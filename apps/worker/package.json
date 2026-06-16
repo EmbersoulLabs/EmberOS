@@ -1,0 +1,29 @@
+{
+  "name": "@ceo-agent/worker",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo ok"
+  },
+  "dependencies": {
+    "@ceo-agent/agents": "workspace:*",
+    "@ceo-agent/db": "workspace:*",
+    "@ceo-agent/queue": "workspace:*",
+    "@ceo-agent/shared": "workspace:*",
+    "archiver": "^7.0.1",
+    "bullmq": "^5.34.5",
+    "dotenv": "^16.4.7",
+    "ioredis": "^5.4.2"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.3",
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

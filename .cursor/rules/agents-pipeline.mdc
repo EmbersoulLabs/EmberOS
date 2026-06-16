@@ -1,0 +1,27 @@
+---
+description: Agent and pipeline development conventions
+globs: packages/agents/**/*,apps/worker/**/*
+alwaysApply: false
+---
+
+# Agent Pipeline Rules
+
+## CEO Task Graph
+
+Steps run in order with `vision_analyze` and `copy_generate` parallel after `ceo_plan`.
+
+## Cost Guardrails
+
+- `cost_budget_usd` default 0.50 per task — hard stop if exceeded.
+- CEO `retry_count` max 2.
+- Vision: max 8 keyframes; long video → Whisper ASR first.
+
+## LLM
+
+- Model: `gpt-4o-mini` with `response_format: json_object`.
+- Validate all outputs with Zod schemas from `@ceo-agent/shared`.
+
+## FFmpeg
+
+- Preview: 720x1280 crf23; Export: 1080x1920 crf20.
+- Fallback on subtitle failure: crop-only without ASS burn.

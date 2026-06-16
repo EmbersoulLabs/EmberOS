@@ -1,0 +1,30 @@
+---
+description: Multi-tenant data isolation — all queries must filter by workspace_id
+alwaysApply: true
+---
+
+# Multi-Tenant Rules
+
+## Isolation Boundary
+
+- **Workspace** is the data isolation boundary for all business data.
+- Every business table (except `organizations`) MUST have `org_id` + `workspace_id`.
+- Storage paths MUST be prefixed with `{workspace_id}/`.
+
+## Query Rules
+
+1. NEVER query campaigns, assets, tasks, creatives, reviews without `workspace_id` filter.
+2. Use `requireWorkspaceRole(workspaceId, userId, minRole)` before any write operation.
+3. Client Portal uses scoped `client_invites.token` — bypass JWT but enforce token + `creative_id` scope.
+
+## API Conventions
+
+- Auth: Supabase JWT in `Authorization: Bearer` (except `/api/portal/*`).
+- Errors: `{ error: string, code: string }`.
+- All campaign/creative/task IDs must be validated against the user's workspace membership.
+
+## Naming
+
+- DB columns: snake_case in Postgres, camelCase in Drizzle schema.
+- API routes: `/api/workspaces/:id`, `/api/campaigns/:id/run`.
+- Queue jobs: `agent.pipeline`, `ffmpeg.render`, `ffmpeg.export`, `ffmpeg.probe`.

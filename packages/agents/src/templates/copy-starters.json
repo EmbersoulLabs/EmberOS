@@ -1,0 +1,20 @@
+[
+  {
+    "id": "pain_point",
+    "name": "痛点型",
+    "structure": "[0-3s hook: pain/question] → [3 value points] → [CTA]",
+    "example_hook": "还在用错方法护肤？"
+  },
+  {
+    "id": "comparison",
+    "name": "对比型",
+    "structure": "[Before state] → [After state] → [How] → [CTA]",
+    "example_hook": "别人 vs 你，差距就在这"
+  },
+  {
+    "id": "story",
+    "name": "故事型",
+    "structure": "[Personal moment] → [Discovery] → [Result] → [CTA]",
+    "example_hook": "上周客户说了一句让我彻底改变..."
+  }
+]

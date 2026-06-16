@@ -1,0 +1,27 @@
+FROM node:20-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
+COPY apps/worker/package.json ./apps/worker/
+COPY packages/agents/package.json ./packages/agents/
+COPY packages/db/package.json ./packages/db/
+COPY packages/queue/package.json ./packages/queue/
+COPY packages/shared/package.json ./packages/shared/
+
+RUN pnpm install --frozen-lockfile || pnpm install
+
+COPY . .
+
+RUN pnpm --filter @ceo-agent/worker build || true
+
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
+ENV NODE_ENV=production
+
+CMD ["pnpm", "--filter", "@ceo-agent/worker", "dev"]

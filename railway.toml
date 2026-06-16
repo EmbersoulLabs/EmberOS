@@ -1,0 +1,7 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "infra/docker/Dockerfile.worker"
+
+[deploy]
+startCommand = "pnpm --filter @ceo-agent/worker dev"
+restartPolicyType = "ON_FAILURE"
