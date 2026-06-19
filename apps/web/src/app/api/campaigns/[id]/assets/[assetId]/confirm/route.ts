@@ -28,20 +28,41 @@ export async function POST(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
-    const [asset] = await db
-      .update(schema.assets)
-      .set({
-        width,
-        height,
-        durationSec: durationSec ? String(durationSec) : undefined,
-      })
-      .where(
-        and(
-          eq(schema.assets.id, assetId),
-          eq(schema.assets.workspaceId, campaign.workspaceId)
+    const updates: {
+      width?: number;
+      height?: number;
+      durationSec?: string;
+    } = {};
+    if (width != null) updates.width = width;
+    if (height != null) updates.height = height;
+    if (durationSec != null) updates.durationSec = String(durationSec);
+
+    let asset;
+    if (Object.keys(updates).length > 0) {
+      const [updated] = await db
+        .update(schema.assets)
+        .set(updates)
+        .where(
+          and(
+            eq(schema.assets.id, assetId),
+            eq(schema.assets.workspaceId, campaign.workspaceId)
+          )
         )
-      )
-      .returning();
+        .returning();
+      asset = updated;
+    } else {
+      const [existing] = await db
+        .select()
+        .from(schema.assets)
+        .where(
+          and(
+            eq(schema.assets.id, assetId),
+            eq(schema.assets.workspaceId, campaign.workspaceId)
+          )
+        )
+        .limit(1);
+      asset = existing;
+    }
 
     if (!asset) return apiError("Asset not found", "NOT_FOUND", 404);
 

@@ -1,8 +1,17 @@
+export * from "./content-type";
+export * from "./motion-compose";
+export * from "./strategy";
+export * from "./hook";
+export * from "./score";
+export * from "./knowledge/query";
 export * from "./ceo";
 export * from "./vision";
+export { transcribeAudio } from "./vision";
+export * from "./tts";
 export * from "./copy";
 export * from "./edit";
 export * from "./compliance";
 export * from "./publish";
 export * from "./orchestrator";
+export type { PipelineHooks, VisionMediaPreparer } from "./orchestrator";
 export * from "./llm";

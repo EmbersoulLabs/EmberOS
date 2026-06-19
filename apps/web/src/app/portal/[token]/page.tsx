@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { BRAND } from "@/lib/brand";
 
 export default function ClientPortalPage() {
   const params = useParams();
@@ -90,6 +91,9 @@ export default function ClientPortalPage() {
             </div>
           </>
         )}
+        <p className="mt-8 text-center text-xs text-slate-400">
+          Powered by {BRAND.product} · {BRAND.company}
+        </p>
       </div>
     </div>
   );

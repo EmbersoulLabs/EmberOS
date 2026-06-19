@@ -1,6 +1,8 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import { QUEUE_NAMES } from "./jobs";
 
+export { QUEUE_NAMES } from "./jobs";
+
 let connection: ConnectionOptions | null = null;
 
 export function getRedisConnection(): ConnectionOptions {
@@ -52,13 +54,18 @@ export async function enqueueRender(
     workspaceId: string;
     orgId: string;
     campaignId: string;
+    mode?: "preview" | "final" | "subtitles_only";
     resolution?: "preview" | "export";
   }
 ) {
+  const mode =
+    data.mode ?? (data.resolution === "export" ? "final" : data.resolution === "preview" ? "preview" : "preview");
   const queue = renderQueue();
-  return queue.add("ffmpeg.render", data, {
-    jobId: `render-${data.creativeId}-${data.resolution ?? "preview"}`,
-  });
+  return queue.add(
+    "ffmpeg.render",
+    { ...data, mode },
+    { jobId: `render-${data.creativeId}-${mode}-${Date.now()}` }
+  );
 }
 
 export async function enqueueExport(data: {
@@ -69,7 +76,8 @@ export async function enqueueExport(data: {
   platforms: string[];
 }) {
   const queue = exportQueue();
-  return queue.add("ffmpeg.export", data, { jobId: `export-${data.creativeId}` });
+  const jobId = `export-${data.creativeId}-${Date.now()}`;
+  return queue.add("ffmpeg.export", data, { jobId });
 }
 
 export async function enqueueProbe(data: {

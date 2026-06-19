@@ -1,6 +1,6 @@
 import { buildDefaultTaskGraph, callJsonModel } from "./llm";
-import { TaskGraphSchema } from "@ceo-agent/shared";
-import type { BrandProfile } from "@ceo-agent/shared";
+import { TaskGraphSchema, type BrandProfile, type StrategyPlan, type KnowledgeSnippet } from "@ceo-agent/shared";
+import { formatKnowledgeForPrompt } from "./knowledge/query";
 
 export interface CeoInput {
   goal: string;
@@ -8,17 +8,28 @@ export interface CeoInput {
   assetSummary: string;
   brandProfile: BrandProfile;
   costBudgetUsd: number;
+  strategyPlan?: StrategyPlan;
+  knowledgeSnippets?: KnowledgeSnippet[];
+  campaignName?: string;
 }
 
 export async function runCeoAgent(input: CeoInput) {
-  const system = `You are the CEO Orchestrator for an AIGC marketing pipeline.
+  const knowledgeBlock = input.knowledgeSnippets?.length
+    ? formatKnowledgeForPrompt(input.knowledgeSnippets)
+    : "";
+
+  const system = `You are the CEO Orchestrator for EmberOS — an AI Marketing Operating System.
 You plan task graphs but do NOT generate copy or edit instructions directly.
 Cost budget: $${input.costBudgetUsd}. Platforms: ${input.platforms.join(", ")}.
-Brand tone: ${input.brandProfile.tone ?? "professional"}. Banned words: ${(input.brandProfile.bannedWords ?? []).join(", ") || "none"}.`;
+Brand tone: ${input.brandProfile.tone ?? "professional"}. Banned words: ${(input.brandProfile.bannedWords ?? []).join(", ") || "none"}.
+${input.strategyPlan ? `Strategy: audience=${input.strategyPlan.targetAudience}, angle=${input.strategyPlan.marketingAngle}, CTA=${input.strategyPlan.ctaStrategy}` : ""}
+${knowledgeBlock ? `Industry knowledge:\n${knowledgeBlock}` : ""}`;
 
-  const user = `Campaign goal: ${input.goal}
+  const user = `Campaign: ${input.campaignName ?? "untitled"}
+Goal: ${input.goal}
 Assets: ${input.assetSummary}
-Generate a TaskGraph JSON with steps for vision, copy, edit, render, compliance, review, platform adapt.`;
+${input.strategyPlan ? `Strategy plan: ${JSON.stringify(input.strategyPlan)}` : ""}
+Generate a TaskGraph JSON with steps for strategy, vision, hooks, copy, edit, render, compliance, score, review, platform adapt.`;
 
   const { result, usage } = await callJsonModel<unknown>(system, user, TaskGraphSchema.toString());
 

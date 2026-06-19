@@ -59,6 +59,9 @@ importers:
       react-hook-form:
         specifier: ^7.54.2
         version: 7.79.0(react@18.3.1)
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -72,6 +75,9 @@ importers:
       '@types/react-dom':
         specifier: ^18.3.5
         version: 18.3.7(@types/react@18.3.31)
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
       autoprefixer:
         specifier: ^10.4.20
         version: 10.5.0(postcss@8.5.15)
@@ -99,6 +105,9 @@ importers:
       '@ceo-agent/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@supabase/supabase-js':
+        specifier: ^2.47.10
+        version: 2.108.2
       archiver:
         specifier: ^7.0.1
         version: 7.0.1
@@ -108,9 +117,18 @@ importers:
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1
+      drizzle-orm:
+        specifier: ^0.38.3
+        version: 0.38.4(@types/react@18.3.31)(postgres@3.4.9)(react@18.3.1)
       ioredis:
         specifier: ^5.4.2
         version: 5.11.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
     devDependencies:
       '@types/archiver':
         specifier: ^6.0.3
@@ -118,9 +136,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.19.21
-      tsx:
-        specifier: ^4.19.2
-        version: 4.22.4
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -141,7 +159,7 @@ importers:
         version: 0.38.4(@types/react@18.3.31)(postgres@3.4.9)(react@18.3.1)
       openai:
         specifier: ^4.77.0
-        version: 4.104.0(zod@3.25.76)
+        version: 4.104.0(ws@8.21.0)(zod@3.25.76)
       zod:
         specifier: ^3.24.1
         version: 3.25.76
@@ -162,9 +180,15 @@ importers:
         specifier: ^3.4.5
         version: 3.4.9
     devDependencies:
+      dotenv:
+        specifier: ^16.4.7
+        version: 16.6.1
       drizzle-kit:
         specifier: ^0.30.1
         version: 0.30.6
+      tsx:
+        specifier: ^4.19.2
+        version: 4.22.4
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
@@ -1145,6 +1169,9 @@ packages:
 
   '@types/readdir-glob@1.1.5':
     resolution: {integrity: sha512-raiuEPUYqXu+nvtY2Pe8s8FEmZ3x5yAH4VkLdihcPdalvsHltomrRC9BzuStrJ9yk06470hS0Crw0f1pXqD+Hg==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@vitest/expect@2.1.9':
     resolution: {integrity: sha512-UJCIkTBenHeKT1TTlKMJWy1laZewsRIzYighyYiJKZreqtdxSos/S1t+ktRMQWu2CKqaarrkeszJx1cgC5tGZw==}
@@ -2412,6 +2439,18 @@ packages:
     resolution: {integrity: sha512-si7QWI6zUMq56bESFvagtmzMdGOtoxfR+Sez11Mobfc7tm+VkUckk9bW2UeffTGVUbOksxmSw0AA2gs8g71NCQ==}
     engines: {node: '>=12'}
 
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   zip-stream@6.0.1:
     resolution: {integrity: sha512-zK7YHHz4ZXpW89AHXUPbQVGKI7uvkd3hzusTdotCg1UxyaVtg0zFJSTfW/Dq5f7OBBVnq6cZIaC8Ti4hb6dtCA==}
     engines: {node: '>= 14'}
@@ -2990,6 +3029,10 @@ snapshots:
       csstype: 3.2.3
 
   '@types/readdir-glob@1.1.5':
+    dependencies:
+      '@types/node': 22.19.21
+
+  '@types/ws@8.18.1':
     dependencies:
       '@types/node': 22.19.21
 
@@ -3775,7 +3818,7 @@ snapshots:
 
   object-hash@3.0.0: {}
 
-  openai@4.104.0(zod@3.25.76):
+  openai@4.104.0(ws@8.21.0)(zod@3.25.76):
     dependencies:
       '@types/node': 18.19.130
       '@types/node-fetch': 2.6.13
@@ -3785,6 +3828,7 @@ snapshots:
       formdata-node: 4.4.1
       node-fetch: 2.7.0
     optionalDependencies:
+      ws: 8.21.0
       zod: 3.25.76
     transitivePeerDependencies:
       - encoding
@@ -4266,6 +4310,8 @@ snapshots:
       ansi-styles: 6.2.3
       string-width: 5.1.2
       strip-ansi: 7.2.0
+
+  ws@8.21.0: {}
 
   zip-stream@6.0.1:
     dependencies:

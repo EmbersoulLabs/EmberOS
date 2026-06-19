@@ -1,4 +1,5 @@
 import type { CopyVariant, Platform } from "@ceo-agent/shared";
+import { pickCopyVariantForPlatform } from "@ceo-agent/shared";
 import { getPlatformSpec } from "@ceo-agent/shared/platform-specs";
 
 export interface PublishInput {
@@ -28,14 +29,10 @@ export interface ExportPack {
 }
 
 export function runPublishAgent(input: PublishInput): ExportPack {
-  const selected =
-    input.copyVariants.find((v) => v.id === input.selectedCopyId) ?? input.copyVariants[0];
-
   const platforms: ExportPack["platforms"] = {};
 
   for (const platform of input.platforms) {
-    const variant =
-      input.copyVariants.find((v) => v.platform === platform) ?? selected;
+    const variant = pickCopyVariantForPlatform(input.copyVariants, platform, input.selectedCopyId);
     const spec = getPlatformSpec(platform);
 
     if (platform === "xiaohongshu") {

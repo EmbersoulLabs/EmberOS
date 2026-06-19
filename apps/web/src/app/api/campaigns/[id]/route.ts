@@ -2,6 +2,8 @@ import { eq, and, desc } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { isCampaignDeletable } from "@/lib/campaigns";
+import { deleteCampaignCascade } from "@/lib/campaign-delete";
 
 export async function GET(
   _request: Request,
@@ -41,7 +43,27 @@ export async function GET(
           .limit(1)
       : [null];
 
-    return apiSuccess({ campaign, assets, task: task ?? null, creative: creative ?? null });
+    let campaignRecord = campaign;
+    if (task?.status === "failed" && campaign.status === "processing") {
+      const [synced] = await db
+        .update(schema.campaigns)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(eq(schema.campaigns.id, id))
+        .returning();
+      campaignRecord = synced ?? campaign;
+    }
+
+    return apiSuccess({
+      campaign: campaignRecord,
+      assets,
+      task: task ?? null,
+      creative: creative ?? null,
+      canDelete: isCampaignDeletable(
+        campaignRecord.status,
+        task?.status,
+        (task?.stepProgress as Record<string, { status?: string }>) ?? null
+      ),
+    });
   } catch (error) {
     return handleApiError(error);
   }
@@ -78,6 +100,55 @@ export async function PATCH(
       .returning();
 
     return apiSuccess({ campaign: updated });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const user = await requireAuth();
+    const { id } = await params;
+    const db = getDb();
+
+    const [campaign] = await db
+      .select()
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, id))
+      .limit(1);
+
+    if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+
+    const [task] = await db
+      .select()
+      .from(schema.tasks)
+      .where(
+        and(eq(schema.tasks.campaignId, id), eq(schema.tasks.workspaceId, campaign.workspaceId))
+      )
+      .orderBy(desc(schema.tasks.createdAt))
+      .limit(1);
+
+    if (
+      !isCampaignDeletable(
+        campaign.status,
+        task?.status,
+        (task?.stepProgress as Record<string, { status?: string }>) ?? null
+      )
+    ) {
+      return apiError(
+        "This campaign cannot be deleted in its current state",
+        "INVALID_STATE",
+        400
+      );
+    }
+
+    await deleteCampaignCascade(db, id, campaign.workspaceId);
+
+    return apiSuccess({ deleted: true });
   } catch (error) {
     return handleApiError(error);
   }

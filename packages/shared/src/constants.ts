@@ -1,9 +1,15 @@
+import { RENDER_MVP_LIMITS } from "./render";
+
 export const LLM_BUDGET_PER_TASK_USD = 0.5;
 export const CEO_MAX_RETRIES = 2;
-export const MAX_UPLOAD_DURATION_SEC = 180;
+export const MAX_UPLOAD_DURATION_SEC = RENDER_MVP_LIMITS.MAX_DURATION_SEC;
+export const MAX_CAMPAIGN_IMAGES = RENDER_MVP_LIMITS.MAX_IMAGES;
+export const MAX_SOURCE_VIDEOS = RENDER_MVP_LIMITS.MAX_SOURCE_VIDEOS;
 export const MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024;
 export const VISION_MAX_FRAMES = 8;
 export const COPY_VARIANT_COUNT = 3;
+/** Trim editor end cards (CapCut / 剪映) from source before montage. */
+export const SOURCE_END_TRIM_SEC = 3.5;
 export const PORTAL_TOKEN_EXPIRY_DAYS = 7;
 export const EXPORT_ZIP_TTL_HOURS = 24;
 
@@ -16,6 +22,14 @@ export const STORAGE_PATHS = {
     `${workspaceId}/campaigns/${campaignId}/renders/${creativeId}/export_1080p.mp4`,
   cover: (workspaceId: string, campaignId: string, creativeId: string) =>
     `${workspaceId}/campaigns/${campaignId}/renders/${creativeId}/cover.jpg`,
+  renderCache: (
+    workspaceId: string,
+    campaignId: string,
+    creativeId: string,
+    fingerprint: string,
+    profile: "preview" | "final"
+  ) =>
+    `${workspaceId}/campaigns/${campaignId}/renders/${creativeId}/cache/${profile}_${fingerprint}_base.mp4`,
   exportPack: (workspaceId: string, campaignId: string, creativeId: string) =>
     `${workspaceId}/campaigns/${campaignId}/exports/${creativeId}/pack.zip`,
 } as const;

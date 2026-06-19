@@ -1,6 +1,7 @@
 import { eq, and, gt } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { apiSuccess, apiError } from "@/lib/api";
+import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
 
 async function validatePortalToken(token: string) {
   const db = getDb();
@@ -120,6 +121,10 @@ export async function POST(
         .update(schema.campaigns)
         .set({ status: decision === "approved" ? "approved" : "pending_internal_review" })
         .where(eq(schema.campaigns.id, creative.campaignId));
+
+      if (decision === "approved") {
+        await enqueueFinalRenderForCreative(creative.id);
+      }
     }
 
     await db

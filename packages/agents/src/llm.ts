@@ -32,17 +32,56 @@ export async function callJsonModel<T>(
   return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
 }
 
+/** GPT-4o vision for frame analysis (higher cost than gpt-4o-mini). */
+export async function callVisionJsonModel<T>(
+  system: string,
+  userText: string,
+  imageDataUrls: string[],
+  schemaHint: string
+): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
+  const openai = getOpenAI();
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [
+      { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: userText },
+          ...imageDataUrls.slice(0, 8).map((url) => ({
+            type: "image_url" as const,
+            image_url: { url, detail: "low" as const },
+          })),
+        ],
+      },
+    ],
+    temperature: 0.4,
+  });
+
+  const content = response.choices[0]?.message?.content ?? "{}";
+  const input = response.usage?.prompt_tokens ?? 0;
+  const output = response.usage?.completion_tokens ?? 0;
+  const costUsd = (input * 2.5 + output * 10) / 1_000_000;
+
+  return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
+}
+
 export function buildDefaultTaskGraph(): TaskGraph {
   return {
     version: "1.0",
     steps: [
       { id: "parse_intent", agent: "ceo", dependsOn: [] },
-      { id: "vision_analyze", agent: "vision", dependsOn: ["parse_intent"], parallel: true },
-      { id: "copy_generate", agent: "copy", dependsOn: ["parse_intent"], parallel: true },
-      { id: "edit_director_plan", agent: "edit", dependsOn: ["vision_analyze", "copy_generate"] },
+      { id: "strategy_plan", agent: "strategy", dependsOn: ["parse_intent"] },
+      { id: "ceo_plan", agent: "ceo", dependsOn: ["strategy_plan"] },
+      { id: "vision_analyze", agent: "vision", dependsOn: ["ceo_plan"] },
+      { id: "hook_generate", agent: "hook", dependsOn: ["vision_analyze"] },
+      { id: "copy_generate", agent: "copy", dependsOn: ["hook_generate"] },
+      { id: "edit_director_plan", agent: "edit", dependsOn: ["copy_generate", "vision_analyze"] },
       { id: "ffmpeg_render", agent: "worker", dependsOn: ["edit_director_plan"] },
       { id: "compliance_check", agent: "compliance", dependsOn: ["ffmpeg_render", "copy_generate"] },
-      { id: "human_review", agent: "human", dependsOn: ["compliance_check"] },
+      { id: "marketing_score", agent: "score", dependsOn: ["compliance_check"] },
+      { id: "human_review", agent: "human", dependsOn: ["marketing_score"] },
       { id: "platform_adapt", agent: "publish", dependsOn: ["human_review"] },
     ],
     retryPolicy: {

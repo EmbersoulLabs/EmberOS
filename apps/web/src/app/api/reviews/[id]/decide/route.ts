@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
 
 export async function POST(
   request: Request,
@@ -54,7 +55,7 @@ export async function POST(
       } else {
         newCreativeStatus = "approved";
         newCampaignStatus = "approved";
-        nextAction = "export";
+        nextAction = "final_render";
       }
     } else {
       newCreativeStatus = "compliance_failed";
@@ -74,6 +75,10 @@ export async function POST(
         .update(schema.campaigns)
         .set({ status: newCampaignStatus })
         .where(eq(schema.campaigns.id, creative.campaignId));
+    }
+
+    if (decision === "approved" && review.reviewerType === "client" && creative) {
+      await enqueueFinalRenderForCreative(creative.id);
     }
 
     return apiSuccess({

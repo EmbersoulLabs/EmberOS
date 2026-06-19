@@ -82,6 +82,9 @@ export const campaigns = pgTable(
     name: text("name").notNull(),
     goal: text("goal"),
     platforms: text("platforms").array().notNull().default([]),
+    industry: text("industry"),
+    strategyJson: jsonb("strategy_json").$type<Record<string, unknown>>(),
+    objectives: text("objectives").array().default([]),
     status: text("status").notNull().default("draft"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
     createdBy: uuid("created_by"),
@@ -124,6 +127,9 @@ export const tasks = pgTable(
       .references(() => campaigns.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("queued"),
     ceoPlan: jsonb("ceo_plan").$type<Record<string, unknown>>(),
+    strategyJson: jsonb("strategy_json").$type<Record<string, unknown>>(),
+    hooksJson: jsonb("hooks_json").$type<Record<string, unknown>>(),
+    marketingScoreJson: jsonb("marketing_score_json").$type<Record<string, unknown>>(),
     currentStep: text("current_step"),
     stepProgress: jsonb("step_progress").$type<Record<string, unknown>>().default({}),
     retryCount: integer("retry_count").notNull().default(0),
@@ -146,7 +152,7 @@ export const creatives = pgTable(
     campaignId: uuid("campaign_id")
       .notNull()
       .references(() => campaigns.id, { onDelete: "cascade" }),
-    taskId: uuid("task_id").references(() => tasks.id),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
     status: text("status").notNull().default("draft"),
     copyVariants: jsonb("copy_variants").$type<unknown[]>().default([]),
     selectedCopyId: text("selected_copy_id"),
@@ -155,6 +161,13 @@ export const creatives = pgTable(
     coverUrl: text("cover_url"),
     editPlan: jsonb("edit_plan").$type<Record<string, unknown>>(),
     complianceResult: jsonb("compliance_result").$type<Record<string, unknown>>(),
+    marketingScoreJson: jsonb("marketing_score_json").$type<Record<string, unknown>>(),
+    selectedHookId: text("selected_hook_id"),
+    publishStatus: text("publish_status").default("none"),
+    renderStatus: text("render_status").default("none"),
+    renderProgress: jsonb("render_progress").$type<Record<string, unknown>>(),
+    renderCachePath: text("render_cache_path"),
+    renderCacheFingerprint: text("render_cache_fingerprint"),
     platformAdaptations: jsonb("platform_adaptations").$type<Record<string, unknown>>().default({}),
     version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -189,7 +202,7 @@ export const clientInvites = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull(),
     workspaceId: uuid("workspace_id").notNull(),
-    creativeId: uuid("creative_id").references(() => creatives.id),
+    creativeId: uuid("creative_id").references(() => creatives.id, { onDelete: "cascade" }),
     token: text("token").notNull().unique(),
     email: text("email"),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -239,6 +252,86 @@ export const agentLogs = pgTable("agent_logs", {
   durationMs: integer("duration_ms"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const marketingScores = pgTable(
+  "marketing_scores",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
+    creativeId: uuid("creative_id").references(() => creatives.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    overallScore: numeric("overall_score"),
+    hookScore: numeric("hook_score"),
+    visualScore: numeric("visual_score"),
+    copyScore: numeric("copy_score"),
+    ctaScore: numeric("cta_score"),
+    platformFitScore: numeric("platform_fit_score"),
+    improvements: jsonb("improvements").$type<string[]>().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("marketing_scores_creative_idx").on(t.creativeId)]
+);
+
+export const knowledgeEntries = pgTable(
+  "knowledge_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id"),
+    workspaceId: uuid("workspace_id"),
+    industry: text("industry").notNull(),
+    category: text("category").notNull(),
+    hookType: text("hook_type"),
+    locale: text("locale").default("zh-CN"),
+    title: text("title"),
+    content: jsonb("content").$type<Record<string, unknown>>().notNull(),
+    performanceScore: numeric("performance_score"),
+    usageCount: integer("usage_count").default(0),
+    isActive: integer("is_active").default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("knowledge_entries_industry_idx").on(t.industry, t.category)]
+);
+
+export const contentAnalytics = pgTable(
+  "content_analytics",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    creativeId: uuid("creative_id")
+      .notNull()
+      .references(() => creatives.id, { onDelete: "cascade" }),
+    publishJobId: uuid("publish_job_id").references(() => publishJobs.id),
+    platform: text("platform").notNull(),
+    metricDate: timestamp("metric_date", { withTimezone: true }).notNull(),
+    views: bigint("views", { mode: "number" }).default(0),
+    reach: bigint("reach", { mode: "number" }).default(0),
+    engagement: bigint("engagement", { mode: "number" }).default(0),
+    clicks: bigint("clicks", { mode: "number" }).default(0),
+    leads: bigint("leads", { mode: "number" }).default(0),
+    conversions: bigint("conversions", { mode: "number" }).default(0),
+    raw: jsonb("raw").$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("content_analytics_creative_idx").on(t.creativeId, t.platform)]
+);
+
+export const workspaceInsights = pgTable(
+  "workspace_insights",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    insightType: text("insight_type").notNull(),
+    platform: text("platform"),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    sampleSize: integer("sample_size").default(0),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("workspace_insights_ws_idx").on(t.workspaceId, t.insightType)]
+);
 
 // Relations
 export const organizationsRelations = relations(organizations, ({ many }) => ({

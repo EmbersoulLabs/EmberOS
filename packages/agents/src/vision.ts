@@ -1,48 +1,123 @@
-import { callJsonModel } from "./llm";
+import { callJsonModel, callVisionJsonModel } from "./llm";
 import { VisionAnalysisSchema } from "@ceo-agent/shared";
 import type { VisionAnalysis } from "@ceo-agent/shared";
+
+export interface VisionFrameInput {
+  atSec: number;
+  dataUrl: string;
+}
 
 export interface VisionInput {
   assetId: string;
   mediaType: "video" | "image";
   durationSec?: number;
   frameDescriptions?: string[];
+  /** Base64 data URLs from worker frame extraction */
+  frames?: VisionFrameInput[];
   transcriptSummary?: string;
+  campaignName?: string;
+  goal?: string;
+}
+
+function isChineseText(text: string): boolean {
+  return /[\u4e00-\u9fff]/.test(text);
+}
+
+function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
+  const topic = input.campaignName?.trim() || "营销素材";
+  const goal = input.goal ?? "";
+  const zh = isChineseText(`${topic}${goal}`);
+
+  if (zh) {
+    return {
+      assetId: input.assetId,
+      mediaType: input.mediaType,
+      durationSec: input.durationSec,
+      subjects: [topic, "产品展示", "场景氛围"],
+      scenes: [
+        {
+          startSec: 0,
+          endSec: Math.min(input.durationSec ?? 3, 3),
+          description: `${topic}实拍画面，产品与环境展示`,
+          emotion: "专业、吸引",
+        },
+      ],
+      products: [{ name: topic, attributes: ["核心卖点", "使用场景"] }],
+      hooks: ["第一眼惊艳", "真实体验", "值得入手"],
+      transcriptSummary: input.transcriptSummary,
+      suggestedMoments: [
+        { startSec: 0, endSec: Math.min(input.durationSec ?? 3, 3), reason: "开场全景与产品特写" },
+      ],
+      confidence: 0.65,
+    };
+  }
+
+  return {
+    assetId: input.assetId,
+    mediaType: input.mediaType,
+    durationSec: input.durationSec,
+    subjects: [topic, "product showcase", "brand scene"],
+    scenes: [
+      {
+        startSec: 0,
+        endSec: input.durationSec ?? 30,
+        description: `${topic} showcase with product styling`,
+      },
+    ],
+    products: [{ name: topic }],
+    hooks: ["first impression", "real experience", "worth trying"],
+    transcriptSummary: input.transcriptSummary,
+    suggestedMoments: [{ startSec: 0, endSec: Math.min(input.durationSec ?? 3, 3), reason: "Opening hero shot" }],
+    confidence: 0.65,
+  };
 }
 
 export async function runVisionAgent(input: VisionInput): Promise<{
   analysis: VisionAnalysis;
   usage: { input: number; output: number; costUsd: number };
 }> {
+  const useChinese = isChineseText(`${input.campaignName ?? ""}${input.goal ?? ""}`);
+  const hasFrames = (input.frames?.length ?? 0) > 0;
+
   const system = `You are a Vision Agent analyzing marketing video/image assets for Singapore/SEA markets.
-Identify subjects, scenes, products, emotional hooks, and suggested highlight moments.
-For videos >60s, rely on transcript summary and key frames only. Output JSON.`;
+Identify subjects, scenes, products, emotional hooks, and suggested highlight moments for ad creation.
+${useChinese ? "Write descriptions in Chinese (简体中文)." : ""}
+${hasFrames ? "You are given real frames from the user's own upload — describe only what you see." : "Infer likely visual content from campaign context when frame data is sparse."}
+For videos, align scene timestamps with the provided frame atSec values when possible.
+Output JSON matching VisionAnalysis schema.`;
 
   const user = JSON.stringify({
     assetId: input.assetId,
     mediaType: input.mediaType,
     durationSec: input.durationSec,
-    frames: input.frameDescriptions ?? [],
+    campaignName: input.campaignName,
+    goal: input.goal,
+    frameTimestamps: input.frames?.map((f) => f.atSec) ?? [],
     transcript: input.transcriptSummary,
+    legacyFrameNotes: input.frameDescriptions ?? [],
   });
 
-  const { result, usage } = await callJsonModel<unknown>(system, user, "VisionAnalysis");
+  const schemaHint = "VisionAnalysis";
+
+  const { result, usage } = hasFrames
+    ? await callVisionJsonModel<unknown>(
+        system,
+        user,
+        input.frames!.map((f) => f.dataUrl),
+        schemaHint
+      )
+    : await callJsonModel<unknown>(system, user, schemaHint);
+
   const parsed = VisionAnalysisSchema.safeParse(result);
 
   const analysis: VisionAnalysis = parsed.success
-    ? parsed.data
-    : {
+    ? {
+        ...parsed.data,
         assetId: input.assetId,
         mediaType: input.mediaType,
-        durationSec: input.durationSec,
-        subjects: ["product"],
-        scenes: [{ startSec: 0, endSec: input.durationSec ?? 30, description: "Main scene" }],
-        products: [],
-        hooks: ["problem-solution"],
-        transcriptSummary: input.transcriptSummary,
-        suggestedMoments: [{ startSec: 0, endSec: 3, reason: "Opening hook" }],
-        confidence: 0.7,
-      };
+        transcriptSummary: parsed.data.transcriptSummary ?? input.transcriptSummary,
+      }
+    : buildFallbackAnalysis(input);
 
   return { analysis, usage };
 }

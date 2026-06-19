@@ -15,13 +15,11 @@ COPY packages/db/package.json ./packages/db/
 COPY packages/queue/package.json ./packages/queue/
 COPY packages/shared/package.json ./packages/shared/
 
-RUN pnpm install --frozen-lockfile || pnpm install
+RUN pnpm install --frozen-lockfile --prod=false || pnpm install --prod=false
 
 COPY . .
-
-RUN pnpm --filter @ceo-agent/worker build || true
 
 ENV FFMPEG_PATH=/usr/bin/ffmpeg
 ENV NODE_ENV=production
 
-CMD ["pnpm", "--filter", "@ceo-agent/worker", "dev"]
+CMD ["pnpm", "--filter", "@ceo-agent/worker", "exec", "tsx", "src/index.ts"]

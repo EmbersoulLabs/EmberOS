@@ -1,7 +1,8 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { isCampaignDeletable } from "@/lib/campaigns";
 
 export async function GET(request: Request) {
   try {
@@ -24,7 +25,32 @@ export async function GET(request: Request) {
       .from(schema.campaigns)
       .where(and(...conditions));
 
-    return apiSuccess({ campaigns });
+    const tasks = await db
+      .select()
+      .from(schema.tasks)
+      .where(eq(schema.tasks.workspaceId, workspaceId))
+      .orderBy(desc(schema.tasks.createdAt));
+
+    const latestTaskByCampaign = new Map<string, (typeof tasks)[number]>();
+    for (const task of tasks) {
+      if (!latestTaskByCampaign.has(task.campaignId)) {
+        latestTaskByCampaign.set(task.campaignId, task);
+      }
+    }
+
+    return apiSuccess({
+      campaigns: campaigns.map((campaign) => ({
+        ...campaign,
+        canDelete: isCampaignDeletable(
+          campaign.status,
+          latestTaskByCampaign.get(campaign.id)?.status,
+          (latestTaskByCampaign.get(campaign.id)?.stepProgress as Record<
+            string,
+            { status?: string }
+          >) ?? null
+        ),
+      })),
+    });
   } catch (error) {
     return handleApiError(error);
   }

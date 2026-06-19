@@ -1,0 +1,95 @@
+import { baseClipFingerprint } from "./render";
+import type { CopyVariant, EditPlan } from "./types/index";
+
+function splitBodyLines(body: string, maxLines = 2): string[] {
+  const chunks = body
+    .split(/[\n。！？!?]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (chunks.length > 0) return chunks.slice(0, maxLines);
+  return body.trim() ? [body.trim().slice(0, 36)] : [];
+}
+
+/** On-screen bilingual line: Chinese on top, English below (中英). */
+export function formatBilingualLine(zh: string, en: string): string {
+  const z = zh.trim();
+  const e = en.trim();
+  if (z && e && z !== e) return `${z}\n${e}`;
+  return z || e;
+}
+
+export function applyBilingualToSubtitles(
+  subtitles: EditPlan["subtitles"],
+  en: CopyVariant,
+  zh: CopyVariant
+): EditPlan["subtitles"] {
+  if (subtitles.length === 0) return subtitles;
+
+  const enBody = splitBodyLines(en.body);
+  const zhBody = splitBodyLines(zh.body);
+  const bodySlots = subtitles.filter((s) => s.style === "body");
+  const hookText = formatBilingualLine(zh.hook, en.hook);
+  const ctaText = formatBilingualLine(zh.cta, en.cta);
+
+  return subtitles.map((s) => {
+    if (s.style === "hook" || s.style === "bold_center") {
+      return { ...s, text: hookText };
+    }
+    if (s.style === "cta") {
+      return { ...s, text: ctaText };
+    }
+    if (s.style === "body") {
+      const idx = bodySlots.indexOf(s);
+      const zhLine = zhBody[idx] ?? zhBody[zhBody.length - 1] ?? zh.body;
+      const enLine = enBody[idx] ?? enBody[enBody.length - 1] ?? en.body;
+      return { ...s, text: formatBilingualLine(zhLine, enLine) };
+    }
+    return s;
+  });
+}
+
+function resolveEnZh(variant: CopyVariant, alt?: CopyVariant): { en: CopyVariant; zh: CopyVariant } | null {
+  if (!alt || variant.locale === alt.locale) return null;
+  const en = variant.locale === "en" ? variant : alt;
+  const zh = variant.locale === "zh" ? variant : alt;
+  return { en, zh };
+}
+
+/** Sync edit-plan subtitle text from a copy variant without changing timing. */
+export function syncSubtitlesFromCopy(
+  editPlan: EditPlan,
+  variant: CopyVariant,
+  altVariant?: CopyVariant
+): EditPlan {
+  const pair = resolveEnZh(variant, altVariant);
+  if (pair) {
+    return {
+      ...editPlan,
+      subtitles: applyBilingualToSubtitles(editPlan.subtitles, pair.en, pair.zh),
+    };
+  }
+
+  const subs = [...editPlan.subtitles];
+  if (subs.length === 0) return editPlan;
+
+  const parts = [variant.hook, variant.body, variant.cta].filter(Boolean);
+  if (parts.length === 0) return editPlan;
+
+  if (subs.length >= 3 && parts.length >= 3) {
+    subs[0] = { ...subs[0]!, text: parts[0]! };
+    subs[1] = { ...subs[1]!, text: parts[1]! };
+    subs[subs.length - 1] = { ...subs[subs.length - 1]!, text: parts[2]! };
+  } else if (subs.length === 1) {
+    subs[0] = { ...subs[0]!, text: parts.join(" ") };
+  } else {
+    for (let i = 0; i < subs.length; i++) {
+      subs[i] = { ...subs[i]!, text: parts[i % parts.length]! };
+    }
+  }
+
+  return { ...editPlan, subtitles: subs };
+}
+
+export function canUseSubtitleOnlyRerender(before: EditPlan, after: EditPlan): boolean {
+  return baseClipFingerprint(before) === baseClipFingerprint(after);
+}

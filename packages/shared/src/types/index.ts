@@ -70,6 +70,7 @@ export const CopyVariantSchema = z.object({
   title: z.string(),
   tags: z.array(z.string()),
   platform: PlatformSchema,
+  locale: z.enum(["en", "zh"]).optional(),
   estimatedReadSec: z.number().optional(),
 });
 export type CopyVariant = z.infer<typeof CopyVariantSchema>;
@@ -119,6 +120,21 @@ export const EditPlanSchema = z.object({
       startSec: z.number(),
       endSec: z.number(),
       speed: z.number().default(1),
+      /** Target duration of this beat in the final timeline (seconds). */
+      outputDurationSec: z.number().optional(),
+      motion: z
+        .enum([
+          "static",
+          "slow_zoom_in",
+          "slow_zoom_out",
+          "pan_left",
+          "pan_right",
+          "pan_up",
+          "focus_pull",
+          "fade_in",
+        ])
+        .optional(),
+      role: z.enum(["hook", "product", "benefits", "proof", "cta"]).optional(),
     })
   ),
   subtitles: z.array(
@@ -137,6 +153,21 @@ export const EditPlanSchema = z.object({
     keepOriginal: z.boolean().default(true),
     bgm: z.string().nullable().optional(),
     normalize: z.boolean().default(true),
+    voiceover: z
+      .object({
+        enabled: z.boolean().default(true),
+        locale: z.enum(["en", "zh"]).optional(),
+        segments: z
+          .array(
+            z.object({
+              startSec: z.number(),
+              endSec: z.number(),
+              text: z.string(),
+            })
+          )
+          .optional(),
+      })
+      .optional(),
   }),
   effects: z
     .array(

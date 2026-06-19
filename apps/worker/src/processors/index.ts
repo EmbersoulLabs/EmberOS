@@ -2,10 +2,18 @@ import { Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { QUEUE_NAMES, getRedisConnection } from "@ceo-agent/queue";
-import { runComplianceAfterRender, runPublishAgent } from "@ceo-agent/agents";
-import { runPipeline } from "@ceo-agent/agents";
-import { STORAGE_PATHS } from "@ceo-agent/shared";
-import { probeVideo, renderVideo, extractCover, createExportZip } from "../ffmpeg/pipeline";
+import { runPublishAgent } from "@ceo-agent/agents";
+import { runPipeline, type PipelineHooks } from "@ceo-agent/agents";
+import { STORAGE_PATHS, MAX_UPLOAD_DURATION_SEC, assessFinishedAdRisk } from "@ceo-agent/shared";
+import { createExportZip, probeVideo } from "../ffmpeg/pipeline";
+import { processRenderJob } from "./render-handler";
+import { prepareVisionFromStorage } from "../media/vision-prep";
+import { mediaHasAudio } from "../ffmpeg/probe-audio";
+import {
+  downloadStorageFile,
+  uploadStorageFile,
+  publicStorageUrl,
+} from "../storage";
 import { mkdir, writeFile, readFile, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -13,54 +21,50 @@ import type { EditPlan, CopyVariant, Platform } from "@ceo-agent/shared";
 
 const concurrency = parseInt(process.env.WORKER_CONCURRENCY ?? "2", 10);
 
-async function getSignedUrl(storagePath: string): Promise<string> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
+/** Reduce Upstash command churn when queues are idle (free tier ~500k/month). */
+const workerOpts = {
+  drainDelay: 5000,
+  settings: {
+    stalledInterval: 60_000,
+  },
+} as const;
 
-  if (!supabaseUrl || !serviceKey) {
-    throw new Error("Supabase storage not configured");
-  }
+const pipelineHooks: PipelineHooks = {
+  prepareVisionMedia: {
+    prepare: (input) => prepareVisionFromStorage(input),
+  },
+};
 
-  const res = await fetch(
-    `${supabaseUrl}/storage/v1/object/sign/${bucket}/${storagePath}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${serviceKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ expiresIn: 3600 }),
-    }
-  );
+async function markTaskStepFailed(
+  taskId: string,
+  stepId: string,
+  message: string
+): Promise<void> {
+  const db = getDb();
+  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
+  if (!task) return;
 
-  if (!res.ok) {
-    throw new Error(`Failed to get signed URL: ${res.statusText}`);
-  }
+  const progress = { ...((task.stepProgress as Record<string, unknown>) ?? {}) };
+  progress[stepId] = {
+    status: "failed",
+    error: message,
+    completedAt: new Date().toISOString(),
+  };
 
-  const data = (await res.json()) as { signedURL: string };
-  return `${supabaseUrl}/storage/v1${data.signedURL}`;
-}
+  await db
+    .update(schema.tasks)
+    .set({
+      stepProgress: progress,
+      status: "failed",
+      errorMessage: message,
+      completedAt: new Date(),
+    })
+    .where(eq(schema.tasks.id, taskId));
 
-async function uploadFile(storagePath: string, localPath: string, contentType: string) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
-
-  const fileBuffer = await readFile(localPath);
-  const res = await fetch(`${supabaseUrl}/storage/v1/object/${bucket}/${storagePath}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${serviceKey}`,
-      "Content-Type": contentType,
-      "x-upsert": "true",
-    },
-    body: fileBuffer,
-  });
-
-  if (!res.ok) {
-    throw new Error(`Upload failed: ${res.statusText}`);
-  }
+  await db
+    .update(schema.campaigns)
+    .set({ status: "failed" })
+    .where(eq(schema.campaigns.id, task.campaignId));
 }
 
 export function startWorkers() {
@@ -71,10 +75,12 @@ export function startWorkers() {
     async (job) => {
       if (job.name === "agent.pipeline") {
         const { taskId } = job.data as { taskId: string };
-        await runPipeline(taskId);
+        console.log(`[agent.pipeline] start task=${taskId}`);
+        await runPipeline(taskId, pipelineHooks);
+        console.log(`[agent.pipeline] done task=${taskId}`);
       }
     },
-    { connection, concurrency }
+    { connection, concurrency, ...workerOpts }
   );
 
   const probeWorker = new Worker(
@@ -91,121 +97,66 @@ export function startWorkers() {
       await mkdir(workDir, { recursive: true });
 
       try {
-        const url = await getSignedUrl(storagePath);
-        const localPath = join(workDir, "input.mp4");
-        const response = await fetch(url);
-        await writeFile(localPath, Buffer.from(await response.arrayBuffer()));
+        const localPath = join(workDir, "input.bin");
+        await downloadStorageFile(storagePath, localPath);
 
         const probe = await probeVideo(localPath);
+        const [assetRow] = await db
+          .select()
+          .from(schema.assets)
+          .where(eq(schema.assets.id, assetId))
+          .limit(1);
+        const meta = (assetRow?.metadata ?? {}) as Record<string, unknown>;
+        const filename = String(meta.originalFilename ?? storagePath.split("/").pop() ?? "");
+        const hasAudio = await mediaHasAudio(localPath);
+        const finishedAdRisk = assessFinishedAdRisk({
+          type: "video",
+          filename,
+          width: probe.width,
+          height: probe.height,
+          durationSec: probe.durationSec,
+          hasAudio,
+        });
+
+        if (probe.durationSec > MAX_UPLOAD_DURATION_SEC) {
+          await db
+            .update(schema.assets)
+            .set({
+              metadata: {
+                ...meta,
+                codec: probe.codec,
+                rejected: true,
+                reason: `Video exceeds ${MAX_UPLOAD_DURATION_SEC}s limit`,
+                finishedAdRisk,
+              },
+            })
+            .where(eq(schema.assets.id, assetId));
+          throw new Error(`Video duration ${probe.durationSec.toFixed(1)}s exceeds ${MAX_UPLOAD_DURATION_SEC}s MVP limit`);
+        }
         await db
           .update(schema.assets)
           .set({
             durationSec: String(probe.durationSec),
             width: probe.width,
             height: probe.height,
-            metadata: { codec: probe.codec },
+            metadata: { ...meta, codec: probe.codec, finishedAdRisk },
           })
           .where(eq(schema.assets.id, assetId));
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
     },
-    { connection, concurrency: 5 }
+    { connection, concurrency: 5, ...workerOpts }
   );
 
   const renderWorker = new Worker(
     QUEUE_NAMES.RENDER,
     async (job) => {
       if (job.name !== "ffmpeg.render") return;
-      const data = job.data as {
-        taskId: string;
-        creativeId: string;
-        workspaceId: string;
-        orgId: string;
-        campaignId: string;
-        resolution: "preview" | "export";
-      };
-
-      const db = getDb();
-      const [creative] = await db
-        .select()
-        .from(schema.creatives)
-        .where(eq(schema.creatives.id, data.creativeId))
-        .limit(1);
-      if (!creative?.editPlan) throw new Error("Edit plan not found");
-
-      const assets = await db
-        .select()
-        .from(schema.assets)
-        .where(eq(schema.assets.campaignId, data.campaignId));
-      const primaryAsset = assets.find((a) => a.type === "video") ?? assets[0];
-      if (!primaryAsset) throw new Error("No source asset");
-
-      const workDir = join(tmpdir(), `render-${data.creativeId}`);
-      await mkdir(workDir, { recursive: true });
-
-      try {
-        const sourceUrl = await getSignedUrl(primaryAsset.storagePath);
-        const localInput = join(workDir, "source.mp4");
-        const response = await fetch(sourceUrl);
-        await writeFile(localInput, Buffer.from(await response.arrayBuffer()));
-
-        const editPlan = creative.editPlan as EditPlan;
-        const outputLocal = join(workDir, "output.mp4");
-        await renderVideo(localInput, editPlan, outputLocal, data.resolution);
-
-        const storagePath =
-          data.resolution === "preview"
-            ? STORAGE_PATHS.preview(data.workspaceId, data.campaignId, data.creativeId)
-            : STORAGE_PATHS.export(data.workspaceId, data.campaignId, data.creativeId);
-
-        await uploadFile(storagePath, outputLocal, "video/mp4");
-
-        const coverLocal = join(workDir, "cover.jpg");
-        await extractCover(localInput, editPlan.cover.atSec, coverLocal);
-        const coverPath = STORAGE_PATHS.cover(data.workspaceId, data.campaignId, data.creativeId);
-        await uploadFile(coverPath, coverLocal, "image/jpeg");
-
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-        const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
-        const videoUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${storagePath}`;
-        const coverUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${coverPath}`;
-
-        const updateData =
-          data.resolution === "preview"
-            ? { videoUrl, coverUrl }
-            : { videoExportUrl: videoUrl };
-
-        await db
-          .update(schema.creatives)
-          .set(updateData)
-          .where(eq(schema.creatives.id, data.creativeId));
-
-        if (data.resolution === "preview") {
-          const db2 = getDb();
-          const [task] = await db2
-            .select()
-            .from(schema.tasks)
-            .where(eq(schema.tasks.id, data.taskId))
-            .limit(1);
-          if (task) {
-            const progress = (task.stepProgress as Record<string, unknown>) ?? {};
-            progress.ffmpeg_render = {
-              status: "completed",
-              completedAt: new Date().toISOString(),
-            };
-            await db2
-              .update(schema.tasks)
-              .set({ stepProgress: progress })
-              .where(eq(schema.tasks.id, data.taskId));
-          }
-          await runComplianceAfterRender(data.taskId, data.creativeId);
-        }
-      } finally {
-        await rm(workDir, { recursive: true, force: true });
-      }
+      console.log(`[ffmpeg.render] start creative=${(job.data as { creativeId: string }).creativeId}`);
+      await processRenderJob(job.data as Parameters<typeof processRenderJob>[0]);
     },
-    { connection, concurrency }
+    { connection, concurrency, ...workerOpts }
   );
 
   const exportWorker = new Worker(
@@ -249,16 +200,23 @@ export function startWorkers() {
 
       try {
         const exportPath = creative.videoExportUrl ?? creative.videoUrl;
-        if (exportPath) {
-          const videoLocal = join(workDir, "video_9x16_1080p.mp4");
-          const response = await fetch(exportPath);
-          await writeFile(videoLocal, Buffer.from(await response.arrayBuffer()));
+        if (!exportPath) throw new Error("No video URL on creative");
+
+        const videoLocal = join(workDir, "video_9x16_1080p.mp4");
+        const response = await fetch(exportPath);
+        if (!response.ok) {
+          throw new Error(
+            `Failed to download video for export (${response.status}). Check storage bucket is public or worker can access Supabase.`
+          );
         }
+        await writeFile(videoLocal, Buffer.from(await response.arrayBuffer()));
 
         if (creative.coverUrl) {
           const coverLocal = join(workDir, "cover.jpg");
-          const response = await fetch(creative.coverUrl);
-          await writeFile(coverLocal, Buffer.from(await response.arrayBuffer()));
+          const coverRes = await fetch(creative.coverUrl);
+          if (coverRes.ok) {
+            await writeFile(coverLocal, Buffer.from(await coverRes.arrayBuffer()));
+          }
         }
 
         await mkdir(join(workDir, "copy"), { recursive: true });
@@ -296,17 +254,18 @@ export function startWorkers() {
         }
 
         await createExportZip(zipFiles, zipLocal);
+        if (!zipFiles.some((f) => f.name.includes("video_9x16"))) {
+          throw new Error("Export ZIP missing video file");
+        }
 
         const packPath = STORAGE_PATHS.exportPack(
           data.workspaceId,
           data.campaignId,
           data.creativeId
         );
-        await uploadFile(packPath, zipLocal, "application/zip");
+        await uploadStorageFile(packPath, zipLocal, "application/zip");
 
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-        const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
-        const exportPackUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${packPath}`;
+        const exportPackUrl = publicStorageUrl(packPath);
 
         await db.insert(schema.publishJobs).values({
           orgId: data.orgId,
@@ -326,15 +285,44 @@ export function startWorkers() {
           .update(schema.campaigns)
           .set({ status: "export_ready" })
           .where(eq(schema.campaigns.id, data.campaignId));
+
+        console.log(`[ffmpeg.export] done creative=${data.creativeId} url=${exportPackUrl}`);
+      } catch (exportErr) {
+        const message = exportErr instanceof Error ? exportErr.message : "Export failed";
+        try {
+          await db.insert(schema.publishJobs).values({
+            orgId: data.orgId,
+            workspaceId: data.workspaceId,
+            creativeId: data.creativeId,
+            platform: "export",
+            status: "export_failed",
+            exportPackUrl: null,
+          });
+        } catch {
+          // ignore duplicate logging failures
+        }
+        throw new Error(message);
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
     },
-    { connection, concurrency }
+    { connection, concurrency, ...workerOpts }
   );
 
-  agentWorker.on("failed", (job, err) => console.error(`Agent job ${job?.id} failed:`, err));
-  renderWorker.on("failed", (job, err) => console.error(`Render job ${job?.id} failed:`, err));
+  agentWorker.on("failed", (job, err) => {
+    console.error(`Agent job ${job?.id} failed:`, err);
+  });
+  renderWorker.on("failed", async (job, err) => {
+    console.error(`Render job ${job?.id} failed:`, err);
+    const taskId = (job?.data as { taskId?: string })?.taskId;
+    if (taskId) {
+      await markTaskStepFailed(
+        taskId,
+        "ffmpeg_render",
+        err instanceof Error ? err.message : "Render failed"
+      );
+    }
+  });
   exportWorker.on("failed", (job, err) => console.error(`Export job ${job?.id} failed:`, err));
 
   console.log("Workers started: agent, probe, render, export");

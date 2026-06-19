@@ -10,6 +10,7 @@
     "worker:dev": "pnpm --filter @ceo-agent/worker dev",
     "db:generate": "pnpm --filter @ceo-agent/db generate",
     "db:push": "pnpm --filter @ceo-agent/db push",
+    "db:marketing-os": "pnpm --filter @ceo-agent/db sql:marketing-os",
     "db:migrate": "pnpm --filter @ceo-agent/db migrate",
     "db:studio": "pnpm --filter @ceo-agent/db studio",
     "test": "vitest run --config vitest.config.ts"

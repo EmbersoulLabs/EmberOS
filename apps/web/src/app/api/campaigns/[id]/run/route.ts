@@ -4,6 +4,7 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueuePipeline } from "@ceo-agent/queue";
 import { LLM_BUDGET_PER_TASK_USD } from "@ceo-agent/shared";
+import { validateCampaignAssetsForRun } from "@/lib/campaign-assets";
 
 const MAX_CONCURRENT_CAMPAIGNS = 2;
 
@@ -43,14 +44,8 @@ export async function POST(
       );
     }
 
-    const assets = await db
-      .select()
-      .from(schema.assets)
-      .where(eq(schema.assets.campaignId, campaignId));
-
-    if (assets.length === 0) {
-      return apiError("Upload at least one asset before running", "VALIDATION_ERROR");
-    }
+    const assetCheck = await validateCampaignAssetsForRun(db, campaignId, campaign.workspaceId);
+    if (!assetCheck.ok) return apiError(assetCheck.error, "VALIDATION_ERROR", 400);
 
     const [task] = await db
       .insert(schema.tasks)

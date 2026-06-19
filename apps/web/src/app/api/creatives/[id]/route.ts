@@ -2,6 +2,13 @@ import { eq } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import {
+  syncSubtitlesFromCopy,
+  canUseSubtitleOnlyRerender,
+  type CopyVariant,
+  type EditPlan,
+} from "@ceo-agent/shared";
+import { enqueuePreviewSubtitleRerender } from "@/lib/render-queue";
 
 export async function GET(
   _request: Request,
@@ -65,12 +72,12 @@ export async function PATCH(
     if (!creative) return apiError("Creative not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(creative.workspaceId, user.id, "editor");
 
-    const variants = [...((creative.copyVariants ?? []) as Record<string, unknown>[])];
+    const variants = [...((creative.copyVariants ?? []) as CopyVariant[])];
     const idx = variants.findIndex((v) => v.id === variantId);
     if (idx === -1) return apiError("Variant not found", "NOT_FOUND", 404);
 
     variants[idx] = {
-      ...variants[idx],
+      ...variants[idx]!,
       ...(hook !== undefined && { hook }),
       ...(copyBody !== undefined && { body: copyBody }),
       ...(cta !== undefined && { cta }),
@@ -78,13 +85,35 @@ export async function PATCH(
       ...(title !== undefined && { title }),
     };
 
+    const previousPlan = creative.editPlan as EditPlan | null;
+    let nextEditPlan = previousPlan;
+    let rerenderSubtitles = false;
+
+    if (previousPlan && (hook !== undefined || copyBody !== undefined || cta !== undefined)) {
+      const pairLocale = variants[idx]!.locale === "zh" ? "en" : "zh";
+      const altVariant = variants.find((v) => v.locale === pairLocale);
+      nextEditPlan = syncSubtitlesFromCopy(previousPlan, variants[idx]!, altVariant);
+      rerenderSubtitles = canUseSubtitleOnlyRerender(previousPlan, nextEditPlan);
+    }
+
     const [updated] = await db
       .update(schema.creatives)
-      .set({ copyVariants: variants, updatedAt: new Date() })
+      .set({
+        copyVariants: variants,
+        ...(nextEditPlan ? { editPlan: nextEditPlan } : {}),
+        updatedAt: new Date(),
+      })
       .where(eq(schema.creatives.id, id))
       .returning();
 
-    return apiSuccess({ creative: updated });
+    if (rerenderSubtitles && creative.taskId && creative.renderStatus === "preview_ready") {
+      await enqueuePreviewSubtitleRerender(id);
+    }
+
+    return apiSuccess({
+      creative: updated,
+      rerenderQueued: rerenderSubtitles,
+    });
   } catch (error) {
     return handleApiError(error);
   }

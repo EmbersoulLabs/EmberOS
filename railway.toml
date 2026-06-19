@@ -3,5 +3,5 @@ builder = "DOCKERFILE"
 dockerfilePath = "infra/docker/Dockerfile.worker"
 
 [deploy]
-startCommand = "pnpm --filter @ceo-agent/worker dev"
+startCommand = "pnpm --filter @ceo-agent/worker exec tsx src/index.ts"
 restartPolicyType = "ON_FAILURE"

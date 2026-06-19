@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, StatusBadge } from "@/components/AppShell";
+import { RunCeoButton } from "@/components/RunCeoButton";
+import { useI18n } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@ceo-agent/shared/i18n";
 
 interface CopyVariant {
   id: string;
@@ -13,14 +16,30 @@ interface CopyVariant {
   title: string;
   tags: string[];
   platform: string;
+  locale?: "en" | "zh";
 }
+
+function variantLabel(v: CopyVariant): string {
+  const lang = v.locale === "zh" ? "中文" : v.locale === "en" ? "EN" : "";
+  return lang ? `${v.platform} · ${lang}` : v.platform;
+}
+
+const FIELD_KEYS: Record<"hook" | "body" | "cta" | "title", TranslationKey> = {
+  hook: "creative.field.hook",
+  body: "creative.field.body",
+  cta: "creative.field.cta",
+  title: "creative.field.title",
+};
 
 export default function CreativePreviewPage() {
   const params = useParams();
   const slug = params.slug as string;
   const id = params.id as string;
+  const { t } = useI18n();
 
   const [creative, setCreative] = useState<Record<string, unknown> | null>(null);
+  const [campaignId, setCampaignId] = useState<string | null>(null);
+  const [taskStatus, setTaskStatus] = useState<string | null>(null);
   const [activeVariant, setActiveVariant] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState<Partial<CopyVariant>>({});
@@ -28,11 +47,28 @@ export default function CreativePreviewPage() {
   useEffect(() => {
     fetch(`/api/creatives/${id}`)
       .then((r) => r.json())
-      .then((d) => setCreative(d.creative));
+      .then((d) => {
+        setCreative(d.creative);
+        setCampaignId(d.campaign?.id ?? null);
+        if (d.campaign?.id) {
+          fetch(`/api/campaigns/${d.campaign.id}`)
+            .then((r) => r.json())
+            .then((cd) => setTaskStatus((cd.task?.status as string) ?? null));
+        }
+      });
   }, [id]);
 
   const variants = (creative?.copyVariants ?? []) as CopyVariant[];
-  const variant = variants[activeVariant];
+  const sortedVariants = [...variants].sort((a, b) => {
+    const order = (v: CopyVariant) => {
+      if (v.locale === "en" && v.platform === "tiktok") return 0;
+      if (v.locale === "en" && v.platform === "instagram") return 1;
+      if (v.locale === "zh") return 2;
+      return 3;
+    };
+    return order(a) - order(b);
+  });
+  const variant = sortedVariants[activeVariant] ?? variants[activeVariant];
 
   async function saveCopy() {
     if (!variant) return;
@@ -52,15 +88,24 @@ export default function CreativePreviewPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ type: "internal" }),
     });
-    alert("Submitted for internal review");
+    alert(t("creative.submitted"));
   }
 
   return (
     <AppShell>
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Creative Preview</h1>
-        {creative && <StatusBadge status={creative.status as string} />}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">{t("creative.title")}</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          {creative && <StatusBadge status={creative.status as string} />}
+          {campaignId && (
+            <RunCeoButton campaignId={campaignId} slug={slug} taskStatus={taskStatus} primary />
+          )}
+        </div>
       </div>
+
+      {campaignId && (
+        <p className="mb-4 text-sm text-slate-500">{t("creative.rerunHint")}</p>
+      )}
 
       {creative?.videoUrl ? (
         <video
@@ -70,12 +115,12 @@ export default function CreativePreviewPage() {
         />
       ) : (
         <div className="mb-6 flex h-48 items-center justify-center rounded-lg bg-slate-200 text-slate-500">
-          Video rendering...
+          {t("creative.rendering")}
         </div>
       )}
 
       <div className="mb-4 flex gap-2">
-        {variants.map((v, i) => (
+        {sortedVariants.map((v, i) => (
           <button
             key={v.id}
             onClick={() => setActiveVariant(i)}
@@ -83,7 +128,7 @@ export default function CreativePreviewPage() {
               i === activeVariant ? "bg-primary text-white" : "border"
             }`}
           >
-            {v.platform} — {v.id}
+            {variantLabel(v)}
           </button>
         ))}
       </div>
@@ -102,16 +147,16 @@ export default function CreativePreviewPage() {
               }}
               className="rounded border px-3 py-1 text-sm"
             >
-              Edit copy
+              {t("creative.editCopy")}
             </button>
             <button onClick={submitReview} className="rounded bg-primary px-3 py-1 text-sm text-white">
-              Submit review
+              {t("creative.submitReview")}
             </button>
             <Link
               href={`/w/${slug}/creatives/${id}/export`}
               className="rounded border px-3 py-1 text-sm"
             >
-              Export
+              {t("creative.export")}
             </Link>
           </div>
         </div>
@@ -121,7 +166,7 @@ export default function CreativePreviewPage() {
         <div className="space-y-3 rounded-lg border bg-white p-4">
           {(["hook", "body", "cta", "title"] as const).map((field) => (
             <div key={field}>
-              <label className="text-sm font-medium capitalize">{field}</label>
+              <label className="text-sm font-medium">{t(FIELD_KEYS[field])}</label>
               <textarea
                 value={(editForm[field] as string) ?? ""}
                 onChange={(e) => setEditForm({ ...editForm, [field]: e.target.value })}
@@ -132,10 +177,10 @@ export default function CreativePreviewPage() {
           ))}
           <div className="flex gap-2">
             <button onClick={saveCopy} className="rounded bg-primary px-3 py-1 text-sm text-white">
-              Save
+              {t("creative.save")}
             </button>
             <button onClick={() => setEditMode(false)} className="rounded border px-3 py-1 text-sm">
-              Cancel
+              {t("workspaces.cancel")}
             </button>
           </div>
         </div>
