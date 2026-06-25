@@ -2,6 +2,15 @@ import { eq, and, desc } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import {
+  isVoicePreset,
+  isContentStyle,
+  isCampaignMarketingGoal,
+  isBgmUserPreference,
+  legacyGoalFromMarketingGoal,
+  DEFAULT_VOICE_PRESET,
+  DEFAULT_BGM_PREFERENCE,
+} from "@ceo-agent/shared";
 import { isCampaignDeletable } from "@/lib/campaigns";
 
 export async function GET(request: Request) {
@@ -60,11 +69,26 @@ export async function POST(request: Request) {
   try {
     const user = await requireAuth();
     const body = await request.json();
-    const { workspaceId, name, goal, platforms } = body as {
+    const {
+      workspaceId,
+      name,
+      goal,
+      platforms,
+      campaignBrief,
+      voicePreset,
+      contentStyle,
+      campaignGoal,
+      bgmPreference,
+    } = body as {
       workspaceId: string;
       name: string;
       goal?: string;
       platforms?: string[];
+      campaignBrief?: string;
+      voicePreset?: string;
+      contentStyle?: string;
+      campaignGoal?: string;
+      bgmPreference?: string;
     };
 
     if (!workspaceId || !name) {
@@ -74,14 +98,26 @@ export async function POST(request: Request) {
     const member = await requireWorkspaceRole(workspaceId, user.id, "operator");
     const db = getDb();
 
+    const briefText = campaignBrief?.trim() || null;
+    const voice = isVoicePreset(voicePreset) ? voicePreset : DEFAULT_VOICE_PRESET;
+    const style = isContentStyle(contentStyle) ? contentStyle : null;
+    const marketingGoal = isCampaignMarketingGoal(campaignGoal) ? campaignGoal : null;
+    const bgm = isBgmUserPreference(bgmPreference) ? bgmPreference : DEFAULT_BGM_PREFERENCE;
+    const legacyGoal = goal?.trim() || (marketingGoal ? legacyGoalFromMarketingGoal(marketingGoal) : undefined);
+
     const [campaign] = await db
       .insert(schema.campaigns)
       .values({
         orgId: member.orgId,
         workspaceId,
         name,
-        goal,
+        goal: legacyGoal,
         platforms: platforms ?? ["tiktok", "xiaohongshu", "instagram"],
+        campaignBrief: briefText,
+        voicePreset: voice,
+        contentStyle: style,
+        campaignGoal: marketingGoal,
+        bgmPreference: bgm,
         createdBy: user.id,
       })
       .returning();

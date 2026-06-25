@@ -1,4 +1,4 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, asc } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
@@ -40,8 +40,19 @@ export async function GET(
           .select()
           .from(schema.creatives)
           .where(eq(schema.creatives.taskId, task.id))
+          .orderBy(asc(schema.creatives.createdAt))
           .limit(1)
       : [null];
+
+    const creatives = task
+      ? await db
+          .select()
+          .from(schema.creatives)
+          .where(eq(schema.creatives.taskId, task.id))
+          .orderBy(asc(schema.creatives.createdAt))
+      : [];
+
+    const hasVideoAsset = assets.some((a) => a.type === "video");
 
     let campaignRecord = campaign;
     if (task?.status === "failed" && campaign.status === "processing") {
@@ -58,6 +69,9 @@ export async function GET(
       assets,
       task: task ?? null,
       creative: creative ?? null,
+      creatives,
+      hasVideoAsset,
+      clipCount: creatives.length,
       canDelete: isCampaignDeletable(
         campaignRecord.status,
         task?.status,

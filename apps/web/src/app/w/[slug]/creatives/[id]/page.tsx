@@ -7,6 +7,12 @@ import { AppShell, StatusBadge } from "@/components/AppShell";
 import { RunCeoButton } from "@/components/RunCeoButton";
 import { useI18n } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
+import { ClipAudioControls } from "@/components/pipeline/ClipAudioControls";
+import { ClipDownloadMenu } from "@/components/pipeline/ClipDownloadMenu";
+import { CopyDownloadButtons } from "@/components/pipeline/CopyDownloadButtons";
+import { MusicMatchPanel } from "@/components/pipeline/MusicMatchPanel";
+import { formatPlatformLabel, videoUrlWithCacheBust } from "@/lib/clip-utils";
+import type { EditPlan } from "@ceo-agent/shared";
 
 interface CopyVariant {
   id: string;
@@ -21,7 +27,8 @@ interface CopyVariant {
 
 function variantLabel(v: CopyVariant): string {
   const lang = v.locale === "zh" ? "中文" : v.locale === "en" ? "EN" : "";
-  return lang ? `${v.platform} · ${lang}` : v.platform;
+  const plat = formatPlatformLabel(v.platform);
+  return lang ? `${plat} · ${lang}` : plat;
 }
 
 const FIELD_KEYS: Record<"hook" | "body" | "cta" | "title", TranslationKey> = {
@@ -40,9 +47,12 @@ export default function CreativePreviewPage() {
   const [creative, setCreative] = useState<Record<string, unknown> | null>(null);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [taskStatus, setTaskStatus] = useState<string | null>(null);
+  const [siblingClips, setSiblingClips] = useState<Array<{ id: string }>>([]);
+  const [clipIndex, setClipIndex] = useState(0);
   const [activeVariant, setActiveVariant] = useState(0);
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState<Partial<CopyVariant>>({});
+  const [copySaveHint, setCopySaveHint] = useState("");
 
   useEffect(() => {
     fetch(`/api/creatives/${id}`)
@@ -50,6 +60,8 @@ export default function CreativePreviewPage() {
       .then((d) => {
         setCreative(d.creative);
         setCampaignId(d.campaign?.id ?? null);
+        setSiblingClips((d.siblingCreatives as Array<{ id: string }>) ?? []);
+        setClipIndex(typeof d.clipIndex === "number" && d.clipIndex >= 0 ? d.clipIndex : 0);
         if (d.campaign?.id) {
           fetch(`/api/campaigns/${d.campaign.id}`)
             .then((r) => r.json())
@@ -57,6 +69,18 @@ export default function CreativePreviewPage() {
         }
       });
   }, [id]);
+
+  useEffect(() => {
+    if ((creative?.renderStatus as string | undefined) !== "preview_rendering") return;
+    const interval = setInterval(() => {
+      fetch(`/api/creatives/${id}`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d.creative) setCreative(d.creative);
+        });
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [id, creative?.renderStatus]);
 
   const variants = (creative?.copyVariants ?? []) as CopyVariant[];
   const sortedVariants = [...variants].sort((a, b) => {
@@ -72,13 +96,19 @@ export default function CreativePreviewPage() {
 
   async function saveCopy() {
     if (!variant) return;
+    setCopySaveHint("");
     const res = await fetch(`/api/creatives/${id}/copy`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ variantId: variant.id, ...editForm }),
     });
     const data = await res.json();
+    if (!res.ok) {
+      setCopySaveHint(data.error ?? t("error.generic"));
+      return;
+    }
     if (data.creative) setCreative(data.creative);
+    if (data.rerenderQueued) setCopySaveHint(t("creative.copySavedRerender"));
     setEditMode(false);
   }
 
@@ -107,17 +137,66 @@ export default function CreativePreviewPage() {
         <p className="mb-4 text-sm text-slate-500">{t("creative.rerunHint")}</p>
       )}
 
+      {siblingClips.length > 1 && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          {siblingClips.map((clip, i) => (
+            <Link
+              key={clip.id}
+              href={`/w/${slug}/creatives/${clip.id}`}
+              className={`rounded px-3 py-1 text-sm ${
+                i === clipIndex ? "bg-primary text-white" : "border"
+              }`}
+            >
+              Clip {i + 1}
+            </Link>
+          ))}
+          <Link
+            href={`/w/${slug}/campaigns/${campaignId}/task`}
+            className="rounded border border-primary px-3 py-1 text-sm text-primary"
+          >
+            All clips
+          </Link>
+        </div>
+      )}
+
       {creative?.videoUrl ? (
         <video
-          src={creative.videoUrl as string}
+          key={String(creative.updatedAt ?? creative.videoUrl)}
+          src={videoUrlWithCacheBust(
+            creative.videoUrl as string,
+            creative.updatedAt as string | undefined
+          )}
           controls
-          className="mb-6 max-h-96 w-full rounded-lg bg-black"
+          className="mx-auto mb-6 max-h-[70vh] w-full max-w-sm rounded-lg bg-black object-contain"
         />
       ) : (
         <div className="mb-6 flex h-48 items-center justify-center rounded-lg bg-slate-200 text-slate-500">
           {t("creative.rendering")}
         </div>
       )}
+
+      {creative?.videoUrl ? (
+        <div className="mx-auto mb-6 max-w-sm space-y-4">
+          <MusicMatchPanel editPlan={creative.editPlan as EditPlan | undefined} />
+          <ClipAudioControls
+            creativeId={id}
+            editPlan={creative.editPlan as EditPlan | undefined}
+            renderStatus={creative.renderStatus as string | undefined}
+            renderProgress={creative.renderProgress as { percent?: number; phase?: string; error?: string } | undefined}
+            onRenderComplete={() => {
+              fetch(`/api/creatives/${id}`)
+                .then((r) => r.json())
+                .then((d) => {
+                  if (d.creative) setCreative(d.creative);
+                });
+            }}
+          />
+          <ClipDownloadMenu
+            creativeId={id}
+            clipLabel={`clip_${clipIndex + 1}`}
+          />
+        </div>
+      ) : null}
 
       <div className="mb-4 flex gap-2">
         {sortedVariants.map((v, i) => (
@@ -135,6 +214,9 @@ export default function CreativePreviewPage() {
 
       {variant && !editMode && (
         <div className="rounded-lg border bg-white p-4">
+          {copySaveHint && (
+            <p className="mb-3 text-sm text-brand-blue">{copySaveHint}</p>
+          )}
           <p className="text-sm font-medium text-primary">{variant.hook}</p>
           <p className="mt-2 whitespace-pre-wrap text-sm">{variant.body}</p>
           <p className="mt-2 text-sm font-medium">{variant.cta}</p>
@@ -149,6 +231,7 @@ export default function CreativePreviewPage() {
             >
               {t("creative.editCopy")}
             </button>
+            <CopyDownloadButtons creativeId={id} compact disabled={variants.length === 0} />
             <button onClick={submitReview} className="rounded bg-primary px-3 py-1 text-sm text-white">
               {t("creative.submitReview")}
             </button>

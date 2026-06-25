@@ -103,6 +103,14 @@ export const VisionAnalysisSchema = z.object({
       reason: z.string(),
     })
   ),
+  /** Normalized center of primary subject/product for camera framing (0–1). */
+  primarySubject: z
+    .object({
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+      label: z.string().optional(),
+    })
+    .optional(),
   confidence: z.number().optional(),
 });
 export type VisionAnalysis = z.infer<typeof VisionAnalysisSchema>;
@@ -135,6 +143,9 @@ export const EditPlanSchema = z.object({
         ])
         .optional(),
       role: z.enum(["hook", "product", "benefits", "proof", "cta"]).optional(),
+      /** Subject center for Ken Burns framing (0–1 normalized). */
+      focusX: z.number().min(0).max(1).optional(),
+      focusY: z.number().min(0).max(1).optional(),
     })
   ),
   subtitles: z.array(
@@ -152,11 +163,49 @@ export const EditPlanSchema = z.object({
   audio: z.object({
     keepOriginal: z.boolean().default(true),
     bgm: z.string().nullable().optional(),
+    /** External (online) BGM track — e.g. Jamendo. When set, worker fetches audioUrl directly. */
+    bgmExternal: z
+      .object({
+        source: z.string(),
+        trackId: z.string(),
+        name: z.string(),
+        artist: z.string().optional(),
+        audioUrl: z.string(),
+        licenseUrl: z.string().optional(),
+        attribution: z.string().optional(),
+      })
+      .nullable()
+      .optional(),
     normalize: z.boolean().default(true),
+    bgmRecommendation: z
+      .object({
+        trackId: z.string(),
+        trackName: z.string(),
+        category: z.string(),
+        confidenceScore: z.number(),
+        reason: z.string(),
+        benefits: z.array(z.string()).default([]),
+        license: z.enum(["royalty_free", "licensed", "ai_generated"]).optional(),
+        analysis: z
+          .object({
+            energyLevel: z.enum(["low", "medium", "high"]),
+            emotionalTone: z.string(),
+            contentType: z.enum(["sales", "story", "educational", "engagement", "trend"]),
+            industry: z.string().nullable(),
+            pacing: z.enum(["slow", "medium", "fast"]),
+            platformFit: z.string().nullable().optional(),
+          })
+          .optional(),
+        alternatives: z
+          .array(z.object({ trackId: z.string(), trackName: z.string() }))
+          .optional(),
+      })
+      .optional(),
     voiceover: z
       .object({
         enabled: z.boolean().default(true),
         locale: z.enum(["en", "zh"]).optional(),
+        voice: z.enum(["female", "male"]).optional(),
         segments: z
           .array(
             z.object({
@@ -177,6 +226,23 @@ export const EditPlanSchema = z.object({
         durationSec: z.number(),
       })
     )
+    .optional(),
+  /** Canonical script for TTS, subtitles, preview, and scoring. */
+  finalScript: z.string().optional(),
+  /** Bilingual subtitle sources — on-screen 中英 when both are set. */
+  finalScriptZh: z.string().optional(),
+  finalScriptEn: z.string().optional(),
+  clipMeta: z
+    .object({
+      index: z.number(),
+      title: z.string(),
+      variant: z.enum(["overall", "hook", "product", "story", "cta"]).optional(),
+      hookType: z.string().optional(),
+      videoArchetype: z
+        .enum(["sales", "story", "educational", "engagement", "trend"])
+        .optional(),
+      platform: PlatformSchema.optional(),
+    })
     .optional(),
 });
 export type EditPlan = z.infer<typeof EditPlanSchema>;

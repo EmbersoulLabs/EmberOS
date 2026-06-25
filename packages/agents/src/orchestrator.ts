@@ -1,7 +1,7 @@
 import { eq, and } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { enqueueRender } from "@ceo-agent/queue";
-import { CEO_MAX_RETRIES, type BrandProfile, type StepProgress } from "@ceo-agent/shared";
+import { CEO_MAX_RETRIES, type BrandProfile, type StepProgress, parseCampaignCreativeBrief, buildVideoAnalysisPrompt, effectiveCampaignGoal, resolveAutoClipSourceAsset } from "@ceo-agent/shared";
 import { runCeoAgent, parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
 import { runHookAgent } from "./hook";
@@ -15,6 +15,8 @@ import type { Platform, StrategyPlan, HookSet } from "@ceo-agent/shared";
 import { runContentTypeAgent } from "./content-type";
 import { resolveCopyMix, getPresetProfile } from "@ceo-agent/shared";
 import { buildImageMontageEditPlan, buildMixedMontageEditPlan, attachVoiceover } from "./motion-compose";
+import { runAutoClipPipeline } from "./auto-clip-pipeline";
+import { applyVoicePreset } from "./voice-preset";
 import type { VisionFrameInput } from "./vision";
 
 export interface VisionMediaPreparer {
@@ -106,6 +108,19 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       )
     );
 
+  const sourceVideo = resolveAutoClipSourceAsset(assets);
+  if (sourceVideo) {
+    console.log(
+      `[agent.pipeline] route=auto_clip task=${taskId} source=${sourceVideo.asset.id} dur=${sourceVideo.durationSec.toFixed(1)}s`
+    );
+    return runAutoClipPipeline(taskId, hooks);
+  }
+  console.log(`[agent.pipeline] route=agency task=${taskId} (no playable source video)`);
+
+  const creativeBrief = parseCampaignCreativeBrief(campaign);
+  const videoAnalysis = buildVideoAnalysisPrompt(creativeBrief);
+  const goal = effectiveCampaignGoal(creativeBrief, campaign.goal);
+
   await db
     .update(schema.tasks)
     .set({ status: "running", startedAt: new Date() })
@@ -120,16 +135,17 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
   try {
     await updateStep(taskId, "parse_intent", { status: "running", startedAt: new Date().toISOString() });
-    const intent = parseIntent(campaign.goal ?? "", campaign.platforms);
+    const intent = parseIntent(goal, campaign.platforms);
     await updateStep(taskId, "parse_intent", { status: "completed", completedAt: new Date().toISOString(), output: intent });
 
     // strategy_plan
     await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
     const { strategy, industry, knowledgeSnippets, usage: strategyUsage } = await runStrategyAgent({
-      goal: campaign.goal ?? "",
+      goal,
       campaignName: campaign.name,
       platforms: campaign.platforms,
       brandProfile,
+      videoAnalysis,
     });
     totalCost += strategyUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
@@ -153,7 +169,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     await updateStep(taskId, "ceo_plan", { status: "running", startedAt: new Date().toISOString() });
     const assetSummary = assets.map((a) => `${a.type}:${a.id}`).join(", ");
     const { taskGraph, usage: ceoUsage } = await runCeoAgent({
-      goal: campaign.goal ?? "",
+      goal,
       platforms: campaign.platforms,
       assetSummary,
       brandProfile,
@@ -161,6 +177,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       strategyPlan: strategy,
       knowledgeSnippets,
       campaignName: campaign.name,
+      videoAnalysis,
     });
     totalCost += ceoUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "ceo", ceoUsage, taskGraph);
@@ -200,7 +217,8 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       mediaType: primaryAsset.type as "video" | "image",
       durationSec: primaryAsset.durationSec ? parseFloat(primaryAsset.durationSec) : undefined,
       campaignName: campaign.name,
-      goal: campaign.goal ?? "",
+      goal,
+      videoAnalysis,
       frames: visionFrames.length > 0 ? visionFrames : undefined,
       transcriptSummary,
     });
@@ -211,7 +229,8 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     // content classify + preset
     await updateStep(taskId, "content_classify", { status: "running", startedAt: new Date().toISOString() });
     const { classification, usage: classifyUsage } = await runContentTypeAgent({
-      goal: campaign.goal ?? "",
+      goal,
+      videoAnalysis,
       campaignName: campaign.name,
       vision,
       platforms: campaign.platforms,
@@ -242,7 +261,8 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     const { hookSet, usage: hookUsage } = await runHookAgent({
       strategy,
       vision,
-      goal: campaign.goal ?? "",
+      goal,
+      videoAnalysis,
       campaignName: campaign.name,
     });
     totalCost += hookUsage.costUsd;
@@ -262,7 +282,8 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     const { variants: allVariants, recommendedVariantId, usage: copyUsageTotal } = await runCopyAgentMix({
       vision,
       brandProfile,
-      goal: campaign.goal ?? "",
+      goal,
+      videoAnalysis,
       campaignName: campaign.name,
       strategyPlan: strategy,
       hookSet,
@@ -307,7 +328,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
         preset,
         assetId: videoAsset.id,
         durationSec: videoAsset.durationSec ? parseFloat(videoAsset.durationSec) : 15,
-        goal: campaign.goal ?? "",
+        goal,
         campaignName: campaign.name,
       });
       editPlan = videoPlan;
@@ -322,7 +343,8 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       });
       await logAgent(task.orgId, task.workspaceId, taskId, "edit", { input: 0, output: 0, costUsd: 0 }, editPlan);
     }
-    editPlan = attachVoiceover(editPlan, allVariants, platforms);
+    editPlan = attachVoiceover(editPlan, allVariants, platforms, goal);
+    editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
     await db
       .update(schema.creatives)
       .set({ editPlan })
@@ -430,6 +452,8 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
     (progress.hook_generate?.output as HookSet);
   const vision = progress.vision_analyze?.output as import("@ceo-agent/shared").VisionAnalysis;
   const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
+  const creativeBrief = campaign ? parseCampaignCreativeBrief(campaign) : null;
+  const videoAnalysis = creativeBrief ? buildVideoAnalysisPrompt(creativeBrief) : null;
 
   if (strategy && hookSet && vision) {
     await updateStep(taskId, "marketing_score", { status: "running", startedAt: new Date().toISOString() });
@@ -441,6 +465,7 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
       editPlan,
       platforms,
       selectedHookId: creative.selectedHookId ?? undefined,
+      videoAnalysis,
     });
     await logAgent(task.orgId, task.workspaceId, taskId, "score", scoreUsage, score);
 

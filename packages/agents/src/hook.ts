@@ -16,6 +16,7 @@ export interface HookInput {
   vision: VisionAnalysis;
   goal: string;
   campaignName?: string;
+  videoAnalysis?: string | null;
 }
 
 function buildFallbackHooks(input: HookInput): HookSet {
@@ -102,6 +103,7 @@ Output JSON: { "hooks": [{ "id", "type", "text", "rationale" }], "recommendedHoo
     goal: input.goal,
     campaignName: input.campaignName,
     hasSeededKnowledge: seeded,
+    ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });
 
   const { result, usage } = await callJsonModel<unknown>(system, user, HookSetSchema.toString());

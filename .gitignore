@@ -10,4 +10,5 @@ dist
 coverage
 .vercel
 tmp
+scripts/vercel-production.env
 *.tsbuildinfo

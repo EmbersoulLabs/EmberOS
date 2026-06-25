@@ -83,7 +83,7 @@ function LogoutButton() {
     <button
       type="button"
       onClick={handleLogout}
-      className="shrink-0 rounded-lg px-3 py-1.5 text-sm text-orange-100 transition hover:bg-white/10 hover:text-white"
+      className="shrink-0 rounded-lg px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/10 hover:text-white"
     >
       {t("nav.logout")}
     </button>
@@ -109,14 +109,14 @@ export function AppShell({
   const showHome = resolvedHome !== null && pathname !== resolvedHome;
 
   return (
-    <div className="min-h-screen bg-mist">
-      <header className="border-b border-orange-200/50 bg-coal text-white shadow-md">
+    <div className="min-h-screen bg-surface-muted">
+      <header className="border-b border-navy-light/30 bg-navy text-white shadow-elevated">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
           <div className="flex min-w-0 items-center gap-1">
             {canGoBack && resolvedBack && (
               <Link
                 href={resolvedBack}
-                className="mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-orange-100 transition hover:bg-white/10 hover:text-white"
+                className="mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
                 aria-label={t("nav.back")}
               >
                 <BackIcon />
@@ -125,7 +125,7 @@ export function AppShell({
             {showHome && resolvedHome && (
               <Link
                 href={resolvedHome}
-                className="mr-1 flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-2 text-orange-100 transition hover:bg-white/10 hover:text-white sm:px-2.5"
+                className="mr-1 flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-2 text-white/70 transition hover:bg-white/10 hover:text-white sm:px-2.5"
                 aria-label={t("nav.home")}
               >
                 <HomeIcon />
@@ -133,13 +133,13 @@ export function AppShell({
               </Link>
             )}
             <Link href="/workspaces" className="flex min-w-0 items-center gap-2.5">
-              <EmberLogo className="h-8 w-8 shrink-0" />
+              <EmberLogo className="h-9 w-9 shrink-0" />
               <span className="truncate text-lg font-bold tracking-tight">{BRAND.product}</span>
             </Link>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {workspaceName && (
-              <span className="rounded-full bg-white/10 px-3 py-1 text-sm text-orange-100 ring-1 ring-orange-400/30">
+              <span className="rounded-full bg-white/10 px-3 py-1 text-sm text-white/90 ring-1 ring-white/15">
                 {workspaceName}
               </span>
             )}
@@ -148,7 +148,7 @@ export function AppShell({
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
     </div>
   );
 }
@@ -157,23 +157,23 @@ export function StatusBadge({ status }: { status: string }) {
   const { t } = useI18n();
   const colors: Record<string, string> = {
     draft: "bg-slate-100 text-slate-700",
-    processing: "bg-blue-100 text-blue-700",
-    pending_internal_review: "bg-amber-100 text-amber-800",
-    pending_client_review: "bg-orange-100 text-orange-900",
-    approved: "bg-green-100 text-green-800",
-    export_ready: "bg-emerald-100 text-emerald-800",
+    processing: "bg-brand-blue/10 text-brand-blue",
+    pending_internal_review: "bg-brand-amber/10 text-brand-amber",
+    pending_client_review: "bg-brand-amber/10 text-brand-amber",
+    approved: "bg-brand-teal/10 text-brand-teal",
+    export_ready: "bg-brand-teal/10 text-brand-teal",
     failed: "bg-red-100 text-red-700",
-    exported: "bg-green-100 text-green-800",
-    queued: "bg-slate-100 text-slate-600",
-    running: "bg-blue-100 text-blue-700",
-    completed: "bg-green-100 text-green-800",
-    pending: "bg-slate-100 text-slate-600",
+    exported: "bg-brand-teal/10 text-brand-teal",
+    queued: "bg-slate-100 text-ink-secondary",
+    running: "bg-brand-blue/10 text-brand-blue",
+    completed: "bg-brand-teal/10 text-brand-teal",
+    pending: "bg-slate-100 text-ink-secondary",
     skipped: "bg-slate-100 text-slate-500",
     compliance_failed: "bg-red-100 text-red-700",
-    preview_rendering: "bg-blue-100 text-blue-700",
-    preview_ready: "bg-cyan-100 text-cyan-800",
-    final_rendering: "bg-indigo-100 text-indigo-800",
-    final_ready: "bg-emerald-100 text-emerald-800",
+    preview_rendering: "bg-brand-blue/10 text-brand-blue",
+    preview_ready: "bg-brand-teal/10 text-brand-teal",
+    final_rendering: "bg-brand-blue/10 text-brand-blue",
+    final_ready: "bg-brand-teal/10 text-brand-teal",
   };
 
   const key = statusTranslationKey(status);
@@ -181,7 +181,7 @@ export function StatusBadge({ status }: { status: string }) {
 
   return (
     <span
-      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${colors[status] ?? "bg-slate-100 text-slate-600"}`}
+      className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${colors[status] ?? "bg-slate-100 text-ink-secondary"}`}
     >
       {label}
     </span>

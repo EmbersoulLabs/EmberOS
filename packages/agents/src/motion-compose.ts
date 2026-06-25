@@ -9,6 +9,11 @@ import {
   clipSubtitleLine,
   firstPhrase,
   secondPhrase,
+  buildFinalScript,
+  estimateSpeechDurationSec,
+  shouldUseVoiceoverForClip,
+  subtitlesFromFinalScript,
+  subtitlesFromBilingualScripts,
 } from "@ceo-agent/shared";
 import type { CopyLocale } from "@ceo-agent/shared";
 
@@ -184,43 +189,64 @@ function subtitleBeatsForMontage(
   return subtitles;
 }
 
-function pickVoiceLocale(variants: CopyVariant[], platforms?: Platform[]): CopyLocale {
-  const hasZh = variants.some((v) => v.locale === "zh");
-  const hasEn = variants.some((v) => v.locale === "en");
-  if (hasZh && !hasEn) return "zh";
-  if (hasEn && !hasZh) return "en";
-  if (platforms?.some((p) => p === "xiaohongshu" || p === "douyin")) {
-    return "zh";
-  }
+function pickVoiceLocale(variants: CopyVariant[], platforms?: Platform[], goal?: string): CopyLocale {
+  if (goal && /[\u4e00-\u9fff]/.test(goal)) return "zh";
+  const zhVariant = variants.find((v) => v.locale === "zh");
+  const enVariant = variants.find((v) => v.locale === "en");
+  if (zhVariant && !enVariant) return "zh";
+  if (enVariant && !zhVariant) return "en";
+  if (platforms?.some((p) => p === "xiaohongshu" || p === "douyin")) return "zh";
+  const zhText = [zhVariant?.hook, zhVariant?.body, zhVariant?.cta].filter(Boolean).join(" ");
+  if (zhText && /[\u4e00-\u9fff]/.test(zhText)) return "zh";
   return "en";
 }
 
-/** Attach TTS voiceover segments aligned to primary-locale subtitles. */
+/** Attach TTS voiceover — finalScript is the single narration source. */
 export function attachVoiceover(
   plan: EditPlan,
   variants: CopyVariant[],
-  platforms?: Platform[]
+  platforms?: Platform[],
+  goal?: string
 ): EditPlan {
-  const locale = pickVoiceLocale(variants, platforms);
-  const suffix = locale === "zh" ? "_zh" : "_en";
-  const segments = plan.subtitles
-    .filter((s) => s.style.endsWith(suffix) || (locale === "zh" && s.style === "hook") || s.style === "bold_center")
-    .filter((s) => s.text.trim().length > 0)
-    .map((s) => ({
-      startSec: s.startSec,
-      endSec: s.endSec,
-      text: s.text,
-    }));
+  const locale = pickVoiceLocale(variants, platforms, goal);
+  const primary = pickBestLocaleVariant(variants, locale) ?? variants[0];
+  if (!primary) return plan;
+
+  const finalScript = plan.finalScript ?? buildFinalScript(primary, locale);
+  if (!finalScript.trim()) return plan;
+
+  const clipDurationSec = plan.targetDurationSec;
+  const useVoice = shouldUseVoiceoverForClip(clipDurationSec, finalScript, locale);
+  const speechDur = estimateSpeechDurationSec(finalScript, locale);
+  const targetDurationSec = useVoice ? Math.max(clipDurationSec, speechDur + 0.5) : clipDurationSec;
+  const pair = pickBilingualCopyPair(variants);
+  const subtitles =
+    pair && pair.zh.id !== pair.en.id
+      ? subtitlesFromBilingualScripts(
+          buildFinalScript(pair.zh, "zh"),
+          buildFinalScript(pair.en, "en"),
+          targetDurationSec
+        )
+      : subtitlesFromFinalScript(finalScript, targetDurationSec, locale);
 
   return {
     ...plan,
+    finalScript,
+    finalScriptZh: pair && pair.zh.id !== pair.en.id ? buildFinalScript(pair.zh, "zh") : undefined,
+    finalScriptEn: pair && pair.zh.id !== pair.en.id ? buildFinalScript(pair.en, "en") : undefined,
+    targetDurationSec,
+    subtitles,
     audio: {
       ...plan.audio,
-      voiceover: {
-        enabled: segments.length > 0,
-        locale,
-        segments,
-      },
+      keepOriginal: false,
+      bgm: plan.audio.bgm ?? "marketing",
+      voiceover: useVoice
+        ? {
+            enabled: true,
+            locale,
+            segments: [{ startSec: 0, endSec: targetDurationSec, text: finalScript }],
+          }
+        : { enabled: false, locale },
     },
   };
 }
@@ -235,7 +261,7 @@ function basePlanFields(
   const en = pair?.en ?? copyVariants[0]!;
   const targetDurationSec = Math.min(
     presetTotalDurationSec(preset),
-    RENDER_MVP_LIMITS.MAX_DURATION_SEC
+    RENDER_MVP_LIMITS.MAX_MONTAGE_OUTPUT_SEC
   );
   return {
     aspectRatio: "9:16",
@@ -348,7 +374,7 @@ export function buildImageMontageEditPlan(input: ImageMontageInput): EditPlan {
 }
 
 export function buildMontageEditPlan(input: MontageInput): EditPlan {
-  const maxDur = input.maxDurationSec ?? RENDER_MVP_LIMITS.MAX_DURATION_SEC;
+  const maxDur = input.maxDurationSec ?? RENDER_MVP_LIMITS.MAX_MONTAGE_OUTPUT_SEC;
   const usableDur = usableSourceDuration(input.sourceDurationSec);
   const startPoints = pickSourceStartPoints(input.vision, input.sourceDurationSec, SCENE_ROLES.length);
 

@@ -5,14 +5,18 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: `${BRAND.product} — ${BRAND.company}`,
-  description: `${BRAND.product} by ${BRAND.company}: AI marketing pipeline for short-form video and copy.`,
+  description: `${BRAND.positioning} by ${BRAND.company}. ${BRAND.tagline}`,
+  icons: {
+    icon: "/brand/favicon.png",
+    apple: "/brand/favicon.png",
+  },
   appleWebApp: {
     title: BRAND.product,
   },
 };
 
 export const viewport = {
-  themeColor: "#1C1917",
+  themeColor: "#0A2540",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

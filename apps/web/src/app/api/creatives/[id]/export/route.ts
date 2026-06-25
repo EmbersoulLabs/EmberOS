@@ -116,7 +116,9 @@ export async function POST(
     }
 
     if (!creative.videoExportUrl) {
-      if (creative.renderStatus === "preview_ready" || creative.videoUrl) {
+      if (creative.renderStatus === "preview_ready" && creative.videoUrl && creative.status === "approved") {
+        // V1 Auto Clip: export preview 720p without final render
+      } else if (creative.renderStatus === "preview_ready" || creative.videoUrl) {
         await enqueueFinalRenderForCreative(id);
         return apiSuccess(
           {
@@ -125,12 +127,13 @@ export async function POST(
           },
           202
         );
+      } else {
+        return apiError(
+          "Final 1080p render is not ready yet. Wait for final_rendering to complete.",
+          "VALIDATION_ERROR",
+          409
+        );
       }
-      return apiError(
-        "Final 1080p render is not ready yet. Wait for final_rendering to complete.",
-        "VALIDATION_ERROR",
-        409
-      );
     }
 
     const exportAllowed =

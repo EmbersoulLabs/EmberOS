@@ -11,6 +11,7 @@ export interface CeoInput {
   strategyPlan?: StrategyPlan;
   knowledgeSnippets?: KnowledgeSnippet[];
   campaignName?: string;
+  videoAnalysis?: string | null;
 }
 
 export async function runCeoAgent(input: CeoInput) {
@@ -29,6 +30,7 @@ ${knowledgeBlock ? `Industry knowledge:\n${knowledgeBlock}` : ""}`;
 Goal: ${input.goal}
 Assets: ${input.assetSummary}
 ${input.strategyPlan ? `Strategy plan: ${JSON.stringify(input.strategyPlan)}` : ""}
+${input.videoAnalysis ? `\n${input.videoAnalysis}` : ""}
 Generate a TaskGraph JSON with steps for strategy, vision, hooks, copy, edit, render, compliance, score, review, platform adapt.`;
 
   const { result, usage } = await callJsonModel<unknown>(system, user, TaskGraphSchema.toString());

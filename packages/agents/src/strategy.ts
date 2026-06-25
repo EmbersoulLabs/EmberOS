@@ -13,6 +13,7 @@ export interface StrategyInput {
   campaignName: string;
   platforms: string[];
   brandProfile: BrandProfile;
+  videoAnalysis?: string | null;
 }
 
 const INDUSTRY_FALLBACK_ZH: Partial<
@@ -157,6 +158,7 @@ Fields: targetAudience, painPoints[], marketingAngle, ctaStrategy, platformPrior
     inferredIndustry: industry,
     hasSeededKnowledge: seeded,
     knowledge: knowledgeBlock,
+    ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });
 
   const { result, usage } = await callJsonModel<unknown>(

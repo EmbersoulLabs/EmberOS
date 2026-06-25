@@ -17,6 +17,7 @@ export interface VisionInput {
   transcriptSummary?: string;
   campaignName?: string;
   goal?: string;
+  videoAnalysis?: string | null;
 }
 
 function isChineseText(text: string): boolean {
@@ -44,6 +45,7 @@ function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
       ],
       products: [{ name: topic, attributes: ["核心卖点", "使用场景"] }],
       hooks: ["第一眼惊艳", "真实体验", "值得入手"],
+      primarySubject: { x: 0.5, y: 0.42, label: topic },
       transcriptSummary: input.transcriptSummary,
       suggestedMoments: [
         { startSec: 0, endSec: Math.min(input.durationSec ?? 3, 3), reason: "开场全景与产品特写" },
@@ -66,6 +68,7 @@ function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
     ],
     products: [{ name: topic }],
     hooks: ["first impression", "real experience", "worth trying"],
+    primarySubject: { x: 0.5, y: 0.42, label: topic },
     transcriptSummary: input.transcriptSummary,
     suggestedMoments: [{ startSec: 0, endSec: Math.min(input.durationSec ?? 3, 3), reason: "Opening hero shot" }],
     confidence: 0.65,
@@ -81,6 +84,7 @@ export async function runVisionAgent(input: VisionInput): Promise<{
 
   const system = `You are a Vision Agent analyzing marketing video/image assets for Singapore/SEA markets.
 Identify subjects, scenes, products, emotional hooks, and suggested highlight moments for ad creation.
+Estimate primarySubject as normalized x/y (0–1) center of the main product or person to keep in frame for vertical video cropping.
 ${useChinese ? "Write descriptions in Chinese (简体中文)." : ""}
 ${hasFrames ? "You are given real frames from the user's own upload — describe only what you see." : "Infer likely visual content from campaign context when frame data is sparse."}
 For videos, align scene timestamps with the provided frame atSec values when possible.
@@ -95,6 +99,7 @@ Output JSON matching VisionAnalysis schema.`;
     frameTimestamps: input.frames?.map((f) => f.atSec) ?? [],
     transcript: input.transcriptSummary,
     legacyFrameNotes: input.frameDescriptions ?? [],
+    ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });
 
   const schemaHint = "VisionAnalysis";

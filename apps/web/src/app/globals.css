@@ -3,31 +3,36 @@
 @tailwind utilities;
 
 :root {
-  --foreground: #1c1917;
-  --background: #faf6f2;
-  --primary: #ea580c;
-  --primary-hover: #c2410c;
-  --ember-flame: #f97316;
-  --ember-glow: #fdba74;
-  --ember-coal: #1c1917;
-  --ember-spark: #fef3c7;
-  --ember-mist: #faf6f2;
+  --navy: #0a2540;
+  --brand-blue: #2563eb;
+  --brand-teal: #14b8a6;
+  --brand-amber: #f59e0b;
+  --background: #f8fafc;
+  --card: #ffffff;
+  --border: #e5e7eb;
+  --foreground: #111827;
+  --muted: #6b7280;
+  --primary: #0a2540;
+  --primary-hover: #0f3460;
 }
 
 body {
   color: var(--foreground);
   background: var(--background);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  -webkit-font-smoothing: antialiased;
 }
 
-@layer utilities {
-  .ember-page-bg {
-    background-color: var(--ember-mist);
-    background-image:
-      radial-gradient(ellipse 80% 50% at 50% -20%, rgb(253 186 116 / 0.35), transparent),
-      radial-gradient(ellipse 60% 40% at 100% 100%, rgb(234 88 12 / 0.08), transparent);
+@layer components {
+  .brand-card {
+    @apply rounded-xl border border-border bg-surface shadow-card;
   }
 
-  .ember-card {
-    @apply border border-orange-200/60 bg-white/90 shadow-lg shadow-orange-950/5 backdrop-blur-sm;
+  .brand-btn-primary {
+    @apply rounded-xl bg-navy px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-navy-light;
+  }
+
+  .brand-btn-secondary {
+    @apply rounded-xl border border-border bg-surface px-5 py-2.5 text-sm font-medium text-ink shadow-sm transition hover:border-brand-blue/30 hover:bg-surface-muted;
   }
 }

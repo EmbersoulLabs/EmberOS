@@ -26,6 +26,7 @@ export interface CopyInput {
   locale?: CopyLocale;
   templates?: CopyTemplate[];
   slotIds?: string[];
+  videoAnalysis?: string | null;
 }
 
 export interface CopyMixInput extends Omit<CopyInput, "platform" | "locale" | "templates" | "slotIds"> {
@@ -337,6 +338,7 @@ Output JSON: { "variants": [{ "id", "template", "hook", "body", "cta", "title", 
       transcript: input.vision.transcriptSummary,
     },
     brand: input.brandProfile,
+    ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });
 
   const { result, usage } = await callJsonModel<unknown>(system, user, "CopyVariants");

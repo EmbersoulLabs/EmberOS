@@ -1,0 +1,92 @@
+/** Turn raw step output JSON into user-facing insight bullets. */
+
+export interface StepInsight {
+  label: string;
+  items: string[];
+  metric?: { label: string; value: string };
+}
+
+export function buildStepInsights(stepId: string, output: unknown): StepInsight | null {
+  if (output == null) return null;
+  const data = output as Record<string, unknown>;
+
+  if (stepId === "hook_generate" && Array.isArray((data as { hooks?: unknown }).hooks)) {
+    const hooks = (data as { hooks: Array<{ text?: string; type?: string }> }).hooks;
+    return {
+      label: "Generated hooks",
+      items: hooks.slice(0, 5).map((h) => h.text ?? "").filter(Boolean),
+    };
+  }
+
+  if (stepId === "copy_generate") {
+    if (Array.isArray(output)) {
+      const variants = output as Array<{ hook?: string; platform?: string; locale?: string }>;
+      return {
+        label: "Script variants",
+        items: variants.slice(0, 4).map((v) => v.hook ?? "").filter(Boolean),
+      };
+    }
+    if (Array.isArray(data)) {
+      return {
+        label: "Script variants",
+        items: (data as Array<{ hook?: string }>).slice(0, 4).map((v) => v.hook ?? "").filter(Boolean),
+      };
+    }
+  }
+
+  if (stepId === "clip_segment" && Array.isArray(output)) {
+    const segments = output as Array<{ reason?: string; startSec?: number; endSec?: number }>;
+    return {
+      label: "Clip moments",
+      items: segments.map(
+        (s, i) => s.reason ?? `Highlight ${i + 1} (${Math.round(s.startSec ?? 0)}s–${Math.round(s.endSec ?? 0)}s)`
+      ),
+    };
+  }
+
+  if (stepId === "marketing_score" && typeof data.overallScore === "number") {
+    const improvements = (data.improvements as string[] | undefined) ?? [];
+    return {
+      label: "Score breakdown",
+      items: improvements.slice(0, 4),
+      metric: { label: "Marketing confidence", value: `${data.overallScore}/100` },
+    };
+  }
+
+  if (stepId === "vision_analyze" && Array.isArray(data.hooks)) {
+    return {
+      label: "Content insights",
+      items: (data.hooks as string[]).slice(0, 4),
+      metric:
+        typeof data.confidence === "number"
+          ? { label: "Confidence", value: `${Math.round((data.confidence as number) * 100)}%` }
+          : undefined,
+    };
+  }
+
+  if (stepId === "content_classify" && data.presetLabel) {
+    return {
+      label: "Format detected",
+      items: [String(data.presetLabel), String(data.contentType ?? "")].filter(Boolean),
+    };
+  }
+
+  if (stepId === "strategy_plan" && data.marketingAngle) {
+    return {
+      label: "Strategy",
+      items: [
+        String(data.marketingAngle),
+        ...((data.objectives as string[] | undefined) ?? []).slice(0, 2),
+      ].filter(Boolean),
+    };
+  }
+
+  if (stepId === "compliance_check" && typeof data.passed === "boolean") {
+    return {
+      label: "Review",
+      items: data.passed ? ["All checks passed"] : ["Issues flagged — see review queue"],
+    };
+  }
+
+  return null;
+}

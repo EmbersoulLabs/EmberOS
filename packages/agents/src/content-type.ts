@@ -15,6 +15,7 @@ export interface ContentTypeInput {
   campaignName?: string;
   vision: VisionAnalysis;
   platforms?: string[];
+  videoAnalysis?: string | null;
 }
 
 const GOAL_PATTERNS: { pattern: RegExp; contentType: ContentType }[] = [
@@ -89,6 +90,7 @@ contentType: product_showcase|service_promotion|wedding|florist|restaurant|beaut
       scenes: input.vision.scenes.slice(0, 4),
       mediaType: input.vision.mediaType,
     },
+    ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });
 
   try {

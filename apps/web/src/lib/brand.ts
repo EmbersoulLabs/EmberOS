@@ -1,21 +1,22 @@
 export const BRAND = {
   product: "EmberOS",
-  company: "EmberSoulLabs",
+  company: "EmberSoul Labs",
+  tagline: "Ignite the Soul of Every Small Business",
+  positioning: "AI Marketing Operating System",
   domain: "embersoullabs.com",
-  tagline: "Upload · generate · review · export",
   defaultOrgName: "EmberSoulLabs",
   defaultOrgSlug: "embersoullabs",
 } as const;
 
-/** Flame / ember palette — keep in sync with globals.css & tailwind.config.js */
-export const EMBER_THEME = {
-  coal: "#1C1917",
-  coalLight: "#292524",
-  ember: "#EA580C",
-  emberHover: "#C2410C",
-  flame: "#F97316",
-  glow: "#FDBA74",
-  spark: "#FEF3C7",
-  ash: "#78716C",
-  mist: "#FAF6F2",
+export const BRAND_COLORS = {
+  navy: "#0A2540",
+  navyLight: "#0F3460",
+  electricBlue: "#2563EB",
+  teal: "#14B8A6",
+  amber: "#F59E0B",
+  background: "#F8FAFC",
+  card: "#FFFFFF",
+  border: "#E5E7EB",
+  textPrimary: "#111827",
+  textSecondary: "#6B7280",
 } as const;

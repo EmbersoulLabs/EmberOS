@@ -13,6 +13,35 @@ export function getRedisConnection(): ConnectionOptions {
   return connection;
 }
 
+/**
+ * BullMQ key prefix — isolates local dev from Railway/production workers on shared Upstash.
+ * Set BULLMQ_PREFIX=local (or LOCAL_DEV=true) in .env.local when using cloud Redis locally.
+ */
+export function getBullmqPrefix(): string | undefined {
+  const explicit = process.env.BULLMQ_PREFIX?.trim();
+  if (explicit) return explicit;
+  if (process.env.LOCAL_DEV === "true") return "local";
+  return undefined;
+}
+
+export function logQueueConfig(): void {
+  const url = process.env.REDIS_URL ?? "redis://localhost:6379";
+  const host = (() => {
+    try {
+      return new URL(url.replace(/^redis:\/\//, "http://")).hostname;
+    } catch {
+      return url;
+    }
+  })();
+  const prefix = getBullmqPrefix();
+  console.log(`[queue] redis=${host} prefix=${prefix ?? "(production — shared with remote workers)"}`);
+  if (/upstash\.io/i.test(url) && !prefix) {
+    console.warn(
+      "[queue] WARNING: Upstash Redis without BULLMQ_PREFIX — remote Railway worker may steal jobs (old pipeline). Set LOCAL_DEV=true and BULLMQ_PREFIX=local in .env.local"
+    );
+  }
+}
+
 const queues = new Map<string, Queue>();
 
 export function getQueue(name: string): Queue {
@@ -21,6 +50,7 @@ export function getQueue(name: string): Queue {
       name,
       new Queue(name, {
         connection: getRedisConnection(),
+        prefix: getBullmqPrefix(),
         defaultJobOptions: {
           removeOnComplete: 100,
           removeOnFail: 50,
@@ -55,16 +85,18 @@ export async function enqueueRender(
     orgId: string;
     campaignId: string;
     mode?: "preview" | "final" | "subtitles_only";
+    outputResolution?: "720p" | "1080p" | "2k";
     resolution?: "preview" | "export";
   }
 ) {
   const mode =
     data.mode ?? (data.resolution === "export" ? "final" : data.resolution === "preview" ? "preview" : "preview");
   const queue = renderQueue();
+  const suffix = data.outputResolution ? `-${data.outputResolution}` : `-${mode}`;
   return queue.add(
     "ffmpeg.render",
     { ...data, mode },
-    { jobId: `render-${data.creativeId}-${mode}-${Date.now()}` }
+    { jobId: `render-${data.creativeId}${suffix}-${Date.now()}` }
   );
 }
 
@@ -78,6 +110,20 @@ export async function enqueueExport(data: {
   const queue = exportQueue();
   const jobId = `export-${data.creativeId}-${Date.now()}`;
   return queue.add("ffmpeg.export", data, { jobId });
+}
+
+export async function enqueueTaskExport(data: {
+  taskId: string;
+  workspaceId: string;
+  orgId: string;
+  campaignId: string;
+  platforms: string[];
+  resolution?: "720p" | "1080p" | "2k";
+}) {
+  const queue = exportQueue();
+  const resolution = data.resolution ?? "720p";
+  const jobId = `export-task-${data.taskId}-${resolution}-${Date.now()}`;
+  return queue.add("ffmpeg.export_task", { ...data, resolution }, { jobId });
 }
 
 export async function enqueueProbe(data: {

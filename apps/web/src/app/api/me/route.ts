@@ -33,6 +33,7 @@ export async function GET() {
         name: m.org.name,
         slug: m.org.slug,
         role: m.role,
+        plan: m.org.plan,
       })),
       workspaces: workspaceMemberships.map((m) => ({
         id: m.workspace.id,

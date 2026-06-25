@@ -27,6 +27,8 @@ export default function CampaignDetailPage() {
   const campaign = data?.campaign as Record<string, unknown> | undefined;
   const task = data?.task as Record<string, unknown> | null;
   const creative = data?.creative as Record<string, unknown> | null;
+  const clipCount = (data?.clipCount as number | undefined) ?? 0;
+  const hasVideoAsset = Boolean(data?.hasVideoAsset);
   const status = campaign?.status as string | undefined;
   const taskStatus = task?.status as string | undefined;
   const stepProgress = (task?.stepProgress ?? null) as Record<string, { status?: string }> | null;
@@ -62,12 +64,12 @@ export default function CampaignDetailPage() {
 
       <div className="mt-6 flex flex-wrap gap-3">
         <Link
-          href={`/w/${slug}/campaigns/${id}/task`}
+          href={`/w/${slug}/campaigns/${id}/task${task?.id ? `?taskId=${task.id}` : ""}`}
           className="rounded-lg bg-primary px-4 py-2 text-sm text-white"
         >
-          {t("campaign.detail.taskProgress")}
+          {hasVideoAsset ? `View 3 clips (${clipCount}/3)` : t("campaign.detail.taskProgress")}
         </Link>
-        {creative && (
+        {creative && !hasVideoAsset && (
           <Link
             href={`/w/${slug}/creatives/${creative.id}`}
             className="rounded-lg border px-4 py-2 text-sm"

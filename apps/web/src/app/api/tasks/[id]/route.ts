@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
@@ -17,16 +17,20 @@ export async function GET(
     if (!task) return apiError("Task not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(task.workspaceId, user.id, "client_viewer");
 
-    const [creative] = await db
+    const creatives = await db
       .select()
       .from(schema.creatives)
       .where(eq(schema.creatives.taskId, id))
-      .limit(1);
+      .orderBy(asc(schema.creatives.createdAt));
+
+    const creative = creatives[0] ?? null;
 
     return apiSuccess({
       task,
       stepProgress: task.stepProgress,
       creative: creative ?? null,
+      creatives,
+      clipCount: creatives.length,
     });
   } catch (error) {
     return handleApiError(error);
