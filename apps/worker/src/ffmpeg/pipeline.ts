@@ -17,6 +17,24 @@ import { buildDynamicMotionFilter, buildVideoClipFilter, segmentTransitionFilter
 
 const execFileAsync = promisify(execFile);
 
+/** Global FFmpeg flags that keep stderr small (no banner, errors only, no per-frame stats). */
+const FFMPEG_QUIET_FLAGS = ["-hide_banner", "-loglevel", "error", "-nostats"] as const;
+
+/**
+ * Centralized FFmpeg runner. Prepends quiet flags so stderr stays tiny and
+ * defaults maxBuffer to 64MB to avoid "stderr maxBuffer length exceeded".
+ */
+function runFfmpeg(
+  args: string[],
+  options?: { cwd?: string; maxBuffer?: number }
+) {
+  return execFileAsync(getFfmpegPath(), [...FFMPEG_QUIET_FLAGS, ...args], {
+    cwd: options?.cwd,
+    windowsHide: true,
+    maxBuffer: options?.maxBuffer ?? 64 * 1024 * 1024,
+  });
+}
+
 function resolveProfile(renderMode: RenderMode, profileKey?: RenderProfileKey) {
   const key = profileKey ?? (renderMode === "subtitles_only" ? "preview" : renderMode);
   return getRenderProfile(key);
@@ -146,7 +164,7 @@ async function renderImageClipSegment(
     "+faststart",
     outputPath,
   ];
-  await execFileAsync(getFfmpegPath(), clipArgs, { cwd: workDir, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  await runFfmpeg(clipArgs, { cwd: workDir });
 }
 
 function resolveClipAsset(
@@ -264,7 +282,7 @@ async function renderClipSegment(
     );
   }
   clipArgs.push(outputPath);
-  await execFileAsync(getFfmpegPath(), clipArgs, { cwd: workDir, windowsHide: true, maxBuffer: 16 * 1024 * 1024 });
+  await runFfmpeg(clipArgs, { cwd: workDir });
 }
 
 async function execFfmpeg(
@@ -287,11 +305,7 @@ async function execFfmpeg(
       : undefined;
 
   try {
-    await execFileAsync(getFfmpegPath(), args, {
-      cwd: options?.cwd,
-      windowsHide: true,
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    await runFfmpeg(args, { cwd: options?.cwd });
   } finally {
     if (interval) clearInterval(interval);
   }
@@ -366,11 +380,7 @@ async function concatSegmentsWithCrossfade(
     outputPath
   );
 
-  await execFileAsync(getFfmpegPath(), inputArgs, {
-    cwd: workDir,
-    windowsHide: true,
-    maxBuffer: 32 * 1024 * 1024,
-  });
+  await runFfmpeg(inputArgs, { cwd: workDir });
 }
 
 export async function renderBaseClip(
@@ -466,7 +476,7 @@ export async function burnSubtitles(
   const profile = resolveProfile(renderMode, profileKey);
   const workDir = join(tmpdir(), `ceo-subs-${Date.now()}`);
   await mkdir(workDir, { recursive: true });
-  const runInWorkDir = { cwd: workDir, windowsHide: true } as const;
+  const runInWorkDir = { cwd: workDir } as const;
   const assLocalPath = join(workDir, "subs.ass");
 
   try {
@@ -511,8 +521,7 @@ export async function burnSubtitles(
       const localFonts = await stageSubtitleFontForRender(workDir);
       await writeFile(assLocalPath, buildAssSubtitles(plan.subtitles, profile.height));
       const subtitledLocal = join(workDir, "subtitled.mp4");
-      await execFileAsync(
-        getFfmpegPath(),
+      await runFfmpeg(
         [
           "-y",
           "-i",
@@ -537,8 +546,7 @@ export async function burnSubtitles(
       );
 
       if (plan.audio.normalize) {
-        await execFileAsync(
-          getFfmpegPath(),
+        await runFfmpeg(
           [
             "-y",
             "-i",
@@ -672,7 +680,7 @@ export async function renderVideo(
 }
 
 export async function extractCoverFromImage(imagePath: string, outputPath: string): Promise<void> {
-  await execFileAsync(getFfmpegPath(), [
+  await runFfmpeg([
     "-y",
     "-i",
     imagePath,
@@ -685,7 +693,7 @@ export async function extractCoverFromImage(imagePath: string, outputPath: strin
 }
 
 export async function extractCover(inputPath: string, atSec: number, outputPath: string): Promise<void> {
-  await execFileAsync(getFfmpegPath(), [
+  await runFfmpeg([
     "-y",
     "-ss",
     String(atSec),

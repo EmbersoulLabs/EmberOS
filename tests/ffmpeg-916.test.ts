@@ -13,7 +13,8 @@ describe("filters-916", () => {
   });
 
   it("uses conditional crop without w/h shorthand in position", () => {
-    expect(FFMPEG_CROP_916_CENTER).toContain("if(gt(iw/ih,9/16),(iw-ih*9/16)/2,0)");
+    // Commas inside if(...) are escaped (\,) for FFmpeg filtergraph syntax.
+    expect(FFMPEG_CROP_916_CENTER).toContain("x=if(gt(iw/ih\\,9/16)\\,(iw-ih*9/16)/2\\,0)");
     expect(FFMPEG_CROP_916_CENTER).not.toContain("(iw-w)");
   });
 
