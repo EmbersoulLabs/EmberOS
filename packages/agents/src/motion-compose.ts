@@ -1,4 +1,4 @@
-import type { CopyVariant, EditPlan, PresetProfile, VisionAnalysis, Platform } from "@ceo-agent/shared";
+import type { CopyVariant, EditPlan, PresetProfile, VisionAnalysis, Platform, SubtitleTimelineSegment } from "@ceo-agent/shared";
 import {
   SCENE_ROLES,
   pickBilingualCopyPair,
@@ -14,6 +14,7 @@ import {
   shouldUseVoiceoverForClip,
   subtitlesFromFinalScript,
   subtitlesFromBilingualScripts,
+  subtitlesFromTimeline,
 } from "@ceo-agent/shared";
 import type { CopyLocale } from "@ceo-agent/shared";
 
@@ -206,7 +207,8 @@ export function attachVoiceover(
   plan: EditPlan,
   variants: CopyVariant[],
   platforms?: Platform[],
-  goal?: string
+  goal?: string,
+  subtitleTimeline?: SubtitleTimelineSegment[]
 ): EditPlan {
   const locale = pickVoiceLocale(variants, platforms, goal);
   const primary = pickBestLocaleVariant(variants, locale) ?? variants[0];
@@ -220,14 +222,30 @@ export function attachVoiceover(
   const speechDur = estimateSpeechDurationSec(finalScript, locale);
   const targetDurationSec = useVoice ? Math.max(clipDurationSec, speechDur + 0.5) : clipDurationSec;
   const pair = pickBilingualCopyPair(variants);
-  const subtitles =
-    pair && pair.zh.id !== pair.en.id
-      ? subtitlesFromBilingualScripts(
-          buildFinalScript(pair.zh, "zh"),
-          buildFinalScript(pair.en, "en"),
-          targetDurationSec
-        )
-      : subtitlesFromFinalScript(finalScript, targetDurationSec, locale);
+  const sourceStart = plan.clips.length > 0 ? Math.min(...plan.clips.map((c) => c.startSec)) : 0;
+  const sourceEnd = plan.clips.length > 0 ? Math.max(...plan.clips.map((c) => c.endSec)) : targetDurationSec;
+
+  let subtitles =
+    subtitleTimeline && subtitleTimeline.length > 0
+      ? subtitlesFromTimeline(subtitleTimeline, sourceStart, sourceEnd, targetDurationSec, locale)
+      : pair && pair.zh.id !== pair.en.id
+        ? subtitlesFromBilingualScripts(
+            buildFinalScript(pair.zh, "zh"),
+            buildFinalScript(pair.en, "en"),
+            targetDurationSec
+          )
+        : subtitlesFromFinalScript(finalScript, targetDurationSec, locale);
+
+  if (subtitles.length === 0) {
+    subtitles =
+      pair && pair.zh.id !== pair.en.id
+        ? subtitlesFromBilingualScripts(
+            buildFinalScript(pair.zh, "zh"),
+            buildFinalScript(pair.en, "en"),
+            targetDurationSec
+          )
+        : subtitlesFromFinalScript(finalScript, targetDurationSec, locale);
+  }
 
   return {
     ...plan,

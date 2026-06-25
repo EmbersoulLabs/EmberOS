@@ -148,8 +148,6 @@ export function PipelineStepCard({
 
   const [expanded, setExpanded] = useState(false);
 
-  const [showTechnical, setShowTechnical] = useState(false);
-
 
 
   const status = normalizeStepStatus(entry?.status);
@@ -335,26 +333,6 @@ export function PipelineStepCard({
               )}
 
             </div>
-
-          )}
-
-          <button
-
-            type="button"
-
-            onClick={() => setShowTechnical((v) => !v)}
-
-            className="mt-3 text-xs text-ink-secondary hover:text-ink"
-
-          >
-
-            {showTechnical ? t("pipeline.hideTechnical") : t("pipeline.showTechnical")}
-
-          </button>
-
-          {showTechnical && (
-
-            <p className="mt-1 font-mono text-[10px] text-ink-secondary">{stepId}</p>
 
           )}
 

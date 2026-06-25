@@ -18,11 +18,16 @@ export const AGENCY_STEPS = [
 
 export const AUTO_CLIP_STEPS = [
   "parse_intent",
+  "strategy_plan",
   "vision_analyze",
+  "highlight_index",
+  "content_generate",
+  "hook_generate",
   "clip_segment",
   "copy_generate",
   "edit_director_plan",
   "ffmpeg_render",
+  "marketing_score",
   "export_ready",
 ] as const;
 
@@ -68,27 +73,27 @@ export const AUTO_CLIP_PIPELINE_PHASES: PipelinePhase[] = [
   {
     id: "strategy",
     titleKey: "pipeline.phase.strategy",
-    steps: ["parse_intent"],
+    steps: ["parse_intent", "strategy_plan"],
   },
   {
     id: "contentAnalysis",
     titleKey: "pipeline.phase.contentAnalysis",
-    steps: ["vision_analyze", "clip_segment"],
+    steps: ["vision_analyze", "highlight_index"],
   },
   {
     id: "contentCreation",
     titleKey: "pipeline.phase.contentCreation",
-    steps: ["copy_generate"],
+    steps: ["content_generate", "hook_generate", "copy_generate"],
   },
   {
     id: "production",
     titleKey: "pipeline.phase.production",
-    steps: ["edit_director_plan", "ffmpeg_render"],
+    steps: ["clip_segment", "edit_director_plan", "ffmpeg_render"],
   },
   {
     id: "delivery",
     titleKey: "pipeline.phase.delivery",
-    steps: ["export_ready"],
+    steps: ["marketing_score", "export_ready"],
   },
 ];
 
@@ -168,7 +173,7 @@ export function isAutoClipTask(
   progress: Record<string, { status?: string; output?: unknown }>,
   creativesCount: number
 ): boolean {
-  if (progress.clip_segment) return true;
+  if (progress.clip_segment || progress.highlight_index) return true;
   const editOut = progress.edit_director_plan?.output;
   if (editOut && typeof editOut === "object" && editOut !== null && "clipCount" in editOut) {
     return true;

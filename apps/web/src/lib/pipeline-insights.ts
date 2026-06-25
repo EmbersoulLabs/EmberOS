@@ -50,6 +50,18 @@ export function buildStepInsights(stepId: string, output: unknown): StepInsight 
     }
   }
 
+  if (stepId === "highlight_index" && Array.isArray(output)) {
+    const segments = output as Array<{ reason?: string; attentionScore?: number; deadAir?: boolean }>;
+    return {
+      label: "Top moments scored",
+      items: segments
+        .filter((s) => !s.deadAir)
+        .slice(0, 4)
+        .map((s) => s.reason ?? "")
+        .filter(Boolean),
+    };
+  }
+
   if (stepId === "clip_segment" && Array.isArray(output)) {
     const segments = output as Array<{ reason?: string; startSec?: number; endSec?: number }>;
     return {

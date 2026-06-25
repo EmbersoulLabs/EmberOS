@@ -19,7 +19,8 @@
     "bgm:refresh": "pnpm --filter @ceo-agent/worker refresh:bgm",
     "db:migrate": "pnpm --filter @ceo-agent/db migrate",
     "db:studio": "pnpm --filter @ceo-agent/db studio",
-    "test": "vitest run --config vitest.config.ts"
+    "test": "vitest run --config vitest.config.ts",
+    "e2e:video-studio": "pnpm --filter @ceo-agent/worker e2e:video-studio"
   },
   "devDependencies": {
     "turbo": "^2.3.3",

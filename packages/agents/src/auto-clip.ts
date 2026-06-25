@@ -8,6 +8,7 @@ import {
   shouldUseVoiceoverForClip,
   subtitlesFromBilingualScripts,
   subtitlesFromFinalScript,
+  subtitlesFromTimeline,
   buildVirtualCuts,
   inferSubjectFocus,
   buildHookTitleSubtitle,
@@ -16,6 +17,7 @@ import {
   type EditPlan,
   type VisionAnalysis,
   type BgmRecommendation,
+  type SubtitleTimelineSegment,
 } from "@ceo-agent/shared";
 import type { AutoClipVariantDef } from "./auto-clip-variants";
 
@@ -150,7 +152,8 @@ export function pickAutoClipSegments(
 export function attachAutoClipVoiceover(
   plan: EditPlan,
   variants: CopyVariant[],
-  voiceLocale: CopyLocale
+  voiceLocale: CopyLocale,
+  subtitleTimeline?: SubtitleTimelineSegment[]
 ): EditPlan {
   const { zhScript, enScript, hasBilingual } = resolveBilingualScripts(variants);
   const primary = pickBestLocaleVariant(variants, voiceLocale) ?? variants[0];
@@ -166,9 +169,22 @@ export function attachAutoClipVoiceover(
   const useVoice = shouldUseVoiceoverForClip(clipDurationSec, finalScript, voiceLocale);
   const speechDur = estimateSpeechDurationSec(finalScript, voiceLocale);
   const targetDurationSec = useVoice ? Math.max(clipDurationSec, speechDur + 0.5) : clipDurationSec;
-  const subtitles = hasBilingual
-    ? subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec)
-    : subtitlesFromFinalScript(finalScript, targetDurationSec, voiceLocale);
+
+  const sourceStart = plan.clips.length > 0 ? Math.min(...plan.clips.map((c) => c.startSec)) : 0;
+  const sourceEnd = plan.clips.length > 0 ? Math.max(...plan.clips.map((c) => c.endSec)) : targetDurationSec;
+
+  let subtitles =
+    subtitleTimeline && subtitleTimeline.length > 0
+      ? subtitlesFromTimeline(subtitleTimeline, sourceStart, sourceEnd, targetDurationSec, voiceLocale)
+      : hasBilingual
+        ? subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec)
+        : subtitlesFromFinalScript(finalScript, targetDurationSec, voiceLocale);
+
+  if (subtitles.length === 0 && hasBilingual) {
+    subtitles = subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec);
+  } else if (subtitles.length === 0) {
+    subtitles = subtitlesFromFinalScript(finalScript, targetDurationSec, voiceLocale);
+  }
 
   if (!useVoice) {
     console.log(
@@ -176,8 +192,6 @@ export function attachAutoClipVoiceover(
     );
   }
 
-  const sourceStart = plan.clips.length > 0 ? Math.min(...plan.clips.map((c) => c.startSec)) : 0;
-  const sourceEnd = plan.clips.length > 0 ? Math.max(...plan.clips.map((c) => c.endSec)) : targetDurationSec;
   const assetId = plan.clips[0]?.assetId;
   const clips =
     useVoice && targetDurationSec > clipDurationSec + 0.05 && assetId
@@ -227,8 +241,9 @@ export function buildStandaloneClipEditPlan(input: {
   bgmKey?: string;
   bgmRecommendation?: BgmRecommendation;
   vision?: VisionAnalysis | null;
+  subtitleTimeline?: SubtitleTimelineSegment[];
 }): EditPlan {
-  const { segment, assetId, copyVariants, clipVariant, platform, bgmKey, bgmRecommendation, vision } =
+  const { segment, assetId, copyVariants, clipVariant, platform, bgmKey, bgmRecommendation, vision, subtitleTimeline } =
     input;
   const sourceLen = segment.endSec - segment.startSec;
   const clipDuration = Math.min(AUTO_CLIP.OUTPUT_DURATION_SEC, Math.max(AUTO_CLIP.MIN_SEGMENT_SEC, sourceLen));
@@ -241,9 +256,18 @@ export function buildStandaloneClipEditPlan(input: {
 
   const finalScript = voiceLocale === "zh" ? zhScript : enScript;
   const targetDurationSec = clipDuration;
-  let subtitles = hasBilingual
-    ? subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec)
-    : [];
+  let subtitles =
+    subtitleTimeline && subtitleTimeline.length > 0
+      ? subtitlesFromTimeline(
+          subtitleTimeline,
+          segment.startSec,
+          segment.endSec,
+          targetDurationSec,
+          voiceLocale
+        )
+      : hasBilingual
+        ? subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec)
+        : [];
 
   const titleSource = zh?.title || en.title;
   const hookCard = buildHookTitleSubtitle(en.hook || titleSource || clipVariant?.title || "", targetDurationSec);

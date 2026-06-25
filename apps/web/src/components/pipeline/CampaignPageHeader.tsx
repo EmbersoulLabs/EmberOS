@@ -1,8 +1,6 @@
 "use client";
 
-import { BRAND } from "@/lib/brand";
 import { useI18n } from "@/lib/i18n/provider";
-
 export function CampaignPageHeader({
   campaignName,
   taskStatus,
@@ -35,7 +33,7 @@ export function CampaignPageHeader({
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-widest text-ink-secondary">
-            {BRAND.product}
+            {t("pipeline.title")}
           </p>
           <h1 className="mt-1 truncate text-2xl font-bold tracking-tight text-navy sm:text-3xl">
             {campaignName ?? t("pipeline.title")}

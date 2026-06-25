@@ -13,11 +13,18 @@ import {
   recommendBgm,
   type BgmRecommendation,
   resolveAutoClipSourceAsset,
+  strategyObjectives,
 } from "@ceo-agent/shared";
 import { parseIntent } from "./ceo";
+import { runStrategyAgent } from "./strategy";
+import {
+  runMarketingContentAgent,
+  contentPackageToHookSet,
+  buildAutoClipCopyVariants,
+} from "./marketing-content";
 import { runVisionAgent } from "./vision";
-import { runCopyAgent } from "./copy";
-import { pickAutoClipSegments, buildStandaloneClipEditPlan, attachAutoClipVoiceover } from "./auto-clip";
+import { buildStandaloneClipEditPlan, attachAutoClipVoiceover } from "./auto-clip";
+import { buildHighlightIndex, pickSegmentsFromHighlightIndex, type TranscriptSegment } from "./highlight-index";
 import { AUTO_CLIP_VARIANTS } from "./auto-clip-variants";
 import { applyVoicePreset } from "./voice-preset";
 import { runAutoClipScoreAgent } from "./score";
@@ -83,7 +90,7 @@ async function logAgent(
   }
 }
 
-/** V1 Auto Clip: long video → 3 standalone 9:16 clips + per-clip copy. */
+/** V1 Auto Clip: long video → 3 standalone 9:16 clips + unified marketing package. */
 export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks) {
   console.log(`[auto-clip] start task=${taskId}`);
   const db = getDb();
@@ -155,9 +162,40 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       output: intent,
     });
 
+    await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
+    const { strategy, industry, usage: strategyUsage } = await runStrategyAgent({
+      goal,
+      campaignName: campaign.name,
+      platforms: campaign.platforms,
+      brandProfile,
+      videoAnalysis,
+    });
+    totalCost += strategyUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
+    await db
+      .update(schema.tasks)
+      .set({ strategyJson: strategy })
+      .where(eq(schema.tasks.id, taskId));
+    await db
+      .update(schema.campaigns)
+      .set({
+        strategyJson: strategy,
+        industry: industry === "general" ? null : industry,
+        objectives: strategyObjectives(strategy),
+      })
+      .where(eq(schema.campaigns.id, campaign.id));
+    await updateStep(taskId, "strategy_plan", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: strategy,
+    });
+
+    if (totalCost > budget) throw new Error("Cost budget exceeded");
+
     await updateStep(taskId, "vision_analyze", { status: "running", startedAt: new Date().toISOString() });
     let visionFrames: VisionFrameInput[] = [];
     let transcriptSummary: string | undefined;
+    let transcriptSegments: TranscriptSegment[] = [];
     if (hooks?.prepareVisionMedia) {
       const visionSources = [videoAsset, ...imageAssets];
       for (const asset of visionSources.slice(0, 8)) {
@@ -168,7 +206,10 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         });
         visionFrames.push(...prepared.frames);
         if (asset.type === "video") {
-          transcriptSummary = prepared.transcriptSummary;
+          transcriptSummary = prepared.transcriptSummary ?? transcriptSummary;
+          if (prepared.transcriptSegments?.length) {
+            transcriptSegments = prepared.transcriptSegments;
+          }
         }
       }
     }
@@ -193,8 +234,54 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
+    await updateStep(taskId, "highlight_index", { status: "running", startedAt: new Date().toISOString() });
+    const highlightIndex = buildHighlightIndex({
+      vision,
+      sourceDurationSec,
+      transcriptSegments,
+      transcriptSummary,
+      keywords: strategy.keywords,
+    });
+    await updateStep(taskId, "highlight_index", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: highlightIndex,
+    });
+
+    await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
+    const { contentPackage, usage: contentUsage } = await runMarketingContentAgent({
+      strategy,
+      vision,
+      videoAnalysis,
+      userNotes: creativeBrief.campaignBrief,
+      goal,
+      campaignName: campaign.name,
+      platforms: campaign.platforms,
+    });
+    totalCost += contentUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, contentPackage);
+    await updateStep(taskId, "content_generate", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: contentPackage,
+    });
+
+    const hookSet = contentPackageToHookSet(contentPackage);
+    await logAgent(task.orgId, task.workspaceId, taskId, "hook", { input: 0, output: 0, costUsd: 0 }, hookSet);
+    await db
+      .update(schema.tasks)
+      .set({ hooksJson: hookSet })
+      .where(eq(schema.tasks.id, taskId));
+    await updateStep(taskId, "hook_generate", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: hookSet,
+    });
+
+    if (totalCost > budget) throw new Error("Cost budget exceeded");
+
     await updateStep(taskId, "clip_segment", { status: "running", startedAt: new Date().toISOString() });
-    const segments = pickAutoClipSegments(vision, sourceDurationSec, AUTO_CLIP.CLIP_COUNT);
+    const segments = pickSegmentsFromHighlightIndex(highlightIndex, sourceDurationSec, AUTO_CLIP.CLIP_COUNT);
     await updateStep(taskId, "clip_segment", {
       status: "completed",
       completedAt: new Date().toISOString(),
@@ -205,64 +292,17 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     const clipPlatforms = resolveAutoClipPlatforms(platforms);
 
     await updateStep(taskId, "copy_generate", { status: "running", startedAt: new Date().toISOString() });
-    const clipCopies: Awaited<ReturnType<typeof runCopyAgent>>["variants"][] = [];
-    let copyUsageTotal = { input: 0, output: 0, costUsd: 0 };
-
+    const clipCopies: CopyVariant[][] = [];
     for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i]!;
-      const clipVariant = AUTO_CLIP_VARIANTS[i] ?? AUTO_CLIP_VARIANTS[0]!;
       const clipPlatform = clipPlatforms[i] ?? clipPlatforms[0]!;
-      const clipGoal = `${goal}. Clip focus (${clipVariant.title}): ${clipVariant.focus}. Target platform: ${clipPlatform}.`;
-      const visionForClip = {
-        ...vision,
-        hooks: [...vision.hooks, segment.reason],
-        suggestedMoments: [segment],
-      };
-
-      const [zhResult, enResult] = await Promise.all([
-        runCopyAgent({
-          vision: visionForClip,
-          brandProfile,
-          platform: clipPlatform,
-          goal: clipGoal,
-          campaignName: `${campaign.name} — Clip ${i + 1}`,
-          slotIds: [`clip-${i + 1}-zh`],
-          templates: ["story"],
-          locale: "zh",
-          videoAnalysis,
-        }),
-        runCopyAgent({
-          vision: visionForClip,
-          brandProfile,
-          platform: clipPlatform,
-          goal: clipGoal,
-          campaignName: `${campaign.name} — Clip ${i + 1}`,
-          slotIds: [`clip-${i + 1}-en`],
-          templates: ["story"],
-          locale: "en",
-          videoAnalysis,
-        }),
-      ]);
-
-      const variants = [zhResult.variants[0], enResult.variants[0]].filter(
-        (v): v is NonNullable<typeof v> => Boolean(v)
-      );
-      clipCopies.push(variants);
-
-      copyUsageTotal.input += zhResult.usage.input + enResult.usage.input;
-      copyUsageTotal.output += zhResult.usage.output + enResult.usage.output;
-      copyUsageTotal.costUsd += zhResult.usage.costUsd + enResult.usage.costUsd;
+      clipCopies.push(buildAutoClipCopyVariants(contentPackage, strategy, i, clipPlatform));
     }
-
-    totalCost += copyUsageTotal.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "copy", copyUsageTotal, clipCopies);
+    await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, clipCopies);
     await updateStep(taskId, "copy_generate", {
       status: "completed",
       completedAt: new Date().toISOString(),
       output: clipCopies,
     });
-
-    if (totalCost > budget) throw new Error("Cost budget exceeded");
 
     await updateStep(taskId, "edit_director_plan", { status: "running", startedAt: new Date().toISOString() });
     const creativeIds: string[] = [];
@@ -293,11 +333,13 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         bgmKey: bgmRec.trackId,
         bgmRecommendation: bgmRec,
         vision,
+        subtitleTimeline: contentPackage.subtitleTimeline,
       });
       editPlan = attachAutoClipVoiceover(
         editPlan,
         variants,
-        resolveClipVoiceLocale(clipVariant.voiceLocale, clipPlatforms, goal)
+        resolveClipVoiceLocale(clipVariant.voiceLocale, clipPlatforms, goal),
+        contentPackage.subtitleTimeline
       );
       editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
 
@@ -395,9 +437,8 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
     .from(schema.campaigns)
     .where(eq(schema.campaigns.id, task.campaignId))
     .limit(1);
-  const vision = ((task.stepProgress as StepProgress) ?? {}).vision_analyze?.output as
-    | VisionAnalysis
-    | undefined;
+  const progress = (task.stepProgress as StepProgress) ?? {};
+  const vision = progress.vision_analyze?.output as VisionAnalysis | undefined;
   const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
 
   if (vision && campaign) {

@@ -127,13 +127,36 @@ Output JSON matching VisionAnalysis schema.`;
   return { analysis, usage };
 }
 
-export async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
+export interface WhisperSegment {
+  startSec: number;
+  endSec: number;
+  text: string;
+}
+
+export async function transcribeAudioDetailed(
+  audioBuffer: Buffer
+): Promise<{ text: string; segments: WhisperSegment[] }> {
   const { getOpenAI } = await import("./llm");
   const openai = getOpenAI();
   const file = new File([new Uint8Array(audioBuffer)], "audio.mp3", { type: "audio/mpeg" });
   const transcription = await openai.audio.transcriptions.create({
     model: "whisper-1",
     file,
+    response_format: "verbose_json",
+    timestamp_granularities: ["segment"],
   });
-  return transcription.text;
+
+  const raw = transcription as { text?: string; segments?: Array<{ start: number; end: number; text: string }> };
+  const segments = (raw.segments ?? []).map((s) => ({
+    startSec: s.start,
+    endSec: s.end,
+    text: s.text.trim(),
+  }));
+
+  return { text: raw.text ?? segments.map((s) => s.text).join(" "), segments };
+}
+
+export async function transcribeAudio(audioBuffer: Buffer): Promise<string> {
+  const { text } = await transcribeAudioDetailed(audioBuffer);
+  return text;
 }

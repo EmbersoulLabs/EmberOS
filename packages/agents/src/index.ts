@@ -15,6 +15,7 @@ export * from "./publish";
 export * from "./task-export";
 export * from "./auto-clip";
 export * from "./auto-clip-pipeline";
+export * from "./highlight-index";
 export * from "./voice-preset";
 export * from "./marketing-content";
 export * from "./orchestrator";

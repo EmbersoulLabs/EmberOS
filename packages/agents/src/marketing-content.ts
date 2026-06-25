@@ -211,6 +211,62 @@ export function contentPackageToCopyVariants(
   return variants;
 }
 
+const CLIP_SCRIPT_KEYS: Array<keyof MarketingContentPackage["voiceScripts"]> = ["15s", "30s", "60s"];
+
+/** Per-clip copy variants derived from unified content package (zh + en). */
+export function buildAutoClipCopyVariants(
+  pkg: MarketingContentPackage,
+  strategy: StrategyPlan,
+  clipIndex: number,
+  platform: Platform
+): CopyVariant[] {
+  const hook = pkg.hooks[clipIndex]?.text ?? pkg.hooks[0]?.text ?? "";
+  const cta = pkg.cta[clipIndex]?.text ?? pkg.cta[0]?.text ?? strategy.ctaStrategy;
+  const scriptKey = CLIP_SCRIPT_KEYS[clipIndex] ?? "30s";
+  const body = pkg.voiceScripts[scriptKey] || pkg.voiceScripts["30s"] || pkg.voiceScripts["15s"];
+  const tags = [
+    ...strategy.hashtags.industry.slice(0, 3),
+    ...strategy.hashtags.local.slice(0, 2),
+    ...strategy.hashtags.trending.slice(0, 2),
+  ].filter(Boolean);
+
+  const enCaption =
+    pkg.captions.tiktok ||
+    pkg.captions.instagram ||
+    `${hook}\n\n${body}\n\n${cta}`;
+  const zhCaption =
+    pkg.captions.xiaohongshu ||
+    pkg.captions.tiktok ||
+    `${hook}\n\n${body}\n\n${cta}`;
+
+  const clipNum = clipIndex + 1;
+  const en: CopyVariant = {
+    id: `clip-${clipNum}-en`,
+    template: "story",
+    hook: hook.slice(0, 120),
+    body: enCaption || body,
+    cta: cta.slice(0, 80),
+    title: strategy.product.slice(0, 60),
+    tags: tags.length ? tags : strategy.keywords.slice(0, 5),
+    platform,
+    locale: "en",
+  };
+
+  const zh: CopyVariant = {
+    id: `clip-${clipNum}-zh`,
+    template: "story",
+    hook: hook.slice(0, 120),
+    body: zhCaption || body,
+    cta: cta.slice(0, 80),
+    title: strategy.product.slice(0, 60),
+    tags: tags.length ? tags : strategy.keywords.slice(0, 5),
+    platform,
+    locale: "zh",
+  };
+
+  return [zh, en];
+}
+
 function buildSubtitleTimeline(script: string, durationSec: number): MarketingContentPackage["subtitleTimeline"] {
   const sentences = script
     .split(/[。！？.!?]+/)

@@ -7,9 +7,14 @@ import { runPublishAgent } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   getBgmTrackById,
+  buildTaskContentPack,
+  contentPackToCsv,
+  contentPackToJson,
   type CopyVariant,
   type EditPlan,
+  type MarketingContentPackage,
   type Platform,
+  type StepProgress,
   type TaskExportResolution,
 } from "@ceo-agent/shared";
 import { pickVideoUrlForExport } from "@ceo-agent/agents";
@@ -183,6 +188,24 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
         `Music credits — see CREDITS.txt\n${creditsBody}\n`
     );
     zipFiles.push({ path: readmePath, name: "README.txt" });
+
+    const contentPackage = (
+      (task.stepProgress as StepProgress)?.content_generate?.output as MarketingContentPackage | undefined
+    );
+    const contentPack = buildTaskContentPack({
+      taskId: data.taskId,
+      campaignId: data.campaignId,
+      contentPackage,
+      creatives,
+    });
+    await mkdir(join(workDir, "content-pack"), { recursive: true });
+    const jsonPath = join(workDir, "content-pack", "content_pack.json");
+    await writeFile(jsonPath, contentPackToJson(contentPack));
+    zipFiles.push({ path: jsonPath, name: "content-pack/content_pack.json" });
+
+    const csvPath = join(workDir, "content-pack", "captions.csv");
+    await writeFile(csvPath, contentPackToCsv(contentPack));
+    zipFiles.push({ path: csvPath, name: "content-pack/captions.csv" });
 
     const zipLocal = join(workDir, "pack.zip");
     const filesToZip: { path: string; name: string }[] = [];

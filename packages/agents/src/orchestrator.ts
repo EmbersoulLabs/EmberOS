@@ -34,7 +34,7 @@ export interface VisionMediaPreparer {
     storagePath: string;
     mediaType: "video" | "image";
     durationSec?: number;
-  }): Promise<{ frames: VisionFrameInput[]; transcriptSummary?: string }>;
+  }): Promise<{ frames: VisionFrameInput[]; transcriptSummary?: string; transcriptSegments?: Array<{ startSec: number; endSec: number; text: string }> }>;
 }
 
 export interface PipelineHooks {
@@ -359,7 +359,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       });
       await logAgent(task.orgId, task.workspaceId, taskId, "edit", { input: 0, output: 0, costUsd: 0 }, editPlan);
     }
-    editPlan = attachVoiceover(editPlan, allVariants, platforms, goal);
+    editPlan = attachVoiceover(editPlan, allVariants, platforms, goal, contentPackage.subtitleTimeline);
     editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
     await db
       .update(schema.creatives)

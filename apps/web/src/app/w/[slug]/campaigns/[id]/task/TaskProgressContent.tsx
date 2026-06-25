@@ -27,6 +27,8 @@ import { ClipPreviewGrid } from "@/components/pipeline/ClipPreviewGrid";
 import { CopyDownloadButtons } from "@/components/pipeline/CopyDownloadButtons";
 import { SingleCreativePreview } from "@/components/pipeline/SingleCreativePreview";
 import { MarketingScorePanel } from "@/components/pipeline/MarketingScorePanel";
+import { MarketingPackagePanel } from "@/components/pipeline/MarketingPackagePanel";
+import type { MarketingContentPackage } from "@ceo-agent/shared";
 
 export default function TaskProgressContent() {
   const params = useParams();
@@ -222,6 +224,10 @@ export default function TaskProgressContent() {
     progress.marketing_score?.status === "completed"
       ? (progress.marketing_score.output as Record<string, unknown> | undefined)
       : undefined;
+  const contentPackage =
+    progress.content_generate?.status === "completed"
+      ? (progress.content_generate.output as MarketingContentPackage | undefined)
+      : undefined;
   const primaryCreative = creatives[0];
   const readyClipCount = creatives.filter((c) => c.videoUrl).length;
   const hasCopy = creatives.some(
@@ -375,6 +381,8 @@ export default function TaskProgressContent() {
 
             {isAutoClip && <ClipPreviewGrid slug={slug} creatives={creatives} />}
 
+            {contentPackage && <MarketingPackagePanel contentPackage={contentPackage} />}
+
             {hasCopy && activeTaskId && (
               <section className="brand-card mt-8 p-6">
                 <h3 className="text-lg font-semibold text-navy">{t("creative.copyDownload.taskTitle")}</h3>
@@ -391,9 +399,11 @@ export default function TaskProgressContent() {
 
             {marketingScore && <MarketingScorePanel score={marketingScore} />}
 
-            <div className="mt-10">
-              <PipelinePhases phases={phases} progress={progress} />
-            </div>
+            {taskStatus !== "completed" && (
+              <div className="mt-10">
+                <PipelinePhases phases={phases} progress={progress} />
+              </div>
+            )}
           </>
         )}
 

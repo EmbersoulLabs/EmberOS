@@ -19,6 +19,7 @@ export interface VisionFrame {
 export interface PreparedVisionMedia {
   frames: VisionFrame[];
   transcriptSummary?: string;
+  transcriptSegments?: Array<{ startSec: number; endSec: number; text: string }>;
 }
 
 function mimeFromPath(path: string): string {
@@ -107,12 +108,13 @@ async function extractAudioMp3(
 async function transcribeLongVideo(
   localPath: string,
   durationSec: number
-): Promise<string | undefined> {
-  const { transcribeAudio } = await import("@ceo-agent/agents");
+): Promise<{ summary?: string; segments: Array<{ startSec: number; endSec: number; text: string }> }> {
+  const { transcribeAudioDetailed } = await import("@ceo-agent/agents");
   const { AUTO_CLIP, RENDER_MVP_LIMITS } = await import("@ceo-agent/shared");
   const maxDuration = Math.min(durationSec, RENDER_MVP_LIMITS.MAX_UPLOAD_DURATION_SEC);
   const chunkSec = AUTO_CLIP.WHISPER_CHUNK_SEC;
   const parts: string[] = [];
+  const segments: Array<{ startSec: number; endSec: number; text: string }> = [];
 
   for (let start = 0; start < maxDuration; start += chunkSec) {
     const len = Math.min(chunkSec, maxDuration - start);
@@ -120,8 +122,15 @@ async function transcribeLongVideo(
     const extracted = await extractAudioMp3(localPath, audioPath, { startSec: start, maxSec: len });
     if (!extracted) continue;
     try {
-      const text = (await transcribeAudio(await readFile(audioPath))).trim();
-      if (text) parts.push(text);
+      const result = await transcribeAudioDetailed(await readFile(audioPath));
+      if (result.text) parts.push(result.text);
+      for (const seg of result.segments) {
+        segments.push({
+          startSec: seg.startSec + start,
+          endSec: seg.endSec + start,
+          text: seg.text,
+        });
+      }
     } catch (err) {
       console.warn(`[vision-prep] Whisper chunk @${start}s failed:`, err);
     } finally {
@@ -130,8 +139,9 @@ async function transcribeLongVideo(
   }
 
   const combined = parts.join(" ").trim();
-  if (!combined) return undefined;
-  return combined.length > 4000 ? `${combined.slice(0, 4000)}…` : combined;
+  const summary =
+    combined.length > 4000 ? `${combined.slice(0, 4000)}…` : combined || undefined;
+  return { summary, segments };
 }
 
 export async function prepareVisionFromStorage(input: {
@@ -181,15 +191,18 @@ export async function prepareVisionFromStorage(input: {
     }
 
     let transcriptSummary: string | undefined;
+    let transcriptSegments: PreparedVisionMedia["transcriptSegments"];
     if (duration >= 4 && (await mediaHasAudio(localPath))) {
       try {
-        transcriptSummary = await transcribeLongVideo(localPath, duration);
+        const transcribed = await transcribeLongVideo(localPath, duration);
+        transcriptSummary = transcribed.summary;
+        transcriptSegments = transcribed.segments.length ? transcribed.segments : undefined;
       } catch (err) {
         console.warn("[vision-prep] Whisper transcription failed:", err);
       }
     }
 
-    return { frames, transcriptSummary };
+    return { frames, transcriptSummary, transcriptSegments };
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

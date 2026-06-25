@@ -11,6 +11,7 @@
     "curate:bgm": "tsx scripts/curate-commercial-bgm.ts",
     "curate:bgm:cc0": "tsx scripts/curate-cc0-bgm.ts",
     "check:infra": "tsx scripts/check-infra.ts",
+    "e2e:video-studio": "tsx ../../scripts/e2e-video-studio.ts",
     "start": "node dist/index.js",
     "build": "tsc && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
