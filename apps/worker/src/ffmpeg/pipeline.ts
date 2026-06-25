@@ -195,12 +195,30 @@ async function renderClipSegment(
   beatCount = 1
 ): Promise<void> {
   const speed = clip.speed ?? 1;
-  const outputDur = clip.outputDurationSec ?? Math.max(1.5, (clip.endSec - clip.startSec) / speed);
+  // Clamp to a sane minimum: a zero/near-zero duration yields trim=duration=0,
+  // which produces an empty segment (zero exit code) that later breaks the
+  // crossfade filtergraph with "Stream specifier ':v' matches no streams".
+  const outputDur = Math.max(
+    0.5,
+    clip.outputDurationSec ?? Math.max(1.5, (clip.endSec - clip.startSec) / speed)
+  );
   const inputNeed = Math.max(0.6, outputDur * speed);
-  const startSec = clip.startSec;
-  const knownSource = sourceDurationSec > 0;
+  const startSec = Math.max(0, clip.startSec);
+  // Trust the real input duration over the passed-in value: an over-estimated
+  // sourceDurationSec (e.g. a 60s default for a much shorter clip) makes us skip
+  // stream_loop and seek past the real end, producing an empty segment.
+  let effectiveSourceDur = sourceDurationSec;
+  try {
+    const probedDur = (await probeVideo(inputPath)).durationSec;
+    if (probedDur > 0) effectiveSourceDur = probedDur;
+  } catch {
+    // keep passed-in value
+  }
+  const knownSource = effectiveSourceDur > 0;
   const needsLoop =
-    !knownSource || clip.endSec > sourceDurationSec + 0.05 || startSec + inputNeed > sourceDurationSec + 0.05;
+    !knownSource ||
+    clip.endSec > effectiveSourceDur + 0.05 ||
+    startSec + inputNeed > effectiveSourceDur + 0.05;
 
   const scale = profileScale(profile);
   let vfBase = buildVideoClipFilter(scale, speed, effects);
@@ -320,6 +338,29 @@ function buildAudioFilter(speed: number, normalize: boolean): string | null {
 
 function profileScale(profile: ReturnType<typeof getRenderProfile>): string {
   return `${profile.width}:${profile.height}`;
+}
+
+/**
+ * A rendered beat segment is usable only if it actually contains both a video
+ * and an audio stream. Degenerate clips (e.g. startSec past a short source with
+ * stream_loop) can produce empty files with a zero exit code, which later break
+ * the crossfade filtergraph with "Stream specifier ':v' matches no streams".
+ */
+async function segmentHasVideoAndAudio(path: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "stream=codec_type",
+      "-of",
+      "csv=p=0",
+      path,
+    ]);
+    return stdout.includes("video") && stdout.includes("audio");
+  } catch {
+    return false;
+  }
 }
 
 /** Concat virtual beats with crossfade + audio crossfade for TikTok-style cuts. */
@@ -442,12 +483,21 @@ export async function renderBaseClip(
       for (let i = 0; i < clips.length; i++) {
         const segPath = join(workDir, `seg_${i}.mp4`);
         await renderOne(clips[i]!, segPath, i, clips.length);
+        if (!(await segmentHasVideoAndAudio(segPath))) {
+          console.warn(`[render] dropping empty/invalid beat segment seg_${i} (no video+audio stream)`);
+          await onProgress?.(15 + step * (i + 1), "base_clip");
+          continue;
+        }
         segmentPaths.push(segPath);
         const c = clips[i]!;
         beatDurations.push(
           c.outputDurationSec ?? Math.max(1.5, (c.endSec - c.startSec) / (c.speed ?? 1))
         );
         await onProgress?.(15 + step * (i + 1), "base_clip");
+      }
+
+      if (segmentPaths.length === 0) {
+        throw new Error("All beat segments were empty/invalid — cannot render base clip");
       }
 
       await concatSegmentsWithCrossfade(
