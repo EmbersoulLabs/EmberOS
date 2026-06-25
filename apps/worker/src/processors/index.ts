@@ -1,13 +1,15 @@
 import { Worker } from "bullmq";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
-import { QUEUE_NAMES, getRedisConnection } from "@ceo-agent/queue";
+import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig } from "@ceo-agent/queue";
 import { runPublishAgent } from "@ceo-agent/agents";
 import { runPipeline, type PipelineHooks } from "@ceo-agent/agents";
-import { STORAGE_PATHS, MAX_UPLOAD_DURATION_SEC, assessFinishedAdRisk } from "@ceo-agent/shared";
+import { STORAGE_PATHS, MAX_UPLOAD_DURATION_SEC, assessFinishedAdRisk, sumUploadVideoDurationSec, validateCombinedVideoDurationSec } from "@ceo-agent/shared";
 import { createExportZip, probeVideo } from "../ffmpeg/pipeline";
 import { processRenderJob } from "./render-handler";
+import { processTaskExportJob, musicCreditFor } from "./export-handler";
 import { prepareVisionFromStorage } from "../media/vision-prep";
+import { ensureMergedSourceVideo } from "../media/merge-source-videos";
 import { mediaHasAudio } from "../ffmpeg/probe-audio";
 import {
   downloadStorageFile,
@@ -69,6 +71,8 @@ async function markTaskStepFailed(
 
 export function startWorkers() {
   const connection = getRedisConnection();
+  const prefix = getBullmqPrefix();
+  logQueueConfig();
 
   const agentWorker = new Worker(
     QUEUE_NAMES.AGENT,
@@ -76,11 +80,12 @@ export function startWorkers() {
       if (job.name === "agent.pipeline") {
         const { taskId } = job.data as { taskId: string };
         console.log(`[agent.pipeline] start task=${taskId}`);
+        await ensureMergedSourceVideo(taskId);
         await runPipeline(taskId, pipelineHooks);
         console.log(`[agent.pipeline] done task=${taskId}`);
       }
     },
-    { connection, concurrency, ...workerOpts }
+    { connection, prefix, concurrency, ...workerOpts }
   );
 
   const probeWorker = new Worker(
@@ -142,11 +147,40 @@ export function startWorkers() {
             metadata: { ...meta, codec: probe.codec, finishedAdRisk },
           })
           .where(eq(schema.assets.id, assetId));
+
+        if (assetRow?.campaignId && assetRow.workspaceId) {
+          const campaignAssets = await db
+            .select()
+            .from(schema.assets)
+            .where(
+              and(
+                eq(schema.assets.campaignId, assetRow.campaignId),
+                eq(schema.assets.workspaceId, assetRow.workspaceId)
+              )
+            );
+          const combined = sumUploadVideoDurationSec(campaignAssets);
+          const combinedCheck = validateCombinedVideoDurationSec(combined);
+          if (!combinedCheck.ok) {
+            await db
+              .update(schema.assets)
+              .set({
+                metadata: {
+                  ...meta,
+                  codec: probe.codec,
+                  rejected: true,
+                  reason: combinedCheck.error,
+                  finishedAdRisk,
+                },
+              })
+              .where(eq(schema.assets.id, assetId));
+            throw new Error(combinedCheck.error);
+          }
+        }
       } finally {
         await rm(workDir, { recursive: true, force: true });
       }
     },
-    { connection, concurrency: 5, ...workerOpts }
+    { connection, prefix, concurrency: 5, ...workerOpts }
   );
 
   const renderWorker = new Worker(
@@ -156,12 +190,25 @@ export function startWorkers() {
       console.log(`[ffmpeg.render] start creative=${(job.data as { creativeId: string }).creativeId}`);
       await processRenderJob(job.data as Parameters<typeof processRenderJob>[0]);
     },
-    { connection, concurrency, ...workerOpts }
+    { connection, prefix, concurrency, ...workerOpts }
   );
 
   const exportWorker = new Worker(
     QUEUE_NAMES.EXPORT,
     async (job) => {
+      if (job.name === "ffmpeg.export_task") {
+        await processTaskExportJob(
+          job.data as {
+            taskId: string;
+            workspaceId: string;
+            orgId: string;
+            campaignId: string;
+            platforms: string[];
+          }
+        );
+        return;
+      }
+
       if (job.name !== "ffmpeg.export") return;
       const data = job.data as {
         creativeId: string;
@@ -229,9 +276,17 @@ export function startWorkers() {
           await writeFile(join(workDir, "copy", `${platform}_variant.md`), content);
         }
 
+        const credit = musicCreditFor(creative.editPlan);
         await writeFile(
           join(workDir, "metadata.json"),
-          JSON.stringify(exportPack, null, 2)
+          JSON.stringify({ ...exportPack, musicCredit: credit }, null, 2)
+        );
+
+        await writeFile(
+          join(workDir, "CREDITS.txt"),
+          `EmberOS — Music Credits\nCreative: ${data.creativeId}\n\n${credit.line}` +
+            `${credit.licenseUrl ? `\nLicense: ${credit.licenseUrl}` : ""}\n\n` +
+            `Note: CC-BY tracks require crediting the artist when you publish.\n`
         );
 
         const zipLocal = join(workDir, "pack.zip");
@@ -244,6 +299,7 @@ export function startWorkers() {
             name: `export/copy/${p}_variant.md`,
           })),
           { path: join(workDir, "metadata.json"), name: "export/metadata.json" },
+          { path: join(workDir, "CREDITS.txt"), name: "export/CREDITS.txt" },
         ]) {
           try {
             await access(entry.path);
@@ -306,7 +362,7 @@ export function startWorkers() {
         await rm(workDir, { recursive: true, force: true });
       }
     },
-    { connection, concurrency, ...workerOpts }
+    { connection, prefix, concurrency, ...workerOpts }
   );
 
   agentWorker.on("failed", (job, err) => {

@@ -4,9 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --include \"src/**/*\" --include \"../../packages/agents/src/**/*\" --include \"../../packages/shared/src/**/*\" src/index.ts",
+    "retry:renders": "tsx scripts/retry-failed-renders.ts",
+    "clean:queue": "tsx scripts/clean-queue.ts",
+    "refresh:bgm": "tsx scripts/refresh-bgm-assets.ts",
+    "curate:bgm": "tsx scripts/curate-commercial-bgm.ts",
+    "curate:bgm:cc0": "tsx scripts/curate-cc0-bgm.ts",
+    "check:infra": "tsx scripts/check-infra.ts",
     "start": "node dist/index.js",
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "echo ok"
   },

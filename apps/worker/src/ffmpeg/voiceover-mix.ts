@@ -1,50 +1,68 @@
+import { access } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { CopyLocale, EditPlan } from "@ceo-agent/shared";
+import { validateTtsDuration } from "@ceo-agent/shared";
 import { getFfmpegPath } from "./ffmpeg-path";
+import { probeAudioDuration } from "./audio-probe";
+import { mixVoiceWithSmartBgm } from "./bgm-mix";
 
 const execFileAsync = promisify(execFile);
+
+export interface VoiceoverMixResult {
+  ttsDurationSec: number;
+  finalDurationSec: number;
+}
 
 export async function mixVideoWithVoiceoverAndBgm(
   videoPath: string,
   outputPath: string,
   editPlan: EditPlan,
   workDir: string,
-  synthesize: (text: string, locale: CopyLocale) => Promise<Buffer>
-): Promise<void> {
+  synthesize: (text: string, locale: CopyLocale, gender?: "female" | "male") => Promise<Buffer>,
+  options?: { cachedTtsPath?: string }
+): Promise<VoiceoverMixResult> {
   const vo = editPlan.audio.voiceover;
   if (!vo?.enabled || !vo.segments?.length) {
     throw new Error("Voiceover not configured");
   }
 
   const locale = vo.locale ?? "zh";
-  const totalDur = editPlan.targetDurationSec;
-  const inputArgs: string[] = ["-y", "-i", videoPath];
-  const filterParts: string[] = [];
-  const mixLabels: string[] = [];
+  const gender = vo.voice ?? "female";
+  const finalDurationSec = editPlan.targetDurationSec;
+  const segmentJoiner = locale === "zh" ? "。" : ". ";
+  const finalScript =
+    editPlan.finalScript?.trim() ||
+    vo.segments
+      .map((s) => s.text.trim())
+      .filter(Boolean)
+      .join(segmentJoiner)
+      .trim();
+  if (!finalScript) throw new Error("finalScript is empty");
 
-  for (let i = 0; i < vo.segments.length; i++) {
-    const seg = vo.segments[i]!;
-    const mp3Path = join(workDir, `vo_${i}.mp3`);
-    const buf = await synthesize(seg.text, locale);
+  const mp3Path = options?.cachedTtsPath ?? join(workDir, "vo_0.mp3");
+  let ttsDurationSec: number;
+
+  try {
+    await access(mp3Path);
+    ttsDurationSec = await probeAudioDuration(mp3Path);
+    validateTtsDuration(finalScript, ttsDurationSec, locale);
+  } catch {
+    const buf = await synthesize(finalScript, locale, gender);
     await writeFile(mp3Path, buf);
-
-    inputArgs.push("-i", mp3Path);
-    const delayMs = Math.round(seg.startSec * 1000);
-    const slotDur = Math.max(0.5, seg.endSec - seg.startSec);
-    const label = `v${i}`;
-    filterParts.push(
-      `[${i + 1}:a]adelay=${delayMs}|${delayMs},atrim=0:${slotDur.toFixed(3)},asetpts=PTS-STARTPTS,volume=1.1[${label}]`
-    );
-    mixLabels.push(`[${label}]`);
+    ttsDurationSec = await probeAudioDuration(mp3Path);
+    validateTtsDuration(finalScript, ttsDurationSec, locale);
   }
 
+  const inputArgs: string[] = ["-y", "-i", videoPath, "-i", mp3Path];
+  const delayMs = Math.round((vo.segments[0]?.startSec ?? 0) * 1000);
   const voiceLabel = "voice";
-  filterParts.push(
-    `${mixLabels.join("")}amix=inputs=${mixLabels.length}:duration=longest:dropout_transition=2:normalize=0[${voiceLabel}]`
-  );
+
+  const filterParts = [
+    `[1:a]adelay=${delayMs}|${delayMs},asetpts=PTS-STARTPTS,volume=1.15,apad=pad_dur=${Math.max(0, finalDurationSec + 1)}[${voiceLabel}]`,
+  ];
 
   const voicedPath = join(workDir, "voiced.mp4");
   await execFileAsync(
@@ -64,7 +82,7 @@ export async function mixVideoWithVoiceoverAndBgm(
       "-b:a",
       "192k",
       "-t",
-      totalDur.toFixed(3),
+      finalDurationSec.toFixed(3),
       "-movflags",
       "+faststart",
       voicedPath,
@@ -72,11 +90,14 @@ export async function mixVideoWithVoiceoverAndBgm(
     { cwd: workDir, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }
   );
 
-  const shouldMixBgm = editPlan.audio.bgm !== "none";
+  const shouldMixBgm = Boolean(editPlan.audio.bgmExternal?.audioUrl) || editPlan.audio.bgm !== "none";
   if (shouldMixBgm) {
-    const { resolveBgmFile } = await import("../bgm/resolve");
-    const { resolveBgmTrackKey } = await import("@ceo-agent/shared");
-    const bgmPath = await resolveBgmFile(resolveBgmTrackKey(editPlan.audio.bgm ?? "default"));
+    const { resolveBgmFileForPlan } = await import("../bgm/resolve");
+    const bgmPath = await resolveBgmFileForPlan(editPlan.audio);
+    const mixFilter = mixVoiceWithSmartBgm("vo", "1:a", "aout", {
+      durationSec: finalDurationSec,
+      duckUnderVoice: true,
+    });
     await execFileAsync(
       getFfmpegPath(),
       [
@@ -88,7 +109,7 @@ export async function mixVideoWithVoiceoverAndBgm(
         "-i",
         bgmPath,
         "-filter_complex",
-        `[0:a]volume=1[vo];[1:a]atrim=0:${totalDur.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.34[bgm];[vo][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
+        `[0:a]volume=1.0[vo];${mixFilter}`,
         "-map",
         "0:v:0",
         "-map",
@@ -100,7 +121,7 @@ export async function mixVideoWithVoiceoverAndBgm(
         "-b:a",
         "192k",
         "-t",
-        totalDur.toFixed(3),
+        finalDurationSec.toFixed(3),
         "-movflags",
         "+faststart",
         outputPath,
@@ -111,4 +132,6 @@ export async function mixVideoWithVoiceoverAndBgm(
     const { copyFile } = await import("node:fs/promises");
     await copyFile(voicedPath, outputPath);
   }
+
+  return { ttsDurationSec, finalDurationSec };
 }

@@ -24,16 +24,36 @@ function getAdminClient() {
   return adminClient;
 }
 
-export async function downloadStorageFile(storagePath: string, localPath: string): Promise<void> {
-  const supabase = getAdminClient();
-  const bucket = getBucket();
-  const { data, error } = await supabase.storage.from(bucket).download(storagePath);
-  if (error || !data) {
-    throw new Error(
-      `Failed to download asset: ${storagePath}${error?.message ? ` — ${error.message}` : ""}`
-    );
+async function withNetworkRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const attempts = 3;
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (i < attempts - 1) {
+        const delayMs = 1000 * 2 ** i;
+        console.warn(`[storage] ${label} failed (attempt ${i + 1}/${attempts}), retrying in ${delayMs}ms`);
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
   }
-  await writeFile(localPath, Buffer.from(await data.arrayBuffer()));
+  throw lastErr;
+}
+
+export async function downloadStorageFile(storagePath: string, localPath: string): Promise<void> {
+  await withNetworkRetry(`download ${storagePath}`, async () => {
+    const supabase = getAdminClient();
+    const bucket = getBucket();
+    const { data, error } = await supabase.storage.from(bucket).download(storagePath);
+    if (error || !data) {
+      throw new Error(
+        `Failed to download asset: ${storagePath}${error?.message ? ` — ${error.message}` : ""}`
+      );
+    }
+    await writeFile(localPath, Buffer.from(await data.arrayBuffer()));
+  });
 }
 
 export async function uploadStorageFile(
@@ -41,16 +61,18 @@ export async function uploadStorageFile(
   localPath: string,
   contentType: string
 ): Promise<void> {
-  const supabase = getAdminClient();
-  const bucket = getBucket();
-  const fileBuffer = await readFile(localPath);
-  const { error } = await supabase.storage.from(bucket).upload(storagePath, fileBuffer, {
-    upsert: true,
-    contentType,
+  await withNetworkRetry(`upload ${storagePath}`, async () => {
+    const supabase = getAdminClient();
+    const bucket = getBucket();
+    const fileBuffer = await readFile(localPath);
+    const { error } = await supabase.storage.from(bucket).upload(storagePath, fileBuffer, {
+      upsert: true,
+      contentType,
+    });
+    if (error) {
+      throw new Error(`Upload failed: ${error.message}`);
+    }
   });
-  if (error) {
-    throw new Error(`Upload failed: ${error.message}`);
-  }
 }
 
 export function publicStorageUrl(storagePath: string): string {

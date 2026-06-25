@@ -3,11 +3,16 @@ import { mkdir, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDb, schema } from "@ceo-agent/db";
-import { runComplianceAfterRender } from "@ceo-agent/agents";
+import { runComplianceAfterRender, maybeFinalizeAutoClipTask, maybeTriggerPendingTaskExport } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   baseClipFingerprint,
   renderStatusForMode,
+  AUTO_CLIP,
+  resolveAutoClipSourceAsset,
+  mergeStoredRendition,
+  profileKeyForDownloadResolution,
+  type ClipDownloadResolution,
   type RenderMode,
   type RenderProgress,
 } from "@ceo-agent/shared";
@@ -28,6 +33,8 @@ export interface RenderJobData {
   orgId: string;
   campaignId: string;
   mode?: RenderMode;
+  /** Single-clip download rendition (1080p / 2k). */
+  outputResolution?: ClipDownloadResolution;
   /** @deprecated use mode */
   resolution?: "preview" | "export";
 }
@@ -75,9 +82,15 @@ async function updateRenderState(
 }
 
 export async function processRenderJob(data: RenderJobData): Promise<void> {
-  const mode = resolveMode(data);
-  const cacheProfile = mode === "final" ? "final" : "preview";
-  const isPreviewPath = mode === "preview" || mode === "subtitles_only";
+  const outputResolution = data.outputResolution;
+  const isRenditionJob = Boolean(outputResolution && outputResolution !== "720p");
+  const mode = isRenditionJob ? "final" : resolveMode(data);
+  const cacheProfile =
+    outputResolution === "2k" ? "2k" : mode === "final" ? "final" : "preview";
+  const isPreviewPath = !isRenditionJob && (mode === "preview" || mode === "subtitles_only");
+  const profileKey = outputResolution
+    ? profileKeyForDownloadResolution(outputResolution)
+    : undefined;
 
   const db = getDb();
   const [creative] = await db
@@ -103,25 +116,41 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     cacheProfile
   );
 
-  const runningStatus = renderStatusForMode(isPreviewPath ? "preview" : "final", true);
-  await updateRenderState(data.taskId, data.creativeId, {
-    percent: 0,
-    phase: "queued",
-    mode,
-    updatedAt: new Date().toISOString(),
-  }, runningStatus);
+  const priorStatus = creative.renderStatus ?? "none";
+  const runningStatus =
+    isRenditionJob && outputResolution === "2k"
+      ? priorStatus
+      : renderStatusForMode(isPreviewPath ? "preview" : "final", true);
 
-  const workDir = join(tmpdir(), `render-${data.creativeId}-${mode}`);
+  async function pushProgress(percent: number, phase: RenderProgress["phase"]) {
+    const progress = {
+      percent,
+      phase,
+      mode,
+      updatedAt: new Date().toISOString(),
+      ...(outputResolution ? { rendition: outputResolution } : {}),
+    };
+    if (isRenditionJob && outputResolution === "2k") {
+      await db
+        .update(schema.creatives)
+        .set({ renderProgress: progress, updatedAt: new Date() })
+        .where(eq(schema.creatives.id, data.creativeId));
+      return;
+    }
+    await updateRenderState(data.taskId, data.creativeId, progress, runningStatus);
+  }
+
+  await pushProgress(0, "queued");
+
+  const workDir = join(
+    tmpdir(),
+    `render-${data.creativeId}-${mode}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  );
   await mkdir(workDir, { recursive: true });
 
   try {
     const onProgress = async (percent: number, phase: RenderProgress["phase"]) => {
-      await updateRenderState(
-        data.taskId,
-        data.creativeId,
-        { percent, phase, mode, updatedAt: new Date().toISOString() },
-        runningStatus
-      );
+      await pushProgress(percent, phase);
     };
 
     let cachedBaseLocal: string | undefined;
@@ -131,25 +160,35 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         creative.renderCacheFingerprint === fingerprint);
 
     if (canUseCache || mode === "subtitles_only") {
+      const cacheDownloadPath =
+        mode === "subtitles_only" && creative.renderCachePath
+          ? creative.renderCachePath
+          : cacheStoragePath;
       try {
         cachedBaseLocal = join(workDir, "cached_base.mp4");
-        await downloadStorageFile(cacheStoragePath, cachedBaseLocal);
+        await downloadStorageFile(cacheDownloadPath, cachedBaseLocal);
         await access(cachedBaseLocal);
       } catch {
         if (mode === "subtitles_only") {
-          throw new Error("Cached base clip not found; run full preview render first");
+          throw new Error(
+            "Cached base clip not found; run full preview render first"
+          );
         }
         cachedBaseLocal = undefined;
       }
     }
 
     const assetMap: RenderAssetMap = new Map();
-    const videoAsset = assets.find((a) => a.type === "video");
+    const sourceVideo = resolveAutoClipSourceAsset(assets);
+    const videoAsset = sourceVideo?.asset;
     const imageAssets = assets.filter((a) => a.type === "image");
 
     if (!cachedBaseLocal) {
       await onProgress(8, "downloading");
-      for (const asset of assets) {
+      const downloadOrder = videoAsset
+        ? [videoAsset, ...assets.filter((a) => a.id !== videoAsset.id)]
+        : assets;
+      for (const asset of downloadOrder) {
         const ext = asset.storagePath.split(".").pop() ?? "bin";
         const localPath = join(workDir, `${asset.id}.${ext}`);
         await downloadStorageFile(asset.storagePath, localPath);
@@ -167,9 +206,10 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
 
     const outputLocal = join(workDir, "output.mp4");
     const cacheLocal = join(workDir, "cache_base.mp4");
-    const effectiveMode: RenderMode = cachedBaseLocal && mode !== "final" ? "subtitles_only" : mode;
+    const effectiveMode: RenderMode =
+      cachedBaseLocal && !isRenditionJob && mode !== "final" ? "subtitles_only" : mode;
 
-    let sourceDurationSec = videoAsset?.durationSec ? parseFloat(videoAsset.durationSec) : 0;
+    let sourceDurationSec = sourceVideo?.durationSec ?? 0;
     if (sourceDurationSec <= 0 && videoAsset && assetMap.has(videoAsset.id)) {
       try {
         sourceDurationSec = (await probeVideo(assetMap.get(videoAsset.id)!.path)).durationSec;
@@ -185,19 +225,23 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
       effectiveMode,
       {
         cachedBasePath: cachedBaseLocal,
-        cacheOutputPath: !cachedBaseLocal && mode !== "subtitles_only" ? cacheLocal : undefined,
+        cacheOutputPath: !cachedBaseLocal && effectiveMode !== "subtitles_only" ? cacheLocal : undefined,
         sourceDurationSec,
         onProgress,
+        profileKey,
       }
     );
 
-    if (!usedCache && mode !== "subtitles_only") {
+    if (!usedCache && effectiveMode !== "subtitles_only") {
       await uploadStorageFile(cacheStoragePath, cacheLocal, "video/mp4");
     }
 
-    const outputStoragePath = isPreviewPath
-      ? STORAGE_PATHS.preview(data.workspaceId, data.campaignId, data.creativeId)
-      : STORAGE_PATHS.export(data.workspaceId, data.campaignId, data.creativeId);
+    const outputStoragePath =
+      outputResolution === "2k"
+        ? STORAGE_PATHS.export2k(data.workspaceId, data.campaignId, data.creativeId)
+        : outputResolution === "1080p" || mode === "final"
+          ? STORAGE_PATHS.export(data.workspaceId, data.campaignId, data.creativeId)
+          : STORAGE_PATHS.preview(data.workspaceId, data.campaignId, data.creativeId);
 
     await onProgress(92, "upload");
     await uploadStorageFile(outputStoragePath, outputLocal, "video/mp4");
@@ -221,39 +265,119 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     }
 
     const videoUrl = publicStorageUrl(outputStoragePath);
-    const doneStatus = renderStatusForMode(isPreviewPath ? "preview" : "final", false);
+    const doneProgress = {
+      percent: 100,
+      phase: "done" as const,
+      mode,
+      updatedAt: new Date().toISOString(),
+      ...(outputResolution ? { rendition: outputResolution } : {}),
+    };
 
-    const creativeUpdate = isPreviewPath
-      ? {
+    if (outputResolution === "2k") {
+      const adaptations = mergeStoredRendition(
+        (creative.platformAdaptations as Record<string, unknown> | null) ?? {},
+        "2k",
+        videoUrl
+      );
+      await db
+        .update(schema.creatives)
+        .set({
+          platformAdaptations: adaptations,
+          renderCachePath: cacheStoragePath,
+          renderCacheFingerprint: fingerprint,
+          renderProgress: doneProgress,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.creatives.id, data.creativeId));
+    } else if (outputResolution === "1080p" || mode === "final") {
+      const doneStatus = renderStatusForMode("final", false);
+      await db
+        .update(schema.creatives)
+        .set({
+          videoExportUrl: videoUrl,
+          renderStatus: doneStatus,
+          renderCachePath: cacheStoragePath,
+          renderCacheFingerprint: fingerprint,
+          renderProgress: doneProgress,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.creatives.id, data.creativeId));
+      await updateRenderState(data.taskId, data.creativeId, doneProgress, doneStatus);
+    } else {
+      const doneStatus = renderStatusForMode("preview", false);
+      await db
+        .update(schema.creatives)
+        .set({
           videoUrl,
           coverUrl,
           renderStatus: doneStatus,
           renderCachePath: cacheStoragePath,
           renderCacheFingerprint: fingerprint,
-          renderProgress: { percent: 100, phase: "done" as const, mode, updatedAt: new Date().toISOString() },
-        }
-      : {
-          videoExportUrl: videoUrl,
-          renderStatus: doneStatus,
-          renderCachePath: cacheStoragePath,
-          renderCacheFingerprint: fingerprint,
-          renderProgress: { percent: 100, phase: "done" as const, mode, updatedAt: new Date().toISOString() },
-        };
-
-    await db.update(schema.creatives).set(creativeUpdate).where(eq(schema.creatives.id, data.creativeId));
-
-    await updateRenderState(
-      data.taskId,
-      data.creativeId,
-      { percent: 100, phase: "done", mode, updatedAt: new Date().toISOString() },
-      doneStatus
-    );
-
-    if (isPreviewPath) {
-      await runComplianceAfterRender(data.taskId, data.creativeId);
+          renderProgress: doneProgress,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.creatives.id, data.creativeId));
+      await updateRenderState(data.taskId, data.creativeId, doneProgress, doneStatus);
     }
 
-    console.log(`[ffmpeg.render] done creative=${data.creativeId} mode=${mode} cache=${!!cachedBaseLocal}`);
+    if (isPreviewPath) {
+      const siblings = await db
+        .select({ id: schema.creatives.id })
+        .from(schema.creatives)
+        .where(eq(schema.creatives.taskId, data.taskId));
+      if (siblings.length >= AUTO_CLIP.CLIP_COUNT) {
+        await maybeFinalizeAutoClipTask(data.taskId);
+      } else {
+        await runComplianceAfterRender(data.taskId, data.creativeId);
+      }
+    }
+
+    if (mode === "final" && !isRenditionJob) {
+      await maybeTriggerPendingTaskExport(data.taskId);
+    }
+    if (outputResolution === "2k") {
+      await maybeTriggerPendingTaskExport(data.taskId);
+    }
+
+    console.log(
+      `[ffmpeg.render] done creative=${data.creativeId} mode=${mode} rendition=${outputResolution ?? "none"} cache=${!!cachedBaseLocal}`
+    );
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : "Render validation failed: voiceover or subtitles incomplete.";
+    console.error(`[ffmpeg.render] failed creative=${data.creativeId}:`, message);
+
+    await db
+      .update(schema.creatives)
+      .set({
+        status: creative.videoUrl ? creative.status : "failed",
+        renderStatus: creative.videoUrl ? "preview_ready" : "none",
+        renderProgress: {
+          percent: 0,
+          phase: "done",
+          mode,
+          error: message,
+          updatedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.creatives.id, data.creativeId));
+
+    const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, data.taskId)).limit(1);
+    if (task) {
+      const stepProgress = { ...((task.stepProgress as Record<string, unknown>) ?? {}) };
+      stepProgress.ffmpeg_render = {
+        status: "failed",
+        error: message,
+        updatedAt: new Date().toISOString(),
+      };
+      await db
+        .update(schema.tasks)
+        .set({ stepProgress, errorMessage: message })
+        .where(eq(schema.tasks.id, data.taskId));
+    }
+
+    throw err;
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

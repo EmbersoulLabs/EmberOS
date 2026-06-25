@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { access } from "node:fs/promises";
 import { getFfmpegPath } from "./ffmpeg-path";
 import { mediaHasAudio } from "./probe-audio";
+import { mixDialogueWithSmartBgm } from "./bgm-mix";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,12 +18,12 @@ export async function mixBackgroundMusic(
   const dur = Math.max(3, durationSec);
   const hasOrig = keepOriginal && (await mediaHasAudio(videoPath));
 
-  const bgmVol = 0.58;
-  const origVol = 0.1;
-
   const filterComplex = hasOrig
-    ? `[0:a]volume=${origVol}[orig];[1:a]atrim=0:${dur.toFixed(2)},asetpts=PTS-STARTPTS,volume=${bgmVol}[bgm];[orig][bgm]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[aout]`
-    : `[1:a]atrim=0:${dur.toFixed(2)},asetpts=PTS-STARTPTS,volume=${bgmVol}[aout]`;
+    ? mixDialogueWithSmartBgm("0:a", "1:a", "aout", dur)
+    : [
+        `[1:a]atrim=0:${dur.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.22,afade=t=in:st=0:d=0.6,afade=t=out:st=${Math.max(0, dur - 0.8).toFixed(2)}:d=0.8[bgm]`,
+        `[bgm]loudnorm=I=-14:TP=-1.5:LRA=11[aout]`,
+      ].join(";");
 
   await execFileAsync(
     getFfmpegPath(),

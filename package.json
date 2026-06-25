@@ -3,6 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "turbo dev",
+  "dev:sync": "node scripts/sync-env.mjs",
+  "predev": "node scripts/sync-env.mjs",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
@@ -11,6 +13,10 @@
     "db:generate": "pnpm --filter @ceo-agent/db generate",
     "db:push": "pnpm --filter @ceo-agent/db push",
     "db:marketing-os": "pnpm --filter @ceo-agent/db sql:marketing-os",
+    "retry:renders": "pnpm --filter @ceo-agent/worker retry:renders",
+    "check:infra": "pnpm --filter @ceo-agent/worker check:infra",
+    "queue:clean": "pnpm --filter @ceo-agent/worker clean:queue",
+    "bgm:refresh": "pnpm --filter @ceo-agent/worker refresh:bgm",
     "db:migrate": "pnpm --filter @ceo-agent/db migrate",
     "db:studio": "pnpm --filter @ceo-agent/db studio",
     "test": "vitest run --config vitest.config.ts"

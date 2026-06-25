@@ -153,25 +153,24 @@ function Deploy-Railway {
 }
 
 function Start-LocalProd {
-    Write-Step "Local production smoke"
+    Write-Step "Local development (recommended)"
     Sync-EnvFiles
-    Test-Build
 
     Write-Host @"
 
-Start two terminals:
+Start BOTH services (required for Auto Clip — 3 videos + subtitles + voice):
 
-  Terminal 1 (Web):
-    cd `"$Root`"
-    pnpm --filter @ceo-agent/web start
+  cd `"$Root`"
+  pnpm dev
 
-  Terminal 2 (Worker):
-    cd `"$Root`"
-    pnpm worker:dev
+This runs Web (:3000) and Worker together with live reload.
+Worker log should show: pipeline=auto_clip_v1
 
-Then open http://localhost:3000
+Do NOT use `next start` without rebuilding — stale UI falls back to old agency mode.
 
 "@ -ForegroundColor Green
+
+    pnpm dev
 }
 
 if ($SetupDb) {
