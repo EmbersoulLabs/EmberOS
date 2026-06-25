@@ -12,6 +12,7 @@ import type {
   CopyMixSlot,
   CopyTemplate,
 } from "@ceo-agent/shared";
+import { strategyAudienceSummary, strategyPainPoints } from "@ceo-agent/shared";
 
 const TEMPLATES = ["pain_point", "comparison", "story"] as const;
 
@@ -121,9 +122,9 @@ function englishBodyForTemplate(template: CopyTemplate, topic: string, wedding: 
 
 function chineseBodyForTemplate(template: CopyTemplate, topic: string, goal: string, strategy?: StrategyPlan): string {
   const map: Record<CopyTemplate, string> = {
-    pain_point: `${topic}｜${goal}：${strategy?.painPoints[0] ?? "预算有限也能做出高级感，关键是层次、配色与稳固性。"} 专业设计让婚车成为照片焦点，路上也不散架。`,
+    pain_point: `${topic}｜${goal}：${strategy ? (strategyPainPoints(strategy)[0] ?? strategy.marketingAngle) : "很多商家内容看起来普通，其实只差一个清晰卖点。"} 用真实场景展示差异。`,
     comparison: `对比普通方案：${strategy?.marketingAngle ?? "专业婚车花艺在层次、配色、稳固性上差距一目了然"}。同样的车，不同的花艺，气质完全不同。`,
-    story: `从实拍看${topic}：${strategy?.targetAudience ?? "适合正在备婚、追求精致细节的你"}。每一层花材都为镜头和路况而设计。`,
+    story: `从实拍看${topic}：${strategy ? strategyAudienceSummary(strategy) : "适合追求品质的你"}。细节决定成片质感。`,
   };
   return map[template];
 }
@@ -245,7 +246,7 @@ function buildFallbackVariants(input: CopyInput): CopyVariant[] {
     const hookTexts =
       input.hookSet?.hooks?.map((h) => h.text) ??
       (strategy
-        ? [strategy.marketingAngle, strategy.painPoints[0] ?? strategy.marketingAngle, strategy.ctaStrategy]
+        ? [strategy.marketingAngle, strategyPainPoints(strategy)[0] ?? strategy.marketingAngle, strategy.ctaStrategy]
         : null);
     const hooks = hookTexts ?? [
       `你知道${topic}的秘密吗？`,
@@ -317,7 +318,7 @@ ${
 Brand tone: ${input.brandProfile.tone ?? "engaging"}. Banned: ${(input.brandProfile.bannedWords ?? []).join(", ") || "none"}.
 Title max ${spec.titleMaxLength} chars. Body max ${spec.bodyMaxLength} chars.
 Structure: hook (0-3s, max 12 words / 16 Chinese chars) → concrete value → CTA.
-${input.strategyPlan ? `Strategy context (translate into ${locale === "zh" ? "Chinese" : "English"}): angle=${input.strategyPlan.marketingAngle}; pains=${input.strategyPlan.painPoints.join("; ")}; CTA=${input.strategyPlan.ctaStrategy}; audience=${input.strategyPlan.targetAudience}.` : ""}
+${input.strategyPlan ? `Strategy context (translate into ${locale === "zh" ? "Chinese" : "English"}): goal=${input.strategyPlan.marketingGoal}; angle=${input.strategyPlan.marketingAngle}; tone=${input.strategyPlan.tone}; pains=${strategyPainPoints(input.strategyPlan).join("; ")}; CTA=${input.strategyPlan.ctaStrategy}; audience=${strategyAudienceSummary(input.strategyPlan)}; product=${input.strategyPlan.product}.` : ""}
 ${input.hookSet?.hooks?.length ? `Hook inspiration (translate/adapt to ${locale === "zh" ? "Chinese" : "English"}): ${input.hookSet.hooks.map((h) => `[${h.type}] ${h.text}`).join(" | ")}` : ""}
 Output JSON: { "variants": [{ "id", "template", "hook", "body", "cta", "title", "tags" }] }`;
 

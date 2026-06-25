@@ -1,6 +1,7 @@
 import { callJsonModel } from "./llm";
 import {
   HookSetSchema,
+  resolveStrategyIndustryEnum,
   type HookItem,
   type HookSet,
   type HookType,
@@ -20,7 +21,7 @@ export interface HookInput {
 }
 
 function buildFallbackHooks(input: HookInput): HookSet {
-  const industry = input.strategy.industry ?? "general";
+  const industry = resolveStrategyIndustryEnum(input.strategy);
   const knowledge = queryKnowledge(industry);
   const byType = new Map<HookType, string>();
 
@@ -78,7 +79,7 @@ export async function runHookAgent(input: HookInput): Promise<{
   hookSet: HookSet;
   usage: { input: number; output: number; costUsd: number };
 }> {
-  const industry = input.strategy.industry ?? "general";
+  const industry = resolveStrategyIndustryEnum(input.strategy);
   const seeded = hasKnowledgeSeed(industry);
   const zh = /[\u4e00-\u9fff]/.test(
     `${input.goal}${input.campaignName ?? ""}${input.strategy.marketingAngle}`

@@ -6,6 +6,7 @@ export const AGENCY_STEPS = [
   "ceo_plan",
   "vision_analyze",
   "content_classify",
+  "content_generate",
   "hook_generate",
   "copy_generate",
   "edit_director_plan",
@@ -49,7 +50,7 @@ export const AGENCY_PIPELINE_PHASES: PipelinePhase[] = [
   {
     id: "contentCreation",
     titleKey: "pipeline.phase.contentCreation",
-    steps: ["hook_generate", "copy_generate"],
+    steps: ["content_generate", "hook_generate", "copy_generate"],
   },
   {
     id: "production",

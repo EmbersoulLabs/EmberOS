@@ -10,6 +10,22 @@ export function buildStepInsights(stepId: string, output: unknown): StepInsight 
   if (output == null) return null;
   const data = output as Record<string, unknown>;
 
+  if (stepId === "content_generate" && data.voiceScripts) {
+    const scripts = data.voiceScripts as Record<string, string>;
+    const hooks = (data.hooks as Array<{ text?: string }> | undefined) ?? [];
+    return {
+      label: "Marketing package",
+      items: [
+        scripts["15s"] ? `15s: ${scripts["15s"].slice(0, 80)}…` : "",
+        ...hooks.slice(0, 3).map((h) => h.text ?? "").filter(Boolean),
+      ].filter(Boolean),
+      metric:
+        typeof data.consistencyScore === "number"
+          ? { label: "Consistency", value: `${data.consistencyScore}/100` }
+          : undefined,
+    };
+  }
+
   if (stepId === "hook_generate" && Array.isArray((data as { hooks?: unknown }).hooks)) {
     const hooks = (data as { hooks: Array<{ text?: string; type?: string }> }).hooks;
     return {
@@ -75,9 +91,14 @@ export function buildStepInsights(stepId: string, output: unknown): StepInsight 
     return {
       label: "Strategy",
       items: [
+        String(data.marketingGoal ?? data.marketingAngle),
         String(data.marketingAngle),
-        ...((data.objectives as string[] | undefined) ?? []).slice(0, 2),
+        String(data.tone ?? ""),
       ].filter(Boolean),
+      metric:
+        typeof data.confidence === "number"
+          ? { label: "Confidence", value: `${Math.round((data.confidence as number) * 100)}%` }
+          : undefined,
     };
   }
 

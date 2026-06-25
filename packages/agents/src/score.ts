@@ -215,12 +215,21 @@ export async function runAutoClipScoreAgent(input: {
 
   const primary = input.copyVariants[0];
   const strategy: StrategyPlan = {
-    targetAudience: "short-form social viewers",
-    painPoints: [],
+    industry: "general",
+    businessType: "Local business",
+    product: input.vision.products[0]?.name ?? "Content",
+    marketingGoal: "Brand Awareness",
     marketingAngle: input.vision.hooks[0] ?? primary?.hook ?? "Product highlight",
-    ctaStrategy: primary?.cta ?? "Take action",
+    brandPersonality: [],
+    tone: "Conversational",
+    videoStyle: "Product Showcase",
+    audience: { painPoints: [], interests: [] },
+    customerJourney: "Awareness",
     platformPriority: input.platforms,
-    objectives: [],
+    ctaStrategy: primary?.cta ?? "Take action",
+    keywords: [],
+    hashtags: { industry: [], local: [], trending: [], seo: [] },
+    confidence: 0.7,
   };
 
   return runScoreAgent({

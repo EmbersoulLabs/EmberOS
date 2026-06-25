@@ -16,6 +16,7 @@ export * from "./task-export";
 export * from "./auto-clip";
 export * from "./auto-clip-pipeline";
 export * from "./voice-preset";
+export * from "./marketing-content";
 export * from "./orchestrator";
 export type { PipelineHooks, VisionMediaPreparer } from "./orchestrator";
 export * from "./llm";

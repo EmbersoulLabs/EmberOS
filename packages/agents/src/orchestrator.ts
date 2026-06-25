@@ -1,10 +1,20 @@
 import { eq, and } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { enqueueRender } from "@ceo-agent/queue";
-import { CEO_MAX_RETRIES, type BrandProfile, type StepProgress, parseCampaignCreativeBrief, buildVideoAnalysisPrompt, effectiveCampaignGoal, resolveAutoClipSourceAsset } from "@ceo-agent/shared";
+import {
+  CEO_MAX_RETRIES,
+  normalizeStrategyPlan,
+  strategyObjectives,
+  type BrandProfile,
+  type StepProgress,
+  parseCampaignCreativeBrief,
+  buildVideoAnalysisPrompt,
+  effectiveCampaignGoal,
+  resolveAutoClipSourceAsset,
+} from "@ceo-agent/shared";
 import { runCeoAgent, parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
-import { runHookAgent } from "./hook";
+import { runMarketingContentAgent, contentPackageToHookSet, contentPackageToCopyVariants } from "./marketing-content";
 import { runScoreAgent } from "./score";
 import { runVisionAgent } from "./vision";
 import { runCopyAgentMix } from "./copy";
@@ -158,7 +168,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       .set({
         strategyJson: strategy,
         industry: industry === "general" ? null : industry,
-        objectives: strategy.objectives,
+        objectives: strategyObjectives(strategy),
       })
       .where(eq(schema.campaigns.id, campaign.id));
     await updateStep(taskId, "strategy_plan", { status: "completed", completedAt: new Date().toISOString(), output: strategy });
@@ -256,42 +266,48 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       output: { ...classification, presetLabel: preset.labelZh },
     });
 
-    // hook_generate
-    await updateStep(taskId, "hook_generate", { status: "running", startedAt: new Date().toISOString() });
-    const { hookSet, usage: hookUsage } = await runHookAgent({
+    // content_generate — unified marketing package from strategy + vision
+    await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
+    const { contentPackage, usage: contentUsage } = await runMarketingContentAgent({
       strategy,
       vision,
-      goal,
       videoAnalysis,
+      userNotes: creativeBrief.campaignBrief,
+      goal,
       campaignName: campaign.name,
+      platforms: campaign.platforms,
     });
-    totalCost += hookUsage.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "hook", hookUsage, hookSet);
+    totalCost += contentUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, contentPackage);
+    await updateStep(taskId, "content_generate", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: contentPackage,
+    });
+
+    if (totalCost > budget) throw new Error("Cost budget exceeded");
+
+    const platforms = (campaign.platforms.length ? campaign.platforms : ["tiktok"]) as Platform[];
+    const hookSet = contentPackageToHookSet(contentPackage);
+    await logAgent(task.orgId, task.workspaceId, taskId, "hook", { input: 0, output: 0, costUsd: 0 }, hookSet);
     await db
       .update(schema.tasks)
       .set({ hooksJson: hookSet })
       .where(eq(schema.tasks.id, taskId));
-    await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
-
-    if (totalCost > budget) throw new Error("Cost budget exceeded");
-
-    // copy — bilingual mix: 2 EN + 1 ZH when English + Chinese platforms
-    await updateStep(taskId, "copy_generate", { status: "running", startedAt: new Date().toISOString() });
-    const platforms = (campaign.platforms.length ? campaign.platforms : ["tiktok"]) as Platform[];
-    const copyMix = resolveCopyMix(platforms);
-    const { variants: allVariants, recommendedVariantId, usage: copyUsageTotal } = await runCopyAgentMix({
-      vision,
-      brandProfile,
-      goal,
-      videoAnalysis,
-      campaignName: campaign.name,
-      strategyPlan: strategy,
-      hookSet,
-      mix: copyMix,
+    await updateStep(taskId, "hook_generate", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: hookSet,
     });
-    totalCost += copyUsageTotal.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "copy", copyUsageTotal, allVariants);
-    await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
+
+    const allVariants = contentPackageToCopyVariants(contentPackage, strategy, platforms);
+    const recommendedVariantId = allVariants.find((v) => v.locale === "en")?.id ?? allVariants[0]?.id ?? "v-en-1";
+    await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, allVariants);
+    await updateStep(taskId, "copy_generate", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: allVariants,
+    });
 
     // create creative
     const [creative] = await db
@@ -443,10 +459,9 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
     .where(eq(schema.campaigns.id, task.campaignId))
     .limit(1);
   const progress = (task.stepProgress as StepProgress) ?? {};
-  const strategy =
-    (task.strategyJson as StrategyPlan | null) ??
-    (campaign?.strategyJson as StrategyPlan | null) ??
-    (progress.strategy_plan?.output as StrategyPlan);
+  const rawStrategy =
+    task.strategyJson ?? campaign?.strategyJson ?? progress.strategy_plan?.output;
+  const strategy = rawStrategy ? normalizeStrategyPlan(rawStrategy) : undefined;
   const hookSet =
     (task.hooksJson as HookSet | null) ??
     (progress.hook_generate?.output as HookSet);
@@ -556,9 +571,8 @@ export async function retryPipelineStep(
       .limit(1);
     const progress = task.stepProgress as StepProgress;
     const vision = progress?.vision_analyze?.output as import("@ceo-agent/shared").VisionAnalysis;
-    const strategy =
-      (task.strategyJson as StrategyPlan | null) ??
-      (progress?.strategy_plan?.output as StrategyPlan);
+    const rawStrategy = task.strategyJson ?? progress?.strategy_plan?.output;
+    const strategy = rawStrategy ? normalizeStrategyPlan(rawStrategy) : undefined;
     const hookSet =
       (task.hooksJson as HookSet | null) ??
       (progress?.hook_generate?.output as HookSet);
