@@ -221,7 +221,11 @@ async function renderClipSegment(
     startSec + inputNeed > effectiveSourceDur + 0.05;
 
   const scale = profileScale(profile);
-  let vfBase = buildVideoClipFilter(scale, speed, effects);
+  // Whole-clip fade effects use absolute timeline (e.g. fade out at 15s). Multi-beat
+  // segments are ~2s each — applying those fades breaks ffmpeg on Linux (Debian).
+  const segmentEffects =
+    beatCount > 1 ? effects?.filter((e) => e.type !== "fade_in" && e.type !== "fade_out") : effects;
+  let vfBase = buildVideoClipFilter(scale, speed, segmentEffects);
   const trans = segmentTransitionFilters(beatIndex === 0, beatIndex === beatCount - 1, outputDur);
   if (trans) vfBase += `,${trans}`;
   const videoFilter = `${vfBase},trim=duration=${outputDur.toFixed(3)},setpts=PTS-STARTPTS`;
