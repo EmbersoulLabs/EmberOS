@@ -51,6 +51,9 @@ export async function ensureMergedSourceVideo(taskId: string): Promise<void> {
     }
 
     const mergedPath = join(workDir, "merged.mp4");
+    console.log(
+      `[merge-source] campaign=${task.campaignId} merging ${uploadVideos.length} clip(s) task=${taskId}`
+    );
     await concatVideoFiles(localPaths, mergedPath, workDir);
     const probe = await probeVideo(mergedPath);
 

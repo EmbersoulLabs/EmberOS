@@ -60,6 +60,7 @@ async function markTaskStepFailed(
       status: "failed",
       errorMessage: message,
       completedAt: new Date(),
+      currentStep: stepId,
     })
     .where(eq(schema.tasks.id, taskId));
 
@@ -67,6 +68,52 @@ async function markTaskStepFailed(
     .update(schema.campaigns)
     .set({ status: "failed" })
     .where(eq(schema.campaigns.id, task.campaignId));
+}
+
+const PIPELINE_STEP_ORDER = [
+  "parse_intent",
+  "strategy_plan",
+  "vision_analyze",
+  "highlight_index",
+  "content_generate",
+  "hook_generate",
+  "clip_segment",
+  "copy_generate",
+  "edit_director_plan",
+  "ffmpeg_render",
+  "marketing_score",
+  "export_ready",
+] as const;
+
+function formatAgentPipelineError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/SIGKILL|signal.*kill/i.test(raw)) {
+    return "Video processing ran out of memory on the server. Try fewer or shorter uploads, then run again.";
+  }
+  if (/video-concat|merge-source|concatVideoFiles|ensureMerged/i.test(raw)) {
+    return "Failed to merge uploaded videos into one source clip.";
+  }
+  const firstLine = raw.split("\n")[0]?.trim() ?? raw;
+  return firstLine.length > 500 ? `${firstLine.slice(0, 497)}...` : firstLine;
+}
+
+function resolveAgentFailureStep(
+  message: string,
+  progress: Record<string, { status?: string }>
+): string {
+  if (/video-concat|merge-source|concatVideoFiles|ensureMerged/i.test(message)) {
+    return "parse_intent";
+  }
+  for (const step of PIPELINE_STEP_ORDER) {
+    if (progress[step]?.status === "running") return step;
+  }
+  for (let i = PIPELINE_STEP_ORDER.length - 1; i >= 0; i--) {
+    const step = PIPELINE_STEP_ORDER[i]!;
+    if (progress[step]?.status === "completed") {
+      return PIPELINE_STEP_ORDER[i + 1] ?? step;
+    }
+  }
+  return "parse_intent";
 }
 
 export function startWorkers() {
@@ -365,8 +412,24 @@ export function startWorkers() {
     { connection, prefix, concurrency, ...workerOpts }
   );
 
-  agentWorker.on("failed", (job, err) => {
+  agentWorker.on("failed", async (job, err) => {
     console.error(`Agent job ${job?.id} failed:`, err);
+    if (job?.name !== "agent.pipeline") return;
+
+    const maxAttempts = job.opts.attempts ?? 3;
+    if (job.attemptsMade < maxAttempts) return;
+
+    const taskId = (job.data as { taskId?: string })?.taskId;
+    if (!taskId) return;
+
+    const db = getDb();
+    const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
+    if (!task || task.status === "failed" || task.status === "completed") return;
+
+    const message = formatAgentPipelineError(err);
+    const progress = (task.stepProgress ?? {}) as Record<string, { status?: string }>;
+    const stepId = resolveAgentFailureStep(message, progress);
+    await markTaskStepFailed(taskId, stepId, message);
   });
   renderWorker.on("failed", async (job, err) => {
     console.error(`Render job ${job?.id} failed:`, err);

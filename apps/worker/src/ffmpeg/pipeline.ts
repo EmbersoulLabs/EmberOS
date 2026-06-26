@@ -10,30 +10,13 @@ import type { EditPlan } from "@ceo-agent/shared";
 import type { ClipMotion } from "@ceo-agent/shared";
 import { getRenderProfile, DYNAMIC_CAMERA, type RenderMode, type RenderPhase, type RenderProfileKey } from "@ceo-agent/shared";
 import { getFfmpegPath } from "./ffmpeg-path";
+import { runFfmpeg } from "./ffmpeg-run";
 import { mediaHasAudio } from "./probe-audio";
 import { FFMPEG_CROP_916_CENTER, FFMPEG_SCALE_FOR_916 } from "./filters-916";
 import { assVideoFilter, buildAssSubtitles } from "./ass-subtitles";
 import { buildDynamicMotionFilter, buildVideoClipFilter, segmentTransitionFilters } from "./dynamic-motion";
 
 const execFileAsync = promisify(execFile);
-
-/** Global FFmpeg flags that keep stderr small (no banner, errors only, no per-frame stats). */
-const FFMPEG_QUIET_FLAGS = ["-hide_banner", "-loglevel", "error", "-nostats"] as const;
-
-/**
- * Centralized FFmpeg runner. Prepends quiet flags so stderr stays tiny and
- * defaults maxBuffer to 64MB to avoid "stderr maxBuffer length exceeded".
- */
-function runFfmpeg(
-  args: string[],
-  options?: { cwd?: string; maxBuffer?: number }
-) {
-  return execFileAsync(getFfmpegPath(), [...FFMPEG_QUIET_FLAGS, ...args], {
-    cwd: options?.cwd,
-    windowsHide: true,
-    maxBuffer: options?.maxBuffer ?? 64 * 1024 * 1024,
-  });
-}
 
 function resolveProfile(renderMode: RenderMode, profileKey?: RenderProfileKey) {
   const key = profileKey ?? (renderMode === "subtitles_only" ? "preview" : renderMode);
