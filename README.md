@@ -307,7 +307,7 @@ sequenceDiagram
     Sys->>Sys: Agent 流水线 + 渲染
     Sys->>QC: pending_internal_review
     QC->>Sys: pass
-    Sys->>Client: 发送 Magic Link
+    Sys->>Client: 发送 Portal 链接
     Client->>Sys: pass / reject + comment
     alt 客户通过
         Sys->>Pub: approved → 导出/发布
