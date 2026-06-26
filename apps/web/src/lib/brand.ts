@@ -6,6 +6,10 @@ export const BRAND = {
   domain: "embersoullabs.com",
   defaultOrgName: "EmberSoulLabs",
   defaultOrgSlug: "embersoullabs",
+  legal: {
+    termsUrl: "https://embersoullabs.com/terms/",
+    privacyUrl: "https://embersoullabs.com/privacy/",
+  },
 } as const;
 
 export const BRAND_COLORS = {

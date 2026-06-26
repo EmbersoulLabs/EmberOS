@@ -17,6 +17,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [rememberPassword, setRememberPassword] = useState(false);
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [isSignUp, setIsSignUp] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -35,6 +36,12 @@ export default function LoginPage() {
     e.preventDefault();
     setLoading(true);
     setMessage("");
+
+    if (isSignUp && !agreedToTerms) {
+      setMessage(t("auth.mustAgreeTerms"));
+      setLoading(false);
+      return;
+    }
 
     if (isSignUp) {
       const { error } = await supabase.auth.signUp({ email, password });
@@ -56,7 +63,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-surface-muted p-4">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-surface-muted p-4">
       <div className="absolute right-4 top-4">
         <LocaleSwitcher variant="light" />
       </div>
@@ -104,6 +111,38 @@ export default function LoginPage() {
             </label>
           )}
 
+          {isSignUp && (
+            <label className="flex cursor-pointer items-start gap-2 text-sm text-ink-secondary">
+              <input
+                type="checkbox"
+                checked={agreedToTerms}
+                onChange={(e) => setAgreedToTerms(e.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-primary focus:ring-primary"
+                required
+              />
+              <span>
+                {t("auth.agreeTermsPrefix")}{" "}
+                <a
+                  href={BRAND.legal.termsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline hover:text-primary-hover"
+                >
+                  {t("auth.termsLink")}
+                </a>{" "}
+                {t("auth.agreeTermsJoiner")}{" "}
+                <a
+                  href={BRAND.legal.privacyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline hover:text-primary-hover"
+                >
+                  {t("auth.privacyLink")}
+                </a>
+              </span>
+            </label>
+          )}
+
           {message && (
             <p
               className={`text-sm ${message === t("auth.checkEmail") ? "text-green-600" : "text-red-600"}`}
@@ -114,7 +153,7 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || (isSignUp && !agreedToTerms)}
             className="w-full rounded-lg bg-primary px-4 py-2.5 text-sm font-medium text-white shadow-ember transition hover:bg-primary-hover disabled:opacity-50"
           >
             {loading ? "..." : isSignUp ? t("auth.signUp") : t("auth.signIn")}
@@ -123,12 +162,38 @@ export default function LoginPage() {
 
         <button
           type="button"
-          onClick={() => setIsSignUp(!isSignUp)}
+          onClick={() => {
+            setIsSignUp(!isSignUp);
+            setMessage("");
+            if (!isSignUp) setAgreedToTerms(false);
+          }}
           className="mt-4 w-full text-center text-sm text-stone-500 hover:text-ember"
         >
           {isSignUp ? t("auth.signInLink") : t("auth.signUpLink")}
         </button>
       </div>
+
+      <footer className="mt-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-stone-500">
+        <span>&copy; {new Date().getFullYear()} {BRAND.company}</span>
+        <span aria-hidden="true">·</span>
+        <a
+          href={BRAND.legal.termsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-ember"
+        >
+          {t("auth.termsLink")}
+        </a>
+        <span aria-hidden="true">·</span>
+        <a
+          href={BRAND.legal.privacyUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hover:text-ember"
+        >
+          {t("auth.privacyLink")}
+        </a>
+      </footer>
     </div>
   );
 }
