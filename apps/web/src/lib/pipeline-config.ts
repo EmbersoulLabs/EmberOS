@@ -98,10 +98,18 @@ export const AUTO_CLIP_PIPELINE_PHASES: PipelinePhase[] = [
 ];
 
 export function computePipelineProgress(
-  progress: Record<string, { status: string; percent?: number }>,
+  progress: Record<string, { status: string; percent?: number; output?: unknown }>,
   taskStatus: string | undefined,
   steps: readonly string[]
 ): { percent: number; currentStep: string | null; currentStepIndex: number; videoReady: boolean } {
+  const renderStep = progress.ffmpeg_render;
+  const renderOutput = renderStep?.output as
+    | { pending?: number; ready?: number; clipCount?: number }
+    | undefined;
+  const rendersFullyComplete =
+    renderStep?.status === "completed" &&
+    !(typeof renderOutput?.pending === "number" && renderOutput.pending > 0);
+
   if (taskStatus === "completed") {
     return { percent: 100, currentStep: null, currentStepIndex: steps.length, videoReady: true };
   }
@@ -112,7 +120,7 @@ export function computePipelineProgress(
       percent: Math.round((done / steps.length) * 100),
       currentStep: failedStep,
       currentStepIndex: failedStep ? steps.indexOf(failedStep) + 1 : done,
-      videoReady: progress.ffmpeg_render?.status === "completed",
+      videoReady: rendersFullyComplete,
     };
   }
 
@@ -146,7 +154,7 @@ export function computePipelineProgress(
     percent: Math.min(99, Math.round((score / steps.length) * 100)),
     currentStep,
     currentStepIndex: Math.max(1, Math.ceil(currentStepIndex)),
-    videoReady: progress.ffmpeg_render?.status === "completed",
+    videoReady: rendersFullyComplete,
   };
 }
 

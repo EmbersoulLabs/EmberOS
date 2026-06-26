@@ -94,7 +94,11 @@ export interface MarketingContentInput {
   goal?: string;
   campaignName?: string;
   platforms?: string[];
+  /** UI locale at run time — drives primary output language (zh / en / ms). */
+  contentLocale?: "zh" | "en" | "ms";
 }
+
+export type ContentLocale = "zh" | "en" | "ms";
 
 function useChinese(input: MarketingContentInput): boolean {
   const blob = [
@@ -108,6 +112,28 @@ function useChinese(input: MarketingContentInput): boolean {
     .filter(Boolean)
     .join("");
   return /[\u4e00-\u9fff]/.test(blob) || Boolean(input.platforms?.some((p) => p === "xiaohongshu" || p === "douyin"));
+}
+
+function resolveContentLocale(input: MarketingContentInput): ContentLocale {
+  const l = input.contentLocale;
+  if (l === "zh" || l === "en" || l === "ms") return l;
+  return useChinese(input) ? "zh" : "en";
+}
+
+function localeToPromptTag(locale: ContentLocale): string {
+  if (locale === "zh") return "zh-CN";
+  if (locale === "ms") return "ms";
+  return "en";
+}
+
+function outputLanguageInstruction(locale: ContentLocale): string {
+  if (locale === "zh") {
+    return "Write ALL primary text (hooks.text, captions, cta.text, strategyBrief, aiSuggestions, platformAssets) in Simplified Chinese (简体中文). Populate textEn and textMs as translations.";
+  }
+  if (locale === "ms") {
+    return "Write ALL primary text in Bahasa Melayu. Populate textEn and textZh (in text field for zh backup) as needed; use textMs as primary Malay copy in hooks.";
+  }
+  return "Write ALL primary text in English. Populate textEn on hooks when primary is another language; include textMs for Malay translations.";
 }
 
 function hookTypeFromLabel(label: string, index: number): HookType {
@@ -315,7 +341,8 @@ function buildSubtitleTimeline(script: string, durationSec: number): MarketingCo
 }
 
 function buildFallbackContent(input: MarketingContentInput): MarketingContentPackage {
-  const zh = useChinese(input);
+  const locale = resolveContentLocale(input);
+  const zh = locale === "zh";
   const s = input.strategy;
   const product = s.product || input.campaignName || "this offer";
   const pain = strategyPainPoints(s)[0];
@@ -622,31 +649,48 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
       brand: [product.replace(/\s+/g, "")],
       industry: s.hashtags.industry,
     },
-    aiSuggestions: zh
-      ? [
-          "建议在晚 8 点前发布",
-          "加入客户真实评价镜头",
-          "使用产品特写增强信任",
-          "可考虑加入价格/优惠 overlay",
-          "展示 before/after 对比",
-        ]
-      : [
-          "Post before 8 PM local time",
-          "Add a customer testimonial clip",
-          "Use close-up product shots",
-          "Consider a pricing overlay",
-          "Show before/after transformation",
-        ],
+    aiSuggestions:
+      locale === "zh"
+        ? [
+            "建议在晚 8 点前发布",
+            "加入客户真实评价镜头",
+            "使用产品特写增强信任",
+            "可考虑加入价格/优惠 overlay",
+            "展示 before/after 对比",
+          ]
+        : locale === "ms"
+          ? [
+              "Siarkan sebelum 8 malam waktu tempatan",
+              "Tambah klip testimoni pelanggan",
+              "Gunakan gambar dekat produk",
+              "Pertimbangkan overlay harga/promosi",
+              "Tunjukkan perbandingan sebelum/selepas",
+            ]
+          : [
+              "Post before 8 PM local time",
+              "Add a customer testimonial clip",
+              "Use close-up product shots",
+              "Consider a pricing overlay",
+              "Show before/after transformation",
+            ],
   };
 
   return pkg;
+}
+
+export function contentLocaleFromMetadata(
+  metadata?: Record<string, unknown> | null
+): ContentLocale | undefined {
+  const l = metadata?.contentLocale;
+  if (l === "zh" || l === "en" || l === "ms") return l;
+  return undefined;
 }
 
 export async function runMarketingContentAgent(input: MarketingContentInput): Promise<{
   contentPackage: MarketingContentPackage;
   usage: { input: number; output: number; costUsd: number };
 }> {
-  const zh = useChinese(input);
+  const locale = resolveContentLocale(input);
 
   const user = JSON.stringify({
     strategy: input.strategy,
@@ -664,7 +708,8 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
     ...(input.userNotes ? { userNotes: input.userNotes } : {}),
-    locale: zh ? "zh-CN" : "en",
+    locale: localeToPromptTag(locale),
+    outputLanguage: outputLanguageInstruction(locale),
   });
 
   const { result, usage } = await callJsonModel<unknown>(

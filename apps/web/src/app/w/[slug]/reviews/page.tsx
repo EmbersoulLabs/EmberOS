@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { useI18n } from "@/lib/i18n/provider";
 
 interface ReviewItem {
   review: { id: string; decision: string; comment?: string };
@@ -13,8 +14,8 @@ interface ReviewItem {
 export default function ReviewQueuePage() {
   const params = useParams();
   const slug = params.slug as string;
+  const { t } = useI18n();
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -22,7 +23,6 @@ export default function ReviewQueuePage() {
       const me = await meRes.json();
       const ws = me.workspaces?.find((w: { slug: string }) => w.slug === slug);
       if (!ws) return;
-      setWorkspaceId(ws.id);
 
       const res = await fetch(`/api/reviews?workspaceId=${ws.id}&status=pending`);
       const data = await res.json();
@@ -32,7 +32,7 @@ export default function ReviewQueuePage() {
   }, [slug]);
 
   async function decide(reviewId: string, decision: "approved" | "rejected") {
-    const comment = decision === "rejected" ? prompt("Rejection reason:") : undefined;
+    const comment = decision === "rejected" ? prompt(t("reviews.rejectPrompt")) : undefined;
     await fetch(`/api/reviews/${reviewId}/decide`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -43,10 +43,10 @@ export default function ReviewQueuePage() {
 
   return (
     <AppShell>
-      <h1 className="mb-6 text-2xl font-bold">Review Queue</h1>
+      <h1 className="mb-6 text-2xl font-bold">{t("reviews.title")}</h1>
 
       {reviews.length === 0 ? (
-        <p className="text-slate-500">No pending reviews.</p>
+        <p className="text-slate-500">{t("reviews.empty")}</p>
       ) : (
         <div className="space-y-4">
           {reviews.map(({ review, creative, campaign }) => (
@@ -60,13 +60,13 @@ export default function ReviewQueuePage() {
                   onClick={() => decide(review.id, "approved")}
                   className="rounded bg-green-600 px-3 py-1 text-sm text-white"
                 >
-                  Approve
+                  {t("reviews.approve")}
                 </button>
                 <button
                   onClick={() => decide(review.id, "rejected")}
                   className="rounded bg-red-600 px-3 py-1 text-sm text-white"
                 >
-                  Reject
+                  {t("reviews.reject")}
                 </button>
               </div>
             </div>

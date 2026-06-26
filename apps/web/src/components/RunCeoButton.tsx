@@ -22,7 +22,7 @@ export function RunCeoButton({
   className?: string;
 }) {
   const router = useRouter();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
 
@@ -39,7 +39,11 @@ export function RunCeoButton({
     setError("");
     setRunning(true);
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}/run`, { method: "POST" });
+      const res = await fetch(`/api/campaigns/${campaignId}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locale }),
+      });
       const body = await res.json();
       if (!res.ok) {
         setError(body.error ?? t("error.runCampaign"));

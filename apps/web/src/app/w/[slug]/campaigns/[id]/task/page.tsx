@@ -2,10 +2,11 @@
 
 import { Suspense } from "react";
 import TaskProgressContent from "./TaskProgressContent";
+import { TaskPageLoading } from "./TaskPageLoading";
 
 export default function TaskProgressPage() {
   return (
-    <Suspense fallback={<p className="p-6 text-slate-500">Loading...</p>}>
+    <Suspense fallback={<TaskPageLoading />}>
       <TaskProgressContent />
     </Suspense>
   );

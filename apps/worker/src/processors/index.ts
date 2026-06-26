@@ -135,8 +135,21 @@ export function startWorkers() {
         const { taskId } = job.data as { taskId: string };
         console.log(`[agent.pipeline] start task=${taskId}`);
         await ensureMergedSourceVideo(taskId);
-        await runPipeline(taskId, pipelineHooks);
-        console.log(`[agent.pipeline] done task=${taskId}`);
+        const result = await runPipeline(taskId, pipelineHooks);
+        const queued =
+          result &&
+          typeof result === "object" &&
+          "status" in result &&
+          (result as { status?: string }).status === "render_queued";
+        if (queued) {
+          const meta = result as { creativeIds?: string[]; creativeId?: string };
+          const count = meta.creativeIds?.length ?? (meta.creativeId ? 1 : 0);
+          console.log(
+            `[agent.pipeline] planning complete — ${count} ffmpeg.render job(s) queued task=${taskId} (videos not ready yet)`
+          );
+        } else {
+          console.log(`[agent.pipeline] finished task=${taskId}`);
+        }
       }
     },
     { connection, prefix, concurrency, ...workerOpts }
@@ -241,7 +254,7 @@ export function startWorkers() {
     QUEUE_NAMES.RENDER,
     async (job) => {
       if (job.name !== "ffmpeg.render") return;
-      console.log(`[ffmpeg.render] start creative=${(job.data as { creativeId: string }).creativeId}`);
+      console.log(`[ffmpeg.render] start task=${(job.data as { taskId: string }).taskId} creative=${(job.data as { creativeId: string }).creativeId}`);
       await processRenderJob(job.data as Parameters<typeof processRenderJob>[0]);
     },
     { connection, prefix, concurrency, ...workerOpts }

@@ -81,7 +81,7 @@ export default function TaskProgressContent() {
           const errBody = await campRes.json().catch(() => ({}));
           throw new Error(
             (errBody as { error?: string }).error ??
-              `Failed to load campaign (${campRes.status})`
+              t("error.loadCampaign", { status: campRes.status })
           );
         }
         const campData = await campRes.json();
@@ -110,7 +110,7 @@ export default function TaskProgressContent() {
         if (!res.ok) {
           const errBody = await res.json().catch(() => ({}));
           throw new Error(
-            (errBody as { error?: string }).error ?? `Failed to load task (${res.status})`
+            (errBody as { error?: string }).error ?? t("error.loadTask", { status: res.status })
           );
         }
         const data = await res.json();
@@ -151,6 +151,17 @@ export default function TaskProgressContent() {
             (c) => c.renderStatus === "preview_ready" && Boolean(c.videoUrl)
           );
         let keepPolling = data.task?.status !== "completed" && data.task?.status !== "failed";
+
+        const ffmpegRender = stepProgress.ffmpeg_render as
+          | { status?: string; output?: { pending?: number } }
+          | undefined;
+        if (ffmpegRender?.status === "running") keepPolling = true;
+        if (
+          typeof ffmpegRender?.output?.pending === "number" &&
+          ffmpegRender.output.pending > 0
+        ) {
+          keepPolling = true;
+        }
 
         const anyClipRendering =
           Array.isArray(data.creatives) &&
@@ -212,7 +223,7 @@ export default function TaskProgressContent() {
         }
         setInitialLoad(false);
       } catch (err) {
-        setPollError(err instanceof Error ? err.message : "Failed to load progress");
+        setPollError(err instanceof Error ? err.message : t("error.loadProgress"));
         setInitialLoad(false);
         if (interval) clearInterval(interval);
       }

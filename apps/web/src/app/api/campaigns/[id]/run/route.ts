@@ -4,6 +4,7 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueuePipeline } from "@ceo-agent/queue";
 import { LLM_BUDGET_PER_TASK_USD } from "@ceo-agent/shared";
+import { isLocale } from "@ceo-agent/shared/i18n";
 import { validateCampaignAssetsForRun } from "@/lib/campaign-assets";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -49,6 +50,24 @@ export async function POST(
 
     const assetCheck = await validateCampaignAssetsForRun(db, campaignId, campaign.workspaceId);
     if (!assetCheck.ok) return apiError(assetCheck.error, "VALIDATION_ERROR", 400);
+
+    let contentLocale: string | undefined;
+    try {
+      const body = (await request.json()) as { locale?: string };
+      if (body.locale && isLocale(body.locale)) contentLocale = body.locale;
+    } catch {
+      /* empty body is fine */
+    }
+
+    if (contentLocale) {
+      const campaignMeta = (campaign.metadata ?? {}) as Record<string, unknown>;
+      await db
+        .update(schema.campaigns)
+        .set({
+          metadata: { ...campaignMeta, contentLocale },
+        })
+        .where(eq(schema.campaigns.id, campaignId));
+    }
 
     const [task] = await db
       .insert(schema.tasks)

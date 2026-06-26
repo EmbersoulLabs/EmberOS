@@ -8,4 +8,5 @@ export {
   translate,
   isLocale,
   statusTranslationKey,
+  uiLocaleToPackLocale,
 } from "./messages";

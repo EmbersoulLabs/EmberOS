@@ -1,3 +1,7 @@
+import type { TranslationKey } from "@ceo-agent/shared/i18n";
+
+type TranslateFn = (key: TranslationKey) => string;
+
 export function scoreLetterGrade(score: number): string {
   if (score >= 90) return "A";
   if (score >= 85) return "A-";
@@ -9,7 +13,7 @@ export function scoreLetterGrade(score: number): string {
   return "D";
 }
 
-export function deriveStrengths(score: Record<string, unknown>): string[] {
+export function deriveStrengths(score: Record<string, unknown>, t: TranslateFn): string[] {
   const strengths: string[] = [];
   const hook = score.hookScore as number | undefined;
   const visual = score.visualScore as number | undefined;
@@ -17,12 +21,12 @@ export function deriveStrengths(score: Record<string, unknown>): string[] {
   const cta = score.ctaScore as number | undefined;
   const platform = score.platformFitScore as number | undefined;
 
-  if ((visual ?? 0) >= 72) strengths.push("Strong product visibility");
-  if ((hook ?? 0) >= 72) strengths.push("Compelling opening hook");
-  if ((copy ?? 0) >= 72) strengths.push("Clear, persuasive messaging");
-  if ((cta ?? 0) >= 70) strengths.push("Actionable call-to-action");
-  if ((platform ?? 0) >= 72) strengths.push("Well-suited for target platform");
-  if (strengths.length === 0) strengths.push("Solid foundation for short-form marketing");
+  if ((visual ?? 0) >= 72) strengths.push(t("score.strength.productVisibility"));
+  if ((hook ?? 0) >= 72) strengths.push(t("score.strength.hook"));
+  if ((copy ?? 0) >= 72) strengths.push(t("score.strength.copy"));
+  if ((cta ?? 0) >= 70) strengths.push(t("score.strength.cta"));
+  if ((platform ?? 0) >= 72) strengths.push(t("score.strength.platform"));
+  if (strengths.length === 0) strengths.push(t("score.strength.fallback"));
 
   return strengths.slice(0, 4);
 }

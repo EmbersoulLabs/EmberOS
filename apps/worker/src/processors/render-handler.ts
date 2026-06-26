@@ -53,15 +53,76 @@ async function updateRenderState(
   renderStatus: ReturnType<typeof renderStatusForMode>
 ) {
   const db = getDb();
-  const stepOutput = {
-    status: progress.phase === "done" ? "completed" : "running",
-    percent: progress.percent,
-    phase: progress.phase,
-    mode: progress.mode,
-    renderStatus,
-    updatedAt: new Date().toISOString(),
-    ...(progress.phase === "done" ? { completedAt: new Date().toISOString() } : {}),
-  };
+
+  await db
+    .update(schema.creatives)
+    .set({
+      renderStatus,
+      renderProgress: progress as unknown as Record<string, unknown>,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.creatives.id, creativeId));
+
+  const creatives = await db
+    .select({
+      id: schema.creatives.id,
+      renderStatus: schema.creatives.renderStatus,
+      videoUrl: schema.creatives.videoUrl,
+      renderProgress: schema.creatives.renderProgress,
+      status: schema.creatives.status,
+    })
+    .from(schema.creatives)
+    .where(eq(schema.creatives.taskId, taskId));
+
+  const isMultiClipPreview =
+    creatives.length > 1 &&
+    (progress.mode === "preview" || progress.mode === "subtitles_only");
+
+  let stepOutput: Record<string, unknown>;
+
+  if (isMultiClipPreview) {
+    const total = creatives.length;
+    const ready = creatives.filter(
+      (c) => c.renderStatus === "preview_ready" && Boolean(c.videoUrl)
+    ).length;
+    const rendering = creatives.some((c) => c.renderStatus === "preview_rendering");
+    const failed = creatives.some(
+      (c) =>
+        c.status === "failed" ||
+        Boolean((c.renderProgress as { error?: string } | null)?.error)
+    );
+    const allDone = ready === total && total > 0;
+    const inFlight = creatives.filter((c) => c.renderStatus === "preview_rendering");
+    const inFlightPercent =
+      inFlight.reduce((sum, c) => {
+        const p = (c.renderProgress as { percent?: number } | null)?.percent ?? 0;
+        return sum + p;
+      }, 0) / Math.max(inFlight.length, 1);
+    const aggregatePercent = allDone
+      ? 100
+      : Math.min(99, Math.round(((ready + inFlightPercent / 100) / total) * 100));
+
+    stepOutput = {
+      status: failed ? "failed" : allDone ? "completed" : "running",
+      percent: aggregatePercent,
+      phase: allDone ? "done" : rendering ? "render" : "queued",
+      mode: progress.mode,
+      renderStatus: allDone ? "preview_ready" : "preview_rendering",
+      updatedAt: new Date().toISOString(),
+      output: { clipCount: total, ready, pending: total - ready },
+      ...(allDone ? { completedAt: new Date().toISOString() } : {}),
+    };
+  } else {
+    stepOutput = {
+      status: progress.phase === "done" ? "completed" : "running",
+      percent: progress.percent,
+      phase: progress.phase,
+      mode: progress.mode,
+      renderStatus,
+      updatedAt: new Date().toISOString(),
+      ...(progress.phase === "done" ? { completedAt: new Date().toISOString() } : {}),
+    };
+  }
 
   const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
   if (task) {
@@ -72,15 +133,6 @@ async function updateRenderState(
       .set({ stepProgress, currentStep: "ffmpeg_render" })
       .where(eq(schema.tasks.id, taskId));
   }
-
-  await db
-    .update(schema.creatives)
-    .set({
-      renderStatus,
-      renderProgress: progress as unknown as Record<string, unknown>,
-      updatedAt: new Date(),
-    })
-    .where(eq(schema.creatives.id, creativeId));
 }
 
 export async function processRenderJob(data: RenderJobData): Promise<void> {

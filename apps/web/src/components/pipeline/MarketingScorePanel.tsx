@@ -16,7 +16,7 @@ export function MarketingScorePanel({ score }: { score: Record<string, unknown> 
 
   const improvements = (score.improvements as string[] | undefined) ?? [];
 
-  const strengths = deriveStrengths(score);
+  const strengths = deriveStrengths(score, t);
 
 
 

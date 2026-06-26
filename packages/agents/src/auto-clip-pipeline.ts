@@ -23,6 +23,7 @@ import {
   runMarketingContentAgent,
   contentPackageToHookSet,
   buildAutoClipCopyVariants,
+  contentLocaleFromMetadata,
 } from "./marketing-content";
 import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
 import { runVisionAgent } from "./vision";
@@ -260,6 +261,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       goal,
       campaignName: campaign.name,
       platforms: campaign.platforms,
+      contentLocale: contentLocaleFromMetadata(campaign.metadata as Record<string, unknown> | null),
     });
     totalCost += contentUsage.costUsd;
     const { contentPackage, usage: translateUsage } =
@@ -407,6 +409,10 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         mode: "preview",
       });
     }
+
+    console.log(
+      `[auto-clip] queued ${creativeIds.length} preview render jobs task=${taskId} — waiting for ffmpeg.render worker`
+    );
 
     return { taskId, creativeIds, status: "render_queued" as const };
   } catch (error) {
