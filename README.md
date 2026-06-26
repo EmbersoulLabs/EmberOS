@@ -1,8 +1,10 @@
-# AIGC CEO for Marketing
+# EmberOS — AIGC CEO for Marketing
 
-**上传素材 → CEO Agent 编排 → 爆款文案 + 剪辑成片 + 平台适配 → 审核 → 导出/发布**
+**EmberSoul Labs** · 上传素材 → CEO Agent 编排 → 爆款文案 + 剪辑成片 + 平台适配 → 审核 → 导出/发布
 
 面向 **自用 / 代运营 / SaaS** 三合一的 AIGC 营销流水线。用户上传视频或图片，由 **CEO Orchestrator** 调度多模态子 Agent，自动产出可发布的短视频与配套文案，经人工或客户审核后导出或发布到社交平台。
+
+**生产环境：** [emberos-iota.vercel.app](https://emberos-iota.vercel.app) · **法律文档：** [Terms](https://embersoullabs.com/terms/) · [Privacy (PDPA)](https://embersoullabs.com/privacy/)
 
 ---
 
@@ -19,6 +21,7 @@
 - [技术栈](#技术栈)
 - [项目结构](#项目结构)
 - [本地开发](#本地开发)
+- [生产与 CI](#生产与-ci)
 - [环境变量](#环境变量)
 - [API 概览](#api-概览)
 - [路线图](#路线图)
@@ -34,7 +37,7 @@
 | **爆款文案** | 按平台（抖音/小红书/TikTok）生成多版标题、正文、标签 |
 | **智能剪辑** | FFmpeg 裁切 9:16、字幕、封面、基础节奏 |
 | **多租户** | Organization → Workspace → Campaign，代运营多客户隔离 |
-| **审核闭环** | 内部 QC + 客户 Portal（Magic Link） |
+| **审核闭环** | 内部 QC + 客户 Portal（scoped token，无需登录） |
 | **导出/发布** | Phase 1 导出成片+文案包；Phase 1.5+ 对接平台 API |
 
 **Phase 1 目标：** 上传后 **10 分钟内** 产出 1 条 9:16 成片 + 3 套文案，支持代运营客户审片。
@@ -141,7 +144,7 @@ flowchart LR
 | 代运营 | 内部 QC 通过 → 生成 **Client Portal** 链接 → 客户审片 |
 | SaaS | 可配置是否跳过客户审核 |
 
-客户通过 Magic Link 打开 Portal，无需登录，仅可查看指定 Creative 并 pass/reject/comment。
+客户通过 **Client Portal** 链接打开审片页，无需登录，仅可查看 token 绑定的 Creative 并 pass/reject/comment。
 
 #### ⑧ 平台适配
 
@@ -353,15 +356,15 @@ flowchart TB
     SVC --> REDIS
 ```
 
-### 部署（推荐）
+### 部署
 
-| 组件 | 部署位置 |
-|------|----------|
-| Next.js Web + API | Vercel |
-| Worker + FFmpeg | Railway / Fly.io / VPS |
-| PostgreSQL + Auth | Supabase |
-| Redis 队列 | Upstash |
-| 视频/图片文件 | Supabase Storage / S3 |
+| 组件 | 部署位置 | 状态 |
+|------|----------|------|
+| Next.js Web + API | Vercel | ✅ [emberos-iota.vercel.app](https://emberos-iota.vercel.app) |
+| Worker + FFmpeg | Railway / Fly.io / VPS | 🔄 需确认生产 Worker 在线 |
+| PostgreSQL + Auth | Supabase | ✅ |
+| Redis 队列 | Upstash | ✅ |
+| 视频/图片文件 | Supabase Storage | ✅ |
 
 ---
 
@@ -436,12 +439,12 @@ ceo-agent/
 
 ## 本地开发
 
-> 代码 scaffold 已完成。按以下步骤配置环境并启动。
+> Monorepo scaffold 与 M1–M3 功能已完成。按以下步骤配置环境并启动。
 
 ### 前置要求
 
 - Node.js 20+
-- pnpm 9+
+- pnpm 9.15+（见根目录 `packageManager`）
 - FFmpeg（Worker 本地调试，加入 PATH）
 - Supabase 项目（Postgres + Auth + Storage）
 - Redis（本地或 Upstash）
@@ -450,18 +453,19 @@ ceo-agent/
 ### 安装
 
 ```bash
-cd "CEO agent"
+git clone https://github.com/EmbersoulLabs/EmberOS.git
+cd EmberOS
 pnpm install
 cp .env.example .env.local
 # 编辑 .env.local 填入 Supabase、Redis、OpenAI 密钥
+pnpm dev:sync   # 同步到 apps/web 与 apps/worker
 ```
-
-将 `.env.local` 复制到 `apps/web/.env.local` 和 `apps/worker/.env`（或根目录 dotenv 由 worker 加载）。
 
 ### 数据库
 
 ```bash
 pnpm db:push          # 推送 schema 到 Supabase
+pnpm db:rls           # 启用多租户 RLS（可重复执行，幂等）
 # 或
 pnpm db:migrate       # 运行 migrations
 ```
@@ -469,22 +473,67 @@ pnpm db:migrate       # 运行 migrations
 ### 启动
 
 ```bash
-# 终端 1：Web
+# 推荐：Web + Worker 一起启动（会先 dev:sync）
 pnpm dev
 
-# 终端 2：Worker
-pnpm worker:dev
+# 或分开两个终端
+pnpm dev            # Web
+pnpm worker:dev     # Worker
 ```
 
-访问：`http://localhost:3000`
+访问：`http://localhost:3000`（注册须勾选 [Terms](https://embersoullabs.com/terms/) 与 [Privacy](https://embersoullabs.com/privacy/)）
 
 ### 快速验证流程
 
 1. 注册/登录 → 创建 Workspace
 2. 新建 Campaign → 上传测试 mp4
-3. 选择 `tiktok` + 目标 `种草` → 点击「运行 CEO」
-4. 在 Task 页查看进度 → Creative 预览
+3. 选择平台 + 目标 → 点击「运行 CEO」
+4. 在 Task 页查看进度 → Creative 预览（Auto Clip 默认 3 条 clip）
 5. 内部审核通过 → 导出 ZIP
+
+### 常用命令
+
+```bash
+pnpm verify                              # test + typecheck + web build（与 CI 一致）
+pnpm check:infra                         # DATABASE_URL + REDIS_URL + OpenAI 连通性
+pnpm smoke:prod -- --url http://localhost:3000
+pnpm e2e:video-studio -- --list          # 列出有视频的 Campaign
+pnpm e2e:video-studio -- --run <id>      # 完整 Auto Clip E2E（需 Worker 在线）
+```
+
+---
+
+## 生产与 CI
+
+### GitHub Actions
+
+推送 `main` 触发 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)：
+
+| Job | 内容 |
+|-----|------|
+| **verify** | `pnpm test` → `pnpm typecheck` → web build |
+| **smoke-local** | 启动 Next.js，验证 `GET /api/health` |
+| **e2e-production** | 手动 `workflow_dispatch`；需配置 Secrets |
+
+**推荐 Secrets：**
+
+| Secret | 用途 |
+|--------|------|
+| `PRODUCTION_APP_URL` | 如 `https://emberos-iota.vercel.app` |
+| `DATABASE_URL` / `REDIS_URL` / `OPENAI_API_KEY` | E2E 与 infra 检查 |
+| `E2E_CAMPAIGN_ID` | 可选；有则跑完整 Auto Clip pipeline |
+
+### 生产烟雾测试
+
+```bash
+pnpm smoke:prod -- --url https://emberos-iota.vercel.app --strict --infra
+```
+
+`--strict` 要求 `/api/health` 返回 `ok: true`（Supabase / DB / Redis 均已配置）。
+
+### 共享 Upstash 时注意
+
+本地与 Railway 共用 Redis 时，在 `.env.local` 设置 `LOCAL_DEV=true` 与 `BULLMQ_PREFIX=local`（`pnpm dev:sync` 在检测到 Upstash 时会自动写入），避免生产 Worker 抢本地任务。对生产队列跑 E2E 时使用 `E2E_PROD_QUEUE=1`。
 
 ---
 
@@ -518,6 +567,13 @@ S3_SECRET_KEY=
 FFMPEG_PATH=/usr/bin/ffmpeg
 WORKER_CONCURRENCY=2
 
+# 本地与生产 Redis 隔离（共用 Upstash 时）
+LOCAL_DEV=true
+BULLMQ_PREFIX=local
+
+# 计费 / 导出
+EXPORT_PAYWALL=false
+
 # 成本护栏
 LLM_BUDGET_PER_TASK_USD=0.50
 CEO_MAX_RETRIES=2
@@ -529,45 +585,51 @@ CEO_MAX_RETRIES=2
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/api/workspaces` | 创建 Workspace |
-| `GET` | `/api/workspaces` | Workspace 列表 |
-| `POST` | `/api/workspaces/:id/invites` | 生成 Client Portal 链接 |
-| `POST` | `/api/campaigns` | 创建 Campaign |
-| `POST` | `/api/campaigns/:id/assets` | 上传素材 |
-| `GET` | `/api/campaigns/:id` | Campaign 详情 + 任务状态 |
+| `GET` | `/api/health` | 健康检查（env 就绪状态） |
+| `GET` / `POST` | `/api/workspaces` | 列表 / 创建 Workspace |
+| `GET` / `POST` | `/api/workspaces/:id` | 详情 / **生成 Client Portal 链接** |
+| `GET` / `POST` | `/api/campaigns` | 列表 / 创建 Campaign |
+| `GET` / `PATCH` | `/api/campaigns/:id` | Campaign 详情 / 更新 |
+| `POST` | `/api/campaigns/:id/assets/upload-url` | 预签名上传 |
+| `POST` | `/api/campaigns/:id/assets/:assetId/confirm` | 确认上传 |
 | `POST` | `/api/campaigns/:id/run` | 触发 CEO 流水线 |
-| `GET` | `/api/tasks/:id` | 任务进度 |
-| `POST` | `/api/tasks/:id/retry` | 重跑指定 Agent |
-| `GET` | `/api/creatives/:id` | 预览 Creative |
+| `GET` / `POST` | `/api/tasks/:id` | 任务进度 / **重跑指定 step** |
+| `GET` / `PATCH` | `/api/creatives/:id` | 预览 Creative |
 | `PATCH` | `/api/creatives/:id/copy` | 修改文案 |
 | `POST` | `/api/creatives/:id/submit-review` | 提交审核 |
 | `POST` | `/api/reviews/:id/decide` | pass / reject |
-| `GET` | `/api/portal/:token` | 客户 Portal 数据 |
-| `POST` | `/api/creatives/:id/export` | 导出 ZIP |
+| `GET` / `POST` | `/api/portal/:token` | 客户 Portal 数据 / 审片决定 |
+| `GET` / `POST` | `/api/creatives/:id/export` | 导出 ZIP |
+| `GET` / `POST` | `/api/tasks/:id/export` | 任务级多 clip 导出包 |
 
 ---
 
 ## 路线图
 
-### Phase 1 — MVP（当前）
+### Phase 1 — MVP（当前 ~75%）
 
 - [x] 产品定义 & 架构设计
-- [x] Monorepo scaffold
-- [ ] 上传 → CEO → 成片 + 文案 → 内部审核 → 导出（需配置 Supabase + Redis + OpenAI）
+- [x] Monorepo scaffold（Web + Worker + Agents）
+- [x] Vercel 生产部署 + `/api/health` smoke
+- [x] 生产 Supabase RLS（`pnpm db:rls`）
+- [x] Auto Clip E2E 验证（真实 Campaign，3/3 clips）
 - [x] Client Portal 审片（代码已就绪）
-- [x] 多 Workspace 隔离（RLS + middleware + 集成测试）
 - [x] GitHub Actions CI（test / typecheck / build / smoke）
-- [x] API 限流 + `/api/health` 健康检查
+- [x] API 限流 + 注册页 Terms/Privacy 勾选
+- [x] 单元测试（RLS 覆盖、RBAC、pipeline 逻辑）
+- [ ] Railway Worker 生产稳定运行（待确认）
+- [ ] Stripe 订阅接入 EmberOS（账号已有，产品内待接）
+- [ ] Workspace DB 级集成测试（F3）
 
 ### Phase 1.5
 
 - [ ] 抖音 / 小红书 / TikTok OAuth 发布
 - [ ] 定时发布队列
-- [ ] 用量统计（为计费做准备）
+- [ ] 用量统计（`usage_records` 接线）
 
 ### Phase 2 — SaaS
 
-- [ ] 自助注册、套餐、Stripe 支付
+- [ ] 套餐、Stripe Checkout / Customer Portal
 - [ ] Agency 档（多 Workspace）
 - [ ] 模板市场 / 行业 Starter
 
@@ -587,9 +649,9 @@ CEO_MAX_RETRIES=2
 | 重试上限 | CEO 自动重试 ≤ 2 次 |
 | 分辨率 | 预览 720p，导出 1080p |
 | 长视频 | 先 ASR 转写，再文本规划；不全量 4K 喂 Vision |
-| 租户隔离 | 存储路径 + DB 查询强制 `workspace_id` |
-| Portal 安全 | Token 单次绑定 Creative、可设过期时间 |
-| 合规 | Compliance Agent + 广告法敏感词库 |
+| 租户隔离 | 存储路径 + API `requireWorkspaceRole` + DB RLS（7 张核心表） |
+| Portal 安全 | Token 绑定 Creative、过期时间、rate limit |
+| 合规 | Compliance Agent + 广告法敏感词库；[Privacy Policy](https://embersoullabs.com/privacy/)（MY PDPA） |
 
 **单 Campaign 运营成本参考：** ~S$0.75（标准档）
 
@@ -601,8 +663,7 @@ CEO_MAX_RETRIES=2
 - [ROADMAP.md](./ROADMAP.md) — **16 周 Plan To-dos** 与完成状态
 - [WORKFLOW.md](./WORKFLOW.md) — 产品分段业务流程（用户操作）
 - [PLAN_PROMPT.md](./PLAN_PROMPT.md) — Cursor Plan 模式完整规划 Prompt
-- 架构 Canvas：`canvases/system-architecture.canvas.tsx`（Cursor IDE 内打开）
-- 市场需求 Canvas：`canvases/market-demand-estimate.canvas.tsx`
+- [embersoullabs.com/terms](https://embersoullabs.com/terms/) · [Privacy](https://embersoullabs.com/privacy/) — 法律文档（EmberOS / Stripe / OpenAI 已覆盖）
 
 ---
 
