@@ -15,6 +15,7 @@
     "db:marketing-os": "pnpm --filter @ceo-agent/db sql:marketing-os",
     "retry:renders": "pnpm --filter @ceo-agent/worker retry:renders",
     "check:infra": "pnpm --filter @ceo-agent/worker check:infra",
+    "upload:brand-logo": "pnpm --filter @ceo-agent/worker upload:brand-logo",
     "queue:clean": "pnpm --filter @ceo-agent/worker clean:queue",
     "bgm:refresh": "pnpm --filter @ceo-agent/worker refresh:bgm",
     "db:migrate": "pnpm --filter @ceo-agent/db migrate",

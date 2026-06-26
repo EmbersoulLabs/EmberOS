@@ -15,6 +15,7 @@ import {
 import { runCeoAgent, parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
 import { runMarketingContentAgent, contentPackageToHookSet, contentPackageToCopyVariants } from "./marketing-content";
+import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
 import { runScoreAgent } from "./score";
 import { runVisionAgent } from "./vision";
 import { runCopyAgentMix } from "./copy";
@@ -268,7 +269,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     // content_generate — unified marketing package from strategy + vision
     await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-    const { contentPackage, usage: contentUsage } = await runMarketingContentAgent({
+    const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
       strategy,
       vision,
       videoAnalysis,
@@ -278,7 +279,13 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       platforms: campaign.platforms,
     });
     totalCost += contentUsage.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, contentPackage);
+    const { contentPackage, usage: translateUsage } =
+      await enrichMarketingPackTranslations(rawContentPackage);
+    totalCost += translateUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
+    if (translateUsage.costUsd > 0) {
+      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
+    }
     await updateStep(taskId, "content_generate", {
       status: "completed",
       completedAt: new Date().toISOString(),

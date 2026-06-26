@@ -9,12 +9,9 @@ import {
   subtitlesFromBilingualScripts,
   subtitlesFromFinalScript,
   subtitlesFromTimeline,
-  formatBilingualLine,
   isChineseText,
-  firstPhrase,
   buildVirtualCuts,
   inferSubjectFocus,
-  buildHookTitleSubtitle,
   type CopyLocale,
   type CopyVariant,
   type EditPlan,
@@ -278,13 +275,6 @@ export function buildStandaloneClipEditPlan(input: {
       : subtitlesFromFinalScript(finalScript, targetDurationSec, voiceLocale);
 
   const titleSource = zh?.title || en.title;
-  const hookLine = hasBilingual
-    ? formatBilingualLine(firstPhrase(zhScript, "zh"), firstPhrase(enScript, "en"))
-    : en.hook || titleSource || clipVariant?.title || "";
-  const hookCard = buildHookTitleSubtitle(hookLine, targetDurationSec);
-  if (hookCard) {
-    subtitles = [hookCard, ...subtitles.filter((s) => s.startSec >= hookCard.endSec - 0.02)];
-  }
 
   const focus = inferSubjectFocus(vision);
   const clips = buildVirtualCuts({

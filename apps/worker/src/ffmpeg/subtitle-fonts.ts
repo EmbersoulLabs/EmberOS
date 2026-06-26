@@ -53,6 +53,16 @@ export function ffmpegAssFontsDir(): string {
   return subtitleFontsDir().replace(/\\/g, "/").replace(/:/g, "\\:");
 }
 
+/** Absolute font path for ffmpeg drawtext fontfile= */
+export function resolveDrawtextFontFile(bold = false): string {
+  if (nodePlatform() === "win32") {
+    const name = bold ? "msyhbd.ttc" : "msyh.ttc";
+    return join(systemFontsDir(), name);
+  }
+  if (hasBundledSubtitleFont()) return BUNDLED_FONT_FILE;
+  return join(systemFontsDir(), bold ? "NotoSansCJK-Bold.ttc" : "NotoSansCJK-Regular.ttc");
+}
+
 /**
  * Copy bundled CJK font next to subs.ass so ffmpeg libass can load glyphs reliably
  * (especially on Windows where absolute fontsdir paths often fail).

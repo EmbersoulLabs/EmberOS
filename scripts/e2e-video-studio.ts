@@ -152,7 +152,6 @@ async function triggerRun(campaignId: string) {
     .set({ status: "processing" })
     .where(eq(schema.campaigns.id, campaignId));
 
-  logQueueConfig();
   if (process.env.E2E_PROD_QUEUE === "1") {
     delete process.env.LOCAL_DEV;
     delete process.env.BULLMQ_PREFIX;
@@ -162,8 +161,9 @@ async function triggerRun(campaignId: string) {
       "[e2e] LOCAL_DEV/BULLMQ_PREFIX active — only a LOCAL worker will process this job."
     );
     console.warn("[e2e] For Railway worker: E2E_PROD_QUEUE=1 pnpm e2e:video-studio --run <id>");
-    console.warn("[e2e] Or: npx @railway/cli run --service worker pnpm e2e:video-studio --run <id>");
+    console.warn("[e2e] Or: npx @railway/cli run pnpm e2e:video-studio --run <id>");
   }
+  logQueueConfig();
 
   await enqueuePipeline(task!.id, campaignId, campaign.workspaceId, campaign.orgId);
 

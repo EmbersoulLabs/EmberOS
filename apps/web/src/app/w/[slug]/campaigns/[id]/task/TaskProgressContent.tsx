@@ -28,7 +28,7 @@ import { CopyDownloadButtons } from "@/components/pipeline/CopyDownloadButtons";
 import { SingleCreativePreview } from "@/components/pipeline/SingleCreativePreview";
 import { MarketingScorePanel } from "@/components/pipeline/MarketingScorePanel";
 import { MarketingPackagePanel } from "@/components/pipeline/MarketingPackagePanel";
-import type { MarketingContentPackage } from "@ceo-agent/shared";
+import { normalizeStrategyPlan, type MarketingContentPackage, type StrategyPlan } from "@ceo-agent/shared";
 
 export default function TaskProgressContent() {
   const params = useParams();
@@ -228,6 +228,10 @@ export default function TaskProgressContent() {
     progress.content_generate?.status === "completed"
       ? (progress.content_generate.output as MarketingContentPackage | undefined)
       : undefined;
+  const strategyPlan: StrategyPlan | undefined =
+    progress.strategy_plan?.status === "completed" && progress.strategy_plan.output
+      ? normalizeStrategyPlan(progress.strategy_plan.output)
+      : undefined;
   const primaryCreative = creatives[0];
   const readyClipCount = creatives.filter((c) => c.videoUrl).length;
   const hasCopy = creatives.some(
@@ -324,7 +328,7 @@ export default function TaskProgressContent() {
 
   return (
     <AppShell>
-      <div className="mx-auto max-w-3xl">
+      <div className="mx-auto max-w-6xl">
         <div className="mb-2 flex flex-wrap items-start justify-between gap-4">
           {task ? (
             <div className="min-w-0 flex-1">
@@ -381,7 +385,13 @@ export default function TaskProgressContent() {
 
             {isAutoClip && <ClipPreviewGrid slug={slug} creatives={creatives} />}
 
-            {contentPackage && <MarketingPackagePanel contentPackage={contentPackage} />}
+            {contentPackage && (
+              <MarketingPackagePanel
+                contentPackage={contentPackage}
+                taskId={activeTaskId}
+                strategy={strategyPlan}
+              />
+            )}
 
             {hasCopy && activeTaskId && !contentPackage && (
               <section className="brand-card mt-8 p-6">

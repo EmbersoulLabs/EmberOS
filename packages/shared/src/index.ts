@@ -22,3 +22,4 @@ export * from "./i18n/index";
 export * from "./campaign-brief";
 export * from "./campaign-video";
 export * from "./marketing-pack-locale";
+export * from "./marketing-dashboard";

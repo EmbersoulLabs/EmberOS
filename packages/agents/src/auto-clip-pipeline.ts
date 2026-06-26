@@ -24,6 +24,7 @@ import {
   contentPackageToHookSet,
   buildAutoClipCopyVariants,
 } from "./marketing-content";
+import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
 import { runVisionAgent } from "./vision";
 import { buildStandaloneClipEditPlan, attachAutoClipVoiceover } from "./auto-clip";
 import { buildHighlightIndex, pickSegmentsFromHighlightIndex, type TranscriptSegment } from "./highlight-index";
@@ -251,7 +252,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     });
 
     await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-    const { contentPackage, usage: contentUsage } = await runMarketingContentAgent({
+    const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
       strategy,
       vision,
       videoAnalysis,
@@ -261,7 +262,13 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       platforms: campaign.platforms,
     });
     totalCost += contentUsage.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, contentPackage);
+    const { contentPackage, usage: translateUsage } =
+      await enrichMarketingPackTranslations(rawContentPackage);
+    totalCost += translateUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
+    if (translateUsage.costUsd > 0) {
+      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
+    }
     await updateStep(taskId, "content_generate", {
       status: "completed",
       completedAt: new Date().toISOString(),

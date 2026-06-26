@@ -37,4 +37,7 @@ export const STORAGE_PATHS = {
     `${workspaceId}/campaigns/${campaignId}/exports/${creativeId}/pack.zip`,
   taskExportPack: (workspaceId: string, campaignId: string, taskId: string) =>
     `${workspaceId}/campaigns/${campaignId}/exports/task_${taskId}/pack.zip`,
+  /** Workspace brand logo for video watermark (worker reads via brandProfile.logoUrl). */
+  brandLogo: (workspaceId: string, filename = "logo-horizontal.png") =>
+    `${workspaceId}/brand/${filename}`,
 } as const;

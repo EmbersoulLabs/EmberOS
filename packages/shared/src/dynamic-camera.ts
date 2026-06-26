@@ -9,7 +9,7 @@ export const DYNAMIC_CAMERA = {
   ZOOM_MIN: 1.0,
   ZOOM_MAX: 1.15,
   CROSSFADE_SEC: 0.12,
-  HOOK_CARD_SEC: 1.0,
+  HOOK_CARD_SEC: 3.0,
 } as const;
 
 export interface SubjectFocus {

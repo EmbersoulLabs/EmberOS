@@ -12,6 +12,7 @@ import {
   resolveAutoClipSourceAsset,
   mergeStoredRendition,
   profileKeyForDownloadResolution,
+  BrandProfileSchema,
   type ClipDownloadResolution,
   type RenderMode,
   type RenderProgress,
@@ -108,6 +109,13 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
 
   const editPlan = creative.editPlan as EditPlan;
   const fingerprint = baseClipFingerprint(editPlan);
+
+  const [workspace] = await db
+    .select()
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, data.workspaceId))
+    .limit(1);
+  const brandProfile = BrandProfileSchema.safeParse(workspace?.brandProfile ?? {}).data;
   const cacheStoragePath = STORAGE_PATHS.renderCache(
     data.workspaceId,
     data.campaignId,
@@ -218,6 +226,18 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
       }
     }
 
+    let logoLocalPath: string | undefined;
+    const logoUrl = brandProfile?.logoUrl?.trim();
+    if (logoUrl) {
+      try {
+        logoLocalPath = join(workDir, "brand-logo.png");
+        await downloadStorageFile(logoUrl, logoLocalPath);
+      } catch (err) {
+        console.warn("[render] brand logo download failed, skipping watermark:", err);
+        logoLocalPath = undefined;
+      }
+    }
+
     const { usedCache } = await renderVideo(
       renderInput,
       editPlan,
@@ -229,6 +249,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         sourceDurationSec,
         onProgress,
         profileKey,
+        logoPath: logoLocalPath,
       }
     );
 

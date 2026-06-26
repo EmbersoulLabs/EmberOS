@@ -18,6 +18,7 @@ export * from "./auto-clip-pipeline";
 export * from "./highlight-index";
 export * from "./voice-preset";
 export * from "./marketing-content";
+export * from "./marketing-pack-translate";
 export * from "./orchestrator";
 export type { PipelineHooks, VisionMediaPreparer } from "./orchestrator";
 export * from "./llm";

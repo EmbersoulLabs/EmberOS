@@ -272,6 +272,57 @@ export const PostingRecommendationSchema = z.object({
 });
 export type PostingRecommendation = z.infer<typeof PostingRecommendationSchema>;
 
+export const MarketingAnalysisSchema = z.object({
+  marketingScore: z.number().min(0).max(100),
+  hookScore: z.number().min(0).max(100),
+  seoScore: z.number().min(0).max(100),
+  emotionalScore: z.number().min(0).max(100),
+  conversionScore: z.number().min(0).max(100),
+  estimatedCtr: z.string(),
+  estimatedEngagement: z.string(),
+  estimatedConversion: z.string(),
+});
+export type MarketingAnalysis = z.infer<typeof MarketingAnalysisSchema>;
+
+export const ContentStrategyBriefSchema = z.object({
+  primaryGoal: z.string(),
+  targetAudience: z.string(),
+  contentAngle: z.string(),
+  painPoint: z.string(),
+  desiredEmotion: z.string(),
+  ctaStrategy: z.string(),
+});
+export type ContentStrategyBrief = z.infer<typeof ContentStrategyBriefSchema>;
+
+export const SeoPackSchema = z.object({
+  primaryKeywords: z.array(z.string()).default([]),
+  secondaryKeywords: z.array(z.string()).default([]),
+  longTailKeywords: z.array(z.string()).default([]),
+  localKeywords: z.array(z.string()).default([]),
+  searchIntent: z.string().default(""),
+});
+export type SeoPack = z.infer<typeof SeoPackSchema>;
+
+export const HashtagPackSchema = z.object({
+  highVolume: z.array(z.string()).default([]),
+  mediumVolume: z.array(z.string()).default([]),
+  local: z.array(z.string()).default([]),
+  brand: z.array(z.string()).default([]),
+  industry: z.array(z.string()).default([]),
+});
+export type HashtagPack = z.infer<typeof HashtagPackSchema>;
+
+export const PlatformMarketingAssetSchema = z.object({
+  caption: z.string().default(""),
+  hook: z.string().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  hashtags: z.array(z.string()).default([]),
+  cta: z.string().default(""),
+  formatStyle: z.string().optional(),
+});
+export type PlatformMarketingAsset = z.infer<typeof PlatformMarketingAssetSchema>;
+
 export const MarketingContentPackageSchema = z.object({
   voiceScripts: VoiceScriptsSchema,
   /** English voice scripts for on-screen 中英 subtitles (required when primary content is Chinese). */
@@ -288,6 +339,16 @@ export const MarketingContentPackageSchema = z.object({
   effects: z.array(z.string()).default([]),
   postingRecommendation: PostingRecommendationSchema,
   consistencyScore: z.number().min(0).max(100).default(85),
+  /** AI marketing analysis dashboard scores. */
+  analysis: MarketingAnalysisSchema.optional(),
+  /** Content strategy brief for dashboard. */
+  strategyBrief: ContentStrategyBriefSchema.optional(),
+  /** Platform-specific rich assets — each platform unique copy. */
+  platformAssets: z.record(PlatformMarketingAssetSchema).optional(),
+  seo: SeoPackSchema.optional(),
+  hashtagPack: HashtagPackSchema.optional(),
+  /** Actionable AI suggestions (short bullets). */
+  aiSuggestions: z.array(z.string()).default([]),
 });
 export type MarketingContentPackage = z.infer<typeof MarketingContentPackageSchema>;
 
@@ -301,6 +362,32 @@ function parseCaptionBlock(raw: Record<string, unknown>): MarketingCaptions {
     youtubeShorts: String(raw.youtubeShorts ?? raw.youtube ?? ""),
     googleBusiness: String(raw.googleBusiness ?? raw.google ?? ""),
   };
+}
+
+function captionFromPlatformAsset(asset: PlatformMarketingAsset): string {
+  const tags = asset.hashtags
+    .filter(Boolean)
+    .map((t) => (t.startsWith("#") ? t : `#${t}`))
+    .join(" ");
+  return [asset.title, asset.hook, asset.caption, asset.description, tags, asset.cta]
+    .filter((p) => p?.trim())
+    .join("\n\n")
+    .trim();
+}
+
+function mergeCaptionsFromPlatformAssets(
+  captions: MarketingCaptions,
+  assets: Record<string, PlatformMarketingAsset>
+): MarketingCaptions {
+  const merged = { ...captions };
+  for (const [id, asset] of Object.entries(assets)) {
+    if (id === "threads") continue;
+    const cap = captionFromPlatformAsset(asset);
+    if (cap && id in merged) {
+      (merged as Record<string, string>)[id] = cap;
+    }
+  }
+  return merged;
 }
 
 function parseLocalizedItemText(value: unknown): {
@@ -375,6 +462,35 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
   const captionsEnRaw = (data.captionsEn ?? {}) as Record<string, unknown>;
   const captionsMsRaw = (data.captionsMs ?? {}) as Record<string, unknown>;
   const postingRaw = (data.postingRecommendation ?? {}) as Record<string, unknown>;
+  const analysisRaw = (data.analysis ?? {}) as Record<string, unknown>;
+  const strategyBriefRaw = (data.strategyBrief ?? {}) as Record<string, unknown>;
+  const platformAssetsRaw = (data.platformAssets ?? {}) as Record<string, unknown>;
+  const seoRaw = (data.seo ?? {}) as Record<string, unknown>;
+  const hashtagRaw = (data.hashtagPack ?? data.hashtags ?? {}) as Record<string, unknown>;
+
+  const parsePlatformAssets = (): Record<string, PlatformMarketingAsset> | undefined => {
+    if (!platformAssetsRaw || typeof platformAssetsRaw !== "object") return undefined;
+    const out: Record<string, PlatformMarketingAsset> = {};
+    for (const [key, val] of Object.entries(platformAssetsRaw)) {
+      if (!val || typeof val !== "object") continue;
+      const a = val as Record<string, unknown>;
+      out[key] = {
+        caption: String(a.caption ?? ""),
+        hook: a.hook ? String(a.hook) : undefined,
+        title: a.title ? String(a.title) : undefined,
+        description: a.description ? String(a.description) : undefined,
+        hashtags: Array.isArray(a.hashtags) ? (a.hashtags as string[]) : [],
+        cta: String(a.cta ?? ""),
+        formatStyle: a.formatStyle ? String(a.formatStyle) : undefined,
+      };
+    }
+    return Object.keys(out).length ? out : undefined;
+  };
+
+  const platformAssets = parsePlatformAssets();
+  const captionsFromAssets = platformAssets
+    ? mergeCaptionsFromPlatformAssets(parseCaptionBlock(captionsRaw), platformAssets)
+    : parseCaptionBlock(captionsRaw);
 
   const candidate = {
     voiceScripts: {
@@ -388,7 +504,7 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
       "60s": String(voiceScriptsEnRaw["60s"] ?? voiceScriptsEnRaw["60S"] ?? ""),
     },
     subtitleTimeline: Array.isArray(data.subtitleTimeline) ? data.subtitleTimeline : [],
-    captions: parseCaptionBlock(captionsRaw),
+    captions: captionsFromAssets,
     captionsEn: Object.keys(captionsEnRaw).length ? parseCaptionBlock(captionsEnRaw) : undefined,
     captionsMs: Object.keys(captionsMsRaw).length ? parseCaptionBlock(captionsMsRaw) : undefined,
     voiceStyle:
@@ -405,6 +521,52 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
       estimatedEngagement: String(postingRaw.estimatedEngagement ?? ""),
     },
     consistencyScore: typeof data.consistencyScore === "number" ? data.consistencyScore : 85,
+    analysis:
+      typeof analysisRaw.marketingScore === "number"
+        ? {
+            marketingScore: analysisRaw.marketingScore as number,
+            hookScore: Number(analysisRaw.hookScore ?? analysisRaw.marketingScore),
+            seoScore: Number(analysisRaw.seoScore ?? 75),
+            emotionalScore: Number(analysisRaw.emotionalScore ?? 80),
+            conversionScore: Number(analysisRaw.conversionScore ?? 72),
+            estimatedCtr: String(analysisRaw.estimatedCtr ?? "2.4% – 4.1%"),
+            estimatedEngagement: String(analysisRaw.estimatedEngagement ?? "Medium–High"),
+            estimatedConversion: String(analysisRaw.estimatedConversion ?? "1.2% – 2.8%"),
+          }
+        : undefined,
+    strategyBrief:
+      strategyBriefRaw.primaryGoal || strategyBriefRaw.contentAngle
+        ? {
+            primaryGoal: String(strategyBriefRaw.primaryGoal ?? ""),
+            targetAudience: String(strategyBriefRaw.targetAudience ?? ""),
+            contentAngle: String(strategyBriefRaw.contentAngle ?? ""),
+            painPoint: String(strategyBriefRaw.painPoint ?? ""),
+            desiredEmotion: String(strategyBriefRaw.desiredEmotion ?? ""),
+            ctaStrategy: String(strategyBriefRaw.ctaStrategy ?? ""),
+          }
+        : undefined,
+    platformAssets,
+    seo:
+      Array.isArray(seoRaw.primaryKeywords) || seoRaw.searchIntent
+        ? {
+            primaryKeywords: Array.isArray(seoRaw.primaryKeywords) ? (seoRaw.primaryKeywords as string[]) : [],
+            secondaryKeywords: Array.isArray(seoRaw.secondaryKeywords) ? (seoRaw.secondaryKeywords as string[]) : [],
+            longTailKeywords: Array.isArray(seoRaw.longTailKeywords) ? (seoRaw.longTailKeywords as string[]) : [],
+            localKeywords: Array.isArray(seoRaw.localKeywords) ? (seoRaw.localKeywords as string[]) : [],
+            searchIntent: String(seoRaw.searchIntent ?? ""),
+          }
+        : undefined,
+    hashtagPack:
+      Array.isArray(hashtagRaw.highVolume) || Array.isArray(hashtagRaw.industry)
+        ? {
+            highVolume: Array.isArray(hashtagRaw.highVolume) ? (hashtagRaw.highVolume as string[]) : [],
+            mediumVolume: Array.isArray(hashtagRaw.mediumVolume) ? (hashtagRaw.mediumVolume as string[]) : [],
+            local: Array.isArray(hashtagRaw.local) ? (hashtagRaw.local as string[]) : [],
+            brand: Array.isArray(hashtagRaw.brand) ? (hashtagRaw.brand as string[]) : [],
+            industry: Array.isArray(hashtagRaw.industry) ? (hashtagRaw.industry as string[]) : [],
+          }
+        : undefined,
+    aiSuggestions: Array.isArray(data.aiSuggestions) ? (data.aiSuggestions as string[]) : [],
   };
 
   const parsed = MarketingContentPackageSchema.safeParse(candidate);

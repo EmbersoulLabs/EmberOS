@@ -15,47 +15,60 @@ import {
   type VisionAnalysis,
 } from "@ceo-agent/shared";
 
-const CONTENT_SYSTEM_PROMPT = `# Marketing Content Agent
+const CONTENT_SYSTEM_PROMPT = `# EmberOS Marketing Content Engine
 
-## ROLE
+You are a senior AI marketing strategist inside EmberOS — NOT a chatbot.
+Output structured JSON for an enterprise marketing dashboard.
+Never write long paragraphs. Never repeat the same sentence across platforms.
+Each platform must feel written by a different expert.
 
-You are the Marketing Content Engine inside EmberOS.
+## INPUT
+Marketing Strategy JSON + Video Analysis + Business context.
 
-You receive a Marketing Strategy JSON from the Strategy Agent.
+## RULES
+- Follow strategy exactly. Do not invent strategy fields.
+- Every platform asset MUST use unique wording — zero copy-paste between platforms.
+- Short bullets and card-friendly strings only (max 2-3 lines per field unless Facebook/LinkedIn caption).
+- Return ONLY valid JSON. No markdown.
 
-Never create your own strategy.
+## REQUIRED OUTPUT
 
-Everything must follow the provided strategy.
+### Core production assets
+voiceScripts (15s/30s/60s), voiceScriptsEn (when Chinese primary), subtitleTimeline,
+hooks[10] with text/textEn/textMs + type, cta[5] UNIQUE styles (never duplicate text),
+voiceStyle, broll, musicMood, effects, postingRecommendation, consistencyScore
 
-Your job is to create a complete multi-platform marketing package.
+### Dashboard: analysis
+marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100),
+estimatedCtr, estimatedEngagement, estimatedConversion (short ranges e.g. "2.1%–3.8%")
 
-Never output strategy fields — only content assets.
+### Dashboard: strategyBrief
+primaryGoal, targetAudience, contentAngle, painPoint, desiredEmotion, ctaStrategy (one line each)
 
----
+### Dashboard: platformAssets — UNIQUE per platform
+Each key: tiktok, instagram, facebook, linkedin, xiaohongshu, threads, youtubeShorts, googleBusiness
+Each object: caption, hook?, title?, description?, hashtags[], cta, formatStyle (one-line platform note)
 
-# INPUT
+Platform rules:
+- facebook: storytelling, community, longer caption
+- linkedin: professional, educational, authority
+- xiaohongshu: emoji, line breaks, lifestyle, search keywords, hashtags
+- instagram: short emotional caption + emoji
+- threads: conversational opinion hook
+- googleBusiness: local SEO, service keywords, call-now CTA
+- youtubeShorts: title + hook + description + hashtags
+- tiktok: native hook + trending CTA
 
-Marketing Strategy JSON, Video Analysis, Business Information, Optional User Notes.
+Also populate legacy captions map (flattened) for backward compatibility.
 
-Information may be incomplete. Infer from strategy + vision. Never ask for more information.
+### Dashboard: seo
+primaryKeywords[], secondaryKeywords[], longTailKeywords[], localKeywords[], searchIntent
 
----
+### Dashboard: hashtagPack
+highVolume[], mediumVolume[], local[], brand[], industry[]
 
-# OBJECTIVES
-
-Generate voice scripts (15s, 30s, 60s), **voiceScriptsEn** (same three lengths in natural English when primary scripts are Chinese), subtitle timeline with timestamps (one idea per segment), platform captions in **three languages** (captions = Chinese primary, captionsEn, captionsMs), 10 hooks and 10 CTAs each with **text (zh), textEn, textMs** (or text as { zh, en, ms }), voice emphasis suggestions, B-roll suggestions, music mood, visual effects, posting recommendation, and consistencyScore (0-100).
-
-On-screen video subtitles are **bilingual 中英** — always provide voiceScriptsEn as English counterparts to voiceScripts when content is Chinese.
-
-Marketing pack must be ready to publish in **Chinese, English, and Bahasa Malaysia**.
-
-Voice scripts: natural, conversational, TTS-friendly, no filler.
-
-Subtitles: comfortable reading speed, timestamps in seconds.
-
-Hooks must align with strategy angle and tone. CTAs must align with strategy ctaStrategy.
-
-Return ONLY JSON. No markdown.`;
+### Dashboard: aiSuggestions
+5-8 short actionable bullets (posting time, creative tips, conversion tips)`;
 
 const HOOK_TYPE_MAP: Record<string, HookType> = {
   curiosity: "curiosity",
@@ -445,7 +458,7 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
   const captions = zh
     ? {
         tiktok: `${hook15}\n${body15}\n${s.ctaStrategy}`,
-        instagram: `${product}｜${s.marketingAngle}\n\n${body15}`,
+        instagram: `${product} ✨\n${s.marketingAngle.slice(0, 80)}`,
         facebook: `${product}\n\n${script30}\n\n${s.ctaStrategy}`,
         linkedin: `${product} — ${s.marketingGoal}\n${s.marketingAngle}\n${s.ctaStrategy}`,
         xiaohongshu: `${product}｜${s.marketingAngle}\n\n${script30}\n\n${s.hashtags.industry.slice(0, 3).map((t) => `#${t}`).join(" ")}`,
@@ -454,13 +467,77 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
       }
     : {
         tiktok: `${hook15}\n${body15}`,
-        instagram: `${product} · ${s.marketingAngle}\n\n${body15}`,
+        instagram: `${product} ✨\n${s.marketingAngle.slice(0, 80)}`,
         facebook: `${product}\n\n${script30}\n\n${s.ctaStrategy}`,
         linkedin: `${product} | ${s.marketingGoal}\n${s.marketingAngle}\n${s.ctaStrategy}`,
         xiaohongshu: "",
         youtubeShorts: `${product} — ${s.marketingGoal}. ${s.keywords.slice(0, 4).join(", ")}`,
         googleBusiness: `${product}: ${s.marketingAngle}. ${s.ctaStrategy}`,
       };
+
+  const platformAssets = {
+    tiktok: {
+      hook: hook15,
+      caption: zh ? `真实场景｜${s.marketingAngle}` : `Real footage · ${s.marketingAngle.slice(0, 60)}`,
+      cta: zh ? "评论区告诉我你最想看哪一款" : "Drop a 🔥 if you want part 2",
+      hashtags: [],
+      formatStyle: "Trend-native short hook",
+    },
+    instagram: {
+      caption: zh ? `${product} 💐\n${pain ?? s.marketingAngle}\n—\n${s.ctaStrategy}` : `${product} 💐\n${s.marketingAngle}\n—\n${s.ctaStrategy}`,
+      cta: zh ? "链接在主页" : "Link in bio",
+      hashtags: [],
+      formatStyle: "Emotional visual caption",
+    },
+    facebook: {
+      caption: zh
+        ? `【${product}】\n\n${script30}\n\n👉 ${s.ctaStrategy}`
+        : `Story time: ${product}\n\n${script30}\n\n👉 ${s.ctaStrategy}`,
+      cta: s.ctaStrategy,
+      hashtags: [],
+      formatStyle: "Community storytelling",
+    },
+    linkedin: {
+      caption: zh
+        ? `行业观察｜${s.industry}\n${s.marketingGoal}\n${s.marketingAngle}\n\n${s.ctaStrategy}`
+        : `Insight · ${s.industry}\n${s.marketingGoal}\n${s.marketingAngle}\n\n${s.ctaStrategy}`,
+      cta: zh ? "欢迎私信交流" : "Let's connect",
+      hashtags: [],
+      formatStyle: "Professional authority",
+    },
+    xiaohongshu: {
+      caption: zh
+        ? `✨${product}真实测评\n\n${s.marketingAngle}\n\n${pain ? `😭${pain}` : ""}\n\n${s.ctaStrategy}`
+        : "",
+      hashtags: [...s.hashtags.industry.slice(0, 4), ...s.hashtags.local.slice(0, 2)],
+      cta: zh ? "收藏备用" : "",
+      formatStyle: "Lifestyle + search",
+    },
+    threads: {
+      caption: zh ? `${s.marketingAngle} — 你怎么看？` : `${s.marketingAngle} — agree or not?`,
+      hook: zh ? `说实话，${product}真的值得吗？` : `Hot take: ${product} is underrated.`,
+      cta: "",
+      hashtags: [],
+      formatStyle: "Opinion / conversation",
+    },
+    youtubeShorts: {
+      caption: "",
+      title: zh ? `${product}｜${s.marketingGoal}` : `${product} — ${s.marketingGoal}`,
+      hook: hook15,
+      description: zh ? `${script30}\n${s.ctaStrategy}` : `${script30}\n${s.ctaStrategy}`,
+      hashtags: s.keywords.slice(0, 5),
+      cta: "",
+      formatStyle: "Shorts SEO",
+    },
+    googleBusiness: {
+      caption: zh
+        ? `${product} · ${s.industry} · ${audience}\n${s.marketingAngle}\n📞 立即咨询`
+        : `${product} · ${s.industry}\n${s.marketingAngle}\n📞 Call now`,
+      cta: zh ? "立即致电" : "Call now",
+      hashtags: [],
+      formatStyle: "Local SEO",
+    },
+  };
 
   const captionsEn = {
     tiktok: `${hookEn}\n${body15}`,
@@ -509,9 +586,57 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
       bestPostingTime: zh ? "工作日 12:00 或 19:00" : "Weekdays 12pm or 7pm local",
       bestPlatform: s.platformPriority[0] ?? "TikTok",
       idealAudience: audience,
-      estimatedEngagement: "Medium",
+      estimatedEngagement: "Medium–High",
     },
     consistencyScore: 78,
+    analysis: {
+      marketingScore: 78,
+      hookScore: 82,
+      seoScore: 74,
+      emotionalScore: 80,
+      conversionScore: 76,
+      estimatedCtr: "2.4% – 4.1%",
+      estimatedEngagement: "Medium–High",
+      estimatedConversion: "1.2% – 2.8%",
+    },
+    strategyBrief: {
+      primaryGoal: s.marketingGoal,
+      targetAudience: audience,
+      contentAngle: s.marketingAngle,
+      painPoint: pain ?? "",
+      desiredEmotion: s.tone,
+      ctaStrategy: s.ctaStrategy,
+    },
+    platformAssets,
+    seo: {
+      primaryKeywords: s.keywords.slice(0, 3),
+      secondaryKeywords: s.keywords.slice(3, 8),
+      longTailKeywords: s.keywords.slice(8, 12),
+      localKeywords: s.hashtags.local,
+      searchIntent: s.marketingGoal,
+    },
+    hashtagPack: {
+      highVolume: s.hashtags.trending,
+      mediumVolume: s.hashtags.seo,
+      local: s.hashtags.local,
+      brand: [product.replace(/\s+/g, "")],
+      industry: s.hashtags.industry,
+    },
+    aiSuggestions: zh
+      ? [
+          "建议在晚 8 点前发布",
+          "加入客户真实评价镜头",
+          "使用产品特写增强信任",
+          "可考虑加入价格/优惠 overlay",
+          "展示 before/after 对比",
+        ]
+      : [
+          "Post before 8 PM local time",
+          "Add a customer testimonial clip",
+          "Use close-up product shots",
+          "Consider a pricing overlay",
+          "Show before/after transformation",
+        ],
   };
 
   return pkg;

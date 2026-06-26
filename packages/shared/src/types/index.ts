@@ -58,6 +58,8 @@ export const BrandProfileSchema = z.object({
   bannedWords: z.array(z.string()).default([]),
   cta: z.string().optional(),
   locale: z.string().default("en-SG"),
+  /** Storage path or URL for brand logo watermark (skipped when empty). */
+  logoUrl: z.string().optional(),
 });
 export type BrandProfile = z.infer<typeof BrandProfileSchema>;
 

@@ -39,10 +39,10 @@ describe("dynamic-camera", () => {
     expect(focus.x).toBe(0.5);
   });
 
-  it("builds hook title card for first second", () => {
+  it("builds hook title card for first 3 seconds", () => {
     const sub = buildHookTitleSubtitle("Stop scrolling — new drop", 12);
     expect(sub).not.toBeNull();
-    expect(sub!.endSec).toBe(1);
+    expect(sub!.endSec).toBe(3);
     expect(sub!.style).toBe("tiktok_hook_card");
   });
 });

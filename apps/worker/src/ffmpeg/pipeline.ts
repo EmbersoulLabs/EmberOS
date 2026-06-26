@@ -13,7 +13,12 @@ import { getFfmpegPath } from "./ffmpeg-path";
 import { runFfmpeg } from "./ffmpeg-run";
 import { mediaHasAudio } from "./probe-audio";
 import { FFMPEG_CROP_916_CENTER, FFMPEG_SCALE_FOR_916 } from "./filters-916";
-import { assVideoFilter, buildAssSubtitles } from "./ass-subtitles";
+import {
+  buildDrawtextOverlayChain,
+  buildLogoOverlayFilterComplex,
+  buildLogoOnlyFilterComplex,
+  createDrawtextOverlayContext,
+} from "./drawtext-overlays";
 import { buildDynamicMotionFilter, buildVideoClipFilter, segmentTransitionFilters } from "./dynamic-motion";
 
 const execFileAsync = promisify(execFile);
@@ -508,7 +513,8 @@ export async function burnSubtitles(
   outputPath: string,
   renderMode: RenderMode,
   onProgress?: RenderProgressCallback,
-  profileKey?: RenderProfileKey
+  profileKey?: RenderProfileKey,
+  options?: { logoPath?: string }
 ): Promise<{ editPlan: EditPlan; ttsDurationSec?: number }> {
   const profile = resolveProfile(renderMode, profileKey);
   const workDir = join(tmpdir(), `ceo-subs-${Date.now()}`);
@@ -551,36 +557,75 @@ export async function burnSubtitles(
     await onProgress?.(60, "subtitles");
     let normalizedLocal = join(workDir, "normalized.mp4");
 
-    if (plan.subtitles.length === 0) {
+    const drawCtx = createDrawtextOverlayContext(profile.width, profile.height);
+    const drawtextFilters = buildDrawtextOverlayChain(plan, drawCtx);
+    const hasDrawtext = drawtextFilters.length > 0;
+    const logoPath = options?.logoPath;
+
+    if (!hasDrawtext && !logoPath) {
       await copyFile(baseClipPath, normalizedLocal);
     } else {
-      const { stageSubtitleFontForRender } = await import("./subtitle-fonts.js");
-      const localFonts = await stageSubtitleFontForRender(workDir);
-      await writeFile(assLocalPath, buildAssSubtitles(plan.subtitles, profile.height));
       const subtitledLocal = join(workDir, "subtitled.mp4");
-      await runFfmpeg(
-        [
-          "-y",
-          "-i",
-          baseClipPath,
-          "-vf",
-          assVideoFilter(workDir, localFonts),
-          "-c:v",
-          "libx264",
-          "-preset",
-          profile.preset,
-          "-crf",
-          profile.crf,
-          "-b:v",
-          profile.videoBitrate,
-          "-c:a",
-          "copy",
-          "-t",
-          plan.targetDurationSec.toFixed(3),
-          subtitledLocal,
-        ],
-        runInWorkDir
-      );
+      const drawtextChain = drawtextFilters.join(",");
+
+      if (logoPath) {
+        const { filterComplex, outputLabel } = hasDrawtext
+          ? buildLogoOverlayFilterComplex(drawtextChain, 1)
+          : buildLogoOnlyFilterComplex(1);
+        await runFfmpeg(
+          [
+            "-y",
+            "-i",
+            baseClipPath,
+            "-i",
+            logoPath,
+            "-filter_complex",
+            filterComplex,
+            "-map",
+            `[${outputLabel}]`,
+            "-map",
+            "0:a?",
+            "-c:v",
+            "libx264",
+            "-preset",
+            profile.preset,
+            "-crf",
+            profile.crf,
+            "-b:v",
+            profile.videoBitrate,
+            "-c:a",
+            "copy",
+            "-t",
+            plan.targetDurationSec.toFixed(3),
+            subtitledLocal,
+          ],
+          runInWorkDir
+        );
+      } else {
+        await runFfmpeg(
+          [
+            "-y",
+            "-i",
+            baseClipPath,
+            "-vf",
+            drawtextChain,
+            "-c:v",
+            "libx264",
+            "-preset",
+            profile.preset,
+            "-crf",
+            profile.crf,
+            "-b:v",
+            profile.videoBitrate,
+            "-c:a",
+            "copy",
+            "-t",
+            plan.targetDurationSec.toFixed(3),
+            subtitledLocal,
+          ],
+          runInWorkDir
+        );
+      }
 
       if (plan.audio.normalize) {
         await runFfmpeg(
@@ -648,7 +693,6 @@ export async function burnSubtitles(
     await validateRenderOutput({
       outputPath,
       editPlan: plan,
-      assPath: plan.subtitles.length > 0 ? assLocalPath : undefined,
       ttsDurationSec,
     });
 
@@ -670,6 +714,7 @@ export async function renderVideo(
     sourceDurationSec?: number;
     onProgress?: RenderProgressCallback;
     profileKey?: RenderProfileKey;
+    logoPath?: string;
   }
 ): Promise<{ usedCache: boolean }> {
   const workDir = join(tmpdir(), `ceo-render-${Date.now()}`);
@@ -709,7 +754,9 @@ export async function renderVideo(
       throw new Error("subtitles_only render requires cached base clip");
     }
 
-    await burnSubtitles(baseLocal, editPlan, outputPath, renderMode, options?.onProgress, options?.profileKey);
+    await burnSubtitles(baseLocal, editPlan, outputPath, renderMode, options?.onProgress, options?.profileKey, {
+      logoPath: options?.logoPath,
+    });
     await options?.onProgress?.(95, "upload");
     return { usedCache };
   } finally {

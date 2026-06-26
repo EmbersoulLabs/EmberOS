@@ -1,26 +1,15 @@
 "use client";
 
-import { useState } from "react";
-import type { MarketingContentPackage } from "@ceo-agent/shared";
+import { useEffect, useState } from "react";
+import type { MarketingContentPackage, StrategyPlan } from "@ceo-agent/shared";
 import {
   MARKETING_PACK_LOCALES,
-  pickCtaText,
-  pickHookText,
-  pickPlatformCaption,
+  isMarketingPackLocaleReady,
   type MarketingPackLocale,
 } from "@ceo-agent/shared";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
 import { useI18n } from "@/lib/i18n/provider";
-
-const PLATFORMS = [
-  { key: "tiktok", label: "TikTok" },
-  { key: "instagram", label: "Instagram" },
-  { key: "facebook", label: "Facebook" },
-  { key: "linkedin", label: "LinkedIn" },
-  { key: "xiaohongshu", label: "小红书" },
-  { key: "youtubeShorts", label: "YouTube Shorts" },
-  { key: "googleBusiness", label: "Google Business" },
-] as const;
+import { MarketingDashboard } from "@/components/marketing-dashboard/MarketingDashboard";
 
 function LocaleTabs({
   locale,
@@ -31,7 +20,7 @@ function LocaleTabs({
 }) {
   const { t } = useI18n();
   return (
-    <div className="mt-4 flex flex-wrap gap-2">
+    <div className="flex flex-wrap gap-2">
       {MARKETING_PACK_LOCALES.map((loc) => (
         <button
           key={loc}
@@ -50,73 +39,81 @@ function LocaleTabs({
   );
 }
 
-export function MarketingPackagePanel({ contentPackage }: { contentPackage: MarketingContentPackage }) {
+export function MarketingPackagePanel({
+  contentPackage: initialPackage,
+  taskId,
+  strategy,
+}: {
+  contentPackage: MarketingContentPackage;
+  taskId?: string;
+  strategy?: StrategyPlan;
+}) {
   const { t } = useI18n();
   const [locale, setLocale] = useState<MarketingPackLocale>("zh");
-  const hooks = contentPackage.hooks.slice(0, 5);
-  const ctas = contentPackage.cta.slice(0, 5);
+  const [pkg, setPkg] = useState(initialPackage);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPkg(initialPackage);
+  }, [initialPackage]);
+
+  useEffect(() => {
+    if (locale === "zh" || !taskId) return;
+    if (isMarketingPackLocaleReady(pkg, locale)) return;
+
+    let cancelled = false;
+    setTranslating(true);
+    setTranslateError(null);
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/tasks/${taskId}/marketing-pack/translate`, { method: "POST" });
+        const data = (await res.json()) as {
+          contentPackage?: MarketingContentPackage;
+          error?: string;
+        };
+        if (cancelled) return;
+        if (!res.ok) {
+          setTranslateError(data.error ?? "Translation failed");
+          return;
+        }
+        if (data.contentPackage) setPkg(data.contentPackage);
+      } catch {
+        if (!cancelled) setTranslateError("Translation failed");
+      } finally {
+        if (!cancelled) setTranslating(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [locale, taskId, pkg]);
 
   return (
-    <section className="brand-card mt-8 p-6">
-      <h3 className="text-lg font-semibold text-navy">{t("pipeline.marketingPackTitle")}</h3>
-      <p className="mt-1 text-sm text-ink-secondary">{t("pipeline.marketingPackSubtitle")}</p>
-
-      <LocaleTabs locale={locale} onChange={setLocale} />
-
-      {hooks.length > 0 && (
-        <div className="mt-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
-            {t("pipeline.marketingPackHooks")}
+    <section className="mt-8">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-widest text-brand-blue">
+            EmberOS Marketing OS
           </p>
-          <ul className="mt-2 space-y-1.5">
-            {hooks.map((h, i) => (
-              <li key={i} className="text-sm text-ink">
-                <span className="text-brand-blue">•</span> {pickHookText(h, locale)}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {ctas.length > 0 && (
-        <div className="mt-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
-            {t("pipeline.marketingPackCtas")}
+          <h2 className="mt-1 text-xl font-semibold tracking-tight text-navy">
+            {t("pipeline.marketingPackTitle")}
+          </h2>
+          <p className="mt-1 max-w-xl text-sm text-ink-secondary">
+            {t("pipeline.marketingPackSubtitle")}
           </p>
-          <ul className="mt-2 space-y-1.5">
-            {ctas.map((c, i) => (
-              <li key={i} className="text-sm text-ink">
-                <span className="text-brand-teal">•</span> {pickCtaText(c, locale)}
-              </li>
-            ))}
-          </ul>
         </div>
-      )}
-
-      <div className="mt-5">
-        <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
-          {t("pipeline.marketingPackPlatforms")}
-        </p>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
-          {PLATFORMS.map(({ key, label }) => {
-            const caption = pickPlatformCaption(contentPackage, key, locale);
-            if (!caption) return null;
-            return (
-              <div key={key} className="rounded-lg border border-border bg-surface-muted/40 px-3 py-2">
-                <p className="text-xs font-medium text-brand-blue">{label}</p>
-                <p className="mt-1 whitespace-pre-line text-sm text-ink">{caption}</p>
-              </div>
-            );
-          })}
-        </div>
+        <LocaleTabs locale={locale} onChange={setLocale} />
       </div>
 
-      {typeof contentPackage.consistencyScore === "number" && (
-        <p className="mt-4 text-sm text-ink-secondary">
-          {t("pipeline.marketingPackScore")}:{" "}
-          <span className="font-semibold text-navy">{contentPackage.consistencyScore}/100</span>
-        </p>
+      {translating && (
+        <p className="mb-4 text-sm text-ink-secondary">{t("pipeline.marketingPackTranslating")}</p>
       )}
+      {translateError && <p className="mb-4 text-sm text-red-600">{translateError}</p>}
+
+      <MarketingDashboard pkg={pkg} strategy={strategy} />
     </section>
   );
 }
