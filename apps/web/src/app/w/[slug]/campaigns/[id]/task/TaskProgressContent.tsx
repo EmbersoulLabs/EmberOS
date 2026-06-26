@@ -50,6 +50,7 @@ export default function TaskProgressContent() {
   const [exportPaywallEnabled, setExportPaywallEnabled] = useState(false);
   const [exportStatus, setExportStatus] = useState<string>("none");
   const [exportedResolution, setExportedResolution] = useState<string | null>(null);
+  const [exportPackFilename, setExportPackFilename] = useState<string | null>(null);
   const [canExport, setCanExport] = useState(false);
   const [exportError, setExportError] = useState("");
   const [finalRenderProgress, setFinalRenderProgress] = useState<{
@@ -122,12 +123,25 @@ export default function TaskProgressContent() {
           }
         }
 
-        const exportStep = (
-          data.task?.stepProgress as Record<string, { output?: { exportPackUrl?: string; resolution?: string } }>
-        )?.export_pack;
-        if (exportStep?.output?.exportPackUrl) {
+        const stepProgress = (data.task?.stepProgress ?? {}) as Record<
+          string,
+          { status?: string; output?: { exportPackUrl?: string; resolution?: string; filename?: string } }
+        >;
+        const exportPacks = (stepProgress.export_packs ?? {}) as Record<
+          string,
+          { status?: string; output?: { exportPackUrl?: string; resolution?: string; filename?: string } }
+        >;
+        const packForResolution = exportPacks[exportResolution];
+        let exportStep = packForResolution?.status === "completed" ? packForResolution : undefined;
+        if (!exportStep && stepProgress.export_pack?.status === "completed") {
+          const legacy = stepProgress.export_pack;
+          if (legacy.output?.resolution === exportResolution) exportStep = legacy;
+        }
+        if (exportStep?.status === "completed" && exportStep.output?.exportPackUrl) {
           setExportPackUrl(exportStep.output.exportPackUrl);
           if (exportStep.output.resolution) setExportedResolution(exportStep.output.resolution);
+          if (exportStep.output.filename) setExportPackFilename(exportStep.output.filename);
+          setExportStatus("ready");
         }
 
         const clipCount = Array.isArray(data.creatives) ? data.creatives.length : 0;
@@ -150,7 +164,9 @@ export default function TaskProgressContent() {
         if (anyClipRendering) keepPolling = true;
 
         if (allPreviewsReady) {
-          const exportRes = await fetch(`/api/tasks/${taskId}/export`);
+          const exportRes = await fetch(
+            `/api/tasks/${taskId}/export?resolution=${encodeURIComponent(exportResolution)}`
+          );
           if (exportRes.ok) {
             const exportData = await exportRes.json();
             setCanExport1080p(Boolean(exportData.canExport1080p));
@@ -159,7 +175,11 @@ export default function TaskProgressContent() {
             setCanExport(Boolean(exportData.canExport));
             setExportStatus(exportData.status ?? "none");
             if (exportData.exportPackUrl) setExportPackUrl(exportData.exportPackUrl);
+            else setExportPackUrl(null);
             if (exportData.exportedResolution) setExportedResolution(exportData.exportedResolution);
+            else setExportedResolution(null);
+            if (exportData.exportPackFilename) setExportPackFilename(exportData.exportPackFilename);
+            else setExportPackFilename(null);
             if (exportData.finalRenderProgress) {
               setFinalRenderProgress(exportData.finalRenderProgress);
             }
@@ -203,7 +223,7 @@ export default function TaskProgressContent() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [campaignId, taskIdParam]);
+  }, [campaignId, taskIdParam, exportResolution]);
 
   const progress = (task?.stepProgress ?? {}) as Record<
     string,
@@ -275,8 +295,10 @@ export default function TaskProgressContent() {
     }
   }
 
-  async function refreshExportStatus(taskId: string) {
-    const exportRes = await fetch(`/api/tasks/${taskId}/export`);
+  async function refreshExportStatus(taskId: string, resolution = exportResolution) {
+    const exportRes = await fetch(
+      `/api/tasks/${taskId}/export?resolution=${encodeURIComponent(resolution)}`
+    );
     if (!exportRes.ok) return;
     const exportData = await exportRes.json();
     setCanExport1080p(Boolean(exportData.canExport1080p));
@@ -285,7 +307,11 @@ export default function TaskProgressContent() {
     setCanExport(Boolean(exportData.canExport));
     setExportStatus(exportData.status ?? "none");
     if (exportData.exportPackUrl) setExportPackUrl(exportData.exportPackUrl);
+    else setExportPackUrl(null);
     if (exportData.exportedResolution) setExportedResolution(exportData.exportedResolution);
+    else setExportedResolution(null);
+    if (exportData.exportPackFilename) setExportPackFilename(exportData.exportPackFilename);
+    else setExportPackFilename(null);
     if (exportData.finalRenderProgress) setFinalRenderProgress(exportData.finalRenderProgress);
     if (exportData.rendition2kProgress) setRendition2kProgress(exportData.rendition2kProgress);
   }
@@ -507,6 +533,14 @@ export default function TaskProgressContent() {
               <p className="mt-3 text-sm text-brand-blue">{t("export.packing")}</p>
             )}
 
+            {exportZipReady && (
+              <p className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                {exportPackFilename
+                  ? t("export.packReady", { filename: exportPackFilename })
+                  : t("export.ready")}
+              </p>
+            )}
+
             {exportStatus === "ready" && exportPackUrl && exportedResolution !== exportResolution && (
               <p className="mt-3 text-sm text-ink-secondary">
                 {exportedResolution} ZIP {t("export.ready")} — switch to {exportedResolution} to download, or export {exportResolution} again.
@@ -518,13 +552,14 @@ export default function TaskProgressContent() {
             )}
 
             <div className="mt-4 flex flex-wrap gap-3">
-              {exportPackUrl && exportStatus === "ready" && (
+              {exportZipReady && exportPackUrl && (
                 <a
                   href={exportPackUrl}
-                  download
+                  download={exportPackFilename ?? undefined}
                   className="brand-btn-primary"
                 >
-                  {t("export.download")} ({exportedResolution ?? exportResolution})
+                  {t("export.download")}
+                  {exportPackFilename ? ` (${exportPackFilename})` : ` (${exportedResolution ?? exportResolution})`}
                 </a>
               )}
               {!exportZipReady && (

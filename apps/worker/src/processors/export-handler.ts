@@ -10,6 +10,10 @@ import {
   buildTaskContentPack,
   contentPackToCsv,
   contentPackToJson,
+  buildExportPackFilename,
+  platformPublishCopyText,
+  encodeCopyExportBody,
+  plainTextToDocHtml,
   type CopyVariant,
   type EditPlan,
   type MarketingContentPackage,
@@ -66,6 +70,26 @@ async function downloadUrlToFile(url: string, localPath: string): Promise<void> 
   await writeFile(localPath, Buffer.from(await response.arrayBuffer()));
 }
 
+async function writeCopyFiles(
+  workDir: string,
+  zipFiles: { path: string; name: string }[],
+  baseName: string,
+  platform: string,
+  p: { title?: string; body?: string; caption?: string; hashtags?: string[]; tags?: string[] }
+) {
+  const plain = platformPublishCopyText(platform, p);
+  if (!plain.trim()) return;
+
+  const txtPath = join(workDir, "copy", `${baseName}_${platform}.txt`);
+  await writeFile(txtPath, encodeCopyExportBody(plain, "txt"));
+  zipFiles.push({ path: txtPath, name: `copy/${baseName}_${platform}.txt` });
+
+  const docPath = join(workDir, "copy", `${baseName}_${platform}.doc`);
+  const docHtml = plainTextToDocHtml(plain, `${baseName} — ${platform}`);
+  await writeFile(docPath, encodeCopyExportBody(docHtml, "doc"));
+  zipFiles.push({ path: docPath, name: `copy/${baseName}_${platform}.doc` });
+}
+
 export async function processTaskExportJob(data: TaskExportJobData): Promise<void> {
   const db = getDb();
   const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, data.taskId)).limit(1);
@@ -86,14 +110,17 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
   if (creatives.length === 0) throw new Error("No creatives for task");
 
   const resolution: TaskExportResolution = data.resolution ?? "720p";
+  const campaignName = campaign?.name ?? "Campaign";
+  const packFilename = buildExportPackFilename(campaignName, resolution);
 
-  const workDir = join(tmpdir(), `export-task-${data.taskId}`);
+  const workDir = join(tmpdir(), `export-task-${data.taskId}-${resolution}`);
   await mkdir(workDir, { recursive: true });
 
   try {
     const zipFiles: { path: string; name: string }[] = [];
     const platforms = (data.platforms.length ? data.platforms : campaign?.platforms ?? ["tiktok"]) as Platform[];
     const musicCredits: { clip: number; credit: MusicCredit }[] = [];
+    const allCopySections: string[] = [];
 
     for (let i = 0; i < creatives.length; i++) {
       const creative = creatives[i]!;
@@ -137,16 +164,16 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
       });
 
       await mkdir(join(workDir, "copy"), { recursive: true });
+      const clipCopyParts: string[] = [`=== Clip ${clipNum} ===`, ""];
       for (const platform of Object.keys(exportPack.platforms)) {
         const p = exportPack.platforms[platform]!;
-        const content =
-          platform === "xiaohongshu"
-            ? `# ${p.title}\n\n${p.body}\n\n${(p.tags ?? []).join(" ")}`
-            : `${p.caption}\n\n${(p.hashtags ?? []).join(" ")}`;
-        const copyPath = join(workDir, "copy", `clip_${clipNum}_${platform}.md`);
-        await writeFile(copyPath, content);
-        zipFiles.push({ path: copyPath, name: `copy/clip_${clipNum}_${platform}.md` });
+        await writeCopyFiles(workDir, zipFiles, `clip_${clipNum}`, platform, p);
+        const plain = platformPublishCopyText(platform, p);
+        if (plain) {
+          clipCopyParts.push(`--- ${platform} ---`, plain, "");
+        }
       }
+      allCopySections.push(clipCopyParts.join("\n"));
 
       const credit = musicCreditFor(creative.editPlan);
       musicCredits.push({ clip: clipNum, credit });
@@ -164,6 +191,18 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
         .where(eq(schema.creatives.id, creative.id));
     }
 
+    const allCopyText = allCopySections.join("\n").trim();
+    if (allCopyText) {
+      const allTxt = join(workDir, "copy", "ALL_CLIPS.txt");
+      await writeFile(allTxt, encodeCopyExportBody(`${campaignName}\n\n${allCopyText}\n`, "txt"));
+      zipFiles.push({ path: allTxt, name: "copy/ALL_CLIPS.txt" });
+
+      const allDoc = join(workDir, "copy", "ALL_CLIPS.doc");
+      const docHtml = plainTextToDocHtml(allCopyText, `${campaignName} — All Clips`);
+      await writeFile(allDoc, encodeCopyExportBody(docHtml, "doc"));
+      zipFiles.push({ path: allDoc, name: "copy/ALL_CLIPS.doc" });
+    }
+
     const creditsBody = musicCredits
       .map(({ clip, credit }) =>
         credit.licenseUrl
@@ -175,7 +214,7 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
     const creditsPath = join(workDir, "CREDITS.txt");
     await writeFile(
       creditsPath,
-      `EmberOS — Music Credits\nTask: ${data.taskId}\n\n${creditsBody}\n\n` +
+      `EmberOS — Music Credits\nCampaign: ${campaignName}\nResolution: ${resolution}\nTask: ${data.taskId}\n\n${creditsBody}\n\n` +
         `Note: Creative Commons (CC-BY) tracks require crediting the artist when you publish.\n` +
         `Include the relevant line above in your post caption or video description.\n`
     );
@@ -184,7 +223,8 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
     const readmePath = join(workDir, "README.txt");
     await writeFile(
       readmePath,
-      `EmberOS Auto Clip Export\nResolution: ${resolution}\nClips: ${creatives.length}\nTask: ${data.taskId}\n\n` +
+      `EmberOS Auto Clip Export\nCampaign: ${campaignName}\nPack: ${packFilename}\nResolution: ${resolution}\nClips: ${creatives.length}\nTask: ${data.taskId}\n\n` +
+        `Copy files: copy/*.txt and copy/*.doc (Word-compatible)\n\n` +
         `Music credits — see CREDITS.txt\n${creditsBody}\n`
     );
     zipFiles.push({ path: readmePath, name: "README.txt" });
@@ -224,15 +264,36 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
 
     await createExportZip(filesToZip, zipLocal);
 
-    const packPath = STORAGE_PATHS.taskExportPack(data.workspaceId, data.campaignId, data.taskId);
+    const packPath = STORAGE_PATHS.taskExportPack(
+      data.workspaceId,
+      data.campaignId,
+      data.taskId,
+      resolution
+    );
     await uploadStorageFile(packPath, zipLocal, "application/zip");
     const exportPackUrl = publicStorageUrl(packPath);
+    const completedAt = new Date().toISOString();
+
+    const packOutput = {
+      exportPackUrl,
+      clipCount: creatives.length,
+      resolution,
+      filename: packFilename,
+      completedAt,
+    };
 
     const progress = { ...((task.stepProgress as Record<string, unknown>) ?? {}) };
+    const exportPacks = { ...((progress.export_packs as Record<string, unknown>) ?? {}) };
+    exportPacks[resolution] = {
+      status: "completed",
+      completedAt,
+      output: packOutput,
+    };
+    progress.export_packs = exportPacks;
     progress.export_pack = {
       status: "completed",
-      completedAt: new Date().toISOString(),
-      output: { exportPackUrl, clipCount: creatives.length, resolution },
+      completedAt,
+      output: packOutput,
     };
 
     const requestOutput = progress.export_request?.output as Record<string, unknown> | undefined;
@@ -240,7 +301,7 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
       progress.export_request = {
         ...(progress.export_request as Record<string, unknown>),
         status: "completed",
-        completedAt: new Date().toISOString(),
+        completedAt,
         output: { ...requestOutput, status: "completed", resolution },
       };
     }
@@ -255,7 +316,9 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
       .set({ status: "export_ready" })
       .where(eq(schema.campaigns.id, data.campaignId));
 
-    console.log(`[ffmpeg.export_task] done task=${data.taskId} url=${exportPackUrl}`);
+    console.log(
+      `[ffmpeg.export_task] done task=${data.taskId} resolution=${resolution} file=${packFilename} url=${exportPackUrl}`
+    );
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

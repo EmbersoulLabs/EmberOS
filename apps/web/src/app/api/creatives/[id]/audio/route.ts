@@ -42,6 +42,7 @@ function patchEditPlanAudio(
     external?: ExternalBgmInput | null;
     voicePreset?: string;
     ttsLocale?: CopyLocale;
+    bgmStartOffsetSec?: number;
   }
 ): EditPlan {
   let next: EditPlan = { ...plan, audio: { ...plan.audio } };
@@ -67,6 +68,7 @@ function patchEditPlanAudio(
             attribution: input.external.attribution,
           },
           bgmRecommendation: undefined,
+          bgmStartOffsetSec: 0,
         },
       };
     }
@@ -84,7 +86,6 @@ function patchEditPlanAudio(
         ...next.audio,
         bgm: trackId,
         keepOriginal: false,
-        // Selecting a built-in track clears any previously chosen online track.
         bgmExternal: null,
         bgmRecommendation: rec
           ? {
@@ -99,6 +100,17 @@ function patchEditPlanAudio(
               license: rec.license,
             }
           : undefined,
+        bgmStartOffsetSec: 0,
+      },
+    };
+  }
+
+  if (input.bgmStartOffsetSec !== undefined) {
+    next = {
+      ...next,
+      audio: {
+        ...next.audio,
+        bgmStartOffsetSec: Math.max(0, input.bgmStartOffsetSec),
       },
     };
   }
@@ -145,15 +157,24 @@ export async function PATCH(
       external?: ExternalBgmInput | null;
       voicePreset?: string;
       ttsLocale?: CopyLocale;
+      bgmStartOffsetSec?: number;
     };
 
     if (
       body.bgm === undefined &&
       body.external === undefined &&
       body.voicePreset === undefined &&
-      body.ttsLocale === undefined
+      body.ttsLocale === undefined &&
+      body.bgmStartOffsetSec === undefined
     ) {
       return apiError("No audio fields to update", "VALIDATION", 400);
+    }
+
+    if (
+      body.bgmStartOffsetSec !== undefined &&
+      (typeof body.bgmStartOffsetSec !== "number" || !Number.isFinite(body.bgmStartOffsetSec) || body.bgmStartOffsetSec < 0)
+    ) {
+      return apiError("Invalid BGM start offset", "VALIDATION", 400);
     }
 
     if (body.external !== undefined && body.external !== null && !isValidExternalBgm(body.external)) {

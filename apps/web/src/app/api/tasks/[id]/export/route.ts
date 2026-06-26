@@ -20,22 +20,32 @@ import {
 } from "@ceo-agent/agents";
 import { enqueueFinalRendersForTask, enqueue2kRendersForTask } from "@/lib/render-queue";
 
-type ExportProgress = {
-  output?: {
-    exportPackUrl?: string;
-    resolution?: string;
-    clipCount?: number;
-  };
+type ExportPackOutput = {
+  exportPackUrl?: string;
+  resolution?: string;
+  clipCount?: number;
+  filename?: string;
+  completedAt?: string;
+};
+
+type ExportProgressStep = {
+  status?: string;
+  output?: ExportPackOutput;
 };
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await requireAuth();
     const { id } = await params;
     const db = getDb();
+
+    const resolutionParam = new URL(request.url).searchParams.get("resolution");
+    const requestedResolution = resolutionParam
+      ? parseTaskExportResolution(resolutionParam, FREE_EXPORT_RESOLUTION)
+      : null;
 
     const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, id)).limit(1);
     if (!task) return apiError("Task not found", "NOT_FOUND", 404);
@@ -47,12 +57,34 @@ export async function GET(
       .where(eq(schema.organizations.id, task.orgId))
       .limit(1);
 
-    const progress = (task.stepProgress ?? {}) as Record<string, ExportProgress>;
-    const exportPack = progress.export_pack?.output;
-    const exportPackUrl = exportPack?.exportPackUrl ?? null;
-    const exportedResolution = exportPack?.resolution ?? null;
+    const progress = (task.stepProgress ?? {}) as Record<string, ExportProgressStep | unknown>;
+    const exportPacks = (progress.export_packs ?? {}) as Record<string, ExportProgressStep>;
+    const exportRequest = progress.export_request as ExportProgressStep | undefined;
+    const exportRequestState = exportRequest?.output as TaskExportRequestState | undefined;
 
-    const exportRequest = progress.export_request?.output as TaskExportRequestState | undefined;
+    let packOutput: ExportPackOutput | undefined;
+    if (requestedResolution) {
+      const packStep = exportPacks[requestedResolution];
+      if (packStep?.status === "completed" && packStep.output?.exportPackUrl) {
+        packOutput = packStep.output;
+      }
+    }
+    if (!packOutput) {
+      const legacy = (progress.export_pack as ExportProgressStep | undefined)?.output;
+      if (legacy?.exportPackUrl) {
+        if (!requestedResolution || legacy.resolution === requestedResolution) {
+          packOutput = legacy;
+        }
+      }
+    }
+
+    const exportPackUrl = packOutput?.exportPackUrl ?? null;
+    const exportedResolution = packOutput?.resolution ?? null;
+    const exportPackFilename = packOutput?.filename ?? null;
+
+    const readyResolutions = Object.entries(exportPacks)
+      .filter(([, step]) => step.status === "completed" && step.output?.exportPackUrl)
+      .map(([resolution]) => resolution);
 
     const creatives = await getTaskCreatives(id);
     const renderProgress = countFinalRenderProgress(creatives);
@@ -76,10 +108,17 @@ export async function GET(
     let status: "none" | "final_rendering" | "export_pending" | "ready" | "failed" = "none";
     if (exportPackUrl) {
       status = "ready";
-    } else if (exportRequest?.status === "exporting") {
+    } else if (
+      exportRequest?.status === "exporting" &&
+      (!requestedResolution || exportRequestState?.resolution === requestedResolution)
+    ) {
       status = "export_pending";
     } else if (
-      exportRequest?.status === "pending_final" ||
+      exportRequest?.status === "pending_final" &&
+      (!requestedResolution || exportRequestState?.resolution === requestedResolution)
+    ) {
+      status = "final_rendering";
+    } else if (
       renderProgress.finalRendering > 0 ||
       rendition2kProgress.rendering > 0
     ) {
@@ -96,7 +135,9 @@ export async function GET(
       exportPaywallEnabled: exportPaywallEnabled(),
       exportPackUrl,
       exportedResolution,
-      exportRequest,
+      exportPackFilename,
+      readyResolutions,
+      exportRequest: exportRequestState,
       status,
       clipCount: creatives.length,
       allClipsReady: allPreviewReady,

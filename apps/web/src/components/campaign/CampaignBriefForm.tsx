@@ -2,13 +2,12 @@
 
 import {
   BGM_USER_PREFERENCES,
-  BGM_START_PREFERENCES,
   DEFAULT_BGM_PREFERENCE,
-  DEFAULT_BGM_START_PREFERENCE,
   VOICE_PRESETS,
   CONTENT_STYLES,
   CAMPAIGN_MARKETING_GOALS,
   DEFAULT_VOICE_PRESET,
+  DEFAULT_BGM_START_PREFERENCE,
   type VoicePreset,
   type ContentStyle,
   type CampaignMarketingGoal,
@@ -97,21 +96,6 @@ export function CampaignBriefForm({
               selected={values.bgmPreference === pref}
               onClick={() => onChange({ ...values, bgmPreference: pref })}
               label={t(`campaign.bgm.${pref}` as TranslationKey)}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="brand-card p-5">
-        <h2 className="mb-1 text-sm font-semibold text-navy">{t("campaign.bgmStart.title")}</h2>
-        <p className="mb-3 text-xs text-ink-secondary">{t("campaign.bgmStart.description")}</p>
-        <div className="flex flex-wrap gap-2">
-          {BGM_START_PREFERENCES.map((pref) => (
-            <OptionChip
-              key={pref}
-              selected={values.bgmStartPreference === pref}
-              onClick={() => onChange({ ...values, bgmStartPreference: pref })}
-              label={t(`campaign.bgmStart.${pref}` as TranslationKey)}
             />
           ))}
         </div>

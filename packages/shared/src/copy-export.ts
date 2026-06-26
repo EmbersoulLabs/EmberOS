@@ -146,3 +146,8 @@ export function encodeCopyExportBody(content: string, format: CopyExportFormat):
   const payload = format === "txt" ? `\uFEFF${content}` : content;
   return new TextEncoder().encode(payload);
 }
+
+/** Word-compatible HTML for ZIP export packs. */
+export function plainTextToDocHtml(text: string, title: string): string {
+  return textToDocHtml(text, title);
+}

@@ -12,6 +12,7 @@ import {
 } from "@ceo-agent/shared";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
 import { useI18n } from "@/lib/i18n/provider";
+import { BgmStartWaveform } from "@/components/pipeline/BgmStartWaveform";
 
 const PHASE_KEYS: Record<RenderPhase, TranslationKey> = {
   queued: "creative.audio.phase.queued",
@@ -87,6 +88,9 @@ export function ClipAudioControls({
   const [awaitingRender, setAwaitingRender] = useState(false);
   const [error, setError] = useState("");
   const [live, setLive] = useState<LiveProgress>(() => renderProgress ?? {});
+  const [bgmStartOffset, setBgmStartOffset] = useState(initial.bgmStartOffsetSec);
+  const [savedBgmStartOffset, setSavedBgmStartOffset] = useState(initial.bgmStartOffsetSec);
+  const [applyingStart, setApplyingStart] = useState(false);
   const [previewPlaying, setPreviewPlaying] = useState(false);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -113,23 +117,36 @@ export function ClipAudioControls({
     renderStatus === "preview_rendering" ||
     renderStatus === "final_rendering" ||
     saving ||
-    awaitingRender;
+    awaitingRender ||
+    applyingStart;
 
   const displayPercent = Math.min(100, Math.max(0, live.percent ?? (saving ? 2 : 0)));
   const phaseKey = live.phase && live.phase in PHASE_KEYS ? PHASE_KEYS[live.phase as RenderPhase] : null;
 
+  const waveformMeta = useMemo(() => {
+    if (bgm === "none") return null;
+    if (bgm === "external") {
+      const url = initial.externalBgm?.audioUrl;
+      return url ? { url, durationSec: 180 } : null;
+    }
+    const track = getBgmTrackById(bgm);
+    return track ? { url: track.fileUrl, durationSec: track.durationSec } : null;
+  }, [bgm, initial.externalBgm]);
+
   useEffect(() => {
-    if (userEditingRef.current || saving || applyingRef.current || awaitingRender) return;
+    if (userEditingRef.current || saving || applyingRef.current || awaitingRender || applyingStart) return;
     const s = readCreativeAudioSettings(editPlan ?? null);
     setBgm(s.bgm);
     setVoicePreset(s.voicePreset);
     setTtsLocale(s.ttsLocale ?? "en");
+    setBgmStartOffset(s.bgmStartOffsetSec);
+    setSavedBgmStartOffset(s.bgmStartOffsetSec);
     pendingRef.current = {
       bgm: s.bgm,
       voicePreset: s.voicePreset,
       ttsLocale: s.ttsLocale ?? "en",
     };
-  }, [editPlan, saving, awaitingRender]);
+  }, [editPlan, saving, awaitingRender, applyingStart]);
 
   useEffect(() => {
     if (renderProgress) setLive(renderProgress);
@@ -308,6 +325,9 @@ export function ClipAudioControls({
   function onBgmChange(next: ClipBgmKey) {
     userEditingRef.current = true;
     setBgm(next);
+    if (next !== bgm) {
+      setBgmStartOffset(0);
+    }
     if (next === "none" || next === "external") {
       stopPreview();
     } else {
@@ -323,7 +343,38 @@ export function ClipAudioControls({
       debounceRef.current = null;
     }
     pendingRef.current = { ...pendingRef.current, bgm };
+    setBgmStartOffset(0);
+    setSavedBgmStartOffset(0);
     void flushApply();
+  }
+
+  async function applyBgmStart() {
+    userEditingRef.current = true;
+    setApplyingStart(true);
+    setError("");
+    setLive({ percent: 0, phase: "queued" });
+    onRerenderStart?.();
+    try {
+      const res = await fetch(`/api/creatives/${creativeId}/audio`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bgmStartOffsetSec: bgmStartOffset }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error ?? t("creative.audio.applyFailed"));
+        userEditingRef.current = false;
+        return;
+      }
+      setSavedBgmStartOffset(bgmStartOffset);
+      wasRenderingRef.current = true;
+      setAwaitingRender(true);
+    } catch {
+      setError(t("creative.audio.applyFailed"));
+      userEditingRef.current = false;
+    } finally {
+      setApplyingStart(false);
+    }
   }
 
   async function runOnlineSearch() {
@@ -357,6 +408,8 @@ export function ClipAudioControls({
     stopPreview();
     userEditingRef.current = true;
     setBgm("external" as ClipBgmKey);
+    setBgmStartOffset(0);
+    setSavedBgmStartOffset(0);
     void flushApply({
       external: {
         source: track.source,
@@ -561,6 +614,20 @@ export function ClipAudioControls({
           </div>
         )}
       </div>
+
+      {waveformMeta && bgm !== "none" && (
+        <BgmStartWaveform
+          audioUrl={waveformMeta.url}
+          trackDurationSec={waveformMeta.durationSec}
+          clipDurationSec={initial.clipDurationSec}
+          offsetSec={bgmStartOffset}
+          savedOffsetSec={savedBgmStartOffset}
+          disabled={isRendering || applyingStart}
+          onOffsetChange={setBgmStartOffset}
+          onApply={() => void applyBgmStart()}
+          applying={applyingStart || saving}
+        />
+      )}
 
       <div>
         <p className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-ink-secondary">

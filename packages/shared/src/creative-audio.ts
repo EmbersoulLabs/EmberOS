@@ -3,8 +3,6 @@ import { BGM_LIBRARY, getBgmTrackById, LEGACY_BGM_KEY_MAP, listDistinctBgmTracks
 import type { CopyLocale } from "./copy-mix";
 
 import type { EditPlan } from "./types/index";
-
-/** All selectable library track ids + none */
 export const CLIP_BGM_KEYS = BGM_LIBRARY.map((t) => t.id) as readonly string[];
 
 export type ClipBgmKey = (typeof CLIP_BGM_KEYS)[number] | "none";
@@ -22,11 +20,48 @@ export interface CreativeAudioSettings {
   hasBilingualScripts: boolean;
   bgmRecommendation?: EditPlan["audio"]["bgmRecommendation"];
   externalBgm?: ExternalBgm;
+  /** Seconds into the BGM file where the bed starts in the rendered clip. */
+  bgmStartOffsetSec: number;
+  clipDurationSec: number;
+  bgmPreviewUrl: string | null;
+  bgmTrackDurationSec: number;
+}
+
+export function getCreativeBgmPreviewMeta(plan: EditPlan | null | undefined): {
+  previewUrl: string | null;
+  durationSec: number;
+} {
+  if (!plan) return { previewUrl: null, durationSec: 120 };
+
+  const external = plan.audio.bgmExternal;
+  if (external?.audioUrl) {
+    return { previewUrl: external.audioUrl, durationSec: 180 };
+  }
+
+  const bgmRaw = plan.audio.bgm;
+  if (!bgmRaw || bgmRaw === "none" || bgmRaw === "external") {
+    return { previewUrl: null, durationSec: 0 };
+  }
+
+  const track = getBgmTrackById(resolveBgmKey(bgmRaw));
+  return {
+    previewUrl: track?.fileUrl ?? null,
+    durationSec: track?.durationSec ?? 120,
+  };
 }
 
 export function readCreativeAudioSettings(plan: EditPlan | null | undefined): CreativeAudioSettings {
+  const bgmMeta = getCreativeBgmPreviewMeta(plan);
   if (!plan) {
-    return { bgm: "calm_ambient", voicePreset: "female", hasBilingualScripts: false };
+    return {
+      bgm: "calm_ambient",
+      voicePreset: "female",
+      hasBilingualScripts: false,
+      bgmStartOffsetSec: 0,
+      clipDurationSec: 15,
+      bgmPreviewUrl: bgmMeta.previewUrl,
+      bgmTrackDurationSec: bgmMeta.durationSec,
+    };
   }
 
   const vo = plan.audio.voiceover;
@@ -54,6 +89,10 @@ export function readCreativeAudioSettings(plan: EditPlan | null | undefined): Cr
     hasBilingualScripts: Boolean(plan.finalScriptZh?.trim() && plan.finalScriptEn?.trim()),
     bgmRecommendation: plan.audio.bgmRecommendation,
     externalBgm: external,
+    bgmStartOffsetSec: plan.audio.bgmStartOffsetSec ?? 0,
+    clipDurationSec: plan.targetDurationSec,
+    bgmPreviewUrl: external?.audioUrl ?? getBgmTrackById(resolveBgmKey(bgmRaw ?? ""))?.fileUrl ?? null,
+    bgmTrackDurationSec: bgmMeta.durationSec,
   };
 }
 

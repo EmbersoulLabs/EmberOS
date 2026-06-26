@@ -35,8 +35,13 @@ export const STORAGE_PATHS = {
     `${workspaceId}/campaigns/${campaignId}/renders/${creativeId}/cache/${profile}_${fingerprint}_base.mp4`,
   exportPack: (workspaceId: string, campaignId: string, creativeId: string) =>
     `${workspaceId}/campaigns/${campaignId}/exports/${creativeId}/pack.zip`,
-  taskExportPack: (workspaceId: string, campaignId: string, taskId: string) =>
-    `${workspaceId}/campaigns/${campaignId}/exports/task_${taskId}/pack.zip`,
+  taskExportPack: (
+    workspaceId: string,
+    campaignId: string,
+    taskId: string,
+    resolution: "720p" | "1080p" | "2k"
+  ) =>
+    `${workspaceId}/campaigns/${campaignId}/exports/task_${taskId}/pack_${resolution}.zip`,
   /** Workspace brand logo for video watermark (worker reads via brandProfile.logoUrl). */
   brandLogo: (workspaceId: string, filename = "logo-horizontal.png") =>
     `${workspaceId}/brand/${filename}`,

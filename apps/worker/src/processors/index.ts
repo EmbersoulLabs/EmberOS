@@ -4,7 +4,16 @@ import { getDb, schema } from "@ceo-agent/db";
 import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig } from "@ceo-agent/queue";
 import { runPublishAgent } from "@ceo-agent/agents";
 import { runPipeline, type PipelineHooks } from "@ceo-agent/agents";
-import { STORAGE_PATHS, MAX_UPLOAD_DURATION_SEC, assessFinishedAdRisk, sumUploadVideoDurationSec, validateCombinedVideoDurationSec } from "@ceo-agent/shared";
+import {
+  STORAGE_PATHS,
+  MAX_UPLOAD_DURATION_SEC,
+  assessFinishedAdRisk,
+  sumUploadVideoDurationSec,
+  validateCombinedVideoDurationSec,
+  platformPublishCopyText,
+  encodeCopyExportBody,
+  plainTextToDocHtml,
+} from "@ceo-agent/shared";
 import { createExportZip, probeVideo } from "../ffmpeg/pipeline";
 import { processRenderJob } from "./render-handler";
 import { processTaskExportJob, musicCreditFor } from "./export-handler";
@@ -314,13 +323,26 @@ export function startWorkers() {
         }
 
         await mkdir(join(workDir, "copy"), { recursive: true });
+        const copyZipEntries: { path: string; name: string }[] = [];
         for (const platform of Object.keys(exportPack.platforms)) {
           const p = exportPack.platforms[platform]!;
-          const content =
-            platform === "xiaohongshu"
-              ? `# ${p.title}\n\n${p.body}\n\n${(p.tags ?? []).join(" ")}`
-              : `${p.caption}\n\n${(p.hashtags ?? []).join(" ")}`;
-          await writeFile(join(workDir, "copy", `${platform}_variant.md`), content);
+          const plain = platformPublishCopyText(platform, p);
+          if (!plain.trim()) continue;
+
+          const txtPath = join(workDir, "copy", `${platform}_variant.txt`);
+          await writeFile(txtPath, encodeCopyExportBody(plain, "txt"));
+          copyZipEntries.push({
+            path: txtPath,
+            name: `export/copy/${platform}_variant.txt`,
+          });
+
+          const docPath = join(workDir, "copy", `${platform}_variant.doc`);
+          const docHtml = plainTextToDocHtml(plain, `${platform} copy`);
+          await writeFile(docPath, encodeCopyExportBody(docHtml, "doc"));
+          copyZipEntries.push({
+            path: docPath,
+            name: `export/copy/${platform}_variant.doc`,
+          });
         }
 
         const credit = musicCreditFor(creative.editPlan);
@@ -341,10 +363,7 @@ export function startWorkers() {
         for (const entry of [
           { path: join(workDir, "video_9x16_1080p.mp4"), name: "export/video_9x16_1080p.mp4" },
           { path: join(workDir, "cover.jpg"), name: "export/cover.jpg" },
-          ...Object.keys(exportPack.platforms).map((p) => ({
-            path: join(workDir, "copy", `${p}_variant.md`),
-            name: `export/copy/${p}_variant.md`,
-          })),
+          ...copyZipEntries,
           { path: join(workDir, "metadata.json"), name: "export/metadata.json" },
           { path: join(workDir, "CREDITS.txt"), name: "export/CREDITS.txt" },
         ]) {
