@@ -9,6 +9,9 @@ import {
   subtitlesFromBilingualScripts,
   subtitlesFromFinalScript,
   subtitlesFromTimeline,
+  formatBilingualLine,
+  isChineseText,
+  firstPhrase,
   buildVirtualCuts,
   inferSubjectFocus,
   buildHookTitleSubtitle,
@@ -68,7 +71,14 @@ function resolveBilingualScripts(variants: CopyVariant[]): {
 
   const enScript = buildFinalScript(en, "en");
   const zhScript = zh ? buildFinalScript(zh, "zh") : enScript;
-  const hasBilingual = Boolean(zh && en && zh.id !== en.id);
+  const hasBilingual = Boolean(
+    zh &&
+      en &&
+      zh.id !== en.id &&
+      enScript.trim() &&
+      zhScript.trim() !== enScript.trim() &&
+      !isChineseText(enScript)
+  );
 
   return { zhScript, enScript, hasBilingual };
 }
@@ -173,12 +183,11 @@ export function attachAutoClipVoiceover(
   const sourceStart = plan.clips.length > 0 ? Math.min(...plan.clips.map((c) => c.startSec)) : 0;
   const sourceEnd = plan.clips.length > 0 ? Math.max(...plan.clips.map((c) => c.endSec)) : targetDurationSec;
 
-  let subtitles =
-    subtitleTimeline && subtitleTimeline.length > 0
+  let subtitles = hasBilingual
+    ? subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec)
+    : subtitleTimeline && subtitleTimeline.length > 0
       ? subtitlesFromTimeline(subtitleTimeline, sourceStart, sourceEnd, targetDurationSec, voiceLocale)
-      : hasBilingual
-        ? subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec)
-        : subtitlesFromFinalScript(finalScript, targetDurationSec, voiceLocale);
+      : subtitlesFromFinalScript(finalScript, targetDurationSec, voiceLocale);
 
   if (subtitles.length === 0 && hasBilingual) {
     subtitles = subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec);
@@ -256,8 +265,9 @@ export function buildStandaloneClipEditPlan(input: {
 
   const finalScript = voiceLocale === "zh" ? zhScript : enScript;
   const targetDurationSec = clipDuration;
-  let subtitles =
-    subtitleTimeline && subtitleTimeline.length > 0
+  let subtitles = hasBilingual
+    ? subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec)
+    : subtitleTimeline && subtitleTimeline.length > 0
       ? subtitlesFromTimeline(
           subtitleTimeline,
           segment.startSec,
@@ -265,12 +275,13 @@ export function buildStandaloneClipEditPlan(input: {
           targetDurationSec,
           voiceLocale
         )
-      : hasBilingual
-        ? subtitlesFromBilingualScripts(zhScript, enScript, targetDurationSec)
-        : [];
+      : subtitlesFromFinalScript(finalScript, targetDurationSec, voiceLocale);
 
   const titleSource = zh?.title || en.title;
-  const hookCard = buildHookTitleSubtitle(en.hook || titleSource || clipVariant?.title || "", targetDurationSec);
+  const hookLine = hasBilingual
+    ? formatBilingualLine(firstPhrase(zhScript, "zh"), firstPhrase(enScript, "en"))
+    : en.hook || titleSource || clipVariant?.title || "";
+  const hookCard = buildHookTitleSubtitle(hookLine, targetDurationSec);
   if (hookCard) {
     subtitles = [hookCard, ...subtitles.filter((s) => s.startSec >= hookCard.endSec - 0.02)];
   }

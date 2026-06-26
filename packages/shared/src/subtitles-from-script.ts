@@ -1,6 +1,7 @@
 import type { CopyLocale } from "./copy-mix";
 import type { EditPlan } from "./types/index";
 import { detectScriptLocale } from "./final-script";
+import { formatBilingualLine } from "./subtitles-sync";
 
 const MIN_SEG_SEC = 1.5;
 const MAX_SEG_SEC = 3.5;
@@ -50,15 +51,6 @@ export function splitScriptChunks(script: string, locale: CopyLocale): string[] 
   return chunks;
 }
 
-function beatStyles(
-  index: number,
-  total: number
-): { zh: EditPlan["subtitles"][number]["style"]; en: EditPlan["subtitles"][number]["style"] } {
-  if (index === 0) return { zh: "hook_zh", en: "hook_en" };
-  if (index === total - 1) return { zh: "cta_zh", en: "cta_en" };
-  return { zh: "body_zh", en: "body_en" };
-}
-
 function styleForChunk(index: number, total: number, locale: CopyLocale): EditPlan["subtitles"][number]["style"] {
   if (index === 0) return locale === "zh" ? "hook_zh" : "hook_en";
   if (index === total - 1) return locale === "zh" ? "cta_zh" : "cta_en";
@@ -89,6 +81,15 @@ export function subtitlesFromChunkTimings(
   return subtitles;
 }
 
+function bilingualStyle(
+  index: number,
+  total: number
+): EditPlan["subtitles"][number]["style"] {
+  if (index === 0) return "hook";
+  if (index === total - 1) return "cta";
+  return "body";
+}
+
 /** Bilingual lines sharing the same measured chunk timings as the spoken voice track. */
 export function subtitlesFromBilingualChunkTimings(
   zhChunks: string[],
@@ -101,18 +102,17 @@ export function subtitlesFromBilingualChunkTimings(
   const subtitles: EditPlan["subtitles"] = [];
   for (let i = 0; i < count; i++) {
     const { startSec, endSec } = timings[i]!;
-    const styles = beatStyles(i, count);
     const zhText = (zhChunks[i] ?? zhChunks.at(-1) ?? "").trim();
     const enText = (enChunks[i] ?? enChunks.at(-1) ?? "").trim();
+    const combined = formatBilingualLine(zhText, enText);
+    if (!combined) continue;
 
-    if (zhText) {
-      subtitles.push({ startSec, endSec, text: zhText, style: styles.zh });
-    }
-    if (enText && enText !== zhText) {
-      subtitles.push({ startSec, endSec, text: enText, style: styles.en });
-    } else if (!zhText && enText) {
-      subtitles.push({ startSec, endSec, text: enText, style: styles.en });
-    }
+    subtitles.push({
+      startSec,
+      endSec,
+      text: combined,
+      style: bilingualStyle(i, count),
+    });
   }
   return subtitles;
 }

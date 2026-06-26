@@ -270,6 +270,8 @@ export type PostingRecommendation = z.infer<typeof PostingRecommendationSchema>;
 
 export const MarketingContentPackageSchema = z.object({
   voiceScripts: VoiceScriptsSchema,
+  /** English voice scripts for on-screen 中英 subtitles (required when primary content is Chinese). */
+  voiceScriptsEn: VoiceScriptsSchema.optional(),
   subtitleTimeline: z.array(SubtitleTimelineSegmentSchema).default([]),
   captions: MarketingCaptionsSchema,
   hooks: z.array(ContentHookItemSchema).min(1),
@@ -315,6 +317,7 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
     .filter((c): c is ContentCtaItem => c !== null);
 
   const voiceScriptsRaw = (data.voiceScripts ?? {}) as Record<string, unknown>;
+  const voiceScriptsEnRaw = (data.voiceScriptsEn ?? {}) as Record<string, unknown>;
   const captionsRaw = (data.captions ?? {}) as Record<string, unknown>;
   const postingRaw = (data.postingRecommendation ?? {}) as Record<string, unknown>;
 
@@ -323,6 +326,11 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
       "15s": String(voiceScriptsRaw["15s"] ?? voiceScriptsRaw["15S"] ?? ""),
       "30s": String(voiceScriptsRaw["30s"] ?? voiceScriptsRaw["30S"] ?? ""),
       "60s": String(voiceScriptsRaw["60s"] ?? voiceScriptsRaw["60S"] ?? ""),
+    },
+    voiceScriptsEn: {
+      "15s": String(voiceScriptsEnRaw["15s"] ?? voiceScriptsEnRaw["15S"] ?? ""),
+      "30s": String(voiceScriptsEnRaw["30s"] ?? voiceScriptsEnRaw["30S"] ?? ""),
+      "60s": String(voiceScriptsEnRaw["60s"] ?? voiceScriptsEnRaw["60S"] ?? ""),
     },
     subtitleTimeline: Array.isArray(data.subtitleTimeline) ? data.subtitleTimeline : [],
     captions: {

@@ -177,6 +177,8 @@ export const EditPlanSchema = z.object({
       .nullable()
       .optional(),
     normalize: z.boolean().default(true),
+    /** Seconds into the BGM file before the bed starts (skip dull intros). */
+    bgmStartOffsetSec: z.number().min(0).optional(),
     bgmRecommendation: z
       .object({
         trackId: z.string(),

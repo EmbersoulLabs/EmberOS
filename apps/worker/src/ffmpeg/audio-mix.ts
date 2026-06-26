@@ -12,16 +12,19 @@ export async function mixBackgroundMusic(
   bgmPath: string,
   outputPath: string,
   durationSec: number,
-  keepOriginal = true
+  keepOriginal = true,
+  bgmStartOffsetSec = 0
 ): Promise<void> {
   await access(bgmPath);
   const dur = Math.max(3, durationSec);
   const hasOrig = keepOriginal && (await mediaHasAudio(videoPath));
+  const start = Math.max(0, bgmStartOffsetSec);
+  const trimEnd = start + dur + 4;
 
   const filterComplex = hasOrig
-    ? mixDialogueWithSmartBgm("0:a", "1:a", "aout", dur)
+    ? mixDialogueWithSmartBgm("0:a", "1:a", "aout", dur, 0.35, undefined, start)
     : [
-        `[1:a]atrim=0:${dur.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.22,afade=t=in:st=0:d=0.6,afade=t=out:st=${Math.max(0, dur - 0.8).toFixed(2)}:d=0.8[bgm]`,
+        `[1:a]atrim=${start.toFixed(2)}:${trimEnd.toFixed(2)},asetpts=PTS-STARTPTS,volume=0.22,afade=t=in:st=0:d=0.6,afade=t=out:st=${Math.max(0, dur - 0.8).toFixed(2)}:d=0.8[bgm]`,
         `[bgm]loudnorm=I=-14:TP=-1.5:LRA=11[aout]`,
       ].join(";");
 

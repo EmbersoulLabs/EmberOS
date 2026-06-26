@@ -5,6 +5,14 @@ import {
   isBgmUserPreference,
   type BgmUserPreference,
 } from "./bgm/library";
+import {
+  BGM_START_PREFERENCES,
+  DEFAULT_BGM_START_PREFERENCE,
+  isBgmStartPreference,
+  type BgmStartPreference,
+} from "./bgm/start-offset";
+
+export { BGM_START_PREFERENCES, type BgmStartPreference };
 
 export const VOICE_PRESETS = [
   "auto",
@@ -41,6 +49,7 @@ export interface CampaignCreativeBrief {
   contentStyle?: ContentStyle;
   campaignGoal?: CampaignMarketingGoal;
   bgmPreference?: BgmUserPreference;
+  bgmStartPreference?: BgmStartPreference;
 }
 
 export const DEFAULT_VOICE_PRESET: VoicePreset = "auto";
@@ -88,7 +97,12 @@ export function parseCampaignCreativeBrief(campaign: {
   const bgmRaw = campaign.bgmPreference ?? fromMeta("bgmPreference");
   const bgmPreference = isBgmUserPreference(bgmRaw) ? bgmRaw : DEFAULT_BGM_PREFERENCE;
 
-  return { campaignBrief, voicePreset, contentStyle, campaignGoal, bgmPreference };
+  const bgmStartRaw = fromMeta("bgmStartPreference");
+  const bgmStartPreference = isBgmStartPreference(bgmStartRaw)
+    ? bgmStartRaw
+    : DEFAULT_BGM_START_PREFERENCE;
+
+  return { campaignBrief, voicePreset, contentStyle, campaignGoal, bgmPreference, bgmStartPreference };
 }
 
 export function hasCreativeBriefInput(brief: CampaignCreativeBrief): boolean {
@@ -97,7 +111,8 @@ export function hasCreativeBriefInput(brief: CampaignCreativeBrief): boolean {
       brief.contentStyle ||
       brief.campaignGoal ||
       (brief.voicePreset && brief.voicePreset !== "auto") ||
-      (brief.bgmPreference && brief.bgmPreference !== "auto")
+      (brief.bgmPreference && brief.bgmPreference !== "auto") ||
+      (brief.bgmStartPreference && brief.bgmStartPreference !== "auto")
   );
 }
 

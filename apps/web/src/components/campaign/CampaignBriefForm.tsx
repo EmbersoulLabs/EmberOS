@@ -2,7 +2,9 @@
 
 import {
   BGM_USER_PREFERENCES,
+  BGM_START_PREFERENCES,
   DEFAULT_BGM_PREFERENCE,
+  DEFAULT_BGM_START_PREFERENCE,
   VOICE_PRESETS,
   CONTENT_STYLES,
   CAMPAIGN_MARKETING_GOALS,
@@ -11,6 +13,7 @@ import {
   type ContentStyle,
   type CampaignMarketingGoal,
   type BgmUserPreference,
+  type BgmStartPreference,
 } from "@ceo-agent/shared";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
 import { useI18n } from "@/lib/i18n/provider";
@@ -21,6 +24,7 @@ export interface CampaignBriefFormValues {
   contentStyle: ContentStyle | "";
   campaignGoal: CampaignMarketingGoal | "";
   bgmPreference: BgmUserPreference;
+  bgmStartPreference: BgmStartPreference;
 }
 
 export const EMPTY_BRIEF_FORM: CampaignBriefFormValues = {
@@ -29,6 +33,7 @@ export const EMPTY_BRIEF_FORM: CampaignBriefFormValues = {
   contentStyle: "",
   campaignGoal: "",
   bgmPreference: DEFAULT_BGM_PREFERENCE,
+  bgmStartPreference: DEFAULT_BGM_START_PREFERENCE,
 };
 
 function OptionChip({
@@ -92,6 +97,21 @@ export function CampaignBriefForm({
               selected={values.bgmPreference === pref}
               onClick={() => onChange({ ...values, bgmPreference: pref })}
               label={t(`campaign.bgm.${pref}` as TranslationKey)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="brand-card p-5">
+        <h2 className="mb-1 text-sm font-semibold text-navy">{t("campaign.bgmStart.title")}</h2>
+        <p className="mb-3 text-xs text-ink-secondary">{t("campaign.bgmStart.description")}</p>
+        <div className="flex flex-wrap gap-2">
+          {BGM_START_PREFERENCES.map((pref) => (
+            <OptionChip
+              key={pref}
+              selected={values.bgmStartPreference === pref}
+              onClick={() => onChange({ ...values, bgmStartPreference: pref })}
+              label={t(`campaign.bgmStart.${pref}` as TranslationKey)}
             />
           ))}
         </div>

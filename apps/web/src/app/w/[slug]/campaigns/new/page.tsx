@@ -172,6 +172,7 @@ export default function CampaignWizardPage() {
           contentStyle: briefForm.contentStyle || undefined,
           campaignGoal: briefForm.campaignGoal || undefined,
           bgmPreference: briefForm.bgmPreference,
+          bgmStartPreference: briefForm.bgmStartPreference,
         }),
       });
       const campData = await campRes.json();

@@ -4,6 +4,8 @@ import {
   normalizeMarketingContentPackage,
   strategyAudienceSummary,
   strategyPainPoints,
+  isChineseText,
+  firstPhrase,
   type CopyVariant,
   type HookSet,
   type HookType,
@@ -41,7 +43,9 @@ Information may be incomplete. Infer from strategy + vision. Never ask for more 
 
 # OBJECTIVES
 
-Generate voice scripts (15s, 30s, 60s), subtitle timeline with timestamps (one idea per segment), platform captions (TikTok, Instagram, Facebook, LinkedIn, Xiaohongshu, YouTube Shorts, Google Business Post), 10 hooks, 10 CTAs, voice emphasis suggestions, B-roll suggestions, music mood, visual effects, posting recommendation, and consistencyScore (0-100).
+Generate voice scripts (15s, 30s, 60s), **voiceScriptsEn** (same three lengths in natural English when primary scripts are Chinese), subtitle timeline with timestamps (one idea per segment), platform captions (TikTok, Instagram, Facebook, LinkedIn, Xiaohongshu, YouTube Shorts, Google Business Post), 10 hooks, 10 CTAs, voice emphasis suggestions, B-roll suggestions, music mood, visual effects, posting recommendation, and consistencyScore (0-100).
+
+On-screen video subtitles are **bilingual 中英** — always provide voiceScriptsEn as English counterparts to voiceScripts when content is Chinese.
 
 Voice scripts: natural, conversational, TTS-friendly, no filler.
 
@@ -223,29 +227,41 @@ export function buildAutoClipCopyVariants(
   const hook = pkg.hooks[clipIndex]?.text ?? pkg.hooks[0]?.text ?? "";
   const cta = pkg.cta[clipIndex]?.text ?? pkg.cta[0]?.text ?? strategy.ctaStrategy;
   const scriptKey = CLIP_SCRIPT_KEYS[clipIndex] ?? "30s";
-  const body = pkg.voiceScripts[scriptKey] || pkg.voiceScripts["30s"] || pkg.voiceScripts["15s"];
+  const zhBody = pkg.voiceScripts[scriptKey] || pkg.voiceScripts["30s"] || pkg.voiceScripts["15s"];
+  const enBodyFromScripts =
+    pkg.voiceScriptsEn?.[scriptKey] ||
+    pkg.voiceScriptsEn?.["30s"] ||
+    pkg.voiceScriptsEn?.["15s"] ||
+    "";
+  const enCaption =
+    pkg.captions.tiktok ||
+    pkg.captions.instagram ||
+    pkg.captions.youtubeShorts ||
+    "";
+  const enBody =
+    enBodyFromScripts.trim() ||
+    (enCaption.trim() && !isChineseText(enCaption) ? enCaption : "") ||
+    zhBody;
+  const enHook =
+    (enBodyFromScripts.trim() ? firstPhrase(enBodyFromScripts, "en") : "") ||
+    (!isChineseText(hook) ? hook : firstPhrase(enBody, "en")) ||
+    hook;
+  const enCta =
+    pkg.cta.find((c) => c.text.trim() && !isChineseText(c.text))?.text ??
+    (!isChineseText(cta) ? cta : cta);
   const tags = [
     ...strategy.hashtags.industry.slice(0, 3),
     ...strategy.hashtags.local.slice(0, 2),
     ...strategy.hashtags.trending.slice(0, 2),
   ].filter(Boolean);
 
-  const enCaption =
-    pkg.captions.tiktok ||
-    pkg.captions.instagram ||
-    `${hook}\n\n${body}\n\n${cta}`;
-  const zhCaption =
-    pkg.captions.xiaohongshu ||
-    pkg.captions.tiktok ||
-    `${hook}\n\n${body}\n\n${cta}`;
-
   const clipNum = clipIndex + 1;
   const en: CopyVariant = {
     id: `clip-${clipNum}-en`,
     template: "story",
-    hook: hook.slice(0, 120),
-    body: enCaption || body,
-    cta: cta.slice(0, 80),
+    hook: enHook.slice(0, 120),
+    body: enBody,
+    cta: enCta.slice(0, 80),
     title: strategy.product.slice(0, 60),
     tags: tags.length ? tags : strategy.keywords.slice(0, 5),
     platform,
@@ -256,7 +272,7 @@ export function buildAutoClipCopyVariants(
     id: `clip-${clipNum}-zh`,
     template: "story",
     hook: hook.slice(0, 120),
-    body: zhCaption || body,
+    body: zhBody,
     cta: cta.slice(0, 80),
     title: strategy.product.slice(0, 60),
     tags: tags.length ? tags : strategy.keywords.slice(0, 5),
@@ -353,6 +369,13 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
 
   const pkg: MarketingContentPackage = {
     voiceScripts: { "15s": script15, "30s": script30, "60s": script60 },
+    voiceScriptsEn: zh
+      ? {
+          "15s": `${product} — ${s.marketingAngle.slice(0, 60)}.`,
+          "30s": `${product}. ${s.marketingGoal}. Built for ${audience}. ${s.ctaStrategy}`,
+          "60s": `${product}. ${s.marketingAngle}. Clear value, memorable visuals. ${s.ctaStrategy}`,
+        }
+      : undefined,
     subtitleTimeline: buildSubtitleTimeline(script15, 15),
     captions,
     hooks,

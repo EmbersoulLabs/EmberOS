@@ -7,9 +7,11 @@ import {
   isContentStyle,
   isCampaignMarketingGoal,
   isBgmUserPreference,
+  isBgmStartPreference,
   legacyGoalFromMarketingGoal,
   DEFAULT_VOICE_PRESET,
   DEFAULT_BGM_PREFERENCE,
+  DEFAULT_BGM_START_PREFERENCE,
 } from "@ceo-agent/shared";
 import { isCampaignDeletable } from "@/lib/campaigns";
 
@@ -79,6 +81,7 @@ export async function POST(request: Request) {
       contentStyle,
       campaignGoal,
       bgmPreference,
+      bgmStartPreference,
     } = body as {
       workspaceId: string;
       name: string;
@@ -89,6 +92,7 @@ export async function POST(request: Request) {
       contentStyle?: string;
       campaignGoal?: string;
       bgmPreference?: string;
+      bgmStartPreference?: string;
     };
 
     if (!workspaceId || !name) {
@@ -103,6 +107,9 @@ export async function POST(request: Request) {
     const style = isContentStyle(contentStyle) ? contentStyle : null;
     const marketingGoal = isCampaignMarketingGoal(campaignGoal) ? campaignGoal : null;
     const bgm = isBgmUserPreference(bgmPreference) ? bgmPreference : DEFAULT_BGM_PREFERENCE;
+    const bgmStart = isBgmStartPreference(bgmStartPreference)
+      ? bgmStartPreference
+      : DEFAULT_BGM_START_PREFERENCE;
     const legacyGoal = goal?.trim() || (marketingGoal ? legacyGoalFromMarketingGoal(marketingGoal) : undefined);
 
     const [campaign] = await db
@@ -118,6 +125,7 @@ export async function POST(request: Request) {
         contentStyle: style,
         campaignGoal: marketingGoal,
         bgmPreference: bgm,
+        metadata: { bgmStartPreference: bgmStart },
         createdBy: user.id,
       })
       .returning();

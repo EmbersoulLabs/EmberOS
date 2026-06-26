@@ -11,6 +11,8 @@ import {
   effectiveCampaignGoal,
   resolveAutoClipPlatforms,
   recommendBgm,
+  getBgmTrackById,
+  resolveBgmStartOffsetSec,
   type BgmRecommendation,
   resolveAutoClipSourceAsset,
   strategyObjectives,
@@ -342,6 +344,19 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         contentPackage.subtitleTimeline
       );
       editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
+
+      const bgmTrack = getBgmTrackById(bgmRec.trackId);
+      editPlan = {
+        ...editPlan,
+        audio: {
+          ...editPlan.audio,
+          bgmStartOffsetSec: resolveBgmStartOffsetSec(
+            bgmTrack?.durationSec ?? 120,
+            editPlan.targetDurationSec,
+            creativeBrief.bgmStartPreference ?? "auto"
+          ),
+        },
+      };
 
       const primaryCopy = variants.find((v) => v.locale === "zh") ?? variants[0]!;
 

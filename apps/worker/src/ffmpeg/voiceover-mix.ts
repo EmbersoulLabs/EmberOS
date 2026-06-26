@@ -97,6 +97,7 @@ export async function mixVideoWithVoiceoverAndBgm(
     const mixFilter = mixVoiceWithSmartBgm("vo", "1:a", "aout", {
       durationSec: finalDurationSec,
       duckUnderVoice: true,
+      bgmStartOffsetSec: editPlan.audio.bgmStartOffsetSec ?? 0,
     });
     await execFileAsync(
       getFfmpegPath(),

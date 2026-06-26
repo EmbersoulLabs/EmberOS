@@ -632,7 +632,8 @@ export async function burnSubtitles(
           bgmPath,
           outputPath,
           plan.targetDurationSec,
-          false
+          false,
+          plan.audio.bgmStartOffsetSec ?? 0
         );
         console.log(`[ffmpeg] BGM mixed key=${bgmKey} dur=${plan.targetDurationSec}s`);
       } catch (err) {
