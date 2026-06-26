@@ -13,6 +13,7 @@
     "db:generate": "pnpm --filter @ceo-agent/db generate",
     "db:push": "pnpm --filter @ceo-agent/db push",
     "db:marketing-os": "pnpm --filter @ceo-agent/db sql:marketing-os",
+    "db:rls": "pnpm --filter @ceo-agent/db sql:rls",
     "retry:renders": "pnpm --filter @ceo-agent/worker retry:renders",
     "check:infra": "pnpm --filter @ceo-agent/worker check:infra",
     "upload:brand-logo": "pnpm --filter @ceo-agent/worker upload:brand-logo",

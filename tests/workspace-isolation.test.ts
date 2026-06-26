@@ -1,20 +1,8 @@
 import { describe, it, expect } from "vitest";
-
-const STORAGE_PATHS = {
-  source: (workspaceId: string, campaignId: string, assetId: string, ext: string) =>
-    `${workspaceId}/campaigns/${campaignId}/source/${assetId}.${ext}`,
-};
+import { ROLE_HIERARCHY } from "@ceo-agent/db";
+import { STORAGE_PATHS } from "@ceo-agent/shared";
 
 const PHASE1_PLATFORMS = ["tiktok", "xiaohongshu", "instagram"];
-
-const ROLE_HIERARCHY = {
-  admin: 100,
-  operator: 80,
-  editor: 60,
-  reviewer: 40,
-  publisher: 40,
-  client_viewer: 10,
-};
 
 describe("workspace isolation", () => {
   it("admin role has higher hierarchy than client_viewer", () => {

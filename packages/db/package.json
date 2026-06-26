@@ -15,6 +15,7 @@
     "migrate": "drizzle-kit migrate",
     "sql:marketing-os": "tsx scripts/apply-marketing-os.ts",
     "sql:campaign-brief": "tsx scripts/apply-campaign-brief.ts",
+    "sql:rls": "tsx scripts/apply-rls.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "echo ok"

@@ -249,8 +249,14 @@ async function pollUntilDone(campaignId: string, taskId: string) {
   throw new Error("Timed out waiting for pipeline completion (35 min)");
 }
 
+function normalizeArgs(argv: string[]): string[] {
+  const args = [...argv];
+  while (args[0] === "--") args.shift();
+  return args;
+}
+
 async function main() {
-  const args = process.argv.slice(2);
+  const args = normalizeArgs(process.argv.slice(2));
   if (args.length === 0 || args.includes("-h") || args.includes("--help")) {
     usage();
     process.exit(args.length === 0 ? 1 : 0);
