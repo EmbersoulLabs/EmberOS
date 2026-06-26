@@ -6,6 +6,7 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { STORAGE_PATHS, MAX_UPLOAD_SIZE_BYTES, assessFinishedAdRisk } from "@ceo-agent/shared";
 import { validateNewAssetUpload } from "@/lib/campaign-assets";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 export async function POST(
   request: Request,
@@ -13,6 +14,8 @@ export async function POST(
 ) {
   try {
     const user = await requireAuth();
+    const limited = await enforceRateLimit(request, "uploadUrl", user.id);
+    if (limited) return limited;
     const { id: campaignId } = await params;
     const body = await request.json();
     const { filename, mimeType, type, fileSizeBytes } = body as {

@@ -1,4 +1,4 @@
-import { Worker } from "bullmq";
+import { Worker, type WorkerOptions } from "bullmq";
 import { eq, and } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig } from "@ceo-agent/queue";
@@ -35,10 +35,8 @@ const concurrency = parseInt(process.env.WORKER_CONCURRENCY ?? "2", 10);
 /** Reduce Upstash command churn when queues are idle (free tier ~500k/month). */
 const workerOpts = {
   drainDelay: 5000,
-  settings: {
-    stalledInterval: 60_000,
-  },
-} as const;
+  stalledInterval: 60_000,
+} satisfies Pick<WorkerOptions, "drainDelay" | "stalledInterval">;
 
 const pipelineHooks: PipelineHooks = {
   prepareVisionMedia: {

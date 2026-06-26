@@ -19,6 +19,7 @@ import {
   type TaskExportRequestState,
 } from "@ceo-agent/agents";
 import { enqueueFinalRendersForTask, enqueue2kRendersForTask } from "@/lib/render-queue";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 type ExportPackOutput = {
   exportPackUrl?: string;
@@ -170,6 +171,8 @@ export async function POST(
 ) {
   try {
     const user = await requireAuth();
+    const limited = await enforceRateLimit(request, "export", user.id);
+    if (limited) return limited;
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const { platforms, resolution: resolutionRaw } = body as {

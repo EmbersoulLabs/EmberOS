@@ -236,7 +236,9 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
       taskId: data.taskId,
       campaignId: data.campaignId,
       contentPackage,
-      creatives,
+      creatives: creatives.map((c) => ({
+        copyVariants: (c.copyVariants ?? null) as CopyVariant[] | null,
+      })),
     });
     await mkdir(join(workDir, "content-pack"), { recursive: true });
     const jsonPath = join(workDir, "content-pack", "content_pack.json");
@@ -296,7 +298,9 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
       output: packOutput,
     };
 
-    const requestOutput = progress.export_request?.output as Record<string, unknown> | undefined;
+    const requestOutput = (
+      progress.export_request as { output?: Record<string, unknown> } | undefined
+    )?.output;
     if (requestOutput) {
       progress.export_request = {
         ...(progress.export_request as Record<string, unknown>),

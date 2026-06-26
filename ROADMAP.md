@@ -70,7 +70,8 @@
 | Client Portal | ✅ | `app/portal/[token]`、`api/portal/[token]` |
 | ZIP export | ✅ | `api/creatives/[id]/export`、worker `createExportZip` |
 | Workspace 隔离测试 | 🔄 | `tests/workspace-isolation.test.ts`（需跑 `pnpm test`） |
-| API 限流 | ⬜ | 待加 middleware |
+| API 限流 | ✅ | `apps/web/src/lib/rate-limit.ts` + 敏感路由；Redis 优先 |
+| GitHub Actions CI | ✅ | `.github/workflows/ci.yml` — test/typecheck/build/smoke |
 | Vercel 部署 web | ⬜ | 待配 `vercel.json` / 环境变量 |
 | Railway 部署 worker | ⬜ | 待 `infra/docker/Dockerfile.worker` |
 
@@ -122,7 +123,7 @@
 - [x] M1 W4 — Campaign/upload/ffprobe
 - [x] M2 W5–W8 — worker + agents + task UI（代码完成，联调后勾）
 - [x] M3 W9–W12 — FFmpeg + review + retry（代码完成，联调后勾）
-- [ ] M4 W13–W16 — Portal/export 已有；**部署 + 限流 + 生产验证** 待做
+- [ ] M4 W13–W16 — Portal/export 已有；**CI + 限流 + 健康检查** ✅；**部署 + 生产验证** 待做
 
 ---
 
@@ -142,6 +143,9 @@ pnpm worker:dev   # 另开终端
 # 检查
 pnpm typecheck
 pnpm test
+pnpm verify          # test + typecheck + web build（与 CI 一致）
+pnpm smoke:prod -- --url http://localhost:3000
+pnpm smoke:infra     # DATABASE_URL + REDIS_URL 连通性
 pnpm build
 ```
 

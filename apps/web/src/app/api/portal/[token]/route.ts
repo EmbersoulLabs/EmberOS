@@ -2,6 +2,7 @@ import { eq, and, gt } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
+import { clientIp, enforceRateLimit } from "@/lib/rate-limit";
 
 async function validatePortalToken(token: string) {
   const db = getDb();
@@ -78,6 +79,8 @@ export async function POST(
 ) {
   try {
     const { token } = await params;
+    const limited = await enforceRateLimit(request, "portalDecide", clientIp(request));
+    if (limited) return limited;
     const invite = await validatePortalToken(token);
     if (!invite || !invite.creativeId) {
       return apiError("Invalid or expired token", "FORBIDDEN", 403);

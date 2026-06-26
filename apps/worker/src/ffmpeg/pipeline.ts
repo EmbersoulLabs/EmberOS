@@ -19,6 +19,12 @@ import {
   buildLogoOnlyFilterComplex,
   createDrawtextOverlayContext,
 } from "./drawtext-overlays";
+import {
+  assVideoFilter,
+  buildAssSubtitles,
+  collectSubtitleHighlightKeywords,
+} from "./ass-subtitles";
+import { stageSubtitleFontForRender } from "./subtitle-fonts";
 import { buildDynamicMotionFilter, buildVideoClipFilter, segmentTransitionFilters } from "./dynamic-motion";
 
 const execFileAsync = promisify(execFile);
@@ -558,19 +564,35 @@ export async function burnSubtitles(
     let normalizedLocal = join(workDir, "normalized.mp4");
 
     const drawCtx = createDrawtextOverlayContext(profile.width, profile.height);
-    const drawtextFilters = buildDrawtextOverlayChain(plan, drawCtx);
-    const hasDrawtext = drawtextFilters.length > 0;
+    const hookDrawtextFilters = buildDrawtextOverlayChain(plan, drawCtx);
+    const hasHookDrawtext = hookDrawtextFilters.length > 0;
+    const hasAssSubs = (plan.subtitles?.length ?? 0) > 0;
     const logoPath = options?.logoPath;
 
-    if (!hasDrawtext && !logoPath) {
+    if (!hasAssSubs && !hasHookDrawtext && !logoPath) {
       await copyFile(baseClipPath, normalizedLocal);
     } else {
       const subtitledLocal = join(workDir, "subtitled.mp4");
-      const drawtextChain = drawtextFilters.join(",");
+
+      let localFonts = false;
+      if (hasAssSubs) {
+        localFonts = await stageSubtitleFontForRender(workDir);
+        const keywords = collectSubtitleHighlightKeywords(plan);
+        await writeFile(
+          assLocalPath,
+          buildAssSubtitles(plan.subtitles, profile.height, keywords),
+          "utf8"
+        );
+      }
+
+      const vfParts: string[] = [];
+      if (hasAssSubs) vfParts.push(assVideoFilter(workDir, localFonts));
+      if (hasHookDrawtext) vfParts.push(hookDrawtextFilters.join(","));
+      const videoFilter = vfParts.join(",");
 
       if (logoPath) {
-        const { filterComplex, outputLabel } = hasDrawtext
-          ? buildLogoOverlayFilterComplex(drawtextChain, 1)
+        const { filterComplex, outputLabel } = videoFilter
+          ? buildLogoOverlayFilterComplex(videoFilter, 1)
           : buildLogoOnlyFilterComplex(1);
         await runFfmpeg(
           [
@@ -601,14 +623,14 @@ export async function burnSubtitles(
           ],
           runInWorkDir
         );
-      } else {
+      } else if (videoFilter) {
         await runFfmpeg(
           [
             "-y",
             "-i",
             baseClipPath,
             "-vf",
-            drawtextChain,
+            videoFilter,
             "-c:v",
             "libx264",
             "-preset",
@@ -625,6 +647,8 @@ export async function burnSubtitles(
           ],
           runInWorkDir
         );
+      } else {
+        await copyFile(baseClipPath, subtitledLocal);
       }
 
       if (plan.audio.normalize) {

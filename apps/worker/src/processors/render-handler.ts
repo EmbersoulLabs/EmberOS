@@ -16,6 +16,7 @@ import {
   type ClipDownloadResolution,
   type RenderMode,
   type RenderProgress,
+  type RenderStatus,
 } from "@ceo-agent/shared";
 import type { EditPlan } from "@ceo-agent/shared";
 import {
@@ -76,7 +77,7 @@ async function updateRenderState(
     .update(schema.creatives)
     .set({
       renderStatus,
-      renderProgress: progress,
+      renderProgress: progress as unknown as Record<string, unknown>,
       updatedAt: new Date(),
     })
     .where(eq(schema.creatives.id, creativeId));
@@ -85,7 +86,8 @@ async function updateRenderState(
 export async function processRenderJob(data: RenderJobData): Promise<void> {
   const outputResolution = data.outputResolution;
   const isRenditionJob = Boolean(outputResolution && outputResolution !== "720p");
-  const mode = isRenditionJob ? "final" : resolveMode(data);
+  const mode: RenderMode = isRenditionJob ? "final" : resolveMode(data);
+  const subtitlesOnly = data.mode === "subtitles_only";
   const cacheProfile =
     outputResolution === "2k" ? "2k" : mode === "final" ? "final" : "preview";
   const isPreviewPath = !isRenditionJob && (mode === "preview" || mode === "subtitles_only");
@@ -124,8 +126,8 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     cacheProfile
   );
 
-  const priorStatus = creative.renderStatus ?? "none";
-  const runningStatus =
+  const priorStatus = (creative.renderStatus ?? "none") as RenderStatus;
+  const runningStatus: RenderStatus =
     isRenditionJob && outputResolution === "2k"
       ? priorStatus
       : renderStatusForMode(isPreviewPath ? "preview" : "final", true);
@@ -163,13 +165,13 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
 
     let cachedBaseLocal: string | undefined;
     const canUseCache =
-      mode === "subtitles_only" ||
+      subtitlesOnly ||
       (creative.renderCachePath === cacheStoragePath &&
         creative.renderCacheFingerprint === fingerprint);
 
-    if (canUseCache || mode === "subtitles_only") {
+    if (canUseCache || subtitlesOnly) {
       const cacheDownloadPath =
-        mode === "subtitles_only" && creative.renderCachePath
+        subtitlesOnly && creative.renderCachePath
           ? creative.renderCachePath
           : cacheStoragePath;
       try {
@@ -177,7 +179,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         await downloadStorageFile(cacheDownloadPath, cachedBaseLocal);
         await access(cachedBaseLocal);
       } catch {
-        if (mode === "subtitles_only") {
+        if (subtitlesOnly) {
           throw new Error(
             "Cached base clip not found; run full preview render first"
           );

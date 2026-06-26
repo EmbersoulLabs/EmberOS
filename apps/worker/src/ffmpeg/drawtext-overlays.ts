@@ -187,14 +187,18 @@ export function buildHookTitleDrawtextFilters(
   return filters;
 }
 
+export function buildHookOnlyDrawtextChain(
+  editPlan: EditPlan,
+  ctx: DrawtextOverlayContext
+): string[] {
+  return buildHookTitleDrawtextFilters(editPlan.cover?.overlayText, ctx);
+}
+
 export function buildDrawtextOverlayChain(
   editPlan: EditPlan,
   ctx: DrawtextOverlayContext
 ): string[] {
-  return [
-    ...buildHookTitleDrawtextFilters(editPlan.cover?.overlayText, ctx),
-    ...buildAnimatedSubtitleDrawtextFilters(editPlan.subtitles, ctx),
-  ];
+  return buildHookOnlyDrawtextChain(editPlan, ctx);
 }
 
 /** Bottom-right logo overlay at 70% opacity, 20px inset. */

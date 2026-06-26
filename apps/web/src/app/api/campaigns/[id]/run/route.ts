@@ -5,15 +5,18 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { enqueuePipeline } from "@ceo-agent/queue";
 import { LLM_BUDGET_PER_TASK_USD } from "@ceo-agent/shared";
 import { validateCampaignAssetsForRun } from "@/lib/campaign-assets";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const MAX_CONCURRENT_CAMPAIGNS = 2;
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await requireAuth();
+    const limited = await enforceRateLimit(request, "campaignRun", user.id);
+    if (limited) return limited;
     const { id: campaignId } = await params;
     const db = getDb();
 

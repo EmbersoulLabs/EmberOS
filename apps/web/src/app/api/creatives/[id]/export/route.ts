@@ -4,6 +4,7 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueExport } from "@ceo-agent/queue";
 import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 const EXPORTABLE_CREATIVE_STATUSES = new Set([
   "pending_internal_review",
@@ -83,6 +84,8 @@ export async function POST(
 ) {
   try {
     const user = await requireAuth();
+    const limited = await enforceRateLimit(request, "export", user.id);
+    if (limited) return limited;
     const { id } = await params;
     const body = await request.json();
     const { platforms } = body as { platforms?: string[] };

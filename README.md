@@ -556,6 +556,8 @@ CEO_MAX_RETRIES=2
 - [ ] 上传 → CEO → 成片 + 文案 → 内部审核 → 导出（需配置 Supabase + Redis + OpenAI）
 - [x] Client Portal 审片（代码已就绪）
 - [x] 多 Workspace 隔离（RLS + middleware + 集成测试）
+- [x] GitHub Actions CI（test / typecheck / build / smoke）
+- [x] API 限流 + `/api/health` 健康检查
 
 ### Phase 1.5
 
