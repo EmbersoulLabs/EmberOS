@@ -43,9 +43,11 @@ Information may be incomplete. Infer from strategy + vision. Never ask for more 
 
 # OBJECTIVES
 
-Generate voice scripts (15s, 30s, 60s), **voiceScriptsEn** (same three lengths in natural English when primary scripts are Chinese), subtitle timeline with timestamps (one idea per segment), platform captions (TikTok, Instagram, Facebook, LinkedIn, Xiaohongshu, YouTube Shorts, Google Business Post), 10 hooks, 10 CTAs, voice emphasis suggestions, B-roll suggestions, music mood, visual effects, posting recommendation, and consistencyScore (0-100).
+Generate voice scripts (15s, 30s, 60s), **voiceScriptsEn** (same three lengths in natural English when primary scripts are Chinese), subtitle timeline with timestamps (one idea per segment), platform captions in **three languages** (captions = Chinese primary, captionsEn, captionsMs), 10 hooks and 10 CTAs each with **text (zh), textEn, textMs** (or text as { zh, en, ms }), voice emphasis suggestions, B-roll suggestions, music mood, visual effects, posting recommendation, and consistencyScore (0-100).
 
 On-screen video subtitles are **bilingual 中英** — always provide voiceScriptsEn as English counterparts to voiceScripts when content is Chinese.
+
+Marketing pack must be ready to publish in **Chinese, English, and Bahasa Malaysia**.
 
 Voice scripts: natural, conversational, TTS-friendly, no filler.
 
@@ -321,30 +323,123 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
     ? `${script30} 核心卖点清晰，画面有记忆点。${s.ctaStrategy}`
     : `${script30} Clear value, memorable visuals. ${s.ctaStrategy}`;
 
+  const hookEn = `${product} — ${s.marketingAngle.slice(0, 60)}.`;
+  const hookMs = `${product} — ${s.marketingAngle.slice(0, 60)}.`;
+
   const hooks: MarketingContentPackage["hooks"] = [
-    { text: hook15, type: "curiosity" },
-    { text: zh ? `为什么${product}值得现在关注？` : `Why ${product} stands out right now?`, type: "question" },
-    { text: pain ?? s.marketingAngle, type: "problem" },
-    { text: s.marketingAngle, type: "transformation" },
-    { text: zh ? `来自${s.industry}的真实案例` : `Real ${s.industry} story`, type: "story" },
-    { text: audience, type: "emotion" },
-    { text: s.product, type: "authority" },
-    { text: s.marketingGoal, type: "trend" },
-    { text: s.ctaStrategy, type: "offer" },
-    { text: zh ? `今天就开始` : `Start today`, type: "shock" },
+    {
+      text: hook15,
+      textEn: hookEn,
+      textMs: hookMs,
+      type: "curiosity",
+    },
+    {
+      text: zh ? `为什么${product}值得现在关注？` : `Why ${product} stands out right now?`,
+      textEn: `Why ${product} stands out right now?`,
+      textMs: `Mengapa ${product} menonjol sekarang?`,
+      type: "question",
+    },
+    {
+      text: pain ?? s.marketingAngle,
+      textEn: pain ?? s.marketingAngle,
+      textMs: pain ?? s.marketingAngle,
+      type: "problem",
+    },
+    {
+      text: s.marketingAngle,
+      textEn: s.marketingAngle,
+      textMs: s.marketingAngle,
+      type: "transformation",
+    },
+    {
+      text: zh ? `来自${s.industry}的真实案例` : `Real ${s.industry} story`,
+      textEn: `Real ${s.industry} story`,
+      textMs: `Kisah sebenar ${s.industry}`,
+      type: "story",
+    },
+    {
+      text: audience,
+      textEn: audience,
+      textMs: audience,
+      type: "emotion",
+    },
+    { text: s.product, textEn: s.product, textMs: s.product, type: "authority" },
+    {
+      text: s.marketingGoal,
+      textEn: s.marketingGoal,
+      textMs: s.marketingGoal,
+      type: "trend",
+    },
+    {
+      text: s.ctaStrategy,
+      textEn: s.ctaStrategy,
+      textMs: s.ctaStrategy,
+      type: "offer",
+    },
+    {
+      text: zh ? `今天就开始` : `Start today`,
+      textEn: "Start today",
+      textMs: "Mulakan hari ini",
+      type: "shock",
+    },
   ];
 
   const cta: MarketingContentPackage["cta"] = [
-    { text: s.ctaStrategy, style: "primary" },
-    { text: zh ? "立即咨询" : "Contact Us", style: "soft" },
-    { text: zh ? "了解更多" : "Learn More", style: "soft" },
-    { text: zh ? "私信我们" : "Message Us", style: "community" },
-    { text: zh ? "预约体验" : "Book Today", style: "booking" },
-    { text: zh ? "马上查看" : "Shop Now", style: "hard" },
-    { text: zh ? "访问官网" : "Visit Website", style: "soft" },
-    { text: zh ? "免费试用" : "Start Free Trial", style: "trial" },
-    { text: zh ? "立即预订" : "Reserve Now", style: "urgency" },
-    { text: zh ? "加入社群" : "Join Today", style: "community" },
+    { text: s.ctaStrategy, textEn: s.ctaStrategy, textMs: s.ctaStrategy, style: "primary" },
+    {
+      text: zh ? "立即咨询" : "Contact Us",
+      textEn: "Contact Us",
+      textMs: "Hubungi Kami",
+      style: "soft",
+    },
+    {
+      text: zh ? "了解更多" : "Learn More",
+      textEn: "Learn More",
+      textMs: "Ketahui Lebih",
+      style: "soft",
+    },
+    {
+      text: zh ? "私信我们" : "Message Us",
+      textEn: "Message Us",
+      textMs: "Mesej Kami",
+      style: "community",
+    },
+    {
+      text: zh ? "预约体验" : "Book Today",
+      textEn: "Book Today",
+      textMs: "Tempah Hari Ini",
+      style: "booking",
+    },
+    {
+      text: zh ? "马上查看" : "Shop Now",
+      textEn: "Shop Now",
+      textMs: "Beli Sekarang",
+      style: "hard",
+    },
+    {
+      text: zh ? "访问官网" : "Visit Website",
+      textEn: "Visit Website",
+      textMs: "Lawati Laman Web",
+      style: "soft",
+    },
+    {
+      text: zh ? "免费试用" : "Start Free Trial",
+      textEn: "Start Free Trial",
+      textMs: "Cuba Percuma",
+      style: "trial",
+    },
+    {
+      text: zh ? "立即预订" : "Reserve Now",
+      textEn: "Reserve Now",
+      textMs: "Tempah Sekarang",
+      style: "urgency",
+    },
+    {
+      text: zh ? "加入社群" : "Join Today",
+      textEn: "Join Today",
+      textMs: "Sertai Hari Ini",
+      style: "community",
+    },
   ];
 
   const captions = zh
@@ -367,17 +462,39 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
         googleBusiness: `${product}: ${s.marketingAngle}. ${s.ctaStrategy}`,
       };
 
+  const captionsEn = {
+    tiktok: `${hookEn}\n${body15}`,
+    instagram: `${product} · ${s.marketingAngle}\n\n${body15}`,
+    facebook: `${product}\n\n${script30}\n\n${s.ctaStrategy}`,
+    linkedin: `${product} | ${s.marketingGoal}\n${s.marketingAngle}\n${s.ctaStrategy}`,
+    xiaohongshu: "",
+    youtubeShorts: `${product} — ${s.marketingGoal}. ${s.keywords.slice(0, 4).join(", ")}`,
+    googleBusiness: `${product}: ${s.marketingAngle}. ${s.ctaStrategy}`,
+  };
+
+  const captionsMs = {
+    tiktok: `${hookMs}\n${body15}`,
+    instagram: `${product} · ${s.marketingAngle}\n\n${body15}`,
+    facebook: `${product}\n\n${script30}\n\n${s.ctaStrategy}`,
+    linkedin: `${product} | ${s.marketingGoal}\n${s.marketingAngle}\n${s.ctaStrategy}`,
+    xiaohongshu: "",
+    youtubeShorts: `${product} — ${s.marketingGoal}. ${s.keywords.slice(0, 4).join(", ")}`,
+    googleBusiness: `${product}: ${s.marketingAngle}. ${s.ctaStrategy}`,
+  };
+
   const pkg: MarketingContentPackage = {
     voiceScripts: { "15s": script15, "30s": script30, "60s": script60 },
     voiceScriptsEn: zh
       ? {
-          "15s": `${product} — ${s.marketingAngle.slice(0, 60)}.`,
+          "15s": hookEn,
           "30s": `${product}. ${s.marketingGoal}. Built for ${audience}. ${s.ctaStrategy}`,
           "60s": `${product}. ${s.marketingAngle}. Clear value, memorable visuals. ${s.ctaStrategy}`,
         }
       : undefined,
     subtitleTimeline: buildSubtitleTimeline(script15, 15),
     captions,
+    captionsEn,
+    captionsMs,
     hooks,
     cta,
     voiceStyle: {

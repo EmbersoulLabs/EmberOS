@@ -383,7 +383,7 @@ export default function TaskProgressContent() {
 
             {contentPackage && <MarketingPackagePanel contentPackage={contentPackage} />}
 
-            {hasCopy && activeTaskId && (
+            {hasCopy && activeTaskId && !contentPackage && (
               <section className="brand-card mt-8 p-6">
                 <h3 className="text-lg font-semibold text-navy">{t("creative.copyDownload.taskTitle")}</h3>
                 <p className="mt-1 text-sm text-ink-secondary">{t("creative.copyDownload.taskHint")}</p>

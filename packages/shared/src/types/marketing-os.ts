@@ -250,12 +250,16 @@ export type MarketingCaptions = z.infer<typeof MarketingCaptionsSchema>;
 
 export const ContentHookItemSchema = z.object({
   text: z.string(),
+  textEn: z.string().optional(),
+  textMs: z.string().optional(),
   type: z.string(),
 });
 export type ContentHookItem = z.infer<typeof ContentHookItemSchema>;
 
 export const ContentCtaItemSchema = z.object({
   text: z.string(),
+  textEn: z.string().optional(),
+  textMs: z.string().optional(),
   style: z.string().optional(),
 });
 export type ContentCtaItem = z.infer<typeof ContentCtaItemSchema>;
@@ -274,6 +278,8 @@ export const MarketingContentPackageSchema = z.object({
   voiceScriptsEn: VoiceScriptsSchema.optional(),
   subtitleTimeline: z.array(SubtitleTimelineSegmentSchema).default([]),
   captions: MarketingCaptionsSchema,
+  captionsEn: MarketingCaptionsSchema.optional(),
+  captionsMs: MarketingCaptionsSchema.optional(),
   hooks: z.array(ContentHookItemSchema).min(1),
   cta: z.array(ContentCtaItemSchema).min(1),
   voiceStyle: z.record(z.union([z.string(), z.array(z.string())])).default({}),
@@ -285,6 +291,36 @@ export const MarketingContentPackageSchema = z.object({
 });
 export type MarketingContentPackage = z.infer<typeof MarketingContentPackageSchema>;
 
+function parseCaptionBlock(raw: Record<string, unknown>): MarketingCaptions {
+  return {
+    tiktok: String(raw.tiktok ?? ""),
+    instagram: String(raw.instagram ?? ""),
+    facebook: String(raw.facebook ?? ""),
+    linkedin: String(raw.linkedin ?? ""),
+    xiaohongshu: String(raw.xiaohongshu ?? ""),
+    youtubeShorts: String(raw.youtubeShorts ?? raw.youtube ?? ""),
+    googleBusiness: String(raw.googleBusiness ?? raw.google ?? ""),
+  };
+}
+
+function parseLocalizedItemText(value: unknown): {
+  text: string;
+  textEn?: string;
+  textMs?: string;
+} {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const tri = value as { zh?: string; en?: string; ms?: string };
+    if ("zh" in tri || "en" in tri || "ms" in tri) {
+      return {
+        text: String(tri.zh ?? tri.en ?? tri.ms ?? "").trim(),
+        textEn: tri.en?.trim() || undefined,
+        textMs: tri.ms?.trim() || undefined,
+      };
+    }
+  }
+  return { text: String(value ?? "").trim() };
+}
+
 /** Normalize LLM hooks/cta that may arrive as plain strings. */
 export function normalizeMarketingContentPackage(raw: unknown): MarketingContentPackage | null {
   if (!raw || typeof raw !== "object") return null;
@@ -292,11 +328,22 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
 
   const hooksRaw = Array.isArray(data.hooks) ? data.hooks : [];
   const hooks = hooksRaw
-    .map((h, i) => {
+    .map((h) => {
       if (typeof h === "string") return { text: h, type: "curiosity" };
       if (h && typeof h === "object" && "text" in h) {
-        const item = h as { text?: string; type?: string };
-        return { text: String(item.text ?? ""), type: String(item.type ?? "curiosity") };
+        const item = h as {
+          text?: unknown;
+          textEn?: string;
+          textMs?: string;
+          type?: string;
+        };
+        const localized = parseLocalizedItemText(item.text);
+        return {
+          text: localized.text,
+          textEn: item.textEn?.trim() || localized.textEn,
+          textMs: item.textMs?.trim() || localized.textMs,
+          type: String(item.type ?? "curiosity"),
+        };
       }
       return null;
     })
@@ -307,10 +354,16 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
     .map((c): ContentCtaItem | null => {
       if (typeof c === "string") return { text: c };
       if (c && typeof c === "object" && "text" in c) {
-        const item = c as { text?: string; style?: string };
-        const text = String(item.text ?? "").trim();
+        const item = c as { text?: unknown; textEn?: string; textMs?: string; style?: string };
+        const localized = parseLocalizedItemText(item.text);
+        const text = localized.text || String(item.text ?? "").trim();
         if (!text) return null;
-        return item.style ? { text, style: item.style } : { text };
+        const base = {
+          text,
+          textEn: item.textEn?.trim() || localized.textEn,
+          textMs: item.textMs?.trim() || localized.textMs,
+        };
+        return item.style ? { ...base, style: item.style } : base;
       }
       return null;
     })
@@ -319,6 +372,8 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
   const voiceScriptsRaw = (data.voiceScripts ?? {}) as Record<string, unknown>;
   const voiceScriptsEnRaw = (data.voiceScriptsEn ?? {}) as Record<string, unknown>;
   const captionsRaw = (data.captions ?? {}) as Record<string, unknown>;
+  const captionsEnRaw = (data.captionsEn ?? {}) as Record<string, unknown>;
+  const captionsMsRaw = (data.captionsMs ?? {}) as Record<string, unknown>;
   const postingRaw = (data.postingRecommendation ?? {}) as Record<string, unknown>;
 
   const candidate = {
@@ -333,17 +388,9 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
       "60s": String(voiceScriptsEnRaw["60s"] ?? voiceScriptsEnRaw["60S"] ?? ""),
     },
     subtitleTimeline: Array.isArray(data.subtitleTimeline) ? data.subtitleTimeline : [],
-    captions: {
-      tiktok: String(captionsRaw.tiktok ?? ""),
-      instagram: String(captionsRaw.instagram ?? ""),
-      facebook: String(captionsRaw.facebook ?? ""),
-      linkedin: String(captionsRaw.linkedin ?? ""),
-      xiaohongshu: String(captionsRaw.xiaohongshu ?? ""),
-      youtubeShorts: String(captionsRaw.youtubeShorts ?? captionsRaw.youtube ?? ""),
-      googleBusiness: String(captionsRaw.googleBusiness ?? captionsRaw.google ?? ""),
-    },
-    hooks,
-    cta,
+    captions: parseCaptionBlock(captionsRaw),
+    captionsEn: Object.keys(captionsEnRaw).length ? parseCaptionBlock(captionsEnRaw) : undefined,
+    captionsMs: Object.keys(captionsMsRaw).length ? parseCaptionBlock(captionsMsRaw) : undefined,
     voiceStyle:
       data.voiceStyle && typeof data.voiceStyle === "object"
         ? (data.voiceStyle as Record<string, string | string[]>)

@@ -8,7 +8,6 @@ import { extractClipMeta, formatClipDuration, formatPlatformLabel, videoUrlWithC
 import { scoreLetterGrade } from "@/lib/score-utils";
 import { ClipAudioControls } from "@/components/pipeline/ClipAudioControls";
 import { ClipDownloadMenu } from "@/components/pipeline/ClipDownloadMenu";
-import { CopyDownloadButtons } from "@/components/pipeline/CopyDownloadButtons";
 import { MusicMatchPanel } from "@/components/pipeline/MusicMatchPanel";
 import type { EditPlan } from "@ceo-agent/shared";
 
@@ -192,7 +191,6 @@ export function ClipPreviewGrid({
                       clipLabel={meta.clipTitle ?? `clip_${index + 1}`}
                       compact
                     />
-                    <CopyDownloadButtons creativeId={id} compact />
                     <Link
                       href={`/w/${slug}/creatives/${id}`}
                       className="block text-center text-xs font-medium text-brand-blue transition hover:text-brand-blue/80"
