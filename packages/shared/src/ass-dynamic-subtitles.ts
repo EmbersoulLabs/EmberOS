@@ -83,7 +83,7 @@ export function buildAssAnimatedDialogueText(
   const cfg = styleConfig ?? resolveSubtitleStyle("minimal");
   const brand = options?.brandColor?.trim() || null;
   const bounce = options?.bounce ?? false;
-  const pop = options?.pop ?? true;
+  const pop = options?.pop ?? false;
   const durationMs = options?.durationMs ?? 0;
   const outlineColor = brand ?? ASS_COLOR_BLACK;
   const outlinePx = brand ? Math.max(cfg.outlinePx, 2) : cfg.outlinePx;
