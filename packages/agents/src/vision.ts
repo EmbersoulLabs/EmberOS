@@ -315,22 +315,25 @@ function coerceVisionResult(result: unknown, input: VisionInput): VisionAnalysis
 }
 
 export async function runVisionAgent(input: VisionInput): Promise<{
-  analysis: VisionAnalysis;
+  analysis: VisionAnalysis & {
+    diagnostics?: { frameCount: number; validFrameCount: number; source: "model" | "fallback" };
+  };
   usage: { input: number; output: number; costUsd: number };
 }> {
   const locale = resolveVisionLocale(input);
-  const hasFrames = (input.frames?.length ?? 0) > 0;
+  const validFrames = (input.frames ?? []).filter((f) => f.dataUrl.length > 200);
+  const hasFrames = validFrames.length > 0;
   console.log(
-    `[vision] start asset=${input.assetId} media=${input.mediaType} frames=${input.frames?.length ?? 0}`
+    `[vision] start asset=${input.assetId} media=${input.mediaType} frames=${input.frames?.length ?? 0} valid=${validFrames.length}`
   );
 
   const system = `You are a Vision Agent analyzing marketing video/image assets for Singapore/SEA markets.
 Identify subjects, scenes, products, emotional hooks, and suggested highlight moments for ad creation.
 Estimate primarySubject as normalized x/y (0–1) center of the main product or person to keep in frame for vertical video cropping.
 ${outputLanguagePrompt(locale)}
-${hasFrames ? "You are given real frames from the user's own upload — describe only what you see." : "Infer likely visual content from campaign context when frame data is sparse."}
+${hasFrames ? "You are given real frames from the user's own upload — describe ONLY what you see in the images. Name specific visible items (e.g. rose bouquet, latte art, leather wallet). NEVER use the campaign project name or marketing goal as a product/subject name." : "Infer likely visual content from campaign context when frame data is sparse."}
 For videos, align scene timestamps with the provided frame atSec values when possible.
-Output JSON matching VisionAnalysis schema.`;
+Output JSON with arrays for subjects, products, scenes, hooks, suggestedMoments.`;
 
   const user = JSON.stringify({
     assetId: input.assetId,
@@ -354,12 +357,13 @@ Output JSON matching VisionAnalysis schema.`;
     ? await callVisionJsonModel<unknown>(
         system,
         user,
-        input.frames!.map((f) => f.dataUrl),
+        validFrames.map((f) => f.dataUrl),
         schemaHint
       )
     : await callJsonModel<unknown>(system, user, schemaHint);
 
   const coerced = coerceVisionResult(result, input);
+  const source = coerced ? ("model" as const) : ("fallback" as const);
   if (!coerced) {
     console.warn(
       `[vision] no usable visual signal (hasFrames=${hasFrames}, asset=${input.assetId}) — templated fallback`
@@ -369,7 +373,16 @@ Output JSON matching VisionAnalysis schema.`;
       `[vision] ok asset=${input.assetId} confidence=${coerced.confidence} subjects=${coerced.subjects.slice(0, 3).join(", ")}`
     );
   }
-  const analysis: VisionAnalysis = coerced ?? buildFallbackAnalysis(input);
+  const analysis: VisionAnalysis & {
+    diagnostics?: { frameCount: number; validFrameCount: number; source: "model" | "fallback" };
+  } = {
+    ...(coerced ?? buildFallbackAnalysis(input)),
+    diagnostics: {
+      frameCount: input.frames?.length ?? 0,
+      validFrameCount: validFrames.length,
+      source,
+    },
+  };
 
   return { analysis, usage };
 }

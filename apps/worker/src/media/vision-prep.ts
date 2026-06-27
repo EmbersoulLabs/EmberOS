@@ -34,6 +34,38 @@ async function toDataUrl(localPath: string): Promise<string> {
   return `data:${mimeFromPath(localPath)};base64,${buffer.toString("base64")}`;
 }
 
+/** Downscale large uploads so gpt-4o vision gets reliable JPEG payloads (multi-MB phone photos break analysis). */
+async function compressImageForVision(inputPath: string, outputPath: string): Promise<void> {
+  await execFileAsync(
+    getFfmpegPath(),
+    [
+      "-y",
+      "-i",
+      inputPath,
+      "-vf",
+      "scale=1024:1024:force_original_aspect_ratio=decrease",
+      "-frames:v",
+      "1",
+      "-q:v",
+      "5",
+      outputPath,
+    ],
+    { windowsHide: true, maxBuffer: 16 * 1024 * 1024 }
+  );
+}
+
+async function imageToVisionDataUrl(localPath: string, workDir: string): Promise<string> {
+  const size = (await stat(localPath)).size;
+  if (size <= 400_000) return toDataUrl(localPath);
+  const compressed = join(workDir, `vision_${Date.now()}.jpg`);
+  await compressImageForVision(localPath, compressed);
+  const compressedSize = (await stat(compressed)).size;
+  console.log(
+    `[vision-prep] compressed image ${(size / 1024 / 1024).toFixed(1)}MB → ${(compressedSize / 1024).toFixed(0)}KB`
+  );
+  return toDataUrl(compressed);
+}
+
 function frameTimestamps(durationSec: number, count: number): number[] {
   const usable = Math.max(1, durationSec - SOURCE_END_TRIM_SEC);
   const n = Math.min(count, VISION_MAX_FRAMES);
@@ -158,8 +190,10 @@ export async function prepareVisionFromStorage(input: {
     await downloadStorageFile(input.storagePath, localPath);
 
     if (input.mediaType === "image") {
+      const dataUrl = await imageToVisionDataUrl(localPath, workDir);
+      console.log(`[vision-prep] image ready chars=${dataUrl.length}`);
       return {
-        frames: [{ atSec: 0, dataUrl: await toDataUrl(localPath) }],
+        frames: [{ atSec: 0, dataUrl }],
       };
     }
 
@@ -178,7 +212,8 @@ export async function prepareVisionFromStorage(input: {
       const framePath = join(workDir, `frame_${i}.jpg`);
       try {
         await extractFrameAt(localPath, times[i]!, framePath);
-        frames.push({ atSec: times[i]!, dataUrl: await toDataUrl(framePath) });
+        const dataUrl = await imageToVisionDataUrl(framePath, workDir);
+        frames.push({ atSec: times[i]!, dataUrl });
       } catch (err) {
         console.warn(`[vision-prep] frame ${i} @${times[i]?.toFixed(2)}s failed:`, err);
       }
@@ -187,7 +222,7 @@ export async function prepareVisionFromStorage(input: {
     if (frames.length === 0) {
       const fallbackPath = join(workDir, "frame_fallback.jpg");
       await extractFrameAt(localPath, 0, fallbackPath);
-      frames.push({ atSec: 0, dataUrl: await toDataUrl(fallbackPath) });
+      frames.push({ atSec: 0, dataUrl: await imageToVisionDataUrl(fallbackPath, workDir) });
     }
 
     let transcriptSummary: string | undefined;

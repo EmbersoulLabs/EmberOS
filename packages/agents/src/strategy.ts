@@ -38,8 +38,8 @@ export interface StrategyInput {
 }
 
 /** Readable summary of substantive vision for the strategy prompt (empty if fallback/generic). */
-function visionSummaryText(vision?: VisionAnalysis): string {
-  if (!vision || isTemplatedVisionFallback(vision) || !hasSubstantiveVision(vision)) return "";
+function visionSummaryText(vision?: VisionAnalysis, campaignName?: string): string {
+  if (!vision || isTemplatedVisionFallback(vision) || !hasSubstantiveVision(vision, campaignName)) return "";
   const products = vision.products?.map((p) => p.name).filter(Boolean) ?? [];
   const subjects = vision.subjects?.filter(Boolean) ?? [];
   const scenes = vision.scenes?.map((s) => s.description).filter(Boolean).slice(0, 4) ?? [];
@@ -251,7 +251,7 @@ function resolveStrategyLocale(input: StrategyInput): ContentLocale {
 /** Context for industry inference — assets first, then description/business info. */
 function strategyExtraContext(input: StrategyInput): string {
   return [
-    visionSummaryText(input.vision),
+    visionSummaryText(input.vision, input.campaignName),
     input.videoAnalysis,
     typeof input.productInformation === "string" ? input.productInformation : "",
     typeof input.businessInformation === "string" ? input.businessInformation : "",
@@ -348,7 +348,7 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const knowledgeBlock = formatKnowledgeForPrompt(knowledgeSnippets);
   const seeded = hasKnowledgeSeed(inferred);
 
-  const visionSummary = visionSummaryText(input.vision);
+  const visionSummary = visionSummaryText(input.vision, input.campaignName);
   const goalIsContext = Boolean(input.goal?.trim()) && !isMarketingObjective(input.goal);
   const hasAnyContext = Boolean(visionSummary || goalIsContext || strategyExtraContext(input));
 

@@ -88,7 +88,7 @@ describe("resolveContentSubject", () => {
       subjects: ["Flower Bouquet", "product showcase", "brand scene"],
       products: [{ name: "Flower Bouquet" }],
       scenes: [],
-    })).toBe(false);
+    }, "Flower Bouquet")).toBe(false);
     expect(
       isTemplatedVisionFallback({
         confidence: 0.82,
@@ -97,6 +97,17 @@ describe("resolveContentSubject", () => {
         scenes: [{ startSec: 0, endSec: 3, description: "Wrapped bouquet on table" }],
       })
     ).toBe(false);
+    expect(
+      hasSubstantiveVision(
+        {
+          confidence: 0.82,
+          subjects: ["blue rose bouquet", "gift wrap"],
+          products: [{ name: "blue rose bouquet" }],
+          scenes: [{ startSec: 0, endSec: 3, description: "Wrapped bouquet on table" }],
+        },
+        "Flower Bouquet"
+      )
+    ).toBe(true);
   });
 
   it("detects when strategy product is just the campaign label", () => {

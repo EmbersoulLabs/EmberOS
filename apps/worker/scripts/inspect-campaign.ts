@@ -1,7 +1,7 @@
 import { config } from "dotenv";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { desc, ilike, or, eq } from "drizzle-orm";
+import { desc, ilike, or, eq, and } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -47,7 +47,13 @@ for (const c of campaigns) {
     .limit(1);
 
   const assets = await db
-    .select({ type: schema.assets.type, durationSec: schema.assets.durationSec, width: schema.assets.width, height: schema.assets.height })
+    .select({
+      type: schema.assets.type,
+      storagePath: schema.assets.storagePath,
+      durationSec: schema.assets.durationSec,
+      width: schema.assets.width,
+      height: schema.assets.height,
+    })
     .from(schema.assets)
     .where(eq(schema.assets.campaignId, c.id));
 
@@ -67,6 +73,19 @@ for (const c of campaigns) {
       vision?.confidence === 0.65 &&
       (vision?.subjects?.includes("product showcase") || vision?.subjects?.includes("产品展示"));
 
+    const [visionLog] = await db
+      .select({
+        inputTokens: schema.agentLogs.inputTokens,
+        outputTokens: schema.agentLogs.outputTokens,
+        costUsd: schema.agentLogs.costUsd,
+      })
+      .from(schema.agentLogs)
+      .where(and(eq(schema.agentLogs.taskId, t.id), eq(schema.agentLogs.agent, "vision")))
+      .limit(1);
+
+    // gpt-4o low-detail: ~85 tokens/image + text — 3 images can be ~450 total (not 3k+).
+    const visionDiag = (vision as { diagnostics?: { frameCount?: number; validFrameCount?: number; source?: string } })?.diagnostics;
+
     console.log("\n--- TASK ---");
     console.log(JSON.stringify({
       taskId: t.id,
@@ -74,7 +93,22 @@ for (const c of campaigns) {
       startedAt: t.startedAt,
       completedAt: t.completedAt,
       assetCount: assets.length,
-      assets: assets.map((a) => ({ type: a.type, durationSec: a.durationSec, width: a.width, height: a.height })),
+      assets: assets.map((a) => ({
+        type: a.type,
+        storagePath: a.storagePath,
+        durationSec: a.durationSec,
+        width: a.width,
+        height: a.height,
+      })),
+      visionDiagnostics: visionDiag ?? null,
+      visionAgentLog: visionLog
+        ? {
+            inputTokens: visionLog.inputTokens,
+            outputTokens: visionLog.outputTokens,
+            costUsd: visionLog.costUsd,
+            parseLikelySucceeded: (visionLog.outputTokens ?? 0) > 200 && !isFallback,
+          }
+        : null,
       visionConfidence: vision?.confidence,
       visionIsFallback: isFallback,
       hooksJson: hooksJson?.hooks?.map((h) => h.text),

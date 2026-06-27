@@ -170,11 +170,12 @@ export function isTemplatedVisionFallback(
 
 /** True when vision carries non-generic asset-derived signal. */
 export function hasSubstantiveVision(
-  vision: VisionLike & { confidence?: number; subjects?: string[] }
+  vision: VisionLike & { confidence?: number; subjects?: string[] },
+  campaignName?: string
 ): boolean {
   if (isTemplatedVisionFallback(vision)) return false;
   return collectVisionCandidates(vision, "en").some(
-    (item) => !isGenericVisionText(item) && !isCampaignLabel(item, undefined)
+    (item) => !isGenericVisionText(item) && !isCampaignLabel(item, campaignName)
   );
 }
 
@@ -212,7 +213,7 @@ export function resolveContentSubject(
   const campaignName = options?.campaignName;
   const description = collectDescriptionCandidates(options);
   const goal = normalizeLabel(options?.goal);
-  const hasAssets = hasSubstantiveVision(vision);
+  const hasAssets = hasSubstantiveVision(vision, campaignName);
 
   const fromAssets = hasAssets
     ? pickCandidate(collectVisionCandidates(vision, locale), campaignName)
