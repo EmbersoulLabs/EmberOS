@@ -325,8 +325,10 @@ export type PlatformMarketingAsset = z.infer<typeof PlatformMarketingAssetSchema
 
 export const MarketingContentPackageSchema = z.object({
   voiceScripts: VoiceScriptsSchema,
-  /** English voice scripts for on-screen 中英 subtitles (required when primary content is Chinese). */
+  /** English voice scripts for on-screen 中英 subtitles (populated when primary content is Chinese). */
   voiceScriptsEn: VoiceScriptsSchema.optional(),
+  /** Chinese voice scripts for on-screen 中英 subtitles (populated when primary content is English). */
+  voiceScriptsZh: VoiceScriptsSchema.optional(),
   subtitleTimeline: z.array(SubtitleTimelineSegmentSchema).default([]),
   captions: MarketingCaptionsSchema,
   captionsEn: MarketingCaptionsSchema.optional(),
@@ -461,6 +463,7 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
 
   const voiceScriptsRaw = (data.voiceScripts ?? {}) as Record<string, unknown>;
   const voiceScriptsEnRaw = (data.voiceScriptsEn ?? {}) as Record<string, unknown>;
+  const voiceScriptsZhRaw = (data.voiceScriptsZh ?? {}) as Record<string, unknown>;
   const captionsRaw = (data.captions ?? {}) as Record<string, unknown>;
   const captionsEnRaw = (data.captionsEn ?? {}) as Record<string, unknown>;
   const captionsMsRaw = (data.captionsMs ?? {}) as Record<string, unknown>;
@@ -519,6 +522,11 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
       "15s": String(voiceScriptsEnRaw["15s"] ?? voiceScriptsEnRaw["15S"] ?? ""),
       "30s": String(voiceScriptsEnRaw["30s"] ?? voiceScriptsEnRaw["30S"] ?? ""),
       "60s": String(voiceScriptsEnRaw["60s"] ?? voiceScriptsEnRaw["60S"] ?? ""),
+    },
+    voiceScriptsZh: {
+      "15s": String(voiceScriptsZhRaw["15s"] ?? voiceScriptsZhRaw["15S"] ?? ""),
+      "30s": String(voiceScriptsZhRaw["30s"] ?? voiceScriptsZhRaw["30S"] ?? ""),
+      "60s": String(voiceScriptsZhRaw["60s"] ?? voiceScriptsZhRaw["60S"] ?? ""),
     },
     subtitleTimeline: Array.isArray(data.subtitleTimeline) ? data.subtitleTimeline : [],
     captions: captionsFromAssets,

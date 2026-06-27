@@ -38,7 +38,8 @@ Marketing Strategy JSON + Video Analysis + Business context.
 ## RULES
 - GROUND EVERY ASSET IN THE VIDEO ANALYSIS (vision): reference the actual subjects,
   products, scenes, and spoken content seen in the footage. Do NOT write generic copy
-  derived only from the campaign name — the campaign name is a label, NOT the content.
+  derived only from the campaign label — use campaignLabel ONLY when vision, goal,
+  userNotes, and videoAnalysis are all absent.
   If the vision shows a specific product/scene, the caption must describe THAT.
 - Follow strategy exactly. Do not invent strategy fields.
 - Every platform asset MUST use unique wording — zero copy-paste between platforms.
@@ -48,7 +49,10 @@ Marketing Strategy JSON + Video Analysis + Business context.
 ## REQUIRED OUTPUT
 
 ### Core production assets
-voiceScripts (15s/30s/60s), voiceScriptsEn (when Chinese primary), subtitleTimeline,
+voiceScripts (15s/30s/60s in the primary output language),
+voiceScriptsZh (15s/30s/60s, ALWAYS fully in Simplified Chinese 简体中文),
+voiceScriptsEn (15s/30s/60s, ALWAYS fully in English),
+subtitleTimeline,
 hooks[10] with text/textEn/textMs + type, cta[5] UNIQUE styles (never duplicate text),
 voiceStyle, broll, musicMood, effects, postingRecommendation, consistencyScore
 
@@ -117,10 +121,9 @@ export interface MarketingContentInput {
 function useChinese(input: MarketingContentInput): boolean {
   const blob = [
     input.goal,
-    input.campaignName,
+    input.userNotes,
     input.strategy.tone,
     input.strategy.product,
-    input.userNotes,
     input.vision.transcriptSummary,
   ]
     .filter(Boolean)
@@ -140,14 +143,26 @@ function localeToPromptTag(locale: ContentLocale): string {
   return "en";
 }
 
+const BILINGUAL_SCRIPTS_RULE =
+  " IMPORTANT: ALWAYS output BOTH voiceScriptsZh (fully in Simplified Chinese 简体中文) AND voiceScriptsEn (fully in English), for all three lengths (15s/30s/60s), regardless of the primary language — they power on-screen 中英 bilingual subtitles. Never leave either empty and never mix languages within one of them.";
+
 function outputLanguageInstruction(locale: ContentLocale): string {
   if (locale === "zh") {
-    return "Write ALL primary text (hooks.text, captions, cta.text, strategyBrief, aiSuggestions, platformAssets) in Simplified Chinese (简体中文). Populate textEn and textMs as translations.";
+    return (
+      "Write ALL primary text (hooks.text, captions, cta.text, strategyBrief, aiSuggestions, platformAssets) in Simplified Chinese (简体中文). Populate textEn and textMs as translations." +
+      BILINGUAL_SCRIPTS_RULE
+    );
   }
   if (locale === "ms") {
-    return "Write ALL primary text in Bahasa Melayu. Populate textEn and textZh (in text field for zh backup) as needed; use textMs as primary Malay copy in hooks.";
+    return (
+      "Write ALL primary text in Bahasa Melayu. Populate textEn and textZh (in text field for zh backup) as needed; use textMs as primary Malay copy in hooks." +
+      BILINGUAL_SCRIPTS_RULE
+    );
   }
-  return "Write ALL primary text in English. Populate textEn on hooks when primary is another language; include textMs for Malay translations.";
+  return (
+    "Write ALL primary text in English. Populate textEn on hooks when primary is another language; include textMs for Malay translations." +
+    BILINGUAL_SCRIPTS_RULE
+  );
 }
 
 function hookTypeFromLabel(label: string, index: number): HookType {
@@ -282,28 +297,40 @@ export function buildAutoClipCopyVariants(
   const hook = pkg.hooks[clipIndex]?.text ?? pkg.hooks[0]?.text ?? "";
   const cta = pkg.cta[clipIndex]?.text ?? pkg.cta[0]?.text ?? strategy.ctaStrategy;
   const scriptKey = CLIP_SCRIPT_KEYS[clipIndex] ?? "30s";
-  const zhBody = pkg.voiceScripts[scriptKey] || pkg.voiceScripts["30s"] || pkg.voiceScripts["15s"];
-  const enBodyFromScripts =
-    pkg.voiceScriptsEn?.[scriptKey] ||
-    pkg.voiceScriptsEn?.["30s"] ||
-    pkg.voiceScriptsEn?.["15s"] ||
-    "";
+
+  const pickScript = (src?: MarketingContentPackage["voiceScripts"]): string =>
+    (src?.[scriptKey] || src?.["30s"] || src?.["15s"] || "").trim();
+
+  // Resolve Chinese and English scripts independently so on-screen 中英 subtitles
+  // always have both languages, regardless of the campaign's primary language.
+  const primaryScript = pickScript(pkg.voiceScripts);
+  const primaryIsZh = isChineseText(primaryScript);
   const enCaption =
-    pkg.captions.tiktok ||
-    pkg.captions.instagram ||
-    pkg.captions.youtubeShorts ||
-    "";
-  const enBody =
-    enBodyFromScripts.trim() ||
-    (enCaption.trim() && !isChineseText(enCaption) ? enCaption : "") ||
-    zhBody;
+    pkg.captions.tiktok || pkg.captions.instagram || pkg.captions.youtubeShorts || "";
+
+  const zhScript = pickScript(pkg.voiceScriptsZh) || (primaryIsZh ? primaryScript : "");
+  const enScript =
+    pickScript(pkg.voiceScriptsEn) ||
+    (!primaryIsZh ? primaryScript : "") ||
+    (enCaption.trim() && !isChineseText(enCaption) ? enCaption : "");
+
+  // Never leave a side empty — fall back to the other language so the variant renders.
+  const zhBody = zhScript || enScript || primaryScript;
+  const enBody = enScript || zhScript || primaryScript;
+
+  const zhHook =
+    (isChineseText(hook) ? hook : "") || (zhScript ? firstPhrase(zhScript, "zh") : "") || hook;
   const enHook =
-    (enBodyFromScripts.trim() ? firstPhrase(enBodyFromScripts, "en") : "") ||
-    (!isChineseText(hook) ? hook : firstPhrase(enBody, "en")) ||
-    hook;
+    (!isChineseText(hook) ? hook : "") || (enScript ? firstPhrase(enScript, "en") : "") || hook;
+
+  const zhCta =
+    pkg.cta.find((c) => c.text.trim() && isChineseText(c.text))?.text ||
+    (isChineseText(cta) ? cta : "") ||
+    cta;
   const enCta =
-    pkg.cta.find((c) => c.text.trim() && !isChineseText(c.text))?.text ??
-    (!isChineseText(cta) ? cta : cta);
+    pkg.cta.find((c) => c.text.trim() && !isChineseText(c.text))?.text ||
+    (!isChineseText(cta) ? cta : "") ||
+    cta;
   const tags = [
     ...strategy.hashtags.industry.slice(0, 3),
     ...strategy.hashtags.local.slice(0, 2),
@@ -326,9 +353,9 @@ export function buildAutoClipCopyVariants(
   const zh: CopyVariant = {
     id: `clip-${clipNum}-zh`,
     template: "story",
-    hook: hook.slice(0, 120),
+    hook: zhHook.slice(0, 120),
     body: zhBody,
-    cta: cta.slice(0, 80),
+    cta: zhCta.slice(0, 80),
     title: strategy.product.slice(0, 60),
     tags: tags.length ? tags : strategy.keywords.slice(0, 5),
     platform,
@@ -360,7 +387,9 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
   const s = input.strategy;
   const product = resolveContentSubject(input.vision, {
     goal: input.goal,
+    userNotes: input.userNotes ?? undefined,
     campaignName: input.campaignName,
+    videoAnalysis: input.videoAnalysis ?? undefined,
     locale,
   });
   const pain = strategyPainPoints(s)[0];
@@ -383,6 +412,19 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
 
   const hookEn = `${product} — ${s.marketingAngle.slice(0, 60)}.`;
   const hookMs = `${product} — ${s.marketingAngle.slice(0, 60)}.`;
+
+  // Always provide both language scripts so on-screen 中英 subtitles can render.
+  // (Best-effort fallback; the LLM path produces fully-translated scripts.)
+  const enScripts = {
+    "15s": `${product} — ${s.marketingAngle.slice(0, 60)}.`,
+    "30s": `${product}. ${s.marketingGoal}. Built for ${audience}. ${s.ctaStrategy}`,
+    "60s": `${product}. ${s.marketingAngle}. Clear value, memorable visuals. ${s.ctaStrategy}`,
+  };
+  const zhScripts = {
+    "15s": `${product}，${s.marketingAngle.slice(0, 40)}。`,
+    "30s": `${product}。${s.marketingGoal}，${audience}都适用。${s.ctaStrategy}`,
+    "60s": `${product}。${s.marketingAngle}。核心卖点清晰，画面有记忆点。${s.ctaStrategy}`,
+  };
 
   const hooks: MarketingContentPackage["hooks"] = [
     {
@@ -608,13 +650,8 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
 
   const pkg: MarketingContentPackage = {
     voiceScripts: { "15s": script15, "30s": script30, "60s": script60 },
-    voiceScriptsEn: zh
-      ? {
-          "15s": hookEn,
-          "30s": `${product}. ${s.marketingGoal}. Built for ${audience}. ${s.ctaStrategy}`,
-          "60s": `${product}. ${s.marketingAngle}. Clear value, memorable visuals. ${s.ctaStrategy}`,
-        }
-      : undefined,
+    voiceScriptsEn: enScripts,
+    voiceScriptsZh: zhScripts,
     subtitleTimeline: buildSubtitleTimeline(script15, 15),
     captions,
     captionsEn,
@@ -715,7 +752,12 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
       durationSec: input.vision.durationSec,
     },
     goal: input.goal,
-    campaignLabel: input.campaignName,
+    ...(input.campaignName &&
+    !input.goal?.trim() &&
+    !input.userNotes?.trim() &&
+    !input.videoAnalysis?.trim()
+      ? { campaignLabel: input.campaignName }
+      : {}),
     platforms: input.platforms,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
@@ -755,6 +797,7 @@ export interface RegeneratePlatformAssetInput {
   vision: VisionAnalysis;
   campaignName?: string;
   goal?: string;
+  userNotes?: string;
   businessInformation?: string | Record<string, unknown> | null;
   contentLocale?: ContentLocale;
   previousCaption?: string;
@@ -772,7 +815,7 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
       ? "zh"
       : (input.contentLocale ??
         (/[\u4e00-\u9fff]/.test(
-          [input.goal, input.campaignName, input.strategy.tone, input.strategy.product]
+          [input.goal, input.userNotes, input.strategy.tone, input.strategy.product]
             .filter(Boolean)
             .join("")
         )
@@ -792,7 +835,10 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
       transcriptSummary: input.vision.transcriptSummary,
     },
     goal: input.goal,
-    campaignLabel: input.campaignName,
+    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
+    ...(input.campaignName && !input.goal?.trim() && !input.userNotes?.trim()
+      ? { campaignLabel: input.campaignName }
+      : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
     ...(input.previousCaption ? { previousCaption: input.previousCaption } : {}),
     locale: localeToPromptTag(locale),
@@ -815,6 +861,7 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
     strategy: input.strategy,
     vision: input.vision,
     goal: input.goal,
+    userNotes: input.userNotes,
     campaignName: input.campaignName,
     businessInformation: input.businessInformation,
     contentLocale: locale,

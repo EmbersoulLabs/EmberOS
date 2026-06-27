@@ -1,5 +1,5 @@
 import { callJsonModel, callVisionJsonModel } from "./llm";
-import { VisionAnalysisSchema, outputLanguagePrompt, isChineseText, type ContentLocale } from "@ceo-agent/shared";
+import { VisionAnalysisSchema, outputLanguagePrompt, isChineseText, resolveContentSubject, type ContentLocale } from "@ceo-agent/shared";
 import type { VisionAnalysis } from "@ceo-agent/shared";
 
 export interface VisionFrameInput {
@@ -17,22 +17,37 @@ export interface VisionInput {
   transcriptSummary?: string;
   campaignName?: string;
   goal?: string;
+  campaignBrief?: string;
+  userNotes?: string;
   videoAnalysis?: string | null;
   contentLocale?: ContentLocale;
 }
 
 function resolveVisionLocale(input: VisionInput): ContentLocale {
   if (input.contentLocale) return input.contentLocale;
-  return isChineseText(`${input.campaignName ?? ""}${input.goal ?? ""}`) ? "zh" : "en";
+  const blob = [input.goal, input.campaignBrief, input.userNotes, input.videoAnalysis]
+    .filter(Boolean)
+    .join("");
+  return isChineseText(blob) ? "zh" : "en";
 }
+
+const EMPTY_VISION: Pick<VisionAnalysis, "products" | "subjects" | "scenes"> = {
+  products: [],
+  subjects: [],
+  scenes: [],
+};
 
 function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
   const locale = resolveVisionLocale(input);
   const zh = locale === "zh";
-  const topic =
-    input.goal?.trim() ||
-    input.videoAnalysis?.slice(0, 48).trim() ||
-    (zh ? "营销素材" : "marketing asset");
+  const topic = resolveContentSubject(EMPTY_VISION, {
+    goal: input.goal,
+    userNotes: input.userNotes,
+    campaignBrief: input.campaignBrief,
+    videoAnalysis: input.videoAnalysis ?? undefined,
+    campaignName: input.campaignName,
+    locale,
+  });
 
   if (zh) {
     return {
@@ -99,12 +114,16 @@ Output JSON matching VisionAnalysis schema.`;
     assetId: input.assetId,
     mediaType: input.mediaType,
     durationSec: input.durationSec,
-    campaignName: input.campaignName,
     goal: input.goal,
+    ...(input.campaignBrief ? { campaignBrief: input.campaignBrief } : {}),
+    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
     frameTimestamps: input.frames?.map((f) => f.atSec) ?? [],
     transcript: input.transcriptSummary,
     legacyFrameNotes: input.frameDescriptions ?? [],
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
+    ...(input.campaignName && !input.goal && !input.campaignBrief && !input.userNotes && !input.videoAnalysis
+      ? { campaignLabel: input.campaignName }
+      : {}),
   });
 
   const schemaHint = "VisionAnalysis";

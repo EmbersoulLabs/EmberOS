@@ -170,38 +170,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       output: intent,
     });
 
-    await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
-    const { strategy: rawStrategy, industry, usage: strategyUsage } = await runStrategyAgent({
-      goal,
-      campaignName: campaign.name,
-      platforms: campaign.platforms,
-      brandProfile,
-      videoAnalysis,
-      contentLocale,
-    });
-    let strategy = rawStrategy;
-    totalCost += strategyUsage.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
-    await db
-      .update(schema.tasks)
-      .set({ strategyJson: strategy })
-      .where(eq(schema.tasks.id, taskId));
-    await db
-      .update(schema.campaigns)
-      .set({
-        strategyJson: strategy,
-        industry: industry === "general" ? null : industry,
-        objectives: strategyObjectives(strategy),
-      })
-      .where(eq(schema.campaigns.id, campaign.id));
-    await updateStep(taskId, "strategy_plan", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: strategy,
-    });
-
-    if (totalCost > budget) throw new Error("Cost budget exceeded");
-
+    // vision_analyze runs FIRST so the marketing plan is grounded in the real assets.
     await updateStep(taskId, "vision_analyze", { status: "running", startedAt: new Date().toISOString() });
     let visionFrames: VisionFrameInput[] = [];
     let transcriptSummary: string | undefined;
@@ -230,30 +199,59 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       durationSec: sourceDurationSec,
       campaignName: campaign.name,
       goal,
+      campaignBrief: creativeBrief.campaignBrief,
       videoAnalysis,
       frames: visionFrames.length > 0 ? visionFrames : undefined,
       transcriptSummary,
       contentLocale,
     });
     totalCost += visionUsage.costUsd;
-    strategy = alignStrategyWithVision(strategy, vision, {
+    await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
+    await updateStep(taskId, "vision_analyze", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: vision,
+    });
+
+    if (totalCost > budget) throw new Error("Cost budget exceeded");
+
+    // strategy_plan is built from the asset analysis (primary), then brief, then name.
+    await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
+    const { strategy: rawStrategy, industry, usage: strategyUsage } = await runStrategyAgent({
       goal,
+      campaignName: campaign.name,
+      platforms: campaign.platforms,
+      brandProfile,
+      vision,
+      videoAnalysis,
+      contentLocale,
+    });
+    let strategy = alignStrategyWithVision(rawStrategy, vision, {
+      goal,
+      campaignBrief: creativeBrief.campaignBrief,
+      userNotes: creativeBrief.campaignBrief,
+      videoAnalysis: videoAnalysis ?? undefined,
       campaignName: campaign.name,
       locale: contentLocale === "zh" ? "zh" : "en",
     });
+    totalCost += strategyUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
     await db
       .update(schema.tasks)
       .set({ strategyJson: strategy })
       .where(eq(schema.tasks.id, taskId));
     await db
       .update(schema.campaigns)
-      .set({ strategyJson: strategy })
+      .set({
+        strategyJson: strategy,
+        industry: industry === "general" ? null : industry,
+        objectives: strategyObjectives(strategy),
+      })
       .where(eq(schema.campaigns.id, campaign.id));
-    await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
-    await updateStep(taskId, "vision_analyze", {
+    await updateStep(taskId, "strategy_plan", {
       status: "completed",
       completedAt: new Date().toISOString(),
-      output: vision,
+      output: strategy,
     });
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");

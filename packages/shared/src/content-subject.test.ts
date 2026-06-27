@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { alignStrategyWithVision, isCampaignLabel, resolveContentSubject } from "../src/content-subject";
+import {
+  alignStrategyWithVision,
+  hasSubstantiveVision,
+  isCampaignLabel,
+  resolveContentSubject,
+} from "../src/content-subject";
 import type { StrategyPlan } from "../src/types/marketing-os";
 import type { VisionAnalysis } from "../src/types";
 
@@ -16,11 +21,44 @@ const vision: VisionAnalysis = {
   transcriptSummary: "We use single-origin beans and oat milk for every cup.",
 };
 
+const emptyVision: VisionAnalysis = {
+  assetId: "a2",
+  mediaType: "video",
+  durationSec: 10,
+  subjects: ["营销素材", "产品展示"],
+  scenes: [{ startSec: 0, endSec: 3, description: "营销素材实拍画面，产品与环境展示" }],
+  products: [{ name: "营销素材" }],
+  hooks: [],
+  suggestedMoments: [],
+};
+
 describe("resolveContentSubject", () => {
   it("prefers vision product over campaign label", () => {
     expect(
       resolveContentSubject(vision, { campaignName: "Summer Promo 2026", goal: "brand awareness" })
     ).toBe("oat milk latte");
+  });
+
+  it("prefers description over campaign label when vision is generic", () => {
+    expect(
+      resolveContentSubject(emptyVision, {
+        campaignName: "作品集",
+        campaignBrief: "Handmade leather wallets for daily carry",
+      })
+    ).toBe("Handmade leather wallets for daily carry");
+    expect(hasSubstantiveVision(emptyVision)).toBe(false);
+  });
+
+  it("uses campaign label only when no description and no asset signal", () => {
+    expect(
+      resolveContentSubject(emptyVision, { campaignName: "作品集" })
+    ).toBe("作品集");
+  });
+
+  it("does not use campaign label when goal is provided", () => {
+    expect(
+      resolveContentSubject(emptyVision, { campaignName: "作品集", goal: "Brand awareness" })
+    ).toBe("Brand awareness");
   });
 
   it("detects when strategy product is just the campaign label", () => {

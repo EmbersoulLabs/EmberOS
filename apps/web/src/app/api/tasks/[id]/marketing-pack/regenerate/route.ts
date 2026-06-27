@@ -5,6 +5,7 @@ import {
   MARKETING_PLATFORM_IDS,
   normalizeMarketingContentPackage,
   normalizeStrategyPlan,
+  parseCampaignCreativeBrief,
   resolvePipelineContentLocale,
   resolvePlatformAssets,
   type MarketingCaptions,
@@ -56,6 +57,7 @@ export async function POST(
 
     let campaignName: string | undefined;
     let goal: string | undefined;
+    let userNotes: string | undefined;
     let metadata: Record<string, unknown> | null = null;
     if (task.campaignId) {
       const [campaign] = await db
@@ -67,6 +69,7 @@ export async function POST(
         campaignName = campaign.name;
         goal = campaign.campaignGoal ?? campaign.goal ?? undefined;
         metadata = campaign.metadata ?? null;
+        userNotes = parseCampaignCreativeBrief(campaign).campaignBrief;
       }
     }
     const contentLocale = resolvePipelineContentLocale(metadata, goal);
@@ -80,6 +83,7 @@ export async function POST(
       vision,
       campaignName,
       goal,
+      userNotes,
       contentLocale,
       previousCaption,
     });

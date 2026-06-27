@@ -2,6 +2,7 @@ import { callJsonModel } from "./llm";
 import {
   HookSetSchema,
   resolveStrategyIndustryEnum,
+  resolveContentSubject,
   type HookItem,
   type HookSet,
   type HookType,
@@ -18,6 +19,7 @@ export interface HookInput {
   goal: string;
   campaignName?: string;
   videoAnalysis?: string | null;
+  userNotes?: string;
 }
 
 function buildFallbackHooks(input: HookInput): HookSet {
@@ -31,11 +33,13 @@ function buildFallbackHooks(input: HookInput): HookSet {
     }
   }
 
-  const subject =
-    input.vision.products[0]?.name ||
-    input.vision.subjects.filter((s) => s !== "product").join("、") ||
-    input.campaignName ||
-    "品牌内容";
+  const subject = resolveContentSubject(input.vision, {
+    goal: input.goal,
+    userNotes: input.userNotes,
+    videoAnalysis: input.videoAnalysis ?? undefined,
+    campaignName: input.campaignName,
+    locale: /[\u4e00-\u9fff]/.test(`${input.goal}${input.strategy.marketingAngle}`) ? "zh" : "en",
+  });
 
   const angle = input.strategy.marketingAngle;
   const isB2b = industry === "b2b_saas";
@@ -81,9 +85,7 @@ export async function runHookAgent(input: HookInput): Promise<{
 }> {
   const industry = resolveStrategyIndustryEnum(input.strategy);
   const seeded = hasKnowledgeSeed(industry);
-  const zh = /[\u4e00-\u9fff]/.test(
-    `${input.goal}${input.campaignName ?? ""}${input.strategy.marketingAngle}`
-  );
+  const zh = /[\u4e00-\u9fff]/.test(`${input.goal}${input.strategy.marketingAngle}${input.userNotes ?? ""}`);
 
   const system = `You are the Hook Agent for short-form video marketing.
 Generate exactly 4 hooks, one per type: curiosity, problem, emotional, offer.
@@ -102,7 +104,7 @@ Output JSON: { "hooks": [{ "id", "type", "text", "rationale" }], "recommendedHoo
       hooks: input.vision.hooks,
     },
     goal: input.goal,
-    campaignName: input.campaignName,
+    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
     hasSeededKnowledge: seeded,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });

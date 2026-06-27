@@ -35,8 +35,8 @@ const GOAL_PATTERNS: { pattern: RegExp; contentType: ContentType }[] = [
   { pattern: /产品|product|展示|showcase/i, contentType: "product_showcase" },
 ];
 
-function inferContentType(goal: string, campaignName: string, vision: VisionAnalysis): ContentType {
-  const text = `${campaignName} ${goal} ${vision.subjects.join(" ")} ${vision.products.map((p) => p.name).join(" ")}`;
+function inferContentType(goal: string, vision: VisionAnalysis, videoAnalysis?: string | null): ContentType {
+  const text = `${goal} ${videoAnalysis ?? ""} ${vision.subjects.join(" ")} ${vision.products.map((p) => p.name).join(" ")}`;
   for (const { pattern, contentType } of GOAL_PATTERNS) {
     if (pattern.test(text)) return contentType;
   }
@@ -58,8 +58,8 @@ function industryFromContentType(contentType: ContentType, fallback: Industry): 
 }
 
 function buildFallback(input: ContentTypeInput): ContentClassification {
-  const industry = inferIndustry(input.goal, input.campaignName ?? "");
-  const contentType = inferContentType(input.goal, input.campaignName ?? "", input.vision);
+  const industry = inferIndustry(input.goal, input.videoAnalysis ?? undefined);
+  const contentType = inferContentType(input.goal, input.vision, input.videoAnalysis);
   return classificationWithPreset({
     industry: industryFromContentType(contentType, industry),
     contentType,
@@ -81,7 +81,6 @@ contentType: product_showcase|service_promotion|wedding|florist|restaurant|beaut
 
   const user = JSON.stringify({
     goal: input.goal,
-    campaignName: input.campaignName,
     platforms: input.platforms,
     vision: {
       subjects: input.vision.subjects,

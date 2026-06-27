@@ -159,17 +159,69 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     const intent = parseIntent(goal, campaign.platforms);
     await updateStep(taskId, "parse_intent", { status: "completed", completedAt: new Date().toISOString(), output: intent });
 
-    // strategy_plan
+    // vision — runs FIRST so strategy/CEO are grounded in the actual assets.
+    await updateStep(taskId, "vision_analyze", { status: "running", startedAt: new Date().toISOString() });
+    const videoAsset = assets.find((a) => a.type === "video");
+    const imageAssets = assets.filter((a) => a.type === "image");
+    const primaryAsset = videoAsset ?? imageAssets[0];
+    if (!primaryAsset) throw new Error("No assets uploaded");
+
+    let visionFrames: VisionFrameInput[] = [];
+    let transcriptSummary: string | undefined;
+    if (hooks?.prepareVisionMedia) {
+      const visionSources = videoAsset ? [videoAsset, ...imageAssets] : imageAssets;
+      for (const asset of visionSources.slice(0, 8)) {
+        const prepared = await hooks.prepareVisionMedia.prepare({
+          storagePath: asset.storagePath,
+          mediaType: asset.type as "video" | "image",
+          durationSec: asset.durationSec ? parseFloat(asset.durationSec) : undefined,
+        });
+        visionFrames.push(...prepared.frames);
+        if (!transcriptSummary && prepared.transcriptSummary) {
+          transcriptSummary = prepared.transcriptSummary;
+        }
+        if (visionFrames.length >= 8) break;
+      }
+      visionFrames = visionFrames.slice(0, 8);
+    }
+
+    const { analysis: vision, usage: visionUsage } = await runVisionAgent({
+      assetId: primaryAsset.id,
+      mediaType: primaryAsset.type as "video" | "image",
+      durationSec: primaryAsset.durationSec ? parseFloat(primaryAsset.durationSec) : undefined,
+      campaignName: campaign.name,
+      goal,
+      campaignBrief: creativeBrief.campaignBrief,
+      videoAnalysis,
+      frames: visionFrames.length > 0 ? visionFrames : undefined,
+      transcriptSummary,
+      contentLocale,
+    });
+    totalCost += visionUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
+    await updateStep(taskId, "vision_analyze", { status: "completed", completedAt: new Date().toISOString(), output: vision });
+
+    if (totalCost > budget) throw new Error("Cost budget exceeded");
+
+    // strategy_plan — built from the asset analysis (primary), then brief, then name.
     await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
     const { strategy: rawStrategy, industry, knowledgeSnippets, usage: strategyUsage } = await runStrategyAgent({
       goal,
       campaignName: campaign.name,
       platforms: campaign.platforms,
       brandProfile,
+      vision,
       videoAnalysis,
       contentLocale,
     });
-    let strategy = rawStrategy;
+    let strategy = alignStrategyWithVision(rawStrategy, vision, {
+      goal,
+      campaignBrief: creativeBrief.campaignBrief,
+      userNotes: creativeBrief.campaignBrief,
+      videoAnalysis: videoAnalysis ?? undefined,
+      campaignName: campaign.name,
+      locale: contentLocale === "zh" ? "zh" : "en",
+    });
     totalCost += strategyUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
     await db
@@ -209,60 +261,6 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
-    // vision
-    await updateStep(taskId, "vision_analyze", { status: "running", startedAt: new Date().toISOString() });
-    const videoAsset = assets.find((a) => a.type === "video");
-    const imageAssets = assets.filter((a) => a.type === "image");
-    const primaryAsset = videoAsset ?? imageAssets[0];
-    if (!primaryAsset) throw new Error("No assets uploaded");
-
-    let visionFrames: VisionFrameInput[] = [];
-    let transcriptSummary: string | undefined;
-    if (hooks?.prepareVisionMedia) {
-      const visionSources = videoAsset ? [videoAsset, ...imageAssets] : imageAssets;
-      for (const asset of visionSources.slice(0, 8)) {
-        const prepared = await hooks.prepareVisionMedia.prepare({
-          storagePath: asset.storagePath,
-          mediaType: asset.type as "video" | "image",
-          durationSec: asset.durationSec ? parseFloat(asset.durationSec) : undefined,
-        });
-        visionFrames.push(...prepared.frames);
-        if (!transcriptSummary && prepared.transcriptSummary) {
-          transcriptSummary = prepared.transcriptSummary;
-        }
-        if (visionFrames.length >= 8) break;
-      }
-      visionFrames = visionFrames.slice(0, 8);
-    }
-
-    const { analysis: vision, usage: visionUsage } = await runVisionAgent({
-      assetId: primaryAsset.id,
-      mediaType: primaryAsset.type as "video" | "image",
-      durationSec: primaryAsset.durationSec ? parseFloat(primaryAsset.durationSec) : undefined,
-      campaignName: campaign.name,
-      goal,
-      videoAnalysis,
-      frames: visionFrames.length > 0 ? visionFrames : undefined,
-      transcriptSummary,
-      contentLocale,
-    });
-    totalCost += visionUsage.costUsd;
-    strategy = alignStrategyWithVision(strategy, vision, {
-      goal,
-      campaignName: campaign.name,
-      locale: contentLocale === "zh" ? "zh" : "en",
-    });
-    await db
-      .update(schema.tasks)
-      .set({ strategyJson: strategy })
-      .where(eq(schema.tasks.id, taskId));
-    await db
-      .update(schema.campaigns)
-      .set({ strategyJson: strategy })
-      .where(eq(schema.campaigns.id, campaign.id));
-    await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
-    await updateStep(taskId, "vision_analyze", { status: "completed", completedAt: new Date().toISOString(), output: vision });
-
     // content classify + preset
     await updateStep(taskId, "content_classify", { status: "running", startedAt: new Date().toISOString() });
     const { classification, usage: classifyUsage } = await runContentTypeAgent({
@@ -298,7 +296,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     const cacheKey = copyCacheKey({
       campaignId: campaign.id,
       platforms: campaign.platforms,
-      brief: [goal, creativeBrief.campaignBrief ?? "", campaign.name].join("|"),
+      brief: [goal, creativeBrief.campaignBrief ?? ""].join("|"),
     });
     const cachedVariants = await getCopyCache(cacheKey);
 

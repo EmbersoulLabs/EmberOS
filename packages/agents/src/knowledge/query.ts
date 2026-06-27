@@ -50,10 +50,10 @@ function resolveSeedKey(industry: Industry): keyof typeof SEEDS | null {
 
 export function inferIndustry(
   goal: string,
-  campaignName: string,
+  extraContext?: string,
   brandIndustry?: string
 ): Industry {
-  const text = `${goal} ${campaignName} ${brandIndustry ?? ""}`.toLowerCase();
+  const text = `${goal} ${extraContext ?? ""} ${brandIndustry ?? ""}`.toLowerCase();
 
   if (/erp|进销存|企业管理|saas|软件系统|crm|财务系统|库存管理|odoo|用友|金蝶|数字化转型|b2b/.test(text)) {
     return "b2b_saas";

@@ -22,6 +22,7 @@ export interface CopyInput {
   platform: Platform;
   goal: string;
   campaignName?: string;
+  userNotes?: string;
   strategyPlan?: StrategyPlan;
   hookSet?: HookSet;
   locale?: CopyLocale;
@@ -66,6 +67,7 @@ function isWeddingFloristContext(input: CopyInput): boolean {
 function resolveTopicZh(input: CopyInput): string {
   return resolveContentSubject(input.vision, {
     goal: input.goal,
+    userNotes: input.userNotes,
     campaignName: input.campaignName,
     locale: "zh",
   });
@@ -75,6 +77,7 @@ function resolveTopicEn(input: CopyInput): string {
   if (isWeddingFloristContext(input)) return "wedding car florals";
   const raw = resolveContentSubject(input.vision, {
     goal: input.goal,
+    userNotes: input.userNotes,
     campaignName: input.campaignName,
     locale: "en",
   });
@@ -324,7 +327,10 @@ Output JSON: { "variants": [{ "id", "template", "hook", "body", "cta", "title", 
 
   const user = JSON.stringify({
     goal: input.goal,
-    campaignLabel: input.campaignName,
+    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
+    ...(input.campaignName && !input.goal?.trim() && !input.userNotes?.trim()
+      ? { campaignLabel: input.campaignName }
+      : {}),
     platform: input.platform,
     locale,
     templates,
