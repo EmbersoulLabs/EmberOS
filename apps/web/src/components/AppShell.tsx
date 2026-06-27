@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { BRAND } from "@/lib/brand";
 import { EmberLogo } from "@/components/EmberLogo";
@@ -24,7 +25,7 @@ function resolveHomeHref(pathname: string): string | null {
 }
 
 function resolveBackHref(pathname: string): string | null {
-  if (pathname === "/workspaces") return null;
+  if (pathname === "/workspaces" || pathname === "/admin") return null;
 
   const parts = pathname.split("/").filter(Boolean);
   if (parts[0] !== "w" || !parts[1]) return "/workspaces";
@@ -109,20 +110,30 @@ export function AppShell({
   workspaceName,
   backHref,
   showBack,
+  showAdminNav = true,
 }: {
   children: React.ReactNode;
   workspaceName?: string;
   backHref?: string;
   showBack?: boolean;
+  showAdminNav?: boolean;
 }) {
   const pathname = usePathname();
   const { t } = useI18n();
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const resolvedBack = backHref ?? resolveBackHref(pathname);
   const resolvedHome = resolveHomeHref(pathname);
   const canGoBack = showBack ?? resolvedBack !== null;
   const showHome = resolvedHome !== null && pathname !== resolvedHome;
-  // On narrow screens, back + home + logo is redundant — prefer back when both exist.
   const showHomeButton = showHome && (!canGoBack || resolvedBack !== resolvedHome);
+  const brandHref = pathname.startsWith("/admin") ? "/admin" : "/workspaces";
+
+  useEffect(() => {
+    fetch("/api/me")
+      .then((r) => r.json())
+      .then((d) => setIsSuperAdmin(Boolean(d.isSuperAdmin)))
+      .catch(() => setIsSuperAdmin(false));
+  }, []);
 
   return (
     <div className="min-h-screen bg-surface-muted">
@@ -149,7 +160,7 @@ export function AppShell({
                   <span className="text-sm font-medium">{t("nav.home")}</span>
                 </Link>
               )}
-              <Link href="/workspaces" className="flex min-w-0 items-center gap-2 sm:gap-2.5">
+              <Link href={brandHref} className="flex min-w-0 items-center gap-2 sm:gap-2.5">
                 <EmberLogo className="h-8 w-8 shrink-0 sm:h-9 sm:w-9" />
                 <span className="truncate text-base font-bold tracking-tight sm:text-lg">
                   {BRAND.product}
@@ -157,6 +168,14 @@ export function AppShell({
               </Link>
             </div>
             <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+              {showAdminNav && isSuperAdmin && !pathname.startsWith("/admin") && (
+                <Link
+                  href="/admin"
+                  className="rounded-lg bg-white/10 px-2 py-1.5 text-[11px] font-medium text-white ring-1 ring-white/15 hover:bg-white/15 sm:px-2.5 sm:text-xs"
+                >
+                  {t("nav.admin")}
+                </Link>
+              )}
               {workspaceName && (
                 <span className="hidden max-w-[8rem] truncate rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/90 ring-1 ring-white/15 sm:inline-block sm:max-w-[10rem] sm:px-3 sm:text-sm md:max-w-none">
                   {workspaceName}

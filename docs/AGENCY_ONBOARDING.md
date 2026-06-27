@@ -208,5 +208,6 @@ Requires internal + client approval. `compliance_failed` blocks export until rew
 ## Related docs
 
 - [README.md](../README.md) — product overview and path B (agency)
+- [PILOT_WORKSPACE_SETUP.md](./PILOT_WORKSPACE_SETUP.md) — slug, settings, roles template per client
 - [PHASE1_MVP_PLAN.md](./PHASE1_MVP_PLAN.md) — MVP scope and review state machine
 - Pilot metrics: `pnpm pilot:metrics -- --help`

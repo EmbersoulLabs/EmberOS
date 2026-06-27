@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess } from "@/lib/api";
+import { isSuperAdminUser } from "@/lib/superadmin";
 
 export async function GET() {
   try {
@@ -28,6 +29,7 @@ export async function GET() {
 
     return apiSuccess({
       user: { id: user.id, email: user.email },
+      isSuperAdmin: isSuperAdminUser(user),
       orgs: orgMemberships.map((m) => ({
         id: m.org.id,
         name: m.org.name,
