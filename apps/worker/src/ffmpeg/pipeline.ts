@@ -8,7 +8,7 @@ import { mixBackgroundMusic } from "./audio-mix";
 import { resolveBgmTrackKey } from "@ceo-agent/shared";
 import type { EditPlan } from "@ceo-agent/shared";
 import type { ClipMotion } from "@ceo-agent/shared";
-import { getRenderProfile, DYNAMIC_CAMERA, type RenderMode, type RenderPhase, type RenderProfileKey } from "@ceo-agent/shared";
+import { getRenderProfile, DYNAMIC_CAMERA, resolveRenderPreferences, type RenderMode, type RenderPhase, type RenderProfileKey } from "@ceo-agent/shared";
 import { getFfmpegPath } from "./ffmpeg-path";
 import { runFfmpeg } from "./ffmpeg-run";
 import { mediaHasAudio } from "./probe-audio";
@@ -578,9 +578,10 @@ export async function burnSubtitles(
       if (hasAssSubs) {
         localFonts = await stageSubtitleFontForRender(workDir);
         const keywords = collectSubtitleHighlightKeywords(plan);
+        const subtitleStyle = resolveRenderPreferences({ editPlan: plan }).subtitleStyle;
         await writeFile(
           assLocalPath,
-          buildAssSubtitles(plan.subtitles, profile.height, keywords),
+          buildAssSubtitles(plan.subtitles, profile.height, keywords, subtitleStyle),
           "utf8"
         );
       }

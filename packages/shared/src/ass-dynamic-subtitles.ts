@@ -1,87 +1,28 @@
-/** EmberOS brand ASS subtitle styling — white body, golden keywords, per-char pop. */
+/** EmberOS premium ASS subtitle styling — white text, subtle fade-in, no bounce. */
 
-/** #FFB800 in ASS BGR (&HAABBGGRR). */
-export const ASS_COLOR_GOLD = "&H0000B8FF";
+import {
+  SUBTITLE_FADE_MS,
+  type SubtitleStyleConfig,
+  resolveSubtitleStyle,
+} from "./subtitle-styles";
+
 export const ASS_COLOR_WHITE = "&H00FFFFFF";
 export const ASS_COLOR_BLACK = "&H00000000";
 
-export const ASS_CHAR_STAGGER_MS = 100;
-export const ASS_CHAR_POP_MS = 80;
-export const ASS_OUTLINE_PX = 2;
+/** @deprecated Use fade animation instead of per-char pop. */
+export const ASS_CHAR_STAGGER_MS = 0;
+export const ASS_CHAR_POP_MS = 0;
+/** @deprecated Gold highlights removed — unified white subtitles. */
+export const ASS_COLOR_GOLD = ASS_COLOR_WHITE;
 
 export type HighlightRange = { start: number; end: number };
 
-const PRICE_PATTERNS: RegExp[] = [
-  /[$¥￥€£₩]\s?\d+(?:[.,]\d{1,2})?/g,
-  /(?:USD|S\$|SGD|RM|NT\$|HK\$)\s?\d+(?:[.,]\d{1,2})?/gi,
-  /\d+(?:[.,]\d{1,2})?\s?(?:元|块|美元|美金|港币|新币)/g,
-  /\d+(?:[.,]\d{1,2})?\s?(?:USD|usd)/g,
-];
-
-const NUMBER_PATTERN = /\d+(?:[.,]\d+)?%?/g;
-
-function mergeHighlightRanges(ranges: HighlightRange[]): HighlightRange[] {
-  if (ranges.length === 0) return [];
-  const sorted = [...ranges].sort((a, b) => a.start - b.start || b.end - a.end);
-  const merged: HighlightRange[] = [sorted[0]!];
-  for (let i = 1; i < sorted.length; i++) {
-    const cur = sorted[i]!;
-    const last = merged[merged.length - 1]!;
-    if (cur.start <= last.end) {
-      last.end = Math.max(last.end, cur.end);
-    } else {
-      merged.push({ ...cur });
-    }
-  }
-  return merged;
+export function findSubtitleHighlightRanges(_text: string, _productNames: string[] = []): HighlightRange[] {
+  return [];
 }
 
-function addRange(ranges: HighlightRange[], start: number, end: number) {
-  if (end > start) ranges.push({ start, end });
-}
-
-function findProductNameRanges(text: string, productNames: string[]): HighlightRange[] {
-  const ranges: HighlightRange[] = [];
-  const names = [...new Set(productNames.map((n) => n.trim()).filter(Boolean))].sort(
-    (a, b) => b.length - a.length
-  );
-
-  for (const name of names) {
-    if (name.length < 2) continue;
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const latin = /[a-zA-Z0-9]/.test(name);
-    const re = new RegExp(escaped, latin ? "gi" : "g");
-    let match: RegExpExecArray | null;
-    while ((match = re.exec(text)) !== null) {
-      addRange(ranges, match.index, match.index + match[0].length);
-    }
-  }
-  return ranges;
-}
-
-/** Detect number, price, and product-name spans without altering source text. */
-export function findSubtitleHighlightRanges(text: string, productNames: string[] = []): HighlightRange[] {
-  const ranges: HighlightRange[] = [...findProductNameRanges(text, productNames)];
-
-  for (const pattern of PRICE_PATTERNS) {
-    pattern.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.exec(text)) !== null) {
-      addRange(ranges, match.index, match.index + match[0].length);
-    }
-  }
-
-  NUMBER_PATTERN.lastIndex = 0;
-  let numMatch: RegExpExecArray | null;
-  while ((numMatch = NUMBER_PATTERN.exec(text)) !== null) {
-    addRange(ranges, numMatch.index, numMatch.index + numMatch[0].length);
-  }
-
-  return mergeHighlightRanges(ranges);
-}
-
-export function isIndexHighlighted(index: number, ranges: HighlightRange[]): boolean {
-  return ranges.some((r) => index >= r.start && index < r.end);
+export function isIndexHighlighted(_index: number, _ranges: HighlightRange[]): boolean {
+  return false;
 }
 
 function escapeAssTextChar(char: string): string {
@@ -91,40 +32,37 @@ function escapeAssTextChar(char: string): string {
   return char;
 }
 
-/** One character: brand colors + pop-in (scale 130% → 100%, stagger 0.1s). */
-export function assCharPopTag(charIndex: number, highlighted: boolean): string {
-  const delay = charIndex * ASS_CHAR_STAGGER_MS;
-  const end1 = delay + ASS_CHAR_POP_MS;
-  const end2 = end1 + ASS_CHAR_POP_MS;
-  const color = highlighted ? ASS_COLOR_GOLD : ASS_COLOR_WHITE;
-  return (
-    `{\\c${color}\\3c${ASS_COLOR_BLACK}\\bord${ASS_OUTLINE_PX}` +
-    `\\t(${delay},${end1},\\fscx130\\fscy130)` +
-    `\\t(${end1},${end2},\\fscx100\\fscy100)}`
-  );
+/** Subtle fade-in (0.2s) — stable text, no bounce/elastic/spring. */
+export function assFadeInTag(fadeMs = SUBTITLE_FADE_MS): string {
+  return `{\\fad(${fadeMs},0)\\c${ASS_COLOR_WHITE}\\3c${ASS_COLOR_BLACK}}`;
 }
 
-/** Build ASS dialogue text with per-char pop; preserves line breaks (\\N) for 中英. */
-export function buildAssAnimatedDialogueText(text: string, productNames: string[] = []): string {
+/** Build ASS dialogue with fade-in; preserves line breaks for bilingual subtitles. */
+export function buildAssAnimatedDialogueText(
+  text: string,
+  _productNames: string[] = [],
+  styleConfig?: SubtitleStyleConfig
+): string {
+  const cfg = styleConfig ?? resolveSubtitleStyle("minimal");
   const lines = text.split("\n");
-  const animatedLines = lines.map((line) => {
+  const animatedLines = lines.map((line, lineIdx) => {
     if (!line) return "";
-    const ranges = findSubtitleHighlightRanges(line, productNames);
-    const chars = [...line];
-    let out = "";
-    let charIndex = 0;
-    for (let i = 0; i < chars.length; i++) {
-      const char = chars[i]!;
-      if (char === " ") {
-        out += " ";
-        charIndex += 1;
-        continue;
-      }
-      const highlighted = isIndexHighlighted(i, ranges);
-      out += assCharPopTag(charIndex, highlighted) + escapeAssTextChar(char);
-      charIndex += 1;
-    }
-    return out;
+    const isSecondary = lineIdx > 0 && lines.length > 1;
+    const scale = isSecondary ? 70 : 100;
+    const bold = isSecondary ? (cfg.secondaryBold ? -1 : 0) : cfg.primaryBold ? -1 : 0;
+    const prefix =
+      `{\\fad(${SUBTITLE_FADE_MS},0)\\c${cfg.primaryColor}` +
+      (cfg.outlinePx > 0 ? `\\3c${ASS_COLOR_BLACK}\\bord${cfg.outlinePx}` : "") +
+      (cfg.shadowPx > 0 ? `\\shad${cfg.shadowPx}` : "") +
+      `\\fscx${scale}\\fscy${scale}` +
+      (bold !== 0 ? `\\b${bold}` : "") +
+      "}";
+    return prefix + line.split("").map(escapeAssTextChar).join("");
   });
   return animatedLines.join("\\N");
+}
+
+/** @deprecated Per-char pop removed. */
+export function assCharPopTag(_charIndex: number, _highlighted: boolean): string {
+  return assFadeInTag();
 }

@@ -38,7 +38,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && isAuthPage) {
+  if (user && isAuthPage && !request.nextUrl.pathname.startsWith("/login/reset-password")) {
     const url = request.nextUrl.clone();
     url.pathname = "/workspaces";
     return NextResponse.redirect(url);

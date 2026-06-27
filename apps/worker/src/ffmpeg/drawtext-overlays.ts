@@ -1,7 +1,7 @@
 import type { EditPlan } from "@ceo-agent/shared";
 import { resolveDrawtextFontFile } from "./subtitle-fonts.js";
 
-export const SUBTITLE_FADE_SEC = 0.3;
+export const SUBTITLE_FADE_SEC = 0.2;
 export const HOOK_TITLE_SEC = 3;
 
 export interface DrawtextOverlayContext {
@@ -44,104 +44,7 @@ function estimateCharWidth(fontSize: number, char: string): number {
     : fontSize * 0.55;
 }
 
-function subtitleFontSize(style: string, height: number): number {
-  const scale = height / 1920;
-  if (style.startsWith("cta")) return Math.round(56 * scale);
-  if (style.includes("hook")) return Math.round(58 * scale);
-  return Math.round(54 * scale);
-}
-
-function subtitleBaseY(style: string, height: number, lineIndex: number): number {
-  const scale = height / 1920;
-  const lineHeight = Math.round(58 * scale);
-  if (style.startsWith("cta")) {
-    return height - Math.round(160 * scale) - lineHeight * (lineIndex + 1);
-  }
-  return height - Math.round(200 * scale) - lineHeight * (lineIndex + 1);
-}
-
-function charDrawtextFilter(input: {
-  char: string;
-  x: number;
-  y: number;
-  fontSize: number;
-  revealSec: number;
-  endSec: number;
-  ctx: DrawtextOverlayContext;
-  bold?: boolean;
-}): string {
-  const { char, x, y, fontSize, revealSec, endSec, ctx, bold } = input;
-  const font = escapeDrawtextPath(bold ? ctx.boldFontFile : ctx.fontFile);
-  const text = escapeDrawtextText(char);
-  return (
-    `drawtext=fontfile='${font}':text='${text}':fontsize=${fontSize}` +
-    `:fontcolor=white:borderw=3:bordercolor=black@0.95` +
-    `:x=${Math.round(x)}:y=${Math.round(y)}` +
-    `:enable='between(t\\,${revealSec.toFixed(3)}\\,${endSec.toFixed(3)})'` +
-    `:alpha='${fadeAlphaExpression(revealSec)}'`
-  );
-}
-
-function buildLineCharDrawtexts(
-  line: string,
-  startSec: number,
-  endSec: number,
-  style: string,
-  ctx: DrawtextOverlayContext,
-  y: number
-): string[] {
-  const chars = [...line.trim()];
-  if (chars.length === 0) return [];
-
-  const fontSize = subtitleFontSize(style, ctx.height);
-  const totalWidth = chars.reduce((w, c) => w + (c === " " ? fontSize * 0.35 : estimateCharWidth(fontSize, c)), 0);
-  let x = (ctx.width - totalWidth) / 2;
-
-  const duration = Math.max(0.5, endSec - startSec);
-  const stagger = Math.min(0.08, Math.max(0.04, (duration - SUBTITLE_FADE_SEC) / Math.max(chars.length, 1)));
-
-  const filters: string[] = [];
-  chars.forEach((char, i) => {
-    if (char === " ") {
-      x += fontSize * 0.35;
-      return;
-    }
-    const revealSec = startSec + i * stagger;
-    const cw = estimateCharWidth(fontSize, char);
-    filters.push(
-      charDrawtextFilter({
-        char,
-        x,
-        y,
-        fontSize,
-        revealSec,
-        endSec,
-        ctx,
-      })
-    );
-    x += cw;
-  });
-  return filters;
-}
-
-/** Per-character pop-in with 0.3s fade for each subtitle segment. */
-export function buildAnimatedSubtitleDrawtextFilters(
-  subtitles: EditPlan["subtitles"],
-  ctx: DrawtextOverlayContext
-): string[] {
-  const filters: string[] = [];
-  for (const sub of subtitles) {
-    if (sub.style === "tiktok_hook_card") continue;
-    const lines = sub.text.split("\n").filter((l: string) => l.trim());
-    lines.forEach((line: string, lineIdx: number) => {
-      const y = subtitleBaseY(sub.style, ctx.height, lineIdx);
-      filters.push(...buildLineCharDrawtexts(line, sub.startSec, sub.endSec, sub.style, ctx, y));
-    });
-  }
-  return filters;
-}
-
-/** Large centered hook title for the first 3 seconds (from copy_variants.title). */
+/** Hook title: bottom-left, SemiBold, fade + slide up — product stays visual hero. */
 export function buildHookTitleDrawtextFilters(
   title: string | undefined,
   ctx: DrawtextOverlayContext,
@@ -151,40 +54,21 @@ export function buildHookTitleDrawtextFilters(
   if (!line) return [];
 
   const scale = ctx.height / 1920;
-  const fontSize = Math.round(72 * scale);
+  const fontSize = Math.round(44 * scale);
   const endSec = Math.min(durationSec, HOOK_TITLE_SEC);
-  const y = Math.round(ctx.height * 0.32);
-  const chars = [...line.slice(0, 36)];
-  const totalWidth = chars.reduce(
-    (w, c) => w + (c === " " ? fontSize * 0.35 : estimateCharWidth(fontSize, c)),
-    0
-  );
-  let x = (ctx.width - totalWidth) / 2;
-  const stagger = 0.07;
+  const marginX = Math.round(48 * scale);
+  const marginY = Math.round(120 * scale);
+  const y = ctx.height - marginY - fontSize;
+  const font = escapeDrawtextPath(ctx.boldFontFile);
+  const text = escapeDrawtextText(line.slice(0, 48));
 
-  const filters: string[] = [];
-  chars.forEach((char, i) => {
-    if (char === " ") {
-      x += fontSize * 0.35;
-      return;
-    }
-    const revealSec = i * stagger;
-    const cw = estimateCharWidth(fontSize, char);
-    filters.push(
-      charDrawtextFilter({
-        char,
-        x,
-        y,
-        fontSize,
-        revealSec,
-        endSec,
-        ctx,
-        bold: true,
-      })
-    );
-    x += cw;
-  });
-  return filters;
+  return [
+    `drawtext=fontfile='${font}':text='${text}':fontsize=${fontSize}` +
+      `:fontcolor=white@0.95:shadowcolor=black@0.4:shadowx=1:shadowy=2` +
+      `:x=${marginX}:y=${y}` +
+      `:enable='between(t\\,0\\,${endSec.toFixed(3)})'` +
+      `:alpha='${fadeAlphaExpression(0)}'`,
+  ];
 }
 
 export function buildHookOnlyDrawtextChain(
@@ -224,4 +108,12 @@ export function buildLogoOnlyFilterComplex(logoInputIndex = 1): {
       `[vtxt][logo]overlay=W-w-20:H-h-20[vout]`,
     outputLabel: "vout",
   };
+}
+
+/** @deprecated Per-char subtitle drawtext removed — ASS handles body subtitles. */
+export function buildAnimatedSubtitleDrawtextFilters(
+  _subtitles: EditPlan["subtitles"],
+  _ctx: DrawtextOverlayContext
+): string[] {
+  return [];
 }

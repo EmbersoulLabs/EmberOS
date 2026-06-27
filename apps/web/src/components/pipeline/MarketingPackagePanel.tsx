@@ -9,6 +9,7 @@ import {
   type MarketingPackLocale,
 } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
+import { getAiOutputLanguage } from "@/lib/preferences";
 import { MarketingDashboard } from "@/components/marketing-dashboard/MarketingDashboard";
 
 export function MarketingPackagePanel({
@@ -21,7 +22,10 @@ export function MarketingPackagePanel({
   strategy?: StrategyPlan;
 }) {
   const { t, locale: uiLocale } = useI18n();
-  const packLocale = uiLocaleToPackLocale(uiLocale) as MarketingPackLocale;
+  const aiPref = getAiOutputLanguage();
+  const packLocale = (
+    aiPref === "auto" ? uiLocaleToPackLocale(uiLocale) : aiPref
+  ) as MarketingPackLocale;
   const [pkg, setPkg] = useState(initialPackage);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
@@ -72,7 +76,7 @@ export function MarketingPackagePanel({
     <section className="mt-8">
       <div className="mb-5 border-b border-border/70 pb-4">
         <p className="text-[11px] font-medium uppercase tracking-widest text-ink-secondary">
-          EmberOS · Marketing OS
+          {t("marketing.brand")}
         </p>
         <h2 className="mt-1 text-lg font-semibold tracking-tight text-navy">
           {t("pipeline.marketingPackTitle")}

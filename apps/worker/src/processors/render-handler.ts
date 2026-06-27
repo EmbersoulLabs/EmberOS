@@ -13,6 +13,8 @@ import {
   mergeStoredRendition,
   profileKeyForDownloadResolution,
   BrandProfileSchema,
+  resolveRenderPreferences,
+  stampRenderPreferences,
   type ClipDownloadResolution,
   type RenderMode,
   type RenderProgress,
@@ -161,7 +163,18 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     .where(eq(schema.assets.campaignId, data.campaignId));
   if (assets.length === 0) throw new Error("No source asset");
 
-  const editPlan = creative.editPlan as EditPlan;
+  const [campaign] = await db
+    .select({ metadata: schema.campaigns.metadata })
+    .from(schema.campaigns)
+    .where(eq(schema.campaigns.id, data.campaignId))
+    .limit(1);
+
+  const rawPlan = creative.editPlan as EditPlan;
+  const renderPrefs = resolveRenderPreferences({
+    editPlan: rawPlan,
+    campaignMetadata: (campaign?.metadata ?? {}) as Record<string, unknown>,
+  });
+  const editPlan = stampRenderPreferences(rawPlan, renderPrefs);
   const fingerprint = baseClipFingerprint(editPlan);
 
   const [workspace] = await db

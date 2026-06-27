@@ -12,6 +12,8 @@ import {
   DEFAULT_VOICE_PRESET,
   DEFAULT_BGM_PREFERENCE,
   DEFAULT_BGM_START_PREFERENCE,
+  isSubtitleLanguagePair,
+  isSubtitleStylePreset,
 } from "@ceo-agent/shared";
 import { isCampaignDeletable } from "@/lib/campaigns";
 
@@ -82,6 +84,8 @@ export async function POST(request: Request) {
       campaignGoal,
       bgmPreference,
       bgmStartPreference,
+      subtitleStyle,
+      subtitleLanguage,
     } = body as {
       workspaceId: string;
       name: string;
@@ -93,6 +97,8 @@ export async function POST(request: Request) {
       campaignGoal?: string;
       bgmPreference?: string;
       bgmStartPreference?: string;
+      subtitleStyle?: string;
+      subtitleLanguage?: string;
     };
 
     if (!workspaceId || !name) {
@@ -112,6 +118,11 @@ export async function POST(request: Request) {
       : DEFAULT_BGM_START_PREFERENCE;
     const legacyGoal = goal?.trim() || (marketingGoal ? legacyGoalFromMarketingGoal(marketingGoal) : undefined);
 
+    const renderPreferences =
+      isSubtitleStylePreset(subtitleStyle ?? "") && isSubtitleLanguagePair(subtitleLanguage ?? "")
+        ? { subtitleStyle, subtitleLanguage }
+        : undefined;
+
     const [campaign] = await db
       .insert(schema.campaigns)
       .values({
@@ -125,7 +136,10 @@ export async function POST(request: Request) {
         contentStyle: style,
         campaignGoal: marketingGoal,
         bgmPreference: bgm,
-        metadata: { bgmStartPreference: bgmStart },
+        metadata: {
+          bgmStartPreference: bgmStart,
+          ...(renderPreferences ? { renderPreferences } : {}),
+        },
         createdBy: user.id,
       })
       .returning();

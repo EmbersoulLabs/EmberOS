@@ -663,7 +663,7 @@ export function ClipAudioControls({
               onClick={() => onLocaleChange("en")}
               className={chipClass(ttsLocale === "en")}
             >
-              EN
+              {t(`lang.en`)}
             </button>
             <button
               type="button"
@@ -671,7 +671,7 @@ export function ClipAudioControls({
               onClick={() => onLocaleChange("zh")}
               className={chipClass(ttsLocale === "zh")}
             >
-              中文
+              {t("lang.zh")}
             </button>
           </div>
         </div>

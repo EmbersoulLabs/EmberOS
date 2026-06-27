@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useI18n } from "@/lib/i18n/provider";
+import { getRenderPreferencesPayload, resolveContentLocaleForRun } from "@/lib/preferences";
 
 function isTaskActive(status?: string | null): boolean {
   return status === "queued" || status === "running";
@@ -42,7 +43,10 @@ export function RunCeoButton({
       const res = await fetch(`/api/campaigns/${campaignId}/run`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ locale }),
+        body: JSON.stringify({
+          locale: resolveContentLocaleForRun(locale),
+          ...getRenderPreferencesPayload(),
+        }),
       });
       const body = await res.json();
       if (!res.ok) {

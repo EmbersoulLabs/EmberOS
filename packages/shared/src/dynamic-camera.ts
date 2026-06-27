@@ -1,14 +1,14 @@
 import type { ClipMotion } from "./presets/types";
 import type { EditPlan, VisionAnalysis } from "./types/index";
 
-/** TikTok-style dynamic camera — virtual cuts every 2–3s with alternating Ken Burns motion. */
+/** Premium corporate camera — slower beats, product-focused pacing. */
 export const DYNAMIC_CAMERA = {
-  MIN_VISUAL_BEATS: 4,
-  BEAT_INTERVAL_SEC: 2.5,
-  MAX_BEATS: 8,
+  MIN_VISUAL_BEATS: 3,
+  BEAT_INTERVAL_SEC: 3.5,
+  MAX_BEATS: 6,
   ZOOM_MIN: 1.0,
-  ZOOM_MAX: 1.15,
-  CROSSFADE_SEC: 0.12,
+  ZOOM_MAX: 1.08,
+  CROSSFADE_SEC: 0.25,
   HOOK_CARD_SEC: 3.0,
 } as const;
 

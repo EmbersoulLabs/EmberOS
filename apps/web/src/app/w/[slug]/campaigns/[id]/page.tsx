@@ -58,7 +58,7 @@ export default function CampaignDetailPage() {
   return (
     <AppShell>
       <div className="mb-2 flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-bold">{(campaign?.name as string) ?? "Campaign"}</h1>
+        <h1 className="text-2xl font-bold">{(campaign?.name as string) ?? t("campaign.defaultName")}</h1>
         {campaign && <StatusBadge status={status!} />}
       </div>
 
@@ -67,7 +67,9 @@ export default function CampaignDetailPage() {
           href={`/w/${slug}/campaigns/${id}/task${task?.id ? `?taskId=${task.id}` : ""}`}
           className="rounded-lg bg-primary px-4 py-2 text-sm text-white"
         >
-          {hasVideoAsset ? `View 3 clips (${clipCount}/3)` : t("campaign.detail.taskProgress")}
+          {hasVideoAsset
+            ? t("campaign.detail.viewClips", { count: "3", ready: String(clipCount) })
+            : t("campaign.detail.taskProgress")}
         </Link>
         {creative && !hasVideoAsset && (
           <Link

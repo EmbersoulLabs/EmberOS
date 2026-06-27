@@ -27,3 +27,5 @@ export * from "./marketing-dashboard";
 export * from "./export-pack";
 export * from "./rate-limit";
 export * from "./ass-dynamic-subtitles";
+export * from "./subtitle-styles";
+export * from "./render-preferences";

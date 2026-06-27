@@ -6,6 +6,7 @@ import { AppShell } from "@/components/AppShell";
 import { PHASE1_PLATFORMS } from "@ceo-agent/shared/platform-specs";
 import { MAX_SOURCE_VIDEOS, MAX_CAMPAIGN_IMAGES, MAX_COMBINED_SOURCE_DURATION_SEC, MAX_UPLOAD_DURATION_SEC } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
+import { resolveContentLocaleForRun, getRenderPreferencesPayload } from "@/lib/preferences";
 import { maxUploadRisk } from "@/lib/upload-risk";
 import {
   CampaignBriefForm,
@@ -43,7 +44,7 @@ async function waitForVideoProbes(campaignId: string, maxWaitMs = 90_000): Promi
 
     await new Promise((r) => setTimeout(r, 1500));
   }
-  throw new Error("Video analysis timed out. Please try running again in a moment.");
+  throw new Error("VIDEO_PROBE_TIMEOUT");
 }
 
 function orderUploadFiles(files: File[]): File[] {
@@ -97,7 +98,7 @@ export default function CampaignWizardPage() {
   const params = useParams();
   const slug = params.slug as string;
   const router = useRouter();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   const [name, setName] = useState("");
   const [briefForm, setBriefForm] = useState<CampaignBriefFormValues>(EMPTY_BRIEF_FORM);
@@ -140,7 +141,13 @@ export default function CampaignWizardPage() {
   }
 
   async function runCampaign(campaignId: string) {
-    const runRes = await fetch(`/api/campaigns/${campaignId}/run`, { method: "POST" });
+    const contentLocale = resolveContentLocaleForRun(locale);
+    const renderPreferences = getRenderPreferencesPayload();
+    const runRes = await fetch(`/api/campaigns/${campaignId}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ locale: contentLocale, ...renderPreferences }),
+    });
     const runData = await runRes.json();
     if (!runRes.ok) {
       throw new Error(runData.error ?? t("error.runCampaign"));
@@ -173,6 +180,7 @@ export default function CampaignWizardPage() {
           campaignGoal: briefForm.campaignGoal || undefined,
           bgmPreference: briefForm.bgmPreference,
           bgmStartPreference: briefForm.bgmStartPreference,
+          ...getRenderPreferencesPayload(),
         }),
       });
       const campData = await campRes.json();
@@ -283,9 +291,7 @@ export default function CampaignWizardPage() {
         );
         const selectedVideos = selected.filter((f) => classifyUploadFile(f) === "video").length;
         if (selectedVideos > 0 && !hasUsableVideo) {
-          throw new Error(
-            "Your videos could not be processed. Check total duration (max 10 min combined) and try again."
-          );
+          throw new Error(t("error.videoProcessing"));
         }
 
         const risk = maxUploadRisk(campaignAssets);
@@ -301,7 +307,12 @@ export default function CampaignWizardPage() {
       setUploadStep("");
       await runCampaign(campaignId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("error.generic"));
+      const msg = err instanceof Error ? err.message : "";
+      if (msg === "VIDEO_PROBE_TIMEOUT") {
+        setError(t("error.videoTimeout"));
+      } else {
+        setError(msg || t("error.generic"));
+      }
     } finally {
       setLoading(false);
       setUploadStep("");
@@ -312,7 +323,7 @@ export default function CampaignWizardPage() {
     <AppShell>
       <div className="mx-auto max-w-2xl">
         <div className="mb-8 border-b border-border pb-6">
-          <p className="text-xs font-semibold uppercase tracking-widest text-ink-secondary">EmberOS</p>
+          <p className="text-xs font-semibold uppercase tracking-widest text-ink-secondary">{t("marketing.brand")}</p>
           <h1 className="mt-1 text-2xl font-bold tracking-tight text-navy sm:text-3xl">
             {t("campaign.new.title")}
           </h1>
@@ -326,7 +337,7 @@ export default function CampaignWizardPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full rounded-xl border border-border px-4 py-2.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-              placeholder="Spring Bouquet Launch"
+              placeholder={t("campaign.namePlaceholder")}
               required
             />
 
@@ -344,7 +355,7 @@ export default function CampaignWizardPage() {
                         : "border border-border bg-surface text-ink-secondary hover:border-brand-blue/30"
                     }`}
                   >
-                    {p}
+                    {t(`platform.${p}` as "platform.tiktok")}
                   </button>
                 ))}
               </div>
@@ -436,7 +447,9 @@ export default function CampaignWizardPage() {
                     >
                       <span className="min-w-0 truncate text-ink">
                         <span className="font-medium text-navy">
-                          {classifyUploadFile(file) === "video" ? "Video" : "Image"}
+                          {classifyUploadFile(file) === "video"
+                            ? t("campaign.fileVideo")
+                            : t("campaign.fileImage")}
                         </span>
                         <span className="mx-1.5 text-ink-secondary">·</span>
                         {file.name}

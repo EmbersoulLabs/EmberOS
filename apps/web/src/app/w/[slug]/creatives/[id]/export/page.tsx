@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { useI18n } from "@/lib/i18n/provider";
@@ -23,6 +24,7 @@ const POLL_TIMEOUT_MS = 20 * 60 * 1000;
 export default function ExportPage() {
   const params = useParams();
   const id = params.id as string;
+  const slug = params.slug as string;
   const { t } = useI18n();
   const [state, setState] = useState<ExportState>({ status: "none", exportPackUrl: null });
   const [loading, setLoading] = useState(false);
@@ -164,46 +166,80 @@ export default function ExportPage() {
     }
   }
 
+  const steps = [
+    { done: state.hasPreview, label: t("export.stepPreview") },
+    { done: state.hasFinal, label: t("export.stepFinal") },
+    { done: Boolean(state.exportPackUrl), label: t("export.stepZip") },
+  ];
+
   return (
     <AppShell>
-      <h1 className="mb-2 text-2xl font-bold">{t("export.title")}</h1>
-      <p className="mb-6 text-sm text-slate-500">{t("export.subtitle")}</p>
+      <div className="mx-auto max-w-xl">
+        <div className="mb-6 border-b border-border/70 pb-4">
+          <p className="text-[11px] font-medium uppercase tracking-widest text-ink-secondary">
+            {t("marketing.brand")}
+          </p>
+          <h1 className="mt-1 text-xl font-semibold tracking-tight text-navy">{t("export.title")}</h1>
+          <p className="mt-1 text-sm text-ink-secondary">{t("export.subtitle")}</p>
+        </div>
 
-      <div className="mb-6 rounded-lg border bg-white p-4 text-sm">
-        <p className="font-medium text-slate-800">{statusHint(state)}</p>
-        <ul className="mt-3 space-y-1 text-slate-600">
-          <li>
-            {state.hasPreview ? "✓" : "○"} {t("export.stepPreview")}
-          </li>
-          <li>
-            {state.hasFinal ? "✓" : "○"} {t("export.stepFinal")}
-          </li>
-          <li>
-            {state.exportPackUrl ? "✓" : "○"} {t("export.stepZip")}
-          </li>
-        </ul>
-        <p className="mt-3 text-xs text-slate-400">{t("export.timingHint")}</p>
+        <section className="rounded-xl border border-border/80 bg-surface p-5 shadow-card">
+          <p className="text-sm font-medium text-navy">{statusHint(state)}</p>
+          <ul className="mt-4 space-y-2">
+            {steps.map((step) => (
+              <li
+                key={step.label}
+                className={`flex items-center gap-2 text-sm ${
+                  step.done ? "text-brand-teal" : "text-ink-secondary"
+                }`}
+              >
+                <span
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                    step.done ? "bg-brand-teal/15 text-brand-teal" : "bg-surface-muted text-ink-secondary"
+                  }`}
+                >
+                  {step.done ? "✓" : "○"}
+                </span>
+                {step.label}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-xs text-ink-secondary">{t("export.timingHint")}</p>
+        </section>
+
+        {error && (
+          <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          {state.exportPackUrl ? (
+            <a
+              href={state.exportPackUrl}
+              download
+              className="inline-flex h-10 items-center rounded-lg bg-navy px-5 text-sm font-medium text-white shadow-sm hover:bg-navy/90"
+            >
+              {t("export.download")}
+            </a>
+          ) : (
+            <button
+              type="button"
+              onClick={triggerExport}
+              disabled={loading || state.blockReason === "preview_not_ready"}
+              className="inline-flex h-10 items-center rounded-lg bg-navy px-5 text-sm font-medium text-white shadow-sm hover:bg-navy/90 disabled:opacity-50"
+            >
+              {loading ? t("export.working") : t("export.generate")}
+            </button>
+          )}
+          <Link
+            href={`/w/${slug}/creatives/${id}`}
+            className="inline-flex h-10 items-center rounded-lg border border-border px-4 text-sm font-medium text-ink-secondary hover:text-navy"
+          >
+            {t("nav.back")}
+          </Link>
+        </div>
       </div>
-
-      {error && <p className="mb-4 text-sm text-red-600">{error}</p>}
-
-      {state.exportPackUrl ? (
-        <a
-          href={state.exportPackUrl}
-          download
-          className="inline-block rounded-lg bg-primary px-4 py-2 text-sm text-white"
-        >
-          {t("export.download")}
-        </a>
-      ) : (
-        <button
-          onClick={triggerExport}
-          disabled={loading || state.blockReason === "preview_not_ready"}
-          className="rounded-lg bg-primary px-4 py-2 text-sm text-white disabled:opacity-50"
-        >
-          {loading ? t("export.working") : t("export.generate")}
-        </button>
-      )}
     </AppShell>
   );
 }

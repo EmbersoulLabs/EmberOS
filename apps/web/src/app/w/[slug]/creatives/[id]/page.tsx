@@ -10,6 +10,7 @@ import type { TranslationKey } from "@ceo-agent/shared/i18n";
 import { ClipAudioControls } from "@/components/pipeline/ClipAudioControls";
 import { ClipDownloadMenu } from "@/components/pipeline/ClipDownloadMenu";
 import { CopyDownloadButtons } from "@/components/pipeline/CopyDownloadButtons";
+import { CreativeSubtitleSettings } from "@/components/pipeline/CreativeSubtitleSettings";
 import { MusicMatchPanel } from "@/components/pipeline/MusicMatchPanel";
 import { formatPlatformLabel, videoUrlWithCacheBust } from "@/lib/clip-utils";
 import type { EditPlan } from "@ceo-agent/shared";
@@ -25,8 +26,9 @@ interface CopyVariant {
   locale?: "en" | "zh";
 }
 
-function variantLabel(v: CopyVariant): string {
-  const lang = v.locale === "zh" ? "中文" : v.locale === "en" ? "EN" : "";
+function variantLabel(v: CopyVariant, t: (k: TranslationKey) => string): string {
+  const lang =
+    v.locale === "zh" ? t("creative.variantZh") : v.locale === "en" ? t("creative.variantEn") : "";
   const plat = formatPlatformLabel(v.platform);
   return lang ? `${plat} · ${lang}` : plat;
 }
@@ -54,6 +56,14 @@ export default function CreativePreviewPage() {
   const [editForm, setEditForm] = useState<Partial<CopyVariant>>({});
   const [copySaveHint, setCopySaveHint] = useState("");
 
+  function refreshCreative() {
+    fetch(`/api/creatives/${id}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.creative) setCreative(d.creative);
+      });
+  }
+
   useEffect(() => {
     fetch(`/api/creatives/${id}`)
       .then((r) => r.json())
@@ -72,13 +82,7 @@ export default function CreativePreviewPage() {
 
   useEffect(() => {
     if ((creative?.renderStatus as string | undefined) !== "preview_rendering") return;
-    const interval = setInterval(() => {
-      fetch(`/api/creatives/${id}`)
-        .then((r) => r.json())
-        .then((d) => {
-          if (d.creative) setCreative(d.creative);
-        });
-    }, 3000);
+    const interval = setInterval(refreshCreative, 3000);
     return () => clearInterval(interval);
   }, [id, creative?.renderStatus]);
 
@@ -93,6 +97,8 @@ export default function CreativePreviewPage() {
     return order(a) - order(b);
   });
   const variant = sortedVariants[activeVariant] ?? variants[activeVariant];
+  const isRendering = creative?.renderStatus === "preview_rendering";
+  const videoUrl = creative?.videoUrl as string | undefined;
 
   async function saveCopy() {
     if (!variant) return;
@@ -121,10 +127,18 @@ export default function CreativePreviewPage() {
     alert(t("creative.submitted"));
   }
 
+  const btn =
+    "inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-ink-secondary transition hover:border-navy/25 hover:text-navy";
+
   return (
     <AppShell>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("creative.title")}</h1>
+      <div className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-border/70 pb-4">
+        <div>
+          <p className="text-[11px] font-medium uppercase tracking-widest text-ink-secondary">
+            {t("marketing.brand")}
+          </p>
+          <h1 className="mt-1 text-xl font-semibold tracking-tight text-navy">{t("creative.title")}</h1>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {creative && <StatusBadge status={creative.status as string} />}
           {campaignId && (
@@ -134,140 +148,181 @@ export default function CreativePreviewPage() {
       </div>
 
       {campaignId && (
-        <p className="mb-4 text-sm text-slate-500">{t("creative.rerunHint")}</p>
+        <p className="mb-4 text-sm text-ink-secondary">{t("creative.rerunHint")}</p>
       )}
 
       {siblingClips.length > 1 && (
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-4 flex flex-wrap gap-1.5">
           {siblingClips.map((clip, i) => (
             <Link
               key={clip.id}
               href={`/w/${slug}/creatives/${clip.id}`}
-              className={`rounded px-3 py-1 text-sm ${
-                i === clipIndex ? "bg-primary text-white" : "border"
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                i === clipIndex
+                  ? "bg-navy text-white shadow-sm"
+                  : "border border-border bg-surface text-ink-secondary hover:text-navy"
               }`}
             >
-              Clip {i + 1}
+              {t("creative.clipNav", { n: i + 1 })}
             </Link>
           ))}
           <Link
             href={`/w/${slug}/campaigns/${campaignId}/task`}
-            className="rounded border border-primary px-3 py-1 text-sm text-primary"
+            className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-brand-blue hover:bg-brand-blue/5"
           >
-            All clips
+            {t("creative.allClips")}
           </Link>
         </div>
       )}
 
-      {creative?.videoUrl ? (
-        <video
-          key={String(creative.updatedAt ?? creative.videoUrl)}
-          src={videoUrlWithCacheBust(
-            creative.videoUrl as string,
-            creative.updatedAt as string | undefined
-          )}
-          controls
-          className="mx-auto mb-6 max-h-[70vh] w-full max-w-sm rounded-lg bg-black object-contain"
-        />
-      ) : (
-        <div className="mb-6 flex h-48 items-center justify-center rounded-lg bg-slate-200 text-slate-500">
-          {t("creative.rendering")}
-        </div>
-      )}
-
-      {creative?.videoUrl ? (
-        <div className="mx-auto mb-6 max-w-sm space-y-4">
-          <MusicMatchPanel editPlan={creative.editPlan as EditPlan | undefined} />
-          <ClipAudioControls
-            creativeId={id}
-            editPlan={creative.editPlan as EditPlan | undefined}
-            renderStatus={creative.renderStatus as string | undefined}
-            renderProgress={creative.renderProgress as { percent?: number; phase?: string; error?: string } | undefined}
-            onRenderComplete={() => {
-              fetch(`/api/creatives/${id}`)
-                .then((r) => r.json())
-                .then((d) => {
-                  if (d.creative) setCreative(d.creative);
-                });
-            }}
-          />
-          <ClipDownloadMenu
-            creativeId={id}
-            clipLabel={`clip_${clipIndex + 1}`}
-          />
-        </div>
-      ) : null}
-
-      <div className="mb-4 flex gap-2">
-        {sortedVariants.map((v, i) => (
-          <button
-            key={v.id}
-            onClick={() => setActiveVariant(i)}
-            className={`rounded px-3 py-1 text-sm ${
-              i === activeVariant ? "bg-primary text-white" : "border"
-            }`}
-          >
-            {variantLabel(v)}
-          </button>
-        ))}
-      </div>
-
-      {variant && !editMode && (
-        <div className="rounded-lg border bg-white p-4">
-          {copySaveHint && (
-            <p className="mb-3 text-sm text-brand-blue">{copySaveHint}</p>
-          )}
-          <p className="text-sm font-medium text-primary">{variant.hook}</p>
-          <p className="mt-2 whitespace-pre-wrap text-sm">{variant.body}</p>
-          <p className="mt-2 text-sm font-medium">{variant.cta}</p>
-          <p className="mt-2 text-xs text-slate-500">{variant.tags?.join(" ")}</p>
-          <div className="mt-4 flex gap-2">
-            <button
-              onClick={() => {
-                setEditForm(variant);
-                setEditMode(true);
-              }}
-              className="rounded border px-3 py-1 text-sm"
-            >
-              {t("creative.editCopy")}
-            </button>
-            <CopyDownloadButtons creativeId={id} compact disabled={variants.length === 0} />
-            <button onClick={submitReview} className="rounded bg-primary px-3 py-1 text-sm text-white">
-              {t("creative.submitReview")}
-            </button>
-            <Link
-              href={`/w/${slug}/creatives/${id}/export`}
-              className="rounded border px-3 py-1 text-sm"
-            >
-              {t("creative.export")}
-            </Link>
-          </div>
-        </div>
-      )}
-
-      {editMode && (
-        <div className="space-y-3 rounded-lg border bg-white p-4">
-          {(["hook", "body", "cta", "title"] as const).map((field) => (
-            <div key={field}>
-              <label className="text-sm font-medium">{t(FIELD_KEYS[field])}</label>
-              <textarea
-                value={(editForm[field] as string) ?? ""}
-                onChange={(e) => setEditForm({ ...editForm, [field]: e.target.value })}
-                className="mt-1 w-full rounded border px-3 py-2 text-sm"
-                rows={field === "body" ? 4 : 2}
-              />
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_1fr]">
+        <div className="space-y-4">
+          {creative?.videoUrl ? (
+            <video
+              key={String(creative.updatedAt ?? videoUrl)}
+              src={videoUrlWithCacheBust(videoUrl!, creative.updatedAt as string | undefined)}
+              controls
+              className="w-full rounded-xl border border-border/80 bg-black object-contain shadow-card"
+            />
+          ) : (
+            <div className="flex aspect-[9/16] max-h-[70vh] items-center justify-center rounded-xl border border-dashed border-border bg-surface-muted text-sm text-ink-secondary">
+              {t("creative.noPreview")}
             </div>
-          ))}
-          <div className="flex gap-2">
-            <button onClick={saveCopy} className="rounded bg-primary px-3 py-1 text-sm text-white">
-              {t("creative.save")}
-            </button>
-            <button onClick={() => setEditMode(false)} className="rounded border px-3 py-1 text-sm">
-              {t("workspaces.cancel")}
-            </button>
-          </div>
+          )}
+
+          {videoUrl && creative && (
+            <>
+              <MusicMatchPanel editPlan={creative.editPlan as EditPlan | undefined} compact />
+              <ClipAudioControls
+                creativeId={id}
+                editPlan={creative.editPlan as EditPlan | undefined}
+                renderStatus={creative.renderStatus as string | undefined}
+                renderProgress={
+                  creative.renderProgress as
+                    | { percent?: number; phase?: string; error?: string }
+                    | undefined
+                }
+                onRenderComplete={refreshCreative}
+              />
+              {variant && (
+                <CreativeSubtitleSettings
+                  creativeId={id}
+                  variantId={variant.id}
+                  disabled={isRendering}
+                  onApplied={refreshCreative}
+                />
+              )}
+              <ClipDownloadMenu creativeId={id} clipLabel={`clip_${clipIndex + 1}`} />
+            </>
+          )}
         </div>
-      )}
+
+        <div className="min-w-0 space-y-4">
+          <div
+            className="flex gap-1 overflow-x-auto rounded-lg border border-border/80 bg-surface-muted/40 p-1"
+            role="tablist"
+          >
+            {sortedVariants.map((v, i) => (
+              <button
+                key={v.id}
+                type="button"
+                role="tab"
+                aria-selected={i === activeVariant}
+                onClick={() => setActiveVariant(i)}
+                className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition ${
+                  i === activeVariant
+                    ? "bg-surface text-navy shadow-sm ring-1 ring-border/80"
+                    : "text-ink-secondary hover:text-navy"
+                }`}
+              >
+                {variantLabel(v, t)}
+              </button>
+            ))}
+          </div>
+
+          {variant && !editMode && (
+            <section className="rounded-xl border border-border/80 bg-surface p-4 shadow-card">
+              {copySaveHint && (
+                <p className="mb-3 text-sm text-brand-blue">{copySaveHint}</p>
+              )}
+              <div className="space-y-3 text-sm">
+                <div className="rounded-lg border border-brand-teal/20 bg-brand-teal/[0.04] px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">
+                    {t("creative.field.hook")}
+                  </p>
+                  <p className="mt-1 font-medium text-navy">{variant.hook}</p>
+                </div>
+                <div className="rounded-lg border border-border/60 bg-surface-muted/30 px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">
+                    {t("creative.field.body")}
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap leading-relaxed text-ink">{variant.body}</p>
+                </div>
+                <div className="rounded-lg border border-border/60 px-3 py-2.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">
+                    {t("creative.field.cta")}
+                  </p>
+                  <p className="mt-1 font-medium text-navy">{variant.cta}</p>
+                </div>
+                {variant.tags?.length > 0 && (
+                  <p className="text-xs text-ink-secondary">{variant.tags.join(" ")}</p>
+                )}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-1.5 border-t border-border/60 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditForm(variant);
+                    setEditMode(true);
+                  }}
+                  className={btn}
+                >
+                  {t("creative.editCopy")}
+                </button>
+                <CopyDownloadButtons creativeId={id} compact disabled={variants.length === 0} />
+                <button type="button" onClick={submitReview} className={`${btn} border-navy/20 bg-navy text-white hover:bg-navy/90 hover:text-white`}>
+                  {t("creative.submitReview")}
+                </button>
+                <Link href={`/w/${slug}/creatives/${id}/export`} className={btn}>
+                  {t("creative.export")}
+                </Link>
+              </div>
+            </section>
+          )}
+
+          {editMode && (
+            <section className="rounded-xl border border-border/80 bg-surface p-4 shadow-card">
+              <div className="space-y-3">
+                {(["hook", "body", "cta", "title"] as const).map((field) => (
+                  <div key={field}>
+                    <label className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+                      {t(FIELD_KEYS[field])}
+                    </label>
+                    <textarea
+                      value={(editForm[field] as string) ?? ""}
+                      onChange={(e) => setEditForm({ ...editForm, [field]: e.target.value })}
+                      className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                      rows={field === "body" ? 4 : 2}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 flex gap-2">
+                <button
+                  type="button"
+                  onClick={saveCopy}
+                  className="rounded-md bg-navy px-3 py-1.5 text-xs font-medium text-white"
+                >
+                  {t("creative.save")}
+                </button>
+                <button type="button" onClick={() => setEditMode(false)} className={btn}>
+                  {t("workspaces.cancel")}
+                </button>
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
     </AppShell>
   );
 }

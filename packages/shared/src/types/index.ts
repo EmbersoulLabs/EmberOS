@@ -248,6 +248,13 @@ export const EditPlanSchema = z.object({
       platform: PlatformSchema.optional(),
     })
     .optional(),
+  /** Client/worker subtitle & render styling — persisted on creative for re-renders. */
+  renderPreferences: z
+    .object({
+      subtitleStyle: z.enum(["minimal", "corporate", "modern", "social"]),
+      subtitleLanguage: z.enum(["zh", "en", "ms", "zh_en", "en_zh", "zh_ms", "en_ms"]),
+    })
+    .optional(),
 });
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 

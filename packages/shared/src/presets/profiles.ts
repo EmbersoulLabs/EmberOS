@@ -9,7 +9,8 @@ function profile(
   scenePacing: PresetProfile["scenePacing"],
   motionByRole: PresetProfile["motionByRole"],
   speedByRole: PresetProfile["speedByRole"],
-  cutStyle: PresetProfile["cutStyle"] = "jump"
+  cutStyle: PresetProfile["cutStyle"] = "jump",
+  captionStyle: PresetProfile["captionStyle"] = "bilingual"
 ): PresetProfile {
   return {
     id,
@@ -18,7 +19,7 @@ function profile(
     scenePacing,
     motionByRole,
     speedByRole,
-    captionStyle: "bilingual",
+    captionStyle,
     ctaStyle: "slide_up",
     cutStyle,
   };
@@ -162,18 +163,19 @@ export const PRESET_PROFILES: Record<PresetId, PresetProfile> = {
   ),
   corporate: profile(
     "corporate",
-    "Corporate",
-    "企业",
-    { hook: 2.5, product: 3.0, benefits: 2.5, proof: 2.5, cta: 2.5 },
+    "Premium Corporate",
+    "企业精品",
+    { hook: 2.0, product: 2.0, benefits: 1.8, proof: 1.8, cta: 2.0 },
     {
       hook: "fade_in",
-      product: "pan_right",
+      product: "slow_zoom_in",
       benefits: "static",
       proof: "static",
-      cta: "focus_pull",
+      cta: "fade_in",
     },
-    { hook: 1.0, product: 1.02, benefits: 1.0, proof: 1.0, cta: 1.0 },
-    "soft"
+    { hook: 1.0, product: 1.0, benefits: 1.0, proof: 1.0, cta: 1.0 },
+    "soft",
+    "minimal"
   ),
 };
 

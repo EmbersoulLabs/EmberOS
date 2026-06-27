@@ -43,7 +43,7 @@ export function resolvePresetId(input: {
   if (input.industry && INDUSTRY_TO_PRESET[input.industry]) {
     return INDUSTRY_TO_PRESET[input.industry]!;
   }
-  return "marketing";
+  return "corporate";
 }
 
 export function resolvePreset(input: {

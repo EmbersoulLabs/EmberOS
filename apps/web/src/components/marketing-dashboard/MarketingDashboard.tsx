@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { MarketingContentPackage, StrategyPlan } from "@ceo-agent/shared";
 import {
   MARKETING_PLATFORM_IDS,
@@ -30,7 +30,34 @@ import {
 import { platformEmphasisKeys, platformLabelKey } from "./platform-ui";
 import { defaultSuggestions, deriveScoreInsights, scoreQualityKey } from "./score-insights";
 
-function PlatformPanel({
+function CopyFieldButton({ text }: { text: string }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+
+  const copy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* ignore */
+    }
+  }, [text]);
+
+  if (!text?.trim()) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="ml-auto shrink-0 rounded border border-border bg-surface px-2 py-0.5 text-[10px] font-medium text-ink-secondary hover:text-navy"
+    >
+      {copied ? t("marketing.action.copied") : t("marketing.action.copy")}
+    </button>
+  );
+}
+
+const PlatformPanel = memo(function PlatformPanel({
   platformId,
   asset,
 }: {
@@ -93,7 +120,7 @@ function PlatformPanel({
       {fullText && <CopyActionBar text={fullText} />}
     </article>
   );
-}
+});
 
 function FieldBlock({
   label,
@@ -114,7 +141,10 @@ function FieldBlock({
           : "rounded-md border border-border/40 bg-white/40 px-3 py-2"
       }
     >
-      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">{label}</p>
+      <div className="flex items-center gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">{label}</p>
+        <CopyFieldButton text={value} />
+      </div>
       <p className={`mt-1 ${multiline ? "whitespace-pre-line leading-relaxed" : "font-medium"}`}>
         {value}
       </p>
@@ -354,33 +384,35 @@ export function MarketingDashboard({
         )}
       </DashboardSection>
 
-      <CollapsibleSection title={t("marketing.seo.title")} subtitle={t("marketing.seo.subtitle")}>
-        <SeoBlock seo={seo} />
-      </CollapsibleSection>
-
       <CollapsibleSection
-        title={t("marketing.hashtags.title")}
-        subtitle={t("marketing.hashtags.subtitle")}
+        title={t("marketing.advanced.title")}
+        subtitle={t("marketing.advanced.subtitle")}
       >
-        <HashtagBlock hashtags={hashtags} />
+        <div className="space-y-5">
+          <div>
+            <p className="mb-2 text-xs font-semibold text-navy">{t("marketing.seo.title")}</p>
+            <SeoBlock seo={seo} />
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-semibold text-navy">{t("marketing.hashtags.title")}</p>
+            <HashtagBlock hashtags={hashtags} />
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-semibold text-navy">{t("marketing.cta.title")}</p>
+            <CtaBlock ctas={ctas} />
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-semibold text-navy">{t("marketing.suggestions.title")}</p>
+            <SuggestionsBlock suggestions={suggestions} />
+          </div>
+          {pkg.hooks.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-semibold text-navy">{t("marketing.hooks.title")}</p>
+              <HooksBlock hooks={pkg.hooks.slice(0, 5)} />
+            </div>
+          )}
+        </div>
       </CollapsibleSection>
-
-      <CollapsibleSection title={t("marketing.cta.title")} subtitle={t("marketing.cta.subtitle")}>
-        <CtaBlock ctas={ctas} />
-      </CollapsibleSection>
-
-      <CollapsibleSection
-        title={t("marketing.suggestions.title")}
-        subtitle={t("marketing.suggestions.subtitle")}
-      >
-        <SuggestionsBlock suggestions={suggestions} />
-      </CollapsibleSection>
-
-      {pkg.hooks.length > 0 && (
-        <CollapsibleSection title={t("marketing.hooks.title")} subtitle={t("marketing.hooks.subtitle")}>
-          <HooksBlock hooks={pkg.hooks.slice(0, 5)} />
-        </CollapsibleSection>
-      )}
     </div>
   );
 }

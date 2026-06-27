@@ -1,6 +1,7 @@
 "use client";
 
 import { useI18n } from "@/lib/i18n/provider";
+
 export function CampaignPageHeader({
   campaignName,
   taskStatus,
@@ -29,19 +30,19 @@ export function CampaignPageHeader({
         : "bg-brand-blue/10 text-brand-blue ring-brand-blue/25";
 
   return (
-    <header className="mb-8 border-b border-border pb-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <header>
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-widest text-ink-secondary">
-            {t("pipeline.title")}
+          <p className="text-[11px] font-medium uppercase tracking-widest text-ink-secondary">
+            {t("marketing.brand")}
           </p>
-          <h1 className="mt-1 truncate text-2xl font-bold tracking-tight text-navy sm:text-3xl">
+          <h1 className="mt-1 truncate text-xl font-semibold tracking-tight text-navy sm:text-2xl">
             {campaignName ?? t("pipeline.title")}
           </h1>
         </div>
         {taskStatus && (
           <span
-            className={`inline-flex shrink-0 items-center rounded-full px-3.5 py-1.5 text-sm font-semibold ring-1 ${statusTone}`}
+            className={`inline-flex shrink-0 items-center rounded-full px-3 py-1 text-xs font-semibold ring-1 ${statusTone}`}
           >
             {statusLabel}
           </span>

@@ -3,9 +3,11 @@ import { getDb, schema } from "@ceo-agent/db";
 import {
   canUseSubtitleOnlyRerender,
   narrationScriptChanged,
+  stampRenderPreferences,
   syncEditPlanFromCopy,
   type CopyVariant,
   type EditPlan,
+  type RenderPreferences,
 } from "@ceo-agent/shared";
 import { enqueuePreviewSubtitleRerender } from "@/lib/render-queue";
 
@@ -16,7 +18,16 @@ export type CopyPatchInput = {
   cta?: string;
   tags?: string[];
   title?: string;
+  renderPreferences?: RenderPreferences;
 };
+
+function renderPreferencesChanged(before: EditPlan, after: EditPlan): boolean {
+  const a = before.renderPreferences;
+  const b = after.renderPreferences;
+  if (!a && !b) return false;
+  if (!a || !b) return true;
+  return a.subtitleStyle !== b.subtitleStyle || a.subtitleLanguage !== b.subtitleLanguage;
+}
 
 export async function applyCreativeCopyPatch(creativeId: string, input: CopyPatchInput) {
   const db = getDb();
@@ -48,22 +59,38 @@ export async function applyCreativeCopyPatch(creativeId: string, input: CopyPatc
   let nextEditPlan = previousPlan;
   let rerenderQueued = false;
 
-  if (previousPlan && scriptFieldsChanged) {
+  if (previousPlan && input.renderPreferences) {
+    nextEditPlan = stampRenderPreferences(previousPlan, input.renderPreferences);
+  }
+
+  if (previousPlan && scriptFieldsChanged && nextEditPlan) {
     const pairLocale = variants[idx]!.locale === "zh" ? "en" : "zh";
     const altVariant = variants.find((v) => v.locale === pairLocale);
-    nextEditPlan = syncEditPlanFromCopy(previousPlan, variants[idx]!, altVariant);
+    nextEditPlan = syncEditPlanFromCopy(nextEditPlan, variants[idx]!, altVariant);
+  }
 
+  const prefsOnly =
+    Boolean(input.renderPreferences) &&
+    !scriptFieldsChanged &&
+    previousPlan &&
+    nextEditPlan &&
+    renderPreferencesChanged(previousPlan, nextEditPlan);
+
+  if (previousPlan && nextEditPlan && (scriptFieldsChanged || prefsOnly)) {
     const canRerender = Boolean(creative.videoUrl || creative.renderCachePath);
     const shouldRerender =
       canRerender &&
       creative.taskId &&
-      (narrationScriptChanged(previousPlan, nextEditPlan) ||
+      (prefsOnly ||
+        narrationScriptChanged(previousPlan, nextEditPlan) ||
         JSON.stringify(previousPlan.subtitles) !== JSON.stringify(nextEditPlan.subtitles));
 
     if (shouldRerender) {
-      const renderMode = canUseSubtitleOnlyRerender(previousPlan, nextEditPlan)
+      const renderMode = prefsOnly
         ? "subtitles_only"
-        : "preview";
+        : canUseSubtitleOnlyRerender(previousPlan, nextEditPlan)
+          ? "subtitles_only"
+          : "preview";
 
       const [updated] = await db
         .update(schema.creatives)

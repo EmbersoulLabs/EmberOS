@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   BGM_USER_PREFERENCES,
   DEFAULT_BGM_PREFERENCE,
@@ -14,8 +15,19 @@ import {
   type BgmUserPreference,
   type BgmStartPreference,
 } from "@ceo-agent/shared";
+import type { SubtitleLanguagePair, SubtitleStylePreset } from "@ceo-agent/shared";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
+import { LOCALES } from "@ceo-agent/shared/i18n";
 import { useI18n } from "@/lib/i18n/provider";
+import {
+  getAiOutputLanguage,
+  getSubtitleLanguage,
+  getSubtitleStyle,
+  setAiOutputLanguage,
+  setSubtitleLanguage,
+  setSubtitleStyle,
+  type AiOutputLanguage,
+} from "@/lib/preferences";
 
 export interface CampaignBriefFormValues {
   campaignBrief: string;
@@ -34,6 +46,18 @@ export const EMPTY_BRIEF_FORM: CampaignBriefFormValues = {
   bgmPreference: DEFAULT_BGM_PREFERENCE,
   bgmStartPreference: DEFAULT_BGM_START_PREFERENCE,
 };
+
+const SUBTITLE_LANG_OPTIONS: SubtitleLanguagePair[] = [
+  "zh",
+  "en",
+  "ms",
+  "zh_en",
+  "en_zh",
+  "zh_ms",
+  "en_ms",
+];
+
+const SUBTITLE_STYLE_OPTIONS: SubtitleStylePreset[] = ["minimal", "corporate", "modern", "social"];
 
 function OptionChip({
   selected,
@@ -67,6 +91,15 @@ export function CampaignBriefForm({
   onChange: (values: CampaignBriefFormValues) => void;
 }) {
   const { t } = useI18n();
+  const [aiOutputLang, setAiOutputLangState] = useState<AiOutputLanguage>("auto");
+  const [subtitleLang, setSubtitleLangState] = useState<SubtitleLanguagePair>("zh_en");
+  const [subtitleStyle, setSubtitleStyleState] = useState<SubtitleStylePreset>("minimal");
+
+  useEffect(() => {
+    setAiOutputLangState(getAiOutputLanguage());
+    setSubtitleLangState(getSubtitleLanguage());
+    setSubtitleStyleState(getSubtitleStyle());
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -84,6 +117,68 @@ export function CampaignBriefForm({
           placeholder={t("campaign.brief.placeholder")}
           className="w-full resize-y rounded-xl border border-border bg-surface px-4 py-3 text-sm leading-relaxed text-ink placeholder:text-ink-secondary/70 focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
         />
+      </section>
+
+      <section className="brand-card p-5">
+        <h2 className="mb-1 text-sm font-semibold text-navy">{t("settings.aiOutputLanguage.title")}</h2>
+        <p className="mb-3 text-xs text-ink-secondary">{t("settings.aiOutputLanguage.description")}</p>
+        <div className="flex flex-wrap gap-2">
+          <OptionChip
+            selected={aiOutputLang === "auto"}
+            onClick={() => {
+              setAiOutputLangState("auto");
+              setAiOutputLanguage("auto");
+            }}
+            label={t("settings.aiOutputLanguage.auto")}
+          />
+          {LOCALES.map(({ code }) => (
+            <OptionChip
+              key={code}
+              selected={aiOutputLang === code}
+              onClick={() => {
+                setAiOutputLangState(code);
+                setAiOutputLanguage(code);
+              }}
+              label={t(`lang.${code}` as TranslationKey)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="brand-card p-5">
+        <h2 className="mb-1 text-sm font-semibold text-navy">{t("settings.subtitleLanguage.title")}</h2>
+        <p className="mb-3 text-xs text-ink-secondary">{t("settings.subtitleLanguage.description")}</p>
+        <div className="flex flex-wrap gap-2">
+          {SUBTITLE_LANG_OPTIONS.map((opt) => (
+            <OptionChip
+              key={opt}
+              selected={subtitleLang === opt}
+              onClick={() => {
+                setSubtitleLangState(opt);
+                setSubtitleLanguage(opt);
+              }}
+              label={t(`settings.subtitleLanguage.${opt}` as TranslationKey)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="brand-card p-5">
+        <h2 className="mb-1 text-sm font-semibold text-navy">{t("settings.subtitleStyle.title")}</h2>
+        <p className="mb-3 text-xs text-ink-secondary">{t("settings.subtitleStyle.description")}</p>
+        <div className="flex flex-wrap gap-2">
+          {SUBTITLE_STYLE_OPTIONS.map((opt) => (
+            <OptionChip
+              key={opt}
+              selected={subtitleStyle === opt}
+              onClick={() => {
+                setSubtitleStyleState(opt);
+                setSubtitleStyle(opt);
+              }}
+              label={t(`settings.subtitleStyle.${opt}` as TranslationKey)}
+            />
+          ))}
+        </div>
       </section>
 
       <section className="brand-card p-5">

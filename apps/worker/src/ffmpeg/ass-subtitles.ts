@@ -3,8 +3,11 @@ import type { EditPlan } from "@ceo-agent/shared";
 import {
   ASS_COLOR_WHITE,
   ASS_COLOR_BLACK,
-  ASS_OUTLINE_PX,
   buildAssAnimatedDialogueText,
+  resolveSubtitleStyle,
+  SUBTITLE_MARGIN_V_PX,
+  DEFAULT_SUBTITLE_STYLE,
+  type SubtitleStylePreset,
 } from "@ceo-agent/shared";
 import { ffmpegAssFontsDir, subtitleFontName } from "./subtitle-fonts.js";
 
@@ -15,10 +18,10 @@ function assStyleLine(
   marginV: number,
   outline: number,
   marginH = 48,
-  bold = -1
+  bold = -1,
+  shadow = 2
 ): string {
   const fontName = subtitleFontName();
-  const shadow = 0;
   return (
     `Style: ${name},${fontName},${fontSize},${ASS_COLOR_WHITE},${ASS_COLOR_BLACK},${ASS_COLOR_BLACK},&H80000000,` +
     `${bold},0,0,0,100,100,0,0,1,${outline},${shadow},${alignment},${marginH},${marginH},${marginV},1`
@@ -51,16 +54,22 @@ export function collectSubtitleHighlightKeywords(editPlan: EditPlan): string[] {
   return [...keywords];
 }
 
-/** Brand dynamic ASS: white + 2px outline, gold keywords, 0.1s char pop; text unchanged (incl. 中英). */
+/** Premium minimal ASS: white SemiBold, subtle shadow, fade-in, safe-area bottom margin. */
 export function buildAssSubtitles(
   subtitles: EditPlan["subtitles"],
   playResY: number,
-  highlightKeywords: string[] = []
+  highlightKeywords: string[] = [],
+  stylePreset: SubtitleStylePreset = DEFAULT_SUBTITLE_STYLE
 ): string {
+  const cfg = resolveSubtitleStyle(stylePreset);
   const scale = playResY / 1920;
   const playResX = Math.round((playResY * 9) / 16);
   const font = subtitleFontName();
-  const outline = Math.max(1, Math.round(ASS_OUTLINE_PX * scale));
+  const outline = Math.max(0, Math.round(cfg.outlinePx * scale));
+  const shadow = Math.max(0, Math.round(cfg.shadowPx * scale));
+  const marginV = Math.round(SUBTITLE_MARGIN_V_PX * scale);
+  const primarySize = Math.round(cfg.fontSizePrimary * scale);
+  const secondarySize = Math.round(cfg.fontSizeSecondary * scale);
 
   const header = `[Script Info]
 ScriptType: v4.00+
@@ -70,15 +79,10 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-${assStyleLine("BrandHook", Math.round(72 * scale), 5, Math.round(80 * scale), outline, 56)}
-${assStyleLine("BrandBody", Math.round(54 * scale), 2, Math.round(200 * scale), outline, 48)}
-${assStyleLine("HookZh", Math.round(58 * scale), 5, Math.round(340 * scale), outline)}
-${assStyleLine("HookEn", Math.round(44 * scale), 5, Math.round(280 * scale), outline, 48, 0)}
-${assStyleLine("BodyZh", Math.round(54 * scale), 2, Math.round(200 * scale), outline)}
-${assStyleLine("BodyEn", Math.round(46 * scale), 2, Math.round(200 * scale), outline, 48, 0)}
-${assStyleLine("CtaZh", Math.round(56 * scale), 2, Math.round(160 * scale), outline)}
-${assStyleLine("CtaEn", Math.round(48 * scale), 2, Math.round(150 * scale), outline, 48, 0)}
-Style: Default,${font},${Math.round(54 * scale)},${ASS_COLOR_WHITE},${ASS_COLOR_BLACK},${ASS_COLOR_BLACK},&H80000000,-1,0,0,0,100,100,0,0,1,${outline},0,2,48,48,${Math.round(200 * scale)},1
+${assStyleLine("BrandHook", Math.round(48 * scale), 1, Math.round(120 * scale), outline, 56, -1, shadow)}
+${assStyleLine("BrandBody", primarySize, 2, marginV, outline, 48, cfg.primaryBold ? -1 : 0, shadow)}
+${assStyleLine("BrandBodySecondary", secondarySize, 2, marginV - Math.round(36 * scale), outline, 48, cfg.secondaryBold ? -1 : 0, shadow)}
+Style: Default,${font},${primarySize},${ASS_COLOR_WHITE},${ASS_COLOR_BLACK},${ASS_COLOR_BLACK},&H80000000,-1,0,0,0,100,100,0,0,1,${outline},${shadow},2,48,48,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -86,23 +90,23 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   const styleMap: Record<string, string> = {
     tiktok_hook_card: "BrandHook",
-    hook: "BrandHook",
+    hook: "BrandBody",
     hook_zh: "BrandBody",
     hook_en: "BrandBody",
-    bold_center: "BrandHook",
+    bold_center: "BrandBody",
     body: "BrandBody",
     body_zh: "BrandBody",
-    body_en: "BrandBody",
+    body_en: "BrandBodySecondary",
     cta: "BrandBody",
     cta_zh: "BrandBody",
-    cta_en: "BrandBody",
+    cta_en: "BrandBodySecondary",
   };
 
   const lines = subtitles.map((s: EditPlan["subtitles"][number]) => {
     if (s.style === "tiktok_hook_card") return null;
     const start = formatAssTime(s.startSec);
     const end = formatAssTime(s.endSec);
-    const text = buildAssAnimatedDialogueText(s.text, highlightKeywords);
+    const text = buildAssAnimatedDialogueText(s.text, highlightKeywords, cfg);
     const style = styleMap[s.style] ?? "BrandBody";
     return `Dialogue: 0,${start},${end},${style},,0,0,0,,${text}`;
   });

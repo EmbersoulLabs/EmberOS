@@ -28,6 +28,7 @@ import { CopyDownloadButtons } from "@/components/pipeline/CopyDownloadButtons";
 import { SingleCreativePreview } from "@/components/pipeline/SingleCreativePreview";
 import { MarketingScorePanel } from "@/components/pipeline/MarketingScorePanel";
 import { MarketingPackagePanel } from "@/components/pipeline/MarketingPackagePanel";
+import { CollapsibleSection } from "@/components/marketing-dashboard/primitives";
 import { normalizeStrategyPlan, type MarketingContentPackage, type StrategyPlan } from "@ceo-agent/shared";
 
 export default function TaskProgressContent() {
@@ -420,8 +421,6 @@ export default function TaskProgressContent() {
               </div>
             )}
 
-            {isAutoClip && <ClipPreviewGrid slug={slug} creatives={creatives} />}
-
             {contentPackage && (
               <MarketingPackagePanel
                 contentPackage={contentPackage}
@@ -430,11 +429,13 @@ export default function TaskProgressContent() {
               />
             )}
 
+            {isAutoClip && <ClipPreviewGrid slug={slug} creatives={creatives} />}
+
             {hasCopy && activeTaskId && !contentPackage && (
-              <section className="brand-card mt-8 p-6">
-                <h3 className="text-lg font-semibold text-navy">{t("creative.copyDownload.taskTitle")}</h3>
-                <p className="mt-1 text-sm text-ink-secondary">{t("creative.copyDownload.taskHint")}</p>
-                <div className="mt-4">
+              <section className="mt-6 rounded-xl border border-border/80 bg-surface p-5 shadow-card">
+                <h3 className="text-sm font-semibold text-navy">{t("creative.copyDownload.taskTitle")}</h3>
+                <p className="mt-1 text-xs text-ink-secondary">{t("creative.copyDownload.taskHint")}</p>
+                <div className="mt-3">
                   <CopyDownloadButtons taskId={activeTaskId} />
                 </div>
               </section>
@@ -447,27 +448,35 @@ export default function TaskProgressContent() {
             {marketingScore && <MarketingScorePanel score={marketingScore} />}
 
             {taskStatus !== "completed" && (
-              <div className="mt-10">
-                <PipelinePhases phases={phases} progress={progress} />
+              <div className="mt-6">
+                <CollapsibleSection
+                  title={t("pipeline.technical.title")}
+                  subtitle={t("pipeline.technical.subtitle")}
+                  defaultOpen={!contentPackage}
+                >
+                  <PipelinePhases phases={phases} progress={progress} compact />
+                </CollapsibleSection>
               </div>
             )}
           </>
         )}
 
         {isAutoClip && readyClipCount > 0 && (
-          <section className="brand-card mt-8 p-6">
-            <h3 className="text-lg font-semibold text-navy">
-              {readyClipCount >= 3 ? t("pipeline.exportAllTitle") : t("pipeline.exportReadyTitle")}
-            </h3>
-            <p className="mt-1 text-sm text-ink-secondary">
-              {readyClipCount < 3
-                ? t("pipeline.exportPartialHint", { ready: String(readyClipCount), total: "3" })
-                : exportPaywallEnabled
-                  ? `${t("pipeline.exportResolutionHint")} ${t("pipeline.exportResolutionHintPaid")}`
-                  : t("pipeline.exportResolutionHint")}
-            </p>
-
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-6">
+          <section className="mt-6 rounded-xl border border-border/80 bg-surface shadow-card">
+            <div className="border-b border-border/60 px-4 py-3 sm:px-5">
+              <h3 className="text-sm font-semibold text-navy">
+                {readyClipCount >= 3 ? t("pipeline.exportAllTitle") : t("pipeline.exportReadyTitle")}
+              </h3>
+              <p className="mt-0.5 text-xs text-ink-secondary">
+                {readyClipCount < 3
+                  ? t("pipeline.exportPartialHint", { ready: String(readyClipCount), total: "3" })
+                  : exportPaywallEnabled
+                    ? `${t("pipeline.exportResolutionHint")} ${t("pipeline.exportResolutionHintPaid")}`
+                    : t("pipeline.exportResolutionHint")}
+              </p>
+            </div>
+            <div className="px-4 py-4 sm:px-5">
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:gap-6">
               <label className="flex cursor-pointer items-center gap-2 text-sm">
                 <input
                   type="radio"
@@ -524,7 +533,7 @@ export default function TaskProgressContent() {
                   )}
                 </span>
               </label>
-            </div>
+              </div>
 
             {exportStatus === "final_rendering" && exportResolution === "2k" && (
               <p className="mt-3 text-sm text-brand-blue">
@@ -554,7 +563,10 @@ export default function TaskProgressContent() {
 
             {exportStatus === "ready" && exportPackUrl && exportedResolution !== exportResolution && (
               <p className="mt-3 text-sm text-ink-secondary">
-                {exportedResolution} ZIP {t("export.ready")} — switch to {exportedResolution} to download, or export {exportResolution} again.
+                {t("export.resolutionSwitchHint", {
+                  exported: exportedResolution ?? "",
+                  target: exportResolution,
+                })}
               </p>
             )}
 
@@ -598,6 +610,7 @@ export default function TaskProgressContent() {
             {!allClipsPreviewReady && readyClipCount > 0 && (
               <p className="mt-2 text-xs text-ink-secondary">{t("export.waitPreview")}</p>
             )}
+            </div>
           </section>
         )}
 

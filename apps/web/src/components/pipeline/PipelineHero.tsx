@@ -60,32 +60,24 @@ export function PipelineHero({
 
   return (
 
-    <div className="brand-card relative overflow-hidden p-6 sm:p-8">
+    <div className="brand-card relative overflow-hidden p-5 sm:p-6">
 
       <div className="pointer-events-none absolute -right-20 -top-20 h-56 w-56 rounded-full bg-brand-blue/5 blur-3xl" />
 
       <div className="relative">
 
-        <p className="text-xs font-semibold uppercase tracking-widest text-brand-blue">
-
-          {t("pipeline.title")}
-
+        <p className="text-[11px] font-medium uppercase tracking-widest text-brand-blue">
+          {isComplete ? t("marketing.brand") : t("pipeline.title")}
         </p>
 
 
 
-        <div className="mt-6 flex flex-wrap items-end justify-between gap-6">
-
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
           <div className="flex items-baseline gap-1.5">
-
             <span
-
-              className={`text-5xl font-bold tabular-nums tracking-tight ${
-
+              className={`text-4xl font-semibold tabular-nums tracking-tight ${
                 isComplete ? "text-brand-teal" : "text-navy"
-
               }`}
-
             >
 
               {percent}
