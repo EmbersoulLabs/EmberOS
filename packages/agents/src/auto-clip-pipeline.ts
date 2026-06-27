@@ -16,6 +16,8 @@ import {
   type BgmRecommendation,
   resolveAutoClipSourceAsset,
   strategyObjectives,
+  resolvePipelineContentLocale,
+  type ContentLocale,
 } from "@ceo-agent/shared";
 import { parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
@@ -23,7 +25,6 @@ import {
   runMarketingContentAgent,
   contentPackageToHookSet,
   buildAutoClipCopyVariants,
-  contentLocaleFromMetadata,
 } from "./marketing-content";
 import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
 import { runVisionAgent } from "./vision";
@@ -39,11 +40,11 @@ import type { CopyLocale, CopyVariant, EditPlan, VisionAnalysis } from "@ceo-age
 function resolveClipVoiceLocale(
   defaultLocale: CopyLocale,
   platforms: Platform[],
-  goal: string
+  contentLocale: ContentLocale
 ): CopyLocale {
-  if (/[\u4e00-\u9fff]/.test(goal)) return "zh";
+  if (contentLocale === "zh") return "zh";
   if (platforms.some((p) => p === "xiaohongshu" || p === "douyin")) return "zh";
-  return defaultLocale;
+  return defaultLocale === "zh" && contentLocale === "en" ? "en" : defaultLocale;
 }
 
 async function updateStep(
@@ -132,8 +133,10 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
   const imageAssets = assets.filter((a) => a.type === "image");
 
   const creativeBrief = parseCampaignCreativeBrief(campaign);
+  const campaignMeta = (campaign.metadata ?? {}) as Record<string, unknown>;
+  const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign.goal);
   const videoAnalysis = buildVideoAnalysisPrompt(creativeBrief);
-  const goal = effectiveCampaignGoal(creativeBrief, campaign.goal);
+  const goal = effectiveCampaignGoal(creativeBrief, campaign.goal, contentLocale);
   const bgmBaseCtx = {
     userPreference: creativeBrief.bgmPreference,
     campaignGoal: creativeBrief.campaignGoal,
@@ -173,6 +176,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       platforms: campaign.platforms,
       brandProfile,
       videoAnalysis,
+      contentLocale,
     });
     totalCost += strategyUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
@@ -227,6 +231,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       videoAnalysis,
       frames: visionFrames.length > 0 ? visionFrames : undefined,
       transcriptSummary,
+      contentLocale,
     });
     totalCost += visionUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
@@ -261,7 +266,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       goal,
       campaignName: campaign.name,
       platforms: campaign.platforms,
-      contentLocale: contentLocaleFromMetadata(campaign.metadata as Record<string, unknown> | null),
+      contentLocale,
     });
     totalCost += contentUsage.costUsd;
     const { contentPackage, usage: translateUsage } =
@@ -349,7 +354,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       editPlan = attachAutoClipVoiceover(
         editPlan,
         variants,
-        resolveClipVoiceLocale(clipVariant.voiceLocale, clipPlatforms, goal),
+        resolveClipVoiceLocale(clipVariant.voiceLocale, clipPlatforms, contentLocale),
         contentPackage.subtitleTimeline
       );
       editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
@@ -367,7 +372,8 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         },
       };
 
-      const primaryCopy = variants.find((v) => v.locale === "zh") ?? variants[0]!;
+      const primaryLocale = contentLocale === "zh" ? "zh" : "en";
+      const primaryCopy = variants.find((v) => v.locale === primaryLocale) ?? variants[0]!;
 
       const [creative] = await db
         .insert(schema.creatives)

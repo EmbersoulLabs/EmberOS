@@ -48,6 +48,16 @@ export function pickPlatformCaption(
   platform: keyof MarketingCaptions,
   locale: MarketingPackLocale
 ): string {
+  // Xiaohongshu (小红书) is a Chinese-first platform — always show Chinese copy
+  // regardless of the UI/pack locale.
+  if (platform === "xiaohongshu") {
+    return (
+      pkg.captions.xiaohongshu?.trim() ||
+      pkg.captionsEn?.xiaohongshu?.trim() ||
+      pkg.captionsMs?.xiaohongshu?.trim() ||
+      ""
+    );
+  }
   if (locale === "zh") {
     return pkg.captions[platform]?.trim() || pkg.captionsEn?.[platform]?.trim() || "";
   }
@@ -85,6 +95,8 @@ export function isMarketingPackLocaleReady(
   });
   if (!ctaOk) return false;
   for (const key of Object.keys(pkg.captions) as (keyof MarketingCaptions)[]) {
+    // Xiaohongshu stays Chinese by design — never blocks translation readiness.
+    if (key === "xiaohongshu") continue;
     if (!pkg.captions[key]?.trim()) continue;
     const cap = pickPlatformCaption(pkg, key, locale);
     if (!isMarketingPackTranslationValid(cap, locale === "ms" ? "ms" : "en")) return false;

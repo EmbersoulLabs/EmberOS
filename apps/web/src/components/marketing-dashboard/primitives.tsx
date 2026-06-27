@@ -195,13 +195,7 @@ export function StrategyField({ label, value }: { label: string; value: string }
   );
 }
 
-export function CopyActionBar({
-  text,
-  onAction,
-}: {
-  text: string;
-  onAction?: (action: "copy" | "regenerate" | "edit" | "expand" | "shorten") => void;
-}) {
+export function CopyActionBar({ text }: { text: string }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
 
@@ -209,12 +203,11 @@ export function CopyActionBar({
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      onAction?.("copy");
       setTimeout(() => setCopied(false), 2000);
     } catch {
       /* ignore */
     }
-  }, [text, onAction]);
+  }, [text]);
 
   const btn =
     "inline-flex h-8 items-center rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-ink-secondary transition hover:border-navy/25 hover:bg-surface-muted hover:text-navy";
@@ -223,18 +216,6 @@ export function CopyActionBar({
     <div className="flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
       <button type="button" onClick={copy} className={btn}>
         {copied ? t("marketing.action.copied") : t("marketing.action.copy")}
-      </button>
-      <button type="button" onClick={copy} className={btn}>
-        {t("marketing.action.copyAll")}
-      </button>
-      <button type="button" className={btn} onClick={() => onAction?.("edit")}>
-        {t("marketing.action.edit")}
-      </button>
-      <button type="button" className={btn} onClick={() => onAction?.("regenerate")}>
-        {t("marketing.action.regenerate")}
-      </button>
-      <button type="button" className={btn} onClick={() => onAction?.("expand")}>
-        {t("marketing.action.expand")}
       </button>
     </div>
   );

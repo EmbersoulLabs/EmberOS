@@ -11,10 +11,16 @@ import {
   buildVideoAnalysisPrompt,
   effectiveCampaignGoal,
   resolveAutoClipSourceAsset,
+  resolvePipelineContentLocale,
+  type ContentLocale,
 } from "@ceo-agent/shared";
 import { runCeoAgent, parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
-import { runMarketingContentAgent, contentPackageToHookSet, contentPackageToCopyVariants, contentLocaleFromMetadata } from "./marketing-content";
+import {
+  runMarketingContentAgent,
+  contentPackageToHookSet,
+  contentPackageToCopyVariants,
+} from "./marketing-content";
 import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
 import { runScoreAgent } from "./score";
 import { runVisionAgent } from "./vision";
@@ -130,8 +136,10 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
   console.log(`[agent.pipeline] route=agency task=${taskId} (no playable source video)`);
 
   const creativeBrief = parseCampaignCreativeBrief(campaign);
+  const campaignMeta = (campaign.metadata ?? {}) as Record<string, unknown>;
+  const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign.goal);
   const videoAnalysis = buildVideoAnalysisPrompt(creativeBrief);
-  const goal = effectiveCampaignGoal(creativeBrief, campaign.goal);
+  const goal = effectiveCampaignGoal(creativeBrief, campaign.goal, contentLocale);
 
   await db
     .update(schema.tasks)
@@ -158,6 +166,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       platforms: campaign.platforms,
       brandProfile,
       videoAnalysis,
+      contentLocale,
     });
     totalCost += strategyUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
@@ -233,6 +242,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       videoAnalysis,
       frames: visionFrames.length > 0 ? visionFrames : undefined,
       transcriptSummary,
+      contentLocale,
     });
     totalCost += visionUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
@@ -250,7 +260,6 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     totalCost += classifyUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "content_type", classifyUsage, classification);
     const preset = getPresetProfile(classification.presetId);
-    const campaignMeta = (campaign.metadata ?? {}) as Record<string, unknown>;
     await db
       .update(schema.campaigns)
       .set({
@@ -313,7 +322,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
         goal,
         campaignName: campaign.name,
         platforms: campaign.platforms,
-        contentLocale: contentLocaleFromMetadata(campaign.metadata as Record<string, unknown> | null),
+        contentLocale,
       });
       totalCost += contentUsage.costUsd;
       const { contentPackage, usage: translateUsage } =

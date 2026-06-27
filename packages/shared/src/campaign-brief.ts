@@ -1,5 +1,6 @@
 /** User-provided creative direction on campaign upload (optional). */
 
+import type { ContentLocale } from "./content-locale";
 import {
   DEFAULT_BGM_PREFERENCE,
   isBgmUserPreference,
@@ -194,8 +195,43 @@ export function buildVideoAnalysisPrompt(brief: CampaignCreativeBrief): string |
   return lines.join("\n");
 }
 
-/** Map marketing goal to legacy goal enum for heuristics. */
-export function legacyGoalFromMarketingGoal(goal?: CampaignMarketingGoal): string {
+/** Map marketing goal to legacy goal string for heuristics (locale-aware). */
+export function legacyGoalFromMarketingGoal(
+  goal: CampaignMarketingGoal,
+  locale: ContentLocale = "zh"
+): string {
+  if (locale === "en") {
+    switch (goal) {
+      case "more_views":
+        return "Grow followers";
+      case "more_engagement":
+        return "Engagement";
+      case "more_leads":
+        return "Lead generation";
+      case "more_sales":
+        return "Drive sales";
+      case "brand_awareness":
+        return "Brand awareness";
+      default:
+        return "Engagement";
+    }
+  }
+  if (locale === "ms") {
+    switch (goal) {
+      case "more_views":
+        return "Tambah pengikut";
+      case "more_engagement":
+        return "Penlibatan";
+      case "more_leads":
+        return "Jana lead";
+      case "more_sales":
+        return "Tingkatkan jualan";
+      case "brand_awareness":
+        return "Kesedaran jenama";
+      default:
+        return "Penlibatan";
+    }
+  }
   switch (goal) {
     case "more_views":
       return "涨粉";
@@ -212,10 +248,19 @@ export function legacyGoalFromMarketingGoal(goal?: CampaignMarketingGoal): strin
   }
 }
 
+const DEFAULT_GOAL: Record<ContentLocale, string> = {
+  zh: "种草",
+  en: "Brand awareness",
+  ms: "Kesedaran jenama",
+};
+
 export function effectiveCampaignGoal(
   brief: CampaignCreativeBrief,
-  fallbackGoal?: string | null
+  fallbackGoal?: string | null,
+  locale: ContentLocale = "zh"
 ): string {
-  if (brief.campaignGoal) return legacyGoalFromMarketingGoal(brief.campaignGoal);
-  return fallbackGoal?.trim() || "种草";
+  if (brief.campaignGoal) return legacyGoalFromMarketingGoal(brief.campaignGoal, locale);
+  const fb = fallbackGoal?.trim();
+  if (fb && (locale === "zh" || !/[\u4e00-\u9fff]/.test(fb))) return fb;
+  return DEFAULT_GOAL[locale];
 }

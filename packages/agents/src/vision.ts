@@ -1,5 +1,5 @@
 import { callJsonModel, callVisionJsonModel } from "./llm";
-import { VisionAnalysisSchema } from "@ceo-agent/shared";
+import { VisionAnalysisSchema, outputLanguagePrompt, isChineseText, type ContentLocale } from "@ceo-agent/shared";
 import type { VisionAnalysis } from "@ceo-agent/shared";
 
 export interface VisionFrameInput {
@@ -18,16 +18,18 @@ export interface VisionInput {
   campaignName?: string;
   goal?: string;
   videoAnalysis?: string | null;
+  contentLocale?: ContentLocale;
 }
 
-function isChineseText(text: string): boolean {
-  return /[\u4e00-\u9fff]/.test(text);
+function resolveVisionLocale(input: VisionInput): ContentLocale {
+  if (input.contentLocale) return input.contentLocale;
+  return isChineseText(`${input.campaignName ?? ""}${input.goal ?? ""}`) ? "zh" : "en";
 }
 
 function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
-  const topic = input.campaignName?.trim() || "营销素材";
-  const goal = input.goal ?? "";
-  const zh = isChineseText(`${topic}${goal}`);
+  const topic = input.campaignName?.trim() || (resolveVisionLocale(input) === "zh" ? "营销素材" : "marketing asset");
+  const locale = resolveVisionLocale(input);
+  const zh = locale === "zh";
 
   if (zh) {
     return {
@@ -79,13 +81,13 @@ export async function runVisionAgent(input: VisionInput): Promise<{
   analysis: VisionAnalysis;
   usage: { input: number; output: number; costUsd: number };
 }> {
-  const useChinese = isChineseText(`${input.campaignName ?? ""}${input.goal ?? ""}`);
+  const locale = resolveVisionLocale(input);
   const hasFrames = (input.frames?.length ?? 0) > 0;
 
   const system = `You are a Vision Agent analyzing marketing video/image assets for Singapore/SEA markets.
 Identify subjects, scenes, products, emotional hooks, and suggested highlight moments for ad creation.
 Estimate primarySubject as normalized x/y (0–1) center of the main product or person to keep in frame for vertical video cropping.
-${useChinese ? "Write descriptions in Chinese (简体中文)." : ""}
+${outputLanguagePrompt(locale)}
 ${hasFrames ? "You are given real frames from the user's own upload — describe only what you see." : "Infer likely visual content from campaign context when frame data is sparse."}
 For videos, align scene timestamps with the provided frame atSec values when possible.
 Output JSON matching VisionAnalysis schema.`;

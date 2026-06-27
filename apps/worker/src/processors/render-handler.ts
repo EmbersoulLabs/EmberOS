@@ -13,6 +13,7 @@ import {
   mergeStoredRendition,
   profileKeyForDownloadResolution,
   BrandProfileSchema,
+  hexToAssColor,
   resolveRenderPreferences,
   stampRenderPreferences,
   type ClipDownloadResolution,
@@ -294,11 +295,16 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     }
 
     let logoLocalPath: string | undefined;
+    let brandColorAss: string | null = null;
     const logoUrl = brandProfile?.logoUrl?.trim();
     if (logoUrl) {
       try {
         logoLocalPath = join(workDir, "brand-logo.png");
         await downloadStorageFile(logoUrl, logoLocalPath);
+        const { extractBrandColorFromLogo } = await import("../ffmpeg/brand-color");
+        const hex = await extractBrandColorFromLogo(logoLocalPath, workDir);
+        brandColorAss = hexToAssColor(hex);
+        if (hex) console.log(`[render] brand subtitle color from logo: ${hex} → ${brandColorAss}`);
       } catch (err) {
         console.warn("[render] brand logo download failed, skipping watermark:", err);
         logoLocalPath = undefined;
@@ -317,6 +323,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         onProgress,
         profileKey,
         logoPath: logoLocalPath,
+        brandColorAss,
       }
     );
 

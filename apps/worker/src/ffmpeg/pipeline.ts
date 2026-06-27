@@ -520,7 +520,7 @@ export async function burnSubtitles(
   renderMode: RenderMode,
   onProgress?: RenderProgressCallback,
   profileKey?: RenderProfileKey,
-  options?: { logoPath?: string }
+  options?: { logoPath?: string; brandColorAss?: string | null }
 ): Promise<{ editPlan: EditPlan; ttsDurationSec?: number }> {
   const profile = resolveProfile(renderMode, profileKey);
   const workDir = join(tmpdir(), `ceo-subs-${Date.now()}`);
@@ -581,7 +581,11 @@ export async function burnSubtitles(
         const subtitleStyle = resolveRenderPreferences({ editPlan: plan }).subtitleStyle;
         await writeFile(
           assLocalPath,
-          buildAssSubtitles(plan.subtitles, profile.height, keywords, subtitleStyle),
+          buildAssSubtitles(plan.subtitles, profile.height, keywords, subtitleStyle, {
+            brandColor: options?.brandColorAss ?? null,
+            // No TTS → looping bounce keeps static subtitles eye-catching; with TTS → speech-synced pop.
+            bounce: !useVoiceover,
+          }),
           "utf8"
         );
       }
@@ -740,6 +744,7 @@ export async function renderVideo(
     onProgress?: RenderProgressCallback;
     profileKey?: RenderProfileKey;
     logoPath?: string;
+    brandColorAss?: string | null;
   }
 ): Promise<{ usedCache: boolean }> {
   const workDir = join(tmpdir(), `ceo-render-${Date.now()}`);
@@ -781,6 +786,7 @@ export async function renderVideo(
 
     await burnSubtitles(baseLocal, editPlan, outputPath, renderMode, options?.onProgress, options?.profileKey, {
       logoPath: options?.logoPath,
+      brandColorAss: options?.brandColorAss,
     });
     await options?.onProgress?.(95, "upload");
     return { usedCache };

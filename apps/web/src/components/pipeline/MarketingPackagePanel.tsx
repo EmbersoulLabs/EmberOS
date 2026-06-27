@@ -1,7 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { MarketingContentPackage, StrategyPlan } from "@ceo-agent/shared";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type {
+  MarketingContentPackage,
+  MarketingPlatformId,
+  PlatformMarketingAsset,
+  StrategyPlan,
+} from "@ceo-agent/shared";
 import {
   isMarketingPackLocaleReady,
   localizeMarketingPackage,
@@ -72,6 +77,36 @@ export function MarketingPackagePanel({
     [pkg, packLocale]
   );
 
+  const onEditPlatform = useCallback(
+    async (platformId: MarketingPlatformId, asset: PlatformMarketingAsset) => {
+      if (!taskId) return;
+      const res = await fetch(`/api/tasks/${taskId}/marketing-pack`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platformId, asset }),
+      });
+      const data = (await res.json()) as { contentPackage?: MarketingContentPackage };
+      if (!res.ok || !data.contentPackage) throw new Error("save_failed");
+      setPkg(data.contentPackage);
+    },
+    [taskId]
+  );
+
+  const onRegeneratePlatform = useCallback(
+    async (platformId: MarketingPlatformId) => {
+      if (!taskId) return;
+      const res = await fetch(`/api/tasks/${taskId}/marketing-pack/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platformId }),
+      });
+      const data = (await res.json()) as { contentPackage?: MarketingContentPackage };
+      if (!res.ok || !data.contentPackage) throw new Error("regenerate_failed");
+      setPkg(data.contentPackage);
+    },
+    [taskId]
+  );
+
   return (
     <section className="mt-8">
       <div className="mb-5 border-b border-border/70 pb-4">
@@ -91,7 +126,12 @@ export function MarketingPackagePanel({
       )}
       {translateError && <p className="mb-4 text-sm text-red-600">{translateError}</p>}
 
-      <MarketingDashboard pkg={displayPackage} strategy={strategy} />
+      <MarketingDashboard
+        pkg={displayPackage}
+        strategy={strategy}
+        onEditPlatform={taskId ? onEditPlatform : undefined}
+        onRegeneratePlatform={taskId ? onRegeneratePlatform : undefined}
+      />
     </section>
   );
 }

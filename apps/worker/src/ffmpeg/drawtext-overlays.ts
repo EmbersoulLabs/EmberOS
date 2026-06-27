@@ -72,10 +72,11 @@ export function buildHookTitleDrawtextFilters(
 }
 
 export function buildHookOnlyDrawtextChain(
-  editPlan: EditPlan,
-  ctx: DrawtextOverlayContext
+  _editPlan: EditPlan,
+  _ctx: DrawtextOverlayContext
 ): string[] {
-  return buildHookTitleDrawtextFilters(editPlan.cover?.overlayText, ctx);
+  // Hook title overlay removed — only ASS subtitles are burned in.
+  return [];
 }
 
 export function buildDrawtextOverlayChain(

@@ -57,17 +57,118 @@ function CopyFieldButton({ text }: { text: string }) {
   );
 }
 
+function EditField({
+  label,
+  value,
+  onChange,
+  multiline,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  multiline?: boolean;
+  placeholder?: string;
+}) {
+  const cls =
+    "mt-1 w-full rounded-md border border-border bg-white px-2.5 py-1.5 text-sm text-ink outline-none focus:border-brand-blue/60";
+  return (
+    <div>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">{label}</p>
+      {multiline ? (
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={4}
+          placeholder={placeholder}
+          className={`${cls} resize-y leading-relaxed`}
+        />
+      ) : (
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className={cls}
+        />
+      )}
+    </div>
+  );
+}
+
 const PlatformPanel = memo(function PlatformPanel({
   platformId,
   asset,
+  onEdit,
+  onRegenerate,
 }: {
   platformId: MarketingPlatformId;
   asset: PlatformMarketingAsset;
+  onEdit?: (asset: PlatformMarketingAsset) => Promise<void>;
+  onRegenerate?: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const def = MARKETING_PLATFORMS[platformId];
   const emphasis = platformEmphasisKeys(platformId);
-  const fullText = localizedPlatformDisplayText(asset);
+
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState<null | "save" | "regen">(null);
+  const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<PlatformMarketingAsset>(asset);
+
+  useEffect(() => {
+    if (!editing) setDraft(asset);
+  }, [asset, editing]);
+
+  const startEdit = useCallback(() => {
+    setDraft(asset);
+    setError(null);
+    setEditing(true);
+  }, [asset]);
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false);
+    setError(null);
+    setDraft(asset);
+  }, [asset]);
+
+  const save = useCallback(async () => {
+    if (!onEdit) {
+      setEditing(false);
+      return;
+    }
+    setBusy("save");
+    setError(null);
+    try {
+      await onEdit({
+        ...draft,
+        hashtags: (draft.hashtags ?? []).map((h) => h.trim()).filter(Boolean),
+      });
+      setEditing(false);
+    } catch {
+      setError(t("marketing.action.saveError"));
+    } finally {
+      setBusy(null);
+    }
+  }, [onEdit, draft, t]);
+
+  const regenerate = useCallback(async () => {
+    if (!onRegenerate) return;
+    setBusy("regen");
+    setError(null);
+    try {
+      await onRegenerate();
+    } catch {
+      setError(t("marketing.action.regenerateError"));
+    } finally {
+      setBusy(null);
+    }
+  }, [onRegenerate, t]);
+
+  const btn =
+    "inline-flex h-8 items-center rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-ink-secondary transition hover:border-navy/25 hover:bg-surface-muted hover:text-navy disabled:cursor-not-allowed disabled:opacity-50";
+  const primaryBtn =
+    "inline-flex h-8 items-center rounded-md border border-brand-blue/30 bg-brand-blue/10 px-2.5 text-xs font-semibold text-brand-blue transition hover:bg-brand-blue/15 disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
     <article className={`rounded-lg border p-4 ${platformAccentClass(def.accent)}`}>
@@ -90,34 +191,106 @@ const PlatformPanel = memo(function PlatformPanel({
         </div>
       </div>
 
-      <div className="mt-4 space-y-3 text-sm text-ink">
-        {asset.hook && <FieldBlock label={t("marketing.field.hook")} value={asset.hook} highlight />}
-        {asset.caption && (
-          <FieldBlock label={t("marketing.field.caption")} value={asset.caption} multiline />
-        )}
-        {asset.title && <FieldBlock label={t("marketing.field.title")} value={asset.title} />}
-        {asset.description && (
-          <FieldBlock label={t("marketing.field.description")} value={asset.description} multiline />
-        )}
-        {asset.hashtags.length > 0 && (
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">
-              {t("marketing.field.hashtags")}
-            </p>
-            <TagList tags={asset.hashtags} />
-          </div>
-        )}
-        {asset.cta && (
-          <div className="rounded-md border border-white/50 bg-white/70 px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">
-              {t("marketing.field.cta")}
-            </p>
-            <p className="mt-1 text-sm font-medium text-navy">{asset.cta}</p>
-          </div>
+      {editing ? (
+        <div className="mt-4 space-y-3">
+          <EditField
+            label={t("marketing.field.caption")}
+            value={draft.caption ?? ""}
+            onChange={(v) => setDraft((d) => ({ ...d, caption: v }))}
+            multiline
+          />
+          <EditField
+            label={t("marketing.field.hook")}
+            value={draft.hook ?? ""}
+            onChange={(v) => setDraft((d) => ({ ...d, hook: v }))}
+          />
+          {(draft.title !== undefined || platformId === "youtubeShorts") && (
+            <EditField
+              label={t("marketing.field.title")}
+              value={draft.title ?? ""}
+              onChange={(v) => setDraft((d) => ({ ...d, title: v }))}
+            />
+          )}
+          {(draft.description !== undefined || platformId === "youtubeShorts") && (
+            <EditField
+              label={t("marketing.field.description")}
+              value={draft.description ?? ""}
+              onChange={(v) => setDraft((d) => ({ ...d, description: v }))}
+              multiline
+            />
+          )}
+          <EditField
+            label={t("marketing.field.cta")}
+            value={draft.cta ?? ""}
+            onChange={(v) => setDraft((d) => ({ ...d, cta: v }))}
+          />
+          <EditField
+            label={t("marketing.field.hashtags")}
+            value={(draft.hashtags ?? []).join(", ")}
+            onChange={(v) =>
+              setDraft((d) => ({
+                ...d,
+                hashtags: v.split(",").map((s) => s.trim().replace(/^#/, "")).filter(Boolean),
+              }))
+            }
+            placeholder="tag1, tag2, tag3"
+          />
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3 text-sm text-ink">
+          {asset.hook && <FieldBlock label={t("marketing.field.hook")} value={asset.hook} highlight />}
+          {asset.caption && (
+            <FieldBlock label={t("marketing.field.caption")} value={asset.caption} multiline />
+          )}
+          {asset.title && <FieldBlock label={t("marketing.field.title")} value={asset.title} />}
+          {asset.description && (
+            <FieldBlock label={t("marketing.field.description")} value={asset.description} multiline />
+          )}
+          {asset.hashtags.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">
+                {t("marketing.field.hashtags")}
+              </p>
+              <TagList tags={asset.hashtags} />
+            </div>
+          )}
+          {asset.cta && (
+            <div className="rounded-md border border-white/50 bg-white/70 px-3 py-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-ink-secondary">
+                {t("marketing.field.cta")}
+              </p>
+              <p className="mt-1 text-sm font-medium text-navy">{asset.cta}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="mt-4 flex flex-wrap gap-1.5 border-t border-border/60 pt-3">
+        {editing ? (
+          <>
+            <button type="button" onClick={save} className={primaryBtn} disabled={busy !== null}>
+              {busy === "save" ? t("marketing.action.saving") : t("marketing.action.save")}
+            </button>
+            <button type="button" onClick={cancelEdit} className={btn} disabled={busy !== null}>
+              {t("marketing.action.cancel")}
+            </button>
+          </>
+        ) : (
+          <>
+            <button type="button" onClick={startEdit} className={btn} disabled={busy !== null}>
+              {t("marketing.action.edit")}
+            </button>
+            {onRegenerate && (
+              <button type="button" onClick={regenerate} className={btn} disabled={busy !== null}>
+                {busy === "regen"
+                  ? t("marketing.action.regenerating")
+                  : t("marketing.action.regenerate")}
+              </button>
+            )}
+          </>
         )}
       </div>
-
-      {fullText && <CopyActionBar text={fullText} />}
+      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
     </article>
   );
 });
@@ -291,9 +464,13 @@ function PlatformTabs({
 export function MarketingDashboard({
   pkg,
   strategy,
+  onEditPlatform,
+  onRegeneratePlatform,
 }: {
   pkg: MarketingContentPackage;
   strategy?: StrategyPlan;
+  onEditPlatform?: (platformId: MarketingPlatformId, asset: PlatformMarketingAsset) => Promise<void>;
+  onRegeneratePlatform?: (platformId: MarketingPlatformId) => Promise<void>;
 }) {
   const { t } = useI18n();
   const analysis = pkg.analysis ?? deriveAnalysisFromPackage(pkg, strategy);
@@ -377,7 +554,20 @@ export function MarketingDashboard({
             />
             <div className="mt-4" role="tabpanel">
               {activeAsset && localizedPlatformDisplayText(activeAsset).trim() && (
-                <PlatformPanel platformId={resolvedActive} asset={activeAsset} />
+                <PlatformPanel
+                  platformId={resolvedActive}
+                  asset={activeAsset}
+                  onEdit={
+                    onEditPlatform
+                      ? (a) => onEditPlatform(resolvedActive, a)
+                      : undefined
+                  }
+                  onRegenerate={
+                    onRegeneratePlatform
+                      ? () => onRegeneratePlatform(resolvedActive)
+                      : undefined
+                  }
+                />
               )}
             </div>
           </>

@@ -4,7 +4,9 @@ import {
   normalizeStrategyPlan,
   resolveStrategyIndustryEnum,
   resolveStrategyPlatforms,
+  outputLanguagePrompt,
   type BrandProfile,
+  type ContentLocale,
   type StrategyPlan,
   type Industry,
 } from "@ceo-agent/shared";
@@ -25,6 +27,7 @@ export interface StrategyInput {
   productInformation?: string | Record<string, unknown> | null;
   businessInformation?: string | Record<string, unknown> | null;
   website?: string | null;
+  contentLocale?: ContentLocale;
 }
 
 const STRATEGY_SYSTEM_PROMPT = `# Marketing Strategy Agent
@@ -198,8 +201,14 @@ function platformLabels(platforms: string[]): string[] {
   return platforms.map((p) => labels[p] ?? p);
 }
 
+function resolveStrategyLocale(input: StrategyInput): ContentLocale {
+  if (input.contentLocale) return input.contentLocale;
+  return /[\u4e00-\u9fff]/.test(`${input.goal}${input.campaignName}`) ? "zh" : "en";
+}
+
 function buildFallbackStrategy(input: StrategyInput, industry: Industry): StrategyPlan {
-  const zh = /[\u4e00-\u9fff]/.test(`${input.goal}${input.campaignName}${input.brandProfile.locale ?? ""}`);
+  const locale = resolveStrategyLocale(input);
+  const zh = locale === "zh";
   const knowledge = queryKnowledge(industry);
   const angles = knowledge.filter((k) => k.category === "angle").map((k) => k.text);
   const ctas = knowledge.filter((k) => k.category === "cta").map((k) => k.text);
@@ -275,7 +284,9 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
     input.campaignName,
     input.brandProfile.industry
   );
-  const knowledgeSnippets = queryKnowledge(inferred, input.brandProfile.locale ?? "zh-CN");
+  const locale = resolveStrategyLocale(input);
+  const knowledgeLocale = locale === "zh" ? "zh-CN" : locale === "ms" ? "ms-MY" : "en-SG";
+  const knowledgeSnippets = queryKnowledge(inferred, knowledgeLocale);
   const knowledgeBlock = formatKnowledgeForPrompt(knowledgeSnippets);
   const seeded = hasKnowledgeSeed(inferred);
 
@@ -287,6 +298,7 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
     inferredIndustry: inferred,
     hasSeededKnowledge: seeded,
     knowledge: knowledgeBlock,
+    outputLanguage: outputLanguagePrompt(locale),
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.imageAnalysis ? { imageAnalysis: input.imageAnalysis } : {}),
     ...(input.productInformation ? { productInformation: input.productInformation } : {}),

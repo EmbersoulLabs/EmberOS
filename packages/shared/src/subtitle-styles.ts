@@ -35,8 +35,8 @@ const BASE: Omit<SubtitleStyleConfig, "id"> = {
   shadowPx: 2,
   primaryBold: true,
   secondaryBold: false,
-  fontSizePrimary: 54,
-  fontSizeSecondary: 38,
+  fontSizePrimary: 62,
+  fontSizeSecondary: 44,
 };
 
 export const SUBTITLE_STYLE_CONFIGS: Record<SubtitleStylePreset, SubtitleStyleConfig> = {
@@ -46,22 +46,22 @@ export const SUBTITLE_STYLE_CONFIGS: Record<SubtitleStylePreset, SubtitleStyleCo
     ...BASE,
     outlinePx: 1,
     shadowPx: 3,
-    fontSizePrimary: 52,
-    fontSizeSecondary: 36,
+    fontSizePrimary: 60,
+    fontSizeSecondary: 42,
   },
   modern: {
     id: "modern",
     ...BASE,
     shadowPx: 4,
-    fontSizePrimary: 56,
-    fontSizeSecondary: 40,
+    fontSizePrimary: 64,
+    fontSizeSecondary: 46,
   },
   social: {
     id: "social",
     ...BASE,
     outlinePx: 2,
-    fontSizePrimary: 58,
-    fontSizeSecondary: 42,
+    fontSizePrimary: 68,
+    fontSizeSecondary: 48,
   },
 };
 
@@ -70,6 +70,17 @@ export function resolveSubtitleStyle(id?: string | null): SubtitleStyleConfig {
     return SUBTITLE_STYLE_CONFIGS[id as SubtitleStylePreset];
   }
   return SUBTITLE_STYLE_CONFIGS.minimal;
+}
+
+/** Convert a #RRGGBB / RRGGBB hex string to an ASS &H00BBGGRR color literal. */
+export function hexToAssColor(hex?: string | null): string | null {
+  if (!hex) return null;
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
+  if (!m) return null;
+  const r = m[1]!.slice(0, 2);
+  const g = m[1]!.slice(2, 4);
+  const b = m[1]!.slice(4, 6);
+  return `&H00${b}${g}${r}`.toUpperCase();
 }
 
 /** Parse bilingual pair config into primary/secondary locale codes. */

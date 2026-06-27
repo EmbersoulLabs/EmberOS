@@ -6,14 +6,23 @@ import {
   strategyPainPoints,
   isChineseText,
   firstPhrase,
+  contentLocaleFromMetadata,
+  MARKETING_PLATFORMS,
+  PlatformMarketingAssetSchema,
+  type ContentLocale,
   type CopyVariant,
   type HookSet,
   type HookType,
   type MarketingContentPackage,
+  type MarketingPlatformId,
+  type PlatformMarketingAsset,
   type Platform,
   type StrategyPlan,
   type VisionAnalysis,
 } from "@ceo-agent/shared";
+
+export type { ContentLocale };
+export { contentLocaleFromMetadata };
 
 const CONTENT_SYSTEM_PROMPT = `# EmberOS Marketing Content Engine
 
@@ -26,6 +35,10 @@ Each platform must feel written by a different expert.
 Marketing Strategy JSON + Video Analysis + Business context.
 
 ## RULES
+- GROUND EVERY ASSET IN THE VIDEO ANALYSIS (vision): reference the actual subjects,
+  products, scenes, and spoken content seen in the footage. Do NOT write generic copy
+  derived only from the campaign name — the campaign name is a label, NOT the content.
+  If the vision shows a specific product/scene, the caption must describe THAT.
 - Follow strategy exactly. Do not invent strategy fields.
 - Every platform asset MUST use unique wording — zero copy-paste between platforms.
 - Short bullets and card-friendly strings only (max 2-3 lines per field unless Facebook/LinkedIn caption).
@@ -52,7 +65,9 @@ Each object: caption, hook?, title?, description?, hashtags[], cta, formatStyle 
 Platform rules:
 - facebook: storytelling, community, longer caption
 - linkedin: professional, educational, authority
-- xiaohongshu: emoji, line breaks, lifestyle, search keywords, hashtags
+- xiaohongshu: ALWAYS write in Simplified Chinese (简体中文) regardless of the output
+  language above — it is a Chinese-first platform. emoji, line breaks, lifestyle,
+  search keywords, hashtags. Never leave it empty.
 - instagram: short emotional caption + emoji
 - threads: conversational opinion hook
 - googleBusiness: local SEO, service keywords, call-now CTA
@@ -95,10 +110,8 @@ export interface MarketingContentInput {
   campaignName?: string;
   platforms?: string[];
   /** UI locale at run time — drives primary output language (zh / en / ms). */
-  contentLocale?: "zh" | "en" | "ms";
+  contentLocale?: ContentLocale;
 }
-
-export type ContentLocale = "zh" | "en" | "ms";
 
 function useChinese(input: MarketingContentInput): boolean {
   const blob = [
@@ -482,13 +495,17 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
     },
   ];
 
+  // Xiaohongshu (小红书) is a Chinese platform — always author copy in Chinese,
+  // independent of the campaign's primary output language.
+  const xiaohongshuZh = `✨${product}真实测评｜${s.marketingAngle}\n\n${pain ? `😭${pain}\n\n` : ""}${script30}\n\n${[...s.hashtags.industry.slice(0, 3), ...s.hashtags.local.slice(0, 2)].map((t) => `#${t}`).join(" ")}`;
+
   const captions = zh
     ? {
         tiktok: `${hook15}\n${body15}\n${s.ctaStrategy}`,
         instagram: `${product} ✨\n${s.marketingAngle.slice(0, 80)}`,
         facebook: `${product}\n\n${script30}\n\n${s.ctaStrategy}`,
         linkedin: `${product} — ${s.marketingGoal}\n${s.marketingAngle}\n${s.ctaStrategy}`,
-        xiaohongshu: `${product}｜${s.marketingAngle}\n\n${script30}\n\n${s.hashtags.industry.slice(0, 3).map((t) => `#${t}`).join(" ")}`,
+        xiaohongshu: xiaohongshuZh,
         youtubeShorts: `${product} ${s.marketingGoal} | ${s.keywords.slice(0, 3).join(", ")}`,
         googleBusiness: `${product} — ${s.marketingAngle}. ${s.ctaStrategy}`,
       }
@@ -497,7 +514,7 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
         instagram: `${product} ✨\n${s.marketingAngle.slice(0, 80)}`,
         facebook: `${product}\n\n${script30}\n\n${s.ctaStrategy}`,
         linkedin: `${product} | ${s.marketingGoal}\n${s.marketingAngle}\n${s.ctaStrategy}`,
-        xiaohongshu: "",
+        xiaohongshu: xiaohongshuZh,
         youtubeShorts: `${product} — ${s.marketingGoal}. ${s.keywords.slice(0, 4).join(", ")}`,
         googleBusiness: `${product}: ${s.marketingAngle}. ${s.ctaStrategy}`,
       };
@@ -533,11 +550,9 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
       formatStyle: "Professional authority",
     },
     xiaohongshu: {
-      caption: zh
-        ? `✨${product}真实测评\n\n${s.marketingAngle}\n\n${pain ? `😭${pain}` : ""}\n\n${s.ctaStrategy}`
-        : "",
+      caption: xiaohongshuZh,
       hashtags: [...s.hashtags.industry.slice(0, 4), ...s.hashtags.local.slice(0, 2)],
-      cta: zh ? "收藏备用" : "",
+      cta: "收藏备用",
       formatStyle: "Lifestyle + search",
     },
     threads: {
@@ -571,7 +586,7 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
     instagram: `${product} · ${s.marketingAngle}\n\n${body15}`,
     facebook: `${product}\n\n${script30}\n\n${s.ctaStrategy}`,
     linkedin: `${product} | ${s.marketingGoal}\n${s.marketingAngle}\n${s.ctaStrategy}`,
-    xiaohongshu: "",
+    xiaohongshu: xiaohongshuZh,
     youtubeShorts: `${product} — ${s.marketingGoal}. ${s.keywords.slice(0, 4).join(", ")}`,
     googleBusiness: `${product}: ${s.marketingAngle}. ${s.ctaStrategy}`,
   };
@@ -581,7 +596,7 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
     instagram: `${product} · ${s.marketingAngle}\n\n${body15}`,
     facebook: `${product}\n\n${script30}\n\n${s.ctaStrategy}`,
     linkedin: `${product} | ${s.marketingGoal}\n${s.marketingAngle}\n${s.ctaStrategy}`,
-    xiaohongshu: "",
+    xiaohongshu: xiaohongshuZh,
     youtubeShorts: `${product} — ${s.marketingGoal}. ${s.keywords.slice(0, 4).join(", ")}`,
     googleBusiness: `${product}: ${s.marketingAngle}. ${s.ctaStrategy}`,
   };
@@ -678,14 +693,6 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
   return pkg;
 }
 
-export function contentLocaleFromMetadata(
-  metadata?: Record<string, unknown> | null
-): ContentLocale | undefined {
-  const l = metadata?.contentLocale;
-  if (l === "zh" || l === "en" || l === "ms") return l;
-  return undefined;
-}
-
 export async function runMarketingContentAgent(input: MarketingContentInput): Promise<{
   contentPackage: MarketingContentPackage;
   usage: { input: number; output: number; costUsd: number };
@@ -724,4 +731,92 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   }
 
   return { contentPackage: buildFallbackContent(input), usage };
+}
+
+const PLATFORM_REGEN_SYSTEM = `# EmberOS — Single Platform Copy Regenerator
+You rewrite ONE social platform's marketing asset for an enterprise dashboard.
+GROUND THE COPY IN THE VIDEO ANALYSIS (vision): use the real subjects, products, scenes
+and transcript seen in the footage. Do NOT base the copy on the campaign name alone —
+the campaign name is a label, not the content.
+Make the new version noticeably DIFFERENT from previousCaption: fresh angle, fresh wording.
+Keep it platform-native, punchy, and card-friendly (max 2-3 short lines per field unless
+Facebook/LinkedIn caption).
+Return ONLY valid JSON for a single platform asset:
+{ caption, hook?, title?, description?, hashtags[], cta, formatStyle }`;
+
+export interface RegeneratePlatformAssetInput {
+  platformId: MarketingPlatformId;
+  strategy: StrategyPlan;
+  vision: VisionAnalysis;
+  campaignName?: string;
+  goal?: string;
+  businessInformation?: string | Record<string, unknown> | null;
+  contentLocale?: ContentLocale;
+  previousCaption?: string;
+}
+
+/** Regenerate a single platform's marketing asset with the AI (per-platform refresh). */
+export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInput): Promise<{
+  asset: PlatformMarketingAsset;
+  usage: { input: number; output: number; costUsd: number };
+}> {
+  const def = MARKETING_PLATFORMS[input.platformId];
+  // Xiaohongshu is a Chinese-first platform — always regenerate in Chinese.
+  const locale: ContentLocale =
+    input.platformId === "xiaohongshu"
+      ? "zh"
+      : (input.contentLocale ??
+        (/[\u4e00-\u9fff]/.test(
+          [input.goal, input.campaignName, input.strategy.tone, input.strategy.product]
+            .filter(Boolean)
+            .join("")
+        )
+          ? "zh"
+          : "en"));
+
+  const user = JSON.stringify({
+    platform: input.platformId,
+    platformPersona: def.expertPersona,
+    requiredFields: def.requiredFields,
+    strategy: input.strategy,
+    vision: {
+      subjects: input.vision.subjects,
+      products: input.vision.products,
+      scenes: input.vision.scenes.slice(0, 6),
+      hooks: input.vision.hooks,
+      transcriptSummary: input.vision.transcriptSummary,
+    },
+    goal: input.goal,
+    campaignName: input.campaignName,
+    ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
+    ...(input.previousCaption ? { previousCaption: input.previousCaption } : {}),
+    locale: localeToPromptTag(locale),
+    outputLanguage: outputLanguageInstruction(locale),
+  });
+
+  const { result, usage } = await callJsonModel<unknown>(
+    PLATFORM_REGEN_SYSTEM,
+    user,
+    PlatformMarketingAssetSchema.toString()
+  );
+
+  const parsed = PlatformMarketingAssetSchema.safeParse(result);
+  if (parsed.success && parsed.data.caption.trim()) {
+    return { asset: parsed.data, usage };
+  }
+
+  // Fallback: derive a fresh single-platform asset from the strategy/vision.
+  const fallbackPkg = buildFallbackContent({
+    strategy: input.strategy,
+    vision: input.vision,
+    goal: input.goal,
+    campaignName: input.campaignName,
+    businessInformation: input.businessInformation,
+    contentLocale: locale,
+  });
+  const fallbackAsset = fallbackPkg.platformAssets?.[input.platformId];
+  return {
+    asset: fallbackAsset ?? { caption: "", cta: "", hashtags: [] },
+    usage,
+  };
 }

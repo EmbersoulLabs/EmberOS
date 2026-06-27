@@ -20,6 +20,7 @@ export * from "./billing";
 export * from "./finished-ad-detect";
 export * from "./i18n/index";
 export * from "./campaign-brief";
+export * from "./content-locale";
 export * from "./campaign-video";
 export * from "./review-flow";
 export * from "./pilot-metrics";
