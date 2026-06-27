@@ -69,6 +69,18 @@ function BackIcon() {
   );
 }
 
+function LogoutIcon() {
+  return (
+    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+      <path
+        fillRule="evenodd"
+        d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 0l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
 function LogoutButton() {
   const router = useRouter();
   const { t } = useI18n();
@@ -83,9 +95,11 @@ function LogoutButton() {
     <button
       type="button"
       onClick={handleLogout}
-      className="shrink-0 rounded-lg px-3 py-1.5 text-sm text-white/70 transition hover:bg-white/10 hover:text-white"
+      aria-label={t("nav.logout")}
+      className="flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm text-white/70 transition hover:bg-white/10 hover:text-white sm:px-3"
     >
-      {t("nav.logout")}
+      <LogoutIcon />
+      <span className="hidden sm:inline">{t("nav.logout")}</span>
     </button>
   );
 }
@@ -107,48 +121,59 @@ export function AppShell({
   const resolvedHome = resolveHomeHref(pathname);
   const canGoBack = showBack ?? resolvedBack !== null;
   const showHome = resolvedHome !== null && pathname !== resolvedHome;
+  // On narrow screens, back + home + logo is redundant — prefer back when both exist.
+  const showHomeButton = showHome && (!canGoBack || resolvedBack !== resolvedHome);
 
   return (
     <div className="min-h-screen bg-surface-muted">
       <header className="border-b border-navy-light/30 bg-navy text-white shadow-elevated">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex min-w-0 items-center gap-1">
-            {canGoBack && resolvedBack && (
-              <Link
-                href={resolvedBack}
-                className="mr-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
-                aria-label={t("nav.back")}
-              >
-                <BackIcon />
+        <div className="mx-auto max-w-6xl px-3 sm:px-4">
+          <div className="flex items-center justify-between gap-2 py-2 sm:gap-3 sm:py-3">
+            <div className="flex min-w-0 flex-1 items-center gap-0.5 sm:gap-1">
+              {canGoBack && resolvedBack && (
+                <Link
+                  href={resolvedBack}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
+                  aria-label={t("nav.back")}
+                >
+                  <BackIcon />
+                </Link>
+              )}
+              {showHomeButton && resolvedHome && (
+                <Link
+                  href={resolvedHome}
+                  className="hidden h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-white/70 transition hover:bg-white/10 hover:text-white sm:flex"
+                  aria-label={t("nav.home")}
+                >
+                  <HomeIcon />
+                  <span className="text-sm font-medium">{t("nav.home")}</span>
+                </Link>
+              )}
+              <Link href="/workspaces" className="flex min-w-0 items-center gap-2 sm:gap-2.5">
+                <EmberLogo className="h-8 w-8 shrink-0 sm:h-9 sm:w-9" />
+                <span className="truncate text-base font-bold tracking-tight sm:text-lg">
+                  {BRAND.product}
+                </span>
               </Link>
-            )}
-            {showHome && resolvedHome && (
-              <Link
-                href={resolvedHome}
-                className="mr-1 flex h-9 shrink-0 items-center gap-1.5 rounded-lg px-2 text-white/70 transition hover:bg-white/10 hover:text-white sm:px-2.5"
-                aria-label={t("nav.home")}
-              >
-                <HomeIcon />
-                <span className="hidden text-sm font-medium sm:inline">{t("nav.home")}</span>
-              </Link>
-            )}
-            <Link href="/workspaces" className="flex min-w-0 items-center gap-2.5">
-              <EmberLogo className="h-9 w-9 shrink-0" />
-              <span className="truncate text-lg font-bold tracking-tight">{BRAND.product}</span>
-            </Link>
+            </div>
+            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+              {workspaceName && (
+                <span className="hidden max-w-[8rem] truncate rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/90 ring-1 ring-white/15 sm:inline-block sm:max-w-[10rem] sm:px-3 sm:text-sm md:max-w-none">
+                  {workspaceName}
+                </span>
+              )}
+              <LocaleSwitcher variant="header" />
+              <LogoutButton />
+            </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {workspaceName && (
-              <span className="rounded-full bg-white/10 px-3 py-1 text-sm text-white/90 ring-1 ring-white/15">
-                {workspaceName}
-              </span>
-            )}
-            <LocaleSwitcher variant="header" />
-            <LogoutButton />
-          </div>
+          {workspaceName && (
+            <div className="border-t border-white/10 pb-2 sm:hidden">
+              <p className="truncate px-0.5 text-xs font-medium text-white/80">{workspaceName}</p>
+            </div>
+          )}
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-8">{children}</main>
+      <main className="mx-auto max-w-6xl px-3 py-6 sm:px-4 sm:py-8">{children}</main>
     </div>
   );
 }
