@@ -62,6 +62,52 @@ const GENERIC_TOKENS = [
 // Connectors / filler that don't add meaning when measuring residue.
 const FILLER_PATTERN = /[\s、,，。.|/&和与及的了在中实拍-]/g;
 
+// Marketing OBJECTIVES — these describe the campaign goal, NOT the product/subject.
+// They must never become the content subject, hook, or product name.
+const MARKETING_OBJECTIVE_TERMS = new Set([
+  "brand awareness",
+  "awareness",
+  "brand",
+  "traffic",
+  "engagement",
+  "reach",
+  "conversion",
+  "conversions",
+  "sales",
+  "leads",
+  "lead generation",
+  "followers",
+  "growth",
+  "promotion",
+  "品牌曝光",
+  "品牌认知",
+  "曝光",
+  "种草",
+  "引流",
+  "转化",
+  "成交",
+  "涨粉",
+  "互动",
+  "获客",
+  "拉新",
+  "推广",
+  "销量",
+]);
+
+/** True when text is a marketing objective (goal), not a product/subject. */
+export function isMarketingObjective(text: string): boolean {
+  const candidate = normalizeLabel(text).toLowerCase();
+  if (!candidate) return false;
+  if (MARKETING_OBJECTIVE_TERMS.has(candidate)) return true;
+  // Short phrases dominated by objective words (e.g. "drive brand awareness").
+  let residue = candidate;
+  for (const term of MARKETING_OBJECTIVE_TERMS) {
+    residue = residue.split(term).join("");
+  }
+  residue = residue.replace(/[\s、,，。.|/&-]|drive|boost|increase|提升|提高|增加/g, "");
+  return residue.length < 3 && candidate.length !== residue.length;
+}
+
 function normalizeLabel(value: string | undefined): string {
   return value?.trim() ?? "";
 }
@@ -81,6 +127,7 @@ export function isGenericVisionText(text: string): boolean {
   if (!candidate) return true;
   const lower = candidate.toLowerCase();
   if (GENERIC_VISION_TERMS.has(lower)) return true;
+  if (isMarketingObjective(candidate)) return true;
   // Strip every generic token, then filler; if almost nothing meaningful
   // remains, the candidate is a generic placeholder.
   let residue = lower;
@@ -163,9 +210,12 @@ export function resolveContentSubject(
   const fromDescription = pickCandidate(description, campaignName);
   if (fromDescription) return fromDescription;
 
-  if (goal && !isCampaignLabel(goal, campaignName)) return goal;
+  // A marketing OBJECTIVE (e.g. "Brand awareness", "种草") is never the subject.
+  const goalIsUsable =
+    goal && !isCampaignLabel(goal, campaignName) && !isMarketingObjective(goal) && !isGenericVisionText(goal);
+  if (goalIsUsable) return goal;
 
-  if (!hasAssets && !description.length && !goal) {
+  if (!hasAssets && !description.length && !goalIsUsable) {
     const cn = normalizeLabel(campaignName);
     if (cn) return cn;
   }

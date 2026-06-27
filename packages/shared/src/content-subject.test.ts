@@ -3,6 +3,7 @@ import {
   alignStrategyWithVision,
   hasSubstantiveVision,
   isCampaignLabel,
+  isMarketingObjective,
   resolveContentSubject,
 } from "../src/content-subject";
 import type { StrategyPlan } from "../src/types/marketing-os";
@@ -55,10 +56,21 @@ describe("resolveContentSubject", () => {
     ).toBe("作品集");
   });
 
-  it("does not use campaign label when goal is provided", () => {
+  it("never returns a marketing objective as the subject", () => {
+    // "Brand awareness" is a goal, not a product → fall back to campaign label.
     expect(
       resolveContentSubject(emptyVision, { campaignName: "作品集", goal: "Brand awareness" })
-    ).toBe("Brand awareness");
+    ).toBe("作品集");
+    // With no campaign label either, drop to a neutral generic subject, never the objective.
+    expect(resolveContentSubject(emptyVision, { goal: "种草" })).toBe("这款产品");
+    expect(isMarketingObjective("Brand awareness")).toBe(true);
+    expect(isMarketingObjective("oat milk latte")).toBe(false);
+  });
+
+  it("uses a real product goal as subject when not an objective", () => {
+    expect(
+      resolveContentSubject(emptyVision, { goal: "Handmade leather wallets" })
+    ).toBe("Handmade leather wallets");
   });
 
   it("detects when strategy product is just the campaign label", () => {
