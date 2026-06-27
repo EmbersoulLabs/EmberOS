@@ -5,7 +5,7 @@
 
 /** Upscale the short dimension so a center 9:16 crop always fits. */
 export const FFMPEG_SCALE_FOR_916 =
-  "scale=if(gt(iw/ih\\,9/16)\\,-2\\,iw*1.25):if(gt(iw/ih\\,9/16)\\,ih*1.25\\,-2)";
+  "scale=if(gt(iw/ih\\,9/16)\\,-2\\,iw*1.25):if(gt(iw/ih\\,9/16)\\,ih*1.25\\,-2):flags=lanczos";
 
 /** Center crop to 9:16 — crop by height when wide, by width when tall/narrow. */
 export const FFMPEG_CROP_916_CENTER =
@@ -14,7 +14,7 @@ export const FFMPEG_CROP_916_CENTER =
 /** Scale → crop → optional middle filters → output scale. */
 export function build916FitChain(scale: string, middle = ""): string {
   const mid = middle ? `,${middle}` : "";
-  return `${FFMPEG_SCALE_FOR_916},${FFMPEG_CROP_916_CENTER}${mid},scale=${scale}`;
+  return `${FFMPEG_SCALE_FOR_916},${FFMPEG_CROP_916_CENTER}${mid},scale=${scale}:flags=lanczos`;
 }
 
 /** True when source is narrower than 9:16 (crop must use full width). */

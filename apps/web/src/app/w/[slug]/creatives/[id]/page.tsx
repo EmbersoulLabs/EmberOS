@@ -13,6 +13,8 @@ import { CopyDownloadButtons } from "@/components/pipeline/CopyDownloadButtons";
 import { CreativeSubtitleSettings } from "@/components/pipeline/CreativeSubtitleSettings";
 import { MusicMatchPanel } from "@/components/pipeline/MusicMatchPanel";
 import { formatPlatformLabel, videoUrlWithCacheBust } from "@/lib/clip-utils";
+import { latestRejectedReview } from "@/lib/review-resubmit";
+import { isCreativeExportable } from "@ceo-agent/shared";
 import type { EditPlan } from "@ceo-agent/shared";
 
 interface CopyVariant {
@@ -55,12 +57,18 @@ export default function CreativePreviewPage() {
   const [editMode, setEditMode] = useState(false);
   const [editForm, setEditForm] = useState<Partial<CopyVariant>>({});
   const [copySaveHint, setCopySaveHint] = useState("");
+  const [reviews, setReviews] = useState<
+    Array<{ decision: string; comment?: string | null; decidedAt?: string | null }>
+  >([]);
+  const [submitHint, setSubmitHint] = useState("");
+  const [submittingReview, setSubmittingReview] = useState(false);
 
   function refreshCreative() {
     fetch(`/api/creatives/${id}`)
       .then((r) => r.json())
       .then((d) => {
         if (d.creative) setCreative(d.creative);
+        if (d.reviews) setReviews(d.reviews);
       });
   }
 
@@ -69,6 +77,7 @@ export default function CreativePreviewPage() {
       .then((r) => r.json())
       .then((d) => {
         setCreative(d.creative);
+        setReviews((d.reviews as typeof reviews) ?? []);
         setCampaignId(d.campaign?.id ?? null);
         setSiblingClips((d.siblingCreatives as Array<{ id: string }>) ?? []);
         setClipIndex(typeof d.clipIndex === "number" && d.clipIndex >= 0 ? d.clipIndex : 0);
@@ -119,13 +128,32 @@ export default function CreativePreviewPage() {
   }
 
   async function submitReview() {
-    await fetch(`/api/creatives/${id}/submit-review`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "internal" }),
-    });
-    alert(t("creative.submitted"));
+    setSubmitHint("");
+    setSubmittingReview(true);
+    try {
+      const res = await fetch(`/api/creatives/${id}/submit-review`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "internal" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setSubmitHint(data.error ?? t("creative.resubmitFailed"));
+        return;
+      }
+      setSubmitHint(t("creative.resubmitSuccess"));
+      refreshCreative();
+    } finally {
+      setSubmittingReview(false);
+    }
   }
+
+  const creativeStatus = creative?.status as string | undefined;
+  const wasRejected = creativeStatus === "compliance_failed";
+  const lastRejection = latestRejectedReview(reviews);
+  const canExport = creativeStatus ? isCreativeExportable(creativeStatus) : false;
+  const reviewPending =
+    creativeStatus === "pending_internal_review" || creativeStatus === "pending_client_review";
 
   const btn =
     "inline-flex h-8 items-center rounded-md border border-border bg-surface px-3 text-xs font-medium text-ink-secondary transition hover:border-navy/25 hover:text-navy";
@@ -149,6 +177,30 @@ export default function CreativePreviewPage() {
 
       {campaignId && (
         <p className="mb-4 text-sm text-ink-secondary">{t("creative.rerunHint")}</p>
+      )}
+
+      {wasRejected && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+          <p className="font-medium">{t("creative.rejectionBannerTitle")}</p>
+          {lastRejection?.comment && (
+            <p className="mt-1 text-red-800">
+              {t("creative.rejectionComment", { comment: lastRejection.comment })}
+            </p>
+          )}
+          <p className="mt-2 text-red-700">{t("creative.rejectionSteps")}</p>
+        </div>
+      )}
+
+      {submitHint && (
+        <p
+          className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
+            submitHint === t("creative.resubmitSuccess")
+              ? "border-brand-teal/30 bg-brand-teal/5 text-brand-teal"
+              : "border-red-200 bg-red-50 text-red-700"
+          }`}
+        >
+          {submitHint}
+        </p>
       )}
 
       {siblingClips.length > 1 && (
@@ -280,12 +332,25 @@ export default function CreativePreviewPage() {
                   {t("creative.editCopy")}
                 </button>
                 <CopyDownloadButtons creativeId={id} compact disabled={variants.length === 0} />
-                <button type="button" onClick={submitReview} className={`${btn} border-navy/20 bg-navy text-white hover:bg-navy/90 hover:text-white`}>
-                  {t("creative.submitReview")}
-                </button>
-                <Link href={`/w/${slug}/creatives/${id}/export`} className={btn}>
-                  {t("creative.export")}
-                </Link>
+                {!reviewPending && (
+                  <button
+                    type="button"
+                    onClick={submitReview}
+                    disabled={submittingReview || isRendering}
+                    className={`${btn} border-navy/20 bg-navy text-white hover:bg-navy/90 hover:text-white disabled:opacity-60`}
+                  >
+                    {wasRejected ? t("creative.resubmitReview") : t("creative.submitReview")}
+                  </button>
+                )}
+                {canExport ? (
+                  <Link href={`/w/${slug}/creatives/${id}/export`} className={btn}>
+                    {t("creative.export")}
+                  </Link>
+                ) : (
+                  <span className={`${btn} cursor-not-allowed opacity-50`} title={t("creative.exportLocked")}>
+                    {t("creative.export")}
+                  </span>
+                )}
               </div>
             </section>
           )}

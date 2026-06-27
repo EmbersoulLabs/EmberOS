@@ -5,10 +5,9 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueExport } from "@ceo-agent/queue";
 import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { isCampaignExportable } from "@ceo-agent/shared";
 
 const EXPORTABLE_CREATIVE_STATUSES = new Set([
-  "pending_internal_review",
-  "pending_client_review",
   "approved",
   "export_ready",
   "exported",
@@ -105,6 +104,10 @@ export async function POST(
       .from(schema.campaigns)
       .where(eq(schema.campaigns.id, creative.campaignId))
       .limit(1);
+
+    if (campaign && !isCampaignExportable(campaign.status)) {
+      return apiError("Creative must pass review before export", "APPROVAL_REQUIRED", 403);
+    }
 
     if (!creative.videoUrl && !creative.videoExportUrl) {
       return apiError(

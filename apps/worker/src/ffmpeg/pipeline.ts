@@ -795,7 +795,7 @@ export async function extractCoverFromImage(imagePath: string, outputPath: strin
     "-i",
     imagePath,
     "-vf",
-    `${FFMPEG_SCALE_FOR_916},${FFMPEG_CROP_916_CENTER},scale=720:1280`,
+    `${FFMPEG_SCALE_FOR_916},${FFMPEG_CROP_916_CENTER},scale=720:1280:flags=lanczos`,
     "-q:v",
     "2",
     outputPath,

@@ -33,11 +33,15 @@ export default function ReviewQueuePage() {
 
   async function decide(reviewId: string, decision: "approved" | "rejected") {
     const comment = decision === "rejected" ? prompt(t("reviews.rejectPrompt")) : undefined;
-    await fetch(`/api/reviews/${reviewId}/decide`, {
+    const res = await fetch(`/api/reviews/${reviewId}/decide`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ decision, comment }),
     });
+    const data = await res.json();
+    if (data.inviteUrl) {
+      window.prompt(t("campaign.review.portalLinkCopied"), data.inviteUrl);
+    }
     setReviews((prev) => prev.filter((r) => r.review.id !== reviewId));
   }
 

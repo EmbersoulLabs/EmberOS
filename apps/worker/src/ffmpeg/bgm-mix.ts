@@ -37,7 +37,7 @@ export function duckBgmUnderVoice(
   outputLabel: string,
   ratio = 6
 ): string {
-  return `[${bgmLabel}][${voiceLabel}]sidechaincompress=threshold=0.02:ratio=${ratio}:attack=120:release=900:makeup=1[${outputLabel}]`;
+  return `[${bgmLabel}][${voiceLabel}]sidechaincompress=threshold=0.02:ratio=${ratio}:attack=30:release=600:makeup=1[${outputLabel}]`;
 }
 
 export function mixVoiceWithSmartBgm(
@@ -92,7 +92,7 @@ export function mixDialogueWithSmartBgm(
   return [
     `[${dialogueLabel}]volume=${dialogueVol}[dlg]`,
     `[${bgmInputLabel}]atrim=${start.toFixed(2)}:${trimEnd.toFixed(2)},asetpts=PTS-STARTPTS,volume=${bgmBaseVol},afade=t=in:st=0:d=${FADE_IN},afade=t=out:st=${fadeOutStart.toFixed(2)}:d=${FADE_OUT}[bgm]`,
-    `[bgm][dlg]sidechaincompress=threshold=0.03:ratio=5:attack=150:release=1000:makeup=1[bgmduck]`,
+    `[bgm][dlg]sidechaincompress=threshold=0.03:ratio=5:attack=30:release=600:makeup=1[bgmduck]`,
     `[dlg][bgmduck]amix=inputs=2:duration=first:dropout_transition=2:normalize=0[preNorm]`,
     `[preNorm]loudnorm=I=-14:TP=-1.5:LRA=11[${outputLabel}]`,
   ].join(";");

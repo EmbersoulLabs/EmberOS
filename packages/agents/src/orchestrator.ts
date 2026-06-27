@@ -22,13 +22,14 @@ import { runCopyAgentMix } from "./copy";
 import { runEditDirectorAgent } from "./edit";
 import { runComplianceAgent } from "./compliance";
 import { runPublishAgent } from "./publish";
-import type { Platform, StrategyPlan, HookSet } from "@ceo-agent/shared";
+import type { Platform, StrategyPlan, HookSet, CopyVariant } from "@ceo-agent/shared";
 import { runContentTypeAgent } from "./content-type";
 import { resolveCopyMix, getPresetProfile } from "@ceo-agent/shared";
 import { buildImageMontageEditPlan, buildMixedMontageEditPlan, attachVoiceover } from "./motion-compose";
 import { runAutoClipPipeline } from "./auto-clip-pipeline";
 import { applyVoicePreset } from "./voice-preset";
 import type { VisionFrameInput } from "./vision";
+import { copyCacheKey, getCopyCache, setCopyCache } from "@ceo-agent/queue";
 
 export interface VisionMediaPreparer {
   prepare(input: {
@@ -267,55 +268,73 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       output: { ...classification, presetLabel: preset.labelZh },
     });
 
-    // content_generate — unified marketing package from strategy + vision
-    await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-    const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
-      strategy,
-      vision,
-      videoAnalysis,
-      userNotes: creativeBrief.campaignBrief,
-      goal,
-      campaignName: campaign.name,
-      platforms: campaign.platforms,
-      contentLocale: contentLocaleFromMetadata(campaign.metadata as Record<string, unknown> | null),
-    });
-    totalCost += contentUsage.costUsd;
-    const { contentPackage, usage: translateUsage } =
-      await enrichMarketingPackTranslations(rawContentPackage);
-    totalCost += translateUsage.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
-    if (translateUsage.costUsd > 0) {
-      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
-    }
-    await updateStep(taskId, "content_generate", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: contentPackage,
-    });
-
-    if (totalCost > budget) throw new Error("Cost budget exceeded");
-
     const platforms = (campaign.platforms.length ? campaign.platforms : ["tiktok"]) as Platform[];
-    const hookSet = contentPackageToHookSet(contentPackage);
-    await logAgent(task.orgId, task.workspaceId, taskId, "hook", { input: 0, output: 0, costUsd: 0 }, hookSet);
-    await db
-      .update(schema.tasks)
-      .set({ hooksJson: hookSet })
-      .where(eq(schema.tasks.id, taskId));
-    await updateStep(taskId, "hook_generate", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: hookSet,
-    });
 
-    const allVariants = contentPackageToCopyVariants(contentPackage, strategy, platforms);
-    const recommendedVariantId = allVariants.find((v) => v.locale === "en")?.id ?? allVariants[0]?.id ?? "v-en-1";
-    await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, allVariants);
-    await updateStep(taskId, "copy_generate", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: allVariants,
+    // content_generate — check copy variant cache first to avoid repeat LLM cost
+    const cacheKey = copyCacheKey({
+      campaignId: campaign.id,
+      platforms: campaign.platforms,
+      brief: [goal, creativeBrief.campaignBrief ?? "", campaign.name].join("|"),
     });
+    const cachedVariants = await getCopyCache(cacheKey);
+
+    let allVariants: CopyVariant[];
+    let hookSet: HookSet;
+
+    if (cachedVariants) {
+      console.log(`[orchestrator] copy cache hit campaignId=${campaign.id}`);
+      allVariants = cachedVariants;
+      // Derive hookSet from cached variants (no LLM cost)
+      hookSet = {
+        hooks: allVariants.map((v, i) => ({
+          id: `h-${i}`,
+          text: v.hook,
+          platform: v.platform,
+          locale: v.locale,
+          template: v.template ?? "pain_point",
+        })),
+        recommendedHookId: "h-0",
+      } as HookSet;
+      await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: { cached: true } });
+      await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
+      await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
+    } else {
+      await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
+      const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
+        strategy,
+        vision,
+        videoAnalysis,
+        userNotes: creativeBrief.campaignBrief,
+        goal,
+        campaignName: campaign.name,
+        platforms: campaign.platforms,
+        contentLocale: contentLocaleFromMetadata(campaign.metadata as Record<string, unknown> | null),
+      });
+      totalCost += contentUsage.costUsd;
+      const { contentPackage, usage: translateUsage } =
+        await enrichMarketingPackTranslations(rawContentPackage);
+      totalCost += translateUsage.costUsd;
+      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
+      if (translateUsage.costUsd > 0) {
+        await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
+      }
+      await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: contentPackage });
+
+      if (totalCost > budget) throw new Error("Cost budget exceeded");
+
+      hookSet = contentPackageToHookSet(contentPackage);
+      await logAgent(task.orgId, task.workspaceId, taskId, "hook", { input: 0, output: 0, costUsd: 0 }, hookSet);
+      await db.update(schema.tasks).set({ hooksJson: hookSet }).where(eq(schema.tasks.id, taskId));
+      await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
+
+      allVariants = contentPackageToCopyVariants(contentPackage, strategy, platforms);
+      await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, allVariants);
+      await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
+
+      await setCopyCache(cacheKey, allVariants);
+    }
+
+    const recommendedVariantId = allVariants.find((v) => v.locale === "en")?.id ?? allVariants[0]?.id ?? "v-en-1";
 
     // create creative
     const [creative] = await db

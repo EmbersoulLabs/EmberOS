@@ -10,6 +10,7 @@ import {
   canDownloadResolution,
   exportPaywallEnabled,
   parseTaskExportResolution,
+  isCampaignExportable,
 } from "@ceo-agent/shared";
 import {
   count2kRenderProgress,
@@ -128,8 +129,18 @@ export async function GET(
       status = "failed";
     }
 
+    const [campaign] = await db
+      .select()
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, task.campaignId))
+      .limit(1);
+
+    const approvalRequired = campaign && !isCampaignExportable(campaign.status);
+
     return apiSuccess({
       taskStatus: task.status,
+      campaignStatus: campaign?.status ?? null,
+      approvalRequired,
       orgPlan: org?.plan ?? "free",
       canExport1080p: paid1080p,
       canExport2k: paid2k,
@@ -147,6 +158,7 @@ export async function GET(
       finalRenderProgress: renderProgress,
       rendition2kProgress,
       canExport:
+        !approvalRequired &&
         allPreviewReady &&
         status !== "final_rendering" &&
         status !== "export_pending",
@@ -223,6 +235,14 @@ export async function POST(
       .from(schema.campaigns)
       .where(eq(schema.campaigns.id, task.campaignId))
       .limit(1);
+
+    if (campaign && !isCampaignExportable(campaign.status)) {
+      return apiError(
+        "Campaign must pass internal and client review before export.",
+        "APPROVAL_REQUIRED",
+        403
+      );
+    }
 
     const exportPlatforms = platforms ?? campaign?.platforms ?? ["tiktok"];
     const requestedAt = new Date().toISOString();

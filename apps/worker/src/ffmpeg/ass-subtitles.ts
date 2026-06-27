@@ -103,7 +103,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   };
 
   const lines = subtitles.map((s: EditPlan["subtitles"][number]) => {
-    if (s.style === "tiktok_hook_card") return null;
     const start = formatAssTime(s.startSec);
     const end = formatAssTime(s.endSec);
     const text = buildAssAnimatedDialogueText(s.text, highlightKeywords, cfg);

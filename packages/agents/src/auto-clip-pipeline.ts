@@ -454,15 +454,37 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
   );
   if (!allPreviewReady) return false;
 
+  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
+  if (!task) return false;
+
   for (const creative of creatives) {
     await db
       .update(schema.creatives)
-      .set({ status: "approved", updatedAt: new Date() })
+      .set({ status: "pending_internal_review", updatedAt: new Date() })
       .where(eq(schema.creatives.id, creative.id));
-  }
 
-  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-  if (!task) return true;
+    const [existing] = await db
+      .select({ id: schema.reviews.id })
+      .from(schema.reviews)
+      .where(
+        and(
+          eq(schema.reviews.creativeId, creative.id),
+          eq(schema.reviews.reviewerType, "internal"),
+          eq(schema.reviews.decision, "pending")
+        )
+      )
+      .limit(1);
+
+    if (!existing) {
+      await db.insert(schema.reviews).values({
+        orgId: task.orgId,
+        workspaceId: task.workspaceId,
+        creativeId: creative.id,
+        reviewerType: "internal",
+        decision: "pending",
+      });
+    }
+  }
 
   const [campaign] = await db
     .select()
@@ -522,7 +544,7 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
     .where(eq(schema.tasks.id, taskId));
   await db
     .update(schema.campaigns)
-    .set({ status: "export_ready" })
+    .set({ status: "pending_internal_review" })
     .where(eq(schema.campaigns.id, task.campaignId));
 
   const [freshTask] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
@@ -537,16 +559,16 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
   if (!finalProgress.marketing_score) {
     finalProgress.marketing_score = { status: "skipped", completedAt: new Date().toISOString() };
   }
-  finalProgress.human_review = { status: "skipped", completedAt: new Date().toISOString() };
-  finalProgress.export_ready = {
-    status: "completed",
-    completedAt: new Date().toISOString(),
+  finalProgress.human_review = {
+    status: "pending",
+    startedAt: new Date().toISOString(),
     output: { creativeIds: creatives.map((c) => c.id) },
   };
+  finalProgress.export_ready = { status: "pending" };
 
   await db
     .update(schema.tasks)
-    .set({ stepProgress: finalProgress, currentStep: "export_ready" })
+    .set({ stepProgress: finalProgress, currentStep: "human_review" })
     .where(eq(schema.tasks.id, taskId));
 
   return true;

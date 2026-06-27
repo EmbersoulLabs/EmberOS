@@ -1,8 +1,9 @@
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and, gt, isNull } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
 import { clientIp, enforceRateLimit } from "@/lib/rate-limit";
+import { syncCampaignStatusFromCreatives } from "@/lib/review-flow";
 
 async function validatePortalToken(token: string) {
   const db = getDb();
@@ -10,7 +11,11 @@ async function validatePortalToken(token: string) {
     .select()
     .from(schema.clientInvites)
     .where(
-      and(eq(schema.clientInvites.token, token), gt(schema.clientInvites.expiresAt, new Date()))
+      and(
+        eq(schema.clientInvites.token, token),
+        gt(schema.clientInvites.expiresAt, new Date()),
+        isNull(schema.clientInvites.usedAt)
+      )
     )
     .limit(1);
 
@@ -120,9 +125,15 @@ export async function POST(
       .limit(1);
 
     if (creative) {
+      const newCampaignStatus = await syncCampaignStatusFromCreatives(
+        db,
+        creative.campaignId,
+        creative.workspaceId
+      );
+
       await db
         .update(schema.campaigns)
-        .set({ status: decision === "approved" ? "approved" : "pending_internal_review" })
+        .set({ status: newCampaignStatus })
         .where(eq(schema.campaigns.id, creative.campaignId));
 
       if (decision === "approved") {

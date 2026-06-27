@@ -1,7 +1,9 @@
-import { eq } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { getDb, requireWorkspaceRole } from "@ceo-agent/db";
+import { eq } from "drizzle-orm";
+import { schema } from "@ceo-agent/db";
+import { submitCreativeForReview } from "@/lib/review-resubmit";
 
 export async function POST(
   request: Request,
@@ -15,7 +17,7 @@ export async function POST(
 
     const db = getDb();
     const [creative] = await db
-      .select()
+      .select({ workspaceId: schema.creatives.workspaceId })
       .from(schema.creatives)
       .where(eq(schema.creatives.id, id))
       .limit(1);
@@ -23,32 +25,26 @@ export async function POST(
     if (!creative) return apiError("Creative not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(creative.workspaceId, user.id, "operator");
 
-    const [review] = await db
-      .insert(schema.reviews)
-      .values({
-        orgId: creative.orgId,
-        workspaceId: creative.workspaceId,
-        creativeId: id,
-        reviewerType: type ?? "internal",
-        reviewerId: user.id,
-        decision: "pending",
-      })
-      .returning();
+    const result = await submitCreativeForReview(db, {
+      creativeId: id,
+      userId: user.id,
+      type: type ?? "internal",
+    });
 
-    const newStatus =
-      type === "client" ? "pending_client_review" : "pending_internal_review";
+    if ("error" in result && result.error) {
+      const status =
+        result.code === "NOT_FOUND" ? 404 : result.code === "REVIEW_PENDING" ? 409 : 400;
+      return apiError(result.error, result.code ?? "VALIDATION_ERROR", status);
+    }
 
-    await db
-      .update(schema.creatives)
-      .set({ status: newStatus })
-      .where(eq(schema.creatives.id, id));
-
-    await db
-      .update(schema.campaigns)
-      .set({ status: newStatus })
-      .where(eq(schema.campaigns.id, creative.campaignId));
-
-    return apiSuccess({ review, campaignStatus: newStatus }, 201);
+    return apiSuccess(
+      {
+        review: result.review,
+        campaignStatus: result.campaignStatus,
+        creativeStatus: result.creativeStatus,
+      },
+      201
+    );
   } catch (error) {
     return handleApiError(error);
   }

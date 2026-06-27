@@ -22,10 +22,11 @@ export async function synthesizeSpeech(
   const voiceMap = gender === "male" ? VOICE_MALE : VOICE_FEMALE;
   const openai = getOpenAI();
   const response = await openai.audio.speech.create({
-    model: "tts-1",
+    model: "tts-1-hd",
     voice: voiceMap[locale],
     input: trimmed.slice(0, 4096),
     response_format: "mp3",
+    speed: 1.0,
   });
 
   return Buffer.from(await response.arrayBuffer());

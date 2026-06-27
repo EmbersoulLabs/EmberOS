@@ -29,7 +29,7 @@ import { SingleCreativePreview } from "@/components/pipeline/SingleCreativePrevi
 import { MarketingScorePanel } from "@/components/pipeline/MarketingScorePanel";
 import { MarketingPackagePanel } from "@/components/pipeline/MarketingPackagePanel";
 import { CollapsibleSection } from "@/components/marketing-dashboard/primitives";
-import { normalizeStrategyPlan, type MarketingContentPackage, type StrategyPlan } from "@ceo-agent/shared";
+import { normalizeStrategyPlan, type MarketingContentPackage, type StrategyPlan, isReviewPending } from "@ceo-agent/shared";
 
 export default function TaskProgressContent() {
   const params = useParams();
@@ -69,6 +69,7 @@ export default function TaskProgressContent() {
   const [canDelete, setCanDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [approvalRequired, setApprovalRequired] = useState(false);
   const [pollError, setPollError] = useState("");
   const [initialLoad, setInitialLoad] = useState(true);
 
@@ -185,6 +186,7 @@ export default function TaskProgressContent() {
             setCanExport2k(Boolean(exportData.canExport2k));
             setExportPaywallEnabled(Boolean(exportData.exportPaywallEnabled));
             setCanExport(Boolean(exportData.canExport));
+            setApprovalRequired(Boolean(exportData.approvalRequired));
             setExportStatus(exportData.status ?? "none");
             if (exportData.exportPackUrl) setExportPackUrl(exportData.exportPackUrl);
             else setExportPackUrl(null);
@@ -317,6 +319,7 @@ export default function TaskProgressContent() {
     setCanExport2k(Boolean(exportData.canExport2k));
     setExportPaywallEnabled(Boolean(exportData.exportPaywallEnabled));
     setCanExport(Boolean(exportData.canExport));
+    setApprovalRequired(Boolean(exportData.approvalRequired));
     setExportStatus(exportData.status ?? "none");
     if (exportData.exportPackUrl) setExportPackUrl(exportData.exportPackUrl);
     else setExportPackUrl(null);
@@ -461,7 +464,26 @@ export default function TaskProgressContent() {
           </>
         )}
 
-        {isAutoClip && readyClipCount > 0 && (
+        {isAutoClip && readyClipCount > 0 && approvalRequired && campaignStatus && isReviewPending(campaignStatus) && (
+          <section className="mt-6 rounded-xl border border-brand-amber/30 bg-brand-amber/[0.06] shadow-card">
+            <div className="px-4 py-4 sm:px-5">
+              <h3 className="text-sm font-semibold text-navy">{t("campaign.review.title")}</h3>
+              <p className="mt-2 text-sm text-ink-secondary">
+                {campaignStatus === "pending_internal_review"
+                  ? t("campaign.review.pendingInternal")
+                  : t("campaign.review.pendingClient")}
+              </p>
+              <Link
+                href={`/w/${slug}/reviews`}
+                className="mt-3 inline-flex h-9 items-center rounded-lg bg-navy px-4 text-sm font-medium text-white hover:bg-navy/90"
+              >
+                {t("campaign.review.goToQueue")}
+              </Link>
+            </div>
+          </section>
+        )}
+
+        {isAutoClip && readyClipCount > 0 && !approvalRequired && (
           <section className="mt-6 rounded-xl border border-border/80 bg-surface shadow-card">
             <div className="border-b border-border/60 px-4 py-3 sm:px-5">
               <h3 className="text-sm font-semibold text-navy">

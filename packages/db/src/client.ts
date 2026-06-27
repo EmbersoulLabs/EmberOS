@@ -11,8 +11,13 @@ export function getDb() {
     if (!url) {
       throw new Error("DATABASE_URL is not set");
     }
+    // Vercel serverless: cap at 1 connection per function instance so pgbouncer
+    // transaction-mode pooling isn't overwhelmed. Long-lived Worker processes use
+    // the default (10) to support concurrent FFmpeg jobs hitting the DB.
+    const isServerless = process.env.VERCEL === "1";
     client = postgres(url, {
       prepare: false,
+      max: isServerless ? 1 : 10,
       connect_timeout: 15,
       idle_timeout: 20,
       max_lifetime: 60 * 30,
