@@ -300,7 +300,7 @@ export const COMMERCIAL_BGM_LIBRARY: BgmTrack[] = [
     "id": "cafe_upbeat",
     "name": "Upbeat Acoustic",
     "category": "upbeat",
-    "durationSec": 164,
+    "durationSec": 178,
     "bpm": 105,
     "mood": "playful",
     "tags": [
@@ -309,10 +309,10 @@ export const COMMERCIAL_BGM_LIBRARY: BgmTrack[] = [
       "lifestyle",
       "acoustic"
     ],
-    "fileUrl": "https://archive.org/download/Komiku-the_binge_watchers/Komiku-TheBingeWatchers-Score1-05AmbiantShock.mp3",
+    "fileUrl": "https://archive.org/download/Komiku-Poupis_incredible_adventures/Komiku-PoupisIncredibleAdventures-04TheWeeklyFair.mp3",
     "brightness": "warm",
     "license": "royalty_free",
-    "attribution": "\"Ambiant Shock\" by Komiku (CC0 / Public Domain — no attribution required)",
+    "attribution": "\"The weekly fair\" by Komiku (CC0 / Public Domain — no attribution required)",
     "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/"
   },
   {

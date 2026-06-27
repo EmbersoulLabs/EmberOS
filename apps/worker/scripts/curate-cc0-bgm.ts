@@ -90,6 +90,24 @@ const HEADERS = {
 
 const CC0_URL = "https://creativecommons.org/publicdomain/zero/1.0/";
 
+/** Skip horror / tension beds for cafe, upbeat, calm, retail templates. */
+const CAFE_UPBEAT_TITLE_BLOCK =
+  /shock|horror|tension|disturb|doom|death|boss|attack|infiltration|retribution|experiment|fascism|swoop|epic|action introduction|level \d/i;
+
+function isSuitableBgmPick(
+  tmpl: { category: string; tags: string[]; mood: string },
+  candidate: PoolTrack
+): boolean {
+  const title = candidate.title.toLowerCase();
+  const needsFriendlyBed =
+    tmpl.category === "upbeat" ||
+    tmpl.category === "calm" ||
+    tmpl.category === "retail_promotion" ||
+    tmpl.tags.some((t) => ["cafe", "coffee", "lifestyle", "acoustic"].includes(t));
+  if (needsFriendlyBed && CAFE_UPBEAT_TITLE_BLOCK.test(title)) return false;
+  return true;
+}
+
 /** Curated CC0 albums on the Internet Archive (Komiku — public domain). */
 const IA_ALBUMS = [
   "Komiku-ItsTimeForAdventureVol2",
@@ -222,6 +240,7 @@ async function main() {
     while (cursor < pool.length) {
       const candidate = pool[cursor++]!;
       if (usedUrls.has(candidate.url)) continue;
+      if (!isSuitableBgmPick(tmpl, candidate)) continue;
       const ok = await downloadVerify(tmpl.id, candidate.url);
       if (ok) {
         picked = candidate;
