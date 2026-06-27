@@ -6,6 +6,18 @@ export function isChineseText(text: string): boolean {
   return CJK_RE.test(text);
 }
 
+/**
+ * True when text is PREDOMINANTLY Chinese \u2014 i.e. more than 30% of non-whitespace
+ * characters are CJK. Unlike isChineseText, a Chinese brand/product name embedded
+ * in an otherwise-English sentence does NOT count as Chinese text.
+ */
+export function isMostlyChineseText(text: string): boolean {
+  const stripped = text.replace(/\s+/g, "");
+  if (!stripped) return false;
+  const cjk = (stripped.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  return cjk / stripped.length > 0.30;
+}
+
 export function detectCopyLocale(text: string): CopyLocale {
   return isChineseText(text) ? "zh" : "en";
 }

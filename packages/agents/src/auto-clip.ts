@@ -11,6 +11,7 @@ import {
   subtitlesFromFinalScript,
   subtitlesFromTimeline,
   isChineseText,
+  isMostlyChineseText,
   buildVirtualCuts,
   inferSubjectFocus,
   type CopyLocale,
@@ -76,7 +77,7 @@ function resolveBilingualScripts(variants: CopyVariant[]): {
       enScript.trim() &&
       zhScript.trim() &&
       zhScript.trim() !== enScript.trim() &&
-      !isChineseText(enScript)
+      !isMostlyChineseText(enScript)
   );
 
   return { zhScript, enScript, hasBilingual };

@@ -391,10 +391,12 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const seeded = hasKnowledgeSeed(inferred);
 
   const visionSummary = visionSummaryText(input.vision, input.campaignName);
+  // Whisper transcript is always real spoken content — pass it even when frame labels are generic.
+  const spokenContent = input.vision?.transcriptSummary?.trim() || "";
   const userDescription = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
   const goalIsContext = Boolean(input.goal?.trim()) && !isMarketingObjective(input.goal);
   const hasAnyContext = Boolean(
-    visionSummary || userDescription || goalIsContext || strategyExtraContext(input)
+    visionSummary || spokenContent || userDescription || goalIsContext || strategyExtraContext(input)
   );
   const creativePreferences = input.creativeBrief
     ? creativePreferencesForPrompt(input.creativeBrief)
@@ -404,7 +406,9 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const user = JSON.stringify({
     // PRIMARY: what the uploaded assets actually show.
     ...(visionSummary ? { assetAnalysis: visionSummary } : {}),
-    ...(assetsUploaded > 0 && !visionSummary
+    // Spoken content from Whisper: always reliable even when frame labels are generic.
+    ...(spokenContent && !visionSummary ? { spokenContent } : {}),
+    ...(assetsUploaded > 0 && !visionSummary && !spokenContent
       ? {
           assetsUploaded,
           assetAnalysisNote:

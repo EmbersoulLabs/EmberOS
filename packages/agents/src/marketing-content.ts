@@ -469,11 +469,16 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
   const hookMs = `${product} — ${s.marketingAngle.slice(0, 60)}.`;
 
   // Always provide both language scripts so on-screen 中英 subtitles can render.
-  // (Best-effort fallback; the LLM path produces fully-translated scripts.)
+  // For Chinese campaigns, strategy fields (angle/goal/cta) are all in Chinese — use
+  // English-only fallback phrases so the en subtitle track is actually in English.
+  const enAngle = isChineseText(s.marketingAngle) ? "discover the quality difference" : s.marketingAngle.slice(0, 60);
+  const enGoal = isChineseText(s.marketingGoal) ? "Brand awareness" : s.marketingGoal;
+  const enAudience = isChineseText(audience) ? "everyone" : audience;
+  const enCta = isChineseText(s.ctaStrategy) ? "Follow for more" : s.ctaStrategy;
   const enScripts = {
-    "15s": `${product} — ${s.marketingAngle.slice(0, 60)}.`,
-    "30s": `${product}. ${s.marketingGoal}. Built for ${audience}. ${s.ctaStrategy}`,
-    "60s": `${product}. ${s.marketingAngle}. Clear value, memorable visuals. ${s.ctaStrategy}`,
+    "15s": `${product} — ${enAngle}.`,
+    "30s": `${product}. ${enGoal}. Built for ${enAudience}. ${enCta}.`,
+    "60s": `${product}. ${enAngle}. Clear value, memorable visuals. ${enCta}.`,
   };
   const zhScripts = {
     "15s": `${product}，${s.marketingAngle.slice(0, 40)}。`,
@@ -841,9 +846,15 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
 
   const normalized = normalizeMarketingContentPackage(result);
   if (normalized) {
+    console.log(`[content] ok hooks=${normalized.hooks.length} voiceScripts=${!!normalized.voiceScripts["30s"]}`);
     return { contentPackage: applyGroundingToPackage(normalized, input), usage };
   }
 
+  // Log what the LLM actually returned so we can diagnose parse failures.
+  const raw = result as Record<string, unknown> | null;
+  const hookCount = Array.isArray(raw?.hooks) ? (raw.hooks as unknown[]).length : typeof raw?.hooks;
+  const ctaCount = Array.isArray(raw?.cta) ? (raw.cta as unknown[]).length : typeof raw?.cta;
+  console.warn(`[content] normalizeMarketingContentPackage failed — using fallback template. hooks=${hookCount} cta=${ctaCount} musicMood=${raw?.musicMood}`);
   return { contentPackage: buildFallbackContent(input), usage };
 }
 

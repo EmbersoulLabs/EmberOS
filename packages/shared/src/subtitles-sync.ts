@@ -6,7 +6,7 @@ import {
   estimateSpeechDurationSec,
   shouldUseVoiceoverForClip,
 } from "./final-script";
-import { isChineseText } from "./subtitle-text";
+import { isChineseText, isMostlyChineseText } from "./subtitle-text";
 import {
   subtitlesFromBilingualScripts,
   subtitlesFromFinalScript,
@@ -126,7 +126,7 @@ export function syncEditPlanFromCopy(
   const pair = resolveEnZh(variant, altVariant);
   const locale = resolveVoiceLocale(editPlan, variant);
   // Use body to check language: cta may fall back to Chinese even on the "en" variant.
-  const bilingual = Boolean(pair && pair.zh.id !== pair.en.id && !isChineseText(pair.en.body ?? ""));
+  const bilingual = Boolean(pair && pair.zh.id !== pair.en.id && !isMostlyChineseText(pair.en.body ?? ""));
 
   let finalScriptZh: string | undefined;
   let finalScriptEn: string | undefined;

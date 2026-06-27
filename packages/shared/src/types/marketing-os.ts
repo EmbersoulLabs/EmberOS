@@ -418,44 +418,53 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
   if (!raw || typeof raw !== "object") return null;
   const data = raw as Record<string, unknown>;
 
-  const hooksRaw = Array.isArray(data.hooks) ? data.hooks : [];
-  const hooks = hooksRaw
+  // LLMs (especially gpt-4o-mini) sometimes return hooks as an object or use
+  // non-standard field names. Normalize to array first.
+  const hooksInput: unknown[] = Array.isArray(data.hooks)
+    ? data.hooks
+    : data.hooks && typeof data.hooks === "object"
+      ? Object.values(data.hooks as Record<string, unknown>)
+      : [];
+  const hooks = hooksInput
     .map((h) => {
       if (typeof h === "string") return { text: h, type: "curiosity" };
-      if (h && typeof h === "object" && "text" in h) {
-        const item = h as {
-          text?: unknown;
-          textEn?: string;
-          textMs?: string;
-          type?: string;
-        };
-        const localized = parseLocalizedItemText(item.text);
+      if (h && typeof h === "object") {
+        const item = h as Record<string, unknown>;
+        // Accept text / hookText / content / message as the hook body.
+        const rawText = item.text ?? item.hookText ?? item.content ?? item.message ?? item.hook ?? "";
+        const localized = parseLocalizedItemText(rawText);
+        if (!localized.text) return null;
         return {
           text: localized.text,
-          textEn: item.textEn?.trim() || localized.textEn,
-          textMs: item.textMs?.trim() || localized.textMs,
-          type: String(item.type ?? "curiosity"),
+          textEn: String(item.textEn ?? "").trim() || localized.textEn,
+          textMs: String(item.textMs ?? "").trim() || localized.textMs,
+          type: String(item.type ?? item.hookType ?? item.kind ?? "curiosity"),
         };
       }
       return null;
     })
     .filter((h): h is ContentHookItem => Boolean(h?.text?.trim()));
 
-  const ctaRaw = Array.isArray(data.cta) ? data.cta : [];
-  const cta = ctaRaw
+  const ctaInput: unknown[] = Array.isArray(data.cta)
+    ? data.cta
+    : data.cta && typeof data.cta === "object"
+      ? Object.values(data.cta as Record<string, unknown>)
+      : [];
+  const cta = ctaInput
     .map((c): ContentCtaItem | null => {
       if (typeof c === "string") return { text: c };
-      if (c && typeof c === "object" && "text" in c) {
-        const item = c as { text?: unknown; textEn?: string; textMs?: string; style?: string };
-        const localized = parseLocalizedItemText(item.text);
-        const text = localized.text || String(item.text ?? "").trim();
+      if (c && typeof c === "object") {
+        const item = c as Record<string, unknown>;
+        const rawText = item.text ?? item.ctaText ?? item.content ?? item.message ?? "";
+        const localized = parseLocalizedItemText(rawText);
+        const text = localized.text || String(rawText ?? "").trim();
         if (!text) return null;
         const base = {
           text,
-          textEn: item.textEn?.trim() || localized.textEn,
-          textMs: item.textMs?.trim() || localized.textMs,
+          textEn: String(item.textEn ?? "").trim() || localized.textEn,
+          textMs: String(item.textMs ?? "").trim() || localized.textMs,
         };
-        return item.style ? { ...base, style: item.style } : base;
+        return item.style ? { ...base, style: String(item.style) } : base;
       }
       return null;
     })
@@ -586,6 +595,17 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
     aiSuggestions: Array.isArray(data.aiSuggestions) ? (data.aiSuggestions as string[]) : [],
   };
 
-  const parsed = MarketingContentPackageSchema.safeParse(candidate);
+  // If the LLM produced no hooks/cta, synthesize minimal entries from voiceScripts so
+  // the package doesn't fall through to the static template fallback.
+  const finalHooks: ContentHookItem[] =
+    hooks.length > 0
+      ? hooks
+      : (() => {
+          const script = candidate.voiceScripts["15s"] || candidate.voiceScripts["30s"] || "";
+          return script ? [{ text: script.slice(0, 100), type: "curiosity" }] : [];
+        })();
+  const finalCta: ContentCtaItem[] = cta.length > 0 ? cta : [{ text: "Follow for more" }];
+
+  const parsed = MarketingContentPackageSchema.safeParse({ ...candidate, hooks: finalHooks, cta: finalCta });
   return parsed.success ? parsed.data : null;
 }
