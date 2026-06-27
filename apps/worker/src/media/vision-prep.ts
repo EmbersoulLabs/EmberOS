@@ -67,12 +67,19 @@ async function imageToVisionDataUrl(localPath: string, workDir: string): Promise
 }
 
 function frameTimestamps(durationSec: number, count: number): number[] {
-  const usable = Math.max(1, durationSec - SOURCE_END_TRIM_SEC);
   const n = Math.min(count, VISION_MAX_FRAMES);
-  return Array.from({ length: n }, (_, i) => {
-    const t = (usable * (i + 1)) / (n + 1);
-    return Math.min(Math.max(0, t), Math.max(0, durationSec - 0.25));
-  });
+  // Skip opening logos/title cards: 10% of duration, capped at 5 s.
+  const startSec = Math.max(0.5, Math.min(durationSec * 0.10, 5.0));
+  // Skip closing fades/credits: whichever is larger — 10% of duration or SOURCE_END_TRIM_SEC.
+  const endSec = Math.max(
+    startSec + 1.0,
+    durationSec - Math.max(durationSec * 0.10, SOURCE_END_TRIM_SEC)
+  );
+  const span = Math.max(0.1, endSec - startSec);
+  // Uniformly place frames at bucket centers (i+0.5)/n within [startSec, endSec].
+  return Array.from({ length: n }, (_, i) =>
+    Math.min(startSec + (span * (i + 0.5)) / n, durationSec - 0.25)
+  );
 }
 
 async function frameFileReady(outputPath: string): Promise<boolean> {
@@ -220,9 +227,10 @@ export async function prepareVisionFromStorage(input: {
     }
 
     if (frames.length === 0) {
+      const fallbackSec = Math.min(Math.max(0.5, duration * 0.10), duration - 0.25);
       const fallbackPath = join(workDir, "frame_fallback.jpg");
-      await extractFrameAt(localPath, 0, fallbackPath);
-      frames.push({ atSec: 0, dataUrl: await imageToVisionDataUrl(fallbackPath, workDir) });
+      await extractFrameAt(localPath, fallbackSec, fallbackPath);
+      frames.push({ atSec: fallbackSec, dataUrl: await imageToVisionDataUrl(fallbackPath, workDir) });
     }
 
     let transcriptSummary: string | undefined;

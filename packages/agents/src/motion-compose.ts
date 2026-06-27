@@ -15,6 +15,7 @@ import {
   subtitlesFromFinalScript,
   subtitlesFromBilingualScripts,
   subtitlesFromTimeline,
+  isChineseText,
 } from "@ceo-agent/shared";
 import type { CopyLocale } from "@ceo-agent/shared";
 
@@ -93,7 +94,8 @@ function subtitleBeatsForMontage(
   const pair = pickBilingualCopyPair(variants);
   const en = pair?.en ?? pickBestLocaleVariant(variants, "en") ?? variants[0]!;
   const zh = pair?.zh ?? pickBestLocaleVariant(variants, "zh");
-  const bilingual = Boolean(zh && en && zh.id !== en.id);
+  // Check that the English variant's body is actually in English; cta may fall back to Chinese.
+  const bilingual = Boolean(zh && en && zh.id !== en.id && !isChineseText(en.body ?? ""));
 
   let t = 0;
   const subtitles: EditPlan["subtitles"] = [];

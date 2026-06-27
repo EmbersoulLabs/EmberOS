@@ -51,7 +51,7 @@ export async function callVisionJsonModel<T>(
           { type: "text", text: userText },
           ...imageDataUrls.slice(0, 8).map((url) => ({
             type: "image_url" as const,
-            image_url: { url, detail: "low" as const },
+            image_url: { url, detail: "high" as const },
           })),
         ],
       },
