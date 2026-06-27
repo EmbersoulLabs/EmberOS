@@ -1,6 +1,7 @@
 import type { CopyLocale } from "./copy-mix";
 import type { CopyVariant, EditPlan } from "./types/index";
 import { AUTO_CLIP } from "./render";
+import { isChineseText } from "./subtitle-text";
 
 /** Single source of truth for TTS, subtitles, preview, and marketing analysis. */
 export function buildFinalScript(variant: CopyVariant, locale?: CopyLocale): string {
@@ -11,6 +12,18 @@ export function buildFinalScript(variant: CopyVariant, locale?: CopyLocale): str
     .filter(Boolean)
     .join(sep)
     .trim();
+}
+
+/**
+ * English voice script — hook + body + CTA, but drops CTA when it leaked to Chinese
+ * (common when the en variant has no translated CTA yet).
+ */
+export function buildEnglishFinalScript(variant: CopyVariant): string {
+  const sep = ". ";
+  const parts = [variant.hook?.trim(), variant.body?.trim()].filter(Boolean);
+  const cta = variant.cta?.trim();
+  if (cta && !isChineseText(cta)) parts.push(cta);
+  return parts.join(sep).trim() || buildFinalScript(variant, "en");
 }
 
 export function detectScriptLocale(script: string): CopyLocale {

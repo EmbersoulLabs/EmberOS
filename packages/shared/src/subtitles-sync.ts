@@ -2,6 +2,7 @@ import { baseClipFingerprint } from "./render";
 import type { CopyLocale } from "./copy-mix";
 import {
   buildFinalScript,
+  buildEnglishFinalScript,
   estimateSpeechDurationSec,
   shouldUseVoiceoverForClip,
 } from "./final-script";
@@ -130,9 +131,8 @@ export function syncEditPlanFromCopy(
   let finalScriptZh: string | undefined;
   let finalScriptEn: string | undefined;
   if (pair) {
-    // Prefer body over full finalScript so Chinese cta fallback doesn't poison the English track.
-    finalScriptZh = pair.zh.body?.trim() || buildFinalScript(pair.zh, "zh");
-    finalScriptEn = pair.en.body?.trim() || buildFinalScript(pair.en, "en");
+    finalScriptZh = buildFinalScript(pair.zh, "zh");
+    finalScriptEn = buildEnglishFinalScript(pair.en);
   }
 
   const primaryScript = bilingual

@@ -4,6 +4,7 @@ import {
   pickBestLocaleVariant,
   pickBilingualCopyPair,
   buildFinalScript,
+  buildEnglishFinalScript,
   estimateSpeechDurationSec,
   shouldUseVoiceoverForClip,
   subtitlesFromBilingualScripts,
@@ -66,11 +67,8 @@ function resolveBilingualScripts(variants: CopyVariant[]): {
   const zh = pair?.zh ?? pickBestLocaleVariant(variants, "zh");
   if (!en) return { zhScript: "", enScript: "", hasBilingual: false };
 
-  // Use body directly for subtitle scripts: buildFinalScript includes cta which may
-  // fall back to Chinese when no translated CTA exists, causing the isChineseText guard
-  // to wrongly disable bilingual mode even though the body is genuine English.
-  const enScript = en.body?.trim() || buildFinalScript(en, "en");
-  const zhScript = (zh?.body?.trim()) || (zh ? buildFinalScript(zh, "zh") : enScript);
+  const enScript = buildEnglishFinalScript(en);
+  const zhScript = zh ? buildFinalScript(zh, "zh") : enScript;
   const hasBilingual = Boolean(
     zh &&
       en &&
