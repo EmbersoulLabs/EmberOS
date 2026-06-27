@@ -7,6 +7,8 @@ import {
   outputLanguagePrompt,
   resolveContentSubject,
   hasSubstantiveVision,
+  isMarketingObjective,
+  isTemplatedVisionFallback,
   type BrandProfile,
   type ContentLocale,
   type StrategyPlan,
@@ -37,7 +39,7 @@ export interface StrategyInput {
 
 /** Readable summary of substantive vision for the strategy prompt (empty if fallback/generic). */
 function visionSummaryText(vision?: VisionAnalysis): string {
-  if (!vision || !hasSubstantiveVision(vision)) return "";
+  if (!vision || isTemplatedVisionFallback(vision) || !hasSubstantiveVision(vision)) return "";
   const products = vision.products?.map((p) => p.name).filter(Boolean) ?? [];
   const subjects = vision.subjects?.filter(Boolean) ?? [];
   const scenes = vision.scenes?.map((s) => s.description).filter(Boolean).slice(0, 4) ?? [];
@@ -347,7 +349,8 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const seeded = hasKnowledgeSeed(inferred);
 
   const visionSummary = visionSummaryText(input.vision);
-  const hasAnyContext = Boolean(visionSummary || input.goal?.trim() || strategyExtraContext(input));
+  const goalIsContext = Boolean(input.goal?.trim()) && !isMarketingObjective(input.goal);
+  const hasAnyContext = Boolean(visionSummary || goalIsContext || strategyExtraContext(input));
 
   const user = JSON.stringify({
     // PRIMARY: what the uploaded assets actually show.

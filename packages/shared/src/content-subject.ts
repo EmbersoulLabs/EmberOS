@@ -159,8 +159,20 @@ function collectVisionCandidates(vision: VisionLike, locale: ContentLocale): str
     .filter(Boolean);
 }
 
+/** True when vision output is the hard-coded templated fallback (not real frame analysis). */
+export function isTemplatedVisionFallback(
+  vision: VisionLike & { confidence?: number; subjects?: string[] }
+): boolean {
+  if (vision.confidence !== 0.65) return false;
+  const markers = new Set(["product showcase", "brand scene", "产品展示", "场景氛围"]);
+  return (vision.subjects ?? []).some((s) => markers.has(s.toLowerCase()));
+}
+
 /** True when vision carries non-generic asset-derived signal. */
-export function hasSubstantiveVision(vision: VisionLike): boolean {
+export function hasSubstantiveVision(
+  vision: VisionLike & { confidence?: number; subjects?: string[] }
+): boolean {
+  if (isTemplatedVisionFallback(vision)) return false;
   return collectVisionCandidates(vision, "en").some(
     (item) => !isGenericVisionText(item) && !isCampaignLabel(item, undefined)
   );

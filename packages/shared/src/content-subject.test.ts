@@ -4,6 +4,7 @@ import {
   hasSubstantiveVision,
   isCampaignLabel,
   isMarketingObjective,
+  isTemplatedVisionFallback,
   resolveContentSubject,
 } from "../src/content-subject";
 import type { StrategyPlan } from "../src/types/marketing-os";
@@ -71,6 +72,31 @@ describe("resolveContentSubject", () => {
     expect(
       resolveContentSubject(emptyVision, { goal: "Handmade leather wallets" })
     ).toBe("Handmade leather wallets");
+  });
+
+  it("detects templated vision fallback so it is not treated as real asset signal", () => {
+    expect(
+      isTemplatedVisionFallback({
+        confidence: 0.65,
+        subjects: ["Flower Bouquet", "product showcase", "brand scene"],
+        products: [{ name: "Flower Bouquet" }],
+        scenes: [],
+      })
+    ).toBe(true);
+    expect(hasSubstantiveVision({
+      confidence: 0.65,
+      subjects: ["Flower Bouquet", "product showcase", "brand scene"],
+      products: [{ name: "Flower Bouquet" }],
+      scenes: [],
+    })).toBe(false);
+    expect(
+      isTemplatedVisionFallback({
+        confidence: 0.82,
+        subjects: ["blue rose bouquet", "gift wrap"],
+        products: [{ name: "blue rose bouquet" }],
+        scenes: [{ startSec: 0, endSec: 3, description: "Wrapped bouquet on table" }],
+      })
+    ).toBe(false);
   });
 
   it("detects when strategy product is just the campaign label", () => {

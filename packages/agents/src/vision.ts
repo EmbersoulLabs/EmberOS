@@ -165,10 +165,100 @@ function unwrapVisionResult(result: unknown): unknown {
   return result;
 }
 
+function ensureStringArray(val: unknown): string[] {
+  if (typeof val === "string") {
+    return val
+      .split(/[,;|]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (!Array.isArray(val)) return [];
+  return val.flatMap((item) => {
+    if (typeof item === "string") return item.trim() ? [item.trim()] : [];
+    if (item && typeof item === "object") {
+      const o = item as Record<string, unknown>;
+      const text = o.name ?? o.label ?? o.description ?? o.text;
+      if (typeof text === "string" && text.trim()) return [text.trim()];
+    }
+    return [];
+  });
+}
+
+function normalizeSceneArray(val: unknown): unknown[] {
+  if (typeof val === "string" && val.trim()) {
+    return [{ startSec: 0, endSec: 3, description: val.trim() }];
+  }
+  if (!Array.isArray(val)) return [];
+  return val.map((item) => {
+    if (typeof item === "string") return { startSec: 0, endSec: 3, description: item.trim() };
+    if (item && typeof item === "object") {
+      const o = item as Record<string, unknown>;
+      return {
+        startSec: o.startSec ?? o.start ?? 0,
+        endSec: o.endSec ?? o.end ?? 3,
+        description: o.description ?? o.label ?? o.name ?? "",
+        emotion: o.emotion,
+      };
+    }
+    return item;
+  });
+}
+
+function normalizeProductArray(val: unknown): unknown[] {
+  if (typeof val === "string" && val.trim()) return [{ name: val.trim() }];
+  if (!Array.isArray(val)) return [];
+  return val.map((item) => {
+    if (typeof item === "string") return { name: item.trim() };
+    if (item && typeof item === "object") {
+      const o = item as Record<string, unknown>;
+      const attrs = o.attributes;
+      return {
+        name: typeof o.name === "string" ? o.name : typeof o.label === "string" ? o.label : "",
+        attributes:
+          typeof attrs === "string"
+            ? attrs.split(/[,;|]/).map((s) => s.trim()).filter(Boolean)
+            : Array.isArray(attrs)
+              ? attrs
+              : undefined,
+      };
+    }
+    return { name: "" };
+  });
+}
+
+/** Coerce common LLM output quirks (string instead of array, nested objects) before Zod. */
+function normalizeVisionPayload(raw: unknown): unknown {
+  const unwrapped = unwrapVisionResult(raw);
+  if (!unwrapped || typeof unwrapped !== "object" || Array.isArray(unwrapped)) return unwrapped;
+  const obj = { ...(unwrapped as Record<string, unknown>) };
+  if ("subjects" in obj) obj.subjects = ensureStringArray(obj.subjects);
+  if ("hooks" in obj) obj.hooks = ensureStringArray(obj.hooks);
+  if ("products" in obj) obj.products = normalizeProductArray(obj.products);
+  if ("scenes" in obj) obj.scenes = normalizeSceneArray(obj.scenes);
+  if ("suggestedMoments" in obj && typeof obj.suggestedMoments === "object") {
+    obj.suggestedMoments = normalizeSceneArray(obj.suggestedMoments).map((s) => {
+      const scene = s as Record<string, unknown>;
+      return {
+        startSec: scene.startSec ?? 0,
+        endSec: scene.endSec ?? 3,
+        reason: scene.reason ?? scene.description ?? "",
+      };
+    });
+  }
+  return obj;
+}
+
 /** Coerce raw model output into a VisionAnalysis, or null when it carries no real visual signal. */
 function coerceVisionResult(result: unknown, input: VisionInput): VisionAnalysis | null {
-  const parsed = LenientVisionSchema.safeParse(unwrapVisionResult(result));
-  if (!parsed.success) return null;
+  const normalized = normalizeVisionPayload(result);
+  const parsed = LenientVisionSchema.safeParse(normalized);
+  if (!parsed.success) {
+    console.warn(
+      `[vision] lenient parse failed asset=${input.assetId}:`,
+      parsed.error.issues.slice(0, 4).map((i) => `${i.path.join(".")}: ${i.message}`)
+    );
+    return null;
+  }
   const d = parsed.data;
 
   const subjects = d.subjects.map((s) => s.trim()).filter(Boolean);
@@ -230,6 +320,9 @@ export async function runVisionAgent(input: VisionInput): Promise<{
 }> {
   const locale = resolveVisionLocale(input);
   const hasFrames = (input.frames?.length ?? 0) > 0;
+  console.log(
+    `[vision] start asset=${input.assetId} media=${input.mediaType} frames=${input.frames?.length ?? 0}`
+  );
 
   const system = `You are a Vision Agent analyzing marketing video/image assets for Singapore/SEA markets.
 Identify subjects, scenes, products, emotional hooks, and suggested highlight moments for ad creation.
@@ -269,7 +362,11 @@ Output JSON matching VisionAnalysis schema.`;
   const coerced = coerceVisionResult(result, input);
   if (!coerced) {
     console.warn(
-      `[vision] model output had no usable visual signal (hasFrames=${hasFrames}, asset=${input.assetId}) — using templated fallback`
+      `[vision] no usable visual signal (hasFrames=${hasFrames}, asset=${input.assetId}) — templated fallback`
+    );
+  } else {
+    console.log(
+      `[vision] ok asset=${input.assetId} confidence=${coerced.confidence} subjects=${coerced.subjects.slice(0, 3).join(", ")}`
     );
   }
   const analysis: VisionAnalysis = coerced ?? buildFallbackAnalysis(input);

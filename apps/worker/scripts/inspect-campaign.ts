@@ -46,20 +46,41 @@ for (const c of campaigns) {
     .orderBy(desc(schema.tasks.createdAt))
     .limit(1);
 
+  const assets = await db
+    .select({ type: schema.assets.type, durationSec: schema.assets.durationSec, width: schema.assets.width, height: schema.assets.height })
+    .from(schema.assets)
+    .where(eq(schema.assets.campaignId, c.id));
+
   for (const t of tasks) {
     const progress = (t.stepProgress ?? {}) as Record<string, { output?: unknown }>;
-    const vision = progress.vision_analyze?.output;
+    const vision = progress.vision_analyze?.output as {
+      subjects?: string[];
+      products?: { name: string }[];
+      confidence?: number;
+      scenes?: { description: string }[];
+    } | undefined;
     const content = progress.content_generate?.output as { hooks?: { text: string; type: string }[]; voiceScripts?: Record<string, string> } | undefined;
     const hooksJson = t.hooksJson as { hooks?: { text: string }[] } | null;
     const copyOut = progress.copy_generate?.output as { hook?: string; body?: string }[] | undefined;
+
+    const isFallback =
+      vision?.confidence === 0.65 &&
+      (vision?.subjects?.includes("product showcase") || vision?.subjects?.includes("产品展示"));
 
     console.log("\n--- TASK ---");
     console.log(JSON.stringify({
       taskId: t.id,
       status: t.status,
+      startedAt: t.startedAt,
+      completedAt: t.completedAt,
+      assetCount: assets.length,
+      assets: assets.map((a) => ({ type: a.type, durationSec: a.durationSec, width: a.width, height: a.height })),
+      visionConfidence: vision?.confidence,
+      visionIsFallback: isFallback,
       hooksJson: hooksJson?.hooks?.map((h) => h.text),
-      visionSubjects: (vision as { subjects?: string[] } | undefined)?.subjects,
-      visionProducts: (vision as { products?: { name: string }[] } | undefined)?.products,
+      visionSubjects: vision?.subjects,
+      visionProducts: vision?.products,
+      visionScenes: vision?.scenes?.slice(0, 2).map((s) => s.description),
       contentHooks: content?.hooks?.slice(0, 4).map((h) => ({ type: h.type, text: h.text })),
       voice15: content?.voiceScripts?.["15s"],
       copyClip0: Array.isArray(copyOut?.[0]) ? copyOut?.[0]?.map((v: { hook?: string; body?: string; locale?: string }) => ({ locale: v.locale, hook: v.hook, body: v.body?.slice(0, 120) })) : copyOut,
