@@ -13,7 +13,7 @@ import { CopyDownloadButtons } from "@/components/pipeline/CopyDownloadButtons";
 import { CreativeSubtitleSettings } from "@/components/pipeline/CreativeSubtitleSettings";
 import { MusicMatchPanel } from "@/components/pipeline/MusicMatchPanel";
 import { formatPlatformLabel, videoUrlWithCacheBust } from "@/lib/clip-utils";
-import { latestRejectedReview } from "@/lib/review-resubmit";
+import { latestRejectedReview } from "@ceo-agent/shared";
 import { isCreativeExportable } from "@ceo-agent/shared";
 import type { EditPlan } from "@ceo-agent/shared";
 

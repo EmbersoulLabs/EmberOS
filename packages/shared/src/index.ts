@@ -23,6 +23,7 @@ export * from "./campaign-brief";
 export * from "./campaign-video";
 export * from "./review-flow";
 export * from "./pilot-metrics";
+export * from "./review-resubmit";
 export * from "./marketing-pack-locale";
 export * from "./localize-marketing-pack";
 export * from "./marketing-dashboard";

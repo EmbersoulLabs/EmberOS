@@ -29,7 +29,7 @@ import { buildImageMontageEditPlan, buildMixedMontageEditPlan, attachVoiceover }
 import { runAutoClipPipeline } from "./auto-clip-pipeline";
 import { applyVoicePreset } from "./voice-preset";
 import type { VisionFrameInput } from "./vision";
-import { copyCacheKey, getCopyCache, setCopyCache } from "@ceo-agent/queue";
+import { copyCacheKey, getCopyCache, setCopyCache } from "@ceo-agent/queue/copy-cache";
 
 export interface VisionMediaPreparer {
   prepare(input: {
@@ -280,21 +280,26 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     let allVariants: CopyVariant[];
     let hookSet: HookSet;
+    let subtitleTimeline: Parameters<typeof attachVoiceover>[4];
 
     if (cachedVariants) {
       console.log(`[orchestrator] copy cache hit campaignId=${campaign.id}`);
       allVariants = cachedVariants;
-      // Derive hookSet from cached variants (no LLM cost)
       hookSet = {
         hooks: allVariants.map((v, i) => ({
           id: `h-${i}`,
+          type:
+            v.template === "story"
+              ? "emotional"
+              : v.template === "review"
+                ? "offer"
+                : v.template === "comparison" || v.template === "listicle"
+                  ? "curiosity"
+                  : "problem",
           text: v.hook,
-          platform: v.platform,
-          locale: v.locale,
-          template: v.template ?? "pain_point",
         })),
         recommendedHookId: "h-0",
-      } as HookSet;
+      };
       await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: { cached: true } });
       await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
       await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
@@ -328,6 +333,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
 
       allVariants = contentPackageToCopyVariants(contentPackage, strategy, platforms);
+      subtitleTimeline = contentPackage.subtitleTimeline;
       await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, allVariants);
       await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
 
@@ -386,7 +392,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       });
       await logAgent(task.orgId, task.workspaceId, taskId, "edit", { input: 0, output: 0, costUsd: 0 }, editPlan);
     }
-    editPlan = attachVoiceover(editPlan, allVariants, platforms, goal, contentPackage.subtitleTimeline);
+    editPlan = attachVoiceover(editPlan, allVariants, platforms, goal, subtitleTimeline);
     editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
     await db
       .update(schema.creatives)

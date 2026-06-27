@@ -1,34 +1,14 @@
 import { eq, and } from "drizzle-orm";
 import type { getDb } from "@ceo-agent/db";
 import { schema } from "@ceo-agent/db";
+import { canSubmitCreativeForReview } from "@ceo-agent/shared";
 import { syncCampaignStatusFromCreatives } from "./review-flow";
 
 type Db = ReturnType<typeof getDb>;
 
 export type ReviewSubmitType = "internal" | "client";
 
-const BLOCKED_WITHOUT_REWORK = new Set(["exported"]);
-
-export function canSubmitCreativeForReview(
-  creativeStatus: string,
-  hasPendingReview: boolean
-): { ok: true } | { ok: false; code: string; message: string } {
-  if (hasPendingReview) {
-    return {
-      ok: false,
-      code: "REVIEW_PENDING",
-      message: "This creative already has a pending review",
-    };
-  }
-  if (BLOCKED_WITHOUT_REWORK.has(creativeStatus)) {
-    return {
-      ok: false,
-      code: "INVALID_STATE",
-      message: "Exported creatives cannot be resubmitted for review",
-    };
-  }
-  return { ok: true };
-}
+export { canSubmitCreativeForReview, latestRejectedReview } from "@ceo-agent/shared";
 
 export async function findPendingReview(db: Db, creativeId: string) {
   const [row] = await db
@@ -124,16 +104,4 @@ export async function submitCreativeForReview(
   }
 
   return { review, campaignStatus, creativeStatus: newCreativeStatus };
-}
-
-export function latestRejectedReview(
-  reviews: Array<{ decision: string; comment?: string | null; decidedAt?: Date | string | null; reviewerType?: string }>
-) {
-  return reviews
-    .filter((r) => r.decision === "rejected")
-    .sort((a, b) => {
-      const ta = a.decidedAt ? new Date(a.decidedAt).getTime() : 0;
-      const tb = b.decidedAt ? new Date(b.decidedAt).getTime() : 0;
-      return tb - ta;
-    })[0];
 }

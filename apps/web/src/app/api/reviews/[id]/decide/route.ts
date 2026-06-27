@@ -131,7 +131,7 @@ export async function POST(
       .set({ status: newCampaignStatus })
       .where(eq(schema.campaigns.id, creative.campaignId));
 
-    if (decision === "approved") {
+    if (decision === "approved" && creative.taskId) {
       const [task] = await db
         .select()
         .from(schema.tasks)

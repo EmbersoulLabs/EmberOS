@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   canSubmitCreativeForReview,
   latestRejectedReview,
-} from "../apps/web/src/lib/review-resubmit";
+} from "@ceo-agent/shared";
 
 describe("canSubmitCreativeForReview", () => {
   it("blocks when a review is already pending", () => {
