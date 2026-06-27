@@ -45,7 +45,6 @@ function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
     goal: input.goal,
     userNotes: input.userNotes,
     campaignBrief: input.campaignBrief,
-    videoAnalysis: input.videoAnalysis ?? undefined,
     campaignName: input.campaignName,
     locale,
   });

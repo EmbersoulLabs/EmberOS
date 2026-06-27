@@ -223,6 +223,9 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       platforms: campaign.platforms,
       brandProfile,
       vision,
+      campaignBrief: creativeBrief.campaignBrief,
+      assetsUploaded: assets.length,
+      creativeBrief,
       videoAnalysis,
       contentLocale,
     });

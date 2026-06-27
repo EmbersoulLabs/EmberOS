@@ -195,6 +195,52 @@ export function buildVideoAnalysisPrompt(brief: CampaignCreativeBrief): string |
   return lines.join("\n");
 }
 
+/** True when text is the auto-generated LLM instruction block — not user content or asset analysis. */
+export function isInternalVideoAnalysisPrompt(text: string | null | undefined): boolean {
+  const t = text?.trim();
+  if (!t) return false;
+  return t.startsWith("VIDEO ANALYSIS");
+}
+
+/** User-written brief only — strips the internal VIDEO ANALYSIS wrapper. */
+export function substantiveCampaignBrief(
+  campaignBrief?: string | null,
+  videoAnalysis?: string | null
+): string | undefined {
+  const direct = campaignBrief?.trim();
+  if (direct) return direct;
+  if (!videoAnalysis?.trim() || isInternalVideoAnalysisPrompt(videoAnalysis)) return undefined;
+  return videoAnalysis.trim();
+}
+
+/** Structured UI preferences (BGM, voice, style, goal) — never use as product/subject/keywords. */
+export function creativePreferencesForPrompt(
+  brief: CampaignCreativeBrief
+): Record<string, string> | null {
+  if (!hasCreativeBriefInput(brief)) return null;
+  return {
+    backgroundMusic: BGM_PREFERENCE_LABELS[brief.bgmPreference ?? DEFAULT_BGM_PREFERENCE],
+    voice: VOICE_PRESET_LABELS[brief.voicePreset],
+    contentStyle: brief.contentStyle
+      ? CONTENT_STYLE_LABELS[brief.contentStyle]
+      : "Auto-detect from footage",
+    marketingGoal: brief.campaignGoal
+      ? CAMPAIGN_GOAL_LABELS[brief.campaignGoal]
+      : "General engagement",
+  };
+}
+
+/** Drop internal prompt fragments from strategy keywords/hashtags/product fields. */
+export function isInternalPromptLeak(text: string | null | undefined): boolean {
+  const t = text?.trim();
+  if (!t) return false;
+  if (isInternalVideoAnalysisPrompt(t)) return true;
+  if (/not provided — use automatic analysis/i.test(t)) return true;
+  if (/^VIDEO\s*ANALYSIS/i.test(t.replace(/\s/g, ""))) return true;
+  if (t.includes("Background Music:") && t.includes("Generate:")) return true;
+  return false;
+}
+
 /** Map marketing goal to legacy goal string for heuristics (locale-aware). */
 export function legacyGoalFromMarketingGoal(
   goal: CampaignMarketingGoal,

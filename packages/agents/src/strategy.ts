@@ -9,12 +9,17 @@ import {
   hasSubstantiveVision,
   isMarketingObjective,
   isTemplatedVisionFallback,
+  isInternalVideoAnalysisPrompt,
+  isInternalPromptLeak,
+  creativePreferencesForPrompt,
+  substantiveCampaignBrief,
   type BrandProfile,
   type ContentLocale,
   type StrategyPlan,
   type VisionAnalysis,
   type Industry,
 } from "@ceo-agent/shared";
+import type { CampaignCreativeBrief } from "@ceo-agent/shared";
 import {
   formatKnowledgeForPrompt,
   hasKnowledgeSeed,
@@ -29,12 +34,18 @@ export interface StrategyInput {
   brandProfile: BrandProfile;
   /** PRIMARY signal — real asset analysis. Drives industry/product/angle. */
   vision?: VisionAnalysis;
+  /** User-written description (preferred over videoAnalysis template). */
+  campaignBrief?: string | null;
+  /** Count of uploaded assets — strategy must not ignore when assetAnalysis is missing. */
+  assetsUploaded?: number;
   videoAnalysis?: string | null;
   imageAnalysis?: string | null;
   productInformation?: string | Record<string, unknown> | null;
   businessInformation?: string | Record<string, unknown> | null;
   website?: string | null;
   contentLocale?: ContentLocale;
+  /** Parsed creative brief for structured preferences (BGM, voice, style). */
+  creativeBrief?: CampaignCreativeBrief;
 }
 
 /** Readable summary of substantive vision for the strategy prompt (empty if fallback/generic). */
@@ -96,9 +107,12 @@ Infer intelligently.
 
 Decide product/service, industry, and marketing angle in THIS order:
 1. assetAnalysis (what the uploaded video/images actually show) — this is the PRIMARY truth.
-2. User description / business information / videoAnalysis brief.
+2. userDescription / business information (user-written brief only).
 3. goal (this is a marketing OBJECTIVE like "Brand awareness" — NEVER treat it as the product name).
-4. campaignLabel — internal project name, LAST RESORT only when 1–3 are all absent.
+4. creativePreferences (BGM, voice, style, marketing goal labels) — execution preferences ONLY, never the product/subject/keywords.
+5. campaignLabel — internal project name, LAST RESORT only when 1–4 are all absent.
+
+Never copy "VIDEO ANALYSIS", "User Brief:", "not provided — use automatic analysis", or creativePreferences values into product, keywords, or hashtags.
 
 If assetAnalysis is present, the strategy MUST match what is actually shown in the footage.
 Never let a marketing objective (e.g. "Brand awareness", "种草") become the product or subject.
@@ -248,16 +262,39 @@ function resolveStrategyLocale(input: StrategyInput): ContentLocale {
   return /[\u4e00-\u9fff]/.test(blob) ? "zh" : "en";
 }
 
-/** Context for industry inference — assets first, then description/business info. */
+/** Context for industry inference — assets first, then user description (never internal LLM templates). */
 function strategyExtraContext(input: StrategyInput): string {
+  const userDescription = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
+  const legacyAnalysis =
+    input.videoAnalysis && !isInternalVideoAnalysisPrompt(input.videoAnalysis)
+      ? input.videoAnalysis
+      : "";
   return [
     visionSummaryText(input.vision, input.campaignName),
-    input.videoAnalysis,
+    userDescription,
+    legacyAnalysis,
     typeof input.productInformation === "string" ? input.productInformation : "",
     typeof input.businessInformation === "string" ? input.businessInformation : "",
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+function sanitizeStrategyOutput(plan: StrategyPlan): StrategyPlan {
+  const clean = (items: string[]) =>
+    items.map((s) => s.trim()).filter((s) => s.length > 0 && !isInternalPromptLeak(s));
+  const product = isInternalPromptLeak(plan.product) ? "" : plan.product;
+  return {
+    ...plan,
+    product,
+    keywords: clean(plan.keywords),
+    hashtags: {
+      industry: clean(plan.hashtags.industry),
+      local: clean(plan.hashtags.local),
+      trending: clean(plan.hashtags.trending),
+      seo: clean(plan.hashtags.seo),
+    },
+  };
 }
 
 function buildFallbackStrategy(input: StrategyInput, industry: Industry): StrategyPlan {
@@ -271,8 +308,9 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
   const subject = resolveContentSubject(input.vision ?? { products: [], subjects: [], scenes: [] }, {
     goal: input.goal,
     userNotes:
-      typeof input.businessInformation === "string" ? input.businessInformation : undefined,
-    videoAnalysis: input.videoAnalysis ?? undefined,
+      substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis) ??
+      (typeof input.businessInformation === "string" ? input.businessInformation : undefined),
+    campaignBrief: substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis),
     campaignName: input.campaignName,
     locale,
   });
@@ -282,57 +320,61 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
     (subject || profile?.product || topic);
 
   if (zh) {
-    return normalizeStrategyPlan(null, {
-      industry: industry === "general" ? "综合" : industry,
-      businessType: profile?.businessType ?? "本地商户",
+    return sanitizeStrategyOutput(
+      normalizeStrategyPlan(null, {
+        industry: industry === "general" ? "综合" : industry,
+        businessType: profile?.businessType ?? "本地商户",
+        product,
+        marketingGoal: profile?.marketingGoal ?? (input.goal || "品牌曝光"),
+        marketingAngle: angles[0] ?? profile?.angle ?? `围绕「${topic}」用真实场景展示核心价值`,
+        brandPersonality: profile?.brandPersonality ?? ["专业", "友好"],
+        tone: profile?.tone ?? "友好",
+        videoStyle: profile?.videoStyle ?? "产品展示",
+        audience: {
+          painPoints: profile?.audience.painPoints ?? [
+            "不知道如何选择合适方案",
+            "担心效果与宣传不符",
+          ],
+          desiredOutcome: profile?.audience.desiredOutcome ?? "获得可信赖的参考",
+          location: input.brandProfile.locale?.includes("SG") ? "新加坡" : undefined,
+          interests: [],
+        },
+        customerJourney: profile?.customerJourney ?? "认知",
+        platformPriority: platformLabels(input.platforms),
+        ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "私信了解更多",
+        keywords: profile?.keywords ?? [topic],
+        hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
+        confidence: 0.65,
+      })
+    );
+  }
+
+  return sanitizeStrategyOutput(
+    normalizeStrategyPlan(null, {
+      industry: industry === "general" ? "general business" : industry,
+      businessType: profile?.businessType ?? "Local business",
       product,
-      marketingGoal: profile?.marketingGoal ?? (input.goal || "品牌曝光"),
-      marketingAngle: angles[0] ?? profile?.angle ?? `围绕「${topic}」用真实场景展示核心价值`,
-      brandPersonality: profile?.brandPersonality ?? ["专业", "友好"],
-      tone: profile?.tone ?? "友好",
-      videoStyle: profile?.videoStyle ?? "产品展示",
+      marketingGoal: profile?.marketingGoal ?? (input.goal || "Brand Awareness"),
+      marketingAngle: angles[0] ?? profile?.angle ?? `Show real value for ${topic}`,
+      brandPersonality: profile?.brandPersonality ?? ["Professional", "Friendly"],
+      tone: profile?.tone ?? "Professional",
+      videoStyle: profile?.videoStyle ?? "Product Showcase",
       audience: {
         painPoints: profile?.audience.painPoints ?? [
-          "不知道如何选择合适方案",
-          "担心效果与宣传不符",
+          "Hard to stand out",
+          "Unclear value proposition",
         ],
-        desiredOutcome: profile?.audience.desiredOutcome ?? "获得可信赖的参考",
-        location: input.brandProfile.locale?.includes("SG") ? "新加坡" : undefined,
+        desiredOutcome: profile?.audience.desiredOutcome ?? "Make a confident choice",
         interests: [],
       },
-      customerJourney: profile?.customerJourney ?? "认知",
+      customerJourney: profile?.customerJourney ?? "Awareness",
       platformPriority: platformLabels(input.platforms),
-      ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "私信了解更多",
+      ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "Learn More",
       keywords: profile?.keywords ?? [topic],
       hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
       confidence: 0.65,
-    });
-  }
-
-  return normalizeStrategyPlan(null, {
-    industry: industry === "general" ? "general business" : industry,
-    businessType: profile?.businessType ?? "Local business",
-    product,
-    marketingGoal: profile?.marketingGoal ?? (input.goal || "Brand Awareness"),
-    marketingAngle: angles[0] ?? profile?.angle ?? `Show real value for ${topic}`,
-    brandPersonality: profile?.brandPersonality ?? ["Professional", "Friendly"],
-    tone: profile?.tone ?? "Professional",
-    videoStyle: profile?.videoStyle ?? "Product Showcase",
-    audience: {
-      painPoints: profile?.audience.painPoints ?? [
-        "Hard to stand out",
-        "Unclear value proposition",
-      ],
-      desiredOutcome: profile?.audience.desiredOutcome ?? "Make a confident choice",
-      interests: [],
-    },
-    customerJourney: profile?.customerJourney ?? "Awareness",
-    platformPriority: platformLabels(input.platforms),
-    ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "Learn More",
-    keywords: profile?.keywords ?? [topic],
-    hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
-    confidence: 0.65,
-  });
+    })
+  );
 }
 
 export async function runStrategyAgent(input: StrategyInput): Promise<{
@@ -349,12 +391,28 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const seeded = hasKnowledgeSeed(inferred);
 
   const visionSummary = visionSummaryText(input.vision, input.campaignName);
+  const userDescription = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
   const goalIsContext = Boolean(input.goal?.trim()) && !isMarketingObjective(input.goal);
-  const hasAnyContext = Boolean(visionSummary || goalIsContext || strategyExtraContext(input));
+  const hasAnyContext = Boolean(
+    visionSummary || userDescription || goalIsContext || strategyExtraContext(input)
+  );
+  const creativePreferences = input.creativeBrief
+    ? creativePreferencesForPrompt(input.creativeBrief)
+    : null;
+  const assetsUploaded = input.assetsUploaded ?? 0;
 
   const user = JSON.stringify({
     // PRIMARY: what the uploaded assets actually show.
     ...(visionSummary ? { assetAnalysis: visionSummary } : {}),
+    ...(assetsUploaded > 0 && !visionSummary
+      ? {
+          assetsUploaded,
+          assetAnalysisNote:
+            "User uploaded media but automatic frame analysis did not return labels — use userDescription or campaignLabel; never invent generic placeholders or copy internal system text.",
+        }
+      : {}),
+    ...(userDescription ? { userDescription } : {}),
+    ...(creativePreferences ? { creativePreferences } : {}),
     goal: input.goal,
     platforms: input.platforms,
     brandProfile: input.brandProfile,
@@ -362,7 +420,6 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
     hasSeededKnowledge: seeded,
     knowledge: knowledgeBlock,
     outputLanguage: outputLanguagePrompt(locale),
-    ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.imageAnalysis ? { imageAnalysis: input.imageAnalysis } : {}),
     ...(input.productInformation ? { productInformation: input.productInformation } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
@@ -378,7 +435,7 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   );
 
   const parsed = StrategyPlanSchema.safeParse(result);
-  const strategy = parsed.success
+  let strategy = parsed.success
     ? {
         ...parsed.data,
         platformPriority: parsed.data.platformPriority.length
@@ -386,6 +443,8 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
           : platformLabels(input.platforms),
       }
     : buildFallbackStrategy(input, inferred);
+
+  strategy = sanitizeStrategyOutput(strategy);
 
   const industry = resolveStrategyIndustryEnum(strategy, inferred);
 

@@ -2,6 +2,7 @@ import type { StrategyPlan } from "./types/marketing-os";
 import type { VisionAnalysis } from "./types";
 import type { ContentLocale } from "./content-locale";
 import { isChineseText } from "./subtitle-text";
+import { isInternalVideoAnalysisPrompt } from "./campaign-brief";
 
 type VisionLike = Pick<VisionAnalysis, "products" | "subjects" | "scenes"> &
   Partial<Pick<VisionAnalysis, "transcriptSummary">>;
@@ -140,7 +141,11 @@ export function isGenericVisionText(text: string): boolean {
 }
 
 function collectDescriptionCandidates(options?: ResolveContentSubjectOptions): string[] {
-  return [options?.userNotes, options?.campaignBrief, options?.videoAnalysis?.slice(0, 80)]
+  const videoNotes =
+    options?.videoAnalysis && !isInternalVideoAnalysisPrompt(options.videoAnalysis)
+      ? options.videoAnalysis.slice(0, 200)
+      : undefined;
+  return [options?.userNotes, options?.campaignBrief, videoNotes]
     .map(normalizeLabel)
     .filter(Boolean);
 }
