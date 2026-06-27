@@ -343,6 +343,9 @@ export const MarketingContentPackageSchema = z.object({
   analysis: MarketingAnalysisSchema.optional(),
   /** Content strategy brief for dashboard. */
   strategyBrief: ContentStrategyBriefSchema.optional(),
+  /** English / Malay translations of strategyBrief (when primary is Chinese). */
+  strategyBriefEn: ContentStrategyBriefSchema.optional(),
+  strategyBriefMs: ContentStrategyBriefSchema.optional(),
   /** Platform-specific rich assets — each platform unique copy. */
   platformAssets: z.record(PlatformMarketingAssetSchema).optional(),
   seo: SeoPackSchema.optional(),
@@ -464,6 +467,8 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
   const postingRaw = (data.postingRecommendation ?? {}) as Record<string, unknown>;
   const analysisRaw = (data.analysis ?? {}) as Record<string, unknown>;
   const strategyBriefRaw = (data.strategyBrief ?? {}) as Record<string, unknown>;
+  const strategyBriefEnRaw = (data.strategyBriefEn ?? {}) as Record<string, unknown>;
+  const strategyBriefMsRaw = (data.strategyBriefMs ?? {}) as Record<string, unknown>;
   const platformAssetsRaw = (data.platformAssets ?? {}) as Record<string, unknown>;
   const seoRaw = (data.seo ?? {}) as Record<string, unknown>;
   const hashtagRaw = (data.hashtagPack ?? data.hashtags ?? {}) as Record<string, unknown>;
@@ -486,6 +491,18 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
     }
     return Object.keys(out).length ? out : undefined;
   };
+
+  const parseStrategyBriefBlock = (raw: Record<string, unknown>) =>
+    raw.primaryGoal || raw.contentAngle
+      ? {
+          primaryGoal: String(raw.primaryGoal ?? ""),
+          targetAudience: String(raw.targetAudience ?? ""),
+          contentAngle: String(raw.contentAngle ?? ""),
+          painPoint: String(raw.painPoint ?? ""),
+          desiredEmotion: String(raw.desiredEmotion ?? ""),
+          ctaStrategy: String(raw.ctaStrategy ?? ""),
+        }
+      : undefined;
 
   const platformAssets = parsePlatformAssets();
   const captionsFromAssets = platformAssets
@@ -534,17 +551,9 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
             estimatedConversion: String(analysisRaw.estimatedConversion ?? "1.2% – 2.8%"),
           }
         : undefined,
-    strategyBrief:
-      strategyBriefRaw.primaryGoal || strategyBriefRaw.contentAngle
-        ? {
-            primaryGoal: String(strategyBriefRaw.primaryGoal ?? ""),
-            targetAudience: String(strategyBriefRaw.targetAudience ?? ""),
-            contentAngle: String(strategyBriefRaw.contentAngle ?? ""),
-            painPoint: String(strategyBriefRaw.painPoint ?? ""),
-            desiredEmotion: String(strategyBriefRaw.desiredEmotion ?? ""),
-            ctaStrategy: String(strategyBriefRaw.ctaStrategy ?? ""),
-          }
-        : undefined,
+    strategyBrief: parseStrategyBriefBlock(strategyBriefRaw),
+    strategyBriefEn: parseStrategyBriefBlock(strategyBriefEnRaw),
+    strategyBriefMs: parseStrategyBriefBlock(strategyBriefMsRaw),
     platformAssets,
     seo:
       Array.isArray(seoRaw.primaryKeywords) || seoRaw.searchIntent

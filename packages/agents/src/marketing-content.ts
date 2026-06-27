@@ -9,6 +9,7 @@ import {
   contentLocaleFromMetadata,
   MARKETING_PLATFORMS,
   PlatformMarketingAssetSchema,
+  resolveContentSubject,
   type ContentLocale,
   type CopyVariant,
   type HookSet,
@@ -357,7 +358,11 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
   const locale = resolveContentLocale(input);
   const zh = locale === "zh";
   const s = input.strategy;
-  const product = s.product || input.campaignName || "this offer";
+  const product = resolveContentSubject(input.vision, {
+    goal: input.goal,
+    campaignName: input.campaignName,
+    locale,
+  });
   const pain = strategyPainPoints(s)[0];
   const audience = strategyAudienceSummary(s);
 
@@ -710,7 +715,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
       durationSec: input.vision.durationSec,
     },
     goal: input.goal,
-    campaignName: input.campaignName,
+    campaignLabel: input.campaignName,
     platforms: input.platforms,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
@@ -787,7 +792,7 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
       transcriptSummary: input.vision.transcriptSummary,
     },
     goal: input.goal,
-    campaignName: input.campaignName,
+    campaignLabel: input.campaignName,
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
     ...(input.previousCaption ? { previousCaption: input.previousCaption } : {}),
     locale: localeToPromptTag(locale),

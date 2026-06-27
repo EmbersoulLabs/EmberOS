@@ -69,6 +69,8 @@ Never ask for more information.
 
 Infer intelligently.
 
+The campaignName field is an internal project label only — never copy it into product, marketingAngle, or keywords. Derive product/service from Video Analysis, goal, and business context.
+
 Never assume content belongs to a florist or wedding vendor unless the input clearly indicates that industry.
 
 Works for any industry: retail, fashion, beauty, restaurant, cafe, bakery, real estate, automotive, electronics, SaaS, mobile app, education, healthcare, fitness, travel, events, finance, professional services, home services, manufacturing, and more.
@@ -213,7 +215,7 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
   const angles = knowledge.filter((k) => k.category === "angle").map((k) => k.text);
   const ctas = knowledge.filter((k) => k.category === "cta").map((k) => k.text);
   const profile = INDUSTRY_FALLBACK[industry];
-  const topic = input.campaignName.trim() || input.brandProfile.targetAudience || "this business";
+  const topic = input.goal.trim() || input.brandProfile.targetAudience || "this business";
   const product =
     (typeof input.productInformation === "string" ? input.productInformation : undefined) ??
     profile?.product ??
@@ -291,7 +293,7 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const seeded = hasKnowledgeSeed(inferred);
 
   const user = JSON.stringify({
-    campaignName: input.campaignName,
+    campaignLabel: input.campaignName,
     goal: input.goal,
     platforms: input.platforms,
     brandProfile: input.brandProfile,

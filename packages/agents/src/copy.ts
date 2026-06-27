@@ -1,5 +1,5 @@
 import { callJsonModel } from "./llm";
-import { COPY_VARIANT_COUNT, isChineseText } from "@ceo-agent/shared";
+import { COPY_VARIANT_COUNT, isChineseText, resolveContentSubject } from "@ceo-agent/shared";
 import { getPlatformSpec, truncateForPlatform } from "@ceo-agent/shared/platform-specs";
 import type {
   BrandProfile,
@@ -64,21 +64,20 @@ function isWeddingFloristContext(input: CopyInput): boolean {
 }
 
 function resolveTopicZh(input: CopyInput): string {
-  return (
-    input.campaignName?.trim() ||
-    input.vision.products[0]?.name ||
-    input.vision.subjects.filter((s) => s !== "product").join("、") ||
-    "婚车花艺"
-  );
+  return resolveContentSubject(input.vision, {
+    goal: input.goal,
+    campaignName: input.campaignName,
+    locale: "zh",
+  });
 }
 
 function resolveTopicEn(input: CopyInput): string {
   if (isWeddingFloristContext(input)) return "wedding car florals";
-  const raw =
-    input.campaignName?.trim() ||
-    input.vision.products[0]?.name ||
-    input.vision.subjects.filter((s) => s !== "product").join(" ") ||
-    "your content";
+  const raw = resolveContentSubject(input.vision, {
+    goal: input.goal,
+    campaignName: input.campaignName,
+    locale: "en",
+  });
   return isChineseText(raw) ? "this look" : raw;
 }
 
@@ -318,13 +317,14 @@ ${
 Brand tone: ${input.brandProfile.tone ?? "engaging"}. Banned: ${(input.brandProfile.bannedWords ?? []).join(", ") || "none"}.
 Title max ${spec.titleMaxLength} chars. Body max ${spec.bodyMaxLength} chars.
 Structure: hook (0-3s, max 12 words / 16 Chinese chars) → concrete value → CTA.
+The campaignLabel in user JSON is an internal project name — never quote it in hook/body/title/tags.
 ${input.strategyPlan ? `Strategy context (translate into ${locale === "zh" ? "Chinese" : "English"}): goal=${input.strategyPlan.marketingGoal}; angle=${input.strategyPlan.marketingAngle}; tone=${input.strategyPlan.tone}; pains=${strategyPainPoints(input.strategyPlan).join("; ")}; CTA=${input.strategyPlan.ctaStrategy}; audience=${strategyAudienceSummary(input.strategyPlan)}; product=${input.strategyPlan.product}.` : ""}
 ${input.hookSet?.hooks?.length ? `Hook inspiration (translate/adapt to ${locale === "zh" ? "Chinese" : "English"}): ${input.hookSet.hooks.map((h) => `[${h.type}] ${h.text}`).join(" | ")}` : ""}
 Output JSON: { "variants": [{ "id", "template", "hook", "body", "cta", "title", "tags" }] }`;
 
   const user = JSON.stringify({
-    campaignName: input.campaignName,
     goal: input.goal,
+    campaignLabel: input.campaignName,
     platform: input.platform,
     locale,
     templates,

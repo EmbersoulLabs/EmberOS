@@ -27,9 +27,12 @@ function resolveVisionLocale(input: VisionInput): ContentLocale {
 }
 
 function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
-  const topic = input.campaignName?.trim() || (resolveVisionLocale(input) === "zh" ? "营销素材" : "marketing asset");
   const locale = resolveVisionLocale(input);
   const zh = locale === "zh";
+  const topic =
+    input.goal?.trim() ||
+    input.videoAnalysis?.slice(0, 48).trim() ||
+    (zh ? "营销素材" : "marketing asset");
 
   if (zh) {
     return {

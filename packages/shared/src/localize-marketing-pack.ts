@@ -8,6 +8,7 @@ import {
   pickCtaText,
   pickHookText,
   pickPlatformCaption,
+  pickStrategyBrief,
   type MarketingPackLocale,
 } from "./marketing-pack-locale";
 import { platformAssetToCaption } from "./marketing-dashboard";
@@ -70,6 +71,7 @@ export function localizeMarketingPackage(
     cta,
     captions,
     platformAssets,
+    strategyBrief: pickStrategyBrief(pkg, locale) ?? pkg.strategyBrief,
   };
 }
 

@@ -8,6 +8,8 @@
     "inspect:queue": "tsx scripts/inspect-queue.ts",
     "retry:renders": "tsx scripts/retry-failed-renders.ts",
     "clean:queue": "tsx scripts/clean-queue.ts",
+    "purge:renders": "tsx scripts/purge-rendered-videos.ts",
+    "purge:db-bloat": "tsx scripts/purge-db-bloat.ts",
     "refresh:bgm": "tsx scripts/refresh-bgm-assets.ts",
     "curate:bgm": "tsx scripts/curate-commercial-bgm.ts",
     "curate:bgm:cc0": "tsx scripts/curate-cc0-bgm.ts",

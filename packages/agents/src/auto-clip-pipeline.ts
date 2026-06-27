@@ -17,6 +17,7 @@ import {
   resolveAutoClipSourceAsset,
   strategyObjectives,
   resolvePipelineContentLocale,
+  alignStrategyWithVision,
   type ContentLocale,
 } from "@ceo-agent/shared";
 import { parseIntent } from "./ceo";
@@ -170,7 +171,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     });
 
     await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
-    const { strategy, industry, usage: strategyUsage } = await runStrategyAgent({
+    const { strategy: rawStrategy, industry, usage: strategyUsage } = await runStrategyAgent({
       goal,
       campaignName: campaign.name,
       platforms: campaign.platforms,
@@ -178,6 +179,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       videoAnalysis,
       contentLocale,
     });
+    let strategy = rawStrategy;
     totalCost += strategyUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
     await db
@@ -234,6 +236,19 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       contentLocale,
     });
     totalCost += visionUsage.costUsd;
+    strategy = alignStrategyWithVision(strategy, vision, {
+      goal,
+      campaignName: campaign.name,
+      locale: contentLocale === "zh" ? "zh" : "en",
+    });
+    await db
+      .update(schema.tasks)
+      .set({ strategyJson: strategy })
+      .where(eq(schema.tasks.id, taskId));
+    await db
+      .update(schema.campaigns)
+      .set({ strategyJson: strategy })
+      .where(eq(schema.campaigns.id, campaign.id));
     await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
     await updateStep(taskId, "vision_analyze", {
       status: "completed",

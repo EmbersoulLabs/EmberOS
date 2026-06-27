@@ -1,4 +1,4 @@
-import type { ContentCtaItem, ContentHookItem, MarketingCaptions, MarketingContentPackage } from "./types/marketing-os";
+import type { ContentCtaItem, ContentHookItem, ContentStrategyBrief, MarketingCaptions, MarketingContentPackage } from "./types/marketing-os";
 import { isChineseText } from "./subtitle-text";
 
 /** Language tab for marketing pack copy (hooks, CTAs, captions) — independent of UI locale. */
@@ -73,6 +73,30 @@ export function pickPlatformCaption(
   return "";
 }
 
+export function pickStrategyBrief(
+  pkg: MarketingContentPackage,
+  locale: MarketingPackLocale
+): ContentStrategyBrief | undefined {
+  const primary = pkg.strategyBrief;
+  if (!primary) return undefined;
+  if (locale === "zh") return primary;
+  if (locale === "en") {
+    const en = pkg.strategyBriefEn;
+    if (en && isMarketingPackTranslationValid(en.primaryGoal, "en")) return en;
+    return primary;
+  }
+  const ms = pkg.strategyBriefMs;
+  if (ms && isMarketingPackTranslationValid(ms.primaryGoal, "ms")) return ms;
+  const en = pkg.strategyBriefEn;
+  if (en && isMarketingPackTranslationValid(en.primaryGoal, "en")) return en;
+  return primary;
+}
+
+function strategyBriefNeedsTranslation(pkg: MarketingContentPackage): boolean {
+  const goal = pkg.strategyBrief?.primaryGoal?.trim();
+  return Boolean(goal && isChineseText(goal));
+}
+
 export function isMarketingPackLocaleReady(
   pkg: MarketingContentPackage,
   locale: MarketingPackLocale
@@ -100,6 +124,12 @@ export function isMarketingPackLocaleReady(
     if (!pkg.captions[key]?.trim()) continue;
     const cap = pickPlatformCaption(pkg, key, locale);
     if (!isMarketingPackTranslationValid(cap, locale === "ms" ? "ms" : "en")) return false;
+  }
+  if (strategyBriefNeedsTranslation(pkg)) {
+    const brief = pickStrategyBrief(pkg, locale);
+    if (!brief || !isMarketingPackTranslationValid(brief.primaryGoal, locale === "ms" ? "ms" : "en")) {
+      return false;
+    }
   }
   return true;
 }
