@@ -8,6 +8,11 @@ import type {
   SeoPack,
   HashtagPack,
 } from "./types/marketing-os";
+import type { VisionAnalysis } from "./types";
+import {
+  assessContentGrounding,
+  applyGroundingToAnalysisScores,
+} from "./content-grounding";
 
 export type { PlatformMarketingAsset, MarketingAnalysis, ContentStrategyBrief, SeoPack, HashtagPack };
 export {
@@ -169,20 +174,47 @@ export function platformAssetsFromCaptions(
 
 export function deriveAnalysisFromPackage(
   pkg: MarketingContentPackage,
-  strategy?: StrategyPlan
+  strategy?: StrategyPlan,
+  options?: {
+    campaignName?: string;
+    vision?: Pick<VisionAnalysis, "products" | "subjects" | "scenes" | "confidence" | "transcriptSummary">;
+    hasUserDescription?: boolean;
+  }
 ): MarketingAnalysis {
   const base = pkg.consistencyScore ?? 78;
   const hookAvg = pkg.hooks.length ? Math.min(100, base + 4) : base;
-  return {
+  const raw: MarketingAnalysis = pkg.analysis ?? {
     marketingScore: base,
     hookScore: hookAvg,
     seoScore: Math.min(100, base - 2 + (strategy?.keywords.length ?? 0)),
     emotionalScore: Math.min(100, base + 2),
     conversionScore: Math.min(100, base - 4 + pkg.cta.length),
-    estimatedCtr: pkg.analysis?.estimatedCtr ?? "2.4% – 4.1%",
-    estimatedEngagement: pkg.postingRecommendation?.estimatedEngagement ?? "Medium–High",
-    estimatedConversion: pkg.analysis?.estimatedConversion ?? "1.2% – 2.8%",
+    estimatedCtr: "2.4% – 4.1%",
+    estimatedEngagement: "Medium–High",
+    estimatedConversion: "1.2% – 2.8%",
   };
+
+  const grounding = assessContentGrounding({
+    vision: options?.vision,
+    campaignName: options?.campaignName,
+    strategyProduct: strategy?.product,
+    strategyAngle: strategy?.marketingAngle,
+    keywords: strategy?.keywords,
+    hasUserDescription: options?.hasUserDescription,
+  });
+
+  const adjusted = applyGroundingToAnalysisScores(
+    {
+      marketingScore: raw.marketingScore,
+      hookScore: raw.hookScore,
+      seoScore: raw.seoScore,
+      emotionalScore: raw.emotionalScore,
+      conversionScore: raw.conversionScore,
+    },
+    grounding.scorePenalty
+  );
+
+  return { ...raw, ...adjusted };
 }
 
 export function deriveStrategyBrief(

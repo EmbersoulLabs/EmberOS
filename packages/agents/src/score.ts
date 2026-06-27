@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { callJsonModel } from "./llm";
 import {
+  isTemplatedVisionFallback,
+  hasSubstantiveVision,
+} from "@ceo-agent/shared";
+import {
   MarketingScoreSchema,
   type CopyVariant,
   type EditPlan,
@@ -111,8 +115,11 @@ function buildFallbackScore(input: ScoreInput): MarketingScore {
   const primaryCopy = input.copyVariants[0];
 
   const hookScore = selectedHook?.text.length >= 8 && selectedHook.text.length <= 40 ? 78 : 65;
-  const visualScore =
+  let visualScore =
     input.vision.scenes.length >= 2 && (input.vision.confidence ?? 0.7) >= 0.5 ? 80 : 68;
+  if (isTemplatedVisionFallback(input.vision) || !hasSubstantiveVision(input.vision)) {
+    visualScore = 42;
+  }
   const copyScore = primaryCopy?.hook && primaryCopy?.body && primaryCopy?.cta ? 75 : 60;
   const ctaScore = primaryCopy?.cta && primaryCopy.cta.length >= 4 ? 72 : 58;
   const platformFitScore = input.copyVariants.some((v) =>

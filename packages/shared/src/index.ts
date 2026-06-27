@@ -22,6 +22,7 @@ export * from "./i18n/index";
 export * from "./campaign-brief";
 export * from "./content-locale";
 export * from "./content-subject";
+export * from "./content-grounding";
 export * from "./campaign-video";
 export * from "./review-flow";
 export * from "./pilot-metrics";

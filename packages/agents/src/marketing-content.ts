@@ -10,6 +10,10 @@ import {
   MARKETING_PLATFORMS,
   PlatformMarketingAssetSchema,
   resolveContentSubject,
+  assessContentGrounding,
+  applyGroundingToAnalysisScores,
+  groundingWarningSuggestion,
+  substantiveCampaignBrief,
   type ContentLocale,
   type CopyVariant,
   type HookSet,
@@ -381,15 +385,66 @@ function buildSubtitleTimeline(script: string, durationSec: number): MarketingCo
   }));
 }
 
+function groundingContext(input: MarketingContentInput) {
+  return assessContentGrounding({
+    vision: input.vision,
+    campaignName: input.campaignName,
+    strategyProduct: input.strategy.product,
+    strategyAngle: input.strategy.marketingAngle,
+    keywords: input.strategy.keywords,
+    hasUserDescription: Boolean(substantiveCampaignBrief(input.userNotes, input.videoAnalysis)),
+  });
+}
+
+function applyGroundingToPackage(
+  pkg: MarketingContentPackage,
+  input: MarketingContentInput
+): MarketingContentPackage {
+  const locale = resolveContentLocale(input);
+  const grounding = groundingContext(input);
+  if (!grounding.isUngrounded && grounding.scorePenalty === 0) return pkg;
+
+  const raw = pkg.analysis ?? {
+    marketingScore: pkg.consistencyScore,
+    hookScore: pkg.consistencyScore + 4,
+    seoScore: pkg.consistencyScore - 2,
+    emotionalScore: pkg.consistencyScore + 2,
+    conversionScore: pkg.consistencyScore - 4,
+    estimatedCtr: "2.4% – 4.1%",
+    estimatedEngagement: "Medium–High",
+    estimatedConversion: "1.2% – 2.8%",
+  };
+  const analysis = applyGroundingToAnalysisScores(
+    {
+      marketingScore: raw.marketingScore,
+      hookScore: raw.hookScore,
+      seoScore: raw.seoScore,
+      emotionalScore: raw.emotionalScore,
+      conversionScore: raw.conversionScore,
+    },
+    grounding.scorePenalty
+  );
+  const warning = groundingWarningSuggestion(locale);
+  const aiSuggestions = [warning, ...(pkg.aiSuggestions ?? [])].filter(
+    (s, i, arr) => arr.indexOf(s) === i
+  );
+
+  return {
+    ...pkg,
+    consistencyScore: analysis.marketingScore,
+    analysis: { ...raw, ...analysis },
+    aiSuggestions,
+  };
+}
+
 function buildFallbackContent(input: MarketingContentInput): MarketingContentPackage {
   const locale = resolveContentLocale(input);
   const zh = locale === "zh";
   const s = input.strategy;
   const product = resolveContentSubject(input.vision, {
     goal: input.goal,
-    userNotes: input.userNotes ?? undefined,
+    userNotes: substantiveCampaignBrief(input.userNotes, input.videoAnalysis),
     campaignName: input.campaignName,
-    videoAnalysis: input.videoAnalysis ?? undefined,
     locale,
   });
   const pain = strategyPainPoints(s)[0];
@@ -648,6 +703,19 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
     googleBusiness: `${product}: ${s.marketingAngle}. ${s.ctaStrategy}`,
   };
 
+  const grounding = groundingContext(input);
+  const defaultAnalysis = {
+    marketingScore: 78,
+    hookScore: 82,
+    seoScore: 74,
+    emotionalScore: 80,
+    conversionScore: 76,
+  };
+  const analysisScores = applyGroundingToAnalysisScores(defaultAnalysis, grounding.scorePenalty);
+  const groundingTips = grounding.isUngrounded
+    ? [groundingWarningSuggestion(locale)]
+    : [];
+
   const pkg: MarketingContentPackage = {
     voiceScripts: { "15s": script15, "30s": script30, "60s": script60 },
     voiceScriptsEn: enScripts,
@@ -672,16 +740,12 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
       idealAudience: audience,
       estimatedEngagement: "Medium–High",
     },
-    consistencyScore: 78,
+    consistencyScore: analysisScores.marketingScore,
     analysis: {
-      marketingScore: 78,
-      hookScore: 82,
-      seoScore: 74,
-      emotionalScore: 80,
-      conversionScore: 76,
-      estimatedCtr: "2.4% – 4.1%",
-      estimatedEngagement: "Medium–High",
-      estimatedConversion: "1.2% – 2.8%",
+      ...analysisScores,
+      estimatedCtr: grounding.isUngrounded ? "—" : "2.4% – 4.1%",
+      estimatedEngagement: grounding.isUngrounded ? "Low (ungrounded)" : "Medium–High",
+      estimatedConversion: grounding.isUngrounded ? "—" : "1.2% – 2.8%",
     },
     strategyBrief: {
       primaryGoal: s.marketingGoal,
@@ -709,6 +773,7 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
     aiSuggestions:
       locale === "zh"
         ? [
+            ...groundingTips,
             "建议在晚 8 点前发布",
             "加入客户真实评价镜头",
             "使用产品特写增强信任",
@@ -717,6 +782,7 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
           ]
         : locale === "ms"
           ? [
+              ...groundingTips,
               "Siarkan sebelum 8 malam waktu tempatan",
               "Tambah klip testimoni pelanggan",
               "Gunakan gambar dekat produk",
@@ -724,6 +790,7 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
               "Tunjukkan perbandingan sebelum/selepas",
             ]
           : [
+              ...groundingTips,
               "Post before 8 PM local time",
               "Add a customer testimonial clip",
               "Use close-up product shots",
@@ -774,7 +841,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
 
   const normalized = normalizeMarketingContentPackage(result);
   if (normalized) {
-    return { contentPackage: normalized, usage };
+    return { contentPackage: applyGroundingToPackage(normalized, input), usage };
   }
 
   return { contentPackage: buildFallbackContent(input), usage };

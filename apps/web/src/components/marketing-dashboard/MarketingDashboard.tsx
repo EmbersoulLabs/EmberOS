@@ -473,7 +473,7 @@ export function MarketingDashboard({
   onRegeneratePlatform?: (platformId: MarketingPlatformId) => Promise<void>;
 }) {
   const { t } = useI18n();
-  const analysis = pkg.analysis ?? deriveAnalysisFromPackage(pkg, strategy);
+  const analysis = deriveAnalysisFromPackage(pkg, strategy);
   const brief = deriveStrategyBrief(pkg, strategy);
   const platformAssets = resolvePlatformAssets(pkg);
   const seo = resolveSeoPack(pkg, strategy);
