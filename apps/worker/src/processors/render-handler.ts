@@ -415,7 +415,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     }
 
     console.log(
-      `[ffmpeg.render] done creative=${data.creativeId} mode=${mode} rendition=${outputResolution ?? "none"} cache=${!!cachedBaseLocal}`
+      `[ffmpeg.render] done creative=${data.creativeId} mode=${mode} rendition=${outputResolution ?? "none"} cache=${!!cachedBaseLocal} task=${data.taskId}`
     );
   } catch (err) {
     const message =

@@ -93,11 +93,26 @@ export async function enqueueRender(
     data.mode ?? (data.resolution === "export" ? "final" : data.resolution === "preview" ? "preview" : "preview");
   const queue = renderQueue();
   const suffix = data.outputResolution ? `-${data.outputResolution}` : `-${mode}`;
-  return queue.add(
+  const job = await queue.add(
     "ffmpeg.render",
     { ...data, mode },
     { jobId: `render-${data.creativeId}${suffix}-${Date.now()}` }
   );
+  try {
+    const counts = await queue.getJobCounts("waiting", "active", "delayed", "failed");
+    console.log(
+      `[queue] render enqueued job=${job.id} creative=${data.creativeId} task=${data.taskId} ` +
+        `waiting=${counts.waiting ?? 0} active=${counts.active ?? 0} delayed=${counts.delayed ?? 0}`
+    );
+  } catch {
+    console.log(`[queue] render enqueued job=${job.id} creative=${data.creativeId} task=${data.taskId}`);
+  }
+  return job;
+}
+
+export async function getRenderQueueCounts() {
+  const queue = renderQueue();
+  return queue.getJobCounts("waiting", "active", "delayed", "failed", "completed");
 }
 
 export async function enqueueExport(data: {

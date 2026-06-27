@@ -31,12 +31,17 @@ import { tmpdir } from "node:os";
 import type { EditPlan, CopyVariant, Platform } from "@ceo-agent/shared";
 
 const concurrency = parseInt(process.env.WORKER_CONCURRENCY ?? "2", 10);
+/** FFmpeg is memory-heavy — default 1 parallel render on Railway to avoid OOM slot deadlock. */
+const renderConcurrency = parseInt(process.env.RENDER_CONCURRENCY ?? "1", 10);
+const agentLockMs = parseInt(process.env.AGENT_JOB_LOCK_MS ?? String(15 * 60 * 1000), 10);
+const renderLockMs = parseInt(process.env.RENDER_JOB_LOCK_MS ?? String(30 * 60 * 1000), 10);
 
 /** Reduce Upstash command churn when queues are idle (free tier ~500k/month). */
 const workerOpts = {
   drainDelay: 5000,
-  stalledInterval: 60_000,
-} satisfies Pick<WorkerOptions, "drainDelay" | "stalledInterval">;
+  stalledInterval: 120_000,
+  maxStalledCount: 2,
+} satisfies Pick<WorkerOptions, "drainDelay" | "stalledInterval" | "maxStalledCount">;
 
 const pipelineHooks: PipelineHooks = {
   prepareVisionMedia: {
@@ -152,7 +157,7 @@ export function startWorkers() {
         }
       }
     },
-    { connection, prefix, concurrency, ...workerOpts }
+    { connection, prefix, concurrency, lockDuration: agentLockMs, ...workerOpts }
   );
 
   const probeWorker = new Worker(
@@ -247,17 +252,20 @@ export function startWorkers() {
         await rm(workDir, { recursive: true, force: true });
       }
     },
-    { connection, prefix, concurrency: 5, ...workerOpts }
+    { connection, prefix, concurrency: 5, lockDuration: 5 * 60 * 1000, ...workerOpts }
   );
 
   const renderWorker = new Worker(
     QUEUE_NAMES.RENDER,
     async (job) => {
       if (job.name !== "ffmpeg.render") return;
-      console.log(`[ffmpeg.render] start task=${(job.data as { taskId: string }).taskId} creative=${(job.data as { creativeId: string }).creativeId}`);
+      const data = job.data as { taskId: string; creativeId: string };
+      console.log(
+        `[ffmpeg.render] start job=${job.id} task=${data.taskId} creative=${data.creativeId} attempt=${job.attemptsMade + 1}`
+      );
       await processRenderJob(job.data as Parameters<typeof processRenderJob>[0]);
     },
-    { connection, prefix, concurrency, ...workerOpts }
+    { connection, prefix, concurrency: renderConcurrency, lockDuration: renderLockMs, ...workerOpts }
   );
 
   const exportWorker = new Worker(
@@ -439,7 +447,7 @@ export function startWorkers() {
         await rm(workDir, { recursive: true, force: true });
       }
     },
-    { connection, prefix, concurrency, ...workerOpts }
+    { connection, prefix, concurrency, lockDuration: 15 * 60 * 1000, ...workerOpts }
   );
 
   agentWorker.on("failed", async (job, err) => {
@@ -461,8 +469,21 @@ export function startWorkers() {
     const stepId = resolveAgentFailureStep(message, progress);
     await markTaskStepFailed(taskId, stepId, message);
   });
+  renderWorker.on("stalled", (jobId) => {
+    console.warn(`[ffmpeg.render] stalled job=${jobId} — lock expired or worker unresponsive`);
+  });
+  renderWorker.on("completed", (job) => {
+    const data = job.data as { taskId?: string; creativeId?: string };
+    console.log(
+      `[ffmpeg.render] queue job=${job.id} completed task=${data.taskId} creative=${data.creativeId}`
+    );
+  });
   renderWorker.on("failed", async (job, err) => {
-    console.error(`Render job ${job?.id} failed:`, err);
+    const data = job?.data as { taskId?: string; creativeId?: string } | undefined;
+    console.error(
+      `[ffmpeg.render] failed job=${job?.id} task=${data?.taskId} creative=${data?.creativeId}:`,
+      err
+    );
     const taskId = (job?.data as { taskId?: string })?.taskId;
     if (taskId) {
       await markTaskStepFailed(
@@ -474,6 +495,8 @@ export function startWorkers() {
   });
   exportWorker.on("failed", (job, err) => console.error(`Export job ${job?.id} failed:`, err));
 
-  console.log("Workers started: agent, probe, render, export");
+  console.log(
+    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export`
+  );
   return { agentWorker, probeWorker, renderWorker, exportWorker };
 }

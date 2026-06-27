@@ -1,6 +1,6 @@
 import { eq, and } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
-import { enqueueRender } from "@ceo-agent/queue";
+import { enqueueRender, getRenderQueueCounts } from "@ceo-agent/queue";
 import {
   AUTO_CLIP,
   type BrandProfile,
@@ -410,8 +410,12 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       });
     }
 
+    const queueCounts = await getRenderQueueCounts().catch(() => null);
     console.log(
-      `[auto-clip] queued ${creativeIds.length} preview render jobs task=${taskId} — waiting for ffmpeg.render worker`
+      `[auto-clip] queued ${creativeIds.length} preview render jobs task=${taskId} — waiting for ffmpeg.render worker` +
+        (queueCounts
+          ? ` (queue: waiting=${queueCounts.waiting ?? 0} active=${queueCounts.active ?? 0})`
+          : "")
     );
 
     return { taskId, creativeIds, status: "render_queued" as const };
