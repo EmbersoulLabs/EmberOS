@@ -1,5 +1,6 @@
+import { z } from "zod";
 import { callJsonModel, callVisionJsonModel } from "./llm";
-import { VisionAnalysisSchema, outputLanguagePrompt, isChineseText, resolveContentSubject, type ContentLocale } from "@ceo-agent/shared";
+import { outputLanguagePrompt, isChineseText, resolveContentSubject, type ContentLocale } from "@ceo-agent/shared";
 import type { VisionAnalysis } from "@ceo-agent/shared";
 
 export interface VisionFrameInput {
@@ -95,6 +96,134 @@ function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
   };
 }
 
+const num = z.coerce.number();
+const str = z.coerce.string();
+
+/**
+ * Lenient mirror of VisionAnalysisSchema for parsing raw model output.
+ * The vision LLM reliably returns the visual fields but routinely omits input
+ * metadata (assetId/mediaType) or leaves out suggestedMoments — the strict
+ * schema would reject the whole (good) analysis and force the templated
+ * fallback. Here every field defaults/coerces so real signal is never lost; we
+ * inject assetId/mediaType ourselves afterwards.
+ */
+const LenientVisionSchema = z
+  .object({
+    subjects: z.array(str).optional().default([]),
+    scenes: z
+      .array(
+        z.object({
+          startSec: num.optional().default(0),
+          endSec: num.optional().default(0),
+          description: str.optional().default(""),
+          emotion: str.optional(),
+        })
+      )
+      .optional()
+      .default([]),
+    products: z
+      .array(
+        z.object({
+          name: str.optional().default(""),
+          attributes: z.array(str).optional(),
+        })
+      )
+      .optional()
+      .default([]),
+    hooks: z.array(str).optional().default([]),
+    transcriptSummary: str.optional(),
+    suggestedMoments: z
+      .array(
+        z.object({
+          startSec: num.optional().default(0),
+          endSec: num.optional().default(0),
+          reason: str.optional().default(""),
+        })
+      )
+      .optional()
+      .default([]),
+    primarySubject: z
+      .object({ x: num.optional(), y: num.optional(), label: str.optional() })
+      .optional(),
+    confidence: num.optional(),
+  })
+  .passthrough();
+
+function clamp01(n: number): number {
+  return Math.min(1, Math.max(0, n));
+}
+
+/** Unwrap a single nested envelope like { analysis: {...} } the model sometimes adds. */
+function unwrapVisionResult(result: unknown): unknown {
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const obj = result as Record<string, unknown>;
+    if (!("subjects" in obj) && !("products" in obj) && !("scenes" in obj)) {
+      const nested = obj.analysis ?? obj.visionAnalysis ?? obj.result ?? obj.data;
+      if (nested && typeof nested === "object") return nested;
+    }
+  }
+  return result;
+}
+
+/** Coerce raw model output into a VisionAnalysis, or null when it carries no real visual signal. */
+function coerceVisionResult(result: unknown, input: VisionInput): VisionAnalysis | null {
+  const parsed = LenientVisionSchema.safeParse(unwrapVisionResult(result));
+  if (!parsed.success) return null;
+  const d = parsed.data;
+
+  const subjects = d.subjects.map((s) => s.trim()).filter(Boolean);
+  const products = d.products
+    .map((p) => ({
+      name: p.name.trim(),
+      attributes: p.attributes?.map((a) => a.trim()).filter(Boolean),
+    }))
+    .filter((p) => p.name.length > 0);
+  const scenes = d.scenes
+    .map((s) => ({
+      startSec: s.startSec,
+      endSec: s.endSec > s.startSec ? s.endSec : s.startSec + 3,
+      description: s.description.trim(),
+      emotion: s.emotion?.trim() || undefined,
+    }))
+    .filter((s) => s.description.length > 0);
+
+  // No usable visual signal at all → let the caller use the templated fallback.
+  if (subjects.length === 0 && products.length === 0 && scenes.length === 0) {
+    return null;
+  }
+
+  const suggestedMoments = d.suggestedMoments
+    .map((m) => ({
+      startSec: m.startSec,
+      endSec: m.endSec > m.startSec ? m.endSec : m.startSec + 3,
+      reason: m.reason.trim(),
+    }))
+    .filter((m) => m.reason.length > 0);
+
+  const primarySubject =
+    d.primarySubject && d.primarySubject.x != null && d.primarySubject.y != null
+      ? {
+          x: clamp01(d.primarySubject.x),
+          y: clamp01(d.primarySubject.y),
+          label: d.primarySubject.label?.trim() || undefined,
+        }
+      : undefined;
+
+  return {
+    assetId: input.assetId,
+    mediaType: input.mediaType,
+    durationSec: input.durationSec,
+    subjects,
+    scenes,
+    products,
+    hooks: d.hooks.map((h) => h.trim()).filter(Boolean),
+    transcriptSummary: d.transcriptSummary?.trim() || input.transcriptSummary,
+    suggestedMoments,
+    primarySubject,
+    confidence: d.confidence ?? 0.82,
+  };
+}
+
 export async function runVisionAgent(input: VisionInput): Promise<{
   analysis: VisionAnalysis;
   usage: { input: number; output: number; costUsd: number };
@@ -137,16 +266,13 @@ Output JSON matching VisionAnalysis schema.`;
       )
     : await callJsonModel<unknown>(system, user, schemaHint);
 
-  const parsed = VisionAnalysisSchema.safeParse(result);
-
-  const analysis: VisionAnalysis = parsed.success
-    ? {
-        ...parsed.data,
-        assetId: input.assetId,
-        mediaType: input.mediaType,
-        transcriptSummary: parsed.data.transcriptSummary ?? input.transcriptSummary,
-      }
-    : buildFallbackAnalysis(input);
+  const coerced = coerceVisionResult(result, input);
+  if (!coerced) {
+    console.warn(
+      `[vision] model output had no usable visual signal (hasFrames=${hasFrames}, asset=${input.assetId}) — using templated fallback`
+    );
+  }
+  const analysis: VisionAnalysis = coerced ?? buildFallbackAnalysis(input);
 
   return { analysis, usage };
 }
