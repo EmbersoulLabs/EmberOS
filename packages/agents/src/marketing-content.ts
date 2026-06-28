@@ -838,10 +838,14 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     outputLanguage: outputLanguageInstruction(locale),
   });
 
+  // Content generation requires large structured JSON output (hooks×10, 8 platform assets,
+  // bilingual voice scripts, analysis, SEO pack). gpt-4o-mini frequently produces malformed
+  // or incomplete JSON at this scale; gpt-4o is significantly more reliable here.
   const { result, usage } = await callJsonModel<unknown>(
     CONTENT_SYSTEM_PROMPT,
     user,
-    MarketingContentPackageSchema.toString()
+    MarketingContentPackageSchema.toString(),
+    { model: "gpt-4o" }
   );
 
   const normalized = normalizeMarketingContentPackage(result);

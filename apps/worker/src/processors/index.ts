@@ -7,6 +7,7 @@ import { runPipeline, type PipelineHooks } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   MAX_UPLOAD_DURATION_SEC,
+  MAX_PROCESSED_SIZE_BYTES,
   assessFinishedAdRisk,
   sumUploadVideoDurationSec,
   validateCombinedVideoDurationSec,
@@ -20,12 +21,13 @@ import { processTaskExportJob, musicCreditFor } from "./export-handler";
 import { prepareVisionFromStorage } from "../media/vision-prep";
 import { ensureMergedSourceVideo } from "../media/merge-source-videos";
 import { mediaHasAudio } from "../ffmpeg/probe-audio";
+import { compressSourceVideo } from "../ffmpeg/compress-source";
 import {
   downloadStorageFile,
   uploadStorageFile,
   publicStorageUrl,
 } from "../storage";
-import { mkdir, writeFile, readFile, rm, access } from "node:fs/promises";
+import { mkdir, writeFile, readFile, rm, access, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { EditPlan, CopyVariant, Platform } from "@ceo-agent/shared";
@@ -210,13 +212,31 @@ export function startWorkers() {
             .where(eq(schema.assets.id, assetId));
           throw new Error(`Video duration ${probe.durationSec.toFixed(1)}s exceeds ${MAX_UPLOAD_DURATION_SEC}s MVP limit`);
         }
+
+        // Auto-compress large uploads to ≤480MB so all downstream reads stay fast.
+        const { size: rawBytes } = await stat(localPath);
+        let finalFileSizeBytes = rawBytes;
+        let compressedMeta: Record<string, unknown> = {};
+        if (rawBytes > MAX_PROCESSED_SIZE_BYTES) {
+          const originalMB = (rawBytes / 1024 / 1024).toFixed(0);
+          console.log(`[probe] ${assetId} is ${originalMB}MB — compressing to ≤480MB…`);
+          const compressedPath = join(workDir, "compressed.mp4");
+          const result = await compressSourceVideo(localPath, compressedPath, probe.durationSec);
+          const compressedMB = (result.outputBytes / 1024 / 1024).toFixed(0);
+          console.log(`[probe] compressed ${originalMB}MB → ${compressedMB}MB — re-uploading…`);
+          await uploadStorageFile(storagePath, compressedPath, "video/mp4");
+          finalFileSizeBytes = result.outputBytes;
+          compressedMeta = { compressedFromBytes: rawBytes };
+        }
+
         await db
           .update(schema.assets)
           .set({
             durationSec: String(probe.durationSec),
             width: probe.width,
             height: probe.height,
-            metadata: { ...meta, codec: probe.codec, finishedAdRisk },
+            fileSizeBytes: finalFileSizeBytes,
+            metadata: { ...meta, codec: probe.codec, finishedAdRisk, ...compressedMeta },
           })
           .where(eq(schema.assets.id, assetId));
 

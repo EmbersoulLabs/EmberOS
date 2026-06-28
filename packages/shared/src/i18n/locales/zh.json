@@ -258,6 +258,7 @@
   "error.runCampaign": "启动 EmberOS 失败",
   "error.translationFailed": "翻译失败",
   "error.videoProcessing": "视频无法处理。请检查总时长（合并不超过 10 分钟）后重试。",
+  "error.uploadPayloadTooLarge": "文件过大（{sizeMb} MB），存储拒绝上传。Supabase 免费版单文件上限 50 MB — 请先压缩视频，或在 Supabase Storage 设置中提高限额（Pro 可设至 500 MB）。",
   "error.videoTimeout": "视频分析超时，请稍后重试。",
   "error.workspaceNotFound": "找不到工作区",
   "export.resolutionSwitchHint": "{exported} ZIP 已就绪 — 切换到 {exported} 下载，或重新导出 {target}。",

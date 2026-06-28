@@ -31,8 +31,9 @@ export async function POST(
 
     const size = fileSizeBytes ?? 0;
     if (size <= 0 || size > MAX_UPLOAD_SIZE_BYTES) {
+      const limitGB = (MAX_UPLOAD_SIZE_BYTES / 1024 / 1024 / 1024).toFixed(0);
       return apiError(
-        `File size must be between 1 byte and ${MAX_UPLOAD_SIZE_BYTES} bytes`,
+        `File too large (max ${limitGB}GB). Videos over 500MB are auto-compressed after upload.`,
         "VALIDATION_ERROR",
         400
       );

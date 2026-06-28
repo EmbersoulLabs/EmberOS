@@ -258,6 +258,7 @@
   "error.runCampaign": "Gagal memulakan EmberOS",
   "error.translationFailed": "Terjemahan gagal",
   "error.videoProcessing": "Video anda tidak dapat diproses. Semak jumlah tempoh (maks 10 min gabungan) dan cuba lagi.",
+  "error.uploadPayloadTooLarge": "Fail terlalu besar untuk storan ({sizeMb} MB). Pelan Percuma Supabase had 50 MB — mampatkan video, atau naikkan had dalam Storage settings (Pro sehingga 500 MB).",
   "error.videoTimeout": "Analisis video tamat masa. Sila cuba lagi sebentar.",
   "error.workspaceNotFound": "Ruang kerja tidak dijumpai",
   "export.resolutionSwitchHint": "ZIP {exported} sedia — tukar ke {exported} untuk muat turun, atau eksport {target} semula.",

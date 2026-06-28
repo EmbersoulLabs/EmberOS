@@ -261,6 +261,13 @@ export default function CampaignWizardPage() {
             body: file,
           });
           if (!uploadRes.ok) {
+            if (uploadRes.status === 413) {
+              throw new Error(
+                t("error.uploadPayloadTooLarge", {
+                  sizeMb: (file.size / (1024 * 1024)).toFixed(0),
+                })
+              );
+            }
             const uploadErr = await uploadRes.text().catch(() => "");
             throw new Error(
               `Upload failed for ${file.name} (${uploadRes.status})${uploadErr ? `: ${uploadErr.slice(0, 120)}` : ""}`

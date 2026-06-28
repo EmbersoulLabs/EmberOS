@@ -258,6 +258,7 @@
   "error.runCampaign": "Failed to start EmberOS",
   "error.translationFailed": "Translation failed",
   "error.videoProcessing": "Your videos could not be processed. Check total duration (max 10 min combined) and try again.",
+  "error.uploadPayloadTooLarge": "File is too large for storage ({sizeMb} MB). Supabase Free allows up to 50 MB per file — compress the video, or raise the limit in Supabase Storage settings (Pro plan up to 500 MB).",
   "error.videoTimeout": "Video analysis timed out. Please try running again in a moment.",
   "error.workspaceNotFound": "Workspace not found",
   "export.resolutionSwitchHint": "{exported} ZIP is ready — switch to {exported} to download, or export {target} again.",

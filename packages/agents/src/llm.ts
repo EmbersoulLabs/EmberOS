@@ -11,11 +11,13 @@ export function getOpenAI() {
 export async function callJsonModel<T>(
   system: string,
   user: string,
-  schemaHint: string
+  schemaHint: string,
+  options?: { model?: "gpt-4o-mini" | "gpt-4o" }
 ): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
   const openai = getOpenAI();
+  const model = options?.model ?? "gpt-4o-mini";
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model,
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
@@ -27,7 +29,9 @@ export async function callJsonModel<T>(
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;
   const output = response.usage?.completion_tokens ?? 0;
-  const costUsd = (input * 0.15 + output * 0.6) / 1_000_000;
+  // gpt-4o: $2.50/1M in + $10/1M out; gpt-4o-mini: $0.15/1M in + $0.60/1M out
+  const [inRate, outRate] = model === "gpt-4o" ? [2.5, 10] : [0.15, 0.6];
+  const costUsd = (input * inRate + output * outRate) / 1_000_000;
 
   return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
 }

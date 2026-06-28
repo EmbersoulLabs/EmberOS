@@ -6,7 +6,10 @@ export const MAX_UPLOAD_DURATION_SEC = RENDER_MVP_LIMITS.MAX_UPLOAD_DURATION_SEC
 export const MAX_COMBINED_SOURCE_DURATION_SEC = RENDER_MVP_LIMITS.MAX_COMBINED_SOURCE_DURATION_SEC;
 export const MAX_CAMPAIGN_IMAGES = RENDER_MVP_LIMITS.MAX_IMAGES;
 export const MAX_SOURCE_VIDEOS = RENDER_MVP_LIMITS.MAX_SOURCE_VIDEOS;
-export const MAX_UPLOAD_SIZE_BYTES = 500 * 1024 * 1024;
+/** Maximum raw file size accepted for upload (worker auto-compresses to ≤500MB). */
+export const MAX_UPLOAD_SIZE_BYTES = 2 * 1024 * 1024 * 1024;
+/** Target compressed size — files larger than this get re-compressed by the probe worker. */
+export const MAX_PROCESSED_SIZE_BYTES = 500 * 1024 * 1024;
 export const VISION_MAX_FRAMES = 8;
 export const COPY_VARIANT_COUNT = 3;
 /** Trim editor end cards (CapCut / 剪映) from source before montage. */
