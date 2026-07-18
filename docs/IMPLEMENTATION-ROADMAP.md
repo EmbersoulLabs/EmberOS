@@ -1238,3 +1238,389 @@ Implement:
 Published manifests are immutable.
 
 Changes create a new version or new manifest according to Specification.
+
+### Sprint 12B — Publishing Hub
+
+Implement:
+
+- Draft.
+- Ready.
+- Scheduled.
+- Published.
+- Failed.
+- Manual publishing flow.
+- Publishing queue.
+- Platform limitations.
+- Retry rules.
+- Publishing audit history.
+
+Do not require all social platform APIs before initial V1 launch.
+
+Manual-assisted publishing is permitted where platform APIs are unavailable.
+
+## 17. Phase 13 — Marketing Intelligence
+
+### Sprint 13A — Performance Data
+
+Implement:
+
+- Post records.
+- Views.
+- Engagement.
+- Clicks.
+- Leads.
+- Sales.
+- Manual data entry.
+- CSV import.
+- Platform data adapters.
+
+### Sprint 13B — Marketing Intelligence
+
+Implement:
+
+- Campaign performance.
+- Content performance.
+- Platform comparison.
+- Best-performing hooks.
+- Best-performing content formats.
+- Trend indicators.
+- Recommended next action.
+
+Recommendations must distinguish:
+
+- Observed data.
+- AI inference.
+- Missing data.
+
+## 18. Phase 14 — Commercialization
+
+### Sprint 14A — Stripe and Subscription
+
+USER DECISION
+
+Stripe is included in V1.
+
+Implement:
+
+- Plans.
+- Subscription.
+- Trial.
+- Stripe Checkout.
+- Customer Portal.
+- Webhooks.
+- Subscription status.
+- Failed payment handling.
+- Plan change.
+- Cancellation.
+- Billing audit records.
+
+### Sprint 14B — Usage and Cost Control
+
+Implement:
+
+- AI usage limits.
+- Image limits.
+- Video limits.
+- Storage limits.
+- Workspace usage.
+- Cost limits.
+- Limit warnings.
+- Hard-stop rules where approved.
+- Super Admin usage visibility.
+- Provider cost reconciliation.
+
+### Sprint 14C — Onboarding
+
+Implement:
+
+- Workspace setup.
+- Business Profile.
+- First Campaign.
+- First Asset upload.
+- First Marketing Package.
+- Guided next actions.
+- Empty state guidance.
+- Completion tracking.
+
+## 19. Super Admin Delivery Sequence
+
+Super Admin must be implemented incrementally.
+
+Initial Foundation:
+
+Sprint 1A
+
+- Workspace management.
+- User management.
+- Feature flags.
+- Audit logs.
+- System status.
+
+AI Foundation:
+
+Sprint 1B
+
+- AI Operations structure.
+- Permissions.
+- Navigation.
+- Data contracts.
+
+Operational Visibility:
+
+Sprint 7C
+
+- AI Execution Console.
+
+Conversational Operations:
+
+Sprint 8A
+
+- Read-only Operations Assistant.
+
+Controlled Actions:
+
+Sprint 8B
+
+- Retry.
+- Incident summary.
+- Draft generation.
+- Test initiation.
+
+Prompt Improvement:
+
+Sprint 9
+
+- Analysis.
+- Draft creation.
+- Testing.
+- Human publish.
+- Rollback.
+
+Commercial Operations:
+
+Sprint 14
+
+- Subscription.
+- Usage.
+- Cost.
+- Billing visibility.
+
+Do not attempt to complete the entire Super Admin product in one Sprint.
+
+## 20. Release Boundaries
+
+### Internal Alpha
+
+Required:
+
+- Engineering Foundation.
+- Authentication.
+- Workspace and permissions.
+- Super Admin MVP.
+- Business Profile.
+- Campaign.
+- Campaign Assets.
+- Command Center with real APIs.
+- Prompt Library foundation.
+- AI Router foundation.
+- Marketing Package.
+
+Primary test flow:
+
+Business Profile
+
+↓
+
+Campaign
+
+↓
+
+Assets
+
+↓
+
+Marketing Package
+
+### Private Beta
+
+Required:
+
+- Internal Alpha.
+- AI Team Coordination Engine.
+- AI Execution Console.
+- AI Operations Assistant read-only mode.
+- Photo Scene V1.
+
+Test businesses:
+
+- Florist.
+- Handmade crafts.
+- Restaurant.
+
+Validation model:
+
+1. Operate the system for test users.
+2. Teach users.
+3. Observe users operating independently.
+4. Improve UX based on actual behavior.
+
+### Paid V1
+
+Required:
+
+- Private Beta.
+- Prompt improvement workflow.
+- Video Studio V1.
+- Publishing Manifest.
+- Publishing Hub.
+- Stripe.
+- Usage controls.
+- Onboarding.
+- Required privacy, security, and operational controls.
+
+Marketing Intelligence may continue to mature after initial paid launch, provided required performance recording is available.
+
+## 21. Definition of Done for Each Sprint
+
+A Sprint is not complete until all applicable items pass:
+
+### Specification
+
+- Implementation matches the authoritative SPEC.
+- UI matches the authoritative UI-SPEC.
+- Prompt behavior matches Prompt Library definitions.
+- No unauthorized product redesign.
+
+### Database
+
+- Migration created.
+- Migration tested.
+- Constraints defined.
+- Workspace scoping enforced.
+- Rollback considered.
+
+### Security
+
+- Authentication enforced.
+- Authorization enforced.
+- Row-level security tested.
+- Sensitive data excluded from logs.
+- Admin actions audited.
+
+### API
+
+- Input validation.
+- Error contracts.
+- Idempotency where required.
+- Permission checks.
+- Pagination where required.
+- Real data source.
+
+### Frontend
+
+- Loading state.
+- Empty state.
+- Error state.
+- Permission state.
+- Responsive behavior.
+- Accessibility basics.
+- No Dead End UX.
+
+### AI
+
+- Prompt version recorded.
+- Model and provider recorded.
+- Structured output validated.
+- Cost recorded.
+- Retry behavior defined.
+- Failure is visible.
+- No direct production Prompt mutation.
+
+### Testing
+
+- Unit tests.
+- Integration tests.
+- Permission tests.
+- API tests.
+- Critical UI tests.
+- Regression tests.
+- Manual acceptance checklist.
+
+### Operations
+
+- Logs are available.
+- Audit records are available.
+- Errors can be diagnosed.
+- Feature can be disabled safely when applicable.
+- Deployment notes are documented.
+
+### Git
+
+- Working tree reviewed.
+- No unrelated files.
+- Diff check passes.
+- Commit message is scoped.
+- Commit is pushed only after acceptance.
+
+## 22. Codex Execution Behavior
+
+For every Sprint, Codex must first return:
+
+1. Blueprint files reviewed.
+2. Existing implementation inspected.
+3. Dependencies.
+4. Proposed files to create.
+5. Proposed files to modify.
+6. Database changes.
+7. API changes.
+8. UI changes.
+9. Security considerations.
+10. Test plan.
+11. Risks.
+12. Acceptance criteria.
+
+Codex must not start implementation when:
+
+- A required Specification is missing.
+- Blueprint documents conflict.
+- Database ownership is unclear.
+- Permission behavior is undefined.
+- The task requires a new product decision.
+
+When blocked, return:
+
+BLOCKED
+
+Reason
+
+Required Decision
+
+Affected Files
+
+Do not guess.
+
+## 23. First Implementation Target
+
+Begin with:
+
+Phase 0
+
+Engineering Foundation
+
+Before implementation:
+
+Inspect the current EmberOS Repository.
+
+Determine which Phase 0 capabilities already exist.
+
+Do not recreate completed work.
+
+Return a gap analysis grouped as:
+
+- Complete.
+- Partial.
+- Missing.
+- Incorrect or inconsistent.
+- Recommended first implementation task.
+
+Do not modify files during the initial gap analysis.
