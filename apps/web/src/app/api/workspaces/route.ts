@@ -1,5 +1,6 @@
-import { eq } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { eq, and } from "drizzle-orm";
+import { getDb, schema, requireOrganizationMembership } from "@ceo-agent/db";
+import { isUuid } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError, slugify } from "@/lib/api";
 
@@ -9,20 +10,31 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const orgId = searchParams.get("orgId");
 
+    // Optional org filter: only allowed after verifying membership in that org.
+    // Super Admin does not get an implicit bypass here.
+    if (orgId) {
+      if (!isUuid(orgId)) {
+        return apiError("orgId must be a valid UUID", "VALIDATION_ERROR", 400);
+      }
+      await requireOrganizationMembership(orgId, user.id);
+    }
+
     const db = getDb();
-    let query = db
+    const results = await db
       .select({ workspace: schema.workspaces, role: schema.workspaceMembers.role })
       .from(schema.workspaceMembers)
       .innerJoin(schema.workspaces, eq(schema.workspaceMembers.workspaceId, schema.workspaces.id))
-      .where(eq(schema.workspaceMembers.userId, user.id));
-
-    const results = await query;
-    const workspaces = orgId
-      ? results.filter((r) => r.workspace.orgId === orgId)
-      : results;
+      .where(
+        orgId
+          ? and(
+              eq(schema.workspaceMembers.userId, user.id),
+              eq(schema.workspaces.orgId, orgId)
+            )
+          : eq(schema.workspaceMembers.userId, user.id)
+      );
 
     return apiSuccess({
-      workspaces: workspaces.map((w) => ({
+      workspaces: results.map((w) => ({
         ...w.workspace,
         role: w.role,
       })),
@@ -44,24 +56,24 @@ export async function POST(request: Request) {
     };
 
     if (!orgId || !name) return apiError("orgId and name are required", "VALIDATION_ERROR");
+    if (!isUuid(orgId)) {
+      return apiError("orgId must be a valid UUID", "VALIDATION_ERROR", 400);
+    }
+
+    // Server must verify membership for the requested orgId.
+    // Never trust client-supplied org ownership; do not use "any org membership".
+    // Super Admin is not granted create rights here — use explicit admin APIs if needed.
+    const orgMember = await requireOrganizationMembership(orgId, user.id);
 
     const db = getDb();
-    const [orgMember] = await db
-      .select()
-      .from(schema.organizationMembers)
-      .where(eq(schema.organizationMembers.userId, user.id))
-      .limit(1);
-
-    if (!orgMember) return apiError("Not an org member", "FORBIDDEN", 403);
-
     const slug = rawSlug ?? slugify(name);
     const [workspace] = await db
       .insert(schema.workspaces)
-      .values({ orgId, name, slug, brandProfile: brandProfile ?? {} })
+      .values({ orgId: orgMember.orgId, name, slug, brandProfile: brandProfile ?? {} })
       .returning();
 
     await db.insert(schema.workspaceMembers).values({
-      orgId,
+      orgId: orgMember.orgId,
       workspaceId: workspace!.id,
       userId: user.id,
       role: "admin",

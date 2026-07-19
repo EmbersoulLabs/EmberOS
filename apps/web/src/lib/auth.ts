@@ -1,5 +1,9 @@
 import { getAuthUser } from "@/lib/supabase/server";
-import { WorkspaceAccessError } from "@ceo-agent/db";
+import {
+  OrganizationAccessError,
+  TenantValidationError,
+  WorkspaceAccessError,
+} from "@ceo-agent/db";
 import { apiError } from "@/lib/api";
 
 export async function requireAuth() {
@@ -21,7 +25,10 @@ export function handleApiError(error: unknown) {
   if (error instanceof AuthError) {
     return apiError("Unauthorized", "UNAUTHORIZED", 401);
   }
-  if (error instanceof WorkspaceAccessError) {
+  if (error instanceof TenantValidationError) {
+    return apiError(error.message, error.code, 400);
+  }
+  if (error instanceof WorkspaceAccessError || error instanceof OrganizationAccessError) {
     return apiError(error.message, error.code, 403);
   }
   if (error && typeof error === "object" && "code" in error && "message" in error) {

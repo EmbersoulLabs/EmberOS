@@ -1,3 +1,4 @@
+export * from "./ids";
 export * from "./dynamic-camera";
 export * from "./bgm";
 export * from "./creative-audio";
