@@ -21,6 +21,40 @@ export class AuthError extends Error {
   }
 }
 
+/** Application error codes that may be returned to clients with their message. */
+const APP_ERROR_HTTP_STATUS = {
+  VALIDATION_ERROR: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  VERSION_CONFLICT: 409,
+} as const;
+
+type AppErrorCode = keyof typeof APP_ERROR_HTTP_STATUS;
+
+function isAppErrorCode(code: unknown): code is AppErrorCode {
+  return typeof code === "string" && code in APP_ERROR_HTTP_STATUS;
+}
+
+/**
+ * Recognized application errors only: typed classes, or Error instances whose
+ * `code` is on the allowlist. Arbitrary `{ code, message }` objects (including
+ * PostgreSQL errors) are treated as unexpected and sanitized to 500.
+ */
+function asRecognizedAppError(
+  error: unknown
+): { message: string; code: AppErrorCode; status: number } | null {
+  if (!(error instanceof Error)) return null;
+  if (!("code" in error)) return null;
+  const code = (error as Error & { code: unknown }).code;
+  if (!isAppErrorCode(code)) return null;
+  return {
+    message: error.message,
+    code,
+    status: APP_ERROR_HTTP_STATUS[code],
+  };
+}
+
 export function handleApiError(error: unknown) {
   if (error instanceof AuthError) {
     return apiError("Unauthorized", "UNAUTHORIZED", 401);
@@ -31,17 +65,12 @@ export function handleApiError(error: unknown) {
   if (error instanceof WorkspaceAccessError || error instanceof OrganizationAccessError) {
     return apiError(error.message, error.code, 403);
   }
-  if (error && typeof error === "object" && "code" in error && "message" in error) {
-    const e = error as { code: string; message: string };
-    if (e.code === "VERSION_CONFLICT") {
-      return apiError(e.message, e.code, 409);
-    }
-    return apiError(e.message, e.code, e.code === "FORBIDDEN" ? 403 : 400);
+
+  const recognized = asRecognizedAppError(error);
+  if (recognized) {
+    return apiError(recognized.message, recognized.code, recognized.status);
   }
+
   console.error(error);
-  return apiError(
-    error instanceof Error ? error.message : "Internal server error",
-    "INTERNAL_ERROR",
-    500
-  );
+  return apiError("Unexpected server error.", "INTERNAL_ERROR", 500);
 }
