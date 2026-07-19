@@ -1,6 +1,9 @@
 /**
  * Apply multi-tenant RLS policies (idempotent — safe to re-run).
  * Usage: pnpm db:rls
+ *
+ * Business Profile (SPEC-001): SELECT/INSERT/UPDATE/DELETE with WITH CHECK
+ * so rows cannot be inserted or moved into an unauthorized tenant.
  */
 import { config } from "dotenv";
 import { readFileSync } from "node:fs";
@@ -19,42 +22,93 @@ if (!url) {
   process.exit(1);
 }
 
-const POLICIES: { table: string; name: string; using: string }[] = [
+type PolicySpec = {
+  table: string;
+  name: string;
+  /** SELECT | INSERT | UPDATE | DELETE | ALL */
+  command: "SELECT" | "INSERT" | "UPDATE" | "DELETE" | "ALL";
+  using?: string;
+  withCheck?: string;
+};
+
+const MEMBER_WORKSPACE = "workspace_id IN (SELECT user_workspace_ids())";
+const MEMBER_WORKSPACE_AND_ORG =
+  "workspace_id IN (SELECT user_workspace_ids()) AND org_id = (SELECT org_id FROM workspaces WHERE id = workspace_id)";
+
+const POLICIES: PolicySpec[] = [
   {
     table: "workspaces",
     name: "workspace_select",
+    command: "SELECT",
     using: "id IN (SELECT user_workspace_ids())",
   },
   {
     table: "workspace_members",
     name: "workspace_members_select",
+    command: "SELECT",
     using: "workspace_id IN (SELECT user_workspace_ids())",
   },
   {
     table: "campaigns",
     name: "campaigns_all",
+    command: "ALL",
     using: "workspace_id IN (SELECT user_workspace_ids())",
   },
   {
     table: "assets",
     name: "assets_all",
+    command: "ALL",
     using: "workspace_id IN (SELECT user_workspace_ids())",
   },
   {
     table: "tasks",
     name: "tasks_all",
+    command: "ALL",
     using: "workspace_id IN (SELECT user_workspace_ids())",
   },
   {
     table: "creatives",
     name: "creatives_all",
+    command: "ALL",
     using: "workspace_id IN (SELECT user_workspace_ids())",
   },
   {
     table: "reviews",
     name: "reviews_all",
+    command: "ALL",
     using: "workspace_id IN (SELECT user_workspace_ids())",
   },
+  // SPEC-001 Business Profile — CS-3
+  {
+    table: "business_profiles",
+    name: "business_profiles_select",
+    command: "SELECT",
+    using: MEMBER_WORKSPACE,
+  },
+  {
+    table: "business_profiles",
+    name: "business_profiles_insert",
+    command: "INSERT",
+    withCheck: MEMBER_WORKSPACE_AND_ORG,
+  },
+  {
+    table: "business_profiles",
+    name: "business_profiles_update",
+    command: "UPDATE",
+    using: MEMBER_WORKSPACE,
+    withCheck: MEMBER_WORKSPACE_AND_ORG,
+  },
+  {
+    table: "business_profiles",
+    name: "business_profiles_delete",
+    command: "DELETE",
+    using: MEMBER_WORKSPACE,
+  },
+];
+
+/** Legacy policy name from earlier WIP — drop if present so re-runs stay clean. */
+const LEGACY_POLICY_DROPS: { table: string; name: string }[] = [
+  { table: "business_profiles", name: "business_profiles_all" },
 ];
 
 const RLS_TABLES = [
@@ -65,6 +119,7 @@ const RLS_TABLES = [
   "tasks",
   "creatives",
   "reviews",
+  "business_profiles",
 ];
 
 function parseStatements(sql: string): string[] {
@@ -78,6 +133,13 @@ function parseStatements(sql: string): string[] {
         .trim()
     )
     .filter((s) => s.length > 0);
+}
+
+function createPolicySql(policy: PolicySpec): string {
+  const parts = [`CREATE POLICY ${policy.name} ON ${policy.table} FOR ${policy.command}`];
+  if (policy.using) parts.push(`USING (${policy.using})`);
+  if (policy.withCheck) parts.push(`WITH CHECK (${policy.withCheck})`);
+  return parts.join(" ");
 }
 
 const functionSql = parseStatements(
@@ -98,15 +160,15 @@ try {
     console.log("[rls] OK: user_workspace_ids()");
   }
 
-  console.log("[rls] Applying policies...");
-  for (const { table, name, using } of POLICIES) {
+  for (const { table, name } of LEGACY_POLICY_DROPS) {
     await db.unsafe(`DROP POLICY IF EXISTS ${name} ON ${table}`);
-    const forAll = table !== "workspaces" && table !== "workspace_members";
-    const cmd = forAll
-      ? `CREATE POLICY ${name} ON ${table} FOR ALL USING (${using})`
-      : `CREATE POLICY ${name} ON ${table} FOR SELECT USING (${using})`;
-    await db.unsafe(cmd);
-    console.log(`  OK: ${name} on ${table}`);
+  }
+
+  console.log("[rls] Applying policies...");
+  for (const policy of POLICIES) {
+    await db.unsafe(`DROP POLICY IF EXISTS ${policy.name} ON ${policy.table}`);
+    await db.unsafe(createPolicySql(policy));
+    console.log(`  OK: ${policy.name} on ${policy.table}`);
   }
 
   console.log("\n[rls] RLS policies applied successfully.");

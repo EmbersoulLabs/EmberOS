@@ -72,3 +72,38 @@ ALTER TABLE workspace_insights ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY workspace_insights_all ON workspace_insights
   FOR ALL USING (workspace_id IN (SELECT user_workspace_ids()));
+
+-- ── business_profiles (SPEC-001 / CS-3) ─────────────────────────────────────
+-- Tenant isolation via workspace membership + org_id must match workspace.org_id.
+-- Soft-delete is UPDATE; covered by UPDATE policies.
+-- Service role bypasses RLS (existing Supabase convention). No Super Admin bypass here.
+ALTER TABLE business_profiles ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS business_profiles_all ON business_profiles;
+DROP POLICY IF EXISTS business_profiles_select ON business_profiles;
+DROP POLICY IF EXISTS business_profiles_insert ON business_profiles;
+DROP POLICY IF EXISTS business_profiles_update ON business_profiles;
+DROP POLICY IF EXISTS business_profiles_delete ON business_profiles;
+
+CREATE POLICY business_profiles_select ON business_profiles
+  FOR SELECT
+  USING (workspace_id IN (SELECT user_workspace_ids()));
+
+CREATE POLICY business_profiles_insert ON business_profiles
+  FOR INSERT
+  WITH CHECK (
+    workspace_id IN (SELECT user_workspace_ids())
+    AND org_id = (SELECT org_id FROM workspaces WHERE id = workspace_id)
+  );
+
+CREATE POLICY business_profiles_update ON business_profiles
+  FOR UPDATE
+  USING (workspace_id IN (SELECT user_workspace_ids()))
+  WITH CHECK (
+    workspace_id IN (SELECT user_workspace_ids())
+    AND org_id = (SELECT org_id FROM workspaces WHERE id = workspace_id)
+  );
+
+CREATE POLICY business_profiles_delete ON business_profiles
+  FOR DELETE
+  USING (workspace_id IN (SELECT user_workspace_ids()));

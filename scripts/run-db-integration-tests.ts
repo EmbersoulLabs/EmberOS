@@ -2,14 +2,27 @@ import { spawnSync } from "node:child_process";
 import { config } from "dotenv";
 import { resolve } from "node:path";
 
-config({ path: resolve(process.cwd(), ".env.local") });
-config({ path: resolve(process.cwd(), "apps/web/.env.local") });
+// Prefer apps/worker/.env (same order as packages/db/scripts/apply-rls.ts).
+// Root .env.local may contain an unparseable DATABASE_URL that would shadow a valid one.
 config({ path: resolve(process.cwd(), "apps/worker/.env") });
+config({ path: resolve(process.cwd(), "apps/web/.env.local") });
+config({ path: resolve(process.cwd(), ".env.local") });
 
-if (!process.env.DATABASE_URL?.trim()) {
+const databaseUrl = process.env.DATABASE_URL?.trim() || "";
+if (!databaseUrl) {
   console.error("[test:integration] DATABASE_URL is not set (.env.local or apps/worker/.env)");
   process.exit(1);
 }
+try {
+  // eslint-disable-next-line no-new
+  new URL(databaseUrl);
+} catch {
+  console.error(
+    "[test:integration] DATABASE_URL is not a valid URL (check password encoding / .env.local)"
+  );
+  process.exit(1);
+}
+process.env.DATABASE_URL = databaseUrl;
 
 process.env.RUN_DB_INTEGRATION_TESTS = "1";
 
