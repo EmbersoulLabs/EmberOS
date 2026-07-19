@@ -67,8 +67,15 @@ ALTER TABLE content_analytics ENABLE ROW LEVEL SECURITY;
 CREATE POLICY content_analytics_all ON content_analytics
   FOR ALL USING (workspace_id IN (SELECT user_workspace_ids()));
 
+-- ── business_profiles ────────────────────────────────────────────────────────
+ALTER TABLE business_profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY business_profiles_all ON business_profiles
+  FOR ALL USING (workspace_id IN (SELECT user_workspace_ids()));
+
 -- ── workspace_insights ───────────────────────────────────────────────────────
 ALTER TABLE workspace_insights ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY workspace_insights_all ON workspace_insights
   FOR ALL USING (workspace_id IN (SELECT user_workspace_ids()));
+

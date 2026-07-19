@@ -1,0 +1,75 @@
+---
+description: Non-blocking business quality warnings vs blocking API errors (locked Product Decision)
+alwaysApply: true
+---
+
+# Non-Blocking Quality Warnings
+
+## Rule
+
+Business quality warnings must be **non-blocking**.
+
+Only true validation failures, permission failures, or invalid requests may return blocking HTTP errors.
+
+Future Specifications must follow this pattern unless explicitly overridden by a locked Product Decision.
+
+## Blocking HTTP Errors (4xx)
+
+Use blocking errors only for:
+
+- Missing or invalid required request input
+- Authentication / authorization failures
+- Workspace or resource not found when required
+- Invalid data shape or constraint violations
+- Version conflicts, duplicate resources, or other integrity failures
+
+Examples: `400 VALIDATION_ERROR`, `401 UNAUTHORIZED`, `403 FORBIDDEN`, `404 NOT_FOUND`, `409 VERSION_CONFLICT`
+
+## Non-Blocking Warnings
+
+Use warnings for business quality or completeness issues that should inform the user but must not stop the workflow.
+
+Examples:
+
+- Incomplete Business Profile
+- Low-confidence AI context
+- Optional recommended fields missing
+- Quality notices that may affect AI output
+
+### API Pattern
+
+Return success for the primary action. Attach warnings in the response body:
+
+```json
+{
+  "campaign": { "...": "..." },
+  "warnings": [
+    {
+      "code": "BUSINESS_PROFILE_INCOMPLETE",
+      "message": "Business Profile is incomplete. AI quality may be affected.",
+      "missing": ["companyName", "industry"]
+    }
+  ]
+}
+```
+
+Do **not** use `422` or other blocking status codes for quality warnings.
+
+### UI Pattern
+
+- Show a visible quality warning (amber/info state)
+- Allow the user to continue
+- Link to the page where they can improve context (e.g. Settings → Business Profile)
+- Never clear user input because of a quality warning
+
+## Reference Implementation
+
+- API: `apps/web/src/app/api/campaigns/route.ts` — `warnings[]` on `201`
+- UI: `apps/web/src/app/w/[slug]/campaigns/new/page.tsx` — quality banner, no submit block
+- Copy: `businessProfile.qualityNotice` in i18n locales
+
+## Do Not
+
+- Block Campaign creation or Generate because Business Profile is incomplete
+- Treat Product quality notices as hard validation errors
+- Guess new blocking rules without a locked Product Decision

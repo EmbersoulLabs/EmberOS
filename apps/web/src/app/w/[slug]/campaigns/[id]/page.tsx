@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  CampaignDashboard,
-  type CampaignDashboardData,
-} from "@/components/campaign/CampaignDashboard";
+  CampaignWorkspaceShell,
+  type CampaignWorkspaceData,
+} from "@/components/campaign/CampaignWorkspaceShell";
 import { isCampaignDeletable } from "@/lib/campaigns";
 import { useI18n } from "@/lib/i18n/provider";
 
@@ -15,22 +15,23 @@ function isTaskActive(status?: string): boolean {
   return status === "queued" || status === "running";
 }
 
-export default function CampaignDetailPage() {
+export default function CampaignWorkspacePage() {
   const params = useParams();
   const router = useRouter();
   const { t } = useI18n();
   const slug = params.slug as string;
   const id = params.id as string;
 
-  const [data, setData] = useState<CampaignDashboardData | null>(null);
+  const [data, setData] = useState<CampaignWorkspaceData | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
   const loadCampaign = useCallback(async () => {
     const res = await fetch(`/api/campaigns/${id}`);
     if (!res.ok) return null;
     const body = await res.json();
-    return body as CampaignDashboardData;
+    return body as CampaignWorkspaceData;
   }, [id]);
 
   useEffect(() => {
@@ -68,7 +69,7 @@ export default function CampaignDetailPage() {
   async function deleteCampaign() {
     const name = (data?.campaign?.name as string) ?? "this campaign";
     setDeleteError("");
-    if (!confirm(t("campaigns.deleteConfirm", { name }))) return;
+    if (!confirm(t("campaigns.deleteConfirmSoft", { name }))) return;
 
     setDeleting(true);
     try {
@@ -81,6 +82,21 @@ export default function CampaignDetailPage() {
       router.push(`/w/${slug}/campaigns`);
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function duplicateCampaign() {
+    setDuplicating(true);
+    try {
+      const res = await fetch(`/api/campaigns/${id}/duplicate`, { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setDeleteError(body.error ?? t("error.generic"));
+        return;
+      }
+      router.push(`/w/${slug}/campaigns/${body.campaign.id}`);
+    } finally {
+      setDuplicating(false);
     }
   }
 
@@ -105,13 +121,18 @@ export default function CampaignDetailPage() {
     );
 
   return (
-    <CampaignDashboard
+    <CampaignWorkspaceShell
       slug={slug}
       campaignId={id}
       data={{ ...data, canDelete }}
+      onRefresh={async () => {
+        await loadCampaign();
+      }}
       deleting={deleting}
       deleteError={deleteError}
       onDelete={deleteCampaign}
+      onDuplicate={duplicateCampaign}
+      duplicating={duplicating}
     />
   );
 }

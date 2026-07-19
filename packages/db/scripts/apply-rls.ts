@@ -55,6 +55,11 @@ const POLICIES: { table: string; name: string; using: string }[] = [
     name: "reviews_all",
     using: "workspace_id IN (SELECT user_workspace_ids())",
   },
+  {
+    table: "business_profiles",
+    name: "business_profiles_all",
+    using: "workspace_id IN (SELECT user_workspace_ids())",
+  },
 ];
 
 const RLS_TABLES = [
@@ -65,6 +70,7 @@ const RLS_TABLES = [
   "tasks",
   "creatives",
   "reviews",
+  "business_profiles",
 ];
 
 function parseStatements(sql: string): string[] {

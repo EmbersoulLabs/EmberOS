@@ -12,6 +12,7 @@ interface Campaign {
   id: string;
   name: string;
   status: string;
+  businessStatus?: string;
   goal?: string;
   platforms: string[];
   canDelete?: boolean;
@@ -24,6 +25,7 @@ export default function CampaignListPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
+  const [profileComplete, setProfileComplete] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -40,6 +42,12 @@ export default function CampaignListPage() {
 
       setWorkspaceId(ws.id);
       setWorkspaceName(ws.name);
+
+      const profileRes = await fetch(`/api/workspaces/${ws.id}/business-profile`);
+      const profileData = await profileRes.json();
+      if (profileRes.ok) {
+        setProfileComplete(Boolean(profileData.completion?.complete));
+      }
 
       const res = await fetch(`/api/campaigns?workspaceId=${ws.id}`);
       const data = await res.json();
@@ -84,13 +92,30 @@ export default function CampaignListPage() {
               </p>
             )}
           </div>
-          <Link
-            href={`/w/${slug}/campaigns/new`}
-            className="inline-flex h-10 items-center rounded-lg bg-navy px-4 text-sm font-medium text-white shadow-sm hover:bg-navy/90"
-          >
-            {t("campaigns.new")}
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/w/${slug}/settings/business-profile`}
+              className="inline-flex h-10 items-center rounded-lg border border-border px-4 text-sm font-medium text-navy hover:border-brand-blue/30"
+            >
+              {t("businessProfile.nav")}
+            </Link>
+            <Link
+              href={`/w/${slug}/campaigns/new`}
+              className="inline-flex h-10 items-center rounded-lg bg-navy px-4 text-sm font-medium text-white shadow-sm hover:bg-navy/90"
+            >
+              {t("campaigns.new")}
+            </Link>
+          </div>
         </div>
+
+        {!profileComplete && (
+          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {t("businessProfile.qualityNotice")}{" "}
+            <Link href={`/w/${slug}/settings/business-profile`} className="font-medium underline">
+              {t("businessProfile.incompleteLink")}
+            </Link>
+          </div>
+        )}
 
         {deleteError && (
           <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -130,7 +155,7 @@ export default function CampaignListPage() {
                   </p>
                 </Link>
                 <div className="flex shrink-0 items-center gap-2">
-                  <StatusBadge status={c.status} />
+                  <StatusBadge status={c.businessStatus ?? c.status} />
                   {(c.canDelete ?? isCampaignDeletable(c.status)) && (
                     <button
                       type="button"

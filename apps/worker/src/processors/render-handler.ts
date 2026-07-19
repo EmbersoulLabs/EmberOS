@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { mkdir, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, schema, resolveBrandProfileForWorkspace } from "@ceo-agent/db";
 import { runComplianceAfterRender, maybeFinalizeAutoClipTask, maybeTriggerPendingTaskExport } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
@@ -12,7 +12,6 @@ import {
   resolveAutoClipSourceAsset,
   mergeStoredRendition,
   profileKeyForDownloadResolution,
-  BrandProfileSchema,
   hexToAssColor,
   resolveRenderPreferences,
   stampRenderPreferences,
@@ -183,7 +182,11 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     .from(schema.workspaces)
     .where(eq(schema.workspaces.id, data.workspaceId))
     .limit(1);
-  const brandProfile = BrandProfileSchema.safeParse(workspace?.brandProfile ?? {}).data;
+  const brandProfile = await resolveBrandProfileForWorkspace(
+    workspace!.orgId,
+    data.workspaceId,
+    workspace?.brandProfile
+  );
   const cacheStoragePath = STORAGE_PATHS.renderCache(
     data.workspaceId,
     data.campaignId,

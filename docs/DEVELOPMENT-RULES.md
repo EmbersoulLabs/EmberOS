@@ -150,6 +150,21 @@ No step may be skipped.
 
 ---
 
+# Sprint Scope Rule
+
+Each Sprint must have exactly one primary objective.
+
+A Sprint must not introduce unrelated features.
+
+If additional work is discovered during implementation:
+
+- Record it.
+- Schedule it for a future Sprint.
+
+Do not expand the current Sprint scope without explicit approval.
+
+---
+
 # Git Rules
 
 Never use

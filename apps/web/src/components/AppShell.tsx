@@ -40,6 +40,12 @@ function resolveBackHref(pathname: string): string | null {
     if (rest[2] === "task") return `/w/${slug}/campaigns/${rest[1]}`;
   }
 
+  if (rest[0] === "settings") {
+    if (rest[1] === "business-profile") return `/w/${slug}/campaigns`;
+  }
+
+  if (rest[0] === "business-profile") return `/w/${slug}/settings/business-profile`;
+
   if (rest[0] === "creatives") {
     if (rest[2] === "export") return `/w/${slug}/creatives/${rest[1]}`;
     if (rest.length === 2) return `/w/${slug}/campaigns`;

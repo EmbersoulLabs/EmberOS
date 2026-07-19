@@ -1,5 +1,5 @@
 /**
- * Upload EmberSoul brand logo to Supabase Storage and set workspace brandProfile.logoUrl.
+ * Upload EmberSoul brand logo to Supabase Storage and set business_profiles.logo.
  *
  * Usage:
  *   pnpm upload:brand-logo
@@ -13,8 +13,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import { eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
-import { STORAGE_PATHS, type BrandProfile } from "@ceo-agent/shared";
+import { getDb, schema, ensureBusinessProfileForWorkspace } from "@ceo-agent/db";
+import { STORAGE_PATHS } from "@ceo-agent/shared";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "../../..");
@@ -86,16 +86,11 @@ async function main() {
     const storagePath = STORAGE_PATHS.brandLogo(ws.id, filename);
     const { publicUrl } = await uploadToStorage(storagePath, fileBuffer, contentType);
 
-    const existing = (ws.brandProfile ?? {}) as BrandProfile;
-    const brandProfile: BrandProfile = {
-      ...existing,
-      logoUrl: storagePath,
-    };
-
+    await ensureBusinessProfileForWorkspace(ws.orgId, ws.id);
     await db
-      .update(schema.workspaces)
-      .set({ brandProfile })
-      .where(eq(schema.workspaces.id, ws.id));
+      .update(schema.businessProfiles)
+      .set({ logo: storagePath, updatedAt: new Date() })
+      .where(eq(schema.businessProfiles.workspaceId, ws.id));
 
     console.log(`✓ ${ws.name} (${ws.slug})`);
     console.log(`  storage: ${storagePath}`);

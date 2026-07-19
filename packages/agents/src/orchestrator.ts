@@ -1,11 +1,10 @@
 import { eq, and } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, schema, resolveBrandProfileForWorkspace } from "@ceo-agent/db";
 import { enqueueRender } from "@ceo-agent/queue";
 import {
   CEO_MAX_RETRIES,
   normalizeStrategyPlan,
   strategyObjectives,
-  type BrandProfile,
   type StepProgress,
   parseCampaignCreativeBrief,
   buildVideoAnalysisPrompt,
@@ -116,7 +115,11 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     .where(eq(schema.workspaces.id, task.workspaceId))
     .limit(1);
 
-  const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
+  const brandProfile = await resolveBrandProfileForWorkspace(
+    workspace!.orgId,
+    task.workspaceId,
+    workspace?.brandProfile
+  );
   const assets = await db
     .select()
     .from(schema.assets)
@@ -478,7 +481,11 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
     .from(schema.workspaces)
     .where(eq(schema.workspaces.id, task.workspaceId))
     .limit(1);
-  const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
+  const brandProfile = await resolveBrandProfileForWorkspace(
+    workspace!.orgId,
+    task.workspaceId,
+    workspace?.brandProfile
+  );
   const variants = (creative.copyVariants ?? []) as import("@ceo-agent/shared").CopyVariant[];
   const editPlan = creative.editPlan as import("@ceo-agent/shared").EditPlan | null;
   const subtitles = editPlan?.subtitles?.map((s) => s.text) ?? [];
@@ -638,7 +645,11 @@ export async function retryPipelineStep(
     const hookSet =
       (task.hooksJson as HookSet | null) ??
       (progress?.hook_generate?.output as HookSet);
-    const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
+    const brandProfile = await resolveBrandProfileForWorkspace(
+    workspace!.orgId,
+    task.workspaceId,
+    workspace?.brandProfile
+  );
     const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
 
     const copyMix = resolveCopyMix(platforms);

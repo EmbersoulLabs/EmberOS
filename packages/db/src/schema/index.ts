@@ -7,6 +7,7 @@ import {
   integer,
   numeric,
   bigint,
+  boolean,
   unique,
   index,
 } from "drizzle-orm/pg-core";
@@ -69,6 +70,62 @@ export const workspaceMembers = pgTable(
   (t) => [unique().on(t.workspaceId, t.userId)]
 );
 
+export const businessProfiles = pgTable(
+  "business_profiles",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    companyName: text("company_name"),
+    industryId: text("industry_id"),
+    industryDisplayName: text("industry_display_name"),
+    industryCustomValue: text("industry_custom_value"),
+    services: text("services").array().notNull().default([]),
+    businessDescription: text("business_description"),
+    targetAudience: text("target_audience"),
+    businessHours: jsonb("business_hours").$type<import("@ceo-agent/shared").BusinessHours>().default([]),
+    businessEmail: text("business_email"),
+    businessPhone: text("business_phone"),
+    whatsappBusiness: text("whatsapp_business"),
+    website: text("website"),
+    facebook: text("facebook"),
+    instagram: text("instagram"),
+    tiktok: text("tiktok"),
+    youtube: text("youtube"),
+    redNote: text("red_note"),
+    linkedIn: text("linkedin"),
+    country: text("country"),
+    stateProvince: text("state_province"),
+    city: text("city"),
+    address: text("address"),
+    postalCode: text("postal_code"),
+    timezone: text("timezone"),
+    brandPersonality: text("brand_personality").array().notNull().default([]),
+    brandStyle: text("brand_style").array().notNull().default([]),
+    brandValues: text("brand_values").array().notNull().default([]),
+    brandKeywords: text("brand_keywords").array().notNull().default([]),
+    logo: text("logo"),
+    brandColors: text("brand_colors").array().notNull().default([]),
+    brandFonts: text("brand_fonts").array().notNull().default([]),
+    brandImages: text("brand_images").array().notNull().default([]),
+    supportedLanguages: text("supported_languages").array().notNull().default([]),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdBy: uuid("created_by"),
+    updatedBy: uuid("updated_by"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    version: integer("version").notNull().default(1),
+  },
+  (t) => [
+    unique().on(t.workspaceId),
+    index("business_profiles_workspace_idx").on(t.workspaceId),
+  ]
+);
+
 export const campaigns = pgTable(
   "campaigns",
   {
@@ -79,6 +136,9 @@ export const campaigns = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
+    companyProfileId: uuid("company_profile_id").references(() => businessProfiles.id, {
+      onDelete: "set null",
+    }),
     name: text("name").notNull(),
     goal: text("goal"),
     platforms: text("platforms").array().notNull().default([]),
@@ -86,17 +146,76 @@ export const campaigns = pgTable(
     strategyJson: jsonb("strategy_json").$type<Record<string, unknown>>(),
     objectives: text("objectives").array().default([]),
     status: text("status").notNull().default("draft"),
+    businessStatus: text("business_status").notNull().default("draft"),
+    description: text("description"),
+    targetAudienceOverride: text("target_audience_override"),
+    campaignObjectiveId: text("campaign_objective_id"),
+    campaignObjectiveCustom: text("campaign_objective_custom"),
     campaignBrief: text("campaign_brief"),
+    outputLanguage: text("output_language"),
+    subtitleLanguage: text("subtitle_language"),
+    ctaLanguage: text("cta_language"),
+    hashtagLanguage: text("hashtag_language"),
     voicePreset: text("voice_preset").default("auto"),
     contentStyle: text("content_style"),
     campaignGoal: text("campaign_goal"),
     bgmPreference: text("bgm_preference").default("auto"),
+    tags: text("tags").array().notNull().default([]),
+    folder: text("folder"),
+    isFavorite: boolean("is_favorite").notNull().default(false),
+    assignedTo: uuid("assigned_to"),
+    firstGeneratedAt: timestamp("first_generated_at", { withTimezone: true }),
+    lastGeneratedAt: timestamp("last_generated_at", { withTimezone: true }),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    marketingPackageId: uuid("marketing_package_id"),
+    externalAssetUrl: text("external_asset_url"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+    version: integer("version").notNull().default(1),
     createdBy: uuid("created_by"),
+    updatedBy: uuid("updated_by"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    deletedBy: uuid("deleted_by"),
+    purgeAfter: timestamp("purge_after", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("campaigns_workspace_idx").on(t.workspaceId)]
+  (t) => [
+    index("campaigns_workspace_idx").on(t.workspaceId),
+    index("campaigns_business_status_idx").on(t.workspaceId, t.businessStatus),
+    index("campaigns_deleted_at_idx").on(t.workspaceId, t.deletedAt),
+  ]
+);
+
+export const marketingPackages = pgTable(
+  "marketing_packages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .unique()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    version: integer("version").notNull().default(1),
+    strategyRef: jsonb("strategy_ref").$type<Record<string, unknown>>(),
+    reportRef: jsonb("report_ref").$type<Record<string, unknown>>(),
+    hookRef: text("hook_ref"),
+    captionRef: text("caption_ref"),
+    ctaRef: text("cta_ref"),
+    hashtagsRef: jsonb("hashtags_ref").$type<string[]>(),
+    subtitleRef: text("subtitle_ref"),
+    videoRef: text("video_ref"),
+    marketingScore: numeric("marketing_score"),
+    userEdited: jsonb("user_edited").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("marketing_packages_workspace_idx").on(t.workspaceId)]
 );
 
 export const assets = pgTable(
@@ -348,6 +467,21 @@ export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
   organization: one(organizations, { fields: [workspaces.orgId], references: [organizations.id] }),
   members: many(workspaceMembers),
   campaigns: many(campaigns),
+  businessProfile: one(businessProfiles, {
+    fields: [workspaces.id],
+    references: [businessProfiles.workspaceId],
+  }),
+}));
+
+export const businessProfilesRelations = relations(businessProfiles, ({ one }) => ({
+  workspace: one(workspaces, {
+    fields: [businessProfiles.workspaceId],
+    references: [workspaces.id],
+  }),
+  organization: one(organizations, {
+    fields: [businessProfiles.orgId],
+    references: [organizations.id],
+  }),
 }));
 
 export const campaignsRelations = relations(campaigns, ({ one, many }) => ({

@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { PHASE1_PLATFORMS } from "@ceo-agent/shared/platform-specs";
-import { MAX_SOURCE_VIDEOS, MAX_CAMPAIGN_IMAGES, MAX_COMBINED_SOURCE_DURATION_SEC, MAX_UPLOAD_DURATION_SEC } from "@ceo-agent/shared";
+import { MAX_SOURCE_VIDEOS, MAX_CAMPAIGN_IMAGES, MAX_COMBINED_SOURCE_DURATION_SEC, MAX_UPLOAD_DURATION_SEC, defaultCampaignLanguages, type ContentLocale } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 import { resolveContentLocaleForRun, getRenderPreferencesPayload } from "@/lib/preferences";
 import { maxUploadRisk } from "@/lib/upload-risk";
@@ -13,6 +14,13 @@ import {
   EMPTY_BRIEF_FORM,
   type CampaignBriefFormValues,
 } from "@/components/campaign/CampaignBriefForm";
+import {
+  CampaignWizardStepper,
+  CampaignObjectiveFields,
+  CampaignLanguageFields,
+  WIZARD_STEPS,
+  type WizardStep,
+} from "@/components/campaign/CampaignWizardSteps";
 
 function classifyUploadFile(file: File): "video" | "image" {
   if (file.type.startsWith("video/")) return "video";
@@ -111,6 +119,30 @@ export default function CampaignWizardPage() {
   const [error, setError] = useState("");
   const [uploadRisk, setUploadRisk] = useState<"low" | "medium" | "high">("low");
   const [pendingCampaignId, setPendingCampaignId] = useState<string | null>(null);
+  const [profileIncomplete, setProfileIncomplete] = useState(false);
+  const [step, setStep] = useState<WizardStep>("name");
+  const [objectiveId, setObjectiveId] = useState("");
+  const [objectiveCustom, setObjectiveCustom] = useState("");
+  const [externalAssetUrl, setExternalAssetUrl] = useState("");
+  const [languages, setLanguages] = useState(() => defaultCampaignLanguages(locale));
+  const suggestedLanguages = locale === "zh"
+    ? { outputLanguage: "zh" as ContentLocale, subtitleLanguage: "zh" as ContentLocale }
+    : undefined;
+
+  useEffect(() => {
+    async function loadProfileStatus() {
+      const meRes = await fetch("/api/me");
+      const me = await meRes.json();
+      const ws = me.workspaces?.find((w: { slug: string }) => w.slug === slug);
+      if (!ws) return;
+      const profileRes = await fetch(`/api/workspaces/${ws.id}/business-profile`);
+      const profileData = await profileRes.json();
+      if (profileRes.ok) {
+        setProfileIncomplete(!profileData.completion?.complete);
+      }
+    }
+    loadProfileStatus();
+  }, [slug]);
 
   function addFiles(incoming: FileList | File[] | null) {
     if (!incoming || incoming.length === 0) return;
@@ -132,6 +164,32 @@ export default function CampaignWizardPage() {
   function removeFile(file: File) {
     const key = fileKey(file);
     setFiles((prev) => prev.filter((f) => fileKey(f) !== key));
+  }
+
+  function canAdvanceFromStep(current: WizardStep): boolean {
+    if (current === "name") return name.trim().length > 0;
+    if (current === "objective") {
+      if (!objectiveId) return false;
+      if (objectiveId === "custom") return objectiveCustom.trim().length > 0;
+      return true;
+    }
+    if (current === "upload") {
+      return files.length > 0 || externalAssetUrl.trim().length > 0;
+    }
+    return true;
+  }
+
+  function goNext() {
+    const index = WIZARD_STEPS.indexOf(step);
+    if (index < WIZARD_STEPS.length - 1 && canAdvanceFromStep(step)) {
+      setStep(WIZARD_STEPS[index + 1]!);
+      setError("");
+    }
+  }
+
+  function goBack() {
+    const index = WIZARD_STEPS.indexOf(step);
+    if (index > 0) setStep(WIZARD_STEPS[index - 1]!);
   }
 
   function togglePlatform(p: string) {
@@ -157,6 +215,10 @@ export default function CampaignWizardPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (step !== "generate") {
+      goNext();
+      return;
+    }
     setLoading(true);
     setError("");
     setUploadStep("");
@@ -174,6 +236,10 @@ export default function CampaignWizardPage() {
           workspaceId: ws.id,
           name,
           platforms,
+          uiLocale: locale,
+          campaignObjectiveId: objectiveId,
+          campaignObjectiveCustom: objectiveId === "custom" ? objectiveCustom : undefined,
+          externalAssetUrl: externalAssetUrl.trim() || undefined,
           campaignBrief: briefForm.campaignBrief.trim() || undefined,
           voicePreset: briefForm.voicePreset,
           contentStyle: briefForm.contentStyle || undefined,
@@ -181,14 +247,24 @@ export default function CampaignWizardPage() {
           bgmPreference: briefForm.bgmPreference,
           bgmStartPreference: briefForm.bgmStartPreference,
           ...getRenderPreferencesPayload(),
+          outputLanguage: languages.outputLanguage,
+          subtitleLanguage: languages.subtitleLanguage,
+          ctaLanguage: languages.ctaLanguage,
+          hashtagLanguage: languages.hashtagLanguage,
         }),
       });
       const campData = await campRes.json();
-      if (!campData.campaign) throw new Error(campData.error ?? t("error.createCampaign"));
+      if (!campData.campaign) {
+        throw new Error(campData.error ?? t("error.createCampaign"));
+      }
+
+      if (campData.warnings?.some((w: { code?: string }) => w.code === "BUSINESS_PROFILE_INCOMPLETE")) {
+        setProfileIncomplete(true);
+      }
 
       const campaignId = campData.campaign.id;
 
-      if (files.length === 0) {
+      if (files.length === 0 && !externalAssetUrl.trim()) {
         throw new Error(t("campaign.uploadRequired"));
       }
 
@@ -312,7 +388,7 @@ export default function CampaignWizardPage() {
       }
 
       setUploadStep("");
-      await runCampaign(campaignId);
+      router.push(`/w/${slug}/campaigns/${campaignId}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "";
       if (msg === "VIDEO_PROBE_TIMEOUT") {
@@ -337,7 +413,19 @@ export default function CampaignWizardPage() {
           <p className="mt-2 text-sm text-ink-secondary">{t("campaign.uploadHint")}</p>
         </div>
 
+        {profileIncomplete && (
+          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {t("businessProfile.qualityNotice")}{" "}
+            <Link href={`/w/${slug}/settings/business-profile`} className="font-medium underline">
+              {t("businessProfile.incompleteLink")}
+            </Link>
+          </div>
+        )}
+
+        <CampaignWizardStepper current={step} />
+
         <form onSubmit={handleSubmit} className="space-y-8">
+          {step === "name" && (
           <section className="brand-card p-6">
             <label className="mb-1.5 block text-sm font-semibold text-navy">{t("campaign.name")}</label>
             <input
@@ -368,9 +456,54 @@ export default function CampaignWizardPage() {
               </div>
             </div>
           </section>
+          )}
 
-          <CampaignBriefForm values={briefForm} onChange={setBriefForm} />
+          {step === "objective" && (
+            <CampaignObjectiveFields
+              objectiveId={objectiveId}
+              customValue={objectiveCustom}
+              onObjectiveId={setObjectiveId}
+              onCustomValue={setObjectiveCustom}
+            />
+          )}
 
+          {step === "brief" && (
+            <CampaignBriefForm values={briefForm} onChange={setBriefForm} />
+          )}
+
+          {step === "language" && (
+            <CampaignLanguageFields
+              languages={languages}
+              suggested={suggestedLanguages}
+              onChange={(field, value) => setLanguages((prev) => ({ ...prev, [field]: value }))}
+              onAcceptSuggestion={() => {
+                if (suggestedLanguages) {
+                  setLanguages((prev) => ({ ...prev, ...suggestedLanguages }));
+                }
+              }}
+            />
+          )}
+
+          {step === "generate" && (
+            <section className="brand-card p-6">
+              <h2 className="text-sm font-semibold text-navy">{t("campaign.workspace.generate.summaryTitle")}</h2>
+              <dl className="mt-4 space-y-2 text-sm">
+                <div className="flex justify-between gap-4">
+                  <dt className="text-ink-secondary">{t("campaign.name")}</dt>
+                  <dd className="font-medium text-navy">{name}</dd>
+                </div>
+                <div className="flex justify-between gap-4">
+                  <dt className="text-ink-secondary">{t("campaign.workspace.overview.assets")}</dt>
+                  <dd className="font-medium text-navy">
+                    {files.length + (externalAssetUrl.trim() ? 1 : 0)}
+                  </dd>
+                </div>
+              </dl>
+              <p className="mt-4 text-xs text-ink-secondary">{t("campaign.wizard.generateHint")}</p>
+            </section>
+          )}
+
+          {step === "upload" && (
           <section className="brand-card p-6">
             <label className="mb-1.5 block text-sm font-semibold text-navy">{t("campaign.upload")}</label>
             <p className="mb-3 text-xs text-ink-secondary">
@@ -474,6 +607,17 @@ export default function CampaignWizardPage() {
                 </ul>
               </>
             )}
+            <label className="mt-6 mb-1.5 block text-sm font-semibold text-navy">
+              {t("campaign.wizard.externalUrl")}
+            </label>
+            <input
+              type="url"
+              value={externalAssetUrl}
+              onChange={(e) => setExternalAssetUrl(e.target.value)}
+              placeholder="https://"
+              className="w-full rounded-xl border border-border px-4 py-2.5 text-sm"
+            />
+            <p className="mt-1 text-xs text-ink-secondary">{t("campaign.wizard.externalUrlHint")}</p>
             {uploadRisk === "high" && (
               <p className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-700">
                 {t("campaign.uploadRiskHigh")}
@@ -485,6 +629,7 @@ export default function CampaignWizardPage() {
               </p>
             )}
           </section>
+          )}
 
           {uploadStep && (
             <p className="rounded-xl border border-brand-blue/20 bg-brand-blue/5 px-4 py-3 text-sm text-brand-blue">
@@ -493,10 +638,31 @@ export default function CampaignWizardPage() {
           )}
 
           {error && (
-            <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
+            <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {error}
+            </p>
           )}
 
-          {pendingCampaignId ? (
+          <div className="flex gap-3">
+            {step !== "name" && (
+              <button
+                type="button"
+                onClick={goBack}
+                className="flex-1 rounded-xl border border-border py-3 text-sm font-semibold text-navy"
+              >
+                {t("campaign.wizard.back")}
+              </button>
+            )}
+            {step !== "generate" ? (
+              <button
+                type="button"
+                disabled={!canAdvanceFromStep(step)}
+                onClick={goNext}
+                className="flex-1 brand-btn-primary py-3 disabled:opacity-50"
+              >
+                {t("campaign.wizard.next")}
+              </button>
+            ) : pendingCampaignId ? (
             <button
               type="button"
               disabled={loading}
@@ -510,7 +676,7 @@ export default function CampaignWizardPage() {
                   setLoading(false);
                 }
               }}
-              className="w-full rounded-xl border border-amber-300 bg-amber-50 py-3 text-sm font-semibold text-amber-900 disabled:opacity-50"
+              className="flex-1 rounded-xl border border-amber-300 bg-amber-50 py-3 text-sm font-semibold text-amber-900 disabled:opacity-50"
             >
               {loading ? t("campaign.creating") : t("campaign.continueAnyway")}
             </button>
@@ -518,11 +684,12 @@ export default function CampaignWizardPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full brand-btn-primary py-3 disabled:opacity-50"
+              className="flex-1 brand-btn-primary py-3 disabled:opacity-50"
             >
-              {loading ? (uploadStep || t("campaign.creating")) : t("campaign.submit")}
+              {loading ? (uploadStep || t("campaign.creating")) : t("campaign.wizard.createAndOpen")}
             </button>
           )}
+          </div>
         </form>
       </div>
     </AppShell>
