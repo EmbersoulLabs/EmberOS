@@ -34,6 +34,7 @@ import {
 const LANGUAGE_SUGGESTIONS = ["English", "Chinese", "Bahasa Melayu", "Japanese"];
 const VOICE_SUGGESTIONS = ["Professional", "Friendly", "Luxury", "Playful", "Bold", "Warm"];
 const STYLE_SUGGESTIONS = ["Modern", "Minimal", "Classic", "Vibrant", "Elegant", "Casual"];
+const VALUE_SUGGESTIONS = ["Premium", "Reliable", "Luxury", "Friendly", "Handmade"];
 
 type ContactFieldKey =
   | "website"
@@ -765,20 +766,14 @@ export function BusinessProfileEditor({
         incomplete={cardIncomplete("brandIdentity")}
         saveFailed={saveStatus === "failed" || saveStatus === "invalid"}
       >
-        <Field label={t("businessProfile.field.logo")} hint={t("businessProfile.uploadReferenceHint")}>
-          <input
-            className={inputClass}
-            value={values.logo}
-            onChange={(e) => patch({ logo: e.target.value })}
-            placeholder={t("businessProfile.storagePathPlaceholder")}
-          />
+        <Field label={t("businessProfile.field.logo")} hint={t("businessProfile.logoUploadHint")}>
+          <button
+            type="button"
+            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-navy hover:border-brand-blue/40"
+          >
+            {t("businessProfile.logoUploadButton")}
+          </button>
         </Field>
-        <TagChipInput
-          label={t("businessProfile.field.brandColors")}
-          values={values.brandColors}
-          onChange={(brandColors) => patch({ brandColors })}
-          placeholder="#FF5733"
-        />
         <TagChipInput
           label={t("businessProfile.field.brandStyle")}
           values={values.brandStyle}
@@ -795,6 +790,8 @@ export function BusinessProfileEditor({
           label={t("businessProfile.field.brandValues")}
           values={values.brandValues}
           onChange={(brandValues) => patch({ brandValues })}
+          placeholder={t("businessProfile.tagPlaceholder")}
+          suggestions={VALUE_SUGGESTIONS}
         />
         <TagChipInput
           label={t("businessProfile.field.brandKeywords")}
@@ -802,24 +799,6 @@ export function BusinessProfileEditor({
           onChange={(brandKeywords) => patch({ brandKeywords })}
           placeholder={t("businessProfile.tagPlaceholder")}
           required
-        />
-      </ProfileCard>
-
-      <ProfileCard
-        title={t("businessProfile.section.assets")}
-        saveFailed={saveStatus === "failed" || saveStatus === "invalid"}
-      >
-        <p className="text-xs text-ink-secondary">{t("businessProfile.assetsHint")}</p>
-        <TagChipInput
-          label={t("businessProfile.field.brandFonts")}
-          values={values.brandFonts}
-          onChange={(brandFonts) => patch({ brandFonts })}
-        />
-        <TagChipInput
-          label={t("businessProfile.field.brandImages")}
-          values={values.brandImages}
-          onChange={(brandImages) => patch({ brandImages })}
-          placeholder={t("businessProfile.storagePathPlaceholder")}
         />
       </ProfileCard>
 

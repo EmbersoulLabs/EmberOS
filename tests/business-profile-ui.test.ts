@@ -182,6 +182,38 @@ describe("business-profile UI helpers", () => {
     }
   });
 
+  it("keeps Business Profile identity UI free of developer asset wording", () => {
+    const editorSource = readFileSync(
+      resolve(__dirname, "../apps/web/src/components/business-profile/BusinessProfileEditor.tsx"),
+      "utf8"
+    );
+    const enMessages = JSON.parse(
+      readFileSync(resolve(__dirname, "../packages/shared/src/i18n/locales/en.json"), "utf8")
+    ) as Record<string, string>;
+
+    expect(editorSource).toContain("businessProfile.logoUploadButton");
+    expect(editorSource).not.toContain("businessProfile.storagePathPlaceholder");
+    expect(editorSource).not.toContain("businessProfile.section.assets");
+    expect(editorSource).not.toContain("businessProfile.field.brandColors");
+    expect(editorSource).not.toContain("businessProfile.field.brandFonts");
+    expect(editorSource).not.toContain("businessProfile.field.brandImages");
+    expect(enMessages["businessProfile.logoUploadButton"]).toBe("Upload Logo");
+    expect(enMessages["businessProfile.logoUploadHint"]).toContain("Optional");
+    expect(Object.keys(enMessages)).not.toEqual(
+      expect.arrayContaining([
+        "businessProfile.assetsHint",
+        "businessProfile.field.brandColors",
+        "businessProfile.field.brandFonts",
+        "businessProfile.field.brandImages",
+        "businessProfile.section.assets",
+        "businessProfile.storagePathPlaceholder",
+        "businessProfile.uploadArea.pendingSpec",
+        "businessProfile.uploadArea.title",
+        "businessProfile.uploadReferenceHint",
+      ])
+    );
+  });
+
   it("maps Accept & Save AI draft onto form fields without implying auto-overwrite", () => {
     const update = businessProfileAiAnalysisToUpdate({
       brandSummary: "Edited summary before save.",
