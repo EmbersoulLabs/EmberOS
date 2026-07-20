@@ -47,7 +47,17 @@ function resolveBackHref(pathname: string): string | null {
 
   if (rest[0] === "reviews") return `/w/${slug}/campaigns`;
 
+  if (rest[0] === "settings") return `/w/${slug}/campaigns`;
+
+  if (rest[0] === "business-profile") return `/w/${slug}/campaigns`;
+
   return "/workspaces";
+}
+
+function workspaceSlugFromPath(pathname: string): string | null {
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts[0] === "w" && parts[1]) return parts[1];
+  return null;
 }
 
 function HomeIcon() {
@@ -127,6 +137,14 @@ export function AppShell({
   const showHome = resolvedHome !== null && pathname !== resolvedHome;
   const showHomeButton = showHome && (!canGoBack || resolvedBack !== resolvedHome);
   const brandHref = pathname.startsWith("/admin") ? "/admin" : "/workspaces";
+  const workspaceSlug = workspaceSlugFromPath(pathname);
+  const businessProfileHref = workspaceSlug
+    ? `/w/${workspaceSlug}/settings/business-profile`
+    : null;
+  const businessProfileActive =
+    Boolean(workspaceSlug) &&
+    (pathname === businessProfileHref ||
+      pathname === `/w/${workspaceSlug}/business-profile`);
 
   useEffect(() => {
     fetch("/api/me")
@@ -174,6 +192,19 @@ export function AppShell({
                   className="rounded-lg bg-white/10 px-2 py-1.5 text-[11px] font-medium text-white ring-1 ring-white/15 hover:bg-white/15 sm:px-2.5 sm:text-xs"
                 >
                   {t("nav.admin")}
+                </Link>
+              )}
+              {businessProfileHref && (
+                <Link
+                  href={businessProfileHref}
+                  aria-current={businessProfileActive ? "page" : undefined}
+                  className={`rounded-lg px-2 py-1.5 text-[11px] font-medium ring-1 sm:px-2.5 sm:text-xs ${
+                    businessProfileActive
+                      ? "bg-white text-navy ring-white"
+                      : "bg-white/10 text-white ring-white/15 hover:bg-white/15"
+                  }`}
+                >
+                  {t("settings.title")}
                 </Link>
               )}
               {workspaceName && (
