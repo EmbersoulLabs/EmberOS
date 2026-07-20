@@ -8,6 +8,7 @@ export * from "./content-pack-export";
 export * from "./copy-export";
 export * from "./types/index";
 export * from "./types/business-profile";
+export * from "./types/business-profile-ai";
 export * from "./dictionaries/industry-dictionary";
 export * from "./business-profile/business-hours";
 export * from "./business-profile/timezone";
