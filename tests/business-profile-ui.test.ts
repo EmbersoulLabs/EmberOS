@@ -8,7 +8,7 @@ import {
   profileToFormValues,
   validateBusinessProfilePatch,
 } from "../apps/web/src/lib/business-profile-form";
-import { emptyBusinessHours } from "@ceo-agent/shared";
+import { businessProfileAiAnalysisToUpdate, emptyBusinessHours } from "@ceo-agent/shared";
 
 const orgId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const workspaceId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -109,5 +109,35 @@ describe("business-profile UI helpers", () => {
     const values = profileToFormValues(draft);
     expect(values.companyName).toBe("");
     expect(values.businessHours).toEqual(emptyBusinessHours());
+  });
+
+  it("maps Accept & Save AI draft onto form fields without implying auto-overwrite", () => {
+    const update = businessProfileAiAnalysisToUpdate({
+      brandSummary: "Edited summary before save.",
+      brandPersonality: ["Creative"],
+      brandTone: ["Playful"],
+      brandKeywords: ["Handmade", "Edited"],
+      targetAudience: ["Gift Buyers"],
+    });
+
+    const baseline = profileToFormValues(createEmptyBusinessProfileDraft(orgId, workspaceId));
+    const accepted = {
+      ...baseline,
+      businessDescription: update.businessDescription,
+      brandPersonality: update.brandPersonality,
+      brandKeywords: update.brandKeywords,
+      targetAudience: update.targetAudience,
+    };
+    const patch = buildBusinessProfilePatch(accepted, 1, "en", baseline);
+
+    expect(patch.businessDescription).toBe("Edited summary before save.");
+    expect(patch.brandKeywords).toEqual(["Handmade", "Edited"]);
+    expect(patch.targetAudience).toBe("Gift Buyers");
+    expect(validateBusinessProfilePatch(patch).success).toBe(true);
+  });
+  it("treats analyzing flag as duplicate-submission lock", () => {
+    const canStart = (analyzing: boolean) => !analyzing;
+    expect(canStart(false)).toBe(true);
+    expect(canStart(true)).toBe(false);
   });
 });

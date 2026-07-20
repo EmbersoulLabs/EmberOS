@@ -9,6 +9,9 @@ import {
   INDUSTRY_DICTIONARY,
   normalizeBusinessProfileRecord,
   resolveSuggestedTimezone,
+  businessProfileAiAnalysisToUpdate,
+  validateBusinessProfileAiAnalysis,
+  type BusinessProfileAiAnalysis,
   type BusinessProfileCardId,
   type BusinessProfileRecord,
   type BusinessProfileRequiredField,
@@ -19,6 +22,7 @@ import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import { TagChipInput } from "./TagChipInput";
 import { BusinessHoursEditor } from "./BusinessHoursEditor";
 import { ProfileCard } from "./ProfileCard";
+import { BusinessProfileAiPanel } from "./BusinessProfileAiPanel";
 import {
   buildBusinessProfilePatch,
   extractApiWarnings,
@@ -141,7 +145,12 @@ export function BusinessProfileEditor({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [apiWarnings, setApiWarnings] = useState(initialWarnings);
   const [retryToken, setRetryToken] = useState(0);
-  const [analyzeNotice, setAnalyzeNotice] = useState(false);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [aiDraft, setAiDraft] = useState<BusinessProfileAiAnalysis | null>(null);
+  const [aiConfidence, setAiConfidence] = useState<number | null>(null);
+  const [aiSourcesUsed, setAiSourcesUsed] = useState<string[]>([]);
+  const [aiMissingSources, setAiMissingSources] = useState<string[]>([]);
+  const [aiError, setAiError] = useState<string | null>(null);
   const skipSaveRef = useRef(true);
   const conflictRef = useRef(false);
   const valuesRef = useRef(values);
@@ -246,6 +255,105 @@ export function BusinessProfileEditor({
     }
   }, [workspaceId, locale, t, onSynced]);
 
+  const runAiAnalyze = useCallback(async () => {
+    if (aiAnalyzing) return;
+    setAiAnalyzing(true);
+    setAiError(null);
+    try {
+      const current = valuesRef.current;
+      const isCustom = current.industryId === INDUSTRY_CUSTOM_ID;
+      const industryEntry = INDUSTRY_DICTIONARY.find((e) => e.id === current.industryId);
+      const res = await fetch(`/api/workspaces/${workspaceId}/business-profile/analyze`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyName: current.companyName || null,
+          industryId: current.industryId || null,
+          industryDisplayName: isCustom
+            ? null
+            : (industryEntry?.labels.en ?? current.industryId) || null,
+          industryCustomValue: isCustom ? current.industryCustomValue || null : null,
+          services: current.services,
+          businessDescription: current.businessDescription || null,
+          targetAudience: current.targetAudience || null,
+          website: current.website || null,
+          facebook: current.facebook || null,
+          instagram: current.instagram || null,
+          tiktok: current.tiktok || null,
+          youtube: current.youtube || null,
+          redNote: current.redNote || null,
+          linkedIn: current.linkedIn || null,
+          logo: current.logo || null,
+          brandColors: current.brandColors,
+          brandKeywords: current.brandKeywords,
+          brandPersonality: current.brandPersonality,
+          country: current.country || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAiError(data.error ?? t("businessProfile.ai.error"));
+        // Keep prior draft if re-analyze fails so saved profile is untouched.
+        if (!aiDraft) setAiDraft(null);
+        return;
+      }
+
+      const checked = validateBusinessProfileAiAnalysis({
+        brandSummary: data.brandSummary,
+        brandPersonality: data.brandPersonality,
+        brandTone: data.brandTone,
+        brandKeywords: data.brandKeywords,
+        targetAudience: data.targetAudience,
+      });
+      if (!checked.ok) {
+        setAiError(t("businessProfile.ai.error"));
+        return;
+      }
+
+      setAiDraft(checked.analysis);
+      setAiConfidence(typeof data.confidence === "number" ? data.confidence : null);
+      setAiSourcesUsed(Array.isArray(data.sourcesUsed) ? data.sourcesUsed : []);
+      setAiMissingSources(Array.isArray(data.missingSources) ? data.missingSources : []);
+    } catch {
+      setAiError(t("businessProfile.ai.error"));
+    } finally {
+      setAiAnalyzing(false);
+    }
+  }, [aiAnalyzing, aiDraft, t, workspaceId]);
+
+  const acceptAiAnalysis = useCallback(() => {
+    if (!aiDraft) return;
+    const checked = validateBusinessProfileAiAnalysis(aiDraft);
+    if (!checked.ok) {
+      setAiError(checked.message || t("businessProfile.ai.error"));
+      return;
+    }
+    const update = businessProfileAiAnalysisToUpdate(checked.analysis);
+    if (conflictRef.current) return;
+
+    // Apply into form + refs synchronously so persist sees accepted values.
+    // Never wrote to the API until this explicit Accept & Save.
+    const nextValues: BusinessProfileFormValues = {
+      ...valuesRef.current,
+      businessDescription: update.businessDescription,
+      brandPersonality: update.brandPersonality,
+      brandKeywords: update.brandKeywords,
+      targetAudience: update.targetAudience,
+    };
+    valuesRef.current = nextValues;
+    setValues(nextValues);
+    setFieldErrors({});
+    setSaveStatus("idle");
+    setAiDraft(null);
+    setAiError(null);
+    setAiConfidence(null);
+    setAiSourcesUsed([]);
+    setAiMissingSources([]);
+    window.setTimeout(() => {
+      void persist();
+    }, 0);
+  }, [aiDraft, persist, t]);
+
   useEffect(() => {
     if (skipSaveRef.current) {
       skipSaveRef.current = false;
@@ -316,14 +424,46 @@ export function BusinessProfileEditor({
             </button>
             <button
               type="button"
-              onClick={() => setAnalyzeNotice(true)}
-              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-navy hover:border-brand-blue/40"
+              onClick={() => void runAiAnalyze()}
+              disabled={aiAnalyzing}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-navy hover:border-brand-blue/40 disabled:opacity-50"
             >
-              {t("businessProfile.analyzeBusiness")}
+              {aiAnalyzing
+                ? t("businessProfile.ai.loading")
+                : t("businessProfile.ai.analyze")}
             </button>
             <LocaleSwitcher variant="light" />
           </div>
         </div>
+
+        {(aiDraft || aiAnalyzing || aiError) && (
+          <BusinessProfileAiPanel
+            draft={
+              aiDraft ?? {
+                brandSummary: "",
+                brandPersonality: [],
+                brandTone: [],
+                brandKeywords: [],
+                targetAudience: [],
+              }
+            }
+            confidence={aiConfidence}
+            sourcesUsed={aiSourcesUsed}
+            missingSources={aiMissingSources}
+            analyzing={aiAnalyzing}
+            error={aiError}
+            onChange={(next) => setAiDraft(next)}
+            onReanalyze={() => void runAiAnalyze()}
+            onAcceptSave={acceptAiAnalysis}
+            onDismiss={() => {
+              setAiDraft(null);
+              setAiError(null);
+              setAiConfidence(null);
+              setAiSourcesUsed([]);
+              setAiMissingSources([]);
+            }}
+          />
+        )}
 
         {qualityWarnings.length > 0 && (
           <div
@@ -387,12 +527,6 @@ export function BusinessProfileEditor({
               {t("businessProfile.retry")}
             </button>
           </div>
-        )}
-
-        {analyzeNotice && (
-          <p className="mt-4 rounded-lg border border-border bg-surface-muted/50 px-3 py-2 text-sm text-ink-secondary">
-            {t("businessProfile.analyzePending")}
-          </p>
         )}
       </header>
 
