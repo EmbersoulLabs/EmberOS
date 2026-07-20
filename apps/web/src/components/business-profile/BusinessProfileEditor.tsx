@@ -35,6 +35,36 @@ const LANGUAGE_SUGGESTIONS = ["English", "Chinese", "Bahasa Melayu", "Japanese"]
 const VOICE_SUGGESTIONS = ["Professional", "Friendly", "Luxury", "Playful", "Bold", "Warm"];
 const STYLE_SUGGESTIONS = ["Modern", "Minimal", "Classic", "Vibrant", "Elegant", "Casual"];
 
+type ContactFieldKey =
+  | "website"
+  | "whatsappBusiness"
+  | "facebook"
+  | "instagram"
+  | "tiktok"
+  | "youtube"
+  | "redNote"
+  | "linkedIn";
+
+const CONTACT_HINT_KEYS: Record<ContactFieldKey, TranslationKey> = {
+  website: "businessProfile.hint.website",
+  whatsappBusiness: "businessProfile.hint.whatsappBusiness",
+  facebook: "businessProfile.hint.facebook",
+  instagram: "businessProfile.hint.instagram",
+  tiktok: "businessProfile.hint.tiktok",
+  youtube: "businessProfile.hint.youtube",
+  redNote: "businessProfile.urlHint",
+  linkedIn: "businessProfile.urlHint",
+};
+
+const CONTACT_PLACEHOLDER_KEYS: Partial<Record<ContactFieldKey, TranslationKey>> = {
+  website: "businessProfile.placeholder.website",
+  whatsappBusiness: "businessProfile.placeholder.whatsappBusiness",
+  facebook: "businessProfile.placeholder.facebook",
+  instagram: "businessProfile.placeholder.instagram",
+  tiktok: "businessProfile.placeholder.tiktok",
+  youtube: "businessProfile.placeholder.youtube",
+};
+
 const TIMEZONE_OPTIONS = [
   "Asia/Singapore",
   "Asia/Kuala_Lumpur",
@@ -387,6 +417,11 @@ export function BusinessProfileEditor({
           ]
         : [];
 
+  function contactPlaceholder(key: ContactFieldKey): string | undefined {
+    const translationKey = CONTACT_PLACEHOLDER_KEYS[key];
+    return translationKey ? t(translationKey) : undefined;
+  }
+
   return (
     <div className="space-y-6">
       <header className="rounded-xl border border-border/80 bg-surface p-4 shadow-card sm:p-5">
@@ -626,11 +661,16 @@ export function BusinessProfileEditor({
             />
           </Field>
         </div>
-        <Field label={t("businessProfile.field.website")} hint={t("businessProfile.urlHint")} error={fieldErrors.website}>
+        <Field
+          label={t("businessProfile.field.website")}
+          hint={t(CONTACT_HINT_KEYS.website)}
+          error={fieldErrors.website}
+        >
           <input
             className={inputClass}
             value={values.website}
             onChange={(e) => patch({ website: e.target.value })}
+            placeholder={contactPlaceholder("website")}
           />
         </Field>
         <div className="grid gap-5 sm:grid-cols-2">
@@ -648,13 +688,14 @@ export function BusinessProfileEditor({
             <Field
               key={key}
               label={t(`businessProfile.field.${key}` as TranslationKey)}
-              hint={t("businessProfile.urlHint")}
+              hint={t(CONTACT_HINT_KEYS[key])}
               error={fieldErrors[key]}
             >
               <input
                 className={inputClass}
                 value={val}
                 onChange={(e) => patch({ [key]: e.target.value })}
+                placeholder={contactPlaceholder(key)}
               />
             </Field>
           ))}

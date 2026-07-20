@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   buildBusinessProfilePatch,
   classifyBusinessProfileHttpStatus,
@@ -8,7 +10,11 @@ import {
   profileToFormValues,
   validateBusinessProfilePatch,
 } from "../apps/web/src/lib/business-profile-form";
-import { businessProfileAiAnalysisToUpdate, emptyBusinessHours } from "@ceo-agent/shared";
+import {
+  assessBusinessProfileCompletion,
+  businessProfileAiAnalysisToUpdate,
+  emptyBusinessHours,
+} from "@ceo-agent/shared";
 
 const orgId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const workspaceId = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -109,6 +115,71 @@ describe("business-profile UI helpers", () => {
     const values = profileToFormValues(draft);
     expect(values.companyName).toBe("");
     expect(values.businessHours).toEqual(emptyBusinessHours());
+  });
+
+  it("keeps website and social presence fields optional", () => {
+    const baseline = profileToFormValues(createEmptyBusinessProfileDraft(orgId, workspaceId));
+    const values = {
+      ...baseline,
+      companyName: "Acme",
+      industryId: "retail",
+      services: ["Repair"],
+      businessDescription: "Phone repair shop.",
+      targetAudience: "Local phone owners",
+      businessEmail: "hello@acme.test",
+      businessPhone: "+6591234567",
+      country: "Singapore",
+      address: "1 Main Street",
+      postalCode: "123456",
+      brandKeywords: ["repair"],
+      website: "",
+      whatsappBusiness: "",
+      facebook: "",
+      instagram: "",
+      tiktok: "",
+      youtube: "",
+    };
+
+    const completion = assessBusinessProfileCompletion(values);
+    const patch = buildBusinessProfilePatch(values, 1, "en", baseline);
+
+    expect(completion.complete).toBe(true);
+    expect(completion.missing).not.toEqual(
+      expect.arrayContaining([
+        "website",
+        "whatsappBusiness",
+        "facebook",
+        "instagram",
+        "tiktok",
+        "youtube",
+      ])
+    );
+    expect(validateBusinessProfilePatch(patch).success).toBe(true);
+  });
+
+  it("defines platform-specific optional helper copy and examples", () => {
+    const locales = ["en", "ms", "zh"] as const;
+    for (const locale of locales) {
+      const raw = readFileSync(
+        resolve(__dirname, `../packages/shared/src/i18n/locales/${locale}.json`),
+        "utf8"
+      );
+      const messages = JSON.parse(raw) as Record<string, string>;
+
+      expect(messages["businessProfile.hint.website"]).toBeTruthy();
+      expect(messages["businessProfile.hint.whatsappBusiness"]).toBeTruthy();
+      expect(messages["businessProfile.hint.facebook"]).toBeTruthy();
+      expect(messages["businessProfile.hint.instagram"]).toBeTruthy();
+      expect(messages["businessProfile.hint.tiktok"]).toBeTruthy();
+      expect(messages["businessProfile.hint.youtube"]).toBeTruthy();
+      expect(messages["businessProfile.placeholder.website"]).toBe("https://yourbusiness.com");
+      expect(messages["businessProfile.placeholder.whatsappBusiness"]).toBe("https://wa.me/6591234567");
+      expect(messages["businessProfile.placeholder.facebook"]).toBe("https://facebook.com/yourbusiness");
+      expect(messages["businessProfile.placeholder.instagram"]).toBe("https://instagram.com/yourbusiness");
+      expect(messages["businessProfile.placeholder.tiktok"]).toBe("https://tiktok.com/@yourbusiness");
+      expect(messages["businessProfile.placeholder.youtube"]).toBe("https://youtube.com/@yourbusiness");
+      expect(messages["businessProfile.urlHint"]).not.toContain("instagram.com/yourbusiness");
+    }
   });
 
   it("maps Accept & Save AI draft onto form fields without implying auto-overwrite", () => {
