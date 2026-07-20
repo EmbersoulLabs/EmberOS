@@ -212,7 +212,7 @@ describe("POST /api/workspaces (PD-012)", () => {
     expect(body.businessProfile.companyName).toBe("Acme");
     expect(body.businessProfile.country).toBe("Singapore");
     expect(body.businessProfile.industryId).toBe("florist");
-    expect(body.redirectTo).toBe("/w/acme/settings/business-profile");
+    expect(body.redirectTo).toBe("/w/acme/business-profile");
     expect(createWorkspaceWithBusinessProfile).toHaveBeenCalledWith({
       orgId,
       userId,
@@ -257,10 +257,10 @@ describe("POST /api/workspaces (PD-012)", () => {
 });
 
 describe("PD-012 UI create payload helpers", () => {
-  it("builds redirect target for Business Profile settings", () => {
+  it("builds redirect target for direct Business Profile module", () => {
     const slug = "acme-flowers";
-    const redirectTo = `/w/${slug}/settings/business-profile`;
-    expect(redirectTo).toBe("/w/acme-flowers/settings/business-profile");
+    const redirectTo = `/w/${slug}/business-profile`;
+    expect(redirectTo).toBe("/w/acme-flowers/business-profile");
   });
 
   it("does not submit when required form fields are empty", () => {

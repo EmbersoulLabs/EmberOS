@@ -93,7 +93,7 @@ export async function POST(request: Request) {
           industryId: businessProfile.industryId,
           industryDisplayName: businessProfile.industryDisplayName,
         },
-        redirectTo: `/w/${workspace.slug}/settings/business-profile`,
+        redirectTo: `/w/${workspace.slug}/business-profile`,
       },
       201
     );

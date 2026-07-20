@@ -96,7 +96,7 @@ export function AppShell({
   const brandHref = pathname.startsWith("/admin") ? "/admin" : "/workspaces";
   const workspaceSlug = workspaceSlugFromPath(pathname);
   const businessProfileHref = workspaceSlug
-    ? `/w/${workspaceSlug}/settings/business-profile`
+    ? `/w/${workspaceSlug}/business-profile`
     : null;
   const businessProfileActive =
     Boolean(workspaceSlug) &&
@@ -117,8 +117,8 @@ export function AppShell({
     }
     if (businessProfileHref) {
       items.push({
-        id: "settings",
-        label: t("settings.title"),
+        id: "business-profile",
+        label: t("businessProfile.nav"),
         href: businessProfileHref,
         current: businessProfileActive,
       });

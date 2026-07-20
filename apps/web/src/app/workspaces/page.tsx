@@ -144,7 +144,7 @@ export default function WorkspacesPage() {
         const redirectTo =
           typeof data.redirectTo === "string"
             ? data.redirectTo
-            : `/w/${data.workspace.slug}/settings/business-profile`;
+            : `/w/${data.workspace.slug}/business-profile`;
         router.push(redirectTo);
         return;
       }
