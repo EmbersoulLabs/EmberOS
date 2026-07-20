@@ -1,14 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { BRAND } from "@/lib/brand";
 import { EmberLogo } from "@/components/EmberLogo";
-import { createClient } from "@/lib/supabase/client";
 import { useI18n } from "@/lib/i18n/provider";
 import { statusTranslationKey } from "@ceo-agent/shared/i18n";
 import { LocaleSwitcher } from "@/components/LocaleSwitcher";
+import { GlobalNavMenu, useLogoutAction, type GlobalNavItem } from "@/components/GlobalNavMenu";
 
 function resolveHomeHref(pathname: string): string | null {
   if (pathname === "/workspaces") return null;
@@ -60,14 +60,6 @@ function workspaceSlugFromPath(pathname: string): string | null {
   return null;
 }
 
-function HomeIcon() {
-  return (
-    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-      <path d="M10.707 2.293a1 1 0 00-1.414 0l-7 7A1 1 0 003 10.414V17a1 1 0 001 1h4a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1h4a1 1 0 001-1v-6.586a1 1 0 00-.293-.707l-7-7z" />
-    </svg>
-  );
-}
-
 function BackIcon() {
   return (
     <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
@@ -77,41 +69,6 @@ function BackIcon() {
         clipRule="evenodd"
       />
     </svg>
-  );
-}
-
-function LogoutIcon() {
-  return (
-    <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
-      <path
-        fillRule="evenodd"
-        d="M3 3a1 1 0 00-1 1v12a1 1 0 102 0V4a1 1 0 00-1-1zm10.293 9.293a1 1 0 001.414 0l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L14.586 9H7a1 1 0 100 2h7.586l-1.293 1.293z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
-}
-
-function LogoutButton() {
-  const router = useRouter();
-  const { t } = useI18n();
-
-  async function handleLogout() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.replace("/login");
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={handleLogout}
-      aria-label={t("nav.logout")}
-      className="flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-sm text-white/70 transition hover:bg-white/10 hover:text-white sm:px-3"
-    >
-      <LogoutIcon />
-      <span className="hidden sm:inline">{t("nav.logout")}</span>
-    </button>
   );
 }
 
@@ -130,12 +87,12 @@ export function AppShell({
 }) {
   const pathname = usePathname();
   const { t } = useI18n();
+  const handleLogout = useLogoutAction();
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const resolvedBack = backHref ?? resolveBackHref(pathname);
   const resolvedHome = resolveHomeHref(pathname);
   const canGoBack = showBack ?? resolvedBack !== null;
   const showHome = resolvedHome !== null && pathname !== resolvedHome;
-  const showHomeButton = showHome && (!canGoBack || resolvedBack !== resolvedHome);
   const brandHref = pathname.startsWith("/admin") ? "/admin" : "/workspaces";
   const workspaceSlug = workspaceSlugFromPath(pathname);
   const businessProfileHref = workspaceSlug
@@ -153,8 +110,45 @@ export function AppShell({
       .catch(() => setIsSuperAdmin(false));
   }, []);
 
+  const navItems = useMemo(() => {
+    const items: GlobalNavItem[] = [];
+    if (showHome && resolvedHome) {
+      items.push({ id: "home", label: t("nav.home"), href: resolvedHome });
+    }
+    if (businessProfileHref) {
+      items.push({
+        id: "settings",
+        label: t("settings.title"),
+        href: businessProfileHref,
+        current: businessProfileActive,
+      });
+    }
+    if (showAdminNav && isSuperAdmin && !pathname.startsWith("/admin")) {
+      items.push({ id: "admin", label: t("nav.admin"), href: "/admin" });
+    }
+    items.push({
+      id: "logout",
+      label: t("nav.logout"),
+      onClick: () => {
+        void handleLogout();
+      },
+    });
+    return items;
+  }, [
+    showHome,
+    resolvedHome,
+    businessProfileHref,
+    businessProfileActive,
+    showAdminNav,
+    isSuperAdmin,
+    pathname,
+    t,
+    handleLogout,
+  ]);
+
   return (
     <div className="min-h-screen bg-surface-muted">
+      {/* Global App Bar — global controls only */}
       <header className="border-b border-navy-light/30 bg-navy text-white shadow-elevated">
         <div className="mx-auto max-w-6xl px-3 sm:px-4">
           <div className="flex items-center justify-between gap-2 py-2 sm:gap-3 sm:py-3">
@@ -168,16 +162,6 @@ export function AppShell({
                   <BackIcon />
                 </Link>
               )}
-              {showHomeButton && resolvedHome && (
-                <Link
-                  href={resolvedHome}
-                  className="hidden h-9 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-white/70 transition hover:bg-white/10 hover:text-white sm:flex"
-                  aria-label={t("nav.home")}
-                >
-                  <HomeIcon />
-                  <span className="text-sm font-medium">{t("nav.home")}</span>
-                </Link>
-              )}
               <Link href={brandHref} className="flex min-w-0 items-center gap-2 sm:gap-2.5">
                 <EmberLogo className="h-8 w-8 shrink-0 sm:h-9 sm:w-9" />
                 <span className="truncate text-base font-bold tracking-tight sm:text-lg">
@@ -185,45 +169,29 @@ export function AppShell({
                 </span>
               </Link>
             </div>
-            <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-              {showAdminNav && isSuperAdmin && !pathname.startsWith("/admin") && (
-                <Link
-                  href="/admin"
-                  className="rounded-lg bg-white/10 px-2 py-1.5 text-[11px] font-medium text-white ring-1 ring-white/15 hover:bg-white/15 sm:px-2.5 sm:text-xs"
-                >
-                  {t("nav.admin")}
-                </Link>
-              )}
-              {businessProfileHref && (
-                <Link
-                  href={businessProfileHref}
-                  aria-current={businessProfileActive ? "page" : undefined}
-                  className={`rounded-lg px-2 py-1.5 text-[11px] font-medium ring-1 sm:px-2.5 sm:text-xs ${
-                    businessProfileActive
-                      ? "bg-white text-navy ring-white"
-                      : "bg-white/10 text-white ring-white/15 hover:bg-white/15"
-                  }`}
-                >
-                  {t("settings.title")}
-                </Link>
-              )}
-              {workspaceName && (
-                <span className="hidden max-w-[8rem] truncate rounded-full bg-white/10 px-2.5 py-1 text-xs text-white/90 ring-1 ring-white/15 sm:inline-block sm:max-w-[10rem] sm:px-3 sm:text-sm md:max-w-none">
-                  {workspaceName}
-                </span>
-              )}
+            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
               <LocaleSwitcher variant="header" />
-              <LogoutButton />
+              <GlobalNavMenu items={navItems} />
             </div>
           </div>
-          {workspaceName && (
-            <div className="border-t border-white/10 pb-2 sm:hidden">
-              <p className="truncate px-0.5 text-xs font-medium text-white/80">{workspaceName}</p>
-            </div>
-          )}
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-3 py-6 sm:px-4 sm:py-8">{children}</main>
+
+      {/* Workspace Header — display only, not a selector */}
+      {workspaceName ? (
+        <div className="border-b border-border/70 bg-surface">
+          <div className="mx-auto max-w-6xl px-3 py-2.5 sm:px-4 sm:py-3">
+            <p
+              className="truncate text-sm font-semibold tracking-tight text-navy sm:text-base"
+              title={workspaceName}
+            >
+              {workspaceName}
+            </p>
+          </div>
+        </div>
+      ) : null}
+
+      <main className="mx-auto max-w-6xl px-3 py-5 sm:px-4 sm:py-8">{children}</main>
     </div>
   );
 }

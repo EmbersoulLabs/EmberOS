@@ -18,7 +18,6 @@ import {
 } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
-import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import { TagChipInput } from "./TagChipInput";
 import { BusinessHoursEditor } from "./BusinessHoursEditor";
 import { ProfileCard } from "./ProfileCard";
@@ -391,14 +390,14 @@ export function BusinessProfileEditor({
   return (
     <div className="space-y-6">
       <header className="rounded-xl border border-border/80 bg-surface p-4 shadow-card sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
+          <div className="min-w-0 flex-1">
             <h1 className="text-xl font-semibold tracking-tight text-navy sm:text-2xl">
               {t("businessProfile.title")}
             </h1>
             <p className="mt-1 text-sm text-ink-secondary">{t("businessProfile.subtitle")}</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full flex-wrap items-center justify-start gap-2 sm:w-auto sm:justify-end">
             <span className="rounded-full bg-navy/10 px-3 py-1 text-xs font-semibold text-navy">
               {t("businessProfile.completionPercent", { percent: String(completion.percent) })}
             </span>
@@ -432,10 +431,8 @@ export function BusinessProfileEditor({
                 ? t("businessProfile.ai.loading")
                 : t("businessProfile.ai.analyze")}
             </button>
-            <LocaleSwitcher variant="light" />
           </div>
         </div>
-
         {(aiDraft || aiAnalyzing || aiError) && (
           <BusinessProfileAiPanel
             draft={
@@ -772,12 +769,6 @@ export function BusinessProfileEditor({
         saveFailed={saveStatus === "failed" || saveStatus === "invalid"}
       >
         <p className="text-xs text-ink-secondary">{t("businessProfile.assetsHint")}</p>
-        <div className="rounded-xl border border-dashed border-border bg-surface-muted/40 px-4 py-8 text-center">
-          <p className="text-sm font-medium text-navy">{t("businessProfile.uploadArea.title")}</p>
-          <p className="mt-1 text-xs text-ink-secondary">
-            {t("businessProfile.uploadArea.pendingSpec")}
-          </p>
-        </div>
         <TagChipInput
           label={t("businessProfile.field.brandFonts")}
           values={values.brandFonts}

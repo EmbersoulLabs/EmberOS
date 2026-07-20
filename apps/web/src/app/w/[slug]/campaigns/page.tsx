@@ -73,11 +73,8 @@ export default function CampaignListPage() {
     <AppShell workspaceName={workspaceName}>
       <div className="mx-auto max-w-4xl">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4 border-b border-border/70 pb-5">
-          <div>
-            <p className="text-[11px] font-medium uppercase tracking-widest text-ink-secondary">
-              {workspaceName}
-            </p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-navy">{t("campaigns.title")}</h1>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold tracking-tight text-navy">{t("campaigns.title")}</h1>
             {!loading && campaigns.length > 0 && (
               <p className="mt-1 text-sm text-ink-secondary">
                 {t("campaigns.count", { count: campaigns.length })}
