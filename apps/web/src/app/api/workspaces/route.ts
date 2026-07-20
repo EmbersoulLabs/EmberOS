@@ -1,8 +1,13 @@
 import { eq, and } from "drizzle-orm";
-import { getDb, schema, requireOrganizationMembership } from "@ceo-agent/db";
-import { isUuid } from "@ceo-agent/shared";
+import {
+  createWorkspaceWithBusinessProfile,
+  getDb,
+  requireOrganizationMembership,
+  schema,
+} from "@ceo-agent/db";
+import { CreateWorkspaceBusinessLedSchema, isUuid } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
-import { apiSuccess, apiError, slugify } from "@/lib/api";
+import { apiSuccess, apiError } from "@/lib/api";
 
 export async function GET(request: Request) {
   try {
@@ -10,8 +15,6 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const orgId = searchParams.get("orgId");
 
-    // Optional org filter: only allowed after verifying membership in that org.
-    // Super Admin does not get an implicit bypass here.
     if (orgId) {
       if (!isUuid(orgId)) {
         return apiError("orgId must be a valid UUID", "VALIDATION_ERROR", 400);
@@ -44,42 +47,56 @@ export async function GET(request: Request) {
   }
 }
 
+/**
+ * PD-012: business-led Workspace creation.
+ * Body: { orgId, businessName, country, industry, locale? }
+ */
 export async function POST(request: Request) {
   try {
     const user = await requireAuth();
-    const body = await request.json();
-    const { orgId, name, slug: rawSlug, brandProfile } = body as {
-      orgId: string;
-      name: string;
-      slug?: string;
-      brandProfile?: Record<string, unknown>;
-    };
 
-    if (!orgId || !name) return apiError("orgId and name are required", "VALIDATION_ERROR");
-    if (!isUuid(orgId)) {
-      return apiError("orgId must be a valid UUID", "VALIDATION_ERROR", 400);
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return apiError("Invalid JSON body", "VALIDATION_ERROR", 400);
     }
 
-    // Server must verify membership for the requested orgId.
-    // Never trust client-supplied org ownership; do not use "any org membership".
-    // Super Admin is not granted create rights here — use explicit admin APIs if needed.
+    const parsed = CreateWorkspaceBusinessLedSchema.safeParse(body);
+    if (!parsed.success) {
+      const message =
+        parsed.error.issues[0]?.message ?? "Invalid workspace creation request";
+      return apiError(message, "VALIDATION_ERROR", 400);
+    }
+
+    const { orgId, businessName, country, industry, locale } = parsed.data;
+
     const orgMember = await requireOrganizationMembership(orgId, user.id);
 
-    const db = getDb();
-    const slug = rawSlug ?? slugify(name);
-    const [workspace] = await db
-      .insert(schema.workspaces)
-      .values({ orgId: orgMember.orgId, name, slug, brandProfile: brandProfile ?? {} })
-      .returning();
-
-    await db.insert(schema.workspaceMembers).values({
+    const { workspace, businessProfile } = await createWorkspaceWithBusinessProfile({
       orgId: orgMember.orgId,
-      workspaceId: workspace!.id,
       userId: user.id,
-      role: "admin",
+      businessName,
+      country,
+      industry,
+      locale,
     });
 
-    return apiSuccess({ workspace }, 201);
+    return apiSuccess(
+      {
+        workspace,
+        businessProfile: {
+          id: businessProfile.id,
+          workspaceId: businessProfile.workspaceId,
+          companyName: businessProfile.companyName,
+          country: businessProfile.country,
+          industryId: businessProfile.industryId,
+          industryDisplayName: businessProfile.industryDisplayName,
+        },
+        redirectTo: `/w/${workspace.slug}/settings/business-profile`,
+      },
+      201
+    );
   } catch (error) {
     return handleApiError(error);
   }

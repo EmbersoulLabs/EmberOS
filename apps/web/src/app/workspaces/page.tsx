@@ -7,6 +7,11 @@ import { AppShell } from "@/components/AppShell";
 import { BRAND } from "@/lib/brand";
 import { useI18n } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
+import {
+  BUSINESS_COUNTRY_OPTIONS,
+  INDUSTRY_CUSTOM_ID,
+  INDUSTRY_DICTIONARY,
+} from "@ceo-agent/shared";
 
 interface Workspace {
   id: string;
@@ -28,12 +33,17 @@ function roleLabel(role: string, t: (key: TranslationKey) => string): string {
 
 export default function WorkspacesPage() {
   const router = useRouter();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [orgId, setOrgId] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
+  const [businessName, setBusinessName] = useState("");
+  const [country, setCountry] = useState("");
+  const [industryId, setIndustryId] = useState("");
+  const [industryCustom, setIndustryCustom] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [createError, setCreateError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -83,26 +93,76 @@ export default function WorkspacesPage() {
     load();
   }, [router, t]);
 
+  function resetCreateForm() {
+    setBusinessName("");
+    setCountry("");
+    setIndustryId("");
+    setIndustryCustom("");
+    setFieldErrors({});
+    setCreateError("");
+  }
+
+  function validateForm(): boolean {
+    const next: Record<string, string> = {};
+    if (!businessName.trim()) next.businessName = t("workspaces.businessNameRequired");
+    if (!country.trim()) next.country = t("workspaces.countryRequired");
+    if (!industryId.trim()) next.industry = t("workspaces.industryRequired");
+    if (industryId === INDUSTRY_CUSTOM_ID && !industryCustom.trim()) {
+      next.industryCustom = t("workspaces.industryCustomRequired");
+    }
+    setFieldErrors(next);
+    return Object.keys(next).length === 0;
+  }
+
   async function createWorkspace(e: React.FormEvent) {
     e.preventDefault();
-    if (!orgId || !newName.trim()) return;
+    if (!orgId || creating) return;
+    if (!validateForm()) return;
+
     setCreating(true);
+    setCreateError("");
     try {
+      const industry =
+        industryId === INDUSTRY_CUSTOM_ID ? industryCustom.trim() : industryId;
       const res = await fetch("/api/workspaces", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orgId, name: newName.trim() }),
+        body: JSON.stringify({
+          orgId,
+          businessName: businessName.trim(),
+          country: country.trim(),
+          industry,
+          locale,
+        }),
       });
       const data = await res.json();
-      if (data.workspace) {
-        setWorkspaces((prev) => [...prev, { ...data.workspace, role: "admin" }]);
-        setNewName("");
-        setShowCreate(false);
+      if (!res.ok) {
+        setCreateError(data.error ?? t("error.generic"));
+        return;
       }
+      if (data.workspace?.slug) {
+        const redirectTo =
+          typeof data.redirectTo === "string"
+            ? data.redirectTo
+            : `/w/${data.workspace.slug}/settings/business-profile`;
+        router.push(redirectTo);
+        return;
+      }
+      setCreateError(t("error.generic"));
+    } catch {
+      setCreateError(t("error.generic"));
     } finally {
       setCreating(false);
     }
   }
+
+  const industryOptions = [
+    ...INDUSTRY_DICTIONARY.map((entry) => ({
+      value: entry.id,
+      label: entry.labels[locale] ?? entry.labels.en,
+    })),
+    { value: INDUSTRY_CUSTOM_ID, label: t("businessProfile.industry.custom") },
+  ];
 
   return (
     <AppShell>
@@ -119,10 +179,13 @@ export default function WorkspacesPage() {
           </div>
           <button
             type="button"
-            onClick={() => setShowCreate(true)}
+            onClick={() => {
+              resetCreateForm();
+              setShowCreate(true);
+            }}
             className="inline-flex h-10 items-center rounded-lg bg-navy px-4 text-sm font-medium text-white shadow-sm hover:bg-navy/90"
           >
-            {t("workspaces.new")}
+            {t("workspaces.newBusiness")}
           </button>
         </div>
 
@@ -135,29 +198,131 @@ export default function WorkspacesPage() {
         {showCreate && (
           <form
             onSubmit={createWorkspace}
-            className="mb-6 rounded-xl border border-border/80 bg-surface p-5 shadow-card"
+            className="mb-6 space-y-4 rounded-xl border border-border/80 bg-surface p-5 shadow-card"
+            noValidate
           >
-            <h2 className="text-sm font-semibold text-navy">{t("workspaces.new")}</h2>
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder={t("workspaces.namePlaceholder")}
-              className="mt-3 w-full rounded-lg border border-border px-3 py-2.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
-              required
-              autoFocus
-            />
-            <div className="mt-4 flex gap-2">
+            <h2 className="text-sm font-semibold text-navy">{t("workspaces.newBusiness")}</h2>
+            <p className="text-xs text-ink-secondary">{t("workspaces.newBusinessHint")}</p>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-navy" htmlFor="businessName">
+                {t("workspaces.businessName")}
+                <span className="ml-0.5 text-red-500" aria-hidden>
+                  *
+                </span>
+              </label>
+              <input
+                id="businessName"
+                value={businessName}
+                onChange={(e) => setBusinessName(e.target.value)}
+                placeholder={t("workspaces.businessNamePlaceholder")}
+                className="w-full rounded-lg border border-border px-3 py-2.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                autoFocus
+                disabled={creating}
+                aria-invalid={Boolean(fieldErrors.businessName)}
+              />
+              {fieldErrors.businessName && (
+                <p className="mt-1 text-xs text-red-600" role="alert">
+                  {fieldErrors.businessName}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-navy" htmlFor="country">
+                {t("workspaces.country")}
+                <span className="ml-0.5 text-red-500" aria-hidden>
+                  *
+                </span>
+              </label>
+              <select
+                id="country"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                className="w-full rounded-lg border border-border px-3 py-2.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                disabled={creating}
+                aria-invalid={Boolean(fieldErrors.country)}
+              >
+                <option value="">{t("workspaces.selectPlaceholder")}</option>
+                {BUSINESS_COUNTRY_OPTIONS.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.country && (
+                <p className="mt-1 text-xs text-red-600" role="alert">
+                  {fieldErrors.country}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-semibold text-navy" htmlFor="industry">
+                {t("workspaces.industry")}
+                <span className="ml-0.5 text-red-500" aria-hidden>
+                  *
+                </span>
+              </label>
+              <select
+                id="industry"
+                value={industryId}
+                onChange={(e) => setIndustryId(e.target.value)}
+                className="w-full rounded-lg border border-border px-3 py-2.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                disabled={creating}
+                aria-invalid={Boolean(fieldErrors.industry)}
+              >
+                <option value="">{t("workspaces.selectPlaceholder")}</option>
+                {industryOptions.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+              {fieldErrors.industry && (
+                <p className="mt-1 text-xs text-red-600" role="alert">
+                  {fieldErrors.industry}
+                </p>
+              )}
+              {industryId === INDUSTRY_CUSTOM_ID && (
+                <input
+                  value={industryCustom}
+                  onChange={(e) => setIndustryCustom(e.target.value)}
+                  placeholder={t("businessProfile.industryCustomPlaceholder")}
+                  className="mt-2 w-full rounded-lg border border-border px-3 py-2.5 text-sm focus:border-brand-blue focus:outline-none focus:ring-2 focus:ring-brand-blue/20"
+                  disabled={creating}
+                  aria-invalid={Boolean(fieldErrors.industryCustom)}
+                />
+              )}
+              {fieldErrors.industryCustom && (
+                <p className="mt-1 text-xs text-red-600" role="alert">
+                  {fieldErrors.industryCustom}
+                </p>
+              )}
+            </div>
+
+            {createError && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                {createError}
+              </p>
+            )}
+
+            <div className="flex gap-2">
               <button
                 type="submit"
                 disabled={creating}
                 className="rounded-lg bg-navy px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
               >
-                {creating ? t("workspaces.loading") : t("workspaces.create")}
+                {creating ? t("workspaces.creating") : t("workspaces.create")}
               </button>
               <button
                 type="button"
-                onClick={() => setShowCreate(false)}
-                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-ink-secondary hover:text-navy"
+                onClick={() => {
+                  setShowCreate(false);
+                  resetCreateForm();
+                }}
+                disabled={creating}
+                className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-ink-secondary hover:text-navy disabled:opacity-50"
               >
                 {t("workspaces.cancel")}
               </button>
@@ -176,10 +341,13 @@ export default function WorkspacesPage() {
             <p className="text-sm font-medium text-navy">{t("workspaces.empty")}</p>
             <button
               type="button"
-              onClick={() => setShowCreate(true)}
+              onClick={() => {
+                resetCreateForm();
+                setShowCreate(true);
+              }}
               className="mt-4 inline-flex h-9 items-center rounded-lg border border-navy/20 bg-navy/[0.04] px-4 text-sm font-medium text-navy hover:bg-navy/[0.08]"
             >
-              {t("workspaces.new")}
+              {t("workspaces.newBusiness")}
             </button>
           </div>
         ) : (
