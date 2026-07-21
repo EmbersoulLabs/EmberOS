@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
@@ -10,6 +10,15 @@ import {
   profileToFormValues,
   validateBusinessProfilePatch,
 } from "../apps/web/src/lib/business-profile-form";
+import {
+  BUSINESS_LOGO_ACCEPT,
+  createBusinessLogoSelection,
+  isAcceptedLogoFile,
+  removeBusinessLogo,
+  uploadBusinessLogo,
+  validateBusinessLogo,
+  type BusinessLogoFile,
+} from "../apps/web/src/lib/business-logo-upload";
 import {
   assessBusinessProfileCompletion,
   businessProfileAiAnalysisToUpdate,
@@ -212,6 +221,141 @@ describe("business-profile UI helpers", () => {
         "businessProfile.uploadReferenceHint",
       ])
     );
+  });
+
+  it("wires Upload Logo to a mobile-compatible native image file input", () => {
+    const editorSource = readFileSync(
+      resolve(__dirname, "../apps/web/src/components/business-profile/BusinessProfileEditor.tsx"),
+      "utf8"
+    );
+
+    expect(editorSource).toContain('type="file"');
+    expect(editorSource).toContain("accept={BUSINESS_LOGO_ACCEPT}");
+    expect(editorSource).toContain('const BUSINESS_LOGO_INPUT_ID = "business-logo-input"');
+    expect(editorSource).toContain("id={BUSINESS_LOGO_INPUT_ID}");
+    expect(editorSource).toContain("htmlFor={BUSINESS_LOGO_INPUT_ID}");
+    expect(editorSource).toContain('className="sr-only"');
+    expect(editorSource).not.toContain("htmlFor={undefined");
+    expect(editorSource).not.toContain("absolute inset-0 h-full w-full cursor-pointer opacity-0");
+    expect(editorSource).not.toContain('className="hidden"');
+    expect(editorSource).not.toContain(" hidden ");
+    expect(editorSource).not.toContain("logoInputRef.current?.click()");
+    expect(editorSource).toContain("uploadBusinessLogo(workspaceId, file)");
+    expect(editorSource).toContain("removeBusinessLogo(workspaceId)");
+    expect(editorSource).toContain('type="button"');
+    expect(BUSINESS_LOGO_ACCEPT).toBe("image/*");
+  });
+
+  it("accepts image files and creates a logo preview selection", () => {
+    const imageFile: BusinessLogoFile = {
+      name: "brand-logo.png",
+      type: "image/png",
+    };
+
+    const selection = createBusinessLogoSelection(imageFile, (file) => `preview://${file.name}`);
+
+    expect(isAcceptedLogoFile(imageFile)).toBe(true);
+    expect(validateBusinessLogo(imageFile)).toBe(true);
+    expect(selection).toEqual({
+      ok: true,
+      fileName: "brand-logo.png",
+      previewUrl: "preview://brand-logo.png",
+    });
+  });
+
+  it("rejects invalid logo file types", () => {
+    const pdfFile: BusinessLogoFile = {
+      name: "brand-logo.pdf",
+      type: "application/pdf",
+    };
+
+    expect(isAcceptedLogoFile(pdfFile)).toBe(false);
+    expect(validateBusinessLogo(pdfFile)).toBe(false);
+    expect(createBusinessLogoSelection(pdfFile, (file) => `preview://${file.name}`)).toEqual({
+      ok: false,
+      reason: "invalid_type",
+    });
+  });
+
+  it("supports replacing and removing the selected logo preview state", () => {
+    const firstFile: BusinessLogoFile = {
+      name: "old-logo.jpg",
+      type: "image/jpeg",
+    };
+    const replacementFile: BusinessLogoFile = {
+      name: "new-logo.webp",
+      type: "image/webp",
+    };
+
+    const firstSelection = createBusinessLogoSelection(
+      firstFile,
+      (file) => `preview://${file.name}`
+    );
+    const replacementSelection = createBusinessLogoSelection(
+      replacementFile,
+      (file) => `preview://${file.name}`
+    );
+    const removedSelection = {
+      fileName: null,
+      previewUrl: null,
+    };
+
+    expect(firstSelection).toMatchObject({
+      ok: true,
+      fileName: "old-logo.jpg",
+      previewUrl: "preview://old-logo.jpg",
+    });
+    expect(replacementSelection).toMatchObject({
+      ok: true,
+      fileName: "new-logo.webp",
+      previewUrl: "preview://new-logo.webp",
+    });
+    expect(removedSelection).toEqual({
+      fileName: null,
+      previewUrl: null,
+    });
+  });
+
+  it("uploads Business Logo through a stable helper boundary", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profile: { logo: "https://example.test/logo.png" },
+        logo: "https://example.test/logo.png",
+      }),
+    });
+    const file = new File(["logo"], "logo.png", { type: "image/png" });
+
+    const result = await uploadBusinessLogo(workspaceId, file, fetcher as typeof fetch);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/workspaces/${workspaceId}/business-profile/logo`,
+      expect.objectContaining({
+        method: "POST",
+        body: expect.any(FormData),
+      })
+    );
+    expect(result.logo).toBe("https://example.test/logo.png");
+  });
+
+  it("removes Business Logo through a stable helper boundary", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profile: { logo: null },
+        logo: null,
+      }),
+    });
+
+    const result = await removeBusinessLogo(workspaceId, fetcher as typeof fetch);
+
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/workspaces/${workspaceId}/business-profile/logo`,
+      expect.objectContaining({
+        method: "DELETE",
+      })
+    );
+    expect(result.logo).toBeNull();
   });
 
   it("maps Accept & Save AI draft onto form fields without implying auto-overwrite", () => {

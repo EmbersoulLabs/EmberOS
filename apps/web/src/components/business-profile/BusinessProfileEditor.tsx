@@ -30,11 +30,18 @@ import {
   type BusinessProfileApiWarning,
   type BusinessProfileFormValues,
 } from "@/lib/business-profile-form";
+import {
+  BUSINESS_LOGO_ACCEPT,
+  createBusinessLogoSelection,
+  removeBusinessLogo,
+  uploadBusinessLogo,
+} from "@/lib/business-logo-upload";
 
 const LANGUAGE_SUGGESTIONS = ["English", "Chinese", "Bahasa Melayu", "Japanese"];
 const VOICE_SUGGESTIONS = ["Professional", "Friendly", "Luxury", "Playful", "Bold", "Warm"];
 const STYLE_SUGGESTIONS = ["Modern", "Minimal", "Classic", "Vibrant", "Elegant", "Casual"];
 const VALUE_SUGGESTIONS = ["Premium", "Reliable", "Luxury", "Friendly", "Handmade"];
+const BUSINESS_LOGO_INPUT_ID = "business-logo-input";
 
 type ContactFieldKey =
   | "website"
@@ -153,6 +160,15 @@ function completionPreview(values: BusinessProfileFormValues) {
   });
 }
 
+function logoFileNameFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return decodeURIComponent(parsed.pathname.split("/").pop() || "Business Logo");
+  } catch {
+    return url.split("/").pop() || "Business Logo";
+  }
+}
+
 export function BusinessProfileEditor({
   workspaceId,
   slug,
@@ -181,6 +197,15 @@ export function BusinessProfileEditor({
   const [aiSourcesUsed, setAiSourcesUsed] = useState<string[]>([]);
   const [aiMissingSources, setAiMissingSources] = useState<string[]>([]);
   const [aiError, setAiError] = useState<string | null>(null);
+  const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(
+    initialProfile.logo?.trim() || null
+  );
+  const [logoFileName, setLogoFileName] = useState<string | null>(
+    initialProfile.logo ? logoFileNameFromUrl(initialProfile.logo) : null
+  );
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [logoUploading, setLogoUploading] = useState(false);
+  const logoInputRef = useRef<HTMLInputElement | null>(null);
   const skipSaveRef = useRef(true);
   const conflictRef = useRef(false);
   const valuesRef = useRef(values);
@@ -422,6 +447,105 @@ export function BusinessProfileEditor({
     const translationKey = CONTACT_PLACEHOLDER_KEYS[key];
     return translationKey ? t(translationKey) : undefined;
   }
+
+  function revokePreviewUrl(url: string | null) {
+    if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+  }
+
+  function applySyncedProfile(profile: BusinessProfileRecord, warnings: BusinessProfileApiWarning[]) {
+    const nextValues = profileToFormValues(profile);
+    baselineRef.current = nextValues;
+    valuesRef.current = nextValues;
+    setValues(nextValues);
+    setVersion(profile.version);
+    versionRef.current = profile.version;
+    setApiWarnings(warnings);
+    onSynced?.(profile, warnings);
+  }
+
+  function clearLogoPreviewState() {
+    setLogoPreviewUrl((current) => {
+      revokePreviewUrl(current);
+      return null;
+    });
+    setLogoFileName(null);
+    setLogoError(null);
+    if (logoInputRef.current) logoInputRef.current.value = "";
+  }
+
+  async function handleLogoSelected(file: File | null) {
+    if (!file) return;
+    const selection = createBusinessLogoSelection(file, (selectedFile) =>
+      URL.createObjectURL(selectedFile as File)
+    );
+    if (!selection.ok) {
+      clearLogoPreviewState();
+      setLogoError(t("businessProfile.logoInvalidType"));
+      return;
+    }
+
+    const previousPreviewUrl = logoPreviewUrl;
+    const previousFileName = logoFileName;
+    setLogoPreviewUrl((current) => {
+      revokePreviewUrl(current);
+      return selection.previewUrl;
+    });
+    setLogoFileName(selection.fileName);
+    setLogoError(null);
+    setLogoUploading(true);
+
+    try {
+      const data = await uploadBusinessLogo(workspaceId, file);
+      const nextProfile = normalizeBusinessProfileRecord(data.profile);
+      const nextWarnings = extractApiWarnings(data);
+      applySyncedProfile(nextProfile, nextWarnings);
+      setLogoPreviewUrl((current) => {
+        revokePreviewUrl(current);
+        return nextProfile.logo || null;
+      });
+      setLogoFileName(file.name);
+      setSaveStatus("saved");
+    } catch {
+      setLogoPreviewUrl((current) => {
+        revokePreviewUrl(current);
+        return previousPreviewUrl;
+      });
+      setLogoFileName(previousFileName);
+      setLogoError(t("businessProfile.logoUploadFailed"));
+      setSaveStatus("failed");
+    } finally {
+      setLogoUploading(false);
+      if (logoInputRef.current) logoInputRef.current.value = "";
+    }
+  }
+
+  async function removeLogo() {
+    const previousPreviewUrl = logoPreviewUrl;
+    const previousFileName = logoFileName;
+    clearLogoPreviewState();
+    setLogoUploading(true);
+
+    try {
+      const data = await removeBusinessLogo(workspaceId);
+      const nextProfile = normalizeBusinessProfileRecord(data.profile);
+      const nextWarnings = extractApiWarnings(data);
+      applySyncedProfile(nextProfile, nextWarnings);
+      setSaveStatus("saved");
+    } catch {
+      setLogoPreviewUrl(previousPreviewUrl);
+      setLogoFileName(previousFileName);
+      setLogoError(t("businessProfile.logoRemoveFailed"));
+      setSaveStatus("failed");
+    } finally {
+      setLogoUploading(false);
+    }
+  }
+
+  useEffect(() => {
+    return () => {
+      revokePreviewUrl(logoPreviewUrl);
+    };
+  }, [logoPreviewUrl]);
 
   return (
     <div className="space-y-6">
@@ -766,13 +890,59 @@ export function BusinessProfileEditor({
         incomplete={cardIncomplete("brandIdentity")}
         saveFailed={saveStatus === "failed" || saveStatus === "invalid"}
       >
-        <Field label={t("businessProfile.field.logo")} hint={t("businessProfile.logoUploadHint")}>
-          <button
-            type="button"
-            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-navy hover:border-brand-blue/40"
-          >
-            {t("businessProfile.logoUploadButton")}
-          </button>
+        <Field
+          label={t("businessProfile.field.logo")}
+          hint={t("businessProfile.logoUploadHint")}
+          error={logoError ?? undefined}
+        >
+          <div className="space-y-3">
+            {logoPreviewUrl && (
+              <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface-muted p-3">
+                <img
+                  src={logoPreviewUrl}
+                  alt={t("businessProfile.logoPreviewAlt")}
+                  className="h-16 w-16 rounded-lg border border-border bg-white object-contain"
+                />
+                <p className="min-w-0 flex-1 truncate text-sm font-medium text-navy">
+                  {logoFileName}
+                </p>
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <input
+                id={BUSINESS_LOGO_INPUT_ID}
+                ref={logoInputRef}
+                type="file"
+                accept={BUSINESS_LOGO_ACCEPT}
+                disabled={logoUploading}
+                className="sr-only"
+                onChange={(event) => void handleLogoSelected(event.target.files?.[0] ?? null)}
+              />
+              <label
+                htmlFor={BUSINESS_LOGO_INPUT_ID}
+                aria-disabled={logoUploading}
+                className={`inline-flex rounded-lg border border-border px-4 py-2 text-sm font-medium text-navy hover:border-brand-blue/40 ${
+                  logoUploading ? "cursor-not-allowed opacity-60" : "cursor-pointer"
+                }`}
+              >
+                {logoUploading
+                  ? t("businessProfile.logoUploading")
+                  : logoFileName
+                  ? t("businessProfile.logoReplaceButton")
+                  : t("businessProfile.logoUploadButton")}
+              </label>
+              {logoFileName && (
+                <button
+                  type="button"
+                  onClick={() => void removeLogo()}
+                  disabled={logoUploading}
+                  className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-ink-secondary hover:border-red-300 hover:text-red-700"
+                >
+                  {t("businessProfile.logoRemoveButton")}
+                </button>
+              )}
+            </div>
+          </div>
         </Field>
         <TagChipInput
           label={t("businessProfile.field.brandStyle")}

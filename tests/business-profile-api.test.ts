@@ -13,6 +13,9 @@ const requireAuth = vi.fn();
 const requireWorkspaceRole = vi.fn();
 const getBusinessProfileByWorkspace = vi.fn();
 const updateBusinessProfile = vi.fn();
+const storageUpload = vi.fn();
+const storageRemove = vi.fn();
+const storageFrom = vi.fn();
 
 vi.mock("@/lib/auth", async () => {
   const actual = await vi.importActual<typeof import("@/lib/auth")>("@/lib/auth");
@@ -32,6 +35,14 @@ vi.mock("@ceo-agent/db", async () => {
     updateBusinessProfile: (...args: unknown[]) => updateBusinessProfile(...args),
   };
 });
+
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => ({
+    storage: {
+      from: (...args: unknown[]) => storageFrom(...args),
+    },
+  }),
+}));
 
 function incompleteProfileRow(overrides: Record<string, unknown> = {}) {
   return {
@@ -83,6 +94,10 @@ function incompleteProfileRow(overrides: Record<string, unknown> = {}) {
 
 async function loadRoute() {
   return import("../apps/web/src/app/api/workspaces/[id]/business-profile/route");
+}
+
+async function loadLogoRoute() {
+  return import("../apps/web/src/app/api/workspaces/[id]/business-profile/logo/route");
 }
 
 describe("businessProfileQualityWarnings", () => {
@@ -148,6 +163,19 @@ describe("GET /api/workspaces/[id]/business-profile", () => {
     expect(requireWorkspaceRole).toHaveBeenCalledWith(workspaceA, userId, "client_viewer");
   });
 
+  it("GET returns persisted logo reference after reload", async () => {
+    const logoUrl =
+      "https://example.supabase.co/storage/v1/object/public/campaign-assets/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/brand/business-logo-existing.png";
+    getBusinessProfileByWorkspace.mockResolvedValue(incompleteProfileRow({ logo: logoUrl }));
+    const { GET } = await loadRoute();
+    const res = await GET(new Request("http://localhost/api"), {
+      params: Promise.resolve({ id: workspaceA }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.profile.logo).toBe(logoUrl);
+  });
+
   it("GET returns 404 when profile does not exist (no lazy create)", async () => {
     getBusinessProfileByWorkspace.mockResolvedValue(null);
     const { GET } = await loadRoute();
@@ -183,6 +211,153 @@ describe("GET /api/workspaces/[id]/business-profile", () => {
     const body = await res.json();
     expect(body.code).toBe("VALIDATION_ERROR");
     expect(requireWorkspaceRole).not.toHaveBeenCalled();
+  });
+});
+
+describe("Business Profile logo persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co";
+    requireAuth.mockResolvedValue({ id: userId });
+    requireWorkspaceRole.mockResolvedValue({
+      orgId: orgA,
+      workspaceId: workspaceA,
+      userId,
+      role: "operator",
+    });
+    storageFrom.mockReturnValue({
+      upload: storageUpload,
+      remove: storageRemove,
+    });
+    storageUpload.mockResolvedValue({ error: null });
+    storageRemove.mockResolvedValue({ error: null });
+    getBusinessProfileByWorkspace.mockResolvedValue(incompleteProfileRow());
+    updateBusinessProfile.mockImplementation(
+      async (_orgId: string, _workspaceId: string, _userId: string, update: Record<string, unknown>) =>
+        incompleteProfileRow({ logo: update.logo ?? null, version: 2 })
+    );
+  });
+
+  it("uploads logo image to Supabase Storage and persists Business Profile logo URL", async () => {
+    const { POST } = await loadLogoRoute();
+    const formData = new FormData();
+    formData.set("file", new File(["logo"], "brand-logo.png", { type: "image/png" }));
+
+    const res = await POST(
+      new Request("http://localhost/api", {
+        method: "POST",
+        body: formData,
+      }),
+      { params: Promise.resolve({ id: workspaceA }) }
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(storageFrom).toHaveBeenCalledWith("campaign-assets");
+    expect(storageUpload).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
+      ),
+      expect.any(Buffer),
+      expect.objectContaining({ contentType: "image/png", upsert: false })
+    );
+    expect(updateBusinessProfile).toHaveBeenCalledWith(
+      orgA,
+      workspaceA,
+      userId,
+      expect.objectContaining({
+        logo: expect.stringMatching(
+          /^https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/campaign-assets\/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
+        ),
+      })
+    );
+    expect(body.profile.logo).toBe(body.logo);
+    expect(body.storagePath).toMatch(
+      /^aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
+    );
+  });
+
+  it("replaces logo and safely removes the previous managed logo file", async () => {
+    const oldLogo =
+      "https://example.supabase.co/storage/v1/object/public/campaign-assets/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/brand/business-logo-old.png";
+    getBusinessProfileByWorkspace.mockResolvedValue(incompleteProfileRow({ logo: oldLogo }));
+    const { POST } = await loadLogoRoute();
+    const formData = new FormData();
+    formData.set("file", new File(["new"], "new-logo.webp", { type: "image/webp" }));
+
+    const res = await POST(
+      new Request("http://localhost/api", {
+        method: "POST",
+        body: formData,
+      }),
+      { params: Promise.resolve({ id: workspaceA }) }
+    );
+
+    expect(res.status).toBe(200);
+    expect(storageRemove).toHaveBeenCalledWith([
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/brand/business-logo-old.png",
+    ]);
+  });
+
+  it("remove clears the Business Profile logo reference and deletes the managed file", async () => {
+    const oldLogo =
+      "https://example.supabase.co/storage/v1/object/public/campaign-assets/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/brand/business-logo-old.png";
+    getBusinessProfileByWorkspace.mockResolvedValue(incompleteProfileRow({ logo: oldLogo }));
+    const { DELETE } = await loadLogoRoute();
+
+    const res = await DELETE(new Request("http://localhost/api", { method: "DELETE" }), {
+      params: Promise.resolve({ id: workspaceA }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(updateBusinessProfile).toHaveBeenCalledWith(orgA, workspaceA, userId, {
+      logo: null,
+    });
+    expect(storageRemove).toHaveBeenCalledWith([
+      "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/brand/business-logo-old.png",
+    ]);
+    expect(body.profile.logo).toBeNull();
+  });
+
+  it("rejects invalid logo file types before storage upload", async () => {
+    const { POST } = await loadLogoRoute();
+    const formData = new FormData();
+    formData.set("file", new File(["pdf"], "logo.pdf", { type: "application/pdf" }));
+
+    const res = await POST(
+      new Request("http://localhost/api", {
+        method: "POST",
+        body: formData,
+      }),
+      { params: Promise.resolve({ id: workspaceA }) }
+    );
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(storageUpload).not.toHaveBeenCalled();
+    expect(updateBusinessProfile).not.toHaveBeenCalled();
+  });
+
+  it("returns storage error when logo upload fails", async () => {
+    storageUpload.mockResolvedValue({ error: { message: "storage offline" } });
+    const { POST } = await loadLogoRoute();
+    const formData = new FormData();
+    formData.set("file", new File(["logo"], "logo.png", { type: "image/png" }));
+
+    const res = await POST(
+      new Request("http://localhost/api", {
+        method: "POST",
+        body: formData,
+      }),
+      { params: Promise.resolve({ id: workspaceA }) }
+    );
+
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.code).toBe("STORAGE_ERROR");
+    expect(updateBusinessProfile).not.toHaveBeenCalled();
   });
 });
 

@@ -48,4 +48,6 @@ export const STORAGE_PATHS = {
   /** Workspace brand logo for video watermark (worker reads via brandProfile.logoUrl). */
   brandLogo: (workspaceId: string, filename = "logo-horizontal.png") =>
     `${workspaceId}/brand/${filename}`,
+  businessLogo: (workspaceId: string, logoId: string, ext: string) =>
+    `${workspaceId}/brand/business-logo-${logoId}.${ext}`,
 } as const;
