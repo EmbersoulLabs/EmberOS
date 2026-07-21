@@ -172,6 +172,66 @@ One Review
 
 ---
 
+# Branch and Deployment Workflow
+
+Branch authority:
+
+- `main` is Production.
+- `staging` is Integration, QA, and Mobile Testing.
+- `feature/*` branches are temporary feature branches.
+
+Development flow:
+
+```text
+feature/*
+
+↓
+
+staging
+
+↓
+
+QA / Mobile Testing
+
+↓
+
+main
+
+↓
+
+Production
+```
+
+Feature branches must be merged into `staging` before they are considered for `main`.
+
+`staging` is the required validation branch for:
+
+- Web testing
+- Android Chrome testing
+- Android App testing when available
+- iOS Safari testing
+- iOS App testing when available
+
+After `staging` is approved, merge `staging` into `main`.
+
+Production deployment must only come from `main`.
+
+Do not merge feature branches directly into `main` unless explicitly approved as an emergency exception.
+
+Do not delete feature branches automatically.
+
+Vercel deployment policy:
+
+- `main` maps to Production deployment.
+- `staging` maps to long-term Staging Preview deployment.
+- `feature/*` branches may create temporary Preview deployments.
+
+If Vercel does not automatically deploy `staging`, configure the Vercel project to include `staging` as a deployable branch.
+
+Manual testing must be completed on the Staging deployment before approving `staging -> main`.
+
+---
+
 # Working Tree Safety
 
 Do not modify unrelated files.
