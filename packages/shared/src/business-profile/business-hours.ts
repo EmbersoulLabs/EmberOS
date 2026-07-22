@@ -37,6 +37,21 @@ export function emptyBusinessHours(): BusinessHours {
   return BUSINESS_HOURS_DAYS.map((day) => ({ day, isOpen: false }));
 }
 
+export function patchBusinessHoursDay(
+  value: BusinessHours,
+  day: BusinessHoursDay,
+  patch: Partial<BusinessHoursDayEntry>
+): BusinessHours {
+  const current = value.find((entry) => entry.day === day) ?? { day, isOpen: false };
+  const updated = { ...current, ...patch, day };
+
+  return BUSINESS_HOURS_DAYS.map((candidate) =>
+    candidate === day
+      ? updated
+      : value.find((entry) => entry.day === candidate) ?? { day: candidate, isOpen: false }
+  );
+}
+
 export function normalizeBusinessHours(raw: unknown): BusinessHours {
   const parsed = BusinessHoursSchema.safeParse(raw);
   if (parsed.success) return parsed.data;

@@ -17,6 +17,7 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { isDatabaseSchemaError } from "@/lib/database-errors";
 
 async function loadWorkspace(workspaceId: string) {
   const db = getDb();
@@ -156,21 +157,31 @@ export async function POST(
     }
 
     const db = getDb();
-    await db.insert(schema.assets).values({
-      id: assetId,
-      orgId: workspace.orgId,
-      workspaceId,
-      type: typeCheck.type,
-      displayName: filename,
-      originalFilename: filename,
-      storagePath,
-      mimeType,
-      fileSizeBytes: size,
-      status: "uploading",
-      source: "library_upload",
-      uploadedBy: user.id,
-      metadata: { originalFilename: filename },
-    });
+    try {
+      await db.insert(schema.assets).values({
+        id: assetId,
+        orgId: workspace.orgId,
+        workspaceId,
+        type: typeCheck.type,
+        displayName: filename,
+        originalFilename: filename,
+        storagePath,
+        mimeType,
+        fileSizeBytes: size,
+        status: "uploading",
+        source: "library_upload",
+        uploadedBy: user.id,
+        metadata: { originalFilename: filename },
+      });
+    } catch (error) {
+      console.error("Asset Library upload record creation failed", {
+        workspaceId,
+        assetId,
+        schemaMismatch: isDatabaseSchemaError(error),
+        error,
+      });
+      return apiError("Upload failed. Please try again.", "ASSET_UPLOAD_FAILED", 500);
+    }
 
     return apiSuccess(
       {

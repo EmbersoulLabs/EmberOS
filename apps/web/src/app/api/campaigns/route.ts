@@ -10,6 +10,7 @@ import {
   DEFAULT_BGM_PREFERENCE,
 } from "@ceo-agent/shared";
 import { isCampaignDeletable } from "@/lib/campaigns";
+import { isDatabaseSchemaError } from "@/lib/database-errors";
 
 export async function GET(request: Request) {
   try {
@@ -135,6 +136,14 @@ export async function POST(request: Request) {
 
     return apiSuccess({ campaign }, 201);
   } catch (error) {
+    if (isDatabaseSchemaError(error)) {
+      console.error("Campaign schema is not ready for Campaign Workspace", error);
+      return apiError(
+        "We could not save this Campaign step.",
+        "CAMPAIGN_SCHEMA_NOT_READY",
+        503
+      );
+    }
     return handleApiError(error);
   }
 }
