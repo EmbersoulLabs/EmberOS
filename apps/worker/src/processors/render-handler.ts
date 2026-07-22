@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { mkdir, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
 import { runComplianceAfterRender, maybeFinalizeAutoClipTask, maybeTriggerPendingTaskExport } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
@@ -158,10 +158,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     .limit(1);
   if (!creative?.editPlan) throw new Error("Edit plan not found");
 
-  const assets = await db
-    .select()
-    .from(schema.assets)
-    .where(eq(schema.assets.campaignId, data.campaignId));
+  const assets = await getCampaignAssets(db, data.campaignId, data.workspaceId);
   if (assets.length === 0) throw new Error("No source asset");
 
   const [campaign] = await db

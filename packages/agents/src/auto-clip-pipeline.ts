@@ -1,5 +1,5 @@
 import { eq, and } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
 import { enqueueRender, getRenderQueueCounts } from "@ceo-agent/queue";
 import {
   AUTO_CLIP,
@@ -117,15 +117,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     .limit(1);
 
   const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
-  const assets = await db
-    .select()
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.campaignId, campaign.id),
-        eq(schema.assets.workspaceId, task.workspaceId)
-      )
-    );
+  const assets = await getCampaignAssets(db, campaign.id, task.workspaceId);
 
   const source = resolveAutoClipSourceAsset(assets);
   if (!source) throw new Error("Auto Clip requires a source video");

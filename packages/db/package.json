@@ -17,6 +17,7 @@
     "sql:campaign-brief": "tsx scripts/apply-campaign-brief.ts",
     "sql:business-profile": "tsx scripts/apply-business-profile.ts",
     "sql:business-profile-v1-1": "tsx scripts/apply-business-profile-v1-1.ts",
+    "sql:asset-library": "tsx scripts/apply-asset-library-v1.ts",
     "sql:rls": "tsx scripts/apply-rls.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",

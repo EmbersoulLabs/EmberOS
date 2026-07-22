@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { PHASE1_PLATFORMS } from "@ceo-agent/shared/platform-specs";
@@ -111,6 +111,47 @@ export default function CampaignWizardPage() {
   const [error, setError] = useState("");
   const [uploadRisk, setUploadRisk] = useState<"low" | "medium" | "high">("low");
   const [pendingCampaignId, setPendingCampaignId] = useState<string | null>(null);
+  const [libraryAssets, setLibraryAssets] = useState<
+    Array<{ id: string; type: string; displayName: string | null; originalFilename: string | null }>
+  >([]);
+  const [readyStories, setReadyStories] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
+  const [analyzeChoiceOpen, setAnalyzeChoiceOpen] = useState(false);
+  const [analyzeCampaignId, setAnalyzeCampaignId] = useState<string | null>(null);
+  const [uploadedVideoAssetIds, setUploadedVideoAssetIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    async function loadLibrary() {
+      try {
+        const meRes = await fetch("/api/me");
+        const me = await meRes.json();
+        if (!meRes.ok) return;
+        const ws = me.workspaces?.find((w: { slug: string }) => w.slug === slug) as
+          | { id: string }
+          | undefined;
+        if (!ws) return;
+        const [assetsRes, storiesRes] = await Promise.all([
+          fetch(`/api/workspaces/${ws.id}/library?sort=newest`),
+          fetch(`/api/workspaces/${ws.id}/stories?status=ready`),
+        ]);
+        const assetsData = await assetsRes.json();
+        const storiesData = await storiesRes.json();
+        if (assetsRes.ok) setLibraryAssets(assetsData.assets ?? []);
+        if (storiesRes.ok) {
+          setReadyStories(
+            (storiesData.stories ?? []).map((s: { id: string; name: string }) => ({
+              id: s.id,
+              name: s.name,
+            }))
+          );
+        }
+      } catch {
+        /* optional enrichment */
+      }
+    }
+    void loadLibrary();
+  }, [slug]);
 
   function addFiles(incoming: FileList | File[] | null) {
     if (!incoming || incoming.length === 0) return;
@@ -155,6 +196,31 @@ export default function CampaignWizardPage() {
     router.push(`/w/${slug}/campaigns/${campaignId}/task?taskId=${runData.taskId}`);
   }
 
+  async function applyMediaAnalysisMode(mode: "separate" | "story") {
+    if (!analyzeCampaignId) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch(`/api/campaigns/${analyzeCampaignId}/media`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mediaAnalysisMode: mode,
+          assetIds: mode === "story" ? uploadedVideoAssetIds : [],
+          createStoryName: mode === "story" ? `${name} Story` : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to save analysis choice");
+      setAnalyzeChoiceOpen(false);
+      await runCampaign(analyzeCampaignId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("error.generic"));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -188,8 +254,23 @@ export default function CampaignWizardPage() {
 
       const campaignId = campData.campaign.id;
 
-      if (files.length === 0) {
+      if (files.length === 0 && selectedAssetIds.length === 0 && selectedStoryIds.length === 0) {
         throw new Error(t("campaign.uploadRequired"));
+      }
+
+      if (selectedAssetIds.length > 0 || selectedStoryIds.length > 0) {
+        const attachRes = await fetch(`/api/campaigns/${campaignId}/media`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            assetIds: selectedAssetIds,
+            storyIds: selectedStoryIds,
+          }),
+        });
+        const attachData = await attachRes.json();
+        if (!attachRes.ok) {
+          throw new Error(attachData.error ?? "Failed to attach library media");
+        }
       }
 
       if (files.length > 0) {
@@ -203,7 +284,12 @@ export default function CampaignWizardPage() {
         if (imageCount > MAX_CAMPAIGN_IMAGES) {
           throw new Error(t("campaign.uploadTooManyImages", { max: String(MAX_CAMPAIGN_IMAGES) }));
         }
-        if (videoCount === 0 && imageCount === 0) {
+        if (
+          videoCount === 0 &&
+          imageCount === 0 &&
+          selectedAssetIds.length === 0 &&
+          selectedStoryIds.length === 0
+        ) {
           throw new Error(t("campaign.uploadRequired"));
         }
 
@@ -230,6 +316,7 @@ export default function CampaignWizardPage() {
         }
 
         const ordered = orderUploadFiles(selected);
+        const newVideoAssetIds: string[] = [];
         for (let i = 0; i < ordered.length; i++) {
           const file = ordered[i]!;
           setUploadStep(
@@ -286,6 +373,7 @@ export default function CampaignWizardPage() {
           if (!confirmRes.ok) {
             throw new Error(confirmData.error ?? `Failed to confirm upload for ${file.name}`);
           }
+          if (type === "video") newVideoAssetIds.push(urlData.assetId as string);
         }
 
         await waitForVideoProbes(campaignId);
@@ -305,6 +393,15 @@ export default function CampaignWizardPage() {
         setUploadRisk(risk);
         if (risk === "high" || risk === "medium") {
           setPendingCampaignId(campaignId);
+          setLoading(false);
+          setUploadStep("");
+          return;
+        }
+
+        if (newVideoAssetIds.length > 1) {
+          setUploadedVideoAssetIds(newVideoAssetIds);
+          setAnalyzeCampaignId(campaignId);
+          setAnalyzeChoiceOpen(true);
           setLoading(false);
           setUploadStep("");
           return;
@@ -371,8 +468,74 @@ export default function CampaignWizardPage() {
 
           <CampaignBriefForm values={briefForm} onChange={setBriefForm} />
 
+          {(libraryAssets.length > 0 || readyStories.length > 0) && (
+            <section className="brand-card space-y-4 p-6">
+              <div>
+                <label className="mb-1.5 block text-sm font-semibold text-navy">
+                  {t("campaign.chooseLibrary")}
+                </label>
+                <p className="mb-3 text-xs text-ink-secondary">{t("assetLibrary.selectAssets")}</p>
+                <div className="max-h-40 space-y-1 overflow-y-auto">
+                  {libraryAssets
+                    .filter((a) => a.type === "video" || a.type === "image")
+                    .slice(0, 40)
+                    .map((asset) => {
+                      const label =
+                        asset.displayName || asset.originalFilename || asset.id.slice(0, 8);
+                      const checked = selectedAssetIds.includes(asset.id);
+                      return (
+                        <label
+                          key={asset.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-surface-muted"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setSelectedAssetIds((prev) =>
+                                checked ? prev.filter((id) => id !== asset.id) : [...prev, asset.id]
+                              )
+                            }
+                          />
+                          <span className="truncate text-navy">{label}</span>
+                          <span className="text-xs capitalize text-ink-secondary">{asset.type}</span>
+                        </label>
+                      );
+                    })}
+                </div>
+              </div>
+              {readyStories.length > 0 ? (
+                <div>
+                  <p className="mb-2 text-xs text-ink-secondary">{t("assetLibrary.selectStories")}</p>
+                  <div className="max-h-32 space-y-1 overflow-y-auto">
+                    {readyStories.map((story) => {
+                      const checked = selectedStoryIds.includes(story.id);
+                      return (
+                        <label
+                          key={story.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-surface-muted"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setSelectedStoryIds((prev) =>
+                                checked ? prev.filter((id) => id !== story.id) : [...prev, story.id]
+                              )
+                            }
+                          />
+                          <span className="truncate text-navy">{story.name}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+            </section>
+          )}
+
           <section className="brand-card p-6">
-            <label className="mb-1.5 block text-sm font-semibold text-navy">{t("campaign.upload")}</label>
+            <label className="mb-1.5 block text-sm font-semibold text-navy">{t("campaign.uploadNew")}</label>
             <p className="mb-3 text-xs text-ink-secondary">
               {t("campaign.uploadOwnMaterial", {
                 maxVideos: String(MAX_SOURCE_VIDEOS),
@@ -524,6 +687,33 @@ export default function CampaignWizardPage() {
             </button>
           )}
         </form>
+
+        {analyzeChoiceOpen ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-navy/40 p-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-elevated">
+              <h2 className="text-lg font-bold text-navy">{t("assetLibrary.analyzeChoiceTitle")}</h2>
+              <p className="mt-2 text-sm text-ink-secondary">{t("assetLibrary.analyzeChoiceHint")}</p>
+              <div className="mt-5 space-y-2">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void applyMediaAnalysisMode("separate")}
+                  className="w-full rounded-xl border border-border px-4 py-3 text-left text-sm font-semibold text-navy hover:bg-surface-muted disabled:opacity-50"
+                >
+                  {t("assetLibrary.analyzeSeparate")}
+                </button>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void applyMediaAnalysisMode("story")}
+                  className="w-full rounded-xl bg-navy px-4 py-3 text-left text-sm font-semibold text-white hover:bg-navy/90 disabled:opacity-50"
+                >
+                  {t("assetLibrary.analyzeAsStory")}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </AppShell>
   );

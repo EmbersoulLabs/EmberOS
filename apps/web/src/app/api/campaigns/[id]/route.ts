@@ -1,5 +1,5 @@
 import { eq, and, desc, asc } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { getDb, schema, requireWorkspaceRole, getCampaignAssets } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { isCampaignDeletable } from "@/lib/campaigns";
@@ -23,10 +23,17 @@ export async function GET(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "client_viewer");
 
-    const assets = await db
-      .select()
-      .from(schema.assets)
-      .where(and(eq(schema.assets.campaignId, id), eq(schema.assets.workspaceId, campaign.workspaceId)));
+    const assets = await getCampaignAssets(db, id, campaign.workspaceId);
+
+    const storyRefs = await db
+      .select({
+        storyId: schema.campaignStoryRefs.storyId,
+        name: schema.stories.name,
+        status: schema.stories.status,
+      })
+      .from(schema.campaignStoryRefs)
+      .innerJoin(schema.stories, eq(schema.stories.id, schema.campaignStoryRefs.storyId))
+      .where(eq(schema.campaignStoryRefs.campaignId, id));
 
     const [task] = await db
       .select()
@@ -67,6 +74,9 @@ export async function GET(
     return apiSuccess({
       campaign: campaignRecord,
       assets,
+      stories: storyRefs,
+      mediaAnalysisMode:
+        ((campaign.metadata ?? {}) as Record<string, unknown>).mediaAnalysisMode ?? null,
       task: task ?? null,
       creative: creative ?? null,
       creatives,

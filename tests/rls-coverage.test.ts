@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-/** Tables with RLS enabled by packages/db/sql/rls.sql */
+/** Tables with RLS enabled by packages/db/sql/rls.sql (+ asset-library-v1.sql) */
 const RLS_ENABLED_TABLES = [
   "workspaces",
   "workspace_members",
@@ -20,10 +20,29 @@ const RLS_ENABLED_TABLES = [
   "business_profiles",
 ];
 
+const ASSET_LIBRARY_RLS_TABLES = [
+  "stories",
+  "story_assets",
+  "campaign_asset_refs",
+  "campaign_story_refs",
+];
+
 describe("RLS coverage", () => {
   it("rls.sql enables RLS on all core tenant tables", () => {
     const sql = readFileSync(resolve(__dirname, "../packages/db/sql/rls.sql"), "utf8");
     for (const table of RLS_ENABLED_TABLES) {
+      expect(sql, `missing ENABLE ROW LEVEL SECURITY for ${table}`).toMatch(
+        new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i")
+      );
+    }
+  });
+
+  it("asset-library-v1.sql enables RLS on Story and Campaign reference tables", () => {
+    const sql = readFileSync(
+      resolve(__dirname, "../packages/db/sql/asset-library-v1.sql"),
+      "utf8"
+    );
+    for (const table of ASSET_LIBRARY_RLS_TABLES) {
       expect(sql, `missing ENABLE ROW LEVEL SECURITY for ${table}`).toMatch(
         new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i")
       );

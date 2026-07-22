@@ -32,7 +32,12 @@ export async function POST(
       width?: number;
       height?: number;
       durationSec?: string;
-    } = {};
+      status?: string;
+      updatedAt?: Date;
+    } = {
+      status: "ready",
+      updatedAt: new Date(),
+    };
     if (width != null) updates.width = width;
     if (height != null) updates.height = height;
     if (durationSec != null) updates.durationSec = String(durationSec);

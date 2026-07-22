@@ -50,4 +50,7 @@ export const STORAGE_PATHS = {
     `${workspaceId}/brand/${filename}`,
   businessLogo: (workspaceId: string, logoId: string, ext: string) =>
     `${workspaceId}/brand/business-logo-${logoId}.${ext}`,
+  /** PD-036 Workspace Asset Library path (no campaign ownership). */
+  library: (workspaceId: string, assetId: string, ext: string) =>
+    `${workspaceId}/library/${assetId}.${ext}`,
 } as const;

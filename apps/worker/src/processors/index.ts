@@ -1,6 +1,6 @@
 import { Worker, type WorkerOptions } from "bullmq";
 import { eq, and } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
 import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig } from "@ceo-agent/queue";
 import { runPublishAgent } from "@ceo-agent/agents";
 import { runPipeline, type PipelineHooks } from "@ceo-agent/agents";
@@ -240,16 +240,23 @@ export function startWorkers() {
           })
           .where(eq(schema.assets.id, assetId));
 
-        if (assetRow?.campaignId && assetRow.workspaceId) {
-          const campaignAssets = await db
-            .select()
-            .from(schema.assets)
-            .where(
-              and(
-                eq(schema.assets.campaignId, assetRow.campaignId),
-                eq(schema.assets.workspaceId, assetRow.workspaceId)
-              )
-            );
+        // Resolve campaign via refs (PD-036) or legacy campaignId
+        let campaignIdForLimits = assetRow?.campaignId ?? null;
+        if (!campaignIdForLimits && assetRow?.workspaceId) {
+          const [ref] = await db
+            .select({ campaignId: schema.campaignAssetRefs.campaignId })
+            .from(schema.campaignAssetRefs)
+            .where(eq(schema.campaignAssetRefs.assetId, assetId))
+            .limit(1);
+          campaignIdForLimits = ref?.campaignId ?? null;
+        }
+
+        if (campaignIdForLimits && assetRow?.workspaceId) {
+          const campaignAssets = await getCampaignAssets(
+            db,
+            campaignIdForLimits,
+            assetRow.workspaceId
+          );
           const combined = sumUploadVideoDurationSec(campaignAssets);
           const combinedCheck = validateCombinedVideoDurationSec(combined);
           if (!combinedCheck.ok) {

@@ -156,26 +156,119 @@ export const campaigns = pgTable(
   (t) => [index("campaigns_workspace_idx").on(t.workspaceId)]
 );
 
+/**
+ * PD-036: Workspace-owned Asset is the single source of truth for uploaded files.
+ * Campaigns reference Assets via campaign_asset_refs.
+ * assets.campaign_id is a nullable legacy compatibility field scheduled for removal
+ * after all historical rows and consumers have migrated to reference tables.
+ */
 export const assets = pgTable(
   "assets",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull(),
     workspaceId: uuid("workspace_id").notNull(),
-    campaignId: uuid("campaign_id")
-      .notNull()
-      .references(() => campaigns.id, { onDelete: "cascade" }),
+    /** @deprecated Legacy compatibility only; scheduled for removal after migration. */
+    campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     type: text("type").notNull(),
+    displayName: text("display_name"),
+    originalFilename: text("original_filename"),
     storagePath: text("storage_path").notNull(),
     mimeType: text("mime_type"),
     durationSec: numeric("duration_sec"),
     width: integer("width"),
     height: integer("height"),
     fileSizeBytes: bigint("file_size_bytes", { mode: "number" }),
+    status: text("status").notNull().default("ready"),
+    source: text("source").notNull().default("campaign_upload"),
+    uploadedBy: uuid("uploaded_by"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
-  (t) => [index("assets_campaign_idx").on(t.campaignId)]
+  (t) => [
+    index("assets_campaign_idx").on(t.campaignId),
+    index("assets_workspace_idx").on(t.workspaceId),
+    index("assets_workspace_deleted_idx").on(t.workspaceId, t.deletedAt),
+  ]
+);
+
+/** PD-037: Story — ordered Asset references; never stores files. */
+export const stories = pgTable(
+  "stories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("draft"),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("stories_workspace_idx").on(t.workspaceId),
+    index("stories_workspace_deleted_idx").on(t.workspaceId, t.deletedAt),
+  ]
+);
+
+/** Many-to-many Story ↔ Asset with persisted business ordering (PD-036/037). */
+export const storyAssets = pgTable(
+  "story_assets",
+  {
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.storyId, t.assetId),
+    index("story_assets_story_idx").on(t.storyId, t.sortOrder),
+    index("story_assets_asset_idx").on(t.assetId),
+  ]
+);
+
+/** Campaign → Asset references (no file ownership). */
+export const campaignAssetRefs = pgTable(
+  "campaign_asset_refs",
+  {
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.campaignId, t.assetId),
+    index("campaign_asset_refs_campaign_idx").on(t.campaignId, t.sortOrder),
+  ]
+);
+
+/** Campaign → Story references. */
+export const campaignStoryRefs = pgTable(
+  "campaign_story_refs",
+  {
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => stories.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.campaignId, t.storyId),
+    index("campaign_story_refs_campaign_idx").on(t.campaignId),
+  ]
 );
 
 export const tasks = pgTable(
@@ -425,8 +518,35 @@ export const businessProfilesRelations = relations(businessProfiles, ({ one }) =
 export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   workspace: one(workspaces, { fields: [campaigns.workspaceId], references: [workspaces.id] }),
   assets: many(assets),
+  assetRefs: many(campaignAssetRefs),
+  storyRefs: many(campaignStoryRefs),
   tasks: many(tasks),
   creatives: many(creatives),
+}));
+
+export const assetsRelations = relations(assets, ({ many }) => ({
+  storyLinks: many(storyAssets),
+  campaignRefs: many(campaignAssetRefs),
+}));
+
+export const storiesRelations = relations(stories, ({ many }) => ({
+  assetLinks: many(storyAssets),
+  campaignRefs: many(campaignStoryRefs),
+}));
+
+export const storyAssetsRelations = relations(storyAssets, ({ one }) => ({
+  story: one(stories, { fields: [storyAssets.storyId], references: [stories.id] }),
+  asset: one(assets, { fields: [storyAssets.assetId], references: [assets.id] }),
+}));
+
+export const campaignAssetRefsRelations = relations(campaignAssetRefs, ({ one }) => ({
+  campaign: one(campaigns, { fields: [campaignAssetRefs.campaignId], references: [campaigns.id] }),
+  asset: one(assets, { fields: [campaignAssetRefs.assetId], references: [assets.id] }),
+}));
+
+export const campaignStoryRefsRelations = relations(campaignStoryRefs, ({ one }) => ({
+  campaign: one(campaigns, { fields: [campaignStoryRefs.campaignId], references: [campaigns.id] }),
+  story: one(stories, { fields: [campaignStoryRefs.storyId], references: [stories.id] }),
 }));
 
 export const tasksRelations = relations(tasks, ({ one }) => ({
