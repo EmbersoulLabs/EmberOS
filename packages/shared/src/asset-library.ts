@@ -104,9 +104,27 @@ export const StoryUpdateBodySchema = z.object({
   assetIds: z.array(z.string().uuid()).optional(),
 });
 
-export const CampaignMediaAttachBodySchema = z.object({
-  assetIds: z.array(z.string().uuid()).optional(),
-  storyIds: z.array(z.string().uuid()).optional(),
-  mediaAnalysisMode: z.enum(["separate", "story"]).optional(),
-  createStoryName: z.string().trim().min(1).max(200).optional(),
-});
+export const CampaignMediaAttachBodySchema = z
+  .object({
+    assetIds: z.array(z.string().uuid()).default([]),
+    storyIds: z.array(z.string().uuid()).default([]),
+    mediaAnalysisMode: z.enum(["separate", "story"]).optional(),
+    storyAssetIds: z.array(z.string().uuid()).optional(),
+    createStoryName: z.string().trim().min(1).max(200).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.mediaAnalysisMode === "story" && (value.storyAssetIds?.length ?? 0) < 2) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["storyAssetIds"],
+        message: "Story mode requires at least two ordered Assets",
+      });
+    }
+    if (value.mediaAnalysisMode !== "story" && value.storyAssetIds?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["storyAssetIds"],
+        message: "storyAssetIds are only valid in Story mode",
+      });
+    }
+  });

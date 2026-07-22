@@ -2,14 +2,17 @@ import { and, eq } from "drizzle-orm";
 import {
   assertAssetsInWorkspace,
   assertStoriesInWorkspace,
-  attachAssetsToCampaign,
-  attachStoriesToCampaign,
   getDb,
+  replaceCampaignMediaReferences,
   replaceStoryAssets,
   requireWorkspaceRole,
   schema,
 } from "@ceo-agent/db";
-import { CampaignMediaAttachBodySchema, isUuid } from "@ceo-agent/shared";
+import {
+  CampaignMediaAttachBodySchema,
+  directAssetsForStoryMode,
+  isUuid,
+} from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { getCampaignAssets } from "@/lib/campaign-assets";
@@ -44,10 +47,15 @@ export async function POST(
 
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
-    const assetIds = parsed.data.assetIds ?? [];
-    const storyIds = parsed.data.storyIds ?? [];
+    const assetIds = parsed.data.assetIds;
+    const storyIds = parsed.data.storyIds;
+    const storyAssetIds = parsed.data.storyAssetIds ?? [];
 
-    const assetCheck = await assertAssetsInWorkspace(db, campaign.workspaceId, assetIds);
+    const assetCheck = await assertAssetsInWorkspace(
+      db,
+      campaign.workspaceId,
+      [...assetIds, ...storyAssetIds]
+    );
     if (!assetCheck.ok) return apiError(assetCheck.error, "VALIDATION_ERROR", 400);
 
     const storyCheck = await assertStoriesInWorkspace(db, campaign.workspaceId, storyIds, {
@@ -57,7 +65,10 @@ export async function POST(
 
     let createdStoryId: string | null = null;
 
-    if (parsed.data.mediaAnalysisMode === "story" && assetIds.length > 1) {
+    let finalAssetIds = assetIds;
+    let finalStoryIds = storyIds;
+
+    if (parsed.data.mediaAnalysisMode === "story" && storyAssetIds.length > 1) {
       const [workspace] = await db
         .select()
         .from(schema.workspaces)
@@ -80,16 +91,22 @@ export async function POST(
         })
         .returning();
 
-      await replaceStoryAssets(db, story.id, assetIds);
-      await attachStoriesToCampaign(db, campaignId, [story.id]);
+      await replaceStoryAssets(db, story.id, storyAssetIds);
+      await db
+        .update(schema.stories)
+        .set({ status: "ready", updatedAt: new Date() })
+        .where(eq(schema.stories.id, story.id));
       createdStoryId = story.id;
-    } else if (assetIds.length > 0) {
-      await attachAssetsToCampaign(db, campaignId, assetIds);
+      finalAssetIds = directAssetsForStoryMode(assetIds, storyAssetIds);
+      finalStoryIds = [...storyIds, story.id];
     }
 
-    if (storyIds.length > 0) {
-      await attachStoriesToCampaign(db, campaignId, storyIds);
-    }
+    await replaceCampaignMediaReferences(
+      db,
+      campaignId,
+      finalAssetIds,
+      finalStoryIds
+    );
 
     if (parsed.data.mediaAnalysisMode) {
       const metadata = {

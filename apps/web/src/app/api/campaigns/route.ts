@@ -3,17 +3,11 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import {
-  isVoicePreset,
-  isContentStyle,
-  isCampaignMarketingGoal,
-  isBgmUserPreference,
-  isBgmStartPreference,
-  legacyGoalFromMarketingGoal,
+  defaultCampaignLanguages,
+  CAMPAIGN_OBJECTIVE_LABELS,
+  CampaignWorkspaceCreateSchema,
   DEFAULT_VOICE_PRESET,
   DEFAULT_BGM_PREFERENCE,
-  DEFAULT_BGM_START_PREFERENCE,
-  isSubtitleLanguagePair,
-  isSubtitleStylePreset,
 } from "@ceo-agent/shared";
 import { isCampaignDeletable } from "@/lib/campaigns";
 
@@ -72,75 +66,70 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await requireAuth();
-    const body = await request.json();
+    const parsed = CampaignWorkspaceCreateSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return apiError("Invalid campaign payload", "VALIDATION_ERROR", 400);
+    }
+
     const {
       workspaceId,
       name,
-      goal,
-      platforms,
+      objective,
+      objectiveCustom,
+      description,
+      targetAudienceOverride,
       campaignBrief,
-      voicePreset,
-      contentStyle,
-      campaignGoal,
-      bgmPreference,
-      bgmStartPreference,
-      subtitleStyle,
+      outputLanguage,
       subtitleLanguage,
-    } = body as {
-      workspaceId: string;
-      name: string;
-      goal?: string;
-      platforms?: string[];
-      campaignBrief?: string;
-      voicePreset?: string;
-      contentStyle?: string;
-      campaignGoal?: string;
-      bgmPreference?: string;
-      bgmStartPreference?: string;
-      subtitleStyle?: string;
-      subtitleLanguage?: string;
-    };
+      ctaLanguage,
+      hashtagLanguage,
+      platforms,
+    } = parsed.data;
 
-    if (!workspaceId || !name) {
-      return apiError("workspaceId and name are required", "VALIDATION_ERROR");
+    if (objective === "other" && !objectiveCustom?.trim()) {
+      return apiError("Custom objective is required when Other is selected", "VALIDATION_ERROR", 400);
     }
+
+    const langs = defaultCampaignLanguages("en");
+    const languages = {
+      outputLanguage: outputLanguage ?? langs.outputLanguage,
+      subtitleLanguage: subtitleLanguage ?? langs.subtitleLanguage,
+      ctaLanguage: ctaLanguage ?? langs.ctaLanguage,
+      hashtagLanguage: hashtagLanguage ?? langs.hashtagLanguage,
+    };
 
     const member = await requireWorkspaceRole(workspaceId, user.id, "operator");
     const db = getDb();
 
-    const briefText = campaignBrief?.trim() || null;
-    const voice = isVoicePreset(voicePreset) ? voicePreset : DEFAULT_VOICE_PRESET;
-    const style = isContentStyle(contentStyle) ? contentStyle : null;
-    const marketingGoal = isCampaignMarketingGoal(campaignGoal) ? campaignGoal : null;
-    const bgm = isBgmUserPreference(bgmPreference) ? bgmPreference : DEFAULT_BGM_PREFERENCE;
-    const bgmStart = isBgmStartPreference(bgmStartPreference)
-      ? bgmStartPreference
-      : DEFAULT_BGM_START_PREFERENCE;
-    const legacyGoal = goal?.trim() || (marketingGoal ? legacyGoalFromMarketingGoal(marketingGoal) : undefined);
-
-    const renderPreferences =
-      isSubtitleStylePreset(subtitleStyle ?? "") && isSubtitleLanguagePair(subtitleLanguage ?? "")
-        ? { subtitleStyle, subtitleLanguage }
-        : undefined;
+    const objectiveLabel =
+      objective === "other"
+        ? objectiveCustom!.trim()
+        : CAMPAIGN_OBJECTIVE_LABELS[objective];
 
     const [campaign] = await db
       .insert(schema.campaigns)
       .values({
         orgId: member.orgId,
         workspaceId,
-        name,
-        goal: legacyGoal,
-        platforms: platforms ?? ["tiktok", "xiaohongshu", "instagram"],
-        campaignBrief: briefText,
-        voicePreset: voice,
-        contentStyle: style,
-        campaignGoal: marketingGoal,
-        bgmPreference: bgm,
-        metadata: {
-          bgmStartPreference: bgmStart,
-          ...(renderPreferences ? { renderPreferences } : {}),
-        },
+        name: name.trim(),
+        goal: objectiveLabel,
+        objective,
+        objectiveCustom: objective === "other" ? objectiveCustom!.trim() : null,
+        description: description?.trim() || null,
+        targetAudienceOverride: targetAudienceOverride?.trim() || null,
+        // PD-005: platforms must not block V1 — keep optional non-empty default for legacy consumers.
+        platforms: Array.isArray(platforms) && platforms.length > 0 ? platforms : [],
+        campaignBrief: campaignBrief?.trim() || null,
+        outputLanguage: languages.outputLanguage,
+        subtitleLanguage: languages.subtitleLanguage,
+        ctaLanguage: languages.ctaLanguage,
+        hashtagLanguage: languages.hashtagLanguage,
+        generateStatus: "idle",
+        voicePreset: DEFAULT_VOICE_PRESET,
+        bgmPreference: DEFAULT_BGM_PREFERENCE,
+        metadata: {},
         createdBy: user.id,
+        status: "draft",
       })
       .returning();
 

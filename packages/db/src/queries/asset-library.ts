@@ -6,6 +6,19 @@ type Db = ReturnType<typeof getDb>;
 
 type AssetRow = typeof schema.assets.$inferSelect;
 
+const MEDIA_REFS_AUTHORITATIVE_KEY = "mediaReferencesAuthoritative";
+
+export function shouldUseLegacyCampaignAssetFallback(
+  resolvedAssetCount: number,
+  campaignMetadata: unknown
+): boolean {
+  if (resolvedAssetCount > 0) return false;
+  if (!campaignMetadata || typeof campaignMetadata !== "object") return true;
+  return (
+    (campaignMetadata as Record<string, unknown>)[MEDIA_REFS_AUTHORITATIVE_KEY] !== true
+  );
+}
+
 /**
  * Resolve campaign media from PD-036 references:
  * - campaign_asset_refs
@@ -19,6 +32,12 @@ export async function getCampaignAssets(
   workspaceId: string
 ): Promise<AssetRow[]> {
   const byId = new Map<string, AssetRow>();
+
+  const [campaign] = await db
+    .select({ metadata: schema.campaigns.metadata })
+    .from(schema.campaigns)
+    .where(eq(schema.campaigns.id, campaignId))
+    .limit(1);
 
   const directRefs = await db
     .select({ asset: schema.assets, sortOrder: schema.campaignAssetRefs.sortOrder })
@@ -45,6 +64,7 @@ export async function getCampaignAssets(
       and(
         eq(schema.campaignStoryRefs.campaignId, campaignId),
         eq(schema.stories.workspaceId, workspaceId),
+        eq(schema.stories.status, "ready"),
         isNull(schema.stories.deletedAt)
       )
     );
@@ -69,7 +89,7 @@ export async function getCampaignAssets(
     }
   }
 
-  if (byId.size === 0) {
+  if (shouldUseLegacyCampaignAssetFallback(byId.size, campaign?.metadata)) {
     const legacy = await db
       .select()
       .from(schema.assets)
@@ -115,6 +135,49 @@ export async function attachStoriesToCampaign(
     .insert(schema.campaignStoryRefs)
     .values(storyIds.map((storyId) => ({ campaignId, storyId })))
     .onConflictDoNothing();
+}
+
+/** Replace Campaign references so persistence exactly matches the current UI selection. */
+export async function replaceCampaignMediaReferences(
+  db: Db,
+  campaignId: string,
+  assetIds: string[],
+  storyIds: string[]
+): Promise<void> {
+  const uniqueAssetIds = [...new Set(assetIds)];
+  const uniqueStoryIds = [...new Set(storyIds)];
+
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(schema.campaignAssetRefs)
+      .where(eq(schema.campaignAssetRefs.campaignId, campaignId));
+    await tx
+      .delete(schema.campaignStoryRefs)
+      .where(eq(schema.campaignStoryRefs.campaignId, campaignId));
+
+    if (uniqueAssetIds.length > 0) {
+      await tx.insert(schema.campaignAssetRefs).values(
+        uniqueAssetIds.map((assetId, sortOrder) => ({
+          campaignId,
+          assetId,
+          sortOrder,
+        }))
+      );
+    }
+    if (uniqueStoryIds.length > 0) {
+      await tx.insert(schema.campaignStoryRefs).values(
+        uniqueStoryIds.map((storyId) => ({ campaignId, storyId }))
+      );
+    }
+
+    await tx
+      .update(schema.campaigns)
+      .set({
+        metadata: sql`coalesce(${schema.campaigns.metadata}, '{}'::jsonb) || '{"mediaReferencesAuthoritative":true}'::jsonb`,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.campaigns.id, campaignId));
+  });
 }
 
 export async function replaceStoryAssets(

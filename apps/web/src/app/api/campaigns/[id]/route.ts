@@ -4,6 +4,12 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { isCampaignDeletable } from "@/lib/campaigns";
 import { deleteCampaignCascade } from "@/lib/campaign-delete";
+import {
+  isCampaignObjective,
+  isCampaignLanguageCode,
+  CAMPAIGN_OBJECTIVE_LABELS,
+  CampaignWorkspacePatchSchema,
+} from "@ceo-agent/shared";
 
 export async function GET(
   _request: Request,
@@ -33,7 +39,12 @@ export async function GET(
       })
       .from(schema.campaignStoryRefs)
       .innerJoin(schema.stories, eq(schema.stories.id, schema.campaignStoryRefs.storyId))
-      .where(eq(schema.campaignStoryRefs.campaignId, id));
+      .where(
+        and(
+          eq(schema.campaignStoryRefs.campaignId, id),
+          eq(schema.stories.status, "ready")
+        )
+      );
 
     const [task] = await db
       .select()
@@ -112,12 +123,70 @@ export async function PATCH(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
+    const parsed = CampaignWorkspacePatchSchema.safeParse(body);
+    if (!parsed.success) {
+      return apiError("Invalid campaign update", "VALIDATION_ERROR", 400);
+    }
+    const patch = parsed.data;
+
+    const nextObjective = patch.objective ?? campaign.objective;
+    const nextCustom =
+      patch.objectiveCustom !== undefined
+        ? patch.objectiveCustom
+        : campaign.objectiveCustom;
+
+    if (patch.objective != null && !isCampaignObjective(patch.objective)) {
+      return apiError("Invalid objective", "VALIDATION_ERROR", 400);
+    }
+    if (nextObjective === "other" && !String(nextCustom ?? "").trim()) {
+      return apiError(
+        "Custom objective is required when Other is selected",
+        "VALIDATION_ERROR",
+        400
+      );
+    }
+
+    for (const key of [
+      "outputLanguage",
+      "subtitleLanguage",
+      "ctaLanguage",
+      "hashtagLanguage",
+    ] as const) {
+      const value = patch[key];
+      if (value != null && !isCampaignLanguageCode(value)) {
+        return apiError(`Invalid ${key}`, "VALIDATION_ERROR", 400);
+      }
+    }
+
+    const objectiveLabel = isCampaignObjective(nextObjective)
+      ? nextObjective === "other"
+        ? String(nextCustom).trim()
+        : CAMPAIGN_OBJECTIVE_LABELS[nextObjective]
+      : campaign.goal;
+
     const [updated] = await db
       .update(schema.campaigns)
       .set({
-        name: body.name ?? campaign.name,
-        goal: body.goal ?? campaign.goal,
-        platforms: body.platforms ?? campaign.platforms,
+        name: patch.name ?? campaign.name,
+        goal: objectiveLabel ?? campaign.goal,
+        objective: (nextObjective as string | null) ?? campaign.objective,
+        objectiveCustom:
+          nextObjective === "other" ? String(nextCustom).trim() : null,
+        description:
+          patch.description !== undefined ? patch.description : campaign.description,
+        targetAudienceOverride:
+          patch.targetAudienceOverride !== undefined
+            ? patch.targetAudienceOverride
+            : campaign.targetAudienceOverride,
+        campaignBrief:
+          patch.campaignBrief !== undefined
+            ? patch.campaignBrief
+            : campaign.campaignBrief,
+        outputLanguage: patch.outputLanguage ?? campaign.outputLanguage,
+        subtitleLanguage: patch.subtitleLanguage ?? campaign.subtitleLanguage,
+        ctaLanguage: patch.ctaLanguage ?? campaign.ctaLanguage,
+        hashtagLanguage: patch.hashtagLanguage ?? campaign.hashtagLanguage,
+        platforms: patch.platforms ?? campaign.platforms,
         updatedAt: new Date(),
       })
       .where(eq(schema.campaigns.id, id))
