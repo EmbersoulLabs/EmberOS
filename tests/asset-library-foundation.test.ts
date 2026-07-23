@@ -6,8 +6,15 @@ import {
   resolveLibraryAssetType,
   STORAGE_PATHS,
 } from "@ceo-agent/shared";
+import { isDatabaseSchemaError } from "../apps/web/src/lib/database-errors";
 
 describe("asset library types (PD-036)", () => {
+  it("detects missing deployed tables and columns as schema configuration failures", () => {
+    expect(isDatabaseSchemaError({ code: "42P01" })).toBe(true);
+    expect(isDatabaseSchemaError({ code: "42703" })).toBe(true);
+    expect(isDatabaseSchemaError({ code: "23505" })).toBe(false);
+    expect(isDatabaseSchemaError(new Error("upload failed"))).toBe(false);
+  });
   it("infers image/video/audio/pdf from mime and filename", () => {
     expect(inferAssetTypeFromMime("image/png")).toBe("image");
     expect(inferAssetTypeFromMime("video/mp4")).toBe("video");

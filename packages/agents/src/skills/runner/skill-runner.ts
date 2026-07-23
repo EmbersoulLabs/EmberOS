@@ -7,6 +7,16 @@ import {
   BUSINESS_PROFILE_ANALYZER_SKILL_ID,
   type BusinessProfileAnalyzerSkillResult,
 } from "../business-profile-analyzer/skill";
+import {
+  CampaignBriefAssistSkill,
+  CAMPAIGN_BRIEF_ASSIST_SKILL_ID,
+  type CampaignBriefAssistSkillResult,
+} from "../campaign-brief-assist/skill";
+import {
+  AssetDisplayNameSkill,
+  ASSET_DISPLAY_NAME_SKILL_ID,
+  type AssetDisplayNameSkillResult,
+} from "../asset-display-name/skill";
 
 type AnySkill = AiSkill<unknown, unknown>;
 
@@ -18,6 +28,12 @@ function ensureDefaultsRegistered() {
       BUSINESS_PROFILE_ANALYZER_SKILL_ID,
       BusinessProfileAnalyzerSkill as AnySkill
     );
+  }
+  if (!skillRegistry.has(CAMPAIGN_BRIEF_ASSIST_SKILL_ID)) {
+    skillRegistry.set(CAMPAIGN_BRIEF_ASSIST_SKILL_ID, CampaignBriefAssistSkill as AnySkill);
+  }
+  if (!skillRegistry.has(ASSET_DISPLAY_NAME_SKILL_ID)) {
+    skillRegistry.set(ASSET_DISPLAY_NAME_SKILL_ID, AssetDisplayNameSkill as AnySkill);
   }
 }
 
@@ -33,6 +49,8 @@ export function getRegisteredAiSkill(skillId: AiSkillId): AnySkill | undefined {
 
 export type ExecuteSkillResultMap = {
   "business-profile-analyzer": BusinessProfileAnalyzerSkillResult;
+  "campaign-brief-assist": CampaignBriefAssistSkillResult;
+  "asset-display-name": AssetDisplayNameSkillResult;
 };
 
 export interface ExecuteSkillDeps {

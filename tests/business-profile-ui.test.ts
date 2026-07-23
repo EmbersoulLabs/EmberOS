@@ -23,6 +23,7 @@ import {
   assessBusinessProfileCompletion,
   businessProfileAiAnalysisToUpdate,
   emptyBusinessHours,
+  patchBusinessHoursDay,
 } from "@ceo-agent/shared";
 
 const orgId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -124,6 +125,47 @@ describe("business-profile UI helpers", () => {
     const values = profileToFormValues(draft);
     expect(values.companyName).toBe("");
     expect(values.businessHours).toEqual(emptyBusinessHours());
+  });
+
+  it("enables a Business Hours day that is absent from sparse persisted data", () => {
+    const hours = patchBusinessHoursDay([], "Monday", {
+      isOpen: true,
+      openTime: "09:00",
+      closeTime: "18:00",
+    });
+
+    expect(hours).toHaveLength(7);
+    expect(hours[0]).toEqual({
+      day: "Monday",
+      isOpen: true,
+      openTime: "09:00",
+      closeTime: "18:00",
+    });
+    expect(hours[1]).toEqual({ day: "Tuesday", isOpen: false });
+  });
+
+  it("persists and reloads enabled Business Hours", () => {
+    const baseline = profileToFormValues(createEmptyBusinessProfileDraft(orgId, workspaceId));
+    const businessHours = patchBusinessHoursDay(baseline.businessHours, "Wednesday", {
+      isOpen: true,
+      openTime: "10:00",
+      closeTime: "17:00",
+    });
+    const patch = buildBusinessProfilePatch(
+      { ...baseline, businessHours },
+      1,
+      "en",
+      baseline
+    );
+
+    expect(validateBusinessProfilePatch(patch).success).toBe(true);
+    expect(patch.businessHours).toEqual(businessHours);
+    expect(
+      profileToFormValues({
+        ...createEmptyBusinessProfileDraft(orgId, workspaceId),
+        businessHours,
+      }).businessHours
+    ).toEqual(businessHours);
   });
 
   it("keeps website and social presence fields optional", () => {

@@ -5,25 +5,36 @@ import { useParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import {
   CampaignMediaInput,
-  LanguageFields,
+  InferredLanguageReadonly,
   CAMPAIGN_OBJECTIVES,
   CAMPAIGN_OBJECTIVE_LABELS,
-  defaultCampaignLanguages,
   type CampaignObjective,
-  type CampaignLanguageCode,
 } from "@/components/campaign/CampaignMediaInput";
+import { CampaignBriefAssistant } from "@/components/campaign/CampaignBriefAssistant";
+import { ReviewAssetPreview } from "@/components/campaign/ReviewAssetPreview";
+import { PublishingPlatformMultiSelect } from "@/components/campaign/PublishingPlatformMultiSelect";
 import { useI18n } from "@/lib/i18n/provider";
+import {
+  formatPublishingPlatforms,
+  inferCampaignLanguages,
+  sanitizePublishingPlatforms,
+  validateCampaignForCreate,
+  type PublishingPlatformId,
+} from "@ceo-agent/shared";
 
-const STEPS = [
-  "name",
-  "objective",
-  "assets",
-  "brief",
-  "language",
-  "generate",
-] as const;
+/** PD-038 — five-step Campaign Wizard (no Language step). */
+const STEPS = ["name", "objective", "assets", "brief", "review"] as const;
 
 type Step = (typeof STEPS)[number];
+
+type ReviewAsset = {
+  id: string;
+  displayName: string | null;
+  originalFilename: string | null;
+  type: string;
+  mimeType?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
 
 export default function CampaignWizardPage() {
   const params = useParams();
@@ -40,15 +51,20 @@ export default function CampaignWizardPage() {
   const [objective, setObjective] = useState<CampaignObjective | "">("");
   const [objectiveCustom, setObjectiveCustom] = useState("");
   const [campaignBrief, setCampaignBrief] = useState("");
-  const [languages, setLanguages] = useState(() => defaultCampaignLanguages(locale));
+  const [platforms, setPlatforms] = useState<PublishingPlatformId[]>([]);
+  const [platformsSeeded, setPlatformsSeeded] = useState(false);
+  const languages = useMemo(
+    () => inferCampaignLanguages(locale, platforms),
+    [locale, platforms]
+  );
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [generateSummary, setGenerateSummary] = useState<Record<string, unknown> | null>(
-    null
-  );
+  const [reviewAssets, setReviewAssets] = useState<ReviewAsset[]>([]);
+  const [reviewStories, setReviewStories] = useState<Array<{ id: string; name: string }>>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   async function ensureWorkspace(): Promise<string> {
     if (workspaceId) return workspaceId;
@@ -68,17 +84,47 @@ export default function CampaignWizardPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
+  // PD-042 — seed Campaign platforms from Business Profile defaults (campaign-only thereafter).
+  useEffect(() => {
+    if (!workspaceId || platformsSeeded) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/business-profile`);
+        const data = await res.json();
+        if (!cancelled && res.ok) {
+          setPlatforms(
+            sanitizePublishingPlatforms(data.profile?.defaultPublishingPlatforms ?? [])
+          );
+        }
+      } catch {
+        // Defaults remain empty; user can still select platforms.
+      } finally {
+        if (!cancelled) setPlatformsSeeded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, platformsSeeded]);
+
   const stepTitle = useMemo(() => {
     const map: Record<Step, string> = {
       name: t("campaign.workspace.stepName"),
       objective: t("campaign.workspace.stepObjective"),
       assets: t("campaign.workspace.stepAssets"),
       brief: t("campaign.workspace.stepBrief"),
-      language: t("campaign.workspace.stepLanguage"),
-      generate: t("campaign.workspace.stepGenerate"),
+      review: t("campaign.workspace.stepReview"),
     };
     return map[step];
   }, [step, t]);
+
+  const objectiveLabel =
+    objective === "other"
+      ? objectiveCustom.trim()
+      : objective
+        ? CAMPAIGN_OBJECTIVE_LABELS[objective]
+        : "";
 
   async function createOrUpdateDraft(): Promise<string> {
     const wsId = await ensureWorkspace();
@@ -88,17 +134,22 @@ export default function CampaignWizardPage() {
       throw new Error(t("campaign.workspace.customObjectiveRequired"));
     }
 
+    const payload = {
+      name: name.trim(),
+      objective,
+      objectiveCustom: objective === "other" ? objectiveCustom.trim() : undefined,
+      campaignBrief: campaignBrief.trim() || undefined,
+      platforms,
+      ...languages,
+    };
+
     if (!campaignId) {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           workspaceId: wsId,
-          name: name.trim(),
-          objective,
-          objectiveCustom: objective === "other" ? objectiveCustom.trim() : undefined,
-          campaignBrief: campaignBrief.trim() || undefined,
-          ...languages,
+          ...payload,
         }),
       });
       const data = await res.json();
@@ -113,11 +164,9 @@ export default function CampaignWizardPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: name.trim(),
-        objective,
+        ...payload,
         objectiveCustom: objective === "other" ? objectiveCustom.trim() : null,
         campaignBrief: campaignBrief.trim() || null,
-        ...languages,
       }),
     });
     const patchData = await patchRes.json();
@@ -139,6 +188,31 @@ export default function CampaignWizardPage() {
     if (!res.ok) throw new Error(data.error ?? "Failed to attach media");
   }
 
+  async function loadReviewSnapshot(id: string) {
+    const campRes = await fetch(`/api/campaigns/${id}`);
+    const campData = await campRes.json();
+    if (!campRes.ok) throw new Error(campData.error ?? "Failed to load campaign");
+    setReviewAssets(campData.assets ?? []);
+    setReviewStories(
+      (campData.stories ?? []).map(
+        (story: { storyId?: string; id?: string; name: string }) => ({
+          id: story.storyId || story.id || "",
+          name: story.name,
+        })
+      ).filter((story: { id: string }) => Boolean(story.id))
+    );
+    const nextPlatforms = sanitizePublishingPlatforms(campData.campaign?.platforms ?? []);
+    setPlatforms(nextPlatforms);
+    const nextWarnings: string[] = [];
+    if (!(campData.assets ?? []).length && !(campData.stories ?? []).length) {
+      nextWarnings.push(t("campaign.workspace.assetsRequired"));
+    }
+    if (nextPlatforms.length === 0) {
+      nextWarnings.push(t("campaign.workspace.platformsEmptyHint"));
+    }
+    setWarnings(nextWarnings);
+  }
+
   async function goNext() {
     setError("");
     setLoading(true);
@@ -149,36 +223,27 @@ export default function CampaignWizardPage() {
         return;
       }
       if (step === "objective") {
-        const id = await createOrUpdateDraft();
-        await ensureWorkspace();
-        void id;
+        await createOrUpdateDraft();
         setStepIndex(2);
         return;
       }
       if (step === "assets") {
         const id = await createOrUpdateDraft();
         await attachMedia(id);
-        if (selectedAssetIds.length === 0 && selectedStoryIds.length === 0) {
-          // Allow continue if files already uploaded into campaign via media input
-          const campRes = await fetch(`/api/campaigns/${id}`);
-          const campData = await campRes.json();
-          const assetCount = (campData.assets ?? []).length;
-          const storyCount = (campData.stories ?? []).length;
-          if (assetCount === 0 && storyCount === 0) {
-            throw new Error(t("campaign.workspace.assetsRequired"));
-          }
+        const campRes = await fetch(`/api/campaigns/${id}`);
+        const campData = await campRes.json();
+        const assetCount = (campData.assets ?? []).length;
+        const storyCount = (campData.stories ?? []).length;
+        if (assetCount === 0 && storyCount === 0) {
+          throw new Error(t("campaign.workspace.assetsRequired"));
         }
         setStepIndex(3);
         return;
       }
       if (step === "brief") {
-        await createOrUpdateDraft();
+        const id = await createOrUpdateDraft();
+        await loadReviewSnapshot(id);
         setStepIndex(4);
-        return;
-      }
-      if (step === "language") {
-        await createOrUpdateDraft();
-        setStepIndex(5);
         return;
       }
     } catch (err) {
@@ -188,17 +253,36 @@ export default function CampaignWizardPage() {
     }
   }
 
-  async function onGenerate() {
+  async function onCreateCampaign() {
     setError("");
     setLoading(true);
     try {
       const id = await createOrUpdateDraft();
       await attachMedia(id);
-      const res = await fetch(`/api/campaigns/${id}/generate`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Generate validation failed");
-      setGenerateSummary(data.summary ?? null);
-      // Enter Campaign Workspace — do NOT call /run.
+
+      const campRes = await fetch(`/api/campaigns/${id}`);
+      const campData = await campRes.json();
+      if (!campRes.ok) throw new Error(campData.error ?? t("campaign.workspace.createFailed"));
+
+      const assetCount = (campData.assets ?? []).length;
+      const storyCount = (campData.stories ?? []).length;
+      const validation = validateCampaignForCreate({
+        name,
+        objective: objective || null,
+        objectiveCustom,
+        outputLanguage: languages.outputLanguage,
+        subtitleLanguage: languages.subtitleLanguage,
+        ctaLanguage: languages.ctaLanguage,
+        hashtagLanguage: languages.hashtagLanguage,
+        assetCount,
+        storyCount,
+      });
+      if (!validation.ok) {
+        throw new Error(validation.errors[0] ?? t("campaign.workspace.createFailed"));
+      }
+
+      // Create Campaign finalizes the reviewed draft only.
+      // Marketing Package generation remains a separate Campaign Workspace action.
       router.push(`/w/${slug}/campaigns/${id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error.generic"));
@@ -206,6 +290,26 @@ export default function CampaignWizardPage() {
       setLoading(false);
     }
   }
+
+  const validationRows = [
+    {
+      ok: Boolean(name.trim()),
+      label: t("campaign.name"),
+    },
+    {
+      ok: Boolean(objective) && (objective !== "other" || Boolean(objectiveCustom.trim())),
+      label: t("campaign.workspace.objective"),
+    },
+    {
+      ok: reviewAssets.length > 0 || reviewStories.length > 0 || selectedAssetIds.length > 0,
+      label: t("campaign.workspace.media"),
+    },
+  ];
+
+  const platformsDisplay =
+    platforms.length > 0
+      ? formatPublishingPlatforms(platforms)
+      : t("campaign.workspace.platformsNotSet");
 
   return (
     <AppShell>
@@ -248,7 +352,7 @@ export default function CampaignWizardPage() {
           ) : null}
 
           {step === "objective" ? (
-            <div className="space-y-3">
+            <div className="space-y-5">
               <label className="block text-sm font-semibold text-navy">
                 {t("campaign.workspace.objective")}
                 <select
@@ -274,6 +378,17 @@ export default function CampaignWizardPage() {
                   />
                 </label>
               ) : null}
+              <PublishingPlatformMultiSelect
+                label={t("campaign.workspace.publishingPlatforms")}
+                hint={
+                  platformsSeeded
+                    ? t("campaign.workspace.publishingPlatformsHint")
+                    : t("campaign.workspace.publishingPlatformsLoading")
+                }
+                values={platforms}
+                onChange={setPlatforms}
+                disabled={loading || !platformsSeeded}
+              />
             </div>
           ) : null}
 
@@ -295,65 +410,113 @@ export default function CampaignWizardPage() {
           ) : null}
 
           {step === "brief" ? (
-            <label className="block text-sm font-semibold text-navy">
-              {t("campaign.workspace.briefOptional")}
-              <textarea
-                value={campaignBrief}
-                onChange={(e) => setCampaignBrief(e.target.value)}
-                rows={5}
-                className="mt-1.5 w-full rounded-xl border border-border px-4 py-2.5 text-sm font-normal"
-                placeholder={t("campaign.workspace.briefPlaceholder")}
-              />
-            </label>
+            <CampaignBriefAssistant
+              campaignId={campaignId}
+              value={campaignBrief}
+              onChange={setCampaignBrief}
+              campaignName={name}
+              objectiveLabel={objectiveLabel}
+              disabled={loading}
+            />
           ) : null}
 
-          {step === "language" ? (
-            <div className="space-y-3">
-              <p className="text-sm text-ink-secondary">{t("campaign.workspace.languageHint")}</p>
-              <LanguageFields values={languages} onChange={setLanguages} disabled={loading} />
-            </div>
-          ) : null}
+          {step === "review" ? (
+            <div className="space-y-5">
+              <p className="text-sm text-ink-secondary">{t("campaign.workspace.reviewHint")}</p>
 
-          {step === "generate" ? (
-            <div className="space-y-3">
-              <p className="text-sm text-ink-secondary">{t("campaign.workspace.generateSummaryHint")}</p>
-              <dl className="space-y-2 rounded-xl bg-surface-muted p-4 text-sm">
+              <dl className="space-y-3 rounded-xl bg-surface-muted p-4 text-sm">
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-secondary">{t("campaign.name")}</dt>
                   <dd className="font-medium text-navy">{name || "—"}</dd>
                 </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-ink-secondary">{t("campaign.workspace.objective")}</dt>
-                  <dd className="font-medium text-navy">
-                    {objective === "other"
-                      ? objectiveCustom || "—"
-                      : objective
-                        ? CAMPAIGN_OBJECTIVE_LABELS[objective]
-                        : "—"}
-                  </dd>
+                  <dd className="font-medium text-navy">{objectiveLabel || "—"}</dd>
                 </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-secondary">{t("campaign.workspace.outputLanguage")}</dt>
-                  <dd className="font-medium text-navy">{languages.outputLanguage}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-secondary">{t("assetLibrary.tabAssets")}</dt>
-                  <dd className="font-medium text-navy">{selectedAssetIds.length}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-secondary">{t("assetLibrary.tabStories")}</dt>
-                  <dd className="font-medium text-navy">{selectedStoryIds.length}</dd>
-                </div>
-                <div className="flex justify-between gap-3">
-                  <dt className="text-ink-secondary">AI</dt>
-                  <dd className="font-medium text-navy">{t("campaign.workspace.noAiThisSprint")}</dd>
+                <div>
+                  <dt className="text-ink-secondary">{t("campaign.platforms")}</dt>
+                  <dd className="mt-1 font-medium text-navy">{platformsDisplay}</dd>
                 </div>
               </dl>
-              {generateSummary ? (
-                <pre className="overflow-auto rounded-lg bg-navy/5 p-3 text-xs text-navy">
-                  {JSON.stringify(generateSummary, null, 2)}
-                </pre>
-              ) : null}
+
+              <div>
+                <h2 className="text-sm font-semibold text-navy">
+                  {t("campaign.workspace.uploadedAssets")}
+                </h2>
+                {reviewAssets.length === 0 && reviewStories.length === 0 ? (
+                  <p className="mt-2 text-sm text-ink-secondary">{t("campaign.workspace.noMedia")}</p>
+                ) : (
+                  <ul className="mt-2 space-y-2">
+                    {workspaceId
+                      ? reviewAssets.map((asset) => (
+                          <ReviewAssetPreview
+                            key={asset.id}
+                            workspaceId={workspaceId}
+                            asset={asset}
+                          />
+                        ))
+                      : null}
+                    {reviewStories.map((story) => (
+                      <li
+                        key={story.id}
+                        className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-navy"
+                      >
+                        Story · {story.name}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold text-navy">
+                  {t("campaign.workspace.briefOptional")}
+                </h2>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-ink-secondary">
+                  {campaignBrief.trim() || t("campaign.workspace.briefEmpty")}
+                </p>
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold text-navy">
+                  {t("campaign.workspace.inferredLanguage")}
+                </h2>
+                <p className="mt-1 text-xs text-ink-secondary">
+                  {t("campaign.workspace.inferredLanguageHint")}
+                </p>
+                <div className="mt-2">
+                  <InferredLanguageReadonly values={languages} />
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold text-navy">
+                  {t("campaign.workspace.aiSettings")}
+                </h2>
+                <p className="mt-1 text-sm text-ink-secondary">
+                  {t("campaign.workspace.aiSettingsHint")}
+                </p>
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold text-navy">
+                  {t("campaign.workspace.finalValidation")}
+                </h2>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {validationRows.map((row) => (
+                    <li key={row.label} className={row.ok ? "text-green-700" : "text-red-600"}>
+                      {row.ok ? "✓" : "✗"} {row.label}
+                    </li>
+                  ))}
+                </ul>
+                {warnings.length > 0 ? (
+                  <ul className="mt-2 space-y-1 text-sm text-amber-700">
+                    {warnings.map((warning) => (
+                      <li key={warning}>⚠ {warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -374,7 +537,7 @@ export default function CampaignWizardPage() {
                 {t("nav.back")}
               </button>
             ) : null}
-            {step !== "generate" ? (
+            {step !== "review" ? (
               <button
                 type="button"
                 disabled={loading}
@@ -386,11 +549,11 @@ export default function CampaignWizardPage() {
             ) : (
               <button
                 type="button"
-                disabled={loading}
-                onClick={() => void onGenerate()}
+                disabled={loading || validationRows.some((row) => !row.ok)}
+                onClick={() => void onCreateCampaign()}
                 className="ml-auto sticky bottom-4 rounded-xl bg-navy px-5 py-3 text-sm font-semibold text-white shadow-elevated disabled:opacity-50"
               >
-                {loading ? t("campaign.creating") : t("campaign.workspace.generate")}
+                {loading ? t("campaign.creating") : t("campaign.workspace.createCampaign")}
               </button>
             )}
           </div>

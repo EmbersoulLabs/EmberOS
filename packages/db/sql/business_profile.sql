@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS business_profiles (
   brand_fonts text[] NOT NULL DEFAULT '{}',
   brand_images text[] NOT NULL DEFAULT '{}',
   supported_languages text[] NOT NULL DEFAULT '{}',
+  default_publishing_platforms text[] NOT NULL DEFAULT '{}',
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   created_by uuid,

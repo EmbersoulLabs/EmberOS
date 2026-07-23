@@ -6,6 +6,7 @@ import {
   CAMPAIGN_OBJECTIVES,
   CAMPAIGN_OBJECTIVE_LABELS,
   MARKETING_PACKAGE_PLACEHOLDER_ITEMS,
+  formatPublishingPlatforms,
   resolveCampaignObjectiveLabel,
   type CampaignObjective,
   type CampaignLanguageCode,
@@ -13,9 +14,10 @@ import {
 import { AppShell, StatusBadge } from "@/components/AppShell";
 import {
   CampaignMediaInput,
-  LanguageFields,
+  InferredLanguageReadonly,
   defaultCampaignLanguages,
 } from "@/components/campaign/CampaignMediaInput";
+import { CampaignBriefAssistant } from "@/components/campaign/CampaignBriefAssistant";
 import { useI18n } from "@/lib/i18n/provider";
 
 type Tab = "overview" | "video" | "package" | "activity";
@@ -278,6 +280,19 @@ export function CampaignWorkspace({
                   />
                 </label>
               ) : null}
+              <div>
+                <p className="text-sm font-semibold text-navy">
+                  {t("campaign.workspace.targetPlatforms")}
+                </p>
+                <p className="mt-1 text-sm text-ink-secondary">
+                  {(campaign.platforms?.length ?? 0) > 0
+                    ? formatPublishingPlatforms(campaign.platforms ?? [])
+                    : t("campaign.workspace.platformsNotSet")}
+                </p>
+                <p className="mt-1 text-xs text-ink-secondary">
+                  {t("campaign.workspace.targetPlatformsReadonlyHint")}
+                </p>
+              </div>
               <label className="block text-sm font-semibold text-navy">
                 {t("campaign.workspace.description")}
                 <textarea
@@ -340,25 +355,29 @@ export function CampaignWorkspace({
           </section>
 
           <section className="rounded-2xl border border-border bg-white p-5">
-            <h2 className="text-base font-bold text-navy">
-              {t("campaign.workspace.briefOptional")}
-            </h2>
-            <textarea
+            <CampaignBriefAssistant
+              campaignId={campaign.id}
               value={brief}
-              onChange={(e) => setBrief(e.target.value)}
-              rows={4}
-              className="mt-3 w-full rounded-lg border border-border px-3 py-2 text-sm"
-              placeholder={t("campaign.workspace.briefPlaceholder")}
+              onChange={setBrief}
+              campaignName={name}
+              objectiveLabel={resolveCampaignObjectiveLabel({
+                objective,
+                objectiveCustom,
+                goal: campaign.goal,
+              })}
+              disabled={saving}
             />
           </section>
 
           <section className="rounded-2xl border border-border bg-white p-5">
             <h2 className="text-base font-bold text-navy">
-              {t("campaign.workspace.languages")}
+              {t("campaign.workspace.inferredLanguage")}
             </h2>
-            <p className="mt-1 text-xs text-ink-secondary">{t("campaign.workspace.languageHint")}</p>
+            <p className="mt-1 text-xs text-ink-secondary">
+              {t("campaign.workspace.inferredLanguageHint")}
+            </p>
             <div className="mt-3">
-              <LanguageFields values={languages} onChange={setLanguages} />
+              <InferredLanguageReadonly values={languages} />
             </div>
           </section>
 

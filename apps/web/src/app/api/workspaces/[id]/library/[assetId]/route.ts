@@ -23,9 +23,9 @@ export async function PATCH(
     }
 
     const db = getDb();
-    const [updated] = await db
-      .update(schema.assets)
-      .set({ displayName, updatedAt: new Date() })
+    const [existing] = await db
+      .select()
+      .from(schema.assets)
       .where(
         and(
           eq(schema.assets.id, assetId),
@@ -33,6 +33,27 @@ export async function PATCH(
           isNull(schema.assets.deletedAt)
         )
       )
+      .limit(1);
+    if (!existing) return apiError("Asset not found", "NOT_FOUND", 404);
+
+    const metadata =
+      existing.metadata && typeof existing.metadata === "object"
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+
+    const [updated] = await db
+      .update(schema.assets)
+      .set({
+        displayName,
+        // PD-040: manual Rename overrides AI/fallback name; originalFilename stays untouched.
+        metadata: {
+          ...metadata,
+          originalFilename: existing.originalFilename ?? metadata.originalFilename,
+          displayNameSource: "manual",
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.assets.id, assetId))
       .returning();
 
     if (!updated) return apiError("Asset not found", "NOT_FOUND", 404);

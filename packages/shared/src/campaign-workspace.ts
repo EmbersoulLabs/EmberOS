@@ -1,4 +1,10 @@
 import { z } from "zod";
+import {
+  PUBLISHING_PLATFORM_LANGUAGE_RULES,
+  PublishingPlatformsSchema,
+  sanitizePublishingPlatforms,
+  type PublishingPlatformId,
+} from "./publishing-platforms";
 
 /** Interim approved Campaign Objective dictionary (Sprint 0003). */
 export const CAMPAIGN_OBJECTIVES = [
@@ -48,6 +54,41 @@ export function defaultCampaignLanguages(uiLocale: string): CampaignLanguages {
   };
 }
 
+/**
+ * PD-042 / PD-038 — infer Caption / Subtitle / CTA / Hashtag languages from:
+ * Workspace UI Language + selected Publishing Platforms + platform rules.
+ * Values are read-only in V1 (no manual override).
+ */
+export function inferCampaignLanguages(
+  uiLocale: string,
+  platforms: readonly string[] = []
+): CampaignLanguages {
+  const base = defaultCampaignLanguages(uiLocale);
+  const selected = sanitizePublishingPlatforms(platforms);
+  if (selected.length === 0) return base;
+
+  const hints = selected
+    .map((id) => PUBLISHING_PLATFORM_LANGUAGE_RULES[id as PublishingPlatformId])
+    .filter((code): code is CampaignLanguageCode => isCampaignLanguageCode(code));
+
+  // Override only when every selected platform shares one language rule.
+  if (
+    hints.length === selected.length &&
+    hints.length > 0 &&
+    hints.every((code) => code === hints[0])
+  ) {
+    const code = hints[0]!;
+    return {
+      outputLanguage: code,
+      subtitleLanguage: code,
+      ctaLanguage: code,
+      hashtagLanguage: code,
+    };
+  }
+
+  return base;
+}
+
 /** SPEC-002 Marketing Package placeholder cards (no AI). */
 export const MARKETING_PACKAGE_PLACEHOLDER_ITEMS = [
   "strategy",
@@ -86,7 +127,7 @@ export const CampaignWorkspacePatchSchema = z.object({
   subtitleLanguage: z.enum(CAMPAIGN_LANGUAGE_CODES).optional(),
   ctaLanguage: z.enum(CAMPAIGN_LANGUAGE_CODES).optional(),
   hashtagLanguage: z.enum(CAMPAIGN_LANGUAGE_CODES).optional(),
-  platforms: z.array(z.string()).optional(),
+  platforms: PublishingPlatformsSchema.optional(),
 });
 
 export const CampaignWorkspaceCreateSchema = z.object({
@@ -101,7 +142,7 @@ export const CampaignWorkspaceCreateSchema = z.object({
   subtitleLanguage: z.enum(CAMPAIGN_LANGUAGE_CODES).optional(),
   ctaLanguage: z.enum(CAMPAIGN_LANGUAGE_CODES).optional(),
   hashtagLanguage: z.enum(CAMPAIGN_LANGUAGE_CODES).optional(),
-  platforms: z.array(z.string().trim().min(1)).optional(),
+  platforms: PublishingPlatformsSchema.optional(),
 });
 
 export function appendUniqueId(current: string[], id: string): string[] {
@@ -176,6 +217,29 @@ export function validateCampaignForGenerate(
       storyCount: input.storyCount,
       aiGeneration: false,
       note: "Generate validates inputs only. AI Marketing Package generation is not run in this Sprint.",
+    },
+  };
+}
+
+/** Final Review and Create validation — does not invoke Marketing Package generation. */
+export function validateCampaignForCreate(
+  input: GenerateValidationInput
+): GenerateValidationResult {
+  const result = validateCampaignForGenerate(input);
+  if (!result.ok) {
+    return {
+      ok: false,
+      errors: result.errors.map((error) =>
+        error.replace("before Generate", "before Create Campaign")
+      ),
+    };
+  }
+  return {
+    ok: true,
+    summary: {
+      ...result.summary,
+      aiGeneration: false,
+      note: "Create Campaign finalizes the reviewed Campaign. Marketing Package generation remains a separate Workspace action.",
     },
   };
 }
