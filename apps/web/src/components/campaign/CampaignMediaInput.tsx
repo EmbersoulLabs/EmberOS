@@ -26,6 +26,7 @@ import {
 } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 import { putWithProgress } from "@/lib/upload-with-progress";
+import { AssetThumb } from "@/components/campaign/AssetThumb";
 
 type LibraryAsset = {
   id: string;
@@ -36,7 +37,7 @@ type LibraryAsset = {
 
 type ReadyStory = { id: string; name: string };
 
-type UploadItemStatus = "uploading" | "success" | "failed";
+type UploadItemStatus = "uploading" | "processing" | "success" | "failed";
 
 type UploadItem = {
   localId: string;
@@ -48,6 +49,7 @@ type UploadItem = {
   displayName?: string;
   originalFilename: string;
   previewUrl?: string;
+  assetType: "video" | "image";
 };
 
 function classifyUploadFile(file: File): "video" | "image" {
@@ -111,7 +113,9 @@ export function CampaignMediaInput({
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
 
-  const uploadBusy = uploads.some((u) => u.status === "uploading");
+  const uploadBusy = uploads.some(
+    (u) => u.status === "uploading" || u.status === "processing"
+  );
 
   const refreshLibrary = useCallback(async () => {
     const [assetsRes, storiesRes] = await Promise.all([
@@ -177,6 +181,9 @@ export function CampaignMediaInput({
           item.file.type || "application/octet-stream",
           (percent) => patchUpload(item.localId, { percent })
         );
+
+        // QA-001 / QA-004 — bytes uploaded; confirm/naming is a separate processing phase.
+        patchUpload(item.localId, { status: "processing", percent: 100 });
 
         const confirmRes = await fetch(
           `/api/campaigns/${campaignId}/assets/${urlData.assetId}/confirm`,
@@ -257,14 +264,18 @@ export function CampaignMediaInput({
           );
         }
 
-        const items: UploadItem[] = incoming.map((file) => ({
-          localId: makeLocalId(),
-          file,
-          status: "uploading" as const,
-          percent: 0,
-          originalFilename: file.name,
-          previewUrl: URL.createObjectURL(file),
-        }));
+        const items: UploadItem[] = incoming.map((file) => {
+          const assetType = classifyUploadFile(file);
+          return {
+            localId: makeLocalId(),
+            file,
+            status: "uploading" as const,
+            percent: 0,
+            originalFilename: file.name,
+            previewUrl: URL.createObjectURL(file),
+            assetType,
+          };
+        });
         setUploads((current) => [...current, ...items]);
         onFilesChange([]);
 
@@ -484,7 +495,27 @@ export function CampaignMediaInput({
               className="rounded-xl border border-border bg-white p-3 text-sm"
             >
               <div className="flex gap-3">
-                {item.previewUrl ? (
+                {item.assetId ? (
+                  <AssetThumb
+                    workspaceId={workspaceId}
+                    asset={{
+                      id: item.assetId,
+                      type: item.assetType,
+                      displayName: item.displayName,
+                      originalFilename: item.originalFilename,
+                      localPreviewUrl: item.previewUrl,
+                    }}
+                    className="h-14 w-14"
+                  />
+                ) : item.assetType === "video" && item.previewUrl ? (
+                  <video
+                    src={item.previewUrl}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="h-14 w-14 rounded-lg object-cover"
+                  />
+                ) : item.previewUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={item.previewUrl}
@@ -493,7 +524,7 @@ export function CampaignMediaInput({
                   />
                 ) : (
                   <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-surface-muted text-xs text-ink-secondary">
-                    {classifyUploadFile(item.file) === "video" ? "Video" : "Image"}
+                    {item.assetType === "video" ? "Video" : "Image"}
                   </div>
                 )}
                 <div className="min-w-0 flex-1">
@@ -518,6 +549,12 @@ export function CampaignMediaInput({
                         {t("campaign.upload.progress", { percent: String(item.percent) })}
                       </p>
                     </div>
+                  ) : null}
+
+                  {item.status === "processing" ? (
+                    <p className="mt-2 text-xs text-ink-secondary">
+                      {t("campaign.upload.processing")}
+                    </p>
                   ) : null}
 
                   {item.status === "success" ? (

@@ -1,10 +1,30 @@
-import { MAX_UPLOAD_SIZE_BYTES, resolveLibraryAssetType } from "@ceo-agent/shared";
+import {
+  MAX_UPLOAD_SIZE_BYTES,
+  resolveLibraryAssetType,
+  resolveAssetDisplayLabel,
+} from "@ceo-agent/shared";
+import { putWithProgress } from "@/lib/upload-with-progress";
 
+export type LibraryUploadPhase = "uploading" | "processing" | "completed";
+
+export type LibraryUploadResult = {
+  assetId: string;
+  displayName: string;
+  originalFilename: string;
+  type: string;
+  mimeType: string;
+  status: string;
+};
+
+/**
+ * Upload to Asset Library with explicit phases (QA-001 / QA-002 / QA-004).
+ * Uploading → Processing → Completed; caller must return UI to idle after completed.
+ */
 export async function uploadLibraryFile(
   workspaceId: string,
   file: File,
-  onProgress?: (label: string) => void
-): Promise<{ assetId: string }> {
+  onPhase?: (phase: LibraryUploadPhase, detail?: string) => void
+): Promise<LibraryUploadResult> {
   const typeCheck = resolveLibraryAssetType({
     filename: file.name,
     mimeType: file.type || "application/octet-stream",
@@ -14,7 +34,7 @@ export async function uploadLibraryFile(
     throw new Error("File too large");
   }
 
-  onProgress?.(file.name);
+  onPhase?.("uploading", file.name);
   const urlRes = await fetch(`/api/workspaces/${workspaceId}/library`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -30,15 +50,13 @@ export async function uploadLibraryFile(
     throw new Error(urlData.error ?? `Failed to prepare upload for ${file.name}`);
   }
 
-  const uploadRes = await fetch(urlData.uploadUrl, {
-    method: "PUT",
-    headers: { "Content-Type": file.type || "application/octet-stream" },
-    body: file,
-  });
-  if (!uploadRes.ok) {
-    throw new Error(`Upload failed for ${file.name} (${uploadRes.status})`);
-  }
+  await putWithProgress(
+    urlData.uploadUrl as string,
+    file,
+    file.type || "application/octet-stream"
+  );
 
+  onPhase?.("processing", file.name);
   const confirmRes = await fetch(
     `/api/workspaces/${workspaceId}/library/${urlData.assetId}/confirm`,
     {
@@ -52,5 +70,31 @@ export async function uploadLibraryFile(
     throw new Error(confirmData.error ?? `Failed to confirm upload for ${file.name}`);
   }
 
-  return { assetId: urlData.assetId as string };
+  const asset = confirmData.asset as
+    | {
+        id?: string;
+        displayName?: string | null;
+        originalFilename?: string | null;
+        type?: string;
+        mimeType?: string | null;
+        status?: string;
+      }
+    | undefined;
+
+  const displayName = resolveAssetDisplayLabel({
+    displayName: asset?.displayName,
+    originalFilename: asset?.originalFilename ?? file.name,
+    id: (asset?.id || urlData.assetId) as string,
+  });
+
+  onPhase?.("completed", displayName);
+
+  return {
+    assetId: (asset?.id || urlData.assetId) as string,
+    displayName,
+    originalFilename: asset?.originalFilename ?? file.name,
+    type: asset?.type ?? typeCheck.type,
+    mimeType: asset?.mimeType ?? file.type ?? "application/octet-stream",
+    status: asset?.status ?? "ready",
+  };
 }

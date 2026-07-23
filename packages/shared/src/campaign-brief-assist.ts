@@ -9,6 +9,8 @@ export const CampaignBriefAssistBodySchema = z.object({
   text: z.string().trim().min(1).max(10000),
   campaignName: z.string().trim().max(200).optional(),
   objective: z.string().trim().max(500).optional(),
+  description: z.string().trim().max(5000).optional(),
+  targetAudience: z.string().trim().max(2000).optional(),
 });
 
 export type CampaignBriefAssistBody = z.infer<typeof CampaignBriefAssistBodySchema>;

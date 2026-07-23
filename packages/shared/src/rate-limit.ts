@@ -34,6 +34,8 @@ export const API_RATE_LIMITS = {
   portalDecide: { limit: 15, windowMs: 60_000 },
   /** PD-041 Campaign Brief AI assistance (independent of upload URL quota). */
   campaignBriefAssist: { limit: 20, windowMs: 60_000 },
+  /** PD-043 Target Audience AI Suggest. */
+  targetAudienceSuggest: { limit: 20, windowMs: 60_000 },
 } as const;
 
 export type ApiRateLimitScope = keyof typeof API_RATE_LIMITS;

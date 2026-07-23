@@ -14,6 +14,8 @@ export function CampaignBriefAssistant({
   onChange,
   campaignName,
   objectiveLabel,
+  description,
+  targetAudience,
   disabled,
 }: {
   campaignId: string | null;
@@ -21,6 +23,8 @@ export function CampaignBriefAssistant({
   onChange: (next: string) => void;
   campaignName?: string;
   objectiveLabel?: string;
+  description?: string;
+  targetAudience?: string;
   disabled?: boolean;
 }) {
   const { t } = useI18n();
@@ -52,6 +56,8 @@ export function CampaignBriefAssistant({
           text: value,
           campaignName,
           objective: objectiveLabel,
+          description: description?.trim() || undefined,
+          targetAudience: targetAudience?.trim() || undefined,
         }),
       });
       const data = await res.json();

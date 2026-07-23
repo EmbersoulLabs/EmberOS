@@ -17,6 +17,11 @@ import {
   ASSET_DISPLAY_NAME_SKILL_ID,
   type AssetDisplayNameSkillResult,
 } from "../asset-display-name/skill";
+import {
+  TargetAudienceSuggestSkill,
+  TARGET_AUDIENCE_SUGGEST_SKILL_ID,
+  type TargetAudienceSuggestSkillResult,
+} from "../target-audience-suggest/skill";
 
 type AnySkill = AiSkill<unknown, unknown>;
 
@@ -35,6 +40,9 @@ function ensureDefaultsRegistered() {
   if (!skillRegistry.has(ASSET_DISPLAY_NAME_SKILL_ID)) {
     skillRegistry.set(ASSET_DISPLAY_NAME_SKILL_ID, AssetDisplayNameSkill as AnySkill);
   }
+  if (!skillRegistry.has(TARGET_AUDIENCE_SUGGEST_SKILL_ID)) {
+    skillRegistry.set(TARGET_AUDIENCE_SUGGEST_SKILL_ID, TargetAudienceSuggestSkill as AnySkill);
+  }
 }
 
 /** Register or replace a skill (tests / future dynamic loading). */
@@ -51,6 +59,7 @@ export type ExecuteSkillResultMap = {
   "business-profile-analyzer": BusinessProfileAnalyzerSkillResult;
   "campaign-brief-assist": CampaignBriefAssistSkillResult;
   "asset-display-name": AssetDisplayNameSkillResult;
+  "target-audience-suggest": TargetAudienceSuggestSkillResult;
 };
 
 export interface ExecuteSkillDeps {

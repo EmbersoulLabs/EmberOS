@@ -7,6 +7,9 @@ export const CampaignBriefAssistSkillInputSchema = z.object({
   text: z.string().trim().min(1).max(10000),
   campaignName: z.string().trim().max(200).optional(),
   objective: z.string().trim().max(500).optional(),
+  /** PD-043 Campaign Context — not duplicated in Brief UI. */
+  description: z.string().trim().max(5000).optional(),
+  targetAudience: z.string().trim().max(2000).optional(),
 });
 
 export type CampaignBriefAssistSkillInput = z.infer<

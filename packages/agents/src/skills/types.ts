@@ -5,7 +5,8 @@ export type AiProviderId = "openai" | "gemini" | "claude" | "deepseek" | "local"
 export type AiSkillId =
   | "business-profile-analyzer"
   | "campaign-brief-assist"
-  | "asset-display-name";
+  | "asset-display-name"
+  | "target-audience-suggest";
 
 export interface AiJsonCompletionRequest {
   system: string;

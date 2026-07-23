@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatFileSize } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 import { uploadLibraryFile } from "@/lib/library-upload";
+import { AssetThumb } from "@/components/campaign/AssetThumb";
 
 export type LibraryAsset = {
   id: string;
@@ -37,6 +38,19 @@ function TypeIcon({ type }: { type: string }) {
   );
 }
 
+function AssetPreview({
+  workspaceId,
+  asset,
+}: {
+  workspaceId: string;
+  asset: LibraryAsset;
+}) {
+  if (asset.type === "image" || asset.type === "video") {
+    return <AssetThumb workspaceId={workspaceId} asset={asset} className="h-12 w-12" />;
+  }
+  return <TypeIcon type={asset.type} />;
+}
+
 export function AssetLibraryWorkbench({
   workspaceId,
 }: {
@@ -53,7 +67,9 @@ export function AssetLibraryWorkbench({
   const [sort, setSort] = useState("newest");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [uploadLabel, setUploadLabel] = useState("");
+  const [uploadPhase, setUploadPhase] = useState<"idle" | "uploading" | "processing">(
+    "idle"
+  );
   const [dragActive, setDragActive] = useState(false);
   const [editingStoryId, setEditingStoryId] = useState<string | null>(null);
   const [storyName, setStoryName] = useState("");
@@ -103,13 +119,17 @@ export function AssetLibraryWorkbench({
     setError("");
     try {
       for (const file of list) {
-        await uploadLibraryFile(workspaceId, file, setUploadLabel);
+        await uploadLibraryFile(workspaceId, file, (phase) => {
+          if (phase === "completed") return;
+          setUploadPhase(phase);
+        });
       }
-      setUploadLabel("");
-      await reload();
     } catch (err) {
-      setUploadLabel("");
       setError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      // QA-001 — always return upload control to idle after completion/failure.
+      setUploadPhase("idle");
+      await reload();
     }
   };
 
@@ -255,7 +275,11 @@ export function AssetLibraryWorkbench({
             onClick={() => fileRef.current?.click()}
             className="rounded-lg bg-navy px-3 py-2 text-sm font-semibold text-white hover:bg-navy/90"
           >
-            {uploadLabel ? t("assetLibrary.uploading") : t("assetLibrary.upload")}
+            {uploadPhase === "uploading"
+              ? t("assetLibrary.uploading")
+              : uploadPhase === "processing"
+                ? t("assetLibrary.processing")
+                : t("assetLibrary.upload")}
           </button>
           <button
             type="button"
@@ -379,10 +403,17 @@ export function AssetLibraryWorkbench({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
           {assets.map((asset) => (
             <div key={asset.id} className="rounded-xl border border-border bg-white p-3">
-              <TypeIcon type={asset.type} />
+              <AssetPreview workspaceId={workspaceId} asset={asset} />
               <p className="mt-2 truncate text-sm font-semibold text-navy" title={assetLabel(asset)}>
                 {assetLabel(asset)}
               </p>
+              {asset.originalFilename &&
+              asset.displayName &&
+              asset.displayName !== asset.originalFilename ? (
+                <p className="truncate text-xs text-ink-secondary" title={asset.originalFilename}>
+                  {asset.originalFilename}
+                </p>
+              ) : null}
               <p className="mt-0.5 text-xs text-ink-secondary">
                 {asset.type} · {formatFileSize(asset.fileSizeBytes)}
               </p>

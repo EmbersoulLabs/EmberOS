@@ -11,6 +11,7 @@ import {
   type CampaignObjective,
 } from "@/components/campaign/CampaignMediaInput";
 import { CampaignBriefAssistant } from "@/components/campaign/CampaignBriefAssistant";
+import { TargetAudienceAssistant } from "@/components/campaign/TargetAudienceAssistant";
 import { ReviewAssetPreview } from "@/components/campaign/ReviewAssetPreview";
 import { PublishingPlatformMultiSelect } from "@/components/campaign/PublishingPlatformMultiSelect";
 import { useI18n } from "@/lib/i18n/provider";
@@ -50,6 +51,8 @@ export default function CampaignWizardPage() {
   const [name, setName] = useState("");
   const [objective, setObjective] = useState<CampaignObjective | "">("");
   const [objectiveCustom, setObjectiveCustom] = useState("");
+  const [description, setDescription] = useState("");
+  const [targetAudience, setTargetAudience] = useState("");
   const [campaignBrief, setCampaignBrief] = useState("");
   const [platforms, setPlatforms] = useState<PublishingPlatformId[]>([]);
   const [platformsSeeded, setPlatformsSeeded] = useState(false);
@@ -138,6 +141,8 @@ export default function CampaignWizardPage() {
       name: name.trim(),
       objective,
       objectiveCustom: objective === "other" ? objectiveCustom.trim() : undefined,
+      description: description.trim() || undefined,
+      targetAudienceOverride: targetAudience.trim() || undefined,
       campaignBrief: campaignBrief.trim() || undefined,
       platforms,
       ...languages,
@@ -163,11 +168,13 @@ export default function CampaignWizardPage() {
     const patchRes = await fetch(`/api/campaigns/${campaignId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...payload,
-        objectiveCustom: objective === "other" ? objectiveCustom.trim() : null,
-        campaignBrief: campaignBrief.trim() || null,
-      }),
+        body: JSON.stringify({
+          ...payload,
+          objectiveCustom: objective === "other" ? objectiveCustom.trim() : null,
+          description: description.trim() || null,
+          targetAudienceOverride: targetAudience.trim() || null,
+          campaignBrief: campaignBrief.trim() || null,
+        }),
     });
     const patchData = await patchRes.json();
     if (!patchRes.ok) throw new Error(patchData.error ?? "Failed to update campaign");
@@ -389,6 +396,26 @@ export default function CampaignWizardPage() {
                 onChange={setPlatforms}
                 disabled={loading || !platformsSeeded}
               />
+              <label className="block text-sm font-semibold text-navy">
+                {t("campaign.workspace.description")}
+                <textarea
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  rows={3}
+                  disabled={loading}
+                  className="mt-1.5 w-full rounded-xl border border-border px-4 py-2.5 text-sm font-normal disabled:opacity-60"
+                  placeholder={t("campaign.workspace.descriptionPlaceholder")}
+                />
+              </label>
+              <TargetAudienceAssistant
+                workspaceId={workspaceId}
+                value={targetAudience}
+                onChange={setTargetAudience}
+                objectiveLabel={objectiveLabel}
+                platforms={platforms}
+                description={description}
+                disabled={loading}
+              />
             </div>
           ) : null}
 
@@ -416,6 +443,8 @@ export default function CampaignWizardPage() {
               onChange={setCampaignBrief}
               campaignName={name}
               objectiveLabel={objectiveLabel}
+              description={description}
+              targetAudience={targetAudience}
               disabled={loading}
             />
           ) : null}
@@ -436,6 +465,18 @@ export default function CampaignWizardPage() {
                 <div>
                   <dt className="text-ink-secondary">{t("campaign.platforms")}</dt>
                   <dd className="mt-1 font-medium text-navy">{platformsDisplay}</dd>
+                </div>
+                <div>
+                  <dt className="text-ink-secondary">{t("campaign.workspace.description")}</dt>
+                  <dd className="mt-1 whitespace-pre-wrap font-medium text-navy">
+                    {description.trim() || t("campaign.workspace.descriptionEmpty")}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-ink-secondary">{t("campaign.workspace.targetAudience")}</dt>
+                  <dd className="mt-1 whitespace-pre-wrap font-medium text-navy">
+                    {targetAudience.trim() || t("campaign.workspace.targetAudienceEmpty")}
+                  </dd>
                 </div>
               </dl>
 

@@ -31,6 +31,7 @@ export * from "./campaign-brief-assist";
 export * from "./asset-display-name";
 export * from "./types/campaign-brief-assist-ai";
 export * from "./types/asset-display-name-ai";
+export * from "./types/target-audience-suggest-ai";
 export * from "./campaign-workspace";
 export * from "./publishing-platforms";
 export * from "./content-locale";
