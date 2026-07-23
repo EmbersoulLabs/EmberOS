@@ -42,6 +42,7 @@ export type BusinessProfileFormValues = {
   brandFonts: string[];
   brandImages: string[];
   supportedLanguages: string[];
+  defaultPublishingPlatforms: string[];
 };
 
 export type BusinessProfileApiWarning = {
@@ -100,6 +101,7 @@ export function createEmptyBusinessProfileDraft(
     brandFonts: [],
     brandImages: [],
     supportedLanguages: [],
+    defaultPublishingPlatforms: [],
     createdAt: now,
     updatedAt: now,
     createdBy: null,
@@ -149,6 +151,7 @@ export function profileToFormValues(
     brandFonts: profile.brandFonts ?? [],
     brandImages: profile.brandImages ?? [],
     supportedLanguages: profile.supportedLanguages ?? [],
+    defaultPublishingPlatforms: profile.defaultPublishingPlatforms ?? [],
   };
 }
 
@@ -275,6 +278,12 @@ export function buildBusinessProfilePatch(
   setChangedList("supportedLanguages", values.supportedLanguages, base.supportedLanguages, {
     allowEmptyClear: true,
   });
+  setChangedList(
+    "defaultPublishingPlatforms",
+    values.defaultPublishingPlatforms,
+    base.defaultPublishingPlatforms,
+    { allowEmptyClear: true }
+  );
 
   const curCustom = values.industryId === INDUSTRY_CUSTOM_ID;
   const prevCustom = base.industryId === INDUSTRY_CUSTOM_ID;

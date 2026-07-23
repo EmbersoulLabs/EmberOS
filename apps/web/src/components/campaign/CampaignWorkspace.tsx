@@ -6,6 +6,7 @@ import {
   CAMPAIGN_OBJECTIVES,
   CAMPAIGN_OBJECTIVE_LABELS,
   MARKETING_PACKAGE_PLACEHOLDER_ITEMS,
+  formatPublishingPlatforms,
   resolveCampaignObjectiveLabel,
   type CampaignObjective,
   type CampaignLanguageCode,
@@ -279,6 +280,19 @@ export function CampaignWorkspace({
                   />
                 </label>
               ) : null}
+              <div>
+                <p className="text-sm font-semibold text-navy">
+                  {t("campaign.workspace.targetPlatforms")}
+                </p>
+                <p className="mt-1 text-sm text-ink-secondary">
+                  {(campaign.platforms?.length ?? 0) > 0
+                    ? formatPublishingPlatforms(campaign.platforms ?? [])
+                    : t("campaign.workspace.platformsNotSet")}
+                </p>
+                <p className="mt-1 text-xs text-ink-secondary">
+                  {t("campaign.workspace.targetPlatformsReadonlyHint")}
+                </p>
+              </div>
               <label className="block text-sm font-semibold text-navy">
                 {t("campaign.workspace.description")}
                 <textarea

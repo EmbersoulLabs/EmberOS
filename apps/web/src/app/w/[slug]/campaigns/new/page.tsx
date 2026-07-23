@@ -8,13 +8,19 @@ import {
   InferredLanguageReadonly,
   CAMPAIGN_OBJECTIVES,
   CAMPAIGN_OBJECTIVE_LABELS,
-  defaultCampaignLanguages,
   type CampaignObjective,
 } from "@/components/campaign/CampaignMediaInput";
 import { CampaignBriefAssistant } from "@/components/campaign/CampaignBriefAssistant";
 import { ReviewAssetPreview } from "@/components/campaign/ReviewAssetPreview";
+import { PublishingPlatformMultiSelect } from "@/components/campaign/PublishingPlatformMultiSelect";
 import { useI18n } from "@/lib/i18n/provider";
-import { validateCampaignForCreate } from "@ceo-agent/shared";
+import {
+  formatPublishingPlatforms,
+  inferCampaignLanguages,
+  sanitizePublishingPlatforms,
+  validateCampaignForCreate,
+  type PublishingPlatformId,
+} from "@ceo-agent/shared";
 
 /** PD-038 — five-step Campaign Wizard (no Language step). */
 const STEPS = ["name", "objective", "assets", "brief", "review"] as const;
@@ -45,7 +51,12 @@ export default function CampaignWizardPage() {
   const [objective, setObjective] = useState<CampaignObjective | "">("");
   const [objectiveCustom, setObjectiveCustom] = useState("");
   const [campaignBrief, setCampaignBrief] = useState("");
-  const [languages] = useState(() => defaultCampaignLanguages(locale));
+  const [platforms, setPlatforms] = useState<PublishingPlatformId[]>([]);
+  const [platformsSeeded, setPlatformsSeeded] = useState(false);
+  const languages = useMemo(
+    () => inferCampaignLanguages(locale, platforms),
+    [locale, platforms]
+  );
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [selectedStoryIds, setSelectedStoryIds] = useState<string[]>([]);
   const [files, setFiles] = useState<File[]>([]);
@@ -53,7 +64,6 @@ export default function CampaignWizardPage() {
   const [error, setError] = useState("");
   const [reviewAssets, setReviewAssets] = useState<ReviewAsset[]>([]);
   const [reviewStories, setReviewStories] = useState<Array<{ id: string; name: string }>>([]);
-  const [platforms, setPlatforms] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
 
   async function ensureWorkspace(): Promise<string> {
@@ -73,6 +83,30 @@ export default function CampaignWizardPage() {
     void ensureWorkspace().catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
+
+  // PD-042 — seed Campaign platforms from Business Profile defaults (campaign-only thereafter).
+  useEffect(() => {
+    if (!workspaceId || platformsSeeded) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/workspaces/${workspaceId}/business-profile`);
+        const data = await res.json();
+        if (!cancelled && res.ok) {
+          setPlatforms(
+            sanitizePublishingPlatforms(data.profile?.defaultPublishingPlatforms ?? [])
+          );
+        }
+      } catch {
+        // Defaults remain empty; user can still select platforms.
+      } finally {
+        if (!cancelled) setPlatformsSeeded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, platformsSeeded]);
 
   const stepTitle = useMemo(() => {
     const map: Record<Step, string> = {
@@ -100,17 +134,22 @@ export default function CampaignWizardPage() {
       throw new Error(t("campaign.workspace.customObjectiveRequired"));
     }
 
+    const payload = {
+      name: name.trim(),
+      objective,
+      objectiveCustom: objective === "other" ? objectiveCustom.trim() : undefined,
+      campaignBrief: campaignBrief.trim() || undefined,
+      platforms,
+      ...languages,
+    };
+
     if (!campaignId) {
       const res = await fetch("/api/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           workspaceId: wsId,
-          name: name.trim(),
-          objective,
-          objectiveCustom: objective === "other" ? objectiveCustom.trim() : undefined,
-          campaignBrief: campaignBrief.trim() || undefined,
-          ...languages,
+          ...payload,
         }),
       });
       const data = await res.json();
@@ -125,11 +164,9 @@ export default function CampaignWizardPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: name.trim(),
-        objective,
+        ...payload,
         objectiveCustom: objective === "other" ? objectiveCustom.trim() : null,
         campaignBrief: campaignBrief.trim() || null,
-        ...languages,
       }),
     });
     const patchData = await patchRes.json();
@@ -164,19 +201,14 @@ export default function CampaignWizardPage() {
         })
       ).filter((story: { id: string }) => Boolean(story.id))
     );
-    setPlatforms(
-      Array.isArray(campData.campaign?.platforms) ? campData.campaign.platforms : []
-    );
+    const nextPlatforms = sanitizePublishingPlatforms(campData.campaign?.platforms ?? []);
+    setPlatforms(nextPlatforms);
     const nextWarnings: string[] = [];
     if (!(campData.assets ?? []).length && !(campData.stories ?? []).length) {
       nextWarnings.push(t("campaign.workspace.assetsRequired"));
     }
-    // Target Platform source is an unresolved Product Decision — report honestly.
-    if (
-      !Array.isArray(campData.campaign?.platforms) ||
-      campData.campaign.platforms.length === 0
-    ) {
-      nextWarnings.push(t("campaign.workspace.platformsUnresolvedHint"));
+    if (nextPlatforms.length === 0) {
+      nextWarnings.push(t("campaign.workspace.platformsEmptyHint"));
     }
     setWarnings(nextWarnings);
   }
@@ -274,6 +306,11 @@ export default function CampaignWizardPage() {
     },
   ];
 
+  const platformsDisplay =
+    platforms.length > 0
+      ? formatPublishingPlatforms(platforms)
+      : t("campaign.workspace.platformsNotSet");
+
   return (
     <AppShell>
       <div className="mx-auto max-w-2xl">
@@ -315,7 +352,7 @@ export default function CampaignWizardPage() {
           ) : null}
 
           {step === "objective" ? (
-            <div className="space-y-3">
+            <div className="space-y-5">
               <label className="block text-sm font-semibold text-navy">
                 {t("campaign.workspace.objective")}
                 <select
@@ -341,6 +378,17 @@ export default function CampaignWizardPage() {
                   />
                 </label>
               ) : null}
+              <PublishingPlatformMultiSelect
+                label={t("campaign.workspace.publishingPlatforms")}
+                hint={
+                  platformsSeeded
+                    ? t("campaign.workspace.publishingPlatformsHint")
+                    : t("campaign.workspace.publishingPlatformsLoading")
+                }
+                values={platforms}
+                onChange={setPlatforms}
+                disabled={loading || !platformsSeeded}
+              />
             </div>
           ) : null}
 
@@ -387,11 +435,7 @@ export default function CampaignWizardPage() {
                 </div>
                 <div>
                   <dt className="text-ink-secondary">{t("campaign.platforms")}</dt>
-                  <dd className="mt-1 font-medium text-navy">
-                    {platforms.length > 0
-                      ? platforms.join(", ")
-                      : t("campaign.workspace.platformsNotSet")}
-                  </dd>
+                  <dd className="mt-1 font-medium text-navy">{platformsDisplay}</dd>
                 </div>
               </dl>
 

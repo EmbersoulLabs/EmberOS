@@ -22,6 +22,7 @@ import { TagChipInput } from "./TagChipInput";
 import { BusinessHoursEditor } from "./BusinessHoursEditor";
 import { ProfileCard } from "./ProfileCard";
 import { BusinessProfileAiPanel } from "./BusinessProfileAiPanel";
+import { PublishingPlatformMultiSelect } from "@/components/campaign/PublishingPlatformMultiSelect";
 import {
   buildBusinessProfilePatch,
   extractApiWarnings,
@@ -1005,6 +1006,20 @@ export function BusinessProfileEditor({
           values={values.supportedLanguages}
           onChange={(supportedLanguages) => patch({ supportedLanguages })}
           suggestions={LANGUAGE_SUGGESTIONS}
+        />
+      </ProfileCard>
+
+      <ProfileCard
+        title={t("businessProfile.section.publishingPlatforms")}
+        saveFailed={saveStatus === "failed" || saveStatus === "invalid"}
+      >
+        <PublishingPlatformMultiSelect
+          label={t("businessProfile.field.defaultPublishingPlatforms")}
+          hint={t("businessProfile.publishingPlatformsHint")}
+          values={values.defaultPublishingPlatforms}
+          onChange={(defaultPublishingPlatforms) =>
+            patch({ defaultPublishingPlatforms })
+          }
         />
       </ProfileCard>
 

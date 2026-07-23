@@ -51,6 +51,8 @@ describe("Sprint 0004 remediation — wizard create semantics", () => {
     );
     expect(wizardSource).not.toMatch(/"language"/);
     expect(wizardSource.match(/STEPS = \[[^\]]+\]/)?.[0].split(",").length).toBe(5);
+    expect(wizardSource).toContain("PublishingPlatformMultiSelect");
+    expect(wizardSource).not.toContain("platformsUnresolvedHint");
   });
 
   it("Create Campaign does not invoke /generate", () => {
