@@ -215,6 +215,17 @@ export function BusinessProfileEditor({
   const baselineRef = useRef(profileToFormValues(initialProfile));
 
   const completion = useMemo(() => completionPreview(values), [values]);
+  const isDirty = useMemo(() => {
+    const payload = buildBusinessProfilePatch(
+      values,
+      version,
+      locale,
+      baselineRef.current
+    );
+    const parsed = validateBusinessProfilePatch(payload);
+    if (!parsed.success) return true;
+    return Object.keys(parsed.data).some((k) => k !== "version");
+  }, [values, version, locale]);
   const cardIncomplete = useCallback(
     (card: BusinessProfileCardId) => completion.incompleteCards.includes(card),
     [completion.incompleteCards]
@@ -430,6 +441,18 @@ export function BusinessProfileEditor({
           ? t("businessProfile.saveStatus.failed")
           : t("businessProfile.saveStatus.idle");
 
+  const mobileStickyLabel =
+    saveStatus === "saving"
+      ? t("businessProfile.saveStatus.saving")
+      : saveStatus === "saved" && !isDirty
+        ? t("businessProfile.saveStatus.savedCheck")
+        : isDirty
+          ? t("businessProfile.saveChanges")
+          : t("businessProfile.saveStatus.savedCheck");
+
+  const mobileStickyActionable =
+    isDirty && saveStatus !== "saving" && saveStatus !== "conflict";
+
   const qualityWarnings =
     apiWarnings.length > 0
       ? apiWarnings
@@ -548,7 +571,7 @@ export function BusinessProfileEditor({
   }, [logoPreviewUrl]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24 md:pb-0">
       <header className="rounded-xl border border-border/80 bg-surface p-4 shadow-card sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-3 sm:gap-4">
           <div className="min-w-0 flex-1">
@@ -1002,6 +1025,30 @@ export function BusinessProfileEditor({
           {completion.missing.map((field) => t(FIELD_I18N[field])).join(", ")}
         </p>
       )}
+
+      {/* PD-039 — mobile Bottom Sticky Status Bar (status; Save only when dirty). */}
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur md:hidden">
+        {mobileStickyActionable ? (
+          <button
+            type="button"
+            onClick={() => void persist()}
+            className="w-full rounded-xl bg-navy px-4 py-3 text-sm font-semibold text-white"
+          >
+            {t("businessProfile.saveChanges")}
+          </button>
+        ) : (
+          <p
+            className={`text-center text-sm font-medium ${
+              saveStatus === "failed" || saveStatus === "invalid" || saveStatus === "conflict"
+                ? "text-red-700"
+                : "text-navy"
+            }`}
+            aria-live="polite"
+          >
+            {mobileStickyLabel}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

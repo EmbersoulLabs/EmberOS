@@ -3,6 +3,7 @@ import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
 import { isUuid } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { suggestReadableAssetName } from "@/lib/asset-auto-name";
 
 export async function POST(
   request: Request,
@@ -38,6 +39,24 @@ export async function POST(
 
     if (!asset) return apiError("Asset not found", "NOT_FOUND", 404);
 
+    const metadata =
+      asset.metadata && typeof asset.metadata === "object"
+        ? (asset.metadata as Record<string, unknown>)
+        : {};
+    const manualName = metadata.displayNameSource === "manual";
+
+    let displayName = asset.displayName;
+    let displayNameSource = metadata.displayNameSource;
+    if (!manualName) {
+      const suggested = await suggestReadableAssetName({
+        originalFilename: asset.originalFilename || asset.displayName || "asset",
+        type: asset.type,
+        mimeType: asset.mimeType,
+      });
+      displayName = suggested.displayName;
+      displayNameSource = suggested.source;
+    }
+
     const [updated] = await db
       .update(schema.assets)
       .set({
@@ -47,6 +66,16 @@ export async function POST(
         durationSec:
           body.durationSec != null ? String(body.durationSec) : asset.durationSec,
         fileSizeBytes: body.fileSizeBytes ?? asset.fileSizeBytes,
+        displayName,
+        metadata: {
+          ...metadata,
+          originalFilename:
+            asset.originalFilename ||
+            (typeof metadata.originalFilename === "string"
+              ? metadata.originalFilename
+              : undefined),
+          displayNameSource,
+        },
         updatedAt: new Date(),
       })
       .where(eq(schema.assets.id, assetId))

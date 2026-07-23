@@ -3,6 +3,7 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueProbe } from "@ceo-agent/queue";
+import { suggestReadableAssetName } from "@/lib/asset-auto-name";
 
 export async function POST(
   request: Request,
@@ -11,7 +12,7 @@ export async function POST(
   try {
     const user = await requireAuth();
     const { id: campaignId, assetId } = await params;
-    const body = await request.json();
+    const body = await request.json().catch(() => ({}));
     const { width, height, durationSec } = body as {
       width?: number;
       height?: number;
@@ -28,46 +29,58 @@ export async function POST(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
-    const updates: {
-      width?: number;
-      height?: number;
-      durationSec?: string;
-      status?: string;
-      updatedAt?: Date;
-    } = {
-      status: "ready",
-      updatedAt: new Date(),
-    };
-    if (width != null) updates.width = width;
-    if (height != null) updates.height = height;
-    if (durationSec != null) updates.durationSec = String(durationSec);
+    const [existing] = await db
+      .select()
+      .from(schema.assets)
+      .where(
+        and(
+          eq(schema.assets.id, assetId),
+          eq(schema.assets.workspaceId, campaign.workspaceId)
+        )
+      )
+      .limit(1);
 
-    let asset;
-    if (Object.keys(updates).length > 0) {
-      const [updated] = await db
-        .update(schema.assets)
-        .set(updates)
-        .where(
-          and(
-            eq(schema.assets.id, assetId),
-            eq(schema.assets.workspaceId, campaign.workspaceId)
-          )
-        )
-        .returning();
-      asset = updated;
-    } else {
-      const [existing] = await db
-        .select()
-        .from(schema.assets)
-        .where(
-          and(
-            eq(schema.assets.id, assetId),
-            eq(schema.assets.workspaceId, campaign.workspaceId)
-          )
-        )
-        .limit(1);
-      asset = existing;
+    if (!existing) return apiError("Asset not found", "NOT_FOUND", 404);
+
+    const metadata =
+      existing.metadata && typeof existing.metadata === "object"
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+    const manualName = metadata.displayNameSource === "manual";
+
+    let displayName = existing.displayName;
+    let displayNameSource = metadata.displayNameSource;
+    if (!manualName) {
+      const suggested = await suggestReadableAssetName({
+        originalFilename: existing.originalFilename || existing.displayName || "asset",
+        type: existing.type,
+        mimeType: existing.mimeType,
+      });
+      displayName = suggested.displayName;
+      displayNameSource = suggested.source;
     }
+
+    const [asset] = await db
+      .update(schema.assets)
+      .set({
+        status: "ready",
+        width: width ?? existing.width,
+        height: height ?? existing.height,
+        durationSec: durationSec != null ? String(durationSec) : existing.durationSec,
+        displayName,
+        metadata: {
+          ...metadata,
+          originalFilename:
+            existing.originalFilename ||
+            (typeof metadata.originalFilename === "string"
+              ? metadata.originalFilename
+              : undefined),
+          displayNameSource,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.assets.id, assetId))
+      .returning();
 
     if (!asset) return apiError("Asset not found", "NOT_FOUND", 404);
 
