@@ -180,6 +180,29 @@ export function validateCampaignForGenerate(
   };
 }
 
+/** Final Review and Create validation — does not invoke Marketing Package generation. */
+export function validateCampaignForCreate(
+  input: GenerateValidationInput
+): GenerateValidationResult {
+  const result = validateCampaignForGenerate(input);
+  if (!result.ok) {
+    return {
+      ok: false,
+      errors: result.errors.map((error) =>
+        error.replace("before Generate", "before Create Campaign")
+      ),
+    };
+  }
+  return {
+    ok: true,
+    summary: {
+      ...result.summary,
+      aiGeneration: false,
+      note: "Create Campaign finalizes the reviewed Campaign. Marketing Package generation remains a separate Workspace action.",
+    },
+  };
+}
+
 export function resolveCampaignObjectiveLabel(campaign: {
   objective?: string | null;
   objectiveCustom?: string | null;

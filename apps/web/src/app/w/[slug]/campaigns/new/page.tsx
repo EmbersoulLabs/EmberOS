@@ -12,7 +12,9 @@ import {
   type CampaignObjective,
 } from "@/components/campaign/CampaignMediaInput";
 import { CampaignBriefAssistant } from "@/components/campaign/CampaignBriefAssistant";
+import { ReviewAssetPreview } from "@/components/campaign/ReviewAssetPreview";
 import { useI18n } from "@/lib/i18n/provider";
+import { validateCampaignForCreate } from "@ceo-agent/shared";
 
 /** PD-038 — five-step Campaign Wizard (no Language step). */
 const STEPS = ["name", "objective", "assets", "brief", "review"] as const;
@@ -24,6 +26,8 @@ type ReviewAsset = {
   displayName: string | null;
   originalFilename: string | null;
   type: string;
+  mimeType?: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 export default function CampaignWizardPage() {
@@ -152,13 +156,27 @@ export default function CampaignWizardPage() {
     const campData = await campRes.json();
     if (!campRes.ok) throw new Error(campData.error ?? "Failed to load campaign");
     setReviewAssets(campData.assets ?? []);
-    setReviewStories(campData.stories ?? []);
+    setReviewStories(
+      (campData.stories ?? []).map(
+        (story: { storyId?: string; id?: string; name: string }) => ({
+          id: story.storyId || story.id || "",
+          name: story.name,
+        })
+      ).filter((story: { id: string }) => Boolean(story.id))
+    );
     setPlatforms(
       Array.isArray(campData.campaign?.platforms) ? campData.campaign.platforms : []
     );
     const nextWarnings: string[] = [];
     if (!(campData.assets ?? []).length && !(campData.stories ?? []).length) {
       nextWarnings.push(t("campaign.workspace.assetsRequired"));
+    }
+    // Target Platform source is an unresolved Product Decision — report honestly.
+    if (
+      !Array.isArray(campData.campaign?.platforms) ||
+      campData.campaign.platforms.length === 0
+    ) {
+      nextWarnings.push(t("campaign.workspace.platformsUnresolvedHint"));
     }
     setWarnings(nextWarnings);
   }
@@ -209,9 +227,30 @@ export default function CampaignWizardPage() {
     try {
       const id = await createOrUpdateDraft();
       await attachMedia(id);
-      const res = await fetch(`/api/campaigns/${id}/generate`, { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? t("campaign.workspace.createFailed"));
+
+      const campRes = await fetch(`/api/campaigns/${id}`);
+      const campData = await campRes.json();
+      if (!campRes.ok) throw new Error(campData.error ?? t("campaign.workspace.createFailed"));
+
+      const assetCount = (campData.assets ?? []).length;
+      const storyCount = (campData.stories ?? []).length;
+      const validation = validateCampaignForCreate({
+        name,
+        objective: objective || null,
+        objectiveCustom,
+        outputLanguage: languages.outputLanguage,
+        subtitleLanguage: languages.subtitleLanguage,
+        ctaLanguage: languages.ctaLanguage,
+        hashtagLanguage: languages.hashtagLanguage,
+        assetCount,
+        storyCount,
+      });
+      if (!validation.ok) {
+        throw new Error(validation.errors[0] ?? t("campaign.workspace.createFailed"));
+      }
+
+      // Create Campaign finalizes the reviewed draft only.
+      // Marketing Package generation remains a separate Campaign Workspace action.
       router.push(`/w/${slug}/campaigns/${id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error.generic"));
@@ -364,22 +403,15 @@ export default function CampaignWizardPage() {
                   <p className="mt-2 text-sm text-ink-secondary">{t("campaign.workspace.noMedia")}</p>
                 ) : (
                   <ul className="mt-2 space-y-2">
-                    {reviewAssets.map((asset) => (
-                      <li
-                        key={asset.id}
-                        className="rounded-lg border border-border px-3 py-2 text-sm"
-                      >
-                        <p className="font-medium text-navy">
-                          {asset.displayName || asset.originalFilename || asset.id.slice(0, 8)}
-                        </p>
-                        {asset.originalFilename &&
-                        asset.displayName &&
-                        asset.displayName !== asset.originalFilename ? (
-                          <p className="text-xs text-ink-secondary">{asset.originalFilename}</p>
-                        ) : null}
-                        <p className="text-xs text-ink-secondary">{asset.type}</p>
-                      </li>
-                    ))}
+                    {workspaceId
+                      ? reviewAssets.map((asset) => (
+                          <ReviewAssetPreview
+                            key={asset.id}
+                            workspaceId={workspaceId}
+                            asset={asset}
+                          />
+                        ))
+                      : null}
                     {reviewStories.map((story) => (
                       <li
                         key={story.id}

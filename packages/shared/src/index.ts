@@ -29,6 +29,8 @@ export * from "./i18n/index";
 export * from "./campaign-brief";
 export * from "./campaign-brief-assist";
 export * from "./asset-display-name";
+export * from "./types/campaign-brief-assist-ai";
+export * from "./types/asset-display-name-ai";
 export * from "./campaign-workspace";
 export * from "./content-locale";
 export * from "./content-subject";

@@ -1,10 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
 import { CampaignBriefAssistBodySchema, isUuid } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
-import { assistCampaignBrief } from "@/lib/campaign-brief-assist";
+import { executeSkill, AiSkillError, CAMPAIGN_BRIEF_ASSIST_SKILL_ID } from "@/lib/campaign-brief-assist";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { logAiSkillFailure } from "@/lib/ai-skill-log";
 
 export async function POST(
   request: Request,
@@ -17,7 +19,7 @@ export async function POST(
       return apiError("Invalid campaign id", "VALIDATION_ERROR", 400);
     }
 
-    const limited = await enforceRateLimit(request, "uploadUrl", user.id);
+    const limited = await enforceRateLimit(request, "campaignBriefAssist", user.id);
     if (limited) return limited;
 
     const parsed = CampaignBriefAssistBodySchema.safeParse(await request.json());
@@ -38,8 +40,9 @@ export async function POST(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
+    const correlationId = randomUUID();
     try {
-      const text = await assistCampaignBrief({
+      const result = await executeSkill("campaign-brief-assist", {
         action: parsed.data.action,
         text: parsed.data.text,
         campaignName: parsed.data.campaignName ?? campaign.name,
@@ -49,10 +52,35 @@ export async function POST(
             ? campaign.objectiveCustom ?? undefined
             : campaign.objective ?? undefined),
       });
-      return apiSuccess({ text, action: parsed.data.action });
+      return apiSuccess({
+        text: result.text,
+        action: parsed.data.action,
+        // Proposal only — client must Accept before applying to Campaign Brief.
+        proposal: true,
+      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Brief assist failed";
-      if (/OPENAI_API_KEY/i.test(message)) {
+      const skillError = error instanceof AiSkillError ? error : null;
+      const code = skillError?.code;
+      const resultState =
+        code === "PROVIDER_UNAVAILABLE"
+          ? "unavailable"
+          : code === "INVALID_INPUT"
+            ? "invalid_input"
+            : code === "NORMALIZE_FAILED"
+              ? "normalize_failed"
+              : "failed";
+
+      logAiSkillFailure({
+        correlationId,
+        skillId: CAMPAIGN_BRIEF_ASSIST_SKILL_ID,
+        action: parsed.data.action,
+        campaignId,
+        workspaceId: campaign.workspaceId,
+        code: code ?? "UNKNOWN",
+        resultState,
+      });
+
+      if (code === "PROVIDER_UNAVAILABLE") {
         return apiError(
           "AI writing assist is temporarily unavailable. Try again later.",
           "AI_UNAVAILABLE",

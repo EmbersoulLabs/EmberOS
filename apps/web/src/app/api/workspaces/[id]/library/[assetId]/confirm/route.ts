@@ -52,9 +52,15 @@ export async function POST(
         originalFilename: asset.originalFilename || asset.displayName || "asset",
         type: asset.type,
         mimeType: asset.mimeType,
+        metadata,
+        assetId,
+        workspaceId,
       });
       displayName = suggested.displayName;
       displayNameSource = suggested.source;
+    } else {
+      displayName = asset.displayName;
+      displayNameSource = "manual";
     }
 
     const [updated] = await db

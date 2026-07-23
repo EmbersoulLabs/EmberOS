@@ -6,7 +6,7 @@ import { useI18n } from "@/lib/i18n/provider";
 
 /**
  * PD-041 Campaign Brief AI Writing Assistant.
- * Exactly three actions + one restore snapshot.
+ * Exactly three actions, one proposal, explicit Accept, one restore snapshot.
  */
 export function CampaignBriefAssistant({
   campaignId,
@@ -25,6 +25,7 @@ export function CampaignBriefAssistant({
 }) {
   const { t } = useI18n();
   const [restoreSnapshot, setRestoreSnapshot] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<CampaignBriefAssistAction | null>(null);
   const [error, setError] = useState("");
   const [lastFailedAction, setLastFailedAction] = useState<CampaignBriefAssistAction | null>(
@@ -33,12 +34,14 @@ export function CampaignBriefAssistant({
 
   const empty = !value.trim();
   const assisting = busyAction != null;
+  const hasProposal = proposal != null;
 
   async function runAction(action: CampaignBriefAssistAction) {
     if (!campaignId || empty || assisting || disabled) return;
     setError("");
     setLastFailedAction(null);
     setBusyAction(action);
+    // Snapshot is the accepted brief immediately before this AI action.
     const previous = value;
     try {
       const res = await fetch(`/api/campaigns/${campaignId}/brief/assist`, {
@@ -55,21 +58,30 @@ export function CampaignBriefAssistant({
       if (!res.ok || typeof data.text !== "string") {
         throw new Error(data.error ?? t("campaign.briefAssist.failed"));
       }
-      // PD-041: one temporary restore snapshot — replaced on each AI action.
+      // Do not auto-accept — keep active Brief unchanged until Accept.
       setRestoreSnapshot(previous);
-      onChange(data.text);
+      setProposal(data.text);
     } catch (err) {
       setLastFailedAction(action);
       setError(err instanceof Error ? err.message : t("campaign.briefAssist.failed"));
+      // Failure preserves existing Brief and any prior proposal state intentionally.
     } finally {
       setBusyAction(null);
     }
+  }
+
+  function acceptProposal() {
+    if (proposal == null) return;
+    onChange(proposal);
+    setProposal(null);
+    setError("");
   }
 
   function restore() {
     if (restoreSnapshot == null) return;
     onChange(restoreSnapshot);
     setRestoreSnapshot(null);
+    setProposal(null);
     setError("");
   }
 
@@ -114,6 +126,39 @@ export function CampaignBriefAssistant({
           {t("campaign.briefAssist.restore")}
         </button>
       </div>
+
+      {hasProposal ? (
+        <div className="rounded-xl border border-border bg-surface-muted/50 p-3 space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">
+            {t("campaign.briefAssist.proposal")}
+          </p>
+          <textarea
+            value={proposal}
+            onChange={(e) => setProposal(e.target.value)}
+            rows={4}
+            disabled={disabled || assisting}
+            className="w-full rounded-xl border border-border bg-white px-3 py-2 text-sm disabled:opacity-60"
+          />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={disabled || assisting || !proposal.trim()}
+              onClick={acceptProposal}
+              className="rounded-lg bg-navy px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+            >
+              {t("campaign.briefAssist.accept")}
+            </button>
+            <button
+              type="button"
+              disabled={disabled || assisting}
+              onClick={() => setProposal(null)}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs font-semibold text-ink-secondary"
+            >
+              {t("campaign.briefAssist.discardProposal")}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {!campaignId ? (
         <p className="text-xs text-ink-secondary">{t("campaign.briefAssist.needDraft")}</p>

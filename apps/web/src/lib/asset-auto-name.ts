@@ -1,34 +1,66 @@
-import { callJsonModel } from "@ceo-agent/agents";
-import { cleanOriginalFilename } from "@ceo-agent/shared";
-
 /**
- * PD-040: suggest a readable display name from filename + asset type.
- * Falls back to cleaned original filename when AI is unavailable or fails.
- * Does not overwrite originalFilename.
+ * PD-040 asset naming — business feature entry.
+ * Uses Skill Runner only when approved content intelligence is present.
+ * Never imports providers/prompts/models.
  */
+import { randomUUID } from "node:crypto";
+import {
+  extractAssetContentIntelligence,
+  fallbackAssetDisplayName,
+} from "@ceo-agent/shared";
+import { executeSkill, AiSkillError } from "@ceo-agent/agents";
+import { logAiSkillFailure } from "@/lib/ai-skill-log";
+
 export async function suggestReadableAssetName(input: {
   originalFilename: string;
   type: string;
   mimeType?: string | null;
+  metadata?: Record<string, unknown> | null;
+  campaignId?: string;
+  assetId?: string;
+  workspaceId?: string;
 }): Promise<{ displayName: string; source: "ai" | "fallback" }> {
-  const fallback = cleanOriginalFilename(input.originalFilename);
+  const fallback = fallbackAssetDisplayName(input.originalFilename);
+  const intelligence = extractAssetContentIntelligence(input.metadata);
+
+  if (!intelligence.available) {
+    return { displayName: fallback, source: "fallback" };
+  }
+
   try {
-    const { result } = await callJsonModel<{ displayName?: string }>(
-      "You name marketing media assets for a campaign library. Return a short human-readable display name (2–8 words). Do not invent brand claims. Prefer descriptive content cues from the filename. No file extensions. No quotes.",
-      JSON.stringify({
-        originalFilename: input.originalFilename,
-        type: input.type,
-        mimeType: input.mimeType ?? null,
-      }),
-      '{ "displayName": string }',
-      { model: "gpt-4o-mini" }
-    );
-    const name = result.displayName?.trim().replace(/\.[a-z0-9]+$/i, "");
-    if (!name || name.length < 2 || name.length > 120) {
+    const result = await executeSkill("asset-display-name", {
+      originalFilename: input.originalFilename,
+      type: input.type,
+      mimeType: input.mimeType ?? null,
+      contentSummary: intelligence.contentSummary ?? undefined,
+      contentLabels:
+        intelligence.contentLabels.length > 0 ? intelligence.contentLabels : undefined,
+    });
+    const name = result.displayName?.trim();
+    if (!name || name.length < 2) {
       return { displayName: fallback, source: "fallback" };
     }
     return { displayName: name, source: "ai" };
-  } catch {
+  } catch (error) {
+    const skillError = error instanceof AiSkillError ? error : null;
+    const code = skillError?.code;
+    logAiSkillFailure({
+      correlationId: randomUUID(),
+      skillId: "asset-display-name",
+      action: "name",
+      campaignId: input.campaignId,
+      assetId: input.assetId,
+      workspaceId: input.workspaceId,
+      code: code ?? "UNKNOWN",
+      resultState:
+        code === "PROVIDER_UNAVAILABLE"
+          ? "unavailable"
+          : code === "INVALID_INPUT"
+            ? "invalid_input"
+            : code === "NORMALIZE_FAILED"
+              ? "normalize_failed"
+              : "failed",
+    });
     return { displayName: fallback, source: "fallback" };
   }
 }

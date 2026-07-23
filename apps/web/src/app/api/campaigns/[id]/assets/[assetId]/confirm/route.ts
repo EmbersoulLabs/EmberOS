@@ -55,9 +55,16 @@ export async function POST(
         originalFilename: existing.originalFilename || existing.displayName || "asset",
         type: existing.type,
         mimeType: existing.mimeType,
+        metadata,
+        campaignId,
+        assetId,
+        workspaceId: campaign.workspaceId,
       });
       displayName = suggested.displayName;
       displayNameSource = suggested.source;
+    } else {
+      displayName = existing.displayName;
+      displayNameSource = "manual";
     }
 
     const [asset] = await db
