@@ -20,7 +20,8 @@ import {
   alignStrategyWithVision,
   type ContentLocale,
 } from "@ceo-agent/shared";
-import { provideCampaignAIContext, enrichCampaignAIContext } from "./campaign-context-provider";
+import { provideCampaignAIContext, enrichCampaignAIContext, provideCampaignAIContextFromCampaign } from "./campaign-context-provider";
+import { failPipelineExecution } from "./pipeline-lifecycle";
 import { parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
 import {
@@ -447,14 +448,11 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     return { taskId, creativeIds, status: "render_queued" as const };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Auto Clip pipeline failed";
-    await db
-      .update(schema.tasks)
-      .set({ status: "failed", errorMessage: message, completedAt: new Date() })
-      .where(eq(schema.tasks.id, taskId));
-    await db
-      .update(schema.campaigns)
-      .set({ status: "failed" })
-      .where(eq(schema.campaigns.id, campaign.id));
+    await failPipelineExecution({
+      taskId,
+      campaignId: campaign.id,
+      message,
+    });
     throw error;
   }
 }
@@ -532,18 +530,14 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
       const primary = creatives[0]!;
       const variants = (primary.copyVariants ?? []) as CopyVariant[];
       const editPlan = primary.editPlan as EditPlan | null;
+      const scoreAssets = await getCampaignAssets(db, campaign.id, task.workspaceId);
       const { score, usage } = await runAutoClipScoreAgent({
-        campaignContext: provideCampaignAIContext({
-          businessProfile: (workspace?.brandProfile ?? {}) as BrandProfile,
-          campaignObjective: campaign.goal ?? "",
-          publishingPlatforms: platforms,
-          targetAudience: campaign.targetAudienceOverride,
-          campaignBrief: parseCampaignCreativeBrief(campaign).campaignBrief,
-          workspaceLanguage: resolvePipelineContentLocale(
-            (campaign.metadata ?? {}) as Record<string, unknown>,
-            campaign.goal
-          ),
+        campaignContext: provideCampaignAIContextFromCampaign({
+          brandProfile: (workspace?.brandProfile ?? {}) as BrandProfile,
+          campaign,
           vision,
+          assets: scoreAssets.map((a) => ({ id: a.id, type: a.type })),
+          transcript: vision.transcriptSummary ?? null,
         }),
         vision,
         copyVariants: variants,

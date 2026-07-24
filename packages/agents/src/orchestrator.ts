@@ -15,7 +15,12 @@ import {
   alignStrategyWithVision,
   type ContentLocale,
 } from "@ceo-agent/shared";
-import { provideCampaignAIContext, enrichCampaignAIContext } from "./campaign-context-provider";
+import {
+  provideCampaignAIContext,
+  enrichCampaignAIContext,
+  provideCampaignAIContextFromCampaign,
+} from "./campaign-context-provider";
+import { failPipelineExecution } from "./pipeline-lifecycle";
 import { runCeoAgent, parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
 import {
@@ -311,60 +316,51 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     let hookSet: HookSet;
     let subtitleTimeline: Parameters<typeof attachVoiceover>[4];
 
+    // Always generate the marketing pack for Review. Copy-variant cache only
+    // skips re-deriving platform variants when a prior run already produced them.
+    await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
+    const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
+      campaignContext: pipelineContext,
+      strategy,
+      vision,
+      videoAnalysis,
+      campaignName: campaign.name,
+    });
+    totalCost += contentUsage.costUsd;
+    const { contentPackage, usage: translateUsage } =
+      await enrichMarketingPackTranslations(rawContentPackage);
+    totalCost += translateUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
+    if (translateUsage.costUsd > 0) {
+      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
+    }
+    await updateStep(taskId, "content_generate", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: contentPackage,
+    });
+
+    if (totalCost > budget) throw new Error("Cost budget exceeded");
+
+    hookSet = contentPackageToHookSet(contentPackage);
+    await logAgent(task.orgId, task.workspaceId, taskId, "hook", { input: 0, output: 0, costUsd: 0 }, hookSet);
+    await db.update(schema.tasks).set({ hooksJson: hookSet }).where(eq(schema.tasks.id, taskId));
+    await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
+
     if (cachedVariants) {
       console.log(`[orchestrator] copy cache hit campaignId=${campaign.id}`);
       allVariants = cachedVariants;
-      hookSet = {
-        hooks: allVariants.map((v, i) => ({
-          id: `h-${i}`,
-          type:
-            v.template === "story"
-              ? "emotional"
-              : v.template === "review"
-                ? "offer"
-                : v.template === "comparison" || v.template === "listicle"
-                  ? "curiosity"
-                  : "problem",
-          text: v.hook,
-        })),
-        recommendedHookId: "h-0",
-      };
-      await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: { cached: true } });
-      await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
-      await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
     } else {
-      await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-      const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
-        campaignContext: pipelineContext,
-        strategy,
-        vision,
-        videoAnalysis,
-        campaignName: campaign.name,
-      });
-      totalCost += contentUsage.costUsd;
-      const { contentPackage, usage: translateUsage } =
-        await enrichMarketingPackTranslations(rawContentPackage);
-      totalCost += translateUsage.costUsd;
-      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
-      if (translateUsage.costUsd > 0) {
-        await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
-      }
-      await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: contentPackage });
-
-      if (totalCost > budget) throw new Error("Cost budget exceeded");
-
-      hookSet = contentPackageToHookSet(contentPackage);
-      await logAgent(task.orgId, task.workspaceId, taskId, "hook", { input: 0, output: 0, costUsd: 0 }, hookSet);
-      await db.update(schema.tasks).set({ hooksJson: hookSet }).where(eq(schema.tasks.id, taskId));
-      await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
-
       allVariants = contentPackageToCopyVariants(contentPackage, strategy, platforms);
-      subtitleTimeline = contentPackage.subtitleTimeline;
-      await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, allVariants);
-      await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
-
       await setCopyCache(cacheKey, allVariants);
     }
+    subtitleTimeline = contentPackage.subtitleTimeline;
+    await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, allVariants);
+    await updateStep(taskId, "copy_generate", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: allVariants,
+    });
 
     const recommendedVariantId = allVariants.find((v) => v.locale === "en")?.id ?? allVariants[0]?.id ?? "v-en-1";
 
@@ -452,14 +448,11 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     return { taskId, creativeId: creative!.id, status: "render_queued" };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Pipeline failed";
-    await db
-      .update(schema.tasks)
-      .set({ status: "failed", errorMessage: message, completedAt: new Date() })
-      .where(eq(schema.tasks.id, taskId));
-    await db
-      .update(schema.campaigns)
-      .set({ status: "failed" })
-      .where(eq(schema.campaigns.id, campaign.id));
+    await failPipelineExecution({
+      taskId,
+      campaignId: campaign.id,
+      message,
+    });
     throw error;
   }
 }
@@ -497,16 +490,24 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
   const rawStrategy =
     task.strategyJson ?? campaign?.strategyJson ?? progress.strategy_plan?.output;
   const strategy = rawStrategy ? normalizeStrategyPlan(rawStrategy) : undefined;
-  const campaignContext = provideCampaignAIContext({
-    businessProfile: brandProfile,
-    campaignObjective: campaign?.goal ?? "",
-    publishingPlatforms: campaign?.platforms ?? [],
-    targetAudience: campaign?.targetAudienceOverride,
-    campaignBrief: creativeBrief?.campaignBrief,
-    workspaceLanguage: contentLocale,
-    vision: vision ?? null,
-    strategy: strategy ?? null,
-  });
+  const campaignAssets = campaign
+    ? await getCampaignAssets(db, campaign.id, task.workspaceId)
+    : [];
+  const campaignContext = campaign
+    ? provideCampaignAIContextFromCampaign({
+        brandProfile,
+        campaign,
+        vision: vision ?? null,
+        strategy: strategy ?? null,
+        assets: campaignAssets.map((a) => ({ id: a.id, type: a.type })),
+        transcript: vision?.transcriptSummary ?? null,
+      })
+    : provideCampaignAIContext({
+        businessProfile: brandProfile,
+        campaignObjective: "",
+        publishingPlatforms: [],
+        workspaceLanguage: contentLocale,
+      });
 
   await updateStep(taskId, "compliance_check", { status: "running", startedAt: new Date().toISOString() });
   const { result, usage } = await runComplianceAgent({
@@ -530,16 +531,26 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
 
   if (!result.passed) {
     if (task.retryCount < CEO_MAX_RETRIES) {
-      await db
-        .update(schema.tasks)
-        .set({ retryCount: task.retryCount + 1 })
-        .where(eq(schema.tasks.id, taskId));
+      try {
+        // retryPipelineStep increments retryCount and re-runs copy + compliance
+        await retryPipelineStep(taskId, "copy");
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Copy retry after compliance failed";
+        await failPipelineExecution({
+          taskId,
+          campaignId: task.campaignId,
+          message,
+        });
+        throw err;
+      }
     } else {
-      await db.update(schema.tasks).set({ status: "failed" }).where(eq(schema.tasks.id, taskId));
-      await db
-        .update(schema.campaigns)
-        .set({ status: "failed" })
-        .where(eq(schema.campaigns.id, task.campaignId));
+      await failPipelineExecution({
+        taskId,
+        campaignId: task.campaignId,
+        message:
+          result.flags?.[0]?.reason ??
+          `Compliance check failed (score=${result.score})`,
+      });
     }
     return;
   }
@@ -663,19 +674,24 @@ export async function retryPipelineStep(
       (progress?.hook_generate?.output as HookSet);
     const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
     const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
-    const creativeBrief = campaign ? parseCampaignCreativeBrief(campaign) : null;
-    const campaignMeta = (campaign?.metadata ?? {}) as Record<string, unknown>;
-    const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign?.goal);
-    const campaignContext = provideCampaignAIContext({
-      businessProfile: brandProfile,
-      campaignObjective: campaign?.goal ?? "",
-      publishingPlatforms: platforms,
-      targetAudience: campaign?.targetAudienceOverride,
-      campaignBrief: creativeBrief?.campaignBrief,
-      workspaceLanguage: contentLocale,
-      vision: vision ?? null,
-      strategy: strategy ?? null,
-    });
+    const campaignAssets = campaign
+      ? await getCampaignAssets(db, campaign.id, task.workspaceId)
+      : [];
+    const campaignContext = campaign
+      ? provideCampaignAIContextFromCampaign({
+          brandProfile,
+          campaign,
+          vision: vision ?? null,
+          strategy: strategy ?? null,
+          assets: campaignAssets.map((a) => ({ id: a.id, type: a.type })),
+          transcript: vision?.transcriptSummary ?? null,
+        })
+      : provideCampaignAIContext({
+          businessProfile: brandProfile,
+          campaignObjective: "",
+          publishingPlatforms: platforms,
+          workspaceLanguage: "en",
+        });
 
     const copyMix = resolveCopyMix(platforms);
     const { variants: allVariants } = await runCopyAgentMix({

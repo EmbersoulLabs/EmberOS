@@ -86,8 +86,10 @@ async function markTaskStepFailed(
 
 const PIPELINE_STEP_ORDER = [
   "parse_intent",
-  "strategy_plan",
   "vision_analyze",
+  "strategy_plan",
+  "ceo_plan",
+  "content_classify",
   "highlight_index",
   "content_generate",
   "hook_generate",
@@ -95,8 +97,10 @@ const PIPELINE_STEP_ORDER = [
   "copy_generate",
   "edit_director_plan",
   "ffmpeg_render",
+  "compliance_check",
   "marketing_score",
   "export_ready",
+  "human_review",
 ] as const;
 
 function formatAgentPipelineError(err: unknown): string {
