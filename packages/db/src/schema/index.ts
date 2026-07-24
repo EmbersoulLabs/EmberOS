@@ -145,6 +145,10 @@ export const campaigns = pgTable(
     /** SPEC-002 / Sprint 0003 interim objective dictionary. */
     objective: text("objective"),
     objectiveCustom: text("objective_custom"),
+    /**
+     * @deprecated PD-044 — legacy column retained for migration compatibility only.
+     * Active app code must not read or write this field. Use campaignBrief.
+     */
     description: text("description"),
     targetAudienceOverride: text("target_audience_override"),
     platforms: text("platforms").array().notNull().default([]),

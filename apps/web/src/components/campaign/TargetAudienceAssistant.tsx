@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useI18n } from "@/lib/i18n/provider";
 
 /**
- * PD-043 Target Audience — AI Suggest with explicit Accept / Edit / Regenerate.
+ * PD-044 Target Audience — AI Suggest with explicit Accept / Edit / Regenerate.
  * Only Accept writes into the Target Audience field.
  */
 export function TargetAudienceAssistant({
@@ -13,7 +13,7 @@ export function TargetAudienceAssistant({
   onChange,
   objectiveLabel,
   platforms,
-  description,
+  campaignBrief,
   disabled,
 }: {
   workspaceId: string | null;
@@ -21,7 +21,7 @@ export function TargetAudienceAssistant({
   onChange: (next: string) => void;
   objectiveLabel?: string;
   platforms: string[];
-  description?: string;
+  campaignBrief?: string;
   disabled?: boolean;
 }) {
   const { t, locale } = useI18n();
@@ -42,7 +42,7 @@ export function TargetAudienceAssistant({
         body: JSON.stringify({
           objective: objectiveLabel || undefined,
           platforms,
-          description: description?.trim() || undefined,
+          campaignBrief: campaignBrief?.trim() || undefined,
           currentAudience: proposal?.trim() || value.trim() || undefined,
           workspaceLanguage: locale,
         }),

@@ -172,8 +172,7 @@ export async function PATCH(
         objective: (nextObjective as string | null) ?? campaign.objective,
         objectiveCustom:
           nextObjective === "other" ? String(nextCustom).trim() : null,
-        description:
-          patch.description !== undefined ? patch.description : campaign.description,
+        // PD-044: do not read/write legacy campaigns.description
         targetAudienceOverride:
           patch.targetAudienceOverride !== undefined
             ? patch.targetAudienceOverride

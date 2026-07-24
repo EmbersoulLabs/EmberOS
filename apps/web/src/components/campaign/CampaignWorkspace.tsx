@@ -28,7 +28,6 @@ type CampaignRecord = {
   status: string;
   objective?: string | null;
   objectiveCustom?: string | null;
-  description?: string | null;
   targetAudienceOverride?: string | null;
   campaignBrief?: string | null;
   outputLanguage?: string | null;
@@ -90,7 +89,6 @@ export function CampaignWorkspace({
   const [name, setName] = useState("");
   const [objective, setObjective] = useState<CampaignObjective | "">("");
   const [objectiveCustom, setObjectiveCustom] = useState("");
-  const [description, setDescription] = useState("");
   const [audienceOverride, setAudienceOverride] = useState("");
   const [brief, setBrief] = useState("");
   const [languages, setLanguages] = useState(() => defaultCampaignLanguages(locale));
@@ -110,7 +108,6 @@ export function CampaignWorkspace({
     setName(c.name ?? "");
     setObjective((c.objective as CampaignObjective) || "");
     setObjectiveCustom(c.objectiveCustom ?? "");
-    setDescription(c.description ?? "");
     setAudienceOverride(c.targetAudienceOverride ?? "");
     setBrief(c.campaignBrief ?? "");
     setLanguages({
@@ -138,7 +135,6 @@ export function CampaignWorkspace({
           name: name.trim(),
           objective: objective || undefined,
           objectiveCustom: objective === "other" ? objectiveCustom.trim() : null,
-          description: description.trim() || null,
           targetAudienceOverride: audienceOverride.trim() || null,
           campaignBrief: brief.trim() || null,
           ...languages,
@@ -294,15 +290,6 @@ export function CampaignWorkspace({
                 </p>
               </div>
               <label className="block text-sm font-semibold text-navy">
-                {t("campaign.workspace.description")}
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={2}
-                  className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-normal"
-                />
-              </label>
-              <label className="block text-sm font-semibold text-navy">
                 {t("campaign.workspace.audienceOverride")}
                 <textarea
                   value={audienceOverride}
@@ -311,6 +298,17 @@ export function CampaignWorkspace({
                   className="mt-1 w-full rounded-lg border border-border px-3 py-2 text-sm font-normal"
                 />
               </label>
+              <div>
+                <p className="text-sm font-semibold text-navy">
+                  {t("campaign.workspace.brief")}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-ink-secondary">
+                  {brief.trim() || t("campaign.workspace.briefEmpty")}
+                </p>
+                <p className="mt-1 text-xs text-ink-secondary">
+                  {t("campaign.workspace.briefReadonlyHint")}
+                </p>
+              </div>
             </div>
           </section>
 
@@ -365,6 +363,8 @@ export function CampaignWorkspace({
                 objectiveCustom,
                 goal: campaign.goal,
               })}
+              platforms={campaign.platforms ?? []}
+              targetAudience={audienceOverride}
               disabled={saving}
             />
           </section>

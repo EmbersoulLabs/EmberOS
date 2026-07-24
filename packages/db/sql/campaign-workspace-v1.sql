@@ -2,6 +2,8 @@
 
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS objective text;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS objective_custom text;
+-- PD-044: campaigns.description is legacy-only. Do not drop in V1 remediations.
+-- Active app code must not read/write this column; use campaign_brief instead.
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS description text;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS target_audience_override text;
 ALTER TABLE campaigns ADD COLUMN IF NOT EXISTS output_language text;

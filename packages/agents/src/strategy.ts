@@ -34,8 +34,10 @@ export interface StrategyInput {
   brandProfile: BrandProfile;
   /** PRIMARY signal — real asset analysis. Drives industry/product/angle. */
   vision?: VisionAnalysis;
-  /** User-written description (preferred over videoAnalysis template). */
+  /** User-written Campaign Brief (preferred over videoAnalysis template). */
   campaignBrief?: string | null;
+  /** PD-044 — campaign Target Audience override (separate from Brief). */
+  targetAudience?: string | null;
   /** Count of uploaded assets — strategy must not ignore when assetAnalysis is missing. */
   assetsUploaded?: number;
   videoAnalysis?: string | null;
@@ -93,7 +95,8 @@ The system may provide:
 * Product Information
 * Business Information
 * Brand Profile
-* User Description
+* Campaign Brief
+* Target Audience
 * Website
 * Previous Marketing Assets
 
@@ -107,10 +110,11 @@ Infer intelligently.
 
 Decide product/service, industry, and marketing angle in THIS order:
 1. assetAnalysis (what the uploaded video/images actually show) — this is the PRIMARY truth.
-2. userDescription / business information (user-written brief only).
-3. goal (this is a marketing OBJECTIVE like "Brand awareness" — NEVER treat it as the product name).
-4. creativePreferences (BGM, voice, style, marketing goal labels) — execution preferences ONLY, never the product/subject/keywords.
-5. campaignLabel — internal project name, LAST RESORT only when 1–4 are all absent.
+2. campaignBrief / business information (user-written Campaign Brief only).
+3. targetAudience (campaign Target Audience override — structured field, not part of Brief).
+4. goal (this is a marketing OBJECTIVE like "Brand awareness" — NEVER treat it as the product name).
+5. creativePreferences (BGM, voice, style, marketing goal labels) — execution preferences ONLY, never the product/subject/keywords.
+6. campaignLabel — internal project name, LAST RESORT only when 1–5 are all absent.
 
 Never copy "VIDEO ANALYSIS", "User Brief:", "not provided — use automatic analysis", or creativePreferences values into product, keywords, or hashtags.
 
@@ -262,16 +266,17 @@ function resolveStrategyLocale(input: StrategyInput): ContentLocale {
   return /[\u4e00-\u9fff]/.test(blob) ? "zh" : "en";
 }
 
-/** Context for industry inference — assets first, then user description (never internal LLM templates). */
+/** Context for industry inference — assets first, then Campaign Brief (never internal LLM templates). */
 function strategyExtraContext(input: StrategyInput): string {
-  const userDescription = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
+  const campaignBrief = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
   const legacyAnalysis =
     input.videoAnalysis && !isInternalVideoAnalysisPrompt(input.videoAnalysis)
       ? input.videoAnalysis
       : "";
   return [
     visionSummaryText(input.vision, input.campaignName),
-    userDescription,
+    campaignBrief,
+    input.targetAudience?.trim() || "",
     legacyAnalysis,
     typeof input.productInformation === "string" ? input.productInformation : "",
     typeof input.businessInformation === "string" ? input.businessInformation : "",
@@ -304,17 +309,22 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
   const angles = knowledge.filter((k) => k.category === "angle").map((k) => k.text);
   const ctas = knowledge.filter((k) => k.category === "cta").map((k) => k.text);
   const profile = INDUSTRY_FALLBACK[industry];
-  // Priority: real asset (vision) → description → goal → campaign name.
+  // Priority: real asset (vision) → Campaign Brief → goal → campaign name.
   const subject = resolveContentSubject(input.vision ?? { products: [], subjects: [], scenes: [] }, {
     goal: input.goal,
     userNotes:
       substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis) ??
+      input.targetAudience?.trim() ??
       (typeof input.businessInformation === "string" ? input.businessInformation : undefined),
     campaignBrief: substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis),
     campaignName: input.campaignName,
     locale,
   });
-  const topic = subject || input.brandProfile.targetAudience || (zh ? "本商家" : "this business");
+  const topic =
+    subject ||
+    input.targetAudience?.trim() ||
+    input.brandProfile.targetAudience ||
+    (zh ? "本商家" : "this business");
   const product =
     (typeof input.productInformation === "string" ? input.productInformation : undefined) ??
     (subject || profile?.product || topic);
@@ -393,10 +403,16 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const visionSummary = visionSummaryText(input.vision, input.campaignName);
   // Whisper transcript is always real spoken content — pass it even when frame labels are generic.
   const spokenContent = input.vision?.transcriptSummary?.trim() || "";
-  const userDescription = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
+  const campaignBriefText = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
+  const targetAudience = input.targetAudience?.trim() || "";
   const goalIsContext = Boolean(input.goal?.trim()) && !isMarketingObjective(input.goal);
   const hasAnyContext = Boolean(
-    visionSummary || spokenContent || userDescription || goalIsContext || strategyExtraContext(input)
+    visionSummary ||
+      spokenContent ||
+      campaignBriefText ||
+      targetAudience ||
+      goalIsContext ||
+      strategyExtraContext(input)
   );
   const creativePreferences = input.creativeBrief
     ? creativePreferencesForPrompt(input.creativeBrief)
@@ -412,10 +428,11 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
       ? {
           assetsUploaded,
           assetAnalysisNote:
-            "User uploaded media but automatic frame analysis did not return labels — use userDescription or campaignLabel; never invent generic placeholders or copy internal system text.",
+            "User uploaded media but automatic frame analysis did not return labels — use campaignBrief or campaignLabel; never invent generic placeholders or copy internal system text.",
         }
       : {}),
-    ...(userDescription ? { userDescription } : {}),
+    ...(campaignBriefText ? { campaignBrief: campaignBriefText } : {}),
+    ...(targetAudience ? { targetAudience } : {}),
     ...(creativePreferences ? { creativePreferences } : {}),
     goal: input.goal,
     platforms: input.platforms,

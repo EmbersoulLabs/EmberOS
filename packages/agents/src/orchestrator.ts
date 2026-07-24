@@ -184,6 +184,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       campaignName: campaign.name,
       goal,
       campaignBrief: creativeBrief.campaignBrief,
+      userNotes: campaign.targetAudienceOverride ?? undefined,
       videoAnalysis,
       frames: visionFrames.length > 0 ? visionFrames : undefined,
       transcriptSummary,
@@ -195,7 +196,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
-    // strategy_plan — built from the asset analysis (primary), then brief, then name.
+    // strategy_plan — built from the asset analysis (primary), then Campaign Brief + Target Audience.
     await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
     const { strategy: rawStrategy, industry, knowledgeSnippets, usage: strategyUsage } = await runStrategyAgent({
       goal,
@@ -204,6 +205,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       brandProfile,
       vision,
       campaignBrief: creativeBrief.campaignBrief,
+      targetAudience: campaign.targetAudienceOverride ?? undefined,
       assetsUploaded: assets.length,
       creativeBrief,
       videoAnalysis,

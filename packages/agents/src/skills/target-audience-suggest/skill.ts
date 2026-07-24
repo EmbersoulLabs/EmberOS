@@ -20,10 +20,10 @@ export interface TargetAudienceSuggestSkillResult {
   };
 }
 
-const SYSTEM_PROMPT = `You suggest a Target Audience for an EmberOS Campaign (PD-043).
+const SYSTEM_PROMPT = `You suggest a Target Audience for an EmberOS Campaign (PD-044).
 Return exactly one concise audience proposal as JSON.
 Do not return multiple alternatives.
-Ground the suggestion in the provided Campaign Objective, Publishing Platforms, Campaign Description, Business Profile, and Workspace Language.
+Ground the suggestion in the provided Campaign Objective, Publishing Platforms, Campaign Brief, Business Profile, and Workspace Language.
 Do not invent unsupported business facts.`;
 
 const SCHEMA_HINT = '{ "text": "string — single Target Audience proposal" }';
@@ -33,8 +33,8 @@ export const TargetAudienceSuggestSkill: AiSkill<
   TargetAudienceSuggestSkillResult
 > = {
   id: TARGET_AUDIENCE_SUGGEST_SKILL_ID,
-  promptVersion: "1.0.0",
-  schemaVersion: "1.0.0",
+  promptVersion: "1.1.0",
+  schemaVersion: "1.1.0",
   retryPolicy: { maxRetries: 1 },
 
   validateInput(payload: unknown): TargetAudienceSuggestSkillInput {
@@ -55,7 +55,7 @@ export const TargetAudienceSuggestSkill: AiSkill<
       user: JSON.stringify({
         objective: input.objective ?? null,
         platforms: input.platforms ?? [],
-        description: input.description ?? null,
+        campaignBrief: input.campaignBrief ?? null,
         businessProfileSummary: input.businessProfileSummary ?? null,
         workspaceLanguage: input.workspaceLanguage ?? null,
         currentAudience: input.currentAudience ?? null,

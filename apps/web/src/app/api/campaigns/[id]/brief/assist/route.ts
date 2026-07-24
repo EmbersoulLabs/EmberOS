@@ -51,7 +51,7 @@ export async function POST(
           (campaign.objective === "other"
             ? campaign.objectiveCustom ?? undefined
             : campaign.objective ?? undefined),
-        description: parsed.data.description ?? campaign.description ?? undefined,
+        platforms: parsed.data.platforms ?? campaign.platforms ?? undefined,
         targetAudience:
           parsed.data.targetAudience ?? campaign.targetAudienceOverride ?? undefined,
       });

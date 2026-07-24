@@ -67,7 +67,7 @@ export const CampaignBriefAssistSkill: AiSkill<
         currentBrief: input.text,
         campaignName: input.campaignName ?? null,
         objective: input.objective ?? null,
-        description: input.description ?? null,
+        platforms: input.platforms ?? [],
         targetAudience: input.targetAudience ?? null,
       }),
       schemaHint: SCHEMA_HINT,

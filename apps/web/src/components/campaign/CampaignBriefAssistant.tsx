@@ -14,7 +14,7 @@ export function CampaignBriefAssistant({
   onChange,
   campaignName,
   objectiveLabel,
-  description,
+  platforms,
   targetAudience,
   disabled,
 }: {
@@ -23,7 +23,7 @@ export function CampaignBriefAssistant({
   onChange: (next: string) => void;
   campaignName?: string;
   objectiveLabel?: string;
-  description?: string;
+  platforms?: string[];
   targetAudience?: string;
   disabled?: boolean;
 }) {
@@ -56,7 +56,7 @@ export function CampaignBriefAssistant({
           text: value,
           campaignName,
           objective: objectiveLabel,
-          description: description?.trim() || undefined,
+          platforms: platforms?.length ? platforms : undefined,
           targetAudience: targetAudience?.trim() || undefined,
         }),
       });

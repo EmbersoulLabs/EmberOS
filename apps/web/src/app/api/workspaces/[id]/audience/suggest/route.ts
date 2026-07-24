@@ -59,7 +59,7 @@ export async function POST(
       const result = await executeSkill("target-audience-suggest", {
         objective: parsed.data.objective,
         platforms: parsed.data.platforms,
-        description: parsed.data.description,
+        campaignBrief: parsed.data.campaignBrief,
         businessProfileSummary,
         workspaceLanguage: parsed.data.workspaceLanguage,
         currentAudience: parsed.data.currentAudience,

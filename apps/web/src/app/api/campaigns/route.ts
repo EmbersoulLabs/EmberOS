@@ -77,7 +77,6 @@ export async function POST(request: Request) {
       name,
       objective,
       objectiveCustom,
-      description,
       targetAudienceOverride,
       campaignBrief,
       outputLanguage,
@@ -116,7 +115,7 @@ export async function POST(request: Request) {
         goal: objectiveLabel,
         objective,
         objectiveCustom: objective === "other" ? objectiveCustom!.trim() : null,
-        description: description?.trim() || null,
+        // PD-044: do not write legacy campaigns.description
         targetAudienceOverride: targetAudienceOverride?.trim() || null,
         // PD-005: platforms must not block V1 — keep optional non-empty default for legacy consumers.
         platforms: Array.isArray(platforms) && platforms.length > 0 ? platforms : [],

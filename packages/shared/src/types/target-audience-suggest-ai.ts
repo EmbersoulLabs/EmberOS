@@ -1,13 +1,27 @@
 import { z } from "zod";
 
-/** PD-043 Target Audience AI Suggest — one proposal per invocation. */
+/** PD-044 — reject obsolete Campaign Description if clients still send it. */
+const RejectedCampaignDescriptionSchema = z
+  .never({
+    errorMap: () => ({
+      message: "Campaign Description was removed (PD-044). Use campaignBrief.",
+    }),
+  })
+  .optional();
+
+/**
+ * PD-044 Target Audience AI Suggest — one proposal per invocation.
+ * Context: Objective, Platforms, Campaign Brief, Business Profile, Workspace Language.
+ */
 export const TargetAudienceSuggestSkillInputSchema = z.object({
   objective: z.string().trim().max(500).optional(),
   platforms: z.array(z.string().trim().min(1)).max(20).optional(),
-  description: z.string().trim().max(5000).optional(),
+  campaignBrief: z.string().trim().max(10000).optional(),
   businessProfileSummary: z.string().trim().max(4000).optional(),
   workspaceLanguage: z.string().trim().max(32).optional(),
   currentAudience: z.string().trim().max(2000).optional(),
+  /** @deprecated PD-044 — rejected when present. */
+  description: RejectedCampaignDescriptionSchema,
 });
 
 export type TargetAudienceSuggestSkillInput = z.infer<

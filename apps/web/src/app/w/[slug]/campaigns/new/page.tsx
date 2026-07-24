@@ -51,7 +51,6 @@ export default function CampaignWizardPage() {
   const [name, setName] = useState("");
   const [objective, setObjective] = useState<CampaignObjective | "">("");
   const [objectiveCustom, setObjectiveCustom] = useState("");
-  const [description, setDescription] = useState("");
   const [targetAudience, setTargetAudience] = useState("");
   const [campaignBrief, setCampaignBrief] = useState("");
   const [platforms, setPlatforms] = useState<PublishingPlatformId[]>([]);
@@ -141,7 +140,6 @@ export default function CampaignWizardPage() {
       name: name.trim(),
       objective,
       objectiveCustom: objective === "other" ? objectiveCustom.trim() : undefined,
-      description: description.trim() || undefined,
       targetAudienceOverride: targetAudience.trim() || undefined,
       campaignBrief: campaignBrief.trim() || undefined,
       platforms,
@@ -171,7 +169,6 @@ export default function CampaignWizardPage() {
         body: JSON.stringify({
           ...payload,
           objectiveCustom: objective === "other" ? objectiveCustom.trim() : null,
-          description: description.trim() || null,
           targetAudienceOverride: targetAudience.trim() || null,
           campaignBrief: campaignBrief.trim() || null,
         }),
@@ -396,24 +393,13 @@ export default function CampaignWizardPage() {
                 onChange={setPlatforms}
                 disabled={loading || !platformsSeeded}
               />
-              <label className="block text-sm font-semibold text-navy">
-                {t("campaign.workspace.description")}
-                <textarea
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={3}
-                  disabled={loading}
-                  className="mt-1.5 w-full rounded-xl border border-border px-4 py-2.5 text-sm font-normal disabled:opacity-60"
-                  placeholder={t("campaign.workspace.descriptionPlaceholder")}
-                />
-              </label>
               <TargetAudienceAssistant
                 workspaceId={workspaceId}
                 value={targetAudience}
                 onChange={setTargetAudience}
                 objectiveLabel={objectiveLabel}
                 platforms={platforms}
-                description={description}
+                campaignBrief={campaignBrief}
                 disabled={loading}
               />
             </div>
@@ -443,7 +429,7 @@ export default function CampaignWizardPage() {
               onChange={setCampaignBrief}
               campaignName={name}
               objectiveLabel={objectiveLabel}
-              description={description}
+              platforms={platforms}
               targetAudience={targetAudience}
               disabled={loading}
             />
@@ -465,12 +451,6 @@ export default function CampaignWizardPage() {
                 <div>
                   <dt className="text-ink-secondary">{t("campaign.platforms")}</dt>
                   <dd className="mt-1 font-medium text-navy">{platformsDisplay}</dd>
-                </div>
-                <div>
-                  <dt className="text-ink-secondary">{t("campaign.workspace.description")}</dt>
-                  <dd className="mt-1 whitespace-pre-wrap font-medium text-navy">
-                    {description.trim() || t("campaign.workspace.descriptionEmpty")}
-                  </dd>
                 </div>
                 <div>
                   <dt className="text-ink-secondary">{t("campaign.workspace.targetAudience")}</dt>
