@@ -18,10 +18,9 @@ import {
   strategyObjectives,
   resolvePipelineContentLocale,
   alignStrategyWithVision,
-  buildCampaignAIContext,
-  withCampaignAIContext,
   type ContentLocale,
 } from "@ceo-agent/shared";
+import { provideCampaignAIContext, enrichCampaignAIContext } from "./campaign-context-provider";
 import { parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
 import {
@@ -132,7 +131,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
   const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign.goal);
   const videoAnalysis = buildVideoAnalysisPrompt(creativeBrief);
   const goal = effectiveCampaignGoal(creativeBrief, campaign.goal, contentLocale);
-  const campaignContext = buildCampaignAIContext({
+  const campaignContext = provideCampaignAIContext({
     businessProfile: brandProfile,
     campaignObjective: goal,
     publishingPlatforms: campaign.platforms ?? [],
@@ -196,7 +195,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       }
     }
 
-    const visionContext = withCampaignAIContext(campaignContext, {
+    const visionContext = enrichCampaignAIContext(campaignContext, {
       transcript: transcriptSummary ?? null,
     });
     const { analysis: vision, usage: visionUsage } = await runVisionAgent({
@@ -221,7 +220,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
 
     // strategy_plan is built from the asset analysis (primary), then brief, then name.
     await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
-    const strategyContext = withCampaignAIContext(campaignContext, {
+    const strategyContext = enrichCampaignAIContext(campaignContext, {
       vision,
       transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
     });
@@ -277,7 +276,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     });
 
     await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-    const contentContext = withCampaignAIContext(campaignContext, {
+    const contentContext = enrichCampaignAIContext(campaignContext, {
       vision,
       strategy,
       transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
@@ -534,7 +533,7 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
       const variants = (primary.copyVariants ?? []) as CopyVariant[];
       const editPlan = primary.editPlan as EditPlan | null;
       const { score, usage } = await runAutoClipScoreAgent({
-        campaignContext: buildCampaignAIContext({
+        campaignContext: provideCampaignAIContext({
           businessProfile: (workspace?.brandProfile ?? {}) as BrandProfile,
           campaignObjective: campaign.goal ?? "",
           publishingPlatforms: platforms,

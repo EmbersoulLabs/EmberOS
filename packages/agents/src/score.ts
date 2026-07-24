@@ -217,7 +217,11 @@ Output JSON matching MarketingScore schema.`;
   return { score: buildFallbackScore(input), usage };
 }
 
-/** Score auto-clip output without full agency strategy/hook steps. */
+/**
+ * Auto Clip Score — AD-001
+ * Required: campaignContext, copyVariants
+ * Optional: vision, editPlan, platforms
+ */
 export async function runAutoClipScoreAgent(input: {
   campaignContext: CampaignAIContext;
   vision?: VisionAnalysis;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { resolve, join } from "node:path";
 import {
   buildCampaignAIContext,
   isCampaignAIContext,
@@ -9,6 +9,20 @@ import {
 
 function read(rel: string): string {
   return readFileSync(resolve(rel), "utf8");
+}
+
+function walkTsFiles(dir: string, out: string[] = []): string[] {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    const st = statSync(full);
+    if (st.isDirectory()) {
+      if (name === "node_modules" || name === "dist" || name === ".next") continue;
+      walkTsFiles(full, out);
+    } else if (/\.(ts|tsx)$/.test(name)) {
+      out.push(full);
+    }
+  }
+  return out;
 }
 
 const MODULES = [
@@ -26,6 +40,7 @@ const MODULES = [
 describe("AD-001 Campaign AI Context Contract", () => {
   const orchestrator = read("packages/agents/src/orchestrator.ts");
   const autoClip = read("packages/agents/src/auto-clip-pipeline.ts");
+  const provider = read("packages/agents/src/campaign-context-provider.ts");
   const contextDef = read("packages/shared/src/campaign-ai-context.ts");
 
   it("defines canonical CampaignAIContext core and optional fields", () => {
@@ -48,22 +63,40 @@ describe("AD-001 Campaign AI Context Contract", () => {
     }
   });
 
-  it("every Campaign AI module requires campaignContext", () => {
+  it("every Campaign AI module accepts CampaignAIContext", () => {
     for (const mod of MODULES) {
       const src = read(mod.path);
       expect(src, mod.name).toContain("campaignContext: CampaignAIContext");
+      expect(src, `${mod.name} Required Inputs`).toMatch(/Required:/);
+      expect(src, `${mod.name} Optional Inputs`).toMatch(/Optional:/);
     }
-    expect(read("packages/agents/src/score.ts")).toContain(
-      "campaignContext: CampaignAIContext"
-    );
     expect(read("packages/agents/src/score.ts")).toContain("runAutoClipScoreAgent");
   });
 
-  it("Orchestrator is the provider of CampaignAIContext for the agency pipeline", () => {
-    expect(orchestrator).toContain("buildCampaignAIContext({");
-    expect(orchestrator).toContain("campaignContext: pipelineContext");
-    expect(orchestrator).toContain("campaignContext: visionContext");
-    expect(orchestrator).toContain("campaignContext: strategyContext");
+  it("Orchestrator-owned provider is the single buildCampaignAIContext caller in app code", () => {
+    expect(provider).toContain("buildCampaignAIContext(");
+    expect(provider).toContain("export function provideCampaignAIContext");
+
+    const allowed = new Set([
+      resolve("packages/shared/src/campaign-ai-context.ts"),
+      resolve("packages/agents/src/campaign-context-provider.ts"),
+      resolve("tests/ad-001-campaign-ai-context.test.ts"),
+      resolve("tests/sprint-0004-phase-2.test.ts"),
+    ]);
+
+    const roots = ["packages/agents/src", "apps/web/src", "apps/worker/src"];
+    for (const root of roots) {
+      for (const file of walkTsFiles(resolve(root))) {
+        const src = readFileSync(file, "utf8");
+        if (!src.includes("buildCampaignAIContext(")) continue;
+        expect(allowed.has(file), `unexpected buildCampaignAIContext in ${file}`).toBe(true);
+      }
+    }
+  });
+
+  it("Orchestrator provides CampaignAIContext to agency modules", () => {
+    expect(orchestrator).toContain("provideCampaignAIContext({");
+    expect(orchestrator).not.toContain("buildCampaignAIContext(");
     expect(orchestrator).toMatch(/runCeoAgent\(\{[\s\S]*?campaignContext/);
     expect(orchestrator).toMatch(/runContentTypeAgent\(\{[\s\S]*?campaignContext/);
     expect(orchestrator).toMatch(/runMarketingContentAgent\(\{[\s\S]*?campaignContext/);
@@ -73,24 +106,33 @@ describe("AD-001 Campaign AI Context Contract", () => {
     expect(orchestrator).toMatch(/runCopyAgentMix\(\{[\s\S]*?campaignContext/);
   });
 
-  it("Auto Clip pipeline provides CampaignAIContext to marketing and score modules", () => {
-    expect(autoClip).toContain("buildCampaignAIContext({");
+  it("Auto Clip uses Orchestrator provider and passes CampaignAIContext", () => {
+    expect(autoClip).toContain("provideCampaignAIContext({");
+    expect(autoClip).not.toContain("buildCampaignAIContext(");
     expect(autoClip).toMatch(/runMarketingContentAgent\(\{[\s\S]*campaignContext:/);
     expect(autoClip).toMatch(/runAutoClipScoreAgent\(\{[\s\S]*campaignContext:/);
     expect(autoClip).toMatch(/runVisionAgent\(\{[\s\S]*campaignContext:/);
     expect(autoClip).toMatch(/runStrategyAgent\(\{[\s\S]*campaignContext:/);
   });
 
-  it("modules do not call buildCampaignAIContext themselves", () => {
+  it("modules do not construct Campaign context", () => {
     for (const mod of MODULES) {
       const src = read(mod.path);
-      expect(src, `${mod.name} must not build context`).not.toContain(
-        "buildCampaignAIContext("
-      );
+      expect(src, mod.name).not.toContain("buildCampaignAIContext(");
+      expect(src, mod.name).not.toContain("provideCampaignAIContext(");
     }
   });
 
-  it("buildCampaignAIContext produces a complete core object", () => {
+  it("prompt behaviour remains structurally unchanged (modules still call LLM helpers)", () => {
+    expect(read("packages/agents/src/ceo.ts")).toContain("callJsonModel");
+    expect(read("packages/agents/src/marketing-content.ts")).toContain("CONTENT_SYSTEM_PROMPT");
+    expect(read("packages/agents/src/compliance.ts")).toContain(
+      "You are a Compliance Agent for Singapore/SEA advertising."
+    );
+    expect(read("packages/agents/src/score.ts")).toContain("You are the Marketing Score Agent");
+  });
+
+  it("build/provideCampaignAIContext produces a complete core object", () => {
     const ctx = buildCampaignAIContext({
       campaignObjective: "awareness",
       publishingPlatforms: ["instagram"],
@@ -128,9 +170,13 @@ describe("AD-001 Campaign AI Context Contract", () => {
     expect(enriched.strategy?.product).toBe("X");
   });
 
-  it("does not reintroduce Campaign Description", () => {
+  it("Campaign Description is never referenced", () => {
     expect(contextDef).not.toContain("campaignDescription");
     expect(orchestrator).not.toContain("campaign.description");
     expect(autoClip).not.toContain("campaign.description");
+    expect(provider).not.toContain("Campaign Description");
+    for (const mod of MODULES) {
+      expect(read(mod.path)).not.toContain("Campaign Description");
+    }
   });
 });

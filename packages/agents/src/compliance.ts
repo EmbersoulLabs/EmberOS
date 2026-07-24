@@ -11,6 +11,7 @@ const DEFAULT_BANNED = ["guaranteed", "100%", "cure", "miracle", "best in the wo
 /**
  * Compliance — AD-001
  * Required: campaignContext, copyVariants, subtitles
+ * Optional: none (all enrichment comes from campaignContext.businessProfile)
  * Consumes from context: businessProfile
  */
 export interface ComplianceInput {

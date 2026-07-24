@@ -10,9 +10,9 @@ import {
   CampaignBriefAssistBodySchema,
   isUuid,
   normalizeBusinessProfileRecord,
-  buildCampaignAIContext,
   type BrandProfile,
 } from "@ceo-agent/shared";
+import { provideCampaignAIContext } from "@ceo-agent/agents";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { executeSkill, AiSkillError, CAMPAIGN_BRIEF_ASSIST_SKILL_ID } from "@/lib/campaign-brief-assist";
@@ -90,7 +90,7 @@ export async function POST(
       "en";
 
     // PD-044 — build complete Campaign AI Context even though Assist may ignore unused fields.
-    const campaignContext = buildCampaignAIContext({
+    const campaignContext = provideCampaignAIContext({
       businessProfile: (workspace?.brandProfile ?? {}) as BrandProfile,
       campaignObjective: objective ?? campaign.goal ?? "",
       publishingPlatforms: platforms,

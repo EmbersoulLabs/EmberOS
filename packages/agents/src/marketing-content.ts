@@ -111,6 +111,12 @@ const HOOK_TYPE_MAP: Record<string, HookType> = {
   shock: "curiosity",
 };
 
+/**
+ * Marketing Content / Auto Clip Marketing — AD-001
+ * Required: campaignContext (with strategy + vision)
+ * Optional: strategy, vision overrides, videoAnalysis, businessInformation, campaignName
+ * Consumes: campaignObjective, campaignBrief, publishingPlatforms, workspaceLanguage, strategy, vision
+ */
 export interface MarketingContentInput {
   /** AD-001 — complete Campaign AI Context (strategy + vision required on context). */
   campaignContext: CampaignAIContext;
@@ -893,6 +899,11 @@ Facebook/LinkedIn caption).
 Return ONLY valid JSON for a single platform asset:
 { caption, hook?, title?, description?, hashtags[], cta, formatStyle }`;
 
+/**
+ * Copy Regeneration — AD-001
+ * Required: campaignContext, platformId
+ * Optional: strategy, vision, campaignName, businessInformation, previousCaption
+ */
 export interface RegeneratePlatformAssetInput {
   /** AD-001 — Copy Regeneration receives the same CampaignAIContext. */
   campaignContext: CampaignAIContext;
@@ -953,7 +964,11 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
 
   // Fallback: derive a fresh single-platform asset from the strategy/vision.
   const fallbackPkg = buildFallbackContent({
-    campaignContext: withStrategyVision(input.campaignContext, resolved.strategy, resolved.vision),
+    campaignContext: {
+      ...input.campaignContext,
+      strategy: resolved.strategy,
+      vision: resolved.vision,
+    },
     strategy: resolved.strategy,
     vision: resolved.vision,
     campaignName: input.campaignName,
@@ -963,17 +978,5 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
   return {
     asset: fallbackAsset ?? { caption: "", cta: "", hashtags: [] },
     usage,
-  };
-}
-
-function withStrategyVision(
-  base: CampaignAIContext,
-  strategy: StrategyPlan,
-  vision: VisionAnalysis
-): CampaignAIContext {
-  return {
-    ...base,
-    strategy,
-    vision,
   };
 }

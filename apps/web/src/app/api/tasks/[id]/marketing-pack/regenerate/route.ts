@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
-import { regeneratePlatformAsset } from "@ceo-agent/agents";
+import { regeneratePlatformAsset, provideCampaignAIContext } from "@ceo-agent/agents";
 import {
   MARKETING_PLATFORM_IDS,
   normalizeMarketingContentPackage,
@@ -8,7 +8,6 @@ import {
   parseCampaignCreativeBrief,
   resolvePipelineContentLocale,
   resolvePlatformAssets,
-  buildCampaignAIContext,
   BrandProfileSchema,
   type BrandProfile,
   type MarketingCaptions,
@@ -91,7 +90,7 @@ export async function POST(
     const prevAssets = resolvePlatformAssets(existing);
     const previousCaption = prevAssets[platformId]?.caption;
 
-    const campaignContext = buildCampaignAIContext({
+    const campaignContext = provideCampaignAIContext({
       businessProfile: brandProfile,
       campaignObjective: goal ?? "",
       publishingPlatforms: platforms,

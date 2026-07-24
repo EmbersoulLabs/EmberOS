@@ -14,6 +14,12 @@ export interface VisionFrameInput {
   dataUrl: string;
 }
 
+/**
+ * Vision AI — AD-001
+ * Required: campaignContext, assetId, mediaType
+ * Optional: frames, transcriptSummary, campaignName, videoAnalysis, durationSec, frameDescriptions
+ * Consumes from context: campaignObjective, campaignBrief, targetAudience, workspaceLanguage, businessProfile, publishingPlatforms
+ */
 export interface VisionInput {
   assetId: string;
   mediaType: "video" | "image";

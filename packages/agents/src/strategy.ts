@@ -30,7 +30,12 @@ import {
 
 export interface StrategyInput {
   campaignName: string;
-  /** PD-044 — complete Campaign AI context (never partial). */
+  /**
+   * AD-001 — complete Campaign AI Context (never partial).
+   * Required: campaignContext, campaignName
+   * Optional: assetsUploaded, videoAnalysis, imageAnalysis, productInformation, businessInformation, website, creativeBrief
+   * Consumes: campaignObjective, publishingPlatforms, businessProfile, campaignBrief, targetAudience, workspaceLanguage, vision, transcript, assets
+   */
   campaignContext: CampaignAIContext;
   /** Count of uploaded assets — strategy must not ignore when assetAnalysis is missing. */
   assetsUploaded?: number;

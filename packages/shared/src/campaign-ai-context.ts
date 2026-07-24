@@ -9,8 +9,8 @@ import type { StrategyPlan } from "./types/marketing-os";
 /**
  * AD-001 / PD-044 — canonical Campaign AI Context.
  *
- * Every Campaign AI module receives this object from the Orchestrator (or
- * Auto Clip pipeline entry). Modules must not construct their own context.
+ * Every Campaign AI module receives this object from the Orchestrator via
+ * `provideCampaignAIContext` (AD-001). Modules must not construct their own context.
  * Prompt implementations may ignore unused fields.
  */
 export interface CampaignAIContextAssetRef {

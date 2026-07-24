@@ -146,7 +146,7 @@ describe("PD-044 Campaign Brief is the sole free-text Campaign Context", () => {
   });
 
   it("main generation receives Target Audience as separate context", () => {
-    expect(orchestrator).toContain("buildCampaignAIContext");
+    expect(orchestrator).toContain("provideCampaignAIContext");
     expect(orchestrator).toContain("campaignContext:");
     expect(orchestrator).toContain("targetAudience: campaign.targetAudienceOverride");
     expect(orchestrator).toContain("campaignBrief: creativeBrief.campaignBrief");
@@ -159,6 +159,7 @@ describe("PD-044 Campaign Brief is the sole free-text Campaign Context", () => {
     const autoClip = read("packages/agents/src/auto-clip-pipeline.ts");
     const contextDef = read("packages/shared/src/campaign-ai-context.ts");
     const briefSkillSrc = read("packages/agents/src/skills/campaign-brief-assist/skill.ts");
+    const provider = read("packages/agents/src/campaign-context-provider.ts");
 
     expect(contextDef).toContain("export interface CampaignAIContext");
     expect(contextDef).toContain("businessProfile:");
@@ -170,13 +171,14 @@ describe("PD-044 Campaign Brief is the sole free-text Campaign Context", () => {
 
     expect(vision).toContain("campaignContext: CampaignAIContext");
     expect(strategy).toContain("campaignContext: CampaignAIContext");
-    expect(orchestrator).toContain("buildCampaignAIContext({");
-    expect(autoClip).toContain("buildCampaignAIContext({");
+    expect(provider).toContain("provideCampaignAIContext");
+    expect(orchestrator).toContain("provideCampaignAIContext({");
+    expect(autoClip).toContain("provideCampaignAIContext({");
     expect(orchestrator).toContain("campaignContext: visionContext");
     expect(orchestrator).toContain("campaignContext: strategyContext");
     expect(autoClip).toContain("campaignContext: visionContext");
     expect(autoClip).toContain("campaignContext: strategyContext");
-    expect(briefRoute).toContain("buildCampaignAIContext");
+    expect(briefRoute).toContain("provideCampaignAIContext");
     expect(briefSkillSrc).toContain("publishingPlatforms:");
     expect(briefSkillSrc).toContain("businessProfile:");
     expect(briefSkillSrc).toContain("workspaceLanguage:");

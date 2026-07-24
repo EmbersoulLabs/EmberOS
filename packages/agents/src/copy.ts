@@ -19,6 +19,7 @@ const TEMPLATES = ["pain_point", "comparison", "story"] as const;
 /**
  * Copy / Copy Mix — AD-001
  * Required: campaignContext, vision (or on context), platform (CopyInput) / mix (CopyMixInput)
+ * Optional: campaignName, strategyPlan, hookSet, locale, templates, slotIds, videoAnalysis
  * Consumes: campaignObjective, businessProfile, campaignBrief, strategy
  */
 export interface CopyInput {

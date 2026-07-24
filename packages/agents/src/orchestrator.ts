@@ -13,10 +13,9 @@ import {
   resolveAutoClipSourceAsset,
   resolvePipelineContentLocale,
   alignStrategyWithVision,
-  buildCampaignAIContext,
-  withCampaignAIContext,
   type ContentLocale,
 } from "@ceo-agent/shared";
+import { provideCampaignAIContext, enrichCampaignAIContext } from "./campaign-context-provider";
 import { runCeoAgent, parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
 import {
@@ -135,7 +134,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
   const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign.goal);
   const videoAnalysis = buildVideoAnalysisPrompt(creativeBrief);
   const goal = effectiveCampaignGoal(creativeBrief, campaign.goal, contentLocale);
-  const campaignContext = buildCampaignAIContext({
+  const campaignContext = provideCampaignAIContext({
     businessProfile: brandProfile,
     campaignObjective: goal,
     publishingPlatforms: campaign.platforms ?? [],
@@ -188,7 +187,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       visionFrames = visionFrames.slice(0, 8);
     }
 
-    const visionContext = withCampaignAIContext(campaignContext, {
+    const visionContext = enrichCampaignAIContext(campaignContext, {
       transcript: transcriptSummary ?? null,
     });
     const { analysis: vision, usage: visionUsage } = await runVisionAgent({
@@ -209,7 +208,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     // strategy_plan — built from the asset analysis (primary), then Campaign Brief + Target Audience.
     await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
-    const strategyContext = withCampaignAIContext(campaignContext, {
+    const strategyContext = enrichCampaignAIContext(campaignContext, {
       vision,
       transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
     });
@@ -246,7 +245,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
-    const pipelineContext = withCampaignAIContext(campaignContext, {
+    const pipelineContext = enrichCampaignAIContext(campaignContext, {
       vision,
       strategy,
       transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
@@ -498,7 +497,7 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
   const rawStrategy =
     task.strategyJson ?? campaign?.strategyJson ?? progress.strategy_plan?.output;
   const strategy = rawStrategy ? normalizeStrategyPlan(rawStrategy) : undefined;
-  const campaignContext = buildCampaignAIContext({
+  const campaignContext = provideCampaignAIContext({
     businessProfile: brandProfile,
     campaignObjective: campaign?.goal ?? "",
     publishingPlatforms: campaign?.platforms ?? [],
@@ -550,7 +549,7 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
     (progress.hook_generate?.output as HookSet);
   const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
   const videoAnalysis = creativeBrief ? buildVideoAnalysisPrompt(creativeBrief) : null;
-  const scoreContext = withCampaignAIContext(campaignContext, {
+  const scoreContext = enrichCampaignAIContext(campaignContext, {
     vision: vision ?? null,
     strategy: strategy ?? null,
   });
@@ -667,7 +666,7 @@ export async function retryPipelineStep(
     const creativeBrief = campaign ? parseCampaignCreativeBrief(campaign) : null;
     const campaignMeta = (campaign?.metadata ?? {}) as Record<string, unknown>;
     const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign?.goal);
-    const campaignContext = buildCampaignAIContext({
+    const campaignContext = provideCampaignAIContext({
       businessProfile: brandProfile,
       campaignObjective: campaign?.goal ?? "",
       publishingPlatforms: platforms,
