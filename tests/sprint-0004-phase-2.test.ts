@@ -125,7 +125,9 @@ describe("PD-044 Campaign Brief is the sole free-text Campaign Context", () => {
     expect(audienceSkill).toContain("campaignBrief");
     expect(briefUi).toContain("platforms?:");
     expect(briefUi).toContain("targetAudience?:");
-    expect(briefSkill).toContain("platforms: input.platforms");
+    expect(briefSkill).toContain("publishingPlatforms:");
+    expect(briefSkill).toContain("businessProfile:");
+    expect(briefSkill).toContain("workspaceLanguage:");
 
     expect(
       TargetAudienceSuggestBodySchema.safeParse({
@@ -144,9 +146,40 @@ describe("PD-044 Campaign Brief is the sole free-text Campaign Context", () => {
   });
 
   it("main generation receives Target Audience as separate context", () => {
+    expect(orchestrator).toContain("buildCampaignAIContext");
+    expect(orchestrator).toContain("campaignContext:");
     expect(orchestrator).toContain("targetAudience: campaign.targetAudienceOverride");
     expect(orchestrator).toContain("campaignBrief: creativeBrief.campaignBrief");
     expect(orchestrator).not.toContain("campaign.description");
+  });
+
+  it("Campaign AI modules receive the same CampaignAIContext", () => {
+    const vision = read("packages/agents/src/vision.ts");
+    const strategy = read("packages/agents/src/strategy.ts");
+    const autoClip = read("packages/agents/src/auto-clip-pipeline.ts");
+    const contextDef = read("packages/shared/src/campaign-ai-context.ts");
+    const briefSkillSrc = read("packages/agents/src/skills/campaign-brief-assist/skill.ts");
+
+    expect(contextDef).toContain("export interface CampaignAIContext");
+    expect(contextDef).toContain("businessProfile:");
+    expect(contextDef).toContain("campaignObjective:");
+    expect(contextDef).toContain("publishingPlatforms:");
+    expect(contextDef).toContain("targetAudience:");
+    expect(contextDef).toContain("campaignBrief:");
+    expect(contextDef).toContain("workspaceLanguage:");
+
+    expect(vision).toContain("campaignContext: CampaignAIContext");
+    expect(strategy).toContain("campaignContext: CampaignAIContext");
+    expect(orchestrator).toContain("buildCampaignAIContext({");
+    expect(autoClip).toContain("buildCampaignAIContext({");
+    expect(orchestrator).toContain("campaignContext: visionContext");
+    expect(orchestrator).toContain("campaignContext: strategyContext");
+    expect(autoClip).toContain("campaignContext: visionContext");
+    expect(autoClip).toContain("campaignContext: strategyContext");
+    expect(briefRoute).toContain("buildCampaignAIContext");
+    expect(briefSkillSrc).toContain("publishingPlatforms:");
+    expect(briefSkillSrc).toContain("businessProfile:");
+    expect(briefSkillSrc).toContain("workspaceLanguage:");
   });
 
   it("database schema and creation SQL have no campaigns.description", () => {

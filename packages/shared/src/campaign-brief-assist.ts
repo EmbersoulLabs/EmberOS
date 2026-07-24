@@ -11,6 +11,8 @@ export const CampaignBriefAssistBodySchema = z.object({
   objective: z.string().trim().max(500).optional(),
   platforms: z.array(z.string().trim().min(1)).max(20).optional(),
   targetAudience: z.string().trim().max(2000).optional(),
+  /** Optional client hint; server prefers campaign/workspace language. */
+  workspaceLanguage: z.string().trim().max(32).optional(),
 });
 
 export type CampaignBriefAssistBody = z.infer<typeof CampaignBriefAssistBodySchema>;

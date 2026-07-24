@@ -33,6 +33,7 @@ export * from "./types/campaign-brief-assist-ai";
 export * from "./types/asset-display-name-ai";
 export * from "./types/target-audience-suggest-ai";
 export * from "./campaign-workspace";
+export * from "./campaign-ai-context";
 export * from "./publishing-platforms";
 export * from "./content-locale";
 export * from "./content-subject";

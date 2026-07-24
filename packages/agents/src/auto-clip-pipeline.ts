@@ -18,6 +18,8 @@ import {
   strategyObjectives,
   resolvePipelineContentLocale,
   alignStrategyWithVision,
+  buildCampaignAIContext,
+  withCampaignAIContext,
   type ContentLocale,
 } from "@ceo-agent/shared";
 import { parseIntent } from "./ceo";
@@ -130,6 +132,15 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
   const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign.goal);
   const videoAnalysis = buildVideoAnalysisPrompt(creativeBrief);
   const goal = effectiveCampaignGoal(creativeBrief, campaign.goal, contentLocale);
+  const campaignContext = buildCampaignAIContext({
+    businessProfile: brandProfile,
+    campaignObjective: goal,
+    publishingPlatforms: campaign.platforms ?? [],
+    targetAudience: campaign.targetAudienceOverride,
+    campaignBrief: creativeBrief.campaignBrief,
+    workspaceLanguage: contentLocale,
+    assets: assets.map((a) => ({ id: a.id, type: a.type })),
+  });
   const bgmBaseCtx = {
     userPreference: creativeBrief.bgmPreference,
     campaignGoal: creativeBrief.campaignGoal,
@@ -185,18 +196,18 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       }
     }
 
+    const visionContext = withCampaignAIContext(campaignContext, {
+      transcript: transcriptSummary ?? null,
+    });
     const { analysis: vision, usage: visionUsage } = await runVisionAgent({
       assetId: videoAsset.id,
       mediaType: "video",
       durationSec: sourceDurationSec,
       campaignName: campaign.name,
-      goal,
-      campaignBrief: creativeBrief.campaignBrief,
-      userNotes: campaign.targetAudienceOverride ?? undefined,
       videoAnalysis,
       frames: visionFrames.length > 0 ? visionFrames : undefined,
       transcriptSummary,
-      contentLocale,
+      campaignContext: visionContext,
     });
     totalCost += visionUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
@@ -210,18 +221,16 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
 
     // strategy_plan is built from the asset analysis (primary), then brief, then name.
     await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
-    const { strategy: rawStrategy, industry, usage: strategyUsage } = await runStrategyAgent({
-      goal,
-      campaignName: campaign.name,
-      platforms: campaign.platforms,
-      brandProfile,
+    const strategyContext = withCampaignAIContext(campaignContext, {
       vision,
-      campaignBrief: creativeBrief.campaignBrief,
-      targetAudience: campaign.targetAudienceOverride ?? undefined,
+      transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
+    });
+    const { strategy: rawStrategy, industry, usage: strategyUsage } = await runStrategyAgent({
+      campaignName: campaign.name,
+      campaignContext: strategyContext,
       assetsUploaded: assets.length,
       creativeBrief,
       videoAnalysis,
-      contentLocale,
     });
     let strategy = alignStrategyWithVision(rawStrategy, vision, {
       goal,

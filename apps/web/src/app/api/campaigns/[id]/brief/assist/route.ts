@@ -1,12 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
-import { CampaignBriefAssistBodySchema, isUuid } from "@ceo-agent/shared";
+import {
+  getDb,
+  requireWorkspaceRole,
+  schema,
+  getBusinessProfileByWorkspace,
+} from "@ceo-agent/db";
+import {
+  CampaignBriefAssistBodySchema,
+  isUuid,
+  normalizeBusinessProfileRecord,
+  buildCampaignAIContext,
+  type BrandProfile,
+} from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { executeSkill, AiSkillError, CAMPAIGN_BRIEF_ASSIST_SKILL_ID } from "@/lib/campaign-brief-assist";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { logAiSkillFailure } from "@/lib/ai-skill-log";
+
+function profileSummary(raw: Record<string, unknown>): string {
+  const profile = normalizeBusinessProfileRecord(raw);
+  const parts = [
+    profile.companyName,
+    profile.industryDisplayName || profile.industryCustomValue,
+    profile.businessDescription,
+    profile.targetAudience,
+    profile.services?.length ? `Services: ${profile.services.join(", ")}` : null,
+    [profile.city, profile.stateProvince, profile.country].filter(Boolean).join(", ") || null,
+  ].filter((p): p is string => Boolean(p?.trim()));
+  return parts.join("\n").slice(0, 4000);
+}
 
 export async function POST(
   request: Request,
@@ -40,20 +64,52 @@ export async function POST(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
+    const [workspace] = await db
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, campaign.workspaceId))
+      .limit(1);
+
+    const row = await getBusinessProfileByWorkspace(campaign.workspaceId);
+    const businessProfileSummary = row
+      ? profileSummary(row as Record<string, unknown>)
+      : undefined;
+
+    const objective =
+      parsed.data.objective ??
+      (campaign.objective === "other"
+        ? campaign.objectiveCustom ?? undefined
+        : campaign.objective ?? undefined);
+    const platforms = parsed.data.platforms ?? campaign.platforms ?? [];
+    const targetAudience =
+      parsed.data.targetAudience ?? campaign.targetAudienceOverride ?? null;
+    const workspaceLanguage =
+      parsed.data.workspaceLanguage ??
+      campaign.outputLanguage ??
+      (workspace?.brandProfile as { locale?: string } | null)?.locale ??
+      "en";
+
+    // PD-044 — build complete Campaign AI Context even though Assist may ignore unused fields.
+    const campaignContext = buildCampaignAIContext({
+      businessProfile: (workspace?.brandProfile ?? {}) as BrandProfile,
+      campaignObjective: objective ?? campaign.goal ?? "",
+      publishingPlatforms: platforms,
+      targetAudience,
+      campaignBrief: parsed.data.text,
+      workspaceLanguage,
+    });
+
     const correlationId = randomUUID();
     try {
       const result = await executeSkill("campaign-brief-assist", {
         action: parsed.data.action,
         text: parsed.data.text,
         campaignName: parsed.data.campaignName ?? campaign.name,
-        objective:
-          parsed.data.objective ??
-          (campaign.objective === "other"
-            ? campaign.objectiveCustom ?? undefined
-            : campaign.objective ?? undefined),
-        platforms: parsed.data.platforms ?? campaign.platforms ?? undefined,
-        targetAudience:
-          parsed.data.targetAudience ?? campaign.targetAudienceOverride ?? undefined,
+        objective: campaignContext.campaignObjective || undefined,
+        platforms: campaignContext.publishingPlatforms,
+        targetAudience: campaignContext.targetAudience ?? undefined,
+        businessProfileSummary: businessProfileSummary,
+        workspaceLanguage: String(campaignContext.workspaceLanguage),
       });
       return apiSuccess({
         text: result.text,

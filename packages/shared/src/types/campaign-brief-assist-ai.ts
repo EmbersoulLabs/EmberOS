@@ -9,6 +9,9 @@ export const CampaignBriefAssistSkillInputSchema = z.object({
   objective: z.string().trim().max(500).optional(),
   platforms: z.array(z.string().trim().min(1)).max(20).optional(),
   targetAudience: z.string().trim().max(2000).optional(),
+  /** Business Profile summary — PD-044 Campaign AI Context. */
+  businessProfileSummary: z.string().trim().max(4000).optional(),
+  workspaceLanguage: z.string().trim().max(32).optional(),
 });
 
 export type CampaignBriefAssistSkillInput = z.infer<

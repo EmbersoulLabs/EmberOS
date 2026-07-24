@@ -65,10 +65,14 @@ export const CampaignBriefAssistSkill: AiSkill<
       user: JSON.stringify({
         action: input.action,
         currentBrief: input.text,
-        campaignName: input.campaignName ?? null,
-        objective: input.objective ?? null,
-        platforms: input.platforms ?? [],
+        // PD-044 Campaign AI Context — modules may ignore unused fields.
+        campaignObjective: input.objective ?? null,
+        publishingPlatforms: input.platforms ?? [],
         targetAudience: input.targetAudience ?? null,
+        campaignBrief: input.text,
+        businessProfile: input.businessProfileSummary ?? null,
+        workspaceLanguage: input.workspaceLanguage ?? null,
+        campaignName: input.campaignName ?? null,
       }),
       schemaHint: SCHEMA_HINT,
       preferredModel: "gpt-4o-mini",

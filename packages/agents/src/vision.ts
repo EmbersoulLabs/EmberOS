@@ -1,6 +1,12 @@
 import { z } from "zod";
 import { callJsonModel, callVisionJsonModel } from "./llm";
-import { outputLanguagePrompt, isChineseText, resolveContentSubject, type ContentLocale } from "@ceo-agent/shared";
+import {
+  outputLanguagePrompt,
+  resolveContentSubject,
+  workspaceLanguageAsContentLocale,
+  type CampaignAIContext,
+  type ContentLocale,
+} from "@ceo-agent/shared";
 import type { VisionAnalysis } from "@ceo-agent/shared";
 
 export interface VisionFrameInput {
@@ -17,19 +23,13 @@ export interface VisionInput {
   frames?: VisionFrameInput[];
   transcriptSummary?: string;
   campaignName?: string;
-  goal?: string;
-  campaignBrief?: string;
-  userNotes?: string;
   videoAnalysis?: string | null;
-  contentLocale?: ContentLocale;
+  /** PD-044 — complete Campaign AI context (unused fields may be ignored by the prompt). */
+  campaignContext: CampaignAIContext;
 }
 
 function resolveVisionLocale(input: VisionInput): ContentLocale {
-  if (input.contentLocale) return input.contentLocale;
-  const blob = [input.goal, input.campaignBrief, input.userNotes, input.videoAnalysis]
-    .filter(Boolean)
-    .join("");
-  return isChineseText(blob) ? "zh" : "en";
+  return workspaceLanguageAsContentLocale(input.campaignContext.workspaceLanguage);
 }
 
 const EMPTY_VISION: Pick<VisionAnalysis, "products" | "subjects" | "scenes"> = {
@@ -41,10 +41,11 @@ const EMPTY_VISION: Pick<VisionAnalysis, "products" | "subjects" | "scenes"> = {
 function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
   const locale = resolveVisionLocale(input);
   const zh = locale === "zh";
+  const ctx = input.campaignContext;
   const topic = resolveContentSubject(EMPTY_VISION, {
-    goal: input.goal,
-    userNotes: input.userNotes,
-    campaignBrief: input.campaignBrief,
+    goal: ctx.campaignObjective,
+    userNotes: ctx.targetAudience ?? undefined,
+    campaignBrief: ctx.campaignBrief ?? undefined,
     campaignName: input.campaignName,
     locale,
   });
@@ -320,6 +321,11 @@ export async function runVisionAgent(input: VisionInput): Promise<{
   usage: { input: number; output: number; costUsd: number };
 }> {
   const locale = resolveVisionLocale(input);
+  const ctx = input.campaignContext;
+  const goal = ctx.campaignObjective;
+  const campaignBrief = ctx.campaignBrief ?? undefined;
+  const targetAudience = ctx.targetAudience ?? undefined;
+  const transcriptSummary = input.transcriptSummary ?? ctx.transcript ?? undefined;
   const validFrames = (input.frames ?? []).filter((f) => f.dataUrl.length > 200);
   const hasFrames = validFrames.length > 0;
   console.log(
@@ -338,16 +344,25 @@ Output JSON with arrays for subjects, products, scenes, hooks, suggestedMoments.
     assetId: input.assetId,
     mediaType: input.mediaType,
     durationSec: input.durationSec,
-    goal: input.goal,
-    ...(input.campaignBrief ? { campaignBrief: input.campaignBrief } : {}),
-    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
+    goal,
+    ...(campaignBrief ? { campaignBrief } : {}),
+    ...(targetAudience ? { userNotes: targetAudience } : {}),
     frameTimestamps: input.frames?.map((f) => f.atSec) ?? [],
-    transcript: input.transcriptSummary,
+    transcript: transcriptSummary,
     legacyFrameNotes: input.frameDescriptions ?? [],
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
-    ...(input.campaignName && !input.goal && !input.campaignBrief && !input.userNotes && !input.videoAnalysis
+    ...(input.campaignName && !goal && !campaignBrief && !targetAudience && !input.videoAnalysis
       ? { campaignLabel: input.campaignName }
       : {}),
+    // PD-044 — full Campaign AI Context is always present; prompt may ignore unused fields.
+    campaignContext: {
+      campaignObjective: ctx.campaignObjective,
+      publishingPlatforms: ctx.publishingPlatforms,
+      targetAudience: ctx.targetAudience,
+      campaignBrief: ctx.campaignBrief,
+      workspaceLanguage: ctx.workspaceLanguage,
+      businessProfile: ctx.businessProfile,
+    },
   });
 
   const schemaHint = "VisionAnalysis";
