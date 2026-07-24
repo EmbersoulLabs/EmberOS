@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import {
   BrandProfileSchema,
   CEO_MAX_RETRIES,
@@ -454,6 +456,19 @@ describe("Campaign E2E pipeline — successful agency path", () => {
     expect((state.copyVariants as unknown[]).length).toBeGreaterThan(0);
     expect(state.marketingScoreJson).toMatchObject({ overallScore: 82 });
     expect(state.stepProgress.human_review?.status).toBe("pending");
+  });
+
+  it("agency Review handoff inserts a pending internal review (parity with Auto Clip)", () => {
+    // Behavioural contract: after compliance pass, Review queue needs a reviews row.
+    // Source of truth is runComplianceAfterRender in orchestrator (real DB insert).
+    const orchestrator = readFileSync(
+      resolve("packages/agents/src/orchestrator.ts"),
+      "utf8"
+    );
+    expect(orchestrator).toMatch(/insert\(schema\.reviews\)/);
+    expect(orchestrator).toMatch(/reviewerType:\s*"internal"/);
+    expect(orchestrator).toMatch(/decision:\s*"pending"/);
+    expect(orchestrator).toContain("pending_internal_review");
   });
 
   it("rejects duplicate stage execution", () => {

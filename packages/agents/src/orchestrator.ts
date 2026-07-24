@@ -555,6 +555,29 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
     return;
   }
 
+  // Agency path must enqueue Review the same way Auto Clip does — otherwise
+  // /api/reviews stays empty while campaign/creative sit in pending_internal_review.
+  const [existingReview] = await db
+    .select({ id: schema.reviews.id })
+    .from(schema.reviews)
+    .where(
+      and(
+        eq(schema.reviews.creativeId, creativeId),
+        eq(schema.reviews.reviewerType, "internal"),
+        eq(schema.reviews.decision, "pending")
+      )
+    )
+    .limit(1);
+  if (!existingReview) {
+    await db.insert(schema.reviews).values({
+      orgId: task.orgId,
+      workspaceId: task.workspaceId,
+      creativeId,
+      reviewerType: "internal",
+      decision: "pending",
+    });
+  }
+
   const hookSet =
     (task.hooksJson as HookSet | null) ??
     (progress.hook_generate?.output as HookSet);
