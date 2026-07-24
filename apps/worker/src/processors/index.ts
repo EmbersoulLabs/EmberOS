@@ -2,8 +2,12 @@ import { Worker, type WorkerOptions } from "bullmq";
 import { eq, and } from "drizzle-orm";
 import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
 import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig } from "@ceo-agent/queue";
-import { runPublishAgent } from "@ceo-agent/agents";
-import { runPipeline, type PipelineHooks } from "@ceo-agent/agents";
+import {
+  failPipelineExecution,
+  runPipeline,
+  runPublishAgent,
+  type PipelineHooks,
+} from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   MAX_UPLOAD_DURATION_SEC,
@@ -58,10 +62,20 @@ async function markTaskStepFailed(
 ): Promise<void> {
   const db = getDb();
   const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-  if (!task) return;
+  // Already terminal or recoverable — do not overwrite (OPS-002 Rule 3).
+  if (
+    !task ||
+    task.status === "failed" ||
+    task.status === "completed" ||
+    task.status === "retrying"
+  ) {
+    return;
+  }
 
   const progress = { ...((task.stepProgress as Record<string, unknown>) ?? {}) };
+  const prior = progress[stepId] as Record<string, unknown> | undefined;
   progress[stepId] = {
+    ...prior,
     status: "failed",
     error: message,
     completedAt: new Date().toISOString(),
@@ -71,17 +85,15 @@ async function markTaskStepFailed(
     .update(schema.tasks)
     .set({
       stepProgress: progress,
-      status: "failed",
-      errorMessage: message,
-      completedAt: new Date(),
       currentStep: stepId,
     })
     .where(eq(schema.tasks.id, taskId));
 
-  await db
-    .update(schema.campaigns)
-    .set({ status: "failed" })
-    .where(eq(schema.campaigns.id, task.campaignId));
+  await failPipelineExecution({
+    taskId,
+    campaignId: task.campaignId,
+    message,
+  });
 }
 
 const PIPELINE_STEP_ORDER = [
@@ -493,7 +505,15 @@ export function startWorkers() {
 
     const db = getDb();
     const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-    if (!task || task.status === "failed" || task.status === "completed") return;
+    // Pipeline catch already applied failPipelineExecution (retrying|failed).
+    if (
+      !task ||
+      task.status === "failed" ||
+      task.status === "completed" ||
+      task.status === "retrying"
+    ) {
+      return;
+    }
 
     const message = formatAgentPipelineError(err);
     const progress = (task.stepProgress ?? {}) as Record<string, { status?: string }>;

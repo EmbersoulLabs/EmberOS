@@ -1,11 +1,11 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
-import { enqueuePipeline } from "@ceo-agent/queue";
-import { LLM_BUDGET_PER_TASK_USD, isSubtitleLanguagePair, isSubtitleStylePreset } from "@ceo-agent/shared";
+import { isSubtitleLanguagePair, isSubtitleStylePreset } from "@ceo-agent/shared";
 import { isLocale } from "@ceo-agent/shared/i18n";
 import { validateCampaignAssetsForRun } from "@/lib/campaign-assets";
+import { startOrReuseCampaignRun } from "@/lib/campaign-run";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
 const MAX_CONCURRENT_CAMPAIGNS = 2;
@@ -40,7 +40,8 @@ export async function POST(
         )
       );
 
-    if (processing.length >= MAX_CONCURRENT_CAMPAIGNS) {
+    // Allow reuse of this campaign's active run even when org concurrency is at cap.
+    if (processing.length >= MAX_CONCURRENT_CAMPAIGNS && campaign.status !== "processing") {
       return apiError(
         `Max ${MAX_CONCURRENT_CAMPAIGNS} concurrent campaigns per org`,
         "RATE_LIMIT",
@@ -73,40 +74,23 @@ export async function POST(
       /* empty body is fine */
     }
 
-    if (contentLocale || renderPreferences) {
-      const campaignMeta = (campaign.metadata ?? {}) as Record<string, unknown>;
-      await db
-        .update(schema.campaigns)
-        .set({
-          metadata: {
-            ...campaignMeta,
-            ...(contentLocale ? { contentLocale } : {}),
-            ...(renderPreferences ? { renderPreferences } : {}),
-          },
-        })
-        .where(eq(schema.campaigns.id, campaignId));
+    const result = await startOrReuseCampaignRun(db, campaign, {
+      contentLocale,
+      renderPreferences,
+    });
+
+    if (!result.ok) {
+      return apiError(result.error, result.code, result.status);
     }
 
-    const [task] = await db
-      .insert(schema.tasks)
-      .values({
-        orgId: campaign.orgId,
-        workspaceId: campaign.workspaceId,
-        campaignId,
-        status: "queued",
-        costBudgetUsd: String(LLM_BUDGET_PER_TASK_USD),
-        stepProgress: {},
-      })
-      .returning();
-
-    await db
-      .update(schema.campaigns)
-      .set({ status: "processing" })
-      .where(eq(schema.campaigns.id, campaignId));
-
-    await enqueuePipeline(task!.id, campaignId, campaign.workspaceId, campaign.orgId);
-
-    return apiSuccess({ taskId: task!.id, status: "queued" }, 202);
+    return apiSuccess(
+      {
+        taskId: result.taskId,
+        status: result.status,
+        reused: result.reused,
+      },
+      result.reused ? 200 : 202
+    );
   } catch (error) {
     return handleApiError(error);
   }

@@ -285,9 +285,23 @@ export default function CampaignWizardPage() {
         throw new Error(validation.errors[0] ?? t("campaign.workspace.createFailed"));
       }
 
-      // Create Campaign finalizes the reviewed draft only.
-      // Marketing Package generation remains a separate Campaign Workspace action.
-      router.push(`/w/${slug}/campaigns/${id}`);
+      // PD-045 / OPS-002 Rule 5: Create Campaign persists data and starts the
+      // initial AI pipeline exactly once, then opens Continue Campaign (task view).
+      const runRes = await fetch(`/api/campaigns/${id}/run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const runData = await runRes.json();
+      if (!runRes.ok) {
+        throw new Error(runData.error ?? t("error.runCampaign"));
+      }
+      const taskId = runData.taskId as string | undefined;
+      router.push(
+        taskId
+          ? `/w/${slug}/campaigns/${id}/task?taskId=${taskId}`
+          : `/w/${slug}/campaigns/${id}/task`
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error.generic"));
     } finally {

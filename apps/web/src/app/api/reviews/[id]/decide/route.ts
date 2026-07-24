@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError, generateToken } from "@/lib/api";
@@ -8,6 +8,7 @@ import {
   resolveWorkspaceReviewSettings,
   syncCampaignStatusFromCreatives,
 } from "@/lib/review-flow";
+import { ReviewDecideBodySchema } from "@ceo-agent/shared";
 
 export async function POST(
   request: Request,
@@ -16,11 +17,12 @@ export async function POST(
   try {
     const user = await requireAuth();
     const { id } = await params;
-    const body = await request.json();
-    const { decision, comment } = body as {
-      decision: "approved" | "rejected";
-      comment?: string;
-    };
+    const raw = await request.json().catch(() => null);
+    const parsed = ReviewDecideBodySchema.safeParse(raw);
+    if (!parsed.success) {
+      return apiError("Invalid review decision payload", "VALIDATION_ERROR", 400);
+    }
+    const { decision, comment } = parsed.data;
 
     const db = getDb();
     const [review] = await db
@@ -32,15 +34,30 @@ export async function POST(
     if (!review) return apiError("Review not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(review.workspaceId, user.id, "reviewer");
 
+    // OPS-002 Rule 4 — only Pending → Approved|Rejected; reject repeats.
+    if (review.decision !== "pending") {
+      return apiError(
+        `Review already decided (${review.decision})`,
+        "ALREADY_DECIDED",
+        409
+      );
+    }
+
     const [updatedReview] = await db
       .update(schema.reviews)
       .set({
         decision,
-        comment,
+        comment: comment ?? null,
         decidedAt: new Date(),
       })
-      .where(eq(schema.reviews.id, id))
+      .where(
+        and(eq(schema.reviews.id, id), eq(schema.reviews.decision, "pending"))
+      )
       .returning();
+
+    if (!updatedReview) {
+      return apiError("Review already decided", "ALREADY_DECIDED", 409);
+    }
 
     const [creative] = await db
       .select()

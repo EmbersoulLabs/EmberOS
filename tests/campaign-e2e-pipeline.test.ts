@@ -558,11 +558,12 @@ describe("failPipelineExecution persists failed running step", () => {
     vi.resetModules();
   });
 
-  it("updates task stepProgress + status and campaign status together", async () => {
+  it("marks recoverable retrying when retries remain (OPS-002 Rule 3)", async () => {
     const taskRow = {
       id: "task-1",
       campaignId: "camp-1",
       currentStep: "strategy_plan",
+      retryCount: 0,
       stepProgress: {
         vision_analyze: { status: "completed" },
         strategy_plan: { status: "running", startedAt: "t" },
@@ -598,19 +599,74 @@ describe("failPipelineExecution persists failed running step", () => {
     });
 
     const { failPipelineExecution } = await import("../packages/agents/src/pipeline-lifecycle");
-    await failPipelineExecution({
+    const outcome = await failPipelineExecution({
       taskId: "task-1",
       campaignId: "camp-1",
       message: "Strategy agent timeout",
     });
 
-    expect(updates.some((u) => u.table === "tasks.id" && u.values.status === "failed")).toBe(true);
-    expect(updates.some((u) => u.table === "campaigns.id" && u.values.status === "failed")).toBe(true);
+    expect(outcome).toBe("retrying");
+    expect(updates.some((u) => u.table === "tasks.id" && u.values.status === "retrying")).toBe(true);
+    expect(updates.some((u) => u.table === "campaigns.id" && u.values.status === "processing")).toBe(
+      true
+    );
     const taskUpdate = updates.find((u) => u.table === "tasks.id");
     const progress = taskUpdate?.values.stepProgress as StepProgress;
     expect(progress.strategy_plan?.status).toBe("failed");
     expect(progress.strategy_plan?.error).toBe("Strategy agent timeout");
     expect(progress.vision_analyze?.status).toBe("completed");
+  });
+
+  it("marks terminal failed when retries exhausted (OPS-002 Rule 3)", async () => {
+    const taskRow = {
+      id: "task-2",
+      campaignId: "camp-2",
+      currentStep: "strategy_plan",
+      retryCount: CEO_MAX_RETRIES,
+      stepProgress: {
+        vision_analyze: { status: "completed" },
+        strategy_plan: { status: "running", startedAt: "t" },
+      } satisfies StepProgress,
+    };
+
+    vi.doMock("@ceo-agent/db", () => {
+      const schema = {
+        tasks: { id: "tasks.id" },
+        campaigns: { id: "campaigns.id" },
+      };
+      return {
+        schema,
+        getDb: () => ({
+          select: () => ({
+            from: () => ({
+              where: () => ({
+                limit: async () => [taskRow],
+              }),
+            }),
+          }),
+          update: (table: { id: string }) => ({
+            set: (values: Record<string, unknown>) => ({
+              where: async () => {
+                updates.push({ table: table.id, values });
+                if (table.id === "tasks.id") Object.assign(taskRow, values);
+                return [];
+              },
+            }),
+          }),
+        }),
+      };
+    });
+
+    const { failPipelineExecution } = await import("../packages/agents/src/pipeline-lifecycle");
+    const outcome = await failPipelineExecution({
+      taskId: "task-2",
+      campaignId: "camp-2",
+      message: "Strategy agent timeout",
+    });
+
+    expect(outcome).toBe("failed");
+    expect(updates.some((u) => u.table === "tasks.id" && u.values.status === "failed")).toBe(true);
+    expect(updates.some((u) => u.table === "campaigns.id" && u.values.status === "failed")).toBe(true);
   });
 });
 

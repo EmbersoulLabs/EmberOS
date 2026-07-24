@@ -1,11 +1,10 @@
 /**
  * Shared Campaign pipeline lifecycle helpers.
- * Ensures running steps never stay "running" after failure, and task/campaign
- * status stay consistent: pending → running → completed | failed.
+ * OPS-002: recoverable Retrying vs terminal Failed after retries exhausted.
  */
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
-import type { StepProgress } from "@ceo-agent/shared";
+import { CEO_MAX_RETRIES, type StepProgress } from "@ceo-agent/shared";
 
 /** Mark every currently-running step as failed (pure). */
 export function markRunningStepsFailed(
@@ -27,12 +26,19 @@ export function markRunningStepsFailed(
   return next;
 }
 
-/** Persist task + campaign failure and flip any running step to failed. */
+export type PipelineFailureOutcome = "retrying" | "failed";
+
+/**
+ * Persist stage failure. Terminal Failed only when retries are exhausted
+ * (OPS-002 Rule 3). Otherwise task enters recoverable `retrying`.
+ */
 export async function failPipelineExecution(params: {
   taskId: string;
   campaignId: string;
   message: string;
-}): Promise<void> {
+  /** Force terminal Failed regardless of retryCount. */
+  forceTerminal?: boolean;
+}): Promise<PipelineFailureOutcome> {
   const db = getDb();
   const [task] = await db
     .select()
@@ -49,6 +55,42 @@ export async function failPipelineExecution(params: {
     task?.currentStep ??
     null;
 
+  const retryCount = task?.retryCount ?? 0;
+  const terminal =
+    params.forceTerminal === true || retryCount >= CEO_MAX_RETRIES;
+
+  if (!terminal) {
+    await db
+      .update(schema.tasks)
+      .set({
+        status: "retrying",
+        errorMessage: params.message,
+        completedAt: null,
+        stepProgress: progress,
+        ...(failedStepId ? { currentStep: failedStepId } : {}),
+      })
+      .where(eq(schema.tasks.id, params.taskId));
+
+    // Campaign stays processing — recoverable, not terminal Failed.
+    await db
+      .update(schema.campaigns)
+      .set({ status: "processing", updatedAt: new Date() })
+      .where(eq(schema.campaigns.id, params.campaignId));
+
+    console.warn(
+      JSON.stringify({
+        event: "pipeline.recoverable_failure",
+        taskId: params.taskId,
+        campaignId: params.campaignId,
+        step: failedStepId,
+        retryCount,
+        maxRetries: CEO_MAX_RETRIES,
+        message: params.message.slice(0, 200),
+      })
+    );
+    return "retrying";
+  }
+
   await db
     .update(schema.tasks)
     .set({
@@ -64,4 +106,17 @@ export async function failPipelineExecution(params: {
     .update(schema.campaigns)
     .set({ status: "failed", updatedAt: new Date() })
     .where(eq(schema.campaigns.id, params.campaignId));
+
+  console.error(
+    JSON.stringify({
+      event: "pipeline.terminal_failure",
+      taskId: params.taskId,
+      campaignId: params.campaignId,
+      step: failedStepId,
+      retryCount,
+      maxRetries: CEO_MAX_RETRIES,
+      message: params.message.slice(0, 200),
+    })
+  );
+  return "failed";
 }
