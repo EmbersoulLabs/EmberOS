@@ -116,21 +116,10 @@ export const GENERATE_PLACEHOLDER_STATES = [
 
 export type GeneratePlaceholderState = (typeof GENERATE_PLACEHOLDER_STATES)[number];
 
-/** PD-044 — reject obsolete Campaign Description if clients still send it. */
-const RejectedCampaignDescriptionSchema = z
-  .never({
-    errorMap: () => ({
-      message: "Campaign Description was removed (PD-044). Use campaignBrief.",
-    }),
-  })
-  .optional();
-
 export const CampaignWorkspacePatchSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   objective: z.enum(CAMPAIGN_OBJECTIVES).optional(),
   objectiveCustom: z.string().trim().max(500).nullable().optional(),
-  /** @deprecated PD-044 — rejected when present. Use campaignBrief. */
-  description: RejectedCampaignDescriptionSchema,
   targetAudienceOverride: z.string().trim().max(2000).nullable().optional(),
   campaignBrief: z.string().trim().max(10000).nullable().optional(),
   outputLanguage: z.enum(CAMPAIGN_LANGUAGE_CODES).optional(),
@@ -145,8 +134,6 @@ export const CampaignWorkspaceCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
   objective: z.enum(CAMPAIGN_OBJECTIVES),
   objectiveCustom: z.string().trim().max(500).optional(),
-  /** @deprecated PD-044 — rejected when present. Use campaignBrief. */
-  description: RejectedCampaignDescriptionSchema,
   targetAudienceOverride: z.string().trim().max(2000).optional(),
   campaignBrief: z.string().trim().max(10000).optional(),
   outputLanguage: z.enum(CAMPAIGN_LANGUAGE_CODES).optional(),

@@ -101,6 +101,7 @@ if (pubRef && pubRef !== EXPECTED) {
 const files = [
   resolve(__dirname, "../sql/asset-library-v1.sql"),
   resolve(__dirname, "../sql/campaign-workspace-v1.sql"),
+  resolve(__dirname, "../sql/campaign-description-pd044.sql"),
 ];
 
 const sql = postgres(databaseUrl, { max: 1, idle_timeout: 5 });
@@ -133,9 +134,9 @@ async function inspect(label) {
     from information_schema.columns
     where table_schema = 'public' and table_name = 'campaigns'
       and column_name in (
-        'objective','objective_custom','description','target_audience_override',
+        'objective','objective_custom','campaign_brief','target_audience_override',
         'output_language','subtitle_language','cta_language','hashtag_language',
-        'generate_status','generate_summary'
+        'generate_status','generate_summary','description'
       )
     order by column_name
   `;

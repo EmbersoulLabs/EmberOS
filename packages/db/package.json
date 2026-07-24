@@ -20,6 +20,7 @@
     "sql:business-profile-pd042": "tsx scripts/apply-business-profile-pd042.ts",
     "sql:asset-library": "tsx scripts/apply-asset-library-v1.ts",
     "sql:campaign-workspace": "tsx scripts/apply-campaign-workspace-v1.ts",
+    "sql:campaign-description-pd044": "tsx scripts/apply-campaign-description-pd044.ts",
     "sql:rls": "tsx scripts/apply-rls.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
