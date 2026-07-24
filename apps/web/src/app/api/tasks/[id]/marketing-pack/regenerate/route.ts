@@ -8,6 +8,9 @@ import {
   parseCampaignCreativeBrief,
   resolvePipelineContentLocale,
   resolvePlatformAssets,
+  buildCampaignAIContext,
+  BrandProfileSchema,
+  type BrandProfile,
   type MarketingCaptions,
   type MarketingPlatformId,
   type StepProgress,
@@ -59,6 +62,9 @@ export async function POST(
     let goal: string | undefined;
     let userNotes: string | undefined;
     let metadata: Record<string, unknown> | null = null;
+    let platforms: string[] = [];
+    let targetAudience: string | null = null;
+    let brandProfile: BrandProfile = BrandProfileSchema.parse({});
     if (task.campaignId) {
       const [campaign] = await db
         .select()
@@ -70,21 +76,38 @@ export async function POST(
         goal = campaign.campaignGoal ?? campaign.goal ?? undefined;
         metadata = campaign.metadata ?? null;
         userNotes = parseCampaignCreativeBrief(campaign).campaignBrief;
+        platforms = campaign.platforms ?? [];
+        targetAudience = campaign.targetAudienceOverride;
       }
+      const [workspace] = await db
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, task.workspaceId))
+        .limit(1);
+      brandProfile = (workspace?.brandProfile ?? brandProfile) as BrandProfile;
     }
     const contentLocale = resolvePipelineContentLocale(metadata, goal);
 
     const prevAssets = resolvePlatformAssets(existing);
     const previousCaption = prevAssets[platformId]?.caption;
 
+    const campaignContext = buildCampaignAIContext({
+      businessProfile: brandProfile,
+      campaignObjective: goal ?? "",
+      publishingPlatforms: platforms,
+      targetAudience,
+      campaignBrief: userNotes,
+      workspaceLanguage: contentLocale,
+      vision,
+      strategy,
+    });
+
     const { asset, usage } = await regeneratePlatformAsset({
+      campaignContext,
       platformId,
       strategy,
       vision,
       campaignName,
-      goal,
-      userNotes,
-      contentLocale,
       previousCaption,
     });
 

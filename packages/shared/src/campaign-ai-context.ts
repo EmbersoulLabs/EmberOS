@@ -1,11 +1,17 @@
 import type { ContentLocale } from "./content-locale";
-import { BrandProfileSchema, type BrandProfile, type VisionAnalysis } from "./types/index";
+import {
+  BrandProfileSchema,
+  type BrandProfile,
+  type VisionAnalysis,
+} from "./types/index";
+import type { StrategyPlan } from "./types/marketing-os";
 
 /**
- * PD-044 — canonical Campaign AI Context.
+ * AD-001 / PD-044 — canonical Campaign AI Context.
  *
- * Every Campaign AI module receives this object.
- * Modules may ignore fields they do not use; callers must not pass partial context.
+ * Every Campaign AI module receives this object from the Orchestrator (or
+ * Auto Clip pipeline entry). Modules must not construct their own context.
+ * Prompt implementations may ignore unused fields.
  */
 export interface CampaignAIContextAssetRef {
   id: string;
@@ -13,6 +19,7 @@ export interface CampaignAIContextAssetRef {
 }
 
 export interface CampaignAIContext {
+  /** Core — always present */
   businessProfile: BrandProfile;
   campaignObjective: string;
   publishingPlatforms: string[];
@@ -21,10 +28,14 @@ export interface CampaignAIContext {
   /** Sole free-text Campaign context. */
   campaignBrief: string | null;
   workspaceLanguage: ContentLocale | string;
-  /** Optional enrichment — still part of the same context object when known. */
+
+  /** Optional enrichment */
   assets?: CampaignAIContextAssetRef[];
   vision?: VisionAnalysis | null;
   transcript?: string | null;
+  strategy?: StrategyPlan | null;
+  generatedOutputs?: Record<string, unknown> | null;
+  workflowMetadata?: Record<string, unknown> | null;
 }
 
 export type BuildCampaignAIContextInput = {
@@ -37,6 +48,9 @@ export type BuildCampaignAIContextInput = {
   assets?: CampaignAIContextAssetRef[];
   vision?: VisionAnalysis | null;
   transcript?: string | null;
+  strategy?: StrategyPlan | null;
+  generatedOutputs?: Record<string, unknown> | null;
+  workflowMetadata?: Record<string, unknown> | null;
 };
 
 const EMPTY_BUSINESS_PROFILE: BrandProfile = BrandProfileSchema.parse({});
@@ -57,14 +71,35 @@ export function buildCampaignAIContext(
     ...(input.assets ? { assets: input.assets } : {}),
     vision: input.vision ?? null,
     transcript: input.transcript?.trim() || null,
+    strategy: input.strategy ?? null,
+    generatedOutputs: input.generatedOutputs ?? null,
+    workflowMetadata: input.workflowMetadata ?? null,
   };
 }
 
-/** Patch optional enrichment fields without dropping required Campaign context. */
+const CORE_KEYS = [
+  "businessProfile",
+  "campaignObjective",
+  "publishingPlatforms",
+  "targetAudience",
+  "campaignBrief",
+  "workspaceLanguage",
+] as const;
+
+/** Patch enrichment fields without dropping required Campaign context core. */
 export function withCampaignAIContext(
   base: CampaignAIContext,
   patch: Partial<
-    Pick<CampaignAIContext, "assets" | "vision" | "transcript" | "businessProfile">
+    Pick<
+      CampaignAIContext,
+      | "assets"
+      | "vision"
+      | "transcript"
+      | "businessProfile"
+      | "strategy"
+      | "generatedOutputs"
+      | "workflowMetadata"
+    >
   >
 ): CampaignAIContext {
   return {
@@ -77,6 +112,13 @@ export function withCampaignAIContext(
     campaignBrief: base.campaignBrief,
     workspaceLanguage: base.workspaceLanguage,
   };
+}
+
+/** True when an object has the AD-001 core Campaign AI Context fields. */
+export function isCampaignAIContext(value: unknown): value is CampaignAIContext {
+  if (!value || typeof value !== "object") return false;
+  const o = value as Record<string, unknown>;
+  return CORE_KEYS.every((k) => k in o);
 }
 
 export function workspaceLanguageAsContentLocale(

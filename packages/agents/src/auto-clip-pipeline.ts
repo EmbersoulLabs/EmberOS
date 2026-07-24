@@ -277,15 +277,17 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     });
 
     await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
+    const contentContext = withCampaignAIContext(campaignContext, {
+      vision,
+      strategy,
+      transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
+    });
     const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
+      campaignContext: contentContext,
       strategy,
       vision,
       videoAnalysis,
-      userNotes: creativeBrief.campaignBrief,
-      goal,
       campaignName: campaign.name,
-      platforms: campaign.platforms,
-      contentLocale,
     });
     totalCost += contentUsage.costUsd;
     const { contentPackage, usage: translateUsage } =
@@ -516,6 +518,11 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
     .from(schema.campaigns)
     .where(eq(schema.campaigns.id, task.campaignId))
     .limit(1);
+  const [workspace] = await db
+    .select()
+    .from(schema.workspaces)
+    .where(eq(schema.workspaces.id, task.workspaceId))
+    .limit(1);
   const progress = (task.stepProgress as StepProgress) ?? {};
   const vision = progress.vision_analyze?.output as VisionAnalysis | undefined;
   const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
@@ -527,6 +534,18 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
       const variants = (primary.copyVariants ?? []) as CopyVariant[];
       const editPlan = primary.editPlan as EditPlan | null;
       const { score, usage } = await runAutoClipScoreAgent({
+        campaignContext: buildCampaignAIContext({
+          businessProfile: (workspace?.brandProfile ?? {}) as BrandProfile,
+          campaignObjective: campaign.goal ?? "",
+          publishingPlatforms: platforms,
+          targetAudience: campaign.targetAudienceOverride,
+          campaignBrief: parseCampaignCreativeBrief(campaign).campaignBrief,
+          workspaceLanguage: resolvePipelineContentLocale(
+            (campaign.metadata ?? {}) as Record<string, unknown>,
+            campaign.goal
+          ),
+          vision,
+        }),
         vision,
         copyVariants: variants,
         editPlan,

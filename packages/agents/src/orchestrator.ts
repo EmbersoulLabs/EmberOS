@@ -246,16 +246,19 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
+    const pipelineContext = withCampaignAIContext(campaignContext, {
+      vision,
+      strategy,
+      transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
+    });
+
     // ceo_plan
     await updateStep(taskId, "ceo_plan", { status: "running", startedAt: new Date().toISOString() });
     const assetSummary = assets.map((a) => `${a.type}:${a.id}`).join(", ");
     const { taskGraph, usage: ceoUsage } = await runCeoAgent({
-      goal,
-      platforms: campaign.platforms,
+      campaignContext: pipelineContext,
       assetSummary,
-      brandProfile,
       costBudgetUsd: budget,
-      strategyPlan: strategy,
       knowledgeSnippets,
       campaignName: campaign.name,
       videoAnalysis,
@@ -270,11 +273,10 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     // content classify + preset
     await updateStep(taskId, "content_classify", { status: "running", startedAt: new Date().toISOString() });
     const { classification, usage: classifyUsage } = await runContentTypeAgent({
-      goal,
+      campaignContext: pipelineContext,
+      vision,
       videoAnalysis,
       campaignName: campaign.name,
-      vision,
-      platforms: campaign.platforms,
     });
     totalCost += classifyUsage.costUsd;
     await logAgent(task.orgId, task.workspaceId, taskId, "content_type", classifyUsage, classification);
@@ -334,14 +336,11 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     } else {
       await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
       const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
+        campaignContext: pipelineContext,
         strategy,
         vision,
         videoAnalysis,
-        userNotes: creativeBrief.campaignBrief,
-        goal,
         campaignName: campaign.name,
-        platforms: campaign.platforms,
-        contentLocale,
       });
       totalCost += contentUsage.costUsd;
       const { contentPackage, usage: translateUsage } =
@@ -400,12 +399,12 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       await logAgent(task.orgId, task.workspaceId, taskId, "edit", { input: 0, output: 0, costUsd: 0 }, editPlan);
     } else if (videoAsset) {
       const { editPlan: videoPlan, usage: editUsage } = await runEditDirectorAgent({
+        campaignContext: pipelineContext,
         vision,
         copyVariants: allVariants,
         preset,
         assetId: videoAsset.id,
         durationSec: videoAsset.durationSec ? parseFloat(videoAsset.durationSec) : 15,
-        goal,
         campaignName: campaign.name,
       });
       editPlan = videoPlan;
@@ -486,8 +485,36 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
   const editPlan = creative.editPlan as import("@ceo-agent/shared").EditPlan | null;
   const subtitles = editPlan?.subtitles?.map((s) => s.text) ?? [];
 
+  const [campaign] = await db
+    .select()
+    .from(schema.campaigns)
+    .where(eq(schema.campaigns.id, task.campaignId))
+    .limit(1);
+  const creativeBrief = campaign ? parseCampaignCreativeBrief(campaign) : null;
+  const campaignMeta = (campaign?.metadata ?? {}) as Record<string, unknown>;
+  const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign?.goal);
+  const progress = (task.stepProgress as StepProgress) ?? {};
+  const vision = progress.vision_analyze?.output as import("@ceo-agent/shared").VisionAnalysis | undefined;
+  const rawStrategy =
+    task.strategyJson ?? campaign?.strategyJson ?? progress.strategy_plan?.output;
+  const strategy = rawStrategy ? normalizeStrategyPlan(rawStrategy) : undefined;
+  const campaignContext = buildCampaignAIContext({
+    businessProfile: brandProfile,
+    campaignObjective: campaign?.goal ?? "",
+    publishingPlatforms: campaign?.platforms ?? [],
+    targetAudience: campaign?.targetAudienceOverride,
+    campaignBrief: creativeBrief?.campaignBrief,
+    workspaceLanguage: contentLocale,
+    vision: vision ?? null,
+    strategy: strategy ?? null,
+  });
+
   await updateStep(taskId, "compliance_check", { status: "running", startedAt: new Date().toISOString() });
-  const { result, usage } = await runComplianceAgent({ copyVariants: variants, subtitles, brandProfile });
+  const { result, usage } = await runComplianceAgent({
+    campaignContext,
+    copyVariants: variants,
+    subtitles,
+  });
   await logAgent(task.orgId, task.workspaceId, taskId, "compliance", usage, result);
 
   const newStatus = result.passed ? "pending_internal_review" : "compliance_failed";
@@ -518,26 +545,20 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
     return;
   }
 
-  const [campaign] = await db
-    .select()
-    .from(schema.campaigns)
-    .where(eq(schema.campaigns.id, task.campaignId))
-    .limit(1);
-  const progress = (task.stepProgress as StepProgress) ?? {};
-  const rawStrategy =
-    task.strategyJson ?? campaign?.strategyJson ?? progress.strategy_plan?.output;
-  const strategy = rawStrategy ? normalizeStrategyPlan(rawStrategy) : undefined;
   const hookSet =
     (task.hooksJson as HookSet | null) ??
     (progress.hook_generate?.output as HookSet);
-  const vision = progress.vision_analyze?.output as import("@ceo-agent/shared").VisionAnalysis;
   const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
-  const creativeBrief = campaign ? parseCampaignCreativeBrief(campaign) : null;
   const videoAnalysis = creativeBrief ? buildVideoAnalysisPrompt(creativeBrief) : null;
+  const scoreContext = withCampaignAIContext(campaignContext, {
+    vision: vision ?? null,
+    strategy: strategy ?? null,
+  });
 
   if (strategy && hookSet && vision) {
     await updateStep(taskId, "marketing_score", { status: "running", startedAt: new Date().toISOString() });
     const { score, usage: scoreUsage } = await runScoreAgent({
+      campaignContext: scoreContext,
       strategy,
       hookSet,
       vision,
@@ -643,12 +664,24 @@ export async function retryPipelineStep(
       (progress?.hook_generate?.output as HookSet);
     const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
     const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
+    const creativeBrief = campaign ? parseCampaignCreativeBrief(campaign) : null;
+    const campaignMeta = (campaign?.metadata ?? {}) as Record<string, unknown>;
+    const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign?.goal);
+    const campaignContext = buildCampaignAIContext({
+      businessProfile: brandProfile,
+      campaignObjective: campaign?.goal ?? "",
+      publishingPlatforms: platforms,
+      targetAudience: campaign?.targetAudienceOverride,
+      campaignBrief: creativeBrief?.campaignBrief,
+      workspaceLanguage: contentLocale,
+      vision: vision ?? null,
+      strategy: strategy ?? null,
+    });
 
     const copyMix = resolveCopyMix(platforms);
     const { variants: allVariants } = await runCopyAgentMix({
+      campaignContext,
       vision,
-      brandProfile,
-      goal: campaign?.goal ?? "",
       campaignName: campaign?.name,
       strategyPlan: strategy,
       hookSet,
