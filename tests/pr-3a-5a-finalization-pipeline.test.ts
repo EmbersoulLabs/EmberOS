@@ -3,6 +3,7 @@ import {
   FinalizationPipeline,
   GateRunner,
   readFinalizationResult,
+  resolveFinalizationResult,
   recordedGate,
   type Gate,
   type GateResult,
@@ -75,6 +76,7 @@ describe("PR-3A.5A canonical Finalization infrastructure", () => {
         taskId: "task-1",
         campaignId: "campaign-1",
         finalOutputReferences: ["creative-1"],
+        inputCheckpoint: "VIDEO_RENDER_COMPLETE",
         gates: [recordedGate(result("compliance", "FAIL"))],
       })
     ).rejects.toThrow("Finalization gates failed: compliance");
@@ -85,6 +87,7 @@ describe("PR-3A.5A canonical Finalization infrastructure", () => {
       taskId: "task-1",
       campaignId: "campaign-1",
       finalOutputReferences: ["creative-1"],
+      inputCheckpoint: "VIDEO_RENDER_COMPLETE",
       gates: [recordedGate(result("validation"))],
       timestamp: "2026-07-25T00:00:00.000Z",
     });
@@ -102,6 +105,7 @@ describe("PR-3A.5A canonical Finalization infrastructure", () => {
       taskId: "task-1",
       campaignId: "campaign-1",
       finalOutputReferences: ["creative-2", "creative-1"],
+      inputCheckpoint: "VIDEO_RENDER_COMPLETE" as const,
       gates: [recordedGate(result("validation"))],
     };
     const first = await pipeline.execute({
@@ -116,6 +120,7 @@ describe("PR-3A.5A canonical Finalization infrastructure", () => {
     expect(first.deterministicFingerprint).toBe(
       second.deterministicFingerprint
     );
+    expect(first.timestamp).not.toBe(second.timestamp);
     expect(Object.isFrozen(first)).toBe(true);
     expect(Object.isFrozen(first.gateResults)).toBe(true);
   });
@@ -125,6 +130,7 @@ describe("PR-3A.5A canonical Finalization infrastructure", () => {
       taskId: "task-1",
       campaignId: "campaign-1",
       finalOutputReferences: ["creative-1"],
+      inputCheckpoint: "VIDEO_RENDER_COMPLETE",
       gates: [recordedGate(result("validation"))],
     });
     const resumed = readFinalizationResult(
@@ -135,6 +141,82 @@ describe("PR-3A.5A canonical Finalization infrastructure", () => {
     expect(() =>
       readFinalizationResult({ ...output, contractVersion: "2" })
     ).toThrow("Unsupported Finalization contract version");
+  });
+
+  it("rejects Finalization before VIDEO_RENDER_COMPLETE", async () => {
+    for (const inputCheckpoint of [
+      "VIDEO_RENDERING",
+      "VIDEO_COMPOSITION_COMPLETE",
+      "UNKNOWN",
+    ] as const) {
+      await expect(
+        new FinalizationPipeline().execute({
+          taskId: "task-1",
+          campaignId: "campaign-1",
+          finalOutputReferences: ["creative-1"],
+          inputCheckpoint,
+          gates: [],
+        } as never)
+      ).rejects.toThrow(
+        `Finalization requires VIDEO_RENDER_COMPLETE, received ${inputCheckpoint}`
+      );
+    }
+  });
+
+  it("accepts VIDEO_RENDER_COMPLETE as the Finalization boundary", async () => {
+    await expect(
+      new FinalizationPipeline().execute({
+        taskId: "task-1",
+        campaignId: "campaign-1",
+        finalOutputReferences: ["creative-1"],
+        inputCheckpoint: "VIDEO_RENDER_COMPLETE",
+        gates: [],
+      })
+    ).resolves.toMatchObject({
+      pipelineState: "COMPLETED",
+      checkpoint: "VIDEO_COMPLETE",
+    });
+  });
+
+  it("rejects VIDEO_RENDER_COMPLETE without a final render reference", async () => {
+    for (const finalOutputReferences of [undefined, [], [""]] as const) {
+      await expect(
+        new FinalizationPipeline().execute({
+          taskId: "task-1",
+          campaignId: "campaign-1",
+          finalOutputReferences,
+          inputCheckpoint: "VIDEO_RENDER_COMPLETE",
+          gates: [],
+        } as never)
+      ).rejects.toThrow(
+        "Finalization requires at least one valid final output reference"
+      );
+    }
+  });
+
+  it("rejects a conflicting final output after Finalization was accepted", async () => {
+    const pipeline = new FinalizationPipeline();
+    const baseInput = {
+      taskId: "task-1",
+      campaignId: "campaign-1",
+      inputCheckpoint: "VIDEO_RENDER_COMPLETE" as const,
+      gates: [recordedGate(result("validation"))],
+    };
+    const first = await pipeline.execute({
+      ...baseInput,
+      finalOutputReferences: ["output.mp4"],
+    });
+    const conflicting = await pipeline.execute({
+      ...baseInput,
+      finalOutputReferences: ["different-output.mp4"],
+    });
+
+    expect(() => resolveFinalizationResult(first, conflicting)).toThrow(
+      "Conflicting Finalization result"
+    );
+    expect(first.deterministicFingerprint).not.toBe(
+      conflicting.deterministicFingerprint
+    );
   });
 
   it("persists Finalization before invoking the existing Review commit", async () => {

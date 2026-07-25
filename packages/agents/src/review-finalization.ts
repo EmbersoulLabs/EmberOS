@@ -9,6 +9,7 @@ import {
 import {
   FinalizationPipeline,
   recordedGate,
+  resolveFinalizationResult,
   type GateResult,
 } from "./finalization-pipeline";
 
@@ -94,12 +95,17 @@ export async function finalizeReviewAfterGates(
     warnings: [],
     provenance: ["mandatory-gates"],
   }));
-  const finalization = await new FinalizationPipeline().execute({
+  const candidateFinalization = await new FinalizationPipeline().execute({
     taskId: input.taskId,
     campaignId: input.campaignId,
     finalOutputReferences: input.creativeIds,
+    inputCheckpoint: "VIDEO_RENDER_COMPLETE",
     gates: gateResults.map(recordedGate),
   });
+  const existingFinalization = input.progress.finalization_pipeline?.output;
+  const finalization = existingFinalization
+    ? resolveFinalizationResult(existingFinalization, candidateFinalization)
+    : candidateFinalization;
   const progress: StepProgress = {
     ...input.progress,
     finalization_pipeline: {

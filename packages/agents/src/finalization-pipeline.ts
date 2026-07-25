@@ -49,6 +49,7 @@ export interface FinalizationResult {
 }
 
 export interface FinalizationPipelineInput extends GateExecutionContext {
+  inputCheckpoint: "VIDEO_RENDER_COMPLETE";
   gates: readonly Gate[];
   timestamp?: string;
 }
@@ -139,6 +140,23 @@ export class FinalizationPipeline {
   constructor(private readonly gateRunner: GateRunner = new GateRunner()) {}
 
   async execute(input: FinalizationPipelineInput): Promise<FinalizationResult> {
+    if (input.inputCheckpoint !== "VIDEO_RENDER_COMPLETE") {
+      throw new Error(
+        `Finalization requires VIDEO_RENDER_COMPLETE, received ${String(input.inputCheckpoint)}`
+      );
+    }
+    if (
+      !Array.isArray(input.finalOutputReferences) ||
+      input.finalOutputReferences.length === 0 ||
+      input.finalOutputReferences.some(
+        (reference) =>
+          typeof reference !== "string" || reference.trim().length === 0
+      )
+    ) {
+      throw new Error(
+        "Finalization requires at least one valid final output reference"
+      );
+    }
     const context: GateExecutionContext = {
       taskId: input.taskId,
       campaignId: input.campaignId,
@@ -227,4 +245,19 @@ export function readFinalizationResult(value: unknown): FinalizationResult {
     throw new Error("Invalid Finalization result");
   }
   return deepFreeze(result) as FinalizationResult;
+}
+
+export function resolveFinalizationResult(
+  existing: unknown,
+  candidate: FinalizationResult
+): FinalizationResult {
+  const accepted = readFinalizationResult(existing);
+  if (
+    accepted.deterministicFingerprint !== candidate.deterministicFingerprint
+  ) {
+    throw new Error(
+      "Conflicting Finalization result: final output fingerprint changed"
+    );
+  }
+  return accepted;
 }
