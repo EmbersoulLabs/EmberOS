@@ -3,8 +3,14 @@ import { getDb, schema } from "@ceo-agent/db";
 import type { StepProgress } from "@ceo-agent/shared";
 import {
   assertMandatoryGatesComplete,
+  evaluateMandatoryGates,
   type MandatoryGateInput,
 } from "./mandatory-gates";
+import {
+  FinalizationPipeline,
+  recordedGate,
+  type GateResult,
+} from "./finalization-pipeline";
 
 export interface ReviewFinalizationInput {
   taskId: string;
@@ -70,5 +76,37 @@ export async function finalizeReviewAfterGates(
     commitReviewFinalization
 ): Promise<void> {
   for (const gate of gates) assertMandatoryGatesComplete(gate);
-  await commit(input);
+
+  const gateIds = [
+    "validation",
+    "compliance",
+    "marketing_score",
+    "creative_registration",
+    "output_readiness",
+  ] as const;
+  const gateResults = gateIds.map<GateResult>((gateId) => ({
+    gateId,
+    status: gates.every(
+      (gate) => !evaluateMandatoryGates(gate).missing.includes(gateId)
+    )
+      ? "PASS"
+      : "FAIL",
+    warnings: [],
+    provenance: ["mandatory-gates"],
+  }));
+  const finalization = await new FinalizationPipeline().execute({
+    taskId: input.taskId,
+    campaignId: input.campaignId,
+    finalOutputReferences: input.creativeIds,
+    gates: gateResults.map(recordedGate),
+  });
+  const progress: StepProgress = {
+    ...input.progress,
+    finalization_pipeline: {
+      status: "completed",
+      completedAt: finalization.timestamp,
+      output: finalization,
+    },
+  };
+  await commit({ ...input, progress });
 }

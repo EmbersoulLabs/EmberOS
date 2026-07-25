@@ -35,6 +35,7 @@ export * from "./marketing-pipeline";
 export * from "./mandatory-gates";
 export * from "./pipeline-checkpoints";
 export * from "./review-finalization";
+export * from "./finalization-pipeline";
 export * from "./video-pipeline-contract";
 export * from "./video-understanding-pipeline";
 export * from "./composition-pipeline";
