@@ -322,7 +322,10 @@ export function startWorkers() {
       console.log(
         `[ffmpeg.render] start job=${job.id} task=${data.taskId} creative=${data.creativeId} attempt=${job.attemptsMade + 1}`
       );
-      await processRenderJob(job.data as Parameters<typeof processRenderJob>[0]);
+      await processRenderJob({
+        ...(job.data as Parameters<typeof processRenderJob>[0]),
+        retryAttempt: job.attemptsMade + 1,
+      });
     },
     { connection, prefix, concurrency: renderConcurrency, lockDuration: renderLockMs, ...workerOpts }
   );
