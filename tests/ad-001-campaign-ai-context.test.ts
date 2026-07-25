@@ -40,6 +40,7 @@ const MODULES = [
 describe("AD-001 Campaign AI Context Contract", () => {
   const orchestrator = read("packages/agents/src/orchestrator.ts");
   const autoClip = read("packages/agents/src/auto-clip-pipeline.ts");
+  const marketingBoundary = read("packages/agents/src/marketing-pipeline.ts");
   const provider = read("packages/agents/src/campaign-context-provider.ts");
   const contextDef = read("packages/shared/src/campaign-ai-context.ts");
 
@@ -99,7 +100,10 @@ describe("AD-001 Campaign AI Context Contract", () => {
     expect(orchestrator).not.toContain("buildCampaignAIContext(");
     expect(orchestrator).toMatch(/runCeoAgent\(\{[\s\S]*?campaignContext/);
     expect(orchestrator).toMatch(/runContentTypeAgent\(\{[\s\S]*?campaignContext/);
-    expect(orchestrator).toMatch(/runMarketingContentAgent\(\{[\s\S]*?campaignContext/);
+    expect(orchestrator).toContain("runMarketingContentPipeline(");
+    expect(marketingBoundary).toMatch(
+      /runMarketingContentAgent\(\{[\s\S]*?campaignContext/
+    );
     expect(orchestrator).toMatch(/runEditDirectorAgent\(\{[\s\S]*?campaignContext/);
     expect(orchestrator).toMatch(/runComplianceAgent\(\{[\s\S]*?campaignContext/);
     expect(orchestrator).toMatch(/runScoreAgent\(\{[\s\S]*?campaignContext/);
@@ -109,10 +113,12 @@ describe("AD-001 Campaign AI Context Contract", () => {
   it("Auto Clip uses Orchestrator provider and passes CampaignAIContext", () => {
     expect(autoClip).toContain("provideCampaignAIContext({");
     expect(autoClip).not.toContain("buildCampaignAIContext(");
-    expect(autoClip).toMatch(/runMarketingContentAgent\(\{[\s\S]*campaignContext:/);
-    expect(autoClip).toMatch(/runAutoClipScoreAgent\(\{[\s\S]*campaignContext:/);
+    expect(autoClip).toContain("runMarketingContentPipeline(");
+    expect(autoClip).toContain("runStrategyPipeline(");
     expect(autoClip).toMatch(/runVisionAgent\(\{[\s\S]*campaignContext:/);
-    expect(autoClip).toMatch(/runStrategyAgent\(\{[\s\S]*campaignContext:/);
+    expect(marketingBoundary).toMatch(
+      /runStrategyAgent\(\{[\s\S]*campaignContext/
+    );
   });
 
   it("modules do not construct Campaign context", () => {

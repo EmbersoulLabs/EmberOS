@@ -23,6 +23,7 @@ const audienceRoute = read("apps/web/src/app/api/workspaces/[id]/audience/sugges
 const briefSkill = read("packages/agents/src/skills/campaign-brief-assist/skill.ts");
 const audienceSkill = read("packages/agents/src/skills/target-audience-suggest/skill.ts");
 const orchestrator = read("packages/agents/src/orchestrator.ts");
+const marketingPipeline = read("packages/agents/src/marketing-pipeline.ts");
 const schema = read("packages/db/src/schema/index.ts");
 const workspaceSql = read("packages/db/sql/campaign-workspace-v1.sql");
 const dropSql = read("packages/db/sql/campaign-description-pd044.sql");
@@ -175,9 +176,15 @@ describe("PD-044 Campaign Brief is the sole free-text Campaign Context", () => {
     expect(orchestrator).toContain("provideCampaignAIContext({");
     expect(autoClip).toContain("provideCampaignAIContext({");
     expect(orchestrator).toContain("campaignContext: visionContext");
-    expect(orchestrator).toContain("campaignContext: strategyContext");
     expect(autoClip).toContain("campaignContext: visionContext");
-    expect(autoClip).toContain("campaignContext: strategyContext");
+    expect(orchestrator).toContain("runStrategyPipeline(");
+    expect(autoClip).toContain("runStrategyPipeline(");
+    expect(marketingPipeline).toContain(
+      "export function runStrategyPipeline(merged: MergedCampaignContext)"
+    );
+    expect(marketingPipeline).toContain(
+      "export function runMarketingContentPipeline(merged: MergedCampaignContext)"
+    );
     expect(briefRoute).toContain("provideCampaignAIContext");
     expect(briefSkillSrc).toContain("publishingPlatforms:");
     expect(briefSkillSrc).toContain("businessProfile:");

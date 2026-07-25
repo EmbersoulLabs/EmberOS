@@ -35,6 +35,7 @@ import { mkdir, writeFile, readFile, rm, access, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { EditPlan, CopyVariant, Platform } from "@ceo-agent/shared";
+import { delayPipelineJobForDependencies } from "./dependency-delay";
 
 const concurrency = parseInt(process.env.WORKER_CONCURRENCY ?? "2", 10);
 /** FFmpeg is memory-heavy — default 1 parallel render on Railway to avoid OOM slot deadlock. */
@@ -164,6 +165,21 @@ export function startWorkers() {
           typeof result === "object" &&
           "status" in result &&
           (result as { status?: string }).status === "render_queued";
+        const waitingForDependency =
+          result &&
+          typeof result === "object" &&
+          "status" in result &&
+          (result as { status?: string }).status === "waiting_for_dependency";
+        if (waitingForDependency) {
+          const delayMs = parseInt(
+            process.env.PIPELINE_DEPENDENCY_RECHECK_MS ?? "5000",
+            10
+          );
+          console.log(
+            `[agent.pipeline] dependencies pending; delayed ${delayMs}ms task=${taskId}`
+          );
+          await delayPipelineJobForDependencies(job, delayMs);
+        }
         if (queued) {
           const meta = result as { creativeIds?: string[]; creativeId?: string };
           const count = meta.creativeIds?.length ?? (meta.creativeId ? 1 : 0);

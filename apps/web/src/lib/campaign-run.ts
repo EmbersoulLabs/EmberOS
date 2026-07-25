@@ -1,7 +1,7 @@
 /**
  * Campaign Run helpers — OPS-002 Rule 1 (one active run) + shared start path.
  */
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { enqueuePipeline } from "@ceo-agent/queue";
 import {
@@ -46,56 +46,99 @@ export async function startOrReuseCampaignRun(
   options?: {
     contentLocale?: string;
     renderPreferences?: { subtitleStyle: string; subtitleLanguage: string };
+    enqueue?: typeof enqueuePipeline;
   }
 ): Promise<StartCampaignRunResult> {
-  const active = await findActiveCampaignTask(db, campaign.id);
-  if (active && isActiveCampaignTaskStatus(active.status)) {
-    return {
-      ok: true,
-      taskId: active.id,
-      status: active.status,
-      reused: true,
-    };
-  }
+  const transactionResult = await db.transaction(async (tx) => {
+    // Serializes competing Run requests for this Campaign without a schema change.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${campaign.id}))`
+    );
+    const [active] = await tx
+      .select()
+      .from(schema.tasks)
+      .where(
+        and(
+          eq(schema.tasks.campaignId, campaign.id),
+          inArray(schema.tasks.status, [...ACTIVE_CAMPAIGN_TASK_STATUSES])
+        )
+      )
+      .orderBy(desc(schema.tasks.createdAt))
+      .limit(1);
+    if (active && isActiveCampaignTaskStatus(active.status)) {
+      return {
+        result: {
+          ok: true,
+          taskId: active.id,
+          status: active.status,
+          reused: true,
+        } satisfies StartCampaignRunResult,
+        enqueue: false,
+      };
+    }
 
-  if (options?.contentLocale || options?.renderPreferences) {
-    const campaignMeta = (campaign.metadata ?? {}) as Record<string, unknown>;
-    await db
-      .update(schema.campaigns)
-      .set({
-        metadata: {
-          ...campaignMeta,
-          ...(options.contentLocale ? { contentLocale: options.contentLocale } : {}),
-          ...(options.renderPreferences
-            ? { renderPreferences: options.renderPreferences }
-            : {}),
-        },
+    if (options?.contentLocale || options?.renderPreferences) {
+      const campaignMeta = (campaign.metadata ?? {}) as Record<string, unknown>;
+      await tx
+        .update(schema.campaigns)
+        .set({
+          metadata: {
+            ...campaignMeta,
+            ...(options.contentLocale
+              ? { contentLocale: options.contentLocale }
+              : {}),
+            ...(options.renderPreferences
+              ? { renderPreferences: options.renderPreferences }
+              : {}),
+          },
+        })
+        .where(eq(schema.campaigns.id, campaign.id));
+    }
+
+    const [task] = await tx
+      .insert(schema.tasks)
+      .values({
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        campaignId: campaign.id,
+        status: "queued",
+        costBudgetUsd: String(LLM_BUDGET_PER_TASK_USD),
+        stepProgress: {},
       })
+      .returning();
+    if (!task) {
+      return {
+        result: {
+          ok: false,
+          error: "Failed to create task",
+          code: "INTERNAL",
+          status: 500,
+        } satisfies StartCampaignRunResult,
+        enqueue: false,
+      };
+    }
+    await tx
+      .update(schema.campaigns)
+      .set({ status: "processing" })
       .where(eq(schema.campaigns.id, campaign.id));
+    return {
+      result: {
+        ok: true,
+        taskId: task.id,
+        status: "queued",
+        reused: false,
+      } satisfies StartCampaignRunResult,
+      enqueue: true,
+    };
+  });
+
+  if (transactionResult.enqueue && transactionResult.result.ok) {
+    await (options?.enqueue ?? enqueuePipeline)(
+      transactionResult.result.taskId,
+      campaign.id,
+      campaign.workspaceId,
+      campaign.orgId
+    );
   }
-
-  const [task] = await db
-    .insert(schema.tasks)
-    .values({
-      orgId: campaign.orgId,
-      workspaceId: campaign.workspaceId,
-      campaignId: campaign.id,
-      status: "queued",
-      costBudgetUsd: String(LLM_BUDGET_PER_TASK_USD),
-      stepProgress: {},
-    })
-    .returning();
-
-  if (!task) {
-    return { ok: false, error: "Failed to create task", code: "INTERNAL", status: 500 };
-  }
-
-  await db
-    .update(schema.campaigns)
-    .set({ status: "processing" })
-    .where(eq(schema.campaigns.id, campaign.id));
-
-  await enqueuePipeline(task.id, campaign.id, campaign.workspaceId, campaign.orgId);
-
-  return { ok: true, taskId: task.id, status: "queued", reused: false };
+  return transactionResult.result;
 }
