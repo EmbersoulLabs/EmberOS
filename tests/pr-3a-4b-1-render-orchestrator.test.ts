@@ -256,8 +256,8 @@ describe("PR-3A.4B-1 Render Orchestrator", () => {
     expect(selectProvider).toHaveBeenCalledWith(["VIDEO", "COVER"]);
     expect(selected.execute).toHaveBeenCalledOnce();
     expect(progress.map((event) => event.stage)).toEqual([
-      "ACCEPTED",
       "QUEUED",
+      "ACCEPTED",
       "PREPARING",
       "RENDERING",
       "UPLOADING",

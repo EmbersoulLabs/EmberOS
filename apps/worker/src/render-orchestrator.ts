@@ -16,6 +16,14 @@ import {
   type RenderWarning,
 } from "./render-providers/contracts";
 import { selectRenderProvider } from "./render-providers";
+import {
+  buildRenderCallbackIdentity,
+  buildRenderIdempotencyKey,
+  RenderPersistenceConflictError,
+  type RenderAttemptIdentity,
+  type RenderPersistence,
+  type RenderResumeDecision,
+} from "./render-persistence";
 
 export const RENDER_ORCHESTRATOR_CONTRACT_VERSION = "1" as const;
 
@@ -63,6 +71,7 @@ export interface RenderOrchestrationResult {
   readonly state: "PARTIALLY_COMPLETE";
   readonly checkpoint: "VIDEO_RENDER_COMPLETE";
   readonly providerId: string;
+  readonly idempotencyKey: string;
   readonly renderRequestFingerprint: string;
   readonly renderResult: RenderResult;
   readonly progress: RenderProgressSummary;
@@ -98,6 +107,7 @@ export interface RenderOrchestratorInput {
   readonly canReuseCompletedResult?: (
     result: RenderOrchestrationResult
   ) => boolean | Promise<boolean>;
+  readonly persistence?: RenderPersistence;
   readonly selectProvider?: (
     requiredCapabilities: readonly RenderProviderCapability[]
   ) => RenderProvider;
@@ -293,7 +303,8 @@ function orchestrationResult(
   request: RenderRequest,
   providerId: string,
   renderResult: RenderResult,
-  progress: RenderProgressSummary
+  progress: RenderProgressSummary,
+  idempotencyKey = buildRenderIdempotencyKey(request, providerId)
 ): RenderOrchestrationResult {
   const body = {
     contractVersion: RENDER_ORCHESTRATOR_CONTRACT_VERSION,
@@ -301,6 +312,7 @@ function orchestrationResult(
     state: "PARTIALLY_COMPLETE" as const,
     checkpoint: "VIDEO_RENDER_COMPLETE" as const,
     providerId,
+    idempotencyKey,
     renderRequestFingerprint: request.retry.deterministicKey,
     renderResult,
     progress,
@@ -325,40 +337,172 @@ export async function runRenderOrchestrator(
     input.creativeDraftId,
     input.requestContext
   );
+  const select = input.selectProvider ?? selectRenderProvider;
+  const provider = select(input.requiredCapabilities);
+  const idempotencyKey = buildRenderIdempotencyKey(request, provider.id);
+  const identity: RenderAttemptIdentity = {
+    idempotencyKey,
+    providerId: provider.id,
+    requestFingerprint: request.retry.deterministicKey,
+    correlationId: request.correlation.correlationId,
+    outputProfileIdentity: renderFingerprint(request.outputProfile),
+  };
+  let leaseToken: string | undefined;
+  let persistedCompleted: RenderOrchestrationResult | undefined;
+  let resumeFrom = input.resumeFrom;
+  if (input.persistence) {
+    let claim = await input.persistence.claimAttempt(identity);
+    if (claim.completedResult) {
+      persistedCompleted = orchestrationResult(
+        request,
+        claim.completedResult.providerId,
+        claim.completedResult.result,
+        {
+          lastStage: "COMPLETED",
+          lastPercent: 100,
+          eventCount: 0,
+        },
+        idempotencyKey
+      );
+      if (
+        await (input.canReuseCompletedResult?.(persistedCompleted) ?? true)
+      ) {
+        await input.persistence.recordDecision(
+          identity,
+          "DUPLICATE_COMPLETION",
+          "Equivalent retry reused the accepted RenderResult"
+        );
+        return persistedCompleted;
+      }
+      await input.persistence.recordDecision(
+        identity,
+        "FOUND_STALE_RESULT",
+        "Persisted RenderResult references are no longer usable"
+      );
+      claim = await input.persistence.claimAttempt(identity, {
+        forceStale: true,
+      });
+    }
+    if (claim.decision.code === "FOUND_RENDERING") {
+      throw new RenderPersistenceConflictError(
+        "CONCURRENT_WRITE_CONFLICT",
+        "A canonical Render attempt is already running",
+        claim.decision
+      );
+    }
+    leaseToken = claim.leaseToken;
+    resumeFrom =
+      claim.decision.safeContext?.resumed === true
+        ? "VIDEO_RENDERING"
+        : resumeFrom;
+    if (
+      !claim.completedResult &&
+      input.completedResult?.checkpoint === "VIDEO_RENDER_COMPLETE" &&
+      input.completedResult.renderRequestFingerprint ===
+        request.retry.deterministicKey &&
+      (await (input.canReuseCompletedResult?.(input.completedResult) ?? true))
+    ) {
+      validateCompletedRenderResult(
+        request,
+        input.completedResult.renderResult
+      );
+      const migrated = await input.persistence.acceptCompletion(
+        identity,
+        input.completedResult.renderResult,
+        leaseToken
+      );
+      return orchestrationResult(
+        request,
+        migrated.storedResult.providerId,
+        migrated.storedResult.result,
+        {
+          lastStage: "COMPLETED",
+          lastPercent: 100,
+          eventCount: 0,
+        },
+        idempotencyKey
+      );
+    }
+  }
+  const completedResult = input.completedResult ?? persistedCompleted;
 
   if (
-    input.completedResult?.checkpoint === "VIDEO_RENDER_COMPLETE" &&
-    input.completedResult.renderRequestFingerprint ===
+    completedResult?.checkpoint === "VIDEO_RENDER_COMPLETE" &&
+    completedResult.renderRequestFingerprint ===
       request.retry.deterministicKey &&
-    (await (input.canReuseCompletedResult?.(input.completedResult) ?? true))
+    (await (input.canReuseCompletedResult?.(completedResult) ?? true))
   ) {
     validateCompletedRenderResult(
       request,
-      input.completedResult.renderResult
+      completedResult.renderResult
     );
-    return input.completedResult;
+    return completedResult;
   }
 
-  if (!input.resumeFrom) {
+  if (!resumeFrom) {
     await input.persistCheckpoint?.({
       checkpoint: "VIDEO_RENDER_PENDING",
       status: "WAITING_FOR_DEPENDENCY",
     });
   }
 
-  const select = input.selectProvider ?? selectRenderProvider;
-  const provider = select(input.requiredCapabilities);
   let eventCount = 0;
-  let accepted = false;
+  let providerAccepted = false;
+  let callbackSequence = 0;
+  let acceptedStageRank = -1;
+  const progressRank: Readonly<Record<NormalizedRenderStage, number>> = {
+    QUEUED: 0,
+    ACCEPTED: 1,
+    PREPARING: 2,
+    RENDERING: 3,
+    UPLOADING: 4,
+    COMPLETED: 5,
+    FAILED: 6,
+  };
   const bufferedProgress: NormalizedRenderProgress[] = [];
   let lastProgress: NormalizedRenderProgress = {
     correlationId: request.correlation.correlationId,
     providerId: provider.id,
-    stage: "ACCEPTED",
+    stage: "QUEUED",
     timestamp: new Date().toISOString(),
     warnings: [],
   };
+  const persistStage = async (
+    progress: NormalizedRenderProgress,
+    resultFingerprint?: string
+  ): Promise<RenderResumeDecision | undefined> => {
+    if (!input.persistence) return undefined;
+    callbackSequence += 1;
+    return input.persistence.acceptCallback(
+      buildRenderCallbackIdentity({
+        idempotencyKey,
+        providerId: provider.id,
+        correlationId: request.correlation.correlationId,
+        requestFingerprint: request.retry.deterministicKey,
+        stage: progress.stage,
+        resultFingerprint,
+        sequence: callbackSequence,
+      }),
+      leaseToken
+    );
+  };
   const emitProgress = async (progress: NormalizedRenderProgress) => {
+    const persistenceDecision = await persistStage(progress);
+    if (
+      persistenceDecision?.code === "DUPLICATE_PROGRESS" ||
+      persistenceDecision?.code === "CALLBACK_REGRESSION"
+    ) {
+      return;
+    }
+    const nextRank = progressRank[progress.stage];
+    if (
+      progress.stage !== "FAILED" &&
+      progress.stage !== "COMPLETED" &&
+      nextRank <= acceptedStageRank
+    ) {
+      return;
+    }
+    acceptedStageRank = Math.max(acceptedStageRank, nextRank);
     lastProgress = progress;
     eventCount += 1;
     await input.onProgress?.(progress);
@@ -369,6 +513,7 @@ export async function runRenderOrchestrator(
       providerId: provider.id,
     });
   };
+  await emitProgress(lastProgress);
   const execution = provider.execute(request, async (percent, phase) => {
     const progress = normalizeRenderProgress(
       phase,
@@ -376,25 +521,25 @@ export async function runRenderOrchestrator(
       provider.id,
       request.correlation.correlationId
     );
-    if (!accepted) {
+    if (!providerAccepted) {
       bufferedProgress.push(progress);
       return;
     }
     await emitProgress(progress);
   });
 
-  eventCount += 1;
-  await input.onProgress?.(lastProgress);
-  await input.persistCheckpoint?.({
-    checkpoint: "VIDEO_RENDERING",
-    status: "RUNNING",
-    progress: lastProgress,
+  const acceptedProgress: NormalizedRenderProgress = {
+    correlationId: request.correlation.correlationId,
     providerId: provider.id,
-  });
+    stage: "ACCEPTED",
+    timestamp: new Date().toISOString(),
+    warnings: [],
+  };
+  await emitProgress(acceptedProgress);
+  providerAccepted = true;
   while (bufferedProgress.length > 0) {
     await emitProgress(bufferedProgress.shift()!);
   }
-  accepted = true;
 
   let providerResult: RenderResult;
   try {
@@ -414,6 +559,7 @@ export async function runRenderOrchestrator(
         },
       ],
     };
+    await persistStage(failed);
     await input.onProgress?.(failed);
     throw error;
   }
@@ -434,14 +580,33 @@ export async function runRenderOrchestrator(
     lastStage: completed.stage,
     lastPercent: completed.percent,
     eventCount,
-  });
+  }, idempotencyKey);
+  let canonicalResult = result;
+  if (input.persistence) {
+    const completion = await input.persistence.acceptCompletion(
+      identity,
+      renderResult,
+      leaseToken
+    );
+    canonicalResult = orchestrationResult(
+      request,
+      completion.storedResult.providerId,
+      completion.storedResult.result,
+      {
+        lastStage: "COMPLETED",
+        lastPercent: 100,
+        eventCount: completion.duplicate ? 0 : eventCount,
+      },
+      idempotencyKey
+    );
+  }
   await input.persistCheckpoint?.({
     checkpoint: "VIDEO_RENDER_COMPLETE",
     status: "COMPLETED",
     progress: completed,
     providerId: provider.id,
     resultFingerprint: renderResult.fingerprint,
-    output: result,
+    output: canonicalResult,
   });
-  return result;
+  return canonicalResult;
 }

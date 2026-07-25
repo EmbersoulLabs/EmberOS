@@ -32,9 +32,9 @@ import type { EditPlan } from "@ceo-agent/shared";
 import { downloadStorageFile, uploadStorageFile, publicStorageUrl } from "../storage";
 import {
   runRenderOrchestrator,
-  type RenderCheckpointEvent,
   type RenderOrchestrationResult,
 } from "../render-orchestrator";
+import { createTaskRenderPersistence } from "../render-persistence";
 import {
   renderFingerprint,
   type RenderProviderCapability,
@@ -102,52 +102,6 @@ function resolveCompositionResult(
     ...body,
     deterministicKey: renderFingerprint(body),
   };
-}
-
-function resolveRenderResumeCheckpoint(
-  stepProgress: Record<string, unknown>
-): "VIDEO_RENDER_PENDING" | "VIDEO_RENDERING" | undefined {
-  const rendering = stepProgress.VIDEO_RENDERING as
-    | { status?: string }
-    | undefined;
-  if (rendering?.status === "running") return "VIDEO_RENDERING";
-  const pending = stepProgress.VIDEO_RENDER_PENDING as
-    | { status?: string }
-    | undefined;
-  return pending ? "VIDEO_RENDER_PENDING" : undefined;
-}
-
-async function persistVideoRenderCheckpoint(
-  taskId: string,
-  event: RenderCheckpointEvent
-): Promise<void> {
-  const db = getDb();
-  const [task] = await db
-    .select({ stepProgress: schema.tasks.stepProgress })
-    .from(schema.tasks)
-    .where(eq(schema.tasks.id, taskId))
-    .limit(1);
-  const stepProgress = {
-    ...((task?.stepProgress as Record<string, unknown> | null) ?? {}),
-  };
-  stepProgress[event.checkpoint] = {
-    status:
-      event.status === "COMPLETED"
-        ? "completed"
-        : event.status === "RUNNING"
-          ? "running"
-          : "pending",
-    checkpoint: event.checkpoint,
-    providerId: event.providerId,
-    progress: event.progress,
-    resultFingerprint: event.resultFingerprint,
-    output: event.output,
-    updatedAt: new Date().toISOString(),
-  };
-  await db
-    .update(schema.tasks)
-    .set({ stepProgress })
-    .where(eq(schema.tasks.id, taskId));
 }
 
 async function updateRenderState(
@@ -440,6 +394,14 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
       ...(logoLocalPath ? (["BRAND_OVERLAY"] as const) : []),
       ...(coverLocal ? (["COVER"] as const) : []),
     ];
+    const correlation = {
+      taskId: data.taskId,
+      creativeId: data.creativeId,
+      campaignId: data.campaignId,
+      workspaceId: data.workspaceId,
+      orgId: data.orgId,
+      correlationId: `${data.taskId}:${data.creativeId}:${mode}`,
+    };
     const renderCompletion = await runRenderOrchestrator({
       compositionResult,
       creativeDraftId: data.creativeId,
@@ -468,14 +430,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
           attempt: data.retryAttempt ?? 1,
           cachedOutputUri: cachedBaseLocal,
         },
-        correlation: {
-          taskId: data.taskId,
-          creativeId: data.creativeId,
-          campaignId: data.campaignId,
-          workspaceId: data.workspaceId,
-          orgId: data.orgId,
-          correlationId: `${data.taskId}:${data.creativeId}:${mode}`,
-        },
+        correlation,
         destinations: {
           outputUri: outputLocal,
           cacheOutputUri:
@@ -497,11 +452,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         legacyEditPlan: editPlan,
       },
       requiredCapabilities,
-      resumeFrom: resolveRenderResumeCheckpoint(
-        (renderTask?.stepProgress as Record<string, unknown> | null) ?? {}
-      ),
-      persistCheckpoint: (event) =>
-        persistVideoRenderCheckpoint(data.taskId, event),
+      persistence: createTaskRenderPersistence(data.taskId, correlation),
       completedResult: (
         (renderTask?.stepProgress as Record<string, unknown> | null)
           ?.VIDEO_RENDER_COMPLETE as
