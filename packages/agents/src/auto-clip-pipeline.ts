@@ -11,8 +11,6 @@ import {
   effectiveCampaignGoal,
   resolveAutoClipPlatforms,
   recommendBgm,
-  getBgmTrackById,
-  resolveBgmStartOffsetSec,
   type BgmRecommendation,
   resolveAutoClipSourceAsset,
   strategyObjectives,
@@ -35,10 +33,8 @@ import {
   buildAutoClipCopyVariants,
 } from "./marketing-content";
 import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
-import { buildStandaloneClipEditPlan, attachAutoClipVoiceover } from "./auto-clip";
 import { pickSegmentsFromHighlightIndex } from "./highlight-index";
 import { AUTO_CLIP_VARIANTS } from "./auto-clip-variants";
-import { applyVoicePreset } from "./voice-preset";
 import type { PipelineHooks } from "./orchestrator";
 import type { CopyLocale, CopyVariant, EditPlan, VisionAnalysis } from "@ceo-agent/shared";
 import { mergePipelineContext } from "./merge-context";
@@ -56,6 +52,10 @@ import {
   runVideoUnderstandingPipeline,
   videoUnderstandingAsPipelineResult,
 } from "./video-understanding-pipeline";
+import {
+  runCompositionPipeline,
+  type CompositionResult,
+} from "./composition-pipeline";
 
 function resolveClipVoiceLocale(
   defaultLocale: CopyLocale,
@@ -465,6 +465,9 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         ),
       });
     }
+    const marketingPipelineResult = adaptMarketingPipelineResult(
+      contentPackage as unknown as Record<string, unknown>
+    );
 
     const hookSet =
       (task.hooksJson as ReturnType<typeof contentPackageToHookSet> | null) ??
@@ -554,25 +557,13 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       });
     }
 
-    let creativeIds =
-      getPipelineStageOutput<{ creativeIds?: string[] }>(
-        progressSnapshot,
-        "edit_director_plan"
-      )?.creativeIds ?? [];
-    if (!stageDone("edit_director_plan") || creativeIds.length === 0) {
-      await updateStep(taskId, "edit_director_plan", {
-        status: "running",
-        startedAt: new Date().toISOString(),
-      });
-      creativeIds = [];
-      for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i]!;
-      const clipVariant = AUTO_CLIP_VARIANTS[i] ?? AUTO_CLIP_VARIANTS[0]!;
-      const clipPlatform = clipPlatforms[i] ?? clipPlatforms[0]!;
-      const variants = clipCopies[i] ?? [];
+    const compositionEntries = segments.map((segment, index) => {
+      const clipVariant =
+        AUTO_CLIP_VARIANTS[index] ?? AUTO_CLIP_VARIANTS[0]!;
+      const clipPlatform = clipPlatforms[index] ?? clipPlatforms[0]!;
+      const variants = clipCopies[index] ?? [];
       if (variants.length === 0) throw new Error("Copy generation failed");
-
-      const bgmRec = recommendBgm({
+      const bgmRecommendation = recommendBgm({
         ...bgmBaseCtx,
         visionHooks: vision.hooks,
         platform: clipPlatform,
@@ -580,67 +571,89 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         clipVariant: clipVariant.variant,
         excludeTrackIds: usedBgmTrackIds,
       });
-      usedBgmTrackIds.push(bgmRec.trackId);
-
-      let editPlan = buildStandaloneClipEditPlan({
-        assetId: videoAsset.id,
+      usedBgmTrackIds.push(bgmRecommendation.trackId);
+      return {
         segment,
         copyVariants: variants,
         clipVariant,
         platform: clipPlatform,
-        bgmKey: bgmRec.trackId,
-        bgmRecommendation: bgmRec,
-        vision,
+        bgmRecommendation,
+        voiceLocale: resolveClipVoiceLocale(
+          clipVariant.voiceLocale,
+          clipPlatforms,
+          contentLocale
+        ),
         subtitleTimeline: contentPackage.subtitleTimeline,
-      });
-      editPlan = attachAutoClipVoiceover(
-        editPlan,
-        variants,
-        resolveClipVoiceLocale(clipVariant.voiceLocale, clipPlatforms, contentLocale),
-        contentPackage.subtitleTimeline
-      );
-      editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
-
-      const bgmTrack = getBgmTrackById(bgmRec.trackId);
-      editPlan = {
-        ...editPlan,
-        audio: {
-          ...editPlan.audio,
-          bgmStartOffsetSec: resolveBgmStartOffsetSec(
-            bgmTrack?.durationSec ?? 120,
-            editPlan.targetDurationSec,
-            creativeBrief.bgmStartPreference ?? "auto"
-          ),
-        },
       };
-
-      const primaryLocale = contentLocale === "zh" ? "zh" : "en";
-      const primaryCopy = variants.find((v) => v.locale === primaryLocale) ?? variants[0]!;
-
-      const [creative] = await db
-        .insert(schema.creatives)
-        .values({
-          orgId: task.orgId,
-          workspaceId: task.workspaceId,
-          campaignId: campaign.id,
-          taskId: task.id,
-          status: "processing",
-          copyVariants: variants,
-          selectedCopyId: primaryCopy.id,
-          editPlan,
-          renderStatus: "preview_rendering",
-        })
-        .returning();
-
-        creativeIds.push(creative!.id);
-      }
-
-      await updateStep(taskId, "edit_director_plan", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        output: { creativeIds, clipCount: segments.length },
-      });
-    }
+    });
+    const existingDrafts = await db
+      .select()
+      .from(schema.creatives)
+      .where(eq(schema.creatives.taskId, task.id))
+      .orderBy(schema.creatives.createdAt);
+    const compositionResult = await runCompositionPipeline({
+      mode: "AUTO_CLIP",
+      videoResult: videoUnderstandingResult,
+      mergedContext: mergedMarketingContext,
+      marketingResult: marketingPipelineResult,
+      sourceAssetId: videoAsset.id,
+      entries: compositionEntries,
+      vision,
+      voicePreset: creativeBrief.voicePreset,
+      bgmStartPreference: creativeBrief.bgmStartPreference,
+      resumeResult: getPipelineStageOutput<CompositionResult>(
+        progressSnapshot,
+        "VIDEO_COMPOSITION_COMPLETE"
+      ),
+      registry: {
+        registerDraft: async (draft) => {
+          const existing = existingDrafts[draft.index];
+          if (existing) {
+            await db
+              .update(schema.creatives)
+              .set({
+                copyVariants: draft.copyVariants,
+                selectedCopyId: draft.selectedCopyId,
+                editPlan: draft.editPlan,
+              })
+              .where(eq(schema.creatives.id, existing.id));
+            return { creativeId: existing.id };
+          }
+          const [created] = await db
+            .insert(schema.creatives)
+            .values({
+              orgId: task.orgId,
+              workspaceId: task.workspaceId,
+              campaignId: campaign.id,
+              taskId: task.id,
+              status: "processing",
+              copyVariants: draft.copyVariants,
+              selectedCopyId: draft.selectedCopyId,
+              editPlan: draft.editPlan,
+              renderStatus: "preview_rendering",
+            })
+            .returning();
+          if (!created) throw new Error("Creative Draft registration failed");
+          existingDrafts.push(created);
+          return { creativeId: created.id };
+        },
+      },
+      persistCheckpoint: async (checkpoint, output) => {
+        await updateStep(taskId, checkpoint, {
+          status: "completed",
+          completedAt: new Date().toISOString(),
+          output,
+        });
+      },
+    });
+    const creativeIds = compositionResult.creativeDrafts.map(
+      (draft) => draft.creativeId
+    );
+    await updateStep(taskId, "edit_director_plan", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: { creativeIds, clipCount: creativeIds.length },
+    });
 
     await updateStep(taskId, "ffmpeg_render", {
       status: "running",

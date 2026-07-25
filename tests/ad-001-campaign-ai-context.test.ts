@@ -43,6 +43,7 @@ describe("AD-001 Campaign AI Context Contract", () => {
   const videoUnderstanding = read(
     "packages/agents/src/video-understanding-pipeline.ts"
   );
+  const composition = read("packages/agents/src/composition-pipeline.ts");
   const marketingBoundary = read("packages/agents/src/marketing-pipeline.ts");
   const provider = read("packages/agents/src/campaign-context-provider.ts");
   const contextDef = read("packages/shared/src/campaign-ai-context.ts");
@@ -107,7 +108,10 @@ describe("AD-001 Campaign AI Context Contract", () => {
     expect(marketingBoundary).toMatch(
       /runMarketingContentAgent\(\{[\s\S]*?campaignContext/
     );
-    expect(orchestrator).toMatch(/runEditDirectorAgent\(\{[\s\S]*?campaignContext/);
+    expect(orchestrator).toContain("runCompositionPipeline({");
+    expect(composition).toMatch(
+      /runEditDirectorAgent\(\{[\s\S]*?campaignContext: input\.campaignContext/
+    );
     expect(orchestrator).toMatch(/runComplianceAgent\(\{[\s\S]*?campaignContext/);
     expect(orchestrator).toMatch(/runScoreAgent\(\{[\s\S]*?campaignContext/);
     expect(orchestrator).toMatch(/runCopyAgentMix\(\{[\s\S]*?campaignContext/);

@@ -17,6 +17,7 @@ import {
   getPipelineStageOutput,
   type ContentLocale,
   type ContentClassification,
+  type SubtitleTimelineSegment,
 } from "@ceo-agent/shared";
 import {
   provideCampaignAIContext,
@@ -33,18 +34,15 @@ import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
 import { runScoreAgent } from "./score";
 import { runVisionAgent } from "./vision";
 import { runCopyAgentMix } from "./copy";
-import { runEditDirectorAgent } from "./edit";
 import { runComplianceAgent } from "./compliance";
 import { runPublishAgent } from "./publish";
 import type { Platform, StrategyPlan, HookSet, CopyVariant } from "@ceo-agent/shared";
 import { runContentTypeAgent } from "./content-type";
 import { resolveCopyMix, getPresetProfile } from "@ceo-agent/shared";
-import { buildImageMontageEditPlan, buildMixedMontageEditPlan, attachVoiceover } from "./motion-compose";
 import {
   maybeFinalizeAutoClipTask,
   runAutoClipPipeline,
 } from "./auto-clip-pipeline";
-import { applyVoicePreset } from "./voice-preset";
 import type { VisionFrameInput } from "./vision";
 import { copyCacheKey, getCopyCache, setCopyCache } from "@ceo-agent/queue/copy-cache";
 import { buildPipelineExecutionPlan } from "./pipeline-router";
@@ -53,6 +51,10 @@ import {
   runMarketingContentPipeline,
   runStrategyPipeline,
 } from "./marketing-pipeline";
+import {
+  runCompositionPipeline,
+  type CompositionResult,
+} from "./composition-pipeline";
 import { assertMandatoryGatesComplete } from "./mandatory-gates";
 import {
   adaptImageUnderstandingResult,
@@ -541,7 +543,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     let allVariants: CopyVariant[];
     let hookSet: HookSet;
-    let subtitleTimeline: Parameters<typeof attachVoiceover>[4];
+    let subtitleTimeline: SubtitleTimelineSegment[] | undefined;
 
     if (stageDone("content_generate") && stageDone("copy_generate") && stageDone("hook_generate")) {
       console.log(`[agent.pipeline] resume skip=content_generate/hooks/copy task=${taskId}`);
@@ -614,81 +616,113 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
         output: allVariants,
       });
     }
+    const marketingPipelineResult = adaptMarketingPipelineResult(
+      {
+        copyVariants: allVariants,
+        hookSet,
+        subtitleTimeline: subtitleTimeline ?? [],
+      },
+      mergedMarketingContext.provenance
+    );
 
     const recommendedVariantId = allVariants.find((v) => v.locale === "en")?.id ?? allVariants[0]?.id ?? "v-en-1";
 
-    // create creative (reuse on resume)
-    let creative = (
+    const existingDraft = (
       await db
         .select()
         .from(schema.creatives)
         .where(eq(schema.creatives.taskId, task.id))
         .limit(1)
     )[0];
-
-    if (!creative) {
-      const [inserted] = await db
-        .insert(schema.creatives)
-        .values({
-          orgId: task.orgId,
-          workspaceId: task.workspaceId,
-          campaignId: campaign.id,
-          taskId: task.id,
-          status: "processing",
-          copyVariants: allVariants,
-          selectedCopyId: recommendedVariantId,
-          selectedHookId: hookSet.recommendedHookId ?? hookSet.hooks[0]?.id,
-        })
-        .returning();
-      creative = inserted!;
-    }
-
-    // edit director
-    if (!stageDone("edit_director_plan") || !creative.editPlan) {
-      await updateStep(taskId, "edit_director_plan", { status: "running", startedAt: new Date().toISOString() });
-      let editPlan;
-      if (videoAsset && imageAssets.length > 0) {
-        editPlan = buildMixedMontageEditPlan({
-          vision: vision!,
-          preset,
-          copyVariants: allVariants,
-          videoAssetId: videoAsset.id,
-          imageAssetIds: imageAssets.map((a) => a.id),
-          sourceDurationSec: videoAsset.durationSec ? parseFloat(videoAsset.durationSec) : 15,
+    const compositionResult = await runCompositionPipeline({
+      mode: "GENERAL",
+      mergedContext: mergedMarketingContext,
+      marketingResult: marketingPipelineResult,
+      campaignContext: pipelineContext,
+      vision: vision!,
+      preset,
+      copyVariants: allVariants,
+      platforms,
+      campaignGoal: goal,
+      campaignName: campaign.name,
+      videoAsset: videoAsset
+        ? {
+            id: videoAsset.id,
+            durationSec: videoAsset.durationSec
+              ? parseFloat(videoAsset.durationSec)
+              : 15,
+          }
+        : undefined,
+      imageAssetIds: imageAssets.map((asset) => asset.id),
+      subtitleTimeline,
+      voicePreset: creativeBrief.voicePreset,
+      selectedCopyId: recommendedVariantId,
+      selectedHookId: hookSet.recommendedHookId ?? hookSet.hooks[0]?.id,
+      resumeResult: getPipelineStageOutput<CompositionResult>(
+        progressSnapshot,
+        "VIDEO_COMPOSITION_COMPLETE"
+      ),
+      registry: {
+        registerDraft: async (draft) => {
+          if (existingDraft) {
+            await db
+              .update(schema.creatives)
+              .set({
+                copyVariants: draft.copyVariants,
+                selectedCopyId: draft.selectedCopyId,
+                selectedHookId: draft.selectedHookId,
+                editPlan: draft.editPlan,
+              })
+              .where(eq(schema.creatives.id, existingDraft.id));
+            return { creativeId: existingDraft.id };
+          }
+          const [created] = await db
+            .insert(schema.creatives)
+            .values({
+              orgId: task.orgId,
+              workspaceId: task.workspaceId,
+              campaignId: campaign.id,
+              taskId: task.id,
+              status: "processing",
+              copyVariants: draft.copyVariants,
+              selectedCopyId: draft.selectedCopyId,
+              selectedHookId: draft.selectedHookId,
+              editPlan: draft.editPlan,
+            })
+            .returning();
+          if (!created) throw new Error("Creative Draft registration failed");
+          return { creativeId: created.id };
+        },
+      },
+      persistCheckpoint: async (checkpoint, output) => {
+        await updateStep(taskId, checkpoint, {
+          status: "completed",
+          completedAt: new Date().toISOString(),
+          output,
         });
-        await logAgent(task.orgId, task.workspaceId, taskId, "edit", { input: 0, output: 0, costUsd: 0 }, editPlan);
-      } else if (videoAsset) {
-        const { editPlan: videoPlan, usage: editUsage } = await runEditDirectorAgent({
-          campaignContext: pipelineContext,
-          vision: vision!,
-          copyVariants: allVariants,
-          preset,
-          assetId: videoAsset.id,
-          durationSec: videoAsset.durationSec ? parseFloat(videoAsset.durationSec) : 15,
-          campaignName: campaign.name,
-        });
-        editPlan = videoPlan;
-        totalCost += editUsage.costUsd;
-        await logAgent(task.orgId, task.workspaceId, taskId, "edit", editUsage, editPlan);
-      } else {
-        editPlan = buildImageMontageEditPlan({
-          vision: vision!,
-          preset,
-          copyVariants: allVariants,
-          imageAssetIds: imageAssets.map((a) => a.id),
-        });
-        await logAgent(task.orgId, task.workspaceId, taskId, "edit", { input: 0, output: 0, costUsd: 0 }, editPlan);
-      }
-      editPlan = attachVoiceover(editPlan, allVariants, platforms, goal, subtitleTimeline);
-      editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
-      await db
-        .update(schema.creatives)
-        .set({ editPlan })
-        .where(eq(schema.creatives.id, creative!.id));
-      await updateStep(taskId, "edit_director_plan", { status: "completed", completedAt: new Date().toISOString(), output: editPlan });
-    } else {
-      console.log(`[agent.pipeline] resume skip=edit_director_plan task=${taskId}`);
-    }
+      },
+    });
+    const creativeId = compositionResult.creativeDrafts[0]?.creativeId;
+    if (!creativeId) throw new Error("Composition produced no Creative Draft");
+    const [creative] = await db
+      .select()
+      .from(schema.creatives)
+      .where(eq(schema.creatives.id, creativeId))
+      .limit(1);
+    if (!creative) throw new Error("Creative Draft registration was not persisted");
+    await logAgent(
+      task.orgId,
+      task.workspaceId,
+      taskId,
+      "edit",
+      { input: 0, output: 0, costUsd: 0 },
+      compositionResult
+    );
+    await updateStep(taskId, "edit_director_plan", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: creative.editPlan,
+    });
 
     // enqueue ffmpeg render — skip if preview already ready
     if (
