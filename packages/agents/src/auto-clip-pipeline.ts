@@ -35,13 +35,11 @@ import {
   buildAutoClipCopyVariants,
 } from "./marketing-content";
 import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
-import { runVisionAgent } from "./vision";
 import { buildStandaloneClipEditPlan, attachAutoClipVoiceover } from "./auto-clip";
-import { buildHighlightIndex, pickSegmentsFromHighlightIndex, type TranscriptSegment } from "./highlight-index";
+import { pickSegmentsFromHighlightIndex } from "./highlight-index";
 import { AUTO_CLIP_VARIANTS } from "./auto-clip-variants";
 import { applyVoicePreset } from "./voice-preset";
 import type { PipelineHooks } from "./orchestrator";
-import type { VisionFrameInput } from "./vision";
 import type { CopyLocale, CopyVariant, EditPlan, VisionAnalysis } from "@ceo-agent/shared";
 import { mergePipelineContext } from "./merge-context";
 import {
@@ -52,9 +50,12 @@ import {
   adaptImageUnderstandingResult,
   adaptMarketingPipelineResult,
   adaptVideoPipelineResult,
-  preRenderVideoWarning,
 } from "./pipeline-adapters";
 import { finalizeReviewAfterGates } from "./review-finalization";
+import {
+  runVideoUnderstandingPipeline,
+  videoUnderstandingAsPipelineResult,
+} from "./video-understanding-pipeline";
 
 function resolveClipVoiceLocale(
   defaultLocale: CopyLocale,
@@ -64,6 +65,19 @@ function resolveClipVoiceLocale(
   if (contentLocale === "zh") return "zh";
   if (platforms.some((p) => p === "xiaohongshu" || p === "douyin")) return "zh";
   return defaultLocale === "zh" && contentLocale === "en" ? "en" : defaultLocale;
+}
+
+function campaignHighlightKeywords(...values: Array<string | null | undefined>) {
+  return [
+    ...new Set(
+      values.flatMap((value) =>
+        (value ?? "")
+          .split(/[^a-zA-Z0-9\u4e00-\u9fff]+/)
+          .map((token) => token.trim().toLowerCase())
+          .filter((token) => token.length >= 2)
+      )
+    ),
+  ].slice(0, 30);
 }
 
 async function updateStep(
@@ -205,67 +219,80 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       });
     }
 
-    // vision_analyze runs FIRST so the marketing plan is grounded in the real assets.
-    let vision = getPipelineStageOutput<VisionAnalysis>(
-      progressSnapshot,
-      "vision_analyze"
-    );
-    let visionFrames: VisionFrameInput[] = [];
-    let transcriptSummary: string | undefined = vision?.transcriptSummary;
-    let transcriptSegments: TranscriptSegment[] = [];
-    if (!stageDone("vision_analyze") || !vision) {
-      await updateStep(taskId, "vision_analyze", {
-        status: "running",
-        startedAt: new Date().toISOString(),
-      });
-      if (hooks?.prepareVisionMedia) {
-        const visionSources = [videoAsset, ...imageAssets];
-        for (const asset of visionSources.slice(0, 8)) {
-          const prepared = await hooks.prepareVisionMedia.prepare({
-            storagePath: asset.storagePath,
-            mediaType: asset.type as "video" | "image",
-            durationSec: asset.durationSec
-              ? parseFloat(asset.durationSec)
-              : undefined,
-          });
-          visionFrames.push(...prepared.frames);
-          if (asset.type === "video") {
-            transcriptSummary = prepared.transcriptSummary ?? transcriptSummary;
-            if (prepared.transcriptSegments?.length) {
-              transcriptSegments = prepared.transcriptSegments;
-            }
-          }
-        }
-      }
-
-      const visionContext = enrichCampaignAIContext(campaignContext, {
-        transcript: transcriptSummary ?? null,
-      });
-      const visionExecution = await runVisionAgent({
+    const understandingExecution = await runVideoUnderstandingPipeline({
+      source: {
         assetId: videoAsset.id,
-        mediaType: "video",
+        storagePath: videoAsset.storagePath,
+        mimeType: videoAsset.mimeType,
+        status: videoAsset.status,
         durationSec: sourceDurationSec,
-        campaignName: campaign.name,
-        videoAnalysis,
-        frames: visionFrames.length > 0 ? visionFrames : undefined,
-        transcriptSummary,
-        campaignContext: visionContext,
-      });
-      vision = visionExecution.analysis;
-      totalCost += visionExecution.usage.costUsd;
+      },
+      campaignContext,
+      campaignName: campaign.name,
+      videoAnalysis,
+      highlightKeywords: campaignHighlightKeywords(
+        goal,
+        creativeBrief.campaignBrief,
+        campaign.targetAudienceOverride
+      ),
+      progress: progressSnapshot,
+      dependencies: hooks?.prepareVisionMedia
+        ? {
+            prepareMedia: (sourceAsset) =>
+              hooks.prepareVisionMedia!.prepare({
+                storagePath: sourceAsset.storagePath,
+                mediaType: "video",
+                durationSec: sourceAsset.durationSec,
+              }),
+          }
+        : undefined,
+      persistCheckpoint: async ({ checkpoint, status, output }) => {
+        const update =
+          status === "running"
+            ? {
+                status,
+                startedAt: new Date().toISOString(),
+              }
+            : {
+                status,
+                completedAt: new Date().toISOString(),
+                output,
+              };
+        await updateStep(taskId, checkpoint, update);
+
+        const legacyStep =
+          checkpoint === "VIDEO_SCENE_ANALYSIS_COMPLETE"
+            ? "vision_analyze"
+            : checkpoint === "VIDEO_HIGHLIGHTS_COMPLETE"
+              ? "highlight_index"
+              : undefined;
+        if (legacyStep) await updateStep(taskId, legacyStep, update);
+      },
+    });
+    const {
+      result: videoUnderstandingResult,
+      vision,
+      transcriptSummary,
+      transcriptSegments,
+      highlights: highlightIndex,
+      usage: visionUsage,
+    } = understandingExecution;
+    const normalizedVideoUnderstanding =
+      videoUnderstandingAsPipelineResult(videoUnderstandingResult);
+    totalCost += visionUsage.costUsd;
+    if (
+      visionUsage.input > 0 ||
+      visionUsage.output > 0 ||
+      visionUsage.costUsd > 0
+    ) {
       await logAgent(
         task.orgId,
         task.workspaceId,
         taskId,
         "vision",
-        visionExecution.usage,
+        visionUsage,
         vision
       );
-      await updateStep(taskId, "vision_analyze", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        output: vision,
-      });
     }
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
@@ -278,16 +305,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
             getPipelineStageOutput(progressSnapshot, "strategy_plan")
         )
       : undefined;
-    const preStrategyMediaResults = [adaptVideoPipelineResult({
-      assetIds: [videoAsset.id],
-      transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
-      sceneAnalysis: vision.scenes,
-      suggestedMoments: vision.suggestedMoments,
-      confidence:
-        vision.confidence === undefined ? {} : { overall: vision.confidence },
-      warnings: [preRenderVideoWarning()],
-      complete: false,
-    })];
+    const preStrategyMediaResults = [normalizedVideoUnderstanding];
     if (imageAssets.length > 0) {
       preStrategyMediaResults.push(adaptImageUnderstandingResult({
         assetIds: imageAssets.map((asset) => asset.id),
@@ -358,39 +376,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
-    let highlightIndex = getPipelineStageOutput<
-      ReturnType<typeof buildHighlightIndex>
-    >(progressSnapshot, "highlight_index");
-    if (!stageDone("highlight_index") || !highlightIndex) {
-      await updateStep(taskId, "highlight_index", {
-        status: "running",
-        startedAt: new Date().toISOString(),
-      });
-      highlightIndex = buildHighlightIndex({
-        vision,
-        sourceDurationSec,
-        transcriptSegments,
-        transcriptSummary,
-        keywords: strategy.keywords,
-      });
-      await updateStep(taskId, "highlight_index", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        output: highlightIndex,
-      });
-    }
-
-    const normalizedMediaResults = [adaptVideoPipelineResult({
-        assetIds: [videoAsset.id],
-        transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
-        sceneAnalysis: vision.scenes,
-        suggestedMoments: vision.suggestedMoments,
-        selectedHighlights: highlightIndex,
-        confidence:
-          vision.confidence === undefined ? {} : { overall: vision.confidence },
-        warnings: [preRenderVideoWarning()],
-        complete: false,
-      })];
+    const normalizedMediaResults = [normalizedVideoUnderstanding];
     if (imageAssets.length > 0) {
       const imageUnderstanding = adaptImageUnderstandingResult({
         assetIds: imageAssets.map((asset) => asset.id),
@@ -424,7 +410,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     await updateStep(taskId, "video_pipeline_output", {
       status: "completed",
       completedAt: new Date().toISOString(),
-      output: normalizedMediaResults[0],
+      output: videoUnderstandingResult,
     });
     let contentPackage = getPipelineStageOutput<MarketingContentPackage>(
       progressSnapshot,

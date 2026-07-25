@@ -40,6 +40,9 @@ const MODULES = [
 describe("AD-001 Campaign AI Context Contract", () => {
   const orchestrator = read("packages/agents/src/orchestrator.ts");
   const autoClip = read("packages/agents/src/auto-clip-pipeline.ts");
+  const videoUnderstanding = read(
+    "packages/agents/src/video-understanding-pipeline.ts"
+  );
   const marketingBoundary = read("packages/agents/src/marketing-pipeline.ts");
   const provider = read("packages/agents/src/campaign-context-provider.ts");
   const contextDef = read("packages/shared/src/campaign-ai-context.ts");
@@ -115,7 +118,14 @@ describe("AD-001 Campaign AI Context Contract", () => {
     expect(autoClip).not.toContain("buildCampaignAIContext(");
     expect(autoClip).toContain("runMarketingContentPipeline(");
     expect(autoClip).toContain("runStrategyPipeline(");
-    expect(autoClip).toMatch(/runVisionAgent\(\{[\s\S]*campaignContext:/);
+    expect(autoClip).toMatch(
+      /runVideoUnderstandingPipeline\(\{[\s\S]*campaignContext/
+    );
+    expect(autoClip).not.toContain("runVisionAgent(");
+    expect(autoClip).not.toContain("buildHighlightIndex(");
+    expect(videoUnderstanding).toMatch(
+      /analyzeVision\(\{[\s\S]*campaignContext: input\.campaignContext/
+    );
     expect(marketingBoundary).toMatch(
       /runStrategyAgent\(\{[\s\S]*campaignContext/
     );

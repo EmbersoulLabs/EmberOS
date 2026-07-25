@@ -36,4 +36,5 @@ export * from "./mandatory-gates";
 export * from "./pipeline-checkpoints";
 export * from "./review-finalization";
 export * from "./video-pipeline-contract";
+export * from "./video-understanding-pipeline";
 export * from "./llm";

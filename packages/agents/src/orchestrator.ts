@@ -326,8 +326,10 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     // vision — runs FIRST so strategy/CEO are grounded in the actual assets.
     const videoAsset = assets.find((a) => a.type === "video");
     const imageAssets = assets.filter((a) => a.type === "image");
-    const primaryAsset = videoAsset ?? imageAssets[0];
-    if (!primaryAsset) throw new Error("No assets uploaded");
+    const primaryAsset = imageAssets[0];
+    if (!primaryAsset) {
+      throw new Error("Image Understanding requires a supported image Asset");
+    }
 
     let vision = getPipelineStageOutput<import("@ceo-agent/shared").VisionAnalysis>(
       progressSnapshot,
@@ -340,17 +342,13 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       let visionFrames: VisionFrameInput[] = [];
       transcriptSummary = undefined;
       if (hooks?.prepareVisionMedia) {
-        const visionSources = videoAsset ? [videoAsset, ...imageAssets] : imageAssets;
-        for (const asset of visionSources.slice(0, 8)) {
+        for (const asset of imageAssets.slice(0, 8)) {
           const prepared = await hooks.prepareVisionMedia.prepare({
             storagePath: asset.storagePath,
-            mediaType: asset.type as "video" | "image",
+            mediaType: "image",
             durationSec: asset.durationSec ? parseFloat(asset.durationSec) : undefined,
           });
           visionFrames.push(...prepared.frames);
-          if (!transcriptSummary && prepared.transcriptSummary) {
-            transcriptSummary = prepared.transcriptSummary;
-          }
           if (visionFrames.length >= 8) break;
         }
         visionFrames = visionFrames.slice(0, 8);
@@ -361,7 +359,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       });
       const { analysis, usage: visionUsage } = await runVisionAgent({
         assetId: primaryAsset.id,
-        mediaType: primaryAsset.type as "video" | "image",
+        mediaType: "image",
         durationSec: primaryAsset.durationSec ? parseFloat(primaryAsset.durationSec) : undefined,
         campaignName: campaign.name,
         videoAnalysis,

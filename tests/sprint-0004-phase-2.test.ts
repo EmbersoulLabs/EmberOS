@@ -158,6 +158,9 @@ describe("PD-044 Campaign Brief is the sole free-text Campaign Context", () => {
     const vision = read("packages/agents/src/vision.ts");
     const strategy = read("packages/agents/src/strategy.ts");
     const autoClip = read("packages/agents/src/auto-clip-pipeline.ts");
+    const videoUnderstanding = read(
+      "packages/agents/src/video-understanding-pipeline.ts"
+    );
     const contextDef = read("packages/shared/src/campaign-ai-context.ts");
     const briefSkillSrc = read("packages/agents/src/skills/campaign-brief-assist/skill.ts");
     const provider = read("packages/agents/src/campaign-context-provider.ts");
@@ -176,7 +179,12 @@ describe("PD-044 Campaign Brief is the sole free-text Campaign Context", () => {
     expect(orchestrator).toContain("provideCampaignAIContext({");
     expect(autoClip).toContain("provideCampaignAIContext({");
     expect(orchestrator).toContain("campaignContext: visionContext");
-    expect(autoClip).toContain("campaignContext: visionContext");
+    expect(autoClip).toMatch(
+      /runVideoUnderstandingPipeline\(\{[\s\S]*campaignContext/
+    );
+    expect(videoUnderstanding).toContain(
+      "campaignContext: input.campaignContext"
+    );
     expect(orchestrator).toContain("runStrategyPipeline(");
     expect(autoClip).toContain("runStrategyPipeline(");
     expect(marketingPipeline).toContain(
