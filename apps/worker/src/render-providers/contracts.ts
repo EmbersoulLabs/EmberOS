@@ -57,6 +57,10 @@ export interface RenderCorrelation {
 export interface RenderRequest {
   readonly contractVersion: typeof RENDER_PROVIDER_CONTRACT_VERSION;
   readonly renderSpecification: RenderSpecification;
+  readonly creativeDraftReferences: readonly {
+    readonly creativeId: string;
+    readonly stableKey: string;
+  }[];
   readonly sourceAssets: readonly RenderSourceAsset[];
   readonly outputProfile: RenderOutputProfile;
   readonly qualityProfile: RenderQualityProfile;
@@ -107,6 +111,7 @@ export interface RenderProvenance {
   readonly providerId: string;
   readonly sourceAssetIds: readonly string[];
   readonly renderSpecificationKey: string;
+  readonly correlationId: string;
   readonly timestamp: string;
 }
 
@@ -121,6 +126,7 @@ export interface RenderResult {
   readonly fileSizeBytes?: number;
   readonly fingerprint: string;
   readonly providerMetadata: RenderProviderMetadata;
+  readonly correlation: RenderCorrelation;
   readonly warnings: readonly RenderWarning[];
   readonly provenance: readonly RenderProvenance[];
   readonly usedCache: boolean;
@@ -136,7 +142,7 @@ export interface RenderProvider {
   readonly id: string;
   readonly version: string;
   capabilities(): ReadonlySet<RenderProviderCapability>;
-  render(
+  execute(
     request: RenderRequest,
     onProgress?: RenderProgressReporter
   ): Promise<RenderResult>;

@@ -30,7 +30,11 @@ import {
 } from "@ceo-agent/shared";
 import type { EditPlan } from "@ceo-agent/shared";
 import { downloadStorageFile, uploadStorageFile, publicStorageUrl } from "../storage";
-import { selectRenderProvider } from "../render-providers";
+import {
+  runRenderOrchestrator,
+  type RenderCheckpointEvent,
+  type RenderOrchestrationResult,
+} from "../render-orchestrator";
 import {
   renderFingerprint,
   type RenderProviderCapability,
@@ -55,19 +59,95 @@ function resolveMode(data: RenderJobData): RenderMode {
   return data.resolution === "export" ? "final" : "preview";
 }
 
-function resolveRenderSpecification(
+function resolveCompositionResult(
   stepProgress: Record<string, unknown>,
   creativeId: string,
   editPlan: EditPlan
-): RenderSpecification {
+): CompositionResult {
   const compositionStep = stepProgress.VIDEO_COMPOSITION_COMPLETE as
     | { output?: CompositionResult }
     | undefined;
-  const canonical = compositionStep?.output?.creativeDrafts.find(
-    (draft) => draft.creativeId === creativeId
-  )?.renderSpecification;
+  const canonical = compositionStep?.output;
+  if (
+    canonical?.creativeDrafts.some(
+      (draft) => draft.creativeId === creativeId
+    )
+  ) {
+    return canonical;
+  }
   // Historical tasks predate PR-3A.3 and require a compatibility projection.
-  return canonical ?? buildRenderSpecification(editPlan);
+  const renderSpecification = buildRenderSpecification(editPlan);
+  const stableKey = renderFingerprint({
+    creativeId,
+    renderSpecification: renderSpecification.deterministicKey,
+  });
+  const body = {
+    contractVersion: "1" as const,
+    pipelineType: "VIDEO_COMPOSITION" as const,
+    state: "COMPLETED" as const,
+    checkpoint: "VIDEO_COMPOSITION_COMPLETE" as const,
+    creativeDrafts: [
+      {
+        stableKey,
+        creativeId,
+        status: "draft" as const,
+        editPlan,
+        renderSpecification,
+      },
+    ],
+    warnings: [],
+    provenance: [],
+  };
+  return {
+    ...body,
+    deterministicKey: renderFingerprint(body),
+  };
+}
+
+function resolveRenderResumeCheckpoint(
+  stepProgress: Record<string, unknown>
+): "VIDEO_RENDER_PENDING" | "VIDEO_RENDERING" | undefined {
+  const rendering = stepProgress.VIDEO_RENDERING as
+    | { status?: string }
+    | undefined;
+  if (rendering?.status === "running") return "VIDEO_RENDERING";
+  const pending = stepProgress.VIDEO_RENDER_PENDING as
+    | { status?: string }
+    | undefined;
+  return pending ? "VIDEO_RENDER_PENDING" : undefined;
+}
+
+async function persistVideoRenderCheckpoint(
+  taskId: string,
+  event: RenderCheckpointEvent
+): Promise<void> {
+  const db = getDb();
+  const [task] = await db
+    .select({ stepProgress: schema.tasks.stepProgress })
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
+    .limit(1);
+  const stepProgress = {
+    ...((task?.stepProgress as Record<string, unknown> | null) ?? {}),
+  };
+  stepProgress[event.checkpoint] = {
+    status:
+      event.status === "COMPLETED"
+        ? "completed"
+        : event.status === "RUNNING"
+          ? "running"
+          : "pending",
+    checkpoint: event.checkpoint,
+    providerId: event.providerId,
+    progress: event.progress,
+    resultFingerprint: event.resultFingerprint,
+    output: event.output,
+    updatedAt: new Date().toISOString(),
+  };
+  await db
+    .update(schema.tasks)
+    .set({ stepProgress })
+    .where(eq(schema.tasks.id, taskId));
 }
 
 async function updateRenderState(
@@ -335,11 +415,16 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         ? join(workDir, "cover.jpg")
         : undefined;
     const firstImage = imageAssets[0];
-    const renderSpecification = resolveRenderSpecification(
+    const compositionResult = resolveCompositionResult(
       (renderTask?.stepProgress as Record<string, unknown> | null) ?? {},
       data.creativeId,
       editPlan
     );
+    const creativeDraft = compositionResult.creativeDrafts.find(
+      (draft) => draft.creativeId === data.creativeId
+    );
+    if (!creativeDraft) throw new Error("Composition Creative Draft not found");
+    const renderSpecification = creativeDraft.renderSpecification;
     const profile = getRenderProfile(
       profileKey ??
         (effectiveMode === "subtitles_only" ? "preview" : effectiveMode)
@@ -355,10 +440,10 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
       ...(logoLocalPath ? (["BRAND_OVERLAY"] as const) : []),
       ...(coverLocal ? (["COVER"] as const) : []),
     ];
-    const renderResult = await selectRenderProvider(requiredCapabilities).render(
-      {
-        contractVersion: "1",
-        renderSpecification,
+    const renderCompletion = await runRenderOrchestrator({
+      compositionResult,
+      creativeDraftId: data.creativeId,
+      requestContext: {
         sourceAssets: [...assetMap.entries()].map(([assetId, asset]) => ({
           assetId,
           uri: asset.path,
@@ -381,12 +466,6 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         },
         retry: {
           attempt: data.retryAttempt ?? 1,
-          deterministicKey: renderFingerprint({
-            creativeId: data.creativeId,
-            mode: effectiveMode,
-            outputResolution,
-            renderSpecification: renderSpecification.deterministicKey,
-          }),
           cachedOutputUri: cachedBaseLocal,
         },
         correlation: {
@@ -417,8 +496,46 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         branding: logoLocalPath ? { logoUri: logoLocalPath } : undefined,
         legacyEditPlan: editPlan,
       },
-      onProgress
-    );
+      requiredCapabilities,
+      resumeFrom: resolveRenderResumeCheckpoint(
+        (renderTask?.stepProgress as Record<string, unknown> | null) ?? {}
+      ),
+      persistCheckpoint: (event) =>
+        persistVideoRenderCheckpoint(data.taskId, event),
+      completedResult: (
+        (renderTask?.stepProgress as Record<string, unknown> | null)
+          ?.VIDEO_RENDER_COMPLETE as
+          | { output?: RenderOrchestrationResult }
+          | undefined
+      )?.output,
+      canReuseCompletedResult: async (completed) => {
+        try {
+          await Promise.all(
+            completed.renderResult.outputReferences
+              .filter((reference) => reference.role === "output")
+              .map((reference) => access(reference.uri))
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      onProgress: (progress) => {
+        const phase: RenderProgress["phase"] =
+          progress.stage === "PREPARING"
+            ? "downloading"
+            : progress.stage === "RENDERING"
+              ? "base_clip"
+              : progress.stage === "UPLOADING"
+                ? "upload"
+                : progress.stage === "COMPLETED" ||
+                    progress.stage === "FAILED"
+                  ? "done"
+                  : "queued";
+        return onProgress(progress.percent ?? 0, phase);
+      },
+    });
+    const renderResult = renderCompletion.renderResult;
     const usedCache = renderResult.usedCache;
 
     if (!usedCache && effectiveMode !== "subtitles_only") {

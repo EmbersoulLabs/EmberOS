@@ -37,9 +37,9 @@ export class FFmpegRenderProvider implements RenderProvider {
     return CAPABILITIES;
   }
 
-  async render(
+  async execute(
     request: RenderRequest,
-    onProgress?: Parameters<RenderProvider["render"]>[1]
+    onProgress?: Parameters<RenderProvider["execute"]>[1]
   ): Promise<RenderResult> {
     const canonicalRequest = validateRenderRequest(request);
     const editPlan = canonicalRequest.legacyEditPlan;
@@ -178,6 +178,7 @@ export class FFmpegRenderProvider implements RenderProvider {
         providerVersion: this.version,
         details: { usedCache },
       },
+      correlation: canonicalRequest.correlation,
       warnings: [],
       provenance: [
         {
@@ -185,6 +186,7 @@ export class FFmpegRenderProvider implements RenderProvider {
           sourceAssetIds: canonicalRequest.sourceAssets.map((asset) => asset.assetId),
           renderSpecificationKey:
             canonicalRequest.renderSpecification.deterministicKey,
+          correlationId: canonicalRequest.correlation.correlationId,
           timestamp: new Date().toISOString(),
         },
       ],

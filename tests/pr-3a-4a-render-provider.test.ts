@@ -100,6 +100,9 @@ function request(overrides: Partial<RenderRequest> = {}): RenderRequest {
   return {
     contractVersion: "1",
     renderSpecification,
+    creativeDraftReferences: [
+      { creativeId: "creative-1", stableKey: "draft-key" },
+    ],
     sourceAssets: [
       { assetId: "asset-1", uri: "source.mp4", mediaType: "video" },
     ],
@@ -157,7 +160,7 @@ describe("PR-3A.4A Render Provider Interface", () => {
       id: "test",
       version: "1",
       capabilities: () => new Set(["VIDEO"]),
-      render: vi.fn(),
+      execute: vi.fn(),
     };
     registry.register(provider, { makeDefault: true });
 
@@ -194,8 +197,17 @@ describe("PR-3A.4A Render Provider Interface", () => {
         providerId: "test",
         providerVersion: "1",
       },
+      correlation: inputCorrelation(),
       warnings: [],
-      provenance: [],
+      provenance: [
+        {
+          providerId: "test",
+          sourceAssetIds: ["asset-1"],
+          renderSpecificationKey: "render-key",
+          correlationId: "correlation-1",
+          timestamp: "2026-07-25T00:00:00.000Z",
+        },
+      ],
       usedCache: false,
       unknownFields: { futureResult: true },
     };
@@ -208,7 +220,7 @@ describe("PR-3A.4A Render Provider Interface", () => {
   it("adapts the unchanged legacy renderer behind RenderProvider", async () => {
     const provider = new FFmpegRenderProvider();
     const progress = vi.fn();
-    const result = await provider.render(request(), progress);
+    const result = await provider.execute(request(), progress);
 
     expect(renderVideo).toHaveBeenCalledOnce();
     expect(renderVideo).toHaveBeenCalledWith(
@@ -256,3 +268,14 @@ describe("PR-3A.4A Render Provider Interface", () => {
     );
   });
 });
+
+function inputCorrelation(): RenderRequest["correlation"] {
+  return {
+    taskId: "task-1",
+    creativeId: "creative-1",
+    campaignId: "campaign-1",
+    workspaceId: "workspace-1",
+    orgId: "org-1",
+    correlationId: "correlation-1",
+  };
+}
