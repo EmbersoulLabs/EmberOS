@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   description: `${BRAND.positioning} by ${BRAND.company}. ${BRAND.tagline}`,
   icons: {
     icon: "/brand/favicon.png",
-    apple: "/brand/favicon.png",
+    apple: "/apple-icon.png",
   },
   appleWebApp: {
     title: BRAND.product,

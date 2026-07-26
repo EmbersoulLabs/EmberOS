@@ -820,6 +820,9 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
       orgId: task.orgId,
       workspaceId: task.workspaceId,
       creativeIds: creatives.map((creative) => creative.id),
+      finalOutputReferences: creatives
+        .map((creative) => creative.videoUrl)
+        .filter((reference): reference is string => Boolean(reference)),
       progress: finalProgress,
     }
   );

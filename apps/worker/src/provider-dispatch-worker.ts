@@ -9,68 +9,53 @@ import {
   type ProviderRoutingRequest,
   type ProviderRouter,
 } from "@ceo-agent/agents/provider-router";
-import type {
-  CanonicalProviderRequest,
-  CanonicalProviderResult,
-  ProviderExecution,
-  ProviderOutboxJob,
+import {
+  validateExecutionDispatch,
+  validateExecutionEnvelope,
+  type CanonicalProviderResult,
+  type ExecutionDispatch,
+  type ExecutionEnvelope,
 } from "@ceo-agent/shared";
 
-export interface ProviderDispatchEnvelope {
-  readonly request: CanonicalProviderRequest;
-  readonly routingRequest: ProviderRoutingRequest;
-  readonly routingPolicy: ProviderRoutingPolicy;
-  readonly dataHandling: ProviderExecutionContext["dataHandling"];
-  readonly trace: Readonly<Record<string, string>>;
+export interface ProviderWorkerDispatchStore {
+  getDispatch(dispatchId: string): Promise<ExecutionDispatch | null>;
 }
 
-export interface ProviderDispatchEnvelopeLoader {
-  load(payloadReference: string): Promise<ProviderDispatchEnvelope>;
+export interface ProviderWorkerEnvelopeStore {
+  getEnvelope(envelopeId: string): Promise<ExecutionEnvelope | null>;
 }
 
-export interface ProviderDispatchOutbox {
-  claimNextJob(input: {
-    leaseOwner: string;
-    leaseDurationMs: number;
-    now?: Date;
-  }): Promise<ProviderOutboxJob | null>;
-  findJob(jobId: string): Promise<ProviderOutboxJob | null>;
-}
-
-export interface ProviderDispatchLedger {
-  findExecution(
-    executionId: string
-  ): Promise<{ execution: ProviderExecution; requestHash: string } | null>;
-}
-
-export interface ProviderDispatchLogEntry {
+export interface ProviderWorkerLogEntry {
   readonly event:
-    | "provider_dispatch.worker_started"
-    | "provider_dispatch.no_job"
-    | "provider_dispatch.job_claimed"
-    | "provider_dispatch.router_decision"
-    | "provider_dispatch.adapter_invoked"
-    | "provider_dispatch.finished"
-    | "provider_dispatch.failed";
+    | "provider_worker.started"
+    | "provider_worker.dispatch_loaded"
+    | "provider_worker.envelope_loaded"
+    | "provider_worker.provider_resolved"
+    | "provider_worker.adapter_invoked"
+    | "provider_worker.finished"
+    | "provider_worker.failed";
   readonly workerId: string;
-  readonly jobId?: string;
-  readonly executionId?: string;
+  readonly dispatchId: string;
+  readonly envelopeId?: string;
+  readonly capabilityId?: string;
   readonly providerId?: string;
-  readonly adapterVersion?: string;
-  readonly outcome?: ProviderDispatchOutcome["status"];
+  readonly workspaceId?: string;
+  readonly correlationId?: string;
+  readonly status: ProviderWorkerOutcome["status"] | "STARTED";
   readonly durationMs?: number;
   readonly reason?: string;
   readonly timestamp: string;
 }
 
-export interface ProviderDispatchLogger {
-  log(entry: ProviderDispatchLogEntry): void;
+export interface ProviderWorkerLogger {
+  log(entry: ProviderWorkerLogEntry): void;
 }
 
-export type ProviderDispatchOutcome =
-  | Readonly<{ status: "NO_JOB"; workerId: string; dispatchTimestamp: string }>
+export type ProviderWorkerOutcome =
   | Readonly<{
       status: "DISPATCHED";
+      dispatchId: string;
+      envelopeId: string;
       jobId: string;
       executionId: string;
       attemptId: string;
@@ -83,216 +68,244 @@ export type ProviderDispatchOutcome =
     }>
   | Readonly<{
       status:
-        | "LEASE_LOST"
+        | "DISPATCH_NOT_FOUND"
+        | "ENVELOPE_NOT_FOUND"
         | "NO_ELIGIBLE_PROVIDER"
         | "ADAPTER_FAILURE"
         | "TIMEOUT_UNKNOWN"
+        | "INVALID_HANDOFF"
         | "UNEXPECTED_INFRASTRUCTURE_FAILURE";
+      dispatchId: string;
       workerId: string;
       dispatchTimestamp: string;
-      jobId?: string;
-      executionId?: string;
       reason: string;
     }>;
 
-export interface OutboxDispatchWorkerOptions {
+export type ProviderDispatchOutcome = ProviderWorkerOutcome;
+
+export interface ProviderExecutionWorkerOptions {
   readonly workerId: string;
-  readonly leaseDurationMs: number;
-  readonly outbox: ProviderDispatchOutbox;
-  readonly ledger: ProviderDispatchLedger;
-  readonly envelopeLoader: ProviderDispatchEnvelopeLoader;
+  readonly dispatches: ProviderWorkerDispatchStore;
+  readonly envelopes: ProviderWorkerEnvelopeStore;
   readonly router: ProviderRouter;
   readonly adapters: ProviderAdapterRegistry;
-  readonly logger?: ProviderDispatchLogger;
+  readonly logger?: ProviderWorkerLogger;
   readonly now?: () => Date;
 }
 
 function freeze<T>(value: T): Readonly<T> {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
     Object.freeze(value);
-    for (const child of Object.values(value as Record<string, unknown>)) freeze(child);
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      freeze(child);
+    }
   }
   return value;
 }
 
-function assertLease(
-  job: ProviderOutboxJob | null,
-  workerId: string,
-  now: Date
-): asserts job is ProviderOutboxJob {
+function routingContracts(envelope: ExecutionEnvelope): {
+  routingRequest: ProviderRoutingRequest;
+  routingPolicy: ProviderRoutingPolicy;
+} {
+  const snapshot = envelope.providerPolicySnapshot;
+  const routingRequest = snapshot.routingRequest;
+  const routingPolicy = snapshot.routingPolicy;
   if (
-    !job ||
-    job.status !== "CLAIMED" ||
-    job.leaseOwner !== workerId ||
-    !job.leaseExpiresAt ||
-    Date.parse(job.leaseExpiresAt) <= now.getTime()
+    !routingRequest ||
+    typeof routingRequest !== "object" ||
+    !routingPolicy ||
+    typeof routingPolicy !== "object"
   ) {
-    throw new Error("Claimed Outbox lease is missing, expired, or owned by another worker");
+    throw new Error(
+      "Execution Envelope does not contain canonical routing contracts"
+    );
   }
+  return {
+    routingRequest: freeze(structuredClone(routingRequest)) as ProviderRoutingRequest,
+    routingPolicy: freeze(structuredClone(routingPolicy)) as ProviderRoutingPolicy,
+  };
 }
 
-function assertEnvelope(
-  job: ProviderOutboxJob,
-  execution: ProviderExecution,
-  envelope: ProviderDispatchEnvelope
+function assertHandoff(
+  dispatch: ExecutionDispatch,
+  envelope: ExecutionEnvelope
 ): void {
-  const request = envelope.request;
-  const identity = execution.identity;
   if (
-    job.executionId !== identity.executionId ||
-    job.correlationId !== execution.metadata.correlationId ||
-    request.executionIdentity.executionId !== identity.executionId ||
-    request.executionIdentity.idempotencyKey !== identity.idempotencyKey ||
-    request.executionIdentity.deterministicFingerprint !==
-      identity.deterministicFingerprint ||
-    request.correlation.correlationId !== job.correlationId ||
-    envelope.routingRequest.tenantId !== identity.tenantId ||
-    envelope.routingRequest.workspaceId !== identity.workspaceId ||
-    envelope.routingRequest.correlationId !== job.correlationId ||
-    envelope.routingRequest.capabilityId !== identity.capabilityId ||
-    envelope.routingRequest.capabilityVersion !== identity.capabilityVersion
+    dispatch.envelopeId !== envelope.envelopeId ||
+    dispatch.workerHandoff.envelopeId !== envelope.envelopeId ||
+    dispatch.payloadReference !== envelope.payloadReference ||
+    dispatch.workerHandoff.payloadReference !== envelope.payloadReference ||
+    dispatch.executionId !== envelope.executionContext.executionId ||
+    dispatch.correlationId !== envelope.executionContext.correlationId ||
+    dispatch.tenantId !== envelope.tenantId ||
+    dispatch.workspaceId !== envelope.workspaceId ||
+    dispatch.capabilityId !== envelope.capabilityId ||
+    dispatch.capabilityVersion !== envelope.capabilityVersion ||
+    dispatch.requestHash !== envelope.requestHash ||
+    dispatch.envelopeHash !== envelope.envelopeHash
   ) {
-    throw new Error("Dispatch envelope conflicts with Outbox or Ledger identity");
+    throw new Error("Dispatch conflicts with immutable Execution Envelope");
   }
 }
 
-export class OutboxDispatchWorker {
-  private readonly now: () => Date;
-  private readonly logger: ProviderDispatchLogger;
+function executionContext(
+  dispatch: ExecutionDispatch,
+  envelope: ExecutionEnvelope
+): ProviderExecutionContext {
+  const dataHandling = envelope.executionContext.dataHandling;
+  return freeze({
+    executionId: dispatch.executionId,
+    providerAttemptId: `${dispatch.executionId}:dispatch:${dispatch.dispatchId}`,
+    correlationId: dispatch.correlationId,
+    tenantId: dispatch.tenantId,
+    workspaceId: dispatch.workspaceId,
+    timeoutDeadline: envelope.executionContext.timeoutDeadline,
+    idempotencyKey: envelope.executionContext.idempotencyKey,
+    capability: {
+      capabilityId: envelope.capabilityId,
+      capabilityVersion: envelope.capabilityVersion,
+      requestSchemaVersion: envelope.canonicalRequest.requestSchemaVersion,
+      resultSchemaVersion: envelope.canonicalRequest.resultSchemaVersion,
+    },
+    dataHandling: {
+      allowedRegions: Array.isArray(dataHandling.allowedRegions)
+        ? (dataHandling.allowedRegions as string[])
+        : undefined,
+      sensitiveData: dataHandling.sensitiveData === true,
+      retentionAllowed: dataHandling.retentionAllowed === true,
+    },
+    trace: envelope.executionContext.trace,
+  }) as ProviderExecutionContext;
+}
 
-  constructor(private readonly options: OutboxDispatchWorkerOptions) {
+export class ProviderExecutionWorker {
+  private readonly now: () => Date;
+  private readonly logger: ProviderWorkerLogger;
+
+  constructor(private readonly options: ProviderExecutionWorkerOptions) {
     if (!options.workerId.trim()) throw new Error("workerId is required");
-    if (!Number.isInteger(options.leaseDurationMs) || options.leaseDurationMs <= 0) {
-      throw new Error("leaseDurationMs must be a positive integer");
-    }
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger ?? { log: () => undefined };
   }
 
-  async dispatchOne(): Promise<ProviderDispatchOutcome> {
+  async execute(dispatchId: string): Promise<ProviderWorkerOutcome> {
     const startedAt = this.now();
     const dispatchTimestamp = startedAt.toISOString();
-    const base = { workerId: this.options.workerId, timestamp: dispatchTimestamp };
-    this.logger.log({ event: "provider_dispatch.worker_started", ...base });
+    const base = {
+      workerId: this.options.workerId,
+      dispatchId,
+      timestamp: dispatchTimestamp,
+    };
+    this.logger.log({
+      event: "provider_worker.started",
+      ...base,
+      status: "STARTED",
+    });
 
-    let claimed: ProviderOutboxJob | null = null;
     try {
-      claimed = await this.options.outbox.claimNextJob({
-        leaseOwner: this.options.workerId,
-        leaseDurationMs: this.options.leaseDurationMs,
-        now: startedAt,
-      });
-      if (!claimed) {
-        this.logger.log({ event: "provider_dispatch.no_job", ...base });
-        return freeze({
-          status: "NO_JOB",
-          workerId: this.options.workerId,
-          dispatchTimestamp,
-        }) as ProviderDispatchOutcome;
+      const storedDispatch = await this.options.dispatches.getDispatch(dispatchId);
+      if (!storedDispatch) {
+        return this.failure("DISPATCH_NOT_FOUND", "Dispatch was not found", base);
       }
-
+      const dispatch = await validateExecutionDispatch(storedDispatch);
       this.logger.log({
-        event: "provider_dispatch.job_claimed",
+        event: "provider_worker.dispatch_loaded",
         ...base,
-        jobId: claimed.jobId,
-        executionId: claimed.executionId,
+        envelopeId: dispatch.envelopeId,
+        capabilityId: dispatch.capabilityId,
+        workspaceId: dispatch.workspaceId,
+        correlationId: dispatch.correlationId,
+        status: "STARTED",
       });
-      assertLease(
-        await this.options.outbox.findJob(claimed.jobId),
-        this.options.workerId,
-        this.now()
+
+      const storedEnvelope = await this.options.envelopes.getEnvelope(
+        dispatch.workerHandoff.envelopeId
       );
+      if (!storedEnvelope) {
+        return this.failure("ENVELOPE_NOT_FOUND", "Execution Envelope was not found", base);
+      }
+      const envelope = await validateExecutionEnvelope(storedEnvelope);
+      assertHandoff(dispatch, envelope);
+      this.logger.log({
+        event: "provider_worker.envelope_loaded",
+        ...base,
+        envelopeId: envelope.envelopeId,
+        capabilityId: envelope.capabilityId,
+        workspaceId: envelope.workspaceId,
+        correlationId: envelope.executionContext.correlationId,
+        status: "STARTED",
+      });
 
-      const ledgerEntry = await this.options.ledger.findExecution(claimed.executionId);
-      if (!ledgerEntry) throw new Error("Provider execution was not found");
-      const envelope = freeze(
-        structuredClone(await this.options.envelopeLoader.load(claimed.payloadReference))
-      ) as ProviderDispatchEnvelope;
-      assertEnvelope(claimed, ledgerEntry.execution, envelope);
-
+      const { routingRequest, routingPolicy } = routingContracts(envelope);
       const decision = await this.options.router.route(
-        envelope.routingRequest,
-        envelope.routingPolicy
-      );
-      this.logger.log({
-        event: "provider_dispatch.router_decision",
-        ...base,
-        jobId: claimed.jobId,
-        executionId: claimed.executionId,
-        providerId: decision.selectedProviderId,
-        adapterVersion: decision.selectedAdapterVersion,
-      });
-
-      assertLease(
-        await this.options.outbox.findJob(claimed.jobId),
-        this.options.workerId,
-        this.now()
+        routingRequest,
+        routingPolicy
       );
       const adapter = this.options.adapters.resolve(
         decision.selectedProviderId,
         decision.selectedAdapterVersion
       );
-      if (!adapter) throw new Error("Router selected an unavailable Provider Adapter");
-
-      const attemptId = `${claimed.executionId}:attempt:${claimed.attemptCount}`;
-      const context: ProviderExecutionContext = freeze({
-        executionId: claimed.executionId,
-        providerAttemptId: attemptId,
-        correlationId: claimed.correlationId,
-        tenantId: ledgerEntry.execution.identity.tenantId,
-        workspaceId: ledgerEntry.execution.identity.workspaceId,
-        timeoutDeadline: new Date(
-          this.now().getTime() + envelope.request.timeoutPolicy.timeoutMs
-        ).toISOString(),
-        idempotencyKey: ledgerEntry.execution.identity.idempotencyKey,
-        capability: {
-          capabilityId: envelope.request.executionIdentity.capabilityId,
-          capabilityVersion: envelope.request.executionIdentity.capabilityVersion,
-          requestSchemaVersion: envelope.request.requestSchemaVersion,
-          resultSchemaVersion: envelope.request.resultSchemaVersion,
-        },
-        dataHandling: envelope.dataHandling,
-        trace: envelope.trace,
-      }) as ProviderExecutionContext;
-
+      if (!adapter) {
+        throw new Error("Provider Registry could not resolve Router decision");
+      }
       this.logger.log({
-        event: "provider_dispatch.adapter_invoked",
+        event: "provider_worker.provider_resolved",
         ...base,
-        jobId: claimed.jobId,
-        executionId: claimed.executionId,
+        envelopeId: envelope.envelopeId,
+        capabilityId: envelope.capabilityId,
         providerId: adapter.providerId,
-        adapterVersion: adapter.adapterVersion,
+        workspaceId: envelope.workspaceId,
+        correlationId: dispatch.correlationId,
+        status: "STARTED",
       });
-      const result = await adapter.execute(envelope.request, context);
+
+      const context = executionContext(dispatch, envelope);
+      this.logger.log({
+        event: "provider_worker.adapter_invoked",
+        ...base,
+        envelopeId: envelope.envelopeId,
+        capabilityId: envelope.capabilityId,
+        providerId: adapter.providerId,
+        workspaceId: envelope.workspaceId,
+        correlationId: dispatch.correlationId,
+        status: "STARTED",
+      });
+      const result = await adapter.execute(envelope.canonicalRequest, context);
       if (
-        result.executionId !== claimed.executionId ||
-        result.providerAttemptId !== attemptId ||
+        result.executionId !== dispatch.executionId ||
+        result.providerAttemptId !== context.providerAttemptId ||
         result.providerMetadata.providerId !== decision.selectedProviderId
       ) {
         throw new Error("Provider Adapter returned a conflicting canonical result");
       }
 
-      const executionDurationMs = Math.max(0, this.now().getTime() - startedAt.getTime());
+      const executionDurationMs = Math.max(
+        0,
+        this.now().getTime() - startedAt.getTime()
+      );
       const outcome = freeze({
         status: "DISPATCHED",
-        jobId: claimed.jobId,
-        executionId: claimed.executionId,
-        attemptId,
+        dispatchId: dispatch.dispatchId,
+        envelopeId: envelope.envelopeId,
+        jobId: dispatch.jobId,
+        executionId: dispatch.executionId,
+        attemptId: context.providerAttemptId,
         providerId: adapter.providerId,
         adapterVersion: adapter.adapterVersion,
         result,
         executionDurationMs,
         workerId: this.options.workerId,
         dispatchTimestamp,
-      }) as ProviderDispatchOutcome;
+      }) as ProviderWorkerOutcome;
       this.logger.log({
-        event: "provider_dispatch.finished",
+        event: "provider_worker.finished",
         ...base,
-        jobId: claimed.jobId,
-        executionId: claimed.executionId,
+        envelopeId: envelope.envelopeId,
+        capabilityId: envelope.capabilityId,
         providerId: adapter.providerId,
-        adapterVersion: adapter.adapterVersion,
-        outcome: "DISPATCHED",
+        workspaceId: envelope.workspaceId,
+        correlationId: dispatch.correlationId,
+        status: "DISPATCHED",
         durationMs: executionDurationMs,
       });
       return outcome;
@@ -304,28 +317,36 @@ export class OutboxDispatchWorker {
             ? error.providerError.kind === "TIMEOUT_UNKNOWN"
               ? "TIMEOUT_UNKNOWN"
               : "ADAPTER_FAILURE"
-            : /lease/i.test(error instanceof Error ? error.message : "")
-              ? "LEASE_LOST"
+            : /Dispatch conflicts|routing contracts/.test(
+                  error instanceof Error ? error.message : ""
+                )
+              ? "INVALID_HANDOFF"
               : "UNEXPECTED_INFRASTRUCTURE_FAILURE";
-      const reason =
-        error instanceof Error ? error.message : "Unknown provider dispatch failure";
-      const outcome = freeze({
+      return this.failure(
         status,
-        workerId: this.options.workerId,
-        dispatchTimestamp,
-        jobId: claimed?.jobId,
-        executionId: claimed?.executionId,
-        reason,
-      }) as ProviderDispatchOutcome;
-      this.logger.log({
-        event: "provider_dispatch.failed",
-        ...base,
-        jobId: claimed?.jobId,
-        executionId: claimed?.executionId,
-        outcome: status,
-        reason,
-      });
-      return outcome;
+        error instanceof Error ? error.message : "Unknown Worker failure",
+        base
+      );
     }
+  }
+
+  private failure(
+    status: Exclude<ProviderWorkerOutcome, { status: "DISPATCHED" }>["status"],
+    reason: string,
+    base: { workerId: string; dispatchId: string; timestamp: string }
+  ): ProviderWorkerOutcome {
+    this.logger.log({
+      event: "provider_worker.failed",
+      ...base,
+      status,
+      reason,
+    });
+    return freeze({
+      status,
+      dispatchId: base.dispatchId,
+      workerId: base.workerId,
+      dispatchTimestamp: base.timestamp,
+      reason,
+    }) as ProviderWorkerOutcome;
   }
 }

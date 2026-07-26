@@ -485,6 +485,7 @@ describe("PR-2 state, gates and executable concurrency foundation", () => {
       orgId: "org-1",
       workspaceId: "workspace-1",
       creativeIds: ["creative-1"],
+      finalOutputReferences: ["https://example.test/creative-1.mp4"],
       progress: {
         ffmpeg_render: { status: "completed" as const },
         compliance_check: { status: "completed" as const },

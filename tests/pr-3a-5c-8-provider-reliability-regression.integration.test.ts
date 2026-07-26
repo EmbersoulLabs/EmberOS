@@ -21,7 +21,7 @@ import {
   type ProviderRoutingPolicy,
   type ProviderRoutingRequest,
 } from "../packages/agents/src/provider-router";
-import { OutboxDispatchWorker } from "../apps/worker/src/provider-dispatch-worker";
+import { OutboxDispatchWorker } from "./helpers/legacy-outbox-dispatch-worker";
 import { ExecutionFinalizer } from "../apps/worker/src/provider-execution-finalizer";
 import { ResumeCoordinator } from "../apps/worker/src/provider-resume-coordinator";
 import { ProviderReconciler } from "../apps/worker/src/provider-reconciler";

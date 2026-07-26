@@ -1043,6 +1043,9 @@ export async function runComplianceAfterRender(
       orgId: task.orgId,
       workspaceId: task.workspaceId,
       creativeIds: [creativeId],
+      finalOutputReferences: gateCreative?.videoUrl
+        ? [gateCreative.videoUrl]
+        : [],
       progress: reviewProgress,
     }
   );

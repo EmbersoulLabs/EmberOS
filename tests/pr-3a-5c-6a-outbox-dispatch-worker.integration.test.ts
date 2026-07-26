@@ -19,7 +19,7 @@ import {
   type ProviderRoutingPolicy,
   type ProviderRoutingRequest,
 } from "../packages/agents/src/provider-router";
-import { OutboxDispatchWorker } from "../apps/worker/src/provider-dispatch-worker";
+import { OutboxDispatchWorker } from "./helpers/legacy-outbox-dispatch-worker";
 import {
   RUN_DB_INTEGRATION,
   createIntegrationSql,

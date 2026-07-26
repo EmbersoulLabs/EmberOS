@@ -10,3 +10,4 @@ export * from "./queries/provider-execution-finalizer";
 export * from "./queries/provider-resume";
 export * from "./queries/provider-reconciliation";
 export * from "./queries/provider-execution-envelope";
+export * from "./queries/provider-execution-dispatch";

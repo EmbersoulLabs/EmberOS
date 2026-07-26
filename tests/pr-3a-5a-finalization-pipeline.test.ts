@@ -234,6 +234,7 @@ describe("PR-3A.5A canonical Finalization infrastructure", () => {
         orgId: "org-1",
         workspaceId: "workspace-1",
         creativeIds: ["creative-1"],
+        finalOutputReferences: ["https://example.test/creative-1.mp4"],
         progress,
       },
       commit
@@ -266,6 +267,7 @@ describe("PR-3A.5A canonical Finalization infrastructure", () => {
           orgId: "org-1",
           workspaceId: "workspace-1",
           creativeIds: ["creative-1"],
+          finalOutputReferences: ["https://example.test/creative-1.mp4"],
           progress,
         },
         commit

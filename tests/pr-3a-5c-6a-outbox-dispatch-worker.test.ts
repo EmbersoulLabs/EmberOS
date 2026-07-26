@@ -22,7 +22,7 @@ import {
   OutboxDispatchWorker,
   type ProviderDispatchEnvelope,
   type ProviderDispatchLogEntry,
-} from "../apps/worker/src/provider-dispatch-worker";
+} from "./helpers/legacy-outbox-dispatch-worker";
 
 const hash = (character: string) => `sha256:${character.repeat(64)}`;
 const now = new Date("2026-07-26T08:00:00.000Z");

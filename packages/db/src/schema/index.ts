@@ -582,6 +582,49 @@ export const providerExecutionEnvelopes = pgTable(
   ]
 );
 
+export const providerExecutionDispatches = pgTable(
+  "provider_execution_dispatches",
+  {
+    dispatchId: text("dispatch_id").primaryKey(),
+    version: text("version").notNull(),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, {
+        onDelete: "restrict",
+      }),
+    envelopeId: text("envelope_id")
+      .notNull()
+      .references(() => providerExecutionEnvelopes.envelopeId, {
+        onDelete: "restrict",
+      }),
+    payloadReference: text("payload_reference").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    capabilityId: text("capability_id").notNull(),
+    capabilityVersion: text("capability_version").notNull(),
+    requestHash: text("request_hash").notNull(),
+    envelopeHash: text("envelope_hash").notNull(),
+    workerHandoff: jsonb("worker_handoff")
+      .$type<import("@ceo-agent/shared").ExecutionDispatch["workerHandoff"]>()
+      .notNull(),
+    dispatchHash: text("dispatch_hash").notNull(),
+    status: text("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("provider_execution_dispatches_job_unique").on(t.jobId),
+    index("provider_execution_dispatches_execution_idx").on(t.executionId),
+    index("provider_execution_dispatches_workspace_idx").on(
+      t.workspaceId,
+      t.createdAt
+    ),
+  ]
+);
+
 export const marketingScores = pgTable(
   "marketing_scores",
   {

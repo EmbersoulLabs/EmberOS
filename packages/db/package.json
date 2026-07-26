@@ -24,6 +24,7 @@
     "sql:provider-ledger": "tsx scripts/apply-provider-ledger.ts",
     "sql:provider-outbox": "tsx scripts/apply-provider-outbox.ts",
     "sql:provider-execution-envelope": "tsx scripts/apply-provider-execution-envelope.ts",
+    "sql:provider-execution-dispatch": "tsx scripts/apply-provider-execution-dispatch.ts",
     "sql:rls": "tsx scripts/apply-rls.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",

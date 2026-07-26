@@ -104,6 +104,7 @@ describeIntegration("PR-2.1 Workflow Engine database guarantees", () => {
       orgId: fixture.orgId,
       workspaceId: fixture.workspaceAId,
       creativeIds: [creative!.id],
+      finalOutputReferences: ["https://example.test/preview.mp4"],
       progress: failedProgress,
     };
 
@@ -149,5 +150,162 @@ describeIntegration("PR-2.1 Workflow Engine database guarantees", () => {
     expect(review?.decision).toBe("pending");
     expect(finalTask?.status).toBe("completed");
     expect(finalCreative?.status).toBe("pending_internal_review");
+  });
+
+  it("serializes concurrent Finalization and rejects conflicting persisted results", async () => {
+    const [task] = await sql<{ id: string }[]>`
+      INSERT INTO tasks (org_id, workspace_id, campaign_id, status, step_progress)
+      VALUES (
+        ${fixture.orgId}, ${fixture.workspaceAId}, ${fixture.campaignAId},
+        ${"running"}, ${sql.json({})}
+      )
+      RETURNING id
+    `;
+    const [creative] = await sql<{ id: string }[]>`
+      INSERT INTO creatives (
+        org_id, workspace_id, campaign_id, task_id, status, render_status, video_url
+      )
+      VALUES (
+        ${fixture.orgId}, ${fixture.workspaceAId}, ${fixture.campaignAId},
+        ${task!.id}, ${"processing"}, ${"preview_ready"},
+        ${"https://example.test/atomic-preview.mp4"}
+      )
+      RETURNING id
+    `;
+    const progress = {
+      ffmpeg_render: { status: "completed" as const },
+      compliance_check: { status: "completed" as const },
+      marketing_score: { status: "completed" as const },
+    };
+    const gates = [{
+      progress,
+      creativeRegistered: true,
+      outputReady: true,
+    }];
+    const input = {
+      taskId: task!.id,
+      campaignId: fixture.campaignAId,
+      orgId: fixture.orgId,
+      workspaceId: fixture.workspaceAId,
+      creativeIds: [creative!.id],
+      finalOutputReferences: ["https://example.test/atomic-preview.mp4"],
+      progress,
+    };
+
+    await Promise.all([
+      finalizeReviewAfterGates(gates, input),
+      finalizeReviewAfterGates(gates, input),
+    ]);
+
+    const reviews = await sql<{ id: string }[]>`
+      SELECT id FROM reviews WHERE creative_id = ${creative!.id}
+    `;
+    const [persisted] = await sql<{
+      step_progress: Record<string, {
+        output?: { deterministicFingerprint?: string };
+      }>;
+    }[]>`
+      SELECT step_progress FROM tasks WHERE id = ${task!.id}
+    `;
+    const acceptedFingerprint =
+      persisted?.step_progress.finalization_pipeline?.output
+        ?.deterministicFingerprint;
+    expect(reviews).toHaveLength(1);
+    expect(acceptedFingerprint).toBeTruthy();
+
+    const [conflictingCreative] = await sql<{ id: string }[]>`
+      INSERT INTO creatives (
+        org_id, workspace_id, campaign_id, task_id, status, render_status, video_url
+      )
+      VALUES (
+        ${fixture.orgId}, ${fixture.workspaceAId}, ${fixture.campaignAId},
+        ${task!.id}, ${"processing"}, ${"preview_ready"},
+        ${"https://example.test/conflicting-preview.mp4"}
+      )
+      RETURNING id
+    `;
+    await expect(
+      finalizeReviewAfterGates(gates, {
+        ...input,
+        creativeIds: [conflictingCreative!.id],
+        finalOutputReferences: [
+          "https://example.test/conflicting-preview.mp4",
+        ],
+      })
+    ).rejects.toThrow("Conflicting Finalization result");
+
+    const [afterConflict] = await sql<{
+      step_progress: Record<string, {
+        output?: { deterministicFingerprint?: string };
+      }>;
+    }[]>`
+      SELECT step_progress FROM tasks WHERE id = ${task!.id}
+    `;
+    expect(
+      afterConflict?.step_progress.finalization_pipeline?.output
+        ?.deterministicFingerprint
+    ).toBe(acceptedFingerprint);
+    expect(
+      await sql<{ id: string }[]>`
+        SELECT id FROM reviews WHERE creative_id = ${conflictingCreative!.id}
+      `
+    ).toHaveLength(0);
+  });
+
+  it("rolls back Finalization when output readiness changes before commit", async () => {
+    const [task] = await sql<{ id: string }[]>`
+      INSERT INTO tasks (org_id, workspace_id, campaign_id, status, step_progress)
+      VALUES (
+        ${fixture.orgId}, ${fixture.workspaceAId}, ${fixture.campaignAId},
+        ${"running"}, ${sql.json({})}
+      )
+      RETURNING id
+    `;
+    const [creative] = await sql<{ id: string }[]>`
+      INSERT INTO creatives (
+        org_id, workspace_id, campaign_id, task_id, status, render_status
+      )
+      VALUES (
+        ${fixture.orgId}, ${fixture.workspaceAId}, ${fixture.campaignAId},
+        ${task!.id}, ${"processing"}, ${"preview_rendering"}
+      )
+      RETURNING id
+    `;
+    const progress = {
+      ffmpeg_render: { status: "completed" as const },
+      compliance_check: { status: "completed" as const },
+      marketing_score: { status: "completed" as const },
+    };
+
+    await expect(
+      finalizeReviewAfterGates(
+        [{ progress, creativeRegistered: true, outputReady: true }],
+        {
+          taskId: task!.id,
+          campaignId: fixture.campaignAId,
+          orgId: fixture.orgId,
+          workspaceId: fixture.workspaceAId,
+          creativeIds: [creative!.id],
+          finalOutputReferences: [
+            "https://example.test/not-ready-preview.mp4",
+          ],
+          progress,
+        }
+      )
+    ).rejects.toThrow("Finalization output is not ready");
+
+    const [persisted] = await sql<{
+      status: string;
+      step_progress: Record<string, unknown>;
+    }[]>`
+      SELECT status, step_progress FROM tasks WHERE id = ${task!.id}
+    `;
+    expect(persisted?.status).toBe("running");
+    expect(persisted?.step_progress.finalization_pipeline).toBeUndefined();
+    expect(
+      await sql<{ id: string }[]>`
+        SELECT id FROM reviews WHERE creative_id = ${creative!.id}
+      `
+    ).toHaveLength(0);
   });
 });
