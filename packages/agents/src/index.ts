@@ -1,5 +1,6 @@
 export * from "./campaign-context-provider";
 export * from "./provider-adapters";
+export * from "./provider-router";
 export * from "./content-type";
 export * from "./motion-compose";
 export * from "./strategy";

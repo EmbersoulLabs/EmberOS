@@ -13,6 +13,27 @@ export type ProviderFeature =
   | "CALLBACKS"
   | "STREAMING";
 
+export type ProviderCostClass = "LOW" | "MEDIUM" | "HIGH";
+export type ProviderLatencyClass = "FAST" | "STANDARD" | "SLOW";
+export type ProviderQualityClass = "STANDARD" | "HIGH" | "PREMIUM";
+export type ProviderReliabilityClass = "STANDARD" | "HIGH" | "CRITICAL";
+
+export interface ProviderRoutingMetadata {
+  readonly costClass: ProviderCostClass;
+  readonly estimatedCostUsd?: number;
+  readonly latencyClass: ProviderLatencyClass;
+  readonly qualityClass: ProviderQualityClass;
+  readonly reliabilityClass: ProviderReliabilityClass;
+  readonly regions: readonly string[];
+  readonly modelFamilies: readonly string[];
+  readonly sensitiveDataAllowed: boolean;
+  readonly externalProcessing: boolean;
+  readonly trainingOptOut: boolean;
+  readonly zeroRetention: boolean;
+  readonly maximumRetentionDays?: number;
+  readonly enterpriseControls: boolean;
+}
+
 export interface ProviderCapabilityDeclaration {
   readonly providerId: string;
   readonly adapterVersion: string;
@@ -26,6 +47,7 @@ export interface ProviderCapabilityDeclaration {
   readonly cancellation: boolean;
   readonly callbacks: boolean;
   readonly streaming: boolean;
+  readonly routing: ProviderRoutingMetadata;
 }
 
 export interface ProviderExecutionContext {

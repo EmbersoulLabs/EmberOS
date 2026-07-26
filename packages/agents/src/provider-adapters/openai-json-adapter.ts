@@ -46,6 +46,19 @@ const CAPABILITY = Object.freeze({
   cancellation: false,
   callbacks: false,
   streaming: false,
+  routing: {
+    costClass: "LOW",
+    latencyClass: "FAST",
+    qualityClass: "HIGH",
+    reliabilityClass: "HIGH",
+    regions: [],
+    modelFamilies: ["gpt-4o"],
+    sensitiveDataAllowed: false,
+    externalProcessing: true,
+    trainingOptOut: false,
+    zeroRetention: false,
+    enterpriseControls: false,
+  },
 } satisfies ProviderCapabilityDeclaration);
 
 type SafeProviderFailure = {
