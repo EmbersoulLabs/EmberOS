@@ -402,6 +402,18 @@ export const CanonicalProviderResultSchema = z
         providerRequestId: NonEmptyStringSchema.optional(),
       })
       .strict(),
+    provenance: z
+      .array(
+        z
+          .object({
+            providerId: NonEmptyStringSchema,
+            adapterVersion: VersionSchema,
+            modelVersion: NonEmptyStringSchema,
+            providerRequestId: NonEmptyStringSchema.optional(),
+          })
+          .strict()
+      )
+      .optional(),
     usage: ProviderUsageSchema,
     cost: ProviderCostSchema,
     modelVersion: NonEmptyStringSchema,

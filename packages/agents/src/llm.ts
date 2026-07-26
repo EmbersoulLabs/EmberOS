@@ -13,7 +13,12 @@ export async function callJsonModel<T>(
   user: string,
   schemaHint: string,
   options?: { model?: "gpt-4o-mini" | "gpt-4o" }
-): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
+): Promise<{
+  result: T;
+  usage: { input: number; output: number; costUsd: number };
+  providerRequestId: string;
+  modelVersion: string;
+}> {
   const openai = getOpenAI();
   const model = options?.model ?? "gpt-4o-mini";
   const response = await openai.chat.completions.create({
@@ -33,7 +38,12 @@ export async function callJsonModel<T>(
   const [inRate, outRate] = model === "gpt-4o" ? [2.5, 10] : [0.15, 0.6];
   const costUsd = (input * inRate + output * outRate) / 1_000_000;
 
-  return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
+  return {
+    result: JSON.parse(content) as T,
+    usage: { input, output, costUsd },
+    providerRequestId: response.id,
+    modelVersion: response.model,
+  };
 }
 
 /** GPT-4o vision for frame analysis (higher cost than gpt-4o-mini). */
