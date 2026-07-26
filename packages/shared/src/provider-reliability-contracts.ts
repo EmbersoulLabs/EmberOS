@@ -129,6 +129,64 @@ export const CallbackStatusSchema = z.enum([
 ]);
 export type CallbackStatus = z.infer<typeof CallbackStatusSchema>;
 
+export const OutboxStatusSchema = z.enum([
+  "PENDING",
+  "CLAIMED",
+  "RETRY_WAIT",
+  "COMPLETED",
+  "DEAD_LETTER",
+  "CANCELLED",
+]);
+export type OutboxStatus = z.infer<typeof OutboxStatusSchema>;
+
+export const ProviderOutboxJobSchema = z
+  .object({
+    contractVersion: z.literal(PROVIDER_RELIABILITY_CONTRACT_VERSION),
+    jobId: NonEmptyStringSchema,
+    executionId: NonEmptyStringSchema,
+    payloadReference: NonEmptyStringSchema,
+    correlationId: NonEmptyStringSchema,
+    status: OutboxStatusSchema,
+    priority: z.number().int(),
+    attemptCount: z.number().int().nonnegative(),
+    nextVisibleAt: z.string().datetime(),
+    leaseOwner: NonEmptyStringSchema.optional(),
+    leaseExpiresAt: z.string().datetime().optional(),
+    retryDelayMs: z.number().int().nonnegative().optional(),
+    retryClassification: NonEmptyStringSchema.optional(),
+    lastErrorCategory: NonEmptyStringSchema.optional(),
+    deadLetterReason: NonEmptyStringSchema.optional(),
+    deadLetterAt: z.string().datetime().optional(),
+    operatorNotes: NonEmptyStringSchema.optional(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    const hasLease = value.leaseOwner !== undefined || value.leaseExpiresAt !== undefined;
+    if (
+      (value.status === "CLAIMED" && (!value.leaseOwner || !value.leaseExpiresAt)) ||
+      (value.status !== "CLAIMED" && hasLease)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Lease identity is required only while the job is CLAIMED",
+      });
+    }
+    if (
+      value.status === "DEAD_LETTER" &&
+      (!value.deadLetterReason || !value.deadLetterAt)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Dead-letter jobs require a reason and timestamp",
+      });
+    }
+  });
+export type ProviderOutboxJob = Readonly<
+  z.infer<typeof ProviderOutboxJobSchema>
+>;
+
 export const ExecutionIdentitySchema = z
   .object({
     executionId: NonEmptyStringSchema,

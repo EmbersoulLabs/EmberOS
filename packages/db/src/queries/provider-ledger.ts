@@ -122,6 +122,55 @@ function assertExecutionIdentity(
   }
 }
 
+type ExecutionWriter = Pick<Db, "insert" | "select">;
+
+export async function createProviderExecution(
+  db: ExecutionWriter,
+  input: ProviderExecution,
+  requestHash: string
+): Promise<ProviderExecution> {
+  const execution = ProviderExecutionSchema.parse(input);
+  const identity = execution.identity;
+  const inserted = await db
+    .insert(schema.providerExecutions)
+    .values({
+      executionId: identity.executionId,
+      contractVersion: execution.contractVersion,
+      orgId: identity.tenantId,
+      workspaceId: identity.workspaceId,
+      campaignId: identity.campaignId,
+      pipelineRunId: identity.pipelineRunId,
+      capabilityId: identity.capabilityId,
+      capabilityVersion: identity.capabilityVersion,
+      idempotencyKey: identity.idempotencyKey,
+      deterministicFingerprint: identity.deterministicFingerprint,
+      requestHash,
+      outputSchemaId: execution.metadata.outputSchemaId,
+      outputSchemaVersion: execution.metadata.outputSchemaVersion,
+      status: execution.status,
+      executionMetadata: execution.metadata,
+      createdAt: new Date(execution.createdAt),
+      completedAt: execution.completedAt ? new Date(execution.completedAt) : undefined,
+    })
+    .onConflictDoNothing()
+    .returning();
+
+  if (inserted[0]) return toExecution(inserted[0]);
+
+  const [existing] = await db
+    .select()
+    .from(schema.providerExecutions)
+    .where(eq(schema.providerExecutions.executionId, identity.executionId))
+    .limit(1);
+  if (!existing) {
+    throw new ProviderLedgerConflictError(
+      "Idempotency key is already owned by another execution"
+    );
+  }
+  assertExecutionIdentity(existing, execution, requestHash);
+  return toExecution(existing);
+}
+
 export class ProviderLedgerRepository {
   constructor(private readonly db: Db = getDb()) {}
 
@@ -129,46 +178,7 @@ export class ProviderLedgerRepository {
     input: ProviderExecution,
     requestHash: string
   ): Promise<ProviderExecution> {
-    const execution = ProviderExecutionSchema.parse(input);
-    const identity = execution.identity;
-    const inserted = await this.db
-      .insert(schema.providerExecutions)
-      .values({
-        executionId: identity.executionId,
-        contractVersion: execution.contractVersion,
-        orgId: identity.tenantId,
-        workspaceId: identity.workspaceId,
-        campaignId: identity.campaignId,
-        pipelineRunId: identity.pipelineRunId,
-        capabilityId: identity.capabilityId,
-        capabilityVersion: identity.capabilityVersion,
-        idempotencyKey: identity.idempotencyKey,
-        deterministicFingerprint: identity.deterministicFingerprint,
-        requestHash,
-        outputSchemaId: execution.metadata.outputSchemaId,
-        outputSchemaVersion: execution.metadata.outputSchemaVersion,
-        status: execution.status,
-        executionMetadata: execution.metadata,
-        createdAt: new Date(execution.createdAt),
-        completedAt: execution.completedAt ? new Date(execution.completedAt) : undefined,
-      })
-      .onConflictDoNothing()
-      .returning();
-
-    if (inserted[0]) return toExecution(inserted[0]);
-
-    const [existing] = await this.db
-      .select()
-      .from(schema.providerExecutions)
-      .where(eq(schema.providerExecutions.executionId, identity.executionId))
-      .limit(1);
-    if (!existing) {
-      throw new ProviderLedgerConflictError(
-        "Idempotency key is already owned by another execution"
-      );
-    }
-    assertExecutionIdentity(existing, execution, requestHash);
-    return toExecution(existing);
+    return createProviderExecution(this.db, input, requestHash);
   }
 
   async appendAttempt(input: AppendProviderAttemptInput): Promise<ProviderAttempt> {

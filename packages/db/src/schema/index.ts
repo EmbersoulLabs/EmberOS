@@ -512,6 +512,38 @@ export const providerAttemptCosts = pgTable(
   }
 );
 
+export const providerOutboxJobs = pgTable(
+  "provider_outbox_jobs",
+  {
+    jobId: text("job_id").primaryKey(),
+    contractVersion: text("contract_version").notNull(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    payloadReference: text("payload_reference").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    status: text("status").notNull().default("PENDING"),
+    priority: integer("priority").notNull().default(0),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextVisibleAt: timestamp("next_visible_at", { withTimezone: true }).notNull().defaultNow(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    retryDelayMs: integer("retry_delay_ms"),
+    retryClassification: text("retry_classification"),
+    lastErrorCategory: text("last_error_category"),
+    deadLetterReason: text("dead_letter_reason"),
+    deadLetterAt: timestamp("dead_letter_at", { withTimezone: true }),
+    operatorNotes: text("operator_notes"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("provider_outbox_jobs_execution_unique").on(t.executionId),
+    index("provider_outbox_jobs_claim_idx").on(t.status, t.nextVisibleAt, t.priority),
+    index("provider_outbox_jobs_lease_idx").on(t.status, t.leaseExpiresAt),
+  ]
+);
+
 export const marketingScores = pgTable(
   "marketing_scores",
   {
