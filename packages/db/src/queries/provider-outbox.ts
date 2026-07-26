@@ -55,6 +55,9 @@ function toOutboxJob(row: typeof schema.providerOutboxJobs.$inferSelect): Provid
     deadLetterReason: row.deadLetterReason ?? undefined,
     deadLetterAt: row.deadLetterAt?.toISOString(),
     operatorNotes: row.operatorNotes ?? undefined,
+    completedAt: row.completedAt?.toISOString(),
+    completionWorkerId: row.completionWorkerId ?? undefined,
+    completionMetadata: row.completionMetadata ?? undefined,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   });
@@ -247,6 +250,7 @@ export class ProviderOutboxRepository {
   async completeJob(input: {
     jobId: string;
     leaseOwner: string;
+    completionMetadata?: Record<string, unknown>;
     now?: Date;
   }): Promise<ProviderOutboxJob> {
     const now = input.now ?? new Date();
@@ -256,6 +260,11 @@ export class ProviderOutboxRepository {
         status: "COMPLETED",
         leaseOwner: null,
         leaseExpiresAt: null,
+        completedAt: now,
+        completionWorkerId: input.leaseOwner,
+        completionMetadata: input.completionMetadata ?? {
+          source: "provider-outbox-repository",
+        },
         updatedAt: now,
       })
       .where(

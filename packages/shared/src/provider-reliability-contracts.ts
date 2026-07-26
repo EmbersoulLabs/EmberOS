@@ -158,6 +158,9 @@ export const ProviderOutboxJobSchema = z
     deadLetterReason: NonEmptyStringSchema.optional(),
     deadLetterAt: z.string().datetime().optional(),
     operatorNotes: NonEmptyStringSchema.optional(),
+    completedAt: z.string().datetime().optional(),
+    completionWorkerId: NonEmptyStringSchema.optional(),
+    completionMetadata: z.record(z.unknown()).optional(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
   })
@@ -180,6 +183,15 @@ export const ProviderOutboxJobSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Dead-letter jobs require a reason and timestamp",
+      });
+    }
+    if (
+      value.status === "COMPLETED" &&
+      (!value.completedAt || !value.completionWorkerId || !value.completionMetadata)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Completed jobs require canonical completion metadata",
       });
     }
   });

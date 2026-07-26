@@ -4,6 +4,7 @@ import path from "node:path";
 export default defineConfig({
   test: {
     include: ["tests/**/*.integration.test.ts"],
+    fileParallelism: false,
   },
   resolve: {
     alias: {

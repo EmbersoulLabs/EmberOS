@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS provider_outbox_jobs (
   dead_letter_reason text,
   dead_letter_at timestamptz,
   operator_notes text,
+  completed_at timestamptz,
+  completion_worker_id text,
+  completion_metadata jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CHECK (
@@ -34,3 +37,8 @@ CREATE INDEX IF NOT EXISTS provider_outbox_jobs_claim_idx
   ON provider_outbox_jobs (status, next_visible_at, priority);
 CREATE INDEX IF NOT EXISTS provider_outbox_jobs_lease_idx
   ON provider_outbox_jobs (status, lease_expires_at);
+
+ALTER TABLE provider_outbox_jobs
+  ADD COLUMN IF NOT EXISTS completed_at timestamptz,
+  ADD COLUMN IF NOT EXISTS completion_worker_id text,
+  ADD COLUMN IF NOT EXISTS completion_metadata jsonb;

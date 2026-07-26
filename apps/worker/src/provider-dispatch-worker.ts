@@ -71,6 +71,7 @@ export type ProviderDispatchOutcome =
   | Readonly<{ status: "NO_JOB"; workerId: string; dispatchTimestamp: string }>
   | Readonly<{
       status: "DISPATCHED";
+      jobId: string;
       executionId: string;
       attemptId: string;
       providerId: string;
@@ -274,6 +275,7 @@ export class OutboxDispatchWorker {
       const executionDurationMs = Math.max(0, this.now().getTime() - startedAt.getTime());
       const outcome = freeze({
         status: "DISPATCHED",
+        jobId: claimed.jobId,
         executionId: claimed.executionId,
         attemptId,
         providerId: adapter.providerId,
