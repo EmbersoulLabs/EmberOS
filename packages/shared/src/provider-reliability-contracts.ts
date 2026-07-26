@@ -318,6 +318,7 @@ export const ProviderUsageSchema = z
     providerUsageId: NonEmptyStringSchema.optional(),
   })
   .strict();
+export type ProviderUsage = Readonly<z.infer<typeof ProviderUsageSchema>>;
 
 export const ProviderCostSchema = z
   .object({
@@ -326,6 +327,7 @@ export const ProviderCostSchema = z
     estimated: z.boolean(),
   })
   .strict();
+export type ProviderCost = Readonly<z.infer<typeof ProviderCostSchema>>;
 
 export const CanonicalProviderResultSchema = z
   .object({

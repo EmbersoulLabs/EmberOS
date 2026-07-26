@@ -423,6 +423,95 @@ export const agentLogs = pgTable("agent_logs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const providerExecutions = pgTable(
+  "provider_executions",
+  {
+    executionId: text("execution_id").primaryKey(),
+    contractVersion: text("contract_version").notNull(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id"),
+    pipelineRunId: text("pipeline_run_id").notNull(),
+    capabilityId: text("capability_id").notNull(),
+    capabilityVersion: text("capability_version").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    requestHash: text("request_hash").notNull(),
+    outputSchemaId: text("output_schema_id").notNull(),
+    outputSchemaVersion: text("output_schema_version").notNull(),
+    status: text("status").notNull(),
+    executionMetadata: jsonb("execution_metadata")
+      .$type<import("@ceo-agent/shared").ExecutionMetadata>()
+      .notNull(),
+    acceptedAttemptId: text("accepted_attempt_id"),
+    acceptedResult: jsonb("accepted_result")
+      .$type<import("@ceo-agent/shared").CanonicalProviderResult>(),
+    acceptedResponseHash: text("accepted_response_hash"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("provider_executions_idempotency_key_unique").on(t.idempotencyKey),
+    index("provider_executions_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("provider_executions_fingerprint_idx").on(t.deterministicFingerprint),
+  ]
+);
+
+export const providerAttempts = pgTable(
+  "provider_attempts",
+  {
+    attemptId: text("attempt_id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    contractVersion: text("contract_version").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    providerId: text("provider_id").notNull(),
+    providerVersion: text("provider_version").notNull(),
+    modelVersion: text("model_version").notNull(),
+    providerRequestId: text("provider_request_id"),
+    requestHash: text("request_hash").notNull(),
+    responseHash: text("response_hash"),
+    status: text("status").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failure: jsonb("failure").$type<import("@ceo-agent/shared").ProviderError>(),
+    warnings: jsonb("warnings")
+      .$type<Array<{ code: string; message: string; retryable: boolean }>>()
+      .notNull()
+      .default([]),
+    providerMetadata: jsonb("provider_metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("provider_attempts_execution_number_unique").on(t.executionId, t.attemptNumber),
+    index("provider_attempts_execution_idx").on(t.executionId, t.attemptNumber),
+  ]
+);
+
+export const providerAttemptUsage = pgTable(
+  "provider_attempt_usage",
+  {
+    attemptId: text("attempt_id")
+      .primaryKey()
+      .references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    usage: jsonb("usage").$type<import("@ceo-agent/shared").ProviderUsage>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  }
+);
+
+export const providerAttemptCosts = pgTable(
+  "provider_attempt_costs",
+  {
+    attemptId: text("attempt_id")
+      .primaryKey()
+      .references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    cost: jsonb("cost").$type<import("@ceo-agent/shared").ProviderCost>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  }
+);
+
 export const marketingScores = pgTable(
   "marketing_scores",
   {

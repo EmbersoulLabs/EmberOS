@@ -4,3 +4,4 @@ export * from "./queries/tenant";
 export * from "./queries/business-profile";
 export * from "./queries/create-workspace";
 export * from "./queries/asset-library";
+export * from "./queries/provider-ledger";
