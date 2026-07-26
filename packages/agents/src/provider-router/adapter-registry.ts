@@ -44,10 +44,15 @@ function compareDeclaration(
 
 export class ProviderAdapterRegistry {
   private readonly declarations = new Map<string, ProviderCapabilityDeclaration>();
+  private readonly adapters = new Map<string, ProviderAdapter>();
 
-  register(adapter: Pick<ProviderAdapter, "providerId" | "adapterVersion" | "capabilities">): void {
+  register(adapter: ProviderAdapter): void {
     const declarations = [...adapter.capabilities()].sort(compareDeclaration);
     if (declarations.length === 0) throw new Error("Adapter must declare capabilities");
+    const adapterKey = `${adapter.providerId}:${adapter.adapterVersion}`;
+    if (this.adapters.has(adapterKey)) {
+      throw new Error(`Provider Adapter already registered: ${adapterKey}`);
+    }
 
     for (const declaration of declarations) {
       if (
@@ -67,6 +72,7 @@ export class ProviderAdapterRegistry {
         freeze(cloneDeclaration(declaration)) as ProviderCapabilityDeclaration
       );
     }
+    this.adapters.set(adapterKey, adapter);
   }
 
   get(
@@ -82,6 +88,10 @@ export class ProviderAdapterRegistry {
         .sort(compareDeclaration)
         .map(cloneDeclaration)
     ) as readonly ProviderCapabilityDeclaration[];
+  }
+
+  resolve(providerId: string, adapterVersion: string): ProviderAdapter | null {
+    return this.adapters.get(`${providerId}:${adapterVersion}`) ?? null;
   }
 
   async snapshot(): Promise<ProviderAdapterRegistrySnapshot> {
