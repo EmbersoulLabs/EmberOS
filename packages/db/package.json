@@ -23,6 +23,7 @@
     "sql:campaign-description-pd044": "tsx scripts/apply-campaign-description-pd044.ts",
     "sql:provider-ledger": "tsx scripts/apply-provider-ledger.ts",
     "sql:provider-outbox": "tsx scripts/apply-provider-outbox.ts",
+    "sql:provider-execution-envelope": "tsx scripts/apply-provider-execution-envelope.ts",
     "sql:rls": "tsx scripts/apply-rls.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",

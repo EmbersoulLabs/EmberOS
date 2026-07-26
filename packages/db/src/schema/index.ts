@@ -547,6 +547,41 @@ export const providerOutboxJobs = pgTable(
   ]
 );
 
+export const providerExecutionEnvelopes = pgTable(
+  "provider_execution_envelopes",
+  {
+    envelopeId: text("envelope_id").primaryKey(),
+    version: text("version").notNull(),
+    payloadReference: text("payload_reference").notNull(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    executionContext: jsonb("execution_context")
+      .$type<import("@ceo-agent/shared").ExecutionEnvelopeContext>()
+      .notNull(),
+    capabilityId: text("capability_id").notNull(),
+    capabilityVersion: text("capability_version").notNull(),
+    providerPolicySnapshot: jsonb("provider_policy_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    canonicalRequest: jsonb("canonical_request")
+      .$type<import("@ceo-agent/shared").CanonicalProviderRequest>()
+      .notNull(),
+    requestHash: text("request_hash").notNull(),
+    envelopeHash: text("envelope_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("provider_execution_envelopes_payload_reference_unique").on(
+      t.payloadReference
+    ),
+    index("provider_execution_envelopes_workspace_idx").on(
+      t.workspaceId,
+      t.createdAt
+    ),
+    index("provider_execution_envelopes_request_hash_idx").on(t.requestHash),
+  ]
+);
+
 export const marketingScores = pgTable(
   "marketing_scores",
   {

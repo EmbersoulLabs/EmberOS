@@ -53,3 +53,4 @@ export * from "./subtitle-styles";
 export * from "./render-preferences";
 export * from "./ops-pipeline";
 export * from "./provider-reliability-contracts";
+export * from "./provider-execution-envelope";
