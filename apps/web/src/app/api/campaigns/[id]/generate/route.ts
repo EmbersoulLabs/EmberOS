@@ -1,20 +1,24 @@
-import { and, eq } from "drizzle-orm";
-import { getCampaignAssets, getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
+import { eq } from "drizzle-orm";
+import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
-import { isUuid, validateCampaignForGenerate } from "@ceo-agent/shared";
+import { isUuid, isSubtitleLanguagePair, isSubtitleStylePreset } from "@ceo-agent/shared";
+import { isLocale } from "@ceo-agent/shared/i18n";
+import { executeCampaignGenerate } from "@/lib/campaign-generate";
+import { enforceRateLimit } from "@/lib/rate-limit";
 
 /**
- * SPEC-002 / UI-SPEC-002 Generate — Sprint 0003 placeholder only.
- * Validates required inputs and records a non-AI processing state.
- * Does NOT enqueue agent.pipeline /run.
+ * Authoritative Campaign Generate — validates inputs and enqueues agent.pipeline.
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await requireAuth();
+    const limited = await enforceRateLimit(request, "campaignRun", user.id);
+    if (limited) return limited;
+
     const { id: campaignId } = await params;
     if (!isUuid(campaignId)) {
       return apiError("Invalid campaign id", "VALIDATION_ERROR", 400);
@@ -30,66 +34,55 @@ export async function POST(
 
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
-    const assets = await getCampaignAssets(db, campaignId, campaign.workspaceId);
-    const storyRefs = await db
-      .select({ storyId: schema.campaignStoryRefs.storyId })
-      .from(schema.campaignStoryRefs)
-      .innerJoin(schema.stories, eq(schema.stories.id, schema.campaignStoryRefs.storyId))
-      .where(
-        and(
-          eq(schema.campaignStoryRefs.campaignId, campaignId),
-          eq(schema.stories.status, "ready")
-        )
-      );
+    let contentLocale: string | undefined;
+    let renderPreferences: { subtitleStyle: string; subtitleLanguage: string } | undefined;
+    try {
+      const body = (await request.json()) as {
+        locale?: string;
+        subtitleStyle?: string;
+        subtitleLanguage?: string;
+      };
+      if (body.locale && isLocale(body.locale)) contentLocale = body.locale;
+      if (
+        isSubtitleStylePreset(body.subtitleStyle ?? "") &&
+        isSubtitleLanguagePair(body.subtitleLanguage ?? "")
+      ) {
+        renderPreferences = {
+          subtitleStyle: body.subtitleStyle!,
+          subtitleLanguage: body.subtitleLanguage!,
+        };
+      }
+    } catch {
+      /* empty body is fine */
+    }
 
-    const validation = validateCampaignForGenerate({
-      name: campaign.name,
-      objective: campaign.objective,
-      objectiveCustom: campaign.objectiveCustom,
-      outputLanguage: campaign.outputLanguage,
-      subtitleLanguage: campaign.subtitleLanguage,
-      ctaLanguage: campaign.ctaLanguage,
-      hashtagLanguage: campaign.hashtagLanguage,
-      assetCount: assets.length,
-      storyCount: storyRefs.length,
+    const result = await executeCampaignGenerate(db, campaign, user.id, {
+      contentLocale,
+      renderPreferences,
     });
 
-    if (!validation.ok) {
-      await db
-        .update(schema.campaigns)
-        .set({
-          generateStatus: "failed",
-          generateSummary: { errors: validation.errors, aiGeneration: false },
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.campaigns.id, campaignId));
-      return apiError(validation.errors.join("; "), "VALIDATION_ERROR", 400);
+    if (!result.ok) {
+      return apiError(result.error, result.code, result.status);
     }
 
     const [updated] = await db
-      .update(schema.campaigns)
-      .set({
-        generateStatus: "waiting",
-        generateSummary: {
-          ...validation.summary,
-          validatedAt: new Date().toISOString(),
-          validatedBy: user.id,
-          aiGeneration: false,
-          marketingPackageGenerated: false,
-        },
-        // Business status remains Draft until real AI/activation exists.
-        status: campaign.status === "draft" ? "draft" : campaign.status,
-        updatedAt: new Date(),
-      })
+      .select()
+      .from(schema.campaigns)
       .where(eq(schema.campaigns.id, campaignId))
-      .returning();
+      .limit(1);
 
-    return apiSuccess({
-      campaign: updated,
-      summary: validation.summary,
-      generateStatus: "waiting",
-      aiInvoked: false,
-    });
+    return apiSuccess(
+      {
+        campaign: updated,
+        taskId: result.taskId,
+        status: result.status,
+        reused: result.reused,
+        summary: result.summary,
+        generateStatus: "processing",
+        aiInvoked: true,
+      },
+      result.reused ? 200 : 202
+    );
   } catch (error) {
     return handleApiError(error);
   }

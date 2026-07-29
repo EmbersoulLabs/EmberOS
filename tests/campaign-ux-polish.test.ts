@@ -55,14 +55,14 @@ describe("Sprint 0004 remediation — wizard create semantics", () => {
     expect(wizardSource).not.toContain("platformsUnresolvedHint");
   });
 
-  it("Create Campaign does not invoke /generate", () => {
+  it("Create Campaign uses authoritative Generate path", () => {
     expect(wizardSource).toContain("onCreateCampaign");
     expect(wizardSource).toContain("validateCampaignForCreate");
-    expect(wizardSource).not.toMatch(/\/api\/campaigns\/\$\{id\}\/generate/);
-    expect(wizardSource).not.toMatch(/method:\s*"POST"[^;]*generate/s);
+    expect(wizardSource).toMatch(/\/api\/campaigns\/\$\{id\}\/generate/);
+    expect(wizardSource).not.toMatch(/method:\s*"POST"[^;]*\/run/s);
   });
 
-  it("Create Campaign auto-starts pipeline and opens Continue Campaign (PD-045)", () => {
+  it("Create Campaign auto-starts pipeline via Generate and opens Continue Campaign (PD-045)", () => {
     const incomplete = validateCampaignForCreate({
       name: "",
       objective: "other",
@@ -88,10 +88,9 @@ describe("Sprint 0004 remediation — wizard create semantics", () => {
     });
     expect(complete.ok).toBe(true);
     if (complete.ok) {
-      expect(complete.summary.aiGeneration).toBe(false);
+      expect(complete.summary.aiGeneration).toBe(true);
     }
-    // PD-045 / OPS-002 Rule 5: persist → POST /run → Continue Campaign (task view)
-    expect(wizardSource).toMatch(/\/api\/campaigns\/\$\{id\}\/run/);
+    expect(wizardSource).toMatch(/\/api\/campaigns\/\$\{id\}\/generate/);
     expect(wizardSource).toMatch(
       /router\.push\(\s*taskId\s*\?\s*`\/w\/\$\{slug\}\/campaigns\/\$\{id\}\/task\?taskId=\$\{taskId\}`/
     );
@@ -105,7 +104,7 @@ describe("Sprint 0004 remediation — wizard create semantics", () => {
       "utf8"
     );
     expect(createRoute).toContain('generateStatus: "idle"');
-    expect(wizardSource).not.toContain("/generate");
+    expect(wizardSource).toMatch(/\/api\/campaigns\/\$\{id\}\/generate/);
   });
 });
 

@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   CAMPAIGN_OBJECTIVES,
   CAMPAIGN_OBJECTIVE_LABELS,
-  MARKETING_PACKAGE_PLACEHOLDER_ITEMS,
   formatPublishingPlatforms,
   resolveCampaignObjectiveLabel,
   type CampaignObjective,
@@ -18,6 +18,7 @@ import {
   defaultCampaignLanguages,
 } from "@/components/campaign/CampaignMediaInput";
 import { CampaignBriefAssistant } from "@/components/campaign/CampaignBriefAssistant";
+import { CampaignMarketingPackageView } from "@/components/campaign/CampaignMarketingPackageView";
 import { useI18n } from "@/lib/i18n/provider";
 
 type Tab = "overview" | "video" | "package" | "activity";
@@ -51,18 +52,6 @@ type AssetRow = {
 
 type StoryRow = { storyId: string; name: string; status: string };
 
-const PACKAGE_LABELS: Record<(typeof MARKETING_PACKAGE_PLACEHOLDER_ITEMS)[number], string> = {
-  strategy: "Strategy",
-  report: "Report",
-  hook: "Hook",
-  caption: "Caption",
-  cta: "CTA",
-  hashtags: "Hashtags",
-  subtitle: "Subtitle",
-  video_reference: "Video Reference",
-  marketing_score: "Marketing Score",
-};
-
 export function CampaignWorkspace({
   slug,
   workspaceId,
@@ -75,6 +64,7 @@ export function CampaignWorkspace({
   workspaceName: string;
 }) {
   const { t, locale } = useI18n();
+  const router = useRouter();
   const [tab, setTab] = useState<Tab>("overview");
   const [campaign, setCampaign] = useState<CampaignRecord | null>(null);
   const [assets, setAssets] = useState<AssetRow[]>([]);
@@ -171,7 +161,12 @@ export function CampaignWorkspace({
       await saveOverview();
       const res = await fetch(`/api/campaigns/${campaignId}/generate`, { method: "POST" });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Generate validation failed");
+      if (!res.ok) throw new Error(data.error ?? "Generate failed");
+      const taskId = data.taskId as string | undefined;
+      if (taskId) {
+        router.push(`/w/${slug}/campaigns/${campaignId}/task?taskId=${taskId}`);
+        return;
+      }
       await load();
       setTab("package");
     } catch (err) {
@@ -410,7 +405,13 @@ export function CampaignWorkspace({
               </div>
               <div className="flex justify-between gap-3">
                 <dt className="text-ink-secondary">AI</dt>
-                <dd className="font-medium text-navy">{t("campaign.workspace.noAiThisSprint")}</dd>
+                <dd className="font-medium text-navy">
+                  {campaign.generateStatus === "processing"
+                    ? "Marketing pipeline running"
+                    : campaign.generateStatus === "completed"
+                      ? "Marketing package ready"
+                      : "Generate to start"}
+                </dd>
               </div>
             </dl>
             {campaign.generateSummary ? (
@@ -450,22 +451,7 @@ export function CampaignWorkspace({
       ) : null}
 
       {tab === "package" ? (
-        <section className="space-y-3">
-          <p className="text-sm text-ink-secondary">{t("campaign.workspace.packageEmpty")}</p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {MARKETING_PACKAGE_PLACEHOLDER_ITEMS.map((item) => (
-              <div
-                key={item}
-                className="rounded-2xl border border-dashed border-border bg-white p-4"
-              >
-                <p className="text-sm font-semibold text-navy">{PACKAGE_LABELS[item]}</p>
-                <p className="mt-2 text-xs text-ink-secondary">
-                  {t("campaign.workspace.placeholderOnly")}
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
+        <CampaignMarketingPackageView campaignId={campaignId} slug={slug} />
       ) : null}
 
       {tab === "activity" ? (

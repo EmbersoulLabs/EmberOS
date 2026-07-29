@@ -31,7 +31,6 @@ export default function LoginPage() {
     const saved = loadRememberedCredentials();
     if (!saved) return;
     setEmail(saved.email);
-    setPassword(saved.password);
     setRememberPassword(true);
   }, []);
 
@@ -69,7 +68,7 @@ export default function LoginPage() {
         setMessage(error.message);
       } else {
         if (rememberPassword) {
-          saveRememberedCredentials(email, password);
+          saveRememberedCredentials(email);
         } else {
           clearRememberedCredentials();
         }

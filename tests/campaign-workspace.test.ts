@@ -35,7 +35,7 @@ describe("campaign workspace (Sprint 0003 / SPEC-002)", () => {
     });
   });
 
-  it("validates generate without invoking AI semantics", () => {
+  it("validates generate and marks AI generation enabled", () => {
     const ok = validateCampaignForGenerate({
       name: "Spring Promo",
       objective: "awareness",
@@ -48,7 +48,7 @@ describe("campaign workspace (Sprint 0003 / SPEC-002)", () => {
     });
     expect(ok.ok).toBe(true);
     if (ok.ok) {
-      expect(ok.summary.aiGeneration).toBe(false);
+      expect(ok.summary.aiGeneration).toBe(true);
     }
 
     const bad = validateCampaignForGenerate({
@@ -185,8 +185,8 @@ describe("campaign workspace (Sprint 0003 / SPEC-002)", () => {
       "apps/web/src/app/api/campaigns/[id]/media/route.ts",
       "utf8"
     );
-    const generateRoute = readFileSync(
-      "apps/web/src/app/api/campaigns/[id]/generate/route.ts",
+    const generateLib = readFileSync(
+      "apps/web/src/lib/campaign-generate.ts",
       "utf8"
     );
     const assetQueries = readFileSync(
@@ -199,7 +199,8 @@ describe("campaign workspace (Sprint 0003 / SPEC-002)", () => {
     expect(mediaRoute).toContain("readyOnly: true");
     expect(mediaRoute).toContain('status: "ready"');
     expect(mediaRoute).toContain("replaceCampaignMediaReferences");
-    expect(generateRoute).toContain('eq(schema.stories.status, "ready")');
+    expect(generateLib).toContain('eq(schema.stories.status, "ready")');
+    expect(generateLib).toContain("startOrReuseCampaignRun");
     expect(assetQueries).toContain('eq(schema.stories.status, "ready")');
   });
 });

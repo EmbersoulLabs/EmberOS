@@ -23,6 +23,8 @@
     "db:studio": "pnpm --filter @ceo-agent/db studio",
     "test": "vitest run --config vitest.config.ts",
     "test:integration": "tsx scripts/run-db-integration-tests.ts",
+    "e2e:marketing": "playwright test e2e/marketing-vertical-slice.spec.ts",
+    "e2e:marketing:video": "playwright test e2e/marketing-video-vertical-slice.spec.ts",
     "verify": "pnpm test && pnpm typecheck && pnpm --filter @ceo-agent/web build",
     "smoke:prod": "tsx scripts/smoke-production.ts",
     "pilot:metrics": "tsx scripts/pilot-metrics.ts",
@@ -35,7 +37,8 @@
     "typescript": "^5.7.2",
     "vitest": "^2.1.8",
     "postgres": "^3.4.5",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "@playwright/test": "^1.51.0"
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {

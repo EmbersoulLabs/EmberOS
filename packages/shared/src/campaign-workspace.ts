@@ -213,8 +213,7 @@ export function validateCampaignForGenerate(
       hashtagLanguage: input.hashtagLanguage!,
       assetCount: input.assetCount,
       storyCount: input.storyCount,
-      aiGeneration: false,
-      note: "Generate validates inputs only. AI Marketing Package generation is not run in this Sprint.",
+      aiGeneration: true,
     },
   };
 }
@@ -236,8 +235,7 @@ export function validateCampaignForCreate(
     ok: true,
     summary: {
       ...result.summary,
-      aiGeneration: false,
-      note: "Create Campaign finalizes the reviewed Campaign. Marketing Package generation remains a separate Workspace action.",
+      aiGeneration: true,
     },
   };
 }

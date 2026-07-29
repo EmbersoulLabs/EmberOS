@@ -36,11 +36,10 @@ const orchestrator = readFileSync(resolve("packages/agents/src/orchestrator.ts")
 const runCeo = readFileSync(resolve("apps/web/src/components/RunCeoButton.tsx"), "utf8");
 
 describe("PD-045 Create Campaign auto-starts pipeline", () => {
-  it("Create Campaign POSTs /run then redirects to Continue Campaign task view", () => {
+  it("Create Campaign POSTs /generate then redirects to Continue Campaign task view", () => {
     expect(wizard).toContain("PD-045");
-    expect(wizard).toMatch(/\/api\/campaigns\/\$\{id\}\/run/);
+    expect(wizard).toMatch(/\/api\/campaigns\/\$\{id\}\/generate/);
     expect(wizard).toMatch(/\/campaigns\/\$\{id\}\/task\?taskId=/);
-    expect(wizard).not.toMatch(/\/api\/campaigns\/\$\{id\}\/generate/);
   });
 
   it("does not leave the user on campaign overview without starting a run", () => {
@@ -63,12 +62,17 @@ describe("OPS-002 Rule 1 — one active run per Campaign", () => {
     expect(isActiveCampaignTaskStatus("completed")).toBe(false);
   });
 
-  it("startOrReuseCampaignRun reuses active task and never double-enqueues", () => {
+  it("startOrReuseCampaignRun is invoked from authoritative Generate path", () => {
+    const generateRoute = readFileSync(
+      resolve("apps/web/src/app/api/campaigns/[id]/generate/route.ts"),
+      "utf8"
+    );
     expect(campaignRun).toContain("findActiveCampaignTask");
     expect(campaignRun).toContain("startOrReuseCampaignRun");
     expect(campaignRun).toContain("reused: true");
     expect(campaignRun).toContain("enqueuePipeline");
-    expect(runRoute).toContain("startOrReuseCampaignRun");
+    expect(generateRoute).toContain("executeCampaignGenerate");
+    expect(runRoute).toContain("executeCampaignGenerate");
     expect(runRoute).toMatch(/result\.reused \? 200 : 202/);
   });
 
