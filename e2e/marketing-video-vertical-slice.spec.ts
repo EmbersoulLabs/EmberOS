@@ -19,11 +19,8 @@ async function writeEvidence(name: string, data: unknown) {
 }
 
 async function waitForUploadSuccess(page: Page) {
-  await expect(page.getByText(/success|ready|完成|成功|uploaded/i).first()).toBeVisible({
-    timeout: 120_000,
-  }).catch(async () => {
-    // Fall back: selected file count appears after upload completes
-    await expect(page.getByText(/1 file\(s\) selected/i)).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByText(/^Uploaded$|上传成功|已上传/i).first()).toBeVisible({
+    timeout: 180_000,
   });
 }
 
@@ -178,8 +175,8 @@ test.describe("Marketing vertical slice — Video Campaign (browser E2E)", () =>
         .waitForResponse(
           (res) =>
             res.url().includes("/api/reviews/") &&
-            res.request().method() === "POST" &&
-            res.url().includes("approve"),
+            res.url().includes("/decide") &&
+            res.request().method() === "POST",
           { timeout: 30_000 }
         )
         .catch(() => null);
