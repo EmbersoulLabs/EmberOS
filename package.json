@@ -25,6 +25,7 @@
     "test:integration": "tsx scripts/run-db-integration-tests.ts",
     "e2e:marketing": "playwright test e2e/marketing-vertical-slice.spec.ts",
     "e2e:marketing:video": "playwright test e2e/marketing-video-vertical-slice.spec.ts",
+    "e2e:ai-story-planning": "playwright test e2e/ai-story-planning.spec.ts",
     "verify": "pnpm test && pnpm typecheck && pnpm --filter @ceo-agent/web build",
     "smoke:prod": "tsx scripts/smoke-production.ts",
     "pilot:metrics": "tsx scripts/pilot-metrics.ts",

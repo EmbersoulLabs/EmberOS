@@ -7,6 +7,7 @@ import {
   integer,
   numeric,
   bigint,
+  boolean,
   unique,
   index,
 } from "drizzle-orm/pg-core";
@@ -283,6 +284,153 @@ export const campaignStoryRefs = pgTable(
   (t) => [
     unique().on(t.campaignId, t.storyId),
     index("campaign_story_refs_campaign_idx").on(t.campaignId),
+  ]
+);
+
+/** Campaign-owned AI Story (V1) — not workspace Asset Story. */
+export const aiStories = pgTable(
+  "ai_stories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    originalIdea: text("original_idea").notNull(),
+    status: text("status").notNull().default("draft"),
+    currentVersionId: uuid("current_version_id"),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("ai_stories_campaign_idx").on(t.campaignId),
+    index("ai_stories_workspace_idx").on(t.workspaceId, t.status),
+  ]
+);
+
+export const aiStoryVersions = pgTable(
+  "ai_story_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    versionNumber: integer("version_number").notNull(),
+    structuredContent: jsonb("structured_content")
+      .$type<import("@ceo-agent/shared").AiStoryStructuredDraft>()
+      .notNull(),
+    sourceContextSnapshot: jsonb("source_context_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    aiMetadata: jsonb("ai_metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    userEdited: boolean("user_edited").notNull().default(false),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    frozenAt: timestamp("frozen_at", { withTimezone: true }),
+    frozenBy: uuid("frozen_by"),
+  },
+  (t) => [
+    unique().on(t.storyId, t.versionNumber),
+    index("ai_story_versions_story_idx").on(t.storyId, t.versionNumber),
+  ]
+);
+
+export const aiStoryAssetLinks = pgTable(
+  "ai_story_asset_links",
+  {
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    usageType: text("usage_type").notNull().default("reference"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.storyId, t.assetId),
+    index("ai_story_asset_links_asset_idx").on(t.assetId),
+  ]
+);
+
+export const aiStoryCreativeContexts = pgTable(
+  "ai_story_creative_contexts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "cascade" }),
+    payload: jsonb("payload").$type<import("@ceo-agent/shared").CreativeContext>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_creative_contexts_story_idx").on(t.storyId, t.createdAt),
+    index("ai_story_creative_contexts_workspace_idx").on(t.workspaceId, t.createdAt),
+  ]
+);
+
+export const aiStoryAnimationPackages = pgTable(
+  "ai_story_animation_packages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("generating"),
+    payload: jsonb("payload")
+      .$type<import("@ceo-agent/shared").AnimationPackagePayload>()
+      .notNull(),
+    consistencyReport: jsonb("consistency_report")
+      .$type<import("@ceo-agent/shared").NarrativeIntegrationReport>()
+      .notNull()
+      .default({ consistent: false, issues: [], links: [] }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvedBy: uuid("approved_by"),
+  },
+  (t) => [
+    index("ai_story_animation_packages_story_idx").on(t.storyId, t.createdAt),
+    index("ai_story_animation_packages_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("ai_story_animation_packages_status_idx").on(t.status),
+    index("ai_story_animation_packages_workspace_status_idx").on(t.workspaceId, t.status),
   ]
 );
 
@@ -737,6 +885,7 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   assets: many(assets),
   assetRefs: many(campaignAssetRefs),
   storyRefs: many(campaignStoryRefs),
+  aiStories: many(aiStories),
   tasks: many(tasks),
   creatives: many(creatives),
 }));
@@ -744,6 +893,7 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
 export const assetsRelations = relations(assets, ({ many }) => ({
   storyLinks: many(storyAssets),
   campaignRefs: many(campaignAssetRefs),
+  aiStoryLinks: many(aiStoryAssetLinks),
 }));
 
 export const storiesRelations = relations(stories, ({ many }) => ({
@@ -765,6 +915,66 @@ export const campaignStoryRefsRelations = relations(campaignStoryRefs, ({ one })
   campaign: one(campaigns, { fields: [campaignStoryRefs.campaignId], references: [campaigns.id] }),
   story: one(stories, { fields: [campaignStoryRefs.storyId], references: [stories.id] }),
 }));
+
+export const aiStoriesRelations = relations(aiStories, ({ one, many }) => ({
+  campaign: one(campaigns, { fields: [aiStories.campaignId], references: [campaigns.id] }),
+  workspace: one(workspaces, { fields: [aiStories.workspaceId], references: [workspaces.id] }),
+  currentVersion: one(aiStoryVersions, {
+    fields: [aiStories.currentVersionId],
+    references: [aiStoryVersions.id],
+  }),
+  versions: many(aiStoryVersions),
+  assetLinks: many(aiStoryAssetLinks),
+  creativeContexts: many(aiStoryCreativeContexts),
+  animationPackages: many(aiStoryAnimationPackages),
+}));
+
+export const aiStoryVersionsRelations = relations(aiStoryVersions, ({ one, many }) => ({
+  story: one(aiStories, { fields: [aiStoryVersions.storyId], references: [aiStories.id] }),
+  creativeContexts: many(aiStoryCreativeContexts),
+  animationPackages: many(aiStoryAnimationPackages),
+}));
+
+export const aiStoryAssetLinksRelations = relations(aiStoryAssetLinks, ({ one }) => ({
+  story: one(aiStories, { fields: [aiStoryAssetLinks.storyId], references: [aiStories.id] }),
+  asset: one(assets, { fields: [aiStoryAssetLinks.assetId], references: [assets.id] }),
+}));
+
+export const aiStoryCreativeContextsRelations = relations(
+  aiStoryCreativeContexts,
+  ({ one }) => ({
+    campaign: one(campaigns, {
+      fields: [aiStoryCreativeContexts.campaignId],
+      references: [campaigns.id],
+    }),
+    story: one(aiStories, {
+      fields: [aiStoryCreativeContexts.storyId],
+      references: [aiStories.id],
+    }),
+    storyVersion: one(aiStoryVersions, {
+      fields: [aiStoryCreativeContexts.storyVersionId],
+      references: [aiStoryVersions.id],
+    }),
+  })
+);
+
+export const aiStoryAnimationPackagesRelations = relations(
+  aiStoryAnimationPackages,
+  ({ one }) => ({
+    campaign: one(campaigns, {
+      fields: [aiStoryAnimationPackages.campaignId],
+      references: [campaigns.id],
+    }),
+    story: one(aiStories, {
+      fields: [aiStoryAnimationPackages.storyId],
+      references: [aiStories.id],
+    }),
+    storyVersion: one(aiStoryVersions, {
+      fields: [aiStoryAnimationPackages.storyVersionId],
+      references: [aiStoryVersions.id],
+    }),
+  })
+);
 
 export const tasksRelations = relations(tasks, ({ one }) => ({
   campaign: one(campaigns, { fields: [tasks.campaignId], references: [campaigns.id] }),

@@ -42,3 +42,4 @@ export * from "./video-pipeline-contract";
 export * from "./video-understanding-pipeline";
 export * from "./composition-pipeline";
 export * from "./llm";
+export * from "./ai-story";

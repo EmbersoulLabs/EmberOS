@@ -51,6 +51,7 @@ type AssetRow = {
 };
 
 type StoryRow = { storyId: string; name: string; status: string };
+type AiStoryRow = { id: string; title: string; status: string; updatedAt?: string };
 
 export function CampaignWorkspace({
   slug,
@@ -69,6 +70,7 @@ export function CampaignWorkspace({
   const [campaign, setCampaign] = useState<CampaignRecord | null>(null);
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [stories, setStories] = useState<StoryRow[]>([]);
+  const [aiStories, setAiStories] = useState<AiStoryRow[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [generateBusy, setGenerateBusy] = useState(false);
@@ -108,6 +110,11 @@ export function CampaignWorkspace({
     });
     setSelectedAssetIds((data.assets ?? []).map((a: AssetRow) => a.id));
     setSelectedStoryIds((data.stories ?? []).map((s: StoryRow) => s.storyId));
+    const aiStoriesRes = await fetch(`/api/campaigns/${campaignId}/ai-stories`);
+    if (aiStoriesRes.ok) {
+      const aiStoriesData = await aiStoriesRes.json();
+      setAiStories(aiStoriesData.stories ?? []);
+    }
   }, [campaignId, locale]);
 
   useEffect(() => {
@@ -344,6 +351,40 @@ export function CampaignWorkspace({
                   <li className="text-ink-secondary">{t("campaign.workspace.noMedia")}</li>
                 ) : null}
               </ul>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-border bg-white p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-bold text-navy">AI Story</h2>
+                <p className="mt-1 text-xs text-ink-secondary">
+                  Create Campaign-owned story drafts, approve them for animation, then generate planning.
+                </p>
+              </div>
+              <Link
+                href={`/w/${slug}/campaigns/${campaignId}/ai-stories/new`}
+                className="rounded-xl bg-navy px-4 py-2 text-sm font-semibold text-white"
+              >
+                Create Story
+              </Link>
+            </div>
+            <div className="mt-4 space-y-2">
+              {aiStories.map((story) => (
+                <Link
+                  key={story.id}
+                  href={`/w/${slug}/campaigns/${campaignId}/ai-stories/${story.id}`}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 text-sm hover:bg-surface-muted"
+                >
+                  <span className="font-medium text-navy">{story.title}</span>
+                  <StatusBadge status={story.status} />
+                </Link>
+              ))}
+              {aiStories.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-ink-secondary">
+                  No AI Stories yet. Create Story to start the AI Story planning flow.
+                </p>
+              ) : null}
             </div>
           </section>
 
