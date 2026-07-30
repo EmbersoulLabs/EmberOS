@@ -6,10 +6,13 @@ import { getDb, schema } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
   CreativeContextSchema,
+  StoryPlanningDraftSchema,
+  isStoryPlanningDraft,
   validatePlanningConsistency,
   type AnimationPackagePayload,
   type CreativeContext,
   type NarrativeIntegrationReport,
+  type StoryPlanningDraft,
 } from "@ceo-agent/shared";
 
 type Db = ReturnType<typeof getDb>;
@@ -79,6 +82,35 @@ export async function getLatestAnimationPackageForStory(
   return animationPackage ?? null;
 }
 
+export async function savePlanningDraft(
+  db: Db,
+  input: {
+    orgId: string;
+    workspaceId: string;
+    campaignId: string;
+    storyId: string;
+    storyVersionId: string;
+    payload: StoryPlanningDraft;
+  }
+) {
+  const payload = StoryPlanningDraftSchema.parse(input.payload);
+  const [animationPackage] = await db
+    .insert(schema.aiStoryAnimationPackages)
+    .values({
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      campaignId: input.campaignId,
+      storyId: input.storyId,
+      storyVersionId: input.storyVersionId,
+      status: "generating",
+      payload,
+      consistencyReport: { consistent: false, issues: ["Planning draft incomplete"], links: [] },
+    })
+    .returning();
+  if (!animationPackage) throw new Error("Failed to save AI Story planning draft");
+  return animationPackage;
+}
+
 export async function saveAnimationPackage(
   db: Db,
   input: {
@@ -114,6 +146,49 @@ export async function saveAnimationPackage(
   return animationPackage;
 }
 
+export function readPlanningDraftFromPackage(
+  animationPackage: { payload: unknown; status: string } | null
+): StoryPlanningDraft | null {
+  if (!animationPackage) return null;
+  if (isStoryPlanningDraft(animationPackage.payload)) {
+    return StoryPlanningDraftSchema.parse(animationPackage.payload);
+  }
+  return null;
+}
+
+export function readCompleteAnimationPackage(
+  animationPackage: { payload: unknown; status: string } | null
+): AnimationPackagePayload | null {
+  if (!animationPackage) return null;
+  if (isStoryPlanningDraft(animationPackage.payload)) return null;
+  const parsed = AnimationPackagePayloadSchema.safeParse(animationPackage.payload);
+  return parsed.success ? parsed.data : null;
+}
+
+export async function getLatestCompleteAnimationPackageForStory(
+  db: Db,
+  input: { campaignId: string; storyId: string; workspaceId: string }
+) {
+  const rows = await db
+    .select()
+    .from(schema.aiStoryAnimationPackages)
+    .where(
+      and(
+        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId)
+      )
+    )
+    .orderBy(desc(schema.aiStoryAnimationPackages.createdAt))
+    .limit(20);
+  for (const row of rows) {
+    if (isStoryPlanningDraft(row.payload)) continue;
+    const parsed = AnimationPackagePayloadSchema.safeParse(row.payload);
+    if (parsed.success) return row;
+  }
+  return null;
+}
+
 export async function approveAnimationPackage(
   db: Db,
   input: {
@@ -124,9 +199,23 @@ export async function approveAnimationPackage(
     approvedBy: string;
   }
 ) {
-  const existing = await getLatestAnimationPackageForStory(db, input);
-  if (!existing || existing.id !== input.packageId) {
+  const [existing] = await db
+    .select()
+    .from(schema.aiStoryAnimationPackages)
+    .where(
+      and(
+        eq(schema.aiStoryAnimationPackages.id, input.packageId),
+        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId)
+      )
+    )
+    .limit(1);
+  if (!existing) {
     throw new Error("Animation Package not found");
+  }
+  if (isStoryPlanningDraft(existing.payload)) {
+    throw new Error("Planning draft is incomplete — assemble Animation Package first");
   }
   const payload = AnimationPackagePayloadSchema.parse(existing.payload);
   const approvedPayload: AnimationPackagePayload = {

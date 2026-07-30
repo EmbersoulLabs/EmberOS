@@ -6,7 +6,7 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 import {
   approveAnimationPackage,
-  getLatestAnimationPackageForStory,
+  getLatestCompleteAnimationPackageForStory,
 } from "@/lib/ai-story-planning-service";
 
 export async function POST(
@@ -37,13 +37,17 @@ export async function POST(
       return apiError("Story must be in planning review before approval", "VALIDATION_ERROR", 409);
     }
 
-    const animationPackage = await getLatestAnimationPackageForStory(db, {
+    const animationPackage = await getLatestCompleteAnimationPackageForStory(db, {
       campaignId,
       storyId,
       workspaceId: campaign.workspaceId,
     });
     if (!animationPackage) {
-      return apiError("Animation Package not found", "NOT_FOUND", 404);
+      return apiError(
+        "Complete Animation Package not found — finish planning stages first",
+        "NOT_FOUND",
+        404
+      );
     }
     if (animationPackage.status === "ready_for_execution") {
       return apiError("Animation Package is already approved", "ALREADY_APPROVED", 409);

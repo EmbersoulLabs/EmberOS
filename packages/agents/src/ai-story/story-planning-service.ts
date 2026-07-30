@@ -179,6 +179,13 @@ export async function generateCreativeContext(
         pacing: "string",
         emotionalJourney: "string",
         themes: ["string"],
+        dialogue: [
+          {
+            speaker: "character name",
+            line: "spoken line",
+            beatHint: "opening | conflict | climax | ending | cta",
+          },
+        ],
       },
       directorContext: {},
     },
@@ -188,6 +195,7 @@ export async function generateCreativeContext(
     [
       "You are a screenwriter preparing an AI Story for animation planning.",
       "Extract only durable creative context from the Story Draft, campaign, brand, and assets.",
+      "Include story, character, world, and narrative context with concise dialogue lines when the story needs speech.",
       "Keep directorContext as an empty object; the director stage fills Director Thinking later.",
       "Return ONLY JSON.",
     ].join(" "),

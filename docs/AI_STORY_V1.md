@@ -18,7 +18,7 @@ Last updated: 2026-07-30
 | `ai_story_versions` | Structured Story Draft versions with optional freeze metadata |
 | `ai_story_asset_links` | Campaign asset references selected for polish context |
 | `ai_story_creative_contexts` | Planning context extracted from approved Story Draft + campaign/brand context |
-| `ai_story_animation_packages` | Animation Package payload + consistency report + approval metadata |
+| `ai_story_animation_packages` | Animation Package payload + consistency report + approval metadata (also stores in-progress `planning_draft`) |
 
 Statuses:
 
@@ -27,7 +27,7 @@ Statuses:
 - `planning_review` may return to `planning`; `failed` may return to `draft`, `generating`, or `planning`.
 
 Structured Story Draft schema: `@ceo-agent/shared` (`AiStoryStructuredDraftSchema`).
-Planning schemas: `CreativeContextSchema`, `DirectorThinkingSchema`, `StoryBeatSchema`, `ScenePlanItemSchema`, `ShotPlanItemSchema`, `AnimationPackagePayloadSchema`.
+Planning schemas: `CreativeContextSchema`, `DirectorThinkingSchema`, `StoryBeatSchema`, `ScenePlanItemSchema`, `ShotPlanItemSchema`, `StoryPlanningDraftSchema`, `AnimationPackagePayloadSchema`.
 
 ## API routes
 
@@ -40,28 +40,31 @@ All routes require Supabase JWT and workspace membership via `requireWorkspaceRo
 | GET | `/api/campaigns/:id/ai-stories/:storyId` | client_viewer+ | Read story + versions |
 | PATCH | `/api/campaigns/:id/ai-stories/:storyId` | operator+ | Edit draft (creates new version) |
 | POST | `/api/campaigns/:id/ai-stories/:storyId/generate` | operator+ | AI polish → Story Draft |
+| POST | `/api/campaigns/:id/ai-stories/:storyId/rewrite` | operator+ | AI rewrite of current Story Draft |
 | POST | `/api/campaigns/:id/ai-stories/:storyId/approve` | operator+ | Approve + freeze → ready_for_animation |
-| GET | `/api/campaigns/:id/ai-stories/:storyId/planning` | client_viewer+ | Read latest Creative Context + Animation Package |
+| POST | `/api/campaigns/:id/ai-stories/:storyId/screenwriter` | operator+ | Characters / dialogue / narrative → Creative Context |
+| GET | `/api/campaigns/:id/ai-stories/:storyId/planning` | client_viewer+ | Read Creative Context + planning draft / Animation Package |
 | POST | `/api/campaigns/:id/ai-stories/:storyId/planning/generate` | operator+ | Run full planning pipeline → planning_review |
+| POST | `/api/campaigns/:id/ai-stories/:storyId/planning/stages/:stage` | operator+ | Run one planning stage (`creative_context` … `animation_package`) |
 | POST | `/api/campaigns/:id/ai-stories/:storyId/planning/approve` | operator+ | Approve Animation Package → ready_for_execution |
 
 ## UI entrypoints
 
 - Campaign Workspace overview: **Create Story** (alongside existing Marketing generate).
 - `/w/:slug/campaigns/:id/ai-stories/new` — plain-language idea + optional assets.
-- `/w/:slug/campaigns/:id/ai-stories/:storyId` — review, edit, approve, Ready for Animation display, Generate Planning, Animation Package review, and Ready for Execution display.
+- `/w/:slug/campaigns/:id/ai-stories/:storyId` — review, rewrite, approve, per-stage planning CTAs, Animation Package review, Ready for Execution.
 
-## AI polish service
+## AI polish / screenwriter
 
-- Package: `@ceo-agent/agents` → `polishAiStoryDraft()`.
-- Provider-neutral interface; current implementation uses existing JSON LLM helper.
-- Validates structured output strictly; missing optional Business Profile / Campaign context yields user-facing warnings only.
+- Package: `@ceo-agent/agents` → `polishAiStoryDraft()`, `rewriteAiStoryDraft()`, `generateStoryCharacters()`, `generateStoryDialogue()`, `generateStoryNarrative()`.
+- Provider-neutral JSON LLM helper; outputs validated with shared Zod schemas.
+- Screenwriter character / dialogue / narrative results persist into `ai_story_creative_contexts`.
 
 ## AI planning service
 
-- Package: `@ceo-agent/agents` → `runFullStoryPlanningPipeline()`.
-- Uses the existing provider-neutral `callJsonModel` helper and validates every stage with shared Zod schemas.
-- Stage order is fixed:
+- Package: `@ceo-agent/agents` → stage generators + `runFullStoryPlanningPipeline()` + `buildAnimationPackage()`.
+- Web runner: `runSinglePlanningStage()` persists progressive `StoryPlanningDraft` rows, then a complete Animation Package on `animation_package`.
+- Stage order (`STORY_PLANNING_STAGE_ORDER`):
   1. Creative Context
   2. Director Thinking
   3. Story Beats
@@ -70,8 +73,8 @@ All routes require Supabase JWT and workspace membership via `requireWorkspaceRo
   6. Character Continuity
   7. World Continuity
   8. Animation Package assembly
-- `validatePlanningConsistency()` checks beat coverage, scene-to-shot coverage, character continuity names/ids, and non-empty world continuity. The report is saved with the package for human review.
-- The package status moves from `review` to `ready_for_execution` only through the planning approval route.
+- `validatePlanningConsistency()` checks beat coverage, scene-to-shot coverage, character continuity names/ids, and non-empty world continuity.
+- Package status moves from `review` to `ready_for_execution` only through the planning approval route.
 
 ## Database apply
 
@@ -85,13 +88,12 @@ Requires `DATABASE_URL` in `.env.local` or `apps/worker/.env`.
 ## Tests
 
 ```bash
-pnpm test tests/ai-story-vertical-slice.test.ts tests/ai-story-planning.test.ts
+pnpm test tests/ai-story-vertical-slice.test.ts tests/ai-story-planning.test.ts tests/ai-story-planning-pipeline.test.ts tests/ai-story-screenwriter.test.ts
+pnpm e2e:ai-story-planning
 ```
 
 ## Not implemented (planned)
 
-- Character profiles
 - Archive API (status model supports `archived`; dedicated endpoint optional)
-- Provider execution pipeline integration for Story polish (direct LLM call in V1 slice)
-- Provider execution from Animation Package
+- Provider execution from Animation Package (Sprint 3)
 - Video rendering, billing, and finalization for AI Story animation

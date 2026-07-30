@@ -169,6 +169,18 @@ describe("AI Story vertical slice (V1)", () => {
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/approve/route.ts",
       "utf8"
     );
+    const planningStageRoute = readFileSync(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/stages/[stage]/route.ts",
+      "utf8"
+    );
+    const rewriteRoute = readFileSync(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/rewrite/route.ts",
+      "utf8"
+    );
+    const screenwriterRoute = readFileSync(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/screenwriter/route.ts",
+      "utf8"
+    );
 
     it("requires authentication and workspace role on all routes", () => {
       for (const source of [
@@ -178,6 +190,9 @@ describe("AI Story vertical slice (V1)", () => {
         approveRoute,
         planningGenerateRoute,
         planningApproveRoute,
+        planningStageRoute,
+        rewriteRoute,
+        screenwriterRoute,
       ]) {
         expect(source).toContain("requireAuth");
         expect(source).toContain("requireWorkspaceRole");
@@ -193,6 +208,9 @@ describe("AI Story vertical slice (V1)", () => {
       expect(approveRoute).toContain("loadCampaignAiStory");
       expect(planningGenerateRoute).toContain("loadCampaignAiStory");
       expect(planningApproveRoute).toContain("loadCampaignAiStory");
+      expect(planningStageRoute).toContain("runSinglePlanningStage");
+      expect(rewriteRoute).toContain("loadCampaignAiStory");
+      expect(screenwriterRoute).toContain("saveCreativeContext");
     });
 
     it("validates campaign assets belong to the campaign and workspace", () => {
@@ -212,11 +230,30 @@ describe("AI Story vertical slice (V1)", () => {
       expect(generateRoute).not.toMatch(/openai/i);
     });
 
+    it("rewrite uses provider-neutral screenwriter rewrite", () => {
+      expect(rewriteRoute).toContain("rewriteAiStoryDraft");
+      expect(rewriteRoute).not.toMatch(/openai/i);
+    });
+
+    it("screenwriter persists characters dialogue narrative into Creative Context", () => {
+      expect(screenwriterRoute).toContain("generateStoryCharacters");
+      expect(screenwriterRoute).toContain("generateStoryDialogue");
+      expect(screenwriterRoute).toContain("generateStoryNarrative");
+      expect(screenwriterRoute).toContain("saveCreativeContext");
+      expect(screenwriterRoute).not.toMatch(/openai/i);
+    });
+
     it("planning generate uses provider-neutral planning service", () => {
       expect(planningGenerateRoute).toContain("runFullStoryPlanningPipeline");
       expect(planningGenerateRoute).toContain('"ready_for_animation"');
       expect(planningGenerateRoute).toContain('"planning_review"');
       expect(planningGenerateRoute).not.toMatch(/openai/i);
+    });
+
+    it("planning stages route runs ordered stage runner", () => {
+      expect(planningStageRoute).toContain("STORY_PLANNING_STAGE_ORDER");
+      expect(planningStageRoute).toContain("runSinglePlanningStage");
+      expect(planningStageRoute).not.toMatch(/openai/i);
     });
   });
 
@@ -310,7 +347,10 @@ describe("AI Story vertical slice (V1)", () => {
       expect(reviewPage).toContain("ready_for_animation");
       expect(reviewPage).toContain("Ready for Animation");
       expect(reviewPage).toContain("Save edits");
-      expect(reviewPage).toContain("Generate Planning");
+      expect(reviewPage).toContain("Generate All Planning");
+      expect(reviewPage).toContain("Generate Creative Context");
+      expect(reviewPage).toContain("Generate Director Thinking");
+      expect(reviewPage).toContain("Rewrite Story");
       expect(reviewPage).toContain("Animation Package");
       expect(reviewPage).toContain("READY FOR EXECUTION");
     });

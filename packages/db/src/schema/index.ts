@@ -415,7 +415,10 @@ export const aiStoryAnimationPackages = pgTable(
       .references(() => aiStoryVersions.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("generating"),
     payload: jsonb("payload")
-      .$type<import("@ceo-agent/shared").AnimationPackagePayload>()
+      .$type<
+        | import("@ceo-agent/shared").AnimationPackagePayload
+        | import("@ceo-agent/shared").StoryPlanningDraft
+      >()
       .notNull(),
     consistencyReport: jsonb("consistency_report")
       .$type<import("@ceo-agent/shared").NarrativeIntegrationReport>()

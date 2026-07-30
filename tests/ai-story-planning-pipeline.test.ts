@@ -47,6 +47,13 @@ describe("AI Story planning pipeline assembly", () => {
                 pacing: "Quick",
                 emotionalJourney: "Concern to relief",
                 themes: ["thoughtfulness"],
+                dialogue: [
+                  {
+                    speaker: "Hero",
+                    line: "This gift will land.",
+                    beatHint: "climax",
+                  },
+                ],
               },
               directorContext: {},
             },

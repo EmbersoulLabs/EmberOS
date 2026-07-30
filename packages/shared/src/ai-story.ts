@@ -191,6 +191,15 @@ export const CreativeContextSchema = z.object({
     pacing: z.string().default(""),
     emotionalJourney: z.string().default(""),
     themes: z.array(z.string()).default([]),
+    dialogue: z
+      .array(
+        z.object({
+          speaker: NonEmptyTextSchema,
+          line: NonEmptyTextSchema,
+          beatHint: z.string().default(""),
+        })
+      )
+      .default([]),
   }),
   directorContext: z.record(z.unknown()).default({}),
 });
@@ -295,6 +304,59 @@ export const PlanningUsageSchema = z.object({
 });
 
 export type PlanningUsage = z.infer<typeof PlanningUsageSchema>;
+
+export type StoryPlanningStage = (typeof STORY_PLANNING_STAGE_ORDER)[number];
+
+/** In-progress Animation Package built stage-by-stage (status generating). */
+export const StoryPlanningDraftSchema = z.object({
+  kind: z.literal("planning_draft"),
+  completedStages: z.array(z.enum(STORY_PLANNING_STAGE_ORDER)).default([]),
+  story: AiStoryStructuredDraftSchema,
+  creativeContext: CreativeContextSchema.optional(),
+  directorThinking: DirectorThinkingSchema.optional(),
+  storyBeats: z.array(StoryBeatSchema).optional(),
+  scenePlan: z.array(ScenePlanItemSchema).optional(),
+  shotPlan: z.array(ShotPlanItemSchema).optional(),
+  characterContinuity: z.array(CharacterContinuityEntrySchema).optional(),
+  worldContinuity: WorldContinuitySchema.optional(),
+  usage: PlanningUsageSchema.optional(),
+});
+
+export type StoryPlanningDraft = z.infer<typeof StoryPlanningDraftSchema>;
+
+export function isStoryPlanningDraft(value: unknown): value is StoryPlanningDraft {
+  return StoryPlanningDraftSchema.safeParse(value).success;
+}
+
+export function nextRequiredPlanningStage(
+  completed: readonly StoryPlanningStage[]
+): StoryPlanningStage | null {
+  for (const stage of STORY_PLANNING_STAGE_ORDER) {
+    if (!completed.includes(stage)) return stage;
+  }
+  return null;
+}
+
+export function prunePlanningDraftAfterStage(
+  draft: StoryPlanningDraft,
+  stage: StoryPlanningStage
+): StoryPlanningDraft {
+  const stageIndex = STORY_PLANNING_STAGE_ORDER.indexOf(stage);
+  const keep = new Set(STORY_PLANNING_STAGE_ORDER.slice(0, stageIndex));
+  return {
+    ...draft,
+    completedStages: draft.completedStages.filter((s) => keep.has(s)),
+    creativeContext: keep.has("creative_context") ? draft.creativeContext : undefined,
+    directorThinking: keep.has("director_thinking") ? draft.directorThinking : undefined,
+    storyBeats: keep.has("story_beats") ? draft.storyBeats : undefined,
+    scenePlan: keep.has("scene_plan") ? draft.scenePlan : undefined,
+    shotPlan: keep.has("shot_plan") ? draft.shotPlan : undefined,
+    characterContinuity: keep.has("character_continuity")
+      ? draft.characterContinuity
+      : undefined,
+    worldContinuity: keep.has("world_continuity") ? draft.worldContinuity : undefined,
+  };
+}
 
 export const AnimationPackagePayloadSchema = z.object({
   story: AiStoryStructuredDraftSchema,

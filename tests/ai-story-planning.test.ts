@@ -4,6 +4,8 @@ import {
   CreativeContextSchema,
   DirectorThinkingSchema,
   STORY_PLANNING_STAGE_ORDER,
+  StoryPlanningDraftSchema,
+  prunePlanningDraftAfterStage,
   validatePlanningConsistency,
   type AnimationPackagePayload,
 } from "@ceo-agent/shared";
@@ -220,5 +222,38 @@ describe("AI Story planning domain", () => {
       "world_continuity",
       "animation_package",
     ]);
+  });
+
+  it("prunes later stages when regenerating an earlier stage", () => {
+    const draft = StoryPlanningDraftSchema.parse({
+      kind: "planning_draft",
+      completedStages: [
+        "creative_context",
+        "director_thinking",
+        "story_beats",
+        "scene_plan",
+      ],
+      story: samplePackage().story,
+      creativeContext: samplePackage().creativeContext,
+      directorThinking: samplePackage().directorThinking,
+      storyBeats: samplePackage().storyBeats,
+      scenePlan: samplePackage().scenePlan,
+    });
+    const pruned = prunePlanningDraftAfterStage(draft, "story_beats");
+    expect(pruned.completedStages).toEqual(["creative_context", "director_thinking"]);
+    expect(pruned.storyBeats).toBeUndefined();
+    expect(pruned.scenePlan).toBeUndefined();
+    expect(pruned.directorThinking).toBeDefined();
+  });
+
+  it("accepts narrative dialogue inside Creative Context", () => {
+    const parsed = CreativeContextSchema.parse({
+      ...samplePackage().creativeContext,
+      narrativeContext: {
+        ...samplePackage().creativeContext.narrativeContext,
+        dialogue: [{ speaker: "Hero", line: "This is perfect.", beatHint: "climax" }],
+      },
+    });
+    expect(parsed.narrativeContext.dialogue?.[0]?.speaker).toBe("Hero");
   });
 });

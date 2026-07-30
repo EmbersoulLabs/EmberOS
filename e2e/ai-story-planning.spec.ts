@@ -114,7 +114,13 @@ test.describe("AI Story planning Sprint 2 (browser E2E)", () => {
     await page.getByRole("button", { name: /Approve & freeze/i }).click();
     await expect(page.getByText(/Ready for Animation/i)).toBeVisible({ timeout: 120_000 });
 
-    await page.getByRole("button", { name: /Generate Planning/i }).click();
+    await expect(page.getByRole("button", { name: /Generate Creative Context/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Generate Director Thinking/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Generate Story Beats/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Generate Scene Plan/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Generate Shot Plan/i })).toBeVisible();
+
+    await page.getByRole("button", { name: /Generate All Planning/i }).click();
     await expect(page.getByText(/Animation Package/i)).toBeVisible({ timeout: 600_000 });
     await expect(page.getByText(/Director Thinking/i)).toBeVisible();
     await expect(page.getByText(/Narrative Integration/i)).toBeVisible();

@@ -6,7 +6,10 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
 import {
   getLatestAnimationPackageForStory,
+  getLatestCompleteAnimationPackageForStory,
   loadLatestCreativeContextForStory,
+  readCompleteAnimationPackage,
+  readPlanningDraftFromPackage,
 } from "@/lib/ai-story-planning-service";
 
 export async function GET(
@@ -32,13 +35,18 @@ export async function GET(
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
 
-    const [creativeContext, animationPackage] = await Promise.all([
+    const [creativeContext, animationPackage, completeRow] = await Promise.all([
       loadLatestCreativeContextForStory(db, {
         campaignId,
         storyId,
         workspaceId: campaign.workspaceId,
       }),
       getLatestAnimationPackageForStory(db, {
+        campaignId,
+        storyId,
+        workspaceId: campaign.workspaceId,
+      }),
+      getLatestCompleteAnimationPackageForStory(db, {
         campaignId,
         storyId,
         workspaceId: campaign.workspaceId,
@@ -50,6 +58,11 @@ export async function GET(
       currentVersion: loaded.currentVersion,
       creativeContext,
       animationPackage,
+      planningDraft: readPlanningDraftFromPackage(animationPackage),
+      completePackage:
+        readCompleteAnimationPackage(animationPackage) ??
+        readCompleteAnimationPackage(completeRow),
+      completeAnimationPackageRow: completeRow,
     });
   } catch (error) {
     return handleApiError(error);

@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, StatusBadge } from "@/components/AppShell";
-import type {
-  AnimationPackagePayload,
-  AiStoryStructuredDraft,
-  CreativeContext,
+import {
+  STORY_PLANNING_STAGE_ORDER,
+  type AnimationPackagePayload,
+  type AiStoryStructuredDraft,
+  type CreativeContext,
+  type StoryPlanningDraft,
+  type StoryPlanningStage,
 } from "@ceo-agent/shared";
 
 const EMPTY_DRAFT: AiStoryStructuredDraft = {
@@ -24,6 +27,17 @@ const EMPTY_DRAFT: AiStoryStructuredDraft = {
   warnings: [],
 };
 
+const STAGE_LABELS: Record<StoryPlanningStage, string> = {
+  creative_context: "Generate Creative Context",
+  director_thinking: "Generate Director Thinking",
+  story_beats: "Generate Story Beats",
+  scene_plan: "Generate Scene Plan",
+  shot_plan: "Generate Shot Plan",
+  character_continuity: "Generate Character Continuity",
+  world_continuity: "Generate World Continuity",
+  animation_package: "Assemble Animation Package",
+};
+
 export default function AiStoryReviewPage() {
   const params = useParams();
   const slug = params.slug as string;
@@ -36,8 +50,10 @@ export default function AiStoryReviewPage() {
   const [creativeContext, setCreativeContext] = useState<CreativeContext | null>(null);
   const [animationPackage, setAnimationPackage] =
     useState<AnimationPackagePayload | null>(null);
+  const [planningDraft, setPlanningDraft] = useState<StoryPlanningDraft | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [busyStage, setBusyStage] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -54,7 +70,7 @@ export default function AiStoryReviewPage() {
     if (content) setDraft(content);
     setWarnings(content?.warnings ?? []);
     if (
-      ["planning_review", "ready_for_execution", "planning", "failed"].includes(
+      ["planning_review", "ready_for_execution", "planning", "ready_for_animation", "failed"].includes(
         data.story.status
       )
     ) {
@@ -66,14 +82,21 @@ export default function AiStoryReviewPage() {
         setCreativeContext(
           (planningData.creativeContext?.payload as CreativeContext | undefined) ?? null
         );
+        setPlanningDraft(
+          (planningData.planningDraft as StoryPlanningDraft | undefined) ?? null
+        );
         setAnimationPackage(
-          (planningData.animationPackage?.payload as AnimationPackagePayload | undefined) ??
-            null
+          (planningData.completePackage as AnimationPackagePayload | undefined) ??
+            (planningData.animationPackage?.payload &&
+            !("kind" in (planningData.animationPackage.payload as object))
+              ? (planningData.animationPackage.payload as AnimationPackagePayload)
+              : null)
         );
       }
     } else {
       setCreativeContext(null);
       setAnimationPackage(null);
+      setPlanningDraft(null);
     }
     setLoading(false);
   }, [campaignId, storyId]);
@@ -81,6 +104,11 @@ export default function AiStoryReviewPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const completedStages = useMemo(
+    () => new Set(planningDraft?.completedStages ?? []),
+    [planningDraft]
+  );
 
   async function saveDraft() {
     setBusy(true);
@@ -121,6 +149,28 @@ export default function AiStoryReviewPage() {
     }
   }
 
+  async function rewriteStory() {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `/api/campaigns/${campaignId}/ai-stories/${storyId}/rewrite`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Rewrite failed");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rewrite failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function generatePlanning() {
     setBusy(true);
     setError("");
@@ -135,6 +185,49 @@ export default function AiStoryReviewPage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Planning generation failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runStage(stage: StoryPlanningStage) {
+    setBusy(true);
+    setBusyStage(stage);
+    setError("");
+    try {
+      const res = await fetch(
+        `/api/campaigns/${campaignId}/ai-stories/${storyId}/planning/stages/${stage}`,
+        { method: "POST" }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `Stage ${stage} failed`);
+      setStatus(data.status ?? status);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Stage ${stage} failed`);
+    } finally {
+      setBusy(false);
+      setBusyStage(null);
+    }
+  }
+
+  async function runScreenwriter(action: "characters" | "dialogue" | "narrative") {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `/api/campaigns/${campaignId}/ai-stories/${storyId}/screenwriter`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `Screenwriter ${action} failed`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Screenwriter ${action} failed`);
     } finally {
       setBusy(false);
     }
@@ -159,6 +252,13 @@ export default function AiStoryReviewPage() {
     }
   }
 
+  function stageEnabled(stage: StoryPlanningStage): boolean {
+    const index = STORY_PLANNING_STAGE_ORDER.indexOf(stage);
+    if (index === 0) return true;
+    const prior = STORY_PLANNING_STAGE_ORDER[index - 1]!;
+    return completedStages.has(prior) || Boolean(creativeContext && stage === "director_thinking");
+  }
+
   if (loading) {
     return (
       <AppShell>
@@ -173,6 +273,13 @@ export default function AiStoryReviewPage() {
     "planning_review",
     "ready_for_execution",
     "archived",
+  ].includes(status);
+
+  const planningActive = [
+    "ready_for_animation",
+    "planning",
+    "planning_review",
+    "failed",
   ].includes(status);
 
   return (
@@ -193,13 +300,13 @@ export default function AiStoryReviewPage() {
 
         {status === "ready_for_animation" ? (
           <div className="rounded-xl border border-brand-teal/30 bg-brand-teal/5 p-4 text-sm text-brand-teal">
-            Ready for Animation — version frozen. Generate planning to create the Animation Package.
+            Ready for Animation — version frozen. Generate planning stages to create the Animation Package.
           </div>
         ) : null}
 
         {status === "planning" ? (
           <div className="rounded-xl border border-brand-blue/30 bg-brand-blue/5 p-4 text-sm text-brand-blue">
-            Planning in progress — building Creative Context, Director Thinking, Beats, Scenes, Shots, and Continuity.
+            Planning in progress — run each stage or Generate All Planning.
           </div>
         ) : null}
 
@@ -273,6 +380,14 @@ export default function AiStoryReviewPage() {
             <button
               type="button"
               disabled={busy || status === "generating"}
+              onClick={() => void rewriteStory()}
+              className="rounded-lg border border-border px-4 py-2 text-sm font-medium"
+            >
+              {busy ? "Rewriting…" : "Rewrite Story"}
+            </button>
+            <button
+              type="button"
+              disabled={busy || status === "generating"}
               onClick={() => void approve()}
               className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
             >
@@ -281,20 +396,107 @@ export default function AiStoryReviewPage() {
           </div>
         ) : null}
 
-        {status === "ready_for_animation" ? (
-          <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void generatePlanning()}
-              className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-            >
-              {busy ? "Generating Planning…" : "Generate Planning"}
-            </button>
-          </div>
+        {planningActive ? (
+          <section className="space-y-4 rounded-2xl border border-border bg-white p-5">
+            <div>
+              <h2 className="text-lg font-bold text-navy">Story Planning</h2>
+              <p className="mt-1 text-sm text-ink-secondary">
+                Run stages in order, or generate the full Animation Package at once. No provider execution.
+              </p>
+            </div>
+
+            {status !== "planning_review" && status !== "ready_for_execution" ? (
+              <div className="flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void generatePlanning()}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                >
+                  {busy && !busyStage ? "Generating Planning…" : "Generate All Planning"}
+                </button>
+              </div>
+            ) : null}
+
+            <div className="grid gap-2">
+              {STORY_PLANNING_STAGE_ORDER.map((stage) => {
+                const done = completedStages.has(stage) ||
+                  (stage === "animation_package" && Boolean(animationPackage));
+                const enabled = stageEnabled(stage);
+                return (
+                  <div
+                    key={stage}
+                    className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 last:border-0"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-navy">{STAGE_LABELS[stage]}</p>
+                      <p className="text-xs text-ink-secondary">
+                        {done ? "Complete" : enabled ? "Ready" : "Waiting on prior stage"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busy || !enabled || status === "ready_for_execution"}
+                      onClick={() => void runStage(stage)}
+                      className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                    >
+                      {busyStage === stage
+                        ? "Running…"
+                        : done
+                          ? `Regenerate ${STAGE_LABELS[stage].replace(/^Generate |^Assemble /, "")}`
+                          : STAGE_LABELS[stage]}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap gap-3 border-t border-border pt-4">
+              <button
+                type="button"
+                disabled={busy || status === "ready_for_execution"}
+                onClick={() => void runScreenwriter("characters")}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm"
+              >
+                Generate Characters
+              </button>
+              <button
+                type="button"
+                disabled={busy || status === "ready_for_execution"}
+                onClick={() => void runScreenwriter("dialogue")}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm"
+              >
+                Generate Dialogue
+              </button>
+              <button
+                type="button"
+                disabled={busy || status === "ready_for_execution"}
+                onClick={() => void runScreenwriter("narrative")}
+                className="rounded-lg border border-border px-3 py-1.5 text-sm"
+              >
+                Generate Narrative
+              </button>
+            </div>
+
+            {creativeContext ? (
+              <PackageSection title="Creative Context" value={creativeContext} />
+            ) : null}
+            {planningDraft ? (
+              <PackageSection
+                title="Planning Draft Progress"
+                value={{
+                  completedStages: planningDraft.completedStages,
+                  beats: planningDraft.storyBeats?.length ?? 0,
+                  scenes: planningDraft.scenePlan?.length ?? 0,
+                  shots: planningDraft.shotPlan?.length ?? 0,
+                }}
+              />
+            ) : null}
+          </section>
         ) : null}
 
-        {status === "planning_review" && animationPackage ? (
+        {(status === "planning_review" || status === "ready_for_execution") &&
+        animationPackage ? (
           <section className="space-y-4 rounded-2xl border border-border bg-white p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
@@ -303,14 +505,16 @@ export default function AiStoryReviewPage() {
                   Review Director Thinking, Beats, Scenes, Shots, Continuity, and Narrative Integration before execution readiness.
                 </p>
               </div>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void approvePlanning()}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-              >
-                {busy ? "Approving…" : "Approve Planning"}
-              </button>
+              {status === "planning_review" ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void approvePlanning()}
+                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+                >
+                  {busy ? "Approving…" : "Approve Planning"}
+                </button>
+              ) : null}
             </div>
 
             <PackageSection title="Director Thinking" value={animationPackage.directorThinking} />
