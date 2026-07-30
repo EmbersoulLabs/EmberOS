@@ -517,6 +517,118 @@ export const reviews = pgTable(
   (t) => [index("reviews_creative_idx").on(t.creativeId)]
 );
 
+/** Sprint 3 — Execution Job for an approved Animation Package. */
+export const aiStoryExecutionJobs = pgTable(
+  "ai_story_execution_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("queued"),
+    mediaKind: text("media_kind").notNull().default("video"),
+    capabilityId: text("capability_id").notNull(),
+    targetOutputCount: integer("target_output_count").notNull().default(5),
+    selectedOutputCount: integer("selected_output_count"),
+    progress: jsonb("progress")
+      .$type<import("@ceo-agent/shared").AiStoryExecutionProgress>()
+      .notNull()
+      .default({
+        phase: "queued",
+        percent: 0,
+        message: "",
+        completedOutputs: 0,
+        targetOutputs: 5,
+        providerAttempts: 0,
+      }),
+    generateReview: jsonb("generate_review")
+      .$type<import("@ceo-agent/shared").GenerateReviewEstimate | null>()
+      .default(null),
+    promptPackage: jsonb("prompt_package")
+      .$type<import("@ceo-agent/shared").PromptBuilderPackage | null>()
+      .default(null),
+    providerExecutionIds: jsonb("provider_execution_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    errorMessage: text("error_message"),
+    retryCount: integer("retry_count").notNull().default(0),
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+    createdBy: uuid("created_by"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_execution_jobs_story_idx").on(t.storyId, t.createdAt),
+    index("ai_story_execution_jobs_workspace_idx").on(t.workspaceId, t.status),
+    index("ai_story_execution_jobs_status_idx").on(t.status, t.createdAt),
+  ]
+);
+
+export const aiStoryMarketingOutputs = pgTable(
+  "ai_story_marketing_outputs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    executionJobId: uuid("execution_job_id")
+      .notNull()
+      .references(() => aiStoryExecutionJobs.id, { onDelete: "cascade" }),
+    creativeId: uuid("creative_id").references(() => creatives.id, {
+      onDelete: "set null",
+    }),
+    mediaKind: text("media_kind").notNull().default("video"),
+    status: text("status").notNull().default("draft"),
+    title: text("title").notNull(),
+    outputIndex: integer("output_index").notNull().default(0),
+    storagePath: text("storage_path"),
+    thumbnailPath: text("thumbnail_path"),
+    subtitlePath: text("subtitle_path"),
+    caption: text("caption").notNull().default(""),
+    hashtags: jsonb("hashtags").$type<string[]>().notNull().default([]),
+    prompt: text("prompt"),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
+    providerId: text("provider_id"),
+    providerExecutionId: text("provider_execution_id"),
+    qualityScore: numeric("quality_score"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_marketing_outputs_job_idx").on(t.executionJobId, t.outputIndex),
+    index("ai_story_marketing_outputs_workspace_idx").on(t.workspaceId, t.status),
+    unique("ai_story_marketing_outputs_job_index_unique").on(
+      t.executionJobId,
+      t.outputIndex
+    ),
+  ]
+);
+
 export const clientInvites = pgTable(
   "client_invites",
   {

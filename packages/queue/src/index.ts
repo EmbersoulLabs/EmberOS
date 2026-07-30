@@ -77,6 +77,19 @@ export async function enqueuePipeline(taskId: string, campaignId: string, worksp
   );
 }
 
+export async function enqueueStoryExecution(input: {
+  executionJobId: string;
+  storyId: string;
+  campaignId: string;
+  workspaceId: string;
+  orgId: string;
+}) {
+  const queue = agentQueue();
+  return queue.add("agent.story_execution", input, {
+    jobId: `story-execution-${input.executionJobId}`,
+  });
+}
+
 export async function enqueueRender(
   data: {
     taskId: string;

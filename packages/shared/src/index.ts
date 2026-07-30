@@ -56,3 +56,5 @@ export * from "./provider-reliability-contracts";
 export * from "./provider-execution-envelope";
 export * from "./provider-execution-dispatch";
 export * from "./ai-story";
+export * from "./ai-story-execution";
+export * from "./marketing-output-strategy";

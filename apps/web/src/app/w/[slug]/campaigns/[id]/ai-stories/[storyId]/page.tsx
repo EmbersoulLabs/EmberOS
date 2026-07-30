@@ -312,8 +312,24 @@ export default function AiStoryReviewPage() {
 
         {status === "ready_for_execution" ? (
           <div className="rounded-xl border border-brand-teal/30 bg-brand-teal/5 p-4 text-sm font-semibold text-brand-teal">
-            Animation Package READY FOR EXECUTION. Provider execution is intentionally not part of this sprint.
+            Animation Package READY FOR EXECUTION. Open Generate Review, then confirm Execute to produce Marketing Outputs.
           </div>
+        ) : null}
+
+        {status === "ready_for_execution" ||
+        status === "generate_review" ||
+        status === "executing" ||
+        status === "execution_review" ||
+        status === "execution_failed" ? (
+          <ExecutionPanel
+            campaignId={campaignId}
+            storyId={storyId}
+            status={status}
+            busy={busy}
+            setBusy={setBusy}
+            setError={setError}
+            onDone={load}
+          />
         ) : null}
 
         {warnings.length > 0 ? (
@@ -548,5 +564,213 @@ function PackageSection({ title, value }: { title: string; value: unknown }) {
         {JSON.stringify(value, null, 2)}
       </pre>
     </div>
+  );
+}
+
+function ExecutionPanel({
+  campaignId,
+  storyId,
+  status,
+  busy,
+  setBusy,
+  setError,
+  onDone,
+}: {
+  campaignId: string;
+  storyId: string;
+  status: string;
+  busy: boolean;
+  setBusy: (v: boolean) => void;
+  setError: (v: string) => void;
+  onDone: () => Promise<void>;
+}) {
+  const [estimate, setEstimate] = useState<unknown>(null);
+  const [outputs, setOutputs] = useState<unknown[]>([]);
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  async function refreshStatus() {
+    const res = await fetch(
+      `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/status`
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+    setJobId(data.executionJob?.id ?? null);
+    setOutputs(data.outputs ?? []);
+  }
+
+  useEffect(() => {
+    void refreshStatus();
+  }, [campaignId, storyId, status]);
+
+  async function generateReview() {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/review`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mediaKind: "video" }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Generate Review failed");
+      setEstimate(data.estimate);
+      await onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Generate Review failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function execute() {
+    setBusy(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirm: true, mediaKind: "video" }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Execute failed");
+      setJobId(data.executionJobId ?? null);
+      await onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Execute failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancel() {
+    if (!jobId) return;
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/${jobId}/cancel`,
+        { method: "POST" }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Cancel failed");
+      await onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cancel failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportApproved() {
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/export`,
+        { method: "POST" }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Export failed");
+      await onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function regenerateOne(outputId: string) {
+    if (!jobId) return;
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/${jobId}/regenerate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ outputId }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Regenerate failed");
+      await refreshStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Regenerate failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="space-y-4 rounded-2xl border border-border bg-white p-5">
+      <div>
+        <h2 className="text-lg font-bold text-navy">Execution Engine</h2>
+        <p className="mt-1 text-sm text-ink-secondary">
+          Generate Review → Execute → Review Marketing Outputs → Export approved only. Provider is selected by capability routing.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        <button
+          type="button"
+          disabled={busy || status === "executing"}
+          onClick={() => void generateReview()}
+          className="rounded-lg border border-border px-3 py-1.5 text-sm"
+        >
+          Generate Review
+        </button>
+        <button
+          type="button"
+          disabled={busy || status === "executing"}
+          onClick={() => void execute()}
+          className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
+        >
+          Confirm Execute
+        </button>
+        <button
+          type="button"
+          disabled={busy || !jobId || status !== "executing"}
+          onClick={() => void cancel()}
+          className="rounded-lg border border-border px-3 py-1.5 text-sm"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={busy || status !== "execution_review"}
+          onClick={() => void exportApproved()}
+          className="rounded-lg border border-border px-3 py-1.5 text-sm"
+        >
+          Export Approved
+        </button>
+      </div>
+      {estimate ? <PackageSection title="Generate Review Estimate" value={estimate} /> : null}
+      {outputs.length > 0 ? (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold text-navy">Marketing Outputs</h3>
+          {(outputs as Array<{ id: string; title: string; status: string }>).map((output) => (
+            <div
+              key={output.id}
+              className="flex flex-wrap items-center justify-between gap-2 border-b border-border py-2 text-sm"
+            >
+              <span>
+                {output.title} · {output.status}
+              </span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void regenerateOne(output.id)}
+                className="rounded border border-border px-2 py-1 text-xs"
+              >
+                Regenerate One
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }

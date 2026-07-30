@@ -190,6 +190,13 @@ export function startWorkers() {
           console.log(`[agent.pipeline] finished task=${taskId}`);
         }
       }
+      if (job.name === "agent.story_execution") {
+        const { executionJobId } = job.data as { executionJobId: string };
+        console.log(`[agent.story_execution] start job=${executionJobId}`);
+        const { runExecutionJob } = await import("@ceo-agent/agents");
+        await runExecutionJob(executionJobId);
+        console.log(`[agent.story_execution] finished job=${executionJobId}`);
+      }
     },
     { connection, prefix, concurrency, lockDuration: agentLockMs, ...workerOpts }
   );
@@ -566,7 +573,27 @@ export function startWorkers() {
   exportWorker.on("failed", (job, err) => console.error(`Export job ${job?.id} failed:`, err));
 
   console.log(
-    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export`
+    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, provider-execution-loop`
   );
+
+  // Production provider outbox cycle (capability-driven dispatch). No-op when empty.
+  const providerLoopMs = parseInt(process.env.PROVIDER_EXECUTION_POLL_MS ?? "5000", 10);
+  const providerLoop = setInterval(() => {
+    void (async () => {
+      try {
+        const { dispatchNextProviderExecution } = await import(
+          "../provider-execution-dispatch-entrypoint"
+        );
+        await dispatchNextProviderExecution();
+      } catch (error) {
+        console.warn(
+          "[provider-execution] cycle error:",
+          error instanceof Error ? error.message : error
+        );
+      }
+    })();
+  }, Math.max(2000, providerLoopMs));
+  providerLoop.unref?.();
+
   return { agentWorker, probeWorker, renderWorker, exportWorker };
 }

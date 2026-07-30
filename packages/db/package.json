@@ -27,6 +27,7 @@
     "sql:provider-execution-dispatch": "tsx scripts/apply-provider-execution-dispatch.ts",
     "sql:ai-story": "tsx scripts/apply-ai-story-v1.ts",
     "sql:ai-story-planning": "tsx scripts/apply-ai-story-planning-v1.ts",
+    "sql:ai-story-execution": "tsx scripts/apply-ai-story-execution-v1.ts",
     "sql:rls": "tsx scripts/apply-rls.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",

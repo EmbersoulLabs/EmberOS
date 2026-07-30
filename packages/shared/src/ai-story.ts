@@ -10,6 +10,10 @@ export const AI_STORY_STATUSES = [
   "planning",
   "planning_review",
   "ready_for_execution",
+  "generate_review",
+  "executing",
+  "execution_review",
+  "execution_failed",
   "failed",
   "archived",
 ] as const;
@@ -57,7 +61,11 @@ export const AI_STORY_ALLOWED_TRANSITIONS: Record<
   ready_for_animation: ["planning", "archived"],
   planning: ["planning_review", "failed"],
   planning_review: ["planning", "ready_for_execution", "archived"],
-  ready_for_execution: ["archived"],
+  ready_for_execution: ["generate_review", "executing", "archived"],
+  generate_review: ["executing", "ready_for_execution", "archived"],
+  executing: ["execution_review", "execution_failed", "archived"],
+  execution_review: ["executing", "archived"],
+  execution_failed: ["executing", "ready_for_execution", "archived"],
   failed: ["draft", "generating", "planning", "archived"],
   archived: [],
 };
