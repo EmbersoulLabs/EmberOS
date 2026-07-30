@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildPromptPackage, buildGenerateReviewEstimate } from "../packages/agents/src/ai-story/prompt-builder";
+import {
+  buildGenerateReviewEstimate,
+  compileExecutionManifest,
+  collectReferencedAssetIds,
+  buildOutputVariantsFromManifest,
+  MissingCampaignAssetsError,
+} from "../packages/agents/src/ai-story/execution-compiler";
 import type { AnimationPackagePayload } from "@ceo-agent/shared";
 import {
   AnimationPackagePayloadSchema,
@@ -7,7 +13,10 @@ import {
   DirectorThinkingSchema,
 } from "@ceo-agent/shared";
 
-function samplePackage(): AnimationPackagePayload {
+const ASSET_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const ASSET_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+
+function samplePackage(assetIds: string[] = [ASSET_A]): AnimationPackagePayload {
   const story = {
     title: "Launch",
     summary: "A shopper discovers the brand.",
@@ -22,7 +31,7 @@ function samplePackage(): AnimationPackagePayload {
     },
     keyMessages: ["Simple gifting"],
     cta: "Shop now",
-    assetReferences: [],
+    assetReferences: assetIds,
     warnings: [],
   };
   const creativeContext = CreativeContextSchema.parse({
@@ -143,52 +152,89 @@ function samplePackage(): AnimationPackagePayload {
   });
 }
 
-describe("Sprint 3 prompt builder", () => {
+describe("Sprint 3 execution compiler", () => {
   it("builds generate review estimate without naming a vendor in the UI contract", () => {
+    const pkg = samplePackage();
+    const referencedAssetIds = collectReferencedAssetIds(pkg);
     const estimate = buildGenerateReviewEstimate({
-      animationPackage: samplePackage(),
-      mediaKind: "video",
+      animationPackage: pkg,
+      referencedAssetIds,
     });
     expect(estimate.targetOutputCount).toBe(5);
     expect(estimate.preferredCapabilityId).toBe("animation-video-generation");
+    expect(estimate.referencedAssetIds).toEqual([ASSET_A]);
     expect(estimate.aiSummary.toLowerCase()).not.toContain("seedance");
   });
 
-  it("builds quality-first output briefs from Animation Package", () => {
-    const pkg = buildPromptPackage({
+  it("compiles an ordered Seedance request with product identity constraints", () => {
+    const pkg = samplePackage([ASSET_A, ASSET_B]);
+    const manifest = compileExecutionManifest({
       storyId: "11111111-1111-1111-1111-111111111111",
       animationPackageId: "22222222-2222-2222-2222-222222222222",
-      animationPackage: samplePackage(),
-      mediaKind: "video",
+      animationPackage: pkg,
+      resolvedAssets: [
+        { assetId: ASSET_A, storagePath: `${ASSET_A}/product.png` },
+        { assetId: ASSET_B, storagePath: `${ASSET_B}/packaging.png` },
+      ],
       now: new Date("2026-07-30T00:00:00.000Z"),
     });
-    expect(pkg.outputBriefs.length).toBeGreaterThanOrEqual(3);
-    expect(pkg.outputBriefs.length).toBeLessThanOrEqual(5);
-    expect(pkg.outputBriefs[0]?.shotPrompts[0]?.prompt.length).toBeGreaterThan(10);
+    expect(manifest.capabilityId).toBe("animation-video-generation");
+    expect(manifest.compiledProviderRequest.prompt.length).toBeGreaterThan(10);
+    expect(manifest.compiledProviderRequest.assetReferences).toHaveLength(2);
+    expect(manifest.identityConstraints.length).toBeGreaterThan(0);
+    const variants = buildOutputVariantsFromManifest(manifest, pkg.story.title);
+    expect(variants.length).toBeGreaterThanOrEqual(3);
+    expect(variants.length).toBeLessThanOrEqual(5);
+  });
+
+  it("fails when Campaign Assets are missing", () => {
+    const pkg = samplePackage([ASSET_A]);
+    expect(() =>
+      compileExecutionManifest({
+        storyId: "11111111-1111-1111-1111-111111111111",
+        animationPackageId: "22222222-2222-2222-2222-222222222222",
+        animationPackage: pkg,
+        resolvedAssets: [],
+      })
+    ).toThrow(MissingCampaignAssetsError);
   });
 });
 
-describe("Sprint 3 provider adapters (mock)", () => {
-  it("hides Seedance and Flux capabilities when API keys are missing", async () => {
+describe("Sprint 3 provider adapters", () => {
+  it("hides Seedance capabilities when API key is missing", async () => {
     const prevSeedance = process.env.SEEDANCE_API_KEY;
-    const prevFlux = process.env.FLUX_API_KEY;
     delete process.env.SEEDANCE_API_KEY;
-    delete process.env.FLUX_API_KEY;
     try {
       const { SeedanceVideoAdapter } = await import(
         "../packages/agents/src/provider-adapters/seedance-video-adapter"
-      );
-      const { FluxImageAdapter } = await import(
-        "../packages/agents/src/provider-adapters/flux-image-adapter"
       );
       const resolver = {
         resolve: async () => ({}),
       };
       expect(new SeedanceVideoAdapter(resolver).capabilities().size).toBe(0);
-      expect(new FluxImageAdapter(resolver).capabilities().size).toBe(0);
     } finally {
       if (prevSeedance !== undefined) process.env.SEEDANCE_API_KEY = prevSeedance;
-      if (prevFlux !== undefined) process.env.FLUX_API_KEY = prevFlux;
+    }
+  });
+
+  it("registers DeterministicSeedanceTestAdapter under test providers flag", async () => {
+    const prevSeedance = process.env.SEEDANCE_API_KEY;
+    const prevFlag = process.env.EMBEROS_TEST_PROVIDERS;
+    delete process.env.SEEDANCE_API_KEY;
+    process.env.EMBEROS_TEST_PROVIDERS = "1";
+    try {
+      const { createProductionProviderRegistry, MemoryPayloadResolver } = await import(
+        "../packages/agents/src/provider-adapters/production-registry"
+      );
+      const registry = createProductionProviderRegistry(new MemoryPayloadResolver());
+      const adapter = registry.resolve("seedance", "1.0.0-test");
+      expect(adapter).toBeTruthy();
+      expect(adapter!.capabilities().size).toBe(1);
+    } finally {
+      if (prevSeedance !== undefined) process.env.SEEDANCE_API_KEY = prevSeedance;
+      else delete process.env.SEEDANCE_API_KEY;
+      if (prevFlag !== undefined) process.env.EMBEROS_TEST_PROVIDERS = prevFlag;
+      else delete process.env.EMBEROS_TEST_PROVIDERS;
     }
   });
 });

@@ -7,7 +7,7 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
 
 /**
- * Export approved AI Story marketing outputs only (ZIP via existing task export).
+ * Export approved AI Story execution video outputs only (ZIP via existing task export).
  */
 export async function POST(
   _request: Request,
@@ -49,16 +49,16 @@ export async function POST(
 
     const approved = await db
       .select()
-      .from(schema.aiStoryMarketingOutputs)
+      .from(schema.aiStoryExecutionOutputs)
       .where(
         and(
-          eq(schema.aiStoryMarketingOutputs.executionJobId, job.id),
-          eq(schema.aiStoryMarketingOutputs.status, "approved")
+          eq(schema.aiStoryExecutionOutputs.executionJobId, job.id),
+          eq(schema.aiStoryExecutionOutputs.status, "approved")
         )
       );
     if (approved.length === 0) {
       return apiError(
-        "Export requires at least one approved marketing output",
+        "Export requires at least one approved execution video output",
         "VALIDATION_ERROR",
         409
       );
@@ -81,8 +81,8 @@ export async function POST(
       // Re-assert only approved outputs remain approved; demote others on the task.
       const allOutputs = await db
         .select()
-        .from(schema.aiStoryMarketingOutputs)
-        .where(eq(schema.aiStoryMarketingOutputs.executionJobId, job.id));
+        .from(schema.aiStoryExecutionOutputs)
+        .where(eq(schema.aiStoryExecutionOutputs.executionJobId, job.id));
       for (const output of allOutputs) {
         if (!output.creativeId) continue;
         if (output.status !== "approved") {
@@ -108,7 +108,7 @@ export async function POST(
       taskId: job.taskId,
       approvedCount: approved.length,
       exportQueued: true,
-      formats: ["ZIP", "MP4", "PNG", "JSON"],
+      formats: ["ZIP", "MP4", "JSON"],
     });
   } catch (error) {
     return handleApiError(error);

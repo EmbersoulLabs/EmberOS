@@ -2,12 +2,12 @@
  * Future-ready capability declarations for providers not yet wired with API keys.
  * These are NOT registered as executable adapters until credentials + HTTP paths exist.
  * Router remains capability-driven and vendor-agnostic in product UI.
+ * Marketing-image generation is out of scope for AI Story Execution (video only).
  */
 import type { ProviderCapabilityDeclaration } from "./contracts";
 
 export const FUTURE_PROVIDER_CAPABILITY_IDS = [
   "animation-video-generation",
-  "marketing-image-generation",
 ] as const;
 
 export const FUTURE_PROVIDER_IDS = [
@@ -21,7 +21,7 @@ export function futureProviderCapabilityStub(
   providerId: (typeof FUTURE_PROVIDER_IDS)[number],
   capabilityId: (typeof FUTURE_PROVIDER_CAPABILITY_IDS)[number]
 ): ProviderCapabilityDeclaration {
-  return Object.freeze({
+  const declaration: ProviderCapabilityDeclaration = {
     providerId,
     adapterVersion: "0.0.0-future",
     capabilityId,
@@ -47,5 +47,6 @@ export function futureProviderCapabilityStub(
       zeroRetention: false,
       enterpriseControls: false,
     },
-  });
+  };
+  return Object.freeze(declaration);
 }

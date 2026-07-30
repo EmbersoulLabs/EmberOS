@@ -40,13 +40,13 @@ export async function POST(
     }
 
     await db
-      .update(schema.aiStoryMarketingOutputs)
+      .update(schema.aiStoryExecutionOutputs)
       .set({ status: "rejected", updatedAt: new Date() })
       .where(
         and(
-          eq(schema.aiStoryMarketingOutputs.storyId, storyId),
-          eq(schema.aiStoryMarketingOutputs.workspaceId, campaign.workspaceId),
-          inArray(schema.aiStoryMarketingOutputs.status, ["pending_review", "draft"])
+          eq(schema.aiStoryExecutionOutputs.storyId, storyId),
+          eq(schema.aiStoryExecutionOutputs.workspaceId, campaign.workspaceId),
+          inArray(schema.aiStoryExecutionOutputs.status, ["pending_review", "draft"])
         )
       );
 

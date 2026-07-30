@@ -143,7 +143,7 @@ export async function maybeTriggerPendingTaskExport(taskId: string): Promise<boo
   if (resolution === FREE_EXPORT_RESOLUTION) return false;
 
   const creatives = await getTaskCreatives(taskId);
-  if (creatives.length < AUTO_CLIP.MIN_OUTPUT_COUNT) return false;
+  if (creatives.length < AUTO_CLIP.CLIP_COUNT) return false;
 
   if (anyRenditionRendering(creatives, resolution)) return false;
   if (!allRenditionReady(creatives, resolution)) return false;

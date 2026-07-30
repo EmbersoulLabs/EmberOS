@@ -1,13 +1,9 @@
 /**
  * PD-054 / PD-055 — Unified Marketing Output Strategy (product configuration).
- *
- * Default target is 5. AI may return fewer (never below MINIMUM) when quality
- * cannot support the target. Never pad with low-quality filler.
+ * Consumed by Auto Clip and AI Story video execution count selection.
+ * AI Story Execution does not generate images.
  */
 import { z } from "zod";
-
-export const MARKETING_OUTPUT_MEDIA_KINDS = ["video", "image"] as const;
-export type MarketingOutputMediaKind = (typeof MARKETING_OUTPUT_MEDIA_KINDS)[number];
 
 /** Product configuration — not architecture constants to hardcode elsewhere. */
 export const MARKETING_OUTPUT_STRATEGY = {
@@ -25,7 +21,6 @@ export const MarketingOutputCandidateSchema = z.object({
   id: z.string().min(1),
   qualityScore: z.number().min(0).max(1),
   reason: z.string().default(""),
-  mediaKind: z.enum(MARKETING_OUTPUT_MEDIA_KINDS).default("video"),
 });
 
 export type MarketingOutputCandidate = z.infer<typeof MarketingOutputCandidateSchema>;
@@ -47,7 +42,7 @@ export type ResolveMarketingOutputCountResult = {
 };
 
 /**
- * Quality-first selection (PD-055). Same strategy for video and image inputs.
+ * Quality-first selection (PD-055). Used for video marketing outputs / Auto Clip.
  */
 export function resolveMarketingOutputCount(
   input: ResolveMarketingOutputCountInput
@@ -82,9 +77,6 @@ export function resolveMarketingOutputCount(
     selected = selected.slice(0, target);
   }
 
-  // Prefer quality over quantity: do not backfill with rejected low-quality items.
-  // If fewer than minimum pass quality, take the best available up to minimum only
-  // when they still clear a soft floor (half of min quality) to avoid empty packs.
   if (selected.length < minimum && ranked.length > 0) {
     const softFloor = minQuality * 0.5;
     const softPass = ranked.filter((c) => c.qualityScore >= softFloor);

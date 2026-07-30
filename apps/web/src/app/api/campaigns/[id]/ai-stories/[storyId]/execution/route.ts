@@ -13,7 +13,6 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
 
 const BodySchema = z.object({
-  mediaKind: z.enum(["video", "image"]).optional(),
   confirm: z.literal(true),
   estimate: GenerateReviewEstimateSchema.optional(),
 });
@@ -65,7 +64,6 @@ export async function POST(
       campaignId,
       storyId,
       workspaceId: campaign.workspaceId,
-      mediaKind: body.data.mediaKind,
     });
     const estimate = body.data.estimate ?? review.estimate;
 
@@ -77,7 +75,6 @@ export async function POST(
       storyId,
       animationPackageId: review.animationPackageId,
       createdBy: user.id,
-      mediaKind: body.data.mediaKind,
       estimate,
       storyStatus: status,
     });

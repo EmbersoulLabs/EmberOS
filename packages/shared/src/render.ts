@@ -1,6 +1,5 @@
 import type { EditPlan } from "./types/index";
 import type { Platform } from "./types/index";
-import { MARKETING_OUTPUT_STRATEGY } from "./marketing-output-strategy";
 
 /** MVP upload / source limits */
 export const RENDER_MVP_LIMITS = {
@@ -15,16 +14,9 @@ export const RENDER_MVP_LIMITS = {
   MAX_MONTAGE_OUTPUT_SEC: 15,
 } as const;
 
-/** Auto Clip V1 — long video → N standalone shorts (PD-054 / PD-055). */
+/** Auto Clip V1 — long video → N standalone shorts */
 export const AUTO_CLIP = {
-  /**
-   * @deprecated Prefer DEFAULT_OUTPUT_COUNT / MARKETING_OUTPUT_STRATEGY.
-   * Alias of the PD-054/055 default target (not a hardcoded architecture constant).
-   */
-  CLIP_COUNT: MARKETING_OUTPUT_STRATEGY.DEFAULT_TARGET_OUTPUTS,
-  DEFAULT_OUTPUT_COUNT: MARKETING_OUTPUT_STRATEGY.DEFAULT_TARGET_OUTPUTS,
-  MIN_OUTPUT_COUNT: MARKETING_OUTPUT_STRATEGY.MINIMUM_OUTPUTS,
-  MAX_OUTPUT_COUNT: MARKETING_OUTPUT_STRATEGY.MAXIMUM_OUTPUTS,
+  CLIP_COUNT: 3,
   OUTPUT_DURATION_SEC: 35,
   MIN_SEGMENT_SEC: 12,
   MAX_SEGMENT_SEC: 45,
@@ -34,7 +26,7 @@ export const AUTO_CLIP = {
   TTS_MIN_CLIP_SEC: 10,
 } as const;
 
-/** Default clip variants for V1 (target 5; quality-first may keep 3–5). */
+/** Default clip variants for V1 (3 clips). Voice: 2× EN + 1× ZH. */
 export const AUTO_CLIP_VARIANTS = [
   {
     index: 0,
@@ -56,38 +48,19 @@ export const AUTO_CLIP_VARIANTS = [
   },
   {
     index: 2,
-    title: "Problem / Pain Point",
-    variant: "problem" as const,
-    hookType: "problem",
-    videoArchetype: "story" as const,
-    focus: "customer pain point and emotional tension",
-    voiceLocale: "en" as const,
-  },
-  {
-    index: 3,
-    title: "Product Highlight",
+    title: "Product Focus",
     variant: "product" as const,
     hookType: "product",
     videoArchetype: "sales" as const,
     focus: "product visibility, features, and benefits",
     voiceLocale: "zh" as const,
   },
-  {
-    index: 4,
-    title: "Promotion / CTA",
-    variant: "cta" as const,
-    hookType: "cta",
-    videoArchetype: "sales" as const,
-    focus: "clear call to action and conversion prompt",
-    voiceLocale: "en" as const,
-  },
 ] as const;
 
-/** Map campaign platforms → one target platform per auto clip. */
+/** Map campaign platforms → one target platform per auto clip (Clip 1/2/3). */
 export function resolveAutoClipPlatforms(platforms: Platform[]): Platform[] {
   const list = platforms.length ? platforms : (["tiktok"] as Platform[]);
-  const count = AUTO_CLIP.DEFAULT_OUTPUT_COUNT;
-  return Array.from({ length: count }, (_, i) => list[i] ?? list[i % list.length]!);
+  return Array.from({ length: AUTO_CLIP.CLIP_COUNT }, (_, i) => list[i] ?? list[i % list.length]!);
 }
 
 export type RenderMode = "preview" | "final" | "subtitles_only";

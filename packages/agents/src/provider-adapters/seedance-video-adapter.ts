@@ -33,6 +33,26 @@ const PayloadSchema = z
     durationSec: z.number().positive().optional(),
     aspectRatio: z.string().optional(),
     outputIndex: z.number().int().nonnegative().optional(),
+    /** Campaign Asset product references from compiled ExecutionManifest. */
+    assetReferences: z
+      .array(
+        z.object({
+          assetId: z.string().uuid(),
+          storagePath: z.string(),
+          role: z.string().default("product"),
+        })
+      )
+      .optional(),
+    identityConstraints: z.array(z.string()).optional(),
+    shotMap: z
+      .array(
+        z.object({
+          shotId: z.string(),
+          sceneId: z.string(),
+          sectionIndex: z.number().int().nonnegative(),
+        })
+      )
+      .optional(),
   })
   .strict();
 
@@ -137,6 +157,14 @@ export class SeedanceVideoAdapter implements ProviderAdapter {
           duration: payload.durationSec ?? 5,
           aspect_ratio: payload.aspectRatio ?? "9:16",
           idempotency_key: request.executionIdentity.idempotencyKey,
+          // Referenced Campaign Assets — animate existing product photos; do not invent product imagery.
+          reference_assets: (payload.assetReferences ?? []).map((a) => ({
+            asset_id: a.assetId,
+            uri: a.storagePath,
+            role: a.role,
+          })),
+          identity_constraints: payload.identityConstraints ?? [],
+          shot_map: payload.shotMap ?? [],
         }),
       });
       if (!createRes.ok) {

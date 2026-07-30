@@ -722,7 +722,7 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
     .from(schema.creatives)
     .where(eq(schema.creatives.taskId, taskId));
 
-  if (creatives.length < AUTO_CLIP.MIN_OUTPUT_COUNT) return false;
+  if (creatives.length < AUTO_CLIP.CLIP_COUNT) return false;
 
   const anyFailed = creatives.some((c) => {
     const progress = c.renderProgress as { error?: string } | null;

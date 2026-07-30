@@ -1,7 +1,6 @@
 import {
   AUTO_CLIP,
   SOURCE_END_TRIM_SEC,
-  resolveMarketingOutputCount,
   type VisionAnalysis,
 } from "@ceo-agent/shared";
 import type { AutoClipSegment } from "./auto-clip";
@@ -194,63 +193,66 @@ function segmentsOverlap(
   return startSec < a.endSec + gapSec && endSec + gapSec > a.startSec;
 }
 
-/** Pick top marketing clips using scored highlights (PD-054/055 quality-first). */
+/** Pick top N non-overlapping clips using scored highlight index. */
 export function pickSegmentsFromHighlightIndex(
   index: HighlightSegment[],
   sourceDurationSec: number,
-  count = AUTO_CLIP.DEFAULT_OUTPUT_COUNT
+  count = AUTO_CLIP.CLIP_COUNT
 ): AutoClipSegment[] {
   const usableEnd = usableSourceEnd(sourceDurationSec);
   const gapSec = Math.max(3, usableEnd * 0.04);
-  const viable = index.filter(
-    (s) => !s.deadAir && s.endSec - s.startSec >= AUTO_CLIP.MIN_SEGMENT_SEC * 0.5
-  );
+  const viable = index.filter((s) => !s.deadAir && s.endSec - s.startSec >= AUTO_CLIP.MIN_SEGMENT_SEC * 0.5);
 
-  const nonOverlapping: Array<HighlightSegment & { qualityScore: number }> = [];
-  const ranked = [...viable].sort(
-    (a, b) => compositeScore(b, 0) - compositeScore(a, 0)
-  );
-  for (const seg of ranked) {
-    if (
-      nonOverlapping.some((p) =>
-        segmentsOverlap(p, seg.startSec, seg.endSec, gapSec)
-      )
-    ) {
-      continue;
-    }
-    const raw = compositeScore(seg, nonOverlapping.length);
-    // Normalize composite score into 0–1 for product strategy.
-    const qualityScore = Math.max(0, Math.min(1, raw / 10));
-    nonOverlapping.push({ ...seg, qualityScore });
-    if (nonOverlapping.length >= AUTO_CLIP.MAX_OUTPUT_COUNT) break;
-  }
-
-  const resolved = resolveMarketingOutputCount({
-    candidates: nonOverlapping.map((seg, i) => ({
-      id: `highlight-${i}-${seg.startSec}`,
-      qualityScore: seg.qualityScore,
-      reason: seg.reason,
-      mediaKind: "video" as const,
-    })),
-    target: Math.min(count, AUTO_CLIP.DEFAULT_OUTPUT_COUNT),
-    minimum: AUTO_CLIP.MIN_OUTPUT_COUNT,
-    maximum: AUTO_CLIP.MAX_OUTPUT_COUNT,
+  const picked: AutoClipSegment[] = [];
+  const ranked = [...viable].sort((a, b) => {
+    const scoreA = compositeScore(a, picked.length);
+    const scoreB = compositeScore(b, picked.length);
+    return scoreB - scoreA;
   });
 
-  const selected = resolved.selected
-    .map((c) => {
-      const match = nonOverlapping.find(
-        (seg, i) => `highlight-${i}-${seg.startSec}` === c.id
-      );
-      return match;
-    })
-    .filter((seg): seg is HighlightSegment & { qualityScore: number } => Boolean(seg));
+  for (const seg of ranked) {
+    if (picked.some((p) => segmentsOverlap(p, seg.startSec, seg.endSec, gapSec))) continue;
+    picked.push({
+      index: picked.length,
+      startSec: seg.startSec,
+      endSec: seg.endSec,
+      reason: seg.reason,
+    });
+    if (picked.length >= count) break;
+  }
 
-  // PD-055: never pad with evenly spaced filler windows.
-  return selected.map((seg, i) => ({
-    index: i,
-    startSec: seg.startSec,
-    endSec: seg.endSec,
-    reason: seg.reason,
-  }));
+  if (picked.length >= count) {
+    return picked.slice(0, count).map((s, i) => ({ ...s, index: i }));
+  }
+
+  const windowLen = Math.min(
+    AUTO_CLIP.OUTPUT_DURATION_SEC,
+    Math.max(AUTO_CLIP.MIN_SEGMENT_SEC, usableEnd / count - gapSec)
+  );
+  const step = (usableEnd - windowLen) / Math.max(1, count - 1);
+
+  for (let i = picked.length; i < count; i++) {
+    const startSec = Math.min(i * step, usableEnd - windowLen);
+    const endSec = startSec + windowLen;
+    if (picked.some((p) => segmentsOverlap(p, startSec, endSec, gapSec))) continue;
+    picked.push({
+      index: i,
+      startSec,
+      endSec,
+      reason: `Highlight ${i + 1}`,
+    });
+  }
+
+  while (picked.length < count) {
+    const i = picked.length;
+    const startSec = Math.min((usableEnd / count) * i, usableEnd - AUTO_CLIP.MIN_SEGMENT_SEC);
+    picked.push({
+      index: i,
+      startSec,
+      endSec: Math.min(startSec + AUTO_CLIP.OUTPUT_DURATION_SEC, usableEnd),
+      reason: `Highlight ${i + 1}`,
+    });
+  }
+
+  return picked.slice(0, count).map((s, index) => ({ ...s, index }));
 }

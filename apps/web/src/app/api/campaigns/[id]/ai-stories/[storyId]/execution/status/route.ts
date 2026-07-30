@@ -44,9 +44,9 @@ export async function GET(
     const outputs = job
       ? await db
           .select()
-          .from(schema.aiStoryMarketingOutputs)
-          .where(eq(schema.aiStoryMarketingOutputs.executionJobId, job.id))
-          .orderBy(schema.aiStoryMarketingOutputs.outputIndex)
+          .from(schema.aiStoryExecutionOutputs)
+          .where(eq(schema.aiStoryExecutionOutputs.executionJobId, job.id))
+          .orderBy(schema.aiStoryExecutionOutputs.outputIndex)
       : [];
 
     return apiSuccess({

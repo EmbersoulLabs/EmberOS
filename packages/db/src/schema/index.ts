@@ -539,8 +539,7 @@ export const aiStoryExecutionJobs = pgTable(
       .references(() => aiStoryAnimationPackages.id, { onDelete: "cascade" }),
     taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
     status: text("status").notNull().default("queued"),
-    mediaKind: text("media_kind").notNull().default("video"),
-    capabilityId: text("capability_id").notNull(),
+    capabilityId: text("capability_id").notNull().default("animation-video-generation"),
     targetOutputCount: integer("target_output_count").notNull().default(5),
     selectedOutputCount: integer("selected_output_count"),
     progress: jsonb("progress")
@@ -557,8 +556,8 @@ export const aiStoryExecutionJobs = pgTable(
     generateReview: jsonb("generate_review")
       .$type<import("@ceo-agent/shared").GenerateReviewEstimate | null>()
       .default(null),
-    promptPackage: jsonb("prompt_package")
-      .$type<import("@ceo-agent/shared").PromptBuilderPackage | null>()
+    executionManifest: jsonb("execution_manifest")
+      .$type<import("@ceo-agent/shared").ExecutionManifest | null>()
       .default(null),
     providerExecutionIds: jsonb("provider_execution_ids")
       .$type<string[]>()
@@ -580,8 +579,8 @@ export const aiStoryExecutionJobs = pgTable(
   ]
 );
 
-export const aiStoryMarketingOutputs = pgTable(
-  "ai_story_marketing_outputs",
+export const aiStoryExecutionOutputs = pgTable(
+  "ai_story_execution_outputs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id")
@@ -599,30 +598,35 @@ export const aiStoryMarketingOutputs = pgTable(
     executionJobId: uuid("execution_job_id")
       .notNull()
       .references(() => aiStoryExecutionJobs.id, { onDelete: "cascade" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "cascade" }),
     creativeId: uuid("creative_id").references(() => creatives.id, {
       onDelete: "set null",
     }),
-    mediaKind: text("media_kind").notNull().default("video"),
+    outputType: text("output_type").notNull().default("animation_video"),
     status: text("status").notNull().default("draft"),
     title: text("title").notNull(),
     outputIndex: integer("output_index").notNull().default(0),
     storagePath: text("storage_path"),
-    thumbnailPath: text("thumbnail_path"),
-    subtitlePath: text("subtitle_path"),
+    generatedVideoAssetId: uuid("generated_video_asset_id"),
+    referencedAssetIds: jsonb("referenced_asset_ids").$type<string[]>().notNull().default([]),
+    executionManifest: jsonb("execution_manifest")
+      .$type<import("@ceo-agent/shared").ExecutionManifest | null>()
+      .default(null),
     caption: text("caption").notNull().default(""),
     hashtags: jsonb("hashtags").$type<string[]>().notNull().default([]),
-    prompt: text("prompt"),
-    metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default({}),
     providerId: text("provider_id"),
     providerExecutionId: text("provider_execution_id"),
     qualityScore: numeric("quality_score"),
+    failureMessage: text("failure_message"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    index("ai_story_marketing_outputs_job_idx").on(t.executionJobId, t.outputIndex),
-    index("ai_story_marketing_outputs_workspace_idx").on(t.workspaceId, t.status),
-    unique("ai_story_marketing_outputs_job_index_unique").on(
+    index("ai_story_execution_outputs_job_idx").on(t.executionJobId, t.outputIndex),
+    index("ai_story_execution_outputs_workspace_idx").on(t.workspaceId, t.status),
+    unique("ai_story_execution_outputs_job_index_unique").on(
       t.executionJobId,
       t.outputIndex
     ),

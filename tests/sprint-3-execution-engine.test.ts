@@ -16,11 +16,11 @@ describe("PD-054/055 Marketing Output Strategy", () => {
   it("returns fewer than target when quality cannot support padding", () => {
     const result = resolveMarketingOutputCount({
       candidates: [
-        { id: "a", qualityScore: 0.9, reason: "strong", mediaKind: "video" },
-        { id: "b", qualityScore: 0.8, reason: "good", mediaKind: "video" },
-        { id: "c", qualityScore: 0.7, reason: "ok", mediaKind: "video" },
-        { id: "d", qualityScore: 0.2, reason: "weak", mediaKind: "video" },
-        { id: "e", qualityScore: 0.1, reason: "filler", mediaKind: "video" },
+        { id: "a", qualityScore: 0.9, reason: "strong" },
+        { id: "b", qualityScore: 0.8, reason: "good" },
+        { id: "c", qualityScore: 0.7, reason: "ok" },
+        { id: "d", qualityScore: 0.2, reason: "weak" },
+        { id: "e", qualityScore: 0.1, reason: "filler" },
       ],
     });
     expect(result.selectedCount).toBe(3);
@@ -28,14 +28,14 @@ describe("PD-054/055 Marketing Output Strategy", () => {
     expect(result.rejectedLowQuality).toBe(2);
   });
 
-  it("applies the same strategy for image media", () => {
+  it("keeps up to five high-quality video candidates", () => {
     const result = resolveMarketingOutputCount({
       candidates: [
-        { id: "1", qualityScore: 0.95, reason: "hero", mediaKind: "image" },
-        { id: "2", qualityScore: 0.9, reason: "product", mediaKind: "image" },
-        { id: "3", qualityScore: 0.85, reason: "lifestyle", mediaKind: "image" },
-        { id: "4", qualityScore: 0.8, reason: "detail", mediaKind: "image" },
-        { id: "5", qualityScore: 0.78, reason: "cta", mediaKind: "image" },
+        { id: "1", qualityScore: 0.95, reason: "hero" },
+        { id: "2", qualityScore: 0.9, reason: "product" },
+        { id: "3", qualityScore: 0.85, reason: "lifestyle" },
+        { id: "4", qualityScore: 0.8, reason: "detail" },
+        { id: "5", qualityScore: 0.78, reason: "cta" },
       ],
     });
     expect(result.selectedCount).toBe(5);

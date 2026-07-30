@@ -611,7 +611,7 @@ function ExecutionPanel({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mediaKind: "video" }),
+          body: JSON.stringify({}),
         }
       );
       const data = await res.json();
@@ -634,7 +634,7 @@ function ExecutionPanel({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirm: true, mediaKind: "video" }),
+          body: JSON.stringify({ confirm: true }),
         }
       );
       const data = await res.json();

@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
-import { regenerateSingleMarketingOutput } from "@ceo-agent/agents";
+import { regenerateSingleExecutionOutput } from "@ceo-agent/agents";
 import { isUuid } from "@ceo-agent/shared";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api";
@@ -11,7 +11,7 @@ const BodySchema = z.object({
 });
 
 /**
- * Regenerate ONE marketing output without re-running the full planning or full job pipeline.
+ * Regenerate ONE execution video output without re-running planning or the full job pipeline.
  */
 export async function POST(
   request: Request,
@@ -38,13 +38,12 @@ export async function POST(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
-    await regenerateSingleMarketingOutput({
+    await regenerateSingleExecutionOutput({
       db,
       executionJobId: jobId,
       outputId: body.data.outputId,
       workspaceId: campaign.workspaceId,
     });
-
     return apiSuccess({
       storyId,
       executionJobId: jobId,

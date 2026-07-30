@@ -1,6 +1,9 @@
 import { OpenAIJsonCompatibilityAdapter } from "./openai-json-adapter";
 import { SeedanceVideoAdapter } from "./seedance-video-adapter";
-import { FluxImageAdapter } from "./flux-image-adapter";
+import {
+  DeterministicSeedanceTestAdapter,
+  testProvidersEnabled,
+} from "./deterministic-seedance-test-adapter";
 import type { ProviderAdapter, ProviderPayloadResolver } from "./contracts";
 import { ProviderAdapterRegistry } from "../provider-router/adapter-registry";
 
@@ -15,7 +18,8 @@ export class MemoryPayloadResolver implements ProviderPayloadResolver {
   }
 
   async resolve(
-    reference: { uri: string } | string
+    reference: { uri: string } | string,
+    _context?: unknown
   ): Promise<unknown> {
     const key = typeof reference === "string" ? reference : reference.uri;
     if (!this.payloads.has(key)) {
@@ -29,11 +33,16 @@ export function createProductionProviderRegistry(
   payloadResolver: ProviderPayloadResolver
 ): ProviderAdapterRegistry {
   const registry = new ProviderAdapterRegistry();
+  const seedance = new SeedanceVideoAdapter(payloadResolver);
   const adapters: ProviderAdapter[] = [
     new OpenAIJsonCompatibilityAdapter(payloadResolver),
-    new SeedanceVideoAdapter(payloadResolver),
-    new FluxImageAdapter(payloadResolver),
+    seedance,
   ];
+  // When Seedance is undeclared (no API key) and test providers are enabled,
+  // register a deterministic animation-video adapter so E2E does not skip.
+  if (seedance.capabilities().size === 0 && testProvidersEnabled()) {
+    adapters.push(new DeterministicSeedanceTestAdapter(payloadResolver));
+  }
   for (const adapter of adapters) {
     if (adapter.capabilities().size === 0) continue;
     registry.register(adapter);

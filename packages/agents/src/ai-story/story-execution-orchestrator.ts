@@ -1,9 +1,10 @@
 /**
- * AI Story Execution Orchestrator — Animation Package → Marketing Outputs.
+ * AI Story Execution Orchestrator — Animation Package → execution video outputs.
  * Uses capability-driven provider routing; UI never selects vendors.
+ * Animation-video only (Seedance); Campaign Assets are resolved, never generated.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
@@ -15,9 +16,8 @@ import {
   type AiStoryExecutionStatus,
   type AiStoryStatus,
   type AnimationPackagePayload,
+  type ExecutionManifest,
   type GenerateReviewEstimate,
-  type MarketingOutputMediaKind,
-  type PromptBuilderPackage,
 } from "@ceo-agent/shared";
 import {
   CanonicalProviderRouter,
@@ -28,7 +28,15 @@ import {
   MemoryPayloadResolver,
   createProductionProviderRegistry,
 } from "../provider-adapters/production-registry";
-import { buildGenerateReviewEstimate, buildPromptPackage } from "./prompt-builder";
+import {
+  MissingCampaignAssetsError,
+  assertCampaignAssetsResolved,
+  buildGenerateReviewEstimate,
+  buildOutputVariantsFromManifest,
+  collectReferencedAssetIds,
+  compileExecutionManifest,
+  type ResolvedCampaignAsset,
+} from "./execution-compiler";
 import type {
   CanonicalProviderRequest,
   CanonicalProviderResult,
@@ -36,6 +44,8 @@ import type {
 import { requestHash } from "@ceo-agent/shared";
 
 type Db = ReturnType<typeof getDb>;
+
+export { MissingCampaignAssetsError };
 
 function progressFor(
   phase: AiStoryExecutionStatus,
@@ -77,11 +87,37 @@ async function setExecutionStatus(
       ...(to === "completed" || to === "failed" || to === "cancelled"
         ? { completedAt: new Date() }
         : {}),
-      ...(patch.lastError ? { errorMessage: patch.lastError } : {}),
     })
     .where(eq(schema.aiStoryExecutionJobs.id, jobId))
     .returning();
   return updated;
+}
+
+async function loadResolvedCampaignAssets(
+  db: Db,
+  workspaceId: string,
+  assetIds: readonly string[]
+): Promise<ResolvedCampaignAsset[]> {
+  if (assetIds.length === 0) return [];
+  const rows = await db
+    .select({
+      assetId: schema.assets.id,
+      storagePath: schema.assets.storagePath,
+      displayName: schema.assets.displayName,
+    })
+    .from(schema.assets)
+    .where(
+      and(
+        eq(schema.assets.workspaceId, workspaceId),
+        inArray(schema.assets.id, [...assetIds]),
+        isNull(schema.assets.deletedAt)
+      )
+    );
+  return rows.map((row) => ({
+    assetId: row.assetId,
+    storagePath: row.storagePath,
+    displayName: row.displayName,
+  }));
 }
 
 export async function createGenerateReview(input: {
@@ -89,7 +125,6 @@ export async function createGenerateReview(input: {
   campaignId: string;
   storyId: string;
   workspaceId: string;
-  mediaKind?: MarketingOutputMediaKind;
 }): Promise<{ estimate: GenerateReviewEstimate; animationPackageId: string }> {
   const [pkgRow] = await input.db
     .select()
@@ -108,9 +143,12 @@ export async function createGenerateReview(input: {
     throw new Error("Approved Animation Package (ready_for_execution) not found");
   }
   const payload = AnimationPackagePayloadSchema.parse(pkgRow.payload);
-  const mediaKind = input.mediaKind ?? "video";
+  const referencedAssetIds = collectReferencedAssetIds(payload);
   return {
-    estimate: buildGenerateReviewEstimate({ animationPackage: payload, mediaKind }),
+    estimate: buildGenerateReviewEstimate({
+      animationPackage: payload,
+      referencedAssetIds,
+    }),
     animationPackageId: pkgRow.id,
   };
 }
@@ -123,7 +161,6 @@ export async function startExecutionJob(input: {
   storyId: string;
   animationPackageId: string;
   createdBy: string;
-  mediaKind?: MarketingOutputMediaKind;
   estimate: GenerateReviewEstimate;
   storyStatus: AiStoryStatus;
 }): Promise<{ jobId: string; taskId: string }> {
@@ -138,11 +175,7 @@ export async function startExecutionJob(input: {
     throw new Error("Story must be ready for execution before starting");
   }
 
-  const mediaKind = input.mediaKind ?? input.estimate.mediaKind;
-  const capabilityId =
-    mediaKind === "image"
-      ? EXECUTION_CAPABILITY_IDS.MARKETING_IMAGE
-      : EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO;
+  const capabilityId = EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO;
 
   const [task] = await input.db
     .insert(schema.tasks)
@@ -167,7 +200,6 @@ export async function startExecutionJob(input: {
       animationPackageId: input.animationPackageId,
       taskId: task.id,
       status: "queued",
-      mediaKind,
       capabilityId,
       targetOutputCount: input.estimate.targetOutputCount,
       generateReview: input.estimate,
@@ -302,16 +334,12 @@ async function invokeProviderForOutput(input: {
     workspaceId: input.workspaceId,
     correlationId: input.correlationId,
     policyVersion: "1.0.0",
-    requiredFeatures:
-      input.capabilityId === EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO ? ["LOOKUP"] : [],
-    requireLookup: input.capabilityId === EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO,
+    requiredFeatures: ["LOOKUP"],
+    requireLookup: true,
     requireCancellation: false,
     requireCallbacks: false,
     requireStreaming: false,
-    preferredProviders:
-      input.capabilityId === EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO
-        ? ["seedance"]
-        : ["flux"],
+    preferredProviders: ["seedance"],
     dataHandling: {
       sensitiveData: false,
       externalProcessingAllowed: true,
@@ -361,10 +389,7 @@ async function invokeProviderForOutput(input: {
       mediaType: "application/json",
     },
     outputSchema: {
-      schemaId:
-        input.capabilityId === EXECUTION_CAPABILITY_IDS.MARKETING_IMAGE
-          ? "MarketingImageResult"
-          : "AnimationVideoResult",
+      schemaId: "AnimationVideoResult",
       schemaVersion: "1.0.0",
     },
     contextVersions: { AnimationPackage: "1.0.0" },
@@ -381,8 +406,7 @@ async function invokeProviderForOutput(input: {
     },
     providerConstraints: {
       allowedProviderIds: [decision.selectedProviderId],
-      executionLookupRequired:
-        input.capabilityId === EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO,
+      executionLookupRequired: true,
     },
   } as CanonicalProviderRequest;
 
@@ -409,6 +433,23 @@ async function invokeProviderForOutput(input: {
   return { providerId: decision.selectedProviderId, result };
 }
 
+function providerPayloadFromManifest(
+  manifest: ExecutionManifest,
+  outputIndex: number
+): Record<string, unknown> {
+  const req = manifest.compiledProviderRequest;
+  return {
+    prompt: req.prompt,
+    negativePrompt: req.negativePrompt,
+    durationSec: req.durationSec,
+    aspectRatio: req.aspectRatio,
+    assetReferences: req.assetReferences,
+    identityConstraints: manifest.identityConstraints,
+    shotMap: req.shotMap,
+    outputIndex,
+  };
+}
+
 export async function runExecutionJob(jobId: string): Promise<void> {
   const db = getDb();
   const [job] = await db
@@ -429,7 +470,7 @@ export async function runExecutionJob(jobId: string): Promise<void> {
   try {
     await setExecutionStatus(db, jobId, job.status as AiStoryExecutionStatus, "preparing", {
       percent: 5,
-      message: "Building prompts from Animation Package",
+      message: "Compiling execution manifest from Animation Package",
       targetOutputs: job.targetOutputCount,
     });
 
@@ -443,18 +484,31 @@ export async function runExecutionJob(jobId: string): Promise<void> {
       pkgRow.payload
     ) as AnimationPackagePayload;
 
-    const promptPackage: PromptBuilderPackage = buildPromptPackage({
+    const referencedAssetIds = collectReferencedAssetIds(animationPackage);
+    const resolvedAssets = await loadResolvedCampaignAssets(
+      db,
+      job.workspaceId,
+      referencedAssetIds
+    );
+    assertCampaignAssetsResolved(referencedAssetIds, resolvedAssets);
+
+    const executionManifest = compileExecutionManifest({
       storyId: job.storyId,
       animationPackageId: job.animationPackageId,
       animationPackage,
-      mediaKind: job.mediaKind as MarketingOutputMediaKind,
+      resolvedAssets,
     });
+
+    const variants = buildOutputVariantsFromManifest(
+      executionManifest,
+      animationPackage.story.title || "AI Story"
+    );
 
     await db
       .update(schema.aiStoryExecutionJobs)
       .set({
-        promptPackage,
-        selectedOutputCount: promptPackage.outputBriefs.length,
+        executionManifest,
+        selectedOutputCount: variants.length,
         updatedAt: new Date(),
       })
       .where(eq(schema.aiStoryExecutionJobs.id, jobId));
@@ -468,8 +522,8 @@ export async function runExecutionJob(jobId: string): Promise<void> {
 
     await setExecutionStatus(db, jobId, "preparing", "running", {
       percent: 20,
-      message: "Dispatching provider executions",
-      targetOutputs: promptPackage.outputBriefs.length,
+      message: "Dispatching animation-video provider executions",
+      targetOutputs: variants.length,
     });
 
     const payloadResolver = new MemoryPayloadResolver();
@@ -479,7 +533,7 @@ export async function runExecutionJob(jobId: string): Promise<void> {
     const providerExecutionIds: string[] = [];
     let completed = 0;
 
-    for (const brief of promptPackage.outputBriefs) {
+    for (const variant of variants) {
       const [fresh] = await db
         .select()
         .from(schema.aiStoryExecutionJobs)
@@ -493,38 +547,44 @@ export async function runExecutionJob(jobId: string): Promise<void> {
         return;
       }
 
-      const primaryPrompt = brief.shotPrompts.map((s) => s.prompt).join("\n\n");
       const { providerId, result } = await invokeProviderForOutput({
-        capabilityId: job.capabilityId,
+        capabilityId: job.capabilityId || EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO,
         workspaceId: job.workspaceId,
         orgId: job.orgId,
         correlationId: jobId,
         payloadResolver,
         registry,
         router,
-        payload:
-          job.mediaKind === "image"
-            ? {
-                prompt: primaryPrompt,
-                negativePrompt: brief.shotPrompts[0]?.negativePrompt,
-                outputIndex: brief.outputIndex,
-              }
-            : {
-                prompt: primaryPrompt,
-                negativePrompt: brief.shotPrompts[0]?.negativePrompt,
-                durationSec: brief.shotPrompts.reduce((s, p) => s + p.durationSec, 0),
-                outputIndex: brief.outputIndex,
-              },
+        payload: providerPayloadFromManifest(executionManifest, variant.outputIndex),
       });
       providerExecutionIds.push(result.executionId);
       completed += 1;
 
-      const normalized = result.normalizedOutput as {
-        videoUrl?: string;
-        imageUrl?: string;
-      };
-      const storagePath =
-        job.mediaKind === "image" ? normalized.imageUrl : normalized.videoUrl;
+      const normalized = result.normalizedOutput as { videoUrl?: string };
+      const storagePath = normalized.videoUrl ?? null;
+
+      const [videoAsset] = storagePath
+        ? await db
+            .insert(schema.assets)
+            .values({
+              orgId: job.orgId,
+              workspaceId: job.workspaceId,
+              campaignId: job.campaignId,
+              type: "video",
+              displayName: variant.title,
+              storagePath,
+              mimeType: "video/mp4",
+              status: "ready",
+              source: "ai_story_execution",
+              metadata: {
+                source: "ai_story_execution",
+                executionJobId: jobId,
+                outputIndex: variant.outputIndex,
+                providerId,
+              },
+            })
+            .returning()
+        : [undefined];
 
       const [creative] = await db
         .insert(schema.creatives)
@@ -536,47 +596,46 @@ export async function runExecutionJob(jobId: string): Promise<void> {
           status: "pending_review",
           copyVariants: [
             {
-              id: `caption-${brief.outputIndex}`,
+              id: `caption-${variant.outputIndex}`,
               platform: "instagram",
-              caption: brief.caption,
-              hashtags: brief.hashtags,
+              caption: variant.caption,
+              hashtags: variant.hashtags,
             },
           ],
-          videoUrl: job.mediaKind === "video" ? storagePath ?? null : null,
-          coverUrl: job.mediaKind === "image" ? storagePath ?? null : null,
+          videoUrl: storagePath,
+          coverUrl: null,
           renderStatus: storagePath ? "preview_ready" : "none",
           editPlan: {
             source: "ai_story_execution",
             executionJobId: jobId,
-            outputIndex: brief.outputIndex,
-            prompt: primaryPrompt,
+            outputIndex: variant.outputIndex,
             providerId,
-            mediaKind: job.mediaKind,
-            metadata: brief.metadata,
+            capabilityId: EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO,
           },
         })
         .returning();
 
-      await db.insert(schema.aiStoryMarketingOutputs).values({
+      await db.insert(schema.aiStoryExecutionOutputs).values({
         orgId: job.orgId,
         workspaceId: job.workspaceId,
         campaignId: job.campaignId,
         storyId: job.storyId,
         executionJobId: jobId,
+        animationPackageId: job.animationPackageId,
         creativeId: creative?.id,
-        mediaKind: job.mediaKind,
+        outputType: "animation_video",
         status: "pending_review",
-        title: brief.title,
-        outputIndex: brief.outputIndex,
-        storagePath: storagePath ?? null,
-        thumbnailPath: job.mediaKind === "image" ? storagePath ?? null : null,
-        caption: brief.caption,
-        hashtags: brief.hashtags,
-        prompt: primaryPrompt,
-        metadata: brief.metadata,
+        title: variant.title,
+        outputIndex: variant.outputIndex,
+        storagePath,
+        generatedVideoAssetId: videoAsset?.id ?? null,
+        referencedAssetIds: [...executionManifest.referencedAssetIds],
+        executionManifest,
+        caption: variant.caption,
+        hashtags: variant.hashtags,
         providerId,
         providerExecutionId: result.executionId,
-        qualityScore: String(brief.qualityScore),
+        qualityScore: String(variant.qualityScore),
       });
 
       if (creative) {
@@ -594,13 +653,10 @@ export async function runExecutionJob(jobId: string): Promise<void> {
         .set({
           providerExecutionIds,
           progress: progressFor("running", {
-            percent: Math.min(
-              90,
-              20 + Math.round((completed / promptPackage.outputBriefs.length) * 70)
-            ),
-            message: `Collected output ${completed}/${promptPackage.outputBriefs.length}`,
+            percent: Math.min(90, 20 + Math.round((completed / variants.length) * 70)),
+            message: `Collected output ${completed}/${variants.length}`,
             completedOutputs: completed,
-            targetOutputs: promptPackage.outputBriefs.length,
+            targetOutputs: variants.length,
             providerAttempts: providerExecutionIds.length,
           }),
           updatedAt: new Date(),
@@ -610,9 +666,9 @@ export async function runExecutionJob(jobId: string): Promise<void> {
 
     await setExecutionStatus(db, jobId, "running", "collecting_assets", {
       percent: 95,
-      message: "Finalizing marketing outputs",
+      message: "Finalizing execution video outputs",
       completedOutputs: completed,
-      targetOutputs: promptPackage.outputBriefs.length,
+      targetOutputs: variants.length,
       providerAttempts: providerExecutionIds.length,
     });
 
@@ -620,7 +676,7 @@ export async function runExecutionJob(jobId: string): Promise<void> {
       percent: 100,
       message: "Execution completed",
       completedOutputs: completed,
-      targetOutputs: promptPackage.outputBriefs.length,
+      targetOutputs: variants.length,
       providerAttempts: providerExecutionIds.length,
     });
 
@@ -674,7 +730,7 @@ export async function runExecutionJob(jobId: string): Promise<void> {
   }
 }
 
-export async function regenerateSingleMarketingOutput(input: {
+export async function regenerateSingleExecutionOutput(input: {
   db: Db;
   executionJobId: string;
   outputId: string;
@@ -682,72 +738,86 @@ export async function regenerateSingleMarketingOutput(input: {
 }): Promise<void> {
   const [output] = await input.db
     .select()
-    .from(schema.aiStoryMarketingOutputs)
+    .from(schema.aiStoryExecutionOutputs)
     .where(
       and(
-        eq(schema.aiStoryMarketingOutputs.id, input.outputId),
-        eq(schema.aiStoryMarketingOutputs.executionJobId, input.executionJobId),
-        eq(schema.aiStoryMarketingOutputs.workspaceId, input.workspaceId)
+        eq(schema.aiStoryExecutionOutputs.id, input.outputId),
+        eq(schema.aiStoryExecutionOutputs.executionJobId, input.executionJobId),
+        eq(schema.aiStoryExecutionOutputs.workspaceId, input.workspaceId)
       )
     )
     .limit(1);
-  if (!output) throw new Error("Marketing output not found");
+  if (!output) throw new Error("Execution output not found");
 
   const [job] = await input.db
     .select()
     .from(schema.aiStoryExecutionJobs)
     .where(eq(schema.aiStoryExecutionJobs.id, input.executionJobId))
     .limit(1);
-  if (!job?.promptPackage) throw new Error("Execution prompt package missing");
-  const promptPackage = job.promptPackage as PromptBuilderPackage;
-  const brief = promptPackage.outputBriefs.find((b) => b.outputIndex === output.outputIndex);
-  if (!brief) throw new Error("Output brief not found — cannot regenerate");
+  if (!job?.executionManifest) throw new Error("Execution manifest missing");
+  const executionManifest = job.executionManifest as ExecutionManifest;
 
   const payloadResolver = new MemoryPayloadResolver();
   const registry = createProductionProviderRegistry(payloadResolver);
   const router = new CanonicalProviderRouter(registry);
-  const primaryPrompt = brief.shotPrompts.map((s) => s.prompt).join("\n\n");
   const { providerId, result } = await invokeProviderForOutput({
-    capabilityId: job.capabilityId,
+    capabilityId: job.capabilityId || EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO,
     workspaceId: job.workspaceId,
     orgId: job.orgId,
     correlationId: `${job.id}-regen-${output.id}`,
     payloadResolver,
     registry,
     router,
-    payload:
-      job.mediaKind === "image"
-        ? { prompt: primaryPrompt, outputIndex: brief.outputIndex }
-        : {
-            prompt: primaryPrompt,
-            durationSec: brief.shotPrompts.reduce((s, p) => s + p.durationSec, 0),
-            outputIndex: brief.outputIndex,
-          },
+    payload: providerPayloadFromManifest(executionManifest, output.outputIndex),
   });
-  const normalized = result.normalizedOutput as { videoUrl?: string; imageUrl?: string };
-  const storagePath =
-    job.mediaKind === "image" ? normalized.imageUrl : normalized.videoUrl;
+  const normalized = result.normalizedOutput as { videoUrl?: string };
+  const storagePath = normalized.videoUrl ?? null;
+
+  let generatedVideoAssetId = output.generatedVideoAssetId;
+  if (storagePath) {
+    const [videoAsset] = await input.db
+      .insert(schema.assets)
+      .values({
+        orgId: job.orgId,
+        workspaceId: job.workspaceId,
+        campaignId: job.campaignId,
+        type: "video",
+        displayName: output.title,
+        storagePath,
+        mimeType: "video/mp4",
+        status: "ready",
+        source: "ai_story_execution",
+        metadata: {
+          source: "ai_story_execution_regen",
+          executionJobId: job.id,
+          outputIndex: output.outputIndex,
+          providerId,
+        },
+      })
+      .returning();
+    generatedVideoAssetId = videoAsset?.id ?? generatedVideoAssetId;
+  }
 
   await input.db
-    .update(schema.aiStoryMarketingOutputs)
+    .update(schema.aiStoryExecutionOutputs)
     .set({
       status: "pending_review",
-      storagePath: storagePath ?? null,
-      thumbnailPath: job.mediaKind === "image" ? storagePath ?? null : null,
+      storagePath,
+      generatedVideoAssetId,
       providerId,
       providerExecutionId: result.executionId,
-      prompt: primaryPrompt,
+      failureMessage: null,
       updatedAt: new Date(),
     })
-    .where(eq(schema.aiStoryMarketingOutputs.id, output.id));
+    .where(eq(schema.aiStoryExecutionOutputs.id, output.id));
 
   if (output.creativeId) {
     await input.db
       .update(schema.creatives)
       .set({
         status: "pending_review",
-        videoUrl: job.mediaKind === "video" ? storagePath ?? null : null,
-        coverUrl: job.mediaKind === "image" ? storagePath ?? null : null,
+        videoUrl: storagePath,
+        coverUrl: null,
         renderStatus: storagePath ? "preview_ready" : "none",
         updatedAt: new Date(),
       })
@@ -762,3 +832,6 @@ export async function regenerateSingleMarketingOutput(input: {
     });
   }
 }
+
+/** @deprecated Use regenerateSingleExecutionOutput */
+export const regenerateSingleMarketingOutput = regenerateSingleExecutionOutput;

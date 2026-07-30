@@ -137,18 +137,18 @@ export async function POST(
       .set({ status: newCreativeStatus })
       .where(eq(schema.creatives.id, creative.id));
 
-    // Keep AI Story marketing outputs in sync with review decisions.
-    const marketingStatus =
+    // Keep AI Story execution outputs in sync with review decisions.
+    const executionOutputStatus =
       newCreativeStatus === "approved"
         ? "approved"
         : decision === "rejected"
           ? "rejected"
           : null;
-    if (marketingStatus) {
+    if (executionOutputStatus) {
       await db
-        .update(schema.aiStoryMarketingOutputs)
-        .set({ status: marketingStatus, updatedAt: new Date() })
-        .where(eq(schema.aiStoryMarketingOutputs.creativeId, creative.id));
+        .update(schema.aiStoryExecutionOutputs)
+        .set({ status: executionOutputStatus, updatedAt: new Date() })
+        .where(eq(schema.aiStoryExecutionOutputs.creativeId, creative.id));
     }
 
     const newCampaignStatus = await syncCampaignStatusFromCreatives(

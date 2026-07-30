@@ -2,17 +2,12 @@ import { eq } from "drizzle-orm";
 import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
 import { createGenerateReview } from "@ceo-agent/agents";
 import { isUuid, type AiStoryStatus } from "@ceo-agent/shared";
-import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 
-const BodySchema = z.object({
-  mediaKind: z.enum(["video", "image"]).optional(),
-});
-
 export async function POST(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string; storyId: string }> }
 ) {
   try {
@@ -20,11 +15,6 @@ export async function POST(
     const { id: campaignId, storyId } = await params;
     if (!isUuid(campaignId) || !isUuid(storyId)) {
       return apiError("Invalid id", "VALIDATION_ERROR", 400);
-    }
-    const raw = await request.json().catch(() => ({}));
-    const body = BodySchema.safeParse(raw);
-    if (!body.success) {
-      return apiError("Invalid body", "VALIDATION_ERROR", 400);
     }
 
     const db = getDb();
@@ -54,7 +44,6 @@ export async function POST(
       campaignId,
       storyId,
       workspaceId: campaign.workspaceId,
-      mediaKind: body.data.mediaKind,
     });
 
     if (status === "ready_for_execution") {

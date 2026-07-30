@@ -1,5 +1,5 @@
 /**
- * AI Story Sprint 3 — Execution Engine domain contracts.
+ * AI Story Sprint 3 — Execution Engine domain contracts (video only).
  * Planning schemas remain in ai-story.ts; this module owns execution only.
  */
 import { z } from "zod";
@@ -58,78 +58,127 @@ export const GenerateReviewEstimateSchema = z.object({
   estimatedCredits: z.number().nonnegative(),
   estimatedCostUsd: z.number().nonnegative(),
   estimatedDurationSec: z.number().nonnegative(),
-  preferredCapabilityId: z.string(),
+  preferredCapabilityId: z.literal("animation-video-generation"),
   risks: z.array(z.string()).default([]),
   targetOutputCount: z.number().int().positive(),
-  mediaKind: z.enum(["video", "image"]),
+  referencedAssetIds: z.array(z.string().uuid()).default([]),
 });
 
 export type GenerateReviewEstimate = z.infer<typeof GenerateReviewEstimateSchema>;
 
-export const PromptBuilderShotPromptSchema = z.object({
+export const PRODUCT_IDENTITY_CONSTRAINTS = [
+  "Preserve product shape exactly as in the referenced Campaign Asset.",
+  "Preserve product colour, packaging, logo, labels, and visible text.",
+  "Preserve proportions and uploaded asset identity.",
+  "Do not recreate, redesign, or invent a different product.",
+] as const;
+
+export const ExecutionCompiledShotSchema = z.object({
   shotId: z.string(),
   sceneId: z.string(),
+  beatIds: z.array(z.string()).default([]),
   order: z.number().int().nonnegative(),
-  prompt: z.string().min(1),
-  negativePrompt: z.string().default(""),
   durationSec: z.number().positive(),
-  camera: z.object({
-    type: z.string(),
-    movement: z.string(),
-    composition: z.string(),
-    framing: z.string(),
-    lens: z.string().default(""),
-  }),
+  cameraType: z.string(),
+  cameraMovement: z.string(),
+  composition: z.string(),
+  framing: z.string(),
+  lensSuggestion: z.string().default(""),
+  focus: z.string(),
+  emotion: z.string(),
+  information: z.string(),
+  transition: z.string().default(""),
   continuityNotes: z.string().default(""),
+  subjectAssetIds: z.array(z.string().uuid()).default([]),
+  promptSection: z.string().min(1),
 });
 
-export type PromptBuilderShotPrompt = z.infer<typeof PromptBuilderShotPromptSchema>;
+export type ExecutionCompiledShot = z.infer<typeof ExecutionCompiledShotSchema>;
 
-export const PromptBuilderPackageSchema = z.object({
+export const ExecutionManifestSchema = z.object({
   storyId: z.string().uuid(),
   animationPackageId: z.string().uuid(),
-  mediaKind: z.enum(["video", "image"]),
-  capabilityId: z.string(),
-  outputBriefs: z.array(
+  capabilityId: z.literal("animation-video-generation"),
+  referencedAssetIds: z.array(z.string().uuid()),
+  identityConstraints: z.array(z.string()).min(1),
+  characterContinuity: z.array(z.record(z.unknown())).default([]),
+  worldContinuity: z.record(z.unknown()).default({}),
+  scenes: z.array(
     z.object({
-      outputIndex: z.number().int().nonnegative(),
-      title: z.string(),
-      hookType: z.string(),
-      qualityScore: z.number().min(0).max(1),
-      shotPrompts: z.array(PromptBuilderShotPromptSchema).min(1),
-      caption: z.string().default(""),
-      hashtags: z.array(z.string()).default([]),
-      metadata: z.record(z.unknown()).default({}),
+      sceneId: z.string(),
+      beatIds: z.array(z.string()),
+      order: z.number().int().nonnegative(),
+      purpose: z.string(),
+      durationSec: z.number().positive(),
+      transition: z.string().default(""),
+      shotIds: z.array(z.string()),
     })
   ),
+  shots: z.array(ExecutionCompiledShotSchema).min(1),
+  /** Deterministic ordered provider request body sections (one final video output). */
+  compiledProviderRequest: z.object({
+    prompt: z.string().min(1),
+    negativePrompt: z.string().default(""),
+    durationSec: z.number().positive(),
+    aspectRatio: z.string().default("9:16"),
+    assetReferences: z.array(
+      z.object({
+        assetId: z.string().uuid(),
+        storagePath: z.string(),
+        role: z.string().default("product"),
+      })
+    ),
+    shotMap: z.array(
+      z.object({
+        shotId: z.string(),
+        sceneId: z.string(),
+        sectionIndex: z.number().int().nonnegative(),
+      })
+    ),
+  }),
   builtAt: z.string().datetime(),
 });
 
-export type PromptBuilderPackage = z.infer<typeof PromptBuilderPackageSchema>;
+export type ExecutionManifest = z.infer<typeof ExecutionManifestSchema>;
 
-export const MarketingOutputArtifactSchema = z.object({
+export const AiStoryExecutionOutputStatusSchema = z.enum([
+  "draft",
+  "pending_review",
+  "approved",
+  "rejected",
+  "failed",
+]);
+
+export type AiStoryExecutionOutputStatus = z.infer<
+  typeof AiStoryExecutionOutputStatusSchema
+>;
+
+export const AiStoryExecutionOutputSchema = z.object({
   id: z.string().uuid(),
   executionJobId: z.string().uuid(),
-  creativeId: z.string().uuid().optional(),
-  mediaKind: z.enum(["video", "image"]),
-  status: z.enum(["draft", "pending_review", "approved", "rejected", "failed"]),
-  title: z.string(),
+  animationPackageId: z.string().uuid(),
+  outputType: z.literal("animation_video"),
+  providerId: z.string().optional(),
+  providerExecutionId: z.string().optional(),
+  referencedAssetIds: z.array(z.string().uuid()).default([]),
+  generatedVideoAssetId: z.string().uuid().optional(),
   storagePath: z.string().optional(),
-  thumbnailPath: z.string().optional(),
+  executionManifest: ExecutionManifestSchema.optional(),
+  /** DB column `status` — draft | pending_review | approved | rejected | failed */
+  status: AiStoryExecutionOutputStatusSchema,
+  failureMessage: z.string().optional(),
+  creativeId: z.string().uuid().optional(),
+  title: z.string(),
+  outputIndex: z.number().int().nonnegative().default(0),
   caption: z.string().default(""),
   hashtags: z.array(z.string()).default([]),
-  subtitlePath: z.string().optional(),
-  prompt: z.string().optional(),
-  metadata: z.record(z.unknown()).default({}),
-  providerId: z.string().optional(),
   qualityScore: z.number().min(0).max(1).optional(),
 });
 
-export type MarketingOutputArtifact = z.infer<typeof MarketingOutputArtifactSchema>;
+export type AiStoryExecutionOutput = z.infer<typeof AiStoryExecutionOutputSchema>;
 
-/** Capability IDs used by the Execution Engine router (UI must not hardcode providers). */
+/** Capability IDs used by the AI Story Execution Engine (UI must not hardcode providers). */
 export const EXECUTION_CAPABILITY_IDS = {
   ANIMATION_VIDEO: "animation-video-generation",
-  MARKETING_IMAGE: "marketing-image-generation",
   JSON_GENERATION: "json-generation",
 } as const;
