@@ -19,7 +19,7 @@ async function writeEvidence(name: string, data: unknown) {
 }
 
 async function waitForUploadSuccess(page: Page) {
-  await expect(page.getByText(/^Uploaded$|上传成功|已上传/i).first()).toBeVisible({
+  await expect(page.getByText(/^Uploaded$|^已上传$/i).first()).toBeVisible({
     timeout: 180_000,
   });
 }
@@ -51,41 +51,51 @@ test.describe("Marketing vertical slice — Video Campaign (browser E2E)", () =>
     expect(storage.password).toBeNull();
     await writeEvidence("browser-storage.json", storage);
 
-    // ── 2) Workspace → New Campaign wizard ────────────────────────────────
-    await page.goto(`/w/${workspaceSlug}/campaigns/new`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: /new campaign|新建|创建活动/i })).toBeVisible({
-      timeout: 30_000,
+    // Stabilize UI language for reliable EN option labels (not product scope)
+    await page.evaluate(() => {
+      localStorage.setItem("emberos-locale", "en");
+      localStorage.setItem("emberos.locale", "en");
     });
 
-    const campaignName = `E2E Video ${Date.now()}`;
-    await page.locator('input[placeholder]').first().fill(campaignName);
-    await page.getByRole("button", { name: /continue|继续|下一步/i }).click();
+    // ── 2) Workspace → New Campaign wizard ────────────────────────────────
+    await page.goto(`/w/${workspaceSlug}/campaigns/new`, { waitUntil: "domcontentloaded" });
+    await page.evaluate(() => localStorage.setItem("emberos-locale", "en"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("button", { name: /continue/i })).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText(/step\s*1\s*of\s*5|第\s*1\s*\/\s*5/i)).toBeVisible();
 
-    // Objective + platforms + audience
-    await page.locator("select").first().selectOption("awareness");
-    const audience = page.locator("textarea").first();
+    const campaignName = `E2E Video ${Date.now()}`;
+    await page.getByRole("textbox", { name: /campaign name|活动名称/i }).fill(campaignName);
+    await page.getByRole("button", { name: /continue/i }).click();
+
+    // Objective + platforms + audience (never use global Language <select> in AppShell)
+    const objectiveSelect = page.locator("main select").filter({ has: page.locator('option[value="awareness"]') });
+    await expect(objectiveSelect).toBeVisible({ timeout: 30_000 });
+    await objectiveSelect.selectOption("awareness");
+    const audience = page.locator("main textarea").first();
     if (await audience.isVisible().catch(() => false)) {
       await audience.fill("Adults shopping for gifts online");
     }
-    await page.getByRole("button", { name: /continue|继续|下一步/i }).click();
+    await page.getByRole("button", { name: /continue/i }).click();
 
     // ── 3) Upload real video fixture via production upload UI ──────────────
-    await expect(page.locator('input[type="file"]')).toBeAttached({ timeout: 30_000 });
-    // Draft campaign must exist after objective Continue
+    await expect(page.locator('input[type="file"]')).toBeAttached({ timeout: 60_000 });
     await page.locator('input[type="file"]').setInputFiles(fixtureVideo);
     await waitForUploadSuccess(page);
     await page.screenshot({ path: resolve(artifactsDir, "01-upload.png"), fullPage: true });
-    await page.getByRole("button", { name: /continue|继续|下一步/i }).click();
+    await page.getByRole("button", { name: /continue/i }).click();
 
     // Brief
-    const brief = page.locator("textarea").first();
+    const brief = page.locator("main textarea").first();
     if (await brief.isVisible().catch(() => false)) {
       await brief.fill("E2E video acceptance: short promo with clear CTA.");
     }
-    await page.getByRole("button", { name: /continue|继续|下一步/i }).click();
+    await page.getByRole("button", { name: /continue/i }).click();
 
     // ── 4) Create Campaign → production Generate ──────────────────────────
-    const createBtn = page.getByRole("button", { name: /create campaign|创建活动|创建营销/i });
+    const createBtn = page.getByRole("button", { name: /create campaign/i });
     await expect(createBtn).toBeEnabled({ timeout: 30_000 });
     await createBtn.click();
     await page.waitForURL(/\/campaigns\/[^/]+\/task/, { timeout: 120_000 });
@@ -99,108 +109,141 @@ test.describe("Marketing vertical slice — Video Campaign (browser E2E)", () =>
     writeFileSync(resolve(artifactsDir, "task-url.txt"), taskUrl);
     await page.screenshot({ path: resolve(artifactsDir, "02-task.png"), fullPage: true });
 
-    // ── 5) Wait for worker / Marketing Package / clips ─────────────────────
-    let packageReady = false;
+    // ── 5) Wait for worker: Marketing Package + Auto Clip finalize + reviews ─
+    let reviewReady = false;
     let jobId: string | null = null;
-    for (let i = 0; i < 120; i++) {
+    for (let i = 0; i < 150; i++) {
       const statusRes = await page.request.get(`/api/tasks/${taskId}`);
+      const expRes = await page.request.get(`/api/tasks/${taskId}/export?resolution=720p`);
+      let status: string | undefined;
+      let content: string | undefined;
       if (statusRes.ok()) {
         const data = (await statusRes.json()) as {
           task?: {
             status?: string;
-            stepProgress?: Record<string, { status?: string; output?: unknown }>;
+            stepProgress?: Record<string, { status?: string }>;
           };
           status?: string;
           stepProgress?: Record<string, { status?: string }>;
         };
-        const status = data.task?.status ?? data.status;
+        status = data.task?.status ?? data.status;
         const progress = data.task?.stepProgress ?? data.stepProgress ?? {};
-        const content = progress.content_generate?.status;
-        const routerOut = progress.pipeline_router?.status;
-        await writeEvidence("task-poll.json", {
-          attempt: i,
-          status,
-          content,
-          router: routerOut,
-        });
+        content = progress.content_generate?.status;
+        await writeEvidence("task-poll.json", { attempt: i, status, content });
         if (status === "failed") {
           throw new Error(`Pipeline failed: ${JSON.stringify(data).slice(0, 2000)}`);
         }
-        // Auto Clip: task completes when clips ready; marketing package may complete earlier
-        if (status === "completed" || content === "completed") {
-          packageReady = true;
-          break;
-        }
       }
-      // Capture agent job id from health/queue when available is best-effort only
-      await page.waitForTimeout(5000);
-      if (i % 6 === 0) await page.reload({ waitUntil: "domcontentloaded" });
-    }
-    expect(packageReady).toBe(true);
-
-    // Ensure Auto Clip path (3 creatives) — poll creatives list via task export status
-    let clipsReady = false;
-    for (let i = 0; i < 90; i++) {
-      const expRes = await page.request.get(`/api/tasks/${taskId}/export?resolution=720p`);
       if (expRes.ok()) {
         const exp = (await expRes.json()) as {
           clipCount?: number;
           allClipsReady?: boolean;
-          approvalRequired?: boolean;
-          canExport?: boolean;
+          campaignStatus?: string | null;
           creatives?: Array<{ id: string; renderStatus?: string }>;
         };
         await writeEvidence("export-status-poll.json", { attempt: i, ...exp });
-        if ((exp.clipCount ?? 0) >= 3 && exp.allClipsReady) {
-          clipsReady = true;
-          jobId = exp.creatives?.[0]?.id ?? null;
+        if ((exp.creatives?.[0]?.id)) jobId = exp.creatives[0].id;
+        // Require task completed + 3 preview-ready clips + review gate
+        if (
+          status === "completed" &&
+          content === "completed" &&
+          (exp.clipCount ?? 0) >= 3 &&
+          exp.allClipsReady &&
+          (exp.campaignStatus === "pending_internal_review" ||
+            exp.campaignStatus === "pending_client_review" ||
+            exp.campaignStatus === "approved" ||
+            exp.campaignStatus === "export_ready")
+        ) {
+          reviewReady = true;
           break;
         }
       }
       await page.waitForTimeout(5000);
       if (i % 6 === 0) await page.reload({ waitUntil: "domcontentloaded" });
     }
-    expect(clipsReady).toBe(true);
+    expect(reviewReady, "Task did not reach review-ready Auto Clip state").toBe(true);
 
-    // ── 6) Review → Approve (UI) ──────────────────────────────────────────
-    await page.goto(`/w/${workspaceSlug}/reviews`, { waitUntil: "domcontentloaded" });
-    await page.screenshot({ path: resolve(artifactsDir, "03-reviews.png"), fullPage: true });
-    const approveButtons = page.getByRole("button", { name: /approve|批准|通过/i });
-    const approveCount = await approveButtons.count();
+    // ── 6) Review → Approve (UI) — only this campaign's pending creatives ─
+    page.on("dialog", (d) => {
+      void d.accept().catch(() => undefined);
+    });
+    await page.evaluate(() => localStorage.setItem("emberos-locale", "en"));
+    // Prefer production task CTA into the review queue
+    await page.goto(taskUrl, { waitUntil: "domcontentloaded" });
+    const reviewLink = page.getByRole("link", { name: /review queue|审核|open review/i });
+    if (await reviewLink.first().isVisible().catch(() => false)) {
+      await reviewLink.first().click();
+      await page.waitForURL(/\/reviews/, { timeout: 30_000 });
+    } else {
+      await page.goto(`/w/${workspaceSlug}/reviews`, { waitUntil: "domcontentloaded" });
+    }
+
+    const meRes = await page.request.get("/api/me");
+    const meBody = (await meRes.json()) as {
+      workspaces?: Array<{ id: string; slug: string }>;
+    };
+    const wsId = meBody.workspaces?.find((w) => w.slug === workspaceSlug)?.id;
+    expect(wsId, "E2E workspace missing from /api/me").toBeTruthy();
+
     let reviewId: string | null = null;
-    for (let i = 0; i < Math.min(approveCount, 8); i++) {
-      const btn = page.getByRole("button", { name: /approve|批准|通过/i }).first();
+    let pendingForCampaign: Array<{ review: { id: string } }> = [];
+    for (let i = 0; i < 60; i++) {
+      const revRes = await page.request.get(
+        `/api/reviews?workspaceId=${wsId}&status=pending`
+      );
+      const revBody = (await revRes.json()) as {
+        reviews?: Array<{ review: { id: string }; campaign?: { name?: string } }>;
+        error?: string;
+      };
+      await writeEvidence("reviews-api.json", { attempt: i, status: revRes.status(), body: revBody });
+      pendingForCampaign = (revBody.reviews ?? []).filter(
+        (r) => r.campaign?.name === campaignName
+      );
+      if (pendingForCampaign.length >= 3) break;
+      await page.waitForTimeout(5000);
+      await page.reload({ waitUntil: "domcontentloaded" });
+    }
+    expect(
+      pendingForCampaign.length,
+      `Expected 3 pending reviews for ${campaignName}`
+    ).toBeGreaterThanOrEqual(3);
+
+    await expect(page.getByText(campaignName).first()).toBeVisible({ timeout: 30_000 });
+    await page.screenshot({ path: resolve(artifactsDir, "03-reviews.png"), fullPage: true });
+
+    let approved = 0;
+    for (let i = 0; i < 6; i++) {
+      const card = page.locator("div.rounded-lg.border").filter({ hasText: campaignName }).first();
+      const btn = card.getByRole("button", { name: /approve|通过/i });
       if (!(await btn.isVisible().catch(() => false))) break;
-      const reviewResponse = page
-        .waitForResponse(
-          (res) =>
-            res.url().includes("/api/reviews/") &&
-            res.url().includes("/decide") &&
-            res.request().method() === "POST",
-          { timeout: 30_000 }
-        )
-        .catch(() => null);
-      page.once("dialog", (d) => d.accept().catch(() => undefined));
+      const reviewResponse = page.waitForResponse(
+        (res) =>
+          res.url().includes("/api/reviews/") &&
+          res.url().includes("/decide") &&
+          res.request().method() === "POST",
+        { timeout: 60_000 }
+      );
       await btn.click();
       const res = await reviewResponse;
-      if (res) {
-        const body = (await res.json().catch(() => ({}))) as { review?: { id?: string }; id?: string };
-        reviewId = body.review?.id ?? body.id ?? reviewId;
-        await writeEvidence(`review-approve-${i}.json`, {
-          status: res.status(),
-          body,
-        });
-      }
-      await page.waitForTimeout(1500);
+      const body = (await res.json().catch(() => ({}))) as {
+        review?: { id?: string };
+        id?: string;
+      };
+      reviewId = body.review?.id ?? body.id ?? reviewId;
+      approved += 1;
+      await writeEvidence(`review-approve-${i}.json`, { status: res.status(), body });
+      await page.waitForTimeout(1000);
     }
-    await writeEvidence("review-summary.json", { attemptedApprovals: approveCount, reviewId });
+    expect(approved, "Expected to approve this campaign's 3 Auto Clip reviews").toBe(3);
+    await writeEvidence("review-summary.json", { approved, reviewId, campaignName });
 
     // ── 7) Export ZIP via task Export CTA ─────────────────────────────────
     await page.goto(taskUrl, { waitUntil: "domcontentloaded" });
     await page.screenshot({ path: resolve(artifactsDir, "04-export-surface.png"), fullPage: true });
 
     // Wait until approval clears export gate
-    for (let i = 0; i < 36; i++) {
+    let exportUnlocked = false;
+    for (let i = 0; i < 60; i++) {
       const expRes = await page.request.get(`/api/tasks/${taskId}/export?resolution=720p`);
       if (expRes.ok()) {
         const exp = (await expRes.json()) as {
@@ -208,24 +251,36 @@ test.describe("Marketing vertical slice — Video Campaign (browser E2E)", () =>
           canExport?: boolean;
           status?: string;
           exportPackUrl?: string | null;
+          campaignStatus?: string | null;
         };
         await writeEvidence("export-gate.json", { attempt: i, ...exp });
-        if (exp.exportPackUrl) break;
-        if (!exp.approvalRequired && exp.canExport) break;
+        if (exp.exportPackUrl || (!exp.approvalRequired && exp.canExport)) {
+          exportUnlocked = true;
+          break;
+        }
       }
       await page.waitForTimeout(5000);
       await page.reload({ waitUntil: "domcontentloaded" });
     }
+    expect(exportUnlocked, "Export gate still locked after review approvals").toBe(true);
 
-    const exportCta = page.getByRole("button", { name: /export|导出/i });
+    // Reload so task UI picks up post-approval export eligibility
+    await page.reload({ waitUntil: "domcontentloaded" });
+    const exportCta = page.getByRole("button", { name: /export 3 clips zip|export 3 clips|导出/i });
     await expect(exportCta.first()).toBeVisible({ timeout: 120_000 });
+    for (let i = 0; i < 36; i++) {
+      if (await exportCta.first().isEnabled().catch(() => false)) break;
+      await page.waitForTimeout(5000);
+      await page.reload({ waitUntil: "domcontentloaded" });
+    }
+    await expect(exportCta.first()).toBeEnabled({ timeout: 60_000 });
 
-    const exportResponse = page.waitForResponse(
+    const exportResponsePromise = page.waitForResponse(
       (res) => res.url().includes(`/api/tasks/${taskId}/export`) && res.request().method() === "POST",
       { timeout: 120_000 }
     );
     await exportCta.first().click();
-    const expRes = await exportResponse;
+    const expRes = await exportResponsePromise;
     const expBody = (await expRes.json().catch(() => ({}))) as {
       status?: string;
       jobId?: string;
