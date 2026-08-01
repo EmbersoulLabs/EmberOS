@@ -1,8 +1,242 @@
 /**
- * AI Story Sprint 3 — Execution Engine domain contracts (video only).
- * Planning schemas remain in ai-story.ts; this module owns execution only.
+ * AI Story Sprint 3 — frozen execution contracts (video only).
+ *
+ * Canonical ownership is Story → Scene → Shot. A Scene is the provider
+ * execution unit; a Story Video is a distinct final result. Marketing Output
+ * quantity is intentionally absent from the frozen contracts.
+ *
+ * Planning schemas remain in ai-story.ts; this module owns execution contracts
+ * only and does not implement persistence, routing, provider calls, review,
+ * retries, assembly, or export.
  */
 import { z } from "zod";
+
+export const AI_STORY_EXECUTION_CONTRACT_VERSION = "1" as const;
+
+const NonEmptyTextSchema = z.string().trim().min(1);
+const IntegrityHashSchema = NonEmptyTextSchema;
+const ImmutableReferenceSchema = z.object({
+  uri: NonEmptyTextSchema,
+  contentHash: IntegrityHashSchema,
+  mediaType: NonEmptyTextSchema,
+});
+
+/** Immutable Story Version used to derive an Animation Package and Scene plan. */
+export const AiStoryFrozenVersionReferenceSchema = z.object({
+  storyId: z.string().uuid(),
+  storyVersionId: z.string().uuid(),
+  versionNumber: z.number().int().positive(),
+  frozenAt: z.string().datetime(),
+  integrityHash: IntegrityHashSchema,
+});
+
+export type AiStoryFrozenVersionReference = z.infer<
+  typeof AiStoryFrozenVersionReferenceSchema
+>;
+
+/** Immutable Animation Package identity compiled from one frozen Story Version. */
+export const AiStoryAnimationPackageExecutionReferenceSchema = z.object({
+  animationPackageId: z.string().uuid(),
+  storyId: z.string().uuid(),
+  storyVersionId: z.string().uuid(),
+  sceneCount: z.number().int().positive(),
+  integrityHash: IntegrityHashSchema,
+});
+
+export type AiStoryAnimationPackageExecutionReference = z.infer<
+  typeof AiStoryAnimationPackageExecutionReferenceSchema
+>;
+
+/** Ordered Shot reference inside exactly one Scene execution unit. */
+export const AiStorySceneShotReferenceSchema = z.object({
+  shotId: NonEmptyTextSchema,
+  sceneId: NonEmptyTextSchema,
+  order: z.number().int().nonnegative(),
+  durationMs: z.number().int().positive(),
+  integrityHash: IntegrityHashSchema,
+});
+
+export type AiStorySceneShotReference = z.infer<
+  typeof AiStorySceneShotReferenceSchema
+>;
+
+/**
+ * Stable cross-boundary identity for one Scene execution.
+ *
+ * `sceneExecutionId` and `idempotencyKey` must remain stable across equivalent
+ * scheduling attempts. Provider attempt identity is deliberately separate.
+ */
+export const AiStorySceneExecutionIdentitySchema = z.object({
+  contractVersion: z.literal(AI_STORY_EXECUTION_CONTRACT_VERSION),
+  sceneExecutionId: z.string().uuid(),
+  tenantId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  storyId: z.string().uuid(),
+  storyVersionId: z.string().uuid(),
+  animationPackageId: z.string().uuid(),
+  sceneId: NonEmptyTextSchema,
+  sceneOrder: z.number().int().nonnegative(),
+  idempotencyKey: NonEmptyTextSchema,
+  deterministicFingerprint: IntegrityHashSchema,
+});
+
+export type AiStorySceneExecutionIdentity = z.infer<
+  typeof AiStorySceneExecutionIdentitySchema
+>;
+
+export const AI_STORY_SCENE_EXECUTION_STATUSES = [
+  "PLANNED",
+  "QUEUED",
+  "RUNNING",
+  "SUCCEEDED",
+  "FAILED",
+  "CANCELLED",
+] as const;
+
+export const AiStorySceneExecutionStatusSchema = z.enum(
+  AI_STORY_SCENE_EXECUTION_STATUSES
+);
+
+export type AiStorySceneExecutionStatus = z.infer<
+  typeof AiStorySceneExecutionStatusSchema
+>;
+
+/**
+ * Provider-independent, immutable execution plan for exactly one Scene.
+ * Prompt text and provider-specific request fields are not canonical Story data.
+ */
+export const AiStorySceneExecutionPlanSchema = z.object({
+  identity: AiStorySceneExecutionIdentitySchema,
+  frozenStoryVersion: AiStoryFrozenVersionReferenceSchema,
+  animationPackage: AiStoryAnimationPackageExecutionReferenceSchema,
+  shotReferences: z.array(AiStorySceneShotReferenceSchema).min(1),
+  referencedAssetIds: z.array(z.string().uuid()).default([]),
+  normalizedPayloadReference: ImmutableReferenceSchema,
+  plannedDurationMs: z.number().int().positive(),
+  compiledAt: z.string().datetime(),
+  compilationHash: IntegrityHashSchema,
+});
+
+export type AiStorySceneExecutionPlan = z.infer<
+  typeof AiStorySceneExecutionPlanSchema
+>;
+
+/** Canonical Story-level plan containing ordered Scene execution identities. */
+export const AiStoryExecutionPlanSchema = z.object({
+  contractVersion: z.literal(AI_STORY_EXECUTION_CONTRACT_VERSION),
+  storyExecutionId: z.string().uuid(),
+  frozenStoryVersion: AiStoryFrozenVersionReferenceSchema,
+  animationPackage: AiStoryAnimationPackageExecutionReferenceSchema,
+  sceneExecutions: z.array(AiStorySceneExecutionIdentitySchema).min(1),
+  compilationHash: IntegrityHashSchema,
+  compiledAt: z.string().datetime(),
+});
+
+export type AiStoryExecutionPlan = z.infer<typeof AiStoryExecutionPlanSchema>;
+
+/** Immutable identity of one provider attempt for one Scene execution. */
+export const AiStorySceneExecutionAttemptSchema = z.object({
+  attemptId: NonEmptyTextSchema,
+  sceneExecutionId: z.string().uuid(),
+  attemptNumber: z.number().int().nonnegative(),
+  providerExecutionId: NonEmptyTextSchema.optional(),
+  status: AiStorySceneExecutionStatusSchema,
+  startedAt: z.string().datetime().optional(),
+  completedAt: z.string().datetime().optional(),
+  requestHash: IntegrityHashSchema,
+  responseHash: IntegrityHashSchema.optional(),
+});
+
+export type AiStorySceneExecutionAttempt = z.infer<
+  typeof AiStorySceneExecutionAttemptSchema
+>;
+
+/** Immutable generated video result belonging to exactly one Scene attempt. */
+export const AiStorySceneVideoResultSchema = z.object({
+  sceneResultId: z.string().uuid(),
+  sceneExecutionId: z.string().uuid(),
+  attemptId: NonEmptyTextSchema,
+  providerExecutionId: NonEmptyTextSchema,
+  sceneId: NonEmptyTextSchema,
+  sceneOrder: z.number().int().nonnegative(),
+  videoReference: ImmutableReferenceSchema,
+  durationMs: z.number().int().positive(),
+  acceptedAt: z.string().datetime(),
+  integrityHash: IntegrityHashSchema,
+});
+
+export type AiStorySceneVideoResult = z.infer<
+  typeof AiStorySceneVideoResultSchema
+>;
+
+export const AI_STORY_SCENE_REVIEW_DECISIONS = [
+  "PENDING",
+  "APPROVED",
+  "REJECTED",
+] as const;
+
+export const AiStorySceneReviewDecisionSchema = z.enum(
+  AI_STORY_SCENE_REVIEW_DECISIONS
+);
+
+export type AiStorySceneReviewDecision = z.infer<
+  typeof AiStorySceneReviewDecisionSchema
+>;
+
+/** Review fact for one immutable Scene video result. */
+export const AiStorySceneReviewSchema = z.object({
+  sceneReviewId: z.string().uuid(),
+  sceneResultId: z.string().uuid(),
+  decision: AiStorySceneReviewDecisionSchema,
+  reviewedBy: z.string().uuid().optional(),
+  reviewedAt: z.string().datetime().optional(),
+});
+
+export type AiStorySceneReview = z.infer<typeof AiStorySceneReviewSchema>;
+
+/**
+ * Canonical final Story video result. It is distinct from Scene results and
+ * from Marketing Outputs. Assembly behavior is intentionally not defined here.
+ */
+export const AiStoryVideoResultSchema = z.object({
+  storyVideoResultId: z.string().uuid(),
+  storyExecutionId: z.string().uuid(),
+  storyId: z.string().uuid(),
+  storyVersionId: z.string().uuid(),
+  animationPackageId: z.string().uuid(),
+  orderedSceneResultIds: z.array(z.string().uuid()).min(1),
+  videoReference: ImmutableReferenceSchema,
+  durationMs: z.number().int().positive(),
+  createdAt: z.string().datetime(),
+  integrityHash: IntegrityHashSchema,
+});
+
+export type AiStoryVideoResult = z.infer<typeof AiStoryVideoResultSchema>;
+
+/** Scene-based Generate Review contract; no Marketing output quantity exists. */
+export const AiStoryExecutionReviewEstimateSchema = z.object({
+  storySummary: z.string(),
+  aiSummary: z.string(),
+  requiredSceneCount: z.number().int().positive(),
+  estimatedProviderExecutions: z.number().int().positive(),
+  estimatedCredits: z.number().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+  estimatedDurationSec: z.number().nonnegative(),
+  preferredCapabilityId: z.literal("animation-video-generation"),
+  risks: z.array(z.string()).default([]),
+  referencedAssetIds: z.array(z.string().uuid()).default([]),
+});
+
+export type AiStoryExecutionReviewEstimate = z.infer<
+  typeof AiStoryExecutionReviewEstimateSchema
+>;
+
+/*
+ * Legacy Sprint 3 compatibility contracts below remain unchanged so Phase 0
+ * does not alter runtime behavior. They are not the frozen canonical model and
+ * must not be used by new AI Story execution code.
+ */
 
 export const AI_STORY_EXECUTION_STATUSES = [
   "queued",
@@ -40,6 +274,7 @@ export function assertAiStoryExecutionTransition(
   }
 }
 
+/** @deprecated Legacy output-based runtime compatibility contract. */
 export const AiStoryExecutionProgressSchema = z.object({
   phase: z.enum(AI_STORY_EXECUTION_STATUSES),
   percent: z.number().min(0).max(100).default(0),
@@ -52,6 +287,7 @@ export const AiStoryExecutionProgressSchema = z.object({
 
 export type AiStoryExecutionProgress = z.infer<typeof AiStoryExecutionProgressSchema>;
 
+/** @deprecated Legacy Marketing-output-based review compatibility contract. */
 export const GenerateReviewEstimateSchema = z.object({
   storySummary: z.string(),
   aiSummary: z.string(),
@@ -95,6 +331,7 @@ export const ExecutionCompiledShotSchema = z.object({
 
 export type ExecutionCompiledShot = z.infer<typeof ExecutionCompiledShotSchema>;
 
+/** @deprecated Legacy complete-Story output manifest compatibility contract. */
 export const ExecutionManifestSchema = z.object({
   storyId: z.string().uuid(),
   animationPackageId: z.string().uuid(),
@@ -153,6 +390,7 @@ export type AiStoryExecutionOutputStatus = z.infer<
   typeof AiStoryExecutionOutputStatusSchema
 >;
 
+/** @deprecated Legacy generic output compatibility contract. */
 export const AiStoryExecutionOutputSchema = z.object({
   id: z.string().uuid(),
   executionJobId: z.string().uuid(),
