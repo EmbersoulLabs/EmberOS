@@ -312,7 +312,7 @@ export default function AiStoryReviewPage() {
 
         {status === "ready_for_execution" ? (
           <div className="rounded-xl border border-brand-teal/30 bg-brand-teal/5 p-4 text-sm font-semibold text-brand-teal">
-            Animation Package READY FOR EXECUTION. Open Generate Review, then confirm Execute to produce Marketing Outputs.
+            Animation Package READY FOR EXECUTION. Open Generate Review to compile Scene Execution Intents and run AI QC (Phase 1 — no provider execution yet).
           </div>
         ) : null}
 
@@ -585,8 +585,11 @@ function ExecutionPanel({
   onDone: () => Promise<void>;
 }) {
   const [estimate, setEstimate] = useState<unknown>(null);
+  const [qcSummary, setQcSummary] = useState<unknown>(null);
+  const [reviewMeta, setReviewMeta] = useState<unknown>(null);
   const [outputs, setOutputs] = useState<unknown[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [executionAllowed, setExecutionAllowed] = useState(false);
 
   async function refreshStatus() {
     const res = await fetch(
@@ -617,6 +620,16 @@ function ExecutionPanel({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Generate Review failed");
       setEstimate(data.estimate);
+      setQcSummary(data.qc ?? null);
+      setReviewMeta({
+        phase: data.phase,
+        overallQcStatus: data.qc?.overallStatus,
+        sceneIntentCount: data.sceneIntentCount,
+        executionAllowed: data.executionAllowed,
+        qcPass: data.qcPass,
+        sceneIntents: data.sceneIntents,
+      });
+      setExecutionAllowed(Boolean(data.executionAllowed));
       await onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generate Review failed");
@@ -710,7 +723,8 @@ function ExecutionPanel({
       <div>
         <h2 className="text-lg font-bold text-navy">Execution Engine</h2>
         <p className="mt-1 text-sm text-ink-secondary">
-          Generate Review → Execute → Review Marketing Outputs → Export approved only. Provider is selected by capability routing.
+          Phase 1: Generate Review compiles Scene Execution Intents and runs provider-neutral AI QC.
+          Provider execution is locked until later Sprint 3 phases.
         </p>
       </div>
       <div className="flex flex-wrap gap-3">
@@ -724,9 +738,14 @@ function ExecutionPanel({
         </button>
         <button
           type="button"
-          disabled={busy || status === "executing"}
+          disabled={busy || status === "executing" || !executionAllowed}
           onClick={() => void execute()}
           className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
+          title={
+            executionAllowed
+              ? "Confirm execute"
+              : "Blocked: Phase 1 QC-only — execution locked"
+          }
         >
           Confirm Execute
         </button>
@@ -747,10 +766,16 @@ function ExecutionPanel({
           Export Approved
         </button>
       </div>
-      {estimate ? <PackageSection title="Generate Review Estimate" value={estimate} /> : null}
+      {reviewMeta ? (
+        <PackageSection title="Generate Review / Phase 1 Meta" value={reviewMeta} />
+      ) : null}
+      {estimate ? (
+        <PackageSection title="Generate Review Estimate (Scene-based)" value={estimate} />
+      ) : null}
+      {qcSummary ? <PackageSection title="AI QC Findings" value={qcSummary} /> : null}
       {outputs.length > 0 ? (
         <div className="space-y-2">
-          <h3 className="text-sm font-semibold text-navy">Marketing Outputs</h3>
+          <h3 className="text-sm font-semibold text-navy">Execution Outputs</h3>
           {(outputs as Array<{ id: string; title: string; status: string }>).map((output) => (
             <div
               key={output.id}

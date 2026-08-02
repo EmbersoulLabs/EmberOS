@@ -6,6 +6,11 @@ import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 
+/**
+ * Sprint 3 Phase 1 — Generate Review:
+ * compile Scene Execution Intents + run provider-neutral AI QC.
+ * Does not start provider execution.
+ */
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string; storyId: string }> }
@@ -44,17 +49,45 @@ export async function POST(
       campaignId,
       storyId,
       workspaceId: campaign.workspaceId,
+      orgId: campaign.orgId,
     });
 
     if (status === "ready_for_execution") {
       await setAiStoryStatus(db, storyId, status, "generate_review");
     }
 
+    const blockingErrors = review.qcResults.flatMap((r) =>
+      r.errors.filter((e) => e.severity === "blocking")
+    );
+    const warnings = review.qcResults.flatMap((r) =>
+      r.errors.filter((e) => e.severity === "warning")
+    );
+
     return apiSuccess({
       storyId,
       status: status === "ready_for_execution" ? "generate_review" : status,
       animationPackageId: review.animationPackageId,
+      phase: review.phase,
       estimate: review.estimate,
+      storyExecutionPlan: review.storyExecutionPlan,
+      sceneIntentCount: review.sceneIntents.length,
+      sceneIntents: review.sceneIntents.map((intent) => ({
+        sceneExecutionId: intent.identity.sceneExecutionId,
+        sceneId: intent.identity.sceneId,
+        sceneOrder: intent.identity.sceneOrder,
+        plannedDurationMs: intent.plannedDurationMs,
+        shotCount: intent.shotReferences.length,
+        referencedAssetIds: intent.referencedAssetIds,
+        deterministicFingerprint: intent.identity.deterministicFingerprint,
+      })),
+      qc: {
+        overallStatus: review.overallQcStatus,
+        results: review.qcResults,
+        blockingErrors,
+        warnings,
+      },
+      executionAllowed: review.executionAllowed,
+      qcPass: review.overallQcStatus !== "failed",
     });
   } catch (error) {
     return handleApiError(error);

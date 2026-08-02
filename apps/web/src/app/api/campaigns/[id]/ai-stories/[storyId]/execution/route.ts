@@ -1,12 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
-import { createGenerateReview, startExecutionJob } from "@ceo-agent/agents";
-import { enqueueStoryExecution } from "@ceo-agent/queue";
-import {
-  GenerateReviewEstimateSchema,
-  isUuid,
-  type AiStoryStatus,
-} from "@ceo-agent/shared";
+import { createGenerateReview } from "@ceo-agent/agents";
+import { isUuid, type AiStoryStatus } from "@ceo-agent/shared";
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
@@ -14,9 +9,12 @@ import { loadCampaignAiStory } from "@/lib/ai-story-service";
 
 const BodySchema = z.object({
   confirm: z.literal(true),
-  estimate: GenerateReviewEstimateSchema.optional(),
 });
 
+/**
+ * Sprint 3 Phase 1 — execution start is locked.
+ * Re-runs Generate Review / AI QC and refuses provider execution.
+ */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string; storyId: string }> }
@@ -64,35 +62,22 @@ export async function POST(
       campaignId,
       storyId,
       workspaceId: campaign.workspaceId,
-    });
-    const estimate = body.data.estimate ?? review.estimate;
-
-    const started = await startExecutionJob({
-      db,
-      orgId: campaign.orgId,
-      workspaceId: campaign.workspaceId,
-      campaignId,
-      storyId,
-      animationPackageId: review.animationPackageId,
-      createdBy: user.id,
-      estimate,
-      storyStatus: status,
-    });
-
-    await enqueueStoryExecution({
-      executionJobId: started.jobId,
-      storyId,
-      campaignId,
-      workspaceId: campaign.workspaceId,
       orgId: campaign.orgId,
     });
 
-    return apiSuccess({
-      storyId,
-      status: "executing",
-      executionJobId: started.jobId,
-      taskId: started.taskId,
-    });
+    if (review.overallQcStatus === "failed") {
+      return apiError(
+        "AI QC blocking findings prevent execution",
+        "AI_QC_BLOCKED",
+        409
+      );
+    }
+
+    return apiError(
+      "Phase 1 lock: Scene compilation and AI QC only. Provider execution, Outbox, and Worker paths are disabled until later Sprint 3 phases are approved.",
+      "PHASE1_EXECUTION_LOCKED",
+      409
+    );
   } catch (error) {
     return handleApiError(error);
   }

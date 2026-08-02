@@ -122,6 +122,66 @@ export type AiStorySceneExecutionPlan = z.infer<
   typeof AiStorySceneExecutionPlanSchema
 >;
 
+/**
+ * Phase 1 name for the frozen Scene execution plan.
+ * Alias only — same schema as AiStorySceneExecutionPlan (Phase 0).
+ */
+export const AiStorySceneExecutionIntentSchema = AiStorySceneExecutionPlanSchema;
+export type AiStorySceneExecutionIntent = AiStorySceneExecutionPlan;
+
+/** Ordered character continuity references preserved on a Scene Intent (IDs only). */
+export const AiStorySceneCharacterReferenceSchema = z.object({
+  characterId: NonEmptyTextSchema,
+  name: NonEmptyTextSchema,
+  integrityHash: IntegrityHashSchema,
+});
+
+export type AiStorySceneCharacterReference = z.infer<
+  typeof AiStorySceneCharacterReferenceSchema
+>;
+
+/**
+ * Provider-neutral compiled instruction snapshot for one Scene.
+ * Derived from the Animation Package; never rewritten by QC or providers.
+ * Not a Canonical Provider Request.
+ */
+export const AiStorySceneCompiledInstructionsSchema = z.object({
+  contractVersion: z.literal(AI_STORY_EXECUTION_CONTRACT_VERSION),
+  capabilityId: z.literal("animation-video-generation"),
+  sceneId: NonEmptyTextSchema,
+  sceneOrder: z.number().int().nonnegative(),
+  purpose: NonEmptyTextSchema,
+  transition: z.string().default(""),
+  continuityNotes: z.string().default(""),
+  beatIds: z.array(NonEmptyTextSchema).default([]),
+  durationMs: z.number().int().positive(),
+  shots: z
+    .array(
+      z.object({
+        shotId: NonEmptyTextSchema,
+        order: z.number().int().nonnegative(),
+        durationMs: z.number().int().positive(),
+        cameraType: NonEmptyTextSchema,
+        cameraMovement: NonEmptyTextSchema,
+        composition: NonEmptyTextSchema,
+        framing: NonEmptyTextSchema,
+        lensSuggestion: z.string().default(""),
+        focus: NonEmptyTextSchema,
+        emotion: NonEmptyTextSchema,
+        information: NonEmptyTextSchema,
+      })
+    )
+    .min(1),
+  characterReferences: z.array(AiStorySceneCharacterReferenceSchema).default([]),
+  referencedAssetIds: z.array(z.string().uuid()).default([]),
+  worldContinuity: z.record(z.unknown()).default({}),
+  productIdentityConstraints: z.array(NonEmptyTextSchema).min(1),
+});
+
+export type AiStorySceneCompiledInstructions = z.infer<
+  typeof AiStorySceneCompiledInstructionsSchema
+>;
+
 /** Canonical Story-level plan containing ordered Scene execution identities. */
 export const AiStoryExecutionPlanSchema = z.object({
   contractVersion: z.literal(AI_STORY_EXECUTION_CONTRACT_VERSION),
@@ -230,6 +290,81 @@ export const AiStoryExecutionReviewEstimateSchema = z.object({
 
 export type AiStoryExecutionReviewEstimate = z.infer<
   typeof AiStoryExecutionReviewEstimateSchema
+>;
+
+/** Stable machine-readable AI QC finding codes (Phase 1). */
+export const AI_STORY_AI_QC_ERROR_CODES = [
+  "STORY_VERSION_MISSING",
+  "STORY_VERSION_NOT_FROZEN",
+  "ANIMATION_PACKAGE_MISSING",
+  "ANIMATION_PACKAGE_NOT_APPROVED",
+  "ANIMATION_PACKAGE_STORY_MISMATCH",
+  "SCENE_NOT_IN_PACKAGE",
+  "SCENE_ORDER_INVALID",
+  "SHOT_MISSING",
+  "SHOT_ORDER_INVALID",
+  "SCENE_DURATION_INVALID",
+  "SHOT_DURATION_INCONSISTENT",
+  "CONTINUITY_CONTEXT_MISSING",
+  "COMPILED_INSTRUCTIONS_EMPTY",
+  "PROMPT_CONTRACT_INVALID",
+  "CAPABILITY_INVALID",
+  "FORBIDDEN_MARKETING_INSTRUCTION",
+  "FORBIDDEN_IMAGE_GENERATION_INSTRUCTION",
+  "MISSING_CAMPAIGN_ASSET",
+  "ASSET_WORKSPACE_MISMATCH",
+  "ASSET_CAMPAIGN_UNAUTHORIZED",
+  "PRODUCT_IDENTITY_REFERENCE_MISSING",
+  "IDENTITY_UNSTABLE",
+  "DETERMINISM_HASH_MISMATCH",
+  "EXECUTION_PARAMETER_INVALID",
+] as const;
+
+export type AiStoryAiQcErrorCode = (typeof AI_STORY_AI_QC_ERROR_CODES)[number];
+
+export const AiStoryAiQcSeveritySchema = z.enum(["blocking", "warning"]);
+export type AiStoryAiQcSeverity = z.infer<typeof AiStoryAiQcSeveritySchema>;
+
+export const AiStoryAiQcFindingSchema = z.object({
+  code: z.enum(AI_STORY_AI_QC_ERROR_CODES),
+  path: NonEmptyTextSchema,
+  message: NonEmptyTextSchema,
+  severity: AiStoryAiQcSeveritySchema,
+});
+
+export type AiStoryAiQcFinding = z.infer<typeof AiStoryAiQcFindingSchema>;
+
+export const AiStoryAiQcStatusSchema = z.enum(["passed", "failed", "warning"]);
+export type AiStoryAiQcStatus = z.infer<typeof AiStoryAiQcStatusSchema>;
+
+/**
+ * Provider-neutral AI QC result for one Scene Execution Intent.
+ * Pure validation artifact — never mutates the Intent.
+ */
+export const AiStoryAiQcResultSchema = z.object({
+  status: AiStoryAiQcStatusSchema,
+  intentId: z.string().uuid(),
+  sceneId: NonEmptyTextSchema,
+  validatedAt: z.string().datetime(),
+  contractVersion: z.literal(AI_STORY_EXECUTION_CONTRACT_VERSION),
+  errors: z.array(AiStoryAiQcFindingSchema).default([]),
+});
+
+export type AiStoryAiQcResult = z.infer<typeof AiStoryAiQcResultSchema>;
+
+/** Aggregate QC + estimate payload returned by Generate Review (Phase 1). */
+export const AiStoryGenerateReviewResultSchema = z.object({
+  estimate: AiStoryExecutionReviewEstimateSchema,
+  storyExecutionPlan: AiStoryExecutionPlanSchema,
+  sceneIntents: z.array(AiStorySceneExecutionIntentSchema).min(1),
+  qcResults: z.array(AiStoryAiQcResultSchema).min(1),
+  overallQcStatus: AiStoryAiQcStatusSchema,
+  executionAllowed: z.boolean(),
+  phase: z.literal("phase_1_qc_only"),
+});
+
+export type AiStoryGenerateReviewResult = z.infer<
+  typeof AiStoryGenerateReviewResultSchema
 >;
 
 /*

@@ -9,11 +9,13 @@ import { getDb, schema } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
   AiStoryExecutionProgressSchema,
+  AiStoryGenerateReviewResultSchema,
   EXECUTION_CAPABILITY_IDS,
   MARKETING_OUTPUT_STRATEGY,
   assertAiStoryExecutionTransition,
   assertAiStoryTransition,
   type AiStoryExecutionStatus,
+  type AiStoryGenerateReviewResult,
   type AiStoryStatus,
   type AnimationPackagePayload,
   type ExecutionManifest,
@@ -37,6 +39,11 @@ import {
   compileExecutionManifest,
   type ResolvedCampaignAsset,
 } from "./execution-compiler";
+import { compileSceneExecutionIntents } from "./scene-execution-compiler";
+import {
+  validateAllSceneExecutionIntents,
+  type AiQcAssetFact,
+} from "./ai-qc-validator";
 import type {
   CanonicalProviderRequest,
   CanonicalProviderResult,
@@ -125,7 +132,14 @@ export async function createGenerateReview(input: {
   campaignId: string;
   storyId: string;
   workspaceId: string;
-}): Promise<{ estimate: GenerateReviewEstimate; animationPackageId: string }> {
+  orgId?: string;
+}): Promise<
+  AiStoryGenerateReviewResult & {
+    animationPackageId: string;
+    /** @deprecated Legacy Marketing estimate — kept for transitional callers only. */
+    estimateLegacy?: GenerateReviewEstimate;
+  }
+> {
   const [pkgRow] = await input.db
     .select()
     .from(schema.aiStoryAnimationPackages)
@@ -142,15 +156,123 @@ export async function createGenerateReview(input: {
   if (!pkgRow) {
     throw new Error("Approved Animation Package (ready_for_execution) not found");
   }
+
+  const [versionRow] = await input.db
+    .select()
+    .from(schema.aiStoryVersions)
+    .where(eq(schema.aiStoryVersions.id, pkgRow.storyVersionId))
+    .limit(1);
+  if (!versionRow) {
+    throw new Error("Story Version for Animation Package not found");
+  }
+
   const payload = AnimationPackagePayloadSchema.parse(pkgRow.payload);
   const referencedAssetIds = collectReferencedAssetIds(payload);
+
+  const resolvedAssets =
+    referencedAssetIds.length > 0
+      ? await loadResolvedCampaignAssets(input.db, input.workspaceId, referencedAssetIds)
+      : [];
+
+  const assetRows =
+    referencedAssetIds.length > 0
+      ? await input.db
+          .select({
+            assetId: schema.assets.id,
+            workspaceId: schema.assets.workspaceId,
+            campaignId: schema.assets.campaignId,
+          })
+          .from(schema.assets)
+          .where(
+            and(
+              eq(schema.assets.workspaceId, input.workspaceId),
+              inArray(schema.assets.id, referencedAssetIds),
+              isNull(schema.assets.deletedAt)
+            )
+          )
+      : [];
+
+  const assetsById = new Map<string, AiQcAssetFact>(
+    assetRows.map((row) => [
+      row.assetId,
+      {
+        assetId: row.assetId,
+        workspaceId: row.workspaceId,
+        campaignId: row.campaignId,
+      },
+    ])
+  );
+
+  const frozenAt =
+    versionRow.frozenAt?.toISOString() ??
+    versionRow.createdAt.toISOString();
+
+  const compiled = compileSceneExecutionIntents(payload, {
+    orgId: input.orgId ?? pkgRow.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    storyVersionId: pkgRow.storyVersionId,
+    storyVersionNumber: versionRow.versionNumber,
+    storyVersionFrozenAt: frozenAt,
+    animationPackageId: pkgRow.id,
+    animationPackageStatus: pkgRow.status,
+  });
+
+  const qcResults = validateAllSceneExecutionIntents(
+    compiled.intents,
+    compiled.instructionsBySceneExecutionId,
+    {
+      storyVersionFrozenAt: versionRow.frozenAt?.toISOString() ?? null,
+      animationPackageStatus: pkgRow.status,
+      workspaceId: input.workspaceId,
+      campaignId: input.campaignId,
+      assetsById,
+    }
+  );
+
+  const overallQcStatus = aggregateQcStatus(qcResults);
+  // Phase 1: QC must pass AND provider execution remains locked until later phases.
+  const executionAllowed = false;
+
+  const result = AiStoryGenerateReviewResultSchema.parse({
+    estimate: {
+      ...compiled.estimate,
+      risks: [
+        ...compiled.estimate.risks,
+        ...(overallQcStatus === "failed"
+          ? ["AI QC reported blocking findings — execution cannot proceed."]
+          : []),
+        ...(resolvedAssets.length < referencedAssetIds.length
+          ? ["Some Campaign Asset references could not be resolved in this workspace."]
+          : []),
+      ],
+    },
+    storyExecutionPlan: compiled.storyExecutionPlan,
+    sceneIntents: compiled.intents,
+    qcResults,
+    overallQcStatus,
+    executionAllowed,
+    phase: "phase_1_qc_only",
+  });
+
   return {
-    estimate: buildGenerateReviewEstimate({
+    ...result,
+    animationPackageId: pkgRow.id,
+    estimateLegacy: buildGenerateReviewEstimate({
       animationPackage: payload,
       referencedAssetIds,
     }),
-    animationPackageId: pkgRow.id,
   };
+}
+
+/**
+ * Phase 1 hard lock — provider execution / outbox / worker paths must not start.
+ */
+export function assertPhase1ExecutionLocked(): never {
+  throw new Error(
+    "Phase 1 lock: Scene compilation and AI QC only. Provider execution is disabled until later Sprint 3 phases are approved."
+  );
 }
 
 export async function startExecutionJob(input: {
@@ -164,75 +286,8 @@ export async function startExecutionJob(input: {
   estimate: GenerateReviewEstimate;
   storyStatus: AiStoryStatus;
 }): Promise<{ jobId: string; taskId: string }> {
-  if (
-    ![
-      "ready_for_execution",
-      "generate_review",
-      "execution_failed",
-      "execution_review",
-    ].includes(input.storyStatus)
-  ) {
-    throw new Error("Story must be ready for execution before starting");
-  }
-
-  const capabilityId = EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO;
-
-  const [task] = await input.db
-    .insert(schema.tasks)
-    .values({
-      orgId: input.orgId,
-      workspaceId: input.workspaceId,
-      campaignId: input.campaignId,
-      status: "queued",
-      currentStep: "ai_story_execution",
-      stepProgress: { source: "ai_story_execution" },
-    })
-    .returning();
-  if (!task) throw new Error("Failed to create execution task");
-
-  const [job] = await input.db
-    .insert(schema.aiStoryExecutionJobs)
-    .values({
-      orgId: input.orgId,
-      workspaceId: input.workspaceId,
-      campaignId: input.campaignId,
-      storyId: input.storyId,
-      animationPackageId: input.animationPackageId,
-      taskId: task.id,
-      status: "queued",
-      capabilityId,
-      targetOutputCount: input.estimate.targetOutputCount,
-      generateReview: input.estimate,
-      progress: progressFor("queued", {
-        targetOutputs: input.estimate.targetOutputCount,
-        message: "Queued for execution",
-      }),
-      createdBy: input.createdBy,
-    })
-    .returning();
-  if (!job) throw new Error("Failed to create execution job");
-
-  const fromStatus = input.storyStatus;
-  if (fromStatus === "ready_for_execution") {
-    assertAiStoryTransition(fromStatus, "generate_review");
-    await input.db
-      .update(schema.aiStories)
-      .set({ status: "generate_review", updatedAt: new Date() })
-      .where(eq(schema.aiStories.id, input.storyId));
-    assertAiStoryTransition("generate_review", "executing");
-  } else if (fromStatus === "generate_review") {
-    assertAiStoryTransition("generate_review", "executing");
-  } else if (fromStatus === "execution_review") {
-    assertAiStoryTransition("execution_review", "executing");
-  } else {
-    assertAiStoryTransition("execution_failed", "executing");
-  }
-  await input.db
-    .update(schema.aiStories)
-    .set({ status: "executing", updatedAt: new Date() })
-    .where(eq(schema.aiStories.id, input.storyId));
-
-  return { jobId: job.id, taskId: task.id };
+  void input;
+  assertPhase1ExecutionLocked();
 }
 
 export async function cancelExecutionJob(db: Db, jobId: string, workspaceId: string) {
