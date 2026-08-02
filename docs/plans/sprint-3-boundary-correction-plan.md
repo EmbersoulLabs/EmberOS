@@ -16,20 +16,24 @@ The narrow correction is:
 
 ```text
 Frozen Story Version
-→ Animation Package
-→ ordered Scene execution records
-→ canonical Provider Outbox
+→ approved Animation Package
+→ Scene Execution Intent
+→ provider-neutral AI QC validation gate
+→ Canonical Provider Request
+→ Provider Outbox
 → Dispatcher
 → Worker
 → Seedance Adapter
 → Finalizer
-→ Scene attempt/result + usage/cost
+→ Scene Result + usage/cost
 → Scene Review
 → complete approved Scene set
 → deterministic Story assembly
 → Story Video
 → Story export
 ```
+
+AI QC is a deterministic eligibility and contract-validation gate. It validates an immutable Scene Execution Intent before Canonical Provider Request creation; it does not generate, rewrite, repair, route, or execute provider work.
 
 This plan deliberately preserves:
 
@@ -76,6 +80,7 @@ Ready to Freeze: **NO**. All freeze blockers in this plan must first pass accept
 3. **Persistence followed the incorrect runtime loop.** Tables record `target_output_count` and `output_index`, so the database cannot express Scene attempts, accepted Scene results, or deterministic Story assembly.
 4. **Tests validated implementation rather than frozen product boundaries.** Unit tests intentionally assert target-five Story outputs; browser E2E does not traverse the real production path.
 5. **Security was applied at routes but not completed at the database boundary.** Workspace role checks exist, but AI Story tables lack checked-in RLS and several internal queries do not validate the full ownership chain.
+6. **The execution path had no explicit pre-Outbox validation boundary.** Scene execution data could proceed toward canonical Provider persistence and dispatch without a provider-neutral gate proving contract validity, ownership, ordering, capability compatibility, and deterministic identity. Invalid requests must fail before a Canonical Provider Request or Outbox record is created.
 
 ### Finding-by-finding impact analysis
 
@@ -292,6 +297,8 @@ Next Phase
 
 Implementation must not continue into the next phase without explicit approval of the current phase's acceptance criteria and evidence. A failed or incomplete review returns work to the same phase; it does not authorize partial progression. Parallel preparation described in the dependency graph may continue only when it does not depend on unapproved outputs and does not activate the next production path.
 
+Phase 1 implementation may define and implement only the Scene Execution Compiler, Scene Execution Intent, provider-neutral AI QC contract and deterministic validation behavior, and Generate Review integration. Phase 2A, Phase 2B, and Phase 3 remain locked until each preceding phase review passes and receives explicit approval.
+
 ### Phase 0 — Frozen Implementation Contracts
 
 Purpose:
@@ -340,19 +347,23 @@ Phase Review Gate:
 - Implementation → Review → Approval → Next Phase.
 - Phase 1 must not begin until the frozen implementation contracts receive explicit approval.
 
-### Phase 1 — Scene Execution Compiler and Generate Review
+### Phase 1 — Scene Execution Compiler, AI QC Contract, and Generate Review
 
 Purpose:
 
 - Compile one deterministic provider-neutral execution intent per Scene.
 - Preserve ordered Shots, continuity context, Story/Version/Package identity, and Campaign Asset references.
+- Define and implement the provider-neutral AI QC contract and deterministic validation behavior between Scene Execution Intent and Canonical Provider Request creation.
 - Make Generate Review estimate the actual Scene plan rather than five Marketing outputs.
+- Surface blocking QC findings through Generate Review before execution is allowed.
 
 Affected modules:
 
 - AI Story execution compiler.
+- Scene Execution Intent contract.
+- Provider-neutral AI QC contract and validator.
 - Generate Review.
-- Seedance payload preparation boundary, without invoking Seedance.
+- Canonical Provider Request preparation boundary, without persistence, Outbox insertion, routing, or Provider invocation.
 
 Affected files:
 
@@ -373,6 +384,7 @@ Potential regressions:
 - Loss of continuity context when splitting complete Story prompts into Scene payloads.
 - Incorrect Shot ordering or duration totals.
 - Campaign Assets leaking across Scenes or workspaces.
+- Nondeterministic QC findings or accidental mutation of the Scene Execution Intent.
 
 Rollback complexity:
 
@@ -390,11 +402,102 @@ Acceptance Criteria:
 - Asset IDs are stable references and are validated as belonging to the authorized Campaign/workspace.
 - No Flux, image-generation, Auto Clip, Marketing Output, or generic Creative behavior exists in the compiler.
 - Estimates derive from Scene duration/provider-normalized estimation inputs, never a fixed five-call assumption.
+- Every Scene Execution Intent is validated before Canonical Provider Request creation.
+- Validation never mutates the Scene Execution Intent, Animation Package, Story, Scene, Shot, compiled instructions, or Asset references.
+- Validation is deterministic: the same Intent produces the same status and the same ordered findings with stable machine-readable codes.
+- Generate Review can report blocking QC findings before execution.
+- No invalid Scene Execution Intent can proceed to Canonical Provider Request or Outbox creation.
+- Phase 1 persists no Outbox work and invokes no Provider or Provider Router.
+
+#### Minimum Sprint 3 AI QC checks
+
+Story and package validation:
+
+- Story Version exists.
+- Story Version is frozen or otherwise immutable for execution.
+- Animation Package exists and is approved.
+- Animation Package identity matches the Story Version.
+- Scene belongs to the approved Animation Package.
+
+Scene and Shot validation:
+
+- Scene ID exists.
+- Scene order is valid and deterministic.
+- At least one Shot exists.
+- Shot order is valid.
+- Required Scene duration is valid.
+- Shot duration data is internally consistent where required.
+- Required continuity context is present.
+
+Prompt and execution validation:
+
+- Compiled execution instructions are non-empty.
+- Required prompt fields are present.
+- Unsupported or malformed execution parameters are rejected.
+- Capability is `animation-video-generation`.
+- No Marketing Output, Auto Clip, Flux, or image-generation instruction is present.
+
+Asset validation:
+
+- Referenced Asset IDs exist.
+- Assets belong to the current workspace.
+- Assets belong to or are validly linked to the current Campaign.
+- Required product identity references are present.
+- Unauthorized Assets fail closed.
+
+Identity and determinism validation:
+
+- Story Version identity is stable.
+- Animation Package identity is stable.
+- Scene execution identity is stable.
+- Repeated validation of the same Intent returns the same result.
+- Validation findings use stable machine-readable error codes and deterministic ordering.
+
+Sprint 3 QC does not include advanced creative quality scoring, visual quality scoring, AI criticism, brand scoring, semantic rewriting, autonomous repair, warning auto-resolution, Provider fallback, or budget calculation.
+
+#### Provider-neutral AI QC result contract
+
+Conceptual PASS result:
+
+```json
+{
+  "status": "passed",
+  "intentId": "...",
+  "validatedAt": "...",
+  "contractVersion": "...",
+  "errors": []
+}
+```
+
+Conceptual FAIL result:
+
+```json
+{
+  "status": "failed",
+  "intentId": "...",
+  "contractVersion": "...",
+  "errors": [
+    {
+      "code": "MISSING_CAMPAIGN_ASSET",
+      "path": "assetReferences[0]",
+      "message": "A required Campaign Asset could not be resolved.",
+      "severity": "blocking"
+    }
+  ]
+}
+```
+
+- Errors are structured and machine-readable, use stable codes, and have deterministic ordering.
+- QC does not expose Provider secrets, credentials, tokens, or sensitive internal data.
+- Generate Review or the execution UI may display approved QC errors.
+- Only blocking errors prevent execution.
+- Sprint 3 does not require warning auto-resolution.
+- The exact TypeScript representation is an implementation detail for Phase 1 and is not defined by this plan update.
 
 Phase Review Gate:
 
 - Implementation → Review → Approval → Next Phase.
-- Phase 2A must not begin until deterministic Scene compilation and Generate Review behavior receive explicit approval.
+- Phase 2A must not begin until deterministic Scene compilation, AI QC behavior, and Generate Review integration receive explicit approval.
 
 ### Phase 2A — Database, Repository, and Identity
 
@@ -519,12 +622,14 @@ Phase Review Gate:
 Purpose:
 
 - Replace direct Adapter execution with the existing canonical Outbox → Dispatcher → Worker → Finalizer path.
+- Require a successful provider-neutral AI QC result before creating a Canonical Provider Request or Outbox record.
 - Correlate each canonical execution with exactly one Story Scene.
 
 Affected modules:
 
 - AI Story scheduling/orchestration.
 - Provider request/envelope/outbox creation.
+- AI QC PASS enforcement at the Canonical Provider Request creation boundary.
 - Existing Dispatcher, Worker, Finalizer, Ledger, usage, and cost readers.
 - Scene completion projection.
 
@@ -549,6 +654,8 @@ Risk: CRITICAL
 Potential regressions:
 
 - Duplicate provider calls during cutover.
+- Canonical Provider Request or Outbox insertion bypassing AI QC.
+- Failed QC incorrectly creating usage or cost records.
 - Result finalized in canonical ledger but not projected to Scene state.
 - Correlation mismatch between Scene and provider execution.
 - Existing non-Story provider flows affected by over-broad changes.
@@ -564,7 +671,9 @@ Production impact:
 Acceptance Criteria:
 
 - No production AI Story code resolves and executes a Provider Adapter directly.
-- One Scene intent creates one canonical execution envelope/outbox job with stable identity.
+- One valid Scene Intent with an AI QC PASS creates one Canonical Provider Request and one canonical execution envelope/outbox job with stable identity.
+- Canonical Provider Request and Outbox creation reject missing, failed, mismatched, or stale QC results.
+- An invalid Scene Intent returns or persists structured errors through the approved boundary and creates no Canonical Provider Request, Outbox row, Provider execution, usage record, or cost record.
 - Dispatcher and Worker validate persisted identities and invoke Seedance only through the canonical path.
 - Finalizer atomically accepts terminal result, usage, cost, and Outbox state.
 - Finalized result projects idempotently to its Scene execution/result without changing ledger authority.
@@ -577,7 +686,11 @@ Acceptance Criteria:
 Implementation must **STOP** after Phase 3 until this exact production path passes:
 
 ```text
-One Scene
+One Scene Intent
+↓
+AI QC PASS
+↓
+Canonical Provider Request
 ↓
 Outbox
 ↓
@@ -598,7 +711,27 @@ Scene Result Projection
 PASS
 ```
 
-Gate evidence must prove one real Scene identity remains consistent across every stage, the terminal result is finalized exactly once, usage and cost are persisted canonically, and Scene Result Projection is idempotent. Mock-only or direct-Adapter execution does not satisfy this gate.
+Gate evidence must prove one real Scene identity remains consistent across AI QC, Canonical Provider Request creation, and every downstream stage; the terminal result is finalized exactly once, usage and cost are persisted canonically, and Scene Result Projection is idempotent. Mock-only or direct-Adapter execution does not satisfy this gate.
+
+The negative gate must also pass:
+
+```text
+Invalid Scene Intent
+↓
+AI QC FAIL
+↓
+structured errors persisted or returned through the approved boundary
+↓
+no Canonical Provider Request
+↓
+no Outbox row
+↓
+no Provider execution
+↓
+no usage or cost record
+```
+
+The negative gate must prove fail-closed behavior for invalid Scene/Shot structure, unauthorized or invalid Campaign Assets, incompatible capability, malformed execution parameters, and deterministic identity failures.
 
 Phase Review Gate:
 
@@ -840,14 +973,41 @@ Production impact:
 
 Acceptance Criteria:
 
-- Unit tests prove Scene derivation, Shot ordering, transitions, assembly fingerprint, and PD-055 independence.
+- Unit tests prove Scene derivation, Shot ordering, transitions, assembly fingerprint, PD-055 independence, and the mandatory AI QC cases below.
 - Database tests prove uniqueness, immutability, ownership, RLS, partial completion, and accepted-result preservation.
-- Integration test proves Scene → Outbox → Dispatch → Worker → Finalizer → usage/cost → Scene result.
+- Integration tests prove both AI QC PASS and AI QC FAIL boundaries before the canonical Provider lifecycle.
 - Retry/recovery tests prove no duplicate Provider call and no regeneration of approved Scenes.
-- Browser E2E creates a multi-Scene Story, confirms Generate Review, observes Scene completion, reviews/regenerates a Scene, assembles, and exports the Story video.
+- Browser E2E proves Generate Review blocks execution on a blocking QC finding and permits a valid Story to enter the normal Scene execution path.
 - Real Seedance validation asserts an actual finalized video result and canonical cost/usage trace for one controlled Scene.
 - Negative tests prove no Flux, Marketing Output Strategy, Creative Studio internals, or Video Studio internals in AI Story execution.
 - `pnpm typecheck`, `pnpm test`, `pnpm test:integration`, relevant Playwright suite, and `git diff --check` pass.
+
+Mandatory AI QC unit coverage:
+
+- A valid Scene Intent passes.
+- A missing prompt fails.
+- Invalid Scene order fails.
+- A missing Shot fails.
+- Invalid duration fails.
+- An unauthorized Asset fails.
+- An Asset linked to the wrong Campaign fails.
+- A wrong capability fails.
+- Marketing Output, Flux, Auto Clip, or image-generation instructions fail where contractually forbidden.
+- Repeated QC is deterministic, including ordered findings and stable codes.
+- QC does not mutate its input.
+
+Mandatory AI QC integration coverage:
+
+- QC PASS allows Canonical Provider Request and Outbox creation.
+- QC FAIL prevents Canonical Provider Request and Outbox creation.
+- QC FAIL produces no Provider execution, usage record, or cost record.
+- Workspace/Campaign/Asset ownership validation fails closed.
+
+Mandatory AI QC browser E2E coverage:
+
+- Generate Review displays a blocking QC error.
+- The user cannot execute while the blocking error remains unresolved.
+- A valid Story proceeds through the normal Scene execution path.
 
 Phase Review Gate:
 
@@ -908,16 +1068,17 @@ Phase Review Gate:
 ```text
 Phase 0 — Frozen implementation contracts
   ↓
-Phase 1 — Scene compiler and Generate Review
+Phase 1 — Scene Execution Compiler + AI QC Contract + Generate Review
   ↓
 Phase 2A — Database, repository, and identity
   ↓
 Phase 2B — Scene review, assembly persistence, RLS, ownership
   ↓
-Phase 3 — Canonical Provider lifecycle integration
+Phase 3 — Canonical Provider lifecycle integration with mandatory AI QC gate
   ↓
 MANDATORY RUNTIME ACCEPTANCE GATE
-One Scene → Outbox → Dispatcher → Worker → Seedance → Finalizer
+One Scene Intent → AI QC PASS → Canonical Provider Request → Outbox
+→ Dispatcher → Worker → Seedance → Finalizer
 → Usage Ledger → Cost Ledger → Scene Result Projection → PASS
   ↓
 Phase 4 — Scene retry, regeneration, review, readiness
@@ -935,9 +1096,10 @@ Phase 1 ─────→ unit/contract tests (continuous) ──────�
 Hard dependencies:
 
 - Phase 1 cannot safely finalize identifiers before Phase 0 contracts are agreed in code.
+- Phase 1 owns only Scene compilation, the provider-neutral AI QC contract/validation behavior, and Generate Review integration; it creates no Outbox work and invokes no Provider.
 - Phase 2A must precede Phase 2B because review, assembly, RLS, and ownership require approved Scene identities and repositories.
 - Phase 2B must precede production Provider dispatch because finalized results need an isolated, ownership-validated canonical Scene target.
-- Phase 3 and its mandatory Runtime Acceptance Gate must pass before retry/review implementation begins.
+- Phase 3 must enforce AI QC PASS before Canonical Provider Request and Outbox creation, and both positive and negative Runtime Acceptance Gates must pass before retry/review implementation begins.
 - Phase 4 must precede assembly because assembly eligibility depends on accepted reviewed Scene results.
 - Phase 5 must precede browser happy-path acceptance.
 - Phase 7 must pass before documentation may claim Sprint 3 is complete.
@@ -964,6 +1126,13 @@ The following are true Sprint 3 blockers and must not be deferred:
 9. Campaign Asset execution lookup that does not fail closed on Campaign/workspace ownership.
 10. Tests that continue to assert five AI Story outputs or cannot prove production-wired Scene execution.
 11. No browser multi-Scene happy path and no controlled real Seedance finalized-result validation.
+12. Any production path can create a Canonical Provider Request without passing provider-neutral AI QC.
+13. AI QC mutates the Scene Execution Intent, Story, Animation Package, Scene, Shot, compiled instructions, or Asset references.
+14. AI QC selects or invokes a Provider, calls the Provider Router, performs retry/regeneration, or calculates Provider-specific billing.
+15. Invalid or unauthorized Campaign Assets can reach Outbox.
+16. Invalid Scene or Shot structure can reach Provider dispatch.
+17. AI QC results are nondeterministic or do not use stable machine-readable error codes.
+18. A failed AI QC result can still create a Canonical Provider Request, Outbox row, Provider execution, usage record, or cost record.
 
 ## Deferred Work
 
@@ -1002,9 +1171,22 @@ These items are valid but do not block Sprint 3 once the checklist passes:
 - [ ] Multiple Scenes and multiple Shots per Scene are supported without a fixed 3–5 limit.
 - [ ] Partial completion, failed, cancelled, rejected, and regeneration states are represented.
 
+### AI QC Gate
+
+- [ ] Every Scene Execution Intent passes provider-neutral QC before Canonical Provider Request creation.
+- [ ] Failed QC creates no Outbox record and invokes no Provider.
+- [ ] QC does not mutate the Story, Animation Package, Scene, Shot, Prompt, or Asset references.
+- [ ] QC does not select a Provider.
+- [ ] QC errors are structured and use stable machine-readable codes.
+- [ ] QC validates Story Version, Animation Package approval, Scene/Shot structure, Asset ownership, continuity requirements, execution parameters, capability, and deterministic identity.
+- [ ] Repeated QC of the same Intent produces the same result and the same ordered findings.
+- [ ] Generate Review surfaces blocking QC findings before execution.
+- [ ] QC contains no Marketing Output, Auto Clip, Flux, Creative Studio, or Video Studio logic.
+- [ ] QC failure creates no canonical usage or cost record.
+
 ### Canonical Provider lifecycle
 
-- [ ] Runtime follows Outbox → Dispatcher → immutable Dispatch → Worker → Adapter → immutable result → Finalizer.
+- [ ] Runtime follows Scene Execution Intent → AI QC PASS → Canonical Provider Request → Outbox → Dispatcher → immutable Dispatch → Worker → Adapter → immutable result → Finalizer.
 - [ ] Finalizer atomically records ledger terminal state, usage, cost, and Outbox terminal state.
 - [ ] AI Story never directly invokes a Provider Adapter.
 - [ ] Only Seedance is eligible for AI Story animation-video generation; approved LLM routing remains limited to planning.
