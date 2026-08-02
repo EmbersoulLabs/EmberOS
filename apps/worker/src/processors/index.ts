@@ -191,6 +191,9 @@ export function startWorkers() {
         }
       }
       if (job.name === "agent.story_execution") {
+        const { assertPhase1ExecutionLocked } = await import("@ceo-agent/shared");
+        assertPhase1ExecutionLocked();
+
         const { executionJobId } = job.data as { executionJobId: string };
         console.log(`[agent.story_execution] start job=${executionJobId}`);
         const { runExecutionJob } = await import("@ceo-agent/agents");

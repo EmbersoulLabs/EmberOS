@@ -57,5 +57,6 @@ export * from "./provider-execution-envelope";
 export * from "./provider-execution-dispatch";
 export * from "./ai-story";
 export * from "./ai-story-execution";
+export * from "./ai-story-phase1-execution-lock";
 export * from "./marketing-output-strategy";
 export * from "./ai-provider-env";

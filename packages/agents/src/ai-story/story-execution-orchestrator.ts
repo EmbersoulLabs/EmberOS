@@ -12,6 +12,7 @@ import {
   AiStoryGenerateReviewResultSchema,
   EXECUTION_CAPABILITY_IDS,
   MARKETING_OUTPUT_STRATEGY,
+  assertPhase1ExecutionLocked,
   assertAiStoryExecutionTransition,
   assertAiStoryTransition,
   type AiStoryExecutionStatus,
@@ -41,6 +42,7 @@ import {
 } from "./execution-compiler";
 import { compileSceneExecutionIntents } from "./scene-execution-compiler";
 import {
+  aggregateQcStatus,
   validateAllSceneExecutionIntents,
   type AiQcAssetFact,
 } from "./ai-qc-validator";
@@ -53,6 +55,7 @@ import { requestHash } from "@ceo-agent/shared";
 type Db = ReturnType<typeof getDb>;
 
 export { MissingCampaignAssetsError };
+export { assertPhase1ExecutionLocked };
 
 function progressFor(
   phase: AiStoryExecutionStatus,
@@ -266,15 +269,6 @@ export async function createGenerateReview(input: {
   };
 }
 
-/**
- * Phase 1 hard lock — provider execution / outbox / worker paths must not start.
- */
-export function assertPhase1ExecutionLocked(): never {
-  throw new Error(
-    "Phase 1 lock: Scene compilation and AI QC only. Provider execution is disabled until later Sprint 3 phases are approved."
-  );
-}
-
 export async function startExecutionJob(input: {
   db: Db;
   orgId: string;
@@ -288,6 +282,7 @@ export async function startExecutionJob(input: {
 }): Promise<{ jobId: string; taskId: string }> {
   void input;
   assertPhase1ExecutionLocked();
+  return undefined as never;
 }
 
 export async function cancelExecutionJob(db: Db, jobId: string, workspaceId: string) {
@@ -324,6 +319,8 @@ export async function cancelExecutionJob(db: Db, jobId: string, workspaceId: str
 }
 
 export async function retryExecutionJob(db: Db, jobId: string, workspaceId: string) {
+  assertPhase1ExecutionLocked();
+
   const [job] = await db
     .select()
     .from(schema.aiStoryExecutionJobs)
@@ -372,6 +369,8 @@ async function invokeProviderForOutput(input: {
   registry: ReturnType<typeof createProductionProviderRegistry>;
   router: CanonicalProviderRouter;
 }): Promise<{ providerId: string; result: CanonicalProviderResult }> {
+  assertPhase1ExecutionLocked();
+
   const executionId = randomUUID();
   const attemptId = randomUUID();
   const idempotencyKey = `story-exec-${executionId}`;
@@ -506,6 +505,9 @@ function providerPayloadFromManifest(
 }
 
 export async function runExecutionJob(jobId: string): Promise<void> {
+  void jobId;
+  assertPhase1ExecutionLocked();
+
   const db = getDb();
   const [job] = await db
     .select()
@@ -791,6 +793,9 @@ export async function regenerateSingleExecutionOutput(input: {
   outputId: string;
   workspaceId: string;
 }): Promise<void> {
+  void input;
+  assertPhase1ExecutionLocked();
+
   const [output] = await input.db
     .select()
     .from(schema.aiStoryExecutionOutputs)

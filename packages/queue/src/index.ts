@@ -1,4 +1,5 @@
 import { Queue, type ConnectionOptions } from "bullmq";
+import { assertPhase1ExecutionLocked } from "@ceo-agent/shared";
 import { QUEUE_NAMES } from "./jobs";
 
 export { QUEUE_NAMES } from "./jobs";
@@ -84,6 +85,9 @@ export async function enqueueStoryExecution(input: {
   workspaceId: string;
   orgId: string;
 }) {
+  void input;
+  assertPhase1ExecutionLocked();
+
   const queue = agentQueue();
   return queue.add("agent.story_execution", input, {
     jobId: `story-execution-${input.executionJobId}`,

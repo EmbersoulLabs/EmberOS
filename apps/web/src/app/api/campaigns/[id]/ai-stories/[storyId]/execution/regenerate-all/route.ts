@@ -1,11 +1,8 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
-import { createGenerateReview, startExecutionJob } from "@ceo-agent/agents";
-import { enqueueStoryExecution } from "@ceo-agent/queue";
-import { isUuid, type AiStoryStatus } from "@ceo-agent/shared";
-import { apiError, apiSuccess } from "@/lib/api";
+import { assertPhase1ExecutionLocked, isUuid } from "@ceo-agent/shared";
+import { apiError } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
-import { loadCampaignAiStory } from "@/lib/ai-story-service";
 
 /** Regenerate ALL outputs by starting a new execution job (does not re-run planning). */
 export async function POST(
@@ -27,62 +24,7 @@ export async function POST(
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
-
-    const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
-    if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
-    const status = loaded.story.status as AiStoryStatus;
-    if (!["execution_review", "execution_failed", "generate_review"].includes(status)) {
-      return apiError(
-        "Regenerate All requires an executed or failed Animation Package execution",
-        "VALIDATION_ERROR",
-        409
-      );
-    }
-
-    await db
-      .update(schema.aiStoryExecutionOutputs)
-      .set({ status: "rejected", updatedAt: new Date() })
-      .where(
-        and(
-          eq(schema.aiStoryExecutionOutputs.storyId, storyId),
-          eq(schema.aiStoryExecutionOutputs.workspaceId, campaign.workspaceId),
-          inArray(schema.aiStoryExecutionOutputs.status, ["pending_review", "draft"])
-        )
-      );
-
-    const review = await createGenerateReview({
-      db,
-      campaignId,
-      storyId,
-      workspaceId: campaign.workspaceId,
-    });
-
-    const started = await startExecutionJob({
-      db,
-      orgId: campaign.orgId,
-      workspaceId: campaign.workspaceId,
-      campaignId,
-      storyId,
-      animationPackageId: review.animationPackageId,
-      createdBy: user.id,
-      estimate: review.estimate,
-      storyStatus: status,
-    });
-
-    await enqueueStoryExecution({
-      executionJobId: started.jobId,
-      storyId,
-      campaignId,
-      workspaceId: campaign.workspaceId,
-      orgId: campaign.orgId,
-    });
-
-    return apiSuccess({
-      storyId,
-      status: "executing",
-      executionJobId: started.jobId,
-      regeneratedAll: true,
-    });
+    assertPhase1ExecutionLocked();
   } catch (error) {
     return handleApiError(error);
   }

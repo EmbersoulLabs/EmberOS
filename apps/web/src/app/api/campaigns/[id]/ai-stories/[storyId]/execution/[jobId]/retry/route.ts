@@ -1,9 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
-import { retryExecutionJob } from "@ceo-agent/agents";
-import { enqueueStoryExecution } from "@ceo-agent/queue";
-import { isUuid } from "@ceo-agent/shared";
-import { apiError, apiSuccess } from "@/lib/api";
+import { assertPhase1ExecutionLocked, isUuid } from "@ceo-agent/shared";
+import { apiError } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 
 export async function POST(
@@ -25,19 +23,7 @@ export async function POST(
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
-
-    const job = await retryExecutionJob(db, jobId, campaign.workspaceId);
-    if (!job) return apiError("Retry failed", "RETRY_FAILED", 502);
-
-    await enqueueStoryExecution({
-      executionJobId: job.id,
-      storyId,
-      campaignId,
-      workspaceId: campaign.workspaceId,
-      orgId: campaign.orgId,
-    });
-
-    return apiSuccess({ storyId, status: "executing", executionJob: job });
+    assertPhase1ExecutionLocked();
   } catch (error) {
     return handleApiError(error);
   }
