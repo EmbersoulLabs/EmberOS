@@ -552,6 +552,115 @@ export const aiStorySceneIntentValidationResults = pgTable(
   ]
 );
 
+/**
+ * Sprint 3 Phase 2B PR 2B.1 — append-only ReviewOpenedFact rows.
+ * One open fact per Execution Plan. Review is a logical aggregate only.
+ */
+export const aiStoryReviewOpenedFacts = pgTable(
+  "ai_story_review_opened_facts",
+  {
+    factId: uuid("fact_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    openedBy: uuid("opened_by").notNull(),
+    openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").ReviewOpenedFact>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_review_opened_plan_unique").on(t.executionPlanId),
+    unique("ai_story_review_opened_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_review_opened_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2B PR 2B.1 — append-only Scene Intent review decision facts.
+ */
+export const aiStorySceneIntentReviewFacts = pgTable(
+  "ai_story_scene_intent_review_facts",
+  {
+    factId: uuid("fact_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sceneId: text("scene_id").notNull(),
+    sceneOrder: integer("scene_order").notNull(),
+    decision: text("decision").notNull(),
+    reviewedBy: uuid("reviewed_by").notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull(),
+    instructionHash: text("instruction_hash")
+      .notNull()
+      .references(() => aiStorySceneInstructionSnapshots.contentHash, { onDelete: "restrict" }),
+    qcResultHash: text("qc_result_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").SceneIntentReviewDecision>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_intent_review_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_scene_intent_review_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_scene_intent_review_scene_idx").on(t.sceneExecutionId, t.acceptedAt),
+    index("ai_story_scene_intent_review_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2B PR 2B.1 — append-only Story review decision facts.
+ */
+export const aiStoryStoryReviewFacts = pgTable(
+  "ai_story_story_review_facts",
+  {
+    factId: uuid("fact_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    decision: text("decision").notNull(),
+    reviewedBy: uuid("reviewed_by").notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").StoryReviewDecision>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_story_review_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_story_review_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_story_review_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
 export const tasks = pgTable(
   "tasks",
   {

@@ -12,3 +12,4 @@ export * from "./queries/provider-reconciliation";
 export * from "./queries/provider-execution-envelope";
 export * from "./queries/provider-execution-dispatch";
 export * from "./queries/ai-story-scene-execution-persistence";
+export * from "./queries/ai-story-execution-plan-review";
