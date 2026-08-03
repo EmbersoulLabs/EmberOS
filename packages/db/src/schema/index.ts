@@ -437,6 +437,121 @@ export const aiStoryAnimationPackages = pgTable(
   ]
 );
 
+/**
+ * Sprint 3 Phase 2A — immutable, content-addressed Scene instructions.
+ * Content hash is the primary identity; org/workspace record first-writer scope.
+ * Canonical compiled instruction authority. See docs/architecture/scene-intent-storage.md
+ * for why Scene rows also retain Intent envelope JSON.
+ */
+export const aiStorySceneInstructionSnapshots = pgTable(
+  "ai_story_scene_instruction_snapshots",
+  {
+    contentHash: text("content_hash").primaryKey(),
+    snapshotId: uuid("snapshot_id").notNull().unique(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    contractVersion: text("contract_version").notNull(),
+    instructions: jsonb("instructions")
+      .$type<import("@ceo-agent/shared").AiStorySceneCompiledInstructions>()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_instruction_snapshots_id_idx").on(t.snapshotId),
+    index("ai_story_instruction_snapshots_workspace_idx").on(t.workspaceId, t.createdAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2A — one canonical plan per deterministic compilation identity.
+ * Uniqueness is `deterministic_fingerprint` (workspace + version + package +
+ * compilation hash + ordered scene identities), not Story Version alone.
+ */
+export const aiStoryExecutionPlans = pgTable(
+  "ai_story_execution_plans",
+  {
+    id: uuid("id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id").notNull().references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("PLANNED"),
+    contractVersion: text("contract_version").notNull(),
+    compilationHash: text("compilation_hash").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    plan: jsonb("plan").$type<import("@ceo-agent/shared").AiStoryExecutionPlan>().notNull(),
+    compiledAt: timestamp("compiled_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_execution_plans_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_execution_plans_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("ai_story_execution_plans_story_idx").on(t.storyId, t.createdAt),
+    index("ai_story_execution_plans_story_version_idx").on(t.workspaceId, t.storyVersionId, t.createdAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2A — Scene row for one plan (status PLANNED only).
+ * `intent` retains non-reconstructable Intent envelope fields only; instruction
+ * bodies are authoritative on Instruction Snapshots.
+ */
+export const aiStorySceneExecutions = pgTable(
+  "ai_story_scene_executions",
+  {
+    id: uuid("id").primaryKey(),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id").notNull().references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    sceneId: text("scene_id").notNull(),
+    sceneOrder: integer("scene_order").notNull(),
+    status: text("status").notNull().default("PLANNED"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    compilationHash: text("compilation_hash").notNull(),
+    instructionHash: text("instruction_hash").notNull().references(() => aiStorySceneInstructionSnapshots.contentHash, { onDelete: "restrict" }),
+    intent: jsonb("intent").$type<import("@ceo-agent/shared").AiStorySceneExecutionIntent>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_executions_plan_scene_unique").on(t.executionPlanId, t.sceneId),
+    unique("ai_story_scene_executions_plan_order_unique").on(t.executionPlanId, t.sceneOrder),
+    unique("ai_story_scene_executions_idempotency_unique").on(t.idempotencyKey),
+    index("ai_story_scene_executions_plan_idx").on(t.executionPlanId, t.sceneOrder),
+  ]
+);
+
+/** Sprint 3 Phase 2A — append-only deterministic AI QC facts (not human review). */
+export const aiStorySceneIntentValidationResults = pgTable(
+  "ai_story_scene_intent_validation_results",
+  {
+    id: uuid("id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    intentHash: text("intent_hash").notNull(),
+    resultHash: text("result_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    status: text("status").notNull(),
+    result: jsonb("result").$type<import("@ceo-agent/shared").AiStoryAiQcResult>().notNull(),
+    validatedAt: timestamp("validated_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_validation_result_unique").on(t.sceneExecutionId, t.resultHash),
+    index("ai_story_scene_validation_scene_idx").on(t.sceneExecutionId, t.acceptedAt),
+    index("ai_story_scene_validation_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_scene_validation_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
 export const tasks = pgTable(
   "tasks",
   {
