@@ -661,6 +661,81 @@ export const aiStoryStoryReviewFacts = pgTable(
   ]
 );
 
+/**
+ * Sprint 3 Phase 2B PR 2B.2 — immutable Story Assembly Definition.
+ * Subordinate to Execution Plan (sole Aggregate Root). Ordering only — not media / Story Video.
+ */
+export const aiStoryAssemblyDefinitions = pgTable(
+  "ai_story_assembly_definitions",
+  {
+    assemblyDefinitionId: uuid("assembly_definition_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneCount: integer("scene_count").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    definition: jsonb("definition").$type<import("@ceo-agent/shared").StoryAssemblyDefinition>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_assembly_definition_plan_unique").on(t.executionPlanId),
+    unique("ai_story_assembly_definition_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_assembly_definition_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2B PR 2B.2 — ordered Scene membership under an Assembly Definition.
+ */
+export const aiStoryAssemblySceneMemberships = pgTable(
+  "ai_story_assembly_scene_memberships",
+  {
+    membershipId: uuid("membership_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    assemblyDefinitionId: uuid("assembly_definition_id")
+      .notNull()
+      .references(() => aiStoryAssemblyDefinitions.assemblyDefinitionId, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sceneId: text("scene_id").notNull(),
+    sceneOrder: integer("scene_order").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    membership: jsonb("membership").$type<import("@ceo-agent/shared").AssemblySceneMembership>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_assembly_membership_fingerprint_unique").on(t.deterministicFingerprint),
+    unique("ai_story_assembly_membership_def_scene_unique").on(t.assemblyDefinitionId, t.sceneExecutionId),
+    unique("ai_story_assembly_membership_def_order_unique").on(t.assemblyDefinitionId, t.sceneOrder),
+    index("ai_story_assembly_membership_plan_idx").on(t.executionPlanId, t.sceneOrder),
+    index("ai_story_assembly_membership_def_idx").on(t.assemblyDefinitionId, t.sceneOrder),
+    index("ai_story_assembly_membership_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
 export const tasks = pgTable(
   "tasks",
   {

@@ -58,6 +58,7 @@ export * from "./provider-execution-dispatch";
 export * from "./ai-story";
 export * from "./ai-story-execution";
 export * from "./ai-story-human-review";
+export * from "./ai-story-assembly";
 export * from "./ai-story-phase1-execution-lock";
 export * from "./marketing-output-strategy";
 export * from "./ai-provider-env";
