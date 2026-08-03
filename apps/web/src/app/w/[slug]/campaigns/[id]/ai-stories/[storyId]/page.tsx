@@ -312,7 +312,7 @@ export default function AiStoryReviewPage() {
 
         {status === "ready_for_execution" ? (
           <div className="rounded-xl border border-brand-teal/30 bg-brand-teal/5 p-4 text-sm font-semibold text-brand-teal">
-            Animation Package READY FOR EXECUTION. Open Generate Review to compile Scene Execution Intents and run AI QC (Phase 1 — no provider execution yet).
+            Animation Package READY FOR EXECUTION. Open Generate Review to compile Scene Execution Intents, run AI QC, and auto-save the Execution Plan (provider execution remains locked).
           </div>
         ) : null}
 
@@ -587,23 +587,8 @@ function ExecutionPanel({
   const [estimate, setEstimate] = useState<unknown>(null);
   const [qcSummary, setQcSummary] = useState<unknown>(null);
   const [reviewMeta, setReviewMeta] = useState<unknown>(null);
-  const [outputs, setOutputs] = useState<unknown[]>([]);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [executionAllowed, setExecutionAllowed] = useState(false);
-
-  async function refreshStatus() {
-    const res = await fetch(
-      `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/status`
-    );
-    if (!res.ok) return;
-    const data = await res.json();
-    setJobId(data.executionJob?.id ?? null);
-    setOutputs(data.outputs ?? []);
-  }
-
-  useEffect(() => {
-    void refreshStatus();
-  }, [campaignId, storyId, status]);
+  const [persistenceStatus, setPersistenceStatus] = useState<string | null>(null);
+  const [planSavedLabel, setPlanSavedLabel] = useState<string | null>(null);
 
   async function generateReview() {
     setBusy(true);
@@ -621,98 +606,31 @@ function ExecutionPanel({
       if (!res.ok) throw new Error(data.error ?? "Generate Review failed");
       setEstimate(data.estimate);
       setQcSummary(data.qc ?? null);
+      setPersistenceStatus(
+        typeof data.persistenceStatus === "string" ? data.persistenceStatus : null
+      );
+      setPlanSavedLabel(
+        data.persistenceStatus === "persisted" || data.persistenceStatus === "reloaded"
+          ? "Plan Saved"
+          : null
+      );
       setReviewMeta({
         phase: data.phase,
         overallQcStatus: data.qc?.overallStatus,
         sceneIntentCount: data.sceneIntentCount,
         executionAllowed: data.executionAllowed,
+        executionLockCode: data.executionLockCode,
+        persistenceStatus: data.persistenceStatus,
+        storyExecutionId: data.storyExecutionId,
+        sceneExecutionIds: data.sceneExecutionIds,
+        compilationHash: data.compilationHash,
+        validationSummary: data.validationSummary,
         qcPass: data.qcPass,
         sceneIntents: data.sceneIntents,
       });
-      setExecutionAllowed(Boolean(data.executionAllowed));
       await onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generate Review failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function execute() {
-    setBusy(true);
-    setError("");
-    try {
-      const res = await fetch(
-        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ confirm: true }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Execute failed");
-      setJobId(data.executionJobId ?? null);
-      await onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Execute failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function cancel() {
-    if (!jobId) return;
-    setBusy(true);
-    try {
-      const res = await fetch(
-        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/${jobId}/cancel`,
-        { method: "POST" }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Cancel failed");
-      await onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Cancel failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function exportApproved() {
-    setBusy(true);
-    try {
-      const res = await fetch(
-        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/export`,
-        { method: "POST" }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Export failed");
-      await onDone();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Export failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function regenerateOne(outputId: string) {
-    if (!jobId) return;
-    setBusy(true);
-    try {
-      const res = await fetch(
-        `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/${jobId}/regenerate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ outputId }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Regenerate failed");
-      await refreshStatus();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Regenerate failed");
     } finally {
       setBusy(false);
     }
@@ -723,8 +641,8 @@ function ExecutionPanel({
       <div>
         <h2 className="text-lg font-bold text-navy">Execution Engine</h2>
         <p className="mt-1 text-sm text-ink-secondary">
-          Phase 1: Generate Review compiles Scene Execution Intents and runs provider-neutral AI QC.
-          Provider execution is locked until later Sprint 3 phases.
+          Phase 2A: Generate Review compiles Scene Execution Intents, runs AI QC, and
+          automatically saves the Execution Plan when QC passes. Provider execution remains locked.
         </p>
       </div>
       <div className="flex flex-wrap gap-3">
@@ -736,66 +654,25 @@ function ExecutionPanel({
         >
           Generate Review
         </button>
-        <button
-          type="button"
-          disabled={busy || status === "executing" || !executionAllowed}
-          onClick={() => void execute()}
-          className="rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60"
-          title={
-            executionAllowed
-              ? "Confirm execute"
-              : "Blocked: Phase 1 QC-only — execution locked"
-          }
-        >
-          Confirm Execute
-        </button>
-        <button
-          type="button"
-          disabled={busy || !jobId || status !== "executing"}
-          onClick={() => void cancel()}
-          className="rounded-lg border border-border px-3 py-1.5 text-sm"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          disabled={busy || status !== "execution_review"}
-          onClick={() => void exportApproved()}
-          className="rounded-lg border border-border px-3 py-1.5 text-sm"
-        >
-          Export Approved
-        </button>
       </div>
+      {planSavedLabel ? (
+        <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-900">
+          {planSavedLabel}
+          {persistenceStatus === "reloaded" ? " · existing plan reloaded" : null}
+        </div>
+      ) : null}
+      {persistenceStatus === "skipped_qc_failed" ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          Plan not saved — AI QC reported blocking findings.
+        </div>
+      ) : null}
       {reviewMeta ? (
-        <PackageSection title="Generate Review / Phase 1 Meta" value={reviewMeta} />
+        <PackageSection title="Generate Review / Phase 2A Meta" value={reviewMeta} />
       ) : null}
       {estimate ? (
         <PackageSection title="Generate Review Estimate (Scene-based)" value={estimate} />
       ) : null}
       {qcSummary ? <PackageSection title="AI QC Findings" value={qcSummary} /> : null}
-      {outputs.length > 0 ? (
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold text-navy">Execution Outputs</h3>
-          {(outputs as Array<{ id: string; title: string; status: string }>).map((output) => (
-            <div
-              key={output.id}
-              className="flex flex-wrap items-center justify-between gap-2 border-b border-border py-2 text-sm"
-            >
-              <span>
-                {output.title} · {output.status}
-              </span>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void regenerateOne(output.id)}
-                className="rounded border border-border px-2 py-1 text-xs"
-              >
-                Regenerate One
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
     </section>
   );
 }

@@ -1,4 +1,4 @@
--- Sprint 3 AI Story Execution Engine (video only; corrects Flux/marketing_outputs mistake)
+-- Sprint 3 AI Story Execution Engine (video only — corrects Flux/marketing_outputs mistake)
 DROP TABLE IF EXISTS ai_story_marketing_outputs;
 DROP TABLE IF EXISTS ai_story_execution_outputs;
 

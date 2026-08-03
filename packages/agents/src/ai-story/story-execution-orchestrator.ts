@@ -12,13 +12,17 @@ import {
   AiStoryGenerateReviewResultSchema,
   EXECUTION_CAPABILITY_IDS,
   MARKETING_OUTPUT_STRATEGY,
+  PHASE1_EXECUTION_LOCKED,
   assertPhase1ExecutionLocked,
   assertAiStoryExecutionTransition,
   assertAiStoryTransition,
+  requestHash,
   type AiStoryExecutionStatus,
   type AiStoryGenerateReviewResult,
   type AiStoryStatus,
   type AnimationPackagePayload,
+  type CanonicalProviderRequest,
+  type CanonicalProviderResult,
   type ExecutionManifest,
   type GenerateReviewEstimate,
 } from "@ceo-agent/shared";
@@ -46,11 +50,7 @@ import {
   validateAllSceneExecutionIntents,
   type AiQcAssetFact,
 } from "./ai-qc-validator";
-import type {
-  CanonicalProviderRequest,
-  CanonicalProviderResult,
-} from "@ceo-agent/shared";
-import { requestHash } from "@ceo-agent/shared";
+import { SceneExecutionPersistenceService } from "./scene-execution-persistence-service";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -235,8 +235,14 @@ export async function createGenerateReview(input: {
   );
 
   const overallQcStatus = aggregateQcStatus(qcResults);
-  // Phase 1: QC must pass AND provider execution remains locked until later phases.
-  const executionAllowed = false;
+  // Phase 1 / 2A: QC may pass, but provider execution remains locked until later phases.
+  const persistence = await new SceneExecutionPersistenceService().persistFromGenerateReview({
+    overallQcStatus,
+    plan: compiled.storyExecutionPlan,
+    intents: compiled.intents,
+    instructionsBySceneExecutionId: compiled.instructionsBySceneExecutionId,
+    validationResults: qcResults,
+  });
 
   const result = AiStoryGenerateReviewResultSchema.parse({
     estimate: {
@@ -255,7 +261,13 @@ export async function createGenerateReview(input: {
     sceneIntents: compiled.intents,
     qcResults,
     overallQcStatus,
-    executionAllowed,
+    executionAllowed: false,
+    executionLockCode: PHASE1_EXECUTION_LOCKED,
+    persistenceStatus: persistence.persistenceStatus,
+    storyExecutionId: persistence.storyExecutionId,
+    sceneExecutionIds: [...persistence.sceneExecutionIds],
+    compilationHash: persistence.compilationHash,
+    validationSummary: persistence.validationSummary,
     phase: "phase_1_qc_only",
   });
 

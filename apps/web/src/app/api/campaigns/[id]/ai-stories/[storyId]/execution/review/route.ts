@@ -7,9 +7,10 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 
 /**
- * Sprint 3 Phase 1 — Generate Review:
- * compile Scene Execution Intents + run provider-neutral AI QC.
- * Does not start provider execution.
+ * Sprint 3 Phase 2A PR2 — Generate Review:
+ * compile Scene Execution Intents + run provider-neutral AI QC +
+ * automatically persist the Execution Plan when QC is PASS or WARNING.
+ * Does not start provider execution. Execution remains FAIL CLOSED.
  */
 export async function POST(
   _request: Request,
@@ -70,6 +71,9 @@ export async function POST(
       phase: review.phase,
       estimate: review.estimate,
       storyExecutionPlan: review.storyExecutionPlan,
+      storyExecutionId: review.storyExecutionId,
+      sceneExecutionIds: review.sceneExecutionIds,
+      compilationHash: review.compilationHash,
       sceneIntentCount: review.sceneIntents.length,
       sceneIntents: review.sceneIntents.map((intent) => ({
         sceneExecutionId: intent.identity.sceneExecutionId,
@@ -86,7 +90,10 @@ export async function POST(
         blockingErrors,
         warnings,
       },
+      validationSummary: review.validationSummary,
+      persistenceStatus: review.persistenceStatus,
       executionAllowed: review.executionAllowed,
+      executionLockCode: review.executionLockCode,
       qcPass: review.overallQcStatus !== "failed",
     });
   } catch (error) {

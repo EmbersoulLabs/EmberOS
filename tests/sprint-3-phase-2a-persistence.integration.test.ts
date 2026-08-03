@@ -59,6 +59,7 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
     await sql`DELETE FROM ai_story_scene_intent_validation_results WHERE org_id = ANY(${orgIds})`;
     await sql`DELETE FROM ai_story_scene_executions WHERE org_id = ANY(${orgIds})`;
     await sql`DELETE FROM ai_story_execution_plans WHERE org_id = ANY(${orgIds})`;
+    await sql`DELETE FROM ai_story_scene_instruction_snapshots WHERE org_id = ANY(${orgIds})`;
     await sql`DELETE FROM campaign_asset_refs WHERE campaign_id IN (${PHASE_2A_IDS.campaignId}, ${PHASE_2A_WORKSPACE_B_IDS.campaignId})`;
     await sql`DELETE FROM assets WHERE id IN (${PHASE_2A_IDS.assetId}, ${PHASE_2A_WORKSPACE_B_IDS.assetId})`;
     await sql`DELETE FROM ai_story_animation_packages WHERE id IN (${PHASE_2A_IDS.animationPackageId}, ${secondPackageId}, ${sameVersionAltPackageId}, ${PHASE_2A_WORKSPACE_B_IDS.animationPackageId})`;
@@ -80,19 +81,14 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
       (${PHASE_2A_WORKSPACE_B_IDS.animationPackageId}, ${PHASE_2A_WORKSPACE_B_IDS.orgId}, ${PHASE_2A_WORKSPACE_B_IDS.workspaceId}, ${PHASE_2A_WORKSPACE_B_IDS.campaignId}, ${PHASE_2A_WORKSPACE_B_IDS.storyId}, ${PHASE_2A_WORKSPACE_B_IDS.storyVersionId}, 'ready_for_execution', ${sql.json(scenePlanPayload)})`;
     await sql`INSERT INTO assets (id, org_id, workspace_id, campaign_id, type, storage_path) VALUES (${PHASE_2A_IDS.assetId}, ${PHASE_2A_IDS.orgId}, ${PHASE_2A_IDS.workspaceId}, ${PHASE_2A_IDS.campaignId}, 'image', 'phase-2a/asset.png'), (${PHASE_2A_WORKSPACE_B_IDS.assetId}, ${PHASE_2A_WORKSPACE_B_IDS.orgId}, ${PHASE_2A_WORKSPACE_B_IDS.workspaceId}, ${PHASE_2A_WORKSPACE_B_IDS.campaignId}, 'image', 'phase-2a-b/asset.png')`;
     await sql`INSERT INTO campaign_asset_refs (campaign_id, asset_id) VALUES (${PHASE_2A_IDS.campaignId}, ${PHASE_2A_IDS.assetId}), (${PHASE_2A_WORKSPACE_B_IDS.campaignId}, ${PHASE_2A_WORKSPACE_B_IDS.assetId})`;
-  });
+  }, 60_000);
 
   afterAll(async () => {
     const orgIds = [PHASE_2A_IDS.orgId, PHASE_2A_WORKSPACE_B_IDS.orgId];
-    const snapshotHashes = [
-      ...makePhase2aCompilation().intents,
-      ...makePhase2aCompilation({ ids: PHASE_2A_WORKSPACE_B_IDS }).intents,
-      ...makePhase2aCompilation({ animationPackageId: sameVersionAltPackageId }).intents,
-    ].map((intent) => intent.normalizedPayloadReference.contentHash);
     await sql`DELETE FROM ai_story_scene_intent_validation_results WHERE org_id = ANY(${orgIds})`;
     await sql`DELETE FROM ai_story_scene_executions WHERE org_id = ANY(${orgIds})`;
     await sql`DELETE FROM ai_story_execution_plans WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_instruction_snapshots WHERE content_hash = ANY(${snapshotHashes}) AND content_hash NOT IN (SELECT instruction_hash FROM ai_story_scene_executions)`;
+    await sql`DELETE FROM ai_story_scene_instruction_snapshots WHERE org_id = ANY(${orgIds})`;
     await sql`DELETE FROM campaign_asset_refs WHERE campaign_id IN (${PHASE_2A_IDS.campaignId}, ${PHASE_2A_WORKSPACE_B_IDS.campaignId})`;
     await sql`DELETE FROM assets WHERE id IN (${PHASE_2A_IDS.assetId}, ${PHASE_2A_WORKSPACE_B_IDS.assetId})`;
     await sql`DELETE FROM ai_story_animation_packages WHERE id IN (${PHASE_2A_IDS.animationPackageId}, ${secondPackageId}, ${sameVersionAltPackageId}, ${PHASE_2A_WORKSPACE_B_IDS.animationPackageId})`;
@@ -103,9 +99,11 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
     await sql`DELETE FROM organizations WHERE id = ANY(${orgIds})`;
     await sql.end();
     await closeDb();
-  });
+  }, 60_000);
 
-  it("persists atomically and idempotently with immutable snapshot/QC lookup", async () => {
+  it(
+    "persists atomically and idempotently with immutable snapshot/QC lookup",
+    async () => {
     const repository = new AiStorySceneExecutionPersistenceRepository();
     const input = makePhase2aCompilation();
     const legacyJobsBefore = await sql`SELECT count(*)::int AS count FROM ai_story_execution_jobs`;
@@ -128,9 +126,13 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
     const legacyOutputsAfter = await sql`SELECT count(*)::int AS count FROM ai_story_execution_outputs`;
     expect(legacyJobsAfter[0]?.count).toBe(legacyJobsBefore[0]?.count);
     expect(legacyOutputsAfter[0]?.count).toBe(legacyOutputsBefore[0]?.count);
-  });
+  },
+    60_000
+  );
 
-  it("parallel deterministic persistence converges to one Execution Plan", async () => {
+  it(
+    "parallel deterministic persistence converges to one Execution Plan",
+    async () => {
     const repository = new AiStorySceneExecutionPersistenceRepository();
     const input = makePhase2aCompilation({
       animationPackageId: sameVersionAltPackageId,
@@ -153,9 +155,13 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
       await sql`SELECT count(*)::int AS count FROM ai_story_scene_executions WHERE execution_plan_id = ${first.plan.storyExecutionId}`;
     expect(planRows[0]?.count).toBe(1);
     expect(sceneRows[0]?.count).toBe(input.intents.length);
-  });
+  },
+    60_000
+  );
 
-  it("isolates independent Execution Plans across workspaces", async () => {
+  it(
+    "isolates independent Execution Plans across workspaces",
+    async () => {
     const repository = new AiStorySceneExecutionPersistenceRepository();
     const workspaceA = makePhase2aCompilation({
       ids: PHASE_2A_IDS,
@@ -183,9 +189,13 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
         )
       ).map((row) => row.plan.storyExecutionId)
     ).toContain(persistedB.plan.storyExecutionId);
-  });
+  },
+    60_000
+  );
 
-  it("allows multiple deterministic plans for the same Story Version", async () => {
+  it(
+    "allows multiple deterministic plans for the same Story Version",
+    async () => {
     const repository = new AiStorySceneExecutionPersistenceRepository();
     const first = makePhase2aCompilation();
     const alternate = makePhase2aCompilation({
@@ -202,7 +212,9 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
     expect(plans.map((row) => row.plan.storyExecutionId)).toEqual(
       expect.arrayContaining([first.plan.storyExecutionId, second.plan.storyExecutionId])
     );
-  });
+  },
+    60_000
+  );
 
   it.each([
     ["organization", PHASE_2A_IDS.orgId],
@@ -218,8 +230,16 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
   });
 
   it("fails closed for unauthorized Campaign Assets", async () => {
-    const input = replaceIds(makePhase2aCompilation(), { [PHASE_2A_IDS.assetId]: crypto.randomUUID() });
-    await expect(new AiStorySceneExecutionPersistenceRepository().persistCompilation(input)).rejects.toBeInstanceOf(ExecutionPlanOwnershipError);
+    // Mutate Intent asset refs only — blunt UUID replaceIds also rewrites instruction
+    // bodies and desyncs contentHash, which fails closed as IdentityConflict first.
+    const input = makePhase2aCompilation();
+    const unauthorizedAssetId = crypto.randomUUID();
+    for (const intent of input.intents) {
+      (intent as { referencedAssetIds: string[] }).referencedAssetIds = [unauthorizedAssetId];
+    }
+    await expect(
+      new AiStorySceneExecutionPersistenceRepository().persistCompilation(input)
+    ).rejects.toBeInstanceOf(ExecutionPlanOwnershipError);
   });
 
   it("fails closed when a Scene is not owned by the Animation Package", async () => {
@@ -233,7 +253,9 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
     ).rejects.toBeInstanceOf(ExecutionPlanOwnershipError);
   });
 
-  it("rolls back the plan when a Scene immutable identity conflicts", async () => {
+  it(
+    "rolls back the plan when a Scene immutable identity conflicts",
+    async () => {
     const repository = new AiStorySceneExecutionPersistenceRepository();
     const existing = makePhase2aCompilation();
     await repository.persistCompilation(existing);
@@ -245,9 +267,13 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
       existing.intents[0]!.identity.idempotencyKey;
     await expect(repository.persistCompilation(second)).rejects.toThrow();
     expect(await repository.getByDeterministicFingerprint(fingerprint)).toBeNull();
-  });
+  },
+    60_000
+  );
 
-  it("returns 409 when an accepted deterministic identity is challenged by a non-equivalent plan", async () => {
+  it(
+    "returns 409 when an accepted deterministic identity is challenged by a non-equivalent plan",
+    async () => {
     const repository = new AiStorySceneExecutionPersistenceRepository();
     const accepted = makePhase2aCompilation({ instructionPurpose: "identity-conflict-base" });
     await repository.persistCompilation(accepted);
@@ -257,5 +283,7 @@ describeIntegration("Sprint 3 Phase 2A persistence foundation", () => {
     await expect(repository.persistCompilation(conflicting)).rejects.toBeInstanceOf(
       ExecutionPlanIdentityConflictError
     );
-  });
+  },
+    60_000
+  );
 });

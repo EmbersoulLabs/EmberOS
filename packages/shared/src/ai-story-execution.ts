@@ -352,14 +352,43 @@ export const AiStoryAiQcResultSchema = z.object({
 
 export type AiStoryAiQcResult = z.infer<typeof AiStoryAiQcResultSchema>;
 
-/** Aggregate QC + estimate payload returned by Generate Review (Phase 1). */
+/**
+ * Phase 2A PR2 — automatic persistence outcome after Generate Review QC.
+ * Never unlocks execution; never implies provider/outbox/queue work.
+ */
+export const AiStoryPersistenceStatusSchema = z.enum([
+  "persisted",
+  "reloaded",
+  "skipped_qc_failed",
+]);
+
+export type AiStoryPersistenceStatus = z.infer<typeof AiStoryPersistenceStatusSchema>;
+
+export const AiStoryGenerateReviewValidationSummarySchema = z.object({
+  overallQcStatus: AiStoryAiQcStatusSchema,
+  blockingErrorCount: z.number().int().nonnegative(),
+  warningCount: z.number().int().nonnegative(),
+  sceneCount: z.number().int().nonnegative(),
+});
+
+export type AiStoryGenerateReviewValidationSummary = z.infer<
+  typeof AiStoryGenerateReviewValidationSummarySchema
+>;
+
+/** Aggregate QC + estimate payload returned by Generate Review (Phase 1 + Phase 2A PR2). */
 export const AiStoryGenerateReviewResultSchema = z.object({
   estimate: AiStoryExecutionReviewEstimateSchema,
   storyExecutionPlan: AiStoryExecutionPlanSchema,
   sceneIntents: z.array(AiStorySceneExecutionIntentSchema).min(1),
   qcResults: z.array(AiStoryAiQcResultSchema).min(1),
   overallQcStatus: AiStoryAiQcStatusSchema,
-  executionAllowed: z.boolean(),
+  executionAllowed: z.literal(false),
+  executionLockCode: z.literal("PHASE1_EXECUTION_LOCKED"),
+  persistenceStatus: AiStoryPersistenceStatusSchema,
+  storyExecutionId: z.string().uuid().nullable(),
+  sceneExecutionIds: z.array(z.string().uuid()),
+  compilationHash: z.string().nullable(),
+  validationSummary: AiStoryGenerateReviewValidationSummarySchema,
   phase: z.literal("phase_1_qc_only"),
 });
 

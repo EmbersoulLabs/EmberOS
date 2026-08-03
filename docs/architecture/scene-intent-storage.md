@@ -89,5 +89,7 @@ On write, persistence fail-closes when
 
 ## Boundary
 
-This document covers Phase 2A Persistence Foundation storage only. It does not authorize
-execution runtime, provider requests, attempts, results, or Generate Review auto-persist (PR2).
+This document covers Phase 2A Persistence Foundation storage only for PR1.
+Phase 2A PR2 wires Generate Review auto-persist through
+`SceneExecutionPersistenceService` and still does not authorize execution
+runtime, provider requests, attempts, results, Queue, Worker, or Outbox.
