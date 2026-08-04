@@ -392,6 +392,12 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
       );
       const sceneById = new Map(sceneRows.map((row) => [row.id, row]));
 
+      if (!(await this.isReviewApproved(plan.id, tx))) {
+        throw new AssemblyStateError(
+          "Story Assembly Definition requires an APPROVED logical Review for this Execution Plan"
+        );
+      }
+
       const fingerprint = buildAssemblyDefinitionFingerprint({
         executionPlanId: plan.id,
         orderedSceneExecutionIds,

@@ -103,16 +103,34 @@ export interface ExecutionPlanReviewStore {
   getLogicalProjection(executionPlanId: string): Promise<LogicalReviewProjection | null>;
 }
 
-function assertEquivalentFact<T extends { deterministicFingerprint: string; factId: string }>(
-  existing: T,
-  requested: T,
-  label: string
-): void {
+function assertEquivalentFact<T extends {
+  deterministicFingerprint: string;
+  factId: string;
+  reviewedAt?: string;
+  openedAt?: string;
+}>(existing: T, requested: T, label: string): void {
   if (
     existing.factId !== requested.factId ||
-    existing.deterministicFingerprint !== requested.deterministicFingerprint ||
-    canonicalPersistenceHash(existing) !== canonicalPersistenceHash(requested)
+    existing.deterministicFingerprint !== requested.deterministicFingerprint
   ) {
+    throw new ExecutionPlanReviewIdentityConflictError(
+      `A different ${label} is already accepted for this deterministic identity`
+    );
+  }
+
+  // First-accepted timestamps are authoritative. Exclude them from replay equivalence
+  // so identical decision identity does not 409 solely due to a new reviewedAt/openedAt.
+  const {
+    reviewedAt: _existingReviewedAt,
+    openedAt: _existingOpenedAt,
+    ...existingStable
+  } = existing;
+  const {
+    reviewedAt: _requestedReviewedAt,
+    openedAt: _requestedOpenedAt,
+    ...requestedStable
+  } = requested;
+  if (canonicalPersistenceHash(existingStable) !== canonicalPersistenceHash(requestedStable)) {
     throw new ExecutionPlanReviewIdentityConflictError(
       `A different ${label} is already accepted for this deterministic identity`
     );
