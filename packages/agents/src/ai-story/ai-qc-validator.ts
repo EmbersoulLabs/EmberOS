@@ -16,7 +16,7 @@ import {
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
 } from "@ceo-agent/shared";
-import { integrityHash } from "./scene-execution-compiler.js";
+import { integrityHash } from "./scene-execution-compiler";
 
 export type AiQcAssetFact = {
   assetId: string;
