@@ -20,6 +20,7 @@ import {
   type AiStorySceneExecutionIntent,
   type AnimationPackagePayload,
 } from "@ceo-agent/shared";
+import { collectReferencedAssetIds } from "./execution-compiler";
 
 export type SceneCompilerContext = {
   orgId: string;
@@ -83,16 +84,6 @@ function durationSecToMs(sec: number): number {
   return ms > 0 ? ms : 1;
 }
 
-export function collectReferencedAssetIds(
-  animationPackage: AnimationPackagePayload
-): string[] {
-  const ids = new Set<string>();
-  for (const id of animationPackage.story.assetReferences ?? []) {
-    if (id) ids.add(id);
-  }
-  return [...ids].sort();
-}
-
 /**
  * Compile one Scene Execution Intent per Animation Package scene.
  * Same inputs → identical ordering, identities, and hashes.
@@ -103,7 +94,10 @@ export function compileSceneExecutionIntents(
 ): SceneExecutionCompileOutput {
   const pkg = AnimationPackagePayloadSchema.parse(animationPackageInput);
   const compiledAt = ctx.compiledAt ?? new Date().toISOString();
-  const referencedAssetIds = collectReferencedAssetIds(pkg);
+  // Canonical collectReferencedAssetIds lives in execution-compiler; sort for Scene Intent determinism.
+  const referencedAssetIds = [...collectReferencedAssetIds(pkg)].sort((a, b) =>
+    a.localeCompare(b)
+  );
 
   const scenesSorted = [...pkg.scenePlan].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const shotsSorted = [...pkg.shotPlan].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
@@ -155,7 +149,9 @@ export function compileSceneExecutionIntents(
         identity: c.identity,
       }),
     }))
-    .sort((a, b) => a.characterId.localeCompare(b.characterId));
+    .sort((a, b) =>
+      (a.characterId ?? "").localeCompare(b.characterId ?? "")
+    );
 
   const intents: AiStorySceneExecutionIntent[] = [];
   const instructionsBySceneExecutionId: Record<string, AiStorySceneCompiledInstructions> = {};
