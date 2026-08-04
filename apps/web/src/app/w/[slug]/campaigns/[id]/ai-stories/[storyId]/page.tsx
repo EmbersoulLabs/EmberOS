@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, StatusBadge } from "@/components/AppShell";
+import { ExecutionPlanReviewPanel } from "@/components/ai-story-review/ExecutionPlanReviewPanel";
+import { executionPlanStorageKey } from "@/lib/ai-story-review-assembly-ui";
 import {
   STORY_PLANNING_STAGE_ORDER,
   type AnimationPackagePayload,
@@ -11,6 +13,7 @@ import {
   type CreativeContext,
   type StoryPlanningDraft,
   type StoryPlanningStage,
+  type WorkspaceRole,
 } from "@ceo-agent/shared";
 
 const EMPTY_DRAFT: AiStoryStructuredDraft = {
@@ -55,6 +58,25 @@ export default function AiStoryReviewPage() {
   const [busy, setBusy] = useState(false);
   const [busyStage, setBusyStage] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | string | null>(null);
+  const [storyVersionId, setStoryVersionId] = useState<string | null>(null);
+  const [animationPackageRecordId, setAnimationPackageRecordId] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const meRes = await fetch("/api/me");
+        if (!meRes.ok) return;
+        const me = await meRes.json();
+        const ws = (
+          me.workspaces as Array<{ slug: string; role: string }> | undefined
+        )?.find((workspace) => workspace.slug === slug);
+        setWorkspaceRole(ws?.role ?? null);
+      } catch {
+        setWorkspaceRole(null);
+      }
+    })();
+  }, [slug]);
 
   const load = useCallback(async () => {
     setError("");
@@ -66,8 +88,23 @@ export default function AiStoryReviewPage() {
       return;
     }
     setStatus(data.story.status);
+    setStoryVersionId(
+      typeof data.currentVersion?.id === "string" ? data.currentVersion.id : null
+    );
     const content = data.currentVersion?.structuredContent as AiStoryStructuredDraft | undefined;
-    if (content) setDraft(content);
+    if (content) {
+      setDraft({
+        ...EMPTY_DRAFT,
+        ...content,
+        story: {
+          ...EMPTY_DRAFT.story,
+          ...(content.story ?? {}),
+        },
+        keyMessages: content.keyMessages ?? [],
+        assetReferences: content.assetReferences ?? [],
+        warnings: content.warnings ?? [],
+      });
+    }
     setWarnings(content?.warnings ?? []);
     if (
       ["planning_review", "ready_for_execution", "planning", "ready_for_animation", "failed"].includes(
@@ -92,11 +129,17 @@ export default function AiStoryReviewPage() {
               ? (planningData.animationPackage.payload as AnimationPackagePayload)
               : null)
         );
+        setAnimationPackageRecordId(
+          typeof planningData.animationPackage?.id === "string"
+            ? planningData.animationPackage.id
+            : null
+        );
       }
     } else {
       setCreativeContext(null);
       setAnimationPackage(null);
       setPlanningDraft(null);
+      setAnimationPackageRecordId(null);
     }
     setLoading(false);
   }, [campaignId, storyId]);
@@ -329,6 +372,10 @@ export default function AiStoryReviewPage() {
             setBusy={setBusy}
             setError={setError}
             onDone={load}
+            workspaceRole={workspaceRole}
+            storyTitle={draft.title}
+            storyVersionId={storyVersionId}
+            animationPackageId={animationPackageRecordId}
           />
         ) : null}
 
@@ -567,6 +614,16 @@ function PackageSection({ title, value }: { title: string; value: unknown }) {
   );
 }
 
+type SafeSceneIntentHint = {
+  sceneExecutionId: string;
+  sceneId?: string;
+  sceneOrder?: number;
+  purpose?: string;
+  plannedDurationMs?: number;
+  shotCount?: number;
+  referencedAssetIds?: string[];
+};
+
 function ExecutionPanel({
   campaignId,
   storyId,
@@ -575,6 +632,10 @@ function ExecutionPanel({
   setBusy,
   setError,
   onDone,
+  workspaceRole,
+  storyTitle,
+  storyVersionId,
+  animationPackageId,
 }: {
   campaignId: string;
   storyId: string;
@@ -583,12 +644,27 @@ function ExecutionPanel({
   setBusy: (v: boolean) => void;
   setError: (v: string) => void;
   onDone: () => Promise<void>;
+  workspaceRole: WorkspaceRole | string | null;
+  storyTitle: string;
+  storyVersionId: string | null;
+  animationPackageId: string | null;
 }) {
-  const [estimate, setEstimate] = useState<unknown>(null);
-  const [qcSummary, setQcSummary] = useState<unknown>(null);
-  const [reviewMeta, setReviewMeta] = useState<unknown>(null);
   const [persistenceStatus, setPersistenceStatus] = useState<string | null>(null);
   const [planSavedLabel, setPlanSavedLabel] = useState<string | null>(null);
+  const [executionPlanId, setExecutionPlanId] = useState<string | null>(null);
+  const [compilationHash, setCompilationHash] = useState<string | null>(null);
+  const [sceneIntentHints, setSceneIntentHints] = useState<SafeSceneIntentHint[]>([]);
+  const [overallQcStatus, setOverallQcStatus] = useState<string | null>(null);
+  const [sceneIntentCount, setSceneIntentCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem(executionPlanStorageKey(storyId));
+      if (stored) setExecutionPlanId(stored);
+    } catch {
+      // sessionStorage unavailable
+    }
+  }, [storyId]);
 
   async function generateReview() {
     setBusy(true);
@@ -604,8 +680,6 @@ function ExecutionPanel({
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Generate Review failed");
-      setEstimate(data.estimate);
-      setQcSummary(data.qc ?? null);
       setPersistenceStatus(
         typeof data.persistenceStatus === "string" ? data.persistenceStatus : null
       );
@@ -614,20 +688,36 @@ function ExecutionPanel({
           ? "Plan Saved"
           : null
       );
-      setReviewMeta({
-        phase: data.phase,
-        overallQcStatus: data.qc?.overallStatus,
-        sceneIntentCount: data.sceneIntentCount,
-        executionAllowed: data.executionAllowed,
-        executionLockCode: data.executionLockCode,
-        persistenceStatus: data.persistenceStatus,
-        storyExecutionId: data.storyExecutionId,
-        sceneExecutionIds: data.sceneExecutionIds,
-        compilationHash: data.compilationHash,
-        validationSummary: data.validationSummary,
-        qcPass: data.qcPass,
-        sceneIntents: data.sceneIntents,
-      });
+      setOverallQcStatus(
+        typeof data.qc?.overallStatus === "string" ? data.qc.overallStatus : null
+      );
+      setSceneIntentCount(
+        typeof data.sceneIntentCount === "number" ? data.sceneIntentCount : null
+      );
+      setCompilationHash(
+        typeof data.compilationHash === "string" ? data.compilationHash : null
+      );
+      const planId =
+        typeof data.storyExecutionId === "string" ? data.storyExecutionId : null;
+      if (planId) {
+        setExecutionPlanId(planId);
+        try {
+          sessionStorage.setItem(executionPlanStorageKey(storyId), planId);
+        } catch {
+          // ignore
+        }
+      }
+      const intents = Array.isArray(data.sceneIntents)
+        ? (data.sceneIntents as SafeSceneIntentHint[]).map((intent) => ({
+            sceneExecutionId: intent.sceneExecutionId,
+            sceneId: intent.sceneId,
+            sceneOrder: intent.sceneOrder,
+            plannedDurationMs: intent.plannedDurationMs,
+            shotCount: intent.shotCount,
+            referencedAssetIds: intent.referencedAssetIds,
+          }))
+        : [];
+      setSceneIntentHints(intents);
       await onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generate Review failed");
@@ -637,42 +727,58 @@ function ExecutionPanel({
   }
 
   return (
-    <section className="space-y-4 rounded-2xl border border-border bg-white p-5">
-      <div>
-        <h2 className="text-lg font-bold text-navy">Execution Engine</h2>
-        <p className="mt-1 text-sm text-ink-secondary">
-          Phase 2A: Generate Review compiles Scene Execution Intents, runs AI QC, and
-          automatically saves the Execution Plan when QC passes. Provider execution remains locked.
+    <div className="space-y-4">
+      <section className="space-y-4 rounded-2xl border border-border bg-white p-5">
+        <div>
+          <h2 className="text-lg font-bold text-navy">Execution Engine</h2>
+          <p className="mt-1 text-sm text-ink-secondary">
+            Phase 2A: Generate Review compiles Scene Execution Intents, runs AI QC, and
+            automatically saves the Execution Plan when QC passes. Provider execution remains
+            locked.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={busy || status === "executing"}
+            onClick={() => void generateReview()}
+            className="brand-btn-primary"
+            data-testid="generate-review"
+          >
+            Generate Review
+          </button>
+        </div>
+        {planSavedLabel ? (
+          <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-900">
+            {planSavedLabel}
+            {persistenceStatus === "reloaded" ? " · existing plan reloaded" : null}
+            {sceneIntentCount != null ? ` · ${sceneIntentCount} scenes` : null}
+            {overallQcStatus ? ` · QC ${overallQcStatus}` : null}
+          </div>
+        ) : null}
+        {persistenceStatus === "skipped_qc_failed" ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Plan not saved — AI QC reported blocking findings.
+          </div>
+        ) : null}
+        <p className="text-xs text-ink-secondary" data-testid="phase2a-execution-locked">
+          Execution remains locked (PHASE1_EXECUTION_LOCKED). No Execute action is available.
         </p>
-      </div>
-      <div className="flex flex-wrap gap-3">
-        <button
-          type="button"
-          disabled={busy || status === "executing"}
-          onClick={() => void generateReview()}
-          className="rounded-lg border border-border px-3 py-1.5 text-sm"
-        >
-          Generate Review
-        </button>
-      </div>
-      {planSavedLabel ? (
-        <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-900">
-          {planSavedLabel}
-          {persistenceStatus === "reloaded" ? " · existing plan reloaded" : null}
-        </div>
+      </section>
+
+      {executionPlanId ? (
+        <ExecutionPlanReviewPanel
+          campaignId={campaignId}
+          storyId={storyId}
+          executionPlanId={executionPlanId}
+          storyTitle={storyTitle}
+          storyVersionId={storyVersionId}
+          animationPackageId={animationPackageId}
+          compilationHash={compilationHash}
+          workspaceRole={workspaceRole}
+          sceneIntentHints={sceneIntentHints}
+        />
       ) : null}
-      {persistenceStatus === "skipped_qc_failed" ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-          Plan not saved — AI QC reported blocking findings.
-        </div>
-      ) : null}
-      {reviewMeta ? (
-        <PackageSection title="Generate Review / Phase 2A Meta" value={reviewMeta} />
-      ) : null}
-      {estimate ? (
-        <PackageSection title="Generate Review Estimate (Scene-based)" value={estimate} />
-      ) : null}
-      {qcSummary ? <PackageSection title="AI QC Findings" value={qcSummary} /> : null}
-    </section>
+    </div>
   );
 }
