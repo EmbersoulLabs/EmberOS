@@ -25,6 +25,12 @@ import {
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
 } from "./ai-story-scene-execution-persistence";
+import {
+  assertExecutionPlanOwnershipChain,
+  assertPlanOwnershipColumnsMatch,
+  assertSceneMatchesPlan,
+  planOwnershipFromRow,
+} from "./ai-story-ownership";
 import { deriveLogicalReviewStatus } from "./ai-story-execution-plan-review";
 import { getWorkspaceMembership, ROLE_HIERARCHY } from "./tenant";
 
@@ -364,6 +370,7 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
   ): Promise<CreateAssemblyDefinitionResult> {
     return this.db.transaction(async (tx) => {
       const plan = await this.requirePlan(input.executionPlanId, tx);
+      await assertExecutionPlanOwnershipChain(plan, tx);
       await this.assertCreatorAuthorized(plan.workspaceId, input.createdBy);
 
       const sceneRows = await tx
@@ -705,19 +712,7 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
     sceneRows: Array<typeof schema.aiStorySceneExecutions.$inferSelect>
   ): void {
     for (const scene of sceneRows) {
-      if (
-        scene.orgId !== plan.orgId ||
-        scene.workspaceId !== plan.workspaceId ||
-        scene.campaignId !== plan.campaignId ||
-        scene.storyId !== plan.storyId ||
-        scene.storyVersionId !== plan.storyVersionId ||
-        scene.animationPackageId !== plan.animationPackageId ||
-        scene.executionPlanId !== plan.id
-      ) {
-        throw new AssemblyOwnershipError(
-          "Scene Execution ownership chain does not match the Execution Plan"
-        );
-      }
+      assertSceneMatchesPlan(plan, scene);
     }
   }
 
@@ -768,6 +763,26 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
     definitionRow: AssemblyDefinitionRow,
     db: QueryDb
   ) {
+    const [plan] = await db
+      .select()
+      .from(schema.aiStoryExecutionPlans)
+      .where(eq(schema.aiStoryExecutionPlans.id, definitionRow.executionPlanId))
+      .limit(1);
+    if (!plan) {
+      throw new AssemblyStateError("Execution Plan not found for Assembly Definition");
+    }
+    await assertExecutionPlanOwnershipChain(plan, db);
+    const expected = planOwnershipFromRow(plan);
+    assertPlanOwnershipColumnsMatch(expected, {
+      orgId: definitionRow.orgId,
+      workspaceId: definitionRow.workspaceId,
+      campaignId: definitionRow.campaignId,
+      storyId: definitionRow.storyId,
+      storyVersionId: definitionRow.storyVersionId,
+      animationPackageId: definitionRow.animationPackageId,
+      executionPlanId: definitionRow.executionPlanId,
+    }, "Assembly Definition");
+
     const membershipRows = await db
       .select()
       .from(schema.aiStoryAssemblySceneMemberships)
@@ -778,6 +793,19 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
         )
       )
       .orderBy(asc(schema.aiStoryAssemblySceneMemberships.sceneOrder));
+
+    for (const row of membershipRows) {
+      assertPlanOwnershipColumnsMatch(expected, {
+        orgId: row.orgId,
+        workspaceId: row.workspaceId,
+        campaignId: row.campaignId,
+        storyId: row.storyId,
+        storyVersionId: row.storyVersionId,
+        animationPackageId: row.animationPackageId,
+        executionPlanId: row.executionPlanId,
+      }, "Assembly Scene membership");
+    }
+
     return assertAssemblyReloadIntegrity(definitionRow, membershipRows);
   }
 

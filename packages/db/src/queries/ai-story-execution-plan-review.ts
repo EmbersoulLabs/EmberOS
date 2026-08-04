@@ -25,6 +25,14 @@ import {
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
 } from "./ai-story-scene-execution-persistence";
+import {
+  assertExecutionPlanOwnershipChain,
+  assertPlanOwnershipColumnsMatch,
+  assertSceneMatchesPlan,
+  assertSnapshotMatchesWorkspace,
+  OwnershipIntegrityViolationError,
+  planOwnershipFromRow,
+} from "./ai-story-ownership";
 import { getWorkspaceMembership, ROLE_HIERARCHY } from "./tenant";
 
 type Db = ReturnType<typeof getDb>;
@@ -287,6 +295,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
           "Scene Execution does not belong to this Execution Plan"
         );
       }
+      assertSceneMatchesPlan(plan, scene);
 
       const [snapshot] = await tx
         .select()
@@ -300,6 +309,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
           "Instruction Snapshot is required before Scene Intent review"
         );
       }
+      assertSnapshotMatchesWorkspace(plan, snapshot);
 
       const validationRows = await tx
         .select()
@@ -317,6 +327,16 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
         );
       }
       const latestQc = validationRows[validationRows.length - 1]!;
+      if (
+        latestQc.orgId !== plan.orgId ||
+        latestQc.workspaceId !== plan.workspaceId ||
+        latestQc.executionPlanId !== plan.id ||
+        latestQc.sceneExecutionId !== scene.id
+      ) {
+        throw new OwnershipIntegrityViolationError(
+          "Intent Validation Result ownership does not match the Execution Plan Aggregate Root"
+        );
+      }
       if (input.decision === "APPROVED" && latestQc.status === "failed") {
         throw new ExecutionPlanReviewStateError(
           "Scene Intent cannot be approved while AI QC is blocking"
@@ -579,6 +599,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     if (!plan) {
       throw new ExecutionPlanReviewStateError("Execution Plan not found");
     }
+    await assertExecutionPlanOwnershipChain(plan, db);
     return plan;
   }
 
@@ -617,21 +638,57 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     plan: typeof schema.aiStoryExecutionPlans.$inferSelect,
     db: QueryDb
   ): Promise<LogicalReviewProjection> {
+    await assertExecutionPlanOwnershipChain(plan, db);
+    const expected = planOwnershipFromRow(plan);
+
     const [openedRow] = await db
       .select()
       .from(schema.aiStoryReviewOpenedFacts)
       .where(eq(schema.aiStoryReviewOpenedFacts.executionPlanId, executionPlanId))
       .limit(1);
+    if (openedRow) {
+      assertPlanOwnershipColumnsMatch(expected, {
+        orgId: openedRow.orgId,
+        workspaceId: openedRow.workspaceId,
+        campaignId: openedRow.campaignId,
+        storyId: openedRow.storyId,
+        storyVersionId: openedRow.storyVersionId,
+        animationPackageId: openedRow.animationPackageId,
+        executionPlanId: openedRow.executionPlanId,
+      }, "ReviewOpenedFact");
+    }
     const sceneRows = await db
       .select()
       .from(schema.aiStorySceneIntentReviewFacts)
       .where(eq(schema.aiStorySceneIntentReviewFacts.executionPlanId, executionPlanId))
       .orderBy(asc(schema.aiStorySceneIntentReviewFacts.acceptedAt));
+    for (const row of sceneRows) {
+      assertPlanOwnershipColumnsMatch(expected, {
+        orgId: row.orgId,
+        workspaceId: row.workspaceId,
+        campaignId: row.campaignId,
+        storyId: row.storyId,
+        storyVersionId: row.storyVersionId,
+        animationPackageId: row.animationPackageId,
+        executionPlanId: row.executionPlanId,
+      }, "SceneIntentReviewFact");
+    }
     const storyRows = await db
       .select()
       .from(schema.aiStoryStoryReviewFacts)
       .where(eq(schema.aiStoryStoryReviewFacts.executionPlanId, executionPlanId))
       .orderBy(asc(schema.aiStoryStoryReviewFacts.acceptedAt));
+    for (const row of storyRows) {
+      assertPlanOwnershipColumnsMatch(expected, {
+        orgId: row.orgId,
+        workspaceId: row.workspaceId,
+        campaignId: row.campaignId,
+        storyId: row.storyId,
+        storyVersionId: row.storyVersionId,
+        animationPackageId: row.animationPackageId,
+        executionPlanId: row.executionPlanId,
+      }, "StoryReviewFact");
+    }
 
     const opened = openedRow ? ReviewOpenedFactSchema.parse(openedRow.fact) : null;
     const sceneDecisions = sceneRows.map((row) =>
@@ -642,10 +699,13 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
       : null;
 
     const requiredSceneRows = await db
-      .select({ id: schema.aiStorySceneExecutions.id })
+      .select()
       .from(schema.aiStorySceneExecutions)
       .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
       .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder));
+    for (const scene of requiredSceneRows) {
+      assertSceneMatchesPlan(plan, scene);
+    }
     const requiredSceneExecutionIds = requiredSceneRows.map((row) => row.id);
     const latest = latestSceneDecisions(sceneDecisions);
     const latestSceneDecisionBySceneExecutionId = Object.fromEntries(latest.entries());

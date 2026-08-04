@@ -14,3 +14,4 @@ export * from "./queries/provider-execution-dispatch";
 export * from "./queries/ai-story-scene-execution-persistence";
 export * from "./queries/ai-story-execution-plan-review";
 export * from "./queries/ai-story-execution-plan-assembly";
+export * from "./queries/ai-story-ownership";
