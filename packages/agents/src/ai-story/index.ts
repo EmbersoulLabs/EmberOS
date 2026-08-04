@@ -6,4 +6,5 @@ export * from "./scene-execution-compiler";
 export * from "./ai-qc-validator";
 export * from "./prompt-builder";
 export * from "./scene-execution-persistence-service";
+export * from "./runtime-authorization-service";
 export * from "./story-execution-orchestrator";
