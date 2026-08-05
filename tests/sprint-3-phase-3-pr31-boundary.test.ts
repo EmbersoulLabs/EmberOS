@@ -132,7 +132,7 @@ describe("Sprint 3 PR 3.1 boundary + identity", () => {
     expect(service).not.toMatch(/billing|Usage|Cost|releaseLease|finalize/i);
   });
 
-  it("PR 3.1 does not introduce Provider Runtime, Queue, Worker, or SQL migrations", () => {
+  it("PR 3.1 contracts and service stay isolated from scheduling/runtime modules", () => {
     const sharedIndex = readFileSync(resolve("packages/shared/src/index.ts"), "utf8");
     expect(sharedIndex).toContain('ai-story-runtime-contracts');
 
@@ -142,9 +142,20 @@ describe("Sprint 3 PR 3.1 boundary + identity", () => {
     );
     expect(agentsIndex).toContain("runtime-authorization-service");
 
-    // No new provider/SQL surface for this PR.
-    expect(() =>
-      readFileSync(resolve("packages/db/sql/ai-story-runtime-authorization-v1.sql"), "utf8")
-    ).toThrow();
+    for (const relative of [
+      "packages/shared/src/ai-story-runtime-contracts.ts",
+      "packages/agents/src/ai-story/runtime-authorization-service.ts",
+    ]) {
+      const source = readFileSync(resolve(relative), "utf8");
+      expect(source).not.toMatch(/from ["']@ceo-agent\/queue["']/);
+      expect(source).not.toMatch(/provider-outbox|ProviderRouter|adapter\.execute/i);
+      expect(source).not.toMatch(/seedance|minimax|upscale/i);
+    }
+
+    const schedulingSql = readFileSync(
+      resolve("packages/db/sql/ai-story-scene-scheduling-v1.sql"),
+      "utf8"
+    );
+    expect(schedulingSql).toContain("ai_story_scene_scheduling_correlations");
   });
 });

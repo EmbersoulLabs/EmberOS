@@ -195,6 +195,13 @@ describe("Sprint 3 PR 3.1 runtime contracts", () => {
         coveredByAuthorization: true,
         observedState: "ACTIVE",
       })
+    ).toEqual({ state: "AUTHORIZED", projectionVersion: 1 });
+    expect(
+      deriveSceneRuntimeProjectionState({
+        coveredByAuthorization: true,
+        schedulingBundleComplete: true,
+        observedState: "ACTIVE",
+      })
     ).toEqual({ state: "ACTIVE", projectionVersion: 1 });
 
     const projections = projectSceneRuntimes({

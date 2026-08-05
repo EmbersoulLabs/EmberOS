@@ -62,6 +62,7 @@ export * from "./ai-story-assembly";
 export * from "./ai-story-review-assembly-api";
 export * from "./ai-story-phase1-execution-lock";
 export * from "./ai-story-runtime-contracts";
+export * from "./ai-story-scene-scheduling";
 
 export * from "./marketing-output-strategy";
 export * from "./ai-provider-env";

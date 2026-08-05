@@ -408,12 +408,14 @@ export type SceneRuntimeProjectionStateResult = {
  */
 export function deriveSceneRuntimeProjectionState(input: {
   readonly coveredByAuthorization: boolean;
+  /** Full scheduling bundle required before ACTIVE (PR 3.2). */
+  readonly schedulingBundleComplete?: boolean;
   readonly observedState?: SceneRuntimeState;
 }): SceneRuntimeProjectionStateResult {
   let state: SceneRuntimeState = "READY";
-  if (input.observedState === "ACTIVE") state = "ACTIVE";
-  else if (input.observedState === "SUCCEEDED") state = "SUCCEEDED";
+  if (input.observedState === "SUCCEEDED") state = "SUCCEEDED";
   else if (input.observedState === "FAILED") state = "FAILED";
+  else if (input.schedulingBundleComplete === true) state = "ACTIVE";
   else if (input.coveredByAuthorization) state = "AUTHORIZED";
   return {
     state,
@@ -432,6 +434,7 @@ export function projectSceneRuntimes(input: {
     readonly sceneId: string;
     readonly sceneOrder: number;
     readonly observedState?: SceneRuntimeState;
+    readonly schedulingBundleComplete?: boolean;
   }[];
   readonly authorizedFact: RuntimeAuthorizedFact | null;
   readonly derivedAt: string;
@@ -443,6 +446,7 @@ export function projectSceneRuntimes(input: {
     const coveredByAuthorization = covered.has(scene.sceneExecutionId);
     const derived = deriveSceneRuntimeProjectionState({
       coveredByAuthorization,
+      schedulingBundleComplete: scene.schedulingBundleComplete === true,
       observedState: scene.observedState,
     });
     return SceneRuntimeProjectionSchema.parse({
@@ -473,6 +477,7 @@ export function projectRuntimeAuthorization(input: {
     readonly sceneId: string;
     readonly sceneOrder: number;
     readonly observedState?: SceneRuntimeState;
+    readonly schedulingBundleComplete?: boolean;
   }[];
   readonly derivedReadiness: ExecutionPlanDerivedReadiness;
   readonly derivedAt: string;

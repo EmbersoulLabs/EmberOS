@@ -15,3 +15,5 @@ export * from "./queries/ai-story-scene-execution-persistence";
 export * from "./queries/ai-story-execution-plan-review";
 export * from "./queries/ai-story-execution-plan-assembly";
 export * from "./queries/ai-story-ownership";
+export * from "./queries/ai-story-runtime-authorization";
+export * from "./queries/ai-story-scene-scheduling";
