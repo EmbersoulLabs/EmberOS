@@ -1285,6 +1285,7 @@ export const aiStorySceneRoutingDecisions = pgTable(
     capabilityVersion: text("capability_version").notNull(),
     selectedProviderId: text("selected_provider_id").notNull(),
     selectedAdapterVersion: text("selected_adapter_version").notNull(),
+    routerVersion: integer("router_version").notNull().default(1),
     registrySnapshotHash: text("registry_snapshot_hash").notNull(),
     capabilitySnapshot: jsonb("capability_snapshot")
       .$type<Record<string, unknown>>()
@@ -1394,6 +1395,61 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
     index("ai_story_scene_scheduling_plan_idx").on(t.executionPlanId, t.acceptedAt),
     index("ai_story_scene_scheduling_workspace_idx").on(t.workspaceId, t.acceptedAt),
     index("ai_story_scene_scheduling_auth_idx").on(t.runtimeAuthorizationId),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.3 — immutable Worker Execution Results (no Finalizer / Scene Result).
+ */
+export const aiStoryWorkerExecutionResults = pgTable(
+  "ai_story_worker_execution_results",
+  {
+    workerExecutionResultId: uuid("worker_execution_result_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    providerExecutionId: text("provider_execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    providerAttemptId: text("provider_attempt_id").notNull(),
+    dispatchId: text("dispatch_id")
+      .notNull()
+      .references(() => providerExecutionDispatches.dispatchId, {
+        onDelete: "restrict",
+      }),
+    outboxJobId: text("outbox_job_id")
+      .notNull()
+      .references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    routingDecisionId: uuid("routing_decision_id")
+      .notNull()
+      .references(() => aiStorySceneRoutingDecisions.routingDecisionId, {
+        onDelete: "restrict",
+      }),
+    providerId: text("provider_id").notNull(),
+    adapterVersion: text("adapter_version").notNull(),
+    routerVersion: integer("router_version").notNull(),
+    providerRequestId: text("provider_request_id"),
+    workerState: text("worker_state").notNull(),
+    acceptanceClassification: text("acceptance_classification").notNull(),
+    canonicalProviderState: text("canonical_provider_state").notNull(),
+    reconciliationRequired: boolean("reconciliation_required").notNull().default(false),
+    deterministicIntegrityHash: text("deterministic_integrity_hash").notNull(),
+    workerContractVersion: text("worker_contract_version").notNull(),
+    result: jsonb("result")
+      .$type<import("@ceo-agent/shared").WorkerExecutionResult>()
+      .notNull(),
+    producedAt: timestamp("produced_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_worker_result_dispatch_unique").on(t.dispatchId),
+    unique("ai_story_worker_result_hash_unique").on(t.deterministicIntegrityHash),
+    unique("ai_story_worker_result_attempt_unique").on(t.providerAttemptId),
+    index("ai_story_worker_result_workspace_idx").on(t.workspaceId, t.acceptedAt),
+    index("ai_story_worker_result_execution_idx").on(t.providerExecutionId),
   ]
 );
 

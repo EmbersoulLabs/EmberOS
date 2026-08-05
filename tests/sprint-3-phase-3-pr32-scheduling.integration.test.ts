@@ -71,7 +71,7 @@ async function insertRoutingDecision(
       story_version_id, animation_package_id, execution_plan_id,
       scene_execution_id, runtime_authorization_id, capability_id,
       capability_version, selected_provider_id, selected_adapter_version,
-      registry_snapshot_hash, capability_snapshot, policy_snapshot,
+      router_version, registry_snapshot_hash, capability_snapshot, policy_snapshot,
       candidate_summary, decided_at, deterministic_integrity_hash,
       automatic_fallback_enabled, contract_version, decision
     ) VALUES (
@@ -89,6 +89,7 @@ async function insertRoutingDecision(
       ${decision.capabilityVersion},
       ${decision.selectedProviderId},
       ${decision.selectedAdapterVersion},
+      ${decision.routerVersion},
       ${decision.registrySnapshotHash},
       ${sql.json(decision.capabilitySnapshot)},
       ${sql.json(decision.policySnapshot)},
@@ -115,6 +116,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
       "../packages/db/sql/provider-outbox.sql",
       "../packages/db/sql/provider-execution-envelope.sql",
       "../packages/db/sql/ai-story-scene-scheduling-v1.sql",
+      "../packages/db/sql/ai-story-scene-routing-router-version-v1.sql",
       "../packages/db/sql/ai-story-scene-scheduling-rls-v1.sql",
     ]) {
       await applySqlFile(sql, relative);

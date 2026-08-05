@@ -108,6 +108,11 @@ export async function cleanupPr32Tenant(
   sql: Sql,
   ids: Phase2aIdSet = PHASE_2A_IDS
 ): Promise<void> {
+  await sql`DELETE FROM ai_story_worker_execution_results WHERE org_id = ${ids.orgId}`;
+  await sql`
+    DELETE FROM provider_execution_dispatches
+    WHERE workspace_id = ${ids.workspaceId}
+  `;
   await sql`DELETE FROM ai_story_scene_scheduling_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_routing_decisions WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_runtime_authorized_facts WHERE org_id = ${ids.orgId}`;

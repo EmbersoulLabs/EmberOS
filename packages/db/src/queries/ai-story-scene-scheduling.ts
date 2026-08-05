@@ -163,6 +163,7 @@ function assertSameRoutingDecision(
     existing.routingDecisionId !== requested.routingDecisionId ||
     existing.selectedProviderId !== requested.selectedProviderId ||
     existing.selectedAdapterVersion !== requested.selectedAdapterVersion ||
+    existing.routerVersion !== requested.routerVersion ||
     existing.registrySnapshotHash !== requested.registrySnapshotHash
   ) {
     throw new SceneSchedulingError(
@@ -646,6 +647,7 @@ export class SceneSchedulingRepository {
         capabilityVersion: decision.capabilityVersion,
         selectedProviderId: decision.selectedProviderId,
         selectedAdapterVersion: decision.selectedAdapterVersion,
+        routerVersion: decision.routerVersion,
         registrySnapshotHash: decision.registrySnapshotHash,
         capabilitySnapshot: decision.capabilitySnapshot,
         policySnapshot: decision.policySnapshot,

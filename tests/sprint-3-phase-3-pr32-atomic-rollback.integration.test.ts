@@ -95,6 +95,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling atomic rollback", () => {
       "../packages/db/sql/provider-outbox.sql",
       "../packages/db/sql/provider-execution-envelope.sql",
       "../packages/db/sql/ai-story-scene-scheduling-v1.sql",
+      "../packages/db/sql/ai-story-scene-routing-router-version-v1.sql",
       "../packages/db/sql/ai-story-scene-scheduling-rls-v1.sql",
     ]) {
       await applySqlFile(sql, relative);

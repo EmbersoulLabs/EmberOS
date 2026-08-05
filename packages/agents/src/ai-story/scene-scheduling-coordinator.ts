@@ -4,6 +4,7 @@ import {
   PersistedSceneRoutingDecisionSchema,
   ProviderExecutionSchema,
   SCENE_ROUTING_DECISION_CONTRACT_VERSION,
+  SCENE_ROUTER_VERSION,
   SCENE_SCHEDULING_CONTRACT_VERSION,
   SceneProviderSchedulingCorrelationSchema,
   SceneSchedulingBundleSchema,
@@ -250,6 +251,7 @@ function buildRoutingDecision(input: {
     routeDecisionHash: input.route.decisionHash,
     selectedProviderId: input.route.selectedProviderId,
     selectedAdapterVersion: input.route.selectedAdapterVersion,
+    routerVersion: SCENE_ROUTER_VERSION,
     registrySnapshotHash: input.route.registrySnapshotHash,
     policySnapshot: input.policy,
     automaticFallbackEnabled: false,
@@ -267,6 +269,7 @@ function buildRoutingDecision(input: {
     capabilityVersion: SCENE_PROVIDER_CAPABILITY_VERSION,
     selectedProviderId: input.route.selectedProviderId,
     selectedAdapterVersion: input.route.selectedAdapterVersion,
+    routerVersion: SCENE_ROUTER_VERSION,
     registrySnapshotHash: input.route.registrySnapshotHash,
     capabilitySnapshot: input.route.selectedCapability as unknown as Record<string, unknown>,
     policySnapshot: input.policy as unknown as Record<string, unknown>,
@@ -671,6 +674,7 @@ export class SceneSchedulingCoordinator {
       existing.deterministicIntegrityHash !== candidate.deterministicIntegrityHash ||
       existing.selectedProviderId !== candidate.selectedProviderId ||
       existing.selectedAdapterVersion !== candidate.selectedAdapterVersion ||
+      existing.routerVersion !== candidate.routerVersion ||
       existing.registrySnapshotHash !== candidate.registrySnapshotHash
     ) {
       throw new SceneSchedulingError(

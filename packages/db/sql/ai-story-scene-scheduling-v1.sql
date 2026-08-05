@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS ai_story_scene_routing_decisions (
   capability_version TEXT NOT NULL,
   selected_provider_id TEXT NOT NULL,
   selected_adapter_version TEXT NOT NULL,
+  router_version INTEGER NOT NULL DEFAULT 1 CHECK (router_version = 1),
   registry_snapshot_hash TEXT NOT NULL,
   capability_snapshot JSONB NOT NULL,
   policy_snapshot JSONB NOT NULL,

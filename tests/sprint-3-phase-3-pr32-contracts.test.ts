@@ -79,6 +79,7 @@ function routingDecision() {
     decidedAt: "2026-08-04T12:05:00.000Z",
     deterministicIntegrityHash: HASH,
     automaticFallbackEnabled: false,
+    routerVersion: 1,
     contractVersion: SCENE_ROUTING_DECISION_CONTRACT_VERSION,
     ownership: OWNERSHIP,
   });
@@ -126,11 +127,18 @@ describe("Sprint 3 PR 3.2 scene scheduling contracts", () => {
   it("parses PersistedSceneRoutingDecision with automaticFallbackEnabled=false", () => {
     const decision = routingDecision();
     expect(decision.automaticFallbackEnabled).toBe(false);
+    expect(decision.routerVersion).toBe(1);
     expect(decision.capabilityId).toBe("animation-video-generation");
     expect(() =>
       PersistedSceneRoutingDecisionSchema.parse({
         ...decision,
         automaticFallbackEnabled: true,
+      })
+    ).toThrow();
+    expect(() =>
+      PersistedSceneRoutingDecisionSchema.parse({
+        ...decision,
+        routerVersion: 2,
       })
     ).toThrow();
   });

@@ -14,9 +14,11 @@ import {
   RuntimeAuthorizedFactSchema,
   RuntimeOwnershipIdentitySchema,
 } from "./ai-story-runtime-contracts";
+import { SCENE_ROUTER_VERSION } from "./ai-story-worker-runtime";
 
 export const SCENE_SCHEDULING_CONTRACT_VERSION = "1" as const;
 export const SCENE_ROUTING_DECISION_CONTRACT_VERSION = "1" as const;
+export { SCENE_ROUTER_VERSION };
 
 const NonEmptyTextSchema = z.string().trim().min(1);
 const IntegrityHashSchema = NonEmptyTextSchema;
@@ -54,6 +56,8 @@ export const PersistedSceneRoutingDecisionSchema = z.object({
   capabilityVersion: z.string().regex(/^\d+\.\d+\.\d+$/),
   selectedProviderId: NonEmptyTextSchema,
   selectedAdapterVersion: NonEmptyTextSchema,
+  /** Frozen router contract version; Worker must use this, never current code inference. */
+  routerVersion: z.literal(SCENE_ROUTER_VERSION),
   registrySnapshotHash: IntegrityHashSchema,
   capabilitySnapshot: z.record(z.unknown()),
   policySnapshot: z.record(z.unknown()),
