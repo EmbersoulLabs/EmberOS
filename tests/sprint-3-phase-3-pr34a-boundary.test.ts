@@ -49,9 +49,8 @@ describe("Sprint 3 PR 3.4A boundary", () => {
     expect(SEEDANCE_NATIVE_IDEMPOTENCY_SUPPORTED).toBe(false);
   });
 
-  it("does not start MiniMax / PR 3.4B / Finalizer / Scene Result modules", () => {
+  it("does not start Finalizer / Scene Result / PR 3.5 modules", () => {
     for (const relative of [
-      "packages/agents/src/ai-story/minimax-canonical-adapter.ts",
       "packages/agents/src/ai-story/scene-provider-finalizer.ts",
       "packages/agents/src/ai-story/scene-result-persistence.ts",
     ]) {
