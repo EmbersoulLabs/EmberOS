@@ -296,12 +296,7 @@ export default function CampaignWizardPage() {
       if (!runRes.ok) {
         throw new Error(runData.error ?? t("error.runCampaign"));
       }
-      const taskId = runData.taskId as string | undefined;
-      router.push(
-        taskId
-          ? `/w/${slug}/campaigns/${id}/task?taskId=${taskId}`
-          : `/w/${slug}/campaigns/${id}/task`
-      );
+      router.push(`/w/${slug}/campaigns/${id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error.generic"));
     } finally {

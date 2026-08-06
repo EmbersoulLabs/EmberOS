@@ -36,14 +36,15 @@ const orchestrator = readFileSync(resolve("packages/agents/src/orchestrator.ts")
 const runCeo = readFileSync(resolve("apps/web/src/components/RunCeoButton.tsx"), "utf8");
 
 describe("PD-045 Create Campaign auto-starts pipeline", () => {
-  it("Create Campaign POSTs /generate then redirects to Continue Campaign task view", () => {
+  it("Create Campaign POSTs /generate then redirects to Campaign Overview", () => {
     expect(wizard).toContain("PD-045");
     expect(wizard).toMatch(/\/api\/campaigns\/\$\{id\}\/generate/);
-    expect(wizard).toMatch(/\/campaigns\/\$\{id\}\/task\?taskId=/);
+    expect(wizard).toMatch(/router\.push\(`\/w\/\$\{slug\}\/campaigns\/\$\{id\}`\)/);
   });
 
-  it("does not leave the user on campaign overview without starting a run", () => {
-    expect(wizard).not.toMatch(/router\.push\(`\/w\/\$\{slug\}\/campaigns\/\$\{id\}`\)/);
+  it("starts the run before opening Overview and does not force Task Progress", () => {
+    expect(wizard.indexOf("/generate")).toBeLessThan(wizard.indexOf("router.push"));
+    expect(wizard).not.toMatch(/\/campaigns\/\$\{id\}\/task\?taskId=/);
   });
 });
 

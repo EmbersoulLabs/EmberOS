@@ -13,6 +13,7 @@ export default function CampaignWorkspacePage() {
   const { t } = useI18n();
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
+  const [workspaceRole, setWorkspaceRole] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -22,11 +23,12 @@ export default function CampaignWorkspacePage() {
       const me = await meRes.json();
       if (!meRes.ok) throw new Error(me.error ?? t("error.loadAccount"));
       const ws = me.workspaces?.find((w: { slug: string }) => w.slug === slug) as
-        | { id: string; name?: string }
+        | { id: string; name?: string; role?: string }
         | undefined;
       if (!ws) throw new Error(t("error.workspaceNotFound"));
       setWorkspaceId(ws.id);
       setWorkspaceName(ws.name ?? slug);
+      setWorkspaceRole(ws.role ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     }
@@ -58,6 +60,7 @@ export default function CampaignWorkspacePage() {
       workspaceId={workspaceId}
       workspaceName={workspaceName}
       campaignId={campaignId}
+      workspaceRole={workspaceRole}
     />
   );
 }

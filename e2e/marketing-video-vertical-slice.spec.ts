@@ -98,16 +98,22 @@ test.describe("Marketing vertical slice — Video Campaign (browser E2E)", () =>
     const createBtn = page.getByRole("button", { name: /create campaign/i });
     await expect(createBtn).toBeEnabled({ timeout: 30_000 });
     await createBtn.click();
-    await page.waitForURL(/\/campaigns\/[^/]+\/task/, { timeout: 120_000 });
+    await page.waitForURL(
+      (url) => /\/campaigns\/[0-9a-f-]{36}$/i.test(url.pathname),
+      { timeout: 120_000 }
+    );
 
-    const taskUrl = page.url();
-    const campaignId = taskUrl.match(/\/campaigns\/([^/]+)\/task/)?.[1] ?? "";
-    const taskId = new URL(taskUrl, "http://local").searchParams.get("taskId") ?? "";
+    const overviewUrl = page.url();
+    const campaignId = overviewUrl.match(/\/campaigns\/([^/]+)$/)?.[1] ?? "";
+    const progressLink = page.getByRole("link", { name: "View full progress" });
+    await expect(progressLink).toBeVisible({ timeout: 30_000 });
+    const taskUrl = await progressLink.getAttribute("href") ?? "";
+    const taskId = new URL(taskUrl, overviewUrl).searchParams.get("taskId") ?? "";
     expect(campaignId).toBeTruthy();
     expect(taskId).toBeTruthy();
-    await writeEvidence("ids.json", { campaignId, taskId, taskUrl, campaignName });
+    await writeEvidence("ids.json", { campaignId, taskId, taskUrl, overviewUrl, campaignName });
     writeFileSync(resolve(artifactsDir, "task-url.txt"), taskUrl);
-    await page.screenshot({ path: resolve(artifactsDir, "02-task.png"), fullPage: true });
+    await page.screenshot({ path: resolve(artifactsDir, "02-overview.png"), fullPage: true });
 
     // ── 5) Wait for worker: Marketing Package + Auto Clip finalize + reviews ─
     let reviewReady = false;
