@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { callJsonModel, callVisionJsonModel } from "./llm";
+import { getVisionAnalysisTimeoutMs, withVisionAnalysisTimeout } from "./vision-timeout";
 import {
   outputLanguagePrompt,
   resolveContentSubject,
@@ -160,11 +161,13 @@ function clamp01(n: number): number {
 }
 
 /** Unwrap a single nested envelope like { analysis: {...} } the model sometimes adds. */
-function unwrapVisionResult(result: unknown): unknown {
+export function unwrapVisionResult(result: unknown): unknown {
   if (result && typeof result === "object" && !Array.isArray(result)) {
     const obj = result as Record<string, unknown>;
     if (!("subjects" in obj) && !("products" in obj) && !("scenes" in obj)) {
-      const nested = obj.analysis ?? obj.visionAnalysis ?? obj.result ?? obj.data;
+      // GPT-4o may use the schema-hint name itself as the JSON envelope.
+      const nested =
+        obj.analysis ?? obj.visionAnalysis ?? obj.VisionAnalysis ?? obj.result ?? obj.data;
       if (nested && typeof nested === "object") return nested;
     }
   }
@@ -373,14 +376,19 @@ Output JSON with arrays for subjects, products, scenes, hooks, suggestedMoments.
 
   const schemaHint = "VisionAnalysis";
 
-  const { result, usage } = hasFrames
-    ? await callVisionJsonModel<unknown>(
-        system,
-        user,
-        validFrames.map((f) => f.dataUrl),
-        schemaHint
-      )
-    : await callJsonModel<unknown>(system, user, schemaHint);
+  const timeoutMs = getVisionAnalysisTimeoutMs();
+  const { result, usage } = await withVisionAnalysisTimeout(
+    (signal) => hasFrames
+      ? callVisionJsonModel<unknown>(
+          system,
+          user,
+          validFrames.map((f) => f.dataUrl),
+          schemaHint,
+          { signal, timeoutMs }
+        )
+      : callJsonModel<unknown>(system, user, schemaHint, { signal, timeoutMs }),
+    timeoutMs
+  );
 
   const coerced = coerceVisionResult(result, input);
   const source = coerced ? ("model" as const) : ("fallback" as const);

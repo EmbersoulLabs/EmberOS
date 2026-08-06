@@ -108,6 +108,7 @@
   "auth.resetPasswordSubtitle": "为您的账户设置新密码。",
   "auth.resetPasswordTitle": "设置新密码",
   "auth.signIn": "登录",
+  "auth.sessionEstablishmentFailed": "登录成功，但无法建立应用会话。请重试。",
   "auth.signInLink": "已有账号？登录",
   "auth.signUp": "注册",
   "auth.signUpLink": "没有账号？注册",

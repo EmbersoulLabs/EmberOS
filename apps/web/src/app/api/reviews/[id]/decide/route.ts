@@ -8,7 +8,10 @@ import {
   resolveWorkspaceReviewSettings,
   syncCampaignStatusFromCreatives,
 } from "@/lib/review-flow";
-import { ReviewDecideBodySchema } from "@ceo-agent/shared";
+import {
+  ReviewDecideBodySchema,
+  assertPhase1ExecutionLocked,
+} from "@ceo-agent/shared";
 
 export async function POST(
   request: Request,
@@ -33,6 +36,15 @@ export async function POST(
 
     if (!review) return apiError("Review not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(review.workspaceId, user.id, "reviewer");
+
+    const [aiStoryExecutionOutput] = await db
+      .select({ id: schema.aiStoryExecutionOutputs.id })
+      .from(schema.aiStoryExecutionOutputs)
+      .where(eq(schema.aiStoryExecutionOutputs.creativeId, review.creativeId))
+      .limit(1);
+    if (aiStoryExecutionOutput) {
+      assertPhase1ExecutionLocked();
+    }
 
     // OPS-002 Rule 4 — only Pending → Approved|Rejected; reject repeats.
     if (review.decision !== "pending") {
@@ -136,6 +148,20 @@ export async function POST(
       .update(schema.creatives)
       .set({ status: newCreativeStatus })
       .where(eq(schema.creatives.id, creative.id));
+
+    // Keep AI Story execution outputs in sync with review decisions.
+    const executionOutputStatus =
+      newCreativeStatus === "approved"
+        ? "approved"
+        : decision === "rejected"
+          ? "rejected"
+          : null;
+    if (executionOutputStatus) {
+      await db
+        .update(schema.aiStoryExecutionOutputs)
+        .set({ status: executionOutputStatus, updatedAt: new Date() })
+        .where(eq(schema.aiStoryExecutionOutputs.creativeId, creative.id));
+    }
 
     const newCampaignStatus = await syncCampaignStatusFromCreatives(
       db,

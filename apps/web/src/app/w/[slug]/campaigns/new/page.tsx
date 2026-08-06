@@ -287,7 +287,7 @@ export default function CampaignWizardPage() {
 
       // PD-045 / OPS-002 Rule 5: Create Campaign persists data and starts the
       // initial AI pipeline exactly once, then opens Continue Campaign (task view).
-      const runRes = await fetch(`/api/campaigns/${id}/run`, {
+      const runRes = await fetch(`/api/campaigns/${id}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
@@ -296,12 +296,7 @@ export default function CampaignWizardPage() {
       if (!runRes.ok) {
         throw new Error(runData.error ?? t("error.runCampaign"));
       }
-      const taskId = runData.taskId as string | undefined;
-      router.push(
-        taskId
-          ? `/w/${slug}/campaigns/${id}/task?taskId=${taskId}`
-          : `/w/${slug}/campaigns/${id}/task`
-      );
+      router.push(`/w/${slug}/campaigns/${id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error.generic"));
     } finally {

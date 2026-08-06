@@ -1,0 +1,166 @@
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import {
+  getBusinessProfileByWorkspace,
+  getDb,
+  requireWorkspaceRole,
+  schema,
+} from "@ceo-agent/db";
+import { runFullStoryPlanningPipeline } from "@ceo-agent/agents";
+import {
+  AiStoryStructuredDraftSchema,
+  assessBusinessProfileCompletion,
+  isUuid,
+  normalizeBusinessProfileRecord,
+  type AiStoryStatus,
+} from "@ceo-agent/shared";
+import { apiError, apiSuccess } from "@/lib/api";
+import { handleApiError, requireAuth } from "@/lib/auth";
+import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
+import {
+  saveAnimationPackage,
+  saveCreativeContext,
+} from "@/lib/ai-story-planning-service";
+
+export async function POST(
+  _request: Request,
+  { params }: { params: Promise<{ id: string; storyId: string }> }
+) {
+  try {
+    const user = await requireAuth();
+    const { id: campaignId, storyId } = await params;
+    if (!isUuid(campaignId) || !isUuid(storyId)) {
+      return apiError("Invalid id", "VALIDATION_ERROR", 400);
+    }
+
+    const db = getDb();
+    const [campaign] = await db
+      .select()
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, campaignId))
+      .limit(1);
+    if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+
+    const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
+    if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
+    if (!loaded.currentVersion) {
+      return apiError("No frozen Story Draft found for planning", "VALIDATION_ERROR", 409);
+    }
+
+    const status = loaded.story.status as AiStoryStatus;
+    if (!["ready_for_animation", "planning_review"].includes(status)) {
+      return apiError("Story cannot enter planning in its current state", "VALIDATION_ERROR", 409);
+    }
+    if (!loaded.currentVersion.frozenAt) {
+      return apiError("Story Version must be frozen before planning", "VALIDATION_ERROR", 409);
+    }
+
+    await setAiStoryStatus(db, storyId, status, "planning");
+
+    try {
+      const storyDraft = AiStoryStructuredDraftSchema.parse(
+        loaded.currentVersion.structuredContent
+      );
+      const profileRow = await getBusinessProfileByWorkspace(campaign.workspaceId);
+      const profile = profileRow
+        ? normalizeBusinessProfileRecord(profileRow as Record<string, unknown>)
+        : null;
+      const completion = profile ? assessBusinessProfileCompletion(profile) : null;
+
+      const assetIds = loaded.assetLinks.map((link) => link.assetId);
+      const assetLabels =
+        assetIds.length === 0
+          ? []
+          : (
+              await db
+                .select({
+                  id: schema.assets.id,
+                  displayName: schema.assets.displayName,
+                  originalFilename: schema.assets.originalFilename,
+                })
+                .from(schema.assets)
+                .where(
+                  and(
+                    eq(schema.assets.workspaceId, campaign.workspaceId),
+                    inArray(schema.assets.id, assetIds),
+                    isNull(schema.assets.deletedAt)
+                  )
+                )
+            ).map(
+              (asset) =>
+                asset.displayName?.trim() ||
+                asset.originalFilename?.trim() ||
+                `asset:${asset.id.slice(0, 8)}`
+            );
+
+      const animationPackage = await runFullStoryPlanningPipeline({
+        storyDraft,
+        campaign: {
+          id: campaign.id,
+          name: campaign.name,
+          objective: campaign.objective,
+          objectiveCustom: campaign.objectiveCustom,
+          targetAudienceOverride: campaign.targetAudienceOverride,
+          campaignBrief: campaign.campaignBrief,
+          goal: campaign.goal,
+          platforms: campaign.platforms,
+        },
+        brand: profile
+          ? {
+              brandName: profile.companyName,
+              brandTone: profile.brandPersonality?.[0] ?? profile.brandStyle?.[0] ?? null,
+              targetAudience: profile.targetAudience,
+              industry:
+                profile.industryDisplayName ||
+                profile.industryCustomValue ||
+                null,
+              description: profile.businessDescription,
+              values: profile.brandValues,
+              style: profile.brandStyle,
+            }
+          : null,
+        assetLabels: [
+          ...assetLabels,
+          ...(completion?.complete === false
+            ? ["Business Profile incomplete; keep brand assumptions explicit."]
+            : []),
+        ],
+      });
+
+      const creativeContext = await saveCreativeContext(db, {
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        campaignId,
+        storyId,
+        storyVersionId: loaded.currentVersion.id,
+        payload: animationPackage.creativeContext,
+      });
+      const savedPackage = await saveAnimationPackage(db, {
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        campaignId,
+        storyId,
+        storyVersionId: loaded.currentVersion.id,
+        payload: animationPackage,
+      });
+
+      await setAiStoryStatus(db, storyId, "planning", "planning_review");
+
+      return apiSuccess({
+        storyId,
+        status: "planning_review",
+        creativeContext,
+        animationPackage: savedPackage,
+      });
+    } catch (error) {
+      await setAiStoryStatus(db, storyId, "planning", "failed");
+      return apiError(
+        error instanceof Error ? error.message : "AI Story planning failed",
+        "AI_PLANNING_FAILED",
+        502
+      );
+    }
+  } catch (error) {
+    return handleApiError(error);
+  }
+}

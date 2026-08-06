@@ -1,9 +1,10 @@
-import { Worker, type WorkerOptions } from "bullmq";
+import { UnrecoverableError, Worker, type WorkerOptions } from "bullmq";
 import { eq, and } from "drizzle-orm";
 import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
 import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig } from "@ceo-agent/queue";
 import {
   failPipelineExecution,
+  isVisionAnalysisTimeoutError,
   runPipeline,
   runPublishAgent,
   type PipelineHooks,
@@ -35,6 +36,8 @@ import { mkdir, writeFile, readFile, rm, access, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { EditPlan, CopyVariant, Platform } from "@ceo-agent/shared";
+import { delayPipelineJobForDependencies } from "./dependency-delay";
+import { refreshAnalyzedAssetDisplayName } from "../asset-auto-name";
 
 const concurrency = parseInt(process.env.WORKER_CONCURRENCY ?? "2", 10);
 /** FFmpeg is memory-heavy — default 1 parallel render on Railway to avoid OOM slot deadlock. */
@@ -158,12 +161,38 @@ export function startWorkers() {
         const { taskId } = job.data as { taskId: string };
         console.log(`[agent.pipeline] start task=${taskId}`);
         await ensureMergedSourceVideo(taskId);
-        const result = await runPipeline(taskId, pipelineHooks);
+        let result;
+        try {
+          result = await runPipeline(taskId, pipelineHooks);
+        } catch (error) {
+          // The pipeline has already persisted the terminal timeout state. Do not
+          // let BullMQ repeat the same provider call for a terminal task.
+          if (isVisionAnalysisTimeoutError(error)) {
+            throw new UnrecoverableError(error.message);
+          }
+          throw error;
+        }
+        await refreshAnalyzedAssetDisplayName(taskId);
         const queued =
           result &&
           typeof result === "object" &&
           "status" in result &&
           (result as { status?: string }).status === "render_queued";
+        const waitingForDependency =
+          result &&
+          typeof result === "object" &&
+          "status" in result &&
+          (result as { status?: string }).status === "waiting_for_dependency";
+        if (waitingForDependency) {
+          const delayMs = parseInt(
+            process.env.PIPELINE_DEPENDENCY_RECHECK_MS ?? "5000",
+            10
+          );
+          console.log(
+            `[agent.pipeline] dependencies pending; delayed ${delayMs}ms task=${taskId}`
+          );
+          await delayPipelineJobForDependencies(job, delayMs);
+        }
         if (queued) {
           const meta = result as { creativeIds?: string[]; creativeId?: string };
           const count = meta.creativeIds?.length ?? (meta.creativeId ? 1 : 0);
@@ -173,6 +202,16 @@ export function startWorkers() {
         } else {
           console.log(`[agent.pipeline] finished task=${taskId}`);
         }
+      }
+      if (job.name === "agent.story_execution") {
+        const { assertPhase1ExecutionLocked } = await import("@ceo-agent/shared");
+        assertPhase1ExecutionLocked();
+
+        const { executionJobId } = job.data as { executionJobId: string };
+        console.log(`[agent.story_execution] start job=${executionJobId}`);
+        const { runExecutionJob } = await import("@ceo-agent/agents");
+        await runExecutionJob(executionJobId);
+        console.log(`[agent.story_execution] finished job=${executionJobId}`);
       }
     },
     { connection, prefix, concurrency, lockDuration: agentLockMs, ...workerOpts }
@@ -306,7 +345,10 @@ export function startWorkers() {
       console.log(
         `[ffmpeg.render] start job=${job.id} task=${data.taskId} creative=${data.creativeId} attempt=${job.attemptsMade + 1}`
       );
-      await processRenderJob(job.data as Parameters<typeof processRenderJob>[0]);
+      await processRenderJob({
+        ...(job.data as Parameters<typeof processRenderJob>[0]),
+        retryAttempt: job.attemptsMade + 1,
+      });
     },
     { connection, prefix, concurrency: renderConcurrency, lockDuration: renderLockMs, ...workerOpts }
   );
@@ -547,7 +589,27 @@ export function startWorkers() {
   exportWorker.on("failed", (job, err) => console.error(`Export job ${job?.id} failed:`, err));
 
   console.log(
-    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export`
+    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, provider-execution-loop`
   );
+
+  // Production provider outbox cycle (capability-driven dispatch). No-op when empty.
+  const providerLoopMs = parseInt(process.env.PROVIDER_EXECUTION_POLL_MS ?? "5000", 10);
+  const providerLoop = setInterval(() => {
+    void (async () => {
+      try {
+        const { dispatchNextProviderExecution } = await import(
+          "../provider-execution-dispatch-entrypoint"
+        );
+        await dispatchNextProviderExecution();
+      } catch (error) {
+        console.warn(
+          "[provider-execution] cycle error:",
+          error instanceof Error ? error.message : error
+        );
+      }
+    })();
+  }, Math.max(2000, providerLoopMs));
+  providerLoop.unref?.();
+
   return { agentWorker, probeWorker, renderWorker, exportWorker };
 }

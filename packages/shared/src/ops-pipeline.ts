@@ -1,6 +1,56 @@
 import { z } from "zod";
 import type { StepProgress } from "./types/index";
 
+export const PIPELINE_STATES = [
+  "NOT_REQUIRED",
+  "WAITING_FOR_DEPENDENCY",
+  "QUEUED",
+  "RUNNING",
+  "PARTIALLY_COMPLETE",
+  "COMPLETED",
+  "FAILED_RETRYABLE",
+  "FAILED_TERMINAL",
+  "SKIPPED",
+  "CANCELLED",
+] as const;
+
+export type PipelineState = (typeof PIPELINE_STATES)[number];
+
+const PIPELINE_STATE_TRANSITIONS: Readonly<Record<PipelineState, readonly PipelineState[]>> = {
+  NOT_REQUIRED: [],
+  WAITING_FOR_DEPENDENCY: ["QUEUED", "FAILED_TERMINAL", "CANCELLED", "SKIPPED"],
+  QUEUED: ["RUNNING", "CANCELLED", "SKIPPED"],
+  RUNNING: [
+    "PARTIALLY_COMPLETE",
+    "COMPLETED",
+    "FAILED_RETRYABLE",
+    "FAILED_TERMINAL",
+    "CANCELLED",
+  ],
+  PARTIALLY_COMPLETE: ["RUNNING", "COMPLETED", "FAILED_RETRYABLE", "FAILED_TERMINAL", "CANCELLED"],
+  COMPLETED: [],
+  FAILED_RETRYABLE: ["QUEUED", "RUNNING", "FAILED_TERMINAL", "CANCELLED"],
+  FAILED_TERMINAL: [],
+  SKIPPED: [],
+  CANCELLED: [],
+};
+
+export function canTransitionPipelineState(
+  from: PipelineState,
+  to: PipelineState
+): boolean {
+  return PIPELINE_STATE_TRANSITIONS[from].includes(to);
+}
+
+export function assertPipelineStateTransition(
+  from: PipelineState,
+  to: PipelineState
+): void {
+  if (!canTransitionPipelineState(from, to)) {
+    throw new Error(`Illegal pipeline state transition: ${from} -> ${to}`);
+  }
+}
+
 /** OPS-002 Rule 1 — active execution states (one per Campaign). */
 export const ACTIVE_CAMPAIGN_TASK_STATUSES = [
   "queued",

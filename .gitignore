@@ -17,3 +17,10 @@ scripts/tmp-inspect-task.ts
 scripts/tmp-verify-review-load.ts
 scripts/vercel-production.env
 *.tsbuildinfo
+
+# Local / CI artifacts
+.pnpm-store/
+test-results/
+playwright-report/
+blob-report/
+e2e/.auth/

@@ -459,16 +459,13 @@ describe("Campaign E2E pipeline — successful agency path", () => {
   });
 
   it("agency Review handoff inserts a pending internal review (parity with Auto Clip)", () => {
-    // Behavioural contract: after compliance pass, Review queue needs a reviews row.
-    // Source of truth is runComplianceAfterRender in orchestrator (real DB insert).
+    // The production handoff uses the shared transactional finalizer. Its DB
+    // behavior is covered by workflow-engine.integration.test.ts.
     const orchestrator = readFileSync(
       resolve("packages/agents/src/orchestrator.ts"),
       "utf8"
     );
-    expect(orchestrator).toMatch(/insert\(schema\.reviews\)/);
-    expect(orchestrator).toMatch(/reviewerType:\s*"internal"/);
-    expect(orchestrator).toMatch(/decision:\s*"pending"/);
-    expect(orchestrator).toContain("pending_internal_review");
+    expect(orchestrator).toContain("finalizeReviewAfterGates(");
   });
 
   it("rejects duplicate stage execution", () => {

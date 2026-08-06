@@ -76,7 +76,45 @@ export async function GET(
     if (task?.status === "failed" && campaign.status === "processing") {
       const [synced] = await db
         .update(schema.campaigns)
-        .set({ status: "failed", updatedAt: new Date() })
+        .set({
+          status: "failed",
+          generateStatus: "failed",
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.campaigns.id, id))
+        .returning();
+      campaignRecord = synced ?? campaign;
+    } else if (
+      task?.status === "completed" &&
+      campaign.generateStatus === "processing"
+    ) {
+      const stepProgress = (task.stepProgress ?? {}) as Record<
+        string,
+        { status?: string; output?: unknown }
+      >;
+      const hasMarketingPack = stepProgress.content_generate?.status === "completed";
+      const [synced] = await db
+        .update(schema.campaigns)
+        .set({
+          generateStatus: "completed",
+          generateSummary: {
+            ...((campaign.generateSummary as Record<string, unknown> | null) ?? {}),
+            marketingPackageGenerated: hasMarketingPack,
+            completedAt: new Date().toISOString(),
+            taskId: task.id,
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.campaigns.id, id))
+        .returning();
+      campaignRecord = synced ?? campaign;
+    } else if (
+      task?.status === "failed" &&
+      campaign.generateStatus === "processing"
+    ) {
+      const [synced] = await db
+        .update(schema.campaigns)
+        .set({ generateStatus: "failed", updatedAt: new Date() })
         .where(eq(schema.campaigns.id, id))
         .returning();
       campaignRecord = synced ?? campaign;

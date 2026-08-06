@@ -7,6 +7,7 @@ import {
   integer,
   numeric,
   bigint,
+  boolean,
   unique,
   index,
 } from "drizzle-orm/pg-core";
@@ -286,6 +287,455 @@ export const campaignStoryRefs = pgTable(
   ]
 );
 
+/** Campaign-owned AI Story (V1) — not workspace Asset Story. */
+export const aiStories = pgTable(
+  "ai_stories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    originalIdea: text("original_idea").notNull(),
+    status: text("status").notNull().default("draft"),
+    currentVersionId: uuid("current_version_id"),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("ai_stories_campaign_idx").on(t.campaignId),
+    index("ai_stories_workspace_idx").on(t.workspaceId, t.status),
+  ]
+);
+
+export const aiStoryVersions = pgTable(
+  "ai_story_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    versionNumber: integer("version_number").notNull(),
+    structuredContent: jsonb("structured_content")
+      .$type<import("@ceo-agent/shared").AiStoryStructuredDraft>()
+      .notNull(),
+    sourceContextSnapshot: jsonb("source_context_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    aiMetadata: jsonb("ai_metadata")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    userEdited: boolean("user_edited").notNull().default(false),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    frozenAt: timestamp("frozen_at", { withTimezone: true }),
+    frozenBy: uuid("frozen_by"),
+  },
+  (t) => [
+    unique().on(t.storyId, t.versionNumber),
+    index("ai_story_versions_story_idx").on(t.storyId, t.versionNumber),
+  ]
+);
+
+export const aiStoryAssetLinks = pgTable(
+  "ai_story_asset_links",
+  {
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    usageType: text("usage_type").notNull().default("reference"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.storyId, t.assetId),
+    index("ai_story_asset_links_asset_idx").on(t.assetId),
+  ]
+);
+
+export const aiStoryCreativeContexts = pgTable(
+  "ai_story_creative_contexts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "cascade" }),
+    payload: jsonb("payload").$type<import("@ceo-agent/shared").CreativeContext>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_creative_contexts_story_idx").on(t.storyId, t.createdAt),
+    index("ai_story_creative_contexts_workspace_idx").on(t.workspaceId, t.createdAt),
+  ]
+);
+
+export const aiStoryAnimationPackages = pgTable(
+  "ai_story_animation_packages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("generating"),
+    payload: jsonb("payload")
+      .$type<
+        | import("@ceo-agent/shared").AnimationPackagePayload
+        | import("@ceo-agent/shared").StoryPlanningDraft
+      >()
+      .notNull(),
+    consistencyReport: jsonb("consistency_report")
+      .$type<import("@ceo-agent/shared").NarrativeIntegrationReport>()
+      .notNull()
+      .default({ consistent: false, issues: [], links: [] }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvedBy: uuid("approved_by"),
+  },
+  (t) => [
+    index("ai_story_animation_packages_story_idx").on(t.storyId, t.createdAt),
+    index("ai_story_animation_packages_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("ai_story_animation_packages_status_idx").on(t.status),
+    index("ai_story_animation_packages_workspace_status_idx").on(t.workspaceId, t.status),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2A — immutable, content-addressed Scene instructions.
+ * Content hash is the primary identity; org/workspace record first-writer scope.
+ * Canonical compiled instruction authority. See docs/architecture/scene-intent-storage.md
+ * for why Scene rows also retain Intent envelope JSON.
+ */
+export const aiStorySceneInstructionSnapshots = pgTable(
+  "ai_story_scene_instruction_snapshots",
+  {
+    contentHash: text("content_hash").primaryKey(),
+    snapshotId: uuid("snapshot_id").notNull().unique(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    contractVersion: text("contract_version").notNull(),
+    instructions: jsonb("instructions")
+      .$type<import("@ceo-agent/shared").AiStorySceneCompiledInstructions>()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_instruction_snapshots_id_idx").on(t.snapshotId),
+    index("ai_story_instruction_snapshots_workspace_idx").on(t.workspaceId, t.createdAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2A — one canonical plan per deterministic compilation identity.
+ * Uniqueness is `deterministic_fingerprint` (workspace + version + package +
+ * compilation hash + ordered scene identities), not Story Version alone.
+ */
+export const aiStoryExecutionPlans = pgTable(
+  "ai_story_execution_plans",
+  {
+    id: uuid("id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id").notNull().references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    status: text("status").notNull().default("PLANNED"),
+    contractVersion: text("contract_version").notNull(),
+    compilationHash: text("compilation_hash").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    plan: jsonb("plan").$type<import("@ceo-agent/shared").AiStoryExecutionPlan>().notNull(),
+    compiledAt: timestamp("compiled_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_execution_plans_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_execution_plans_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("ai_story_execution_plans_story_idx").on(t.storyId, t.createdAt),
+    index("ai_story_execution_plans_story_version_idx").on(t.workspaceId, t.storyVersionId, t.createdAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2A — Scene row for one plan (status PLANNED only).
+ * `intent` retains non-reconstructable Intent envelope fields only; instruction
+ * bodies are authoritative on Instruction Snapshots.
+ */
+export const aiStorySceneExecutions = pgTable(
+  "ai_story_scene_executions",
+  {
+    id: uuid("id").primaryKey(),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id").notNull().references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    sceneId: text("scene_id").notNull(),
+    sceneOrder: integer("scene_order").notNull(),
+    status: text("status").notNull().default("PLANNED"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    compilationHash: text("compilation_hash").notNull(),
+    instructionHash: text("instruction_hash").notNull().references(() => aiStorySceneInstructionSnapshots.contentHash, { onDelete: "restrict" }),
+    intent: jsonb("intent").$type<import("@ceo-agent/shared").AiStorySceneExecutionIntent>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_executions_plan_scene_unique").on(t.executionPlanId, t.sceneId),
+    unique("ai_story_scene_executions_plan_order_unique").on(t.executionPlanId, t.sceneOrder),
+    unique("ai_story_scene_executions_idempotency_unique").on(t.idempotencyKey),
+    index("ai_story_scene_executions_plan_idx").on(t.executionPlanId, t.sceneOrder),
+  ]
+);
+
+/** Sprint 3 Phase 2A — append-only deterministic AI QC facts (not human review). */
+export const aiStorySceneIntentValidationResults = pgTable(
+  "ai_story_scene_intent_validation_results",
+  {
+    id: uuid("id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    intentHash: text("intent_hash").notNull(),
+    resultHash: text("result_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    status: text("status").notNull(),
+    result: jsonb("result").$type<import("@ceo-agent/shared").AiStoryAiQcResult>().notNull(),
+    validatedAt: timestamp("validated_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_validation_result_unique").on(t.sceneExecutionId, t.resultHash),
+    index("ai_story_scene_validation_scene_idx").on(t.sceneExecutionId, t.acceptedAt),
+    index("ai_story_scene_validation_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_scene_validation_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2B PR 2B.1 — append-only ReviewOpenedFact rows.
+ * One open fact per Execution Plan. Review is a logical aggregate only.
+ */
+export const aiStoryReviewOpenedFacts = pgTable(
+  "ai_story_review_opened_facts",
+  {
+    factId: uuid("fact_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    openedBy: uuid("opened_by").notNull(),
+    openedAt: timestamp("opened_at", { withTimezone: true }).notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").ReviewOpenedFact>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_review_opened_plan_unique").on(t.executionPlanId),
+    unique("ai_story_review_opened_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_review_opened_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2B PR 2B.1 — append-only Scene Intent review decision facts.
+ */
+export const aiStorySceneIntentReviewFacts = pgTable(
+  "ai_story_scene_intent_review_facts",
+  {
+    factId: uuid("fact_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sceneId: text("scene_id").notNull(),
+    sceneOrder: integer("scene_order").notNull(),
+    decision: text("decision").notNull(),
+    reviewedBy: uuid("reviewed_by").notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull(),
+    instructionHash: text("instruction_hash")
+      .notNull()
+      .references(() => aiStorySceneInstructionSnapshots.contentHash, { onDelete: "restrict" }),
+    qcResultHash: text("qc_result_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").SceneIntentReviewDecision>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_intent_review_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_scene_intent_review_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_scene_intent_review_scene_idx").on(t.sceneExecutionId, t.acceptedAt),
+    index("ai_story_scene_intent_review_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2B PR 2B.1 — append-only Story review decision facts.
+ */
+export const aiStoryStoryReviewFacts = pgTable(
+  "ai_story_story_review_facts",
+  {
+    factId: uuid("fact_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    decision: text("decision").notNull(),
+    reviewedBy: uuid("reviewed_by").notNull(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }).notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").StoryReviewDecision>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_story_review_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_story_review_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_story_review_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2B PR 2B.2 — immutable Story Assembly Definition.
+ * Subordinate to Execution Plan (sole Aggregate Root). Ordering only — not media / Story Video.
+ */
+export const aiStoryAssemblyDefinitions = pgTable(
+  "ai_story_assembly_definitions",
+  {
+    assemblyDefinitionId: uuid("assembly_definition_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneCount: integer("scene_count").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    definition: jsonb("definition").$type<import("@ceo-agent/shared").StoryAssemblyDefinition>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_assembly_definition_plan_unique").on(t.executionPlanId),
+    unique("ai_story_assembly_definition_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_assembly_definition_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 Phase 2B PR 2B.2 — ordered Scene membership under an Assembly Definition.
+ */
+export const aiStoryAssemblySceneMemberships = pgTable(
+  "ai_story_assembly_scene_memberships",
+  {
+    membershipId: uuid("membership_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    assemblyDefinitionId: uuid("assembly_definition_id")
+      .notNull()
+      .references(() => aiStoryAssemblyDefinitions.assemblyDefinitionId, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sceneId: text("scene_id").notNull(),
+    sceneOrder: integer("scene_order").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    membership: jsonb("membership").$type<import("@ceo-agent/shared").AssemblySceneMembership>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_assembly_membership_fingerprint_unique").on(t.deterministicFingerprint),
+    unique("ai_story_assembly_membership_def_scene_unique").on(t.assemblyDefinitionId, t.sceneExecutionId),
+    unique("ai_story_assembly_membership_def_order_unique").on(t.assemblyDefinitionId, t.sceneOrder),
+    index("ai_story_assembly_membership_plan_idx").on(t.executionPlanId, t.sceneOrder),
+    index("ai_story_assembly_membership_def_idx").on(t.assemblyDefinitionId, t.sceneOrder),
+    index("ai_story_assembly_membership_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
 export const tasks = pgTable(
   "tasks",
   {
@@ -366,6 +816,122 @@ export const reviews = pgTable(
   (t) => [index("reviews_creative_idx").on(t.creativeId)]
 );
 
+/** Sprint 3 — Execution Job for an approved Animation Package. */
+export const aiStoryExecutionJobs = pgTable(
+  "ai_story_execution_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "cascade" }),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("queued"),
+    capabilityId: text("capability_id").notNull().default("animation-video-generation"),
+    targetOutputCount: integer("target_output_count").notNull().default(5),
+    selectedOutputCount: integer("selected_output_count"),
+    progress: jsonb("progress")
+      .$type<import("@ceo-agent/shared").AiStoryExecutionProgress>()
+      .notNull()
+      .default({
+        phase: "queued",
+        percent: 0,
+        message: "",
+        completedOutputs: 0,
+        targetOutputs: 5,
+        providerAttempts: 0,
+      }),
+    generateReview: jsonb("generate_review")
+      .$type<import("@ceo-agent/shared").GenerateReviewEstimate | null>()
+      .default(null),
+    executionManifest: jsonb("execution_manifest")
+      .$type<import("@ceo-agent/shared").ExecutionManifest | null>()
+      .default(null),
+    providerExecutionIds: jsonb("provider_execution_ids")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    errorMessage: text("error_message"),
+    retryCount: integer("retry_count").notNull().default(0),
+    cancelRequestedAt: timestamp("cancel_requested_at", { withTimezone: true }),
+    createdBy: uuid("created_by"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_execution_jobs_story_idx").on(t.storyId, t.createdAt),
+    index("ai_story_execution_jobs_workspace_idx").on(t.workspaceId, t.status),
+    index("ai_story_execution_jobs_status_idx").on(t.status, t.createdAt),
+  ]
+);
+
+export const aiStoryExecutionOutputs = pgTable(
+  "ai_story_execution_outputs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "cascade" }),
+    executionJobId: uuid("execution_job_id")
+      .notNull()
+      .references(() => aiStoryExecutionJobs.id, { onDelete: "cascade" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "cascade" }),
+    creativeId: uuid("creative_id").references(() => creatives.id, {
+      onDelete: "set null",
+    }),
+    outputType: text("output_type").notNull().default("animation_video"),
+    status: text("status").notNull().default("draft"),
+    title: text("title").notNull(),
+    outputIndex: integer("output_index").notNull().default(0),
+    storagePath: text("storage_path"),
+    generatedVideoAssetId: uuid("generated_video_asset_id"),
+    referencedAssetIds: jsonb("referenced_asset_ids").$type<string[]>().notNull().default([]),
+    executionManifest: jsonb("execution_manifest")
+      .$type<import("@ceo-agent/shared").ExecutionManifest | null>()
+      .default(null),
+    caption: text("caption").notNull().default(""),
+    hashtags: jsonb("hashtags").$type<string[]>().notNull().default([]),
+    providerId: text("provider_id"),
+    providerExecutionId: text("provider_execution_id"),
+    qualityScore: numeric("quality_score"),
+    failureMessage: text("failure_message"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_execution_outputs_job_idx").on(t.executionJobId, t.outputIndex),
+    index("ai_story_execution_outputs_workspace_idx").on(t.workspaceId, t.status),
+    unique("ai_story_execution_outputs_job_index_unique").on(
+      t.executionJobId,
+      t.outputIndex
+    ),
+  ]
+);
+
 export const clientInvites = pgTable(
   "client_invites",
   {
@@ -422,6 +988,470 @@ export const agentLogs = pgTable("agent_logs", {
   durationMs: integer("duration_ms"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const providerExecutions = pgTable(
+  "provider_executions",
+  {
+    executionId: text("execution_id").primaryKey(),
+    contractVersion: text("contract_version").notNull(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id"),
+    pipelineRunId: text("pipeline_run_id").notNull(),
+    capabilityId: text("capability_id").notNull(),
+    capabilityVersion: text("capability_version").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    requestHash: text("request_hash").notNull(),
+    outputSchemaId: text("output_schema_id").notNull(),
+    outputSchemaVersion: text("output_schema_version").notNull(),
+    status: text("status").notNull(),
+    executionMetadata: jsonb("execution_metadata")
+      .$type<import("@ceo-agent/shared").ExecutionMetadata>()
+      .notNull(),
+    acceptedAttemptId: text("accepted_attempt_id"),
+    acceptedResult: jsonb("accepted_result")
+      .$type<import("@ceo-agent/shared").CanonicalProviderResult>(),
+    acceptedResponseHash: text("accepted_response_hash"),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("provider_executions_idempotency_key_unique").on(t.idempotencyKey),
+    index("provider_executions_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("provider_executions_fingerprint_idx").on(t.deterministicFingerprint),
+  ]
+);
+
+export const providerAttempts = pgTable(
+  "provider_attempts",
+  {
+    attemptId: text("attempt_id").primaryKey(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    contractVersion: text("contract_version").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    providerId: text("provider_id").notNull(),
+    providerVersion: text("provider_version").notNull(),
+    modelVersion: text("model_version").notNull(),
+    providerRequestId: text("provider_request_id"),
+    requestHash: text("request_hash").notNull(),
+    responseHash: text("response_hash"),
+    status: text("status").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    failure: jsonb("failure").$type<import("@ceo-agent/shared").ProviderError>(),
+    warnings: jsonb("warnings")
+      .$type<Array<{ code: string; message: string; retryable: boolean }>>()
+      .notNull()
+      .default([]),
+    providerMetadata: jsonb("provider_metadata").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("provider_attempts_execution_number_unique").on(t.executionId, t.attemptNumber),
+    index("provider_attempts_execution_idx").on(t.executionId, t.attemptNumber),
+  ]
+);
+
+export const providerAttemptUsage = pgTable(
+  "provider_attempt_usage",
+  {
+    attemptId: text("attempt_id")
+      .primaryKey()
+      .references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    usage: jsonb("usage").$type<import("@ceo-agent/shared").ProviderUsage>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  }
+);
+
+export const providerAttemptCosts = pgTable(
+  "provider_attempt_costs",
+  {
+    attemptId: text("attempt_id")
+      .primaryKey()
+      .references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    cost: jsonb("cost").$type<import("@ceo-agent/shared").ProviderCost>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  }
+);
+
+export const providerOutboxJobs = pgTable(
+  "provider_outbox_jobs",
+  {
+    jobId: text("job_id").primaryKey(),
+    contractVersion: text("contract_version").notNull(),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    payloadReference: text("payload_reference").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    status: text("status").notNull().default("PENDING"),
+    priority: integer("priority").notNull().default(0),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    nextVisibleAt: timestamp("next_visible_at", { withTimezone: true }).notNull().defaultNow(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    retryDelayMs: integer("retry_delay_ms"),
+    retryClassification: text("retry_classification"),
+    lastErrorCategory: text("last_error_category"),
+    deadLetterReason: text("dead_letter_reason"),
+    deadLetterAt: timestamp("dead_letter_at", { withTimezone: true }),
+    operatorNotes: text("operator_notes"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    completionWorkerId: text("completion_worker_id"),
+    completionMetadata: jsonb("completion_metadata").$type<Record<string, unknown>>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("provider_outbox_jobs_execution_unique").on(t.executionId),
+    index("provider_outbox_jobs_claim_idx").on(t.status, t.nextVisibleAt, t.priority),
+    index("provider_outbox_jobs_lease_idx").on(t.status, t.leaseExpiresAt),
+  ]
+);
+
+export const providerExecutionEnvelopes = pgTable(
+  "provider_execution_envelopes",
+  {
+    envelopeId: text("envelope_id").primaryKey(),
+    version: text("version").notNull(),
+    payloadReference: text("payload_reference").notNull(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    executionContext: jsonb("execution_context")
+      .$type<import("@ceo-agent/shared").ExecutionEnvelopeContext>()
+      .notNull(),
+    capabilityId: text("capability_id").notNull(),
+    capabilityVersion: text("capability_version").notNull(),
+    providerPolicySnapshot: jsonb("provider_policy_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    canonicalRequest: jsonb("canonical_request")
+      .$type<import("@ceo-agent/shared").CanonicalProviderRequest>()
+      .notNull(),
+    requestHash: text("request_hash").notNull(),
+    envelopeHash: text("envelope_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("provider_execution_envelopes_payload_reference_unique").on(
+      t.payloadReference
+    ),
+    index("provider_execution_envelopes_workspace_idx").on(
+      t.workspaceId,
+      t.createdAt
+    ),
+    index("provider_execution_envelopes_request_hash_idx").on(t.requestHash),
+  ]
+);
+
+export const providerExecutionDispatches = pgTable(
+  "provider_execution_dispatches",
+  {
+    dispatchId: text("dispatch_id").primaryKey(),
+    version: text("version").notNull(),
+    jobId: text("job_id")
+      .notNull()
+      .references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, {
+        onDelete: "restrict",
+      }),
+    envelopeId: text("envelope_id")
+      .notNull()
+      .references(() => providerExecutionEnvelopes.envelopeId, {
+        onDelete: "restrict",
+      }),
+    payloadReference: text("payload_reference").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    capabilityId: text("capability_id").notNull(),
+    capabilityVersion: text("capability_version").notNull(),
+    requestHash: text("request_hash").notNull(),
+    envelopeHash: text("envelope_hash").notNull(),
+    workerHandoff: jsonb("worker_handoff")
+      .$type<import("@ceo-agent/shared").ExecutionDispatch["workerHandoff"]>()
+      .notNull(),
+    dispatchHash: text("dispatch_hash").notNull(),
+    status: text("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("provider_execution_dispatches_job_unique").on(t.jobId),
+    index("provider_execution_dispatches_execution_idx").on(t.executionId),
+    index("provider_execution_dispatches_workspace_idx").on(
+      t.workspaceId,
+      t.createdAt
+    ),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.2 — append-only RuntimeAuthorizedFact persistence.
+ * One accepted authorization fact per Execution Plan.
+ */
+export const aiStoryRuntimeAuthorizedFacts = pgTable(
+  "ai_story_runtime_authorized_facts",
+  {
+    runtimeAuthorizationId: uuid("runtime_authorization_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    runtimeAuthorizationVersion: integer("runtime_authorization_version").notNull(),
+    reviewDecisionId: uuid("review_decision_id").notNull(),
+    reviewHash: text("review_hash").notNull(),
+    assemblyDefinitionId: uuid("assembly_definition_id").notNull(),
+    assemblyHash: text("assembly_hash").notNull(),
+    orderedSceneExecutionIds: jsonb("ordered_scene_execution_ids")
+      .$type<string[]>()
+      .notNull(),
+    qcResultIds: jsonb("qc_result_ids").$type<string[]>().notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    authorizationContractVersion: text("authorization_contract_version").notNull(),
+    deterministicIntegrityHash: text("deterministic_integrity_hash").notNull(),
+    fact: jsonb("fact")
+      .$type<import("@ceo-agent/shared").RuntimeAuthorizedFact>()
+      .notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_runtime_auth_plan_unique").on(t.executionPlanId),
+    unique("ai_story_runtime_auth_hash_unique").on(t.deterministicIntegrityHash),
+    index("ai_story_runtime_auth_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.2 — immutable Scene routing decisions (fallback disabled).
+ */
+export const aiStorySceneRoutingDecisions = pgTable(
+  "ai_story_scene_routing_decisions",
+  {
+    routingDecisionId: uuid("routing_decision_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    runtimeAuthorizationId: uuid("runtime_authorization_id")
+      .notNull()
+      .references(() => aiStoryRuntimeAuthorizedFacts.runtimeAuthorizationId, {
+        onDelete: "restrict",
+      }),
+    capabilityId: text("capability_id").notNull(),
+    capabilityVersion: text("capability_version").notNull(),
+    selectedProviderId: text("selected_provider_id").notNull(),
+    selectedAdapterVersion: text("selected_adapter_version").notNull(),
+    routerVersion: integer("router_version").notNull().default(1),
+    registrySnapshotHash: text("registry_snapshot_hash").notNull(),
+    capabilitySnapshot: jsonb("capability_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    policySnapshot: jsonb("policy_snapshot")
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    candidateSummary: jsonb("candidate_summary")
+      .$type<
+        Array<{
+          providerId: string;
+          adapterVersion: string;
+          selected: boolean;
+          scoreTotal?: number;
+          exclusionCodes: string[];
+        }>
+      >()
+      .notNull(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
+    deterministicIntegrityHash: text("deterministic_integrity_hash").notNull(),
+    automaticFallbackEnabled: boolean("automatic_fallback_enabled").notNull().default(false),
+    contractVersion: text("contract_version").notNull(),
+    decision: jsonb("decision")
+      .$type<import("@ceo-agent/shared").PersistedSceneRoutingDecision>()
+      .notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_routing_scene_unique").on(t.sceneExecutionId),
+    unique("ai_story_scene_routing_hash_unique").on(t.deterministicIntegrityHash),
+    index("ai_story_scene_routing_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_scene_routing_workspace_idx").on(t.workspaceId, t.acceptedAt),
+    index("ai_story_scene_routing_auth_idx").on(t.runtimeAuthorizationId),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.2 — Scene ↔ Provider Execution scheduling correlation.
+ */
+export const aiStorySceneSchedulingCorrelations = pgTable(
+  "ai_story_scene_scheduling_correlations",
+  {
+    correlationId: uuid("correlation_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    runtimeAuthorizationId: uuid("runtime_authorization_id")
+      .notNull()
+      .references(() => aiStoryRuntimeAuthorizedFacts.runtimeAuthorizationId, {
+        onDelete: "restrict",
+      }),
+    routingDecisionId: uuid("routing_decision_id")
+      .notNull()
+      .references(() => aiStorySceneRoutingDecisions.routingDecisionId, {
+        onDelete: "restrict",
+      }),
+    providerExecutionId: text("provider_execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    envelopeId: text("envelope_id")
+      .notNull()
+      .references(() => providerExecutionEnvelopes.envelopeId, {
+        onDelete: "restrict",
+      }),
+    outboxJobId: text("outbox_job_id")
+      .notNull()
+      .references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    requestHash: text("request_hash").notNull(),
+    envelopeHash: text("envelope_hash").notNull(),
+    routingDecisionHash: text("routing_decision_hash").notNull(),
+    authorizationHash: text("authorization_hash").notNull(),
+    schedulingIdentityHash: text("scheduling_identity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    scheduledBy: uuid("scheduled_by").notNull(),
+    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    correlation: jsonb("correlation")
+      .$type<import("@ceo-agent/shared").SceneProviderSchedulingCorrelation>()
+      .notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_scheduling_scene_unique").on(t.sceneExecutionId),
+    unique("ai_story_scene_scheduling_provider_unique").on(t.providerExecutionId),
+    unique("ai_story_scene_scheduling_outbox_unique").on(t.outboxJobId),
+    unique("ai_story_scene_scheduling_identity_unique").on(t.schedulingIdentityHash),
+    index("ai_story_scene_scheduling_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_scene_scheduling_workspace_idx").on(t.workspaceId, t.acceptedAt),
+    index("ai_story_scene_scheduling_auth_idx").on(t.runtimeAuthorizationId),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.3 — immutable Worker Execution Results (no Finalizer / Scene Result).
+ */
+export const aiStoryWorkerExecutionResults = pgTable(
+  "ai_story_worker_execution_results",
+  {
+    workerExecutionResultId: uuid("worker_execution_result_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    providerExecutionId: text("provider_execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    providerAttemptId: text("provider_attempt_id").notNull(),
+    dispatchId: text("dispatch_id")
+      .notNull()
+      .references(() => providerExecutionDispatches.dispatchId, {
+        onDelete: "restrict",
+      }),
+    outboxJobId: text("outbox_job_id")
+      .notNull()
+      .references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    routingDecisionId: uuid("routing_decision_id")
+      .notNull()
+      .references(() => aiStorySceneRoutingDecisions.routingDecisionId, {
+        onDelete: "restrict",
+      }),
+    providerId: text("provider_id").notNull(),
+    adapterVersion: text("adapter_version").notNull(),
+    routerVersion: integer("router_version").notNull(),
+    providerRequestId: text("provider_request_id"),
+    workerState: text("worker_state").notNull(),
+    acceptanceClassification: text("acceptance_classification").notNull(),
+    canonicalProviderState: text("canonical_provider_state").notNull(),
+    reconciliationRequired: boolean("reconciliation_required").notNull().default(false),
+    deterministicIntegrityHash: text("deterministic_integrity_hash").notNull(),
+    workerContractVersion: text("worker_contract_version").notNull(),
+    result: jsonb("result")
+      .$type<import("@ceo-agent/shared").WorkerExecutionResult>()
+      .notNull(),
+    producedAt: timestamp("produced_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_worker_result_dispatch_unique").on(t.dispatchId),
+    unique("ai_story_worker_result_hash_unique").on(t.deterministicIntegrityHash),
+    unique("ai_story_worker_result_attempt_unique").on(t.providerAttemptId),
+    index("ai_story_worker_result_workspace_idx").on(t.workspaceId, t.acceptedAt),
+    index("ai_story_worker_result_execution_idx").on(t.providerExecutionId),
+  ]
+);
 
 export const marketingScores = pgTable(
   "marketing_scores",
@@ -535,6 +1565,7 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   assets: many(assets),
   assetRefs: many(campaignAssetRefs),
   storyRefs: many(campaignStoryRefs),
+  aiStories: many(aiStories),
   tasks: many(tasks),
   creatives: many(creatives),
 }));
@@ -542,6 +1573,7 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
 export const assetsRelations = relations(assets, ({ many }) => ({
   storyLinks: many(storyAssets),
   campaignRefs: many(campaignAssetRefs),
+  aiStoryLinks: many(aiStoryAssetLinks),
 }));
 
 export const storiesRelations = relations(stories, ({ many }) => ({
@@ -563,6 +1595,66 @@ export const campaignStoryRefsRelations = relations(campaignStoryRefs, ({ one })
   campaign: one(campaigns, { fields: [campaignStoryRefs.campaignId], references: [campaigns.id] }),
   story: one(stories, { fields: [campaignStoryRefs.storyId], references: [stories.id] }),
 }));
+
+export const aiStoriesRelations = relations(aiStories, ({ one, many }) => ({
+  campaign: one(campaigns, { fields: [aiStories.campaignId], references: [campaigns.id] }),
+  workspace: one(workspaces, { fields: [aiStories.workspaceId], references: [workspaces.id] }),
+  currentVersion: one(aiStoryVersions, {
+    fields: [aiStories.currentVersionId],
+    references: [aiStoryVersions.id],
+  }),
+  versions: many(aiStoryVersions),
+  assetLinks: many(aiStoryAssetLinks),
+  creativeContexts: many(aiStoryCreativeContexts),
+  animationPackages: many(aiStoryAnimationPackages),
+}));
+
+export const aiStoryVersionsRelations = relations(aiStoryVersions, ({ one, many }) => ({
+  story: one(aiStories, { fields: [aiStoryVersions.storyId], references: [aiStories.id] }),
+  creativeContexts: many(aiStoryCreativeContexts),
+  animationPackages: many(aiStoryAnimationPackages),
+}));
+
+export const aiStoryAssetLinksRelations = relations(aiStoryAssetLinks, ({ one }) => ({
+  story: one(aiStories, { fields: [aiStoryAssetLinks.storyId], references: [aiStories.id] }),
+  asset: one(assets, { fields: [aiStoryAssetLinks.assetId], references: [assets.id] }),
+}));
+
+export const aiStoryCreativeContextsRelations = relations(
+  aiStoryCreativeContexts,
+  ({ one }) => ({
+    campaign: one(campaigns, {
+      fields: [aiStoryCreativeContexts.campaignId],
+      references: [campaigns.id],
+    }),
+    story: one(aiStories, {
+      fields: [aiStoryCreativeContexts.storyId],
+      references: [aiStories.id],
+    }),
+    storyVersion: one(aiStoryVersions, {
+      fields: [aiStoryCreativeContexts.storyVersionId],
+      references: [aiStoryVersions.id],
+    }),
+  })
+);
+
+export const aiStoryAnimationPackagesRelations = relations(
+  aiStoryAnimationPackages,
+  ({ one }) => ({
+    campaign: one(campaigns, {
+      fields: [aiStoryAnimationPackages.campaignId],
+      references: [campaigns.id],
+    }),
+    story: one(aiStories, {
+      fields: [aiStoryAnimationPackages.storyId],
+      references: [aiStories.id],
+    }),
+    storyVersion: one(aiStoryVersions, {
+      fields: [aiStoryAnimationPackages.storyVersionId],
+      references: [aiStoryVersions.id],
+    }),
+  })
+);
 
 export const tasksRelations = relations(tasks, ({ one }) => ({
   campaign: one(campaigns, { fields: [tasks.campaignId], references: [campaigns.id] }),

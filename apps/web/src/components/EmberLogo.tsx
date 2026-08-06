@@ -1,11 +1,11 @@
 import { BRAND } from "@/lib/brand";
 
-/** Official EmberSoul flame icon — transparent PNG, flame centered. */
+/** Official Ember OS app icon. */
 export function EmberLogo({ className = "h-9 w-9" }: { className?: string }) {
   return (
     // Native img — Next.js Image optimizer returns 400 for these large PNGs
     <img
-      src="/brand/logo-icon-transparent.png"
+      src="/brand/logo-icon.png"
       alt=""
       width={36}
       height={36}
@@ -15,7 +15,7 @@ export function EmberLogo({ className = "h-9 w-9" }: { className?: string }) {
   );
 }
 
-/** Full EMBERSOUL LABS horizontal wordmark (official PNG, transparent). */
+/** Official Ember OS logo mark (full brand lockup). */
 export function EmberLogoWordmark({
   className = "",
 }: {
@@ -23,11 +23,11 @@ export function EmberLogoWordmark({
 }) {
   return (
     <img
-      src="/brand/logo-horizontal-transparent.png"
+      src="/brand/logo-horizontal.png"
       alt={BRAND.company}
       width={280}
-      height={80}
-      className={`h-auto w-52 max-w-full shrink-0 object-contain sm:w-60 ${className}`}
+      height={280}
+      className={`h-auto w-40 max-w-full shrink-0 object-contain sm:w-48 ${className}`}
       decoding="async"
     />
   );
