@@ -161,11 +161,13 @@ function clamp01(n: number): number {
 }
 
 /** Unwrap a single nested envelope like { analysis: {...} } the model sometimes adds. */
-function unwrapVisionResult(result: unknown): unknown {
+export function unwrapVisionResult(result: unknown): unknown {
   if (result && typeof result === "object" && !Array.isArray(result)) {
     const obj = result as Record<string, unknown>;
     if (!("subjects" in obj) && !("products" in obj) && !("scenes" in obj)) {
-      const nested = obj.analysis ?? obj.visionAnalysis ?? obj.result ?? obj.data;
+      // GPT-4o may use the schema-hint name itself as the JSON envelope.
+      const nested =
+        obj.analysis ?? obj.visionAnalysis ?? obj.VisionAnalysis ?? obj.result ?? obj.data;
       if (nested && typeof nested === "object") return nested;
     }
   }

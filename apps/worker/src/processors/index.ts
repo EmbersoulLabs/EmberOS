@@ -37,6 +37,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { EditPlan, CopyVariant, Platform } from "@ceo-agent/shared";
 import { delayPipelineJobForDependencies } from "./dependency-delay";
+import { refreshAnalyzedAssetDisplayName } from "../asset-auto-name";
 
 const concurrency = parseInt(process.env.WORKER_CONCURRENCY ?? "2", 10);
 /** FFmpeg is memory-heavy — default 1 parallel render on Railway to avoid OOM slot deadlock. */
@@ -171,6 +172,7 @@ export function startWorkers() {
           }
           throw error;
         }
+        await refreshAnalyzedAssetDisplayName(taskId);
         const queued =
           result &&
           typeof result === "object" &&
