@@ -30,6 +30,10 @@ const bpPd042Sql = readFileSync(
   resolve("packages/db/sql/business_profile_pd042.sql"),
   "utf8"
 );
+const previewMigrationRunnerSource = readFileSync(
+  resolve("packages/db/scripts/apply-preview-migrations.mjs"),
+  "utf8"
+);
 
 describe("PD-042 — Target Platform Source", () => {
   it("defines the approved publishing platform dictionary", () => {
@@ -115,9 +119,9 @@ describe("PD-042 — Target Platform Source", () => {
   });
 
   it("shows Target Platforms read-only on Campaign Workspace", () => {
-    expect(workspaceSource).toContain("targetPlatforms");
+    expect(workspaceSource).toContain("campaign.platforms?.length");
     expect(workspaceSource).toContain("formatPublishingPlatforms");
-    expect(workspaceSource).toContain("targetPlatformsReadonlyHint");
+    expect(workspaceSource).toContain(">Platforms</dt>");
   });
 
   it("exposes Default Publishing Platforms on Business Profile editor", () => {
@@ -129,5 +133,9 @@ describe("PD-042 — Target Platform Source", () => {
   it("includes default_publishing_platforms in Business Profile SQL", () => {
     expect(bpSchemaSql).toContain("default_publishing_platforms");
     expect(bpPd042Sql).toContain("default_publishing_platforms");
+  });
+
+  it("includes the PD-042 patch in the coordinated preview migration runner", () => {
+    expect(previewMigrationRunnerSource).toContain("business_profile_pd042.sql");
   });
 });

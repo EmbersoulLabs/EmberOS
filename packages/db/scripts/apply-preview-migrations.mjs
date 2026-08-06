@@ -99,6 +99,7 @@ if (pubRef && pubRef !== EXPECTED) {
 }
 
 const files = [
+  resolve(__dirname, "../sql/business_profile_pd042.sql"),
   resolve(__dirname, "../sql/asset-library-v1.sql"),
   resolve(__dirname, "../sql/campaign-workspace-v1.sql"),
   resolve(__dirname, "../sql/campaign-description-pd044.sql"),
