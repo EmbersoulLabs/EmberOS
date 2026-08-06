@@ -1,6 +1,6 @@
 import { callJsonModel } from "./llm";
 import { inferIndustry } from "./knowledge/query";
-import type { VisionAnalysis } from "@ceo-agent/shared";
+import type { CampaignAIContext, VisionAnalysis } from "@ceo-agent/shared";
 import {
   ContentClassificationSchema,
   classificationWithPreset,
@@ -10,11 +10,17 @@ import {
   type Industry,
 } from "@ceo-agent/shared";
 
+/**
+ * Content Type — AD-001
+ * Required: campaignContext (with vision), vision when not yet on context
+ * Optional: campaignName, videoAnalysis
+ * Consumes: campaignObjective, publishingPlatforms, vision
+ */
 export interface ContentTypeInput {
-  goal: string;
+  campaignContext: CampaignAIContext;
+  /** Prefer campaignContext.vision; accepted when caller has a fresher vision object. */
+  vision?: VisionAnalysis;
   campaignName?: string;
-  vision: VisionAnalysis;
-  platforms?: string[];
   videoAnalysis?: string | null;
 }
 
@@ -57,9 +63,22 @@ function industryFromContentType(contentType: ContentType, fallback: Industry): 
   return map[contentType] ?? fallback;
 }
 
+function resolveContentTypeFields(input: ContentTypeInput) {
+  const vision = input.vision ?? input.campaignContext.vision;
+  if (!vision) {
+    throw new Error("Content Type requires vision on CampaignAIContext");
+  }
+  return {
+    goal: input.campaignContext.campaignObjective,
+    platforms: input.campaignContext.publishingPlatforms,
+    vision,
+  };
+}
+
 function buildFallback(input: ContentTypeInput): ContentClassification {
-  const industry = inferIndustry(input.goal, input.videoAnalysis ?? undefined);
-  const contentType = inferContentType(input.goal, input.vision, input.videoAnalysis);
+  const { goal, vision } = resolveContentTypeFields(input);
+  const industry = inferIndustry(goal, input.videoAnalysis ?? undefined);
+  const contentType = inferContentType(goal, vision, input.videoAnalysis);
   return classificationWithPreset({
     industry: industryFromContentType(contentType, industry),
     contentType,
@@ -72,6 +91,7 @@ export async function runContentTypeAgent(input: ContentTypeInput): Promise<{
   classification: ContentClassification;
   usage: { input: number; output: number; costUsd: number };
 }> {
+  const { goal, platforms, vision } = resolveContentTypeFields(input);
   const fallback = buildFallback(input);
 
   const system = `You classify marketing content for short-form video campaigns.
@@ -80,14 +100,14 @@ industry: florist|wedding|restaurant|retail|beauty|real_estate|phone_buyback|b2b
 contentType: product_showcase|service_promotion|wedding|florist|restaurant|beauty|education|real_estate|phone_buyback|podcast|storytelling|event_promotion|recruitment|branding|general`;
 
   const user = JSON.stringify({
-    goal: input.goal,
-    platforms: input.platforms,
+    goal,
+    platforms,
     vision: {
-      subjects: input.vision.subjects,
-      products: input.vision.products,
-      hooks: input.vision.hooks,
-      scenes: input.vision.scenes.slice(0, 4),
-      mediaType: input.vision.mediaType,
+      subjects: vision.subjects,
+      products: vision.products,
+      hooks: vision.hooks,
+      scenes: vision.scenes.slice(0, 4),
+      mediaType: vision.mediaType,
     },
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });

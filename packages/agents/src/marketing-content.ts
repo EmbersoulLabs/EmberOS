@@ -14,6 +14,8 @@ import {
   applyGroundingToAnalysisScores,
   groundingWarningSuggestion,
   substantiveCampaignBrief,
+  workspaceLanguageAsContentLocale,
+  type CampaignAIContext,
   type ContentLocale,
   type CopyVariant,
   type HookSet,
@@ -109,35 +111,57 @@ const HOOK_TYPE_MAP: Record<string, HookType> = {
   shock: "curiosity",
 };
 
+/**
+ * Marketing Content / Auto Clip Marketing — AD-001
+ * Required: campaignContext (with strategy + vision)
+ * Optional: strategy, vision overrides, videoAnalysis, businessInformation, campaignName
+ * Consumes: campaignObjective, campaignBrief, publishingPlatforms, workspaceLanguage, strategy, vision
+ */
 export interface MarketingContentInput {
-  strategy: StrategyPlan;
-  vision: VisionAnalysis;
+  /** AD-001 — complete Campaign AI Context (strategy + vision required on context). */
+  campaignContext: CampaignAIContext;
+  /** Prefer campaignContext.strategy / .vision when present. */
+  strategy?: StrategyPlan;
+  vision?: VisionAnalysis;
   videoAnalysis?: string | null;
   businessInformation?: string | Record<string, unknown> | null;
-  userNotes?: string | null;
-  goal?: string;
   campaignName?: string;
-  platforms?: string[];
-  /** UI locale at run time — drives primary output language (zh / en / ms). */
-  contentLocale?: ContentLocale;
+}
+
+function resolveMarketingFields(input: {
+  campaignContext: CampaignAIContext;
+  strategy?: StrategyPlan | null;
+  vision?: VisionAnalysis | null;
+}) {
+  const strategy = input.strategy ?? input.campaignContext.strategy ?? null;
+  const vision = input.vision ?? input.campaignContext.vision ?? null;
+  if (!strategy || !vision) {
+    throw new Error("Marketing Content requires strategy and vision on CampaignAIContext");
+  }
+  return {
+    strategy,
+    vision,
+    goal: input.campaignContext.campaignObjective,
+    userNotes: input.campaignContext.campaignBrief,
+    platforms: input.campaignContext.publishingPlatforms,
+    contentLocale: workspaceLanguageAsContentLocale(input.campaignContext.workspaceLanguage),
+  };
 }
 
 function useChinese(input: MarketingContentInput): boolean {
-  const blob = [
-    input.goal,
-    input.userNotes,
-    input.strategy.tone,
-    input.strategy.product,
-    input.vision.transcriptSummary,
-  ]
+  const { goal, userNotes, strategy, vision, platforms } = resolveMarketingFields(input);
+  const blob = [goal, userNotes, strategy.tone, strategy.product, vision.transcriptSummary]
     .filter(Boolean)
     .join("");
-  return /[\u4e00-\u9fff]/.test(blob) || Boolean(input.platforms?.some((p) => p === "xiaohongshu" || p === "douyin"));
+  return (
+    /[\u4e00-\u9fff]/.test(blob) ||
+    Boolean(platforms?.some((p) => p === "xiaohongshu" || p === "douyin"))
+  );
 }
 
 function resolveContentLocale(input: MarketingContentInput): ContentLocale {
-  const l = input.contentLocale;
-  if (l === "zh" || l === "en" || l === "ms") return l;
+  const { contentLocale } = resolveMarketingFields(input);
+  if (contentLocale === "zh" || contentLocale === "en" || contentLocale === "ms") return contentLocale;
   return useChinese(input) ? "zh" : "en";
 }
 
@@ -386,13 +410,14 @@ function buildSubtitleTimeline(script: string, durationSec: number): MarketingCo
 }
 
 function groundingContext(input: MarketingContentInput) {
+  const { strategy, vision, userNotes } = resolveMarketingFields(input);
   return assessContentGrounding({
-    vision: input.vision,
+    vision,
     campaignName: input.campaignName,
-    strategyProduct: input.strategy.product,
-    strategyAngle: input.strategy.marketingAngle,
-    keywords: input.strategy.keywords,
-    hasUserDescription: Boolean(substantiveCampaignBrief(input.userNotes, input.videoAnalysis)),
+    strategyProduct: strategy.product,
+    strategyAngle: strategy.marketingAngle,
+    keywords: strategy.keywords,
+    hasUserDescription: Boolean(substantiveCampaignBrief(userNotes, input.videoAnalysis)),
   });
 }
 
@@ -440,10 +465,10 @@ function applyGroundingToPackage(
 function buildFallbackContent(input: MarketingContentInput): MarketingContentPackage {
   const locale = resolveContentLocale(input);
   const zh = locale === "zh";
-  const s = input.strategy;
-  const product = resolveContentSubject(input.vision, {
-    goal: input.goal,
-    userNotes: substantiveCampaignBrief(input.userNotes, input.videoAnalysis),
+  const { strategy: s, vision, goal, userNotes } = resolveMarketingFields(input);
+  const product = resolveContentSubject(vision, {
+    goal,
+    userNotes: substantiveCampaignBrief(userNotes, input.videoAnalysis),
     campaignName: input.campaignName,
     locale,
   });
@@ -812,28 +837,29 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   usage: { input: number; output: number; costUsd: number };
 }> {
   const locale = resolveContentLocale(input);
+  const { strategy, vision, goal, userNotes, platforms } = resolveMarketingFields(input);
 
   const user = JSON.stringify({
-    strategy: input.strategy,
+    strategy,
     vision: {
-      subjects: input.vision.subjects,
-      products: input.vision.products,
-      scenes: input.vision.scenes.slice(0, 6),
-      hooks: input.vision.hooks,
-      transcriptSummary: input.vision.transcriptSummary,
-      durationSec: input.vision.durationSec,
+      subjects: vision.subjects,
+      products: vision.products,
+      scenes: vision.scenes.slice(0, 6),
+      hooks: vision.hooks,
+      transcriptSummary: vision.transcriptSummary,
+      durationSec: vision.durationSec,
     },
-    goal: input.goal,
+    goal,
     ...(input.campaignName &&
-    !input.goal?.trim() &&
-    !input.userNotes?.trim() &&
+    !goal?.trim() &&
+    !userNotes?.trim() &&
     !input.videoAnalysis?.trim()
       ? { campaignLabel: input.campaignName }
       : {}),
-    platforms: input.platforms,
+    platforms,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
-    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
+    ...(userNotes ? { userNotes } : {}),
     locale: localeToPromptTag(locale),
     outputLanguage: outputLanguageInstruction(locale),
   });
@@ -873,15 +899,19 @@ Facebook/LinkedIn caption).
 Return ONLY valid JSON for a single platform asset:
 { caption, hook?, title?, description?, hashtags[], cta, formatStyle }`;
 
+/**
+ * Copy Regeneration — AD-001
+ * Required: campaignContext, platformId
+ * Optional: strategy, vision, campaignName, businessInformation, previousCaption
+ */
 export interface RegeneratePlatformAssetInput {
+  /** AD-001 — Copy Regeneration receives the same CampaignAIContext. */
+  campaignContext: CampaignAIContext;
   platformId: MarketingPlatformId;
-  strategy: StrategyPlan;
-  vision: VisionAnalysis;
+  strategy?: StrategyPlan;
+  vision?: VisionAnalysis;
   campaignName?: string;
-  goal?: string;
-  userNotes?: string;
   businessInformation?: string | Record<string, unknown> | null;
-  contentLocale?: ContentLocale;
   previousCaption?: string;
 }
 
@@ -890,35 +920,29 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
   asset: PlatformMarketingAsset;
   usage: { input: number; output: number; costUsd: number };
 }> {
+  const resolved = resolveMarketingFields(input);
   const def = MARKETING_PLATFORMS[input.platformId];
   // Xiaohongshu is a Chinese-first platform — always regenerate in Chinese.
   const locale: ContentLocale =
     input.platformId === "xiaohongshu"
       ? "zh"
-      : (input.contentLocale ??
-        (/[\u4e00-\u9fff]/.test(
-          [input.goal, input.userNotes, input.strategy.tone, input.strategy.product]
-            .filter(Boolean)
-            .join("")
-        )
-          ? "zh"
-          : "en"));
+      : resolved.contentLocale;
 
   const user = JSON.stringify({
     platform: input.platformId,
     platformPersona: def.expertPersona,
     requiredFields: def.requiredFields,
-    strategy: input.strategy,
+    strategy: resolved.strategy,
     vision: {
-      subjects: input.vision.subjects,
-      products: input.vision.products,
-      scenes: input.vision.scenes.slice(0, 6),
-      hooks: input.vision.hooks,
-      transcriptSummary: input.vision.transcriptSummary,
+      subjects: resolved.vision.subjects,
+      products: resolved.vision.products,
+      scenes: resolved.vision.scenes.slice(0, 6),
+      hooks: resolved.vision.hooks,
+      transcriptSummary: resolved.vision.transcriptSummary,
     },
-    goal: input.goal,
-    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
-    ...(input.campaignName && !input.goal?.trim() && !input.userNotes?.trim()
+    goal: resolved.goal,
+    ...(resolved.userNotes ? { userNotes: resolved.userNotes } : {}),
+    ...(input.campaignName && !resolved.goal?.trim() && !resolved.userNotes?.trim()
       ? { campaignLabel: input.campaignName }
       : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
@@ -940,13 +964,15 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
 
   // Fallback: derive a fresh single-platform asset from the strategy/vision.
   const fallbackPkg = buildFallbackContent({
-    strategy: input.strategy,
-    vision: input.vision,
-    goal: input.goal,
-    userNotes: input.userNotes,
+    campaignContext: {
+      ...input.campaignContext,
+      strategy: resolved.strategy,
+      vision: resolved.vision,
+    },
+    strategy: resolved.strategy,
+    vision: resolved.vision,
     campaignName: input.campaignName,
     businessInformation: input.businessInformation,
-    contentLocale: locale,
   });
   const fallbackAsset = fallbackPkg.platformAssets?.[input.platformId];
   return {

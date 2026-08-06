@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { and, asc, eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { eq } from "drizzle-orm";
+import { attachAssetsToCampaign, getCampaignAssets, getDb, schema } from "@ceo-agent/db";
 import {
   STORAGE_PATHS,
   listUploadVideoAssets,
@@ -19,16 +19,7 @@ export async function ensureMergedSourceVideo(taskId: string): Promise<void> {
   const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
   if (!task) throw new Error(`Task ${taskId} not found`);
 
-  const assets = await db
-    .select()
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.campaignId, task.campaignId),
-        eq(schema.assets.workspaceId, task.workspaceId)
-      )
-    )
-    .orderBy(asc(schema.assets.createdAt));
+  const assets = await getCampaignAssets(db, task.campaignId, task.workspaceId);
 
   if (assets.some((asset) => asset.type === "video" && isMergedSourceAsset(asset.metadata))) {
     return;
@@ -58,26 +49,30 @@ export async function ensureMergedSourceVideo(taskId: string): Promise<void> {
     const probe = await probeVideo(mergedPath);
 
     const assetId = randomUUID();
-    const storagePath = STORAGE_PATHS.source(task.workspaceId, task.campaignId, assetId, "mp4");
+    const storagePath = STORAGE_PATHS.library(task.workspaceId, assetId, "mp4");
     await uploadStorageFile(storagePath, mergedPath, "video/mp4");
 
     await db.insert(schema.assets).values({
       id: assetId,
       orgId: task.orgId,
       workspaceId: task.workspaceId,
-      campaignId: task.campaignId,
       type: "video",
+      displayName: "merged-source.mp4",
+      originalFilename: "merged-source.mp4",
       storagePath,
       mimeType: "video/mp4",
       durationSec: String(probe.durationSec),
       width: probe.width,
       height: probe.height,
+      status: "ready",
+      source: "system_generated",
       metadata: {
         merged: true,
         mergedFrom: uploadVideos.map((asset) => asset.id),
         originalFilename: "merged-source.mp4",
       },
     });
+    await attachAssetsToCampaign(db, task.campaignId, [assetId]);
 
     console.log(
       `[merge-source] campaign=${task.campaignId} merged ${uploadVideos.length} clips → ${probe.durationSec.toFixed(1)}s`

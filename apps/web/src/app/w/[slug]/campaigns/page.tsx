@@ -116,7 +116,7 @@ export default function CampaignListPage() {
             {campaigns.map((c) => (
               <div
                 key={c.id}
-                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border border-border/80 bg-surface p-4 shadow-card transition hover:border-brand-blue/25"
+                className="flex flex-col gap-3 rounded-xl border border-border/80 bg-surface p-4 shadow-card transition hover:border-brand-blue/25 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-4"
               >
                 <Link href={`/w/${slug}/campaigns/${c.id}`} className="min-w-0">
                   <h2 className="font-semibold text-navy">{c.name}</h2>
@@ -126,14 +126,15 @@ export default function CampaignListPage() {
                       : c.goal || "—"}
                   </p>
                 </Link>
-                <div className="flex shrink-0 items-center gap-2">
+                <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto">
                   <StatusBadge status={c.status} />
+                  <Link href={`/w/${slug}/campaigns/${c.id}`} className="ml-auto inline-flex min-h-11 items-center rounded-lg border border-border px-3 text-xs font-semibold text-navy">Open</Link>
                   {(c.canDelete ?? isCampaignDeletable(c.status)) && (
                     <button
                       type="button"
                       disabled={deletingId === c.id}
                       onClick={(e) => deleteCampaign(e, c.id, c.name)}
-                      className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+                      className="min-h-11 rounded-lg border border-red-200 px-3 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
                     >
                       {deletingId === c.id ? t("campaigns.deleting") : t("campaigns.delete")}
                     </button>

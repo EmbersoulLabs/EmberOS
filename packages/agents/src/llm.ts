@@ -12,10 +12,19 @@ export async function callJsonModel<T>(
   system: string,
   user: string,
   schemaHint: string,
-  options?: { model?: "gpt-4o-mini" | "gpt-4o" }
-): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
+  options?: { model?: "gpt-4o-mini" | "gpt-4o"; signal?: AbortSignal; timeoutMs?: number }
+): Promise<{
+  result: T;
+  usage: { input: number; output: number; costUsd: number };
+  providerRequestId: string;
+  modelVersion: string;
+}> {
   const openai = getOpenAI();
   const model = options?.model ?? "gpt-4o-mini";
+  const requestOptions = {
+    ...(options?.signal ? { signal: options.signal } : {}),
+    ...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+  };
   const response = await openai.chat.completions.create({
     model,
     response_format: { type: "json_object" },
@@ -24,7 +33,7 @@ export async function callJsonModel<T>(
       { role: "user", content: user },
     ],
     temperature: 0.7,
-  });
+  }, requestOptions);
 
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;
@@ -33,7 +42,12 @@ export async function callJsonModel<T>(
   const [inRate, outRate] = model === "gpt-4o" ? [2.5, 10] : [0.15, 0.6];
   const costUsd = (input * inRate + output * outRate) / 1_000_000;
 
-  return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
+  return {
+    result: JSON.parse(content) as T,
+    usage: { input, output, costUsd },
+    providerRequestId: response.id,
+    modelVersion: response.model,
+  };
 }
 
 /** GPT-4o vision for frame analysis (higher cost than gpt-4o-mini). */
@@ -41,9 +55,14 @@ export async function callVisionJsonModel<T>(
   system: string,
   userText: string,
   imageDataUrls: string[],
-  schemaHint: string
+  schemaHint: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number }
 ): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
   const openai = getOpenAI();
+  const requestOptions = {
+    ...(options?.signal ? { signal: options.signal } : {}),
+    ...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+  };
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     response_format: { type: "json_object" },
@@ -61,7 +80,7 @@ export async function callVisionJsonModel<T>(
       },
     ],
     temperature: 0.4,
-  });
+  }, requestOptions);
 
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;

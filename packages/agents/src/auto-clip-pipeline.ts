@@ -1,5 +1,5 @@
-import { eq, and } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { eq } from "drizzle-orm";
+import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
 import { enqueueRender, getRenderQueueCounts } from "@ceo-agent/queue";
 import {
   AUTO_CLIP,
@@ -11,32 +11,52 @@ import {
   effectiveCampaignGoal,
   resolveAutoClipPlatforms,
   recommendBgm,
-  getBgmTrackById,
-  resolveBgmStartOffsetSec,
   type BgmRecommendation,
   resolveAutoClipSourceAsset,
   strategyObjectives,
   resolvePipelineContentLocale,
   alignStrategyWithVision,
+  getPipelineStageOutput,
+  isPipelineStageComplete,
+  normalizeStrategyPlan,
   type ContentLocale,
+  type MarketingContentPackage,
 } from "@ceo-agent/shared";
-import { parseIntent } from "./ceo";
-import { runStrategyAgent } from "./strategy";
 import {
-  runMarketingContentAgent,
+  provideCampaignAIContext,
+  enrichCampaignAIContext,
+} from "./campaign-context-provider";
+import { failPipelineExecution } from "./pipeline-lifecycle";
+import { isVisionAnalysisTimeoutError } from "./vision-timeout";
+import { parseIntent } from "./ceo";
+import {
   contentPackageToHookSet,
   buildAutoClipCopyVariants,
 } from "./marketing-content";
 import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
-import { runVisionAgent } from "./vision";
-import { buildStandaloneClipEditPlan, attachAutoClipVoiceover } from "./auto-clip";
-import { buildHighlightIndex, pickSegmentsFromHighlightIndex, type TranscriptSegment } from "./highlight-index";
+import { pickSegmentsFromHighlightIndex } from "./highlight-index";
 import { AUTO_CLIP_VARIANTS } from "./auto-clip-variants";
-import { applyVoicePreset } from "./voice-preset";
-import { runAutoClipScoreAgent } from "./score";
 import type { PipelineHooks } from "./orchestrator";
-import type { VisionFrameInput } from "./vision";
 import type { CopyLocale, CopyVariant, EditPlan, VisionAnalysis } from "@ceo-agent/shared";
+import { mergePipelineContext } from "./merge-context";
+import {
+  runMarketingContentPipeline,
+  runStrategyPipeline,
+} from "./marketing-pipeline";
+import {
+  adaptImageUnderstandingResult,
+  adaptMarketingPipelineResult,
+  adaptVideoPipelineResult,
+} from "./pipeline-adapters";
+import { finalizeReviewAfterGates } from "./review-finalization";
+import {
+  runVideoUnderstandingPipeline,
+  videoUnderstandingAsPipelineResult,
+} from "./video-understanding-pipeline";
+import {
+  runCompositionPipeline,
+  type CompositionResult,
+} from "./composition-pipeline";
 
 function resolveClipVoiceLocale(
   defaultLocale: CopyLocale,
@@ -46,6 +66,19 @@ function resolveClipVoiceLocale(
   if (contentLocale === "zh") return "zh";
   if (platforms.some((p) => p === "xiaohongshu" || p === "douyin")) return "zh";
   return defaultLocale === "zh" && contentLocale === "en" ? "en" : defaultLocale;
+}
+
+function campaignHighlightKeywords(...values: Array<string | null | undefined>) {
+  return [
+    ...new Set(
+      values.flatMap((value) =>
+        (value ?? "")
+          .split(/[^a-zA-Z0-9\u4e00-\u9fff]+/)
+          .map((token) => token.trim().toLowerCase())
+          .filter((token) => token.length >= 2)
+      )
+    ),
+  ].slice(0, 30);
 }
 
 async function updateStep(
@@ -117,15 +150,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     .limit(1);
 
   const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
-  const assets = await db
-    .select()
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.campaignId, campaign.id),
-        eq(schema.assets.workspaceId, task.workspaceId)
-      )
-    );
+  const assets = await getCampaignAssets(db, campaign.id, task.workspaceId);
 
   const source = resolveAutoClipSourceAsset(assets);
   if (!source) throw new Error("Auto Clip requires a source video");
@@ -138,6 +163,23 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
   const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign.goal);
   const videoAnalysis = buildVideoAnalysisPrompt(creativeBrief);
   const goal = effectiveCampaignGoal(creativeBrief, campaign.goal, contentLocale);
+  const campaignContext = provideCampaignAIContext({
+    businessProfile: brandProfile,
+    campaignObjective: goal,
+    publishingPlatforms: campaign.platforms ?? [],
+    targetAudience: campaign.targetAudienceOverride,
+    campaignBrief: creativeBrief.campaignBrief,
+    workspaceLanguage: contentLocale,
+    assets: assets.map((a) => ({ id: a.id, type: a.type })),
+    workflowMetadata: {
+      marketingExecution: {
+        campaignName: campaign.name,
+        creativeBrief,
+        videoAnalysis,
+        assetsUploaded: assets.length,
+      },
+    },
+  });
   const bgmBaseCtx = {
     userPreference: creativeBrief.bgmPreference,
     campaignGoal: creativeBrief.campaignGoal,
@@ -148,6 +190,9 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     industry: brandProfile.industry ?? null,
   };
   const usedBgmTrackIds: string[] = [];
+  const progressSnapshot = (task.stepProgress as StepProgress) ?? {};
+  const stageDone = (id: string) =>
+    isPipelineStageComplete(progressSnapshot, id);
 
   await db
     .update(schema.tasks)
@@ -162,191 +207,364 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
   const budget = parseFloat(task.costBudgetUsd ?? "0.5");
 
   try {
-    await updateStep(taskId, "parse_intent", { status: "running", startedAt: new Date().toISOString() });
-    const intent = parseIntent(goal, campaign.platforms);
-    await updateStep(taskId, "parse_intent", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: intent,
-    });
-
-    // vision_analyze runs FIRST so the marketing plan is grounded in the real assets.
-    await updateStep(taskId, "vision_analyze", { status: "running", startedAt: new Date().toISOString() });
-    let visionFrames: VisionFrameInput[] = [];
-    let transcriptSummary: string | undefined;
-    let transcriptSegments: TranscriptSegment[] = [];
-    if (hooks?.prepareVisionMedia) {
-      const visionSources = [videoAsset, ...imageAssets];
-      for (const asset of visionSources.slice(0, 8)) {
-        const prepared = await hooks.prepareVisionMedia.prepare({
-          storagePath: asset.storagePath,
-          mediaType: asset.type as "video" | "image",
-          durationSec: asset.durationSec ? parseFloat(asset.durationSec) : undefined,
-        });
-        visionFrames.push(...prepared.frames);
-        if (asset.type === "video") {
-          transcriptSummary = prepared.transcriptSummary ?? transcriptSummary;
-          if (prepared.transcriptSegments?.length) {
-            transcriptSegments = prepared.transcriptSegments;
-          }
-        }
-      }
+    if (!stageDone("parse_intent")) {
+      await updateStep(taskId, "parse_intent", {
+        status: "running",
+        startedAt: new Date().toISOString(),
+      });
+      const intent = parseIntent(goal, campaign.platforms);
+      await updateStep(taskId, "parse_intent", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        output: intent,
+      });
     }
 
-    const { analysis: vision, usage: visionUsage } = await runVisionAgent({
-      assetId: videoAsset.id,
-      mediaType: "video",
-      durationSec: sourceDurationSec,
+    const understandingExecution = await runVideoUnderstandingPipeline({
+      source: {
+        assetId: videoAsset.id,
+        storagePath: videoAsset.storagePath,
+        mimeType: videoAsset.mimeType,
+        status: videoAsset.status,
+        durationSec: sourceDurationSec,
+      },
+      campaignContext,
       campaignName: campaign.name,
-      goal,
-      campaignBrief: creativeBrief.campaignBrief,
       videoAnalysis,
-      frames: visionFrames.length > 0 ? visionFrames : undefined,
+      highlightKeywords: campaignHighlightKeywords(
+        goal,
+        creativeBrief.campaignBrief,
+        campaign.targetAudienceOverride
+      ),
+      progress: progressSnapshot,
+      dependencies: hooks?.prepareVisionMedia
+        ? {
+            prepareMedia: (sourceAsset) =>
+              hooks.prepareVisionMedia!.prepare({
+                storagePath: sourceAsset.storagePath,
+                mediaType: "video",
+                durationSec: sourceAsset.durationSec,
+              }),
+          }
+        : undefined,
+      persistCheckpoint: async ({ checkpoint, status, output }) => {
+        const update =
+          status === "running"
+            ? {
+                status,
+                startedAt: new Date().toISOString(),
+              }
+            : {
+                status,
+                completedAt: new Date().toISOString(),
+                output,
+              };
+        await updateStep(taskId, checkpoint, update);
+
+        const legacyStep =
+          checkpoint === "VIDEO_SCENE_ANALYSIS_COMPLETE"
+            ? "vision_analyze"
+            : checkpoint === "VIDEO_HIGHLIGHTS_COMPLETE"
+              ? "highlight_index"
+              : undefined;
+        if (legacyStep) await updateStep(taskId, legacyStep, update);
+      },
+    });
+    const {
+      result: videoUnderstandingResult,
+      vision,
       transcriptSummary,
-      contentLocale,
-    });
+      transcriptSegments,
+      highlights: highlightIndex,
+      usage: visionUsage,
+    } = understandingExecution;
+    const normalizedVideoUnderstanding =
+      videoUnderstandingAsPipelineResult(videoUnderstandingResult);
     totalCost += visionUsage.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
-    await updateStep(taskId, "vision_analyze", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: vision,
-    });
+    if (
+      visionUsage.input > 0 ||
+      visionUsage.output > 0 ||
+      visionUsage.costUsd > 0
+    ) {
+      await logAgent(
+        task.orgId,
+        task.workspaceId,
+        taskId,
+        "vision",
+        visionUsage,
+        vision
+      );
+    }
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
     // strategy_plan is built from the asset analysis (primary), then brief, then name.
-    await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
-    const { strategy: rawStrategy, industry, usage: strategyUsage } = await runStrategyAgent({
-      goal,
-      campaignName: campaign.name,
-      platforms: campaign.platforms,
-      brandProfile,
-      vision,
-      campaignBrief: creativeBrief.campaignBrief,
-      assetsUploaded: assets.length,
-      creativeBrief,
-      videoAnalysis,
-      contentLocale,
-    });
-    let strategy = alignStrategyWithVision(rawStrategy, vision, {
-      goal,
-      campaignBrief: creativeBrief.campaignBrief,
-      userNotes: creativeBrief.campaignBrief,
-      videoAnalysis: videoAnalysis ?? undefined,
-      campaignName: campaign.name,
-      locale: contentLocale === "zh" ? "zh" : "en",
-    });
-    totalCost += strategyUsage.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
-    await db
-      .update(schema.tasks)
-      .set({ strategyJson: strategy })
-      .where(eq(schema.tasks.id, taskId));
-    await db
-      .update(schema.campaigns)
-      .set({
-        strategyJson: strategy,
-        industry: industry === "general" ? null : industry,
-        objectives: strategyObjectives(strategy),
-      })
-      .where(eq(schema.campaigns.id, campaign.id));
-    await updateStep(taskId, "strategy_plan", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: strategy,
-    });
-
-    if (totalCost > budget) throw new Error("Cost budget exceeded");
-
-    await updateStep(taskId, "highlight_index", { status: "running", startedAt: new Date().toISOString() });
-    const highlightIndex = buildHighlightIndex({
-      vision,
-      sourceDurationSec,
-      transcriptSegments,
-      transcriptSummary,
-      keywords: strategy.keywords,
-    });
-    await updateStep(taskId, "highlight_index", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: highlightIndex,
-    });
-
-    await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-    const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
-      strategy,
-      vision,
-      videoAnalysis,
-      userNotes: creativeBrief.campaignBrief,
-      goal,
-      campaignName: campaign.name,
-      platforms: campaign.platforms,
-      contentLocale,
-    });
-    totalCost += contentUsage.costUsd;
-    const { contentPackage, usage: translateUsage } =
-      await enrichMarketingPackTranslations(rawContentPackage);
-    totalCost += translateUsage.costUsd;
-    await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
-    if (translateUsage.costUsd > 0) {
-      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
+    let strategy = stageDone("strategy_plan")
+      ? normalizeStrategyPlan(
+          task.strategyJson ??
+            campaign.strategyJson ??
+            getPipelineStageOutput(progressSnapshot, "strategy_plan")
+        )
+      : undefined;
+    const preStrategyMediaResults = [normalizedVideoUnderstanding];
+    if (imageAssets.length > 0) {
+      preStrategyMediaResults.push(adaptImageUnderstandingResult({
+        assetIds: imageAssets.map((asset) => asset.id),
+        classification: vision.mediaType,
+        productDetection: vision.products,
+        subjectDetection: vision.subjects,
+        sceneDetection: vision.scenes,
+        confidence:
+          vision.confidence === undefined ? {} : { overall: vision.confidence },
+      }));
     }
-    await updateStep(taskId, "content_generate", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: contentPackage,
-    });
-
-    const hookSet = contentPackageToHookSet(contentPackage);
-    await logAgent(task.orgId, task.workspaceId, taskId, "hook", { input: 0, output: 0, costUsd: 0 }, hookSet);
-    await db
-      .update(schema.tasks)
-      .set({ hooksJson: hookSet })
-      .where(eq(schema.tasks.id, taskId));
-    await updateStep(taskId, "hook_generate", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: hookSet,
-    });
+    const preStrategyMergedContext = mergePipelineContext(
+      enrichCampaignAIContext(campaignContext, {
+        vision,
+        transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
+      }),
+      preStrategyMediaResults
+    );
+    if (!stageDone("strategy_plan") || !strategy) {
+      await updateStep(taskId, "strategy_plan", {
+        status: "running",
+        startedAt: new Date().toISOString(),
+      });
+      const strategyExecution = await runStrategyPipeline(
+        preStrategyMergedContext
+      );
+      const {
+        strategy: rawStrategy,
+        industry,
+        usage: strategyUsage,
+      } = strategyExecution.output;
+      strategy = alignStrategyWithVision(rawStrategy, vision, {
+        goal,
+        campaignBrief: creativeBrief.campaignBrief,
+        userNotes:
+          campaign.targetAudienceOverride ?? creativeBrief.campaignBrief,
+        videoAnalysis: videoAnalysis ?? undefined,
+        campaignName: campaign.name,
+        locale: contentLocale === "zh" ? "zh" : "en",
+      });
+      totalCost += strategyUsage.costUsd;
+      await logAgent(
+        task.orgId,
+        task.workspaceId,
+        taskId,
+        "strategy",
+        strategyUsage,
+        strategy
+      );
+      await db
+        .update(schema.tasks)
+        .set({ strategyJson: strategy })
+        .where(eq(schema.tasks.id, taskId));
+      await db
+        .update(schema.campaigns)
+        .set({
+          strategyJson: strategy,
+          industry: industry === "general" ? null : industry,
+          objectives: strategyObjectives(strategy),
+        })
+        .where(eq(schema.campaigns.id, campaign.id));
+      await updateStep(taskId, "strategy_plan", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        output: strategy,
+      });
+    }
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
-    await updateStep(taskId, "clip_segment", { status: "running", startedAt: new Date().toISOString() });
-    const segments = pickSegmentsFromHighlightIndex(highlightIndex, sourceDurationSec, AUTO_CLIP.CLIP_COUNT);
-    await updateStep(taskId, "clip_segment", {
+    const normalizedMediaResults = [normalizedVideoUnderstanding];
+    if (imageAssets.length > 0) {
+      const imageUnderstanding = adaptImageUnderstandingResult({
+        assetIds: imageAssets.map((asset) => asset.id),
+        classification: vision.mediaType,
+        productDetection: vision.products,
+        subjectDetection: vision.subjects,
+        sceneDetection: vision.scenes,
+        confidence:
+          vision.confidence === undefined ? {} : { overall: vision.confidence },
+      });
+      normalizedMediaResults.push(imageUnderstanding);
+      await updateStep(taskId, "image_understanding_output", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        output: imageUnderstanding,
+      });
+    }
+    const mergedMarketingContext = mergePipelineContext(
+      enrichCampaignAIContext(campaignContext, {
+        vision,
+        strategy,
+        transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
+      }),
+      normalizedMediaResults
+    );
+    await updateStep(taskId, "merge_context", {
       status: "completed",
       completedAt: new Date().toISOString(),
-      output: segments,
+      output: mergedMarketingContext,
     });
+    await updateStep(taskId, "video_pipeline_output", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: videoUnderstandingResult,
+    });
+    let contentPackage = getPipelineStageOutput<MarketingContentPackage>(
+      progressSnapshot,
+      "content_generate"
+    );
+    if (!stageDone("content_generate") || !contentPackage) {
+      await updateStep(taskId, "content_generate", {
+        status: "running",
+        startedAt: new Date().toISOString(),
+      });
+      const marketingExecution = await runMarketingContentPipeline(
+        mergedMarketingContext
+      );
+      const {
+        contentPackage: rawContentPackage,
+        usage: contentUsage,
+      } = marketingExecution.output;
+      totalCost += contentUsage.costUsd;
+      const translated = await enrichMarketingPackTranslations(
+        rawContentPackage
+      );
+      contentPackage = translated.contentPackage;
+      totalCost += translated.usage.costUsd;
+      await logAgent(
+        task.orgId,
+        task.workspaceId,
+        taskId,
+        "marketing_content",
+        contentUsage,
+        rawContentPackage
+      );
+      if (translated.usage.costUsd > 0) {
+        await logAgent(
+          task.orgId,
+          task.workspaceId,
+          taskId,
+          "marketing_translate",
+          translated.usage,
+          contentPackage
+        );
+      }
+      await updateStep(taskId, "content_generate", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        output: contentPackage,
+      });
+      await updateStep(taskId, "marketing_pipeline_output", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        output: adaptMarketingPipelineResult(
+          contentPackage as unknown as Record<string, unknown>
+        ),
+      });
+    }
+    const marketingPipelineResult = adaptMarketingPipelineResult(
+      contentPackage as unknown as Record<string, unknown>
+    );
+
+    const hookSet =
+      (task.hooksJson as ReturnType<typeof contentPackageToHookSet> | null) ??
+      getPipelineStageOutput<ReturnType<typeof contentPackageToHookSet>>(
+        progressSnapshot,
+        "hook_generate"
+      ) ??
+      contentPackageToHookSet(contentPackage);
+    if (!stageDone("hook_generate")) {
+      await logAgent(
+        task.orgId,
+        task.workspaceId,
+        taskId,
+        "hook",
+        { input: 0, output: 0, costUsd: 0 },
+        hookSet
+      );
+      await db
+        .update(schema.tasks)
+        .set({ hooksJson: hookSet })
+        .where(eq(schema.tasks.id, taskId));
+      await updateStep(taskId, "hook_generate", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        output: hookSet,
+      });
+    }
+
+    if (totalCost > budget) throw new Error("Cost budget exceeded");
+
+    let segments = getPipelineStageOutput<
+      ReturnType<typeof pickSegmentsFromHighlightIndex>
+    >(progressSnapshot, "clip_segment");
+    if (!stageDone("clip_segment") || !segments) {
+      await updateStep(taskId, "clip_segment", {
+        status: "running",
+        startedAt: new Date().toISOString(),
+      });
+      segments = pickSegmentsFromHighlightIndex(
+        highlightIndex,
+        sourceDurationSec,
+        AUTO_CLIP.CLIP_COUNT
+      );
+      await updateStep(taskId, "clip_segment", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        output: segments,
+      });
+    }
 
     const platforms = (campaign.platforms.length ? campaign.platforms : ["tiktok"]) as Platform[];
     const clipPlatforms = resolveAutoClipPlatforms(platforms);
 
-    await updateStep(taskId, "copy_generate", { status: "running", startedAt: new Date().toISOString() });
-    const clipCopies: CopyVariant[][] = [];
-    for (let i = 0; i < segments.length; i++) {
-      const clipPlatform = clipPlatforms[i] ?? clipPlatforms[0]!;
-      clipCopies.push(buildAutoClipCopyVariants(contentPackage, strategy, i, clipPlatform));
+    let clipCopies = getPipelineStageOutput<CopyVariant[][]>(
+      progressSnapshot,
+      "copy_generate"
+    );
+    if (!stageDone("copy_generate") || !clipCopies) {
+      await updateStep(taskId, "copy_generate", {
+        status: "running",
+        startedAt: new Date().toISOString(),
+      });
+      clipCopies = [];
+      for (let i = 0; i < segments.length; i++) {
+        const clipPlatform = clipPlatforms[i] ?? clipPlatforms[0]!;
+        clipCopies.push(
+          buildAutoClipCopyVariants(
+            contentPackage,
+            strategy,
+            i,
+            clipPlatform
+          )
+        );
+      }
+      await logAgent(
+        task.orgId,
+        task.workspaceId,
+        taskId,
+        "copy",
+        { input: 0, output: 0, costUsd: 0 },
+        clipCopies
+      );
+      await updateStep(taskId, "copy_generate", {
+        status: "completed",
+        completedAt: new Date().toISOString(),
+        output: clipCopies,
+      });
     }
-    await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, clipCopies);
-    await updateStep(taskId, "copy_generate", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: clipCopies,
-    });
 
-    await updateStep(taskId, "edit_director_plan", { status: "running", startedAt: new Date().toISOString() });
-    const creativeIds: string[] = [];
-
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i]!;
-      const clipVariant = AUTO_CLIP_VARIANTS[i] ?? AUTO_CLIP_VARIANTS[0]!;
-      const clipPlatform = clipPlatforms[i] ?? clipPlatforms[0]!;
-      const variants = clipCopies[i] ?? [];
+    const compositionEntries = segments.map((segment, index) => {
+      const clipVariant =
+        AUTO_CLIP_VARIANTS[index] ?? AUTO_CLIP_VARIANTS[0]!;
+      const clipPlatform = clipPlatforms[index] ?? clipPlatforms[0]!;
+      const variants = clipCopies[index] ?? [];
       if (variants.length === 0) throw new Error("Copy generation failed");
-
-      const bgmRec = recommendBgm({
+      const bgmRecommendation = recommendBgm({
         ...bgmBaseCtx,
         visionHooks: vision.hooks,
         platform: clipPlatform,
@@ -354,65 +572,88 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         clipVariant: clipVariant.variant,
         excludeTrackIds: usedBgmTrackIds,
       });
-      usedBgmTrackIds.push(bgmRec.trackId);
-
-      let editPlan = buildStandaloneClipEditPlan({
-        assetId: videoAsset.id,
+      usedBgmTrackIds.push(bgmRecommendation.trackId);
+      return {
         segment,
         copyVariants: variants,
         clipVariant,
         platform: clipPlatform,
-        bgmKey: bgmRec.trackId,
-        bgmRecommendation: bgmRec,
-        vision,
+        bgmRecommendation,
+        voiceLocale: resolveClipVoiceLocale(
+          clipVariant.voiceLocale,
+          clipPlatforms,
+          contentLocale
+        ),
         subtitleTimeline: contentPackage.subtitleTimeline,
-      });
-      editPlan = attachAutoClipVoiceover(
-        editPlan,
-        variants,
-        resolveClipVoiceLocale(clipVariant.voiceLocale, clipPlatforms, contentLocale),
-        contentPackage.subtitleTimeline
-      );
-      editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
-
-      const bgmTrack = getBgmTrackById(bgmRec.trackId);
-      editPlan = {
-        ...editPlan,
-        audio: {
-          ...editPlan.audio,
-          bgmStartOffsetSec: resolveBgmStartOffsetSec(
-            bgmTrack?.durationSec ?? 120,
-            editPlan.targetDurationSec,
-            creativeBrief.bgmStartPreference ?? "auto"
-          ),
-        },
       };
-
-      const primaryLocale = contentLocale === "zh" ? "zh" : "en";
-      const primaryCopy = variants.find((v) => v.locale === primaryLocale) ?? variants[0]!;
-
-      const [creative] = await db
-        .insert(schema.creatives)
-        .values({
-          orgId: task.orgId,
-          workspaceId: task.workspaceId,
-          campaignId: campaign.id,
-          taskId: task.id,
-          status: "processing",
-          copyVariants: variants,
-          selectedCopyId: primaryCopy.id,
-          editPlan,
-          renderStatus: "preview_rendering",
-        })
-        .returning();
-
-      creativeIds.push(creative!.id);
-    }
-
+    });
+    const existingDrafts = await db
+      .select()
+      .from(schema.creatives)
+      .where(eq(schema.creatives.taskId, task.id))
+      .orderBy(schema.creatives.createdAt);
+    const compositionResult = await runCompositionPipeline({
+      mode: "AUTO_CLIP",
+      videoResult: videoUnderstandingResult,
+      mergedContext: mergedMarketingContext,
+      marketingResult: marketingPipelineResult,
+      sourceAssetId: videoAsset.id,
+      entries: compositionEntries,
+      vision,
+      voicePreset: creativeBrief.voicePreset,
+      bgmStartPreference: creativeBrief.bgmStartPreference,
+      resumeResult: getPipelineStageOutput<CompositionResult>(
+        progressSnapshot,
+        "VIDEO_COMPOSITION_COMPLETE"
+      ),
+      registry: {
+        registerDraft: async (draft) => {
+          const existing = existingDrafts[draft.index];
+          if (existing) {
+            await db
+              .update(schema.creatives)
+              .set({
+                copyVariants: draft.copyVariants,
+                selectedCopyId: draft.selectedCopyId,
+                editPlan: draft.editPlan,
+              })
+              .where(eq(schema.creatives.id, existing.id));
+            return { creativeId: existing.id };
+          }
+          const [created] = await db
+            .insert(schema.creatives)
+            .values({
+              orgId: task.orgId,
+              workspaceId: task.workspaceId,
+              campaignId: campaign.id,
+              taskId: task.id,
+              status: "processing",
+              copyVariants: draft.copyVariants,
+              selectedCopyId: draft.selectedCopyId,
+              editPlan: draft.editPlan,
+              renderStatus: "preview_rendering",
+            })
+            .returning();
+          if (!created) throw new Error("Creative Draft registration failed");
+          existingDrafts.push(created);
+          return { creativeId: created.id };
+        },
+      },
+      persistCheckpoint: async (checkpoint, output) => {
+        await updateStep(taskId, checkpoint, {
+          status: "completed",
+          completedAt: new Date().toISOString(),
+          output,
+        });
+      },
+    });
+    const creativeIds = compositionResult.creativeDrafts.map(
+      (draft) => draft.creativeId
+    );
     await updateStep(taskId, "edit_director_plan", {
       status: "completed",
       completedAt: new Date().toISOString(),
-      output: { creativeIds, clipCount: segments.length },
+      output: { creativeIds, clipCount: creativeIds.length },
     });
 
     await updateStep(taskId, "ffmpeg_render", {
@@ -421,7 +662,20 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       output: { clipCount: creativeIds.length, queued: creativeIds.length },
     });
 
-    for (const creativeId of creativeIds) {
+    const existingCreatives = await db
+      .select()
+      .from(schema.creatives)
+      .where(eq(schema.creatives.taskId, task.id));
+    const readyIds = new Set(
+      existingCreatives
+        .filter(
+          (creative) =>
+            creative.renderStatus === "preview_ready" &&
+            Boolean(creative.videoUrl)
+        )
+        .map((creative) => creative.id)
+    );
+    for (const creativeId of creativeIds.filter((id) => !readyIds.has(id))) {
       await enqueueRender({
         taskId: task.id,
         creativeId,
@@ -430,6 +684,15 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
         campaignId: campaign.id,
         mode: "preview",
       });
+    }
+
+    if (readyIds.size === creativeIds.length) {
+      const finalized = await maybeFinalizeAutoClipTask(taskId);
+      return {
+        taskId,
+        creativeIds,
+        status: finalized ? "review_ready" as const : "render_queued" as const,
+      };
     }
 
     const queueCounts = await getRenderQueueCounts().catch(() => null);
@@ -443,14 +706,12 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     return { taskId, creativeIds, status: "render_queued" as const };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Auto Clip pipeline failed";
-    await db
-      .update(schema.tasks)
-      .set({ status: "failed", errorMessage: message, completedAt: new Date() })
-      .where(eq(schema.tasks.id, taskId));
-    await db
-      .update(schema.campaigns)
-      .set({ status: "failed" })
-      .where(eq(schema.campaigns.id, campaign.id));
+    await failPipelineExecution({
+      taskId,
+      campaignId: campaign.id,
+      message,
+      forceTerminal: isVisionAnalysisTimeoutError(error),
+    });
     throw error;
   }
 }
@@ -479,95 +740,53 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
   const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
   if (!task) return false;
 
+  // Auto Clip uses the same mandatory gate boundary as the general path.
+  // The dynamic import avoids a static orchestrator cycle while preserving one
+  // gate implementation for Compliance and Marketing Score.
+  const { runComplianceAfterRender } = await import("./orchestrator");
   for (const creative of creatives) {
-    await db
-      .update(schema.creatives)
-      .set({ status: "pending_internal_review", updatedAt: new Date() })
-      .where(eq(schema.creatives.id, creative.id));
-
-    const [existing] = await db
-      .select({ id: schema.reviews.id })
-      .from(schema.reviews)
-      .where(
-        and(
-          eq(schema.reviews.creativeId, creative.id),
-          eq(schema.reviews.reviewerType, "internal"),
-          eq(schema.reviews.decision, "pending")
-        )
-      )
-      .limit(1);
-
-    if (!existing) {
-      await db.insert(schema.reviews).values({
-        orgId: task.orgId,
-        workspaceId: task.workspaceId,
-        creativeId: creative.id,
-        reviewerType: "internal",
-        decision: "pending",
-      });
-    }
+    await runComplianceAfterRender(taskId, creative.id, { finalizeReview: false });
   }
 
-  const [campaign] = await db
+  const [gatedTask] = await db
     .select()
-    .from(schema.campaigns)
-    .where(eq(schema.campaigns.id, task.campaignId))
+    .from(schema.tasks)
+    .where(eq(schema.tasks.id, taskId))
     .limit(1);
-  const progress = (task.stepProgress as StepProgress) ?? {};
+  const progress = (gatedTask?.stepProgress as StepProgress) ?? {};
   const vision = progress.vision_analyze?.output as VisionAnalysis | undefined;
-  const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
-
-  if (vision && campaign) {
-    await updateStep(taskId, "marketing_score", { status: "running", startedAt: new Date().toISOString() });
-    try {
-      const primary = creatives[0]!;
-      const variants = (primary.copyVariants ?? []) as CopyVariant[];
-      const editPlan = primary.editPlan as EditPlan | null;
-      const { score, usage } = await runAutoClipScoreAgent({
-        vision,
-        copyVariants: variants,
-        editPlan,
-        platforms,
-      });
-      await logAgent(task.orgId, task.workspaceId, taskId, "score", usage, score);
-      await db
-        .update(schema.tasks)
-        .set({ marketingScoreJson: score })
-        .where(eq(schema.tasks.id, taskId));
-      for (const creative of creatives) {
-        await db
-          .update(schema.creatives)
-          .set({ marketingScoreJson: score })
-          .where(eq(schema.creatives.id, creative.id));
-      }
-      await updateStep(taskId, "marketing_score", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        output: score,
-      });
-    } catch (err) {
-      console.warn("[auto-clip] marketing score failed:", err);
-      await updateStep(taskId, "marketing_score", {
-        status: "skipped",
-        completedAt: new Date().toISOString(),
-        error: err instanceof Error ? err.message : "score failed",
-      });
-    }
-  } else {
-    await updateStep(taskId, "marketing_score", {
-      status: "skipped",
-      completedAt: new Date().toISOString(),
-    });
-  }
-
-  await db
-    .update(schema.tasks)
-    .set({ status: "completed", completedAt: new Date() })
-    .where(eq(schema.tasks.id, taskId));
-  await db
-    .update(schema.campaigns)
-    .set({ status: "pending_internal_review" })
-    .where(eq(schema.campaigns.id, task.campaignId));
+  const videoPipelineResult = adaptVideoPipelineResult({
+    assetIds:
+      ((progress.merge_context?.output as {
+        assetIds?: string[];
+      } | undefined)?.assetIds ?? []).filter(Boolean),
+    creativeIds: creatives.map((creative) => creative.id),
+    transcript: vision?.transcriptSummary ?? null,
+    sceneAnalysis: vision?.scenes,
+    suggestedMoments: vision?.suggestedMoments,
+    selectedHighlights: progress.highlight_index?.output,
+    editPlanReferences: creatives.map((creative) => ({
+      creativeId: creative.id,
+      editPlan: creative.editPlan,
+    })),
+    renderedCreativeReferences: creatives.map((creative) => ({
+      creativeId: creative.id,
+      videoUrl: creative.videoUrl,
+      coverUrl: creative.coverUrl,
+    })),
+    subtitleReferences: creatives.map((creative) => ({
+      creativeId: creative.id,
+      subtitles: (creative.editPlan as EditPlan | null)?.subtitles ?? [],
+    })),
+    confidence:
+      vision?.confidence === undefined ? {} : { overall: vision.confidence },
+    complete: true,
+  });
+  await updateStep(taskId, "video_pipeline_output", {
+    status: "completed",
+    completedAt: new Date().toISOString(),
+    output: videoPipelineResult,
+  });
 
   const [freshTask] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
   const finalProgress = (freshTask?.stepProgress as StepProgress) ?? {};
@@ -577,9 +796,11 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
     completedAt: new Date().toISOString(),
     output: { clipCount: creatives.length, allReady: true },
   };
-  finalProgress.compliance_check = { status: "skipped", completedAt: new Date().toISOString() };
-  if (!finalProgress.marketing_score) {
-    finalProgress.marketing_score = { status: "skipped", completedAt: new Date().toISOString() };
+  if (
+    finalProgress.compliance_check?.status !== "completed" ||
+    finalProgress.marketing_score?.status !== "completed"
+  ) {
+    throw new Error("Auto Clip mandatory gates did not complete");
   }
   finalProgress.human_review = {
     status: "pending",
@@ -588,10 +809,25 @@ export async function maybeFinalizeAutoClipTask(taskId: string) {
   };
   finalProgress.export_ready = { status: "pending" };
 
-  await db
-    .update(schema.tasks)
-    .set({ stepProgress: finalProgress, currentStep: "human_review" })
-    .where(eq(schema.tasks.id, taskId));
+  await finalizeReviewAfterGates(
+    creatives.map((creative) => ({
+      progress: finalProgress,
+      creativeRegistered: Boolean(creative.id),
+      outputReady:
+        creative.renderStatus === "preview_ready" && Boolean(creative.videoUrl),
+    })),
+    {
+      taskId,
+      campaignId: task.campaignId,
+      orgId: task.orgId,
+      workspaceId: task.workspaceId,
+      creativeIds: creatives.map((creative) => creative.id),
+      finalOutputReferences: creatives
+        .map((creative) => creative.videoUrl)
+        .filter((reference): reference is string => Boolean(reference)),
+      progress: finalProgress,
+    }
+  );
 
   return true;
 }

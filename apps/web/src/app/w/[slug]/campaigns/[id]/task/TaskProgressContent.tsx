@@ -150,7 +150,11 @@ export default function TaskProgressContent() {
         const allPreviewsReady =
           clipCount >= 3 &&
           (data.creatives as Array<{ renderStatus?: string; videoUrl?: string }>).every(
-            (c) => c.renderStatus === "preview_ready" && Boolean(c.videoUrl)
+            (c) =>
+              Boolean(c.videoUrl) &&
+              (c.renderStatus === "preview_ready" ||
+                c.renderStatus === "final_ready" ||
+                c.renderStatus === "final_rendering")
           );
         let keepPolling = data.task?.status !== "completed" && data.task?.status !== "failed";
 
@@ -272,10 +276,15 @@ export default function TaskProgressContent() {
     (c) => Array.isArray(c.copyVariants) && (c.copyVariants as unknown[]).length > 0
   );
   const activeTaskId = (task?.id as string | undefined) ?? taskIdParam ?? undefined;
+  // Align with task-export previewReady: finals supersede preview_ready.
   const allClipsPreviewReady =
     creatives.length >= 3 &&
     creatives.every(
-      (c) => c.renderStatus === "preview_ready" && Boolean(c.videoUrl)
+      (c) =>
+        Boolean(c.videoUrl) &&
+        (c.renderStatus === "preview_ready" ||
+          c.renderStatus === "final_ready" ||
+          c.renderStatus === "final_rendering")
     );
   const exportZipReady =
     Boolean(exportPackUrl) &&

@@ -34,7 +34,11 @@ export function countFinalRenderProgress(
   ).length;
   const finalRendering = creatives.filter((c) => c.renderStatus === "final_rendering").length;
   const previewReady = creatives.filter(
-    (c) => c.renderStatus === "preview_ready" && Boolean(c.videoUrl)
+    (c) =>
+      Boolean(c.videoUrl) &&
+      (c.renderStatus === "preview_ready" ||
+        c.renderStatus === "final_ready" ||
+        c.renderStatus === "final_rendering")
   ).length;
   return { total, finalReady, finalRendering, previewReady };
 }

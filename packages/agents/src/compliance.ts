@@ -1,20 +1,31 @@
 import { callJsonModel } from "./llm";
 import { ComplianceResultSchema } from "@ceo-agent/shared";
-import type { BrandProfile, ComplianceResult, CopyVariant } from "@ceo-agent/shared";
+import type {
+  CampaignAIContext,
+  ComplianceResult,
+  CopyVariant,
+} from "@ceo-agent/shared";
 
 const DEFAULT_BANNED = ["guaranteed", "100%", "cure", "miracle", "best in the world"];
 
+/**
+ * Compliance — AD-001
+ * Required: campaignContext, copyVariants, subtitles
+ * Optional: none (all enrichment comes from campaignContext.businessProfile)
+ * Consumes from context: businessProfile
+ */
 export interface ComplianceInput {
+  campaignContext: CampaignAIContext;
   copyVariants: CopyVariant[];
   subtitles: string[];
-  brandProfile: BrandProfile;
 }
 
 export async function runComplianceAgent(input: ComplianceInput): Promise<{
   result: ComplianceResult;
   usage: { input: number; output: number; costUsd: number };
 }> {
-  const banned = [...DEFAULT_BANNED, ...(input.brandProfile.bannedWords ?? [])];
+  const brandProfile = input.campaignContext.businessProfile;
+  const banned = [...DEFAULT_BANNED, ...(brandProfile.bannedWords ?? [])];
 
   const system = `You are a Compliance Agent for Singapore/SEA advertising.
 Check for superlatives, false claims, medical/financial disclaimers, and banned words.

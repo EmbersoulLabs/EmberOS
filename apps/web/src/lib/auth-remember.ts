@@ -1,30 +1,34 @@
 const REMEMBER_KEY = "emberos.auth.remember";
 const EMAIL_KEY = "emberos.auth.email";
-const PASSWORD_KEY = "emberos.auth.password";
+/** Legacy key — cleared on read/write; passwords must never be stored client-side. */
+const LEGACY_PASSWORD_KEY = "emberos.auth.password";
 
 export interface RememberedCredentials {
   email: string;
-  password: string;
   remember: boolean;
+}
+
+function clearLegacyPasswordStorage(): void {
+  localStorage.removeItem(LEGACY_PASSWORD_KEY);
 }
 
 export function loadRememberedCredentials(): RememberedCredentials | null {
   if (typeof window === "undefined") return null;
+  clearLegacyPasswordStorage();
   if (localStorage.getItem(REMEMBER_KEY) !== "1") return null;
   const email = localStorage.getItem(EMAIL_KEY) ?? "";
-  const password = localStorage.getItem(PASSWORD_KEY) ?? "";
   if (!email) return null;
-  return { email, password, remember: true };
+  return { email, remember: true };
 }
 
-export function saveRememberedCredentials(email: string, password: string): void {
+export function saveRememberedCredentials(email: string): void {
+  clearLegacyPasswordStorage();
   localStorage.setItem(REMEMBER_KEY, "1");
-  localStorage.setItem(EMAIL_KEY, email);
-  localStorage.setItem(PASSWORD_KEY, password);
+  localStorage.setItem(EMAIL_KEY, email.trim());
 }
 
 export function clearRememberedCredentials(): void {
   localStorage.removeItem(REMEMBER_KEY);
   localStorage.removeItem(EMAIL_KEY);
-  localStorage.removeItem(PASSWORD_KEY);
+  clearLegacyPasswordStorage();
 }

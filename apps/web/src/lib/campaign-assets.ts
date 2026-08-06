@@ -1,6 +1,5 @@
-import { eq, and } from "drizzle-orm";
 import type { getDb } from "@ceo-agent/db";
-import { schema } from "@ceo-agent/db";
+import { getCampaignAssets } from "@ceo-agent/db";
 import {
   MAX_CAMPAIGN_IMAGES,
   MAX_SOURCE_VIDEOS,
@@ -15,12 +14,7 @@ import {
 
 type Db = ReturnType<typeof getDb>;
 
-export async function getCampaignAssets(db: Db, campaignId: string, workspaceId: string) {
-  return db
-    .select()
-    .from(schema.assets)
-    .where(and(eq(schema.assets.campaignId, campaignId), eq(schema.assets.workspaceId, workspaceId)));
-}
+export { getCampaignAssets };
 
 export async function validateCampaignAssetsForRun(
   db: Db,

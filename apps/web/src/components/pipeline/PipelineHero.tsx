@@ -54,7 +54,13 @@ export function PipelineHero({
 
   const isFailed = taskStatus === "failed";
 
-  const eta = taskStatus === "running" ? estimateTimeRemaining(percent) : "";
+  const isActive =
+    taskStatus === "running" ||
+    taskStatus === "queued" ||
+    taskStatus === "retrying" ||
+    taskStatus === "resume";
+
+  const eta = isActive && taskStatus !== "queued" ? estimateTimeRemaining(percent) : "";
 
 
 
@@ -88,7 +94,7 @@ export function PipelineHero({
 
           </div>
 
-          {taskStatus === "running" && (
+          {isActive && (
 
             <div className="text-right">
 
@@ -148,7 +154,7 @@ export function PipelineHero({
 
 
 
-        {taskStatus === "running" && (
+        {isActive && (
 
           <p className="mt-4 text-sm text-ink-secondary">{stepLabel(currentStep, t)}</p>
 
@@ -168,7 +174,7 @@ export function PipelineHero({
 
 
 
-        {taskStatus === "running" && (
+        {isActive && (
 
           <p className="mt-2 text-xs text-ink-secondary">{t("pipeline.renderHint")}</p>
 
