@@ -1453,6 +1453,112 @@ export const aiStoryWorkerExecutionResults = pgTable(
   ]
 );
 
+/**
+ * Sprint 3 PR 3.5 — Scene↔Provider finalization correlation (projection-only).
+ * Does not store usage/cost amounts. Provider ledgers remain authoritative.
+ */
+export const aiStorySceneProjectionCorrelations = pgTable(
+  "ai_story_scene_projection_correlations",
+  {
+    projectionCorrelationId: uuid("projection_correlation_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    workerExecutionResultId: uuid("worker_execution_result_id")
+      .notNull()
+      .references(() => aiStoryWorkerExecutionResults.workerExecutionResultId, {
+        onDelete: "restrict",
+      }),
+    providerExecutionId: text("provider_execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    providerAttemptId: text("provider_attempt_id").notNull(),
+    outboxJobId: text("outbox_job_id")
+      .notNull()
+      .references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    dispatchId: text("dispatch_id")
+      .notNull()
+      .references(() => providerExecutionDispatches.dispatchId, {
+        onDelete: "restrict",
+      }),
+    providerFinalizationReference: text("provider_finalization_reference").notNull(),
+    sceneResultId: uuid("scene_result_id").notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    correlation: jsonb("correlation")
+      .$type<import("@ceo-agent/shared").SceneProjectionCorrelation>()
+      .notNull(),
+    projectedAt: timestamp("projected_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_scene_projection_scene_unique").on(t.sceneExecutionId),
+    unique("ai_story_scene_projection_hash_unique").on(t.integrityHash),
+    unique("ai_story_scene_projection_finalization_unique").on(
+      t.providerFinalizationReference
+    ),
+    index("ai_story_scene_projection_workspace_idx").on(t.workspaceId, t.projectedAt),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.5 — Projected Canonical Scene Result (references Provider artifacts).
+ */
+export const aiStorySceneResults = pgTable(
+  "ai_story_scene_results",
+  {
+    sceneResultId: uuid("scene_result_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneRuntimeId: uuid("scene_runtime_id").notNull(),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    workerExecutionResultId: uuid("worker_execution_result_id")
+      .notNull()
+      .references(() => aiStoryWorkerExecutionResults.workerExecutionResultId, {
+        onDelete: "restrict",
+      }),
+    projectionCorrelationId: uuid("projection_correlation_id")
+      .notNull()
+      .references(() => aiStorySceneProjectionCorrelations.projectionCorrelationId, {
+        onDelete: "restrict",
+      }),
+    providerExecutionId: text("provider_execution_id").notNull(),
+    providerAttemptId: text("provider_attempt_id").notNull(),
+    providerFinalizationReference: text("provider_finalization_reference").notNull(),
+    sceneId: text("scene_id").notNull(),
+    sceneOrder: integer("scene_order").notNull(),
+    status: text("status").notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    result: jsonb("result")
+      .$type<import("@ceo-agent/shared").ProjectedSceneResult>()
+      .notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    projectedAt: timestamp("projected_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_scene_results_scene_unique").on(t.sceneExecutionId),
+    unique("ai_story_scene_results_hash_unique").on(t.integrityHash),
+    unique("ai_story_scene_results_worker_unique").on(t.workerExecutionResultId),
+    index("ai_story_scene_results_workspace_idx").on(t.workspaceId, t.projectedAt),
+    index("ai_story_scene_results_plan_idx").on(t.executionPlanId, t.sceneOrder),
+  ]
+);
+
 export const marketingScores = pgTable(
   "marketing_scores",
   {

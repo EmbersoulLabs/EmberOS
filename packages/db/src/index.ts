@@ -18,3 +18,4 @@ export * from "./queries/ai-story-ownership";
 export * from "./queries/ai-story-runtime-authorization";
 export * from "./queries/ai-story-scene-scheduling";
 export * from "./queries/ai-story-worker-runtime";
+export * from "./queries/ai-story-scene-projection";

@@ -57,15 +57,20 @@ describe("Sprint 3 PR 3.4B boundary", () => {
     expect(MINIMAX_NATIVE_IDEMPOTENCY_SUPPORTED).toBe(false);
   });
 
-  it("does not start Finalizer / Scene Result / PR 3.5 modules", () => {
-    for (const relative of [
-      "packages/agents/src/ai-story/scene-provider-finalizer.ts",
-      "packages/agents/src/ai-story/scene-result-persistence.ts",
-      "packages/agents/src/ai-story/scene-usage-ledger.ts",
-      "packages/agents/src/ai-story/story-assembly-export.ts",
-    ]) {
-      expect(() => readFileSync(resolve(relative), "utf8")).toThrow();
-    }
+  it("does not invoke Finalizer / Scene projection from MiniMax Adapter", () => {
+    const adapter = readFileSync(
+      resolve("packages/agents/src/ai-story/minimax-canonical-adapter.ts"),
+      "utf8"
+    );
+    expect(adapter).not.toMatch(/SceneProviderFinalizer|SceneFinalizationCoordinator/);
+    expect(adapter).not.toMatch(/from ["'].*scene-provider-finalizer/);
+    expect(adapter).not.toMatch(/from ["'].*scene-finalization-coordinator/);
+    expect(adapter).not.toMatch(/from ["'].*scene-result-projector/);
+    expect(adapter).not.toMatch(/from ["'].*scene-usage-ledger/);
+    expect(adapter).not.toMatch(/from ["'].*scene-cost-ledger/);
+    expect(() =>
+      readFileSync(resolve("packages/agents/src/ai-story/story-assembly-export.ts"), "utf8")
+    ).toThrow();
   });
 
   it("does not add public MiniMax callback endpoint", () => {

@@ -312,4 +312,89 @@ export class ProviderOutboxRepository {
     if (!rows[0]) throw new ProviderOutboxConflictError("Active lease is required");
     return toOutboxJob(rows[0]);
   }
+
+  /**
+   * Claim a specific outbox job (or renew lease) so Production Finalizer can complete it.
+   * Does not mark COMPLETED / DEAD_LETTER — Finalizer owns terminal outbox writes.
+   */
+  async claimOrRenewForFinalization(input: {
+    jobId: string;
+    leaseOwner: string;
+    leaseDurationMs: number;
+    now?: Date;
+  }): Promise<ProviderOutboxJob> {
+    if (!input.leaseOwner.trim()) throw new Error("leaseOwner is required");
+    if (!Number.isInteger(input.leaseDurationMs) || input.leaseDurationMs <= 0) {
+      throw new Error("leaseDurationMs must be a positive integer");
+    }
+    const now = input.now ?? new Date();
+    const leaseExpiresAt = new Date(now.getTime() + input.leaseDurationMs);
+
+    return this.db.transaction(async (tx) => {
+      const [job] = await tx
+        .select()
+        .from(schema.providerOutboxJobs)
+        .where(eq(schema.providerOutboxJobs.jobId, input.jobId))
+        .limit(1);
+      if (!job) {
+        throw new ProviderOutboxConflictError("Outbox job not found");
+      }
+
+      if (
+        job.status === "CLAIMED" &&
+        job.leaseOwner === input.leaseOwner &&
+        job.leaseExpiresAt &&
+        job.leaseExpiresAt.getTime() > now.getTime()
+      ) {
+        const renewed = await tx
+          .update(schema.providerOutboxJobs)
+          .set({ leaseExpiresAt, updatedAt: now })
+          .where(
+            and(
+              eq(schema.providerOutboxJobs.jobId, input.jobId),
+              eq(schema.providerOutboxJobs.leaseOwner, input.leaseOwner)
+            )
+          )
+          .returning();
+        if (!renewed[0]) {
+          throw new ProviderOutboxConflictError("Failed to renew Finalizer lease");
+        }
+        return toOutboxJob(renewed[0]);
+      }
+
+      if (job.status === "COMPLETED") {
+        return toOutboxJob(job);
+      }
+
+      if (
+        job.status !== "PENDING" &&
+        job.status !== "RETRY_WAIT" &&
+        !(
+          job.status === "CLAIMED" &&
+          job.leaseExpiresAt &&
+          job.leaseExpiresAt.getTime() <= now.getTime()
+        )
+      ) {
+        throw new ProviderOutboxConflictError(
+          `Outbox job status ${job.status} cannot be claimed for Finalizer`
+        );
+      }
+
+      const claimed = await tx
+        .update(schema.providerOutboxJobs)
+        .set({
+          status: "CLAIMED",
+          leaseOwner: input.leaseOwner,
+          leaseExpiresAt,
+          attemptCount: sql`${schema.providerOutboxJobs.attemptCount} + 1`,
+          updatedAt: now,
+        })
+        .where(eq(schema.providerOutboxJobs.jobId, input.jobId))
+        .returning();
+      if (!claimed[0]) {
+        throw new ProviderOutboxConflictError("Failed to claim outbox job for Finalizer");
+      }
+      return toOutboxJob(claimed[0]);
+    });
+  }
 }

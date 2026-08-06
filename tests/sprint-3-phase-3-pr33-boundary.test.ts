@@ -62,11 +62,24 @@ describe("Sprint 3 PR 3.3 boundary", () => {
     const files = [
       "packages/agents/src/ai-story/seedance-production-adapter.ts",
       "packages/agents/src/ai-story/minimax-production-adapter.ts",
-      "packages/agents/src/ai-story/scene-provider-finalizer.ts",
     ];
     for (const relative of files) {
       expect(() => readFileSync(resolve(relative), "utf8")).toThrow();
     }
+  });
+
+  it("Worker never imports Finalizer or Scene projection modules", () => {
+    const worker = readFileSync(
+      resolve("packages/agents/src/ai-story/scene-provider-worker-runtime.ts"),
+      "utf8"
+    );
+    expect(worker).not.toMatch(/SceneProviderFinalizer|SceneFinalizationCoordinator/);
+    expect(worker).not.toMatch(/from ["'].*scene-provider-finalizer/);
+    expect(worker).not.toMatch(/from ["'].*scene-finalization-coordinator/);
+    expect(worker).not.toMatch(/from ["'].*scene-result-projector/);
+    expect(worker).not.toMatch(/from ["'].*scene-usage-ledger/);
+    expect(worker).not.toMatch(/from ["'].*scene-cost-ledger/);
+    expect(worker).toContain("finalizerInvoked: false");
   });
 
   it("does not add public Provider callback endpoint in PR 3.3", () => {
