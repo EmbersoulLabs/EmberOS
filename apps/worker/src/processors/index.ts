@@ -1,9 +1,10 @@
-import { Worker, type WorkerOptions } from "bullmq";
+import { UnrecoverableError, Worker, type WorkerOptions } from "bullmq";
 import { eq, and } from "drizzle-orm";
 import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
 import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig } from "@ceo-agent/queue";
 import {
   failPipelineExecution,
+  isVisionAnalysisTimeoutError,
   runPipeline,
   runPublishAgent,
   type PipelineHooks,
@@ -159,7 +160,17 @@ export function startWorkers() {
         const { taskId } = job.data as { taskId: string };
         console.log(`[agent.pipeline] start task=${taskId}`);
         await ensureMergedSourceVideo(taskId);
-        const result = await runPipeline(taskId, pipelineHooks);
+        let result;
+        try {
+          result = await runPipeline(taskId, pipelineHooks);
+        } catch (error) {
+          // The pipeline has already persisted the terminal timeout state. Do not
+          // let BullMQ repeat the same provider call for a terminal task.
+          if (isVisionAnalysisTimeoutError(error)) {
+            throw new UnrecoverableError(error.message);
+          }
+          throw error;
+        }
         const queued =
           result &&
           typeof result === "object" &&

@@ -27,6 +27,7 @@ import {
   enrichCampaignAIContext,
 } from "./campaign-context-provider";
 import { failPipelineExecution } from "./pipeline-lifecycle";
+import { isVisionAnalysisTimeoutError } from "./vision-timeout";
 import { parseIntent } from "./ceo";
 import {
   contentPackageToHookSet,
@@ -709,6 +710,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
       taskId,
       campaignId: campaign.id,
       message,
+      forceTerminal: isVisionAnalysisTimeoutError(error),
     });
     throw error;
   }

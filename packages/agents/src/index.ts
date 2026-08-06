@@ -9,6 +9,7 @@ export * from "./score";
 export * from "./knowledge/query";
 export * from "./ceo";
 export * from "./vision";
+export * from "./vision-timeout";
 export { transcribeAudio } from "./vision";
 export * from "./tts";
 export * from "./copy";

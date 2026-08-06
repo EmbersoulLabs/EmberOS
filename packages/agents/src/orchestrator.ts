@@ -25,6 +25,7 @@ import {
   provideCampaignAIContextFromCampaign,
 } from "./campaign-context-provider";
 import { failPipelineExecution } from "./pipeline-lifecycle";
+import { isVisionAnalysisTimeoutError } from "./vision-timeout";
 import { runCeoAgent, parseIntent } from "./ceo";
 import {
   contentPackageToHookSet,
@@ -764,6 +765,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       taskId,
       campaignId: campaign.id,
       message,
+      forceTerminal: isVisionAnalysisTimeoutError(error),
     });
     throw error;
   }

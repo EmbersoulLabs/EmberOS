@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { config } from "dotenv";
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { cleanupInterruptedE2ECampaigns } from "./helpers/campaign-cleanup";
 
 config({ path: resolve(".env.e2e.local") });
 config({ path: resolve(".env.local") });
@@ -27,6 +28,19 @@ async function waitForUploadSuccess(page: Page) {
 test.describe("Marketing vertical slice — Video Campaign (browser E2E)", () => {
   test.skip(!hasCredentials, "Set E2E_USER_EMAIL / E2E_USER_PASSWORD");
   test.skip(!existsSync(fixtureVideo), "Missing e2e/fixtures/e2e-clip.mp4");
+
+  test.afterEach(async ({ page }) => {
+    const meResponse = await page.request.get("/api/me");
+    if (!meResponse.ok()) {
+      throw new Error(`Post-test E2E cleanup authentication failed (${meResponse.status()})`);
+    }
+    const me = (await meResponse.json()) as {
+      workspaces?: Array<{ id: string; slug: string }>;
+    };
+    const workspace = me.workspaces?.find((item) => item.slug === workspaceSlug);
+    if (!workspace) throw new Error(`Post-test E2E cleanup workspace ${workspaceSlug} missing`);
+    await cleanupInterruptedE2ECampaigns(page.request, workspace.id);
+  });
 
   test("login → create video campaign → generate → review → export ZIP", async ({
     page,

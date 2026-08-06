@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { callJsonModel, callVisionJsonModel } from "./llm";
+import { getVisionAnalysisTimeoutMs, withVisionAnalysisTimeout } from "./vision-timeout";
 import {
   outputLanguagePrompt,
   resolveContentSubject,
@@ -373,14 +374,19 @@ Output JSON with arrays for subjects, products, scenes, hooks, suggestedMoments.
 
   const schemaHint = "VisionAnalysis";
 
-  const { result, usage } = hasFrames
-    ? await callVisionJsonModel<unknown>(
-        system,
-        user,
-        validFrames.map((f) => f.dataUrl),
-        schemaHint
-      )
-    : await callJsonModel<unknown>(system, user, schemaHint);
+  const timeoutMs = getVisionAnalysisTimeoutMs();
+  const { result, usage } = await withVisionAnalysisTimeout(
+    (signal) => hasFrames
+      ? callVisionJsonModel<unknown>(
+          system,
+          user,
+          validFrames.map((f) => f.dataUrl),
+          schemaHint,
+          { signal, timeoutMs }
+        )
+      : callJsonModel<unknown>(system, user, schemaHint, { signal, timeoutMs }),
+    timeoutMs
+  );
 
   const coerced = coerceVisionResult(result, input);
   const source = coerced ? ("model" as const) : ("fallback" as const);
