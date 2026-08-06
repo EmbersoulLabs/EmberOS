@@ -6,6 +6,10 @@ config({ path: resolve(".env.e2e.local") });
 config({ path: resolve(".env.local") });
 
 const baseURL = process.env.E2E_BASE_URL?.trim() || "http://127.0.0.1:3000";
+const parsedBaseURL = new URL(baseURL);
+if (parsedBaseURL.hostname !== "127.0.0.1") {
+  throw new Error(`E2E_BASE_URL must use the canonical host 127.0.0.1, received ${parsedBaseURL.hostname}`);
+}
 
 /**
  * Marketing vertical slice browser E2E.
@@ -31,5 +35,25 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  webServer: {
+    command: "node scripts/start-local-runtime.mjs --e2e",
+    url: `${baseURL}/api/health/runtime`,
+    reuseExistingServer: true,
+    timeout: 120_000,
+  },
+  projects: [
+    { name: "auth-setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "chromium",
+      dependencies: ["auth-setup"],
+      testIgnore: [/auth\.setup\.ts/, /auth-protected\.spec\.ts/],
+      use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/operator.json" },
+    },
+    {
+      name: "chromium-viewer",
+      dependencies: ["auth-setup"],
+      testMatch: /(auth-protected|campaign-overview-authenticated)\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/viewer.json" },
+    },
+  ],
 });

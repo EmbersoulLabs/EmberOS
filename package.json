@@ -2,9 +2,10 @@
   "name": "ceo-agent",
   "private": true,
   "scripts": {
-    "dev": "turbo dev",
-  "dev:sync": "node scripts/sync-env.mjs",
-  "predev": "node scripts/sync-env.mjs",
+    "dev": "node scripts/start-local-runtime.mjs",
+    "dev:turbo": "turbo dev",
+    "dev:sync": "node scripts/sync-env.mjs",
+    "predev": "node scripts/sync-env.mjs",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
