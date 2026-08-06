@@ -108,6 +108,7 @@
   "auth.resetPasswordSubtitle": "Pilih kata laluan baharu untuk akaun anda.",
   "auth.resetPasswordTitle": "Tetapkan kata laluan baharu",
   "auth.signIn": "Log masuk",
+  "auth.sessionEstablishmentFailed": "Log masuk berjaya, tetapi sesi aplikasi tidak dapat diwujudkan. Sila cuba lagi.",
   "auth.signInLink": "Sudah ada akaun? Log masuk",
   "auth.signUp": "Daftar",
   "auth.signUpLink": "Tiada akaun? Daftar",

@@ -40,7 +40,9 @@
     "vitest": "^2.1.8",
     "postgres": "^3.4.5",
     "dotenv": "^16.4.7",
-    "@playwright/test": "^1.51.0"
+    "@playwright/test": "^1.51.0",
+    "@supabase/ssr": "^0.5.2",
+    "@supabase/supabase-js": "^2.47.10"
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { config } from "dotenv";
-import { createClient } from "@supabase/supabase-js";
+import { authenticateContext } from "./helpers/auth";
 import { resolve } from "node:path";
 
 config({ path: resolve(".env.e2e.local") });
@@ -31,32 +31,7 @@ test.describe("AI Story planning Sprint 2 (browser E2E)", () => {
   }) => {
     test.setTimeout(900_000);
 
-    const supabase = createClient(supabaseUrl!, supabaseAnon!);
-    const signed = await supabase.auth.signInWithPassword({
-      email: email!,
-      password: password!,
-    });
-    expect(signed.error, signed.error?.message ?? "sign-in failed").toBeNull();
-    const session = signed.data.session!;
-    const projectRef = new URL(supabaseUrl!).hostname.split(".")[0]!;
-    await context.addCookies([
-      {
-        name: `sb-${projectRef}-auth-token`,
-        value: JSON.stringify({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-          expires_at: session.expires_at,
-          expires_in: session.expires_in,
-          token_type: session.token_type,
-          user: session.user,
-        }),
-        domain: "127.0.0.1",
-        path: "/",
-        httpOnly: false,
-        secure: false,
-        sameSite: "Lax",
-      },
-    ]);
+    await authenticateContext(context, { email: email!, password: password! });
 
     await page.goto(`/w/${workspaceSlug}/campaigns`, { waitUntil: "domcontentloaded" });
     const meRes = await page.request.get("/api/me");
@@ -112,7 +87,9 @@ test.describe("AI Story planning Sprint 2 (browser E2E)", () => {
     await expect(page.getByRole("heading", { name: "Story Draft" })).toBeVisible();
 
     await page.getByRole("button", { name: /Approve & freeze/i }).click();
-    await expect(page.getByText(/Ready for Animation/i)).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByText("ready for animation", { exact: true })).toBeVisible({
+      timeout: 120_000,
+    });
 
     await expect(page.getByRole("button", { name: /Generate Creative Context/i })).toBeVisible();
     await expect(page.getByRole("button", { name: /Generate Director Thinking/i })).toBeVisible();
@@ -121,11 +98,15 @@ test.describe("AI Story planning Sprint 2 (browser E2E)", () => {
     await expect(page.getByRole("button", { name: /Generate Shot Plan/i })).toBeVisible();
 
     await page.getByRole("button", { name: /Generate All Planning/i }).click();
-    await expect(page.getByText(/Animation Package/i)).toBeVisible({ timeout: 600_000 });
-    await expect(page.getByText(/Director Thinking/i)).toBeVisible();
-    await expect(page.getByText(/Narrative Integration/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: /Approve Planning/i })).toBeEnabled({
+      timeout: 600_000,
+    });
+    await expect(page.getByRole("heading", { name: "Director Thinking", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Narrative Integration", exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: /Approve Planning/i }).click();
-    await expect(page.getByText(/READY FOR EXECUTION/i)).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByText("ready for execution", { exact: true })).toBeVisible({
+      timeout: 120_000,
+    });
   });
 });

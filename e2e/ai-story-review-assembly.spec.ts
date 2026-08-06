@@ -6,7 +6,7 @@
  */
 import { test, expect, type APIRequestContext, type BrowserContext } from "@playwright/test";
 import { config } from "dotenv";
-import { createClient } from "@supabase/supabase-js";
+import { authenticateContext } from "./helpers/auth";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 
@@ -72,34 +72,11 @@ async function signInWithCredentials(
   userEmail: string,
   userPassword: string
 ) {
-  const supabase = createClient(supabaseUrl!, supabaseAnon!);
-  const signed = await supabase.auth.signInWithPassword({
+  const authenticated = await authenticateContext(context, {
     email: userEmail,
     password: userPassword,
   });
-  expect(signed.error, signed.error?.message ?? "sign-in failed").toBeNull();
-  const session = signed.data.session!;
-  const projectRef = new URL(supabaseUrl!).hostname.split(".")[0]!;
-  await context.clearCookies();
-  await context.addCookies([
-    {
-      name: `sb-${projectRef}-auth-token`,
-      value: JSON.stringify({
-        access_token: session.access_token,
-        refresh_token: session.refresh_token,
-        expires_at: session.expires_at,
-        expires_in: session.expires_in,
-        token_type: session.token_type,
-        user: session.user,
-      }),
-      domain: "127.0.0.1",
-      path: "/",
-      httpOnly: false,
-      secure: false,
-      sameSite: "Lax",
-    },
-  ]);
-  return session.user.id as string;
+  return authenticated.userId;
 }
 
 async function signIn(context: BrowserContext) {

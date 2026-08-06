@@ -108,6 +108,7 @@
   "auth.resetPasswordSubtitle": "Choose a new password for your account.",
   "auth.resetPasswordTitle": "Set new password",
   "auth.signIn": "Sign in",
+  "auth.sessionEstablishmentFailed": "Sign-in succeeded, but the application session could not be established. Please try again.",
   "auth.signInLink": "Already have an account? Sign in",
   "auth.signUp": "Sign up",
   "auth.signUpLink": "Need an account? Sign up",

@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { config } from "dotenv";
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { createClient } from "@supabase/supabase-js";
+import { authenticateContext } from "./helpers/auth";
 
 config({ path: resolve(".env.e2e.local") });
 config({ path: resolve(".env.local") });
@@ -38,35 +38,11 @@ test.describe("Marketing vertical slice (browser E2E)", () => {
       )
     );
 
-    // 1) Credential verification (no hardcoded secrets in source)
-    const supabase = createClient(supabaseUrl!, supabaseAnon!);
-    const signed = await supabase.auth.signInWithPassword({ email: email!, password: password! });
-    expect(signed.error, signed.error?.message ?? "sign-in failed").toBeNull();
-    expect(signed.data.session).toBeTruthy();
-    const session = signed.data.session!;
-
-    const projectRef = new URL(supabaseUrl!).hostname.split(".")[0]!;
-    await context.addCookies([
-      {
-        name: `sb-${projectRef}-auth-token`,
-        value: JSON.stringify({
-          access_token: session.access_token,
-          refresh_token: session.refresh_token,
-          expires_at: session.expires_at,
-          expires_in: session.expires_in,
-          token_type: session.token_type,
-          user: session.user,
-        }),
-        domain: "127.0.0.1",
-        path: "/",
-        httpOnly: false,
-        secure: false,
-        sameSite: "Lax",
-      },
-    ]);
+    // 1) Credential verification through the same Supabase SSR cookie serializer as middleware.
+    const authenticated = await authenticateContext(context, { email: email!, password: password! });
     writeFileSync(
       resolve(artifactsDir, "auth-result.json"),
-      JSON.stringify({ userId: session.user.id, hasSession: true, email }, null, 2)
+      JSON.stringify({ userId: authenticated.userId, hasSession: true, email }, null, 2)
     );
 
     // Remember-me email-only (security)

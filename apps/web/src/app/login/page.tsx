@@ -24,10 +24,12 @@ export default function LoginPage() {
   const [mode, setMode] = useState<AuthMode>("signIn");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
 
   const supabase = useMemo(() => createClient(), []);
 
   useEffect(() => {
+    setHydrated(true);
     const saved = loadRememberedCredentials();
     if (!saved) return;
     setEmail(saved.email);
@@ -63,10 +65,18 @@ export default function LoginPage() {
       const { error } = await supabase.auth.signUp({ email, password });
       setMessage(error ? error.message : t("auth.checkEmail"));
     } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
         setMessage(error.message);
+      } else if (!data.session) {
+        setMessage(t("auth.sessionEstablishmentFailed"));
       } else {
+        const sessionCheck = await fetch("/api/me", { cache: "no-store" });
+        if (!sessionCheck.ok) {
+          setMessage(t("auth.sessionEstablishmentFailed"));
+          setLoading(false);
+          return;
+        }
         if (rememberPassword) {
           saveRememberedCredentials(email);
         } else {
@@ -114,7 +124,11 @@ export default function LoginPage() {
           <p className="mt-1 text-sm text-ink-secondary">{subtitle}</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          className="space-y-4"
+          data-hydrated={hydrated ? "true" : "false"}
+        >
           <div>
             <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-secondary">
               {t("auth.email")}
