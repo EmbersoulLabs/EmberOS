@@ -28,12 +28,11 @@ describe("Sprint 3 PR 3.6 Phase 3 boundaries", () => {
     ).toBe(true);
   });
 
-  it("does not add Phase B projector/engine modules (Phase A FSR persistence allowed)", () => {
+  it("does not add Phase C Export/Publish or legacy engine modules (Phase A+B FSR allowed)", () => {
     const forbidden = [
       "packages/agents/src/ai-story/story-assembly-engine.ts",
       "packages/agents/src/ai-story/assembly-artifact-store.ts",
       "apps/worker/src/story-assembly-runtime.ts",
-      "packages/agents/src/ai-story/final-story-result-projector.ts",
       "packages/agents/src/ai-story/export-runtime.ts",
       "packages/agents/src/ai-story/publish-runtime.ts",
     ];

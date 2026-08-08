@@ -404,12 +404,20 @@ describeIntegration("Sprint 3 PR 3.6 Assembly Runtime persistence", () => {
   });
 
   it("does not create Final Story Result rows", async () => {
+    // PR 3.7 Phase A may create ai_story_final_story_results in shared DBs.
+    // Assembly Runtime must still never write Final Story Result rows.
     const tables = await sql`
       SELECT tablename FROM pg_tables
-      WHERE schemaname = 'current_schema' OR schemaname = 'public'
+      WHERE schemaname = 'public' AND tablename = 'ai_story_final_story_results'
     `;
-    const names = tables.map((row: { tablename: string }) => row.tablename);
-    expect(names).not.toContain("ai_story_final_story_results");
+    if (tables.length === 0) {
+      return;
+    }
+    const count = await sql<{ count: string }[]>`
+      SELECT COUNT(*)::text AS count FROM ai_story_final_story_results
+      WHERE org_id = ANY(${orgIds})
+    `;
+    expect(count[0]?.count).toBe("0");
   });
 
   it("orchestrator recovers SUCCEEDED from Postgres artifact without media/engine access", async () => {

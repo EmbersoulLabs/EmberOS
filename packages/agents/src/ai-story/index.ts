@@ -26,6 +26,7 @@ export * from "./assembly-runtime-facts";
 export * from "./assembly-runtime-projection";
 export * from "./assembly-runtime-job-memory";
 export * from "./assembly-runtime-orchestrator";
+export * from "./final-story-result-projector";
 export * from "./seedance-capability";
 export * from "./seedance-config";
 export * from "./seedance-request-mapping";

@@ -77,9 +77,8 @@ describe("Sprint 3 PR 3.7 Phase A boundaries", () => {
     expect(source).toMatch(/fresh transaction/);
   });
 
-  it("does not start Phase B+ / Execute / Export / Publish / Provider modules", () => {
+  it("does not start Phase C+ / Execute / Export / Publish / Provider modules (Phase B projector allowed)", () => {
     const forbidden = [
-      "packages/agents/src/ai-story/final-story-result-projector.ts",
       "packages/agents/src/ai-story/export-runtime.ts",
       "packages/agents/src/ai-story/publish-runtime.ts",
       "packages/agents/src/ai-story/story-delivery-orchestrator.ts",

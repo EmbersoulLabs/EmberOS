@@ -38,10 +38,7 @@ describe("Sprint 3 PR 3.6 Assembly Runtime boundaries", () => {
     expect(
       existsSync(join(ROOT, "packages/db/scripts/apply-ai-story-assembly-runtime-artifact-v1.ts"))
     ).toBe(true);
-    // PR 3.6 runtime itself did not ship FSR; PR 3.7 Phase A may add it.
-    expect(
-      existsSync(join(ROOT, "packages/agents/src/ai-story/final-story-result-projector.ts"))
-    ).toBe(false);
+    // PR 3.6 runtime itself did not ship FSR projector; PR 3.7 Phase B may add it.
   });
 
   it("keeps Phase 2/3 forbidden exact module names absent", () => {
@@ -92,16 +89,13 @@ describe("Sprint 3 PR 3.6 Assembly Runtime boundaries", () => {
     expect(source).not.toMatch(/async delete\(/);
   });
 
-  it("does not start PR 3.7 Phase B+ modules (Phase A persistence allowed)", () => {
+  it("does not start PR 3.7 Phase C+ Export/Publish (Phase A persistence + Phase B projector allowed)", () => {
     expect(existsSync(join(ROOT, "packages/agents/src/ai-story/export-runtime.ts"))).toBe(
       false
     );
     expect(existsSync(join(ROOT, "packages/agents/src/ai-story/publish-runtime.ts"))).toBe(
       false
     );
-    expect(
-      existsSync(join(ROOT, "packages/agents/src/ai-story/final-story-result-projector.ts"))
-    ).toBe(false);
     // Phase A persistence contract/module is expected once PR 3.7 Phase A lands.
     expect(
       existsSync(
