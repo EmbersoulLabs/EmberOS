@@ -115,15 +115,12 @@ describe("Sprint 3 PR 3.7 Phase A boundaries", () => {
     expect(sql).toMatch(/UNIQUE \(assembly_job_id\)/);
   });
 
-  it("does not add Execute UI or worker handlers in this phase", () => {
+  it("does not add final-story UI from Phase A (Phase D Execute owned separately)", () => {
     const webApi = collectSources(
       join(ROOT, "apps/web/src/app/api/campaigns")
     )
-      .filter((path) => path.includes("final-story") || path.includes("execute"))
+      .filter((path) => path.includes("final-story"))
       .map((path) => path.replace(/\\/g, "/"));
-    expect(
-      webApi.some((path) => path.includes("execution-plans") && path.endsWith("/execute/route.ts"))
-    ).toBe(false);
     expect(
       webApi.some((path) => path.includes("final-story-result/route.ts"))
     ).toBe(false);

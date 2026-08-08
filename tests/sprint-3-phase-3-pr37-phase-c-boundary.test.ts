@@ -45,11 +45,10 @@ describe("Sprint 3 PR 3.7 Phase C production runtime wiring boundaries", () => {
     );
   });
 
-  it("does not unlock Execute / Browser UI / Export / Publish / Retry", () => {
+  it("does not unlock Execute / Browser UI / Export / Publish / Retry from Phase C modules", () => {
     const forbidden = [
       "packages/agents/src/ai-story/export-runtime.ts",
       "packages/agents/src/ai-story/publish-runtime.ts",
-      "packages/agents/src/ai-story/canonical-execute-entrypoint.ts",
       "apps/worker/src/processors/ai-story-export-handler.ts",
       "apps/worker/src/processors/ai-story-publish-handler.ts",
     ];
@@ -60,6 +59,10 @@ describe("Sprint 3 PR 3.7 Phase C production runtime wiring boundaries", () => {
     expect(read("apps/worker/src/processors/index.ts")).toContain(
       "assertPhase1ExecutionLocked"
     );
+    // Phase C modules must not own the product Execute facade (Phase D does).
+    expect(
+      read("packages/agents/src/ai-story/ai-story-runtime-continuation-coordinator.ts")
+    ).not.toMatch(/authorizeAndExecuteExecutionPlan/);
   });
 
   it("continuation does not own persistence authorities or duplicate runtimes", () => {
@@ -97,15 +100,10 @@ describe("Sprint 3 PR 3.7 Phase C production runtime wiring boundaries", () => {
     ).toBe(true);
   });
 
-  it("does not add public Execute or final-story GET APIs", () => {
+  it("does not add final-story GET APIs (Phase D Execute route is owned separately)", () => {
     const webApi = collectSources(join(ROOT, "apps/web/src/app/api/campaigns"))
-      .filter((path) => path.includes("final-story") || path.includes("execute"))
+      .filter((path) => path.includes("final-story"))
       .map((path) => path.replace(/\\/g, "/"));
-    expect(
-      webApi.some(
-        (path) => path.includes("execution-plans") && path.endsWith("/execute/route.ts")
-      )
-    ).toBe(false);
     expect(webApi.some((path) => path.includes("final-story-result/route.ts"))).toBe(false);
   });
 });

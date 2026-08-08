@@ -34,12 +34,11 @@ describe("Sprint 3 PR 3.7 Phase B Final Story Result Projector boundaries", () =
     );
   });
 
-  it("does not start Phase D Export/Publish / Execute unlock (Phase C wiring allowed)", () => {
+  it("does not start Export/Publish (Phase C wiring + Phase D Execute allowed)", () => {
     const forbidden = [
       "packages/agents/src/ai-story/export-runtime.ts",
       "packages/agents/src/ai-story/publish-runtime.ts",
       "packages/agents/src/ai-story/story-delivery-orchestrator.ts",
-      "packages/agents/src/ai-story/canonical-execute-entrypoint.ts",
       "apps/worker/src/processors/ai-story-final-result-handler.ts",
       "apps/worker/src/processors/ai-story-export-handler.ts",
       "apps/worker/src/processors/ai-story-publish-handler.ts",
@@ -68,16 +67,15 @@ describe("Sprint 3 PR 3.7 Phase B Final Story Result Projector boundaries", () =
     expect(source).not.toMatch(/getBySceneResultId|loadCanonicalSceneResults/);
   });
 
-  it("does not add Execute UI or final-story browser API in this phase", () => {
+  it("does not add final-story browser API from Phase B (Phase D Execute owned separately)", () => {
     const webApi = collectSources(join(ROOT, "apps/web/src/app/api/campaigns"))
-      .filter((path) => path.includes("final-story") || path.includes("execute"))
+      .filter((path) => path.includes("final-story"))
       .map((path) => path.replace(/\\/g, "/"));
-    expect(
-      webApi.some(
-        (path) => path.includes("execution-plans") && path.endsWith("/execute/route.ts")
-      )
-    ).toBe(false);
     expect(webApi.some((path) => path.includes("final-story-result/route.ts"))).toBe(false);
+    // Projector module itself must not reference Execute unlock.
+    expect(
+      read("packages/agents/src/ai-story/final-story-result-projector.ts")
+    ).not.toMatch(/authorizeAndExecuteExecutionPlan/);
   });
 
   it("does not modify Seedance / MiniMax / Production Finalizer modules in Phase B", () => {

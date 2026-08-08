@@ -259,8 +259,30 @@ export async function persistDispatchFromScheduled(
       ${dispatch.status},
       ${dispatch.createdAt}
     )
-    ON CONFLICT DO NOTHING
+    ON CONFLICT (job_id) DO NOTHING
   `;
+  const [existing] = await sql<{
+    dispatch_id: string;
+    dispatch_hash: string;
+    execution_id: string;
+  }[]>`
+    SELECT dispatch_id, dispatch_hash, execution_id
+    FROM provider_execution_dispatches
+    WHERE job_id = ${dispatch.jobId}
+    LIMIT 1
+  `;
+  if (!existing) {
+    throw new Error("Dispatch persistence did not produce an accepted record");
+  }
+  if (
+    existing.dispatch_id !== dispatch.dispatchId ||
+    existing.dispatch_hash !== dispatch.dispatchHash ||
+    existing.execution_id !== dispatch.executionId
+  ) {
+    throw new Error(
+      "Existing Dispatch conflicts with requested Dispatch identity"
+    );
+  }
   return dispatch;
 }
 
