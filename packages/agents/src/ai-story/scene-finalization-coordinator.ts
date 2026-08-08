@@ -124,6 +124,11 @@ export class SceneFinalizationCoordinator {
   async finalizeAndProject(input: {
     readonly dispatchId: string;
     readonly workerExecutionResultId?: string;
+    /**
+     * MODEL A: non-terminal observations (e.g. TRANSIENT_INFRA) are not immutable
+     * WorkerExecutionResult rows. Coordinator may pass the in-memory operational result.
+     */
+    readonly workerResultOverride?: WorkerExecutionResult;
   }): Promise<SceneProjectionOutcome> {
     const bundle = await this.dependencies.chain.loadValidatedBundleByDispatchId(
       input.dispatchId
@@ -135,9 +140,10 @@ export class SceneFinalizationCoordinator {
       );
     }
     const workerResult =
-      await this.dependencies.chain.loadWorkerExecutionResultByDispatchId(
+      input.workerResultOverride ??
+      (await this.dependencies.chain.loadWorkerExecutionResultByDispatchId(
         input.dispatchId
-      );
+      ));
     if (!workerResult) {
       throw new SceneFinalizationCoordinatorError(
         "SCENE_PROJECTION_CHAIN_INVALID",
@@ -284,11 +290,12 @@ export class SceneFinalizationCoordinator {
     readonly bundle: SceneProjectionValidatedBundle;
     readonly workerResult: WorkerExecutionResult;
   }): Promise<SceneProjectionOutcome> {
-    const releaseApi =
-      this.dependencies.outbox?.releaseLease ??
-      this.dependencies.bridge.outbox.releaseLease.bind(
-        this.dependencies.bridge.outbox
-      );
+    const releaseApi = this.dependencies.outbox
+      ? (args: Parameters<NonNullable<typeof this.dependencies.outbox>["releaseLease"]>[0]) =>
+          this.dependencies.outbox!.releaseLease(args)
+      : (args: Parameters<
+          typeof this.dependencies.bridge.outbox.releaseLease
+        >[0]) => this.dependencies.bridge.outbox.releaseLease(args);
 
     let prepared;
     try {

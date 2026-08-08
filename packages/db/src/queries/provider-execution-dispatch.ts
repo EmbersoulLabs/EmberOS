@@ -72,7 +72,26 @@ function assertEquivalentDispatch(
 export class ExecutionDispatchRepository {
   constructor(private readonly db: Db = getDb()) {}
 
-  async selectEligibleJob(now: Date = new Date()): Promise<DispatchableProviderJob | null> {
+  async selectEligibleJob(
+    now: Date = new Date(),
+    options: { readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER" } = {}
+  ): Promise<DispatchableProviderJob | null> {
+    const ownership = options.ownership ?? "ANY";
+    const ownershipPredicate =
+      ownership === "AI_STORY_SCENE"
+        ? sql`and exists (
+            select 1
+            from ai_story_scene_scheduling_correlations correlation
+            where correlation.outbox_job_id = job.job_id
+          )`
+        : ownership === "GENERIC_PROVIDER"
+          ? sql`and not exists (
+              select 1
+              from ai_story_scene_scheduling_correlations correlation
+              where correlation.outbox_job_id = job.job_id
+            )`
+          : sql``;
+
     const rows = (await this.db.execute(sql`
       select
         job.job_id,
@@ -89,6 +108,7 @@ export class ExecutionDispatchRepository {
         and job.next_visible_at <= ${now.toISOString()}::timestamptz
         and execution.status in ('PENDING', 'DISPATCHABLE')
         and dispatch.dispatch_id is null
+        ${ownershipPredicate}
       order by
         job.priority desc,
         job.next_visible_at asc,

@@ -69,6 +69,13 @@ export type WorkerRuntimeRepository = {
   acceptOrReturnWorkerExecutionResult(
     result: WorkerExecutionResult
   ): Promise<{ result: WorkerExecutionResult; converged: boolean }>;
+  /** MODEL A: append-only non-terminal observation (optional for legacy test doubles). */
+  appendWorkerAttemptObservation?(
+    result: WorkerExecutionResult
+  ): Promise<{ result: WorkerExecutionResult; converged: boolean }>;
+  getLatestWorkerAttemptObservationByDispatchId?(
+    dispatchId: string
+  ): Promise<WorkerExecutionResult | null>;
 };
 
 export type ProcessDispatchInput = {
@@ -168,23 +175,18 @@ export class SceneProviderWorkerRuntime {
   }
 
   async processDispatch(input: ProcessDispatchInput): Promise<ProcessDispatchOutcome> {
-    const existing =
+    const terminal =
       await this.dependencies.repository.getWorkerExecutionResultByDispatchId(
         input.dispatchId
       );
-    if (existing) {
-      return {
-        result: existing,
-        replayed: true,
-        adapterInvoked: false,
-        finalizerInvoked: false,
-        usageWritten: false,
-        costWritten: false,
-        sceneResultWritten: false,
-        executionAllowed: false,
-        automaticFallbackEnabled: false,
-      };
-    }
+    const observation =
+      terminal == null &&
+      this.dependencies.repository.getLatestWorkerAttemptObservationByDispatchId
+        ? await this.dependencies.repository.getLatestWorkerAttemptObservationByDispatchId(
+            input.dispatchId
+          )
+        : null;
+    const existing = terminal ?? observation;
 
     const bundle = await this.dependencies.repository.loadValidatedBundleByDispatchId(
       input.dispatchId
@@ -207,7 +209,30 @@ export class SceneProviderWorkerRuntime {
     });
 
     const adapter = this.resolveBoundAdapter(bundle.routingDecision);
-    const mode = input.mode ?? "submit";
+    const resumeProviderRequestId =
+      input.providerRequestId ?? existing?.providerRequestId;
+    const canResumeLookup =
+      Boolean(existing) &&
+      !terminal &&
+      Boolean(resumeProviderRequestId) &&
+      !isTerminalWorkerResult(existing!) &&
+      (input.mode === "lookup" || existing!.reconciliationRequired === true);
+
+    if (existing && !canResumeLookup) {
+      return {
+        result: existing,
+        replayed: true,
+        adapterInvoked: false,
+        finalizerInvoked: false,
+        usageWritten: false,
+        costWritten: false,
+        sceneResultWritten: false,
+        executionAllowed: false,
+        automaticFallbackEnabled: false,
+      };
+    }
+
+    const mode = canResumeLookup ? "lookup" : (input.mode ?? "submit");
 
     let adapterResult:
       | {
@@ -224,14 +249,14 @@ export class SceneProviderWorkerRuntime {
 
     try {
       if (mode === "lookup") {
-        if (!input.providerRequestId) {
+        if (!resumeProviderRequestId) {
           throw new WorkerRuntimeError(
             "RECONCILIATION_REQUIRED",
             "Lookup requires a persisted providerRequestId"
           );
         }
         adapterResult = await adapter.lookup({
-          providerRequestId: input.providerRequestId,
+          providerRequestId: resumeProviderRequestId,
           envelope: bundle.envelope,
           providerAttemptId,
           dispatchId: bundle.dispatch.dispatchId,
@@ -322,8 +347,9 @@ export class SceneProviderWorkerRuntime {
       deterministicIntegrityHash: computeWorkerExecutionResultHash(withoutHash),
     });
 
-    const accepted =
-      await this.dependencies.repository.acceptOrReturnWorkerExecutionResult(result);
+    const accepted = isTerminalWorkerResult(result)
+      ? await this.dependencies.repository.acceptOrReturnWorkerExecutionResult(result)
+      : await this.persistNonTerminalObservation(result);
 
     return {
       result: accepted.result,
@@ -336,6 +362,19 @@ export class SceneProviderWorkerRuntime {
       executionAllowed: false,
       automaticFallbackEnabled: false,
     };
+  }
+
+  private async persistNonTerminalObservation(
+    result: WorkerExecutionResult
+  ): Promise<{ result: WorkerExecutionResult; converged: boolean }> {
+    const append = this.dependencies.repository.appendWorkerAttemptObservation;
+    if (!append) {
+      throw new WorkerRuntimeError(
+        "WORKER_ATTEMPT_CONFLICT",
+        "Repository does not support Worker Attempt Observations for non-terminal results"
+      );
+    }
+    return append.call(this.dependencies.repository, result);
   }
 
   private resolveBoundAdapter(
@@ -466,6 +505,19 @@ export class SceneProviderWorkerRuntime {
       );
     }
   }
+}
+
+function isTerminalWorkerResult(result: WorkerExecutionResult): boolean {
+  return (
+    result.workerState === "TERMINAL_SUCCESS" ||
+    result.workerState === "TERMINAL_FAILURE" ||
+    result.workerState === "NOT_ACCEPTED" ||
+    result.canonicalProviderState === "SUCCEEDED" ||
+    result.canonicalProviderState === "FAILED" ||
+    result.canonicalProviderState === "REJECTED" ||
+    result.canonicalProviderState === "TIMED_OUT" ||
+    result.acceptanceClassification === "NOT_ACCEPTED"
+  );
 }
 
 function mapWorkerState(

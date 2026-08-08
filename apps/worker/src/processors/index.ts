@@ -579,18 +579,31 @@ export function startWorkers() {
     `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, provider-execution-loop`
   );
 
-  // Production provider outbox cycle (capability-driven dispatch). No-op when empty.
+  // Production AI Story cycle: Dispatch → Scene Worker → Finalizer → Assembly → FSR.
+  // Reuses the same poll loop (no second Outbox consumer).
   const providerLoopMs = parseInt(process.env.PROVIDER_EXECUTION_POLL_MS ?? "5000", 10);
   const providerLoop = setInterval(() => {
     void (async () => {
       try {
-        const { dispatchNextProviderExecution } = await import(
-          "../provider-execution-dispatch-entrypoint"
+        const { runAiStoryProviderWorkerCycle } = await import(
+          "../ai-story-provider-worker-cycle"
         );
-        await dispatchNextProviderExecution();
+        const outcome = await runAiStoryProviderWorkerCycle();
+        if (
+          outcome.dispatchStatus === "DISPATCHED" &&
+          outcome.continuation &&
+          outcome.continuation.status !== "SKIPPED_NON_SCENE"
+        ) {
+          console.log(
+            `[ai-story-runtime] dispatch continued status=${outcome.continuation.status}` +
+              (outcome.continuation.assemblyJobId
+                ? ` assembly=${outcome.continuation.assemblyJobId}`
+                : "")
+          );
+        }
       } catch (error) {
         console.warn(
-          "[provider-execution] cycle error:",
+          "[ai-story-runtime] cycle error:",
           error instanceof Error ? error.message : error
         );
       }

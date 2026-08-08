@@ -1401,6 +1401,7 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
 
 /**
  * Sprint 3 PR 3.3 — immutable Worker Execution Results (no Finalizer / Scene Result).
+ * Terminal normalized Worker evidence only (MODEL A in PR 3.7 Phase C remediation).
  */
 export const aiStoryWorkerExecutionResults = pgTable(
   "ai_story_worker_execution_results",
@@ -1451,6 +1452,51 @@ export const aiStoryWorkerExecutionResults = pgTable(
     unique("ai_story_worker_result_attempt_unique").on(t.providerAttemptId),
     index("ai_story_worker_result_workspace_idx").on(t.workspaceId, t.acceptedAt),
     index("ai_story_worker_result_execution_idx").on(t.providerExecutionId),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.7 Phase C remediation — append-only Worker Attempt Observations.
+ * Operational resume/reconciliation evidence for non-terminal Adapter outcomes.
+ * Does not replace immutable terminal WorkerExecutionResult authority.
+ */
+export const aiStoryWorkerAttemptObservations = pgTable(
+  "ai_story_worker_attempt_observations",
+  {
+    observationId: uuid("observation_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    providerExecutionId: text("provider_execution_id")
+      .notNull()
+      .references(() => providerExecutions.executionId, { onDelete: "restrict" }),
+    providerAttemptId: text("provider_attempt_id").notNull(),
+    dispatchId: text("dispatch_id")
+      .notNull()
+      .references(() => providerExecutionDispatches.dispatchId, {
+        onDelete: "restrict",
+      }),
+    outboxJobId: text("outbox_job_id")
+      .notNull()
+      .references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    providerRequestId: text("provider_request_id"),
+    observationKind: text("observation_kind").notNull(),
+    reconciliationRequired: boolean("reconciliation_required").notNull().default(false),
+    deterministicIntegrityHash: text("deterministic_integrity_hash").notNull(),
+    observation: jsonb("observation")
+      .$type<import("@ceo-agent/shared").WorkerExecutionResult>()
+      .notNull(),
+    producedAt: timestamp("produced_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_worker_observation_hash_unique").on(t.deterministicIntegrityHash),
+    index("ai_story_worker_observation_dispatch_idx").on(t.dispatchId, t.producedAt),
+    index("ai_story_worker_observation_attempt_idx").on(t.providerAttemptId, t.producedAt),
+    index("ai_story_worker_observation_workspace_idx").on(t.workspaceId, t.acceptedAt),
   ]
 );
 

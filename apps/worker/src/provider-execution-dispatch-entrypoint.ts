@@ -25,8 +25,10 @@ function getProductionDispatcher(): ProviderExecutionDispatcher {
  * Canonical production boundary for selecting and materializing one Dispatch.
  * PR-3A.5C.6.3 will make Workers consume its immutable Dispatch output.
  */
-export async function dispatchNextProviderExecution(): Promise<DispatcherOutcome> {
-  return getProductionDispatcher().dispatchNext();
+export async function dispatchNextProviderExecution(
+  options: { readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER" } = {}
+): Promise<DispatcherOutcome> {
+  return getProductionDispatcher().dispatchNext(options);
 }
 
 export type ProviderExecutionCycleOutcome =

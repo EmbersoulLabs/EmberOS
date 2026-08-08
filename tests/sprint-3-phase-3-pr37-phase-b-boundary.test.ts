@@ -34,7 +34,7 @@ describe("Sprint 3 PR 3.7 Phase B Final Story Result Projector boundaries", () =
     );
   });
 
-  it("does not start Phase C / Execute / Export / Publish / Worker / Queue", () => {
+  it("does not start Phase D Export/Publish / Execute unlock (Phase C wiring allowed)", () => {
     const forbidden = [
       "packages/agents/src/ai-story/export-runtime.ts",
       "packages/agents/src/ai-story/publish-runtime.ts",
@@ -43,7 +43,6 @@ describe("Sprint 3 PR 3.7 Phase B Final Story Result Projector boundaries", () =
       "apps/worker/src/processors/ai-story-final-result-handler.ts",
       "apps/worker/src/processors/ai-story-export-handler.ts",
       "apps/worker/src/processors/ai-story-publish-handler.ts",
-      "packages/queue/src/ai-story-final-story-result-jobs.ts",
     ];
     for (const path of forbidden) {
       expect(existsSync(join(ROOT, path))).toBe(false);

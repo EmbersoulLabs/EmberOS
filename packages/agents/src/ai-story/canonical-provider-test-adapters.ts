@@ -30,6 +30,8 @@ export type DeterministicTestAdapterScenario =
   | "terminal_success"
   | "terminal_rejection"
   | "terminal_failure"
+  | "terminal_moderation_rejected"
+  | "terminal_timeout"
   | "transient_infrastructure_error"
   | "conflicting_replay";
 
@@ -104,9 +106,18 @@ export class DeterministicCanonicalTestAdapter implements CanonicalProviderAdapt
       };
     }
     if (this.scenario === "acceptance_unknown") {
+      const providerRequestId = canonicalPersistenceHash({
+        kind: "canonical-test-provider-request",
+        dispatchId: input.dispatchId,
+        providerAttemptId: input.providerAttemptId,
+        envelopeId: input.envelope.envelopeId,
+        scenario: this.scenario,
+      });
+      this.acceptedRequestIds.set(input.dispatchId, providerRequestId);
       return {
         acceptanceClassification: "ACCEPTANCE_UNKNOWN",
         canonicalProviderState: "ACCEPTANCE_UNKNOWN",
+        providerRequestId,
         reconciliationRequired: true,
         failureClassification: failureFromCode(
           "PROVIDER_ACCEPTANCE_UNKNOWN",
@@ -149,6 +160,16 @@ export class DeterministicCanonicalTestAdapter implements CanonicalProviderAdapt
       };
     }
 
+    if (this.scenario === "acceptance_unknown") {
+      if (this.lookupCount === 1) {
+        return {
+          acceptanceClassification: "ACCEPTED",
+          canonicalProviderState: "PROCESSING",
+          providerRequestId: input.providerRequestId,
+          reconciliationRequired: true,
+        };
+      }
+    }
     if (this.scenario === "processing_lookup" || this.scenario === "accepted_async") {
       if (this.lookupCount < 2) {
         return {
@@ -180,6 +201,31 @@ export class DeterministicCanonicalTestAdapter implements CanonicalProviderAdapt
         failureClassification: failureFromCode(
           "PROVIDER_FAILED",
           "Provider failed the accepted request"
+        ),
+      };
+    }
+    if (this.scenario === "terminal_moderation_rejected") {
+      return {
+        acceptanceClassification: "ACCEPTED",
+        canonicalProviderState: "REJECTED",
+        providerRequestId: input.providerRequestId,
+        reconciliationRequired: false,
+        failureClassification: failureFromCode(
+          "PROVIDER_MODERATION_REJECTED",
+          "Provider moderation rejected the accepted request"
+        ),
+      };
+    }
+    if (this.scenario === "terminal_timeout") {
+      return {
+        acceptanceClassification: "ACCEPTED",
+        canonicalProviderState: "TIMED_OUT",
+        providerRequestId: input.providerRequestId,
+        reconciliationRequired: false,
+        failureClassification: failureFromCode(
+          "PROVIDER_TIMEOUT",
+          "Provider timed out the accepted request",
+          { terminal: true, retryable: false }
         ),
       };
     }

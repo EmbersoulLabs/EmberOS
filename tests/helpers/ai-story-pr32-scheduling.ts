@@ -108,12 +108,23 @@ export async function cleanupPr32Tenant(
   sql: Sql,
   ids: Phase2aIdSet = PHASE_2A_IDS
 ): Promise<void> {
+  await sql`DELETE FROM ai_story_final_story_results WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_assembly_artifacts WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_assembly_job_facts WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_assembly_jobs WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_results WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_projection_correlations WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_worker_attempt_observations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_worker_execution_results WHERE org_id = ${ids.orgId}`;
   await sql`
     DELETE FROM provider_execution_dispatches
     WHERE workspace_id = ${ids.workspaceId}
+       OR job_id IN (
+         SELECT job_id FROM provider_outbox_jobs
+         WHERE execution_id IN (
+           SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+         )
+       )
   `;
   await sql`DELETE FROM ai_story_scene_scheduling_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_routing_decisions WHERE org_id = ${ids.orgId}`;
@@ -175,6 +186,7 @@ export async function prepareAuthorizedSchedulingPlan(input: {
   readonly ids?: Phase2aIdSet;
   readonly userId?: string;
   readonly persistAuthorization?: boolean;
+  readonly sceneOrder?: readonly number[];
 }) {
   const ids = input.ids ?? PHASE_2A_IDS;
   const userId = input.userId ?? PR32_USER_A;
@@ -183,6 +195,7 @@ export async function prepareAuthorizedSchedulingPlan(input: {
       makePhase2aCompilation({
         ids,
         instructionPurpose: `${input.purpose}-${crypto.randomUUID()}`,
+        sceneOrder: input.sceneOrder,
       })
     );
   const executionPlanId = persisted.plan.storyExecutionId;
