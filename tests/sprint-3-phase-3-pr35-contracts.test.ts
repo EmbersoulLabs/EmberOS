@@ -39,6 +39,7 @@ describe("Sprint 3 PR 3.5 remediated projection contracts", () => {
         providerId: worker.providerId,
         adapterVersion: worker.adapterVersion,
         completionMetadata: {},
+        terminalKind: "SUCCEEDED",
       },
     });
 

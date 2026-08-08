@@ -1,8 +1,10 @@
 /**
- * Sprint 3 PR 3.5 — Coordinates Production Finalizer (Tx A) then Scene Projection (Tx B).
+ * Sprint 3 PR 3.5R1 — Coordinates Production Finalizer (Tx A) then Scene Projection (Tx B).
  *
  * Not a Provider Finalizer. Does not write provider_executions / usage / cost / outbox terminal.
  * Invokes Production Provider FinalizationRepository for Transaction A only.
+ * Routes SUCCEEDED and terminal failures; ACCEPTANCE_UNKNOWN → reconciliation;
+ * TRANSIENT_INFRA_FAILURE → canonical outbox retry (no terminal write).
  */
 import {
   SceneProjectionOutcomeSchema,
@@ -14,10 +16,13 @@ import {
 import type {
   ProviderExecutionFinalizationRecord,
   ProviderExecutionFinalizationRepository,
+  ProviderExecutionTerminalFailureRecord,
+  ProviderOutboxRepository,
 } from "@ceo-agent/db";
 import {
   ProviderWorkerResultFinalizerBridge,
   ProviderWorkerResultFinalizerBridgeError,
+  classifyWorkerResultForCoordinator,
   type ProviderWorkerResultFinalizerBridgeDependencies,
 } from "./provider-worker-result-finalizer-bridge";
 import {
@@ -44,7 +49,7 @@ export type SceneFinalizationCoordinatorRepository = {
     dispatchId: string
   ): Promise<WorkerExecutionResult | null>;
   /**
-   * Read-only: if Production Finalizer already accepted this execution, return it.
+   * Read-only: if Production Finalizer already terminalized this execution, return it.
    */
   loadAcceptedProviderFinalization(
     executionId: string
@@ -56,12 +61,13 @@ export type SceneFinalizationCoordinatorDependencies = {
   readonly bridge: ProviderWorkerResultFinalizerBridgeDependencies;
   readonly productionFinalizer: Pick<
     ProviderExecutionFinalizationRepository,
-    "finalize"
+    "finalize" | "finalizeTerminalFailure"
   >;
+  readonly outbox?: Pick<ProviderOutboxRepository, "releaseLease">;
   readonly projection: SceneProjectionRepository;
 };
 
-function toAccepted(
+function toAcceptedSuccess(
   record: ProviderExecutionFinalizationRecord,
   adapterVersion: string,
   providerId: string
@@ -77,6 +83,28 @@ function toAccepted(
     providerId,
     adapterVersion,
     completionMetadata: record.completionMetadata,
+    terminalKind: "SUCCEEDED",
+  };
+}
+
+function toAcceptedFailure(
+  record: ProviderExecutionTerminalFailureRecord,
+  adapterVersion: string,
+  providerId: string
+): AcceptedProviderFinalization {
+  return {
+    executionId: record.executionId,
+    attemptId: record.attemptId,
+    jobId: record.jobId,
+    workerId: record.workerId,
+    completedAt: record.completedAt,
+    resultReference: record.resultReference,
+    responseHash: record.responseHash,
+    providerId,
+    adapterVersion,
+    completionMetadata: record.completionMetadata,
+    terminalKind: "TERMINAL_FAILURE",
+    failureCode: record.failureCode,
   };
 }
 
@@ -126,6 +154,32 @@ export class SceneFinalizationCoordinator {
       );
     }
 
+    const route = classifyWorkerResultForCoordinator(workerResult);
+
+    if (route === "ACCEPTANCE_UNKNOWN") {
+      return SceneProjectionOutcomeSchema.parse({
+        outcome: "RECONCILIATION_REQUIRED",
+        dispatchId: workerResult.dispatchId,
+        providerExecutionId: workerResult.providerExecutionId,
+        outboxJobId: workerResult.outboxJobId,
+        reason: "ACCEPTANCE_UNKNOWN requires reconciliation; Finalizer not invoked",
+        finalizerInvoked: false,
+        executionAllowed: false,
+        automaticFallbackEnabled: false,
+      });
+    }
+
+    if (route === "TRANSIENT_INFRA_FAILURE") {
+      return this.scheduleTransientRetry({ bundle, workerResult });
+    }
+
+    if (route === "NON_TERMINAL") {
+      throw new SceneFinalizationCoordinatorError(
+        "SCENE_PROJECTION_NON_TERMINAL",
+        `Worker result is not terminal for Finalizer routing: ${workerResult.canonicalProviderState}`
+      );
+    }
+
     let finalizerInvoked = false;
     let accepted =
       await this.dependencies.chain.loadAcceptedProviderFinalization(
@@ -133,28 +187,54 @@ export class SceneFinalizationCoordinator {
       );
 
     if (!accepted) {
-      let prepared;
-      try {
-        prepared = await this.bridge.prepareFinalizerInput({
-          bundle,
-          workerResult,
-        });
-      } catch (error) {
-        if (error instanceof ProviderWorkerResultFinalizerBridgeError) {
-          throw new SceneFinalizationCoordinatorError(error.code, error.message);
+      if (route === "SUCCEEDED") {
+        let prepared;
+        try {
+          prepared = await this.bridge.prepareFinalizerInput({
+            bundle,
+            workerResult,
+          });
+        } catch (error) {
+          if (error instanceof ProviderWorkerResultFinalizerBridgeError) {
+            throw new SceneFinalizationCoordinatorError(error.code, error.message);
+          }
+          throw error;
         }
-        throw error;
-      }
 
-      finalizerInvoked = true;
-      const record = await this.dependencies.productionFinalizer.finalize(
-        prepared.finalizerInput
-      );
-      accepted = toAccepted(
-        record,
-        workerResult.adapterVersion,
-        workerResult.providerId
-      );
+        finalizerInvoked = true;
+        const record = await this.dependencies.productionFinalizer.finalize(
+          prepared.finalizerInput
+        );
+        accepted = toAcceptedSuccess(
+          record,
+          workerResult.adapterVersion,
+          workerResult.providerId
+        );
+      } else {
+        let prepared;
+        try {
+          prepared = await this.bridge.prepareTerminalFailureFinalizerInput({
+            bundle,
+            workerResult,
+          });
+        } catch (error) {
+          if (error instanceof ProviderWorkerResultFinalizerBridgeError) {
+            throw new SceneFinalizationCoordinatorError(error.code, error.message);
+          }
+          throw error;
+        }
+
+        finalizerInvoked = true;
+        const record =
+          await this.dependencies.productionFinalizer.finalizeTerminalFailure(
+            prepared.finalizerInput
+          );
+        accepted = toAcceptedFailure(
+          record,
+          workerResult.adapterVersion,
+          workerResult.providerId
+        );
+      }
     }
 
     // Transaction B — separate; must not roll back Tx A.
@@ -169,6 +249,18 @@ export class SceneFinalizationCoordinator {
       if (error instanceof SceneResultProjectorError) {
         throw new SceneFinalizationCoordinatorError(error.code, error.message);
       }
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        typeof (error as { code: unknown }).code === "string" &&
+        String((error as { code: string }).code).startsWith("SCENE_PROJECTION_")
+      ) {
+        throw new SceneFinalizationCoordinatorError(
+          (error as { code: string }).code,
+          error instanceof Error ? error.message : "Projection failed"
+        );
+      }
       throw new SceneFinalizationCoordinatorError(
         "SCENE_PROJECTION_TRANSACTION_FAILED",
         error instanceof Error ? error.message : "Projection failed"
@@ -176,12 +268,55 @@ export class SceneFinalizationCoordinator {
     }
 
     return SceneProjectionOutcomeSchema.parse({
+      outcome: "PROJECTED",
       correlation: projected.correlation,
       sceneResult: projected.sceneResult,
       providerFinalizationReference:
         projected.sceneResult.providerFinalizationReference,
       replayed: projected.converged,
       finalizerInvoked,
+      executionAllowed: false,
+      automaticFallbackEnabled: false,
+    });
+  }
+
+  private async scheduleTransientRetry(input: {
+    readonly bundle: SceneProjectionValidatedBundle;
+    readonly workerResult: WorkerExecutionResult;
+  }): Promise<SceneProjectionOutcome> {
+    const releaseApi =
+      this.dependencies.outbox?.releaseLease ??
+      this.dependencies.bridge.outbox.releaseLease.bind(
+        this.dependencies.bridge.outbox
+      );
+
+    let prepared;
+    try {
+      prepared = await this.bridge.prepareTransientRetry(input);
+    } catch (error) {
+      if (error instanceof ProviderWorkerResultFinalizerBridgeError) {
+        throw new SceneFinalizationCoordinatorError(error.code, error.message);
+      }
+      throw error;
+    }
+
+    await releaseApi({
+      jobId: prepared.jobId,
+      leaseOwner: prepared.leaseOwner,
+      nextVisibleAt: prepared.nextVisibleAt,
+      retryDelayMs: prepared.retryDelayMs,
+      retryClassification: prepared.retryClassification,
+      lastErrorCategory: prepared.lastErrorCategory,
+    });
+
+    return SceneProjectionOutcomeSchema.parse({
+      outcome: "RETRY_SCHEDULED",
+      dispatchId: input.workerResult.dispatchId,
+      providerExecutionId: input.workerResult.providerExecutionId,
+      outboxJobId: input.workerResult.outboxJobId,
+      nextVisibleAt: prepared.nextVisibleAt.toISOString(),
+      retryClassification: "TRANSIENT_INFRA_FAILURE",
+      finalizerInvoked: false,
       executionAllowed: false,
       automaticFallbackEnabled: false,
     });

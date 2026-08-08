@@ -76,6 +76,15 @@ describe("Sprint 3 PR 3.5 remediated boundary", () => {
     expect(finalizer).toContain("providerAttemptCosts");
     expect(finalizer).toContain('status: "SUCCEEDED"');
     expect(finalizer).toContain('status: "COMPLETED"');
+    expect(finalizer).toContain("finalizeTerminalFailure");
+    expect(finalizer).toContain('status: "TERMINAL_FAILURE"');
+    expect(finalizer).toContain('status: "DEAD_LETTER"');
+    // Failure path must not invent usage/cost writes inside finalizeTerminalFailure.
+    const failureFn = finalizer.slice(
+      finalizer.indexOf("async finalizeTerminalFailure")
+    );
+    expect(failureFn).not.toContain("providerAttemptUsage");
+    expect(failureFn).not.toContain("providerAttemptCosts");
   });
 
   it("projection SQL has no scene usage/cost ledgers", () => {

@@ -79,15 +79,39 @@ export type SceneProjectionCorrelation = z.infer<
   typeof SceneProjectionCorrelationSchema
 >;
 
-export const SceneProjectionOutcomeSchema = z.object({
-  correlation: SceneProjectionCorrelationSchema,
-  sceneResult: ProjectedSceneResultSchema,
-  providerFinalizationReference: z.string().min(1),
-  replayed: z.boolean(),
-  finalizerInvoked: z.boolean(),
-  executionAllowed: z.literal(false),
-  automaticFallbackEnabled: z.literal(false),
-});
+export const SceneProjectionOutcomeSchema = z.discriminatedUnion("outcome", [
+  z.object({
+    outcome: z.literal("PROJECTED"),
+    correlation: SceneProjectionCorrelationSchema,
+    sceneResult: ProjectedSceneResultSchema,
+    providerFinalizationReference: z.string().min(1),
+    replayed: z.boolean(),
+    finalizerInvoked: z.boolean(),
+    executionAllowed: z.literal(false),
+    automaticFallbackEnabled: z.literal(false),
+  }),
+  z.object({
+    outcome: z.literal("RECONCILIATION_REQUIRED"),
+    dispatchId: z.string().min(1),
+    providerExecutionId: z.string().min(1),
+    outboxJobId: z.string().min(1),
+    reason: z.string().min(1),
+    finalizerInvoked: z.literal(false),
+    executionAllowed: z.literal(false),
+    automaticFallbackEnabled: z.literal(false),
+  }),
+  z.object({
+    outcome: z.literal("RETRY_SCHEDULED"),
+    dispatchId: z.string().min(1),
+    providerExecutionId: z.string().min(1),
+    outboxJobId: z.string().min(1),
+    nextVisibleAt: z.string().datetime(),
+    retryClassification: z.string().min(1),
+    finalizerInvoked: z.literal(false),
+    executionAllowed: z.literal(false),
+    automaticFallbackEnabled: z.literal(false),
+  }),
+]);
 
 export type SceneProjectionOutcome = z.infer<typeof SceneProjectionOutcomeSchema>;
 
@@ -115,6 +139,9 @@ export type AcceptedProviderFinalization = {
   readonly providerId: string;
   readonly adapterVersion: string;
   readonly completionMetadata: Readonly<Record<string, unknown>>;
+  /** Production Finalizer terminal class for this acceptance. */
+  readonly terminalKind?: "SUCCEEDED" | "TERMINAL_FAILURE";
+  readonly failureCode?: string;
 };
 
 export type SceneProjectionPersistInput = {
@@ -157,6 +184,7 @@ export function mapWorkerFailureToProjectionFailure(
 ): z.infer<typeof RuntimeFailureClassificationSchema> | null {
   switch (code) {
     case "PROVIDER_MODERATION_REJECTED":
+      return "PROVIDER_MODERATION_REJECTED";
     case "PROVIDER_REJECTED":
       return "PROVIDER_REJECTED";
     case "PROVIDER_TIMEOUT":
@@ -167,6 +195,44 @@ export function mapWorkerFailureToProjectionFailure(
     default:
       return code ? "FINALIZATION_FAILED" : null;
   }
+}
+
+/**
+ * Maps Worker canonical provider state + failure code to Scene Result status.
+ * Projection-only; does not own Provider terminal writes.
+ */
+export function mapWorkerResultToSceneStatus(input: {
+  readonly canonicalProviderState: WorkerExecutionResult["canonicalProviderState"];
+  readonly failureCode?: string;
+}): "SUCCEEDED" | "FAILED" | "REJECTED" | "TIMEOUT" {
+  if (input.canonicalProviderState === "SUCCEEDED") return "SUCCEEDED";
+  if (input.canonicalProviderState === "TIMED_OUT") return "TIMEOUT";
+  if (input.canonicalProviderState === "REJECTED") return "REJECTED";
+  if (
+    input.failureCode === "PROVIDER_TIMEOUT" ||
+    input.failureCode === "PROVIDER_MODERATION_REJECTED" ||
+    input.failureCode === "PROVIDER_REJECTED"
+  ) {
+    if (input.failureCode === "PROVIDER_TIMEOUT") return "TIMEOUT";
+    return "REJECTED";
+  }
+  return "FAILED";
+}
+
+/** Terminal Worker outcomes that Production Finalizer may terminalize as failure. */
+export const FINALIZER_TERMINAL_FAILURE_STATES = [
+  "FAILED",
+  "REJECTED",
+  "TIMED_OUT",
+] as const;
+
+export type FinalizerTerminalFailureState =
+  (typeof FINALIZER_TERMINAL_FAILURE_STATES)[number];
+
+export function isFinalizerTerminalFailureState(
+  state: WorkerExecutionResult["canonicalProviderState"]
+): state is FinalizerTerminalFailureState {
+  return (FINALIZER_TERMINAL_FAILURE_STATES as readonly string[]).includes(state);
 }
 
 export type {

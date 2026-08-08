@@ -108,6 +108,8 @@ export async function cleanupPr32Tenant(
   sql: Sql,
   ids: Phase2aIdSet = PHASE_2A_IDS
 ): Promise<void> {
+  await sql`DELETE FROM ai_story_scene_results WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_projection_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_worker_execution_results WHERE org_id = ${ids.orgId}`;
   await sql`
     DELETE FROM provider_execution_dispatches
@@ -116,6 +118,30 @@ export async function cleanupPr32Tenant(
   await sql`DELETE FROM ai_story_scene_scheduling_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_routing_decisions WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_runtime_authorized_facts WHERE org_id = ${ids.orgId}`;
+  await sql`
+    DELETE FROM provider_attempt_costs
+    WHERE attempt_id IN (
+      SELECT attempt_id FROM provider_attempts
+      WHERE execution_id IN (
+        SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+      )
+    )
+  `;
+  await sql`
+    DELETE FROM provider_attempt_usage
+    WHERE attempt_id IN (
+      SELECT attempt_id FROM provider_attempts
+      WHERE execution_id IN (
+        SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+      )
+    )
+  `;
+  await sql`
+    DELETE FROM provider_attempts
+    WHERE execution_id IN (
+      SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+    )
+  `;
   await sql`
     DELETE FROM provider_outbox_jobs
     WHERE execution_id IN (

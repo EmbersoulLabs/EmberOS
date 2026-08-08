@@ -9,8 +9,11 @@ import {
   PHASE1_EXECUTION_LOCKED,
   PROVIDER_RELIABILITY_CONTRACT_VERSION,
   SCENE_ROUTER_VERSION,
+  createProviderError,
+  isFinalizerTerminalFailureState,
   type CanonicalProviderResult,
   type ProviderAttempt,
+  type ProviderError,
   type SceneProjectionValidatedBundle,
   type WorkerExecutionResult,
 } from "@ceo-agent/shared";
@@ -19,6 +22,7 @@ import {
 } from "@ceo-agent/db";
 import type { ProviderLedgerRepository } from "@ceo-agent/db";
 import type { ProviderOutboxRepository } from "@ceo-agent/db";
+import type { ProviderExecutionTerminalFailureInput } from "@ceo-agent/db";
 
 export class ProviderWorkerResultFinalizerBridgeError extends Error {
   constructor(
@@ -61,6 +65,25 @@ export type BridgeFinalizerInput = {
 };
 
 export type BridgePrepareSuccess = BridgePrepareResult;
+
+export type BridgePrepareTerminalFailure = {
+  readonly finalizerInput: ProviderExecutionTerminalFailureInput;
+  readonly attempt: ProviderAttempt;
+  readonly attemptCreated: boolean;
+  readonly workerResult: WorkerExecutionResult;
+  readonly bundle: SceneProjectionValidatedBundle;
+};
+
+export type BridgePrepareRetry = {
+  readonly jobId: string;
+  readonly leaseOwner: string;
+  readonly nextVisibleAt: Date;
+  readonly retryDelayMs: number;
+  readonly retryClassification: "TRANSIENT_INFRA_FAILURE";
+  readonly lastErrorCategory: string;
+  readonly workerResult: WorkerExecutionResult;
+  readonly bundle: SceneProjectionValidatedBundle;
+};
 
 function assertOwnershipChain(bundle: SceneProjectionValidatedBundle): void {
   const ownership = bundle.runtimeAuthorization.ownership;
@@ -181,7 +204,7 @@ function assertTerminalSuccess(workerResult: WorkerExecutionResult): void {
   if (workerResult.canonicalProviderState !== "SUCCEEDED") {
     throw new ProviderWorkerResultFinalizerBridgeError(
       "BRIDGE_NON_TERMINAL",
-      `Bridge maps only SUCCEEDED Worker results to Production Finalizer; got ${workerResult.canonicalProviderState}`
+      `Bridge maps only SUCCEEDED Worker results to success Finalizer; got ${workerResult.canonicalProviderState}`
     );
   }
   if (workerResult.workerState !== "TERMINAL_SUCCESS") {
@@ -190,6 +213,91 @@ function assertTerminalSuccess(workerResult: WorkerExecutionResult): void {
       `Bridge requires TERMINAL_SUCCESS worker state; got ${workerResult.workerState}`
     );
   }
+}
+
+function assertTerminalFailure(workerResult: WorkerExecutionResult): void {
+  if (!isFinalizerTerminalFailureState(workerResult.canonicalProviderState)) {
+    throw new ProviderWorkerResultFinalizerBridgeError(
+      "BRIDGE_NON_TERMINAL",
+      `Bridge maps only FAILED/REJECTED/TIMED_OUT to failure Finalizer; got ${workerResult.canonicalProviderState}`
+    );
+  }
+  if (
+    workerResult.workerState !== "TERMINAL_FAILURE" &&
+    workerResult.workerState !== "NOT_ACCEPTED"
+  ) {
+    throw new ProviderWorkerResultFinalizerBridgeError(
+      "BRIDGE_NON_TERMINAL",
+      `Bridge requires TERMINAL_FAILURE or NOT_ACCEPTED worker state; got ${workerResult.workerState}`
+    );
+  }
+  if (!workerResult.failureClassification?.terminal) {
+    throw new ProviderWorkerResultFinalizerBridgeError(
+      "BRIDGE_NON_TERMINAL",
+      "Terminal failure Finalizer requires failureClassification.terminal=true"
+    );
+  }
+}
+
+export function classifyWorkerResultForCoordinator(
+  workerResult: WorkerExecutionResult
+):
+  | "SUCCEEDED"
+  | "TERMINAL_FAILURE"
+  | "ACCEPTANCE_UNKNOWN"
+  | "TRANSIENT_INFRA_FAILURE"
+  | "NON_TERMINAL" {
+  if (
+    workerResult.canonicalProviderState === "ACCEPTANCE_UNKNOWN" ||
+    workerResult.acceptanceClassification === "ACCEPTANCE_UNKNOWN" ||
+    workerResult.workerState === "ACCEPTANCE_UNKNOWN"
+  ) {
+    return "ACCEPTANCE_UNKNOWN";
+  }
+  if (
+    workerResult.failureClassification?.retryable === true &&
+    workerResult.failureClassification.terminal === false &&
+    workerResult.failureClassification.reconciliationRequired === false
+  ) {
+    return "TRANSIENT_INFRA_FAILURE";
+  }
+  if (workerResult.canonicalProviderState === "SUCCEEDED") {
+    return "SUCCEEDED";
+  }
+  if (isFinalizerTerminalFailureState(workerResult.canonicalProviderState)) {
+    return "TERMINAL_FAILURE";
+  }
+  return "NON_TERMINAL";
+}
+
+function mapFailureCodeToProviderError(
+  workerResult: WorkerExecutionResult
+): ProviderError {
+  const code = workerResult.failureClassification?.code ?? "PROVIDER_FAILED";
+  const message =
+    workerResult.failureClassification?.sanitizedMessage ??
+    "Provider terminal failure";
+  if (code === "PROVIDER_TIMEOUT") {
+    // AI Story treats PROVIDER_TIMEOUT as Production-Finalizer terminal (DEAD_LETTER),
+    // not TIMEOUT_UNKNOWN reconciliation.
+    return createProviderError("TERMINAL_FAILURE", {
+      code,
+      message,
+    });
+  }
+  if (
+    code === "PROVIDER_REJECTED" ||
+    code === "PROVIDER_MODERATION_REJECTED"
+  ) {
+    return createProviderError("POLICY_REJECTION", {
+      code,
+      message,
+    });
+  }
+  return createProviderError("TERMINAL_FAILURE", {
+    code,
+    message,
+  });
 }
 
 function ensureSha256Hash(value: string, seed: unknown): string {
@@ -299,12 +407,58 @@ export function buildBridgeProviderAttempt(input: {
   };
 }
 
+export function buildBridgeTerminalFailureAttempt(input: {
+  readonly workerResult: WorkerExecutionResult;
+  readonly bundle: SceneProjectionValidatedBundle;
+  readonly failure: ProviderError;
+}): {
+  readonly attempt: ProviderAttempt;
+  readonly requestHash: string;
+  readonly responseHash: string;
+  readonly resultReference: string;
+} {
+  const requestHash = ensureSha256Hash(input.bundle.envelope.requestHash, {
+    kind: "bridge-failure-request-hash",
+    envelopeId: input.bundle.envelope.envelopeId,
+  });
+  const responseHash = ensureSha256Hash(
+    input.workerResult.deterministicIntegrityHash,
+    {
+      kind: "bridge-failure-response-hash",
+      workerExecutionResultId: input.workerResult.workerExecutionResultId,
+    }
+  );
+  const resultReference = `terminal-failure://${input.workerResult.workerExecutionResultId}`;
+  return {
+    requestHash,
+    responseHash,
+    resultReference,
+    attempt: {
+      contractVersion: PROVIDER_RELIABILITY_CONTRACT_VERSION,
+      attemptId: input.workerResult.providerAttemptId,
+      executionId: input.workerResult.providerExecutionId,
+      attemptNumber: 1,
+      providerId: input.workerResult.providerId,
+      providerVersion: input.workerResult.adapterVersion,
+      modelVersion: input.workerResult.adapterVersion,
+      ...(input.workerResult.providerRequestId
+        ? { providerRequestId: input.workerResult.providerRequestId }
+        : {}),
+      requestHash,
+      responseHash,
+      status: "TERMINAL_FAILURE",
+      startedAt: input.workerResult.producedAt,
+      completedAt: input.workerResult.producedAt,
+    },
+  };
+}
+
 export type ProviderWorkerResultFinalizerBridgeDependencies = {
   readonly ledger: Pick<ProviderLedgerRepository, "appendAttempt">;
-  readonly outbox: Pick<ProviderOutboxRepository, "findJob"> & {
+  readonly outbox: Pick<ProviderOutboxRepository, "findJob" | "releaseLease"> & {
     /**
      * Ensures the outbox job is CLAIMED by workerId with an active lease.
-     * Not a terminal write — Finalizer still owns COMPLETED.
+     * Not a terminal write — Finalizer still owns COMPLETED / DEAD_LETTER.
      */
     claimOrRenewForFinalization(input: {
       jobId: string;
@@ -315,17 +469,20 @@ export type ProviderWorkerResultFinalizerBridgeDependencies = {
   };
   readonly workerId?: string;
   readonly leaseDurationMs?: number;
+  readonly retryDelayMs?: number;
 };
 
 export class ProviderWorkerResultFinalizerBridge {
   private readonly workerId: string;
   private readonly leaseDurationMs: number;
+  private readonly retryDelayMs: number;
 
   constructor(
     private readonly dependencies: ProviderWorkerResultFinalizerBridgeDependencies
   ) {
     this.workerId = dependencies.workerId ?? "ai-story-finalizer-bridge";
     this.leaseDurationMs = dependencies.leaseDurationMs ?? 60_000;
+    this.retryDelayMs = dependencies.retryDelayMs ?? 5_000;
   }
 
   /**
@@ -403,6 +560,122 @@ export class ProviderWorkerResultFinalizerBridge {
       canonicalResult,
       attempt,
       attemptCreated,
+      workerResult,
+      bundle,
+    };
+  }
+
+  /**
+   * Prepare Production Finalizer terminal-failure input.
+   * Appends TERMINAL_FAILURE attempt; does not write usage/cost/outbox terminal.
+   */
+  async prepareTerminalFailureFinalizerInput(input: {
+    readonly bundle: SceneProjectionValidatedBundle;
+    readonly workerResult: WorkerExecutionResult;
+  }): Promise<BridgePrepareTerminalFailure> {
+    const { bundle, workerResult } = input;
+    assertOwnershipChain(bundle);
+    assertImmutableChain(bundle, workerResult);
+    assertTerminalFailure(workerResult);
+    void PHASE1_EXECUTION_LOCKED;
+
+    const failure = mapFailureCodeToProviderError(workerResult);
+    const built = buildBridgeTerminalFailureAttempt({
+      workerResult,
+      bundle,
+      failure,
+    });
+
+    let attemptCreated = false;
+    let attempt: ProviderAttempt;
+    try {
+      attempt = await this.dependencies.ledger.appendAttempt({
+        attempt: built.attempt,
+        failure,
+        providerMetadata: {
+          source: "ai-story-worker-result-bridge",
+          workerExecutionResultId: workerResult.workerExecutionResultId,
+          terminalKind: "TERMINAL_FAILURE",
+          failureCode: failure.code,
+        },
+      });
+      attemptCreated = attempt.attemptId === built.attempt.attemptId;
+    } catch (error) {
+      throw new ProviderWorkerResultFinalizerBridgeError(
+        "BRIDGE_ATTEMPT_CONFLICT",
+        error instanceof Error ? error.message : "Provider attempt conflict"
+      );
+    }
+
+    await this.dependencies.outbox.claimOrRenewForFinalization({
+      jobId: workerResult.outboxJobId,
+      leaseOwner: this.workerId,
+      leaseDurationMs: this.leaseDurationMs,
+    });
+
+    return {
+      finalizerInput: {
+        jobId: workerResult.outboxJobId,
+        executionId: workerResult.providerExecutionId,
+        attemptId: workerResult.providerAttemptId,
+        workerId: this.workerId,
+        providerId: workerResult.providerId,
+        adapterVersion: workerResult.adapterVersion,
+        failureCode: failure.code,
+        failureReason: failure.message,
+        resultReference: built.resultReference,
+        requestHash: built.requestHash,
+        responseHash: built.responseHash,
+        dispatchTimestamp: bundle.dispatch.createdAt,
+        executionDurationMs:
+          workerResult.normalizedUsageFacts?.durationMs ?? 0,
+        completionMetadata: {
+          workerExecutionResultId: workerResult.workerExecutionResultId,
+          canonicalProviderState: workerResult.canonicalProviderState,
+          source: "ai-story-worker-result-bridge",
+        },
+      },
+      attempt,
+      attemptCreated,
+      workerResult,
+      bundle,
+    };
+  }
+
+  /**
+   * Claim lease and return release instructions for TRANSIENT_INFRA_FAILURE.
+   * Does not terminalize Provider execution or outbox.
+   */
+  async prepareTransientRetry(input: {
+    readonly bundle: SceneProjectionValidatedBundle;
+    readonly workerResult: WorkerExecutionResult;
+  }): Promise<BridgePrepareRetry> {
+    const { bundle, workerResult } = input;
+    assertOwnershipChain(bundle);
+    assertImmutableChain(bundle, workerResult);
+    if (classifyWorkerResultForCoordinator(workerResult) !== "TRANSIENT_INFRA_FAILURE") {
+      throw new ProviderWorkerResultFinalizerBridgeError(
+        "BRIDGE_NON_TERMINAL",
+        "prepareTransientRetry requires TRANSIENT_INFRA_FAILURE classification"
+      );
+    }
+    void PHASE1_EXECUTION_LOCKED;
+
+    await this.dependencies.outbox.claimOrRenewForFinalization({
+      jobId: workerResult.outboxJobId,
+      leaseOwner: this.workerId,
+      leaseDurationMs: this.leaseDurationMs,
+    });
+
+    const nextVisibleAt = new Date(Date.now() + this.retryDelayMs);
+    return {
+      jobId: workerResult.outboxJobId,
+      leaseOwner: this.workerId,
+      nextVisibleAt,
+      retryDelayMs: this.retryDelayMs,
+      retryClassification: "TRANSIENT_INFRA_FAILURE",
+      lastErrorCategory:
+        workerResult.failureClassification?.code ?? "TRANSIENT_INFRA_FAILURE",
       workerResult,
       bundle,
     };

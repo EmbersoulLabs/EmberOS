@@ -11,8 +11,11 @@ import {
 } from "../packages/agents/src/ai-story/scene-finalization-coordinator";
 import { SceneResultProjectorError } from "../packages/agents/src/ai-story/scene-result-projector";
 import {
+  buildAcceptanceUnknownWorkerResult,
   buildPr35ProjectionBundle,
+  buildTerminalFailureWorkerResult,
   buildTerminalSuccessWorkerResult,
+  buildTransientInfraWorkerResult,
   InMemoryBridgeLedger,
   InMemoryBridgeOutbox,
   InMemoryProductionFinalizer,
@@ -27,6 +30,9 @@ import type {
 function buildCoordinatorDeps(opts?: {
   failProjectionOnce?: boolean;
   preAccepted?: AcceptedProviderFinalization | null;
+  workerFactory?: (
+    bundle: SceneProjectionValidatedBundle
+  ) => WorkerExecutionResult;
 }) {
   const bundlePromise = buildPr35ProjectionBundle();
   const ledger = new InMemoryBridgeLedger();
@@ -34,6 +40,7 @@ function buildCoordinatorDeps(opts?: {
   const productionFinalizer = new InMemoryProductionFinalizer();
   const projection = new InMemoryProjectionRepository();
   if (opts?.failProjectionOnce) projection.failNext = true;
+  const workerFactory = opts?.workerFactory ?? buildTerminalSuccessWorkerResult;
 
   const state: {
     bundle: SceneProjectionValidatedBundle | null;
@@ -47,7 +54,7 @@ function buildCoordinatorDeps(opts?: {
 
   const ready = bundlePromise.then((bundle) => {
     state.bundle = bundle;
-    state.worker = buildTerminalSuccessWorkerResult(bundle);
+    state.worker = workerFactory(bundle);
     return bundle;
   });
 
@@ -146,8 +153,12 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
         status: "SUCCEEDED",
       },
     ]);
-    expect(deps.productionFinalizer.outboxTerminal).toHaveLength(1);
+    expect(deps.productionFinalizer.outboxTerminal).toEqual([
+      { jobId: deps.productionFinalizer.calls[0]!.jobId, status: "COMPLETED" },
+    ]);
     expect(deps.ledger.usageWrites).toHaveLength(0);
+    expect(outcome.outcome).toBe("PROJECTED");
+    if (outcome.outcome !== "PROJECTED") throw new Error("expected PROJECTED");
     expect(outcome.sceneResult.providerUsageReference).toMatch(
       /^provider-attempt-usage:\/\//
     );
@@ -169,6 +180,11 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
     expect(deps.productionFinalizer.calls).toHaveLength(1);
     expect(deps.productionFinalizer.usageInserted).toHaveLength(1);
     expect(deps.productionFinalizer.outboxTerminal).toHaveLength(1);
+    expect(first.outcome).toBe("PROJECTED");
+    expect(second.outcome).toBe("PROJECTED");
+    if (first.outcome !== "PROJECTED" || second.outcome !== "PROJECTED") {
+      throw new Error("expected PROJECTED");
+    }
     expect(second.sceneResult.integrityHash).toBe(first.sceneResult.integrityHash);
   });
 
@@ -188,6 +204,8 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
     const recovered = await deps.coordinator.finalizeAndProject({ dispatchId });
     expect(recovered.finalizerInvoked).toBe(false);
     expect(deps.productionFinalizer.calls).toHaveLength(1);
+    expect(recovered.outcome).toBe("PROJECTED");
+    if (recovered.outcome !== "PROJECTED") throw new Error("expected PROJECTED");
     expect(recovered.sceneResult.status).toBe("SUCCEEDED");
   });
 
@@ -212,7 +230,7 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
     expect(first.sceneResult.sceneResultId).toBeTruthy();
   });
 
-  it("rejects non-SUCCEEDED worker results at the bridge", async () => {
+  it("rejects non-SUCCEEDED worker results at the success bridge", async () => {
     const bundle = await buildPr35ProjectionBundle();
     const worker = buildTerminalSuccessWorkerResult(bundle, {
       workerState: "PROCESSING",
@@ -227,5 +245,73 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
     await expect(
       bridge.prepareFinalizerInput({ bundle, workerResult: worker })
     ).rejects.toMatchObject({ code: "BRIDGE_NON_TERMINAL" });
+  });
+
+  it("routes FAILED through Production Finalizer terminal failure + FAILED projection", async () => {
+    const deps = buildCoordinatorDeps({
+      workerFactory: (bundle) =>
+        buildTerminalFailureWorkerResult(bundle, { failureCode: "PROVIDER_FAILED" }),
+    });
+    const dispatchId = await deps.getDispatchId();
+    const outcome = await deps.coordinator.finalizeAndProject({ dispatchId });
+
+    expect(outcome.outcome).toBe("PROJECTED");
+    if (outcome.outcome !== "PROJECTED") throw new Error("expected PROJECTED");
+    expect(outcome.sceneResult.status).toBe("FAILED");
+    expect(deps.productionFinalizer.failureCalls).toHaveLength(1);
+    expect(deps.productionFinalizer.usageInserted).toHaveLength(0);
+    expect(deps.productionFinalizer.costInserted).toHaveLength(0);
+    expect(deps.productionFinalizer.outboxTerminal).toHaveLength(1);
+    expect(deps.productionFinalizer.outboxTerminal[0]?.status).toBe("DEAD_LETTER");
+  });
+
+  it("routes REJECTED / TIMEOUT / MODERATION through Finalizer without usage/cost", async () => {
+    for (const [failureCode, sceneStatus] of [
+      ["PROVIDER_REJECTED", "REJECTED"],
+      ["PROVIDER_MODERATION_REJECTED", "REJECTED"],
+      ["PROVIDER_TIMEOUT", "TIMEOUT"],
+    ] as const) {
+      const deps = buildCoordinatorDeps({
+        workerFactory: (bundle) =>
+          buildTerminalFailureWorkerResult(bundle, { failureCode }),
+      });
+      const dispatchId = await deps.getDispatchId();
+      const outcome = await deps.coordinator.finalizeAndProject({ dispatchId });
+      expect(outcome.outcome).toBe("PROJECTED");
+      if (outcome.outcome !== "PROJECTED") throw new Error("expected PROJECTED");
+      expect(outcome.sceneResult.status).toBe(sceneStatus);
+      expect(deps.productionFinalizer.usageInserted).toHaveLength(0);
+      expect(deps.productionFinalizer.outboxTerminal[0]?.status).toBe("DEAD_LETTER");
+    }
+  });
+
+  it("ACCEPTANCE_UNKNOWN does not invoke Finalizer", async () => {
+    const deps = buildCoordinatorDeps({
+      workerFactory: buildAcceptanceUnknownWorkerResult,
+    });
+    const dispatchId = await deps.getDispatchId();
+    const outcome = await deps.coordinator.finalizeAndProject({ dispatchId });
+    expect(outcome).toMatchObject({
+      outcome: "RECONCILIATION_REQUIRED",
+      finalizerInvoked: false,
+    });
+    expect(deps.productionFinalizer.calls).toHaveLength(0);
+    expect(deps.productionFinalizer.failureCalls).toHaveLength(0);
+  });
+
+  it("TRANSIENT_INFRA_FAILURE schedules retry without terminal Finalizer", async () => {
+    const deps = buildCoordinatorDeps({
+      workerFactory: buildTransientInfraWorkerResult,
+    });
+    const dispatchId = await deps.getDispatchId();
+    const outcome = await deps.coordinator.finalizeAndProject({ dispatchId });
+    expect(outcome).toMatchObject({
+      outcome: "RETRY_SCHEDULED",
+      retryClassification: "TRANSIENT_INFRA_FAILURE",
+      finalizerInvoked: false,
+    });
+    expect(deps.outbox.releases).toHaveLength(1);
+    expect(deps.productionFinalizer.calls).toHaveLength(0);
+    expect(deps.productionFinalizer.failureCalls).toHaveLength(0);
   });
 });

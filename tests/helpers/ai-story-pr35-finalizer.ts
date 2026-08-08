@@ -106,11 +106,13 @@ export function buildTerminalSuccessWorkerResult(
 
 export class InMemoryBridgeLedger {
   attempts = new Map<string, ProviderAttempt>();
+  failures = new Map<string, unknown>();
   usageWrites: string[] = [];
   costWrites: string[] = [];
 
   async appendAttempt(input: {
     attempt: ProviderAttempt;
+    failure?: unknown;
     providerMetadata?: Record<string, unknown>;
   }): Promise<ProviderAttempt> {
     const existing = this.attempts.get(input.attempt.attemptId);
@@ -121,6 +123,7 @@ export class InMemoryBridgeLedger {
       return existing;
     }
     this.attempts.set(input.attempt.attemptId, input.attempt);
+    if (input.failure) this.failures.set(input.attempt.attemptId, input.failure);
     return input.attempt;
   }
 
@@ -138,6 +141,7 @@ export class InMemoryBridgeLedger {
 export class InMemoryBridgeOutbox {
   claims: string[] = [];
   completions: string[] = [];
+  releases: string[] = [];
   statusByJob = new Map<string, string>();
 
   async findJob(jobId: string) {
@@ -155,14 +159,34 @@ export class InMemoryBridgeOutbox {
     this.claims.push(input.jobId);
     this.statusByJob.set(input.jobId, "CLAIMED");
   }
+
+  async releaseLease(input: {
+    jobId: string;
+    leaseOwner: string;
+    nextVisibleAt: Date;
+    retryDelayMs?: number;
+    retryClassification?: string;
+    lastErrorCategory?: string;
+  }) {
+    this.releases.push(input.jobId);
+    this.statusByJob.set(
+      input.jobId,
+      input.nextVisibleAt.getTime() > Date.now() ? "RETRY_WAIT" : "PENDING"
+    );
+    return {
+      jobId: input.jobId,
+      status: this.statusByJob.get(input.jobId),
+    } as never;
+  }
 }
 
 export class InMemoryProductionFinalizer {
   calls: BridgeFinalizerInput[] = [];
+  failureCalls: Array<{ executionId: string; failureCode: string }> = [];
   usageInserted: string[] = [];
   costInserted: string[] = [];
   executionTerminal: Array<{ executionId: string; status: string }> = [];
-  outboxTerminal: string[] = [];
+  outboxTerminal: Array<{ jobId: string; status: string }> = [];
   failNext = false;
   accepted = new Map<string, AcceptedProviderFinalization>();
 
@@ -180,7 +204,7 @@ export class InMemoryProductionFinalizer {
       executionId: input.executionId,
       status: "SUCCEEDED",
     });
-    this.outboxTerminal.push(input.jobId);
+    this.outboxTerminal.push({ jobId: input.jobId, status: "COMPLETED" });
     const completedAt = "2026-08-05T13:00:01.000Z";
     const record: ProviderExecutionFinalizationRecord = {
       executionId: input.executionId,
@@ -190,6 +214,7 @@ export class InMemoryProductionFinalizer {
       result: input.result,
       completedAt,
       completionMetadata: input.completionMetadata,
+      terminalKind: "SUCCEEDED",
     };
     this.accepted.set(input.executionId, {
       executionId: input.executionId,
@@ -202,6 +227,72 @@ export class InMemoryProductionFinalizer {
       providerId: input.providerId,
       adapterVersion: input.adapterVersion,
       completionMetadata: input.completionMetadata,
+      terminalKind: "SUCCEEDED",
+    });
+    return record;
+  }
+
+  async finalizeTerminalFailure(input: {
+    readonly jobId: string;
+    readonly executionId: string;
+    readonly attemptId: string;
+    readonly workerId: string;
+    readonly providerId: string;
+    readonly adapterVersion: string;
+    readonly failureCode: string;
+    readonly failureReason: string;
+    readonly resultReference: string;
+    readonly requestHash: string;
+    readonly responseHash: string;
+    readonly dispatchTimestamp: string;
+    readonly executionDurationMs: number;
+    readonly completionMetadata?: Readonly<Record<string, unknown>>;
+  }) {
+    if (this.failNext) {
+      this.failNext = false;
+      throw new Error("Simulated Production Finalizer failure");
+    }
+    this.failureCalls.push({
+      executionId: input.executionId,
+      failureCode: input.failureCode,
+    });
+    this.executionTerminal.push({
+      executionId: input.executionId,
+      status: "TERMINAL_FAILURE",
+    });
+    this.outboxTerminal.push({ jobId: input.jobId, status: "DEAD_LETTER" });
+    const completedAt = "2026-08-05T13:00:01.000Z";
+    const completionMetadata = {
+      terminalKind: "TERMINAL_FAILURE",
+      failureCode: input.failureCode,
+      resultReference: input.resultReference,
+      ...(input.completionMetadata ?? {}),
+    };
+    const record = {
+      executionId: input.executionId,
+      attemptId: input.attemptId,
+      jobId: input.jobId,
+      workerId: input.workerId,
+      terminalKind: "TERMINAL_FAILURE" as const,
+      failureCode: input.failureCode,
+      resultReference: input.resultReference,
+      responseHash: input.responseHash,
+      completedAt,
+      completionMetadata,
+    };
+    this.accepted.set(input.executionId, {
+      executionId: input.executionId,
+      attemptId: input.attemptId,
+      jobId: input.jobId,
+      workerId: input.workerId,
+      completedAt,
+      resultReference: input.resultReference,
+      responseHash: input.responseHash,
+      providerId: input.providerId,
+      adapterVersion: input.adapterVersion,
+      completionMetadata,
+      terminalKind: "TERMINAL_FAILURE",
+      failureCode: input.failureCode,
     });
     return record;
   }
@@ -252,4 +343,144 @@ export class InMemoryProjectionRepository implements SceneProjectionRepository {
 
 export function pr35Ownership() {
   return pr33AuthorizedFact().ownership;
+}
+
+export function buildTerminalFailureWorkerResult(
+  bundle: SceneProjectionValidatedBundle,
+  overrides: Partial<WorkerExecutionResult> & {
+    readonly failureCode?:
+      | "PROVIDER_FAILED"
+      | "PROVIDER_REJECTED"
+      | "PROVIDER_MODERATION_REJECTED"
+      | "PROVIDER_TIMEOUT";
+  } = {}
+): WorkerExecutionResult {
+  const failureCode = overrides.failureCode ?? "PROVIDER_FAILED";
+  const stateByCode = {
+    PROVIDER_FAILED: "FAILED",
+    PROVIDER_REJECTED: "REJECTED",
+    PROVIDER_MODERATION_REJECTED: "REJECTED",
+    PROVIDER_TIMEOUT: "TIMED_OUT",
+  } as const;
+  const producedAt = "2026-08-05T13:00:00.000Z";
+  const { deterministicIntegrityHash: hashOverride, failureCode: _fc, ...rest } =
+    overrides;
+  const withoutHash = {
+    workerExecutionResultId: "10000000-0000-5000-8000-000000000811",
+    providerExecutionId: bundle.providerExecutionId,
+    providerAttemptId: "10000000-0000-5000-8000-000000000812",
+    dispatchId: bundle.dispatch.dispatchId,
+    outboxJobId: bundle.outboxJobId,
+    routingDecisionId: bundle.routingDecision.routingDecisionId,
+    providerId: bundle.routingDecision.selectedProviderId,
+    adapterVersion: bundle.routingDecision.selectedAdapterVersion,
+    routerVersion: SCENE_ROUTER_VERSION,
+    providerRequestId: "cgt-pr35-terminal-failure",
+    workerState: "TERMINAL_FAILURE" as const,
+    acceptanceClassification: "ACCEPTED" as const,
+    canonicalProviderState: stateByCode[failureCode],
+    normalizedResultReference: undefined,
+    terminalMedia: undefined,
+    failureClassification: {
+      code: failureCode,
+      retryable: false,
+      terminal: true,
+      reconciliationRequired: false,
+      sanitizedMessage: `Terminal ${failureCode}`,
+    },
+    reconciliationRequired: false,
+    workerContractVersion: WORKER_RUNTIME_CONTRACT_VERSION,
+    attemptContractVersion: WORKER_ATTEMPT_CONTRACT_VERSION,
+    producedAt,
+    executionAllowed: false as const,
+    executionLockCode: PHASE1_EXECUTION_LOCKED,
+    automaticFallbackEnabled: false as const,
+    ...rest,
+  };
+  if (hashOverride) {
+    return WorkerExecutionResultSchema.parse({
+      ...withoutHash,
+      deterministicIntegrityHash: hashOverride,
+    });
+  }
+  return WorkerExecutionResultSchema.parse({
+    ...withoutHash,
+    deterministicIntegrityHash: computeWorkerExecutionResultHash(withoutHash),
+  });
+}
+
+export function buildTransientInfraWorkerResult(
+  bundle: SceneProjectionValidatedBundle
+): WorkerExecutionResult {
+  const producedAt = "2026-08-05T13:00:00.000Z";
+  const withoutHash = {
+    workerExecutionResultId: "10000000-0000-5000-8000-000000000821",
+    providerExecutionId: bundle.providerExecutionId,
+    providerAttemptId: "10000000-0000-5000-8000-000000000822",
+    dispatchId: bundle.dispatch.dispatchId,
+    outboxJobId: bundle.outboxJobId,
+    routingDecisionId: bundle.routingDecision.routingDecisionId,
+    providerId: bundle.routingDecision.selectedProviderId,
+    adapterVersion: bundle.routingDecision.selectedAdapterVersion,
+    routerVersion: SCENE_ROUTER_VERSION,
+    workerState: "PROCESSING" as const,
+    acceptanceClassification: "ACCEPTED" as const,
+    canonicalProviderState: "PROCESSING" as const,
+    failureClassification: {
+      code: "PROVIDER_FAILED" as const,
+      retryable: true,
+      terminal: false,
+      reconciliationRequired: false,
+      sanitizedMessage: "Transient provider infrastructure failure",
+    },
+    reconciliationRequired: false,
+    workerContractVersion: WORKER_RUNTIME_CONTRACT_VERSION,
+    attemptContractVersion: WORKER_ATTEMPT_CONTRACT_VERSION,
+    producedAt,
+    executionAllowed: false as const,
+    executionLockCode: PHASE1_EXECUTION_LOCKED,
+    automaticFallbackEnabled: false as const,
+  };
+  return WorkerExecutionResultSchema.parse({
+    ...withoutHash,
+    deterministicIntegrityHash: computeWorkerExecutionResultHash(withoutHash),
+  });
+}
+
+export function buildAcceptanceUnknownWorkerResult(
+  bundle: SceneProjectionValidatedBundle
+): WorkerExecutionResult {
+  const producedAt = "2026-08-05T13:00:00.000Z";
+  const withoutHash = {
+    workerExecutionResultId: "10000000-0000-5000-8000-000000000831",
+    providerExecutionId: bundle.providerExecutionId,
+    providerAttemptId: "10000000-0000-5000-8000-000000000832",
+    dispatchId: bundle.dispatch.dispatchId,
+    outboxJobId: bundle.outboxJobId,
+    routingDecisionId: bundle.routingDecision.routingDecisionId,
+    providerId: bundle.routingDecision.selectedProviderId,
+    adapterVersion: bundle.routingDecision.selectedAdapterVersion,
+    routerVersion: SCENE_ROUTER_VERSION,
+    workerState: "ACCEPTANCE_UNKNOWN" as const,
+    acceptanceClassification: "ACCEPTANCE_UNKNOWN" as const,
+    canonicalProviderState: "ACCEPTANCE_UNKNOWN" as const,
+    failureClassification: {
+      code: "PROVIDER_ACCEPTANCE_UNKNOWN" as const,
+      retryable: false,
+      terminal: false,
+      reconciliationRequired: true,
+      sanitizedMessage: "Provider acceptance unknown",
+    },
+    reconciliationRequired: true,
+    workerContractVersion: WORKER_RUNTIME_CONTRACT_VERSION,
+    attemptContractVersion: WORKER_ATTEMPT_CONTRACT_VERSION,
+    producedAt,
+    executionAllowed: false as const,
+    executionLockCode: PHASE1_EXECUTION_LOCKED,
+    automaticFallbackEnabled: false as const,
+  };
+  return WorkerExecutionResultSchema.parse({
+    ...withoutHash,
+    deterministicIntegrityHash: computeWorkerExecutionResultHash(withoutHash),
+  });
 }

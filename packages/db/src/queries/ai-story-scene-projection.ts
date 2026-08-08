@@ -207,13 +207,7 @@ export class SceneProjectionRepositoryImpl {
       .from(schema.providerExecutions)
       .where(eq(schema.providerExecutions.executionId, executionId))
       .limit(1);
-    if (
-      !execution ||
-      execution.status !== "SUCCEEDED" ||
-      !execution.acceptedResult ||
-      !execution.acceptedAttemptId ||
-      !execution.completedAt
-    ) {
+    if (!execution || !execution.acceptedAttemptId || !execution.completedAt) {
       return null;
     }
 
@@ -222,23 +216,61 @@ export class SceneProjectionRepositoryImpl {
       .from(schema.providerOutboxJobs)
       .where(eq(schema.providerOutboxJobs.executionId, executionId))
       .limit(1);
-    if (!job || job.status !== "COMPLETED") return null;
+    if (!job) return null;
 
-    const result = execution.acceptedResult;
-    return {
-      executionId,
-      attemptId: execution.acceptedAttemptId,
-      jobId: job.jobId,
-      workerId: job.completionWorkerId ?? "unknown",
-      completedAt: execution.completedAt.toISOString(),
-      resultReference: result.resultReference,
-      responseHash: result.responseHash,
-      providerId: result.providerMetadata.providerId,
-      adapterVersion:
-        result.provenance?.[0]?.adapterVersion ??
-        result.providerMetadata.providerVersion,
-      completionMetadata: (job.completionMetadata ?? {}) as Record<string, unknown>,
-    };
+    if (
+      execution.status === "SUCCEEDED" &&
+      execution.acceptedResult &&
+      job.status === "COMPLETED"
+    ) {
+      const result = execution.acceptedResult;
+      return {
+        executionId,
+        attemptId: execution.acceptedAttemptId,
+        jobId: job.jobId,
+        workerId: job.completionWorkerId ?? "unknown",
+        completedAt: execution.completedAt.toISOString(),
+        resultReference: result.resultReference,
+        responseHash: result.responseHash,
+        providerId: result.providerMetadata.providerId,
+        adapterVersion:
+          result.provenance?.[0]?.adapterVersion ??
+          result.providerMetadata.providerVersion,
+        completionMetadata: (job.completionMetadata ?? {}) as Record<string, unknown>,
+        terminalKind: "SUCCEEDED",
+      };
+    }
+
+    if (execution.status === "TERMINAL_FAILURE" && job.status === "DEAD_LETTER") {
+      const meta = (job.completionMetadata ?? {}) as Record<string, unknown>;
+      const resultReference =
+        typeof meta.resultReference === "string" && meta.resultReference.length > 0
+          ? meta.resultReference
+          : `terminal-failure://${execution.acceptedAttemptId}`;
+      const responseHash =
+        execution.acceptedResponseHash ??
+        (typeof meta.responseHash === "string" ? meta.responseHash : "");
+      if (!responseHash) return null;
+      return {
+        executionId,
+        attemptId: execution.acceptedAttemptId,
+        jobId: job.jobId,
+        workerId: job.completionWorkerId ?? "unknown",
+        completedAt: execution.completedAt.toISOString(),
+        resultReference,
+        responseHash,
+        providerId:
+          typeof meta.providerId === "string" ? meta.providerId : "unknown",
+        adapterVersion:
+          typeof meta.adapterVersion === "string" ? meta.adapterVersion : "unknown",
+        completionMetadata: meta,
+        terminalKind: "TERMINAL_FAILURE",
+        failureCode:
+          typeof meta.failureCode === "string" ? meta.failureCode : undefined,
+      };
+    }
+
+    return null;
   }
 
   async acceptOrConvergeProjection(input: {

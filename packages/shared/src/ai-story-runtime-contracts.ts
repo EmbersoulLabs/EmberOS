@@ -314,7 +314,7 @@ export const CanonicalSceneResultSchema = z.object({
   sceneId: NonEmptyTextSchema,
   sceneOrder: z.number().int().nonnegative(),
   ownership: RuntimeOwnershipIdentitySchema,
-  status: z.enum(["SUCCEEDED", "FAILED"]),
+  status: z.enum(["SUCCEEDED", "FAILED", "REJECTED", "TIMEOUT"]),
   failureClassification: RuntimeFailureClassificationSchema.nullable().default(null),
   mediaReference: RuntimeMediaReferenceSchema.nullable().default(null),
   durationMs: z.number().int().positive().nullable().default(null),
@@ -324,6 +324,7 @@ export const CanonicalSceneResultSchema = z.object({
 });
 
 export type CanonicalSceneResult = z.infer<typeof CanonicalSceneResultSchema>;
+export type CanonicalSceneResultStatus = CanonicalSceneResult["status"];
 
 /* -------------------------------------------------------------------------- */
 /* 5. Final Story Result Contract                                             */

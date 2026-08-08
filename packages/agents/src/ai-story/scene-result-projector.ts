@@ -13,6 +13,7 @@ import {
   buildProviderFinalizationReference,
   buildProviderUsageReference,
   mapWorkerFailureToProjectionFailure,
+  mapWorkerResultToSceneStatus,
   type AcceptedProviderFinalization,
   type ProjectedSceneResult,
   type SceneProjectionCorrelation,
@@ -142,13 +143,34 @@ export function projectSceneResultFromAcceptedFinalization(input: {
   const ownership = bundle.runtimeAuthorization.ownership;
   const projectedAt = workerResult.producedAt;
   const acceptedAt = finalization.completedAt;
-  const status =
-    workerResult.canonicalProviderState === "SUCCEEDED" ? "SUCCEEDED" : "FAILED";
+  const status = mapWorkerResultToSceneStatus({
+    canonicalProviderState: workerResult.canonicalProviderState,
+    failureCode: workerResult.failureClassification?.code,
+  });
+  if (
+    finalization.terminalKind === "TERMINAL_FAILURE" &&
+    status === "SUCCEEDED"
+  ) {
+    throw new SceneResultProjectorError(
+      "SCENE_PROJECTION_FINALIZATION_REQUIRED",
+      "Terminal-failure finalization cannot project SUCCEEDED Scene Result"
+    );
+  }
+  if (
+    finalization.terminalKind === "SUCCEEDED" &&
+    status !== "SUCCEEDED"
+  ) {
+    throw new SceneResultProjectorError(
+      "SCENE_PROJECTION_FINALIZATION_REQUIRED",
+      "Successful finalization cannot project non-SUCCEEDED Scene Result"
+    );
+  }
   const failureClassification =
-    status === "FAILED"
-      ? mapWorkerFailureToProjectionFailure(workerResult.failureClassification?.code) ??
-        "PROVIDER_FAILED"
-      : null;
+    status === "SUCCEEDED"
+      ? null
+      : mapWorkerFailureToProjectionFailure(
+          workerResult.failureClassification?.code ?? finalization.failureCode
+        ) ?? "PROVIDER_FAILED";
 
   const mediaReference =
     status === "SUCCEEDED" && workerResult.terminalMedia?.uriReference
@@ -171,13 +193,10 @@ export function projectSceneResultFromAcceptedFinalization(input: {
           }
         : null;
 
-  if (status === "SUCCEEDED" && !mediaReference) {
-    // Allow success without media only if resultReference exists (still no false media).
-  }
-  if (status === "FAILED" && mediaReference) {
+  if (status !== "SUCCEEDED" && mediaReference) {
     throw new SceneResultProjectorError(
       "SCENE_PROJECTION_HASH_MISMATCH",
-      "Failed Scene Result must not include successful media reference"
+      "Non-success Scene Result must not include successful media reference"
     );
   }
 
@@ -204,9 +223,9 @@ export function projectSceneResultFromAcceptedFinalization(input: {
     sceneId: bundle.sceneId,
     sceneOrder: bundle.sceneOrder,
     ownership,
-    status: status as "SUCCEEDED" | "FAILED",
+    status,
     failureClassification,
-    mediaReference: status === "FAILED" ? null : mediaReference,
+    mediaReference: status === "SUCCEEDED" ? mediaReference : null,
     durationMs: durationMs && durationMs > 0 ? durationMs : null,
     acceptedAt,
     projectedAt,
