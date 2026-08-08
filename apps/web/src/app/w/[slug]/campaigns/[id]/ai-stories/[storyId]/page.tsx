@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, StatusBadge } from "@/components/AppShell";
+import { StoryRuntimePanel } from "@/components/ai-story/StoryRuntimePanel";
 import { ExecutionPlanReviewPanel } from "@/components/ai-story-review/ExecutionPlanReviewPanel";
 import { executionPlanStorageKey } from "@/lib/ai-story-review-assembly-ui";
 import {
@@ -762,9 +763,19 @@ function ExecutionPanel({
           </div>
         ) : null}
         <p className="text-xs text-ink-secondary" data-testid="phase2a-execution-locked">
-          Execution remains locked (PHASE1_EXECUTION_LOCKED). No Execute action is available.
+          Legacy Execute / Retry / Export remain locked. Use Story Runtime Execute below when the
+          plan is READY_FOR_EXECUTION.
         </p>
       </section>
+
+      {executionPlanId ? (
+        <StoryRuntimePanel
+          campaignId={campaignId}
+          storyId={storyId}
+          executionPlanId={executionPlanId}
+          workspaceRole={workspaceRole}
+        />
+      ) : null}
 
       {executionPlanId ? (
         <ExecutionPlanReviewPanel

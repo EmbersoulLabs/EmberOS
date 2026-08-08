@@ -91,16 +91,19 @@ describe("Sprint 3 PR 3.7 Phase D Canonical Execute boundaries", () => {
     );
   });
 
-  it("does not introduce Export / Publish / Browser UI / Phase E", () => {
+  it("does not introduce Export / Publish; Phase E browser viewer is allowed", () => {
     const forbidden = [
       "packages/agents/src/ai-story/export-runtime.ts",
       "packages/agents/src/ai-story/publish-runtime.ts",
-      "apps/web/src/components/ai-story/FinalStoryResultViewer.tsx",
       "apps/web/src/app/(app)/campaigns/[id]/ai-stories/[storyId]/runtime/page.tsx",
     ];
     for (const path of forbidden) {
       expect(existsSync(join(ROOT, path))).toBe(false);
     }
+    // Phase E may introduce FinalStoryResultViewer; Phase D forbade it until then.
+    expect(
+      existsSync(join(ROOT, "apps/web/src/components/ai-story/FinalStoryResultViewer.tsx"))
+    ).toBe(true);
     const route = read(
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"
     );

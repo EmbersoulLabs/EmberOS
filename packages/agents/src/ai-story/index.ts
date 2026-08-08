@@ -9,6 +9,7 @@ export * from "./scene-execution-persistence-service";
 export * from "./runtime-authorization-service";
 export * from "./authorize-and-execute-execution-plan";
 export * from "./canonical-execute-router";
+export * from "./derive-product-runtime-projection";
 export * from "./canonical-scene-provider-request";
 export * from "./scene-scheduling-coordinator";
 export * from "./canonical-provider-adapter";

@@ -98,6 +98,16 @@ export function createInMemoryAssemblyJobRepository(
       }
       return null;
     },
+    async getLatestByExecutionPlanId(executionPlanId) {
+      let latest: AssemblyJob | null = null;
+      for (const job of jobs.values()) {
+        if (job.executionPlanId !== executionPlanId) continue;
+        if (!latest || job.acceptedAt >= latest.acceptedAt) {
+          latest = job;
+        }
+      }
+      return latest;
+    },
     async acceptOrConverge(input) {
       const job = AssemblyJobSchema.parse(input);
       const existing = jobs.get(job.assemblyJobId);

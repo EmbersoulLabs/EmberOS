@@ -4,7 +4,7 @@
  * Accept-or-converge Assembly Jobs + append-only Assembly Job Facts.
  * No Final Story Result. No media assembly. No update()/delete().
  */
-import { asc, eq, sql } from "drizzle-orm";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import {
   AssemblyFailedFactSchema,
   AssemblyJobAcceptedFactSchema,
@@ -87,6 +87,10 @@ export interface AssemblyJobRepository {
   getByAssemblyJobId(assemblyJobId: string): Promise<AssemblyJob | null>;
   getByDeterministicFingerprint(
     deterministicFingerprint: string
+  ): Promise<AssemblyJob | null>;
+  /** Observational read: latest accepted Assembly Job for a plan (Phase E). */
+  getLatestByExecutionPlanId(
+    executionPlanId: string
   ): Promise<AssemblyJob | null>;
   acceptOrConverge(job: AssemblyJob): Promise<AcceptOrConvergeAssemblyJobResult>;
   acquireTerminalAcceptanceLock(
@@ -592,6 +596,21 @@ export class AssemblyJobRepositoryImpl implements AssemblyJobRepository {
     return loadJobByFingerprint(this.db, deterministicFingerprint);
   }
 
+  async getLatestByExecutionPlanId(
+    executionPlanId: string
+  ): Promise<AssemblyJob | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.aiStoryAssemblyJobs)
+      .where(eq(schema.aiStoryAssemblyJobs.executionPlanId, executionPlanId))
+      .orderBy(
+        desc(schema.aiStoryAssemblyJobs.acceptedAt),
+        desc(schema.aiStoryAssemblyJobs.assemblyJobId)
+      )
+      .limit(1);
+    return row ? toJob(row) : null;
+  }
+
   async acceptOrConverge(input: AssemblyJob): Promise<AcceptOrConvergeAssemblyJobResult> {
     const job = AssemblyJobSchema.parse(input);
     assertJobIdentityMatchesDerived(job);
@@ -688,6 +707,7 @@ export function listAssemblyJobRepositoryMutators(): readonly string[] {
   return [
     "getByAssemblyJobId",
     "getByDeterministicFingerprint",
+    "getLatestByExecutionPlanId",
     "acceptOrConverge",
     "acquireTerminalAcceptanceLock",
     "appendAssemblyJobFact",
