@@ -7,6 +7,7 @@ config({ path: resolve(".env.local") });
 
 const baseURL = process.env.E2E_BASE_URL?.trim() || "http://127.0.0.1:3000";
 const parsedBaseURL = new URL(baseURL);
+const useExternalRuntime = process.env.E2E_EXTERNAL_RUNTIME === "true";
 if (parsedBaseURL.hostname !== "127.0.0.1") {
   throw new Error(`E2E_BASE_URL must use the canonical host 127.0.0.1, received ${parsedBaseURL.hostname}`);
 }
@@ -35,12 +36,14 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
-  webServer: {
-    command: "node scripts/start-local-runtime.mjs --e2e",
-    url: `${baseURL}/api/health/runtime`,
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  webServer: useExternalRuntime
+    ? undefined
+    : {
+        command: "node scripts/start-local-runtime.mjs --e2e",
+        url: `${baseURL}/api/health/runtime`,
+        reuseExistingServer: true,
+        timeout: 120_000,
+      },
   projects: [
     { name: "auth-setup", testMatch: /auth\.setup\.ts/ },
     {

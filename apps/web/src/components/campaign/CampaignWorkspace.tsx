@@ -47,12 +47,20 @@ type AssetRow = {
   originalFilename?: string | null;
   fileSizeBytes?: number | null;
   createdAt?: string;
+  metadata?: Record<string, unknown> | null;
 };
 
 type StoryRow = { storyId: string; name: string; status: string };
 type AiStoryRow = { id: string; title: string; status: string; updatedAt?: string };
 type TaskRow = { id: string; status: string; currentStep?: string | null; stepProgress?: Record<string, { status?: string; percent?: number }>; createdAt?: string; updatedAt?: string };
 type CreativeRow = { id: string; status?: string; title?: string | null; coverUrl?: string | null; createdAt?: string; updatedAt?: string };
+
+function assetAnalysisStatus(asset: AssetRow): string | undefined {
+  const state = asset.metadata?.assetAnalysis;
+  if (!state || typeof state !== "object") return undefined;
+  const status = (state as Record<string, unknown>).status;
+  return typeof status === "string" ? status : undefined;
+}
 
 export function CampaignWorkspace({
   slug,
@@ -144,6 +152,20 @@ export function CampaignWorkspace({
     const timer = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(timer);
   }, [task, load]);
+
+  useEffect(() => {
+    const analyzing = assets.some((asset) => {
+      const state = asset.metadata?.assetAnalysis;
+      const status =
+        state && typeof state === "object"
+          ? (state as Record<string, unknown>).status
+          : undefined;
+      return status === "pending" || status === "analyzing";
+    });
+    if (!analyzing) return;
+    const timer = window.setInterval(() => void load(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [assets, load]);
 
   async function saveOverview() {
     setSaving(true);
@@ -290,7 +312,7 @@ export function CampaignWorkspace({
 
           <section id="create-content" className="rounded-2xl border border-border bg-white p-4 sm:p-5"><h2 className="text-base font-bold text-navy">Create Content</h2><p className="mt-1 text-xs text-ink-secondary">Video Studio and AI Story are peer workflows inside this Campaign.</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="flex min-h-44 flex-col rounded-xl border border-border p-4"><h3 className="font-bold text-navy">Create Video</h3><p className="mt-2 flex-1 text-sm text-ink-secondary">Use Campaign assets and the existing generation pipeline.</p>{!canCreate ? <p className="mb-3 text-xs text-amber-700">Operator permission is required.</p> : assets.length === 0 ? <p className="mb-3 text-xs text-amber-700">Add at least one Campaign asset first.</p> : null}<button type="button" disabled={!canCreate || assets.length === 0 || generateBusy || Boolean(activeTask)} onClick={() => void onGenerate()} className="min-h-11 rounded-lg bg-navy px-4 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{generateBusy ? "Starting…" : "Create Video"}</button></div><div className="flex min-h-44 flex-col rounded-xl border border-border p-4"><h3 className="font-bold text-navy">Create AI Story</h3><p className="mt-2 flex-1 text-sm text-ink-secondary">Draft a Campaign-owned story. Assets are optional.</p>{!canCreate ? <p className="mb-3 text-xs text-amber-700">Operator permission is required.</p> : null}{canCreate ? <Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/new`} className="inline-flex min-h-11 items-center justify-center rounded-lg bg-navy px-4 text-sm font-semibold text-white">Create AI Story</Link> : <span aria-disabled className="inline-flex min-h-11 items-center justify-center rounded-lg bg-slate-200 text-sm font-semibold text-slate-500">Create AI Story</span>}</div></div></section>
 
-          <section className="rounded-2xl border border-border bg-white p-4 sm:p-5"><h2 className="text-base font-bold text-navy">Media Assets</h2><p className="mt-1 text-xs text-ink-secondary">{assets.length} Campaign asset{assets.length === 1 ? "" : "s"}</p>{assets.length ? <ul className="mt-3 divide-y divide-border">{assets.slice(0, 4).map((asset) => <li key={asset.id} className="flex min-w-0 items-center gap-3 py-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-xs font-semibold">{asset.type === "video" ? "Video" : "Image"}</span><div className="min-w-0"><p className="truncate text-sm font-semibold text-navy">{asset.displayName || asset.originalFilename || "Asset"}</p>{asset.displayName && asset.originalFilename && asset.displayName !== asset.originalFilename ? <p className="truncate text-xs text-ink-secondary">Original: {asset.originalFilename}</p> : null}</div></li>)}</ul> : <p className="mt-3 text-sm text-ink-secondary">No Campaign assets yet.</p>}<Link href={`/w/${slug}/assets`} className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg border border-border px-4 text-sm font-semibold text-navy">Manage Assets</Link></section>
+          <section className="rounded-2xl border border-border bg-white p-4 sm:p-5"><h2 className="text-base font-bold text-navy">Media Assets</h2><p className="mt-1 text-xs text-ink-secondary">{assets.length} Campaign asset{assets.length === 1 ? "" : "s"}</p>{assets.length ? <ul className="mt-3 divide-y divide-border">{assets.slice(0, 4).map((asset) => <li key={asset.id} className="flex min-w-0 items-center gap-3 py-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-surface-muted text-xs font-semibold">{asset.type === "video" ? "Video" : "Image"}</span><div className="min-w-0"><p className="truncate text-sm font-semibold text-navy">{asset.displayName || asset.originalFilename || "Asset"}</p>{asset.displayName && asset.originalFilename && asset.displayName !== asset.originalFilename ? <p className="truncate text-xs text-ink-secondary">Original: {asset.originalFilename}</p> : null}{["pending", "analyzing"].includes(assetAnalysisStatus(asset) ?? "") ? <p className="text-xs text-ink-secondary" role="status">Analyzing image…</p> : assetAnalysisStatus(asset) === "failed" ? <p className="text-xs text-amber-700">Analysis unavailable</p> : null}</div></li>)}</ul> : <p className="mt-3 text-sm text-ink-secondary">No Campaign assets yet.</p>}<Link href={`/w/${slug}/assets`} className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg border border-border px-4 text-sm font-semibold text-navy">Manage Assets</Link></section>
 
           <section className="rounded-2xl border border-border bg-white p-4 sm:p-5"><h2 className="text-base font-bold text-navy">Recent Content</h2><div className="mt-4 grid gap-5 lg:grid-cols-2"><div><h3 className="text-sm font-bold text-navy">Recent Videos</h3>{creatives.length ? <ul className="mt-2 space-y-2">{creatives.slice(-3).reverse().map((creative, index) => <li key={creative.id}><Link href={`/w/${slug}/creatives/${creative.id}`} className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-border p-3"><span className="truncate text-sm font-semibold text-navy">{creative.title || `Campaign video ${index + 1}`}</span><StatusBadge status={creative.status || "processing"} /></Link></li>)}</ul> : <p className="mt-2 rounded-xl border border-dashed border-border p-3 text-sm text-ink-secondary">No videos yet. <a href="#create-content" className="font-semibold underline">Create a video</a>.</p>}</div><div><h3 className="text-sm font-bold text-navy">Recent AI Stories</h3>{storiesLoading ? <div className="mt-2 h-20 animate-pulse rounded-xl bg-surface-muted" /> : storiesError ? <div className="mt-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{storiesError}<button type="button" onClick={() => void load()} className="mt-2 block min-h-11 rounded-lg border border-red-300 px-3 font-semibold">Try again</button></div> : aiStories.length ? <ul className="mt-2 space-y-2">{aiStories.slice(0, 3).map((story) => <li key={story.id}><Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/${story.id}`} className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-border p-3"><span className="truncate text-sm font-semibold text-navy">{story.title}</span><StatusBadge status={story.status} /></Link></li>)}</ul> : <p className="mt-2 rounded-xl border border-dashed border-border p-3 text-sm text-ink-secondary">No AI Stories yet. <a href="#create-content" className="font-semibold underline">Create an AI Story</a>.</p>}</div></div></section>
 

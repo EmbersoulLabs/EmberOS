@@ -9,7 +9,6 @@ import {
 import {
   isUuid,
   LibraryUploadBodySchema,
-  MAX_UPLOAD_SIZE_BYTES,
   resolveLibraryAssetType,
   STORAGE_PATHS,
 } from "@ceo-agent/shared";
@@ -18,6 +17,7 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { isDatabaseSchemaError } from "@/lib/database-errors";
+import { validateStorageUpload } from "@/lib/storage-upload-validation";
 
 async function loadWorkspace(workspaceId: string) {
   const db = getDb();
@@ -133,15 +133,20 @@ export async function POST(
     if (!typeCheck.ok) return apiError(typeCheck.error, "VALIDATION_ERROR", 400);
 
     const size = fileSizeBytes ?? 0;
-    if (size <= 0 || size > MAX_UPLOAD_SIZE_BYTES) {
-      const limitGB = (MAX_UPLOAD_SIZE_BYTES / 1024 / 1024 / 1024).toFixed(0);
-      return apiError(`File too large (max ${limitGB}GB).`, "VALIDATION_ERROR", 400);
-    }
 
     const assetId = randomUUID();
     const ext = filename.split(".").pop()?.toLowerCase() || typeCheck.type;
     const storagePath = STORAGE_PATHS.library(workspaceId, assetId, ext);
     const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
+
+    const storageCheck = await validateStorageUpload({
+      sizeBytes: size,
+      mimeType,
+      bucket,
+    });
+    if (!storageCheck.ok) {
+      return apiError(storageCheck.error, storageCheck.code, 400);
+    }
 
     const supabase = createAdminClient();
     const { data, error } = await supabase.storage

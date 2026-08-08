@@ -16,7 +16,17 @@ export async function startRuntimeHeartbeat(): Promise<() => Promise<void>> {
   const redis = new Redis(redisUrl, { connectTimeout: 10_000, maxRetriesPerRequest: 1 });
   await redis.ping();
   const key = workerHeartbeatKey();
-  const write = () => redis.set(key, JSON.stringify({ pid: process.pid, at: Date.now() }), "EX", HEARTBEAT_TTL_SECONDS);
+  const write = () =>
+    redis.set(
+      key,
+      JSON.stringify({
+        pid: process.pid,
+        at: Date.now(),
+        capabilities: ["agent", "asset-analysis", "probe", "render", "export"],
+      }),
+      "EX",
+      HEARTBEAT_TTL_SECONDS
+    );
   await write();
   const timer = setInterval(() => void write().catch((error) => {
     console.error("[worker] heartbeat failed:", error instanceof Error ? error.message : error);

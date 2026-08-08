@@ -6,11 +6,12 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   STORAGE_PATHS,
-  MAX_UPLOAD_SIZE_BYTES,
   assessFinishedAdRisk,
+  resolveLibraryAssetType,
 } from "@ceo-agent/shared";
 import { validateNewAssetUpload } from "@/lib/campaign-assets";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { validateStorageUpload } from "@/lib/storage-upload-validation";
 
 export async function POST(
   request: Request,
@@ -22,26 +23,28 @@ export async function POST(
     if (limited) return limited;
     const { id: campaignId } = await params;
     const body = await request.json();
-    const { filename, mimeType, type, fileSizeBytes } = body as {
+    const { filename, mimeType, type, fileSizeBytes, durationSec } = body as {
       filename: string;
       mimeType: string;
       type: "video" | "image";
       fileSizeBytes?: number;
+      durationSec?: number;
     };
 
     if (!filename || !mimeType || !type) {
       return apiError("filename, mimeType, and type are required", "VALIDATION_ERROR", 400);
     }
 
-    const size = fileSizeBytes ?? 0;
-    if (size <= 0 || size > MAX_UPLOAD_SIZE_BYTES) {
-      const limitGB = (MAX_UPLOAD_SIZE_BYTES / 1024 / 1024 / 1024).toFixed(0);
+    const typeCheck = resolveLibraryAssetType({ filename, mimeType, type });
+    if (!typeCheck.ok || typeCheck.type !== type) {
       return apiError(
-        `File too large (max ${limitGB}GB). Videos over 500MB are auto-compressed after upload.`,
-        "VALIDATION_ERROR",
+        typeCheck.ok ? "Declared asset type does not match the file MIME type." : typeCheck.error,
+        "MIME_NOT_ALLOWED",
         400
       );
     }
+
+    const size = fileSizeBytes ?? 0;
 
     const db = getDb();
     const [campaign] = await db
@@ -53,14 +56,29 @@ export async function POST(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
-    const assetCheck = await validateNewAssetUpload(db, campaignId, campaign.workspaceId, type);
-    if (!assetCheck.ok) return apiError(assetCheck.error, "VALIDATION_ERROR", 400);
+    const assetCheck = await validateNewAssetUpload(
+      db,
+      campaignId,
+      campaign.workspaceId,
+      type,
+      type === "video" ? durationSec : undefined
+    );
+    if (!assetCheck.ok) return apiError(assetCheck.error, assetCheck.code, 400);
 
     const assetId = randomUUID();
     const ext = filename.split(".").pop() ?? "mp4";
     // PD-036: file lives in Workspace library; campaign only receives a reference.
     const storagePath = STORAGE_PATHS.library(campaign.workspaceId, assetId, ext);
     const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
+
+    const storageCheck = await validateStorageUpload({
+      sizeBytes: size,
+      mimeType,
+      bucket,
+    });
+    if (!storageCheck.ok) {
+      return apiError(storageCheck.error, storageCheck.code, 400);
+    }
 
     const supabase = createAdminClient();
     const { data, error } = await supabase.storage

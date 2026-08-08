@@ -38,6 +38,7 @@ import { tmpdir } from "node:os";
 import type { EditPlan, CopyVariant, Platform } from "@ceo-agent/shared";
 import { delayPipelineJobForDependencies } from "./dependency-delay";
 import { refreshAnalyzedAssetDisplayName } from "../asset-auto-name";
+import { processAssetAnalysisJob } from "./asset-analysis-handler";
 
 const concurrency = parseInt(process.env.WORKER_CONCURRENCY ?? "2", 10);
 /** FFmpeg is memory-heavy — default 1 parallel render on Railway to avoid OOM slot deadlock. */
@@ -215,6 +216,28 @@ export function startWorkers() {
       }
     },
     { connection, prefix, concurrency, lockDuration: agentLockMs, ...workerOpts }
+  );
+
+  const assetAnalysisWorker = new Worker(
+    QUEUE_NAMES.ASSET_ANALYSIS,
+    async (job) => {
+      if (job.name !== "asset.analysis") return;
+      const data = job.data as { assetId: string; workspaceId: string };
+      console.log(
+        `[asset-analysis] start job=${job.id} asset=${data.assetId} attempt=${job.attemptsMade + 1}`
+      );
+      const result = await processAssetAnalysisJob(data, job.attemptsMade + 1);
+      console.log(
+        `[asset-analysis] ${result.status} job=${job.id} asset=${data.assetId}`
+      );
+    },
+    {
+      connection,
+      prefix,
+      concurrency: Math.max(1, Math.min(concurrency, 3)),
+      lockDuration: agentLockMs,
+      ...workerOpts,
+    }
   );
 
   const probeWorker = new Worker(
@@ -587,9 +610,12 @@ export function startWorkers() {
     }
   });
   exportWorker.on("failed", (job, err) => console.error(`Export job ${job?.id} failed:`, err));
+  assetAnalysisWorker.on("failed", (job, err) =>
+    console.error(`Asset analysis job ${job?.id} failed:`, err)
+  );
 
   console.log(
-    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, provider-execution-loop`
+    `Workers started: agent (concurrency=${concurrency}), asset-analysis, render (concurrency=${renderConcurrency}), probe, export, provider-execution-loop`
   );
 
   // Production provider outbox cycle (capability-driven dispatch). No-op when empty.
@@ -611,5 +637,5 @@ export function startWorkers() {
   }, Math.max(2000, providerLoopMs));
   providerLoop.unref?.();
 
-  return { agentWorker, probeWorker, renderWorker, exportWorker };
+  return { agentWorker, assetAnalysisWorker, probeWorker, renderWorker, exportWorker };
 }

@@ -5,6 +5,7 @@ export const QUEUE_NAMES = {
   RENDER: "render",
   EXPORT: "export",
   PROBE: "probe",
+  ASSET_ANALYSIS: "asset-analysis",
 } as const;
 
 export const AgentJobSchema = z.discriminatedUnion("name", [
@@ -117,6 +118,15 @@ export const ProbeJobSchema = z.object({
   }),
 });
 
+export const AssetAnalysisJobSchema = z.object({
+  name: z.literal("asset.analysis"),
+  data: z.object({
+    assetId: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+  }),
+});
+
 export type RenderJob = z.infer<typeof RenderJobSchema>;
 export type ExportJob = z.infer<typeof ExportJobSchema>;
 export type ProbeJob = z.infer<typeof ProbeJobSchema>;
+export type AssetAnalysisJob = z.infer<typeof AssetAnalysisJobSchema>;

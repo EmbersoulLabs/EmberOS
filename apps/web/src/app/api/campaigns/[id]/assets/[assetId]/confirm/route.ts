@@ -4,6 +4,7 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueProbe } from "@ceo-agent/queue";
 import { suggestReadableAssetName } from "@/lib/asset-auto-name";
+import { enqueueImageAnalysisAfterConfirm } from "@/lib/asset-analysis-queue";
 
 export async function POST(
   request: Request,
@@ -99,7 +100,14 @@ export async function POST(
       });
     }
 
-    return apiSuccess({ asset });
+    const analysisStatus = await enqueueImageAnalysisAfterConfirm({
+      assetId: asset.id,
+      workspaceId: asset.workspaceId,
+      type: asset.type,
+      metadata: asset.metadata,
+    });
+
+    return apiSuccess({ asset, analysisStatus });
   } catch (error) {
     return handleApiError(error);
   }

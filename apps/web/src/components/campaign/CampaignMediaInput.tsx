@@ -33,6 +33,8 @@ type LibraryAsset = {
   type: string;
   displayName: string | null;
   originalFilename: string | null;
+  durationSec?: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 type ReadyStory = { id: string; name: string };
@@ -50,6 +52,7 @@ type UploadItem = {
   originalFilename: string;
   previewUrl?: string;
   assetType: "video" | "image";
+  durationSec?: number;
 };
 
 function classifyUploadFile(file: File): "video" | "image" {
@@ -168,6 +171,7 @@ export function CampaignMediaInput({
             mimeType: item.file.type || (type === "video" ? "video/mp4" : "image/jpeg"),
             type,
             fileSizeBytes: item.file.size,
+            durationSec: item.durationSec,
           }),
         });
         const urlData = await urlRes.json();
@@ -190,7 +194,7 @@ export function CampaignMediaInput({
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({}),
+            body: JSON.stringify({ durationSec: item.durationSec }),
           }
         );
         const confirmData = await confirmRes.json();
@@ -236,14 +240,29 @@ export function CampaignMediaInput({
       try {
         const videoCount = incoming.filter((f) => classifyUploadFile(f) === "video").length;
         const imageCount = incoming.filter((f) => classifyUploadFile(f) === "image").length;
-        if (videoCount > MAX_SOURCE_VIDEOS) {
+        const selectedAssets = libraryAssets.filter((asset) =>
+          selectedAssetIds.includes(asset.id)
+        );
+        const existingVideoCount = selectedAssets.filter(
+          (asset) => asset.type === "video"
+        ).length;
+        const existingImageCount = selectedAssets.filter(
+          (asset) => asset.type === "image"
+        ).length;
+        if (existingVideoCount + videoCount > MAX_SOURCE_VIDEOS) {
           throw new Error(t("campaign.uploadTooManyVideos", { max: String(MAX_SOURCE_VIDEOS) }));
         }
-        if (imageCount > MAX_CAMPAIGN_IMAGES) {
+        if (existingImageCount + imageCount > MAX_CAMPAIGN_IMAGES) {
           throw new Error(t("campaign.uploadTooManyImages", { max: String(MAX_CAMPAIGN_IMAGES) }));
         }
 
-        let combined = 0;
+        const durations = new Map<File, number>();
+        let combined = selectedAssets
+          .filter((asset) => asset.type === "video")
+          .reduce((total, asset) => {
+            const duration = Number.parseFloat(asset.durationSec ?? "");
+            return total + (Number.isFinite(duration) ? duration : 0);
+          }, 0);
         for (const file of incoming.filter((f) => classifyUploadFile(f) === "video")) {
           const duration = await probeLocalVideoDuration(file);
           if (duration > MAX_UPLOAD_DURATION_SEC) {
@@ -255,6 +274,7 @@ export function CampaignMediaInput({
             );
           }
           combined += duration;
+          durations.set(file, duration);
         }
         if (combined > MAX_COMBINED_SOURCE_DURATION_SEC) {
           throw new Error(
@@ -274,6 +294,7 @@ export function CampaignMediaInput({
             originalFilename: file.name,
             previewUrl: URL.createObjectURL(file),
             assetType,
+            durationSec: durations.get(file),
           };
         });
         setUploads((current) => [...current, ...items]);
@@ -295,7 +316,7 @@ export function CampaignMediaInput({
         setError(err instanceof Error ? err.message : "Upload failed");
       }
     },
-    [campaignId, onFilesChange, t, uploadOne]
+    [campaignId, libraryAssets, onFilesChange, selectedAssetIds, t, uploadOne]
   );
 
   const retryUpload = useCallback(

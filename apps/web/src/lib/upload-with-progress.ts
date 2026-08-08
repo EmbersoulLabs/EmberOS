@@ -20,7 +20,29 @@ export function putWithProgress(
         resolve();
         return;
       }
-      reject(new Error(`Upload failed (${xhr.status})`));
+      let detail = "";
+      try {
+        const payload = JSON.parse(xhr.responseText || "{}") as {
+          message?: unknown;
+          error?: unknown;
+        };
+        detail =
+          typeof payload.message === "string"
+            ? payload.message
+            : typeof payload.error === "string"
+              ? payload.error
+              : "";
+      } catch {
+        detail = "";
+      }
+      const safeDetail = detail.replace(/https?:\/\/\S+/g, "").trim();
+      reject(
+        new Error(
+          safeDetail
+            ? `Upload rejected (${xhr.status}): ${safeDetail}`
+            : `Storage rejected the upload (HTTP ${xhr.status}). Check file size and type.`
+        )
+      );
     };
     xhr.onerror = () => reject(new Error("Upload network error"));
     xhr.onabort = () => reject(new Error("Upload aborted"));

@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import Redis from "ioredis";
 import { createClient } from "@supabase/supabase-js";
-import { getBullmqPrefix, getRenderQueueCounts, agentQueue } from "@ceo-agent/queue";
+import {
+  getBullmqPrefix,
+  getRenderQueueCounts,
+  agentQueue,
+  assetAnalysisQueue,
+} from "@ceo-agent/queue";
 import { getDb } from "@ceo-agent/db";
 import { sql } from "drizzle-orm";
 
@@ -41,7 +46,19 @@ export async function GET() {
     checks.database = "ok";
     await redis.ping();
     checks.redis = "ok";
-    checks.worker = (await redis.get(heartbeatKey())) ? "ok" : "missing";
+    const heartbeat = await redis.get(heartbeatKey());
+    checks.worker = heartbeat ? "ok" : "missing";
+    let workerCapabilities: string[] = [];
+    if (heartbeat) {
+      try {
+        const parsed = JSON.parse(heartbeat) as { capabilities?: unknown };
+        workerCapabilities = Array.isArray(parsed.capabilities)
+          ? parsed.capabilities.filter((item): item is string => typeof item === "string")
+          : [];
+      } catch {
+        workerCapabilities = [];
+      }
+    }
 
     const supabase = createClient(supabaseUrl, serviceRole, { auth: { persistSession: false } });
     const { data: buckets, error: storageError } = await supabase.storage.listBuckets();
@@ -52,14 +69,18 @@ export async function GET() {
     await Promise.all([
       getRenderQueueCounts(),
       agentQueue().getJobCounts("waiting", "active", "delayed", "failed"),
+      assetAnalysisQueue().getJobCounts("waiting", "active", "delayed", "failed"),
     ]);
     checks.queue = "ok";
+    checks.assetAnalysisConsumer = workerCapabilities.includes("asset-analysis")
+      ? "ok"
+      : "missing";
   } catch (error) {
     checks.error = error instanceof Error ? error.message : "Runtime dependency failed";
   } finally {
     redis.disconnect();
   }
 
-  const ok = ["database", "redis", "worker", "supabase", "storage", "queue"].every((key) => checks[key] === "ok");
+  const ok = ["database", "redis", "worker", "supabase", "storage", "queue", "assetAnalysisConsumer"].every((key) => checks[key] === "ok");
   return NextResponse.json({ ok, service: "emberos-local-runtime", checks, timestamp: new Date().toISOString() }, { status: ok ? 200 : 503 });
 }

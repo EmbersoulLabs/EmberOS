@@ -68,6 +68,7 @@ export const agentQueue = () => getQueue(QUEUE_NAMES.AGENT);
 export const renderQueue = () => getQueue(QUEUE_NAMES.RENDER);
 export const exportQueue = () => getQueue(QUEUE_NAMES.EXPORT);
 export const probeQueue = () => getQueue(QUEUE_NAMES.PROBE);
+export const assetAnalysisQueue = () => getQueue(QUEUE_NAMES.ASSET_ANALYSIS);
 
 export async function enqueuePipeline(taskId: string, campaignId: string, workspaceId: string, orgId: string) {
   const queue = agentQueue();
@@ -165,4 +166,27 @@ export async function enqueueProbe(data: {
 }) {
   const queue = probeQueue();
   return queue.add("ffmpeg.probe", data, { jobId: `probe-${data.assetId}` });
+}
+
+export async function enqueueAssetAnalysis(data: {
+  assetId: string;
+  workspaceId: string;
+}) {
+  const queue = assetAnalysisQueue();
+  const jobId = `asset-analysis-${data.assetId}`;
+  const existing = await queue.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === "failed") {
+      await existing.retry();
+    }
+    return existing;
+  }
+  return queue.add("asset.analysis", data, {
+    // Stable identity makes repeated confirm requests idempotent. A retained
+    // failed job is retried above instead of being silently blocked by its ID.
+    jobId,
+    attempts: 3,
+    backoff: { type: "exponential", delay: 2_000 },
+  });
 }

@@ -4,6 +4,8 @@ import { isUuid } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { suggestReadableAssetName } from "@/lib/asset-auto-name";
+import { enqueueImageAnalysisAfterConfirm } from "@/lib/asset-analysis-queue";
+import { enqueueProbe } from "@ceo-agent/queue";
 
 export async function POST(
   request: Request,
@@ -87,7 +89,24 @@ export async function POST(
       .where(eq(schema.assets.id, assetId))
       .returning();
 
-    return apiSuccess({ asset: updated });
+    if (updated?.type === "video") {
+      await enqueueProbe({
+        assetId: updated.id,
+        workspaceId: updated.workspaceId,
+        storagePath: updated.storagePath,
+      });
+    }
+
+    const analysisStatus = updated
+      ? await enqueueImageAnalysisAfterConfirm({
+          assetId: updated.id,
+          workspaceId: updated.workspaceId,
+          type: updated.type,
+          metadata: updated.metadata,
+        })
+      : "not_applicable";
+
+    return apiSuccess({ asset: updated, analysisStatus });
   } catch (error) {
     return handleApiError(error);
   }

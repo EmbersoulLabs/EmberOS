@@ -18,18 +18,18 @@ export function contentIntelligenceFromVision(vision: VisionAnalysis) {
 }
 
 /** Best-effort post-vision naming; upload/pipeline success never depends on it. */
-export async function refreshAnalyzedAssetDisplayName(taskId: string): Promise<void> {
+export async function refreshAssetDisplayNameFromVision(input: {
+  assetId: string;
+  workspaceId: string;
+  vision: VisionAnalysis;
+}): Promise<void> {
   try {
     const db = getDb();
-    const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-    const progress = (task?.stepProgress ?? {}) as Record<string, { output?: unknown }>;
-    const parsed = VisionAnalysisSchema.safeParse(progress.vision_analyze?.output);
-    if (!task || !parsed.success) return;
-    const [asset] = await db.select().from(schema.assets).where(and(eq(schema.assets.id, parsed.data.assetId), eq(schema.assets.workspaceId, task.workspaceId))).limit(1);
+    const [asset] = await db.select().from(schema.assets).where(and(eq(schema.assets.id, input.assetId), eq(schema.assets.workspaceId, input.workspaceId))).limit(1);
     if (!asset) return;
     const metadata = (asset.metadata ?? {}) as Record<string, unknown>;
     if (metadata.displayNameSource === "manual") return;
-    const intelligence = contentIntelligenceFromVision(parsed.data);
+    const intelligence = contentIntelligenceFromVision(input.vision);
     if (!intelligence.contentSummary && !intelligence.contentLabels.length) return;
     let displayName = asset.displayName;
     let displayNameSource: "ai" | "fallback" = "fallback";
@@ -41,6 +41,20 @@ export async function refreshAnalyzedAssetDisplayName(taskId: string): Promise<v
     }
     await db.update(schema.assets).set({ displayName, metadata: { ...metadata, ...intelligence, visionAnalyzedAt: new Date().toISOString(), displayNameSource }, updatedAt: new Date() }).where(and(eq(schema.assets.id, asset.id), sql`coalesce(${schema.assets.metadata}->>'displayNameSource', '') <> 'manual'`));
   } catch (error) {
-    console.warn(`[asset-auto-name] post-analysis update failed task=${taskId}:`, error instanceof Error ? error.message : error);
+    console.warn(`[asset-auto-name] post-analysis update failed asset=${input.assetId}:`, error instanceof Error ? error.message : error);
   }
+}
+
+/** Compatibility path for Campaign pipelines that persist vision on a Task. */
+export async function refreshAnalyzedAssetDisplayName(taskId: string): Promise<void> {
+  const db = getDb();
+  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
+  const progress = (task?.stepProgress ?? {}) as Record<string, { output?: unknown }>;
+  const parsed = VisionAnalysisSchema.safeParse(progress.vision_analyze?.output);
+  if (!task || !parsed.success) return;
+  await refreshAssetDisplayNameFromVision({
+    assetId: parsed.data.assetId,
+    workspaceId: task.workspaceId,
+    vision: parsed.data,
+  });
 }

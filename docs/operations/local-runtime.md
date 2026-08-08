@@ -52,6 +52,27 @@ worker. Asset Library uploads require Storage, while analysis and Auto Rename
 require Redis and Worker. Video generation also requires FFmpeg and render
 processors. Publishing is optional for non-publishing vertical slices.
 
+Image confirmation enqueues a dedicated `asset-analysis` BullMQ job. The
+worker heartbeat advertises the `asset-analysis` capability, and the detailed
+development/E2E health response reports `checks.assetAnalysisConsumer: "ok"`
+only when that capability is present. Asset metadata uses
+`assetAnalysis.status` (`pending`, `analyzing`, `completed`, or `failed`) plus
+`visionAnalysis`; analysis failure preserves the upload and fallback name.
+
+## Vercel Preview and Railway Worker pairing
+
+Vercel deploys the Next.js Web application only. A Preview upload receives an
+AI name only when a Railway Worker containing the matching `asset-analysis`
+processor is running against the same `REDIS_URL`, `BULLMQ_PREFIX`, database,
+Storage bucket, and provider configuration. A Preview-specific prefix requires
+a Worker with that exact prefix; an omitted prefix uses the shared deployed
+queue. Do not point a Preview Web deployment at a local-prefixed queue and
+expect the production Railway Worker to consume it.
+
+The Vercel deployment and Railway Worker must therefore be released as a pair
+for changes that add queue producers or consumers. Vercel does not execute the
+Worker process.
+
 ## Health and recovery
 
 Open `GET /api/health/runtime`. A ready response contains `ok: true` and `ok`

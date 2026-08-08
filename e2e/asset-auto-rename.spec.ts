@@ -61,12 +61,6 @@ async function uploadCampaignImage(
   return { ...prepared, fallback: confirmed.asset.displayName, confirmed: confirmed.asset };
 }
 
-async function startCampaign(request: APIRequestContext, campaignId: string) {
-  const response = await request.post(`/api/campaigns/${campaignId}/generate`, { data: {} });
-  expect(response.ok(), await response.text()).toBeTruthy();
-  return ((await response.json()) as { taskId: string }).taskId;
-}
-
 async function getCampaignAsset(request: APIRequestContext, campaignId: string, assetId: string) {
   const response = await request.get(`/api/campaigns/${campaignId}`);
   expect(response.ok(), await response.text()).toBeTruthy();
@@ -112,7 +106,6 @@ test.describe("content-aware Asset Auto Rename", () => {
       expect(upload.confirmed.originalFilename).toBe(fixture.file);
       expect(upload.fallback).toBeTruthy();
       const storagePath = upload.storagePath;
-      await startCampaign(page.request, campaignId);
       const asset = await waitForAiName(page.request, campaignId, upload.assetId);
       expect(asset.displayName).toMatch(fixture.semantic);
       expect(asset.displayName).not.toBe(upload.fallback);
@@ -144,14 +137,15 @@ test.describe("content-aware Asset Auto Rename", () => {
       expect(cleanup.ok(), await cleanup.text()).toBeTruthy();
     }
 
-    // Real race: rename after vision is persisted but before the worker's post-pipeline naming refresh.
+    // Real race: rename while the independent Asset analysis job is active.
     const raceCampaignId = await createCampaign(page.request, workspace!.id, "manual-race");
     const raceUpload = await uploadCampaignImage(page.request, raceCampaignId, "bouquet.png");
-    const raceTaskId = await startCampaign(page.request, raceCampaignId);
     for (let attempt = 0; attempt < 100; attempt++) {
-      const response = await page.request.get(`/api/tasks/${raceTaskId}`);
-      const body = response.ok() ? ((await response.json()) as { task?: { stepProgress?: Record<string, { status?: string }> } }) : {};
-      if (body.task?.stepProgress?.vision_analyze?.status === "completed") break;
+      const current = await getCampaignAsset(page.request, raceCampaignId, raceUpload.assetId);
+      const state = current?.metadata?.assetAnalysis as
+        | { status?: string }
+        | undefined;
+      if (state?.status === "pending" || state?.status === "analyzing") break;
       await page.waitForTimeout(2_000);
     }
     const manualName = `Manual Rose Selection ${Date.now()}`;

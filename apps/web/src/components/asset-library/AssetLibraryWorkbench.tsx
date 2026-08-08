@@ -15,6 +15,7 @@ export type LibraryAsset = {
   fileSizeBytes: number | null;
   createdAt: string;
   status: string;
+  metadata?: Record<string, unknown> | null;
 };
 
 export type LibraryStory = {
@@ -27,6 +28,18 @@ export type LibraryStory = {
 
 function assetLabel(asset: LibraryAsset) {
   return asset.displayName || asset.originalFilename || asset.id.slice(0, 8);
+}
+
+function assetAnalysisLabel(asset: LibraryAsset): string | null {
+  const state = asset.metadata?.assetAnalysis;
+  const status =
+    state && typeof state === "object"
+      ? (state as Record<string, unknown>).status
+      : undefined;
+  if (status === "pending") return "Analysis pending";
+  if (status === "analyzing") return "Analyzing image…";
+  if (status === "failed") return "Analysis unavailable — manual rename is available";
+  return null;
 }
 
 function TypeIcon({ type }: { type: string }) {
@@ -112,6 +125,20 @@ export function AssetLibraryWorkbench({
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  useEffect(() => {
+    const analyzing = assets.some((asset) => {
+      const state = asset.metadata?.assetAnalysis;
+      const status =
+        state && typeof state === "object"
+          ? (state as Record<string, unknown>).status
+          : undefined;
+      return status === "pending" || status === "analyzing";
+    });
+    if (!analyzing) return;
+    const timer = window.setInterval(() => void loadAssets(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [assets, loadAssets]);
 
   const uploadFiles = async (files: FileList | File[]) => {
     const list = Array.from(files);
@@ -417,6 +444,11 @@ export function AssetLibraryWorkbench({
               <p className="mt-0.5 text-xs text-ink-secondary">
                 {asset.type} · {formatFileSize(asset.fileSizeBytes)}
               </p>
+              {assetAnalysisLabel(asset) ? (
+                <p className="mt-1 text-xs text-ink-secondary" role="status">
+                  {assetAnalysisLabel(asset)}
+                </p>
+              ) : null}
               <p className="text-xs text-ink-secondary">
                 {new Date(asset.createdAt).toLocaleDateString()}
               </p>
@@ -452,7 +484,14 @@ export function AssetLibraryWorkbench({
               {assets.map((asset) => (
                 <tr key={asset.id} className="border-t border-border">
                   <td className="px-3 py-2 font-medium text-navy">{assetLabel(asset)}</td>
-                  <td className="px-3 py-2 capitalize">{asset.type}</td>
+                  <td className="px-3 py-2 capitalize">
+                    {asset.type}
+                    {assetAnalysisLabel(asset) ? (
+                      <span className="mt-0.5 block text-xs normal-case text-ink-secondary" role="status">
+                        {assetAnalysisLabel(asset)}
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="px-3 py-2">{formatFileSize(asset.fileSizeBytes)}</td>
                   <td className="px-3 py-2">{new Date(asset.createdAt).toLocaleString()}</td>
                   <td className="px-3 py-2 text-right">

@@ -14,6 +14,16 @@ import {
 
 type Db = ReturnType<typeof getDb>;
 
+type ExistingAsset = Awaited<ReturnType<typeof getCampaignAssets>>[number];
+
+export type NewAssetValidationResult =
+  | { ok: true }
+  | {
+      ok: false;
+      code: "ASSET_LIMIT" | "VIDEO_TOO_LONG" | "COMBINED_DURATION_TOO_LONG";
+      error: string;
+    };
+
 export { getCampaignAssets };
 
 export async function validateCampaignAssetsForRun(
@@ -74,20 +84,56 @@ export async function validateNewAssetUpload(
   db: Db,
   campaignId: string,
   workspaceId: string,
-  type: "video" | "image"
-): Promise<{ ok: true } | { ok: false; error: string }> {
+  type: "video" | "image",
+  durationSec?: number
+): Promise<NewAssetValidationResult> {
   const assets = await getCampaignAssets(db, campaignId, workspaceId);
+  return validateNewAssetAgainstExisting(assets, type, durationSec);
+}
+
+export function validateNewAssetAgainstExisting(
+  assets: ExistingAsset[],
+  type: "video" | "image",
+  durationSec?: number
+): NewAssetValidationResult {
   const uploadVideos = listUploadVideoAssets(assets);
   const images = assets.filter((a) => a.type === "image");
 
   if (type === "video" && uploadVideos.length >= MAX_SOURCE_VIDEOS) {
     return {
       ok: false,
+      code: "ASSET_LIMIT",
       error: `At most ${MAX_SOURCE_VIDEOS} source videos per campaign. You can add up to ${MAX_CAMPAIGN_IMAGES} product images.`,
     };
   }
   if (type === "image" && images.length >= MAX_CAMPAIGN_IMAGES) {
-    return { ok: false, error: `Maximum ${MAX_CAMPAIGN_IMAGES} images per campaign (MVP)` };
+    return { ok: false, code: "ASSET_LIMIT", error: `Maximum ${MAX_CAMPAIGN_IMAGES} images per campaign (MVP)` };
+  }
+
+  if (type === "video" && durationSec != null) {
+    if (!Number.isFinite(durationSec) || durationSec <= 0) {
+      return {
+        ok: false,
+        code: "VIDEO_TOO_LONG",
+        error: "Video duration could not be read. Use a supported MP4, MOV, or WebM file.",
+      };
+    }
+    if (durationSec > MAX_UPLOAD_DURATION_SEC) {
+      return {
+        ok: false,
+        code: "VIDEO_TOO_LONG",
+        error: `Video duration ${durationSec.toFixed(1)}s exceeds the ${Math.round(MAX_UPLOAD_DURATION_SEC / 60)} minute per-file limit.`,
+      };
+    }
+    const combinedSec = sumUploadVideoDurationSec(assets) + durationSec;
+    const combined = validateCombinedVideoDurationSec(combinedSec);
+    if (!combined.ok) {
+      return {
+        ok: false,
+        code: "COMBINED_DURATION_TOO_LONG",
+        error: combined.error,
+      };
+    }
   }
 
   return { ok: true };
