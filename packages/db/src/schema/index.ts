@@ -6,6 +6,7 @@ import {
   jsonb,
   integer,
   numeric,
+  doublePrecision,
   bigint,
   boolean,
   unique,
@@ -1450,6 +1451,153 @@ export const aiStoryWorkerExecutionResults = pgTable(
     unique("ai_story_worker_result_attempt_unique").on(t.providerAttemptId),
     index("ai_story_worker_result_workspace_idx").on(t.workspaceId, t.acceptedAt),
     index("ai_story_worker_result_execution_idx").on(t.providerExecutionId),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.6 Phase 3 — immutable deterministic Assembly Job.
+ * Subordinate to Execution Plan. No Final Story Result. No media assembly.
+ */
+export const aiStoryAssemblyJobs = pgTable(
+  "ai_story_assembly_jobs",
+  {
+    assemblyJobId: uuid("assembly_job_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    assemblyDefinitionId: uuid("assembly_definition_id")
+      .notNull()
+      .references(() => aiStoryAssemblyDefinitions.assemblyDefinitionId, {
+        onDelete: "restrict",
+      }),
+    runtimeAuthorizationId: uuid("runtime_authorization_id").notNull(),
+    orderedSceneResultIds: jsonb("ordered_scene_result_ids").$type<string[]>().notNull(),
+    orderedSceneContentHashes: jsonb("ordered_scene_content_hashes")
+      .$type<string[]>()
+      .notNull(),
+    assemblyContractVersion: text("assembly_contract_version").notNull(),
+    assemblyEngineSnapshotId: uuid("assembly_engine_snapshot_id").notNull(),
+    assemblyEngineSnapshotHash: text("assembly_engine_snapshot_hash").notNull(),
+    deterministicFingerprint: text("deterministic_fingerprint").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    job: jsonb("job").$type<import("@ceo-agent/shared/server").AssemblyJob>().notNull(),
+  },
+  (t) => [
+    unique("ai_story_assembly_jobs_fingerprint_unique").on(t.deterministicFingerprint),
+    index("ai_story_assembly_jobs_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_assembly_jobs_workspace_idx").on(t.workspaceId, t.acceptedAt),
+    index("ai_story_assembly_jobs_definition_idx").on(t.assemblyDefinitionId),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.6 Phase 3 — append-only Assembly Job facts.
+ * Immutable. One ACCEPTED. At most one terminal SUCCEEDED|FAILED.
+ * PROCESSING_STARTED is operational telemetry only.
+ */
+export const aiStoryAssemblyJobFacts = pgTable(
+  "ai_story_assembly_job_facts",
+  {
+    factId: uuid("fact_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    assemblyJobId: uuid("assembly_job_id")
+      .notNull()
+      .references(() => aiStoryAssemblyJobs.assemblyJobId, { onDelete: "restrict" }),
+    factKind: text("fact_kind").notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared/server").AssemblyJobFact>().notNull(),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_assembly_job_facts_hash_unique").on(t.integrityHash),
+    index("ai_story_assembly_job_facts_job_idx").on(t.assemblyJobId, t.recordedAt),
+    index("ai_story_assembly_job_facts_workspace_idx").on(t.workspaceId, t.recordedAt),
+    index("ai_story_assembly_job_facts_plan_idx").on(t.executionPlanId, t.recordedAt),
+  ]
+);
+
+/**
+ * Sprint 3 PR 3.6 — immutable Assembly Runtime artifact metadata (no binary).
+ * One artifact per Assembly Job / execution identity. No Final Story Result.
+ */
+export const aiStoryAssemblyArtifacts = pgTable(
+  "ai_story_assembly_artifacts",
+  {
+    artifactId: uuid("artifact_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    assemblyJobId: uuid("assembly_job_id")
+      .notNull()
+      .references(() => aiStoryAssemblyJobs.assemblyJobId, { onDelete: "restrict" }),
+    executionIdentity: text("execution_identity").notNull(),
+    artifactReference: text("artifact_reference").notNull(),
+    contentHash: text("content_hash").notNull(),
+    mediaType: text("media_type").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    frameRate: doublePrecision("frame_rate").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    assemblyEngineVersion: text("assembly_engine_version").notNull(),
+    normalizationPolicyVersion: text("normalization_policy_version").notNull(),
+    assemblyRuntimeContractVersion: text("assembly_runtime_contract_version").notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    artifact: jsonb("artifact").$type<import("@ceo-agent/shared/server").AssemblyArtifact>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_assembly_artifacts_identity_unique").on(t.executionIdentity),
+    unique("ai_story_assembly_artifacts_hash_unique").on(t.integrityHash),
+    unique("ai_story_assembly_artifacts_job_unique").on(t.assemblyJobId),
+    index("ai_story_assembly_artifacts_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("ai_story_assembly_artifacts_plan_idx").on(t.executionPlanId, t.createdAt),
+    index("ai_story_assembly_artifacts_content_hash_idx").on(t.contentHash),
   ]
 );
 
