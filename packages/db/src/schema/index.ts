@@ -1602,6 +1602,75 @@ export const aiStoryAssemblyArtifacts = pgTable(
 );
 
 /**
+ * Sprint 3 PR 3.7 Phase A — success-only immutable Final Story Result.
+ * Subordinate to Execution Plan. No Export / Publish. No FAILED rows.
+ */
+export const aiStoryFinalStoryResults = pgTable(
+  "ai_story_final_story_results",
+  {
+    finalStoryResultId: uuid("final_story_result_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    assemblyDefinitionId: uuid("assembly_definition_id")
+      .notNull()
+      .references(() => aiStoryAssemblyDefinitions.assemblyDefinitionId, {
+        onDelete: "restrict",
+      }),
+    assemblyJobId: uuid("assembly_job_id")
+      .notNull()
+      .references(() => aiStoryAssemblyJobs.assemblyJobId, { onDelete: "restrict" }),
+    assemblyArtifactId: uuid("assembly_artifact_id")
+      .notNull()
+      .references(() => aiStoryAssemblyArtifacts.artifactId, { onDelete: "restrict" }),
+    assemblyJobIdentity: text("assembly_job_identity").notNull(),
+    orderedSceneResultIds: jsonb("ordered_scene_result_ids").$type<string[]>().notNull(),
+    outputMediaReference: text("output_media_reference").notNull(),
+    contentHash: text("content_hash").notNull(),
+    mediaType: text("media_type").notNull(),
+    totalDurationMs: integer("total_duration_ms").notNull(),
+    width: integer("width").notNull(),
+    height: integer("height").notNull(),
+    frameRate: doublePrecision("frame_rate").notNull(),
+    assemblyRuntimeContractVersion: text("assembly_runtime_contract_version").notNull(),
+    assemblyEngineVersion: text("assembly_engine_version").notNull(),
+    normalizationPolicyVersion: text("normalization_policy_version").notNull(),
+    finalStoryResultContractVersion: text("final_story_result_contract_version").notNull(),
+    assemblyEngineSnapshotHash: text("assembly_engine_snapshot_hash").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    projectedAt: timestamp("projected_at", { withTimezone: true }).notNull(),
+    projectionVersion: text("projection_version").notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    result: jsonb("result")
+      .$type<import("@ceo-agent/shared/server").FinalStoryResultPersistenceRecord>()
+      .notNull(),
+  },
+  (t) => [
+    unique("ai_story_final_story_results_job_unique").on(t.assemblyJobId),
+    unique("ai_story_final_story_results_artifact_unique").on(t.assemblyArtifactId),
+    unique("ai_story_final_story_results_integrity_unique").on(t.integrityHash),
+    unique("ai_story_final_story_results_job_identity_unique").on(t.assemblyJobIdentity),
+    index("ai_story_final_story_results_workspace_idx").on(t.workspaceId, t.acceptedAt),
+    index("ai_story_final_story_results_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_final_story_results_content_hash_idx").on(t.contentHash),
+  ]
+);
+
+/**
  * Sprint 3 PR 3.5 — Scene↔Provider finalization correlation (projection-only).
  * Does not store usage/cost amounts. Provider ledgers remain authoritative.
  */

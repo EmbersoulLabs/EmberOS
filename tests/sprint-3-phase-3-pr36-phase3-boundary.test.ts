@@ -28,17 +28,22 @@ describe("Sprint 3 PR 3.6 Phase 3 boundaries", () => {
     ).toBe(true);
   });
 
-  it("does not add Final Story Result, engine, artifact, or media modules", () => {
+  it("does not add Phase B projector/engine modules (Phase A FSR persistence allowed)", () => {
     const forbidden = [
-      "packages/db/src/queries/ai-story-final-story-result.ts",
-      "packages/db/sql/ai-story-final-story-result-v1.sql",
       "packages/agents/src/ai-story/story-assembly-engine.ts",
       "packages/agents/src/ai-story/assembly-artifact-store.ts",
       "apps/worker/src/story-assembly-runtime.ts",
+      "packages/agents/src/ai-story/final-story-result-projector.ts",
+      "packages/agents/src/ai-story/export-runtime.ts",
+      "packages/agents/src/ai-story/publish-runtime.ts",
     ];
     for (const path of forbidden) {
       expect(existsSync(join(ROOT, path))).toBe(false);
     }
+    // Phase A may introduce Final Story Result persistence.
+    expect(
+      existsSync(join(ROOT, "packages/db/src/queries/ai-story-final-story-result.ts"))
+    ).toBe(true);
   });
 
   it("keeps repository append-only without update/delete", () => {

@@ -25,7 +25,7 @@ function collectSources(dir: string): string[] {
 }
 
 describe("Sprint 3 PR 3.6 Assembly Runtime boundaries", () => {
-  it("adds runtime modules without Final Story Result persistence", () => {
+  it("adds runtime modules; Phase A may add Final Story Result persistence", () => {
     expect(
       existsSync(join(ROOT, "packages/agents/src/ai-story/assembly-runtime-orchestrator.ts"))
     ).toBe(true);
@@ -38,11 +38,9 @@ describe("Sprint 3 PR 3.6 Assembly Runtime boundaries", () => {
     expect(
       existsSync(join(ROOT, "packages/db/scripts/apply-ai-story-assembly-runtime-artifact-v1.ts"))
     ).toBe(true);
+    // PR 3.6 runtime itself did not ship FSR; PR 3.7 Phase A may add it.
     expect(
-      existsSync(join(ROOT, "packages/db/src/queries/ai-story-final-story-result.ts"))
-    ).toBe(false);
-    expect(
-      existsSync(join(ROOT, "packages/db/sql/ai-story-final-story-result-v1.sql"))
+      existsSync(join(ROOT, "packages/agents/src/ai-story/final-story-result-projector.ts"))
     ).toBe(false);
   });
 
@@ -94,19 +92,25 @@ describe("Sprint 3 PR 3.6 Assembly Runtime boundaries", () => {
     expect(source).not.toMatch(/async delete\(/);
   });
 
-  it("does not start PR 3.7 modules", () => {
+  it("does not start PR 3.7 Phase B+ modules (Phase A persistence allowed)", () => {
     expect(existsSync(join(ROOT, "packages/agents/src/ai-story/export-runtime.ts"))).toBe(
       false
     );
     expect(existsSync(join(ROOT, "packages/agents/src/ai-story/publish-runtime.ts"))).toBe(
       false
     );
-    expect(existsSync(join(ROOT, "packages/shared/src/ai-story-final-story-result-persistence.ts"))).toBe(
-      false
-    );
+    expect(
+      existsSync(join(ROOT, "packages/agents/src/ai-story/final-story-result-projector.ts"))
+    ).toBe(false);
+    // Phase A persistence contract/module is expected once PR 3.7 Phase A lands.
+    expect(
+      existsSync(
+        join(ROOT, "packages/shared/src/ai-story-final-story-result-persistence.ts")
+      )
+    ).toBe(true);
   });
 
-  it("SQL does not create Final Story Result tables", () => {
+  it("SQL creates assembly artifacts; Final Story Result table may exist from Phase A", () => {
     const sql = read("packages/db/sql/ai-story-assembly-runtime-artifact-v1.sql");
     expect(sql).toMatch(/ai_story_assembly_artifacts/);
     expect(sql).not.toMatch(/ai_story_final_story_results/);

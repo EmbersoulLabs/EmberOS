@@ -331,8 +331,14 @@ export type CanonicalSceneResultStatus = CanonicalSceneResult["status"];
 /* -------------------------------------------------------------------------- */
 
 /**
- * Immutable Final Story Result subordinate to the Execution Plan.
- * Contract only — does NOT implement assembly runtime.
+ * PR 3.1 language-only Final Story Result stub.
+ *
+ * NON-AUTHORITATIVE for Sprint 3 PR 3.7 persistence.
+ * Allows FAILED / nullable media semantics that must never be persisted as
+ * `ai_story_final_story_results` rows. Authoritative success-only persistence
+ * lives in `ai-story-final-story-result-persistence.ts` (server entry).
+ *
+ * Contract only — does NOT implement assembly runtime or persistence.
  */
 export const FinalStoryResultSchema = z.object({
   storyResultId: z.string().uuid(),
