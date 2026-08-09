@@ -13,6 +13,10 @@ export default defineConfig({
         __dirname,
         "packages/shared/src/server.ts"
       ),
+      "@ceo-agent/shared/platform-specs": path.resolve(
+        __dirname,
+        "packages/shared/src/platform-specs/index.ts"
+      ),
       "@ceo-agent/shared": path.resolve(__dirname, "packages/shared/src/index.ts"),
       "@ceo-agent/queue": path.resolve(__dirname, "packages/queue/src/index.ts"),
       "@ceo-agent/agents": path.resolve(__dirname, "packages/agents/src/index.ts"),

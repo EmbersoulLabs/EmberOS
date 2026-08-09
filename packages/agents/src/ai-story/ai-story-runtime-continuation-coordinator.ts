@@ -266,14 +266,36 @@ export class AiStoryRuntimeContinuationCoordinator {
     }
 
     if (route === "NON_TERMINAL") {
-      // Accepted async — attempt lookup resume when providerRequestId exists.
+      // Accepted async — poll lookup until terminal / reconciliation / deadline.
+      // Required for live Provider acceptance (Seedance/MiniMax) where first lookup
+      // is often still PROCESSING. Without this loop, subsequent continueFromDispatch
+      // would replay the non-terminal observation and never advance.
       if (workerOutcome.result.providerRequestId) {
-        const resumed = await this.workerRuntime.processDispatch({
+        const providerRequestId = workerOutcome.result.providerRequestId;
+        const pollMs = Math.max(
+          1_000,
+          Number(process.env.EMBEROS_AI_STORY_LOOKUP_POLL_MS ?? 3_000) || 3_000
+        );
+        const deadlineMs = Math.max(
+          pollMs,
+          Number(process.env.EMBEROS_AI_STORY_LOOKUP_DEADLINE_MS ?? 600_000) || 600_000
+        );
+        const deadline = Date.now() + deadlineMs;
+        let resumed = await this.workerRuntime.processDispatch({
           dispatchId,
           mode: "lookup",
-          providerRequestId: workerOutcome.result.providerRequestId,
+          providerRequestId,
         });
-        const resumedRoute = classifyWorkerResultForCoordinator(resumed.result);
+        let resumedRoute = classifyWorkerResultForCoordinator(resumed.result);
+        while (resumedRoute === "NON_TERMINAL" && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, pollMs));
+          resumed = await this.workerRuntime.processDispatch({
+            dispatchId,
+            mode: "lookup",
+            providerRequestId,
+          });
+          resumedRoute = classifyWorkerResultForCoordinator(resumed.result);
+        }
         if (resumedRoute === "NON_TERMINAL" || resumedRoute === "ACCEPTANCE_UNKNOWN") {
           return {
             status:

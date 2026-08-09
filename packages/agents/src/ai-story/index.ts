@@ -11,6 +11,7 @@ export * from "./authorize-and-execute-execution-plan";
 export * from "./canonical-execute-router";
 export * from "./derive-product-runtime-projection";
 export * from "./canonical-scene-provider-request";
+export * from "./canonical-scene-payload-resolver";
 export * from "./scene-scheduling-coordinator";
 export * from "./canonical-provider-adapter";
 export * from "./canonical-provider-test-adapters";

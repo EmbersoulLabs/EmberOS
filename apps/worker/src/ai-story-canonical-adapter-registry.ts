@@ -4,6 +4,7 @@
  */
 import {
   CanonicalAdapterRegistry,
+  createCompilationBackedCanonicalPayloadResolver,
   registerMinimaxCanonicalAdapter,
   registerSeedanceCanonicalAdapter,
   loadMinimaxAdapterConfig,
@@ -12,7 +13,10 @@ import {
   type MinimaxPayloadResolver,
   type SeedancePayloadResolver,
 } from "@ceo-agent/agents";
-import { ExecutionEnvelopeRepository } from "@ceo-agent/db";
+import {
+  AiStorySceneExecutionPersistenceRepository,
+  ExecutionEnvelopeRepository,
+} from "@ceo-agent/db";
 
 export type ProductionAiStoryAdapterRegistryOptions = {
   /** Injected registry for tests (deterministic adapters). */
@@ -25,30 +29,27 @@ export type ProductionAiStoryAdapterRegistryOptions = {
 };
 
 /**
- * Resolve canonical scene payloads from persisted Execution Envelopes.
- * Adapter mapping reads normalizedPayloadReference; we load the Envelope and
- * return its stored canonicalRequest payload body (no credentials).
+ * Resolve canonical scene payloads from persisted Execution Envelopes +
+ * frozen Scene compilation instructions (Adapter-ready prompt/duration/shots).
  */
 export function createEnvelopeBackedCanonicalPayloadResolver(
   envelopes: Pick<
     ExecutionEnvelopeRepository,
     "getEnvelopeByPayloadReference"
-  > = new ExecutionEnvelopeRepository()
+  > = new ExecutionEnvelopeRepository(),
+  persistence: Pick<
+    AiStorySceneExecutionPersistenceRepository,
+    "getByExecutionPlanId"
+  > = new AiStorySceneExecutionPersistenceRepository(),
+  options: { readonly resolution?: string } = {}
 ): SeedancePayloadResolver & MinimaxPayloadResolver {
-  return {
-    async resolve(reference) {
-      const uri = reference.uri;
-      const envelope =
-        (await envelopes.getEnvelopeByPayloadReference(uri)) ??
-        (await envelopes.getEnvelopeByPayloadReference(reference.contentHash));
-      if (!envelope) {
-        throw new Error(`Canonical payload Envelope not found for ${uri}`);
-      }
-      const request = envelope.canonicalRequest as Record<string, unknown>;
-      const nested = request.payload ?? request.normalizedPayload ?? request;
-      return nested;
-    },
-  };
+  return createCompilationBackedCanonicalPayloadResolver({
+    getEnvelopeByPayloadReference: (payloadReference) =>
+      envelopes.getEnvelopeByPayloadReference(payloadReference),
+    getCompilationByExecutionPlanId: (executionPlanId) =>
+      persistence.getByExecutionPlanId(executionPlanId),
+    resolution: options.resolution,
+  });
 }
 
 /**
@@ -63,16 +64,27 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
   const registry = new CanonicalAdapterRegistry();
   const env = options.env ?? process.env;
   const requireEnabled = options.requireEnabled === true;
-  const payloadResolver =
+  // Minimal-cost defaults when product instructions omit resolution.
+  const seedanceResolver =
     options.seedancePayloadResolver ??
+    createEnvelopeBackedCanonicalPayloadResolver(
+      new ExecutionEnvelopeRepository(),
+      new AiStorySceneExecutionPersistenceRepository(),
+      { resolution: "480p" }
+    );
+  const minimaxResolver =
     options.minimaxPayloadResolver ??
-    createEnvelopeBackedCanonicalPayloadResolver();
+    createEnvelopeBackedCanonicalPayloadResolver(
+      new ExecutionEnvelopeRepository(),
+      new AiStorySceneExecutionPersistenceRepository(),
+      { resolution: "768P" }
+    );
 
   try {
     const seedance = loadSeedanceAdapterConfig(env, { requireEnabled });
     registerSeedanceCanonicalAdapter(registry, {
       config: seedance,
-      payloadResolver,
+      payloadResolver: seedanceResolver,
     });
   } catch (error) {
     if (requireEnabled) throw error;
@@ -86,7 +98,7 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
     const minimax = loadMinimaxAdapterConfig(env, { requireEnabled });
     registerMinimaxCanonicalAdapter(registry, {
       config: minimax,
-      payloadResolver,
+      payloadResolver: minimaxResolver,
     });
   } catch (error) {
     if (requireEnabled) throw error;

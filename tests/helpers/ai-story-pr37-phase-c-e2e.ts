@@ -29,6 +29,7 @@ import {
 import { createExecutionDispatch } from "@ceo-agent/shared";
 import type { CanonicalSceneResult } from "@ceo-agent/shared/server";
 import { SceneSchedulingCoordinator } from "../../packages/agents/src/ai-story/scene-scheduling-coordinator";
+import type { ProviderRouter } from "../../packages/agents/src/provider-router";
 import {
   FixedSeedanceRouter,
   PR32_USER_A,
@@ -301,6 +302,19 @@ export async function createPhaseCCoordinator(input: {
   readonly artifactRoot: string;
   readonly pathByUri: Map<string, string>;
   readonly expectedOwnership?: { orgId: string; workspaceId: string };
+  /** Phase F: override fixture media access (e.g. HTTPS Provider terminal media). */
+  readonly mediaAccess?: {
+    resolveToLocalPath: (input: {
+      ownership: { orgId: string; workspaceId: string; [k: string]: unknown };
+      scene: {
+        sceneOrder: number;
+        sceneResultId: string;
+        contentHash?: string;
+        mediaReference: { uri: string; contentHash: string };
+      };
+      workDir: string;
+    }) => Promise<{ localPath: string; contentHash: string }>;
+  };
   readonly fsrHooks?: {
     beforePersist?: () => void | Promise<void>;
   };
@@ -318,10 +332,9 @@ export async function createPhaseCCoordinator(input: {
   const jobRepo = new AssemblyJobRepositoryImpl();
   const artifactRepo = new AssemblyArtifactRepositoryImpl();
   const fsrRepo = new FinalStoryResultRepositoryImpl();
-  const mediaAccess = createPhaseCMediaAccessPort(
-    input.pathByUri,
-    input.expectedOwnership
-  );
+  const mediaAccess =
+    input.mediaAccess ??
+    createPhaseCMediaAccessPort(input.pathByUri, input.expectedOwnership);
   const instrumentation = input.instrumentation ?? {
     finalizeCalls: 0,
     finalizeTerminalFailureCalls: 0,
@@ -471,9 +484,11 @@ export async function scheduleAndDispatchScene(input: {
   readonly executionPlanId: string;
   readonly sceneExecutionId: string;
   readonly runtimeAuthorizationId: string;
+  /** Must match the router used by Canonical Execute when re-scheduling. */
+  readonly router?: ProviderRouter;
 }) {
   const scheduled = await new SceneSchedulingCoordinator({
-    router: new FixedSeedanceRouter(),
+    router: input.router ?? new FixedSeedanceRouter(),
   }).scheduleAuthorizedScene({
     executionPlanId: input.executionPlanId,
     sceneExecutionId: input.sceneExecutionId,

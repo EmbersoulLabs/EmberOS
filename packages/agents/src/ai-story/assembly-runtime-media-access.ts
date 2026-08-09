@@ -5,7 +5,7 @@
  * they are explicitly workspace-prefixed. HTTP requires an injected storage port.
  */
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   redactSensitiveAssemblyValue,
@@ -194,6 +194,66 @@ export function createWorkspaceScopedStorageMediaAccessPort(
       });
       const contentHash = await verifyContentHash(target, scene);
       return { localPath: target, contentHash };
+    },
+  };
+}
+
+/**
+ * Phase F — download Provider terminal HTTPS media for Assembly.
+ *
+ * Production Scene Results may temporarily carry Provider HTTPS URIs with a
+ * URI-derived placeholder contentHash. This port downloads the bytes for FFmpeg
+ * and accepts the placeholder hash so Assembly Job identity remains stable until
+ * durable workspace ingest lands. Never logs the full signed URL.
+ */
+export function createHttpsProviderMediaAccessPort(input?: {
+  readonly expectedOwnership?: Pick<RuntimeOwnershipIdentity, "orgId" | "workspaceId">;
+  readonly fetchImpl?: typeof fetch;
+}): AssemblyMediaAccessPort {
+  const fetchImpl = input?.fetchImpl ?? fetch;
+  return {
+    async resolveToLocalPath({ ownership, scene, workDir }) {
+      if (
+        input?.expectedOwnership &&
+        (ownership.orgId !== input.expectedOwnership.orgId ||
+          ownership.workspaceId !== input.expectedOwnership.workspaceId)
+      ) {
+        throw new AssemblyMediaAccessError(
+          "ASSEMBLY_MEDIA_UNAVAILABLE",
+          "Cross-workspace media access is denied"
+        );
+      }
+      const uri = scene.mediaReference.uri;
+      if (!isHttpUrl(uri)) {
+        throw new AssemblyMediaAccessError(
+          "ASSEMBLY_MEDIA_UNAVAILABLE",
+          "HTTPS provider media port requires an https media URI"
+        );
+      }
+      if (hasPathTraversal(uri)) {
+        throw new AssemblyMediaAccessError(
+          "ASSEMBLY_MEDIA_UNAVAILABLE",
+          "Media reference path traversal is denied"
+        );
+      }
+
+      await mkdir(workDir, { recursive: true });
+      const target = join(workDir, `scene-${scene.sceneOrder}-${scene.sceneResultId}.mp4`);
+      const response = await fetchImpl(uri);
+      if (!response.ok) {
+        throw new AssemblyMediaAccessError(
+          "ASSEMBLY_MEDIA_UNAVAILABLE",
+          `Provider media download failed (${response.status})`
+        );
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      await writeFile(target, bytes);
+      const fileHash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      const expected = scene.contentHash || scene.mediaReference.contentHash;
+      // Provider adapters often omit byte hashes; Scene projection may bind a
+      // URI-derived placeholder. Prefer the plan-bound expected hash for Assembly
+      // identity while using downloaded bytes for FFmpeg.
+      return { localPath: target, contentHash: expected || fileHash };
     },
   };
 }

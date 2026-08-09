@@ -115,14 +115,13 @@ describe("Sprint 3 PR 3.7 Phase A boundaries", () => {
     expect(sql).toMatch(/UNIQUE \(assembly_job_id\)/);
   });
 
-  it("does not add final-story UI from Phase A (Phase D Execute owned separately)", () => {
-    const webApi = collectSources(
-      join(ROOT, "apps/web/src/app/api/campaigns")
-    )
-      .filter((path) => path.includes("final-story"))
-      .map((path) => path.replace(/\\/g, "/"));
-    expect(
-      webApi.some((path) => path.includes("final-story-result/route.ts"))
-    ).toBe(false);
+  it("Phase E READ_ONLY final-story GET is present; Phase A did not own mutations", () => {
+    const route = read(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/final-story-result/route.ts"
+    );
+    expect(route).toMatch(/export async function GET/);
+    expect(route).not.toMatch(/export async function POST/);
+    expect(route).not.toMatch(/authorizeAndExecuteExecutionPlan/);
+    expect(route).not.toMatch(/FinalStoryResultProjector|acceptOrConverge/);
   });
 });

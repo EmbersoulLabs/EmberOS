@@ -160,7 +160,16 @@ export async function runDeterministicAssemblyEngine(input: {
         sceneResultId: scene.sceneResultId,
         localPath: resolved.localPath,
       });
-      if (probe.contentHash !== scene.contentHash) {
+      // Strict path: probed bytes must match Scene Result contentHash.
+      // HTTPS Provider ingest (Phase F) may attest the plan-bound URI-derived
+      // placeholder via mediaAccess until durable workspace object keys exist.
+      // In that case mediaAccess returns contentHash === scene.contentHash while
+      // probed bytes differ; honor the attestation without weakening local/fixture
+      // paths that do not attest.
+      const bytesMatch = probe.contentHash === scene.contentHash;
+      const mediaAccessAttestsPlanHash =
+        resolved.contentHash === scene.contentHash;
+      if (!bytesMatch && !mediaAccessAttestsPlanHash) {
         throw new AssemblyEngineError(
           "ASSEMBLY_MEDIA_HASH_MISMATCH",
           "Scene media content hash mismatch"

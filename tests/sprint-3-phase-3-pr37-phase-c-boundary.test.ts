@@ -100,10 +100,16 @@ describe("Sprint 3 PR 3.7 Phase C production runtime wiring boundaries", () => {
     ).toBe(true);
   });
 
-  it("does not add final-story GET APIs (Phase D Execute route is owned separately)", () => {
-    const webApi = collectSources(join(ROOT, "apps/web/src/app/api/campaigns"))
-      .filter((path) => path.includes("final-story"))
-      .map((path) => path.replace(/\\/g, "/"));
-    expect(webApi.some((path) => path.includes("final-story-result/route.ts"))).toBe(false);
+  it("Phase E READ_ONLY final-story GET is present; Execute remains the sole mutation", () => {
+    const fsr = read(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/final-story-result/route.ts"
+    );
+    expect(fsr).toMatch(/export async function GET/);
+    expect(fsr).not.toMatch(/export async function POST/);
+    expect(fsr).not.toMatch(/authorizeAndExecuteExecutionPlan/);
+    const execute = read(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"
+    );
+    expect(execute).toMatch(/authorizeAndExecuteExecutionPlan/);
   });
 });
