@@ -412,6 +412,9 @@ export async function createPhaseCCoordinator(input: {
   const { runDeterministicAssemblyRuntime } = await import(
     "../../packages/agents/src/ai-story/assembly-runtime-orchestrator"
   );
+  const { buildProductionAssemblyEngineSnapshotHash } = await import(
+    "../../packages/agents/src/ai-story/ai-story-runtime-continuation-coordinator"
+  );
 
   return {
     instrumentation,
@@ -444,6 +447,9 @@ export async function createPhaseCCoordinator(input: {
         finalStoryResultRepository: fsrRepo,
         hooks: input.fsrHooks,
       },
+      // Sprint 4 Phase A: fixture local media path — skip durable attestation gate.
+      requireDurableSceneMedia: false,
+      assemblyEngineSnapshotHash: buildProductionAssemblyEngineSnapshotHash(),
       runAssembly: async (runtimeInput) => {
         return runDeterministicAssemblyRuntime({
           ...runtimeInput,

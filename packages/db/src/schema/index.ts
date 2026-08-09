@@ -1717,6 +1717,63 @@ export const aiStoryFinalStoryResults = pgTable(
 );
 
 /**
+ * Sprint 4 Phase A — Durable Scene Media Attestation (immutable).
+ * Subordinate to Canonical Scene Result. No UPDATE/DELETE product paths.
+ */
+export const aiStoryDurableSceneMediaAttestations = pgTable(
+  "ai_story_durable_scene_media_attestations",
+  {
+    mediaAttestationId: uuid("media_attestation_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    animationPackageId: uuid("animation_package_id")
+      .notNull()
+      .references(() => aiStoryAnimationPackages.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sceneResultId: uuid("scene_result_id")
+      .notNull()
+      .references(() => aiStorySceneResults.sceneResultId, { onDelete: "restrict" }),
+    sourceMediaReference: jsonb("source_media_reference")
+      .$type<import("@ceo-agent/shared/server").DurableMediaSourceReference>()
+      .notNull(),
+    durableObjectReference: text("durable_object_reference").notNull(),
+    contentHash: text("content_hash").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    mediaType: text("media_type").notNull(),
+    ingestContractVersion: text("ingest_contract_version").notNull(),
+    storageProvider: text("storage_provider").notNull(),
+    storageNamespaceVersion: text("storage_namespace_version").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    attestation: jsonb("attestation")
+      .$type<import("@ceo-agent/shared/server").DurableSceneMediaAttestation>()
+      .notNull(),
+  },
+  (t) => [
+    unique("ai_story_durable_scene_media_scene_unique").on(t.sceneResultId),
+    unique("ai_story_durable_scene_media_integrity_unique").on(t.integrityHash),
+    unique("ai_story_durable_scene_media_object_unique").on(t.durableObjectReference),
+    index("ai_story_durable_scene_media_workspace_idx").on(t.workspaceId, t.acceptedAt),
+    index("ai_story_durable_scene_media_plan_idx").on(t.executionPlanId, t.acceptedAt),
+    index("ai_story_durable_scene_media_hash_idx").on(t.contentHash),
+  ]
+);
+
+/**
  * Sprint 3 PR 3.5 — Scene↔Provider finalization correlation (projection-only).
  * Does not store usage/cost amounts. Provider ledgers remain authoritative.
  */

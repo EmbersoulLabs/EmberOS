@@ -112,6 +112,7 @@ export async function cleanupPr32Tenant(
   await sql`DELETE FROM ai_story_assembly_artifacts WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_assembly_job_facts WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_assembly_jobs WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_durable_scene_media_attestations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_results WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_projection_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_worker_attempt_observations WHERE org_id = ${ids.orgId}`;

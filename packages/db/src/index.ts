@@ -22,4 +22,5 @@ export * from "./queries/ai-story-scene-projection";
 export * from "./queries/ai-story-assembly-job";
 export * from "./queries/ai-story-assembly-artifact";
 export * from "./queries/ai-story-final-story-result";
+export * from "./queries/ai-story-durable-scene-media";
 export * from "./queries/ai-story-assembly-validation-loader";

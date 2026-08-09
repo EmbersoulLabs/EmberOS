@@ -59,20 +59,39 @@ export async function downloadStorageFile(storagePath: string, localPath: string
 export async function uploadStorageFile(
   storagePath: string,
   localPath: string,
-  contentType: string
+  contentType: string,
+  options?: { readonly upsert?: boolean }
 ): Promise<void> {
   await withNetworkRetry(`upload ${storagePath}`, async () => {
     const supabase = getAdminClient();
     const bucket = getBucket();
     const fileBuffer = await readFile(localPath);
     const { error } = await supabase.storage.from(bucket).upload(storagePath, fileBuffer, {
-      upsert: true,
+      upsert: options?.upsert ?? true,
       contentType,
     });
     if (error) {
       throw new Error(`Upload failed: ${error.message}`);
     }
   });
+}
+
+/** Immutable upload — never overwrites existing objects (upsert:false). */
+export async function uploadStorageFileImmutable(
+  storagePath: string,
+  localPath: string,
+  contentType: string
+): Promise<"created" | "already_exists"> {
+  try {
+    await uploadStorageFile(storagePath, localPath, contentType, { upsert: false });
+    return "created";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/already exists|Duplicate|409|resource already/i.test(message)) {
+      return "already_exists";
+    }
+    throw error;
+  }
 }
 
 export function publicStorageUrl(storagePath: string): string {

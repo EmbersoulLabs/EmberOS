@@ -53,4 +53,26 @@ export const STORAGE_PATHS = {
   /** PD-036 Workspace Asset Library path (no campaign ownership). */
   library: (workspaceId: string, assetId: string, ext: string) =>
     `${workspaceId}/library/${assetId}.${ext}`,
+  /**
+   * Sprint 4 Phase A — durable scene media object key.
+   * `contentHashHex` is the 64-char hex digest (no `sha256:` prefix).
+   */
+  aiStoryScene: (
+    workspaceId: string,
+    executionPlanId: string,
+    sceneExecutionId: string,
+    contentHashHex: string
+  ) =>
+    `${workspaceId}/ai-story/scenes/${executionPlanId}/${sceneExecutionId}/${contentHashHex}.mp4`,
+  /**
+   * Sprint 4 Phase A — durable assembly artifact object key.
+   * `contentHashHex` is the 64-char hex digest (no `sha256:` prefix).
+   */
+  aiStoryAssembly: (
+    workspaceId: string,
+    executionPlanId: string,
+    assemblyJobId: string,
+    contentHashHex: string
+  ) =>
+    `${workspaceId}/ai-story/assembly/${executionPlanId}/${assemblyJobId}/${contentHashHex}.mp4`,
 } as const;

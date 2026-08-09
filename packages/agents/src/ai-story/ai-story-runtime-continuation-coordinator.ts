@@ -7,6 +7,9 @@
  *   → FinalStoryResultProjector
  *
  * Does NOT own persistence. Does NOT unlock Execute. Does NOT Export/Publish.
+ *
+ * Sprint 4 Phase A: optional durable scene media ingest + attestation-gated
+ * Assembly identity. Does NOT mutate Canonical Scene Result rows.
  */
 import {
   AssemblyJobSchema,
@@ -16,6 +19,7 @@ import {
   type AssemblyJob,
   type AssemblyRuntimeResult,
   type CanonicalSceneResult,
+  type DurableSceneMediaAttestation,
   type RuntimeOwnershipIdentity,
   type SceneProjectionOutcome,
   type StoryAssemblyDefinition,
@@ -53,6 +57,12 @@ import {
   type FinalStoryResultProjectionOutcome,
   type FinalStoryResultProjectorDeps,
 } from "./final-story-result-projector";
+import { resolveProductionAssemblyEngineSnapshotHash } from "./assembly-engine-provenance";
+import {
+  ingestProviderSceneMedia,
+  type DurableSceneMediaAttestationRepository,
+} from "./provider-media-ingest";
+import type { DurableObjectStore } from "./durable-object-store";
 
 export type AiStoryContinuationStatus =
   | "SKIPPED_NON_SCENE"
@@ -81,7 +91,11 @@ export type AiStoryContinuationOutcome = {
   readonly message?: string;
 };
 
-/** Frozen production Assembly engine snapshot config (identity only). */
+/**
+ * @deprecated Placeholder ffff… snapshot for unit/fixture tests only.
+ * Production must inject `assemblyEngineSnapshotHash` or call
+ * `resolveProductionAssemblyEngineSnapshotHash`.
+ */
 export function buildProductionAssemblyEngineSnapshotHash(): string {
   return buildAssemblyEngineSnapshotContentHash({
     engineName: "ember-story-assembly",
@@ -204,6 +218,27 @@ export function buildDeterministicAssemblyJob(input: {
   });
 }
 
+function rewriteSceneResultsWithDurableMedia(input: {
+  readonly sceneResults: readonly CanonicalSceneResult[];
+  readonly attestationsBySceneResultId: ReadonlyMap<
+    string,
+    DurableSceneMediaAttestation
+  >;
+}): CanonicalSceneResult[] {
+  return input.sceneResults.map((result) => {
+    const attestation = input.attestationsBySceneResultId.get(result.sceneResultId);
+    if (!attestation || !result.mediaReference) return result;
+    return {
+      ...result,
+      mediaReference: {
+        ...result.mediaReference,
+        uri: attestation.durableObjectReference,
+        contentHash: attestation.contentHash,
+      },
+    };
+  });
+}
+
 export type AiStoryRuntimeContinuationDependencies = {
   readonly worker: SceneProviderWorkerRuntimeDependencies;
   readonly finalization: SceneFinalizationCoordinatorDependencies;
@@ -222,12 +257,27 @@ export type AiStoryRuntimeContinuationDependencies = {
     readonly executionPlanId: string;
     readonly job: AssemblyJob;
   }) => Promise<AssemblyRuntimeSources>;
+  /**
+   * Production Assembly engine snapshot hash (ffmpeg provenance).
+   * When omitted, coordinator resolves via resolveProductionAssemblyEngineSnapshotHash.
+   */
+  readonly assemblyEngineSnapshotHash?: string;
+  /** Sprint 4 Phase A — durable media attestation repository. */
+  readonly durableMediaRepository?: DurableSceneMediaAttestationRepository;
+  /** Sprint 4 Phase A — durable object store for Provider HTTPS ingest. */
+  readonly durableObjectStore?: DurableObjectStore;
+  /**
+   * When true (default), Assembly requires durable attestations for all ordered
+   * scenes and uses attestation content hashes. Fixture tests may set false.
+   */
+  readonly requireDurableSceneMedia?: boolean;
 };
 
 export class AiStoryRuntimeContinuationCoordinator {
   private readonly workerRuntime: SceneProviderWorkerRuntime;
   private readonly finalizationCoordinator: SceneFinalizationCoordinator;
   private readonly fsrProjector: FinalStoryResultProjector;
+  private readonly requireDurableSceneMedia: boolean;
 
   constructor(private readonly deps: AiStoryRuntimeContinuationDependencies) {
     this.workerRuntime = new SceneProviderWorkerRuntime(deps.worker);
@@ -239,6 +289,7 @@ export class AiStoryRuntimeContinuationCoordinator {
       artifactBlobStore: deps.blobStore,
       hooks: deps.finalStoryResult.hooks,
     });
+    this.requireDurableSceneMedia = deps.requireDurableSceneMedia !== false;
   }
 
   /**
@@ -403,22 +454,70 @@ export class AiStoryRuntimeContinuationCoordinator {
       };
     }
 
+    let orderedSceneContentHashes = readiness.orderedSceneContentHashes;
+    let attestationsBySceneResultId = new Map<string, DurableSceneMediaAttestation>();
+
+    if (this.requireDurableSceneMedia) {
+      if (!this.deps.durableMediaRepository) {
+        return {
+          status: "ASSEMBLY_NOT_READY",
+          executionPlanId: input.executionPlanId,
+          message: "Durable Scene Media repository is required for Assembly",
+        };
+      }
+      const attestations =
+        await this.deps.durableMediaRepository.listByExecutionPlanId(
+          input.executionPlanId
+        );
+      attestationsBySceneResultId = new Map(
+        attestations.map((row) => [row.sceneResultId, row] as const)
+      );
+      const durableHashes: string[] = [];
+      for (const sceneResultId of readiness.orderedSceneResultIds) {
+        const attestation = attestationsBySceneResultId.get(sceneResultId);
+        if (!attestation) {
+          return {
+            status: "ASSEMBLY_NOT_READY",
+            executionPlanId: input.executionPlanId,
+            message: `Durable Scene Media Attestation missing for sceneResultId=${sceneResultId}`,
+          };
+        }
+        durableHashes.push(attestation.contentHash);
+      }
+      orderedSceneContentHashes = durableHashes;
+    }
+
+    const assemblyEngineSnapshotHash =
+      this.deps.assemblyEngineSnapshotHash ??
+      (await resolveProductionAssemblyEngineSnapshotHash());
+
     const job = buildDeterministicAssemblyJob({
       ownership: input.ownership,
       assemblyDefinitionId: validation.assemblyDefinitionId,
       runtimeAuthorizationId: input.runtimeAuthorizationId,
       orderedSceneResultIds: readiness.orderedSceneResultIds,
-      orderedSceneContentHashes: readiness.orderedSceneContentHashes,
+      orderedSceneContentHashes,
+      assemblyEngineSnapshotHash,
     });
     const accepted = await this.deps.jobRepository.acceptOrConverge(job);
     const sources = await this.deps.loadAssemblyRuntimeSources({
       executionPlanId: input.executionPlanId,
       job: accepted.job,
     });
+    const rewrittenSources: AssemblyRuntimeSources =
+      this.requireDurableSceneMedia && attestationsBySceneResultId.size > 0
+        ? {
+            ...sources,
+            sceneResults: rewriteSceneResultsWithDurableMedia({
+              sceneResults: sources.sceneResults,
+              attestationsBySceneResultId,
+            }),
+          }
+        : sources;
     const runAssembly = this.deps.runAssembly ?? runDeterministicAssemblyRuntime;
     const assembly = await runAssembly({
       assemblyJobId: accepted.job.assemblyJobId,
-      sources,
+      sources: rewrittenSources,
       jobRepository: this.deps.jobRepository,
       artifactRepository: this.deps.artifactRepository,
       mediaAccess: this.deps.mediaAccess,
@@ -490,6 +589,25 @@ export class AiStoryRuntimeContinuationCoordinator {
         adapterInvoked: input.adapterInvoked,
         message: "Scene projected non-success; Assembly not triggered",
       };
+    }
+
+    const terminalUri = input.workerResult.terminalMedia?.uriReference;
+    if (
+      terminalUri &&
+      /^https:/i.test(terminalUri) &&
+      this.deps.durableMediaRepository &&
+      this.deps.durableObjectStore
+    ) {
+      await ingestProviderSceneMedia({
+        ingest: {
+          ownership: input.ownership,
+          sceneExecutionId: projection.sceneResult.sceneExecutionId,
+          sceneResultId: projection.sceneResult.sceneResultId,
+          sourceHttpsUri: terminalUri,
+        },
+        store: this.deps.durableObjectStore,
+        repository: this.deps.durableMediaRepository,
+      });
     }
 
     const continued = await this.continueAssemblyAndFinalStoryResult({
