@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { BRAND } from "@/lib/brand";
 import { useI18n } from "@/lib/i18n/provider";
+import {
+  initialPreviewDeliveryState,
+  previewArtifactIdentity,
+  recordPreviewDeliveryFailure,
+  recordPreviewDeliverySuccess,
+  recordPreviewRefreshFailure,
+} from "@/lib/bounded-preview-delivery";
 
 export default function ClientPortalPage() {
   const params = useParams();
@@ -12,6 +19,8 @@ export default function ClientPortalPage() {
   const [data, setData] = useState<Record<string, unknown> | null>(null);
   const [comment, setComment] = useState("");
   const [done, setDone] = useState(false);
+  const previewDelivery = useRef(initialPreviewDeliveryState("unresolved-preview"));
+  const [previewDeliveryStatus, setPreviewDeliveryStatus] = useState("INITIAL");
 
   useEffect(() => {
     fetch(`/api/portal/${token}`)
@@ -29,6 +38,38 @@ export default function ClientPortalPage() {
       body: JSON.stringify({ decision, comment }),
     });
     setDone(true);
+  }
+
+  async function refreshDelivery(): Promise<boolean> {
+    try {
+      const response = await fetch(`/api/portal/${token}`);
+      if (!response.ok) return false;
+      const next = await response.json();
+      if (!next.creative) return false;
+      setData(next);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const artifactIdentity = previewArtifactIdentity(creative);
+  const terminalPreviewError =
+    previewDelivery.current.artifactIdentity === artifactIdentity &&
+    previewDeliveryStatus === "TERMINAL_PREVIEW_ERROR";
+
+  async function handlePreviewError() {
+    const transition = recordPreviewDeliveryFailure(previewDelivery.current, artifactIdentity);
+    previewDelivery.current = transition.state;
+    setPreviewDeliveryStatus(transition.state.status);
+    if (!transition.shouldRefresh) return;
+    if (!(await refreshDelivery())) {
+      previewDelivery.current = recordPreviewRefreshFailure(
+        previewDelivery.current,
+        artifactIdentity
+      );
+      setPreviewDeliveryStatus(previewDelivery.current.status);
+    }
   }
 
   if (!data) {
@@ -57,15 +98,23 @@ export default function ClientPortalPage() {
           <p className="rounded-lg bg-green-50 p-4 text-green-800">{t("portal.thankYou")}</p>
         ) : (
           <>
-            {creative?.videoUrl ? (
+            {creative?.videoUrl && !terminalPreviewError ? (
               <video
                 src={creative.videoUrl as string}
+                onError={() => void handlePreviewError()}
+                onLoadedData={() => {
+                  previewDelivery.current = recordPreviewDeliverySuccess(
+                    previewDelivery.current,
+                    artifactIdentity
+                  );
+                  setPreviewDeliveryStatus(previewDelivery.current.status);
+                }}
                 controls
                 className="mb-4 w-full rounded-lg bg-black"
               />
             ) : (
               <div className="mb-4 flex h-48 items-center justify-center rounded-lg bg-slate-200">
-                {t("portal.noPreview")}
+                {terminalPreviewError ? "Preview could not be loaded." : t("portal.noPreview")}
               </div>
             )}
 

@@ -24,8 +24,8 @@ import { mediaHasAudio } from "../ffmpeg/probe-audio";
 import { compressSourceVideo } from "../ffmpeg/compress-source";
 import {
   downloadStorageFile,
+  downloadStorageReference,
   uploadStorageFile,
-  publicStorageUrl,
 } from "../storage";
 import { mkdir, writeFile, readFile, rm, access, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -342,23 +342,24 @@ export function startWorkers() {
 
       try {
         const exportPath = creative.videoExportUrl ?? creative.videoUrl;
-        if (!exportPath) throw new Error("No video URL on creative");
+        if (!exportPath) throw new Error("No video artifact on creative");
 
         const videoLocal = join(workDir, "video_9x16_1080p.mp4");
-        const response = await fetch(exportPath);
-        if (!response.ok) {
-          throw new Error(
-            `Failed to download video for export (${response.status}). Check storage bucket is public or worker can access Supabase.`
-          );
-        }
-        await writeFile(videoLocal, Buffer.from(await response.arrayBuffer()));
+        await downloadStorageReference(
+          exportPath,
+          creative.videoExportUrl
+            ? STORAGE_PATHS.export(data.workspaceId, data.campaignId, data.creativeId)
+            : STORAGE_PATHS.preview(data.workspaceId, data.campaignId, data.creativeId),
+          videoLocal
+        );
 
         if (creative.coverUrl) {
           const coverLocal = join(workDir, "cover.jpg");
-          const coverRes = await fetch(creative.coverUrl);
-          if (coverRes.ok) {
-            await writeFile(coverLocal, Buffer.from(await coverRes.arrayBuffer()));
-          }
+          await downloadStorageReference(
+            creative.coverUrl,
+            STORAGE_PATHS.cover(data.workspaceId, data.campaignId, data.creativeId),
+            coverLocal
+          );
         }
 
         await mkdir(join(workDir, "copy"), { recursive: true });
@@ -426,7 +427,7 @@ export function startWorkers() {
         );
         await uploadStorageFile(packPath, zipLocal, "application/zip");
 
-        const exportPackUrl = publicStorageUrl(packPath);
+        const exportPackUrl = packPath;
 
         await db.insert(schema.publishJobs).values({
           orgId: data.orgId,

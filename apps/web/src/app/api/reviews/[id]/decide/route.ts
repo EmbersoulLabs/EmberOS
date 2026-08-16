@@ -3,6 +3,7 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError, generateToken } from "@/lib/api";
 import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
+import { withSignedCreativeArtifacts } from "@/lib/video-artifact-delivery";
 import {
   createClientInvite,
   resolveWorkspaceReviewSettings,
@@ -165,7 +166,7 @@ export async function POST(
 
     return apiSuccess({
       review: updatedReview,
-      creative: { ...creative, status: newCreativeStatus },
+      creative: await withSignedCreativeArtifacts({ ...creative, status: newCreativeStatus }),
       campaignStatus: newCampaignStatus,
       nextAction,
       inviteUrl,

@@ -4,6 +4,7 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
 import { clientIp, enforceRateLimit } from "@/lib/rate-limit";
 import { syncCampaignStatusFromCreatives } from "@/lib/review-flow";
+import { withSignedCreativeArtifacts } from "@/lib/video-artifact-delivery";
 
 async function validatePortalToken(token: string) {
   const db = getDb();
@@ -67,7 +68,7 @@ export async function GET(
       .where(eq(schema.reviews.creativeId, creative.id));
 
     return apiSuccess({
-      creative,
+      creative: await withSignedCreativeArtifacts(creative),
       campaign,
       brandName: workspace?.name,
       reviews,

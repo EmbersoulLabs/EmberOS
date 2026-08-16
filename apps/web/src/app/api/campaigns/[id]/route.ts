@@ -3,6 +3,7 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { isCampaignDeletable } from "@/lib/campaigns";
+import { withSignedCreativeArtifacts, withSignedTaskExportProgress } from "@/lib/video-artifact-delivery";
 import { deleteCampaignCascade } from "@/lib/campaign-delete";
 
 export async function GET(
@@ -35,15 +36,6 @@ export async function GET(
       .orderBy(desc(schema.tasks.createdAt))
       .limit(1);
 
-    const [creative] = task
-      ? await db
-          .select()
-          .from(schema.creatives)
-          .where(eq(schema.creatives.taskId, task.id))
-          .orderBy(asc(schema.creatives.createdAt))
-          .limit(1)
-      : [null];
-
     const creatives = task
       ? await db
           .select()
@@ -64,12 +56,19 @@ export async function GET(
       campaignRecord = synced ?? campaign;
     }
 
+    const deliveredCreatives = await Promise.all(creatives.map((item) => withSignedCreativeArtifacts(item)));
+    const deliveredProgress = task
+      ? await withSignedTaskExportProgress(
+          task.stepProgress as Record<string, unknown> | null,
+          { taskId: task.id, workspaceId: task.workspaceId, campaignId: task.campaignId }
+        )
+      : null;
     return apiSuccess({
       campaign: campaignRecord,
       assets,
-      task: task ?? null,
-      creative: creative ?? null,
-      creatives,
+      task: task ? { ...task, stepProgress: deliveredProgress } : null,
+      creative: deliveredCreatives[0] ?? null,
+      creatives: deliveredCreatives,
       hasVideoAsset,
       clipCount: creatives.length,
       canDelete: isCampaignDeletable(

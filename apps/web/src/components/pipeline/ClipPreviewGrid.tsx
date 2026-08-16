@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/provider";
 import { StatusBadge } from "@/components/AppShell";
 import { extractClipMeta, formatClipDuration, formatPlatformLabel, videoUrlWithCacheBust } from "@/lib/clip-utils";
@@ -10,6 +10,13 @@ import { ClipAudioControls } from "@/components/pipeline/ClipAudioControls";
 import { ClipDownloadMenu } from "@/components/pipeline/ClipDownloadMenu";
 import { MusicMatchPanel } from "@/components/pipeline/MusicMatchPanel";
 import type { EditPlan } from "@ceo-agent/shared";
+import {
+  previewArtifactIdentity,
+  recordPreviewDeliveryFailure,
+  recordPreviewDeliverySuccess,
+  recordPreviewRefreshFailure,
+  type PreviewDeliveryState,
+} from "@/lib/bounded-preview-delivery";
 
 function clipStatus(creative: Record<string, unknown> | undefined): string {
   if (!creative) return "pending";
@@ -33,6 +40,8 @@ export function ClipPreviewGrid({
   // After an in-card audio re-render finishes, the parent poll may have stopped
   // (task already completed). Keep a local override so the new video shows.
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({});
+  const previewDelivery = useRef<Record<string, PreviewDeliveryState>>({});
+  const [, setDeliveryRevision] = useState(0);
   const merged = creatives.map((c) => {
     const id = c?.id as string | undefined;
     return id && overrides[id] ? { ...c, ...overrides[id] } : c;
@@ -40,15 +49,33 @@ export function ClipPreviewGrid({
   const ready = merged.filter((c) => c.videoUrl).length;
   const failed = merged.filter((c) => clipStatus(c) === "failed").length;
 
-  async function refreshClip(creativeId: string) {
+  async function refreshClip(creativeId: string): Promise<boolean> {
     try {
       const res = await fetch(`/api/creatives/${creativeId}`);
+      if (!res.ok) return false;
       const data = await res.json();
       if (data.creative) {
         setOverrides((prev) => ({ ...prev, [creativeId]: data.creative }));
+        return true;
       }
     } catch {
       // ignore
+    }
+    return false;
+  }
+
+  async function handlePreviewError(creative: Record<string, unknown>, creativeId: string) {
+    const identity = previewArtifactIdentity(creative);
+    const transition = recordPreviewDeliveryFailure(previewDelivery.current[creativeId], identity);
+    previewDelivery.current[creativeId] = transition.state;
+    setDeliveryRevision((value) => value + 1);
+    if (!transition.shouldRefresh) return;
+    if (!(await refreshClip(creativeId))) {
+      previewDelivery.current[creativeId] = recordPreviewRefreshFailure(
+        previewDelivery.current[creativeId]!,
+        identity
+      );
+      setDeliveryRevision((value) => value + 1);
     }
   }
 
@@ -87,13 +114,18 @@ export function ClipPreviewGrid({
           const meta = extractClipMeta(c);
           const status = clipStatus(c);
           const progress = c?.renderProgress as { error?: string } | undefined;
+          const artifactIdentity = previewArtifactIdentity(c);
+          const deliveryState = id ? previewDelivery.current[id] : undefined;
+          const terminalPreviewError =
+            deliveryState?.artifactIdentity === artifactIdentity &&
+            deliveryState.status === "TERMINAL_PREVIEW_ERROR";
 
           return (
             <div
               key={id ?? `slot-${index}`}
               className="brand-card overflow-hidden transition-shadow duration-200 hover:shadow-elevated"
             >
-              {videoUrl ? (
+              {videoUrl && !terminalPreviewError ? (
                 <video
                   key={String(c?.updatedAt ?? id)}
                   src={videoUrlWithCacheBust(
@@ -101,11 +133,23 @@ export function ClipPreviewGrid({
                     c?.updatedAt as string | undefined
                   )}
                   controls
+                  onError={() => id && c && void handlePreviewError(c, id)}
+                  onLoadedData={() => {
+                    if (!id) return;
+                    previewDelivery.current[id] = recordPreviewDeliverySuccess(
+                      previewDelivery.current[id],
+                      artifactIdentity
+                    );
+                  }}
                   className="aspect-[9/16] w-full bg-navy object-contain"
                 />
               ) : (
                 <div className="flex aspect-[9/16] flex-col items-center justify-center gap-2 bg-surface-muted px-4 text-center text-ink-secondary">
-                  {status === "preview_rendering" ? (
+                  {terminalPreviewError ? (
+                    <span className="text-xs font-medium text-red-600">
+                      Preview could not be loaded.
+                    </span>
+                  ) : status === "preview_rendering" ? (
                     <>
                       <svg className="h-8 w-8 animate-spin text-brand-blue" viewBox="0 0 24 24" fill="none">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />

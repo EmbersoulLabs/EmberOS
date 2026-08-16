@@ -3,6 +3,7 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { retryPipelineStep } from "@ceo-agent/agents";
+import { withSignedCreativeArtifacts, withSignedTaskExportProgress } from "@/lib/video-artifact-delivery";
 
 export async function GET(
   _request: Request,
@@ -23,14 +24,19 @@ export async function GET(
       .where(eq(schema.creatives.taskId, id))
       .orderBy(asc(schema.creatives.createdAt));
 
-    const creative = creatives[0] ?? null;
+    const deliveredCreatives = await Promise.all(creatives.map((item) => withSignedCreativeArtifacts(item)));
+    const deliveredProgress = await withSignedTaskExportProgress(
+      task.stepProgress as Record<string, unknown> | null,
+      { taskId: task.id, workspaceId: task.workspaceId, campaignId: task.campaignId }
+    );
+    const creative = deliveredCreatives[0] ?? null;
 
     return apiSuccess({
-      task,
-      stepProgress: task.stepProgress,
+      task: { ...task, stepProgress: deliveredProgress },
+      stepProgress: deliveredProgress,
       creative: creative ?? null,
-      creatives,
-      clipCount: creatives.length,
+      creatives: deliveredCreatives,
+      clipCount: deliveredCreatives.length,
     });
   } catch (error) {
     return handleApiError(error);

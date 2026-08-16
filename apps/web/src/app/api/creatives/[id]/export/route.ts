@@ -6,6 +6,7 @@ import { enqueueExport } from "@ceo-agent/queue";
 import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
 import { enforceRateLimit } from "@/lib/rate-limit";
 import { isCampaignExportable } from "@ceo-agent/shared";
+import { signCreativeExportPack } from "@/lib/video-artifact-delivery";
 
 const EXPORTABLE_CREATIVE_STATUSES = new Set([
   "approved",
@@ -60,7 +61,14 @@ export async function GET(
 
     return apiSuccess({
       status: job?.status ?? (renderStatus === "final_rendering" ? "final_rendering" : "none"),
-      exportPackUrl: job?.exportPackUrl ?? null,
+      exportPackUrl: job?.exportPackUrl
+        ? await signCreativeExportPack({
+            creativeId: creative.id,
+            workspaceId: creative.workspaceId,
+            campaignId: creative.campaignId,
+            reference: job.exportPackUrl,
+          })
+        : null,
       exportError:
         job?.status === "export_failed"
           ? "Export job failed. Check worker logs and retry."

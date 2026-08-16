@@ -59,6 +59,28 @@ export async function downloadStorageFile(
     await writeFile(localPath, Buffer.from(await data.arrayBuffer()));
   });
 }
+/** Resolve only the exact server-derived object, with bounded legacy URL support. */
+export function resolveExpectedStoragePath(
+  reference: string,
+  expectedStoragePath: string
+): string {
+  if (reference === expectedStoragePath) return expectedStoragePath;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
+  if (!url) throw new Error("Supabase storage not configured");
+  const historicalPublicUrl = `${url}/storage/v1/object/public/${getBucket()}/${expectedStoragePath}`;
+  if (reference === historicalPublicUrl) return expectedStoragePath;
+
+  throw new Error("Artifact reference does not match server-owned storage identity");
+}
+
+export async function downloadStorageReference(
+  reference: string,
+  expectedStoragePath: string,
+  localPath: string
+): Promise<void> {
+  await downloadStorageFile(resolveExpectedStoragePath(reference, expectedStoragePath), localPath);
+}
 
 export async function uploadStorageFile(
   storagePath: string,
@@ -77,11 +99,4 @@ export async function uploadStorageFile(
       throw new Error(`Upload failed: ${error.message}`);
     }
   });
-}
-
-export function publicStorageUrl(storagePath: string): string {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const bucket = getBucket();
-  if (!url) throw new Error("Supabase storage not configured");
-  return `${url}/storage/v1/object/public/${bucket}/${storagePath}`;
 }

@@ -10,6 +10,7 @@ import {
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueClipDownloadRender } from "@/lib/render-queue";
+import { signCreativeDownload } from "@/lib/video-artifact-delivery";
 
 export async function GET(
   _request: Request,
@@ -46,6 +47,12 @@ export async function GET(
         phase?: string;
       } | null,
     });
+    for (const resolution of ["720p", "1080p", "2k"] as const) {
+      const rendition = renditions[resolution];
+      if (rendition.url) {
+        rendition.url = await signCreativeDownload(creative, resolution, rendition.url);
+      }
+    }
 
     return apiSuccess({
       renditions,
@@ -105,11 +112,19 @@ export async function POST(
     );
 
     if (existingUrl) {
-      return apiSuccess({ status: "ready", resolution, url: existingUrl });
+      return apiSuccess({
+        status: "ready",
+        resolution,
+        url: await signCreativeDownload(creative, resolution, existingUrl),
+      });
     }
 
     if (resolution === "720p") {
-      return apiSuccess({ status: "ready", resolution, url: creative.videoUrl });
+      return apiSuccess({
+        status: "ready",
+        resolution,
+        url: await signCreativeDownload(creative, resolution, creative.videoUrl),
+      });
     }
 
     try {

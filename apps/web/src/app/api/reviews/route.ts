@@ -2,6 +2,7 @@ import { eq, and } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { withSignedCreativeArtifacts } from "@/lib/video-artifact-delivery";
 
 export async function GET(request: Request) {
   try {
@@ -30,7 +31,14 @@ export async function GET(request: Request) {
         )
       );
 
-    return apiSuccess({ reviews });
+    return apiSuccess({
+      reviews: await Promise.all(
+        reviews.map(async (item) => ({
+          ...item,
+          creative: await withSignedCreativeArtifacts(item.creative),
+        }))
+      ),
+    });
   } catch (error) {
     return handleApiError(error);
   }

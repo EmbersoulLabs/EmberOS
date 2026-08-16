@@ -30,7 +30,7 @@ import {
   probeVideo,
   type RenderAssetMap,
 } from "../ffmpeg/pipeline";
-import { downloadStorageFile, uploadStorageFile, publicStorageUrl } from "../storage";
+import { downloadStorageFile, uploadStorageFile } from "../storage";
 
 export interface RenderJobData {
   taskId: string;
@@ -361,10 +361,11 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
       }
       const coverPath = STORAGE_PATHS.cover(data.workspaceId, data.campaignId, data.creativeId);
       await uploadStorageFile(coverPath, coverLocal, "image/jpeg");
-      coverUrl = publicStorageUrl(coverPath);
+      coverUrl = coverPath;
     }
 
-    const videoUrl = publicStorageUrl(outputStoragePath);
+    // Durable object identity only. Authenticated delivery URLs are minted by web routes.
+    const videoUrl = outputStoragePath;
     const doneProgress = {
       percent: 100,
       phase: "done" as const,

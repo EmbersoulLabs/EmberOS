@@ -21,6 +21,7 @@ import {
 } from "@ceo-agent/agents";
 import { enqueueFinalRendersForTask, enqueue2kRendersForTask } from "@/lib/render-queue";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { signTaskExportPack, withSignedCreativeArtifacts } from "@/lib/video-artifact-delivery";
 
 type ExportPackOutput = {
   exportPackUrl?: string;
@@ -80,7 +81,16 @@ export async function GET(
       }
     }
 
-    const exportPackUrl = packOutput?.exportPackUrl ?? null;
+    const exportPackUrl = packOutput?.exportPackUrl
+      ? await signTaskExportPack({
+          taskId: task.id,
+          workspaceId: task.workspaceId,
+          campaignId: task.campaignId,
+          resolution: (packOutput.resolution ?? requestedResolution ?? "720p") as "720p" | "1080p" | "2k",
+          reference: packOutput.exportPackUrl,
+          filename: packOutput.filename,
+        })
+      : null;
     const exportedResolution = packOutput?.resolution ?? null;
     const exportPackFilename = packOutput?.filename ?? null;
 
@@ -162,7 +172,7 @@ export async function GET(
         allPreviewReady &&
         status !== "final_rendering" &&
         status !== "export_pending",
-      creatives: creatives.map((c, index) => ({
+      creatives: (await Promise.all(creatives.map((c) => withSignedCreativeArtifacts(c)))).map((c, index) => ({
         id: c.id,
         index: index + 1,
         status: c.status,

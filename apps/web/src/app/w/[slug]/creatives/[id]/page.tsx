@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, StatusBadge } from "@/components/AppShell";
@@ -16,6 +16,13 @@ import { formatPlatformLabel, videoUrlWithCacheBust } from "@/lib/clip-utils";
 import { latestRejectedReview } from "@ceo-agent/shared";
 import { isCreativeExportable } from "@ceo-agent/shared";
 import type { EditPlan } from "@ceo-agent/shared";
+import {
+  initialPreviewDeliveryState,
+  previewArtifactIdentity,
+  recordPreviewDeliveryFailure,
+  recordPreviewDeliverySuccess,
+  recordPreviewRefreshFailure,
+} from "@/lib/bounded-preview-delivery";
 
 interface CopyVariant {
   id: string;
@@ -62,14 +69,20 @@ export default function CreativePreviewPage() {
   >([]);
   const [submitHint, setSubmitHint] = useState("");
   const [submittingReview, setSubmittingReview] = useState(false);
+  const previewDelivery = useRef(initialPreviewDeliveryState("unresolved-preview"));
+  const [previewDeliveryStatus, setPreviewDeliveryStatus] = useState("INITIAL");
 
-  function refreshCreative() {
-    fetch(`/api/creatives/${id}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.creative) setCreative(d.creative);
-        if (d.reviews) setReviews(d.reviews);
-      });
+  async function refreshCreative(): Promise<boolean> {
+    try {
+      const response = await fetch(`/api/creatives/${id}`);
+      if (!response.ok) return false;
+      const data = await response.json();
+      if (data.creative) setCreative(data.creative);
+      if (data.reviews) setReviews(data.reviews);
+      return Boolean(data.creative);
+    } catch {
+      return false;
+    }
   }
 
   useEffect(() => {
@@ -108,6 +121,24 @@ export default function CreativePreviewPage() {
   const variant = sortedVariants[activeVariant] ?? variants[activeVariant];
   const isRendering = creative?.renderStatus === "preview_rendering";
   const videoUrl = creative?.videoUrl as string | undefined;
+  const artifactIdentity = previewArtifactIdentity(creative);
+  const terminalPreviewError =
+    previewDelivery.current.artifactIdentity === artifactIdentity &&
+    previewDeliveryStatus === "TERMINAL_PREVIEW_ERROR";
+
+  async function handlePreviewError() {
+    const transition = recordPreviewDeliveryFailure(previewDelivery.current, artifactIdentity);
+    previewDelivery.current = transition.state;
+    setPreviewDeliveryStatus(transition.state.status);
+    if (!transition.shouldRefresh) return;
+    if (!(await refreshCreative())) {
+      previewDelivery.current = recordPreviewRefreshFailure(
+        previewDelivery.current,
+        artifactIdentity
+      );
+      setPreviewDeliveryStatus(previewDelivery.current.status);
+    }
+  }
 
   async function saveCopy() {
     if (!variant) return;
@@ -229,16 +260,24 @@ export default function CreativePreviewPage() {
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_1fr]">
         <div className="space-y-4">
-          {creative?.videoUrl ? (
+          {creative?.videoUrl && !terminalPreviewError ? (
             <video
               key={String(creative.updatedAt ?? videoUrl)}
               src={videoUrlWithCacheBust(videoUrl!, creative.updatedAt as string | undefined)}
+              onError={() => void handlePreviewError()}
+              onLoadedData={() => {
+                previewDelivery.current = recordPreviewDeliverySuccess(
+                  previewDelivery.current,
+                  artifactIdentity
+                );
+                setPreviewDeliveryStatus(previewDelivery.current.status);
+              }}
               controls
               className="w-full rounded-xl border border-border/80 bg-black object-contain shadow-card"
             />
           ) : (
             <div className="flex aspect-[9/16] max-h-[70vh] items-center justify-center rounded-xl border border-dashed border-border bg-surface-muted text-sm text-ink-secondary">
-              {t("creative.noPreview")}
+              {terminalPreviewError ? "Preview could not be loaded." : t("creative.noPreview")}
             </div>
           )}
 
