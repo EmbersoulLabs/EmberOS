@@ -3,6 +3,7 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueProbe } from "@ceo-agent/queue";
+import { finalizeStoredSourceAssetIdentity } from "@/lib/source-asset-content-hash";
 
 export async function POST(
   request: Request,
@@ -72,6 +73,12 @@ export async function POST(
         workspaceId: asset.workspaceId,
         storagePath: asset.storagePath,
       });
+    } else {
+      try {
+        asset = await finalizeStoredSourceAssetIdentity(db, asset);
+      } catch {
+        // Images without storage bytes remain NULL until a later safe finalize.
+      }
     }
 
     return apiSuccess({ asset });

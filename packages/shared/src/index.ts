@@ -43,3 +43,6 @@ export * from "./workspaces/business-led-create";
 export * from "./ass-dynamic-subtitles";
 export * from "./subtitle-styles";
 export * from "./render-preferences";
+export * from "./source-asset-content-hash";
+export * from "./campaign-video-generation-identity";
+export * from "./video-studio-ops-evidence";

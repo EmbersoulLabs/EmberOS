@@ -173,6 +173,7 @@ export const assets = pgTable(
     height: integer("height"),
     fileSizeBytes: bigint("file_size_bytes", { mode: "number" }),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
+    contentHash: text("content_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("assets_campaign_idx").on(t.campaignId)]
@@ -198,6 +199,8 @@ export const tasks = pgTable(
     costUsd: numeric("cost_usd").default("0"),
     costBudgetUsd: numeric("cost_budget_usd").default("0.50"),
     errorMessage: text("error_message"),
+    generationInputCapsule: jsonb("generation_input_capsule").$type<Record<string, unknown>>(),
+    generationInputFingerprint: text("generation_input_fingerprint"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
