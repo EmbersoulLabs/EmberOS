@@ -12,6 +12,7 @@ Governance version: **v2.2**
 - Immutable baseline commit: `de7509132b2a3fa442be8a07f94d6a3ef0f0d176`
 - Current milestone: MS-017
 - Current RC: Video Studio V1 bounded assembly candidate
+- Assembly HEAD: tip of `release/video-studio-v1-bounded` (do not mark RELEASED)
 
 This is a prepared assembly-candidate declaration. It does not mark production live and does not set `VIDEO_STUDIO_V1_RELEASED`.
 
