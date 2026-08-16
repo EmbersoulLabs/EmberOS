@@ -30,6 +30,7 @@ import { MarketingScorePanel } from "@/components/pipeline/MarketingScorePanel";
 import { MarketingPackagePanel } from "@/components/pipeline/MarketingPackagePanel";
 import { CollapsibleSection } from "@/components/marketing-dashboard/primitives";
 import { normalizeStrategyPlan, type MarketingContentPackage, type StrategyPlan, isReviewPending } from "@ceo-agent/shared";
+import { projectVideoStudioResult } from "@/lib/video-studio-result-state";
 
 export default function TaskProgressContent() {
   const params = useParams();
@@ -72,6 +73,9 @@ export default function TaskProgressContent() {
   const [approvalRequired, setApprovalRequired] = useState(false);
   const [pollError, setPollError] = useState("");
   const [initialLoad, setInitialLoad] = useState(true);
+  const [wrongCampaignTask, setWrongCampaignTask] = useState(false);
+  const [displayedIsLatest, setDisplayedIsLatest] = useState(false);
+  const [previewDeliveryErrorIds, setPreviewDeliveryErrorIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval> | undefined;
@@ -89,6 +93,7 @@ export default function TaskProgressContent() {
         const campData = await campRes.json();
         setPollError("");
         const taskId = taskIdParam ?? campData.task?.id;
+        setDisplayedIsLatest(Boolean(taskId && taskId === campData.task?.id));
         const campStatus = campData.campaign?.status as string | undefined;
         const campName = campData.campaign?.name as string | undefined;
         if (campStatus) setCampaignStatus(campStatus);
@@ -104,6 +109,9 @@ export default function TaskProgressContent() {
               : false)
         );
         if (!taskId) {
+          setTask(null);
+          setCreatives([]);
+          setWrongCampaignTask(false);
           setInitialLoad(false);
           return;
         }
@@ -116,6 +124,15 @@ export default function TaskProgressContent() {
           );
         }
         const data = await res.json();
+        if (data.task?.campaignId !== campaignId) {
+          setWrongCampaignTask(true);
+          setTask(null);
+          setCreatives([]);
+          setInitialLoad(false);
+          if (interval) clearInterval(interval);
+          return;
+        }
+        setWrongCampaignTask(false);
         setTask(data.task);
         if (data.creative?.id) setCreativeId(data.creative.id);
         if (Array.isArray(data.creatives)) {
@@ -226,7 +243,7 @@ export default function TaskProgressContent() {
         }
         setInitialLoad(false);
       } catch (err) {
-        setPollError(err instanceof Error ? err.message : t("error.loadProgress"));
+        setPollError(t("pipeline.generationSafeError"));
         setInitialLoad(false);
         if (interval) clearInterval(interval);
       }
@@ -291,6 +308,28 @@ export default function TaskProgressContent() {
     taskStatus === "failed" ||
     steps.some((step) => progress[step]?.status === "failed") ||
     (campaignStatus ? isCampaignDeletable(campaignStatus, taskStatus, progress) : false);
+  const resultProjection = projectVideoStudioResult({
+    task: task
+      ? { status: taskStatus, campaignId: task.campaignId as string | undefined }
+      : null,
+    routeCampaignId: campaignId,
+    creatives,
+    previewDeliveryErrorIds,
+    exportStatus,
+  });
+
+  function updateIdentitySet(
+    setter: typeof setPreviewDeliveryErrorIds,
+    creativeId: string,
+    active: boolean
+  ) {
+    setter((previous) => {
+      const next = new Set(previous);
+      if (active) next.add(creativeId);
+      else next.delete(creativeId);
+      return next;
+    });
+  }
 
   async function deleteCampaign() {
     setDeleteError("");
@@ -404,12 +443,53 @@ export default function TaskProgressContent() {
 
         {initialLoad && !task && <PipelineLoadingState />}
 
-        {!initialLoad && !task && !pollError && (
+        {wrongCampaignTask && (
+          <section className="rounded-xl border border-amber-200 bg-amber-50 p-5" role="alert">
+            <h2 className="font-semibold text-navy">{t("pipeline.wrongTaskTitle")}</h2>
+            <p className="mt-1 text-sm text-ink-secondary">{t("pipeline.wrongTaskBody")}</p>
+            <Link href={`/w/${slug}/campaigns/${campaignId}/task`} className="brand-btn-secondary mt-4 inline-flex">
+              {t("pipeline.openLatestGeneration")}
+            </Link>
+          </section>
+        )}
+
+        {!initialLoad && !task && !pollError && !wrongCampaignTask && (
           <PipelineEmptyState onBackHref={`/w/${slug}/campaigns`} />
         )}
 
         {task && (
           <>
+            {isAutoClip && (
+              <section className="mb-5 rounded-xl border border-border/80 bg-surface p-4 shadow-card">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-navy">
+                      {resultProjection.state === "COMPLETE"
+                        ? t("pipeline.resultComplete")
+                        : resultProjection.state === "PARTIAL"
+                          ? t("pipeline.resultPartial")
+                          : resultProjection.state === "FAILED"
+                            ? t("pipeline.resultFailed")
+                            : resultProjection.state === "RECOVERING"
+                              ? t("pipeline.resultRecovering")
+                            : resultProjection.state === "QUEUED"
+                              ? t("pipeline.resultQueued")
+                              : t("pipeline.resultProcessing")}
+                    </p>
+                    <p className="mt-1 text-sm text-ink-secondary">
+                      {t("pipeline.resultReadyCount", {
+                        ready: String(resultProjection.readyCount),
+                        total: "3",
+                      })}
+                    </p>
+                  </div>
+                  <div className="text-right text-xs text-ink-secondary">
+                    <p>{displayedIsLatest ? t("pipeline.latestGeneration") : t("pipeline.historicalGeneration")}</p>
+                    {task.createdAt ? <time>{new Date(task.createdAt as string).toLocaleString()}</time> : null}
+                  </div>
+                </div>
+              </section>
+            )}
             <PipelineHero
               percent={percent}
               currentStep={currentStep}
@@ -418,9 +498,9 @@ export default function TaskProgressContent() {
               taskStatus={taskStatus}
             />
 
-            {taskError && (
+            {taskError && taskStatus === "failed" && (
               <div className="mt-4">
-                <PipelineErrorBanner message={taskError} />
+                <PipelineErrorBanner message={t("pipeline.generationSafeError")} />
               </div>
             )}
 
@@ -432,7 +512,15 @@ export default function TaskProgressContent() {
               />
             )}
 
-            {isAutoClip && <ClipPreviewGrid slug={slug} creatives={creatives} />}
+            {isAutoClip && (
+              <ClipPreviewGrid
+                slug={slug}
+                creatives={creatives}
+                onPreviewDeliveryErrorChange={(creativeId, active) =>
+                  updateIdentitySet(setPreviewDeliveryErrorIds, creativeId, active)
+                }
+              />
+            )}
 
             {hasCopy && activeTaskId && !contentPackage && (
               <section className="mt-6 rounded-xl border border-border/80 bg-surface p-5 shadow-card">

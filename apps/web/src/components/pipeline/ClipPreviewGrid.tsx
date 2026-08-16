@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/provider";
 import { StatusBadge } from "@/components/AppShell";
 import { extractClipMeta, formatClipDuration, formatPlatformLabel, videoUrlWithCacheBust } from "@/lib/clip-utils";
@@ -17,6 +17,10 @@ import {
   recordPreviewRefreshFailure,
   type PreviewDeliveryState,
 } from "@/lib/bounded-preview-delivery";
+import { resolveCreativeRecoveryPollDecision } from "@/lib/video-studio-result-state";
+
+const CREATIVE_RECOVERY_POLL_MS = 3000;
+const MAX_CREATIVE_RECOVERY_POLLS = 60;
 
 function clipStatus(creative: Record<string, unknown> | undefined): string {
   if (!creative) return "pending";
@@ -31,12 +35,16 @@ function clipStatus(creative: Record<string, unknown> | undefined): string {
 export function ClipPreviewGrid({
   slug,
   creatives,
+  onPreviewDeliveryErrorChange,
 }: {
   slug: string;
   creatives: Array<Record<string, unknown>>;
+  onPreviewDeliveryErrorChange?: (creativeId: string, active: boolean) => void;
 }) {
   const { t } = useI18n();
   const [retrying, setRetrying] = useState<string | null>(null);
+  const [recoveryErrors, setRecoveryErrors] = useState<Record<string, string>>({});
+  const recoveryTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   // After an in-card audio re-render finishes, the parent poll may have stopped
   // (task already completed). Keep a local override so the new video shows.
   const [overrides, setOverrides] = useState<Record<string, Record<string, unknown>>>({});
@@ -49,25 +57,37 @@ export function ClipPreviewGrid({
   const ready = merged.filter((c) => c.videoUrl).length;
   const failed = merged.filter((c) => clipStatus(c) === "failed").length;
 
-  async function refreshClip(creativeId: string): Promise<boolean> {
+  useEffect(() => () => {
+    Object.values(recoveryTimers.current).forEach(clearTimeout);
+  }, []);
+
+  async function loadClip(creativeId: string): Promise<Record<string, unknown> | null> {
     try {
       const res = await fetch(`/api/creatives/${creativeId}`);
-      if (!res.ok) return false;
+      if (!res.ok) return null;
       const data = await res.json();
       if (data.creative) {
         setOverrides((prev) => ({ ...prev, [creativeId]: data.creative }));
-        return true;
+        return data.creative as Record<string, unknown>;
       }
     } catch {
       // ignore
     }
-    return false;
+    return null;
+  }
+
+  async function refreshClip(creativeId: string): Promise<boolean> {
+    return Boolean(await loadClip(creativeId));
   }
 
   async function handlePreviewError(creative: Record<string, unknown>, creativeId: string) {
     const identity = previewArtifactIdentity(creative);
     const transition = recordPreviewDeliveryFailure(previewDelivery.current[creativeId], identity);
     previewDelivery.current[creativeId] = transition.state;
+    onPreviewDeliveryErrorChange?.(
+      creativeId,
+      transition.state.status === "TERMINAL_PREVIEW_ERROR"
+    );
     setDeliveryRevision((value) => value + 1);
     if (!transition.shouldRefresh) return;
     if (!(await refreshClip(creativeId))) {
@@ -75,15 +95,65 @@ export function ClipPreviewGrid({
         previewDelivery.current[creativeId]!,
         identity
       );
+      onPreviewDeliveryErrorChange?.(creativeId, true);
       setDeliveryRevision((value) => value + 1);
     }
   }
 
   async function retryClip(creativeId: string) {
     setRetrying(creativeId);
+    setRecoveryErrors((previous) => ({ ...previous, [creativeId]: "" }));
     try {
-      await fetch(`/api/creatives/${creativeId}/retry-render`, { method: "POST" });
-    } finally {
+      const response = await fetch(`/api/creatives/${creativeId}/retry-render`, { method: "POST" });
+      if (!response.ok) {
+        setRecoveryErrors((previous) => ({
+          ...previous,
+          [creativeId]: t("pipeline.retryRenderRejected"),
+        }));
+        setRetrying(null);
+        return;
+      }
+      const persisted = await loadClip(creativeId);
+      if (!persisted) {
+        setRecoveryErrors((previous) => ({
+          ...previous,
+          [creativeId]: t("pipeline.retryRenderStatusUnavailable"),
+        }));
+      }
+
+      let polls = 0;
+      const pollCreative = async () => {
+        polls += 1;
+        const creative = (await loadClip(creativeId)) ?? undefined;
+        const decision = resolveCreativeRecoveryPollDecision(creative, polls, MAX_CREATIVE_RECOVERY_POLLS);
+        if (decision === "READY") {
+          setRetrying(null);
+          return;
+        }
+        if (decision === "FAILED") {
+          setRetrying(null);
+          setRecoveryErrors((previous) => ({
+            ...previous,
+            [creativeId]: t("pipeline.retryRenderFailed"),
+          }));
+          return;
+        }
+        if (decision === "PAUSE_ACTIVE") {
+          setRetrying(null);
+          setRecoveryErrors((previous) => ({
+            ...previous,
+            [creativeId]: t("pipeline.retryRenderStillProcessing"),
+          }));
+          return;
+        }
+        recoveryTimers.current[creativeId] = setTimeout(pollCreative, CREATIVE_RECOVERY_POLL_MS);
+      };
+      recoveryTimers.current[creativeId] = setTimeout(pollCreative, CREATIVE_RECOVERY_POLL_MS);
+    } catch {
+      setRecoveryErrors((previous) => ({
+        ...previous,
+        [creativeId]: t("pipeline.retryRenderRejected"),
+      }));
       setRetrying(null);
     }
   }
@@ -113,7 +183,6 @@ export function ClipPreviewGrid({
           const videoUrl = c?.videoUrl as string | undefined;
           const meta = extractClipMeta(c);
           const status = clipStatus(c);
-          const progress = c?.renderProgress as { error?: string } | undefined;
           const artifactIdentity = previewArtifactIdentity(c);
           const deliveryState = id ? previewDelivery.current[id] : undefined;
           const terminalPreviewError =
@@ -140,6 +209,7 @@ export function ClipPreviewGrid({
                       previewDelivery.current[id],
                       artifactIdentity
                     );
+                    onPreviewDeliveryErrorChange?.(id, false);
                   }}
                   className="aspect-[9/16] w-full bg-navy object-contain"
                 />
@@ -160,9 +230,7 @@ export function ClipPreviewGrid({
                   ) : status === "failed" ? (
                     <>
                       <span className="text-xs font-medium text-red-600">{t("pipeline.clipFailed")}</span>
-                      {progress?.error && (
-                        <span className="line-clamp-3 text-[10px] text-red-500">{progress.error}</span>
-                      )}
+                      <span className="text-[10px] text-red-500">{t("pipeline.clipRenderSafeError")}</span>
                     </>
                   ) : (
                     <span className="text-xs">{c ? t("pipeline.clipWaiting") : t("pipeline.clipQueued")}</span>
@@ -217,6 +285,9 @@ export function ClipPreviewGrid({
                   >
                     {retrying === id ? t("pipeline.retrying") : t("pipeline.retryClip")}
                   </button>
+                )}
+                {id && recoveryErrors[id] && (
+                  <p className="text-xs text-red-600" role="alert">{recoveryErrors[id]}</p>
                 )}
 
                 {videoUrl && id && (

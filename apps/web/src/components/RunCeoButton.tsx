@@ -6,7 +6,13 @@ import { useI18n } from "@/lib/i18n/provider";
 import { getRenderPreferencesPayload, resolveContentLocaleForRun } from "@/lib/preferences";
 
 function isTaskActive(status?: string | null): boolean {
-  return status === "queued" || status === "running";
+  return (
+    status === "queued" ||
+    status === "running" ||
+    status === "processing" ||
+    status === "retrying" ||
+    status === "resume"
+  );
 }
 
 export function RunCeoButton({
@@ -33,14 +39,14 @@ export function RunCeoButton({
   const label = running
     ? t("campaign.detail.running")
     : isRerun
-      ? t("campaign.detail.rerun")
+      ? t("campaign.detail.generateAgain")
       : t("campaign.detail.run");
 
   async function handleRun() {
     setError("");
     setRunning(true);
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}/run`, {
+      const res = await fetch(`/api/campaigns/${campaignId}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
