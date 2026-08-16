@@ -5,9 +5,33 @@ import {
   AUTO_CLIP,
   FREE_EXPORT_RESOLUTION,
   PAID_EXPORT_RESOLUTION,
+  type RenderStatus,
   type TaskExportResolution,
   type StepProgress,
 } from "@ceo-agent/shared";
+
+const TASK_EXPORT_READY_RENDER_STATUSES = new Set<RenderStatus>([
+  "preview_ready",
+  "final_ready",
+]);
+
+/** Preview or final rendition is terminal-ready for task ZIP export. Fail-closed otherwise. */
+export function isCreativeReadyForTaskExport(
+  renderStatus: string | null | undefined
+): boolean {
+  return TASK_EXPORT_READY_RENDER_STATUSES.has(renderStatus as RenderStatus);
+}
+
+/** Complete three-output package with usable 720p artifacts. Missing/in-flight/failed denied. */
+export function isTaskPackageReadyForFreeExport(
+  creatives: Array<{ renderStatus: string | null; videoUrl: string | null }>
+): boolean {
+  if (creatives.length < AUTO_CLIP.CLIP_COUNT) return false;
+  const ready = creatives.filter(
+    (c) => isCreativeReadyForTaskExport(c.renderStatus) && Boolean(c.videoUrl)
+  ).length;
+  return ready >= AUTO_CLIP.CLIP_COUNT;
+}
 
 export interface TaskExportRequestState {
   resolution: TaskExportResolution;
@@ -34,7 +58,7 @@ export function countFinalRenderProgress(
   ).length;
   const finalRendering = creatives.filter((c) => c.renderStatus === "final_rendering").length;
   const previewReady = creatives.filter(
-    (c) => c.renderStatus === "preview_ready" && Boolean(c.videoUrl)
+    (c) => isCreativeReadyForTaskExport(c.renderStatus) && Boolean(c.videoUrl)
   ).length;
   return { total, finalReady, finalRendering, previewReady };
 }
