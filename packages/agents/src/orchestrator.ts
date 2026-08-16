@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { enqueueRender } from "@ceo-agent/queue";
 import {
@@ -13,8 +13,10 @@ import {
   resolveAutoClipSourceAsset,
   resolvePipelineContentLocale,
   alignStrategyWithVision,
+  emitVideoStudioOpsEvent,
   type ContentLocale,
 } from "@ceo-agent/shared";
+import { loadTrackedCampaignTaskInputs } from "./campaign-task-generation-identity";
 import { runCeoAgent, parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
 import {
@@ -98,10 +100,15 @@ async function logAgent(
   }
 }
 
+/** Retry = Resume: completed stages remain in persisted stepProgress. */
+function isPipelineStageComplete(progress: StepProgress, stepId: string): boolean {
+  return progress[stepId]?.status === "completed";
+}
+
 export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
   const db = getDb();
-  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-  if (!task) throw new Error(`Task ${taskId} not found`);
+  const tracked = await loadTrackedCampaignTaskInputs(taskId);
+  const task = tracked.task;
 
   const [campaign] = await db
     .select()
@@ -117,15 +124,13 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     .limit(1);
 
   const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
-  const assets = await db
-    .select()
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.campaignId, campaign.id),
-        eq(schema.assets.workspaceId, task.workspaceId)
-      )
-    );
+  const assets = tracked.assets;
+  const priorProgress = (task.stepProgress as StepProgress) ?? {};
+  for (const [stepId, step] of Object.entries(priorProgress)) {
+    if (isPipelineStageComplete(priorProgress, stepId)) {
+      console.log(`[pipeline] resume skip=${stepId} task=${taskId} status=${step?.status}`);
+    }
+  }
 
   const sourceVideo = resolveAutoClipSourceAsset(assets);
   if (sourceVideo) {
@@ -599,9 +604,22 @@ export async function retryPipelineStep(
   step: "copy" | "edit" | "full"
 ) {
   const db = getDb();
-  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-  if (!task) throw new Error("Task not found");
+  const tracked = await loadTrackedCampaignTaskInputs(taskId);
+  const task = tracked.task;
   if (task.retryCount >= CEO_MAX_RETRIES) throw new Error("Max retries exceeded");
+
+  // Retry = Resume — same task identity is preserved.
+  emitVideoStudioOpsEvent({
+    event: "pipeline.resume",
+    stage: "agent.pipeline",
+    outcome: "retrying",
+    orgId: task.orgId,
+    workspaceId: task.workspaceId,
+    campaignId: task.campaignId,
+    taskId,
+    recoveryKind: "pipeline_resume",
+    retryCount: task.retryCount + 1,
+  });
 
   await db
     .update(schema.tasks)

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
-import { isSubtitleLanguagePair, isSubtitleStylePreset } from "@ceo-agent/shared";
+import { isUuid, isSubtitleLanguagePair, isSubtitleStylePreset } from "@ceo-agent/shared";
 import { isLocale } from "@ceo-agent/shared/i18n";
 import { executeCampaignGenerate } from "@/lib/campaign-generate";
 import { pendingAiExecutionProjection } from "@/lib/ai-execution-truth";
@@ -16,15 +16,18 @@ export async function POST(
     const user = await requireAuth();
     const limited = await enforceRateLimit(request, "campaignRun", user.id);
     if (limited) return limited;
-    const { id: campaignId } = await params;
-    const db = getDb();
 
+    const { id: campaignId } = await params;
+    if (!isUuid(campaignId)) {
+      return apiError("Invalid campaign id", "VALIDATION_ERROR", 400);
+    }
+
+    const db = getDb();
     const [campaign] = await db
       .select()
       .from(schema.campaigns)
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
-
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 

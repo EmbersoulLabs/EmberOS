@@ -2,6 +2,20 @@ import { RENDER_MVP_LIMITS } from "./render";
 
 export const LLM_BUDGET_PER_TASK_USD = 0.5;
 export const CEO_MAX_RETRIES = 2;
+export const ACTIVE_CAMPAIGN_TASK_STATUSES = [
+  "queued",
+  "running",
+  "processing",
+  "retrying",
+  "resume",
+] as const;
+export type ActiveCampaignTaskStatus = (typeof ACTIVE_CAMPAIGN_TASK_STATUSES)[number];
+export function isActiveCampaignTaskStatus(value: unknown): value is ActiveCampaignTaskStatus {
+  return (
+    typeof value === "string" &&
+    (ACTIVE_CAMPAIGN_TASK_STATUSES as readonly string[]).includes(value)
+  );
+}
 export const MAX_UPLOAD_DURATION_SEC = RENDER_MVP_LIMITS.MAX_UPLOAD_DURATION_SEC;
 export const MAX_COMBINED_SOURCE_DURATION_SEC = RENDER_MVP_LIMITS.MAX_COMBINED_SOURCE_DURATION_SEC;
 export const MAX_CAMPAIGN_IMAGES = RENDER_MVP_LIMITS.MAX_IMAGES;

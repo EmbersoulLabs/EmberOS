@@ -13,6 +13,8 @@ export * from "./edit";
 export * from "./compliance";
 export * from "./publish";
 export * from "./task-export";
+export * from "./campaign-task-generation-identity";
+export * from "./pipeline-lifecycle";
 export * from "./auto-clip";
 export * from "./auto-clip-pipeline";
 export * from "./highlight-index";

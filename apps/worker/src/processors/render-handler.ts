@@ -3,7 +3,7 @@ import { mkdir, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDb, schema } from "@ceo-agent/db";
-import { runComplianceAfterRender, maybeFinalizeAutoClipTask, maybeTriggerPendingTaskExport } from "@ceo-agent/agents";
+import { runComplianceAfterRender, maybeFinalizeAutoClipTask, maybeTriggerPendingTaskExport, loadTrackedCampaignTaskInputs } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   baseClipFingerprint,
@@ -159,10 +159,11 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     .limit(1);
   if (!creative?.editPlan) throw new Error("Edit plan not found");
 
-  const assets = await db
-    .select()
-    .from(schema.assets)
-    .where(eq(schema.assets.campaignId, data.campaignId));
+  const tracked = await loadTrackedCampaignTaskInputs(data.taskId);
+  if (tracked.capsule.authority.campaignId !== data.campaignId) {
+    throw new Error("Render job campaign does not match frozen generation identity");
+  }
+  const assets = tracked.assets;
   if (assets.length === 0) throw new Error("No source asset");
 
   const [campaign] = await db

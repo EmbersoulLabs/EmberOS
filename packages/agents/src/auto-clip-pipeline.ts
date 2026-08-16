@@ -37,6 +37,7 @@ import { runAutoClipScoreAgent } from "./score";
 import type { PipelineHooks } from "./orchestrator";
 import type { VisionFrameInput } from "./vision";
 import type { CopyLocale, CopyVariant, EditPlan, VisionAnalysis } from "@ceo-agent/shared";
+import { loadTrackedCampaignTaskInputs } from "./campaign-task-generation-identity";
 
 function resolveClipVoiceLocale(
   defaultLocale: CopyLocale,
@@ -100,8 +101,8 @@ async function logAgent(
 export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks) {
   console.log(`[auto-clip] start task=${taskId}`);
   const db = getDb();
-  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-  if (!task) throw new Error(`Task ${taskId} not found`);
+  const tracked = await loadTrackedCampaignTaskInputs(taskId);
+  const task = tracked.task;
 
   const [campaign] = await db
     .select()
@@ -117,15 +118,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     .limit(1);
 
   const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
-  const assets = await db
-    .select()
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.campaignId, campaign.id),
-        eq(schema.assets.workspaceId, task.workspaceId)
-      )
-    );
+  const assets = tracked.assets;
 
   const source = resolveAutoClipSourceAsset(assets);
   if (!source) throw new Error("Auto Clip requires a source video");

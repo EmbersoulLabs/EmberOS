@@ -1,4 +1,4 @@
-import { eq, and } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import type { getDb } from "@ceo-agent/db";
 import { schema } from "@ceo-agent/db";
 import {
@@ -13,13 +13,16 @@ import {
   listVideosPendingProbe,
 } from "@ceo-agent/shared";
 
-type Db = ReturnType<typeof getDb>;
+type Db = {
+  select: ReturnType<typeof getDb>["select"];
+};
 
 export async function getCampaignAssets(db: Db, campaignId: string, workspaceId: string) {
   return db
     .select()
     .from(schema.assets)
-    .where(and(eq(schema.assets.campaignId, campaignId), eq(schema.assets.workspaceId, workspaceId)));
+    .where(and(eq(schema.assets.campaignId, campaignId), eq(schema.assets.workspaceId, workspaceId)))
+    .orderBy(asc(schema.assets.createdAt), asc(schema.assets.id));
 }
 
 export async function validateCampaignAssetsForRun(
