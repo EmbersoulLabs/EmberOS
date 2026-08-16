@@ -3,7 +3,7 @@ import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDb, schema } from "@ceo-agent/db";
-import { runPublishAgent } from "@ceo-agent/agents";
+import { runPublishAgent, persistTaskExportFailure } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   getBgmTrackById,
@@ -14,6 +14,7 @@ import {
   platformPublishCopyText,
   encodeCopyExportBody,
   plainTextToDocHtml,
+  emitVideoStudioOpsEvent,
   type CopyVariant,
   type EditPlan,
   type MarketingContentPackage,
@@ -325,6 +326,23 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
     console.log(
       `[ffmpeg.export_task] done task=${data.taskId} resolution=${resolution} file=${packFilename} url=${exportPackUrl}`
     );
+    emitVideoStudioOpsEvent({
+      event: "export.completed",
+      stage: "ffmpeg.export_task",
+      outcome: "completed",
+      orgId: data.orgId,
+      workspaceId: data.workspaceId,
+      campaignId: data.campaignId,
+      taskId: data.taskId,
+      resolution,
+    });
+  } catch (error) {
+    await persistTaskExportFailure({
+      taskId: data.taskId,
+      error: error instanceof Error ? error.message : String(error),
+      resolution,
+    });
+    throw error;
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
