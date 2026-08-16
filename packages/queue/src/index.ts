@@ -1,7 +1,10 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import { QUEUE_NAMES } from "./jobs";
+import { emitVideoStudioOpsEvent } from "@ceo-agent/shared";
 
 export { QUEUE_NAMES } from "./jobs";
+
+export const DEFAULT_JOB_ATTEMPTS = 3;
 
 let connection: ConnectionOptions | null = null;
 
@@ -54,7 +57,7 @@ export function getQueue(name: string): Queue {
         defaultJobOptions: {
           removeOnComplete: 100,
           removeOnFail: 50,
-          attempts: 3,
+          attempts: DEFAULT_JOB_ATTEMPTS,
           backoff: { type: "exponential", delay: 2000 },
         },
       })
@@ -70,11 +73,23 @@ export const probeQueue = () => getQueue(QUEUE_NAMES.PROBE);
 
 export async function enqueuePipeline(taskId: string, campaignId: string, workspaceId: string, orgId: string) {
   const queue = agentQueue();
-  return queue.add(
+  const job = await queue.add(
     "agent.pipeline",
     { taskId, campaignId, workspaceId, orgId },
     { jobId: `pipeline-${taskId}` }
   );
+  emitVideoStudioOpsEvent({
+    event: "pipeline.enqueued",
+    stage: "agent.pipeline",
+    outcome: "enqueued",
+    orgId,
+    workspaceId,
+    campaignId,
+    taskId,
+    jobId: job.id,
+    recoveryKind: "new_generation",
+  });
+  return job;
 }
 
 export async function enqueueRender(
@@ -107,6 +122,17 @@ export async function enqueueRender(
   } catch {
     console.log(`[queue] render enqueued job=${job.id} creative=${data.creativeId} task=${data.taskId}`);
   }
+  emitVideoStudioOpsEvent({
+    event: "render.enqueued",
+    stage: "ffmpeg.render",
+    outcome: "enqueued",
+    orgId: data.orgId,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    taskId: data.taskId,
+    creativeId: data.creativeId,
+    jobId: job.id,
+  });
   return job;
 }
 
@@ -138,7 +164,19 @@ export async function enqueueTaskExport(data: {
   const queue = exportQueue();
   const resolution = data.resolution ?? "720p";
   const jobId = `export-task-${data.taskId}-${resolution}-${Date.now()}`;
-  return queue.add("ffmpeg.export_task", { ...data, resolution }, { jobId });
+  const job = await queue.add("ffmpeg.export_task", { ...data, resolution }, { jobId });
+  emitVideoStudioOpsEvent({
+    event: "export.enqueued",
+    stage: "ffmpeg.export_task",
+    outcome: "enqueued",
+    orgId: data.orgId,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    taskId: data.taskId,
+    jobId: job.id,
+    resolution,
+  });
+  return job;
 }
 
 export async function enqueueProbe(data: {
