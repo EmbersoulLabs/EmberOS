@@ -1,7 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { STORAGE_PATHS } from "@ceo-agent/shared";
+import {
+  STORAGE_PATHS,
+  configuredBusinessBrandingBucket,
+  isBusinessLogoObjectKey,
+  publicBrandingObjectUrl,
+  resolveLogoStorageReference,
+} from "@ceo-agent/shared";
 
-export const BUSINESS_LOGO_BUCKET = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
+/** Dedicated public branding bucket. Never SUPABASE_STORAGE_BUCKET / campaign-assets. */
+export function getBusinessLogoBucket() {
+  return configuredBusinessBrandingBucket();
+}
+
+/** Request-time branding bucket. Prefer getBusinessLogoBucket() in new code. */
+export const BUSINESS_LOGO_BUCKET = getBusinessLogoBucket();
 
 const EXT_BY_MIME_TYPE: Record<string, string> = {
   "image/jpeg": "jpg",
@@ -34,18 +46,32 @@ export function createBusinessLogoStoragePath(
 }
 
 export function publicBusinessLogoUrl(baseUrl: string, bucket: string, storagePath: string) {
-  return `${baseUrl.replace(/\/$/, "")}/storage/v1/object/public/${bucket}/${storagePath}`;
+  return publicBrandingObjectUrl(baseUrl, bucket, storagePath);
 }
 
+/**
+ * Resolve a persisted Business Profile logo to a managed object.
+ * Accepts branding-bucket public URLs and leftover campaign-assets public URLs
+ * for delete/replace cleanup only.
+ */
 export function storagePathFromBusinessLogoUrl(
   value: string | null | undefined,
-  baseUrl: string,
-  bucket: string,
+  _baseUrl: string,
+  _bucket: string,
   workspaceId: string
 ) {
-  if (!value) return null;
-  const publicPrefix = `${baseUrl.replace(/\/$/, "")}/storage/v1/object/public/${bucket}/`;
-  const storagePath = value.startsWith(publicPrefix) ? value.slice(publicPrefix.length) : value;
-  const workspaceBrandPrefix = `${workspaceId}/brand/business-logo-`;
-  return storagePath.startsWith(workspaceBrandPrefix) ? storagePath : null;
+  const resolved = resolveLogoStorageReference(value);
+  if (!resolved) return null;
+  if (!isBusinessLogoObjectKey(workspaceId, resolved.objectKey)) return null;
+  return resolved.objectKey;
+}
+
+export function businessLogoStorageFromPersistedValue(
+  value: string | null | undefined,
+  workspaceId: string
+) {
+  const resolved = resolveLogoStorageReference(value);
+  if (!resolved) return null;
+  if (!isBusinessLogoObjectKey(workspaceId, resolved.objectKey)) return null;
+  return resolved;
 }

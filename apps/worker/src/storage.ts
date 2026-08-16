@@ -42,10 +42,14 @@ async function withNetworkRetry<T>(label: string, fn: () => Promise<T>): Promise
   throw lastErr;
 }
 
-export async function downloadStorageFile(storagePath: string, localPath: string): Promise<void> {
+export async function downloadStorageFile(
+  storagePath: string,
+  localPath: string,
+  options?: { readonly bucket?: string }
+): Promise<void> {
   await withNetworkRetry(`download ${storagePath}`, async () => {
     const supabase = getAdminClient();
-    const bucket = getBucket();
+    const bucket = options?.bucket ?? getBucket();
     const { data, error } = await supabase.storage.from(bucket).download(storagePath);
     if (error || !data) {
       throw new Error(

@@ -22,6 +22,7 @@ export * from "./subtitles-from-script";
 export * from "./subtitle-timeline";
 export * from "./platform-specs/index";
 export * from "./constants";
+export * from "./business-branding-storage";
 export * from "./billing";
 export * from "./finished-ad-detect";
 export * from "./i18n/index";

@@ -14,6 +14,7 @@ import {
   profileKeyForDownloadResolution,
   BrandProfileSchema,
   hexToAssColor,
+  resolveLogoStorageReference,
   resolveRenderPreferences,
   stampRenderPreferences,
   type ClipDownloadResolution,
@@ -300,7 +301,11 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     if (logoUrl) {
       try {
         logoLocalPath = join(workDir, "brand-logo.png");
-        await downloadStorageFile(logoUrl, logoLocalPath);
+        const logoRef = resolveLogoStorageReference(logoUrl);
+        if (!logoRef) {
+          throw new Error("Logo object reference is empty");
+        }
+        await downloadStorageFile(logoRef.objectKey, logoLocalPath, { bucket: logoRef.bucket });
         const { extractBrandColorFromLogo } = await import("../ffmpeg/brand-color");
         const hex = await extractBrandColorFromLogo(logoLocalPath, workDir);
         brandColorAss = hexToAssColor(hex);

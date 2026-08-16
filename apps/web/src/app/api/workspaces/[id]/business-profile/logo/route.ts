@@ -8,24 +8,22 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
-  BUSINESS_LOGO_BUCKET,
+  getBusinessLogoBucket,
+  businessLogoStorageFromPersistedValue,
   createBusinessLogoStoragePath,
   isBusinessLogoMimeType,
   publicBusinessLogoUrl,
-  storagePathFromBusinessLogoUrl,
 } from "@/lib/business-logo-storage";
 
 async function deleteStoredBusinessLogo(
   value: string | null | undefined,
-  workspaceId: string,
-  baseUrl: string,
-  bucket: string
+  workspaceId: string
 ) {
-  const storagePath = storagePathFromBusinessLogoUrl(value, baseUrl, bucket, workspaceId);
-  if (!storagePath) return;
+  const resolved = businessLogoStorageFromPersistedValue(value, workspaceId);
+  if (!resolved) return;
 
   const supabase = createAdminClient();
-  const { error } = await supabase.storage.from(bucket).remove([storagePath]);
+  const { error } = await supabase.storage.from(resolved.bucket).remove([resolved.objectKey]);
   if (error) {
     console.warn(`[business-profile-logo] old logo cleanup failed: ${error.message}`);
   }
@@ -63,7 +61,7 @@ export async function POST(
 
     const current = await getBusinessProfileByWorkspace(workspaceId);
     const storagePath = createBusinessLogoStoragePath(workspaceId, file.name, file.type);
-    const bucket = BUSINESS_LOGO_BUCKET;
+    const bucket = getBusinessLogoBucket();
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     if (!supabaseUrl) {
       return apiError("Storage is not configured", "STORAGE_ERROR", 502);
@@ -89,15 +87,16 @@ export async function POST(
         logo: logoUrl,
       });
     } catch (error) {
-      await deleteStoredBusinessLogo(storagePath, workspaceId, supabaseUrl, bucket);
+      const { error: cleanupError } = await supabase.storage.from(bucket).remove([storagePath]);
+      if (cleanupError) {
+        console.warn(`[business-profile-logo] upload rollback cleanup failed: ${cleanupError.message}`);
+      }
       throw error;
     }
 
     await deleteStoredBusinessLogo(
       (current?.logo as string | null | undefined) ?? null,
-      workspaceId,
-      supabaseUrl,
-      bucket
+      workspaceId
     );
 
     return apiSuccess({
@@ -132,9 +131,7 @@ export async function DELETE(
     if (supabaseUrl) {
       await deleteStoredBusinessLogo(
         (current?.logo as string | null | undefined) ?? null,
-        workspaceId,
-        supabaseUrl,
-        BUSINESS_LOGO_BUCKET
+        workspaceId
       );
     }
 
