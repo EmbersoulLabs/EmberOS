@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { STORAGE_PATHS } from "../packages/shared/src/constants";
 import {
@@ -148,12 +148,12 @@ describe("VS-RC-FIX-01 tenant-safe Video Studio artifacts", () => {
     expect(helper).toContain("createAdminClient");
     expect(helper).not.toContain("NEXT_PUBLIC_SUPABASE_ANON_KEY");
     for (const path of [
-      "packages/shared/src/editing-plan-v1.ts",
-      "packages/agents/src/editing-director-v1.ts",
       "packages/shared/src/render.ts",
     ]) {
       expect(read(path)).not.toContain("VIDEO_ARTIFACT_SIGNED_URL_TTL_SECONDS");
     }
+    expect(existsSync(resolve(ROOT, "packages/shared/src/editing-plan-v1.ts"))).toBe(false);
+    expect(existsSync(resolve(ROOT, "packages/agents/src/editing-director-v1.ts"))).toBe(false);
   });
 
   it("persists stable object references and removes public authority from production render/export", () => {

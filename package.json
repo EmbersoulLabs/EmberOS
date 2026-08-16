@@ -23,6 +23,7 @@
     "db:studio": "pnpm --filter @ceo-agent/db studio",
     "test": "vitest run --config vitest.config.ts",
     "test:integration": "tsx scripts/run-db-integration-tests.ts",
+    "test:video-studio:product-loop": "tsx scripts/run-video-studio-product-loop.ts",
     "verify": "pnpm test && pnpm typecheck && pnpm --filter @ceo-agent/web build",
     "smoke:prod": "tsx scripts/smoke-production.ts",
     "pilot:metrics": "tsx scripts/pilot-metrics.ts",
