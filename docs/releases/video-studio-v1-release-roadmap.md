@@ -4,21 +4,31 @@
 >
 > Code and Git history remain the implementation authority. If this roadmap conflicts with committed repository evidence, repository evidence wins and this roadmap must be corrected.
 
-Last updated: 2026-08-16
+Last updated: 2026-08-18
 
-Authority branch: `release/sprint-4-phase-b`
+Authority branch: `release/sprint-4-phase-b` (RC roadmap origin)
+
+Production release branch: `release/video-studio-v1-bounded`
+
+Production revision: `eea988d5addd268d4d3356d336d7d076109b26ea`
 
 Committed baseline: `b07fbea` (`VS-RC-OBS-01` operational evidence)
 
-Release status: `RELEASE_CANDIDATE_IN_PROGRESS`
+Release status: `RELEASED / FROZEN`
 
-`VIDEO_STUDIO_V1_RELEASED = NO`
+`VIDEO_STUDIO_V1_RELEASED = YES`
 
-`VIDEO_STUDIO_V1_RELEASE_DECISION = CONDITIONAL_RELEASE_READY`
+`VIDEO_STUDIO_V1_RELEASE_DECISION = RELEASED`
 
 `RENDERER_V1 = FROZEN`
 
 `AUTH-01 production cutover = NOT DEPLOYED` (`SEPARATE_COMMERCIAL_ROLLOUT_GATE`)
+
+`Quota = DEFERRED`
+
+`AI Story = OUT OF VIDEO_STUDIO_V1_RELEASE_SCOPE`
+
+`Creative Studio = OUT OF VIDEO_STUDIO_V1_RELEASE_SCOPE`
 
 ## 1. Release Objective
 
@@ -41,6 +51,31 @@ Required release properties:
 
 V2 editing sophistication is not part of this definition.
 
+### 2.1 Authoritative production V1 definition (2026-08-17 close)
+
+`VIDEO_STUDIO_V1_BOUNDED_RELEASE_CLOSE` found ROADMAP_DEFINITION_DRIFT in the Section 2 sequence above.
+
+The Director / source-rhythm / EditingPlanV1 steps were implementation-era language from the P1–P3B architecture track. They are **not** mandatory production V1 release conditions.
+
+That wording is superseded as a V1 *production* requirement by:
+
+1. Section 1 user-visible objective: three short-form marketing outputs; renderer expansion excluded.
+2. Product decision: AI Director is feature-flagged and may fall back deterministically.
+3. Renderer V1 freeze: reopen P2 only for a certified release-blocking defect. No such defect exists.
+4. Assembly-A: keep certified production auto-clip; do not transplant `editing-director-v1`, `editing-plan-v1`, or `source-rhythm-v1`.
+5. PROD-CERT and Assembly-C: the certified production path is auto-clip, which does not contain those files.
+6. `docs/VIDEO_STUDIO.md` Quick Mode success: ≥3 marketing videos without editing via `auto-clip-pipeline.ts`.
+
+Authoritative `VIDEO_STUDIO_V1_RELEASED` loop:
+
+`authorized user → campaign/video entry → frozen source identity → generation identity → auto-clip three-output composition → deterministic Renderer V1 render → tenant-safe preview → bounded partial-failure recovery → applicable review/approval → authorized download/export → terminal task state → operational evidence → production-runtime certification`
+
+FIX-03 production requirement is web pending-execution projection: queued APIs must not predict Director invocation. Worker Director execution is not a bounded V1 release requirement.
+
+Director, source rhythm, and EditingPlanV1 remain FROZEN on the release-branch architecture and move to POST_V1 / V1.1 quality. They are not missing V1 product capabilities.
+
+Historical Section 2 text above is retained as evidence of the superseded implementation-era wording.
+
 ## 3. Authority Baseline
 
 | Authority | Repository evidence | State |
@@ -51,10 +86,10 @@ V2 editing sophistication is not part of this definition.
 | P3A | `c479b64` | FROZEN |
 | P3B-1 | `728df8674bc32027aae9eb25068e5b73466d9fe5` | FROZEN |
 | P3B-2 | `3194d2a749c0d3882cab05f9c95fc38761620041` | FROZEN |
-| Release channel | `RELEASE_CHANNEL.md` identifies this worktree/branch and MS-017, with no current repository RC declaration | RC roadmap established here; release channel synchronization is future closeout governance work |
-| Current implementation | OBS-01 `b07fbea`; UX-01 `65b5417` + E1 `b291ce4`; AUTH-01 CLOSE-R2 PASS; PROD-CERT close `55613ad`; RELEASE_GATE CONDITIONAL_RELEASE_READY | Release-branch product/security/runtime gates PASS. Current production is bounded slices, not full V1. AUTH-01 remains not deployed |
+| Release channel | `RELEASE_CHANNEL.md` names bounded Video Studio V1 RELEASED / FROZEN at `eea988d` | PASS |
+| Current implementation | OBS-01 `b07fbea`; UX-01 `65b5417` + E1 `b291ce4`; AUTH-01 CLOSE-R2 PASS; PROD-CERT close `55613ad`; bounded production `eea988d`; RELEASED / FROZEN | Bounded production assembly is the released V1. Full release HEAD remains unsafe. AUTH-01 remains not deployed |
 
-Material discrepancy: committed governance says `Current RC: none`; this roadmap establishes Video Studio release-candidate work but does not rewrite that committed release-channel declaration. It must be synchronized only through an authorized closeout/governance task.
+Release channel names this bounded revision as released Video Studio V1. Production authority remains `eea988d`, not full release HEAD.
 
 ## 4. Frozen Architecture
 
@@ -103,19 +138,19 @@ Material discrepancy: committed governance says `Current RC: none`; this roadmap
 
 ## 7. Active Phase
 
-**Post-RC-E bounded release assembly**
+**Video Studio V1 RELEASED / FROZEN**
 
-RC-E is complete with `CONDITIONAL_RELEASE_READY`. Video Studio V1 is not released. Do not deploy full release HEAD. Do not deploy AUTH-01 cutover. Do not mark `VIDEO_STUDIO_V1_RELEASED`.
+Bounded production assembly `eea988d` is the released V1. Do not deploy full release HEAD. Do not deploy AUTH-01 cutover. Do not transplant Director/rhythm into the certified renderer. Do not modify Renderer V1.
 
 ## 8. Active Task
 
-**`VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY` — assemble and deploy the Video Studio V1 release slice**
+**`VIDEO_STUDIO_V1_BOUNDED_RELEASE_CLOSE` — final V1 definition / release decision**
 
-Status: `BUILT / VALIDATED` / `PENDING PRODUCTION DEPLOYMENT`
+Status: `CLOSED / RELEASED`
 
-Assembly-B (2026-08-16): branch `release/video-studio-v1-bounded` built from `ceb9451` by patch extraction. Required identity/hash, FIX-02, UX-01, OBS-01, and FIX-03 web pending projection are assembled and statically/integration validated. AUTH-01/AI Story/Creative Studio/renderer transplant remain excluded. Production deploy is not authorized.
+Close review (2026-08-17): Section 2 Director/rhythm/EditingPlanV1 language is ROADMAP_DEFINITION_DRIFT, superseded by Section 1, the feature-flagged Director fallback decision, Renderer V1 freeze, Assembly-A exclusion, and Assembly-C certified auto-clip production. Missing mandatory V1 capabilities: NONE.
 
-`VIDEO_STUDIO_V1_RELEASE_GATE` is CLOSED / CONDITIONAL_RELEASE_READY. `VIDEO_STUDIO_V1_RELEASED` remains NO.
+`VIDEO_STUDIO_V1_RELEASED = YES`. Production web+worker remain `eea988d5addd268d4d3356d336d7d076109b26ea`. AUTH-01/quota/AI Story/Creative Studio remain outside this release.
 
 ## 9. Launch Blockers
 
@@ -134,8 +169,9 @@ Assembly-B (2026-08-16): branch `release/video-studio-v1-bounded` built from `ce
 | VS-RC-OBS-01 | RC-C | CLOSED / PASS — structured ops events with stable correlation IDs; bounded failure classification; durable export_request failure write-back; retry-mode distinction without new schema or observability platform |
 | VS-RC-TEST-01 | RC-C | CLOSED / PASS — permanent non-skippable `pnpm test:video-studio:product-loop`; real DB/Redis/worker/browser execution; private local campaign-assets; three persisted/presented outputs; refresh/revisit recovery; same-Creative recovery; Generate Again new task; preview delivery recovery; export success/failure; inactive historical; workspace isolation; OBS evidence |
 | OPS-EDIT-V1-PROD-ENV-01 | RC-D | CLOSED / PASS — deployed worker media/runtime probe certified on Railway production `a32f2efa` / `c7657a61` |
-| VIDEO_STUDIO_V1_RELEASE_GATE | RC-E | CLOSED / CONDITIONAL_RELEASE_READY — all mandatory product/security/runtime gates PASS; no unresolved launch blocker; current production is not full V1; `VIDEO_STUDIO_V1_RELEASED` remains NO |
-| VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY | Post-RC-E | BUILT / VALIDATED / PENDING PRODUCTION DEPLOYMENT — branch `release/video-studio-v1-bounded` from `ceb9451`; patch-extract identity/UX/OBS/FIX-02/FIX-03 web projection; certified production renderer preserved; AUTH-01/AI Story/Creative Studio excluded |
+| VIDEO_STUDIO_V1_RELEASE_GATE | RC-E | CLOSED / CONDITIONAL_RELEASE_READY historically; superseded for RELEASED by bounded close review below |
+| VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY | Post-RC-E | DEPLOYED / VERIFIED / PASS — production web+worker `eea988d`; identity migrations applied; live hash/capsule/fingerprint/retry/3-output/private/OBS/export PASS; AUTH-01/AI Story/Creative Studio excluded |
+| VIDEO_STUDIO_V1_BOUNDED_RELEASE_CLOSE | Post-assembly | CLOSED / RELEASED — Director/rhythm classified POST_V1; bounded auto-clip loop is the authoritative V1; `VIDEO_STUDIO_V1_RELEASED = YES` |
 
 ## 11. Product Decisions
 
@@ -145,8 +181,9 @@ Assembly-B (2026-08-16): branch `release/video-studio-v1-bounded` built from `ce
 |---|---|
 | Video Studio is the campaign execution layer for long-form source to short-form marketing outputs, separate from AI Story, Creative Studio and manual NLE | `docs/VIDEO_STUDIO.md`; production Campaign/Auto Clip routes |
 | V1 produces three outputs | `AUTO_CLIP.CLIP_COUNT` in `packages/shared/src/render.ts`; composition/export gates |
-| AI Director is feature-flagged, source/rhythm eligible, bounded to two attempts, and may fall back deterministically | P2/P3B production orchestration and tests |
-| Renderer V1 is frozen after P3B-2 | Frozen commit lineage and this release boundary |
+| AI Director is feature-flagged, source/rhythm eligible, bounded to two attempts, and may fall back deterministically | P2/P3B release-branch orchestration and tests; not a production V1 mandatory capability |
+| Director / source rhythm / EditingPlanV1 are POST_V1 | VIDEO_STUDIO_V1_BOUNDED_RELEASE_CLOSE: implementation-era Section 2 wording superseded; production V1 is certified auto-clip; transplant would violate Renderer V1 freeze and Assembly-A |
+| Renderer V1 is frozen after P3B-2 | Frozen commit lineage and this release boundary; certified production renderer remains the auto-clip/Renderer V1 path at `eea988d` |
 | Signed delivery credentials are not artifact identity | FIX-01/E1 closeout commit `273b33d` |
 | Director execution truth is derived from runtime evidence | FIX-03 commit `e113aaa`: eligibility requires `AI_EDITING_DIRECTOR_ENABLED`, canonical frozen selected-source identity and nonempty SourceRhythm evidence bound to that exact identity; queued APIs return `aiInvoked = null` and `aiExecutionStatus = PENDING_RUNTIME_EVIDENCE`; runtime modes are `AI_DIRECTED`, `AI_DIRECTED_CHECKPOINT_REPLAY`, `DETERMINISTIC_FALLBACK`, and `LEGACY_DETERMINISTIC`; no additional AI call |
 | Video Studio entitlement authority | AUTH-01 CLOSE-R2 PASS: workspace authority precedes centralized capability enforcement; only `ACTIVE`/`TRIALING` subscriptions project PLAN capabilities; inactive states fail closed; Super Admin remains a product override without tenant bypass; AI Story policy is unchanged; quota is deferred |
@@ -172,8 +209,8 @@ Assembly-B (2026-08-16): branch `release/video-studio-v1-bounded` built from `ce
 | Provider/storage credentials | PRESENT | Production worker has `DATABASE_URL`, `REDIS_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `SUPABASE_STORAGE_BUCKET=campaign-assets`; `BULLMQ_PREFIX` intentionally absent (shared production namespace) |
 | Production fixtures | DEFERRED / NOT REQUIRED FOR V1 REPRESENTATIVE CERT | Six-source and 10/30/60-minute fixtures were not required to close representative `VS-EDIT-V1-PROD-CERT-R1` |
 | PROD-CERT | CLOSED / PASS | Representative production run completed through signed delivery and same-task 720p export; `PROD_CERT_720P_EXPORT_BLOCKED_AFTER_FINAL_RENDER` resolved |
-| Video Studio identity schema | PENDING PRODUCTION APPLY | Production `tasks` lacks `generation_input_capsule` / `generation_input_fingerprint`; production `assets` lacks `content_hash`. Required SQL: `campaign-video-generation-identity-v1.sql`, `source-asset-content-hash-v1.sql`. Do not apply AI Story/Creative Studio migrations as part of Video Studio V1 |
-| Current production vs intended V1 | BOUNDED SLICES ONLY | Web `ceb9451` = production `c7657a61` + export-readiness helper; worker `c7657a61` / `a32f2efa`. Release HEAD `55613ad` is not deployed. OBS-01, UX-01, FIX-02, FIX-03, AUTH-01, and generation identity are absent from the live slice |
+| Video Studio identity schema | APPLIED / LIVE | Production `assets.content_hash`, `tasks.generation_input_capsule`, and `tasks.generation_input_fingerprint` live after Assembly-C. Do not apply AI Story/Creative Studio migrations as part of Video Studio V1 |
+| Current production vs released V1 | RELEASED BOUNDED ASSEMBLY | Web+worker `eea988d5addd268d4d3356d336d7d076109b26ea` on `emberos-iota` / Railway `@ceo-agent/worker`. Full release HEAD is not deployed. AUTH-01 remains not deployed |
 
 Environment blockers are not renderer defects.
 
@@ -193,7 +230,7 @@ Environment blockers are not renderer defects.
 | Production vision templated fallback | PROD-CERT representative testsrc source triggered vision fallback; not a security, persistence, or three-output defect | Customer-source understanding fails as a release requirement |
 | Production marketing content fallback | PROD-CERT representative run used marketing-content fallback; execution remained recoverable and truthful under FIX-03 | Fallback becomes silent or blocks the representative product loop |
 
-### V1.1 (6)
+### V1.1 (9)
 
 | Item | Why deferred | Reopening trigger |
 |---|---|---|
@@ -203,6 +240,9 @@ Environment blockers are not renderer defects.
 | Render/storage/network cost attribution | Can be measured externally for certification | Required for billing or safe cost controls |
 | Consolidated support/admin task narrative | Minimum release evidence can use existing task/checkpoint/log records | Support cannot reconstruct failures safely |
 | Diagnosis-specific failure copy | Generic bounded recovery is sufficient if actionable | Generic copy prevents recovery for a common failure |
+| AI Editing Director production transplant (`editing-director-v1`) | Feature-flagged internal strategy with authorized deterministic fallback; Assembly-A excluded it from the certified production slice; Renderer V1 freeze forbids transplant without a certified defect | A certified V1.1/V2 product decision requires Director-owned editing and explicitly reopens the frozen renderer/director boundary |
+| Source rhythm production transplant (`source-rhythm-v1`) | Director evidence, not a certified-renderer requirement; beat/rhythm cuts remain V2 | Identity/determinism defect in a future Director phase, or an explicit V1.1 quality program |
+| EditingPlanV1 production transplant (`editing-plan-v1`) | Strict plan contract remains frozen on the release branch; production V1 composition is certified auto-clip | A future Director phase requires the plan compiler in production |
 
 ### V2 (9)
 
@@ -233,6 +273,8 @@ Beat/downbeat synchronization; temporal tracking; speed ramps; kinetic typograph
 | OPS-RAILWAY-ACCESS / OPS-EDIT-V1-PROD-ENV-01 Production Worker Runtime | production web/worker `c7657a61`; Railway worker `a32f2efa` | CLOSED / PASS; live Railway production access; FFmpeg/ffprobe 5.1.9; queue consumers registered; production DB/Redis; private `campaign-assets` read; canonical storage identity; AUTH-01 not deployed; Renderer V1 frozen |
 | VS-EDIT-V1-PROD-CERT-R1 Production Real-Output Certification | task `f73dc0f1-83d9-457c-91d6-b1073e23e528`; E1 `2af30d0`; E1D web `ceb9451`; worker `c7657a61` / `a32f2efa` | CLOSED / PASS; production pipeline completed; 3/3 output renders completed; private storage confirmed; signed delivery confirmed; review/final render completed; final_ready export blocker corrected; same failed task successfully re-exported; 720p export persisted and delivered; representative runtime resources passed; worker remained healthy; AUTH-01 not deployed; Renderer V1 frozen |
 | VIDEO_STUDIO_V1_RELEASE_GATE Final Release Readiness Review | review of closed RC-A through RC-D plus live production schema probe | CLOSED / CONDITIONAL_RELEASE_READY; no unresolved launch blocker; full HEAD deploy unsafe; AUTH-01 cutover not required before V1 product launch; bounded assembly remains; `VIDEO_STUDIO_V1_RELEASED` remains NO |
+| VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY-C Production Deploy | web+worker `eea988d`; Railway `8ede3056-54a0-4bff-a437-9b7bc54d752e`; evidence `5763757` | DEPLOYED / VERIFIED / PASS; identity schema live; cert task `41685b58-0aef-469d-804b-6c171bb80392`; AUTH-01 not deployed; Renderer V1 frozen |
+| VIDEO_STUDIO_V1_BOUNDED_RELEASE_CLOSE Final Definition / Release Decision | docs close on `release/video-studio-v1-bounded` | CLOSED / RELEASED; Section 2 Director/rhythm wording classified ROADMAP_DEFINITION_DRIFT and superseded; `VIDEO_STUDIO_V1_RELEASED = YES`; production remains `eea988d` |
 
 Production `campaign-assets` is private and signed-only. Renderer V1 remains frozen.
 
@@ -244,7 +286,9 @@ Production `campaign-assets` is private and signed-only. Renderer V1 remains fro
 | RC-B Product Contract | Truthful mode, frozen entitlement, operable recovery | PASS |
 | RC-C Repository Regression | Release evidence and product-loop/security gate pass | PASS |
 | RC-D Production Certification | Environment probe pass and real-output certification pass | PASS |
-| RC-E Final Release | All blockers closed and REQUIRED_V1 dispositioned | PASS / CONDITIONAL_RELEASE_READY |
+| RC-E Final Release | All blockers closed and REQUIRED_V1 dispositioned | PASS / CONDITIONAL_RELEASE_READY historically; RELEASED by bounded close |
+| Bounded production assembly | Identity, recovery, OBS, private delivery, export on certified auto-clip | PASS / DEPLOYED |
+| V1 definition close | Authoritative V1 matches certified bounded production | PASS / RELEASED |
 
 ## 16. Change-Control Rules
 
@@ -288,6 +332,16 @@ Production `campaign-assets` is private and signed-only. Renderer V1 remains fro
 | 2026-08-16 | Close VIDEO_STUDIO_V1_RELEASE_GATE as CONDITIONAL_RELEASE_READY | Product/security/runtime gates PASS; production real-output PASS; no unresolved launch blocker; current production is bounded slices (`ceb9451` web / `c7657a61` worker), not full V1; full HEAD deploy is unsafe; AUTH-01 remains a separate commercial rollout; required identity migrations are unapplied; `VIDEO_STUDIO_V1_RELEASED` remains NO; next is VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY |
 | 2026-08-16 | Complete VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY-A scope review | SCOPE_REVIEW_PASS; base `ceb9451`; patch-extract mixed commits; do not cherry-pick HEAD; keep certified production auto-clip; AUTH-01/AI Story/Creative Studio excluded; next is ASSEMBLY-B implementation |
 | 2026-08-16 | Complete VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY-B implementation | BUILT / VALIDATED / PENDING PRODUCTION DEPLOYMENT; branch `release/video-studio-v1-bounded` from `ceb9451`; AUTH-01/AI Story/Creative Studio excluded; product-loop `BLOCKED_ENVIRONMENT`; next is ASSEMBLY-C production preflight/deploy |
+| 2026-08-17 | Complete VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY-C production deploy and live revalidation | DEPLOYED / VERIFIED / PASS; migrations `source-asset-content-hash-v1.sql` + `campaign-video-generation-identity-v1.sql`; web+worker `eea988d`; cert task `41685b58-0aef-469d-804b-6c171bb80392`; contentHash/capsule/fingerprint live; retry identity preserved; 3 outputs; private signed delivery; OBS live; final_ready 720p export PASS; product-loop PASS; AUTH-01 not deployed; `VIDEO_STUDIO_V1_RELEASED` remains NO pending definition close |
+| 2026-08-17 | Close VIDEO_STUDIO_V1_BOUNDED_RELEASE_CLOSE; mark Video Studio V1 RELEASED / FROZEN | ROADMAP_DEFINITION_DRIFT confirmed: Section 2 Director/rhythm/EditingPlanV1 sequence is implementation-era and is superseded by Section 1, feature-flagged Director fallback, Renderer V1 freeze, Assembly-A exclusion, and Assembly-C certified auto-clip. Director/rhythm move to V1.1 / POST_V1. Production revision `eea988d`. AUTH-01 remains separate commercial rollout. Quota remains deferred. AI Story and Creative Studio remain separate. `VIDEO_STUDIO_V1_RELEASED = YES` |
+| 2026-08-17 | EMBEROS-V1-NEXT-01: correct post-Video-Studio next action from Phase 12 to Phase 10 | Phase 11 is RELEASED / FROZEN. Phase 10 Photo Scene V1 is not started and remains the Private Beta requirement. Phase 12 Publishing Hub implementation is not next. Canonical module name is Photo Scene V1; Creative Studio is the same capability family. Internal Creator Studio is a separate super-admin product. |
+| 2026-08-17 | Close EMBEROS-PHOTO-SCENE-01A architecture review; authorize 10A | Photo Scene V1 architecture frozen in `docs/architecture/photo-scene-v1.md`. Reuse `assets` + campaign refs; official scenes and generations are later small entities; `creative_studio_jobs` never-landed / not required; Flux not V1; deterministic official-scene composition. Phase 10 not implemented. Next is EMBEROS-PHOTO-SCENE-10A. |
+| 2026-08-17 | Close EMBEROS-PHOTO-SCENE-10A Creative Asset Foundation | CLOSED / PASS. Existing `assets` + `campaign_asset_refs`; Photo Scene roles in metadata; library storage prefix; no creative_assets / jobs / scenes / generations; no providers. Next is EMBEROS-PHOTO-SCENE-10B. |
+| 2026-08-18 | Close EMBEROS-PHOTO-SCENE-10B Product Extraction | CLOSED / PASS. Live Photoroom quality reused from `c72c343` (8/8, mean 4.95/5). Durable runtime certified on preview Postgres/Redis/BullMQ with deterministic adapter; zero new paid calls. Combined 10B evidence SUFFICIENT. Next is EMBEROS-PHOTO-SCENE-10C. |
+| 2026-08-18 | Close EMBEROS-PHOTO-SCENE-10C Official Scene Library | CLOSED / PASS. Global `photo_scene_official_scenes` + immutable versions; frozen scene+placement contract; tenant mutation denied; no marketing image; no paid image APIs. Next is EMBEROS-PHOTO-SCENE-10D. |
+| 2026-08-18 | Close EMBEROS-PHOTO-SCENE-10D Marketing Image Generation | CLOSED / PASS. Deterministic compositor; `photo_scene_generations.operation=marketing_image`; durable marketing_image asset; signed delivery; retry/Generate Again; Photoroom network calls = 0. PHOTO_SCENE_V1 = IMPLEMENTATION_COMPLETE / RELEASE_PENDING. |
+| 2026-08-18 | Close EMBEROS-PHOTO-SCENE-V1-PROD-01 production release readiness | CONDITIONAL PASS. Source authority PASS. Direct HEAD deploy unsafe. Bounded assembly required from `eea988d`. Three additive SQL files; official bucket `photo-scene-official`; seed with uploads; Photoroom env prerequisite. AUTH-01/AI Story/Publishing/Flux/Renderer excluded. Next is PROD-02 assembly. PHOTO_SCENE_V1 remains IMPLEMENTATION_COMPLETE / RELEASE_PENDING. |
+| 2026-08-18 | Build EMBEROS-PHOTO-SCENE-V1-PROD-02 bounded production assembly | BUILT / VALIDATED on `release/photo-scene-v1-bounded` from `eea988d`. Production-authorized migrate/preflight/bucket/seed/env tools added. No production mutate/deploy. Next is PROD-03. PHOTO_SCENE_V1 remains IMPLEMENTATION_COMPLETE / RELEASE_PENDING. |
 
 ## 18. Release Gate Review (2026-08-16)
 
@@ -295,14 +349,14 @@ Decision: `CONDITIONAL_RELEASE_READY`. This is not `VIDEO_STUDIO_V1_RELEASED`.
 
 | Gate | Classification |
 |---|---|
-| Durable generation identity | CLOSED_PASS on full release branch (`8e2613d`); absent from current production slice and production schema |
-| Fixed three-output contract | CLOSED_PASS — `AUTO_CLIP.CLIP_COUNT = 3`; PROD-CERT persisted/presented 3 |
+| Durable generation identity | CLOSED_PASS on bounded production assembly (`eea988d`); add-only production schema applied |
+| Fixed three-output contract | CLOSED_PASS — `AUTO_CLIP.CLIP_COUNT = 3`; Assembly-C live persisted/presented 3 |
 | FIX-01 artifact delivery | CLOSED_PASS |
-| FIX-02 retry/render terminality | CLOSED_PASS on release branch; not in current production SHA |
-| FIX-03 Director/render truth | CLOSED_PASS on release branch; not in current production SHA |
+| FIX-02 retry/render terminality | CLOSED_PASS on bounded production assembly `eea988d` |
+| FIX-03 Director/render truth | CLOSED_PASS web pending projection on bounded production; worker Director transplant excluded |
 | AUTH-01 entitlement authority | CLOSED_PASS on release branch; `AUTH01_PRODUCTION_CUTOVER = NO`; `SEPARATE_COMMERCIAL_ROLLOUT_GATE` |
-| UX-01 result/recovery | CLOSED_PASS on release branch; not in current production SHA |
-| OBS-01 operational evidence | CLOSED_PASS on release branch; `OBS01_PRODUCTION_RUNTIME_PRESENT = NO` |
+| UX-01 result/recovery | CLOSED_PASS on bounded production assembly `eea988d` |
+| OBS-01 operational evidence | CLOSED_PASS on bounded production; `OBS01_PRODUCTION_RUNTIME_PRESENT = YES` |
 | TEST-01 product-loop | CLOSED_PASS — permanent `pnpm test:video-studio:product-loop` |
 | STORAGE-01 branding separation | CLOSED_PASS / DEPLOYED |
 | Private campaign-assets | CLOSED_PASS / DEPLOYED |
@@ -312,12 +366,42 @@ Decision: `CONDITIONAL_RELEASE_READY`. This is not `VIDEO_STUDIO_V1_RELEASED`.
 | AI Story | NOT_APPLICABLE / OUT OF VIDEO_STUDIO_V1_RELEASE_SCOPE |
 | Renderer expansion | DEFERRED / FROZEN |
 
-Current production is not the intended V1 revision. `c7657a61` does not contain FIX-02, FIX-03, AUTH-01, UX-01, OBS-01, TEST-01, or generation identity. Web `ceb9451` adds only the export-readiness helper. Full release HEAD (`55613ad`, 797 files vs `c7657a61`) includes AUTH-01, AI Story, Creative Studio, and commercial code and is not a safe production deploy.
+Current production is the bounded Video Studio V1 assembly `eea988d` (web + worker), not full release HEAD. AUTH-01 remains not deployed. AI Story and Creative Studio remain out of scope. Renderer V1 remains frozen.
 
-Required Video Studio DB migrations pending on production: `campaign-video-generation-identity-v1.sql`, `source-asset-content-hash-v1.sql`. Production already contains unrelated AI Story / commercial tables; those are not Video Studio V1 release requirements and must not be treated as a reason to deploy full HEAD.
+Required Video Studio identity migrations are applied on production: `source-asset-content-hash-v1.sql`, `campaign-video-generation-identity-v1.sql`. Production already contains unrelated AI Story / commercial tables; those are not Video Studio V1 release requirements and must not be treated as a reason to deploy full HEAD.
 
-Release-channel file still declares `Current RC: none`. Synchronization remains a closeout governance step, not a product blocker.
+Release channel now declares released Video Studio V1 at `eea988d`. Full release HEAD remains not production.
+
+## 18.1 Bounded V1 Close Review (2026-08-17)
+
+Decision: `VIDEO_STUDIO_V1_RELEASED = YES`. Status: `RELEASED / FROZEN`.
+
+| Gate | Classification |
+|---|---|
+| Durable generation identity | CLOSED_PASS on bounded production `eea988d` |
+| Fixed three-output contract | CLOSED_PASS |
+| FIX-01 artifact delivery | CLOSED_PASS |
+| FIX-02 retry/render terminality | CLOSED_PASS |
+| FIX-03 execution truth | CLOSED_PASS web pending projection; worker Director transplant not required for V1 |
+| AUTH-01 entitlement authority | CLOSED_PASS on release branch; production cutover remains `SEPARATE_COMMERCIAL_ROLLOUT_GATE` and does not block V1 |
+| UX-01 result/recovery | CLOSED_PASS |
+| OBS-01 operational evidence | CLOSED_PASS |
+| TEST-01 product-loop | CLOSED_PASS |
+| STORAGE-01 branding separation | CLOSED_PASS / DEPLOYED |
+| Private campaign-assets | CLOSED_PASS / DEPLOYED |
+| Production worker runtime | CLOSED_PASS |
+| Production real-output | CLOSED_PASS |
+| Bounded production assembly | CLOSED_PASS / DEPLOYED / VERIFIED |
+| Director / rhythm / EditingPlanV1 production transplant | POST_V1 / V1.1 — not a V1 release blocker |
+| Quota | DEFERRED — does not block V1 |
+| AI Story | NOT_APPLICABLE / OUT OF VIDEO_STUDIO_V1_RELEASE_SCOPE |
+| Creative Studio | NOT_APPLICABLE / OUT OF VIDEO_STUDIO_V1_RELEASE_SCOPE |
+| Renderer expansion | DEFERRED / FROZEN |
+
+Production authority remains bounded revision `eea988d5addd268d4d3356d336d7d076109b26ea`. This close does not deploy AUTH-01, AI Story, Creative Studio, quota, or full release HEAD.
 
 ## 19. Next Action
 
-**NEXT ACTION: VIDEO_STUDIO_V1_BOUNDED_RELEASE_ASSEMBLY-C — production migration/deployment preflight and deploy. Do not mark V1 released. Do not deploy AUTH-01. Do not deploy AI Story or Creative Studio.**
+**NEXT ACTION: EMBEROS-PHOTO-SCENE-V1-PROD-03 — Production deploy + certification.** PHOTO_SCENE_V1 is IMPLEMENTATION_COMPLETE / RELEASE_PENDING. Bounded assembly is BUILT / VALIDATED on `release/photo-scene-v1-bounded`. Do not claim RELEASED / FROZEN until deployed and production-certified.
+
+Plan: `docs/releases/photo-scene-v1-bounded-assembly.md`. Do not start Publishing, Flux, or AUTH-01.

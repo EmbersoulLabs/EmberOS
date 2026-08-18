@@ -1092,7 +1092,15 @@ Acceptance Criteria:
 
 ## 14. Phase 10 — Photo Scene V1
 
+Architecture freeze: `docs/architecture/photo-scene-v1.md` (EMBEROS-PHOTO-SCENE-01A, 2026-08-17). Phase 10 is **IMPLEMENTATION_COMPLETE / RELEASE_PENDING**. Sprint 10A is CLOSED / PASS. Sprint 10B is **CLOSED / PASS**. Sprint 10C is **CLOSED / PASS**. Sprint 10D is **CLOSED / PASS**. Photo Scene V1 product loop is implemented. EMBEROS-PHOTO-SCENE-V1-PROD-01 is CONDITIONAL PASS. `PHOTO_SCENE_V1_BOUNDED_ASSEMBLY` is **BUILT / VALIDATED** on `release/photo-scene-v1-bounded` from `eea988d`. Do not mark RELEASED / FROZEN. Next is EMBEROS-PHOTO-SCENE-V1-PROD-03 production deploy + certification.
+
+Photo Scene V1 is Creative Studio V1. Do not create a parallel Creative Studio product.
+
 ### Sprint 10A — Creative Asset Foundation
+
+Status: CLOSED / PASS (EMBEROS-PHOTO-SCENE-10A)
+
+Reuse existing `assets` + `campaign_asset_refs`. Roles in `metadata.photoScene`. No `creative_assets`, `creative_studio_jobs`, official scene table, or generation table.
 
 Implement:
 
@@ -1108,6 +1116,16 @@ Implement:
 
 ### Sprint 10B — Product Extraction
 
+Status: CLOSED / PASS (EMBEROS-PHOTO-SCENE-10B-RUNTIME-ZERO-PAID-API)
+
+`V1_BACKGROUND_REMOVAL_PROVIDER = photoroom`. Live provider quality remains inherited from `c72c343` (8/8 PNG+alpha, mean 4.95/5, median 875ms, configured $0.02). Durable runtime was certified separately against authorized preview Postgres + Redis + BullMQ using the deterministic adapter only: `PHOTO_SCENE_ALLOW_DETERMINISTIC_PROVIDER=true`, `PHOTOROOM_NETWORK_CALL_COUNT=0`, `CERT_RUNTIME_EXTERNAL_COST=USD 0`.
+
+This deterministic run does **not** prove live-provider end-to-end persistence. Combined 10B evidence is sufficient: live quality CERTIFIED + durable runtime CERTIFIED. See `docs/architecture/photo-scene-provider-cert.md`.
+
+Next is 10C Official Scene Library.
+
+Durable `photo_scene_generations` extraction authority, private PNG output, retry/reuse, tenant isolation, and a provider-neutral adapter are implemented.
+
 Implement:
 
 - Product image upload.
@@ -1121,6 +1139,12 @@ Implement:
 
 ### Sprint 10C — Official Scene Library
 
+Status: CLOSED / PASS (EMBEROS-PHOTO-SCENE-10C)
+
+Global official scene catalog with immutable `sceneId` + `sceneVersion`. Tenant users may select published versions and freeze placement. They cannot mutate the catalog. 10C does not create a marketing image and does not call paid image APIs.
+
+Next is 10D Marketing Image Generation (CLOSED / PASS).
+
 Implement:
 
 - Curated official scenes.
@@ -1132,6 +1156,14 @@ Implement:
 - Save output.
 
 ### Sprint 10D — Marketing Image Generation
+
+Status: CLOSED / PASS (EMBEROS-PHOTO-SCENE-10D)
+
+Deterministic compositor on existing `photo_scene_generations` (`operation=marketing_image`). Reuses 10B `extracted_product`. Official scene + 10C placement + brand/marketing snapshots freeze before compose. Durable `marketing_image` asset in private `campaign-assets`. Signed preview/download. Retry keeps generation id. Generate Again creates a new id. Photoroom is not recalled for composition.
+
+V1 composition authority: `DETERMINISTIC_COMPOSITOR`. No Flux / OpenAI image / custom AI scene generation.
+
+PHOTO_SCENE_V1: IMPLEMENTATION_COMPLETE / RELEASE_PENDING. PHOTO_SCENE_V1_BOUNDED_ASSEMBLY: BUILT / VALIDATED. Next is PROD-03 production deploy + certification.
 
 Implement:
 
