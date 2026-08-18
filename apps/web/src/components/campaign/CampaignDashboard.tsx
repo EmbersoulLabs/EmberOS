@@ -9,6 +9,9 @@ import { RunCeoButton } from "@/components/RunCeoButton";
 import { ClipPreviewGrid } from "@/components/pipeline/ClipPreviewGrid";
 import { PipelineHero } from "@/components/pipeline/PipelineHero";
 import { PipelinePhases } from "@/components/pipeline/PipelinePhases";
+import { PhotoSceneExtractionPanel } from "@/components/photo-scene/PhotoSceneExtractionPanel";
+import { PhotoSceneOfficialLibraryPanel } from "@/components/photo-scene/PhotoSceneOfficialLibraryPanel";
+import { PhotoSceneMarketingImagePanel } from "@/components/photo-scene/PhotoSceneMarketingImagePanel";
 import { DashboardSection, CollapsibleSection } from "@/components/marketing-dashboard/primitives";
 import { formatClipDuration, formatPlatformLabel } from "@/lib/clip-utils";
 import {
@@ -313,6 +316,16 @@ export function CampaignDashboard({
         <div className="grid gap-5 lg:grid-cols-2">
           <CampaignBriefCard campaign={campaign} />
           <CampaignAssetsCard assets={assets} />
+        </div>
+
+        <div className="mt-5">
+          <PhotoSceneExtractionPanel campaignId={campaignId} assets={assets} />
+        </div>
+        <div className="mt-5">
+          <PhotoSceneOfficialLibraryPanel campaignId={campaignId} />
+        </div>
+        <div className="mt-5">
+          <PhotoSceneMarketingImagePanel campaignId={campaignId} />
         </div>
 
         {reviewPending && (

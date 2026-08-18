@@ -6,7 +6,11 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./photo-scene/execute-product-extraction": "./src/photo-scene/execute-product-extraction.ts",
+    "./photo-scene/execute-marketing-composition": "./src/photo-scene/execute-marketing-composition.ts",
+    "./photo-scene/compose-marketing-image": "./src/photo-scene/compose-marketing-image.ts",
+    "./photo-scene/background-removal": "./src/photo-scene/background-removal.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -8,6 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./server": "./src/campaign-video-generation-identity.server.ts",
+    "./photo-scene-extraction.server": "./src/photo-scene-extraction.server.ts",
+    "./photo-scene-marketing.server": "./src/photo-scene-marketing.server.ts",
     "./platform-specs": "./src/platform-specs/index.ts",
     "./types": "./src/types/index.ts",
     "./i18n": "./src/i18n/index.ts"

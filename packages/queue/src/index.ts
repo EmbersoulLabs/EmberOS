@@ -1,6 +1,6 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import { QUEUE_NAMES } from "./jobs";
-import { emitVideoStudioOpsEvent } from "@ceo-agent/shared";
+import { emitPhotoSceneOpsEvent, emitVideoStudioOpsEvent } from "@ceo-agent/shared";
 
 export { QUEUE_NAMES } from "./jobs";
 
@@ -70,6 +70,7 @@ export const agentQueue = () => getQueue(QUEUE_NAMES.AGENT);
 export const renderQueue = () => getQueue(QUEUE_NAMES.RENDER);
 export const exportQueue = () => getQueue(QUEUE_NAMES.EXPORT);
 export const probeQueue = () => getQueue(QUEUE_NAMES.PROBE);
+export const photoSceneQueue = () => getQueue(QUEUE_NAMES.PHOTO_SCENE);
 
 export async function enqueuePipeline(taskId: string, campaignId: string, workspaceId: string, orgId: string) {
   const queue = agentQueue();
@@ -186,4 +187,73 @@ export async function enqueueProbe(data: {
 }) {
   const queue = probeQueue();
   return queue.add("ffmpeg.probe", data, { jobId: `probe-${data.assetId}` });
+}
+
+export async function enqueuePhotoSceneExtract(data: {
+  generationId: string;
+  workspaceId: string;
+  orgId: string;
+  campaignId: string;
+  attempt: number;
+}) {
+  const queue = photoSceneQueue();
+  const job = await queue.add(
+    "photo_scene.extract",
+    {
+      generationId: data.generationId,
+      workspaceId: data.workspaceId,
+      orgId: data.orgId,
+      campaignId: data.campaignId,
+    },
+    {
+      jobId: `photo-scene-extract-${data.generationId}-${data.attempt}`,
+      attempts: 1,
+    }
+  );
+  emitPhotoSceneOpsEvent({
+    event: "extraction.enqueued",
+    stage: "photo_scene.extract",
+    outcome: "enqueued",
+    orgId: data.orgId,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    generationId: data.generationId,
+    attempt: data.attempt,
+  });
+  return job;
+}
+
+export async function enqueuePhotoSceneCompose(data: {
+  generationId: string;
+  workspaceId: string;
+  orgId: string;
+  campaignId: string;
+  attempt: number;
+}) {
+  const queue = photoSceneQueue();
+  const job = await queue.add(
+    "photo_scene.compose",
+    {
+      generationId: data.generationId,
+      workspaceId: data.workspaceId,
+      orgId: data.orgId,
+      campaignId: data.campaignId,
+    },
+    {
+      jobId: `photo-scene-compose-${data.generationId}-${data.attempt}`,
+      attempts: 1,
+    }
+  );
+  emitPhotoSceneOpsEvent({
+    event: "composition.enqueued",
+    stage: "photo_scene.compose",
+    outcome: "enqueued",
+    orgId: data.orgId,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    generationId: data.generationId,
+    attempt: data.attempt,
+    providerKey: "deterministic_compositor",
+  });
+  return job;
 }

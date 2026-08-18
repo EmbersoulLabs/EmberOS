@@ -26,3 +26,8 @@ export * from "./skills";
 export * from "./orchestrator";
 export type { PipelineHooks, VisionMediaPreparer } from "./orchestrator";
 export * from "./llm";
+export * from "./photo-scene/background-removal";
+export * from "./photo-scene/png";
+export * from "./photo-scene/execute-product-extraction";
+export * from "./photo-scene/providers/photoroom";
+export * from "./photo-scene/providers/photoroom-config";

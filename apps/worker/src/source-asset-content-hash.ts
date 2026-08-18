@@ -12,3 +12,7 @@ export async function hashSourceAssetFile(filePath: string): Promise<string> {
   });
   return `sha256:${hash.digest("hex")}`;
 }
+
+export function hashSourceAssetBytes(bytes: Buffer): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}

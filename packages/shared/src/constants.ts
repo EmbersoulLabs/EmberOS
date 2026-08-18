@@ -64,4 +64,7 @@ export const STORAGE_PATHS = {
     `${workspaceId}/brand/${filename}`,
   businessLogo: (workspaceId: string, logoId: string, ext: string) =>
     `${workspaceId}/brand/business-logo-${logoId}.${ext}`,
+  /** Photo Scene / Asset Library tenant objects (not Video Studio render paths). */
+  library: (workspaceId: string, assetId: string, ext: string) =>
+    `${workspaceId}/library/${assetId}.${ext}`,
 } as const;

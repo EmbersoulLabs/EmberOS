@@ -18,6 +18,11 @@ const RLS_ENABLED_TABLES = [
   "content_analytics",
   "workspace_insights",
   "business_profiles",
+  "campaign_asset_refs",
+  "photo_scene_generations",
+  "photo_scene_official_scenes",
+  "photo_scene_official_scene_versions",
+  "photo_scene_scene_selections",
 ];
 
 describe("RLS coverage", () => {
@@ -50,6 +55,11 @@ describe("RLS coverage", () => {
       "business_profiles_insert",
       "business_profiles_update",
       "business_profiles_delete",
+      "campaign_asset_refs_all",
+      "photo_scene_generations_all",
+      "photo_scene_official_scenes_select",
+      "photo_scene_official_scene_versions_select",
+      "photo_scene_scene_selections_all",
     ];
     for (const name of policyNames) {
       expect(sql, `missing policy ${name}`).toMatch(

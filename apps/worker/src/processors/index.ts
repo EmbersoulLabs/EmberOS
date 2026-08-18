@@ -16,10 +16,13 @@ import {
   plainTextToDocHtml,
   emitVideoStudioOpsEvent,
   boundOpsDiagnosticMessage,
+  emitPhotoSceneOpsEvent,
 } from "@ceo-agent/shared";
 import { createExportZip, probeVideo } from "../ffmpeg/pipeline";
 import { processRenderJob } from "./render-handler";
 import { processTaskExportJob, musicCreditFor } from "./export-handler";
+import { processPhotoSceneExtractJob, markPhotoSceneExtractJobFailed } from "./photo-scene-extract-handler";
+import { processPhotoSceneComposeJob, markPhotoSceneComposeJobFailed } from "./photo-scene-compose-handler";
 import { prepareVisionFromStorage } from "../media/vision-prep";
 import { ensureMergedSourceVideo } from "../media/merge-source-videos";
 import { mediaHasAudio } from "../ffmpeg/probe-audio";
@@ -625,8 +628,60 @@ export function startWorkers() {
   });
   exportWorker.on("failed", (job, err) => console.error(`Export job ${job?.id} failed:`, err));
 
-  console.log(
-    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export`
+  const photoSceneWorker = new Worker(
+    QUEUE_NAMES.PHOTO_SCENE,
+    async (job) => {
+      if (job.name === "photo_scene.extract") {
+        const data = job.data as {
+          generationId: string;
+          workspaceId: string;
+          orgId: string;
+          campaignId: string;
+        };
+        await processPhotoSceneExtractJob(data);
+        return;
+      }
+      if (job.name !== "photo_scene.compose") return;
+      const data = job.data as {
+        generationId: string;
+        workspaceId: string;
+        orgId: string;
+        campaignId: string;
+      };
+      await processPhotoSceneComposeJob(data);
+    },
+    { connection, prefix, concurrency, lockDuration: 10 * 60 * 1000, ...workerOpts }
   );
-  return { agentWorker, probeWorker, renderWorker, exportWorker };
+  photoSceneWorker.on("failed", async (job, err) => {
+    const data = job?.data as {
+      generationId?: string;
+      workspaceId?: string;
+      orgId?: string;
+      campaignId?: string;
+    } | undefined;
+    const compose = job?.name === "photo_scene.compose";
+    console.error(
+      `[${compose ? "photo_scene.compose" : "photo_scene.extract"}] failed job=${job?.id} generation=${data?.generationId}:`,
+      err
+    );
+    emitPhotoSceneOpsEvent({
+      event: compose ? "composition.job_failed" : "extraction.job_failed",
+      stage: compose ? "photo_scene.compose" : "photo_scene.extract",
+      outcome: "failed",
+      orgId: data?.orgId,
+      workspaceId: data?.workspaceId,
+      campaignId: data?.campaignId,
+      generationId: data?.generationId,
+      attempt: job?.attemptsMade,
+      failureClass: compose ? "COMPOSITION_FAILED" : "PROVIDER_UNAVAILABLE",
+      message: boundOpsDiagnosticMessage(err),
+    });
+    if (compose) await markPhotoSceneComposeJobFailed(data ?? {});
+    else await markPhotoSceneExtractJobFailed(data ?? {});
+  });
+
+  console.log(
+    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, photo-scene`
+  );
+  return { agentWorker, probeWorker, renderWorker, exportWorker, photoSceneWorker };
 }
