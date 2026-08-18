@@ -20,6 +20,10 @@
     "sql:rls": "tsx scripts/apply-rls.ts",
     "sql:source-asset-content-hash-v1": "tsx scripts/apply-source-asset-content-hash-v1.ts",
     "sql:campaign-video-generation-identity-v1": "tsx scripts/apply-campaign-video-generation-identity-v1.ts",
+    "sql:photo-scene-campaign-asset-refs-v1": "tsx scripts/apply-photo-scene-campaign-asset-refs-v1.ts",
+    "sql:photo-scene-generations-v1": "tsx scripts/apply-photo-scene-generations-v1.ts",
+    "sql:photo-scene-official-scenes-v1": "tsx scripts/apply-photo-scene-official-scenes-v1.ts",
+    "sql:photo-scene-v1-production": "tsx scripts/apply-photo-scene-v1-production.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "echo ok"

@@ -8,9 +8,10 @@ import {
   numeric,
   bigint,
   unique,
+  uniqueIndex,
   index,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 
 export const organizations = pgTable("organizations", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -177,6 +178,136 @@ export const assets = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("assets_campaign_idx").on(t.campaignId)]
+);
+
+/** Campaign → Asset references (Photo Scene / Asset Library). File ownership stays on assets. */
+export const campaignAssetRefs = pgTable(
+  "campaign_asset_refs",
+  {
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.campaignId, t.assetId),
+    index("campaign_asset_refs_campaign_idx").on(t.campaignId, t.sortOrder),
+  ]
+);
+
+/** Photo Scene generation/extraction execution identity. Not Video Studio tasks. */
+export const photoSceneGenerations = pgTable(
+  "photo_scene_generations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    operation: text("operation").notNull().default("product_extraction"),
+    status: text("status").notNull().default("queued"),
+    sourceAssetId: uuid("source_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    sourceContentHash: text("source_content_hash").notNull(),
+    inputCapsule: jsonb("input_capsule").$type<Record<string, unknown>>().notNull(),
+    inputFingerprint: text("input_fingerprint").notNull(),
+    outputAssetId: uuid("output_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    providerKey: text("provider_key"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    errorCode: text("error_code"),
+    boundedError: text("bounded_error"),
+    costUsd: numeric("cost_usd"),
+    createdBy: uuid("created_by"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("photo_scene_generations_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("photo_scene_generations_campaign_idx").on(t.campaignId, t.createdAt),
+    index("photo_scene_generations_reuse_idx").on(
+      t.workspaceId,
+      t.operation,
+      t.inputFingerprint,
+      t.status
+    ),
+    uniqueIndex("photo_scene_generations_inflight_fingerprint_idx")
+      .on(t.workspaceId, t.operation, t.inputFingerprint)
+      .where(sql`${t.status} in ('queued', 'processing')`),
+  ]
+);
+
+/** Global Official Scene Library. Not tenant-owned. Versions are immutable once published. */
+export const photoSceneOfficialScenes = pgTable("photo_scene_official_scenes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  tags: text("tags").array().notNull().default([]),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const photoSceneOfficialSceneVersions = pgTable(
+  "photo_scene_official_scene_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sceneId: uuid("scene_id")
+      .notNull()
+      .references(() => photoSceneOfficialScenes.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    status: text("status").notNull().default("draft"),
+    supportedPresets: text("supported_presets").array().notNull(),
+    backgroundStorageIdentity: text("background_storage_identity").notNull(),
+    backgroundContentHash: text("background_content_hash").notNull(),
+    previewStorageIdentity: text("preview_storage_identity").notNull(),
+    safeArea: jsonb("safe_area").$type<Record<string, unknown>>().notNull(),
+    productAnchor: text("product_anchor").notNull(),
+    scaleMin: numeric("scale_min").notNull(),
+    scaleMax: numeric("scale_max").notNull(),
+    defaultScale: numeric("default_scale").notNull(),
+    defaultOffsetX: numeric("default_offset_x").notNull().default("0"),
+    defaultOffsetY: numeric("default_offset_y").notNull().default("0"),
+    defaultShadowPreset: text("default_shadow_preset").notNull().default("soft"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    retiredAt: timestamp("retired_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.sceneId, t.version),
+    uniqueIndex("photo_scene_official_scene_one_published_idx")
+      .on(t.sceneId)
+      .where(sql`${t.status} = 'published'`),
+    index("photo_scene_official_scene_versions_status_idx").on(t.status, t.sceneId),
+  ]
+);
+
+/** Tenant-owned frozen official-scene + placement selection. Not a marketing image. */
+export const photoSceneSceneSelections = pgTable(
+  "photo_scene_scene_selections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    extractedAssetId: uuid("extracted_asset_id").references(() => assets.id, { onDelete: "restrict" }),
+    frozenSelection: jsonb("frozen_selection").$type<Record<string, unknown>>().notNull(),
+    createdBy: uuid("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.workspaceId, t.campaignId),
+    index("photo_scene_scene_selections_campaign_idx").on(t.campaignId),
+  ]
 );
 
 export const tasks = pgTable(
@@ -428,8 +559,59 @@ export const businessProfilesRelations = relations(businessProfiles, ({ one }) =
 export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   workspace: one(workspaces, { fields: [campaigns.workspaceId], references: [workspaces.id] }),
   assets: many(assets),
+  assetRefs: many(campaignAssetRefs),
   tasks: many(tasks),
   creatives: many(creatives),
+  photoSceneGenerations: many(photoSceneGenerations),
+  photoSceneSceneSelections: many(photoSceneSceneSelections),
+}));
+
+export const assetsRelations = relations(assets, ({ one, many }) => ({
+  campaign: one(campaigns, { fields: [assets.campaignId], references: [campaigns.id] }),
+  campaignRefs: many(campaignAssetRefs),
+}));
+
+export const campaignAssetRefsRelations = relations(campaignAssetRefs, ({ one }) => ({
+  campaign: one(campaigns, { fields: [campaignAssetRefs.campaignId], references: [campaigns.id] }),
+  asset: one(assets, { fields: [campaignAssetRefs.assetId], references: [assets.id] }),
+}));
+
+export const photoSceneGenerationsRelations = relations(photoSceneGenerations, ({ one }) => ({
+  campaign: one(campaigns, {
+    fields: [photoSceneGenerations.campaignId],
+    references: [campaigns.id],
+  }),
+  sourceAsset: one(assets, {
+    fields: [photoSceneGenerations.sourceAssetId],
+    references: [assets.id],
+    relationName: "photoSceneGenerationSource",
+  }),
+  outputAsset: one(assets, {
+    fields: [photoSceneGenerations.outputAssetId],
+    references: [assets.id],
+    relationName: "photoSceneGenerationOutput",
+  }),
+}));
+
+export const photoSceneOfficialScenesRelations = relations(photoSceneOfficialScenes, ({ many }) => ({
+  versions: many(photoSceneOfficialSceneVersions),
+}));
+
+export const photoSceneOfficialSceneVersionsRelations = relations(
+  photoSceneOfficialSceneVersions,
+  ({ one }) => ({
+    scene: one(photoSceneOfficialScenes, {
+      fields: [photoSceneOfficialSceneVersions.sceneId],
+      references: [photoSceneOfficialScenes.id],
+    }),
+  })
+);
+
+export const photoSceneSceneSelectionsRelations = relations(photoSceneSceneSelections, ({ one }) => ({
+  campaign: one(campaigns, {
+    fields: [photoSceneSceneSelections.campaignId],
+    references: [campaigns.id],
+  }),
 }));
 
 export const tasksRelations = relations(tasks, ({ one }) => ({
