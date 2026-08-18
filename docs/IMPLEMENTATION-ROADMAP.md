@@ -1092,7 +1092,7 @@ Acceptance Criteria:
 
 ## 14. Phase 10 — Photo Scene V1
 
-Architecture freeze: `docs/architecture/photo-scene-v1.md` (EMBEROS-PHOTO-SCENE-01A, 2026-08-17). Phase 10 is **IMPLEMENTATION_COMPLETE / RELEASE_PENDING**. Sprint 10A is CLOSED / PASS. Sprint 10B is **CLOSED / PASS**. Sprint 10C is **CLOSED / PASS**. Sprint 10D is **CLOSED / PASS**. Photo Scene V1 product loop is implemented. EMBEROS-PHOTO-SCENE-V1-PROD-01 is CONDITIONAL PASS. `PHOTO_SCENE_V1_BOUNDED_ASSEMBLY` is **BUILT / VALIDATED** on `release/photo-scene-v1-bounded` from `eea988d`. Do not mark RELEASED / FROZEN. Next is EMBEROS-PHOTO-SCENE-V1-PROD-03 production deploy + certification.
+Architecture freeze: `docs/architecture/photo-scene-v1.md` (EMBEROS-PHOTO-SCENE-01A, 2026-08-17). Phase 10 is **RELEASED / FROZEN** (EMBEROS-PHOTO-SCENE-V1-PROD-03, 2026-08-18). Sprint 10A is CLOSED / PASS. Sprint 10B is **CLOSED / PASS**. Sprint 10C is **CLOSED / PASS**. Sprint 10D is **CLOSED / PASS**. Production web and worker are pinned to bounded assembly `b447f539400f2765958c1c94add708a979c86604`. Video Studio V1 remains RELEASED / FROZEN. Do not start Phase 12 Publishing. Do not deploy AUTH-01, Flux, or quota.
 
 Photo Scene V1 is Creative Studio V1. Do not create a parallel Creative Studio product.
 
@@ -1163,7 +1163,7 @@ Deterministic compositor on existing `photo_scene_generations` (`operation=marke
 
 V1 composition authority: `DETERMINISTIC_COMPOSITOR`. No Flux / OpenAI image / custom AI scene generation.
 
-PHOTO_SCENE_V1: IMPLEMENTATION_COMPLETE / RELEASE_PENDING. PHOTO_SCENE_V1_BOUNDED_ASSEMBLY: BUILT / VALIDATED. Next is PROD-03 production deploy + certification.
+PHOTO_SCENE_V1: RELEASED / FROZEN. Production pin: web Vercel `dpl_5s473VnKexZdGf5Sg2RKsG1tfDmx` and Railway worker `1ea483b7-bf45-4ec9-a73b-bafa5f08e589` @ `b447f539400f2765958c1c94add708a979c86604`. Do not start Phase 12 Publishing. Do not deploy AUTH-01, Flux, or quota.
 
 Implement:
 

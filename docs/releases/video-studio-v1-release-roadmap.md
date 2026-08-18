@@ -342,6 +342,7 @@ Production `campaign-assets` is private and signed-only. Renderer V1 remains fro
 | 2026-08-18 | Close EMBEROS-PHOTO-SCENE-10D Marketing Image Generation | CLOSED / PASS. Deterministic compositor; `photo_scene_generations.operation=marketing_image`; durable marketing_image asset; signed delivery; retry/Generate Again; Photoroom network calls = 0. PHOTO_SCENE_V1 = IMPLEMENTATION_COMPLETE / RELEASE_PENDING. |
 | 2026-08-18 | Close EMBEROS-PHOTO-SCENE-V1-PROD-01 production release readiness | CONDITIONAL PASS. Source authority PASS. Direct HEAD deploy unsafe. Bounded assembly required from `eea988d`. Three additive SQL files; official bucket `photo-scene-official`; seed with uploads; Photoroom env prerequisite. AUTH-01/AI Story/Publishing/Flux/Renderer excluded. Next is PROD-02 assembly. PHOTO_SCENE_V1 remains IMPLEMENTATION_COMPLETE / RELEASE_PENDING. |
 | 2026-08-18 | Build EMBEROS-PHOTO-SCENE-V1-PROD-02 bounded production assembly | BUILT / VALIDATED on `release/photo-scene-v1-bounded` from `eea988d`. Production-authorized migrate/preflight/bucket/seed/env tools added. No production mutate/deploy. Next is PROD-03. PHOTO_SCENE_V1 remains IMPLEMENTATION_COMPLETE / RELEASE_PENDING. |
+| 2026-08-18 | Close EMBEROS-PHOTO-SCENE-V1-PROD-03 production deploy + certification | PASS. Bounded assembly `b447f53` deployed (worker first, then web). A–Q Photo Scene loop certified with 1 Photoroom call ($0.02). Video Studio V1 regression PASS. PHOTO_SCENE_V1 = RELEASED / FROZEN. Phase 12 Publishing not started. |
 
 ## 18. Release Gate Review (2026-08-16)
 
@@ -402,6 +403,4 @@ Production authority remains bounded revision `eea988d5addd268d4d3356d336d7d0761
 
 ## 19. Next Action
 
-**NEXT ACTION: EMBEROS-PHOTO-SCENE-V1-PROD-03 — Production deploy + certification.** PHOTO_SCENE_V1 is IMPLEMENTATION_COMPLETE / RELEASE_PENDING. Bounded assembly is BUILT / VALIDATED on `release/photo-scene-v1-bounded`. Do not claim RELEASED / FROZEN until deployed and production-certified.
-
-Plan: `docs/releases/photo-scene-v1-bounded-assembly.md`. Do not start Publishing, Flux, or AUTH-01.
+**NEXT ACTION: Hold.** Photo Scene V1 and Video Studio V1 are both RELEASED / FROZEN. Do not start Phase 12 Publishing. Do not deploy AUTH-01, Flux, or quota.

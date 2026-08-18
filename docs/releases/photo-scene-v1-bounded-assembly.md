@@ -5,7 +5,7 @@ Date: 2026-08-18
 Base: `eea988d5addd268d4d3356d336d7d076109b26ea`  
 Branch: `release/photo-scene-v1-bounded`
 
-This assembly is built and validated. It is **not** deployed. Photo Scene remains IMPLEMENTATION_COMPLETE / RELEASE_PENDING.
+This assembly is built, validated, and production-deployed by EMBEROS-PHOTO-SCENE-V1-PROD-03. Photo Scene V1 is RELEASED / FROZEN at `b447f539400f2765958c1c94add708a979c86604`.
 
 ## Operator commands (do not run against production in PROD-02)
 
@@ -40,4 +40,6 @@ Preview apply scripts still refuse production.
 
 ## Status
 
-`PHOTO_SCENE_V1_BOUNDED_ASSEMBLY` = BUILT / VALIDATED
+`PHOTO_SCENE_V1_BOUNDED_ASSEMBLY` = BUILT / VALIDATED / DEPLOYED
+
+`PHOTO_SCENE_V1` = RELEASED / FROZEN

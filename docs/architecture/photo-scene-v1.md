@@ -4,14 +4,14 @@
 > Chat history is not authority. `docs/IMPLEMENTATION-ROADMAP.md` remains the product-phase authority.
 > This file records the EMBEROS-PHOTO-SCENE-01A scope freeze.
 
-Status: `10D_CLOSED_PASS` / Phase 10 `IMPLEMENTATION_COMPLETE_RELEASE_PENDING`
+Status: `10D_CLOSED_PASS` / Phase 10 `RELEASED_FROZEN`
 Date: 2026-08-18
 Roadmap phase: 10 — Photo Scene V1
 Implementation status: 10A CLOSED / PASS; 10B CLOSED / PASS; 10C CLOSED / PASS; 10D CLOSED / PASS
 Video Studio V1: RELEASED / FROZEN at `eea988d5addd268d4d3356d336d7d076109b26ea`
-PHOTO_SCENE_V1: IMPLEMENTATION_COMPLETE / RELEASE_PENDING
+PHOTO_SCENE_V1: RELEASED / FROZEN at `b447f539400f2765958c1c94add708a979c86604` (EMBEROS-PHOTO-SCENE-V1-PROD-03)
 
-Do not mark Photo Scene V1 production RELEASED / FROZEN until a separate production deploy/certification ticket.
+Photo Scene V1 production is RELEASED / FROZEN. Do not start Phase 12 Publishing. Do not deploy AUTH-01, Flux, or quota.
 
 ## 1. Product identity
 
@@ -309,8 +309,10 @@ Smallest coherent architecture. Do not implement on frozen Video Studio producti
 
 EMBEROS-PHOTO-SCENE-V1-PROD-01 (2026-08-18): CONDITIONAL PASS. Direct HEAD deploy is not safe.
 
-EMBEROS-PHOTO-SCENE-V1-PROD-02 (2026-08-18): bounded assembly BUILT / VALIDATED on `release/photo-scene-v1-bounded` from `eea988d5addd268d4d3356d336d7d076109b26ea`. Production-authorized migrate/preflight/bucket/seed/env tools exist. Photo Scene remains IMPLEMENTATION_COMPLETE / RELEASE_PENDING.
+EMBEROS-PHOTO-SCENE-V1-PROD-02 (2026-08-18): bounded assembly BUILT / VALIDATED on `release/photo-scene-v1-bounded` from `eea988d5addd268d4d3356d336d7d076109b26ea`.
+
+EMBEROS-PHOTO-SCENE-V1-PROD-03 (2026-08-18): production deploy + live certification PASS. PHOTO_SCENE_V1 is RELEASED / FROZEN at `b447f539400f2765958c1c94add708a979c86604`.
 
 ## 13. Next ticket
 
-EMBEROS-PHOTO-SCENE-V1-PROD-03 — Production deploy + certification. Do not start Publishing, Flux, AUTH-01, or quota. Do not mark Photo Scene RELEASED / FROZEN.
+Do not start Phase 12 Publishing. Do not deploy AUTH-01, Flux, or quota. Video Studio V1 and Photo Scene V1 are both RELEASED / FROZEN.
