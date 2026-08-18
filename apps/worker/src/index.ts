@@ -20,7 +20,7 @@ logSubtitleFontStatus();
 if (!process.env.OPENAI_API_KEY?.trim()) {
   console.warn("[worker] OPENAI_API_KEY is not set — TTS, agents, and marketing scores will fail");
 }
-console.log("[worker] pipeline=auto_clip_v1 (video campaigns → 3 clips)");
+console.log("[worker] pipeline=auto_clip_v1 + photo_scene + ai_story_execution");
 
 startWorkers();
 

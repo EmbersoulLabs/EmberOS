@@ -1,0 +1,96 @@
+# AI Story Self-Use V1 bounded production overlay assembly
+
+Ticket: `EMBEROS-AI-STORY-EXEC-02`  
+Date: 2026-08-19  
+Production base: `b447f539400f2765958c1c94add708a979c86604`  
+Branch: `release/ai-story-self-use-v1-bounded`  
+AI Story source: `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`
+
+This assembly is built and validated. It is **not** deployed. AI Story remains NOT RELEASED.
+
+Do not merge `release/sprint-4-phase-b`. That branch is source authority only.
+
+## Operator commands (do not run against production in EXEC-02)
+
+```text
+pnpm ai-story:prod-schema-preflight
+```
+
+Apply scripts refuse production (`egkgybrjmzukzmkcrpag`) unless both are set:
+
+- `AI_STORY_PROD_MIGRATION_ALLOW=true`
+- `AI_STORY_PROD_MIGRATION_ACK=AI_STORY_SELF_USE_V1`
+
+EXEC-02 does not apply schema, change production env, call paid providers, or deploy.
+
+## Assembly method
+
+1. Branch from production pin `b447f53` exactly.
+2. Patch-extract AI Story runtime from `cfaa895` by allowlisted paths.
+3. Reconcile barrels additively. Do not transplant Sprint 4 barrels.
+4. Add production-compat shims for `assets` / `campaigns` columns that exist only on Sprint 4 HEAD.
+5. Keep Video Studio Renderer V1 and Photo Scene V1 files unchanged.
+
+## Runtime manifest (classification)
+
+| Class | Scope |
+| --- | --- |
+| REQUIRED_RUNTIME | `packages/agents/src/ai-story/**`, provider adapters/router, worker AI Story cycle, queue `agent.story_execution` lock producer, shared AI Story contracts |
+| REQUIRED_SCHEMA | Additive drizzle tables for AI Story, provider ledger/outbox/envelope/dispatch, platform-admin, entitlements, credits, billing-account |
+| REQUIRED_MIGRATION | `packages/db/sql/ai-story-*.sql`, provider SQL, platform-admin/commercial/credits SQL. DROPs removed from execution SQL. Apply scripts fail-closed on production. |
+| REQUIRED_UI | Campaign-owned `/ai-stories` pages, review/runtime/FSR panels, `AiStoryCampaignPanel` on production `CampaignDashboard` |
+| REQUIRED_TEST | Existing AI Story unit/boundary tests; Creative Studio execute-route expectation removed |
+| REQUIRED_DOC | `docs/AI_STORY_V1.md`, `docs/AI_STORY_EXECUTION_V1.md`, this assembly report |
+| COMPAT_SHIM | `apps/web/src/lib/ai-story-production-compat.ts`; bounded `packages/shared/src/server.ts`; bounded `packages/agents/src/commercial/index.ts`; `uploadStorageFile({ upsert })` default true |
+| EXCLUDED | AUTH-01 Stripe cutover, quota, Publishing, Creative Studio runtime, Flux, Video Studio renderer changes, Photo Scene implementation changes, full Sprint 4 barrels/HEAD |
+
+## Database reconciliation
+
+- Required AI Story tables: see `AI_STORY_REQUIRED_TABLES` in `packages/shared/src/ai-story-production-ops.ts`.
+- Structural compile/runtime tables: `AI_STORY_STRUCTURAL_TABLES` (provider + commercial persistence used by current Execute).
+- Leftover production `ai_stories` rows must not be dropped. Migrations are `CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`.
+- `DESTRUCTIVE_MIGRATION_REQUIRED = NO`.
+- Live production preflight was not applied in EXEC-02 (`ENVIRONMENT_NOT_RUN` unless `DATABASE_URL` is present locally). Expected gaps are later execution/review/assembly/FSR/provider tables, not destruction of the 18 leftover stories.
+
+## Storage / delivery
+
+- Bucket: `SUPABASE_STORAGE_BUCKET` default `campaign-assets` (private).
+- Canonical identity: workspace-prefixed durable object keys (`{workspaceId}/ai-story/...`).
+- Provider public URLs are not durable authority.
+- Signed delivery: request-scoped via Final Story Result download/playback routes.
+- Anonymous access: not expected.
+
+## Access / cost (preserved, not solved)
+
+- Product policy: Super Admin + Agency allowed; Free / Pro / Pro Plus denied.
+- Canonical Execute still depends on commercial authorization / credit reserve. EXEC-03 must solve Super Admin/Agency execution without Stripe activation.
+- `AUTH01_INCLUDED = NO`. No Super Admin ops bypass.
+- `usageWritten` / `costWritten` remain `false`. EXEC-05 remains required.
+
+## Forbidden-scope audit (`b447f53`..assembly)
+
+| Item | Result |
+| --- | --- |
+| AUTH-01 / Stripe webhook runtime | ABSENT (drizzle `stripeEventReceipts` is compile-only; no `stripe_event` SQL; no webhook routes) |
+| Quota / Publishing / Flux / Creative Studio routes | ABSENT |
+| Video Studio renderer | UNCHANGED |
+| Photo Scene handlers/UI panels | UNCHANGED (AI Story card appended after Photo Scene cards) |
+| STRUCTURAL_DEPENDENCY | Commercial auth, entitlements, credits, platform-admin, plan capability map |
+| COMMERCIAL_CUTOVER | NOT included |
+
+`FORBIDDEN_SCOPE_DIFF = NONE`
+
+## Remaining self-use tickets
+
+1. `EMBEROS-AI-STORY-EXEC-03` — Super Admin / Agency execute without Stripe/credit activation.
+2. `EMBEROS-AI-STORY-EXEC-05` — provider attempt usage/cost persistence.
+3. `EMBEROS-AI-STORY-EXEC-04` — generated Scene review/retry with attempt history.
+4. `EMBEROS-AI-STORY-EXEC-06` — media-aware QC or V1 freeze (plan QC + mandatory human generated-media review).
+5. Later: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` after schema apply + bounded live gate.
+
+## Status
+
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` = BUILT / VALIDATED  
+`DEPLOYMENT` = NONE  
+`PRODUCTION_SCHEMA_CHANGE` = NONE  
+`PAID_PROVIDER_CALLS` = 0

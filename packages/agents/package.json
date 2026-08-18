@@ -7,6 +7,9 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./provider-adapters": "./src/provider-adapters/index.ts",
+    "./provider-router": "./src/provider-router/index.ts",
+    "./commercial": "./src/commercial/index.ts",
     "./photo-scene/execute-product-extraction": "./src/photo-scene/execute-product-extraction.ts",
     "./photo-scene/execute-marketing-composition": "./src/photo-scene/execute-marketing-composition.ts",
     "./photo-scene/compose-marketing-image": "./src/photo-scene/compose-marketing-image.ts",

@@ -196,6 +196,16 @@ export function startWorkers() {
           console.log(`[agent.pipeline] finished task=${taskId}`);
         }
       }
+      if (job.name === "agent.story_execution") {
+        const { assertPhase1ExecutionLocked } = await import("@ceo-agent/shared");
+        assertPhase1ExecutionLocked();
+
+        const { executionJobId } = job.data as { executionJobId: string };
+        console.log(`[agent.story_execution] start job=${executionJobId}`);
+        const { runExecutionJob } = await import("@ceo-agent/agents");
+        await runExecutionJob(executionJobId);
+        console.log(`[agent.story_execution] finished job=${executionJobId}`);
+      }
     },
     { connection, prefix, concurrency, lockDuration: agentLockMs, ...workerOpts }
   );
@@ -681,7 +691,38 @@ export function startWorkers() {
   });
 
   console.log(
-    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, photo-scene`
+    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, photo-scene, ai-story-runtime`
   );
+
+  const providerLoopMs = parseInt(process.env.PROVIDER_EXECUTION_POLL_MS ?? "5000", 10);
+  const providerLoop = setInterval(() => {
+    void (async () => {
+      try {
+        const { runAiStoryProviderWorkerCycle } = await import(
+          "../ai-story-provider-worker-cycle"
+        );
+        const outcome = await runAiStoryProviderWorkerCycle();
+        if (
+          outcome.dispatchStatus === "DISPATCHED" &&
+          outcome.continuation &&
+          outcome.continuation.status !== "SKIPPED_NON_SCENE"
+        ) {
+          console.log(
+            `[ai-story-runtime] dispatch continued status=${outcome.continuation.status}` +
+              (outcome.continuation.assemblyJobId
+                ? ` assembly=${outcome.continuation.assemblyJobId}`
+                : "")
+          );
+        }
+      } catch (error) {
+        console.warn(
+          "[ai-story-runtime] cycle error:",
+          error instanceof Error ? error.message : error
+        );
+      }
+    })();
+  }, Math.max(2000, providerLoopMs));
+  providerLoop.unref?.();
+
   return { agentWorker, probeWorker, renderWorker, exportWorker, photoSceneWorker };
 }

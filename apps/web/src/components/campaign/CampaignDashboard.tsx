@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { parseCampaignCreativeBrief, isCampaignExportable, isReviewPending } from "@ceo-agent/shared";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
@@ -132,6 +133,67 @@ function CampaignBriefCard({ campaign }: { campaign: Record<string, unknown> }) 
           </p>
         </div>
       )}
+    </DashboardSection>
+  );
+}
+
+function AiStoryCampaignPanel({ slug, campaignId }: { slug: string; campaignId: string }) {
+  const { t } = useI18n();
+  const [canAccess, setCanAccess] = useState(false);
+  const [stories, setStories] = useState<Array<{ id: string; title: string; status: string }>>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories`);
+      if (cancelled) return;
+      if (!res.ok) {
+        setCanAccess(false);
+        setStories([]);
+        return;
+      }
+      const body = (await res.json()) as { stories?: Array<{ id: string; title: string; status: string }> };
+      setCanAccess(true);
+      setStories(body.stories ?? []);
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId]);
+
+  if (!canAccess) return null;
+
+  return (
+    <DashboardSection
+      title={t("aiStory.entry.title")}
+      action={
+        <Link
+          href={`/w/${slug}/campaigns/${campaignId}/ai-stories/new`}
+          className="text-xs font-medium text-brand-blue hover:underline"
+        >
+          {t("aiStory.entry.create")}
+        </Link>
+      }
+    >
+      <div className="space-y-2 px-4 py-4 sm:px-5">
+        <p className="text-sm text-ink-secondary">{t("aiStory.entry.subtitle")}</p>
+        {stories.map((story) => (
+          <Link
+            key={story.id}
+            href={`/w/${slug}/campaigns/${campaignId}/ai-stories/${story.id}`}
+            className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 text-sm hover:bg-surface-muted"
+          >
+            <span className="font-medium text-navy">{story.title}</span>
+            <StatusBadge status={story.status} />
+          </Link>
+        ))}
+        {stories.length === 0 ? (
+          <p className="rounded-xl border border-dashed border-border px-3 py-4 text-sm text-ink-secondary">
+            {t("aiStory.entry.empty")}
+          </p>
+        ) : null}
+      </div>
     </DashboardSection>
   );
 }
@@ -326,6 +388,9 @@ export function CampaignDashboard({
         </div>
         <div className="mt-5">
           <PhotoSceneMarketingImagePanel campaignId={campaignId} />
+        </div>
+        <div className="mt-5">
+          <AiStoryCampaignPanel slug={slug} campaignId={campaignId} />
         </div>
 
         {reviewPending && (

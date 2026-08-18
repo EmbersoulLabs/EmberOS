@@ -1,6 +1,6 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import { QUEUE_NAMES } from "./jobs";
-import { emitPhotoSceneOpsEvent, emitVideoStudioOpsEvent } from "@ceo-agent/shared";
+import { assertPhase1ExecutionLocked, emitPhotoSceneOpsEvent, emitVideoStudioOpsEvent } from "@ceo-agent/shared";
 
 export { QUEUE_NAMES } from "./jobs";
 
@@ -91,6 +91,26 @@ export async function enqueuePipeline(taskId: string, campaignId: string, worksp
     recoveryKind: "new_generation",
   });
   return job;
+}
+
+/**
+ * Phase-1 lock producer. Canonical Execute uses the provider outbox, not this
+ * queue path. The enqueue remains so tests and leftover callers fail closed.
+ */
+export async function enqueueStoryExecution(input: {
+  executionJobId: string;
+  storyId: string;
+  campaignId: string;
+  workspaceId: string;
+  orgId: string;
+}) {
+  void input;
+  assertPhase1ExecutionLocked();
+
+  const queue = agentQueue();
+  return queue.add("agent.story_execution", input, {
+    jobId: `story-execution-${input.executionJobId}`,
+  });
 }
 
 export async function enqueueRender(

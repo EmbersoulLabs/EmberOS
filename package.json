@@ -27,6 +27,7 @@
     "photo-scene:prod-schema-preflight": "tsx scripts/photo-scene-prod-schema-preflight.ts",
     "photo-scene:prod-bucket-plan": "tsx scripts/photo-scene-prod-official-bucket.ts",
     "photo-scene:prod-photoroom-env": "tsx scripts/photo-scene-prod-photoroom-env-preflight.ts",
+    "ai-story:prod-schema-preflight": "tsx scripts/ai-story-prod-schema-preflight.ts",
     "verify": "pnpm test && pnpm typecheck && pnpm --filter @ceo-agent/web build",
     "smoke:prod": "tsx scripts/smoke-production.ts",
     "pilot:metrics": "tsx scripts/pilot-metrics.ts",

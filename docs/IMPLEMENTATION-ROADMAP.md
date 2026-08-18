@@ -1656,3 +1656,15 @@ Return a gap analysis grouped as:
 - Recommended first implementation task.
 
 Do not modify files during the initial gap analysis.
+
+## Current overlay status — AI Story Self-Use V1
+
+Ticket `EMBEROS-AI-STORY-EXEC-02` (2026-08-19).
+
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` is **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` from production pin `b447f539400f2765958c1c94add708a979c86604`. Source authority is `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60` (patch-extract only; no full-branch merge).
+
+AI Story remains NOT RELEASED. This overlay is not deployed and does not apply production schema.
+
+Video Studio V1 and Photo Scene V1 files are unchanged except a bounded AI Story entry on the existing campaign dashboard.
+
+Next implementation ticket: `EMBEROS-AI-STORY-EXEC-03` (Super Admin / Agency execute without Stripe/credit activation). Follow-ups remain EXEC-05, EXEC-04, EXEC-06. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.

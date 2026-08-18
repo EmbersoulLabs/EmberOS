@@ -31,3 +31,7 @@ export * from "./photo-scene/png";
 export * from "./photo-scene/execute-product-extraction";
 export * from "./photo-scene/providers/photoroom";
 export * from "./photo-scene/providers/photoroom-config";
+export * from "./provider-adapters";
+export * from "./provider-router";
+export * from "./ai-story";
+export * from "./commercial";
