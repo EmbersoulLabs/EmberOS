@@ -6,7 +6,7 @@ Production base: `b447f539400f2765958c1c94add708a979c86604`
 Branch: `release/ai-story-self-use-v1-bounded`  
 AI Story source: `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`
 
-This assembly is built and validated. It is **not** deployed. AI Story remains NOT RELEASED.
+This assembly is built, validated, and **DEPLOYED / AWAITING REAL EPISODE CERT** on production at `36b5241636c6e6828cef82b8ae165e2eea71f42b`. AI Story remains NOT RELEASED.
 
 Do not merge `release/sprint-4-phase-b`. That branch is source authority only.
 
@@ -90,15 +90,14 @@ pnpm exec tsx scripts/ai-story-prod-apply-generated-scene-review.ts
 
 ## Remaining self-use tickets
 
-1. Configure primary AI Story video provider (Seedance or MiniMax) on Railway production worker env. Do not copy Sprint 4 local secrets without an explicit env ticket.
-2. Resume `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` (deploy overlay + one 3-Scene complete episode).
+1. `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` — one 3-Scene complete episode from the real provider execution gate.
 
-PROD-CERT Phase 0 (2026-08-19): live production baseline MATCHES `b447f53`. Additive `ai_story_generated_scene_reviews` applied. Paid execution STOPPED because production worker has no Seedance/MiniMax API key. Overlay not deployed. AI Story remains NOT RELEASED.
+`EMBEROS-AI-STORY-PROD-ENV-01` PASS. `EMBEROS-AI-STORY-PROD-DEPLOY-01` deployed overlay `36b5241636c6e6828cef82b8ae165e2eea71f42b` with zero paid provider calls. AI Story remains NOT RELEASED.
 
 ## Status
 
 `AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` = BUILT / VALIDATED  
-`AI_STORY_SELF_USE_V1` = NOT_CERTIFIED  
-`DEPLOYMENT` = NONE (web/worker overlay not deployed)  
-`PRODUCTION_SCHEMA_CHANGE` = additive `ai_story_generated_scene_reviews` only  
+`AI_STORY_SELF_USE_V1` = DEPLOYED_AWAITING_REAL_EPISODE_CERT  
+`DEPLOYMENT` = worker Railway `5d775841` + web Vercel `dpl_4BgYwuJ4pE8bvkCDuiU3cSx3CEyk` @ `36b5241`  
+`PRODUCTION_SCHEMA_CHANGE` = additive `ai_story_generated_scene_reviews` only (already applied; no new SQL in PROD-DEPLOY-01)  
 `PAID_PROVIDER_CALLS` = 0

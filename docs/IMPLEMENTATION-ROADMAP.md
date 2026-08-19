@@ -1659,14 +1659,10 @@ Do not modify files during the initial gap analysis.
 
 ## Current overlay status — AI Story Self-Use V1
 
-Ticket `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` (2026-08-19).
+Ticket `EMBEROS-AI-STORY-PROD-DEPLOY-01` (2026-08-19).
 
-`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` @ `aaa44d77766b7ab729402c89dc9de519f3ba0da3` from production pin `b447f539400f2765958c1c94add708a979c86604`.
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` @ `36b5241636c6e6828cef82b8ae165e2eea71f42b` (EXEC-06 `aaa44d7` in ancestry) from production pin `b447f539400f2765958c1c94add708a979c86604`.
 
-Live production baseline **MATCHES** that pin: web `emberos-iota.vercel.app` deployment `dpl_5s473VnKexZdGf5Sg2RKsG1tfDmx`; Railway production worker `1ea483b7-bf45-4ec9-a73b-bafa5f08e589` commit `b447f53`.
+Bounded overlay is **DEPLOYED / AWAITING REAL EPISODE CERT**. Production worker Railway `5d775841-cbea-47a6-a2de-ef64fe014851` and production web Vercel `dpl_4BgYwuJ4pE8bvkCDuiU3cSx3CEyk` (`emberos-iota.vercel.app`) both run `36b5241`. Schema remains additive-compatible (53/53 required tables; leftover 18 `ai_stories` rows preserved). Seedance production env is present. No paid Seedance/MiniMax/Fal/Photoroom call was made in this ticket.
 
-PROD-CERT Phase 0 stopped before paid execution. Production schema is compatible after applying additive `ai_story_generated_scene_reviews` (+ RLS). Canonical artifact bucket `campaign-assets` remains private. Production worker has **no** Seedance or MiniMax API configuration (`AI_PROVIDER_SEEDANCE_*` / `SEEDANCE_API_KEY` / MiniMax equivalents ABSENT). OPENAI_API_KEY is present for non-video work only.
-
-Do not deploy the overlay and do not call paid video providers until a primary cert provider is configured on the production worker. Do not copy Sprint 4 local keys onto production without an explicit env ticket. Do not mark AI Story RELEASED.
-
-Blocked next: configure primary AI Story video provider on Railway production, then resume `EMBEROS-AI-STORY-SELF-USE-PROD-CERT`. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
+Do not mark AI Story RELEASED. Do not open Free/Pro/Pro Plus. Next: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` from the real provider execution gate. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
