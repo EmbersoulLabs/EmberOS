@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql, asc } from "drizzle-orm";
 import {
   PHASE1_EXECUTION_LOCKED,
   PersistedSceneRoutingDecisionSchema,
@@ -394,6 +394,7 @@ export class SceneSchedulingRepository {
       .select()
       .from(schema.aiStorySceneSchedulingCorrelations)
       .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId))
+      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
       .limit(1);
     return row ? toCorrelation(row) : null;
   }
@@ -416,6 +417,7 @@ export class SceneSchedulingRepository {
       .select()
       .from(schema.aiStorySceneSchedulingCorrelations)
       .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId))
+      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
       .limit(1);
     if (!correlationRow) return null;
 
@@ -814,8 +816,8 @@ export class SceneSchedulingRepository {
       .from(schema.aiStorySceneSchedulingCorrelations)
       .where(
         eq(
-          schema.aiStorySceneSchedulingCorrelations.sceneExecutionId,
-          correlation.sceneExecutionId
+          schema.aiStorySceneSchedulingCorrelations.schedulingIdentityHash,
+          correlation.schedulingIdentityHash
         )
       )
       .limit(1);

@@ -11,6 +11,7 @@ import {
   deriveProductCanExecute,
   deriveProductRuntimeStatus,
   emptyAiStoryProviderSpendProjection,
+  latestRowBySceneExecutionId,
   type ProductRuntimeAssemblyState,
   type ProductRuntimeProjection,
   type WorkspaceRole,
@@ -27,6 +28,7 @@ import {
   getDb,
   schema,
 } from "@ceo-agent/db";
+import { GeneratedSceneReviewService } from "./generated-scene-review-service";
 
 const OPERATOR_ROLES: ReadonlySet<string> = new Set(["admin", "operator"]);
 
@@ -241,13 +243,30 @@ export async function deriveProductRuntimeProjection(
   });
 
   const sceneResults = await validation.listCanonicalSceneResults(executionPlanId);
-  const succeededSceneCount = sceneResults.filter((r) => r.status === "SUCCEEDED").length;
-  const failedSceneCount = sceneResults.filter(
+  const latestByScene = latestRowBySceneExecutionId(sceneResults, (left, right) =>
+    left.acceptedAt.localeCompare(right.acceptedAt)
+  );
+  const latestResults = [...latestByScene.values()];
+  const succeededSceneCount = latestResults.filter((r) => r.status === "SUCCEEDED").length;
+  const failedSceneCount = latestResults.filter(
     (r) => r.status === "FAILED" || r.status === "REJECTED" || r.status === "TIMEOUT"
   ).length;
 
+  const generatedSceneReviews = await new GeneratedSceneReviewService().loadPlanReadModel(
+    executionPlanId
+  ).catch(() => []);
+  const pendingReviewSceneCount = generatedSceneReviews.filter(
+    (row) => row.reviewState === "PENDING_REVIEW"
+  ).length;
+  const approvedSceneCount = generatedSceneReviews.filter(
+    (row) => row.reviewState === "APPROVED"
+  ).length;
+  const runningSceneCount = generatedSceneReviews.filter((row) => row.running).length;
+
   const terminalSceneExecutionIds = new Set(
-    sceneResults.map((r) => r.sceneExecutionId)
+    latestResults
+      .filter((row) => !generatedSceneReviews.some((review) => review.sceneExecutionId === row.sceneExecutionId && review.running))
+      .map((r) => r.sceneExecutionId)
   );
 
   const reconciliationCount = authFact
@@ -261,8 +280,8 @@ export async function deriveProductRuntimeProjection(
 
   const hasActiveSceneRuntime =
     Boolean(authFact) &&
-    incompleteSceneCount > 0 &&
-    reconciliationCount === 0;
+    reconciliationCount === 0 &&
+    (incompleteSceneCount > 0 || runningSceneCount > 0);
 
   const assemblyJob = await jobRepo.getLatestByExecutionPlanId(executionPlanId);
   const assemblyFacts = assemblyJob
@@ -321,6 +340,9 @@ export async function deriveProductRuntimeProjection(
       assemblySafeMessage,
     }),
     providerSpend,
+    generatedSceneReviews,
+    pendingReviewSceneCount,
+    approvedSceneCount,
     derivedAt,
   });
 }

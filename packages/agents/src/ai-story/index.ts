@@ -9,6 +9,7 @@ export * from "./scene-execution-persistence-service";
 export * from "./runtime-authorization-service";
 export * from "./authorize-and-execute-execution-plan";
 export * from "./ai-story-execution-authorization";
+export * from "./generated-scene-review-service";
 export * from "./canonical-execute-router";
 export * from "./derive-product-runtime-projection";
 export * from "./canonical-scene-provider-request";

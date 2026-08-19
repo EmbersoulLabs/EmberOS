@@ -62,6 +62,7 @@ export * from "./ai-story-runtime-contracts";
 export * from "./ai-story-canonical-execute";
 export * from "./ai-story-execution-authorization";
 export * from "./ai-story-provider-attempt-cost";
+export * from "./ai-story-generated-scene-review";
 export * from "./ai-story-product-runtime-status";
 export * from "./ai-story-final-story-result-read";
 export * from "./ai-story-scene-scheduling";

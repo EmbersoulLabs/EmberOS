@@ -469,10 +469,15 @@ export async function createPhaseCCoordinator(input: {
         const sceneResults = await validationRepo.listCanonicalSceneResults(
           executionPlanId
         );
+        const approvedIds = new Set(
+          await validationRepo.listApprovedGeneratedSceneResultIds(executionPlanId)
+        );
         return {
           definition,
           memberships,
-          sceneResults: sceneResults as CanonicalSceneResult[],
+          sceneResults: sceneResults.filter((result) =>
+            approvedIds.has(result.sceneResultId)
+          ) as CanonicalSceneResult[],
         };
       },
     }),

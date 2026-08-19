@@ -29,6 +29,10 @@ export type AssemblyValidationRepository = {
     executionPlanId: string
   ) => Promise<readonly CanonicalSceneResult[]>;
 
+  readonly listApprovedGeneratedSceneResultIds: (
+    executionPlanId: string
+  ) => Promise<readonly string[]>;
+
   readonly getSceneMediaMetadata: (
     sceneResultId: string
   ) => Promise<AssemblySceneMediaMetadata | null>;
@@ -44,6 +48,7 @@ export function createInMemoryAssemblyValidationRepository(input: {
   readonly memberships?: readonly AssemblySceneMembership[];
   readonly sceneResults?: readonly CanonicalSceneResult[];
   readonly mediaMetadata?: readonly AssemblySceneMediaMetadata[];
+  readonly approvedSceneResultIds?: readonly string[];
 }): AssemblyValidationRepository {
   const plans = Object.freeze(
     new Map(
@@ -85,6 +90,14 @@ export function createInMemoryAssemblyValidationRepository(input: {
     },
     async listCanonicalSceneResults(executionPlanId) {
       return resultsByPlan.get(executionPlanId) ?? Object.freeze([]);
+    },
+    async listApprovedGeneratedSceneResultIds(executionPlanId) {
+      if (input.approvedSceneResultIds) {
+        return Object.freeze([...input.approvedSceneResultIds]);
+      }
+      return Object.freeze(
+        (resultsByPlan.get(executionPlanId) ?? []).map((result) => result.sceneResultId)
+      );
     },
     async getSceneMediaMetadata(sceneResultId) {
       return mediaByResult.get(sceneResultId) ?? null;

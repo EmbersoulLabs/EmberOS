@@ -19,6 +19,7 @@ import {
 } from "@ceo-agent/shared";
 import { getDb } from "../client";
 import * as schema from "../schema/index";
+import { insertPendingGeneratedSceneReviewInTransaction } from "./ai-story-generated-scene-review";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -288,8 +289,8 @@ export class SceneProjectionRepositoryImpl {
           .from(schema.aiStorySceneProjectionCorrelations)
           .where(
             eq(
-              schema.aiStorySceneProjectionCorrelations.sceneExecutionId,
-              input.correlation.sceneExecutionId
+              schema.aiStorySceneProjectionCorrelations.providerAttemptId,
+              input.correlation.providerAttemptId
             )
           )
           .limit(1);
@@ -353,8 +354,8 @@ export class SceneProjectionRepositoryImpl {
             .from(schema.aiStorySceneProjectionCorrelations)
             .where(
               eq(
-                schema.aiStorySceneProjectionCorrelations.sceneExecutionId,
-                input.correlation.sceneExecutionId
+                schema.aiStorySceneProjectionCorrelations.providerAttemptId,
+                input.correlation.providerAttemptId
               )
             )
             .limit(1);
@@ -412,6 +413,18 @@ export class SceneProjectionRepositoryImpl {
           result: input.sceneResult,
           acceptedAt: new Date(input.sceneResult.acceptedAt),
           projectedAt: new Date(input.sceneResult.projectedAt),
+        });
+
+        await insertPendingGeneratedSceneReviewInTransaction(tx, {
+          orgId: input.sceneResult.ownership.orgId,
+          workspaceId: input.sceneResult.ownership.workspaceId,
+          campaignId: input.sceneResult.ownership.campaignId,
+          storyId: input.sceneResult.ownership.storyId,
+          executionPlanId: input.sceneResult.executionPlanId,
+          sceneExecutionId: input.sceneResult.sceneExecutionId,
+          sceneId: input.sceneResult.sceneId,
+          providerAttemptId: input.sceneResult.providerAttemptId,
+          sceneResultId: input.sceneResult.sceneResultId,
         });
 
         return {

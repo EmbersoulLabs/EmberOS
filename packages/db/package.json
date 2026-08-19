@@ -37,6 +37,7 @@
     "sql:ai-story-rls": "tsx scripts/apply-ai-story-canonical-rls-v1.ts",
     "sql:ai-story-scene-scheduling": "tsx scripts/apply-ai-story-scene-scheduling-v1.ts",
     "sql:ai-story-scene-scheduling-rls": "tsx scripts/apply-ai-story-scene-scheduling-rls-v1.ts",
+    "sql:ai-story-generated-scene-review": "tsx scripts/apply-ai-story-generated-scene-review-v1.ts",
     "sql:ai-story-worker-runtime": "tsx scripts/apply-ai-story-worker-runtime-v1.ts",
     "sql:ai-story-worker-attempt-observation": "tsx scripts/apply-ai-story-worker-attempt-observation-v1.ts",
     "sql:platform-admin": "tsx scripts/apply-platform-admin-v1.ts",

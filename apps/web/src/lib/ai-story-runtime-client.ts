@@ -79,6 +79,26 @@ export async function postCanonicalExecute(input: {
   return { ...(body as CanonicalExecuteResponse), httpStatus: res.status };
 }
 
+export async function postGeneratedSceneReviewDecision(input: {
+  campaignId: string;
+  storyId: string;
+  executionPlanId: string;
+  sceneExecutionId: string;
+  action: "approve" | "retry" | "reject";
+  attemptId?: string;
+}): Promise<void> {
+  const base = `${plansBase(input.campaignId, input.storyId, input.executionPlanId)}/scenes/${input.sceneExecutionId}`;
+  const path =
+    input.action === "approve"
+      ? `${base}/attempts/${input.attemptId}/approve`
+      : `${base}/${input.action}`;
+  await requestJson(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+}
+
 export async function getFinalStoryResultReadModel(input: {
   campaignId: string;
   storyId: string;

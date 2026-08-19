@@ -16,6 +16,7 @@ import {
   buildAssemblyEngineSnapshotContentHash,
   buildAssemblyEngineSnapshotId,
   buildAssemblyJobIdentity,
+  selectAssemblyAuthoritativeSceneResults,
   type AssemblyJob,
   type AssemblyRuntimeResult,
   type CanonicalSceneResult,
@@ -434,6 +435,24 @@ export class AiStoryRuntimeContinuationCoordinator {
       await this.deps.assemblyValidation.repository.listCanonicalSceneResults(
         input.executionPlanId
       );
+    const approvedIds = new Set(
+      await this.deps.assemblyValidation.repository.listApprovedGeneratedSceneResultIds(
+        input.executionPlanId
+      )
+    );
+    let approvedResults: CanonicalSceneResult[];
+    try {
+      approvedResults = selectAssemblyAuthoritativeSceneResults({
+        sceneResults,
+        approvedSceneResultIds: approvedIds,
+      });
+    } catch {
+      return {
+        status: "ASSEMBLY_NOT_READY",
+        executionPlanId: input.executionPlanId,
+        message: "Approved generated Scene output is ambiguous",
+      };
+    }
     if (!definition) {
       return {
         status: "ASSEMBLY_NOT_READY",
@@ -444,7 +463,7 @@ export class AiStoryRuntimeContinuationCoordinator {
     const readiness = deriveSceneCompleteReadiness({
       definition,
       memberships,
-      sceneResults,
+      sceneResults: approvedResults,
     });
     if (!readiness.ready) {
       return {

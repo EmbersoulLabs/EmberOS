@@ -1567,13 +1567,13 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
     acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    unique("ai_story_scene_scheduling_scene_unique").on(t.sceneExecutionId),
     unique("ai_story_scene_scheduling_provider_unique").on(t.providerExecutionId),
     unique("ai_story_scene_scheduling_outbox_unique").on(t.outboxJobId),
     unique("ai_story_scene_scheduling_identity_unique").on(t.schedulingIdentityHash),
     index("ai_story_scene_scheduling_plan_idx").on(t.executionPlanId, t.acceptedAt),
     index("ai_story_scene_scheduling_workspace_idx").on(t.workspaceId, t.acceptedAt),
     index("ai_story_scene_scheduling_auth_idx").on(t.runtimeAuthorizationId),
+    index("ai_story_scene_scheduling_scene_idx").on(t.sceneExecutionId, t.acceptedAt),
   ]
 );
 
@@ -2699,7 +2699,10 @@ export const aiStorySceneProjectionCorrelations = pgTable(
     projectedAt: timestamp("projected_at", { withTimezone: true }).notNull(),
   },
   (t) => [
-    unique("ai_story_scene_projection_scene_unique").on(t.sceneExecutionId),
+    uniqueIndex("ai_story_scene_projection_scene_attempt_unique").on(
+      t.sceneExecutionId,
+      t.providerAttemptId
+    ),
     unique("ai_story_scene_projection_hash_unique").on(t.integrityHash),
     unique("ai_story_scene_projection_finalization_unique").on(
       t.providerFinalizationReference
@@ -2754,11 +2757,76 @@ export const aiStorySceneResults = pgTable(
     projectedAt: timestamp("projected_at", { withTimezone: true }).notNull(),
   },
   (t) => [
-    unique("ai_story_scene_results_scene_unique").on(t.sceneExecutionId),
+    uniqueIndex("ai_story_scene_results_scene_attempt_unique").on(
+      t.sceneExecutionId,
+      t.providerAttemptId
+    ),
     unique("ai_story_scene_results_hash_unique").on(t.integrityHash),
     unique("ai_story_scene_results_worker_unique").on(t.workerExecutionResultId),
     index("ai_story_scene_results_workspace_idx").on(t.workspaceId, t.projectedAt),
     index("ai_story_scene_results_plan_idx").on(t.executionPlanId, t.sceneOrder),
+  ]
+);
+
+/**
+ * EXEC-04 — persisted generated-media Scene review (not Scene Intent review).
+ */
+
+export const aiStoryGeneratedSceneReviews = pgTable(
+  "ai_story_generated_scene_reviews",
+  {
+    generatedSceneReviewId: uuid("generated_scene_review_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sceneId: text("scene_id").notNull(),
+    providerAttemptId: text("provider_attempt_id").notNull(),
+    sceneResultId: uuid("scene_result_id").references(
+      () => aiStorySceneResults.sceneResultId,
+      { onDelete: "restrict" }
+    ),
+    decision: text("decision").notNull(),
+    decidedBy: uuid("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    rationale: text("rationale"),
+    contractVersion: text("contract_version").notNull(),
+    fact: jsonb("fact")
+      .$type<import("@ceo-agent/shared").GeneratedSceneReviewFact>()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_generated_scene_reviews_scene_attempt_unique").on(
+      t.sceneExecutionId,
+      t.providerAttemptId
+    ),
+    uniqueIndex("ai_story_generated_scene_reviews_approved_scene_unique")
+      .on(t.sceneExecutionId)
+      .where(sql`${t.decision} = 'APPROVED'`),
+    index("ai_story_generated_scene_reviews_plan_idx").on(
+      t.executionPlanId,
+      t.createdAt
+    ),
+    index("ai_story_generated_scene_reviews_workspace_idx").on(
+      t.workspaceId,
+      t.createdAt
+    ),
   ]
 );
 

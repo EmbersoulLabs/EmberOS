@@ -1659,12 +1659,12 @@ Do not modify files during the initial gap analysis.
 
 ## Current overlay status — AI Story Self-Use V1
 
-Ticket `EMBEROS-AI-STORY-EXEC-05` (2026-08-19).
+Ticket `EMBEROS-AI-STORY-EXEC-04` (2026-08-19).
 
-`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` from production pin `b447f539400f2765958c1c94add708a979c86604`. EXEC-03 authority was `c8602c5d12ff16cf91d056081284408ee931bce8`. Source authority is `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`.
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` from production pin `b447f539400f2765958c1c94add708a979c86604`. EXEC-03 authority was `c8602c5d12ff16cf91d056081284408ee931bce8`. EXEC-05 authority was `93656a43a9d2336f6ab219b683f3e518d7406b94`. Source authority is `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`.
 
-EXEC-05 persists provider-attempt usage/cost on the existing provider attempt ledger. Ops/non-commercial execution still records provider spend (`settlementMode=none` does not mean providerCost=0). Cost source is labeled; unknown cost is not fabricated as 0. AI Story remains NOT RELEASED. This overlay is not deployed and does not apply production schema.
+EXEC-04 persists generated-media Scene review and bounded retry. Retry keeps the same Story/Scene and frozen Scene input, creates a new provider attempt, and leaves prior attempt/cost evidence intact. Only an approved generated Scene output is assembly-authoritative. Retry cap is `AI_STORY_SCENE_MAX_ATTEMPTS` (default 3). AI Story remains NOT RELEASED. This overlay is not deployed and does not apply production schema.
 
 Do not mark AI Story self-use ready.
 
-Next implementation ticket: `EMBEROS-AI-STORY-EXEC-04` (generated Scene review/retry). Follow-ups remain EXEC-06, then SELF-USE-PROD-CERT. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
+Next implementation ticket: `EMBEROS-AI-STORY-EXEC-06` (media-aware QC). Follow-up remains SELF-USE-PROD-CERT. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.

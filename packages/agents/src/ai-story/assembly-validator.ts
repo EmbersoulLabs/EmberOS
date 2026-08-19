@@ -15,6 +15,7 @@ import {
   AssemblyValidationRequestSchema,
   AssemblyValidationResultSchema,
   assemblyIntegrityHash,
+  selectAssemblyAuthoritativeSceneResults,
   type AssemblySceneMediaMetadata,
   type AssemblySceneMembership,
   type AssemblyValidationExecutionPlan,
@@ -602,11 +603,45 @@ export async function validateAssemblyInputs(
   }
 
   const sceneResults = await repository.listCanonicalSceneResults(request.executionPlanId);
+  const approvedIds = new Set(
+    (await repository.listApprovedGeneratedSceneResultIds(request.executionPlanId)) ?? []
+  );
+  let authoritativeResults: CanonicalSceneResult[];
+  try {
+    authoritativeResults = selectAssemblyAuthoritativeSceneResults({
+      sceneResults,
+      approvedSceneResultIds: approvedIds,
+    });
+  } catch {
+    return AssemblyValidationResultSchema.parse({
+      ok: false,
+      executionPlanId: request.executionPlanId,
+      issues: [
+        issue(
+          "SCENE_RESULT_CONFLICT",
+          "Multiple approved generated Scene outputs exist for one Scene Execution",
+          { executionPlanId: request.executionPlanId }
+        ),
+      ],
+      validationFingerprint: buildValidationFingerprint({
+        request,
+        ok: false,
+        issues: [
+          issue(
+            "SCENE_RESULT_CONFLICT",
+            "Multiple approved generated Scene outputs exist for one Scene Execution",
+            { executionPlanId: request.executionPlanId }
+          ),
+        ],
+        assemblyDefinitionId: definition.assemblyDefinitionId,
+      }),
+    });
+  }
   const membershipValidation = validateMembershipsAndSceneResults(
     plan,
     definition,
     memberships,
-    sceneResults,
+    authoritativeResults,
     request.ownership
   );
 

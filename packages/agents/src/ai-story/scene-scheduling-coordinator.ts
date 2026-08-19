@@ -110,6 +110,11 @@ export type ScheduleAuthorizedSceneInput = {
   readonly actorUserId: string;
   readonly routingPolicy?: ProviderRoutingPolicy;
   readonly preferredProviders?: readonly string[];
+  /**
+   * EXEC-04 product retry generation. 1 = first schedule (identity unchanged).
+   * Values > 1 create a new provider execution of the same frozen Scene.
+   */
+  readonly retryGeneration?: number;
 };
 
 export type SceneSchedulingCoordinatorDependencies = {
@@ -163,12 +168,16 @@ function identitySeed(input: {
   readonly runtimeAuthorizationId: string;
   readonly instructionHash: string;
   readonly routingDecisionHash?: string;
+  readonly retryGeneration?: number;
 }) {
   return {
     sceneExecutionId: input.sceneExecutionId,
     runtimeAuthorizationId: input.runtimeAuthorizationId,
     instructionHash: input.instructionHash,
     routingDecisionHash: input.routingDecisionHash ?? null,
+    ...(input.retryGeneration && input.retryGeneration > 1
+      ? { retryGeneration: input.retryGeneration }
+      : {}),
   };
 }
 
@@ -416,10 +425,13 @@ export class SceneSchedulingCoordinator {
         );
       }
 
+      const retryGeneration = input.retryGeneration ?? 1;
       const acceptedBundle =
-        await this.schedulingRepo.getAcceptedBundleBySceneExecutionId(
-          input.sceneExecutionId
-        );
+        retryGeneration <= 1
+          ? await this.schedulingRepo.getAcceptedBundleBySceneExecutionId(
+              input.sceneExecutionId
+            )
+          : null;
       if (acceptedBundle) {
         this.assertAcceptedBundleMatchesInput(acceptedBundle, input, fact);
         return SceneSchedulingBundleSchema.parse({
@@ -499,38 +511,36 @@ export class SceneSchedulingCoordinator {
         sceneExecutionId: input.sceneExecutionId,
         runtimeAuthorizationId: fact.runtimeAuthorizationId,
         instructionHash,
+        retryGeneration,
       });
       const correlationId = deterministicPersistenceUuid(
         "ai-story-scene-scheduling-correlation",
         seedBeforeRouting
       );
       const policy = effectiveRoutingPolicy(input);
-      const routingRequest = buildRoutingRequest({
-        fact,
-        sceneExecutionId: input.sceneExecutionId,
-        instructionHash,
-        correlationId,
-        policy,
-        preferredProviders: input.preferredProviders,
-      });
-      const route = await this.dependencies.router.route(routingRequest, policy);
-      const routingDecision = buildRoutingDecision({
-        fact,
-        sceneExecutionId: input.sceneExecutionId,
-        route,
-        policy,
-        decidedAt: route.createdAt || this.now().toISOString(),
-      });
       const existingRoutingDecision =
         await this.schedulingRepo.getRoutingDecisionBySceneExecutionId(
           input.sceneExecutionId
         );
       const acceptedRoutingDecision = existingRoutingDecision
-        ? this.reuseEquivalentRoutingDecision(
-            existingRoutingDecision,
-            routingDecision
-          )
-        : routingDecision;
+        ? existingRoutingDecision
+        : buildRoutingDecision({
+            fact,
+            sceneExecutionId: input.sceneExecutionId,
+            route: await this.dependencies.router.route(
+              buildRoutingRequest({
+                fact,
+                sceneExecutionId: input.sceneExecutionId,
+                instructionHash,
+                correlationId,
+                policy,
+                preferredProviders: input.preferredProviders,
+              }),
+              policy
+            ),
+            policy,
+            decidedAt: this.now().toISOString(),
+          });
       // Derive schedule clocks from the authoritative routing decision time so
       // concurrent equivalent schedules converge on identical identity payloads.
       const scheduledAt = acceptedRoutingDecision.decidedAt;
@@ -542,6 +552,7 @@ export class SceneSchedulingCoordinator {
         runtimeAuthorizationId: fact.runtimeAuthorizationId,
         instructionHash,
         routingDecisionHash: acceptedRoutingDecision.deterministicIntegrityHash,
+        retryGeneration,
       });
       const outboxJobId = deterministicPersistenceUuid(
         "ai-story-scene-outbox-job",
@@ -559,6 +570,7 @@ export class SceneSchedulingCoordinator {
         correlationId,
         createdAt: scheduledAt,
         timeoutDeadline,
+        retryGeneration,
       });
       const providerExecution = buildProviderExecution({
         canonicalRequest: request.canonicalRequest,

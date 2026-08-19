@@ -19,6 +19,7 @@ import {
 } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 import { assertExecutionPlanOwnershipChain, planOwnershipFromRow } from "./ai-story-ownership";
+import { GeneratedSceneReviewRepository } from "./ai-story-generated-scene-review";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -36,6 +37,9 @@ export type AssemblyValidationLoader = {
   readonly listCanonicalSceneResults: (
     executionPlanId: string
   ) => Promise<readonly CanonicalSceneResult[]>;
+  readonly listApprovedGeneratedSceneResultIds?: (
+    executionPlanId: string
+  ) => Promise<readonly string[]>;
   readonly getSceneMediaMetadata: (
     sceneResultId: string
   ) => Promise<AssemblySceneMediaMetadata | null>;
@@ -113,6 +117,14 @@ export class AssemblyValidationRepositoryImpl implements AssemblyValidationLoade
       const projected = ProjectedSceneResultSchema.parse(row.result);
       return CanonicalSceneResultSchema.parse(projected);
     });
+  }
+
+  async listApprovedGeneratedSceneResultIds(
+    executionPlanId: string
+  ): Promise<readonly string[]> {
+    return new GeneratedSceneReviewRepository(this.db).listApprovedSceneResultIds(
+      executionPlanId
+    );
   }
 
   async getSceneMediaMetadata(

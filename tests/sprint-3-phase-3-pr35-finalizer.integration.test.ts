@@ -169,6 +169,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
       "../packages/db/sql/ai-story-scene-scheduling-rls-v1.sql",
       "../packages/db/sql/ai-story-worker-runtime-v1.sql",
       "../packages/db/sql/ai-story-scene-projection-v1.sql",
+      "../packages/db/sql/ai-story-generated-scene-review-v1.sql",
     ]) {
       await applySqlFile(sql, relative);
     }

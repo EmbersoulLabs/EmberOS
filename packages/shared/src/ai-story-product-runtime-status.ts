@@ -7,6 +7,7 @@
 import { z } from "zod";
 import { RUNTIME_PROJECTION_VERSION } from "./ai-story-runtime-contracts";
 import { AiStoryProviderSpendProjectionSchema } from "./ai-story-provider-attempt-cost";
+import { GeneratedSceneReviewReadModelSchema } from "./ai-story-generated-scene-review";
 
 export const PRODUCT_RUNTIME_STATUS_CONTRACT_VERSION = "1" as const;
 
@@ -94,6 +95,10 @@ export const ProductRuntimeProjectionSchema = z.object({
   safeFailureSummary: z.string().nullable(),
   /** EXEC-05 provider spend reconstruction. Optional for legacy projection clients. */
   providerSpend: AiStoryProviderSpendProjectionSchema.optional(),
+  /** EXEC-04 generated-media review. Optional for legacy projection clients. */
+  generatedSceneReviews: z.array(GeneratedSceneReviewReadModelSchema).optional(),
+  pendingReviewSceneCount: z.number().int().nonnegative().optional(),
+  approvedSceneCount: z.number().int().nonnegative().optional(),
   derivedAt: z.string().datetime(),
 });
 

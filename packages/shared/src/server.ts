@@ -10,6 +10,7 @@ export * from "./canonical-integrity";
 export * from "./ai-story-assembly-runtime";
 export * from "./ai-story-assembly-runtime-execution";
 export * from "./ai-story-assembly-validation";
+export * from "./ai-story-generated-scene-review";
 export * from "./ai-story-final-story-result-persistence";
 export * from "./ai-story-durable-scene-media";
 export * from "./ai-story-assembly";

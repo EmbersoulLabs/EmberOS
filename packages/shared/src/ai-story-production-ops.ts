@@ -34,6 +34,7 @@ export const AI_STORY_REQUIRED_TABLES = [
   "ai_story_durable_scene_media_attestations",
   "ai_story_scene_projection_correlations",
   "ai_story_scene_results",
+  "ai_story_generated_scene_reviews",
 ] as const;
 
 export const AI_STORY_STRUCTURAL_TABLES = [

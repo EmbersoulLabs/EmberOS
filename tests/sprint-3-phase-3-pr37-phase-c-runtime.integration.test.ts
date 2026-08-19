@@ -80,6 +80,7 @@ describeIntegration("Sprint 3 PR 3.7 Phase C remediation Postgres E2E", () => {
       "../packages/db/sql/ai-story-worker-runtime-v1.sql",
       "../packages/db/sql/ai-story-worker-attempt-observation-v1.sql",
       "../packages/db/sql/ai-story-scene-projection-v1.sql",
+      "../packages/db/sql/ai-story-generated-scene-review-v1.sql",
       "../packages/db/sql/ai-story-assembly-job-persistence-v1.sql",
       "../packages/db/sql/ai-story-assembly-runtime-artifact-v1.sql",
       "../packages/db/sql/ai-story-final-story-result-v1.sql",

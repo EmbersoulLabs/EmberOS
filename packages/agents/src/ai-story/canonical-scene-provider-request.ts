@@ -23,6 +23,8 @@ export type BuildCanonicalSceneProviderRequestInput = {
   readonly correlationId: string;
   readonly createdAt: string;
   readonly timeoutDeadline: string;
+  /** EXEC-04: >1 creates a new provider execution of the same frozen payload. */
+  readonly retryGeneration?: number;
 };
 
 export type BuildCanonicalSceneProviderRequestCompatInput = {
@@ -51,11 +53,13 @@ function sortText(values: readonly string[]): string[] {
 }
 
 function fullIdentitySeed(input: BuildCanonicalSceneProviderRequestInput) {
+  const retryGeneration = input.retryGeneration ?? 1;
   return {
     sceneExecutionId: input.sceneIntent.identity.sceneExecutionId,
     runtimeAuthorizationId: input.runtimeAuthorization.runtimeAuthorizationId,
     instructionHash: input.sceneIntent.normalizedPayloadReference.contentHash,
     routingDecisionHash: input.routingDecision.deterministicIntegrityHash,
+    ...(retryGeneration > 1 ? { retryGeneration } : {}),
   };
 }
 
@@ -158,9 +162,12 @@ function buildFull(
   const seed = fullIdentitySeed(input);
   const payloadContent = buildPayloadReferenceContent(input);
   const contentHash = integrityHash(payloadContent);
+  const retryGeneration = input.retryGeneration ?? 1;
   const payloadReference = `memory://ai-story/scene-provider-request/${
     input.sceneIntent.identity.sceneExecutionId
-  }/${contentHash.replace(/^sha256:/, "")}`;
+  }/${contentHash.replace(/^sha256:/, "")}${
+    retryGeneration > 1 ? `/retry/${retryGeneration}` : ""
+  }`;
   const normalizedPayloadReference = {
     uri: payloadReference,
     contentHash,
