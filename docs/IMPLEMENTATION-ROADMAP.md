@@ -1659,10 +1659,10 @@ Do not modify files during the initial gap analysis.
 
 ## Current overlay status — AI Story Self-Use V1
 
-Ticket `EMBEROS-AI-STORY-PROD-DEPLOY-01` (2026-08-19).
+Ticket `EMBEROS-AI-STORY-PROD-FIX-01` (2026-08-20).
 
-`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` @ `36b5241636c6e6828cef82b8ae165e2eea71f42b` (EXEC-06 `aaa44d7` in ancestry) from production pin `b447f539400f2765958c1c94add708a979c86604`.
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` @ `70273cd607e03a984a8b53833f8581b6c4349a17` from production pin `b447f539400f2765958c1c94add708a979c86604`. PROD-FIX-01 filters Canonical Execute to enabled/executable providers and persists `campaign_asset_refs` on campaign-scoped upload.
 
-Bounded overlay is **DEPLOYED / AWAITING REAL EPISODE CERT**. Production worker Railway `5d775841-cbea-47a6-a2de-ef64fe014851` and production web Vercel `dpl_4BgYwuJ4pE8bvkCDuiU3cSx3CEyk` (`emberos-iota.vercel.app`) both run `36b5241`. Schema remains additive-compatible (53/53 required tables; leftover 18 `ai_stories` rows preserved). Seedance production env is present. No paid Seedance/MiniMax/Fal/Photoroom call was made in this ticket.
+Bounded overlay is **DEPLOYED / AWAITING REAL EPISODE CERT**. Production worker Railway `7a39164b-795e-4fc7-b061-4652c1792abf` and production web Vercel `dpl_GAaTzFEiDFvQMZdypQ1P7BwQboxH` (`emberos-iota.vercel.app`) both run `70273cd`. Failed MiniMax cert rows were not rewritten. No paid Seedance/MiniMax/Fal/Photoroom call was made in this ticket.
 
-Do not mark AI Story RELEASED. Do not open Free/Pro/Pro Plus. Next: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` from the real provider execution gate. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
+Do not mark AI Story RELEASED. Do not open Free/Pro/Pro Plus. Next: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT-R2` from the real provider execution gate. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.

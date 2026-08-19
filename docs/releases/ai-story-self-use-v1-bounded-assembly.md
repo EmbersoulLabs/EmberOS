@@ -6,7 +6,7 @@ Production base: `b447f539400f2765958c1c94add708a979c86604`
 Branch: `release/ai-story-self-use-v1-bounded`  
 AI Story source: `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`
 
-This assembly is built, validated, and **DEPLOYED / AWAITING REAL EPISODE CERT** on production at `36b5241636c6e6828cef82b8ae165e2eea71f42b`. AI Story remains NOT RELEASED.
+This assembly is built, validated, and **DEPLOYED / AWAITING REAL EPISODE CERT** on production at `70273cd607e03a984a8b53833f8581b6c4349a17` (PROD-FIX-01 routing/source-ref overlay on `36b5241`). AI Story remains NOT RELEASED.
 
 Do not merge `release/sprint-4-phase-b`. That branch is source authority only.
 
