@@ -181,13 +181,28 @@ function identitySeed(input: {
   };
 }
 
+function sanitizePreferredProviders(
+  preferred: readonly string[],
+  policy: ProviderRoutingPolicy
+): readonly string[] {
+  const allowed = policy.allowedProviders;
+  const denied = new Set(policy.deniedProviders ?? []);
+  return preferred.filter((providerId) => {
+    if (denied.has(providerId)) return false;
+    if (allowed && !allowed.includes(providerId)) return false;
+    return true;
+  });
+}
+
 function effectiveRoutingPolicy(input: ScheduleAuthorizedSceneInput): ProviderRoutingPolicy {
   const base = input.routingPolicy ?? DEFAULT_ROUTING_POLICY;
+  const preferred = sanitizePreferredProviders(
+    input.preferredProviders ? [...input.preferredProviders] : [...base.preferredProviders],
+    base
+  );
   return {
     ...base,
-    preferredProviders: input.preferredProviders
-      ? [...input.preferredProviders]
-      : [...base.preferredProviders],
+    preferredProviders: [...preferred],
   };
 }
 
@@ -221,9 +236,11 @@ function buildRoutingRequest(input: {
     requireCancellation: false,
     requireCallbacks: false,
     requireStreaming: false,
-    preferredProviders: input.preferredProviders
-      ? [...input.preferredProviders]
-      : [...input.policy.preferredProviders],
+    preferredProviders: [
+      ...(input.preferredProviders && input.preferredProviders.length > 0
+        ? input.preferredProviders
+        : input.policy.preferredProviders),
+    ],
     dataHandling: {
       sensitiveData: false,
       externalProcessingAllowed: true,
@@ -518,10 +535,17 @@ export class SceneSchedulingCoordinator {
         seedBeforeRouting
       );
       const policy = effectiveRoutingPolicy(input);
+      const preferredProviders = policy.preferredProviders;
       const existingRoutingDecision =
         await this.schedulingRepo.getRoutingDecisionBySceneExecutionId(
           input.sceneExecutionId
         );
+      if (!existingRoutingDecision && policy.allowedProviders?.length === 0) {
+        throw new SceneSchedulingError(
+          "NO_EXECUTABLE_PROVIDER",
+          "No executable provider is available for Scene scheduling"
+        );
+      }
       const acceptedRoutingDecision = existingRoutingDecision
         ? existingRoutingDecision
         : buildRoutingDecision({
@@ -534,7 +558,7 @@ export class SceneSchedulingCoordinator {
                 instructionHash,
                 correlationId,
                 policy,
-                preferredProviders: input.preferredProviders,
+                preferredProviders,
               }),
               policy
             ),
@@ -656,7 +680,12 @@ export class SceneSchedulingCoordinator {
       });
     } catch (error) {
       if (error instanceof NoEligibleProviderError) {
-        throw new SceneSchedulingError("NO_ELIGIBLE_PROVIDER", error.message);
+        throw new SceneSchedulingError(
+          error.details.exclusions.length === 0
+            ? "NO_EXECUTABLE_PROVIDER"
+            : "NO_ELIGIBLE_PROVIDER",
+          error.message
+        );
       }
       throw error;
     }

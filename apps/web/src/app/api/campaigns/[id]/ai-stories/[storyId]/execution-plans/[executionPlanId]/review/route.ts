@@ -4,6 +4,7 @@
  * Execution remains FAIL CLOSED.
  */
 import { ExecutionPlanReviewRepository } from "@ceo-agent/db";
+import { withBoundedTimeout } from "@ceo-agent/shared";
 import { apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import {
@@ -45,11 +46,15 @@ export async function POST(_request: Request, { params }: RouteParams) {
       minRole: "operator",
     });
 
-    const opened = await new ExecutionPlanReviewRepository(ctx.db).openReview({
-      executionPlanId: ctx.executionPlanId,
-      openedBy: user.id,
-    });
-    const readModel = await buildExecutionPlanReviewAssemblyReadModel(ctx);
+    const opened = await withBoundedTimeout(
+      new ExecutionPlanReviewRepository(ctx.db).openReview({
+        executionPlanId: ctx.executionPlanId,
+        openedBy: user.id,
+      })
+    );
+    const readModel = await withBoundedTimeout(
+      buildExecutionPlanReviewAssemblyReadModel(ctx)
+    );
 
     return apiSuccess({
       opened,

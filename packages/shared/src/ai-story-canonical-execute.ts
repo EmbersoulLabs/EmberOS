@@ -50,6 +50,9 @@ export type CanonicalExecuteResponse = z.infer<typeof CanonicalExecuteResponseSc
 /** Forbidden mass-assignment / injection keys for Execute request bodies. */
 export const CANONICAL_EXECUTE_FORBIDDEN_BODY_KEYS = [
   "providerId",
+  "preferredProviders",
+  "allowedProviders",
+  "deniedProviders",
   "adapterVersion",
   "sceneIds",
   "sceneExecutionIds",

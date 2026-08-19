@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { createGenerateReview } from "@ceo-agent/agents";
-import { isUuid, type AiStoryStatus } from "@ceo-agent/shared";
+import { isUuid, withBoundedTimeout, type AiStoryStatus } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
@@ -46,13 +46,15 @@ export async function POST(
       );
     }
 
-    const review = await createGenerateReview({
-      db,
-      campaignId,
-      storyId,
-      workspaceId: campaign.workspaceId,
-      orgId: campaign.orgId,
-    });
+    const review = await withBoundedTimeout(
+      createGenerateReview({
+        db,
+        campaignId,
+        storyId,
+        workspaceId: campaign.workspaceId,
+        orgId: campaign.orgId,
+      })
+    );
 
     if (status === "ready_for_execution") {
       await setAiStoryStatus(db, storyId, status, "generate_review");

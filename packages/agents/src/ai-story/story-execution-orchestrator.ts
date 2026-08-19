@@ -196,13 +196,27 @@ export async function createGenerateReview(input: {
           )
       : [];
 
+  const campaignLinks =
+    referencedAssetIds.length > 0
+      ? await input.db
+          .select({ assetId: schema.campaignAssetRefs.assetId })
+          .from(schema.campaignAssetRefs)
+          .where(
+            and(
+              eq(schema.campaignAssetRefs.campaignId, input.campaignId),
+              inArray(schema.campaignAssetRefs.assetId, referencedAssetIds)
+            )
+          )
+      : [];
+  const linkedAssetIds = new Set(campaignLinks.map((row) => row.assetId));
+
   const assetsById = new Map<string, AiQcAssetFact>(
     assetRows.map((row) => [
       row.assetId,
       {
         assetId: row.assetId,
         workspaceId: row.workspaceId,
-        campaignId: row.campaignId,
+        campaignId: linkedAssetIds.has(row.assetId) ? input.campaignId : null,
       },
     ])
   );

@@ -13,6 +13,7 @@ import {
   type MinimaxPayloadResolver,
   type SeedancePayloadResolver,
 } from "@ceo-agent/agents";
+import { getAiProviderConfig, isAiProviderReady } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
   ExecutionEnvelopeRepository,
@@ -81,11 +82,16 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
     );
 
   try {
-    const seedance = loadSeedanceAdapterConfig(env, { requireEnabled });
-    registerSeedanceCanonicalAdapter(registry, {
-      config: seedance,
-      payloadResolver: seedanceResolver,
-    });
+    const config = getAiProviderConfig(env);
+    if (config.providers.seedance.enabled && isAiProviderReady(config, "seedance")) {
+      const seedance = loadSeedanceAdapterConfig(env, { requireEnabled: true });
+      registerSeedanceCanonicalAdapter(registry, {
+        config: seedance,
+        payloadResolver: seedanceResolver,
+      });
+    } else {
+      console.warn("[ai-story-adapters] Seedance not registered: disabled or not executable");
+    }
   } catch (error) {
     if (requireEnabled) throw error;
     console.warn(
@@ -95,11 +101,16 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
   }
 
   try {
-    const minimax = loadMinimaxAdapterConfig(env, { requireEnabled });
-    registerMinimaxCanonicalAdapter(registry, {
-      config: minimax,
-      payloadResolver: minimaxResolver,
-    });
+    const config = getAiProviderConfig(env);
+    if (config.providers.minimax.enabled && isAiProviderReady(config, "minimax")) {
+      const minimax = loadMinimaxAdapterConfig(env, { requireEnabled: true });
+      registerMinimaxCanonicalAdapter(registry, {
+        config: minimax,
+        payloadResolver: minimaxResolver,
+      });
+    } else {
+      console.warn("[ai-story-adapters] MiniMax not registered: disabled or not executable");
+    }
   } catch (error) {
     if (requireEnabled) throw error;
     console.warn(

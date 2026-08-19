@@ -2,7 +2,7 @@
  * Campaign-owned AI Story persistence helpers.
  */
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, schema, CampaignAssetRefError } from "@ceo-agent/db";
 import {
   assertAiStoryTransition,
   nextAiStoryVersionNumber,
@@ -115,7 +115,10 @@ export async function assertCampaignAssets(
   const allowed = new Set(refs.map((r) => r.assetId));
   for (const id of assetIds) {
     if (!allowed.has(id)) {
-      throw new Error(`Asset ${id} is not linked to this Campaign`);
+      throw new CampaignAssetRefError(
+        "CAMPAIGN_ASSET_REF_MISSING",
+        `Asset ${id} is not linked to this Campaign`
+      );
     }
   }
   const assets = await db

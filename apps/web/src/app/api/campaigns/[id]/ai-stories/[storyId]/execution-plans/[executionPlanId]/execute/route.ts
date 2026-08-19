@@ -12,6 +12,7 @@ import {
   authorizeAiStoryExecution,
   CanonicalExecuteError,
   AiStoryExecutionDeniedError,
+  resolveCanonicalExecuteRoutingPolicy,
 } from "@ceo-agent/agents";
 import {
   CANONICAL_EXECUTE_FORBIDDEN_BODY_KEYS,
@@ -104,6 +105,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       actorUserId: user.id,
       ownership,
       router: createCanonicalExecuteProviderRouter(),
+      routingPolicy: resolveCanonicalExecuteRoutingPolicy(),
       executionAuthorization,
     });
 

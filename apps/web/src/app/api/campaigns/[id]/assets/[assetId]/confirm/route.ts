@@ -1,5 +1,5 @@
 import { eq, and } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { getDb, schema, requireWorkspaceRole, persistSameWorkspaceCampaignAssetRef } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueProbe } from "@ceo-agent/queue";
@@ -66,6 +66,13 @@ export async function POST(
     }
 
     if (!asset) return apiError("Asset not found", "NOT_FOUND", 404);
+
+    await persistSameWorkspaceCampaignAssetRef(db, {
+      campaignId,
+      assetId: asset.id,
+      workspaceId: campaign.workspaceId,
+      orgId: campaign.orgId,
+    });
 
     if (asset.type === "video") {
       await enqueueProbe({

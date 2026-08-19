@@ -27,7 +27,7 @@ import {
   getDb,
   schema,
 } from "@ceo-agent/db";
-import type { ProviderRouter } from "../provider-router";
+import type { ProviderRouter, ProviderRoutingPolicy } from "../provider-router";
 import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
 import {
   CommercialAuthorizationError,
@@ -61,6 +61,9 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
   readonly actorUserId: string;
   readonly ownership: RuntimeOwnershipIdentity;
   readonly router: ProviderRouter;
+  /** Optional frozen routing policy. Product Execute supplies config-derived eligibility. */
+  readonly routingPolicy?: ProviderRoutingPolicy;
+  readonly preferredProviders?: readonly string[];
   /** Optional DI for tests. */
   readonly now?: () => Date;
   readonly authorizationService?: RuntimeAuthorizationService;
@@ -390,6 +393,8 @@ export async function authorizeAndExecuteExecutionPlan(
           ? toAiStoryExecutionAuthorizationEvidence(executionAuthorization)
           : accepted.fact.executionAuthorization,
         actorUserId: input.actorUserId,
+        routingPolicy: input.routingPolicy,
+        preferredProviders: input.preferredProviders,
       });
       scheduledSceneIds.push(sceneExecutionId);
       // Replayed accepted bundles still count toward scheduledSceneCount.

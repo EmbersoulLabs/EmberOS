@@ -11,6 +11,8 @@ export * from "./authorize-and-execute-execution-plan";
 export * from "./ai-story-execution-authorization";
 export * from "./generated-scene-review-service";
 export * from "./canonical-execute-router";
+export * from "./provider-execution-eligibility";
+export * from "./bounded-timeout";
 export * from "./derive-product-runtime-projection";
 export * from "./canonical-scene-provider-request";
 export * from "./canonical-scene-payload-resolver";

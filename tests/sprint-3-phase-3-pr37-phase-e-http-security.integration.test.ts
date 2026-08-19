@@ -20,6 +20,7 @@ import {
   getIntegrationDbUrl,
 } from "./helpers/db-integration";
 import { applyPhaseECommercialSql } from "./helpers/commercial-phase-e-sql";
+import { applyProductionLikeVideoRoutingEnv } from "./helpers/ai-story-prod-fix-01-env";
 import {
   makePhase2aCompilation,
   type Phase2aIdSet,
@@ -289,6 +290,7 @@ describeIntegration("Sprint 3 PR 3.7 Phase E HTTP security + GET side effects", 
   let postExecute: typeof getRuntime;
 
   beforeAll(async () => {
+    applyProductionLikeVideoRoutingEnv();
     sql = createIntegrationSql();
     for (const relative of [
       "../packages/db/sql/ai-story-scene-execution-persistence-v1.sql",

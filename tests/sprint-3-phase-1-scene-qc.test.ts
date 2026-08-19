@@ -299,6 +299,28 @@ describe("Phase 1 AI QC Layer", () => {
     expect(again.errors).toEqual(results[0]!.errors);
   });
 
+  it("blocks when Campaign Asset refs are missing even if the workspace asset exists", () => {
+    const compiled = compileSceneExecutionIntents(samplePackage(), baseCtx);
+    const results = validateAllSceneExecutionIntents(
+      compiled.intents,
+      compiled.instructionsBySceneExecutionId,
+      {
+        storyVersionFrozenAt: baseCtx.storyVersionFrozenAt,
+        animationPackageStatus: "ready_for_execution",
+        workspaceId: WS,
+        campaignId: CAMP,
+        assetsById: new Map([
+          [ASSET_A, { assetId: ASSET_A, workspaceId: WS, campaignId: null }],
+        ]),
+        validatedAt: "2026-08-02T01:00:00.000Z",
+      }
+    );
+    expect(aggregateQcStatus(results)).toBe("failed");
+    expect(
+      results[0]!.errors.some((e) => e.code === "ASSET_CAMPAIGN_UNAUTHORIZED")
+    ).toBe(true);
+  });
+
   it("blocks when Campaign Assets are missing", () => {
     const compiled = compileSceneExecutionIntents(samplePackage(), baseCtx);
     const results = validateAllSceneExecutionIntents(

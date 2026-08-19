@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { getDb, schema, requireWorkspaceRole, persistSameWorkspaceCampaignAssetRef } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -72,19 +72,27 @@ export async function POST(
 
     const filenameRisk = assessFinishedAdRisk({ type, filename });
 
-    await db.insert(schema.assets).values({
-      id: assetId,
-      orgId: campaign.orgId,
-      workspaceId: campaign.workspaceId,
-      campaignId,
-      type,
-      storagePath,
-      mimeType,
-      fileSizeBytes: size,
-      metadata: {
-        originalFilename: filename,
-        finishedAdRisk: filenameRisk,
-      },
+    await db.transaction(async (tx) => {
+      await tx.insert(schema.assets).values({
+        id: assetId,
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        campaignId,
+        type,
+        storagePath,
+        mimeType,
+        fileSizeBytes: size,
+        metadata: {
+          originalFilename: filename,
+          finishedAdRisk: filenameRisk,
+        },
+      });
+      await persistSameWorkspaceCampaignAssetRef(tx, {
+        campaignId,
+        assetId,
+        workspaceId: campaign.workspaceId,
+        orgId: campaign.orgId,
+      });
     });
 
     return apiSuccess(

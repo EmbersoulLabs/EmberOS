@@ -289,7 +289,7 @@ export function validateSceneExecutionIntent(
         )
       );
     }
-    if (asset.campaignId && asset.campaignId !== ctx.campaignId) {
+    if (asset.campaignId !== ctx.campaignId) {
       errors.push(
         finding(
           "ASSET_CAMPAIGN_UNAUTHORIZED",

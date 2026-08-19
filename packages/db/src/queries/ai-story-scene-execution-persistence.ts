@@ -644,7 +644,7 @@ export class AiStorySceneExecutionPersistenceRepository
         !asset ||
         asset.orgId !== first.tenantId ||
         asset.workspaceId !== first.workspaceId ||
-        (asset.campaignId !== first.campaignId && !linked.has(assetId))
+        !linked.has(assetId)
       ) {
         throw new ExecutionPlanOwnershipError("A referenced Campaign Asset is unauthorized");
       }
