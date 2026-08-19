@@ -8,7 +8,7 @@ Governance version: **v2.2**
 
 - Worktree: `worktrees/ai-story-self-use-v1-bounded`
 - Branch: `release/ai-story-self-use-v1-bounded`
-- Production overlay revision: `70273cd607e03a984a8b53833f8581b6c4349a17`
+- Production overlay revision: `b52925aa20e4c66092f8fff0ea5cf7c30620ac6e`
 - Frozen product pin under the overlay: `b447f539400f2765958c1c94add708a979c86604`
 - Current release: Video Studio V1 RELEASED / FROZEN; Photo Scene V1 RELEASED / FROZEN
 - `VIDEO_STUDIO_V1_RELEASED`: YES
@@ -19,7 +19,7 @@ Governance version: **v2.2**
 
 Production web: `emberos-iota.vercel.app` Vercel `dpl_GAaTzFEiDFvQMZdypQ1P7BwQboxH` @ `70273cd`
 
-Production worker: Railway `@ceo-agent/worker` `7a39164b-795e-4fc7-b061-4652c1792abf` @ `70273cd`
+Production worker: Railway `@ceo-agent/worker` `b5b0699d-425f-423f-998c-eaaf0e460b88` @ `b52925a`
 
 Do not mark AI Story RELEASED / FROZEN until complete-episode certification PASSes. Access remains Super Admin + Agency only.
 

@@ -1661,8 +1661,8 @@ Do not modify files during the initial gap analysis.
 
 Ticket `EMBEROS-AI-STORY-PROD-FIX-01` (2026-08-20).
 
-`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` @ `70273cd607e03a984a8b53833f8581b6c4349a17` from production pin `b447f539400f2765958c1c94add708a979c86604`. PROD-FIX-01 filters Canonical Execute to enabled/executable providers and persists `campaign_asset_refs` on campaign-scoped upload.
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` @ `b52925aa20e4c66092f8fff0ea5cf7c30620ac6e` from production pin `b447f539400f2765958c1c94add708a979c86604`. PROD-FIX-01 filters Canonical Execute to enabled/executable providers and persists `campaign_asset_refs` on campaign-scoped upload.
 
-Bounded overlay is **DEPLOYED / AWAITING REAL EPISODE CERT**. Production worker Railway `7a39164b-795e-4fc7-b061-4652c1792abf` and production web Vercel `dpl_GAaTzFEiDFvQMZdypQ1P7BwQboxH` (`emberos-iota.vercel.app`) both run `70273cd`. Failed MiniMax cert rows were not rewritten. No paid Seedance/MiniMax/Fal/Photoroom call was made in this ticket.
+Bounded overlay is **DEPLOYED / AWAITING REAL EPISODE CERT**. Production worker Railway `b5b0699d-425f-423f-998c-eaaf0e460b88` @ `b52925a`; production web Vercel `dpl_GAaTzFEiDFvQMZdypQ1P7BwQboxH` (`emberos-iota.vercel.app`) @ `70273cd` (CLI upload of the fix commit). Failed MiniMax cert rows were not rewritten. No paid Seedance/MiniMax/Fal/Photoroom call was made in this ticket.
 
 Do not mark AI Story RELEASED. Do not open Free/Pro/Pro Plus. Next: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT-R2` from the real provider execution gate. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
