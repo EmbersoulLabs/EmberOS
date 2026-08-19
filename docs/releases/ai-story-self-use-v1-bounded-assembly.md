@@ -10,18 +10,23 @@ This assembly is built and validated. It is **not** deployed. AI Story remains N
 
 Do not merge `release/sprint-4-phase-b`. That branch is source authority only.
 
-## Operator commands (do not run against production in EXEC-02)
+## Operator commands
 
 ```text
-pnpm ai-story:prod-schema-preflight
+pnpm exec tsx scripts/ai-story-prod-schema-preflight.ts
+pnpm exec tsx scripts/ai-story-prod-provider-env-preflight.ts
+pnpm exec tsx scripts/ai-story-prod-storage-preflight.ts
 ```
 
-Apply scripts refuse production (`egkgybrjmzukzmkcrpag`) unless both are set:
+Apply generated Scene review SQL against production only with:
 
+- `AI_STORY_RAILWAY_VARS_FILE` (Railway `variable list --json` tempfile; never commit)
 - `AI_STORY_PROD_MIGRATION_ALLOW=true`
 - `AI_STORY_PROD_MIGRATION_ACK=AI_STORY_SELF_USE_V1`
 
-EXEC-02 does not apply schema, change production env, call paid providers, or deploy.
+```text
+pnpm exec tsx scripts/ai-story-prod-apply-generated-scene-review.ts
+```
 
 ## Assembly method
 
@@ -85,13 +90,15 @@ EXEC-02 does not apply schema, change production env, call paid providers, or de
 
 ## Remaining self-use tickets
 
-1. `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` after schema apply + bounded live gate.
+1. Configure primary AI Story video provider (Seedance or MiniMax) on Railway production worker env. Do not copy Sprint 4 local secrets without an explicit env ticket.
+2. Resume `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` (deploy overlay + one 3-Scene complete episode).
 
-EXEC-06 is CLOSED / PASS. Implementation gates are CLOSED. Production certification is not granted.
+PROD-CERT Phase 0 (2026-08-19): live production baseline MATCHES `b447f53`. Additive `ai_story_generated_scene_reviews` applied. Paid execution STOPPED because production worker has no Seedance/MiniMax API key. Overlay not deployed. AI Story remains NOT RELEASED.
 
 ## Status
 
 `AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` = BUILT / VALIDATED  
-`DEPLOYMENT` = NONE  
-`PRODUCTION_SCHEMA_CHANGE` = NONE  
+`AI_STORY_SELF_USE_V1` = NOT_CERTIFIED  
+`DEPLOYMENT` = NONE (web/worker overlay not deployed)  
+`PRODUCTION_SCHEMA_CHANGE` = additive `ai_story_generated_scene_reviews` only  
 `PAID_PROVIDER_CALLS` = 0

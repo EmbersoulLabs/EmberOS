@@ -1659,12 +1659,14 @@ Do not modify files during the initial gap analysis.
 
 ## Current overlay status — AI Story Self-Use V1
 
-Ticket `EMBEROS-AI-STORY-EXEC-06` (2026-08-19).
+Ticket `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` (2026-08-19).
 
-`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` from production pin `b447f539400f2765958c1c94add708a979c86604`. EXEC-03 authority was `c8602c5d12ff16cf91d056081284408ee931bce8`. EXEC-05 authority was `93656a43a9d2336f6ab219b683f3e518d7406b94`. EXEC-04 authority was `f77e829ca90ee96594447c2b3f9d93ab9a5de051`. Source authority is `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`.
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` @ `aaa44d77766b7ab729402c89dc9de519f3ba0da3` from production pin `b447f539400f2765958c1c94add708a979c86604`.
 
-EXEC-06 freezes AI Story Self-Use V1 QC as **plan/intent AI QC + mandatory human generated-media review**. Existing Plan QC remains authoritative for planning/intent/structure only. There is no production-worthy media-aware QC of generated image/video/audio; none was added. Generated-media acceptance is EXEC-04 persisted Scene review (`PENDING_REVIEW` / `APPROVED` / `RETRY_REQUESTED` / `REJECTED_TERMINAL`). Assembly consumes only the exact approved `(sceneExecutionId, providerAttemptId, sceneResultId)`. AI Story implementation gates are CLOSED. AI Story remains NOT RELEASED and is **not production certified**. This overlay is not deployed and does not apply production schema.
+Live production baseline **MATCHES** that pin: web `emberos-iota.vercel.app` deployment `dpl_5s473VnKexZdGf5Sg2RKsG1tfDmx`; Railway production worker `1ea483b7-bf45-4ec9-a73b-bafa5f08e589` commit `b447f53`.
 
-Do not mark AI Story RELEASED.
+PROD-CERT Phase 0 stopped before paid execution. Production schema is compatible after applying additive `ai_story_generated_scene_reviews` (+ RLS). Canonical artifact bucket `campaign-assets` remains private. Production worker has **no** Seedance or MiniMax API configuration (`AI_PROVIDER_SEEDANCE_*` / `SEEDANCE_API_KEY` / MiniMax equivalents ABSENT). OPENAI_API_KEY is present for non-video work only.
 
-Remaining self-use ticket: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT`. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
+Do not deploy the overlay and do not call paid video providers until a primary cert provider is configured on the production worker. Do not copy Sprint 4 local keys onto production without an explicit env ticket. Do not mark AI Story RELEASED.
+
+Blocked next: configure primary AI Story video provider on Railway production, then resume `EMBEROS-AI-STORY-SELF-USE-PROD-CERT`. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
