@@ -9,6 +9,7 @@ import {
   SceneProviderSchedulingCorrelationSchema,
   SceneSchedulingBundleSchema,
   createExecutionEnvelope,
+  type AiStoryExecutionAuthorizationEvidence,
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
   type CanonicalProviderRequest,
@@ -101,9 +102,11 @@ export type ScheduleAuthorizedSceneInput = {
   /** Required. Scheduling loads the canonical persisted RuntimeAuthorizedFact only. */
   readonly runtimeAuthorizationId: string;
   /**
-   * Required. Scheduler consumes Commercial Authorization only — no Authorization, no schedule.
+   * Required for commercial settlement. Omitted when EXEC-03 ops/non-commercial
+   * authorization explicitly selected settlementMode=none.
    */
-  readonly commercialAuthorizationId: string;
+  readonly commercialAuthorizationId?: string;
+  readonly executionAuthorization?: AiStoryExecutionAuthorizationEvidence;
   readonly actorUserId: string;
   readonly routingPolicy?: ProviderRoutingPolicy;
   readonly preferredProviders?: readonly string[];
@@ -664,6 +667,24 @@ export class SceneSchedulingCoordinator {
     input: ScheduleAuthorizedSceneInput,
     fact: RuntimeAuthorizedFact
   ): Promise<void> {
+    const evidence =
+      input.executionAuthorization ?? fact.executionAuthorization;
+    if (evidence?.settlementMode === "none") {
+      if (evidence.accessMode !== "ops") {
+        throw new SceneSchedulingError(
+          "COMMERCIAL_AUTHORIZATION_DENIED",
+          "Non-commercial scheduling requires ops accessMode"
+        );
+      }
+      if (input.commercialAuthorizationId?.trim()) {
+        throw new SceneSchedulingError(
+          "COMMERCIAL_AUTHORIZATION_DENIED",
+          "Ops execution must not carry a commercial authorization id"
+        );
+      }
+      return;
+    }
+
     if (!input.commercialAuthorizationId?.trim()) {
       throw new SceneSchedulingError(
         "COMMERCIAL_AUTHORIZATION_REQUIRED",

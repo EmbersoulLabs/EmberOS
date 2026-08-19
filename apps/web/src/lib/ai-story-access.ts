@@ -1,15 +1,19 @@
 import {
   EntitlementRepositoryImpl,
+  getOrganizationPlan,
   requireWorkspaceRole,
 } from "@ceo-agent/db";
 import {
+  asOrganizationsPlanCompatibilityProjection,
   effectiveProjectionHasCapability,
   type WorkspaceRole,
 } from "@ceo-agent/shared";
+import { planMappingIncludesCapability } from "@ceo-agent/shared/server";
 import { resolvePlatformAdminForUser } from "@/lib/platform-admin-auth";
 
 export type AiStoryAccessAuthorization =
   | { readonly allowedBy: "ACTIVE_PLATFORM_ADMIN" }
+  | { readonly allowedBy: "AGENCY_PLAN_CAPABILITY" }
   | { readonly allowedBy: "EFFECTIVE_ENTITLEMENT" };
 
 export class AiStoryAccessDeniedError extends Error {
@@ -28,6 +32,7 @@ type AiStoryAccessDependencies = {
     EntitlementRepositoryImpl,
     "rebuildEffectiveProjection"
   >;
+  readonly getOrganizationPlan: typeof getOrganizationPlan;
   readonly now: () => string;
 };
 
@@ -37,6 +42,7 @@ const defaultDependencies: AiStoryAccessDependencies = {
   get entitlementRepository() {
     return new EntitlementRepositoryImpl();
   },
+  getOrganizationPlan,
   now: () => new Date().toISOString(),
 };
 
@@ -44,9 +50,11 @@ const defaultDependencies: AiStoryAccessDependencies = {
  * Canonical AI Story product-entry authorization.
  *
  * ACTIVE persistent Platform Admin authority is an explicit operational
- * override. All customer access requires workspace membership followed by a
- * canonical entitlement rebuild and ai_story.access in the resulting
- * projection. Browser claims and organizations.plan are never consulted.
+ * override. Agency product class uses the versioned plan capability mapping
+ * against organizations.plan as a compatibility projection only — not Stripe
+ * or subscription authority. Other customer classes require workspace
+ * membership plus ai_story.access in the rebuilt entitlement projection.
+ * Browser claims are never consulted.
  */
 export async function authorizeAiStoryAccess(
   input: {
@@ -72,6 +80,12 @@ export async function authorizeAiStoryAccess(
   );
   if (membership.orgId !== input.orgId) {
     throw new AiStoryAccessDeniedError();
+  }
+
+  const plan = await dependencies.getOrganizationPlan(input.orgId);
+  const compatibility = asOrganizationsPlanCompatibilityProjection(plan);
+  if (planMappingIncludesCapability(compatibility.normalizedPlan, "ai_story.access")) {
+    return { allowedBy: "AGENCY_PLAN_CAPABILITY" };
   }
 
   const projectedAt = dependencies.now();

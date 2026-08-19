@@ -19,7 +19,9 @@ const { requireAuth, authorizeAccess, resolvePlan, getDb } = vi.hoisted(() => ({
 vi.mock("@ceo-agent/agents", () => ({
   runFullStoryPlanningPipeline: vi.fn(),
   authorizeAndExecuteExecutionPlan: vi.fn(),
+  authorizeAiStoryExecution: vi.fn(),
   CanonicalExecuteError: class CanonicalExecuteError extends Error {},
+  AiStoryExecutionDeniedError: class AiStoryExecutionDeniedError extends Error {},
 }));
 
 function accessDenied() {

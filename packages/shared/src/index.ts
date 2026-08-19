@@ -60,6 +60,7 @@ export * from "./ai-story-review-assembly-api";
 export * from "./ai-story-phase1-execution-lock";
 export * from "./ai-story-runtime-contracts";
 export * from "./ai-story-canonical-execute";
+export * from "./ai-story-execution-authorization";
 export * from "./ai-story-product-runtime-status";
 export * from "./ai-story-final-story-result-read";
 export * from "./ai-story-scene-scheduling";

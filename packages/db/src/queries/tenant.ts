@@ -74,6 +74,17 @@ export async function getOrganizationMembership(orgId: string, userId: string) {
   return member ?? null;
 }
 
+/** Compatibility plan string only — not Subscription or Entitlement authority. */
+export async function getOrganizationPlan(orgId: string): Promise<string | null> {
+  const db = getDb();
+  const [org] = await db
+    .select({ plan: schema.organizations.plan })
+    .from(schema.organizations)
+    .where(eq(schema.organizations.id, orgId))
+    .limit(1);
+  return org?.plan ?? null;
+}
+
 /**
  * Verify the user belongs to the given organization (server-side).
  * Super Admin is not granted org access here — that must be an explicit admin path.

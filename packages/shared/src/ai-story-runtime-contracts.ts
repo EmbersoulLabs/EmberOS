@@ -17,6 +17,7 @@
  */
 import { z } from "zod";
 import { PHASE1_EXECUTION_LOCKED } from "./ai-story-phase1-execution-lock";
+import { AiStoryExecutionAuthorizationEvidenceSchema } from "./ai-story-execution-authorization";
 
 export const RUNTIME_AUTHORIZATION_CONTRACT_VERSION = "1" as const;
 export const SCENE_RUNTIME_CONTRACT_VERSION = "1" as const;
@@ -216,6 +217,11 @@ export const RuntimeAuthorizedFactSchema = z.object({
   authorizedBy: z.string().uuid(),
   authorizedAt: z.string().datetime(),
   deterministicIntegrityHash: IntegrityHashSchema,
+  /**
+   * EXEC-03 product/settlement evidence. Optional so historical facts parse.
+   * Excluded from RuntimeAuthorizedFact integrity hash.
+   */
+  executionAuthorization: AiStoryExecutionAuthorizationEvidenceSchema.optional(),
 });
 
 export type RuntimeAuthorizedFact = z.infer<typeof RuntimeAuthorizedFactSchema>;

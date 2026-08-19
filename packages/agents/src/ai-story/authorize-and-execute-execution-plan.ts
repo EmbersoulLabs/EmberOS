@@ -13,6 +13,8 @@ import { asc, eq } from "drizzle-orm";
 import {
   CanonicalExecuteResponseSchema,
   PHASE1_EXECUTION_LOCKED,
+  toAiStoryExecutionAuthorizationEvidence,
+  type AiStoryExecutionAuthorization,
   type CanonicalExecuteResponse,
   type CanonicalExecuteRuntimeStatus,
   type RuntimeOwnershipIdentity,
@@ -68,14 +70,25 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
   readonly persistenceRepository?: AiStorySceneExecutionPersistenceRepository;
   readonly schedulingCoordinator?: SceneSchedulingCoordinator;
   readonly commercialAuthorizationService?: CommercialAuthorizationService;
+  /**
+   * EXEC-03 product authorization decision. When omitted, Execute keeps the
+   * legacy commercial fail-closed path. Ops/agency callers must pass an
+   * explicit non-commercial decision — never inferred from billing failure.
+   */
+  readonly executionAuthorization?: AiStoryExecutionAuthorization;
+  readonly loadLatestQc?: (
+    executionPlanId: string,
+    orderedSceneExecutionIds: readonly string[]
+  ) => Promise<RuntimeAuthorizationQcInput[]>;
 };
 
 export type AuthorizeAndExecuteExecutionPlanResult = {
   readonly response: CanonicalExecuteResponse;
   readonly httpStatus: 200 | 202;
   readonly runtimeAuthorizationId: string;
-  readonly commercialAuthorizationId: string;
+  readonly commercialAuthorizationId: string | null;
   readonly scheduledSceneIds: readonly string[];
+  readonly executionAuthorization: AiStoryExecutionAuthorization | null;
 };
 
 /**
@@ -250,7 +263,7 @@ export async function authorizeAndExecuteExecutionPlan(
     );
   }
 
-  const qcResults = await loadLatestQcByScene(
+  const qcResults = await (input.loadLatestQc ?? loadLatestQcByScene)(
     input.executionPlanId,
     orderedSceneExecutionIds
   );
@@ -300,9 +313,29 @@ export async function authorizeAndExecuteExecutionPlan(
     throw error;
   }
 
+  const executionAuthorization = input.executionAuthorization ?? null;
+  if (
+    executionAuthorization &&
+    executionAuthorization.settlementMode === "none" &&
+    executionAuthorization.accessMode !== "ops"
+  ) {
+    throw new CanonicalExecuteError(
+      "AI_STORY_EXECUTION_DENIED",
+      "Non-commercial settlement requires ops accessMode",
+      403
+    );
+  }
+  const factToPersist = executionAuthorization
+    ? {
+        ...issued.fact,
+        executionAuthorization:
+          toAiStoryExecutionAuthorizationEvidence(executionAuthorization),
+      }
+    : issued.fact;
+
   let accepted;
   try {
-    accepted = await authRepo.acceptOrReturn(issued.fact);
+    accepted = await authRepo.acceptOrReturn(factToPersist);
   } catch (error) {
     if (
       error &&
@@ -319,19 +352,27 @@ export async function authorizeAndExecuteExecutionPlan(
     throw error;
   }
 
-  let commercial;
-  try {
-    commercial = await commercialAuth.authorizeExecutionPlanExecute({
-      orgId: input.ownership.orgId,
-      workspaceId: input.ownership.workspaceId,
-      executionPlanId: input.executionPlanId,
-      authorizedAt: now().toISOString(),
-    });
-  } catch (error) {
-    if (error instanceof CommercialAuthorizationError) {
-      throw new CanonicalExecuteError(error.code, error.message, error.status);
+  const skipCommercialSettlement =
+    executionAuthorization?.accessMode === "ops" &&
+    executionAuthorization.settlementMode === "none";
+
+  let commercial: Awaited<
+    ReturnType<CommercialAuthorizationService["authorizeExecutionPlanExecute"]>
+  > | null = null;
+  if (!skipCommercialSettlement) {
+    try {
+      commercial = await commercialAuth.authorizeExecutionPlanExecute({
+        orgId: input.ownership.orgId,
+        workspaceId: input.ownership.workspaceId,
+        executionPlanId: input.executionPlanId,
+        authorizedAt: now().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof CommercialAuthorizationError) {
+        throw new CanonicalExecuteError(error.code, error.message, error.status);
+      }
+      throw error;
     }
-    throw error;
   }
 
   const scheduledSceneIds: string[] = [];
@@ -342,8 +383,12 @@ export async function authorizeAndExecuteExecutionPlan(
         executionPlanId: input.executionPlanId,
         sceneExecutionId,
         runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
-        commercialAuthorizationId:
-          commercial.authorization.commercialAuthorizationId,
+        commercialAuthorizationId: commercial
+          ? commercial.authorization.commercialAuthorizationId
+          : undefined,
+        executionAuthorization: executionAuthorization
+          ? toAiStoryExecutionAuthorizationEvidence(executionAuthorization)
+          : accepted.fact.executionAuthorization,
         actorUserId: input.actorUserId,
       });
       scheduledSceneIds.push(sceneExecutionId);
@@ -385,7 +430,8 @@ export async function authorizeAndExecuteExecutionPlan(
     httpStatus: newlyAccepted ? 202 : 200,
     runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
     commercialAuthorizationId:
-      commercial.authorization.commercialAuthorizationId,
+      commercial?.authorization.commercialAuthorizationId ?? null,
     scheduledSceneIds,
+    executionAuthorization,
   };
 }

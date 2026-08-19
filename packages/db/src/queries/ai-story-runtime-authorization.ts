@@ -40,10 +40,11 @@ function toFact(
 }
 
 function factHashInput(fact: RuntimeAuthorizedFact): RuntimeAuthorizedFact {
+  const { executionAuthorization: _ignored, ...core } = fact;
   return RuntimeAuthorizedFactSchema.parse({
-    ...fact,
-    orderedSceneExecutionIds: [...fact.orderedSceneExecutionIds],
-    qcResultIds: [...fact.qcResultIds],
+    ...core,
+    orderedSceneExecutionIds: [...core.orderedSceneExecutionIds],
+    qcResultIds: [...core.qcResultIds],
   });
 }
 

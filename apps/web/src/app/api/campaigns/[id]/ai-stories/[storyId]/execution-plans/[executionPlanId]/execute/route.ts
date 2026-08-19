@@ -9,7 +9,9 @@
  */
 import {
   authorizeAndExecuteExecutionPlan,
+  authorizeAiStoryExecution,
   CanonicalExecuteError,
+  AiStoryExecutionDeniedError,
 } from "@ceo-agent/agents";
 import {
   CANONICAL_EXECUTE_FORBIDDEN_BODY_KEYS,
@@ -79,6 +81,14 @@ export async function POST(request: Request, { params }: RouteParams) {
       minRole: "operator",
     });
 
+    const executionAuthorization = await authorizeAiStoryExecution({
+      user,
+      orgId: ctx.orgId,
+      workspaceId: ctx.workspaceId,
+      minRole: "operator",
+      clientClaims: body,
+    });
+
     const ownership = {
       orgId: ctx.orgId,
       workspaceId: ctx.workspaceId,
@@ -94,6 +104,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       actorUserId: user.id,
       ownership,
       router: createCanonicalExecuteProviderRouter(),
+      executionAuthorization,
     });
 
     return apiSuccess(
@@ -107,6 +118,9 @@ export async function POST(request: Request, { params }: RouteParams) {
       result.httpStatus
     );
   } catch (error) {
+    if (error instanceof AiStoryExecutionDeniedError) {
+      return apiError(error.message, error.code, error.status);
+    }
     if (error instanceof CanonicalExecuteError) {
       return apiError(error.message, error.code, error.status);
     }

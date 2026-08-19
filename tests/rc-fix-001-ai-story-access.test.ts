@@ -31,11 +31,12 @@ function dependencies(input?: {
   capabilities?: Array<"ai_story.access" | "ai_story.execute">;
   workspaceAllowed?: boolean;
   platformAdminStatus?: "ACTIVE_GRANT" | "DENIED";
+  organizationPlan?: string | null;
 }) {
   return {
     requireWorkspaceRole: input?.workspaceAllowed === false
       ? vi.fn().mockRejectedValue(new Error("workspace denied"))
-      : vi.fn().mockResolvedValue({ orgId: ORG }),
+      : vi.fn().mockResolvedValue({ orgId: ORG, workspaceId: WORKSPACE, role: "operator" }),
     resolvePlatformAdmin: vi.fn().mockResolvedValue(
       input?.platformAdminStatus === "ACTIVE_GRANT"
         ? { status: "ACTIVE_GRANT", assignment: { platformAdminAssignmentId: "active" } }
@@ -46,6 +47,7 @@ function dependencies(input?: {
         projection(input?.capabilities ?? [])
       ),
     },
+    getOrganizationPlan: vi.fn().mockResolvedValue(input?.organizationPlan ?? "free"),
     now: () => NOW,
   };
 }
@@ -61,6 +63,14 @@ describe("RC-FIX-001 canonical AI Story access", () => {
   it("allows Agency-style access projection for list/read/planning", async () => {
     await expect(authorizeAiStoryAccess(request, dependencies({ capabilities: ["ai_story.access"] })))
       .resolves.toEqual({ allowedBy: "EFFECTIVE_ENTITLEMENT" });
+  });
+
+  it("allows Agency plan capability without commercial entitlements", async () => {
+    const deps = dependencies({ organizationPlan: "agency" });
+    await expect(authorizeAiStoryAccess(request, deps)).resolves.toEqual({
+      allowedBy: "AGENCY_PLAN_CAPABILITY",
+    });
+    expect(deps.entitlementRepository.rebuildEffectiveProjection).not.toHaveBeenCalled();
   });
 
   it.each(["free", "pro"])("denies %s without ai_story.access", async () => {

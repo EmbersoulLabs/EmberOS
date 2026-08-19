@@ -1659,12 +1659,14 @@ Do not modify files during the initial gap analysis.
 
 ## Current overlay status — AI Story Self-Use V1
 
-Ticket `EMBEROS-AI-STORY-EXEC-02` (2026-08-19).
+Ticket `EMBEROS-AI-STORY-EXEC-03` (2026-08-19).
 
-`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` is **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` from production pin `b447f539400f2765958c1c94add708a979c86604`. Source authority is `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60` (patch-extract only; no full-branch merge).
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` from production pin `b447f539400f2765958c1c94add708a979c86604`. EXEC-02 overlay HEAD was `c2229e7068eb5ebe6a216e18ee7b1dabe62285fb`. Source authority is `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`.
 
-AI Story remains NOT RELEASED. This overlay is not deployed and does not apply production schema.
+EXEC-03 closed the Super Admin / Agency execution authorization gap: product authorization is now separate from commercial settlement. Ops/agency non-commercial mode is an explicit server-side decision. Commercial Execute remains fail-closed. AI Story remains NOT RELEASED. This overlay is not deployed and does not apply production schema.
 
-Video Studio V1 and Photo Scene V1 files are unchanged except a bounded AI Story entry on the existing campaign dashboard.
+Video Studio V1 and Photo Scene V1 files are unchanged except the bounded AI Story entry already present on the campaign dashboard from EXEC-02.
 
-Next implementation ticket: `EMBEROS-AI-STORY-EXEC-03` (Super Admin / Agency execute without Stripe/credit activation). Follow-ups remain EXEC-05, EXEC-04, EXEC-06. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
+Do not mark AI Story self-use ready.
+
+Next implementation ticket: `EMBEROS-AI-STORY-EXEC-05` (provider attempt usage/cost persistence). Follow-ups remain EXEC-04, EXEC-06, then SELF-USE-PROD-CERT. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.

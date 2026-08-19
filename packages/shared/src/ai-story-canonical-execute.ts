@@ -61,4 +61,9 @@ export const CANONICAL_EXECUTE_FORBIDDEN_BODY_KEYS = [
   "artifactId",
   "ready",
   "executionAllowed",
+  "role",
+  "accessMode",
+  "settlementMode",
+  "plan",
+  "capability",
 ] as const;

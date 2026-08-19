@@ -63,8 +63,9 @@ EXEC-02 does not apply schema, change production env, call paid providers, or de
 ## Access / cost (preserved, not solved)
 
 - Product policy: Super Admin + Agency allowed; Free / Pro / Pro Plus denied.
-- Canonical Execute still depends on commercial authorization / credit reserve. EXEC-03 must solve Super Admin/Agency execution without Stripe activation.
-- `AUTH01_INCLUDED = NO`. No Super Admin ops bypass.
+- Canonical Execute product authorization is `authorizeAiStoryExecution`. Super Admin ACTIVE grant and Agency plan capability mapping receive explicit ops/non-commercial settlement (`settlementMode=none`). That mode skips billing account, subscription, and credit reserve. It does not mean provider cost is zero.
+- Commercial Execute remains fail-closed when product authorization does not select ops mode.
+- `AUTH01_INCLUDED = NO`. No Stripe cutover. No quota.
 - `usageWritten` / `costWritten` remain `false`. EXEC-05 remains required.
 
 ## Forbidden-scope audit (`b447f53`..assembly)
@@ -82,11 +83,10 @@ EXEC-02 does not apply schema, change production env, call paid providers, or de
 
 ## Remaining self-use tickets
 
-1. `EMBEROS-AI-STORY-EXEC-03` — Super Admin / Agency execute without Stripe/credit activation.
-2. `EMBEROS-AI-STORY-EXEC-05` — provider attempt usage/cost persistence.
-3. `EMBEROS-AI-STORY-EXEC-04` — generated Scene review/retry with attempt history.
-4. `EMBEROS-AI-STORY-EXEC-06` — media-aware QC or V1 freeze (plan QC + mandatory human generated-media review).
-5. Later: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` after schema apply + bounded live gate.
+1. `EMBEROS-AI-STORY-EXEC-05` — provider attempt usage/cost persistence.
+2. `EMBEROS-AI-STORY-EXEC-04` — generated Scene review/retry with attempt history.
+3. `EMBEROS-AI-STORY-EXEC-06` — media-aware QC or V1 freeze (plan QC + mandatory human generated-media review).
+4. Later: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` after schema apply + bounded live gate.
 
 ## Status
 
