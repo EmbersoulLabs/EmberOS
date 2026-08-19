@@ -16,7 +16,7 @@ import type {
   ProviderCallbackReceipt,
   WorkerFailureClassification,
 } from "@ceo-agent/shared";
-import { WORKER_RUNTIME_CONTRACT_VERSION } from "@ceo-agent/shared";
+import { WORKER_RUNTIME_CONTRACT_VERSION, configuredEstimateForProvider } from "@ceo-agent/shared";
 import { canonicalPersistenceHash } from "@ceo-agent/db";
 import type { ProviderCapabilityDeclaration } from "../provider-adapters/contracts";
 import {
@@ -330,9 +330,8 @@ function normalizeLookupBody(
               unitKind: completionTokens !== undefined ? "tokens" : "video",
             },
       normalizedCostMetadata: {
-        currency: "USD",
-        amount: 0.4,
-        estimated: true,
+        ...configuredEstimateForProvider("minimax")!,
+        modelKey: readString(task.model) ?? "minimax",
       },
       reconciliationRequired: false,
       operationalMetadata: {

@@ -386,15 +386,35 @@ export const ProviderUsageSchema = z
     outputTokens: z.number().int().nonnegative().optional(),
     totalTokens: z.number().int().nonnegative().optional(),
     providerUsageId: NonEmptyStringSchema.optional(),
+    durationMs: z.number().int().nonnegative().optional(),
+    requestedDurationSeconds: z.number().nonnegative().optional(),
+    requestedResolution: NonEmptyStringSchema.optional(),
+    units: z.number().nonnegative().optional(),
+    unitKind: NonEmptyStringSchema.optional(),
   })
   .strict();
 export type ProviderUsage = Readonly<z.infer<typeof ProviderUsageSchema>>;
 
+/**
+ * EXEC-05 — costSource is required on new writes.
+ * Legacy rows may omit it; reconstruction classifies those as LEGACY_UNKNOWN.
+ * amount is nullable so UNKNOWN is not fabricated as 0.
+ */
+export const ProviderCostSourceSchema = z.enum([
+  "PROVIDER_REPORTED",
+  "MODEL_PRICING_TABLE",
+  "CONFIGURED_ESTIMATE",
+  "UNKNOWN",
+  "LEGACY_UNKNOWN",
+]);
+export type ProviderCostSource = z.infer<typeof ProviderCostSourceSchema>;
+
 export const ProviderCostSchema = z
   .object({
-    amount: z.number().nonnegative(),
+    amount: z.number().nonnegative().nullable(),
     currency: z.string().regex(/^[A-Z]{3}$/),
     estimated: z.boolean(),
+    costSource: ProviderCostSourceSchema.optional(),
   })
   .strict();
 export type ProviderCost = Readonly<z.infer<typeof ProviderCostSchema>>;

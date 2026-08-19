@@ -16,7 +16,7 @@ import type {
   ProviderCallbackReceipt,
   WorkerFailureClassification,
 } from "@ceo-agent/shared";
-import { WORKER_RUNTIME_CONTRACT_VERSION } from "@ceo-agent/shared";
+import { WORKER_RUNTIME_CONTRACT_VERSION, configuredEstimateForProvider } from "@ceo-agent/shared";
 import { canonicalPersistenceHash } from "@ceo-agent/db";
 import type { ProviderCapabilityDeclaration } from "../provider-adapters/contracts";
 import {
@@ -320,9 +320,8 @@ function normalizeLookupBody(
               unitKind: completionTokens !== undefined ? "tokens" : "video",
             },
       normalizedCostMetadata: {
-        currency: "USD",
-        amount: 0.35,
-        estimated: true,
+        ...configuredEstimateForProvider("seedance")!,
+        modelKey: readString(record.model) ?? "seedance",
       },
       reconciliationRequired: false,
       operationalMetadata: {

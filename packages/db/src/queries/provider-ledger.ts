@@ -347,6 +347,15 @@ export class ProviderLedgerRepository {
     return CanonicalProviderResultSchema.parse(updated[0].acceptedResult);
   }
 
+  async listAttempts(executionId: string): Promise<ProviderAttempt[]> {
+    const rows = await this.db
+      .select()
+      .from(schema.providerAttempts)
+      .where(eq(schema.providerAttempts.executionId, executionId))
+      .orderBy(schema.providerAttempts.attemptNumber);
+    return rows.map(toAttempt);
+  }
+
   async findExecution(executionId: string): Promise<ProviderLedgerExecution | null> {
     const [execution] = await this.db
       .select()

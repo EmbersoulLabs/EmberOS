@@ -10,6 +10,7 @@ import {
   RUNTIME_PROJECTION_VERSION,
   deriveProductCanExecute,
   deriveProductRuntimeStatus,
+  emptyAiStoryProviderSpendProjection,
   type ProductRuntimeAssemblyState,
   type ProductRuntimeProjection,
   type WorkspaceRole,
@@ -22,6 +23,7 @@ import {
   ExecutionPlanReviewRepository,
   FinalStoryResultRepositoryImpl,
   RuntimeAuthorizationPersistenceRepository,
+  reconstructAiStoryProviderSpendForPlan,
   getDb,
   schema,
 } from "@ceo-agent/db";
@@ -295,6 +297,10 @@ export async function deriveProductRuntimeProjection(
     callerMayExecute: OPERATOR_ROLES.has(String(input.callerRole ?? "")),
   });
 
+  const providerSpend = authFact
+    ? await reconstructAiStoryProviderSpendForPlan(executionPlanId)
+    : emptyAiStoryProviderSpendProjection();
+
   return ProductRuntimeProjectionSchema.parse({
     contractVersion: PRODUCT_RUNTIME_STATUS_CONTRACT_VERSION,
     executionPlanId,
@@ -314,6 +320,7 @@ export async function deriveProductRuntimeProjection(
       reconciliationCount,
       assemblySafeMessage,
     }),
+    providerSpend,
     derivedAt,
   });
 }

@@ -260,8 +260,20 @@ export class DeterministicCanonicalTestAdapter implements CanonicalProviderAdapt
         width: 1080,
         height: 1920,
       },
-      normalizedUsageFacts: { durationMs: 2500, units: 1, unitKind: "video" },
-      normalizedCostMetadata: { currency: "USD", amount: 0, estimated: true },
+      normalizedUsageFacts: {
+        durationMs: 2500,
+        units: 1,
+        unitKind: "video",
+        requestedDurationSeconds: 5,
+        requestedResolution: "1080p",
+      },
+      normalizedCostMetadata: {
+        currency: "USD",
+        amount: 0,
+        estimated: false,
+        costSource: "CONFIGURED_ESTIMATE",
+        modelKey: "test-provider",
+      },
       reconciliationRequired: false,
     };
   }

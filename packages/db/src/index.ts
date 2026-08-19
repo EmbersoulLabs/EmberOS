@@ -33,4 +33,5 @@ export * from "./queries/subscription";
 export * from "./queries/entitlement";
 export * from "./queries/credits";
 export * from "./queries/commercial-authorization";
+export * from "./queries/ai-story-provider-attempt-cost";
 export * from "./queries/admin-runtime-operations";

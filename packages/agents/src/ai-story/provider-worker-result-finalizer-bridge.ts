@@ -11,6 +11,10 @@ import {
   SCENE_ROUTER_VERSION,
   createProviderError,
   isFinalizerTerminalFailureState,
+  mapWorkerCostMetadataToProviderCost,
+  mapWorkerUsageFactsToProviderUsage,
+  nextProviderAttemptNumber,
+  safeProviderRequestId,
   type CanonicalProviderResult,
   type ProviderAttempt,
   type ProviderError,
@@ -326,19 +330,19 @@ export function mapWorkerResultToCanonicalProviderResult(input: {
     workerResult.normalizedResultReference ??
     `worker-result://${workerResult.workerExecutionResultId}`;
 
-  const usage = {
-    ...(workerResult.normalizedUsageFacts?.inputTokens !== undefined
-      ? { inputTokens: workerResult.normalizedUsageFacts.inputTokens }
-      : {}),
-    ...(workerResult.normalizedUsageFacts?.outputTokens !== undefined
-      ? { outputTokens: workerResult.normalizedUsageFacts.outputTokens }
-      : {}),
-  };
-  const cost = {
-    amount: workerResult.normalizedCostMetadata?.amount ?? 0,
-    currency: (workerResult.normalizedCostMetadata?.currency ?? "USD").toUpperCase(),
-    estimated: workerResult.normalizedCostMetadata?.estimated ?? true,
-  };
+  const usage = mapWorkerUsageFactsToProviderUsage(
+    workerResult.normalizedUsageFacts,
+    {
+      durationMs: workerResult.terminalMedia?.durationMs,
+    }
+  );
+  const cost = mapWorkerCostMetadataToProviderCost(
+    workerResult.normalizedCostMetadata
+  );
+
+  const providerRequestId = safeProviderRequestId(workerResult.providerRequestId);
+  const modelVersion =
+    workerResult.normalizedCostMetadata?.modelKey ?? workerResult.adapterVersion;
 
   return {
     contractVersion: PROVIDER_RELIABILITY_CONTRACT_VERSION,
@@ -360,23 +364,19 @@ export function mapWorkerResultToCanonicalProviderResult(input: {
     providerMetadata: {
       providerId: workerResult.providerId,
       providerVersion: workerResult.adapterVersion,
-      ...(workerResult.providerRequestId
-        ? { providerRequestId: workerResult.providerRequestId }
-        : {}),
+      ...(providerRequestId ? { providerRequestId } : {}),
     },
     provenance: [
       {
         providerId: workerResult.providerId,
         adapterVersion: workerResult.adapterVersion,
-        modelVersion: workerResult.adapterVersion,
-        ...(workerResult.providerRequestId
-          ? { providerRequestId: workerResult.providerRequestId }
-          : {}),
+        modelVersion,
+        ...(providerRequestId ? { providerRequestId } : {}),
       },
     ],
     usage,
     cost,
-    modelVersion: workerResult.adapterVersion,
+    modelVersion,
     requestHash,
     responseHash,
     retryable: false,
@@ -387,18 +387,22 @@ export function mapWorkerResultToCanonicalProviderResult(input: {
 export function buildBridgeProviderAttempt(input: {
   readonly workerResult: WorkerExecutionResult;
   readonly canonicalResult: CanonicalProviderResult;
+  readonly attemptNumber?: number;
 }): ProviderAttempt {
+  const providerRequestId = safeProviderRequestId(
+    input.workerResult.providerRequestId
+  );
   return {
     contractVersion: PROVIDER_RELIABILITY_CONTRACT_VERSION,
     attemptId: input.workerResult.providerAttemptId,
     executionId: input.workerResult.providerExecutionId,
-    attemptNumber: 1,
+    attemptNumber: input.attemptNumber ?? 1,
     providerId: input.workerResult.providerId,
     providerVersion: input.workerResult.adapterVersion,
-    modelVersion: input.canonicalResult.modelVersion,
-    ...(input.workerResult.providerRequestId
-      ? { providerRequestId: input.workerResult.providerRequestId }
-      : {}),
+    modelVersion:
+      input.workerResult.normalizedCostMetadata?.modelKey ??
+      input.canonicalResult.modelVersion,
+    ...(providerRequestId ? { providerRequestId } : {}),
     requestHash: input.canonicalResult.requestHash,
     responseHash: input.canonicalResult.responseHash,
     status: "SUCCEEDED",
@@ -411,6 +415,7 @@ export function buildBridgeTerminalFailureAttempt(input: {
   readonly workerResult: WorkerExecutionResult;
   readonly bundle: SceneProjectionValidatedBundle;
   readonly failure: ProviderError;
+  readonly attemptNumber?: number;
 }): {
   readonly attempt: ProviderAttempt;
   readonly requestHash: string;
@@ -429,6 +434,12 @@ export function buildBridgeTerminalFailureAttempt(input: {
     }
   );
   const resultReference = `terminal-failure://${input.workerResult.workerExecutionResultId}`;
+  const providerRequestId = safeProviderRequestId(
+    input.workerResult.providerRequestId
+  );
+  const modelVersion =
+    input.workerResult.normalizedCostMetadata?.modelKey ??
+    input.workerResult.adapterVersion;
   return {
     requestHash,
     responseHash,
@@ -437,13 +448,11 @@ export function buildBridgeTerminalFailureAttempt(input: {
       contractVersion: PROVIDER_RELIABILITY_CONTRACT_VERSION,
       attemptId: input.workerResult.providerAttemptId,
       executionId: input.workerResult.providerExecutionId,
-      attemptNumber: 1,
+      attemptNumber: input.attemptNumber ?? 1,
       providerId: input.workerResult.providerId,
       providerVersion: input.workerResult.adapterVersion,
-      modelVersion: input.workerResult.adapterVersion,
-      ...(input.workerResult.providerRequestId
-        ? { providerRequestId: input.workerResult.providerRequestId }
-        : {}),
+      modelVersion,
+      ...(providerRequestId ? { providerRequestId } : {}),
       requestHash,
       responseHash,
       status: "TERMINAL_FAILURE",
@@ -454,7 +463,9 @@ export function buildBridgeTerminalFailureAttempt(input: {
 }
 
 export type ProviderWorkerResultFinalizerBridgeDependencies = {
-  readonly ledger: Pick<ProviderLedgerRepository, "appendAttempt">;
+  readonly ledger: Pick<ProviderLedgerRepository, "appendAttempt"> & {
+    readonly listAttempts?: ProviderLedgerRepository["listAttempts"];
+  };
   readonly outbox: Pick<ProviderOutboxRepository, "findJob" | "releaseLease"> & {
     /**
      * Ensures the outbox job is CLAIMED by workerId with an active lease.
@@ -485,6 +496,16 @@ export class ProviderWorkerResultFinalizerBridge {
     this.retryDelayMs = dependencies.retryDelayMs ?? 5_000;
   }
 
+  private async resolveAttemptNumber(
+    executionId: string,
+    attemptId: string
+  ): Promise<number> {
+    const listAttempts = this.dependencies.ledger.listAttempts;
+    if (!listAttempts) return 1;
+    const existing = await listAttempts(executionId);
+    return nextProviderAttemptNumber(existing, attemptId);
+  }
+
   /**
    * Validate chain, map to Finalizer input, append-or-return attempt, ensure lease.
    * Performs no Provider terminal / usage / cost / outbox COMPLETED writes.
@@ -503,9 +524,14 @@ export class ProviderWorkerResultFinalizerBridge {
       workerResult,
       bundle,
     });
+    const attemptNumber = await this.resolveAttemptNumber(
+      workerResult.providerExecutionId,
+      workerResult.providerAttemptId
+    );
     const attemptCandidate = buildBridgeProviderAttempt({
       workerResult,
       canonicalResult,
+      attemptNumber,
     });
 
     let attemptCreated = false;
@@ -580,10 +606,15 @@ export class ProviderWorkerResultFinalizerBridge {
     void PHASE1_EXECUTION_LOCKED;
 
     const failure = mapFailureCodeToProviderError(workerResult);
+    const attemptNumber = await this.resolveAttemptNumber(
+      workerResult.providerExecutionId,
+      workerResult.providerAttemptId
+    );
     const built = buildBridgeTerminalFailureAttempt({
       workerResult,
       bundle,
       failure,
+      attemptNumber,
     });
 
     let attemptCreated = false;
@@ -629,6 +660,8 @@ export class ProviderWorkerResultFinalizerBridge {
         dispatchTimestamp: bundle.dispatch.createdAt,
         executionDurationMs:
           workerResult.normalizedUsageFacts?.durationMs ?? 0,
+        usage: mapWorkerUsageFactsToProviderUsage(workerResult.normalizedUsageFacts),
+        cost: mapWorkerCostMetadataToProviderCost(workerResult.normalizedCostMetadata),
         completionMetadata: {
           workerExecutionResultId: workerResult.workerExecutionResultId,
           canonicalProviderState: workerResult.canonicalProviderState,

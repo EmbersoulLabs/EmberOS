@@ -163,6 +163,17 @@ export function StoryRuntimePanel({
               {projection.reconciliationCount > 0
                 ? ` · ${projection.reconciliationCount} reconciliation`
                 : ""}
+              {projection.providerSpend && projection.providerSpend.attemptCount > 0
+                ? ` · ${
+                    projection.providerSpend.storyKnownAmount == null
+                      ? "provider spend unknown"
+                      : `$${projection.providerSpend.storyKnownAmount} ${projection.providerSpend.currency}`
+                  }${
+                    projection.providerSpend.unknownAttemptCount > 0
+                      ? ` (${projection.providerSpend.unknownAttemptCount} unknown)`
+                      : ""
+                  }`
+                : ""}
             </span>
           ) : null}
         </div>

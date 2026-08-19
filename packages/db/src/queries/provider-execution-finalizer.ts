@@ -4,6 +4,8 @@ import {
   ProviderCostSchema,
   ProviderUsageSchema,
   type CanonicalProviderResult,
+  type ProviderCost,
+  type ProviderUsage,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 
@@ -57,6 +59,8 @@ export interface ProviderExecutionTerminalFailureInput {
   readonly responseHash: string;
   readonly dispatchTimestamp: string;
   readonly executionDurationMs: number;
+  readonly usage?: ProviderUsage;
+  readonly cost?: ProviderCost;
   readonly completionMetadata?: Readonly<Record<string, unknown>>;
   readonly now?: Date;
 }
@@ -291,8 +295,8 @@ export class ProviderExecutionFinalizationRepository {
 
   /**
    * Tx A terminal failure path — sole Production Finalizer authority.
-   * Writes attempt-bound TERMINAL_FAILURE on the execution and DEAD_LETTER on outbox.
-   * Does NOT write usage or cost. Does NOT invent new outbox states.
+   * Writes attempt-bound TERMINAL_FAILURE, DEAD_LETTER, and truthful usage/cost.
+   * Does NOT invent cost amount 0 when cost is unknown.
    */
   async finalizeTerminalFailure(
     input: ProviderExecutionTerminalFailureInput
@@ -407,6 +411,51 @@ export class ProviderExecutionFinalizationRepository {
         throw new ProviderExecutionFinalizationError(
           "Active Outbox lease is required for finalization"
         );
+      }
+
+      const usage = ProviderUsageSchema.parse(input.usage ?? {});
+      const cost = ProviderCostSchema.parse(
+        input.cost ?? {
+          amount: null,
+          currency: "USD",
+          estimated: true,
+          costSource: "UNKNOWN",
+        }
+      );
+      const usageRows = await tx
+        .insert(schema.providerAttemptUsage)
+        .values({ attemptId: input.attemptId, usage })
+        .onConflictDoNothing()
+        .returning();
+      if (!usageRows[0]) {
+        const [existing] = await tx
+          .select()
+          .from(schema.providerAttemptUsage)
+          .where(eq(schema.providerAttemptUsage.attemptId, input.attemptId))
+          .limit(1);
+        if (!existing || !sameJson(existing.usage, usage)) {
+          throw new ProviderExecutionFinalizationError(
+            "Provider usage conflicts with persisted facts"
+          );
+        }
+      }
+
+      const costRows = await tx
+        .insert(schema.providerAttemptCosts)
+        .values({ attemptId: input.attemptId, cost })
+        .onConflictDoNothing()
+        .returning();
+      if (!costRows[0]) {
+        const [existing] = await tx
+          .select()
+          .from(schema.providerAttemptCosts)
+          .where(eq(schema.providerAttemptCosts.attemptId, input.attemptId))
+          .limit(1);
+        if (!existing || !sameJson(existing.cost, cost)) {
+          throw new ProviderExecutionFinalizationError(
+            "Provider cost conflicts with persisted facts"
+          );
+        }
       }
 
       const terminalized = await tx

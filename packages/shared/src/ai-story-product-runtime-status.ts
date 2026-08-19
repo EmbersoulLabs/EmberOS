@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import { RUNTIME_PROJECTION_VERSION } from "./ai-story-runtime-contracts";
+import { AiStoryProviderSpendProjectionSchema } from "./ai-story-provider-attempt-cost";
 
 export const PRODUCT_RUNTIME_STATUS_CONTRACT_VERSION = "1" as const;
 
@@ -91,6 +92,8 @@ export const ProductRuntimeProjectionSchema = z.object({
   /** UI convenience only. Not authority. */
   canExecute: z.boolean(),
   safeFailureSummary: z.string().nullable(),
+  /** EXEC-05 provider spend reconstruction. Optional for legacy projection clients. */
+  providerSpend: AiStoryProviderSpendProjectionSchema.optional(),
   derivedAt: z.string().datetime(),
 });
 
