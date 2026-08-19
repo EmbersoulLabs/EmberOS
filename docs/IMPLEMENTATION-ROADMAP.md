@@ -1659,12 +1659,12 @@ Do not modify files during the initial gap analysis.
 
 ## Current overlay status — AI Story Self-Use V1
 
-Ticket `EMBEROS-AI-STORY-EXEC-04` (2026-08-19).
+Ticket `EMBEROS-AI-STORY-EXEC-06` (2026-08-19).
 
-`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` from production pin `b447f539400f2765958c1c94add708a979c86604`. EXEC-03 authority was `c8602c5d12ff16cf91d056081284408ee931bce8`. EXEC-05 authority was `93656a43a9d2336f6ab219b683f3e518d7406b94`. Source authority is `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`.
+`AI_STORY_SELF_USE_V1_BOUNDED_ASSEMBLY` remains **BUILT / VALIDATED** on `release/ai-story-self-use-v1-bounded` from production pin `b447f539400f2765958c1c94add708a979c86604`. EXEC-03 authority was `c8602c5d12ff16cf91d056081284408ee931bce8`. EXEC-05 authority was `93656a43a9d2336f6ab219b683f3e518d7406b94`. EXEC-04 authority was `f77e829ca90ee96594447c2b3f9d93ab9a5de051`. Source authority is `release/sprint-4-phase-b` @ `cfaa8950e682b0cd512514d52a4e7d9c5113cd60`.
 
-EXEC-04 persists generated-media Scene review and bounded retry. Retry keeps the same Story/Scene and frozen Scene input, creates a new provider attempt, and leaves prior attempt/cost evidence intact. Only an approved generated Scene output is assembly-authoritative. Retry cap is `AI_STORY_SCENE_MAX_ATTEMPTS` (default 3). AI Story remains NOT RELEASED. This overlay is not deployed and does not apply production schema.
+EXEC-06 freezes AI Story Self-Use V1 QC as **plan/intent AI QC + mandatory human generated-media review**. Existing Plan QC remains authoritative for planning/intent/structure only. There is no production-worthy media-aware QC of generated image/video/audio; none was added. Generated-media acceptance is EXEC-04 persisted Scene review (`PENDING_REVIEW` / `APPROVED` / `RETRY_REQUESTED` / `REJECTED_TERMINAL`). Assembly consumes only the exact approved `(sceneExecutionId, providerAttemptId, sceneResultId)`. AI Story implementation gates are CLOSED. AI Story remains NOT RELEASED and is **not production certified**. This overlay is not deployed and does not apply production schema.
 
-Do not mark AI Story self-use ready.
+Do not mark AI Story RELEASED.
 
-Next implementation ticket: `EMBEROS-AI-STORY-EXEC-06` (media-aware QC). Follow-up remains SELF-USE-PROD-CERT. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.
+Remaining self-use ticket: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT`. See `docs/releases/ai-story-self-use-v1-bounded-assembly.md`.

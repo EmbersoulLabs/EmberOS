@@ -68,6 +68,7 @@ EXEC-02 does not apply schema, change production env, call paid providers, or de
 - `AUTH01_INCLUDED = NO`. No Stripe cutover. No quota.
 - EXEC-05 persists provider-attempt usage/cost on existing `provider_attempts` / `provider_attempt_usage` / `provider_attempt_costs` JSON. Reconstruction is exposed on product runtime as `providerSpend`.
 - EXEC-04 persists generated-media Scene review on `ai_story_generated_scene_reviews`. Retry creates a new provider attempt of the same Scene with frozen input. Assembly consumes only the approved Scene output. Retry cap: `AI_STORY_SCENE_MAX_ATTEMPTS` (default 3).
+- EXEC-06 freezes V1 QC as plan/intent AI QC + mandatory human generated-media review. Plan QC must not be represented as visual/media QC. Future media-aware QC (artifact → optional automated media QC evidence → human review → approved output) is documented, not implemented.
 
 ## Forbidden-scope audit (`b447f53`..assembly)
 
@@ -84,8 +85,9 @@ EXEC-02 does not apply schema, change production env, call paid providers, or de
 
 ## Remaining self-use tickets
 
-1. `EMBEROS-AI-STORY-EXEC-06` — media-aware QC or V1 freeze (plan QC + mandatory human generated-media review).
-2. Later: `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` after schema apply + bounded live gate.
+1. `EMBEROS-AI-STORY-SELF-USE-PROD-CERT` after schema apply + bounded live gate.
+
+EXEC-06 is CLOSED / PASS. Implementation gates are CLOSED. Production certification is not granted.
 
 ## Status
 

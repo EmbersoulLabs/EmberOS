@@ -103,6 +103,14 @@ export function FinalStoryResultViewer({
         <p className="mt-1 text-sm text-ink-secondary">
           {t("aiStory.runtime.finalVideoSubtitle")}
         </p>
+        {model?.qcProvenance ? (
+          <p
+            className="mt-1 text-xs text-ink-secondary"
+            data-testid="final-story-qc-provenance"
+          >
+            {t("aiStory.runtime.finalVideoQcProvenance")}
+          </p>
+        ) : null}
       </div>
       {loading ? (
         <p className="text-sm text-ink-secondary" data-testid="final-story-loading">

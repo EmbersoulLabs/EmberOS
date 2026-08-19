@@ -5,7 +5,10 @@
  *
  * Read-only. Does not accept/project FSR. Does not persist signed URLs.
  */
-import { FinalStoryResultRepositoryImpl } from "@ceo-agent/db";
+import {
+  FinalStoryResultRepositoryImpl,
+  GeneratedSceneReviewRepository,
+} from "@ceo-agent/db";
 import {
   FINAL_STORY_RESULT_PLAYBACK_TTL_SECONDS,
   FINAL_STORY_RESULT_READ_CONTRACT_VERSION,
@@ -13,6 +16,7 @@ import {
   FINAL_STORY_RESULT_READ_PROJECTION_VERSION,
   FinalStoryResultReadModelSchema,
   PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS,
+  reconstructFinalStoryResultQcProvenance,
 } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
@@ -83,6 +87,22 @@ export async function GET(_request: Request, { params }: RouteParams) {
       );
     }
 
+    let qcProvenance;
+    try {
+      const reviews = await new GeneratedSceneReviewRepository().listByExecutionPlanId(
+        ctx.executionPlanId
+      );
+      qcProvenance = reconstructFinalStoryResultQcProvenance({
+        orderedSceneResultIds: record.orderedSceneResultIds,
+        reviews,
+      });
+    } catch {
+      qcProvenance = reconstructFinalStoryResultQcProvenance({
+        orderedSceneResultIds: record.orderedSceneResultIds,
+        reviews: [],
+      });
+    }
+
     const body = FinalStoryResultReadModelSchema.parse({
       contractVersion: FINAL_STORY_RESULT_READ_CONTRACT_VERSION,
       persistenceContractVersion: FINAL_STORY_RESULT_READ_PERSISTENCE_VERSION,
@@ -99,6 +119,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
       acceptedAt: record.acceptedAt,
       playbackUrl: playback.playbackUrl,
       playbackUrlExpiresInSeconds: playback.expiresInSeconds,
+      qcProvenance,
     });
 
     assertNoForbiddenKeys(body);

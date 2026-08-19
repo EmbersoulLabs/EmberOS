@@ -733,9 +733,9 @@ function ExecutionPanel({
         <div>
           <h2 className="text-lg font-bold text-navy">Execution Engine</h2>
           <p className="mt-1 text-sm text-ink-secondary">
-            Phase 2A: Generate Review compiles Scene Execution Intents, runs AI QC, and
-            automatically saves the Execution Plan when QC passes. Provider execution remains
-            locked.
+            Phase 2A: Generate Review compiles Scene Execution Intents, runs Plan QC, and
+            automatically saves the Execution Plan when Plan QC passes. Plan QC does not
+            approve generated media. Provider execution remains locked.
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
@@ -754,12 +754,12 @@ function ExecutionPanel({
             {planSavedLabel}
             {persistenceStatus === "reloaded" ? " · existing plan reloaded" : null}
             {sceneIntentCount != null ? ` · ${sceneIntentCount} scenes` : null}
-            {overallQcStatus ? ` · QC ${overallQcStatus}` : null}
+            {overallQcStatus ? ` · Plan QC ${overallQcStatus}` : null}
           </div>
         ) : null}
         {persistenceStatus === "skipped_qc_failed" ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Plan not saved — AI QC reported blocking findings.
+            Plan not saved — Plan QC reported blocking findings.
           </div>
         ) : null}
         <p className="text-xs text-ink-secondary" data-testid="phase2a-execution-locked">

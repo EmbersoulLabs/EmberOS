@@ -95,6 +95,8 @@ export function createInMemoryAssemblyValidationRepository(input: {
       if (input.approvedSceneResultIds) {
         return Object.freeze([...input.approvedSceneResultIds]);
       }
+      // Legacy unit fixtures omit reviews. Production-like tests must pass
+      // approvedSceneResultIds explicitly (EXEC-04/EXEC-06 human approval).
       return Object.freeze(
         (resultsByPlan.get(executionPlanId) ?? []).map((result) => result.sceneResultId)
       );

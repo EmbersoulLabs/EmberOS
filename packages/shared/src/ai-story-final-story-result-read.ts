@@ -5,6 +5,7 @@
  * Client-safe: does not import server-only persistence modules.
  */
 import { z } from "zod";
+import { FinalStoryResultQcProvenanceSchema } from "./ai-story-generated-media-qc-policy";
 
 export const FINAL_STORY_RESULT_READ_CONTRACT_VERSION = "1" as const;
 /** Mirrors FINAL_STORY_RESULT_PERSISTENCE_CONTRACT_VERSION without importing server entry. */
@@ -34,6 +35,12 @@ export const FinalStoryResultReadModelSchema = z.object({
   /** Short-lived signed read URL. Never written to FSR persistence. */
   playbackUrl: z.string().url(),
   playbackUrlExpiresInSeconds: z.number().int().positive(),
+  /**
+   * Derived at GET time from EXEC-04 reviews + assembled Scene Result ids.
+   * Distinguishes plan QC, human generated-media approval, and assembly.
+   * Never persisted on the FSR row.
+   */
+  qcProvenance: FinalStoryResultQcProvenanceSchema.optional(),
 });
 
 export type FinalStoryResultReadModel = z.infer<

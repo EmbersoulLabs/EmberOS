@@ -3,7 +3,8 @@
  *
  * Review attaches to Scene execution + provider attempt/output, not UI state.
  * Retry is a new provider attempt of the same Scene with frozen input.
- * Plan/intent QC is not generated-media approval. EXEC-06 is out of scope.
+ * Plan/intent QC is not generated-media approval. EXEC-06 freezes V1 as
+ * plan/intent AI QC + mandatory human generated-media review (this module).
  */
 import { z } from "zod";
 

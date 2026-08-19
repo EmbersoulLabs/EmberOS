@@ -158,6 +158,12 @@ export function StoryRuntimePanel({
                 succeeded: projection.succeededSceneCount,
                 required: projection.requiredSceneCount,
               })}
+              {(projection.pendingReviewSceneCount ?? 0) > 0
+                ? ` · ${t("aiStory.runtime.pendingHumanReview")}`
+                : (projection.approvedSceneCount ?? 0) > 0 &&
+                    projection.approvedSceneCount === projection.requiredSceneCount
+                  ? ` · ${t("aiStory.runtime.sceneApprovedByReviewer")}`
+                  : ""}
               {projection.failedSceneCount > 0
                 ? ` · ${projection.failedSceneCount} failed`
                 : ""}
