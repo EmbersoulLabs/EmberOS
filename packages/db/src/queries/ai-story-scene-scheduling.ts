@@ -333,6 +333,34 @@ export class SceneSchedulingRepository {
           );
         }
 
+        // EXEC-07 fail-closed authority boundary. This check intentionally lives
+        // in the same transaction that creates the provider execution and outbox:
+        // no caller (including a stale/compatibility execution path) may schedule
+        // a Scene until its durable release-ledger row is RELEASED and bound to
+        // the exact plan, workspace, and RuntimeAuthorizedFact.
+        const [releaseAuthority] = await tx
+          .select()
+          .from(schema.aiStorySceneReleaseStates)
+          .where(
+            and(
+              eq(schema.aiStorySceneReleaseStates.sceneExecutionId, scene.id),
+              eq(schema.aiStorySceneReleaseStates.executionPlanId, plan.id),
+              eq(schema.aiStorySceneReleaseStates.workspaceId, expected.workspaceId),
+              eq(
+                schema.aiStorySceneReleaseStates.runtimeAuthorizationId,
+                authFact.runtimeAuthorizationId
+              ),
+              eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED")
+            )
+          )
+          .limit(1);
+        if (!releaseAuthority) {
+          throw new SceneSchedulingError(
+            "SCENE_SCHEDULING_NOT_ELIGIBLE",
+            "Durable RELEASED Scene authority is required before provider scheduling"
+          );
+        }
+
         const acceptedAuth = await acceptRuntimeAuthorizationFactInTransaction(
           tx,
           authFact,

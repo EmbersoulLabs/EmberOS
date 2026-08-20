@@ -21,6 +21,30 @@ describe("EXEC-07 durable staged Scene release", () => {
     expect(source).not.toContain("for (const sceneExecutionId of orderedSceneExecutionIds)");
   });
 
+  it("denies transactional scheduling without an exact durable RELEASED authority", () => {
+    const repository = read("packages/db/src/queries/ai-story-scene-scheduling.ts");
+    const releaseGuard = repository.indexOf("const [releaseAuthority]");
+    const providerExecutionWrite = repository.indexOf("createProviderExecution(", releaseGuard);
+    const outboxWrite = repository.indexOf("createOutboxJobInTransaction", releaseGuard);
+
+    expect(releaseGuard).toBeGreaterThan(-1);
+    expect(repository).toContain("schema.aiStorySceneReleaseStates.releaseState, \"RELEASED\"");
+    expect(repository).toContain("Durable RELEASED Scene authority is required");
+    expect(providerExecutionWrite).toBeGreaterThan(releaseGuard);
+    expect(outboxWrite).toBeGreaterThan(releaseGuard);
+  });
+
+  it("fails before scheduling when release-ledger initialization does not converge", () => {
+    const source = read("packages/agents/src/ai-story/authorize-and-execute-execution-plan.ts");
+    const initialize = source.indexOf("await releases.initialize");
+    const conflict = source.indexOf("STAGED_RELEASE_CONFLICT", initialize);
+    const schedule = source.indexOf("scheduling.scheduleAuthorizedScene", initialize);
+
+    expect(initialize).toBeGreaterThan(-1);
+    expect(conflict).toBeGreaterThan(initialize);
+    expect(schedule).toBeGreaterThan(conflict);
+  });
+
   it("remaining release is server-derived and exact-approval gated", () => {
     const repo = read("packages/db/src/queries/ai-story-scene-release.ts");
     expect(repo).toContain("pg_advisory_xact_lock");
@@ -40,5 +64,16 @@ describe("EXEC-07 durable staged Scene release", () => {
   it("keeps provider routing and unrelated frozen products outside the change", () => {
     const service = read("packages/agents/src/ai-story/release-remaining-scenes.ts");
     expect(service).not.toMatch(/seedance|minimax|photoroom|stripe|quota|publishing/i);
+  });
+
+  it("keeps the production Execute route on the single staged authority", () => {
+    const route = read("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts");
+    const agentsBarrel = read("packages/agents/src/index.ts");
+    const aiStoryBarrel = read("packages/agents/src/ai-story/index.ts");
+
+    expect(route).toContain("authorizeAndExecuteExecutionPlan");
+    expect(agentsBarrel).toContain('export * from "./ai-story"');
+    expect(aiStoryBarrel).toContain('export * from "./authorize-and-execute-execution-plan"');
+    expect(route.match(/authorizeAndExecuteExecutionPlan\(/g)).toHaveLength(1);
   });
 });
