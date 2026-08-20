@@ -27,6 +27,7 @@ import {
   RuntimeAuthorizationPersistenceRepository,
   getDb,
   schema,
+  type ProductionVerificationAuthority,
 } from "@ceo-agent/db";
 import type { ProviderRouter, ProviderRoutingPolicy } from "../provider-router";
 import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
@@ -81,6 +82,8 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
    * explicit non-commercial decision — never inferred from billing failure.
    */
   readonly executionAuthorization?: AiStoryExecutionAuthorization;
+  /** Server-created PROD-VERIFY-01 authority. Never derived from request data. */
+  readonly productionVerification?: ProductionVerificationAuthority;
   readonly loadLatestQc?: (
     executionPlanId: string,
     orderedSceneExecutionIds: readonly string[]
@@ -425,6 +428,7 @@ export async function authorizeAndExecuteExecutionPlan(
         actorUserId: input.actorUserId,
         routingPolicy: input.routingPolicy,
         preferredProviders: input.preferredProviders,
+        productionVerification: input.productionVerification,
       });
       scheduledSceneIds.push(sceneExecutionId);
       // Replayed accepted bundles still count toward scheduledSceneCount.

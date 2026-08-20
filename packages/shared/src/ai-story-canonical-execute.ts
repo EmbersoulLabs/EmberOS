@@ -69,4 +69,8 @@ export const CANONICAL_EXECUTE_FORBIDDEN_BODY_KEYS = [
   "settlementMode",
   "plan",
   "capability",
+  "verify",
+  "verificationMode",
+  "verificationPolicyVersion",
+  "productionVerification",
 ] as const;

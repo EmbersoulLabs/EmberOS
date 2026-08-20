@@ -70,6 +70,7 @@ export type ScheduleAcceptedBundleInput = {
   readonly outboxJob: CreateOutboxJobInput;
   readonly correlation: SceneProviderSchedulingCorrelation;
   readonly scheduledBy: string;
+  readonly productionVerification?: ProductionVerificationAuthority;
   readonly testFailureAfter?:
     | "runtime_authorization"
     | "routing_decision"
@@ -77,6 +78,16 @@ export type ScheduleAcceptedBundleInput = {
     | "outbox"
     | "envelope"
     | "correlation";
+};
+
+export const AI_STORY_PRODUCTION_VERIFICATION_POLICY_VERSION =
+  "ai-story-prod-verify.v1" as const;
+
+export type ProductionVerificationAuthority = {
+  readonly verificationMode: true;
+  readonly verificationPolicyVersion: typeof AI_STORY_PRODUCTION_VERIFICATION_POLICY_VERSION;
+  readonly authorizedBy: "ACTIVE_PLATFORM_ADMIN";
+  readonly createdBy: string;
 };
 
 function failAfterTestStage(
@@ -380,7 +391,54 @@ export class SceneSchedulingRepository {
           input.requestHash
         );
         failAfterTestStage(input, "provider_execution");
-        await this.createOutboxJobInTransaction(tx, input.outboxJob);
+        await this.createOutboxJobInTransaction(
+          tx,
+          input.outboxJob,
+          input.productionVerification
+        );
+        if (input.productionVerification) {
+          const insertedVerification = await tx
+            .insert(schema.aiStoryExecuteVerifications)
+            .values({
+              executionPlanId: plan.id,
+              runtimeAuthorizationId: authFact.runtimeAuthorizationId,
+              sceneExecutionId: scene.id,
+              workspaceId: expected.workspaceId,
+              outboxJobId: input.outboxJob.jobId,
+              verificationMode: true,
+              verificationPolicyVersion:
+                input.productionVerification.verificationPolicyVersion,
+              authorizedBy: input.productionVerification.authorizedBy,
+              createdBy: input.productionVerification.createdBy,
+            })
+            .onConflictDoNothing()
+            .returning();
+          if (!insertedVerification[0]) {
+            const existingVerification = await this.getProductionVerificationInTransaction(
+              tx,
+              plan.id
+            );
+            if (
+              !existingVerification ||
+              existingVerification.runtimeAuthorizationId !==
+                authFact.runtimeAuthorizationId ||
+              existingVerification.sceneExecutionId !== scene.id ||
+              existingVerification.workspaceId !== expected.workspaceId ||
+              existingVerification.outboxJobId !== input.outboxJob.jobId ||
+              existingVerification.verificationMode !== true ||
+              existingVerification.verificationPolicyVersion !==
+                input.productionVerification.verificationPolicyVersion ||
+              existingVerification.authorizedBy !==
+                input.productionVerification.authorizedBy ||
+              existingVerification.createdBy !== input.productionVerification.createdBy
+            ) {
+              throw new SceneSchedulingError(
+                "IDENTITY_CONFLICT",
+                "Production verification identity conflicts with persisted authority"
+              );
+            }
+          }
+        }
         failAfterTestStage(input, "outbox");
         const acceptedEnvelope = await this.insertEnvelope(tx, envelope);
         failAfterTestStage(input, "envelope");
@@ -553,6 +611,10 @@ export class SceneSchedulingRepository {
     });
   }
 
+  async getProductionVerification(executionPlanId: string) {
+    return this.getProductionVerificationInTransaction(this.db, executionPlanId);
+  }
+
   async listSchedulingCompletenessForPlan(
     executionPlanId: string
   ): Promise<ReadonlyMap<string, boolean>> {
@@ -714,7 +776,8 @@ export class SceneSchedulingRepository {
 
   private async createOutboxJobInTransaction(
     tx: Tx,
-    input: CreateOutboxJobInput
+    input: CreateOutboxJobInput,
+    productionVerification?: ProductionVerificationAuthority
   ): Promise<void> {
     const rows = await tx
       .insert(schema.providerOutboxJobs)
@@ -724,6 +787,7 @@ export class SceneSchedulingRepository {
         executionId: input.executionId,
         payloadReference: input.payloadReference,
         correlationId: input.correlationId,
+        status: productionVerification ? "CANCELLED" : "PENDING",
         priority: input.priority ?? 0,
         nextVisibleAt: input.nextVisibleAt ?? new Date(),
       })
@@ -742,7 +806,26 @@ export class SceneSchedulingRepository {
         "Provider execution already owns a different outbox intent"
       );
     }
+    const expectedStatus = productionVerification ? "CANCELLED" : "PENDING";
+    if (existing.status !== expectedStatus) {
+      throw new SceneSchedulingError(
+        "OUTBOX_SCHEDULING_CONFLICT",
+        "Outbox dispatch disposition conflicts with persisted intent"
+      );
+    }
     assertSameOutboxJob(existing, input);
+  }
+
+  private async getProductionVerificationInTransaction(
+    db: Pick<Tx, "select">,
+    executionPlanId: string
+  ) {
+    const [row] = await db
+      .select()
+      .from(schema.aiStoryExecuteVerifications)
+      .where(eq(schema.aiStoryExecuteVerifications.executionPlanId, executionPlanId))
+      .limit(1);
+    return row ?? null;
   }
 
   private async insertEnvelope(tx: Tx, input: ExecutionEnvelope): Promise<ExecutionEnvelope> {

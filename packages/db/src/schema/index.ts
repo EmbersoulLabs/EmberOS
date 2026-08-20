@@ -1457,6 +1457,45 @@ export const aiStorySceneReleaseStates = pgTable(
   ]
 );
 
+/** PROD-VERIFY-01 — explicit, server-authorized no-provider Execute evidence. */
+export const aiStoryExecuteVerifications = pgTable(
+  "ai_story_execute_verifications",
+  {
+    executionPlanId: uuid("execution_plan_id")
+      .primaryKey()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    runtimeAuthorizationId: uuid("runtime_authorization_id")
+      .notNull()
+      .references(() => aiStoryRuntimeAuthorizedFacts.runtimeAuthorizationId, {
+        onDelete: "restrict",
+      }),
+    sceneExecutionId: uuid("scene_execution_id")
+      .notNull()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    outboxJobId: text("outbox_job_id")
+      .notNull()
+      .references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    verificationMode: boolean("verification_mode").notNull().default(true),
+    verificationPolicyVersion: text("verification_policy_version").notNull(),
+    authorizedBy: text("authorized_by").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_execute_verification_outbox_unique").on(t.outboxJobId),
+    unique("ai_story_execute_verification_runtime_auth_unique").on(
+      t.runtimeAuthorizationId
+    ),
+    index("ai_story_execute_verification_workspace_idx").on(
+      t.workspaceId,
+      t.createdAt
+    ),
+  ]
+);
+
 /**
  * Sprint 3 PR 3.2 — immutable Scene routing decisions (fallback disabled).
  */

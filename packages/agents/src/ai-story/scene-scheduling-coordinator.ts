@@ -30,6 +30,7 @@ import {
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
   type CommercialAuthorizationRepository,
+  type ProductionVerificationAuthority,
 } from "@ceo-agent/db";
 import { commercialExecutionIdentityForPlan } from "@ceo-agent/shared/server";
 import {
@@ -115,6 +116,8 @@ export type ScheduleAuthorizedSceneInput = {
    * Values > 1 create a new provider execution of the same frozen Scene.
    */
   readonly retryGeneration?: number;
+  /** Server-only PROD-VERIFY-01 authority; never populated from client input. */
+  readonly productionVerification?: ProductionVerificationAuthority;
 };
 
 export type SceneSchedulingCoordinatorDependencies = {
@@ -126,7 +129,7 @@ export type SceneSchedulingCoordinatorDependencies = {
     | "scheduleAcceptedBundle"
     | "getRoutingDecisionBySceneExecutionId"
     | "getAcceptedBundleBySceneExecutionId"
-  >;
+  > & Partial<Pick<SceneSchedulingRepository, "getProductionVerification">>;
   readonly persistenceRepo?: Pick<
     AiStorySceneExecutionPersistenceRepository,
     "getByExecutionPlanId" | "getValidationResults"
@@ -400,7 +403,7 @@ export class SceneSchedulingCoordinator {
     | "scheduleAcceptedBundle"
     | "getAcceptedBundleBySceneExecutionId"
     | "getRoutingDecisionBySceneExecutionId"
-  >;
+  > & Partial<Pick<SceneSchedulingRepository, "getProductionVerification">>;
   private readonly persistenceRepo: Pick<
     AiStorySceneExecutionPersistenceRepository,
     "getByExecutionPlanId" | "getValidationResults"
@@ -450,6 +453,34 @@ export class SceneSchedulingCoordinator {
             )
           : null;
       if (acceptedBundle) {
+        if (input.productionVerification) {
+          if (!this.schedulingRepo.getProductionVerification) {
+            throw new SceneSchedulingError(
+              "SCENE_SCHEDULING_NOT_ELIGIBLE",
+              "Production verification persistence authority is unavailable"
+            );
+          }
+          const verification = await this.schedulingRepo.getProductionVerification(
+            input.executionPlanId
+          );
+          if (
+            !verification ||
+            verification.outboxJobId !== acceptedBundle.outboxJobId ||
+            verification.runtimeAuthorizationId !== fact.runtimeAuthorizationId ||
+            verification.sceneExecutionId !== input.sceneExecutionId ||
+            verification.workspaceId !== fact.ownership.workspaceId ||
+            verification.verificationMode !== true ||
+            verification.verificationPolicyVersion !==
+              input.productionVerification.verificationPolicyVersion ||
+            verification.authorizedBy !== input.productionVerification.authorizedBy ||
+            verification.createdBy !== input.productionVerification.createdBy
+          ) {
+            throw new SceneSchedulingError(
+              "SCENE_SCHEDULING_NOT_ELIGIBLE",
+              "Accepted schedule is not owned by this production verification authority"
+            );
+          }
+        }
         this.assertAcceptedBundleMatchesInput(acceptedBundle, input, fact);
         return SceneSchedulingBundleSchema.parse({
           ...acceptedBundle,
@@ -670,6 +701,7 @@ export class SceneSchedulingCoordinator {
         },
         correlation,
         scheduledBy: input.actorUserId,
+        productionVerification: input.productionVerification,
       });
 
       return SceneSchedulingBundleSchema.parse({
