@@ -26,6 +26,10 @@ describe("PROD-VERIFY-FIXTURE-01 deterministic server fixture", () => {
     expect(source).toContain("PRODUCTION_CONTROL_PATH_VERIFICATION");
     expect(source).toContain("externalAiCalls: 0");
     expect(source).toContain("generated.sceneExecutionIds.length !== 3");
+    expect(source).toContain("FIXTURE_PNG");
+    expect(source).toContain("persistSameWorkspaceCampaignAssetRef");
+    expect(source).toContain("contentHash");
+    expect(source).toContain("assetReferences: [assetId]");
   });
 
   it("uses production domain persistence, approval, assembly and canonical Execute", () => {

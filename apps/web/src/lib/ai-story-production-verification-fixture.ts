@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
   getDb,
+  persistSameWorkspaceCampaignAssetRef,
   schema,
 } from "@ceo-agent/db";
 import {
@@ -16,16 +17,23 @@ import {
   AnimationPackagePayloadSchema,
   CreativeContextSchema,
   DirectorThinkingSchema,
+  STORAGE_PATHS,
 } from "@ceo-agent/shared";
 import { createAiStoryVersion, freezeAiStoryVersion, setAiStoryStatus } from "@/lib/ai-story-service";
 import { approveAnimationPackage, saveAnimationPackage } from "@/lib/ai-story-planning-service";
 import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
 import { AI_STORY_PRODUCTION_VERIFICATION_POLICY_VERSION } from "@ceo-agent/db";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const AI_STORY_PROD_VERIFY_FIXTURE_VERSION =
   "ai-story-prod-verify-fixture.v1" as const;
 
-function fixturePackage() {
+const FIXTURE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64"
+);
+
+function fixturePackage(assetId: string) {
   const story = {
     title: "R2 Deterministic Verification Story",
     summary: "A three-scene production control-path verification using lilies.",
@@ -40,7 +48,7 @@ function fixturePackage() {
     },
     keyMessages: ["Deterministic production verification"],
     cta: "No customer-facing call to action",
-    assetReferences: [],
+    assetReferences: [assetId],
     warnings: [],
   };
   const creativeContext = CreativeContextSchema.parse({
@@ -149,6 +157,52 @@ export async function createProductionVerificationFixture(input: {
 
   let storyId: string | null = null;
   try {
+    const assetId = randomUUID();
+    const contentHash = createHash("sha256").update(FIXTURE_PNG).digest("hex");
+    const storagePath = STORAGE_PATHS.source(
+      campaign.workspaceId,
+      campaign.id,
+      assetId,
+      "png"
+    );
+    const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
+    const { error: uploadError } = await createAdminClient().storage
+      .from(bucket)
+      .upload(storagePath, FIXTURE_PNG, {
+        contentType: "image/png",
+        upsert: false,
+      });
+    if (uploadError) {
+      throw new Error(`Failed to persist private verification asset: ${uploadError.message}`);
+    }
+    await db.transaction(async (tx) => {
+      await tx.insert(schema.assets).values({
+        id: assetId,
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        campaignId: campaign.id,
+        type: "image",
+        storagePath,
+        mimeType: "image/png",
+        width: 1,
+        height: 1,
+        fileSizeBytes: FIXTURE_PNG.byteLength,
+        contentHash,
+        metadata: {
+          originalFilename: "ai-story-prod-verify-fixture-v1.png",
+          verificationFixture: true,
+          verificationFixtureVersion: AI_STORY_PROD_VERIFY_FIXTURE_VERSION,
+          fixtureRunId: runId,
+          purpose: "PRODUCTION_CONTROL_PATH_VERIFICATION",
+        },
+      });
+      await persistSameWorkspaceCampaignAssetRef(tx, {
+        campaignId: campaign.id,
+        assetId,
+        workspaceId: campaign.workspaceId,
+        orgId: campaign.orgId,
+      });
+    });
     const [story] = await db.insert(schema.aiStories).values({
       orgId: campaign.orgId,
       workspaceId: campaign.workspaceId,
@@ -161,7 +215,7 @@ export async function createProductionVerificationFixture(input: {
     if (!story) throw new Error("Failed to persist verification Story");
     storyId = story.id;
 
-    const payload = fixturePackage();
+    const payload = fixturePackage(assetId);
     const version = await createAiStoryVersion(db, {
       storyId: story.id,
       structuredContent: payload.story,
