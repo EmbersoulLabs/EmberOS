@@ -10,8 +10,13 @@ describe("PROD-VERIFY-FIXTURE-01 deterministic server fixture", () => {
   it("is Platform Admin-only and accepts no arbitrary payload", () => {
     const route = read(routePath);
     expect(route).toContain("requirePlatformAdmin()");
-    expect(route).toContain('raw.trim() !== "{}"');
-    expect(route).not.toMatch(/prompt|provider|model|accessMode|settlementMode/);
+    expect(route).toContain('raw.trim() === "{}"');
+    expect(route).toContain('raw === "confirm=true"');
+    expect(route).toContain("Cross-origin fixture invocation denied");
+    expect(route).toContain("frame-ancestors 'none'");
+    for (const forbiddenField of ["prompt", "provider", "model", "accessMode", "settlementMode"]) {
+      expect(route).not.toContain(`name=\"${forbiddenField}\"`);
+    }
   });
 
   it("uses an explicit versioned three-scene fixture with zero declared AI usage", () => {
