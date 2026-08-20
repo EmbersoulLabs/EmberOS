@@ -294,6 +294,15 @@ describe("EXEC-03 ops execute create + queue", () => {
           return { replayed: false };
         }),
       } as never,
+      sceneReleaseRepository: {
+        initialize: vi.fn(async () => [{
+          sceneExecutionId: SCENE_A,
+          sceneOrder: 1,
+          releaseState: "RELEASED",
+          runtimeAuthorizationId: "10000000-0000-4000-8000-000000000401",
+          workspaceId: OWNERSHIP.workspaceId,
+        }]),
+      } as never,
       commercialAuthorizationService: commercial as never,
       executionAuthorization: opsAdmin,
       loadLatestQc: async () => [

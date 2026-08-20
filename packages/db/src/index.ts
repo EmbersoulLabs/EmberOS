@@ -35,5 +35,6 @@ export * from "./queries/credits";
 export * from "./queries/commercial-authorization";
 export * from "./queries/ai-story-provider-attempt-cost";
 export * from "./queries/ai-story-generated-scene-review";
+export * from "./queries/ai-story-scene-release";
 export * from "./queries/campaign-asset-refs";
 export * from "./queries/admin-runtime-operations";

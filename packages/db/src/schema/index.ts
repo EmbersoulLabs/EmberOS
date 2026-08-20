@@ -1422,6 +1422,41 @@ export const aiStoryRuntimeAuthorizedFacts = pgTable(
   ]
 );
 
+/** EXEC-07 — durable separation between plan authorization and provider release. */
+export const aiStorySceneReleaseStates = pgTable(
+  "ai_story_scene_release_states",
+  {
+    sceneExecutionId: uuid("scene_execution_id")
+      .primaryKey()
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id")
+      .notNull()
+      .references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    runtimeAuthorizationId: uuid("runtime_authorization_id")
+      .notNull()
+      .references(() => aiStoryRuntimeAuthorizedFacts.runtimeAuthorizationId, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    sceneOrder: integer("scene_order").notNull(),
+    releaseState: text("release_state").notNull(),
+    releaseStage: integer("release_stage"),
+    releasedBy: uuid("released_by"),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    gateSceneExecutionId: uuid("gate_scene_execution_id")
+      .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    gateProviderAttemptId: text("gate_provider_attempt_id"),
+    gateSceneResultId: uuid("gate_scene_result_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_release_plan_order_unique").on(t.executionPlanId, t.sceneOrder),
+    index("ai_story_scene_release_plan_idx").on(t.executionPlanId, t.sceneOrder),
+    index("ai_story_scene_release_workspace_idx").on(t.workspaceId, t.createdAt),
+  ]
+);
+
 /**
  * Sprint 3 PR 3.2 — immutable Scene routing decisions (fallback disabled).
  */

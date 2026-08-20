@@ -14,6 +14,7 @@ import {
   StoryRuntimeClientError,
   getProductRuntimeProjection,
   postCanonicalExecute,
+  postReleaseRemainingScenes,
 } from "@/lib/ai-story-runtime-client";
 import {
   PRODUCT_RUNTIME_POLL_INTERVAL_MS,
@@ -44,6 +45,7 @@ export function StoryRuntimePanel({
   const [projection, setProjection] = useState<ProductRuntimeProjection | null>(null);
   const [loading, setLoading] = useState(true);
   const [executing, setExecuting] = useState(false);
+  const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const executeInFlight = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -128,6 +130,17 @@ export function StoryRuntimePanel({
     }
   }
 
+  async function onReleaseRemaining() {
+    if (!projection?.remainingReleasePermitted || releasing) return;
+    setReleasing(true); setError(null);
+    try {
+      await postReleaseRemainingScenes({ campaignId, storyId, executionPlanId });
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Release remaining scenes failed");
+    } finally { setReleasing(false); }
+  }
+
   const statusLabel = t(statusKey(projection?.status));
   const canExecute =
     showExecuteChrome && Boolean(projection?.canExecute) && !executing && !loading;
@@ -198,6 +211,12 @@ export function StoryRuntimePanel({
                 ? t("aiStory.runtime.executing")
                 : t("aiStory.runtime.execute")}
             </button>
+            {projection?.remainingReleasePermitted ? (
+              <button type="button" disabled={releasing} onClick={() => void onReleaseRemaining()}
+                className="brand-btn-primary" data-testid="release-remaining-scenes">
+                {releasing ? "Releasing…" : "Release remaining scenes"}
+              </button>
+            ) : null}
           </div>
         ) : (
           <p className="text-xs text-ink-secondary" data-testid="viewer-execute-hidden">
@@ -212,6 +231,14 @@ export function StoryRuntimePanel({
           >
             {projection.safeFailureSummary ?? t("aiStory.runtime.reconciliation")}
           </div>
+        ) : null}
+
+        {(projection?.heldSceneCount ?? 0) > 0 ? (
+          <p className="text-sm text-ink-secondary" data-testid="held-scenes-status">
+            {projection?.remainingReleasePermitted
+              ? `${projection.heldSceneCount} remaining scene(s) ready for operator release`
+              : `${projection?.heldSceneCount} scene(s) waiting for first-scene approval`}
+          </p>
         ) : null}
 
         {projection?.status === "SCENES_FAILED" ||

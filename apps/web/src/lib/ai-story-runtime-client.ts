@@ -79,6 +79,14 @@ export async function postCanonicalExecute(input: {
   return { ...(body as CanonicalExecuteResponse), httpStatus: res.status };
 }
 
+export async function postReleaseRemainingScenes(input: {
+  campaignId: string; storyId: string; executionPlanId: string;
+}): Promise<void> {
+  await requestJson(plansBase(input.campaignId, input.storyId, input.executionPlanId) + "/release-remaining-scenes", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+  });
+}
+
 export async function postGeneratedSceneReviewDecision(input: {
   campaignId: string;
   storyId: string;

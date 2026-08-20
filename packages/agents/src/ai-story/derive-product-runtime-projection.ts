@@ -23,6 +23,7 @@ import {
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
   FinalStoryResultRepositoryImpl,
+  AiStorySceneReleaseRepository,
   RuntimeAuthorizationPersistenceRepository,
   reconstructAiStoryProviderSpendForPlan,
   getDb,
@@ -208,6 +209,7 @@ export async function deriveProductRuntimeProjection(
   const validation = new AssemblyValidationRepositoryImpl();
   const jobRepo = new AssemblyJobRepositoryImpl();
   const fsrRepo = new FinalStoryResultRepositoryImpl();
+  const releaseRepo = new AiStorySceneReleaseRepository();
 
   const [review, assembly, authFact, fsr, compilation] = await Promise.all([
     reviewRepo.getLogicalProjection(executionPlanId),
@@ -261,6 +263,16 @@ export async function deriveProductRuntimeProjection(
   const approvedSceneCount = generatedSceneReviews.filter(
     (row) => row.reviewState === "APPROVED"
   ).length;
+  const releaseRows = authFact ? await releaseRepo.list(executionPlanId) : [];
+  const sceneReleaseStates = releaseRows.map((row) => ({
+    sceneExecutionId: row.sceneExecutionId,
+    sceneOrder: row.sceneOrder,
+    releaseState: row.releaseState === "RELEASED" ? "RELEASED" as const : "AUTHORIZED_NOT_RELEASED" as const,
+  }));
+  const heldSceneCount = sceneReleaseStates.filter((row) => row.releaseState === "AUTHORIZED_NOT_RELEASED").length;
+  const firstSceneId = sceneReleaseStates.find((row) => row.sceneOrder === 1)?.sceneExecutionId;
+  const firstApproved = generatedSceneReviews.some((row) => row.sceneExecutionId === firstSceneId && row.reviewState === "APPROVED");
+  const remainingReleasePermitted = Boolean(authFact && heldSceneCount > 0 && firstApproved);
   const runningSceneCount = generatedSceneReviews.filter((row) => row.running).length;
 
   const terminalSceneExecutionIds = new Set(
@@ -343,6 +355,9 @@ export async function deriveProductRuntimeProjection(
     generatedSceneReviews,
     pendingReviewSceneCount,
     approvedSceneCount,
+    sceneReleaseStates,
+    remainingReleasePermitted,
+    heldSceneCount,
     derivedAt,
   });
 }

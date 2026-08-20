@@ -21,6 +21,7 @@ import {
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStorySceneReleaseRepository,
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
   RuntimeAuthorizationPersistenceRepository,
@@ -72,6 +73,7 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
   readonly assemblyRepository?: ExecutionPlanAssemblyRepository;
   readonly persistenceRepository?: AiStorySceneExecutionPersistenceRepository;
   readonly schedulingCoordinator?: SceneSchedulingCoordinator;
+  readonly sceneReleaseRepository?: AiStorySceneReleaseRepository;
   readonly commercialAuthorizationService?: CommercialAuthorizationService;
   /**
    * EXEC-03 product authorization decision. When omitted, Execute keeps the
@@ -378,9 +380,37 @@ export async function authorizeAndExecuteExecutionPlan(
     }
   }
 
+  const releases = input.sceneReleaseRepository ?? new AiStorySceneReleaseRepository();
+  const releaseRows = await releases.initialize({
+    executionPlanId: input.executionPlanId,
+    runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
+    workspaceId: input.ownership.workspaceId,
+    orderedSceneExecutionIds,
+    actorUserId: input.actorUserId,
+    releasedAt: now(),
+  });
+  const initialScene = releaseRows.find(
+    (row) => row.sceneOrder === 1 && row.releaseState === "RELEASED"
+  );
+  const releaseLedgerMatchesAuthorization =
+    releaseRows.length === orderedSceneExecutionIds.length &&
+    releaseRows.every((row, index) =>
+      row.sceneOrder === index + 1 &&
+      row.sceneExecutionId === orderedSceneExecutionIds[index] &&
+      row.runtimeAuthorizationId === accepted.fact.runtimeAuthorizationId &&
+      row.workspaceId === input.ownership.workspaceId
+    );
+  if (!releaseLedgerMatchesAuthorization || !initialScene || initialScene.sceneExecutionId !== orderedSceneExecutionIds[0]) {
+    throw new CanonicalExecuteError(
+      "STAGED_RELEASE_CONFLICT",
+      "Durable initial Scene release does not match Assembly ordering",
+      409
+    );
+  }
+
   const scheduledSceneIds: string[] = [];
   let anyNewSchedule = false;
-  for (const sceneExecutionId of orderedSceneExecutionIds) {
+  for (const sceneExecutionId of [initialScene.sceneExecutionId]) {
     try {
       const bundle = await scheduling.scheduleAuthorizedScene({
         executionPlanId: input.executionPlanId,

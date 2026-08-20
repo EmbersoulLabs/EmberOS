@@ -99,6 +99,13 @@ export const ProductRuntimeProjectionSchema = z.object({
   generatedSceneReviews: z.array(GeneratedSceneReviewReadModelSchema).optional(),
   pendingReviewSceneCount: z.number().int().nonnegative().optional(),
   approvedSceneCount: z.number().int().nonnegative().optional(),
+  sceneReleaseStates: z.array(z.object({
+    sceneExecutionId: z.string().uuid(),
+    sceneOrder: z.number().int().positive(),
+    releaseState: z.enum(["AUTHORIZED_NOT_RELEASED", "RELEASED"]),
+  })).optional(),
+  remainingReleasePermitted: z.boolean().optional(),
+  heldSceneCount: z.number().int().nonnegative().optional(),
   derivedAt: z.string().datetime(),
 });
 
