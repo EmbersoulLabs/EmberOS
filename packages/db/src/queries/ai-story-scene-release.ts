@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "../client";
 
 export type AiStorySceneReleaseState = "AUTHORIZED_NOT_RELEASED" | "RELEASED";
@@ -51,8 +51,36 @@ export class AiStorySceneReleaseRepository {
         .where(and(eq(schema.aiStoryGeneratedSceneReviews.sceneExecutionId, first.sceneExecutionId), eq(schema.aiStoryGeneratedSceneReviews.decision, "APPROVED"))).limit(1);
       if (!approved || !approved.sceneResultId || !approved.providerAttemptId) throw new Error("FIRST_SCENE_EXACT_APPROVAL_REQUIRED");
       const [result] = await tx.select().from(schema.aiStorySceneResults)
-        .where(and(eq(schema.aiStorySceneResults.sceneResultId, approved.sceneResultId), eq(schema.aiStorySceneResults.sceneExecutionId, first.sceneExecutionId), eq(schema.aiStorySceneResults.status, "SUCCEEDED"))).limit(1);
+        .where(and(
+          eq(schema.aiStorySceneResults.sceneResultId, approved.sceneResultId),
+          eq(schema.aiStorySceneResults.sceneExecutionId, first.sceneExecutionId),
+          eq(schema.aiStorySceneResults.providerAttemptId, approved.providerAttemptId),
+          eq(schema.aiStorySceneResults.status, "SUCCEEDED")
+        )).limit(1);
       if (!result) throw new Error("FIRST_SCENE_DURABLE_RESULT_REQUIRED");
+      const [attempt] = await tx.select().from(schema.providerAttempts)
+        .where(and(
+          eq(schema.providerAttempts.attemptId, approved.providerAttemptId),
+          eq(schema.providerAttempts.status, "SUCCEEDED")
+        )).limit(1);
+      if (!attempt || attempt.executionId !== result.providerExecutionId) {
+        throw new Error("FIRST_SCENE_EXACT_ATTEMPT_REQUIRED");
+      }
+      const correlations = await tx.select().from(schema.aiStorySceneSchedulingCorrelations)
+        .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, first.sceneExecutionId));
+      if (!correlations.some((row) => row.providerExecutionId === attempt.executionId)) {
+        throw new Error("FIRST_SCENE_EXACT_ATTEMPT_REQUIRED");
+      }
+      const executionIds = correlations.map((row) => row.providerExecutionId);
+      const executions = executionIds.length === 0 ? [] : await tx.select()
+        .from(schema.providerExecutions)
+        .where(inArray(schema.providerExecutions.executionId, executionIds));
+      if (
+        executions.length !== executionIds.length ||
+        executions.some((row) => row.status !== "SUCCEEDED" && row.status !== "TERMINAL_FAILURE")
+      ) {
+        throw new Error("FIRST_SCENE_RETRY_OR_EXECUTION_IN_FLIGHT");
+      }
       const held = rows.filter((row) => row.sceneOrder > 1 && row.releaseState === "AUTHORIZED_NOT_RELEASED");
       if (held.length === 0) return [];
       const ids: string[] = [];

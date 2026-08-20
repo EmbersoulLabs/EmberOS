@@ -27,6 +27,10 @@ describe("EXEC-07 durable staged Scene release", () => {
     expect(repo).toContain('decision, "APPROVED"');
     expect(repo).toContain('status, "SUCCEEDED"');
     expect(repo).toContain("gateProviderAttemptId");
+    expect(repo).toContain("FIRST_SCENE_EXACT_ATTEMPT_REQUIRED");
+    expect(repo).toContain("FIRST_SCENE_RETRY_OR_EXECUTION_IN_FLIGHT");
+    expect(repo).toContain("providerAttempts.attemptId");
+    expect(repo).toContain("result.providerExecutionId");
     const route = read("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/release-remaining-scenes/route.ts");
     expect(route).toContain("resolveAuthorizedExecutionPlan");
     expect(route).toContain("authorizeAiStoryExecution");
