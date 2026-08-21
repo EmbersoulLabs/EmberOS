@@ -8,7 +8,7 @@
  * Cross-tenant / unauthorized access → 403 (*_OWNERSHIP_INVALID codes at call sites)
  * Ownership drift / column mismatch → OWNERSHIP_INTEGRITY_VIOLATION (409)
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb, schema } from "../client";
 
 type Db = ReturnType<typeof getDb>;
@@ -153,6 +153,69 @@ export async function assertExecutionPlanOwnershipChain(
     .limit(1);
 
   if (!organization || !workspace || !campaign || !story || !version || !animationPackage) {
+    throw new OwnershipIntegrityViolationError(
+      "Execution Plan ownership chain does not resolve to Organization → Workspace → Campaign → Story → Story Version → Animation Package"
+    );
+  }
+}
+
+/**
+ * Runtime-authorization hot path ownership proof.
+ *
+ * The general ownership helper above intentionally keeps each authority check
+ * explicit. Fresh RuntimeAuthorizedFact issuance, however, runs under one
+ * max-one-pool transaction and must not spend six network round trips proving
+ * the same immutable chain. This equivalent predicate is evaluated by
+ * Postgres in one statement on the caller's transaction connection.
+ */
+export async function assertExecutionPlanOwnershipChainInSingleQuery(
+  plan: {
+    readonly id: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+    readonly animationPackageId: string;
+  },
+  db: QueryDb
+): Promise<void> {
+  const [row] = await db.execute<{ valid: boolean }>(sql`
+    select (
+      exists (
+        select 1 from ${schema.organizations} o
+        where o.id = ${plan.orgId}::uuid
+      ) and exists (
+        select 1 from ${schema.workspaces} w
+        where w.id = ${plan.workspaceId}::uuid
+          and w.org_id = ${plan.orgId}::uuid
+      ) and exists (
+        select 1 from ${schema.campaigns} c
+        where c.id = ${plan.campaignId}::uuid
+          and c.workspace_id = ${plan.workspaceId}::uuid
+          and c.org_id = ${plan.orgId}::uuid
+      ) and exists (
+        select 1 from ${schema.aiStories} s
+        where s.id = ${plan.storyId}::uuid
+          and s.campaign_id = ${plan.campaignId}::uuid
+          and s.workspace_id = ${plan.workspaceId}::uuid
+          and s.org_id = ${plan.orgId}::uuid
+      ) and exists (
+        select 1 from ${schema.aiStoryVersions} v
+        where v.id = ${plan.storyVersionId}::uuid
+          and v.story_id = ${plan.storyId}::uuid
+      ) and exists (
+        select 1 from ${schema.aiStoryAnimationPackages} p
+        where p.id = ${plan.animationPackageId}::uuid
+          and p.story_id = ${plan.storyId}::uuid
+          and p.story_version_id = ${plan.storyVersionId}::uuid
+          and p.campaign_id = ${plan.campaignId}::uuid
+          and p.workspace_id = ${plan.workspaceId}::uuid
+          and p.org_id = ${plan.orgId}::uuid
+      )
+    ) as valid
+  `);
+  if (!row?.valid) {
     throw new OwnershipIntegrityViolationError(
       "Execution Plan ownership chain does not resolve to Organization → Workspace → Campaign → Story → Story Version → Animation Package"
     );
