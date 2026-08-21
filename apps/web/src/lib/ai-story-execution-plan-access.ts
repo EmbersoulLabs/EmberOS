@@ -44,6 +44,8 @@ export type AuthorizedExecutionPlanContext = {
   readonly orgId: string;
   readonly workspaceId: string;
   readonly storyTitle: string;
+  readonly storyStatus: string;
+  readonly verificationFixture: boolean;
   readonly plan: typeof schema.aiStoryExecutionPlans.$inferSelect;
 };
 
@@ -115,6 +117,9 @@ export async function resolveAuthorizedExecutionPlan(input: {
     orgId: plan.orgId,
     workspaceId: plan.workspaceId,
     storyTitle: loaded.story.title,
+    storyStatus: loaded.story.status,
+    verificationFixture:
+      loaded.currentVersion?.sourceContextSnapshot?.verificationFixture === true,
     plan,
   };
 }

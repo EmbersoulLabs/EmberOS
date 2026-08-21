@@ -82,6 +82,14 @@ export async function POST(request: Request, { params }: RouteParams) {
       minRole: "operator",
     });
 
+    if (ctx.verificationFixture) {
+      return apiError(
+        "Production verification fixtures require the server-only verification authority",
+        "AI_STORY_PRODUCTION_VERIFICATION_REQUIRED",
+        403
+      );
+    }
+
     const executionAuthorization = await authorizeAiStoryExecution({
       user,
       orgId: ctx.orgId,

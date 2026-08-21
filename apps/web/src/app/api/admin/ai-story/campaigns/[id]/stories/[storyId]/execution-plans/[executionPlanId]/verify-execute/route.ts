@@ -55,6 +55,13 @@ export async function POST(request: Request, { params }: RouteParams) {
       executionPlanId,
       minRole: "operator",
     });
+    if (!ctx.verificationFixture || ctx.storyStatus !== "ready_for_execution") {
+      return apiError(
+        "Production verification fixture is incomplete",
+        "AI_STORY_PRODUCTION_VERIFICATION_INCOMPLETE",
+        409
+      );
+    }
     const executionAuthorization = await authorizeAiStoryExecution({
       user,
       orgId: ctx.orgId,

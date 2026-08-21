@@ -1,7 +1,11 @@
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError } from "@/lib/auth";
 import { requirePlatformAdmin } from "@/lib/platform-admin-auth";
-import { createProductionVerificationFixture } from "@/lib/ai-story-production-verification-fixture";
+import {
+  createProductionVerificationFixture,
+  runProductionVerificationStep,
+  type ProductionVerificationStepTiming,
+} from "@/lib/ai-story-production-verification-fixture";
 
 function operatorPage(campaignId: string) {
   const action = `/api/admin/ai-story/campaigns/${campaignId}/production-verification-fixture`;
@@ -29,8 +33,13 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const stepTimings: ProductionVerificationStepTiming[] = [];
   try {
-    const { user } = await requirePlatformAdmin();
+    const { user } = await runProductionVerificationStep(
+      "platform_admin_authority",
+      () => requirePlatformAdmin(),
+      { timings: stepTimings }
+    );
     const url = new URL(request.url);
     const origin = request.headers.get("origin");
     if (origin && origin !== url.origin) {
@@ -46,7 +55,11 @@ export async function POST(
       return apiError("Verification fixture accepts an empty object body only", "VALIDATION_ERROR", 422);
     }
     const { id: campaignId } = await params;
-    const result = await createProductionVerificationFixture({ campaignId, user });
+    const result = await createProductionVerificationFixture({
+      campaignId,
+      user,
+      stepTimings,
+    });
     return apiSuccess(result, 201);
   } catch (error) {
     return handleApiError(error);

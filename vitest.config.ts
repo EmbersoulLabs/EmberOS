@@ -40,6 +40,10 @@ export default defineConfig({
         "packages/agents/src/commercial/index.ts"
       ),
       "@ceo-agent/agents": path.resolve(__dirname, "packages/agents/src/index.ts"),
+      "@ceo-agent/queue/copy-cache": path.resolve(
+        __dirname,
+        "packages/queue/src/copy-cache.ts"
+      ),
       "@ceo-agent/queue": path.resolve(__dirname, "packages/queue/src/index.ts"),
     },
   },
