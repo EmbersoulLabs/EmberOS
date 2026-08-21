@@ -611,22 +611,25 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
     return [...verified.memberships];
   }
 
-  async getProjection(executionPlanId: string): Promise<AssemblyProjection | null> {
-    const plan = await this.requirePlanOrNull(executionPlanId, this.db);
+  async getProjection(
+    executionPlanId: string,
+    db: QueryDb = this.db
+  ): Promise<AssemblyProjection | null> {
+    const plan = await this.requirePlanOrNull(executionPlanId, db);
     if (!plan) return null;
 
-    const verified = await this.loadVerifiedAssemblyByPlanId(executionPlanId, this.db);
+    const verified = await this.loadVerifiedAssemblyByPlanId(executionPlanId, db);
     const definition = verified?.definition ?? null;
     const memberships = verified?.memberships ?? [];
 
-    const sceneRows = await this.db
+    const sceneRows = await db
       .select({ id: schema.aiStorySceneExecutions.id })
       .from(schema.aiStorySceneExecutions)
       .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
       .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder));
     const requiredIds = sceneRows.map((row) => row.id);
 
-    const reviewApproved = await this.isReviewApproved(executionPlanId, this.db);
+    const reviewApproved = await this.isReviewApproved(executionPlanId, db);
     // Projection ordering and counts are derived only from relational membership rows.
     const orderedSceneExecutionIds = memberships.map(
       (membership) => membership.sceneExecutionId

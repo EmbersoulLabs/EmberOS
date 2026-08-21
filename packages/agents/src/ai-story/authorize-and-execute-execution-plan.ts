@@ -28,6 +28,8 @@ import {
   getDb,
   schema,
   type ProductionVerificationAuthority,
+  type QueryDb,
+  type RuntimeAuthorizationPersistenceTimings,
 } from "@ceo-agent/db";
 import type { ProviderRouter, ProviderRoutingPolicy } from "../provider-router";
 import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
@@ -84,6 +86,15 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
   readonly executionAuthorization?: AiStoryExecutionAuthorization;
   /** Server-created PROD-VERIFY-01 authority. Never derived from request data. */
   readonly productionVerification?: ProductionVerificationAuthority;
+  /**
+   * Canonical transaction authority for compilation/review/assembly/QC reads
+   * through RuntimeAuthorizedFact acceptance. Production defaults to getDb().transaction;
+   * tests may inject an equivalent max-one-pool transaction runner.
+   */
+  readonly runtimeAuthorizationTransaction?: RuntimeAuthorizationTransactionRunner;
+  readonly observeRuntimeAuthorizationBoundary?: (
+    timings: RuntimeAuthorizationBoundaryTimings
+  ) => void;
   readonly loadLatestQc?: (
     executionPlanId: string,
     orderedSceneExecutionIds: readonly string[]
@@ -106,6 +117,22 @@ export type AuthorizeAndExecuteExecutionPlanResult = {
 export function enterCanonicalProductExecutePath(): void {
   // Intentional no-op: this call site is the sole selective product Execute gate.
 }
+
+export type RuntimeAuthorizationBoundaryTimings = {
+  readonly authEvaluationMs: number;
+  readonly authorizedFactLookupMs: number;
+  readonly authorizedFactWriteMs: number;
+  readonly executionAuthorizationWriteMs: number;
+  readonly commitMs: number;
+};
+
+type RuntimeAuthorizationTransactionDb = Parameters<
+  Parameters<ReturnType<typeof getDb>["transaction"]>[0]
+>[0];
+
+export type RuntimeAuthorizationTransactionRunner = <T>(
+  operation: (tx: RuntimeAuthorizationTransactionDb) => Promise<T>
+) => Promise<T>;
 
 function deriveReady(input: {
   readonly reviewStatus: string;
@@ -137,9 +164,9 @@ function mapQcStatus(
 
 async function loadLatestQcByScene(
   executionPlanId: string,
-  orderedSceneExecutionIds: readonly string[]
+  orderedSceneExecutionIds: readonly string[],
+  db: QueryDb = getDb()
 ): Promise<RuntimeAuthorizationQcInput[]> {
-  const db = getDb();
   const rows = await db
     .select()
     .from(schema.aiStorySceneIntentValidationResults)
@@ -211,116 +238,6 @@ export async function authorizeAndExecuteExecutionPlan(
     new CommercialAuthorizationService();
   const now = input.now ?? (() => new Date());
 
-  const persisted = await persistence.getByExecutionPlanId(input.executionPlanId);
-  if (!persisted) {
-    throw new CanonicalExecuteError(
-      "EXECUTE_NOT_READY",
-      "Execution Plan compilation is missing",
-      409
-    );
-  }
-
-  const review = await reviewRepo.getLogicalProjection(input.executionPlanId);
-  if (!review) {
-    throw new CanonicalExecuteError(
-      "EXECUTE_NOT_READY",
-      "Review projection is missing",
-      409
-    );
-  }
-  if (review.status === "REJECTED") {
-    throw new CanonicalExecuteError(
-      "EXECUTE_REVIEW_REJECTED",
-      "Human Review is REJECTED; Execute is denied",
-      409
-    );
-  }
-  if (review.status !== "APPROVED" || !review.storyDecision) {
-    throw new CanonicalExecuteError(
-      "EXECUTE_REVIEW_NOT_APPROVED",
-      "Human Review must be APPROVED before Execute",
-      409
-    );
-  }
-
-  const assembly = await assemblyRepo.getProjection(input.executionPlanId);
-  if (!assembly?.definition) {
-    throw new CanonicalExecuteError(
-      "EXECUTE_ASSEMBLY_MISSING",
-      "Assembly Definition is required before Execute",
-      409
-    );
-  }
-  const prerequisites = assembly.prerequisites;
-  if (!prerequisites.membershipComplete || !prerequisites.orderingDeterministic) {
-    throw new CanonicalExecuteError(
-      "EXECUTE_ASSEMBLY_INVALID",
-      "Assembly Definition memberships are incomplete or non-deterministic",
-      409
-    );
-  }
-
-  const orderedSceneExecutionIds = [
-    ...assembly.definition.orderedSceneExecutionIds,
-  ];
-  if (orderedSceneExecutionIds.length === 0) {
-    throw new CanonicalExecuteError(
-      "EXECUTE_ASSEMBLY_INVALID",
-      "Assembly Definition has no ordered scenes",
-      409
-    );
-  }
-
-  const qcResults = await (input.loadLatestQc ?? loadLatestQcByScene)(
-    input.executionPlanId,
-    orderedSceneExecutionIds
-  );
-  const scenesHaveNonBlockingQc = qcResults.every((row) => row.status !== "failed");
-  if (!scenesHaveNonBlockingQc) {
-    throw new CanonicalExecuteError(
-      "EXECUTE_QC_BLOCKED",
-      "QC blockers prevent Execute",
-      409
-    );
-  }
-
-  const derivedReadiness = deriveReady({
-    reviewStatus: review.status,
-    hasDefinition: prerequisites.hasDefinition,
-    membershipComplete: prerequisites.membershipComplete,
-    orderingDeterministic: prerequisites.orderingDeterministic,
-    scenesHaveNonBlockingQc,
-  });
-  if (derivedReadiness !== "READY_FOR_EXECUTION") {
-    throw new CanonicalExecuteError(
-      "EXECUTE_NOT_READY",
-      "Execution Plan is NOT_READY for Execute",
-      409
-    );
-  }
-
-  let issued;
-  try {
-    issued = authService.authorize({
-      ownership: input.ownership,
-      reviewDecisionId: review.storyDecision.factId,
-      reviewHash: review.storyDecision.deterministicFingerprint,
-      reviewDecision: "APPROVED",
-      assemblyDefinitionId: assembly.definition.assemblyDefinitionId,
-      assemblyHash: assembly.definition.deterministicFingerprint,
-      orderedSceneExecutionIds,
-      qcResults,
-      authorizedBy: input.actorUserId,
-      authorizedAt: now().toISOString(),
-      derivedReadiness: "READY_FOR_EXECUTION",
-    });
-  } catch (error) {
-    if (error instanceof RuntimeAuthorizationError) {
-      throw new CanonicalExecuteError(error.code, error.message, error.status);
-    }
-    throw error;
-  }
-
   const executionAuthorization = input.executionAuthorization ?? null;
   if (
     executionAuthorization &&
@@ -333,32 +250,212 @@ export async function authorizeAndExecuteExecutionPlan(
       403
     );
   }
-  const factToPersist = executionAuthorization
-    ? {
-        ...issued.fact,
-        executionAuthorization:
-          toAiStoryExecutionAuthorizationEvidence(executionAuthorization),
-      }
-    : issued.fact;
+  const persistenceTimings: RuntimeAuthorizationPersistenceTimings = {
+    authorizedFactLookupMs: 0,
+    authorizedFactWriteMs: 0,
+  };
+  let authEvaluationMs = 0;
 
-  let accepted;
-  try {
-    accepted = await authRepo.acceptOrReturn(factToPersist);
-  } catch (error) {
-    if (
-      error &&
-      typeof error === "object" &&
-      "code" in error &&
-      typeof (error as { code: unknown }).code === "string"
-    ) {
+  const evaluateAndPersistRuntimeAuthorization = async (
+    dbAuthority?: QueryDb
+  ) => {
+    const persisted = await persistence.getByExecutionPlanId(
+      input.executionPlanId,
+      dbAuthority
+    );
+    if (!persisted) {
       throw new CanonicalExecuteError(
-        (error as { code: string }).code,
-        error instanceof Error ? error.message : "Runtime authorization conflict",
+        "EXECUTE_NOT_READY",
+        "Execution Plan compilation is missing",
         409
       );
     }
-    throw error;
+
+    const review = await reviewRepo.getLogicalProjection(
+      input.executionPlanId,
+      dbAuthority
+    );
+    if (!review) {
+      throw new CanonicalExecuteError(
+        "EXECUTE_NOT_READY",
+        "Review projection is missing",
+        409
+      );
+    }
+    if (review.status === "REJECTED") {
+      throw new CanonicalExecuteError(
+        "EXECUTE_REVIEW_REJECTED",
+        "Human Review is REJECTED; Execute is denied",
+        409
+      );
+    }
+    if (review.status !== "APPROVED" || !review.storyDecision) {
+      throw new CanonicalExecuteError(
+        "EXECUTE_REVIEW_NOT_APPROVED",
+        "Human Review must be APPROVED before Execute",
+        409
+      );
+    }
+
+    const assembly = await assemblyRepo.getProjection(
+      input.executionPlanId,
+      dbAuthority
+    );
+    if (!assembly?.definition) {
+      throw new CanonicalExecuteError(
+        "EXECUTE_ASSEMBLY_MISSING",
+        "Assembly Definition is required before Execute",
+        409
+      );
+    }
+    const prerequisites = assembly.prerequisites;
+    if (!prerequisites.membershipComplete || !prerequisites.orderingDeterministic) {
+      throw new CanonicalExecuteError(
+        "EXECUTE_ASSEMBLY_INVALID",
+        "Assembly Definition memberships are incomplete or non-deterministic",
+        409
+      );
+    }
+
+    const orderedSceneExecutionIds = [
+      ...assembly.definition.orderedSceneExecutionIds,
+    ];
+    if (orderedSceneExecutionIds.length === 0) {
+      throw new CanonicalExecuteError(
+        "EXECUTE_ASSEMBLY_INVALID",
+        "Assembly Definition has no ordered scenes",
+        409
+      );
+    }
+
+    const qcResults = input.loadLatestQc
+      ? await input.loadLatestQc(input.executionPlanId, orderedSceneExecutionIds)
+      : await loadLatestQcByScene(
+          input.executionPlanId,
+          orderedSceneExecutionIds,
+          dbAuthority
+        );
+    const scenesHaveNonBlockingQc = qcResults.every((row) => row.status !== "failed");
+    if (!scenesHaveNonBlockingQc) {
+      throw new CanonicalExecuteError(
+        "EXECUTE_QC_BLOCKED",
+        "QC blockers prevent Execute",
+        409
+      );
+    }
+
+    const derivedReadiness = deriveReady({
+      reviewStatus: review.status,
+      hasDefinition: prerequisites.hasDefinition,
+      membershipComplete: prerequisites.membershipComplete,
+      orderingDeterministic: prerequisites.orderingDeterministic,
+      scenesHaveNonBlockingQc,
+    });
+    if (derivedReadiness !== "READY_FOR_EXECUTION") {
+      throw new CanonicalExecuteError(
+        "EXECUTE_NOT_READY",
+        "Execution Plan is NOT_READY for Execute",
+        409
+      );
+    }
+
+    let issued;
+    const authEvaluationStartedAt = performance.now();
+    try {
+      issued = authService.authorize({
+        ownership: input.ownership,
+        reviewDecisionId: review.storyDecision.factId,
+        reviewHash: review.storyDecision.deterministicFingerprint,
+        reviewDecision: "APPROVED",
+        assemblyDefinitionId: assembly.definition.assemblyDefinitionId,
+        assemblyHash: assembly.definition.deterministicFingerprint,
+        orderedSceneExecutionIds,
+        qcResults,
+        authorizedBy: input.actorUserId,
+        authorizedAt: now().toISOString(),
+        derivedReadiness: "READY_FOR_EXECUTION",
+      });
+    } catch (error) {
+      if (error instanceof RuntimeAuthorizationError) {
+        throw new CanonicalExecuteError(error.code, error.message, error.status);
+      }
+      throw error;
+    } finally {
+      authEvaluationMs += performance.now() - authEvaluationStartedAt;
+    }
+
+    const factToPersist = executionAuthorization
+      ? {
+          ...issued.fact,
+          executionAuthorization:
+            toAiStoryExecutionAuthorizationEvidence(executionAuthorization),
+        }
+      : issued.fact;
+
+    try {
+      const accepted = dbAuthority
+        ? await authRepo.acceptOrReturnInTransaction(
+            factToPersist,
+            dbAuthority as RuntimeAuthorizationTransactionDb,
+            persistenceTimings
+          )
+        : await authRepo.acceptOrReturn(factToPersist);
+      return { accepted, orderedSceneExecutionIds };
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        typeof (error as { code: unknown }).code === "string"
+      ) {
+        throw new CanonicalExecuteError(
+          (error as { code: string }).code,
+          error instanceof Error ? error.message : "Runtime authorization conflict",
+          409
+        );
+      }
+      throw error;
+    }
+  };
+
+  const defaultDbRepositories =
+    !input.persistenceRepository &&
+    !input.reviewRepository &&
+    !input.assemblyRepository &&
+    !input.authorizationRepository &&
+    !input.loadLatestQc;
+  const useCanonicalTransaction =
+    Boolean(input.runtimeAuthorizationTransaction) || defaultDbRepositories;
+  let commitMs = 0;
+  let transactionBodyCompletedAt = 0;
+  let boundary;
+  if (useCanonicalTransaction) {
+    const runTransaction = input.runtimeAuthorizationTransaction ??
+      (<T>(operation: (tx: RuntimeAuthorizationTransactionDb) => Promise<T>) =>
+        getDb().transaction(operation));
+    boundary = await runTransaction(async (tx) => {
+      const result = await evaluateAndPersistRuntimeAuthorization(tx);
+      transactionBodyCompletedAt = performance.now();
+      return result;
+    });
+    commitMs = performance.now() - transactionBodyCompletedAt;
+  } else {
+    boundary = await evaluateAndPersistRuntimeAuthorization();
   }
+  const { accepted, orderedSceneExecutionIds } = boundary;
+  const boundaryTimings: RuntimeAuthorizationBoundaryTimings = {
+    authEvaluationMs,
+    authorizedFactLookupMs: persistenceTimings.authorizedFactLookupMs,
+    authorizedFactWriteMs: persistenceTimings.authorizedFactWriteMs,
+    executionAuthorizationWriteMs: persistenceTimings.authorizedFactWriteMs,
+    commitMs,
+  };
+  input.observeRuntimeAuthorizationBoundary?.(boundaryTimings);
+  console.info(JSON.stringify({
+    event: "AI_STORY_RUNTIME_AUTHORIZATION_BOUNDARY_COMPLETED",
+    executionPlanId: input.executionPlanId,
+    ...boundaryTimings,
+  }));
 
   const skipCommercialSettlement =
     executionAuthorization?.accessMode === "ops" &&

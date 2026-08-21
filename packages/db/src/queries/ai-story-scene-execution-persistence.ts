@@ -388,13 +388,16 @@ export class AiStorySceneExecutionPersistenceRepository
     });
   }
 
-  async getByExecutionPlanId(id: string): Promise<PersistedSceneExecutionCompilation | null> {
-    const [row] = await this.db
+  async getByExecutionPlanId(
+    id: string,
+    db: QueryDb = this.db
+  ): Promise<PersistedSceneExecutionCompilation | null> {
+    const [row] = await db
       .select()
       .from(schema.aiStoryExecutionPlans)
       .where(eq(schema.aiStoryExecutionPlans.id, id))
       .limit(1);
-    return row ? this.hydratePlan(row, this.db) : null;
+    return row ? this.hydratePlan(row, db) : null;
   }
 
   async getByDeterministicFingerprint(

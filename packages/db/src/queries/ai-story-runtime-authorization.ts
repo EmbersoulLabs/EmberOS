@@ -33,6 +33,19 @@ export class RuntimeAuthorizationPersistenceError extends Error {
   }
 }
 
+export type RuntimeAuthorizationPersistenceTimings = {
+  authorizedFactLookupMs: number;
+  authorizedFactWriteMs: number;
+};
+
+function addTiming(
+  timings: RuntimeAuthorizationPersistenceTimings | undefined,
+  field: keyof RuntimeAuthorizationPersistenceTimings,
+  startedAt: number
+): void {
+  if (timings) timings[field] += performance.now() - startedAt;
+}
+
 function toFact(
   row: typeof schema.aiStoryRuntimeAuthorizedFacts.$inferSelect
 ): RuntimeAuthorizedFact {
@@ -93,7 +106,10 @@ async function lockExecutionPlan(executionPlanId: string, db: QueryDb) {
 export async function acceptRuntimeAuthorizationFactInTransaction(
   tx: Tx,
   input: RuntimeAuthorizedFact,
-  options: { readonly lockPlan?: boolean } = {}
+  options: {
+    readonly lockPlan?: boolean;
+    readonly timings?: RuntimeAuthorizationPersistenceTimings;
+  } = {}
 ): Promise<{ fact: RuntimeAuthorizedFact; converged: boolean }> {
   const fact = RuntimeAuthorizedFactSchema.parse(input);
   const plan = options.lockPlan === false
@@ -129,11 +145,13 @@ export async function acceptRuntimeAuthorizationFactInTransaction(
     "RuntimeAuthorizedFact"
   );
 
+  const existingForPlanStartedAt = performance.now();
   const [existingForPlan] = await tx
     .select()
     .from(schema.aiStoryRuntimeAuthorizedFacts)
     .where(eq(schema.aiStoryRuntimeAuthorizedFacts.executionPlanId, fact.executionPlanId))
     .limit(1);
+  addTiming(options.timings, "authorizedFactLookupMs", existingForPlanStartedAt);
 
   if (existingForPlan) {
     const existing = toFact(existingForPlan);
@@ -147,6 +165,7 @@ export async function acceptRuntimeAuthorizationFactInTransaction(
     return { fact: existing, converged: true };
   }
 
+  const writeStartedAt = performance.now();
   const inserted = await tx
     .insert(schema.aiStoryRuntimeAuthorizedFacts)
     .values({
@@ -173,16 +192,19 @@ export async function acceptRuntimeAuthorizationFactInTransaction(
     })
     .onConflictDoNothing()
     .returning();
+  addTiming(options.timings, "authorizedFactWriteMs", writeStartedAt);
 
   if (inserted[0]) {
     return { fact: toFact(inserted[0]), converged: false };
   }
 
+  const acceptedByPlanStartedAt = performance.now();
   const [acceptedByPlan] = await tx
     .select()
     .from(schema.aiStoryRuntimeAuthorizedFacts)
     .where(eq(schema.aiStoryRuntimeAuthorizedFacts.executionPlanId, fact.executionPlanId))
     .limit(1);
+  addTiming(options.timings, "authorizedFactLookupMs", acceptedByPlanStartedAt);
   if (acceptedByPlan) {
     const existing = toFact(acceptedByPlan);
     if (existing.deterministicIntegrityHash !== fact.deterministicIntegrityHash) {
@@ -195,6 +217,7 @@ export async function acceptRuntimeAuthorizationFactInTransaction(
     return { fact: existing, converged: true };
   }
 
+  const acceptedByHashStartedAt = performance.now();
   const [acceptedByHash] = await tx
     .select()
     .from(schema.aiStoryRuntimeAuthorizedFacts)
@@ -205,6 +228,7 @@ export async function acceptRuntimeAuthorizationFactInTransaction(
       )
     )
     .limit(1);
+  addTiming(options.timings, "authorizedFactLookupMs", acceptedByHashStartedAt);
   if (acceptedByHash) {
     const existing = toFact(acceptedByHash);
     if (existing.executionPlanId !== fact.executionPlanId) {
@@ -232,6 +256,14 @@ export class RuntimeAuthorizationPersistenceRepository {
     return this.db.transaction((tx) =>
       acceptRuntimeAuthorizationFactInTransaction(tx, fact)
     );
+  }
+
+  async acceptOrReturnInTransaction(
+    fact: RuntimeAuthorizedFact,
+    tx: Tx,
+    timings?: RuntimeAuthorizationPersistenceTimings
+  ): Promise<{ fact: RuntimeAuthorizedFact; converged: boolean }> {
+    return acceptRuntimeAuthorizationFactInTransaction(tx, fact, { timings });
   }
 
   async getByExecutionPlanId(

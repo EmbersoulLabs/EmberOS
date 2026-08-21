@@ -596,11 +596,12 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   }
 
   async getLogicalProjection(
-    executionPlanId: string
+    executionPlanId: string,
+    db: QueryDb = this.db
   ): Promise<LogicalReviewProjection | null> {
-    const plan = await this.requirePlanOrNull(executionPlanId, this.db);
+    const plan = await this.requirePlanOrNull(executionPlanId, db);
     if (!plan) return null;
-    return this.readProjection(executionPlanId, plan, this.db);
+    return this.readProjection(executionPlanId, plan, db);
   }
 
   private async requirePlanOrNull(executionPlanId: string, db: QueryDb) {
