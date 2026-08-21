@@ -500,9 +500,8 @@ export class ProviderWorkerResultFinalizerBridge {
     executionId: string,
     attemptId: string
   ): Promise<number> {
-    const listAttempts = this.dependencies.ledger.listAttempts;
-    if (!listAttempts) return 1;
-    const existing = await listAttempts(executionId);
+    if (!this.dependencies.ledger.listAttempts) return 1;
+    const existing = await this.dependencies.ledger.listAttempts(executionId);
     return nextProviderAttemptNumber(existing, attemptId);
   }
 

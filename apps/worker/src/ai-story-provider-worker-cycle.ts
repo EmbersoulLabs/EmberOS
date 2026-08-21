@@ -35,6 +35,7 @@ import {
   ProviderOutboxRepository,
   SceneProjectionRepositoryImpl,
   SceneProviderWorkerRuntimeRepository,
+  getDb,
 } from "@ceo-agent/db";
 import {
   CanonicalSceneResultSchema,
@@ -53,6 +54,9 @@ export type AiStoryProviderWorkerCycleOptions = {
   readonly artifactRoot?: string;
   readonly durableObjectRoot?: string;
   readonly coordinator?: AiStoryRuntimeContinuationCoordinator;
+  readonly db?: ReturnType<typeof getDb>;
+  readonly assemblyEngineSnapshotHash?: string;
+  readonly dispatchNext?: typeof dispatchNextProviderExecution;
 };
 
 let cachedCoordinator: AiStoryRuntimeContinuationCoordinator | undefined;
@@ -100,23 +104,26 @@ async function resolveProductionDurableObjectStore(
 export async function createProductionAiStoryContinuationCoordinator(
   options: AiStoryProviderWorkerCycleOptions = {}
 ): Promise<AiStoryRuntimeContinuationCoordinator> {
+  const db = options.db ?? getDb();
   await resolveArtifactRoot(options.artifactRoot);
   const durableObjectStore = await resolveProductionDurableObjectStore(options);
-  const durableMediaRepository = new DurableSceneMediaAttestationRepositoryImpl();
+  const durableMediaRepository = new DurableSceneMediaAttestationRepositoryImpl(db);
   const blobStore = createDurableAssemblyArtifactBlobStore(durableObjectStore);
   const mediaAccess = createDurableAssemblyMediaAccessPort({
     store: durableObjectStore,
     attestations: durableMediaRepository,
   });
-  const workerRepo = new SceneProviderWorkerRuntimeRepository();
-  const projectionRepo = new SceneProjectionRepositoryImpl();
-  const validationRepo = new AssemblyValidationRepositoryImpl();
-  const jobRepo = new AssemblyJobRepositoryImpl();
-  const artifactRepo = new AssemblyArtifactRepositoryImpl();
-  const fsrRepo = new FinalStoryResultRepositoryImpl();
+  const workerRepo = new SceneProviderWorkerRuntimeRepository(db);
+  const projectionRepo = new SceneProjectionRepositoryImpl(db);
+  const validationRepo = new AssemblyValidationRepositoryImpl(db);
+  const jobRepo = new AssemblyJobRepositoryImpl(db);
+  const artifactRepo = new AssemblyArtifactRepositoryImpl(db);
+  const fsrRepo = new FinalStoryResultRepositoryImpl(db);
+  const ledgerRepo = new ProviderLedgerRepository(db);
+  const outboxRepo = new ProviderOutboxRepository(db);
   const adapters =
     options.adapters ?? createProductionAiStoryCanonicalAdapterRegistry();
-  const assemblyEngineSnapshotHash =
+  const assemblyEngineSnapshotHash = options.assemblyEngineSnapshotHash ??
     await resolveProductionAssemblyEngineSnapshotHash();
 
   return new AiStoryRuntimeContinuationCoordinator({
@@ -127,16 +134,16 @@ export async function createProductionAiStoryContinuationCoordinator(
     finalization: {
       chain: projectionRepo,
       bridge: {
-        ledger: new ProviderLedgerRepository(),
+        ledger: ledgerRepo,
         outbox: {
-          findJob: (jobId: string) => new ProviderOutboxRepository().findJob(jobId),
-          releaseLease: (input) => new ProviderOutboxRepository().releaseLease(input),
+          findJob: (jobId: string) => outboxRepo.findJob(jobId),
+          releaseLease: (input) => outboxRepo.releaseLease(input),
           claimOrRenewForFinalization: async (input) => {
-            await new ProviderOutboxRepository().claimOrRenewForFinalization(input);
+            await outboxRepo.claimOrRenewForFinalization(input);
           },
         },
       },
-      productionFinalizer: new ProviderExecutionFinalizationRepository(),
+      productionFinalizer: new ProviderExecutionFinalizationRepository(db),
       projection: projectionRepo,
     },
     assemblyValidation: {
@@ -237,14 +244,14 @@ export async function runAiStoryProviderWorkerCycle(
   readonly ownership?: "AI_STORY_SCENE" | "GENERIC_PROVIDER" | "MISSING_DISPATCH";
   readonly continuation?: AiStoryContinuationOutcome;
 }> {
-  const dispatchOutcome = await dispatchNextProviderExecution({
+  const dispatchOutcome = await (options.dispatchNext ?? dispatchNextProviderExecution)({
     ownership: "AI_STORY_SCENE",
   });
   if (dispatchOutcome.status !== "DISPATCHED") {
     return { dispatchStatus: "NO_JOB" };
   }
 
-  const workerRepo = new SceneProviderWorkerRuntimeRepository();
+  const workerRepo = new SceneProviderWorkerRuntimeRepository(options.db ?? getDb());
   const ownership = await workerRepo.classifyDispatchOwnership(
     dispatchOutcome.dispatch.dispatchId
   );

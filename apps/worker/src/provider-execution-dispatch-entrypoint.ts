@@ -1,6 +1,7 @@
 import {
   ExecutionDispatchRepository,
   ExecutionEnvelopeRepository,
+  getDb,
 } from "@ceo-agent/db";
 import {
   ProviderExecutionDispatcher,
@@ -14,10 +15,13 @@ import type {
 let productionDispatcher: ProviderExecutionDispatcher | undefined;
 
 function getProductionDispatcher(): ProviderExecutionDispatcher {
-  productionDispatcher ??= new ProviderExecutionDispatcher(
-    new ExecutionDispatchRepository(),
-    new ExecutionEnvelopeRepository()
-  );
+  if (!productionDispatcher) {
+    const db = getDb();
+    productionDispatcher = new ProviderExecutionDispatcher(
+      new ExecutionDispatchRepository(db),
+      new ExecutionEnvelopeRepository(db)
+    );
+  }
   return productionDispatcher;
 }
 
