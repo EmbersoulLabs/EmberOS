@@ -6,6 +6,7 @@ import {
   getDb,
   persistSameWorkspaceCampaignAssetRef,
   schema,
+  withFreshDbContext,
 } from "@ceo-agent/db";
 import {
   createGenerateReview,
@@ -46,12 +47,59 @@ export class ProductionVerificationStepTimeoutError extends Error {
   }
 }
 
+export class ProductionVerificationFailureClassificationError extends Error {
+  readonly code = "AI_STORY_PRODUCTION_VERIFICATION_FAILURE_CLASSIFICATION_FAILED";
+
+  constructor() {
+    super("Production verification failed and its incomplete-state classification could not be persisted");
+    this.name = "ProductionVerificationFailureClassificationError";
+  }
+}
+
+type FailureClassificationWriter = (
+  storyId: string,
+  failedAt: Date
+) => Promise<boolean>;
+
+const writeFailedIncompleteWithFreshDb: FailureClassificationWriter = async (
+  storyId,
+  failedAt
+) => withFreshDbContext(async (freshDb) => {
+  const updated = await freshDb
+    .update(schema.aiStories)
+    .set({ status: "failed", archivedAt: failedAt, updatedAt: failedAt })
+    .where(eq(schema.aiStories.id, storyId))
+    .returning({ id: schema.aiStories.id });
+  return updated.length === 1;
+});
+
+export async function persistFailedIncompleteClassification(
+  storyId: string,
+  options: {
+    readonly writer?: FailureClassificationWriter;
+    readonly failedAt?: Date;
+  } = {}
+): Promise<void> {
+  const persisted = await (options.writer ?? writeFailedIncompleteWithFreshDb)(
+    storyId,
+    options.failedAt ?? new Date()
+  );
+  if (!persisted) {
+    throw new ProductionVerificationFailureClassificationError();
+  }
+}
+
 export async function runProductionVerificationStep<T>(
   step: string,
   operation: () => PromiseLike<T>,
   options: {
     readonly timeoutMs?: number;
     readonly timings?: ProductionVerificationStepTiming[];
+    readonly safeCorrelation?: Readonly<{
+      fixtureRunId?: string;
+      storyId?: string;
+      executionPlanId?: string;
+    }>;
   } = {}
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? AI_STORY_PROD_VERIFY_STEP_TIMEOUT_MS;
@@ -61,6 +109,7 @@ export async function runProductionVerificationStep<T>(
     event: "AI_STORY_PROD_VERIFY_STEP_STARTED",
     step,
     timeoutMs,
+    ...options.safeCorrelation,
   }));
   try {
     const result = await Promise.race([
@@ -74,7 +123,11 @@ export async function runProductionVerificationStep<T>(
     ]);
     const timing = { step, status: "PASS" as const, durationMs: Date.now() - startedAt };
     options.timings?.push(timing);
-    console.info(JSON.stringify({ event: "AI_STORY_PROD_VERIFY_STEP_COMPLETED", ...timing }));
+    console.info(JSON.stringify({
+      event: "AI_STORY_PROD_VERIFY_STEP_COMPLETED",
+      ...timing,
+      ...options.safeCorrelation,
+    }));
     return result;
   } catch (error) {
     const timing = {
@@ -91,6 +144,7 @@ export async function runProductionVerificationStep<T>(
       code: error instanceof ProductionVerificationStepTimeoutError
         ? error.code
         : "AI_STORY_PROD_VERIFY_STEP_FAILED",
+      ...options.safeCorrelation,
     }));
     throw error;
   } finally {
@@ -224,6 +278,8 @@ export async function createProductionVerificationFixture(input: {
   const runId = randomUUID();
   const stepTimings = input.stepTimings ?? [];
   const fixtureDeadline = Date.now() + AI_STORY_PROD_VERIFY_TOTAL_TIMEOUT_MS;
+  let storyId: string | null = null;
+  let executionPlanId: string | null = null;
   const step = <T>(name: string, operation: () => PromiseLike<T>, timeoutMs?: number) => {
     const remainingMs = fixtureDeadline - Date.now();
     if (remainingMs <= 0) {
@@ -238,6 +294,11 @@ export async function createProductionVerificationFixture(input: {
         remainingMs
       ),
       timings: stepTimings,
+      safeCorrelation: {
+        fixtureRunId: runId,
+        ...(storyId ? { storyId } : {}),
+        ...(executionPlanId ? { executionPlanId } : {}),
+      },
     });
   };
   const [campaign] = await step("campaign_authority", () =>
@@ -246,7 +307,6 @@ export async function createProductionVerificationFixture(input: {
   );
   if (!campaign) throw new Error("Campaign not found");
 
-  let storyId: string | null = null;
   try {
     const assetId = randomUUID();
     const contentHash = `sha256:${createHash("sha256").update(FIXTURE_PNG).digest("hex")}`;
@@ -359,16 +419,17 @@ export async function createProductionVerificationFixture(input: {
     if (generated.sceneExecutionIds.length !== 3 || !generated.storyExecutionId) {
       throw new Error("Verification fixture did not compile exactly three Scenes");
     }
-    const executionPlanId = generated.storyExecutionId;
+    const createdExecutionPlanId = generated.storyExecutionId;
+    executionPlanId = createdExecutionPlanId;
     const review = new ExecutionPlanReviewRepository(db);
     await step("review_open", () => review.openReview({
-      executionPlanId,
+      executionPlanId: createdExecutionPlanId,
       openedBy: input.user.id,
     }));
     for (const sceneExecutionId of generated.sceneExecutionIds) {
       await step(`scene_intent_approval_${generated.sceneExecutionIds.indexOf(sceneExecutionId) + 1}`, () =>
         review.appendSceneIntentDecision({
-        executionPlanId,
+        executionPlanId: createdExecutionPlanId,
         sceneExecutionId,
         decision: "APPROVED",
         reviewedBy: input.user.id,
@@ -377,14 +438,14 @@ export async function createProductionVerificationFixture(input: {
       );
     }
     await step("story_plan_approval", () => review.appendStoryDecision({
-      executionPlanId,
+      executionPlanId: createdExecutionPlanId,
       decision: "APPROVED",
       reviewedBy: input.user.id,
       rationale: AI_STORY_PROD_VERIFY_FIXTURE_VERSION,
     }));
     const assembly = await step("assembly_definition", () =>
       new ExecutionPlanAssemblyRepository(db).createOrReturnAssembly({
-      executionPlanId,
+      executionPlanId: createdExecutionPlanId,
       createdBy: input.user.id,
       orderedSceneExecutionIds: generated.sceneExecutionIds,
       })
@@ -400,7 +461,7 @@ export async function createProductionVerificationFixture(input: {
       throw new Error("Fixture execution requires ACTIVE_PLATFORM_ADMIN");
     }
     const executed = await step("canonical_verification_execute", () => authorizeAndExecuteExecutionPlan({
-      executionPlanId,
+      executionPlanId: createdExecutionPlanId,
       actorUserId: input.user.id,
       ownership: {
         orgId: campaign.orgId,
@@ -409,7 +470,7 @@ export async function createProductionVerificationFixture(input: {
         storyId: story.id,
         storyVersionId: version.id,
         animationPackageId: approvedPackage.id,
-        executionPlanId,
+        executionPlanId: createdExecutionPlanId,
       },
       router: createCanonicalExecuteProviderRouter(),
       routingPolicy: resolveCanonicalExecuteRoutingPolicy(),
@@ -432,7 +493,7 @@ export async function createProductionVerificationFixture(input: {
       storyId: story.id,
       storyVersionId: version.id,
       animationPackageId: approvedPackage.id,
-      executionPlanId,
+      executionPlanId: createdExecutionPlanId,
       sceneExecutionIds: generated.sceneExecutionIds,
       assemblyDefinitionId: assembly.definition.assemblyDefinitionId,
       assemblySceneCount: assembly.definition.sceneCount,
@@ -443,15 +504,34 @@ export async function createProductionVerificationFixture(input: {
   } catch (error) {
     if (storyId) {
       try {
-        await runProductionVerificationStep("fixture_state_failed_incomplete", () =>
-          db.update(schema.aiStories)
-            .set({ status: "failed", archivedAt: new Date(), updatedAt: new Date() })
-            .where(eq(schema.aiStories.id, storyId!)),
-          { timeoutMs: 5_000, timings: stepTimings }
+        await runProductionVerificationStep("failure_classification", () =>
+          persistFailedIncompleteClassification(storyId!),
+          {
+            timeoutMs: 5_000,
+            timings: stepTimings,
+            safeCorrelation: {
+              fixtureRunId: runId,
+              storyId,
+              ...(executionPlanId ? { executionPlanId } : {}),
+            },
+          }
         );
-      } catch {
-        // Before the final promotion the Story remains planning_review, which is
-        // deliberately non-execute-ready even if failure classification stalls.
+      } catch (classificationError) {
+        console.error(JSON.stringify({
+          event: "AI_STORY_PROD_VERIFY_FAILURE_CLASSIFICATION_FAILED",
+          fixtureRunId: runId,
+          storyId,
+          executionPlanId,
+          primaryErrorCode: error instanceof ProductionVerificationStepTimeoutError
+            ? error.code
+            : "AI_STORY_PRODUCTION_VERIFICATION_FAILED",
+          classificationErrorCode: classificationError instanceof ProductionVerificationStepTimeoutError
+            ? classificationError.code
+            : classificationError instanceof ProductionVerificationFailureClassificationError
+              ? classificationError.code
+              : "AI_STORY_PRODUCTION_VERIFICATION_FAILURE_CLASSIFICATION_FAILED",
+        }));
+        throw new ProductionVerificationFailureClassificationError();
       }
     }
     throw error;

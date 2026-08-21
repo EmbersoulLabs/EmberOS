@@ -33,7 +33,7 @@ import {
   OwnershipIntegrityViolationError,
   planOwnershipFromRow,
 } from "./ai-story-ownership";
-import { getWorkspaceMembership, ROLE_HIERARCHY } from "./tenant";
+import { ROLE_HIERARCHY } from "./tenant";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -213,7 +213,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   async openReview(input: OpenExecutionPlanReviewInput): Promise<ReviewOpenedFact> {
     return this.db.transaction(async (tx) => {
       const plan = await this.requirePlan(input.executionPlanId, tx);
-      await this.assertReviewerAuthorized(plan.workspaceId, input.openedBy);
+      await this.assertReviewerAuthorized(plan.workspaceId, input.openedBy, tx);
 
       const fingerprint = buildOpenedFingerprint(plan.id);
       const factId = deterministicPersistenceUuid("review-opened", fingerprint);
@@ -293,7 +293,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   ): Promise<SceneIntentReviewDecision> {
     return this.db.transaction(async (tx) => {
       const plan = await this.requirePlan(input.executionPlanId, tx);
-      await this.assertReviewerAuthorized(plan.workspaceId, input.reviewedBy);
+      await this.assertReviewerAuthorized(plan.workspaceId, input.reviewedBy, tx);
       await this.requireOpened(plan.id, tx);
 
       const projection = await this.readProjection(plan.id, plan, tx);
@@ -469,7 +469,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   async appendStoryDecision(input: AppendStoryReviewInput): Promise<StoryReviewDecision> {
     return this.db.transaction(async (tx) => {
       const plan = await this.requirePlan(input.executionPlanId, tx);
-      await this.assertReviewerAuthorized(plan.workspaceId, input.reviewedBy);
+      await this.assertReviewerAuthorized(plan.workspaceId, input.reviewedBy, tx);
       await this.requireOpened(plan.id, tx);
 
       const projection = await this.readProjection(plan.id, plan, tx);
@@ -635,8 +635,24 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     return ReviewOpenedFactSchema.parse(opened.fact);
   }
 
-  private async assertReviewerAuthorized(workspaceId: string, userId: string) {
-    const member = await getWorkspaceMembership(workspaceId, userId);
+  private async assertReviewerAuthorized(
+    workspaceId: string,
+    userId: string,
+    db: QueryDb
+  ) {
+    // Use the caller's transaction connection. Calling getWorkspaceMembership
+    // here would check out a second global-pool connection while the transaction
+    // already holds Vercel's sole max:1 connection, causing a self-deadlock.
+    const [member] = await db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(
+        and(
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+          eq(schema.workspaceMembers.userId, userId)
+        )
+      )
+      .limit(1);
     if (!member) {
       throw new ExecutionPlanReviewOwnershipError(
         "Reviewer is not a member of this workspace"

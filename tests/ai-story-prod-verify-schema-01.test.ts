@@ -42,9 +42,9 @@ describe("PROD-VERIFY-SCHEMA-01 production verification fail-closed repair", () 
     );
     expect(executeIndex).toBeGreaterThan(-1);
     expect(completedIndex).toBeGreaterThan(executeIndex);
-    expect(source).toContain('"fixture_state_failed_incomplete"');
-    expect(source).toContain('status: "failed", archivedAt: new Date()');
-    expect(source).toContain("Story remains planning_review");
+    expect(source).toContain('"failure_classification"');
+    expect(source).toContain('status: "failed", archivedAt: failedAt');
+    expect(source).toContain("persistFailedIncompleteClassification");
   });
 
   it("I-K denies every product Execute for verification fixture lineage", () => {

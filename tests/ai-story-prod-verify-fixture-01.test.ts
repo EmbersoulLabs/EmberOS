@@ -54,6 +54,6 @@ describe("PROD-VERIFY-FIXTURE-01 deterministic server fixture", () => {
   it("preserves failed evidence without exposing a partially ready fixture", () => {
     const source = read(fixturePath);
     expect(source).toContain('status: "failed"');
-    expect(source).toContain("archivedAt: new Date()");
+    expect(source).toContain("archivedAt: failedAt");
   });
 });
