@@ -38,6 +38,13 @@ export async function GET(
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
 
+    if (loaded.verificationFixtureState === "LEGACY_PARTIAL_VERIFICATION_FIXTURE") {
+      return apiSuccess({
+        ...loaded,
+        story: { ...loaded.story, status: "failed" },
+        persistedStoryStatus: loaded.story.status,
+      });
+    }
     return apiSuccess(loaded);
   } catch (error) {
     return handleApiError(error);

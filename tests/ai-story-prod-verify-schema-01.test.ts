@@ -58,6 +58,21 @@ describe("PROD-VERIFY-SCHEMA-01 production verification fail-closed repair", () 
     expect(verifyExecute).toContain('ctx.storyStatus !== "ready_for_execution"');
   });
 
+  it("projects preserved legacy partial evidence as non-ready without mutating it", () => {
+    const service = read("apps/web/src/lib/ai-story-service.ts");
+    const storyRoute = read(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/route.ts"
+    );
+    expect(service).toContain("LEGACY_PARTIAL_VERIFICATION_FIXTURE");
+    expect(service).toContain("schema.aiStoryExecuteVerifications");
+    expect(storyRoute).toContain(
+      'loaded.verificationFixtureState === "LEGACY_PARTIAL_VERIFICATION_FIXTURE"'
+    );
+    expect(storyRoute).toContain('story: { ...loaded.story, status: "failed" }');
+    expect(storyRoute).toContain("persistedStoryStatus: loaded.story.status");
+    expect(storyRoute).not.toContain("update(schema.aiStories)");
+  });
+
   it("P adds bounded per-step and whole-fixture timing evidence", () => {
     const source = read(fixturePath);
     const route = read(fixtureRoutePath);

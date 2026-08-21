@@ -46,7 +46,39 @@ export async function loadCampaignAiStory(
   const currentVersion =
     versions.find((v) => v.id === story.currentVersionId) ?? versions[0] ?? null;
 
-  return { story, versions, currentVersion, assetLinks };
+  let verificationFixtureState:
+    | "CREATING"
+    | "FAILED_INCOMPLETE"
+    | "LEGACY_PARTIAL_VERIFICATION_FIXTURE"
+    | "COMPLETED"
+    | null = null;
+  if (currentVersion?.sourceContextSnapshot?.verificationFixture === true) {
+    const plans = await db
+      .select({ id: schema.aiStoryExecutionPlans.id })
+      .from(schema.aiStoryExecutionPlans)
+      .where(eq(schema.aiStoryExecutionPlans.storyId, storyId));
+    const verificationRows = plans.length > 0
+      ? await db
+          .select({ executionPlanId: schema.aiStoryExecuteVerifications.executionPlanId })
+          .from(schema.aiStoryExecuteVerifications)
+          .where(
+            inArray(
+              schema.aiStoryExecuteVerifications.executionPlanId,
+              plans.map((plan) => plan.id)
+            )
+          )
+          .limit(1)
+      : [];
+    verificationFixtureState = verificationRows.length > 0
+      ? "COMPLETED"
+      : story.status === "failed" || story.status === "archived"
+        ? "FAILED_INCOMPLETE"
+        : story.status === "ready_for_execution"
+          ? "LEGACY_PARTIAL_VERIFICATION_FIXTURE"
+          : "CREATING";
+  }
+
+  return { story, versions, currentVersion, assetLinks, verificationFixtureState };
 }
 
 export async function listCampaignAiStories(
