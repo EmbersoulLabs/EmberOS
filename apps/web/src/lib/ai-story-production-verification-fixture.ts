@@ -158,7 +158,7 @@ export async function createProductionVerificationFixture(input: {
   let storyId: string | null = null;
   try {
     const assetId = randomUUID();
-    const contentHash = createHash("sha256").update(FIXTURE_PNG).digest("hex");
+    const contentHash = `sha256:${createHash("sha256").update(FIXTURE_PNG).digest("hex")}`;
     const storagePath = STORAGE_PATHS.source(
       campaign.workspaceId,
       campaign.id,

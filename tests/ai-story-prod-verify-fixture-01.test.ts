@@ -29,6 +29,7 @@ describe("PROD-VERIFY-FIXTURE-01 deterministic server fixture", () => {
     expect(source).toContain("FIXTURE_PNG");
     expect(source).toContain("persistSameWorkspaceCampaignAssetRef");
     expect(source).toContain("contentHash");
+    expect(source).toContain('const contentHash = `sha256:${createHash("sha256")');
     expect(source).toContain("assetReferences: [assetId]");
   });
 
