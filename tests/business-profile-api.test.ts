@@ -253,7 +253,7 @@ describe("Business Profile logo persistence", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(storageFrom).toHaveBeenCalledWith("campaign-assets");
+    expect(storageFrom).toHaveBeenCalledWith("business-branding");
     expect(storageUpload).toHaveBeenCalledWith(
       expect.stringMatching(
         /^aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
@@ -267,7 +267,7 @@ describe("Business Profile logo persistence", () => {
       userId,
       expect.objectContaining({
         logo: expect.stringMatching(
-          /^https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/campaign-assets\/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
+          /^https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/business-branding\/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
         ),
       })
     );
