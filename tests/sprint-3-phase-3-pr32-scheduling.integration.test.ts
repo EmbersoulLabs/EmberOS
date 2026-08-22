@@ -22,7 +22,6 @@ import {
   createIntegrationSql,
   getIntegrationDbUrl,
 } from "./helpers/db-integration";
-import { applyPhaseECommercialAuthorizationSql } from "./helpers/commercial-phase-e-sql";
 import { PHASE_2A_IDS } from "./helpers/ai-story-phase-2a";
 import {
   FixedSeedanceRouter,
@@ -119,10 +118,13 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
       "../packages/db/sql/ai-story-scene-scheduling-v1.sql",
       "../packages/db/sql/ai-story-scene-routing-router-version-v1.sql",
       "../packages/db/sql/ai-story-scene-scheduling-rls-v1.sql",
+      "../packages/db/sql/ai-story-staged-release-v1.sql",
+      "../packages/db/sql/commercial-persistence-v1.sql",
+      "../packages/db/sql/credits-settlement-v1.sql",
+      "../packages/db/sql/commercial-authorization-v1.sql",
     ]) {
       await applySqlFile(sql, relative);
     }
-    await applyPhaseECommercialAuthorizationSql(sql);
     await cleanupPr32Tenant(sql);
     await seedPr32Tenant(sql);
   }, 120_000);

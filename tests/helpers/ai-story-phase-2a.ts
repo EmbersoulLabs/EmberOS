@@ -57,7 +57,7 @@ export function makePhase2aCompilation(
   };
   const orders = overrides.sceneOrder ?? [0, 1];
   const compiledAt = "2026-08-02T12:00:00.000Z";
-  const sceneIds = ["scene-a", "scene-b"];
+  const sceneIds = ["scene-a", "scene-b", "scene-c"];
   const instructionsBySceneExecutionId: Record<string, AiStorySceneCompiledInstructions> = {};
   const intents: AiStorySceneExecutionIntent[] = orders.map((order, index) => {
     const sceneId = sceneIds[index]!;

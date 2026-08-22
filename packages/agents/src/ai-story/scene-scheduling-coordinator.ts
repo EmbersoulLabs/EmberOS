@@ -31,6 +31,8 @@ import {
   deterministicPersistenceUuid,
   type CommercialAuthorizationRepository,
   type ProductionVerificationAuthority,
+  type SceneSchedulingPersistenceBoundary,
+  type SceneSchedulingStepTiming,
 } from "@ceo-agent/db";
 import { commercialExecutionIdentityForPlan } from "@ceo-agent/shared/server";
 import {
@@ -118,6 +120,11 @@ export type ScheduleAuthorizedSceneInput = {
   readonly retryGeneration?: number;
   /** Server-only PROD-VERIFY-01 authority; never populated from client input. */
   readonly productionVerification?: ProductionVerificationAuthority;
+  /** Safe server-side performance observer; never used as authorization. */
+  readonly observeTiming?: (observation: SceneSchedulingStepTiming) => void;
+  readonly observePersistenceBoundary?: (
+    boundary: SceneSchedulingPersistenceBoundary
+  ) => void;
 };
 
 export type SceneSchedulingCoordinatorDependencies = {
@@ -132,7 +139,7 @@ export type SceneSchedulingCoordinatorDependencies = {
   > & Partial<Pick<SceneSchedulingRepository, "getProductionVerification">>;
   readonly persistenceRepo?: Pick<
     AiStorySceneExecutionPersistenceRepository,
-    "getByExecutionPlanId" | "getValidationResults"
+    "getByExecutionPlanId"
   >;
   readonly assemblyRepo?: Pick<ExecutionPlanAssemblyRepository, "listMemberships">;
   readonly now?: () => Date;
@@ -406,7 +413,7 @@ export class SceneSchedulingCoordinator {
   > & Partial<Pick<SceneSchedulingRepository, "getProductionVerification">>;
   private readonly persistenceRepo: Pick<
     AiStorySceneExecutionPersistenceRepository,
-    "getByExecutionPlanId" | "getValidationResults"
+    "getByExecutionPlanId"
   >;
   private readonly assemblyRepo: Pick<ExecutionPlanAssemblyRepository, "listMemberships">;
   private readonly now: () => Date;
@@ -429,6 +436,39 @@ export class SceneSchedulingCoordinator {
   async scheduleAuthorizedScene(
     input: ScheduleAuthorizedSceneInput
   ): Promise<SceneSchedulingBundle> {
+    const timings: SceneSchedulingStepTiming[] = [];
+    let persistenceBoundary: SceneSchedulingPersistenceBoundary | null = null;
+    const observeTiming = (observation: SceneSchedulingStepTiming) => {
+      timings.push(observation);
+      input.observeTiming?.(observation);
+    };
+    const measurePreTransaction = async <T>(
+      step: SceneSchedulingStepTiming["step"],
+      operation: () => Promise<T> | T,
+      outcome: (value: T) => SceneSchedulingStepTiming["outcome"] = () => "PASS"
+    ): Promise<T> => {
+      const startedAt = performance.now();
+      try {
+        const value = await operation();
+        observeTiming({
+          step,
+          durationMs: performance.now() - startedAt,
+          transactionAuthority: "none",
+          connectionAuthority: "pre_transaction",
+          outcome: outcome(value),
+        });
+        return value;
+      } catch (error) {
+        observeTiming({
+          step,
+          durationMs: performance.now() - startedAt,
+          transactionAuthority: "none",
+          connectionAuthority: "pre_transaction",
+          outcome: "FAIL",
+        });
+        throw error;
+      }
+    };
     try {
       const fact = await this.loadPersistedAuthorization(input);
       await this.assertCommercialAuthorization(input, fact);
@@ -538,8 +578,10 @@ export class SceneSchedulingCoordinator {
         );
       }
 
-      const validationResults = await this.persistenceRepo.getValidationResults(
-        input.sceneExecutionId
+      // The canonical compilation already contains the accepted QC facts. A
+      // second repository hydration here duplicated one production DB round trip.
+      const validationResults = compilation.validationResults.filter(
+        (result) => result.intentId === input.sceneExecutionId
       );
       if (
         validationResults.length === 0 ||
@@ -565,11 +607,18 @@ export class SceneSchedulingCoordinator {
         "ai-story-scene-scheduling-correlation",
         seedBeforeRouting
       );
-      const policy = effectiveRoutingPolicy(input);
+      const policy = await measurePreTransaction(
+        "provider_eligibility",
+        () => effectiveRoutingPolicy(input)
+      );
       const preferredProviders = policy.preferredProviders;
       const existingRoutingDecision =
-        await this.schedulingRepo.getRoutingDecisionBySceneExecutionId(
-          input.sceneExecutionId
+        await measurePreTransaction(
+          "routing_decision_lookup",
+          () => this.schedulingRepo.getRoutingDecisionBySceneExecutionId(
+            input.sceneExecutionId
+          ),
+          (value) => value ? "CONVERGED" : "MISS"
         );
       if (!existingRoutingDecision && policy.allowedProviders?.length === 0) {
         throw new SceneSchedulingError(
@@ -579,23 +628,26 @@ export class SceneSchedulingCoordinator {
       }
       const acceptedRoutingDecision = existingRoutingDecision
         ? existingRoutingDecision
-        : buildRoutingDecision({
-            fact,
-            sceneExecutionId: input.sceneExecutionId,
-            route: await this.dependencies.router.route(
-              buildRoutingRequest({
-                fact,
-                sceneExecutionId: input.sceneExecutionId,
-                instructionHash,
-                correlationId,
-                policy,
-                preferredProviders,
-              }),
-              policy
-            ),
-            policy,
-            decidedAt: this.now().toISOString(),
-          });
+        : await measurePreTransaction(
+            "routing_request_build",
+            async () => buildRoutingDecision({
+              fact,
+              sceneExecutionId: input.sceneExecutionId,
+              route: await this.dependencies.router.route(
+                buildRoutingRequest({
+                  fact,
+                  sceneExecutionId: input.sceneExecutionId,
+                  instructionHash,
+                  correlationId,
+                  policy,
+                  preferredProviders,
+                }),
+                policy
+              ),
+              policy,
+              decidedAt: this.now().toISOString(),
+            })
+          );
       // Derive schedule clocks from the authoritative routing decision time so
       // concurrent equivalent schedules converge on identical identity payloads.
       const scheduledAt = acceptedRoutingDecision.decidedAt;
@@ -702,7 +754,20 @@ export class SceneSchedulingCoordinator {
         correlation,
         scheduledBy: input.actorUserId,
         productionVerification: input.productionVerification,
+        observeTiming,
+        observeBoundary: (boundary) => {
+          persistenceBoundary = boundary;
+          input.observePersistenceBoundary?.(boundary);
+        },
       });
+
+      console.info(JSON.stringify({
+        event: "AI_STORY_POST_RELEASE_SCHEDULING_BOUNDARY_COMPLETED",
+        executionPlanId: input.executionPlanId,
+        sceneExecutionId: input.sceneExecutionId,
+        persistenceBoundary,
+        timings,
+      }));
 
       return SceneSchedulingBundleSchema.parse({
         ...bundle,

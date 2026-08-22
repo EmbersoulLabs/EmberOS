@@ -1,6 +1,7 @@
 import type { Sql } from "postgres";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStorySceneReleaseRepository,
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
   RuntimeAuthorizationPersistenceRepository,
@@ -48,6 +49,15 @@ const SCENE_PLAN_PAYLOAD = {
       transition: "cut",
       continuityNotes: "",
       order: 1,
+    },
+    {
+      id: "scene-c",
+      beatIds: ["beat-2"],
+      purpose: "C",
+      durationSec: 3,
+      transition: "cut",
+      continuityNotes: "",
+      order: 2,
     },
   ],
 };
@@ -165,6 +175,8 @@ export async function cleanupPr32Tenant(
          )
        )
   `;
+  await sql`DELETE FROM ai_story_execute_verifications WHERE workspace_id = ${ids.workspaceId}`;
+  await sql`DELETE FROM ai_story_scene_release_states WHERE workspace_id = ${ids.workspaceId}`;
   await sql`DELETE FROM ai_story_scene_scheduling_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_routing_decisions WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_runtime_authorized_facts WHERE org_id = ${ids.orgId}`;
@@ -226,6 +238,7 @@ export async function prepareAuthorizedSchedulingPlan(input: {
   readonly userId?: string;
   readonly persistAuthorization?: boolean;
   readonly sceneOrder?: readonly number[];
+  readonly skipCommercialAuthorization?: boolean;
 }) {
   const ids = input.ids ?? PHASE_2A_IDS;
   const userId = input.userId ?? PR32_USER_A;
@@ -301,11 +314,24 @@ export async function prepareAuthorizedSchedulingPlan(input: {
           issued.fact
         );
 
-  const commercial = await acceptCommercialAuthorizationFixture({
-    orgId: ids.orgId,
-    workspaceId: ids.workspaceId,
-    executionPlanId,
-  });
+  if (input.persistAuthorization !== false) {
+    await new AiStorySceneReleaseRepository().initialize({
+      executionPlanId,
+      runtimeAuthorizationId: acceptedAuthorization.fact.runtimeAuthorizationId,
+      workspaceId: ids.workspaceId,
+      orderedSceneExecutionIds: sceneExecutionIds,
+      actorUserId: userId,
+      releasedAt: new Date("2026-08-04T12:00:00.000Z"),
+    });
+  }
+
+  const commercial = input.skipCommercialAuthorization
+    ? null
+    : await acceptCommercialAuthorizationFixture({
+        orgId: ids.orgId,
+        workspaceId: ids.workspaceId,
+        executionPlanId,
+      });
 
   return {
     persisted,
@@ -314,7 +340,7 @@ export async function prepareAuthorizedSchedulingPlan(input: {
     assembly,
     issuedAuthorization: issued.fact,
     acceptedAuthorization: acceptedAuthorization.fact,
-    commercialAuthorizationId: commercial.commercialAuthorizationId,
+    commercialAuthorizationId: commercial?.commercialAuthorizationId,
     userId,
   };
 }
