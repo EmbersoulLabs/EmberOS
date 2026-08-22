@@ -8,6 +8,7 @@ import { StoryRuntimePanel } from "@/components/ai-story/StoryRuntimePanel";
 import { PlanningApprovalControl } from "@/components/ai-story/PlanningApprovalControl";
 import { ExecutionPlanReviewPanel } from "@/components/ai-story-review/ExecutionPlanReviewPanel";
 import { executionPlanStorageKey } from "@/lib/ai-story-review-assembly-ui";
+import { fetchCurrentExecutionPlan } from "@/lib/ai-story-execution-plan-discovery-client";
 import {
   STORY_PLANNING_STAGE_ORDER,
   type AnimationPackagePayload,
@@ -645,13 +646,46 @@ function ExecutionPanel({
   const [sceneIntentCount, setSceneIntentCount] = useState<number | null>(null);
 
   useEffect(() => {
-    try {
-      const stored = sessionStorage.getItem(executionPlanStorageKey(storyId));
-      if (stored) setExecutionPlanId(stored);
-    } catch {
-      // sessionStorage unavailable
+    let cancelled = false;
+
+    async function discoverPersistedPlan() {
+      try {
+        const data = await fetchCurrentExecutionPlan({ campaignId, storyId });
+        if (cancelled) return;
+
+        const discoveredId =
+          typeof data.executionPlan?.executionPlanId === "string"
+            ? data.executionPlan.executionPlanId
+            : null;
+        setExecutionPlanId(discoveredId);
+        setSceneIntentCount(
+          typeof data.executionPlan?.sceneIntentCount === "number"
+            ? data.executionPlan.sceneIntentCount
+            : null
+        );
+        setPlanSavedLabel(discoveredId ? "Plan Saved" : null);
+        setPersistenceStatus(discoveredId ? "reloaded" : null);
+        try {
+          if (discoveredId) {
+            sessionStorage.setItem(executionPlanStorageKey(storyId), discoveredId);
+          } else {
+            sessionStorage.removeItem(executionPlanStorageKey(storyId));
+          }
+        } catch {
+          // sessionStorage is only an optional cache.
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : "Execution Plan discovery failed");
+        }
+      }
     }
-  }, [storyId]);
+
+    void discoverPersistedPlan();
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId, setError, storyId]);
 
   async function generateReview() {
     setBusy(true);
