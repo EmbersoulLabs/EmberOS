@@ -28,11 +28,11 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 12
-      env:
-        EMBEROS_TEST_DB_ENVIRONMENT: test
-        RUN_DB_INTEGRATION_TESTS: "1"
-        DB_POOL_MAX: "1"
-        DATABASE_URL: postgresql://emberos:emberos-ci-only@127.0.0.1:5432/emberos_test
+    env:
+      EMBEROS_TEST_DB_ENVIRONMENT: test
+      RUN_DB_INTEGRATION_TESTS: "1"
+      DB_POOL_MAX: "1"
+      DATABASE_URL: postgresql://emberos:emberos-ci-only@127.0.0.1:5432/emberos_test
       NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
       SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
