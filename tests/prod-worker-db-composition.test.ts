@@ -54,8 +54,15 @@ describe("production AI Story worker DB composition", () => {
     });
 
     await expect(
-      (bridge as unknown as { resolveAttemptNumber(a: string, b: string): Promise<number> })
-        .resolveAttemptNumber("execution", "attempt")
+      (bridge as unknown as {
+        resolveAttemptNumber(
+          bundle: { providerExecutionId: string; correlation: { retryGeneration?: number } },
+          attemptId: string
+        ): Promise<number>;
+      }).resolveAttemptNumber(
+        { providerExecutionId: "execution", correlation: {} },
+        "attempt"
+      )
     ).resolves.toBe(1);
   });
 
