@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "codex/**"]
   pull_request:
 
 concurrency:
@@ -10,6 +10,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  db-integration-authority:
+    name: Ephemeral PostgreSQL integration authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: emberos_test
+          POSTGRES_USER: emberos
+          POSTGRES_PASSWORD: emberos-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U emberos -d emberos_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      EMBEROS_TEST_DB_ENVIRONMENT: test
+      RUN_DB_INTEGRATION_TESTS: "1"
+      DATABASE_URL: postgresql://emberos:emberos-ci-only@127.0.0.1:5432/emberos_test
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify test database mutation guard
+        run: pnpm exec vitest run --config vitest.config.ts tests/test-db-authority-guard.test.ts
+
+      - name: Apply canonical Drizzle schema
+        run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
+
+      - name: Certify ephemeral PostgreSQL behavior
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
+
   verify:
     name: Test, typecheck, build
     runs-on: ubuntu-latest
