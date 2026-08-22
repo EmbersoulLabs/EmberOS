@@ -7,9 +7,13 @@
  */
 import { deriveProductRuntimeProjection } from "@ceo-agent/agents";
 import { getWorkspaceMembership } from "@ceo-agent/db";
-import { PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS } from "@ceo-agent/shared";
+import {
+  PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS,
+  ProductRuntimeProjectionSchema,
+} from "@ceo-agent/shared";
 import { apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
+import { mintSceneResultPlayback } from "@/lib/ai-story-scene-media-playback";
 import {
   executionPlanRouteErrorResponse,
   resolveAuthorizedExecutionPlan,
@@ -47,8 +51,47 @@ export async function GET(_request: Request, { params }: RouteParams) {
       callerRole: membership?.role ?? null,
     });
 
-    assertNoForbiddenKeys(projection);
-    return apiSuccess(projection);
+    const generatedSceneReviews = await Promise.all(
+      (projection.generatedSceneReviews ?? []).map(async (scene) => {
+        if (!scene.generatedMedia) return scene;
+        try {
+          const delivery = await mintSceneResultPlayback({
+            workspaceId: ctx.workspaceId,
+            executionPlanId: ctx.executionPlanId,
+            sceneExecutionId: scene.sceneExecutionId,
+            providerAttemptId: scene.generatedMedia.providerAttemptId,
+            sceneResultId: scene.generatedMedia.sceneResultId,
+          });
+          return {
+            ...scene,
+            generatedMedia: {
+              ...scene.generatedMedia,
+              ...delivery,
+              deliveryStatus: "READY" as const,
+              safeError: null,
+            },
+          };
+        } catch {
+          return {
+            ...scene,
+            generatedMedia: {
+              ...scene.generatedMedia,
+              deliveryUrl: null,
+              expiresAt: null,
+              deliveryStatus: "UNAVAILABLE" as const,
+              safeError: "Scene media preview is temporarily unavailable.",
+            },
+          };
+        }
+      })
+    );
+    const deliveredProjection = ProductRuntimeProjectionSchema.parse({
+      ...projection,
+      generatedSceneReviews,
+    });
+
+    assertNoForbiddenKeys(deliveredProjection);
+    return apiSuccess(deliveredProjection);
   } catch (error) {
     return executionPlanRouteErrorResponse(error) ?? handleApiError(error);
   }

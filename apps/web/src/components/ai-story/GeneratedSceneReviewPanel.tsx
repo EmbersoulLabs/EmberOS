@@ -24,6 +24,10 @@ type Props = {
 
 const OPERATOR_ROLES = new Set(["admin", "operator"]);
 
+function shortId(value: string): string {
+  return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+}
+
 const STATE_KEYS: Record<GeneratedSceneReviewReadModel["reviewState"], TranslationKey> = {
   PENDING_REVIEW: "aiStory.generatedReview.state.PENDING_REVIEW",
   APPROVED: "aiStory.generatedReview.state.APPROVED",
@@ -122,6 +126,36 @@ export function GeneratedSceneReviewPanel({
                       : `$${scene.sceneKnownCost}`,
                 })}
               </p>
+              {scene.generatedMedia ? (
+                <div
+                  className="mt-3 space-y-2"
+                  data-testid={`generated-scene-media-${scene.sceneOrder}`}
+                >
+                  {scene.generatedMedia.deliveryUrl ? (
+                    <video
+                      className="w-full rounded-xl border border-border bg-black"
+                      controls
+                      preload="metadata"
+                      src={scene.generatedMedia.deliveryUrl}
+                      data-testid={`generated-scene-media-preview-${scene.sceneOrder}`}
+                    >
+                      Your browser does not support video playback.
+                    </video>
+                  ) : (
+                    <p
+                      className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900"
+                      data-testid={`generated-scene-media-error-${scene.sceneOrder}`}
+                    >
+                      {scene.generatedMedia.safeError ??
+                        "Scene media preview is temporarily unavailable."}
+                    </p>
+                  )}
+                  <p className="text-xs text-ink-secondary">
+                    Result {shortId(scene.generatedMedia.sceneResultId)} · Attempt{" "}
+                    {shortId(scene.generatedMedia.providerAttemptId)}
+                  </p>
+                </div>
+              ) : null}
               {canDecide && pending ? (
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button

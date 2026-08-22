@@ -254,9 +254,37 @@ export async function deriveProductRuntimeProjection(
     (r) => r.status === "FAILED" || r.status === "REJECTED" || r.status === "TIMEOUT"
   ).length;
 
-  const generatedSceneReviews = await new GeneratedSceneReviewService().loadPlanReadModel(
+  const generatedSceneReviewBase = await new GeneratedSceneReviewService().loadPlanReadModel(
     executionPlanId
   ).catch(() => []);
+  const sceneResultById = new Map(latestResults.map((row) => [row.sceneResultId, row]));
+  const generatedSceneReviews = generatedSceneReviewBase.map((review) => {
+    const latestAttempt = review.attempts.find(
+      (attempt) => attempt.attemptId === review.latestAttemptId
+    );
+    const result = latestAttempt?.sceneResultId
+      ? sceneResultById.get(latestAttempt.sceneResultId)
+      : undefined;
+    const media =
+      result?.status === "SUCCEEDED" &&
+      result.mediaReference &&
+      latestAttempt?.attemptId === review.latestAttemptId &&
+      result.sceneExecutionId === review.sceneExecutionId
+        ? {
+            mediaId: result.sceneResultId,
+            sceneResultId: result.sceneResultId,
+            sceneExecutionId: result.sceneExecutionId,
+            providerAttemptId: latestAttempt.attemptId,
+            mediaType: result.mediaReference.mediaType,
+            contentType: result.mediaReference.mediaType,
+            deliveryUrl: null,
+            expiresAt: null,
+            deliveryStatus: "PENDING" as const,
+            safeError: null,
+          }
+        : null;
+    return { ...review, generatedMedia: media };
+  });
   const pendingReviewSceneCount = generatedSceneReviews.filter(
     (row) => row.reviewState === "PENDING_REVIEW"
   ).length;

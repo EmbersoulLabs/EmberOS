@@ -102,6 +102,30 @@ export type GeneratedSceneAttemptReadModel = z.infer<
   typeof GeneratedSceneAttemptReadModelSchema
 >;
 
+/**
+ * Browser-safe identity and request-scoped delivery for one persisted Scene
+ * Result. The durable storage key is deliberately excluded; deliveryUrl is a
+ * short-lived server-minted URL and is never persistence authority.
+ */
+export const GeneratedSceneMediaReadModelSchema = z
+  .object({
+    mediaId: z.string().uuid(),
+    sceneResultId: z.string().uuid(),
+    sceneExecutionId: z.string().uuid(),
+    providerAttemptId: z.string().min(1),
+    mediaType: z.string().min(1),
+    contentType: z.string().min(1),
+    deliveryUrl: z.string().url().nullable(),
+    expiresAt: z.string().datetime().nullable(),
+    deliveryStatus: z.enum(["PENDING", "READY", "UNAVAILABLE"]),
+    safeError: z.string().nullable(),
+  })
+  .strict();
+
+export type GeneratedSceneMediaReadModel = z.infer<
+  typeof GeneratedSceneMediaReadModelSchema
+>;
+
 /** Browser-safe per-Scene generated-media review projection. No secrets/URLs. */
 export const GeneratedSceneReviewReadModelSchema = z
   .object({
@@ -122,6 +146,7 @@ export const GeneratedSceneReviewReadModelSchema = z
     currency: z.literal("USD"),
     running: z.boolean(),
     attempts: z.array(GeneratedSceneAttemptReadModelSchema),
+    generatedMedia: GeneratedSceneMediaReadModelSchema.nullable().default(null),
   })
   .strict();
 
