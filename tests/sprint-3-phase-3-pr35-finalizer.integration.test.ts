@@ -2,8 +2,6 @@
  * Sprint 3 PR 3.5R1 — real PostgreSQL integration for Production Finalizer + Scene projection.
  * No mocks. Skips unless RUN_DB_INTEGRATION_TESTS=1 and DATABASE_URL is set.
  */
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Sql } from "postgres";
 import { createExecutionDispatch } from "@ceo-agent/shared";
@@ -48,22 +46,6 @@ if (RUN_DB_INTEGRATION && !integrationDbUrl) {
   throw new Error("DATABASE_URL is required when RUN_DB_INTEGRATION_TESTS=1");
 }
 const describeIntegration = RUN_DB_INTEGRATION ? describe : describe.skip;
-
-async function applySqlFile(sql: Sql, relative: string): Promise<void> {
-  const migration = readFileSync(resolve(__dirname, relative), "utf8");
-  for (const statement of migration
-    .split(";")
-    .map((part) =>
-      part
-        .split("\n")
-        .filter((line) => !line.trim().startsWith("--"))
-        .join("\n")
-        .trim()
-    )
-    .filter(Boolean)) {
-    await sql.unsafe(statement);
-  }
-}
 
 async function persistDispatch(
   sql: Sql,
@@ -156,23 +138,6 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
 
   beforeAll(async () => {
     sql = createIntegrationSql();
-    for (const relative of [
-      "../packages/db/sql/ai-story-scene-execution-persistence-v1.sql",
-      "../packages/db/sql/ai-story-human-review-persistence-v1.sql",
-      "../packages/db/sql/ai-story-assembly-definition-persistence-v1.sql",
-      "../packages/db/sql/provider-ledger.sql",
-      "../packages/db/sql/provider-outbox.sql",
-      "../packages/db/sql/provider-execution-envelope.sql",
-      "../packages/db/sql/provider-execution-dispatch.sql",
-      "../packages/db/sql/ai-story-scene-scheduling-v1.sql",
-      "../packages/db/sql/ai-story-scene-routing-router-version-v1.sql",
-      "../packages/db/sql/ai-story-scene-scheduling-rls-v1.sql",
-      "../packages/db/sql/ai-story-worker-runtime-v1.sql",
-      "../packages/db/sql/ai-story-scene-projection-v1.sql",
-      "../packages/db/sql/ai-story-generated-scene-review-v1.sql",
-    ]) {
-      await applySqlFile(sql, relative);
-    }
     await cleanupPr32Tenant(sql);
     await seedPr32Tenant(sql, undefined, PR32_USER_A, "pr35r1");
   }, 180_000);
