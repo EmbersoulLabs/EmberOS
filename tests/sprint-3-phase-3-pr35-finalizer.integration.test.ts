@@ -192,7 +192,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     return worker;
   }
 
-  it("successful finalization + usage/cost/outbox/execution once + projection", async () => {
+  it("successful finalization and approval certification", async () => {
     const { dispatch } = await scheduleScene();
     await seedTerminalSuccessWorker(dispatch.dispatchId);
 
