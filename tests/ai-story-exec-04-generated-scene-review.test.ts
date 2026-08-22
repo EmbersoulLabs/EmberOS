@@ -163,6 +163,7 @@ describe("EXEC-04 retry authorization service", () => {
     return {
       sceneExecutionId: SCENE_EXEC,
       sceneId: "scene-a",
+      sceneOrder: 0,
       executionPlanId: PLAN,
       orgId: ORG,
       workspaceId: WORKSPACE,
@@ -189,18 +190,24 @@ describe("EXEC-04 retry authorization service", () => {
       ],
       results: [
         {
+          workspaceId: WORKSPACE,
+          executionPlanId: PLAN,
+          sceneExecutionId: SCENE_EXEC,
+          sceneId: "scene-a",
           providerAttemptId: "attempt-1",
           status: "SUCCEEDED",
           sceneResultId: SCENE_RESULT_1,
+          projectedAt: new Date("2026-08-05T13:00:00.000Z"),
         },
       ],
       correlations: Array.from({ length: attemptCount }, (_, index) => ({
         providerExecutionId: `exec-${index + 1}`,
+        scheduledAt: new Date("2026-08-05T12:55:00.000Z"),
       })),
       providerExecutions: new Map(
         Array.from({ length: attemptCount }, (_, index) => [
           `exec-${index + 1}`,
-          { status: "SUCCEEDED" },
+          { status: "SUCCEEDED", acceptedAttemptId: `attempt-${index + 1}` },
         ])
       ),
       attemptCount,

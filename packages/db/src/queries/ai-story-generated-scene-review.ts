@@ -43,6 +43,7 @@ export class GeneratedSceneReviewError extends Error {
 export type GeneratedSceneReviewLockSnapshot = {
   readonly sceneExecutionId: string;
   readonly sceneId: string;
+  readonly sceneOrder: number;
   readonly executionPlanId: string;
   readonly orgId: string;
   readonly workspaceId: string;
@@ -58,6 +59,26 @@ export type GeneratedSceneReviewLockSnapshot = {
   readonly attemptCount: number;
   readonly maxAttempts: number;
 };
+
+export type GeneratedSceneReviewConnectionMetrics = {
+  connectionAcquireCount: number;
+  transactionCount: number;
+  secondCheckoutAttempts: number;
+  maxConcurrentConnectionsObserved: number;
+  connectionWaitMs: number;
+  transactionDurationMs: number;
+};
+
+export function createGeneratedSceneReviewConnectionMetrics(): GeneratedSceneReviewConnectionMetrics {
+  return {
+    connectionAcquireCount: 0,
+    transactionCount: 0,
+    secondCheckoutAttempts: 0,
+    maxConcurrentConnectionsObserved: 0,
+    connectionWaitMs: 0,
+    transactionDurationMs: 0,
+  };
+}
 
 function toFact(
   row: typeof schema.aiStoryGeneratedSceneReviews.$inferSelect
@@ -158,7 +179,12 @@ export async function insertPendingGeneratedSceneReviewInTransaction(
 }
 
 export class GeneratedSceneReviewRepository {
-  constructor(private readonly db: Db = getDb()) {}
+  private activeTransactions = 0;
+
+  constructor(
+    private readonly db: Db = getDb(),
+    private readonly connectionMetrics?: GeneratedSceneReviewConnectionMetrics
+  ) {}
 
   async listByExecutionPlanId(
     executionPlanId: string
@@ -220,7 +246,25 @@ export class GeneratedSceneReviewRepository {
     },
     work: (tx: Tx, snapshot: GeneratedSceneReviewLockSnapshot) => Promise<T>
   ): Promise<T> {
-    return this.db.transaction(async (tx) => {
+    const waitStartedAt = performance.now();
+    if (this.connectionMetrics) {
+      this.connectionMetrics.connectionAcquireCount += 1;
+      this.connectionMetrics.transactionCount += 1;
+      if (this.connectionMetrics.connectionAcquireCount > 1) {
+        this.connectionMetrics.secondCheckoutAttempts += 1;
+      }
+    }
+    const transactionStartedAt = performance.now();
+    this.activeTransactions += 1;
+    if (this.connectionMetrics) {
+      this.connectionMetrics.connectionWaitMs += transactionStartedAt - waitStartedAt;
+      this.connectionMetrics.maxConcurrentConnectionsObserved = Math.max(
+        this.connectionMetrics.maxConcurrentConnectionsObserved,
+        this.activeTransactions
+      );
+    }
+    try {
+      return await this.db.transaction(async (tx) => {
       // Review decisions run in a serverless max:1 pool. Bound lock/query waits
       // inside the transaction so a conflicting writer fails closed instead of
       // occupying the only request connection until the platform timeout.
@@ -239,8 +283,15 @@ export class GeneratedSceneReviewRepository {
         for update
       `);
       const snapshot = await loadLockedSnapshot(tx, input);
-      return work(tx, snapshot);
-    });
+        return work(tx, snapshot);
+      });
+    } finally {
+      this.activeTransactions -= 1;
+      if (this.connectionMetrics) {
+        this.connectionMetrics.transactionDurationMs +=
+          performance.now() - transactionStartedAt;
+      }
+    }
   }
 
   async writeDecisionInTransaction(
@@ -356,6 +407,7 @@ async function loadLockedSnapshot(
   return {
     sceneExecutionId: scene.id,
     sceneId: scene.sceneId,
+    sceneOrder: scene.sceneOrder,
     executionPlanId: scene.executionPlanId,
     orgId: scene.orgId,
     workspaceId: scene.workspaceId,

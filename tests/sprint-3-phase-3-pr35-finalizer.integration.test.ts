@@ -15,7 +15,9 @@ import {
 import { GeneratedSceneReviewService } from "../packages/agents/src/ai-story/generated-scene-review-service";
 import {
   closeDb,
+  createGeneratedSceneReviewConnectionMetrics,
   ExecutionEnvelopeRepository,
+  GeneratedSceneReviewRepository,
   ProviderExecutionFinalizationError,
   ProviderExecutionFinalizationRepository,
   ProviderLedgerRepository,
@@ -228,7 +230,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     expect(cost?.count).toBe(1);
     expect(scenes?.count).toBe(1);
 
-    const approvalService = new GeneratedSceneReviewService({
+    const bindingService = new GeneratedSceneReviewService({
       now: () => new Date("2026-08-05T13:05:00.000Z"),
     });
     const approvalInput = {
@@ -239,6 +241,73 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
       workspaceId: dispatch.workspaceId,
       executionAuthorization: {} as never,
     };
+
+    // The JSON fact is an immutable-domain authority alongside indexed
+    // columns. A forged/mismatched attempt identity must fail closed.
+    const wrongAttemptId = `wrong-attempt-${crypto.randomUUID()}`;
+    await sql`
+      UPDATE ai_story_generated_scene_reviews
+      SET fact = jsonb_set(fact, '{providerAttemptId}', to_jsonb(${wrongAttemptId}::text))
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    await expect(
+      bindingService.approve({ ...approvalInput, attemptId: wrongAttemptId })
+    ).rejects.toBeTruthy();
+    await sql`
+      UPDATE ai_story_generated_scene_reviews
+      SET fact = jsonb_set(fact, '{providerAttemptId}', to_jsonb(${outcome.sceneResult.providerAttemptId}::text))
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+
+    const wrongResultId = crypto.randomUUID();
+    await sql`
+      UPDATE ai_story_generated_scene_reviews
+      SET fact = jsonb_set(fact, '{sceneResultId}', to_jsonb(${wrongResultId}::text))
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    await expect(bindingService.approve(approvalInput)).rejects.toBeTruthy();
+    await sql`
+      UPDATE ai_story_generated_scene_reviews
+      SET fact = jsonb_set(fact, '{sceneResultId}', to_jsonb(${outcome.sceneResult.sceneResultId}::text))
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+
+    const wrongSceneExecutionId = crypto.randomUUID();
+    await sql`
+      UPDATE ai_story_generated_scene_reviews
+      SET fact = jsonb_set(fact, '{sceneExecutionId}', to_jsonb(${wrongSceneExecutionId}::text))
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    await expect(bindingService.approve(approvalInput)).rejects.toBeTruthy();
+    await sql`
+      UPDATE ai_story_generated_scene_reviews
+      SET fact = jsonb_set(fact, '{sceneExecutionId}', to_jsonb(${outcome.sceneResult.sceneExecutionId}::text))
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    const [afterNegativeBindings] = await sql<{
+      decision: string;
+      decided_at: Date | null;
+      decided_by: string | null;
+    }[]>`
+      SELECT decision, decided_at, decided_by FROM ai_story_generated_scene_reviews
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    expect(afterNegativeBindings).toMatchObject({
+      decision: "PENDING_REVIEW",
+      decided_at: null,
+      decided_by: null,
+    });
+
+    const failureService = new GeneratedSceneReviewService({
+      now: () => new Date("2026-08-05T13:05:00.000Z"),
+    });
 
     // A deterministic persistence failure must roll the decision back.
     await sql.unsafe(`
@@ -253,7 +322,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
       BEFORE UPDATE ON ai_story_generated_scene_reviews
       FOR EACH ROW EXECUTE FUNCTION emberos_ci_fail_scene_review_update()
     `);
-    await expect(approvalService.approve(approvalInput)).rejects.toBeTruthy();
+    await expect(failureService.approve(approvalInput)).rejects.toBeTruthy();
     await sql.unsafe(`DROP TRIGGER emberos_ci_fail_scene_review_update ON ai_story_generated_scene_reviews`);
     await sql.unsafe(`DROP FUNCTION emberos_ci_fail_scene_review_update()`);
     const [afterPersistenceFailure] = await sql<{ decision: string; decided_at: Date | null }[]>`
@@ -274,7 +343,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     });
     await new Promise((resolve) => setTimeout(resolve, 100));
     const lockFailureStartedAt = performance.now();
-    await expect(approvalService.approve(approvalInput)).rejects.toBeTruthy();
+    await expect(failureService.approve(approvalInput)).rejects.toBeTruthy();
     expect(performance.now() - lockFailureStartedAt).toBeLessThan(15_000);
     releasePlanLock();
     await planLockOwner;
@@ -285,6 +354,11 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     `;
     expect(afterLockFailure).toMatchObject({ decision: "PENDING_REVIEW", decided_at: null });
 
+    const connectionMetrics = createGeneratedSceneReviewConnectionMetrics();
+    const approvalService = new GeneratedSceneReviewService({
+      reviewRepository: new GeneratedSceneReviewRepository(undefined, connectionMetrics),
+      now: () => new Date("2026-08-05T13:05:00.000Z"),
+    });
     const approvalStartedAt = performance.now();
     const approval = await approvalService.approve({
       ...approvalInput,
@@ -295,13 +369,26 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     expect(approval.review.sceneResultId).toBe(outcome.sceneResult.sceneResultId);
     expect(approval.review.decidedBy).toBe(PR32_USER_A);
     expect(approval.review.decidedAt).toBe("2026-08-05T13:05:00.000Z");
+    expect(connectionMetrics).toMatchObject({
+      connectionAcquireCount: 1,
+      transactionCount: 1,
+      secondCheckoutAttempts: 0,
+      maxConcurrentConnectionsObserved: 1,
+    });
 
-    const replay = await approvalService.approve({
+    const replayMetrics = createGeneratedSceneReviewConnectionMetrics();
+    const replayService = new GeneratedSceneReviewService({
+      reviewRepository: new GeneratedSceneReviewRepository(undefined, replayMetrics),
+      now: () => new Date("2026-08-05T13:05:00.000Z"),
+    });
+
+    const replay = await replayService.approve({
       ...approvalInput,
     });
     expect(replay.review.generatedSceneReviewId).toBe(
       approval.review.generatedSceneReviewId
     );
+    expect(replayMetrics.secondCheckoutAttempts).toBe(0);
     const [reviewCount] = await sql<{ count: number }[]>`
       SELECT count(*)::int AS count FROM ai_story_generated_scene_reviews
       WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}

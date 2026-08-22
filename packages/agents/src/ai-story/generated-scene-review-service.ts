@@ -79,7 +79,7 @@ export class GeneratedSceneReviewService {
   }): Promise<GeneratedSceneReviewDecisionResponse> {
     void input.executionAuthorization;
     try {
-      const review = await this.reviewRepo.transactDecision(
+      const decision = await this.reviewRepo.transactDecision(
         {
           executionPlanId: input.executionPlanId,
           sceneExecutionId: input.sceneExecutionId,
@@ -90,7 +90,10 @@ export class GeneratedSceneReviewService {
           const approved = snapshotApprovedReview(snapshot);
           if (approved) {
             if (approved.providerAttemptId === input.attemptId) {
-              return approved;
+              return {
+                review: approved,
+                scene: buildDecisionSceneReadModel(snapshot, approved),
+              };
             }
             throw new GeneratedSceneReviewError(
               "GENERATED_SCENE_REVIEW_STATE_CONFLICT",
@@ -122,13 +125,29 @@ export class GeneratedSceneReviewService {
               "Only a succeeded generated output can be approved"
             );
           }
+          if (
+            target.sceneExecutionId !== snapshot.sceneExecutionId ||
+            target.executionPlanId !== snapshot.executionPlanId ||
+            target.workspaceId !== snapshot.workspaceId ||
+            target.sceneId !== snapshot.sceneId ||
+            target.sceneResultId !== result.sceneResultId ||
+            result.sceneExecutionId !== snapshot.sceneExecutionId ||
+            result.executionPlanId !== snapshot.executionPlanId ||
+            result.workspaceId !== snapshot.workspaceId ||
+            result.sceneId !== snapshot.sceneId
+          ) {
+            throw new GeneratedSceneReviewError(
+              "GENERATED_SCENE_APPROVAL_BINDING_INVALID",
+              "Generated Scene result does not match the review authority"
+            );
+          }
           if (target.decision !== "PENDING_REVIEW") {
             throw new GeneratedSceneReviewError(
               "GENERATED_SCENE_REVIEW_STATE_CONFLICT",
               "Generated Scene output is not pending review"
             );
           }
-          return this.reviewRepo.writeDecisionInTransaction(tx, {
+          const review = await this.reviewRepo.writeDecisionInTransaction(tx, {
             current: {
               ...target,
               sceneResultId: result.sceneResultId,
@@ -137,15 +156,15 @@ export class GeneratedSceneReviewService {
             decidedBy: input.actorUserId,
             decidedAt: this.nowIso(),
           });
+          return {
+            review,
+            scene: buildDecisionSceneReadModel(snapshot, review),
+          };
         }
       );
-      const scene = await this.loadSceneReadModel(
-        input.executionPlanId,
-        input.sceneExecutionId
-      );
       return GeneratedSceneReviewDecisionResponseSchema.parse({
-        review,
-        scene,
+        review: decision.review,
+        scene: decision.scene,
         retryEnqueued: false,
         newAttemptNumber: null,
       });
@@ -454,6 +473,63 @@ export class GeneratedSceneReviewService {
       attempts,
     });
   }
+}
+
+function buildDecisionSceneReadModel(
+  snapshot: GeneratedSceneReviewLockSnapshot,
+  decision: GeneratedSceneReviewFact
+): GeneratedSceneReviewReadModel {
+  const reviews = snapshot.reviews.map((review) =>
+    review.generatedSceneReviewId === decision.generatedSceneReviewId ? decision : review
+  );
+  const attempts: GeneratedSceneAttemptReadModel[] = reviews.map((review, index) => {
+    const result = snapshot.results.find(
+      (candidate) => candidate.providerAttemptId === review.providerAttemptId
+    );
+    const correlation = snapshot.correlations.find((candidate) => {
+      const execution = snapshot.providerExecutions.get(candidate.providerExecutionId);
+      return execution?.acceptedAttemptId === review.providerAttemptId;
+    });
+    const execution = correlation
+      ? snapshot.providerExecutions.get(correlation.providerExecutionId)
+      : undefined;
+    const succeeded = result?.status === "SUCCEEDED";
+    return {
+      attemptId: review.providerAttemptId,
+      attemptNumber: index + 1,
+      providerExecutionId: correlation?.providerExecutionId ?? null,
+      status: result?.status ?? execution?.status ?? "UNKNOWN",
+      outcome: succeeded ? "success" : execution?.status === "TERMINAL_FAILURE" ? "failure" : "unknown",
+      sceneResultId: result?.sceneResultId ?? review.sceneResultId,
+      reviewState: review.decision,
+      failureClass: null,
+      knownCostAmount: null,
+      costSource: null,
+      createdAt: correlation?.scheduledAt.toISOString() ?? null,
+      completedAt: result?.projectedAt.toISOString() ?? execution?.completedAt?.toISOString() ?? null,
+    };
+  });
+  const latest = attempts[attempts.length - 1] ?? null;
+  return GeneratedSceneReviewReadModelSchema.parse({
+    sceneExecutionId: snapshot.sceneExecutionId,
+    sceneId: snapshot.sceneId,
+    sceneOrder: snapshot.sceneOrder,
+    reviewState: decision.decision,
+    approvedAttemptId: decision.decision === "APPROVED" ? decision.providerAttemptId : null,
+    approvedSceneResultId: decision.decision === "APPROVED" ? decision.sceneResultId : null,
+    latestAttemptId: latest?.attemptId ?? null,
+    latestAttemptNumber: latest?.attemptNumber ?? null,
+    latestAttemptStatus: latest?.status ?? null,
+    attemptCount: Math.max(snapshot.attemptCount, attempts.length),
+    retryRemaining: Math.max(0, snapshot.maxAttempts - Math.max(snapshot.attemptCount, attempts.length)),
+    maxAttempts: snapshot.maxAttempts,
+    latestAttemptKnownCost: null,
+    sceneKnownCost: null,
+    currency: "USD",
+    running: false,
+    attempts,
+    generatedMedia: null,
+  });
 }
 
 function assertSameScene(
