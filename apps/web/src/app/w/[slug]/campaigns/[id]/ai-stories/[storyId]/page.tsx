@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, StatusBadge } from "@/components/AppShell";
 import { StoryRuntimePanel } from "@/components/ai-story/StoryRuntimePanel";
+import { PlanningApprovalControl } from "@/components/ai-story/PlanningApprovalControl";
 import { ExecutionPlanReviewPanel } from "@/components/ai-story-review/ExecutionPlanReviewPanel";
 import { executionPlanStorageKey } from "@/lib/ai-story-review-assembly-ui";
 import {
@@ -272,25 +273,6 @@ export default function AiStoryReviewPage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : `Screenwriter ${action} failed`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function approvePlanning() {
-    setBusy(true);
-    setError("");
-    try {
-      const res = await fetch(
-        `/api/campaigns/${campaignId}/ai-stories/${storyId}/planning/approve`,
-        { method: "POST" }
-      );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Planning approval failed");
-      setStatus(data.status ?? "ready_for_execution");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Planning approval failed");
     } finally {
       setBusy(false);
     }
@@ -570,14 +552,18 @@ export default function AiStoryReviewPage() {
                 </p>
               </div>
               {status === "planning_review" ? (
-                <button
-                  type="button"
+                <PlanningApprovalControl
+                  campaignId={campaignId}
+                  storyId={storyId}
+                  storyVersionId={storyVersionId}
+                  animationPackageId={animationPackageRecordId}
                   disabled={busy}
-                  onClick={() => void approvePlanning()}
-                  className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-                >
-                  {busy ? "Approving…" : "Approve Planning"}
-                </button>
+                  onApproved={async (nextStatus) => {
+                    setStatus(nextStatus);
+                    await load();
+                  }}
+                  onError={setError}
+                />
               ) : null}
             </div>
 
