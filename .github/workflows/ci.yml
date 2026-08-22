@@ -59,10 +59,13 @@ jobs:
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
 
       - name: Certify ephemeral PostgreSQL behavior
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
+
+      - name: Certify generated Scene approval on PostgreSQL
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
-          tests/ai-story-ci-postgres-authority.integration.test.ts
           tests/sprint-3-phase-3-pr35-finalizer.integration.test.ts
+          -t "successful finalization + usage/cost/outbox/execution once + projection"
 
   verify:
     name: Test, typecheck, build
