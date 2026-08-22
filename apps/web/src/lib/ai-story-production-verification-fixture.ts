@@ -25,11 +25,16 @@ import { approveAnimationPackage, saveAnimationPackage } from "@/lib/ai-story-pl
 import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
 import { AI_STORY_PRODUCTION_VERIFICATION_POLICY_VERSION } from "@ceo-agent/db";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  completeProductionVerificationFixture,
+  ProductionVerificationCompletionError,
+} from "@/lib/ai-story-production-verification-completion";
 
 export const AI_STORY_PROD_VERIFY_FIXTURE_VERSION =
   "ai-story-prod-verify-fixture.v1" as const;
 
 export const AI_STORY_PROD_VERIFY_STEP_TIMEOUT_MS = 15_000;
+export const AI_STORY_PROD_VERIFY_CANONICAL_TIMEOUT_MS = 30_000;
 export const AI_STORY_PROD_VERIFY_TOTAL_TIMEOUT_MS = 120_000;
 
 export type ProductionVerificationStepTiming = {
@@ -53,6 +58,15 @@ export class ProductionVerificationFailureClassificationError extends Error {
   constructor() {
     super("Production verification failed and its incomplete-state classification could not be persisted");
     this.name = "ProductionVerificationFailureClassificationError";
+  }
+}
+
+export class ProductionVerificationHarnessPostCanonicalError extends Error {
+  readonly code = "VERIFICATION_HARNESS_FAILED_AFTER_CANONICAL_SUCCESS";
+
+  constructor(readonly causeCode: string) {
+    super("Verification harness bookkeeping failed after canonical control-path success");
+    this.name = "ProductionVerificationHarnessPostCanonicalError";
   }
 }
 
@@ -280,6 +294,7 @@ export async function createProductionVerificationFixture(input: {
   const fixtureDeadline = Date.now() + AI_STORY_PROD_VERIFY_TOTAL_TIMEOUT_MS;
   let storyId: string | null = null;
   let executionPlanId: string | null = null;
+  let canonicalExecuteSucceeded = false;
   const step = <T>(name: string, operation: () => PromiseLike<T>, timeoutMs?: number) => {
     const remainingMs = fixtureDeadline - Date.now();
     if (remainingMs <= 0) {
@@ -481,11 +496,18 @@ export async function createProductionVerificationFixture(input: {
         authorizedBy: "ACTIVE_PLATFORM_ADMIN",
         createdBy: input.user.id,
       },
-    }));
-    // The Story is promoted only after canonical Execute atomically persists the
-    // verification identity, staged-release ledger, routing and terminal outbox.
-    await step("fixture_state_completed", () =>
-      setAiStoryStatus(db, story.id, "planning_review", "ready_for_execution")
+    }), AI_STORY_PROD_VERIFY_CANONICAL_TIMEOUT_MS);
+    canonicalExecuteSucceeded = true;
+    // Completion is a separate verification-harness authority. It validates the
+    // already committed canonical facts on one fresh connection, then performs
+    // an idempotent Story projection write and bounded readback.
+    const completion = await step("fixture_state_completed", () =>
+      completeProductionVerificationFixture({
+        storyId: story.id,
+        storyVersionId: version.id,
+        executionPlanId: createdExecutionPlanId,
+        workspaceId: campaign.workspaceId,
+      })
     );
     return {
       fixtureRunId: runId,
@@ -498,12 +520,34 @@ export async function createProductionVerificationFixture(input: {
       assemblyDefinitionId: assembly.definition.assemblyDefinitionId,
       assemblySceneCount: assembly.definition.sceneCount,
       execute: executed.response,
-      fixtureState: "COMPLETED" as const,
+      fixtureState: completion.fixtureState,
+      completion,
       stepTimings,
     };
   } catch (error) {
+    const canonicalTimeoutOutcomeAmbiguous =
+      error instanceof ProductionVerificationStepTimeoutError &&
+      error.step === "canonical_verification_execute";
+    if (storyId && (canonicalExecuteSucceeded || canonicalTimeoutOutcomeAmbiguous)) {
+      const causeCode = error instanceof ProductionVerificationStepTimeoutError
+        ? error.code
+        : error instanceof ProductionVerificationCompletionError
+          ? error.code
+          : "PRODUCTION_VERIFICATION_POST_CANONICAL_BOOKKEEPING_FAILED";
+      console.error(JSON.stringify({
+        event: "AI_STORY_PROD_VERIFY_POST_CANONICAL_HARNESS_FAILED",
+        code: "VERIFICATION_HARNESS_FAILED_AFTER_CANONICAL_SUCCESS",
+        causeCode,
+        fixtureRunId: runId,
+        storyId,
+        executionPlanId,
+        storyFailureClassificationWritten: false,
+      }));
+      throw new ProductionVerificationHarnessPostCanonicalError(causeCode);
+    }
     if (storyId) {
       try {
+        const failureClassificationStartedAt = performance.now();
         await runProductionVerificationStep("failure_classification", () =>
           persistFailedIncompleteClassification(storyId!),
           {
@@ -516,6 +560,14 @@ export async function createProductionVerificationFixture(input: {
             },
           }
         );
+        console.info(JSON.stringify({
+          event: "AI_STORY_PROD_VERIFY_FAILURE_CLASSIFICATION_COMPLETED",
+          failure_classification_ms:
+            performance.now() - failureClassificationStartedAt,
+          fixtureRunId: runId,
+          storyId,
+          executionPlanId,
+        }));
       } catch (classificationError) {
         console.error(JSON.stringify({
           event: "AI_STORY_PROD_VERIFY_FAILURE_CLASSIFICATION_FAILED",
