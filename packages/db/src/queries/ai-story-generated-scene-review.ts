@@ -221,6 +221,11 @@ export class GeneratedSceneReviewRepository {
     work: (tx: Tx, snapshot: GeneratedSceneReviewLockSnapshot) => Promise<T>
   ): Promise<T> {
     return this.db.transaction(async (tx) => {
+      // Review decisions run in a serverless max:1 pool. Bound lock/query waits
+      // inside the transaction so a conflicting writer fails closed instead of
+      // occupying the only request connection until the platform timeout.
+      await tx.execute(sql`set local lock_timeout = '5s'`);
+      await tx.execute(sql`set local statement_timeout = '12s'`);
       await tx.execute(sql`
         select ${schema.aiStoryExecutionPlans.id}
         from ${schema.aiStoryExecutionPlans}
@@ -318,30 +323,26 @@ async function loadLockedSnapshot(
     );
   }
 
-  const [reviews, results, correlations] = await Promise.all([
-    tx
-      .select()
-      .from(schema.aiStoryGeneratedSceneReviews)
-      .where(
-        eq(schema.aiStoryGeneratedSceneReviews.sceneExecutionId, input.sceneExecutionId)
-      )
-      .orderBy(asc(schema.aiStoryGeneratedSceneReviews.createdAt)),
-    tx
-      .select()
-      .from(schema.aiStorySceneResults)
-      .where(eq(schema.aiStorySceneResults.sceneExecutionId, input.sceneExecutionId))
-      .orderBy(asc(schema.aiStorySceneResults.projectedAt)),
-    tx
-      .select()
-      .from(schema.aiStorySceneSchedulingCorrelations)
-      .where(
-        eq(
-          schema.aiStorySceneSchedulingCorrelations.sceneExecutionId,
-          input.sceneExecutionId
-        )
-      )
-      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt)),
-  ]);
+  // Keep every read on the transaction receiver and issue them sequentially.
+  // Concurrent promises can cause receiver/pool churn in a max:1 serverless
+  // process even though the logical operation owns one transaction.
+  const reviews = await tx
+    .select()
+    .from(schema.aiStoryGeneratedSceneReviews)
+    .where(eq(schema.aiStoryGeneratedSceneReviews.sceneExecutionId, input.sceneExecutionId))
+    .orderBy(asc(schema.aiStoryGeneratedSceneReviews.createdAt));
+  const results = await tx
+    .select()
+    .from(schema.aiStorySceneResults)
+    .where(eq(schema.aiStorySceneResults.sceneExecutionId, input.sceneExecutionId))
+    .orderBy(asc(schema.aiStorySceneResults.projectedAt));
+  const correlations = await tx
+    .select()
+    .from(schema.aiStorySceneSchedulingCorrelations)
+    .where(
+      eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, input.sceneExecutionId)
+    )
+    .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt));
 
   const executionIds = correlations.map((row) => row.providerExecutionId);
   const executions =

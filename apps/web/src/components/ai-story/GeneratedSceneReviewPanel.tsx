@@ -72,7 +72,7 @@ export function GeneratedSceneReviewPanel({
     } catch (err) {
       setError(
         err instanceof StoryRuntimeClientError
-          ? err.message
+          ? `${err.message}${err.requestCorrelationId ? ` (reference ${err.requestCorrelationId})` : ""}`
           : err instanceof Error
             ? err.message
             : t("aiStory.generatedReview.error")

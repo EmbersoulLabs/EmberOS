@@ -24,7 +24,19 @@ type RouteParams = {
 };
 
 export async function POST(request: Request, { params }: RouteParams) {
+  const receivedCorrelation = request.headers.get("x-emberos-request-correlation-id");
+  const requestCorrelationId =
+    receivedCorrelation && /^[0-9a-f-]{36}$/i.test(receivedCorrelation)
+      ? receivedCorrelation
+      : crypto.randomUUID();
+  const startedAt = performance.now();
+  let stage = "request_parse";
+  const respond = (response: Response) => {
+    response.headers.set("x-emberos-request-correlation-id", requestCorrelationId);
+    return response;
+  };
   try {
+    stage = "auth";
     const user = await requireAuth();
     const {
       id: campaignId,
@@ -34,19 +46,20 @@ export async function POST(request: Request, { params }: RouteParams) {
       attemptId,
     } = await params;
     if (!attemptId || attemptId.trim().length < 1) {
-      return apiError("Invalid attempt identity", "VALIDATION_ERROR", 400);
+      return respond(apiError("Invalid attempt identity", "VALIDATION_ERROR", 400));
     }
 
     const body = await request.json().catch(() => ({}));
     const forged = rejectForgedGeneratedSceneReviewBody(body);
     if (forged) {
-      return apiError(
+      return respond(apiError(
         "Client-forged review identity is not accepted",
         "GENERATED_SCENE_IDENTITY_FORGED",
         422
-      );
+      ));
     }
 
+    stage = "workspace_authorization";
     const ctx = await authorizeGeneratedSceneReviewWrite({
       user,
       campaignId,
@@ -55,6 +68,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       sceneExecutionId,
       clientClaims: body,
     });
+    stage = "execution_authorization";
     const executionAuthorization = await authorizeAiStoryExecution({
       user,
       orgId: ctx.orgId,
@@ -63,6 +77,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       clientClaims: body,
     });
 
+    stage = "approval_transaction";
     const result = await createdGeneratedSceneReviewService().approve({
       executionPlanId: ctx.executionPlanId,
       sceneExecutionId,
@@ -71,14 +86,30 @@ export async function POST(request: Request, { params }: RouteParams) {
       workspaceId: ctx.workspaceId,
       executionAuthorization,
     });
-    return apiSuccess(result);
+    stage = "response_serialize";
+    console.info("ai_story_scene_approval_completed", {
+      requestCorrelationId,
+      storyId,
+      executionPlanId,
+      sceneExecutionId,
+      providerAttemptId: attemptId,
+      reviewId: result.review.generatedSceneReviewId,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    return respond(apiSuccess({ ...result, requestCorrelationId }));
   } catch (error) {
+    console.error("ai_story_scene_approval_failed", {
+      requestCorrelationId,
+      stage,
+      durationMs: Math.round(performance.now() - startedAt),
+      errorName: error instanceof Error ? error.name : "UnknownError",
+    });
     if (error instanceof AiStoryExecutionDeniedError) {
-      return apiError(error.message, error.code, error.status);
+      return respond(apiError(error.message, error.code, error.status));
     }
     if (error instanceof GeneratedSceneReviewError) {
-      return apiError(error.message, error.code, error.status);
+      return respond(apiError(error.message, error.code, error.status));
     }
-    return executionPlanRouteErrorResponse(error) ?? handleApiError(error);
+    return respond(executionPlanRouteErrorResponse(error) ?? handleApiError(error));
   }
 }

@@ -14,6 +14,7 @@ import {
   SceneFinalizationCoordinator,
   SceneFinalizationCoordinatorError,
 } from "../packages/agents/src/ai-story/scene-finalization-coordinator";
+import { GeneratedSceneReviewService } from "../packages/agents/src/ai-story/generated-scene-review-service";
 import {
   closeDb,
   ExecutionEnvelopeRepository,
@@ -263,6 +264,45 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     expect(usage?.count).toBe(1);
     expect(cost?.count).toBe(1);
     expect(scenes?.count).toBe(1);
+
+    const approvalStartedAt = performance.now();
+    const approvalService = new GeneratedSceneReviewService({
+      now: () => new Date("2026-08-05T13:05:00.000Z"),
+    });
+    const approval = await approvalService.approve({
+      executionPlanId: outcome.sceneResult.executionPlanId,
+      sceneExecutionId: outcome.sceneResult.sceneExecutionId,
+      attemptId: outcome.sceneResult.providerAttemptId,
+      actorUserId: PR32_USER_A,
+      workspaceId: outcome.sceneResult.workspaceId,
+      // The service consumes persisted execution authority; the route owns
+      // construction/validation of this already-certified authorization.
+      executionAuthorization: {} as never,
+    });
+    expect(performance.now() - approvalStartedAt).toBeLessThan(15_000);
+    expect(approval.review.decision).toBe("APPROVED");
+    expect(approval.review.providerAttemptId).toBe(outcome.sceneResult.providerAttemptId);
+    expect(approval.review.sceneResultId).toBe(outcome.sceneResult.sceneResultId);
+    expect(approval.review.decidedBy).toBe(PR32_USER_A);
+    expect(approval.review.decidedAt).toBe("2026-08-05T13:05:00.000Z");
+
+    const replay = await approvalService.approve({
+      executionPlanId: outcome.sceneResult.executionPlanId,
+      sceneExecutionId: outcome.sceneResult.sceneExecutionId,
+      attemptId: outcome.sceneResult.providerAttemptId,
+      actorUserId: PR32_USER_A,
+      workspaceId: outcome.sceneResult.workspaceId,
+      executionAuthorization: {} as never,
+    });
+    expect(replay.review.generatedSceneReviewId).toBe(
+      approval.review.generatedSceneReviewId
+    );
+    const [reviewCount] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM ai_story_generated_scene_reviews
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    expect(reviewCount?.count).toBe(1);
   }, 180_000);
 
   it("replay converges without re-invoking Finalizer / rewriting usage", async () => {

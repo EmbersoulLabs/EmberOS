@@ -11,12 +11,14 @@ import type {
 export class StoryRuntimeClientError extends Error {
   readonly code: string;
   readonly status: number;
+  readonly requestCorrelationId: string | null;
 
-  constructor(message: string, code: string, status: number) {
+  constructor(message: string, code: string, status: number, requestCorrelationId: string | null = null) {
     super(message);
     this.name = "StoryRuntimeClientError";
     this.code = code;
     this.status = status;
+    this.requestCorrelationId = requestCorrelationId;
   }
 }
 
@@ -35,11 +37,15 @@ async function parseJson(res: Response): Promise<Record<string, unknown>> {
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   const res = await fetch(input, init);
   const body = await parseJson(res);
+  const requestCorrelationId =
+    res.headers.get("x-emberos-request-correlation-id") ??
+    (typeof body.requestCorrelationId === "string" ? body.requestCorrelationId : null);
   if (!res.ok) {
     throw new StoryRuntimeClientError(
       typeof body.error === "string" ? body.error : "Request failed",
       typeof body.code === "string" ? body.code : "UNKNOWN",
-      res.status
+      res.status,
+      requestCorrelationId
     );
   }
   return body as T;
@@ -100,9 +106,13 @@ export async function postGeneratedSceneReviewDecision(input: {
     input.action === "approve"
       ? `${base}/attempts/${input.attemptId}/approve`
       : `${base}/${input.action}`;
+  const requestCorrelationId = crypto.randomUUID();
   await requestJson(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-emberos-request-correlation-id": requestCorrelationId,
+    },
     body: JSON.stringify({}),
   });
 }

@@ -38,13 +38,6 @@ export async function authorizeGeneratedSceneReviewWrite(input: {
     executionPlanId: input.executionPlanId,
     minRole: "operator",
   });
-  await authorizeAiStoryExecution({
-    user: input.user,
-    orgId: ctx.orgId,
-    workspaceId: ctx.workspaceId,
-    minRole: "operator",
-    clientClaims: input.clientClaims,
-  });
   return ctx;
 }
 
