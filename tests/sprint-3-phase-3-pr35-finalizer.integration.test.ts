@@ -237,7 +237,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
       sceneExecutionId: outcome.sceneResult.sceneExecutionId,
       attemptId: outcome.sceneResult.providerAttemptId,
       actorUserId: PR32_USER_A,
-      workspaceId: outcome.sceneResult.workspaceId,
+      workspaceId: dispatch.workspaceId,
       // The service consumes persisted execution authority; the route owns
       // construction/validation of this already-certified authorization.
       executionAuthorization: {} as never,
@@ -254,7 +254,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
       sceneExecutionId: outcome.sceneResult.sceneExecutionId,
       attemptId: outcome.sceneResult.providerAttemptId,
       actorUserId: PR32_USER_A,
-      workspaceId: outcome.sceneResult.workspaceId,
+      workspaceId: dispatch.workspaceId,
       executionAuthorization: {} as never,
     });
     expect(replay.review.generatedSceneReviewId).toBe(
