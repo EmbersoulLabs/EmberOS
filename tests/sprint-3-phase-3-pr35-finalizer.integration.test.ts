@@ -30,7 +30,6 @@ import {
   createIntegrationSql,
   getIntegrationDbUrl,
 } from "./helpers/db-integration";
-import { applyPhaseECommercialAuthorizationSql } from "./helpers/commercial-phase-e-sql";
 import {
   FixedSeedanceRouter,
   PR32_USER_A,
@@ -174,7 +173,6 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     ]) {
       await applySqlFile(sql, relative);
     }
-    await applyPhaseECommercialAuthorizationSql(sql);
     await cleanupPr32Tenant(sql);
     await seedPr32Tenant(sql, undefined, PR32_USER_A, "pr35r1");
   }, 180_000);
