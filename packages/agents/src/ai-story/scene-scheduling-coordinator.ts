@@ -354,6 +354,7 @@ function buildCorrelation(input: {
   readonly correlationId: string;
   readonly scheduledAt: string;
   readonly scheduledBy: string;
+  readonly retryGeneration: number;
 }): SceneProviderSchedulingCorrelation {
   const schedulingIdentityHash = computeSceneSchedulingIdentityHash({
     ownership: input.fact.ownership,
@@ -386,6 +387,9 @@ function buildCorrelation(input: {
     contractVersion: SCENE_SCHEDULING_CONTRACT_VERSION,
     scheduledAt: input.scheduledAt,
     scheduledBy: input.scheduledBy,
+    ...(input.retryGeneration > 1
+      ? { retryGeneration: input.retryGeneration }
+      : {}),
   });
 }
 
@@ -653,6 +657,7 @@ export class SceneSchedulingCoordinator {
         correlationId,
         scheduledAt,
         scheduledBy: input.actorUserId,
+        retryGeneration,
       });
 
       const bundle = await this.schedulingRepo.scheduleAcceptedBundle({

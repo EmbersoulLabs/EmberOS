@@ -3,8 +3,9 @@
  *
  * Not a Provider Finalizer. Does not write provider_executions / usage / cost / outbox terminal.
  * Invokes Production Provider FinalizationRepository for Transaction A only.
- * Routes SUCCEEDED and terminal failures; ACCEPTANCE_UNKNOWN → reconciliation;
- * TRANSIENT_INFRA_FAILURE → canonical outbox retry (no terminal write).
+ * Routes SUCCEEDED and all known failures through terminal finalization;
+ * ACCEPTANCE_UNKNOWN remains reconciliation-only. Retry eligibility is durable
+ * metadata and never an automatic outbox transition for AI Story.
  */
 import {
   SceneProjectionOutcomeSchema,
@@ -175,10 +176,6 @@ export class SceneFinalizationCoordinator {
       });
     }
 
-    if (route === "TRANSIENT_INFRA_FAILURE") {
-      return this.scheduleTransientRetry({ bundle, workerResult });
-    }
-
     if (route === "NON_TERMINAL") {
       throw new SceneFinalizationCoordinatorError(
         "SCENE_PROJECTION_NON_TERMINAL",
@@ -286,46 +283,4 @@ export class SceneFinalizationCoordinator {
     });
   }
 
-  private async scheduleTransientRetry(input: {
-    readonly bundle: SceneProjectionValidatedBundle;
-    readonly workerResult: WorkerExecutionResult;
-  }): Promise<SceneProjectionOutcome> {
-    const releaseApi = this.dependencies.outbox
-      ? (args: Parameters<NonNullable<typeof this.dependencies.outbox>["releaseLease"]>[0]) =>
-          this.dependencies.outbox!.releaseLease(args)
-      : (args: Parameters<
-          typeof this.dependencies.bridge.outbox.releaseLease
-        >[0]) => this.dependencies.bridge.outbox.releaseLease(args);
-
-    let prepared;
-    try {
-      prepared = await this.bridge.prepareTransientRetry(input);
-    } catch (error) {
-      if (error instanceof ProviderWorkerResultFinalizerBridgeError) {
-        throw new SceneFinalizationCoordinatorError(error.code, error.message);
-      }
-      throw error;
-    }
-
-    await releaseApi({
-      jobId: prepared.jobId,
-      leaseOwner: prepared.leaseOwner,
-      nextVisibleAt: prepared.nextVisibleAt,
-      retryDelayMs: prepared.retryDelayMs,
-      retryClassification: prepared.retryClassification,
-      lastErrorCategory: prepared.lastErrorCategory,
-    });
-
-    return SceneProjectionOutcomeSchema.parse({
-      outcome: "RETRY_SCHEDULED",
-      dispatchId: input.workerResult.dispatchId,
-      providerExecutionId: input.workerResult.providerExecutionId,
-      outboxJobId: input.workerResult.outboxJobId,
-      nextVisibleAt: prepared.nextVisibleAt.toISOString(),
-      retryClassification: "TRANSIENT_INFRA_FAILURE",
-      finalizerInvoked: false,
-      executionAllowed: false,
-      automaticFallbackEnabled: false,
-    });
-  }
 }

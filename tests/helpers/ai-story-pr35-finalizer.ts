@@ -246,6 +246,8 @@ export class InMemoryProductionFinalizer {
     readonly responseHash: string;
     readonly dispatchTimestamp: string;
     readonly executionDurationMs: number;
+    readonly usage?: ProviderUsage;
+    readonly cost?: ProviderCost;
     readonly completionMetadata?: Readonly<Record<string, unknown>>;
   }) {
     if (this.failNext) {
@@ -256,6 +258,10 @@ export class InMemoryProductionFinalizer {
       executionId: input.executionId,
       failureCode: input.failureCode,
     });
+    if (input.usage && Object.keys(input.usage).length > 0) {
+      this.usageInserted.push(input.attemptId);
+    }
+    if (input.cost?.amount != null) this.costInserted.push(input.attemptId);
     this.executionTerminal.push({
       executionId: input.executionId,
       status: "TERMINAL_FAILURE",
@@ -426,6 +432,18 @@ export function buildTransientInfraWorkerResult(
     workerState: "PROCESSING" as const,
     acceptanceClassification: "ACCEPTED" as const,
     canonicalProviderState: "PROCESSING" as const,
+    normalizedUsageFacts: {
+      durationMs: 1_000,
+      units: 1,
+      unitKind: "generation",
+    },
+    normalizedCostMetadata: {
+      amount: 0.01,
+      currency: "USD",
+      estimated: true,
+      costSource: "CONFIGURED_ESTIMATE" as const,
+      modelKey: "seedance-test",
+    },
     failureClassification: {
       code: "PROVIDER_FAILED" as const,
       retryable: true,
