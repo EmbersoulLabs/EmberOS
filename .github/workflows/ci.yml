@@ -136,19 +136,19 @@ jobs:
 
       - name: Start web and smoke /api/health
         run: |
-          pnpm --filter @ceo-agent/web exec next start -p 3000 &
+          setsid pnpm --filter @ceo-agent/web exec next start -p 3000 &
           web_pid=$!
-          trap 'kill "$web_pid" 2>/dev/null || true' EXIT
+          trap 'kill -- -"$web_pid" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/api/health > /dev/null; then
+            if curl --connect-timeout 2 --max-time 5 -sf http://localhost:3000/api/health > /dev/null; then
               echo "Server ready"
               break
             fi
             sleep 2
           done
-          curl -sf http://localhost:3000/api/health | tee /tmp/health.json
+          curl --connect-timeout 2 --max-time 15 -sf http://localhost:3000/api/health | tee /tmp/health.json
           pnpm smoke:prod -- --url http://localhost:3000
-          kill "$web_pid" 2>/dev/null || true
+          kill -- -"$web_pid" 2>/dev/null || true
           wait "$web_pid" 2>/dev/null || true
 
   e2e-production:
