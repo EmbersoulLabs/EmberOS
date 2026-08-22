@@ -8,6 +8,9 @@ import { getDb, schema } from "@ceo-agent/db";
 import {
   ProjectedSceneResultSchema,
   assertWorkspaceScopedDurableObjectKey,
+  parseDurableSceneMediaAttestation,
+  redactHttpsMediaUri,
+  type DurableSceneMediaAttestation,
   type ProjectedSceneResult,
 } from "@ceo-agent/shared/server";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -21,8 +24,10 @@ export function assertSceneMediaResultAuthority(input: {
   readonly providerAttemptId: string;
   readonly sceneResultId: string;
   readonly result: ProjectedSceneResult;
+  readonly attestation: DurableSceneMediaAttestation;
 }): string {
   const result = input.result;
+  const attestation = input.attestation;
   if (
     result.status !== "SUCCEEDED" ||
     !result.mediaReference ||
@@ -34,8 +39,40 @@ export function assertSceneMediaResultAuthority(input: {
   ) {
     throw new Error("Scene media identity does not match the persisted result");
   }
-  assertWorkspaceScopedDurableObjectKey(input.workspaceId, result.mediaReference.uri);
-  return result.mediaReference.uri;
+  if (
+    attestation.workspaceId !== input.workspaceId ||
+    attestation.executionPlanId !== input.executionPlanId ||
+    attestation.sceneExecutionId !== input.sceneExecutionId ||
+    attestation.sceneResultId !== input.sceneResultId ||
+    attestation.orgId !== result.ownership.orgId ||
+    attestation.campaignId !== result.ownership.campaignId ||
+    attestation.storyId !== result.ownership.storyId ||
+    attestation.storyVersionId !== result.ownership.storyVersionId ||
+    attestation.animationPackageId !== result.ownership.animationPackageId
+  ) {
+    throw new Error("Durable media attestation does not match the persisted result");
+  }
+
+  const source = redactHttpsMediaUri(result.mediaReference.uri);
+  if (
+    source.scheme !== attestation.sourceMediaReference.scheme ||
+    source.host !== attestation.sourceMediaReference.host ||
+    source.path !== attestation.sourceMediaReference.path
+  ) {
+    throw new Error("Durable media attestation source does not match the persisted result");
+  }
+
+  const objectKey = attestation.durableObjectReference;
+  assertWorkspaceScopedDurableObjectKey(input.workspaceId, objectKey);
+  const expectedPrefix = `${input.workspaceId}/ai-story/scenes/${input.executionPlanId}/${input.sceneExecutionId}/`;
+  const expectedFilename = `${attestation.contentHash.replace(/^sha256:/, "")}.mp4`;
+  if (
+    !objectKey.startsWith(expectedPrefix) ||
+    !objectKey.endsWith(`/${expectedFilename}`)
+  ) {
+    throw new Error("Durable media object key does not match the attested Scene identity");
+  }
+  return objectKey;
 }
 
 export async function mintSceneResultPlayback(input: {
@@ -61,8 +98,38 @@ export async function mintSceneResultPlayback(input: {
     .limit(1);
   if (!row) throw new Error("Scene media is not available");
 
+  const [attestationRow] = await db
+    .select()
+    .from(schema.aiStoryDurableSceneMediaAttestations)
+    .where(
+      and(
+        eq(
+          schema.aiStoryDurableSceneMediaAttestations.sceneResultId,
+          input.sceneResultId
+        ),
+        eq(schema.aiStoryDurableSceneMediaAttestations.workspaceId, input.workspaceId),
+        eq(
+          schema.aiStoryDurableSceneMediaAttestations.executionPlanId,
+          input.executionPlanId
+        ),
+        eq(
+          schema.aiStoryDurableSceneMediaAttestations.sceneExecutionId,
+          input.sceneExecutionId
+        )
+      )
+    )
+    .limit(1);
+  if (!attestationRow) {
+    throw new Error("Scene media preview is temporarily unavailable");
+  }
+
   const result = ProjectedSceneResultSchema.parse(row.result);
-  const objectKey = assertSceneMediaResultAuthority({ ...input, result });
+  const attestation = parseDurableSceneMediaAttestation(attestationRow.attestation);
+  const objectKey = assertSceneMediaResultAuthority({
+    ...input,
+    result,
+    attestation,
+  });
   const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
   const { data, error } = await createAdminClient().storage
     .from(bucket)
