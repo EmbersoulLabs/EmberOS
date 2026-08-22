@@ -254,17 +254,20 @@ export class GeneratedSceneReviewRepository {
         this.connectionMetrics.secondCheckoutAttempts += 1;
       }
     }
-    const transactionStartedAt = performance.now();
-    this.activeTransactions += 1;
-    if (this.connectionMetrics) {
-      this.connectionMetrics.connectionWaitMs += transactionStartedAt - waitStartedAt;
-      this.connectionMetrics.maxConcurrentConnectionsObserved = Math.max(
-        this.connectionMetrics.maxConcurrentConnectionsObserved,
-        this.activeTransactions
-      );
-    }
-    try {
-      return await this.db.transaction(async (tx) => {
+    return this.db.transaction(async (tx) => {
+      // Entering the callback is the first point at which Drizzle has handed
+      // this request its transaction receiver, so this measures acquisition
+      // wait rather than time spent merely constructing the promise.
+      const transactionStartedAt = performance.now();
+      this.activeTransactions += 1;
+      if (this.connectionMetrics) {
+        this.connectionMetrics.connectionWaitMs += transactionStartedAt - waitStartedAt;
+        this.connectionMetrics.maxConcurrentConnectionsObserved = Math.max(
+          this.connectionMetrics.maxConcurrentConnectionsObserved,
+          this.activeTransactions
+        );
+      }
+      try {
       // Review decisions run in a serverless max:1 pool. Bound lock/query waits
       // inside the transaction so a conflicting writer fails closed instead of
       // occupying the only request connection until the platform timeout.
@@ -283,15 +286,15 @@ export class GeneratedSceneReviewRepository {
         for update
       `);
       const snapshot = await loadLockedSnapshot(tx, input);
-        return work(tx, snapshot);
-      });
-    } finally {
-      this.activeTransactions -= 1;
-      if (this.connectionMetrics) {
-        this.connectionMetrics.transactionDurationMs +=
-          performance.now() - transactionStartedAt;
+        return await work(tx, snapshot);
+      } finally {
+        this.activeTransactions -= 1;
+        if (this.connectionMetrics) {
+          this.connectionMetrics.transactionDurationMs +=
+            performance.now() - transactionStartedAt;
+        }
       }
-    }
+    });
   }
 
   async writeDecisionInTransaction(

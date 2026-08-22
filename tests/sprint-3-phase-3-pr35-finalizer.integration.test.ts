@@ -375,6 +375,12 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
       secondCheckoutAttempts: 0,
       maxConcurrentConnectionsObserved: 1,
     });
+    expect(connectionMetrics.connectionWaitMs).toBeGreaterThanOrEqual(0);
+    expect(connectionMetrics.transactionDurationMs).toBeGreaterThan(0);
+    console.info("generated_scene_approval_connection_certification", {
+      ...connectionMetrics,
+      approvalTotalDurationMs: Math.round(performance.now() - approvalStartedAt),
+    });
 
     const replayMetrics = createGeneratedSceneReviewConnectionMetrics();
     const replayService = new GeneratedSceneReviewService({
