@@ -83,68 +83,79 @@ export default function AiStoryReviewPage() {
 
   const load = useCallback(async () => {
     setError("");
-    const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}`);
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error ?? "Failed to load story");
-      setLoading(false);
-      return;
-    }
-    setStatus(data.story.status);
-    setStoryVersionId(
-      typeof data.currentVersion?.id === "string" ? data.currentVersion.id : null
-    );
-    const content = data.currentVersion?.structuredContent as AiStoryStructuredDraft | undefined;
-    if (content) {
-      setDraft({
-        ...EMPTY_DRAFT,
-        ...content,
-        story: {
-          ...EMPTY_DRAFT.story,
-          ...(content.story ?? {}),
-        },
-        keyMessages: content.keyMessages ?? [],
-        assetReferences: content.assetReferences ?? [],
-        warnings: content.warnings ?? [],
-      });
-    }
-    setWarnings(content?.warnings ?? []);
-    if (
-      ["planning_review", "ready_for_execution", "planning", "ready_for_animation", "failed"].includes(
-        data.story.status
-      )
-    ) {
-      const planningRes = await fetch(
-        `/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load story");
+
+      setStatus(data.story.status);
+      setStoryVersionId(
+        typeof data.currentVersion?.id === "string" ? data.currentVersion.id : null
       );
-      if (planningRes.ok) {
-        const planningData = await planningRes.json();
-        setCreativeContext(
-          (planningData.creativeContext?.payload as CreativeContext | undefined) ?? null
-        );
-        setPlanningDraft(
-          (planningData.planningDraft as StoryPlanningDraft | undefined) ?? null
-        );
-        setAnimationPackage(
-          (planningData.completePackage as AnimationPackagePayload | undefined) ??
-            (planningData.animationPackage?.payload &&
-            !("kind" in (planningData.animationPackage.payload as object))
-              ? (planningData.animationPackage.payload as AnimationPackagePayload)
-              : null)
-        );
-        setAnimationPackageRecordId(
-          typeof planningData.animationPackage?.id === "string"
-            ? planningData.animationPackage.id
-            : null
-        );
+      const content = data.currentVersion?.structuredContent as AiStoryStructuredDraft | undefined;
+      if (content) {
+        setDraft({
+          ...EMPTY_DRAFT,
+          ...content,
+          story: {
+            ...EMPTY_DRAFT.story,
+            ...(content.story ?? {}),
+          },
+          keyMessages: content.keyMessages ?? [],
+          assetReferences: content.assetReferences ?? [],
+          warnings: content.warnings ?? [],
+        });
       }
-    } else {
-      setCreativeContext(null);
-      setAnimationPackage(null);
-      setPlanningDraft(null);
-      setAnimationPackageRecordId(null);
+      setWarnings(content?.warnings ?? []);
+      if (
+        [
+          "planning_review",
+          "ready_for_execution",
+          "planning",
+          "ready_for_animation",
+          "generate_review",
+          "executing",
+          "execution_review",
+          "execution_failed",
+          "failed",
+        ].includes(data.story.status)
+      ) {
+        const planningRes = await fetch(
+          `/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`
+        );
+        if (planningRes.ok) {
+          const planningData = await planningRes.json();
+          setCreativeContext(
+            (planningData.creativeContext?.payload as CreativeContext | undefined) ?? null
+          );
+          setPlanningDraft(
+            (planningData.planningDraft as StoryPlanningDraft | undefined) ?? null
+          );
+          setAnimationPackage(
+            (planningData.completePackage as AnimationPackagePayload | undefined) ??
+              (planningData.animationPackage?.payload &&
+              !("kind" in (planningData.animationPackage.payload as object))
+                ? (planningData.animationPackage.payload as AnimationPackagePayload)
+                : null)
+          );
+          setAnimationPackageRecordId(
+            typeof planningData.animationPackage?.id === "string"
+              ? planningData.animationPackage.id
+              : null
+          );
+        }
+      } else {
+        setCreativeContext(null);
+        setAnimationPackage(null);
+        setPlanningDraft(null);
+        setAnimationPackageRecordId(null);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load story");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [campaignId, storyId]);
 
   useEffect(() => {

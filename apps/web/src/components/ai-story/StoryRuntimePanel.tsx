@@ -29,6 +29,9 @@ type Props = {
   workspaceRole: WorkspaceRole | string | null;
 };
 
+const INITIAL_SERVER_READ_ATTEMPTS = 3;
+const INITIAL_SERVER_READ_RETRY_MS = 750;
+
 function statusKey(status: string | null | undefined): TranslationKey {
   const key = `aiStory.runtime.status.${status ?? "NOT_READY"}`;
   return key as TranslationKey;
@@ -93,7 +96,12 @@ export function StoryRuntimePanel({
   useEffect(() => {
     setLoading(true);
     void (async () => {
-      const next = await refresh();
+      let next: ProductRuntimeProjection | null = null;
+      for (let attempt = 1; attempt <= INITIAL_SERVER_READ_ATTEMPTS; attempt += 1) {
+        next = await refresh();
+        if (next || attempt === INITIAL_SERVER_READ_ATTEMPTS) break;
+        await new Promise((resolve) => setTimeout(resolve, INITIAL_SERVER_READ_RETRY_MS));
+      }
       ensurePolling(next?.status);
     })();
     return () => {
