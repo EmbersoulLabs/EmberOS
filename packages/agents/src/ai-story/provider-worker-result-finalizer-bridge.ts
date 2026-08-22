@@ -78,17 +78,6 @@ export type BridgePrepareTerminalFailure = {
   readonly bundle: SceneProjectionValidatedBundle;
 };
 
-export type BridgePrepareRetry = {
-  readonly jobId: string;
-  readonly leaseOwner: string;
-  readonly nextVisibleAt: Date;
-  readonly retryDelayMs: number;
-  readonly retryClassification: "TRANSIENT_INFRA_FAILURE";
-  readonly lastErrorCategory: string;
-  readonly workerResult: WorkerExecutionResult;
-  readonly bundle: SceneProjectionValidatedBundle;
-};
-
 function assertOwnershipChain(bundle: SceneProjectionValidatedBundle): void {
   const ownership = bundle.runtimeAuthorization.ownership;
   const routing = bundle.routingDecision.ownership;
@@ -219,7 +208,9 @@ function assertTerminalSuccess(workerResult: WorkerExecutionResult): void {
   }
 }
 
-function assertTerminalFailure(workerResult: WorkerExecutionResult): void {
+function assertFinalizableFailure(workerResult: WorkerExecutionResult): void {
+  const route = classifyWorkerResultForCoordinator(workerResult);
+  if (route === "TRANSIENT_INFRA_FAILURE") return;
   if (!isFinalizerTerminalFailureState(workerResult.canonicalProviderState)) {
     throw new ProviderWorkerResultFinalizerBridgeError(
       "BRIDGE_NON_TERMINAL",
@@ -281,6 +272,21 @@ function mapFailureCodeToProviderError(
   const message =
     workerResult.failureClassification?.sanitizedMessage ??
     "Provider terminal failure";
+  if (
+    workerResult.failureClassification?.retryable === true &&
+    workerResult.failureClassification.terminal === false &&
+    workerResult.failureClassification.reconciliationRequired === false
+  ) {
+    return createProviderError("RETRYABLE", {
+      code,
+      message,
+      safeDetails: {
+        retryEligible: true,
+        automaticRetry: false,
+        humanRetryRequired: true,
+      },
+    });
+  }
   if (code === "PROVIDER_TIMEOUT") {
     // AI Story treats PROVIDER_TIMEOUT as Production-Finalizer terminal (DEAD_LETTER),
     // not TIMEOUT_UNKNOWN reconciliation.
@@ -480,30 +486,31 @@ export type ProviderWorkerResultFinalizerBridgeDependencies = {
   };
   readonly workerId?: string;
   readonly leaseDurationMs?: number;
-  readonly retryDelayMs?: number;
 };
 
 export class ProviderWorkerResultFinalizerBridge {
   private readonly workerId: string;
   private readonly leaseDurationMs: number;
-  private readonly retryDelayMs: number;
 
   constructor(
     private readonly dependencies: ProviderWorkerResultFinalizerBridgeDependencies
   ) {
     this.workerId = dependencies.workerId ?? "ai-story-finalizer-bridge";
     this.leaseDurationMs = dependencies.leaseDurationMs ?? 60_000;
-    this.retryDelayMs = dependencies.retryDelayMs ?? 5_000;
   }
 
   private async resolveAttemptNumber(
-    executionId: string,
+    bundle: SceneProjectionValidatedBundle,
     attemptId: string
   ): Promise<number> {
+    const humanAuthorizedGeneration = bundle.correlation.retryGeneration ?? 1;
     const listAttempts = this.dependencies.ledger.listAttempts;
-    if (!listAttempts) return 1;
-    const existing = await listAttempts(executionId);
-    return nextProviderAttemptNumber(existing, attemptId);
+    if (!listAttempts) return humanAuthorizedGeneration;
+    const existing = await listAttempts(bundle.providerExecutionId);
+    return Math.max(
+      humanAuthorizedGeneration,
+      nextProviderAttemptNumber(existing, attemptId)
+    );
   }
 
   /**
@@ -525,7 +532,7 @@ export class ProviderWorkerResultFinalizerBridge {
       bundle,
     });
     const attemptNumber = await this.resolveAttemptNumber(
-      workerResult.providerExecutionId,
+      bundle,
       workerResult.providerAttemptId
     );
     const attemptCandidate = buildBridgeProviderAttempt({
@@ -602,12 +609,12 @@ export class ProviderWorkerResultFinalizerBridge {
     const { bundle, workerResult } = input;
     assertOwnershipChain(bundle);
     assertImmutableChain(bundle, workerResult);
-    assertTerminalFailure(workerResult);
+    assertFinalizableFailure(workerResult);
     void PHASE1_EXECUTION_LOCKED;
 
     const failure = mapFailureCodeToProviderError(workerResult);
     const attemptNumber = await this.resolveAttemptNumber(
-      workerResult.providerExecutionId,
+      bundle,
       workerResult.providerAttemptId
     );
     const built = buildBridgeTerminalFailureAttempt({
@@ -628,6 +635,9 @@ export class ProviderWorkerResultFinalizerBridge {
           workerExecutionResultId: workerResult.workerExecutionResultId,
           terminalKind: "TERMINAL_FAILURE",
           failureCode: failure.code,
+          retryEligible: failure.retryable,
+          automaticRetry: false,
+          humanRetryRequired: failure.retryable,
         },
       });
       attemptCreated = attempt.attemptId === built.attempt.attemptId;
@@ -666,6 +676,9 @@ export class ProviderWorkerResultFinalizerBridge {
           workerExecutionResultId: workerResult.workerExecutionResultId,
           canonicalProviderState: workerResult.canonicalProviderState,
           source: "ai-story-worker-result-bridge",
+          retryEligible: failure.retryable,
+          automaticRetry: false,
+          humanRetryRequired: failure.retryable,
         },
       },
       attempt,
@@ -675,43 +688,5 @@ export class ProviderWorkerResultFinalizerBridge {
     };
   }
 
-  /**
-   * Claim lease and return release instructions for TRANSIENT_INFRA_FAILURE.
-   * Does not terminalize Provider execution or outbox.
-   */
-  async prepareTransientRetry(input: {
-    readonly bundle: SceneProjectionValidatedBundle;
-    readonly workerResult: WorkerExecutionResult;
-  }): Promise<BridgePrepareRetry> {
-    const { bundle, workerResult } = input;
-    assertOwnershipChain(bundle);
-    assertImmutableChain(bundle, workerResult);
-    if (classifyWorkerResultForCoordinator(workerResult) !== "TRANSIENT_INFRA_FAILURE") {
-      throw new ProviderWorkerResultFinalizerBridgeError(
-        "BRIDGE_NON_TERMINAL",
-        "prepareTransientRetry requires TRANSIENT_INFRA_FAILURE classification"
-      );
-    }
-    void PHASE1_EXECUTION_LOCKED;
-
-    await this.dependencies.outbox.claimOrRenewForFinalization({
-      jobId: workerResult.outboxJobId,
-      leaseOwner: this.workerId,
-      leaseDurationMs: this.leaseDurationMs,
-    });
-
-    const nextVisibleAt = new Date(Date.now() + this.retryDelayMs);
-    return {
-      jobId: workerResult.outboxJobId,
-      leaseOwner: this.workerId,
-      nextVisibleAt,
-      retryDelayMs: this.retryDelayMs,
-      retryClassification: "TRANSIENT_INFRA_FAILURE",
-      lastErrorCategory:
-        workerResult.failureClassification?.code ?? "TRANSIENT_INFRA_FAILURE",
-      workerResult,
-      bundle,
-    };
-  }
 }
 

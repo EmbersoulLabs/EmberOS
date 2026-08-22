@@ -106,6 +106,8 @@ export const SceneProviderSchedulingCorrelationSchema = z.object({
   contractVersion: z.literal(SCENE_SCHEDULING_CONTRACT_VERSION),
   scheduledAt: z.string().datetime(),
   scheduledBy: z.string().uuid(),
+  /** Human-authorized Scene attempt ordinal. Absent on legacy/initial rows. */
+  retryGeneration: z.number().int().positive().optional(),
 });
 
 export type SceneProviderSchedulingCorrelation = z.infer<

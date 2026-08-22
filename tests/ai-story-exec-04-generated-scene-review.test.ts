@@ -295,6 +295,88 @@ describe("EXEC-04 retry authorization service", () => {
     expect(schedule).not.toHaveBeenCalled();
   });
 
+  it("G/H: explicit human retry creates generation 2 and duplicate requests converge", async () => {
+    const snapshot = pendingSnapshot(1);
+    snapshot.results[0] = {
+      providerAttemptId: "attempt-1",
+      status: "FAILED",
+      sceneResultId: SCENE_RESULT_1,
+    };
+    snapshot.providerExecutions.set("exec-1", { status: "TERMINAL_FAILURE" });
+    const scheduledIdentities = new Set<string>();
+    const schedule = vi.fn(async (input: { retryGeneration: number }) => {
+      scheduledIdentities.add(`${SCENE_EXEC}:${input.retryGeneration}`);
+      return {};
+    });
+    const service = new GeneratedSceneReviewService({
+      reviewRepository: {
+        transactDecision: async (
+          _input: unknown,
+          work: (tx: unknown, locked: unknown) => Promise<unknown>
+        ) => work({}, snapshot),
+        writeDecisionInTransaction: vi.fn(async (_tx, input) => ({
+          ...input.current,
+          decision: input.decision,
+          decidedBy: input.decidedBy,
+          decidedAt: input.decidedAt,
+        })),
+      } as never,
+      authorizationRepository: {
+        getByExecutionPlanId: async () => ({
+          runtimeAuthorizationId: "10000000-0000-5000-8000-000000000099",
+        }),
+      } as never,
+      persistenceRepository: {
+        getByExecutionPlanId: async () => ({ intents: [{}] }),
+      } as never,
+      schedulingCoordinator: { scheduleAuthorizedScene: schedule } as never,
+    });
+    vi.spyOn(service, "loadPlanReadModel").mockResolvedValue([
+      {
+        sceneExecutionId: SCENE_EXEC,
+        sceneId: "scene-a",
+        sceneOrder: 0,
+        reviewState: "RETRY_REQUESTED",
+        approvedAttemptId: null,
+        approvedSceneResultId: null,
+        latestAttemptId: "attempt-1",
+        latestAttemptNumber: 1,
+        latestAttemptStatus: "failed",
+        attemptCount: 1,
+        retryRemaining: 2,
+        maxAttempts: 3,
+        latestAttemptKnownCost: 0.01,
+        sceneKnownCost: 0.01,
+        currency: "USD",
+        running: false,
+        attempts: [],
+      },
+    ]);
+
+    const retryInput = {
+      executionPlanId: PLAN,
+      sceneExecutionId: SCENE_EXEC,
+      actorUserId: USER,
+      workspaceId: WORKSPACE,
+      executionAuthorization: auth,
+    };
+    const first = await service.retry(retryInput);
+    const duplicate = await service.retry(retryInput);
+
+    expect(first.newAttemptNumber).toBe(2);
+    expect(duplicate.newAttemptNumber).toBe(2);
+    expect(schedule).toHaveBeenCalledTimes(2);
+    expect(schedule).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ retryGeneration: 2 })
+    );
+    expect(schedule).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ retryGeneration: 2 })
+    );
+    expect(scheduledIdentities.size).toBe(1);
+  });
+
   it("H: in-flight retry is fail-closed and does not enqueue again", async () => {
     const snapshot = pendingSnapshot(1);
     snapshot.providerExecutions.set("exec-1", { status: "PENDING" });

@@ -480,7 +480,9 @@ async function invokeProviderForOutput(input: {
     },
     timeoutPolicy: { timeoutMs: 600_000, reconciliationDelayMs: 5_000 },
     retryPolicy: {
-      maxAttempts: 3,
+      // Paid AI Story retries are created only by the explicit human Retry
+      // authority. One canonical request therefore permits one attempt.
+      maxAttempts: 1,
       initialDelayMs: 500,
       maximumDelayMs: 8_000,
       backoffMultiplier: 2,

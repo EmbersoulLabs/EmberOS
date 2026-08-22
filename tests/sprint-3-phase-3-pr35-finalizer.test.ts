@@ -299,19 +299,60 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
     expect(deps.productionFinalizer.failureCalls).toHaveLength(0);
   });
 
-  it("TRANSIENT_INFRA_FAILURE schedules retry without terminal Finalizer", async () => {
+  it("TRANSIENT_INFRA_FAILURE terminalizes and waits for explicit human retry", async () => {
     const deps = buildCoordinatorDeps({
       workerFactory: buildTransientInfraWorkerResult,
     });
     const dispatchId = await deps.getDispatchId();
     const outcome = await deps.coordinator.finalizeAndProject({ dispatchId });
     expect(outcome).toMatchObject({
-      outcome: "RETRY_SCHEDULED",
-      retryClassification: "TRANSIENT_INFRA_FAILURE",
-      finalizerInvoked: false,
+      outcome: "PROJECTED",
+      finalizerInvoked: true,
     });
-    expect(deps.outbox.releases).toHaveLength(1);
+    expect(deps.outbox.releases).toHaveLength(0);
     expect(deps.productionFinalizer.calls).toHaveLength(0);
-    expect(deps.productionFinalizer.failureCalls).toHaveLength(0);
+    expect(deps.productionFinalizer.failureCalls).toHaveLength(1);
+    expect(deps.productionFinalizer.usageInserted).toHaveLength(1);
+    expect(deps.productionFinalizer.costInserted).toHaveLength(1);
+    expect(deps.productionFinalizer.executionTerminal[0]?.status).toBe(
+      "TERMINAL_FAILURE"
+    );
+    expect(deps.productionFinalizer.outboxTerminal[0]?.status).toBe(
+      "DEAD_LETTER"
+    );
+    const attempt = [...deps.ledger.attempts.values()][0];
+    expect(attempt?.status).toBe("TERMINAL_FAILURE");
+    expect(deps.ledger.failures.get(attempt!.attemptId)).toMatchObject({
+      retryable: true,
+      terminal: false,
+      safeDetails: {
+        retryEligible: true,
+        automaticRetry: false,
+        humanRetryRequired: true,
+      },
+    });
+  });
+
+  it("human-authorized retry generation persists as the new attempt ordinal", async () => {
+    const base = await buildPr35ProjectionBundle();
+    const bundle = {
+      ...base,
+      correlation: { ...base.correlation, retryGeneration: 2 },
+    };
+    const worker = buildTransientInfraWorkerResult(bundle);
+    const ledger = new InMemoryBridgeLedger();
+    const bridge = new ProviderWorkerResultFinalizerBridge({
+      ledger,
+      outbox: new InMemoryBridgeOutbox(),
+    });
+
+    const prepared = await bridge.prepareTerminalFailureFinalizerInput({
+      bundle,
+      workerResult: worker,
+    });
+
+    expect(prepared.attempt.attemptNumber).toBe(2);
+    expect(prepared.attempt.attemptId).toBe(worker.providerAttemptId);
+    expect(prepared.attempt.status).toBe("TERMINAL_FAILURE");
   });
 });

@@ -145,7 +145,10 @@ function buildRequest(input: {
     },
     timeoutPolicy: { timeoutMs: 600_000, reconciliationDelayMs: 5_000 },
     retryPolicy: {
-      maxAttempts: 3,
+      // A new paid attempt requires the explicit generated-media Retry action.
+      // The Scene-level max-attempt limit is enforced by that human-authorized
+      // path; a single canonical provider request must never retry itself.
+      maxAttempts: 1,
       initialDelayMs: 500,
       maximumDelayMs: 8_000,
       backoffMultiplier: 2,
