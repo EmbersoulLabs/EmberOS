@@ -31,12 +31,12 @@ export const AiStoryStructuredDraftSchema = z.object({
     opening: z.string().max(8000),
     development: z.string().max(8000),
     ending: z.string().max(8000),
-  }),
+  }).strict(),
   keyMessages: z.array(z.string().max(500)).max(20),
   cta: z.string().max(1000),
   assetReferences: z.array(z.string().uuid()).max(32),
   warnings: z.array(z.string().max(500)).max(20),
-});
+}).strict();
 
 export type AiStoryStructuredDraft = z.infer<typeof AiStoryStructuredDraftSchema>;
 

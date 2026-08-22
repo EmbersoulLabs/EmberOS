@@ -14,6 +14,11 @@ import { polishAiStoryDraft } from "@ceo-agent/agents";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import {
+  beginAiStoryPlanningAccounting,
+  buildAiStoryPlanningLedgerIdentity,
+  persistAiStoryPlanningOutcome,
+} from "@/lib/ai-story-planning-accounting";
+import {
   assetLabelFromProductionRow,
   campaignPlanningFields,
 } from "@/lib/ai-story-production-compat";
@@ -52,7 +57,19 @@ export async function POST(
       return apiError("Story cannot be polished in its current state", "VALIDATION_ERROR", 409);
     }
 
-    await setAiStoryStatus(db, storyId, status, "generating");
+    const [claimedStory] = await db
+      .update(schema.aiStories)
+      .set({ status: "generating", updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.aiStories.id, storyId),
+          eq(schema.aiStories.status, status)
+        )
+      )
+      .returning({ id: schema.aiStories.id });
+    if (!claimedStory) {
+      return apiError("Story planning is already in progress", "CONFLICT", 409);
+    }
 
     const profileRow = await getBusinessProfileByWorkspace(campaign.workspaceId);
     const profile = profileRow
@@ -80,6 +97,36 @@ export async function POST(
               )
           ).map((a) => assetLabelFromProductionRow(a));
 
+    const accountingIdentity = buildAiStoryPlanningLedgerIdentity({
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+      storyId,
+      runSeed: loaded.story.updatedAt.toISOString(),
+      requestMaterial: {
+        storyId,
+        originalIdea: loaded.story.originalIdea,
+        campaign: campaignPlanningFields(campaign),
+        businessProfileId: profileRow?.id ?? null,
+        assetIds,
+      },
+      startedAt: new Date().toISOString(),
+    });
+    try {
+      await beginAiStoryPlanningAccounting(db, accountingIdentity);
+    } catch {
+      await db
+        .update(schema.aiStories)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.aiStories.id, storyId),
+            eq(schema.aiStories.status, "generating")
+          )
+        );
+      throw new Error("AI_STORY_PLANNING_ACCOUNTING_INITIALIZATION_FAILED");
+    }
+
     const polish = await polishAiStoryDraft({
       originalIdea: loaded.story.originalIdea,
       campaign: {
@@ -102,9 +149,42 @@ export async function POST(
     });
 
     if (!polish.ok) {
-      await setAiStoryStatus(db, storyId, "generating", "failed");
-      return apiError(polish.error, "AI_GENERATION_FAILED", 502);
+      const persistence = await persistAiStoryPlanningOutcome({
+        db,
+        storyId,
+        identity: accountingIdentity,
+        status: "TERMINAL_FAILURE",
+        failureCode: polish.failureCode,
+        errorStage: polish.errorStage,
+        validationIssueCodes: polish.validationIssueCodes,
+        accounting: polish.accounting,
+        timings: polish.timings,
+        completedAt: new Date().toISOString(),
+      });
+      console.info("[ai-story-planning] terminal", {
+        storyId,
+        executionId: accountingIdentity.executionId,
+        errorStage: polish.errorStage,
+        validationIssueCount: polish.validationIssueCodes.length,
+        planningProviderMs: polish.timings.planningProviderMs,
+        planningDecodeMs: polish.timings.planningDecodeMs,
+        planningValidationMs: polish.timings.planningValidationMs,
+        planningUsagePersistMs: persistence.usagePersistMs,
+        planningCostPersistMs: persistence.costPersistMs,
+        planningFailurePersistMs: persistence.failurePersistMs,
+      });
+      return apiError(polish.error, polish.failureCode, 502);
     }
+
+    const persistence = await persistAiStoryPlanningOutcome({
+      db,
+      storyId,
+      identity: accountingIdentity,
+      status: "SUCCEEDED",
+      accounting: polish.accounting,
+      timings: polish.timings,
+      completedAt: new Date().toISOString(),
+    });
 
     const draft = {
       ...polish.draft,
@@ -115,25 +195,57 @@ export async function POST(
       ],
     };
 
-    const version = await createAiStoryVersion(db, {
-      storyId,
-      structuredContent: draft,
-      sourceContextSnapshot: {
-        campaignId,
-        workspaceId: campaign.workspaceId,
-        assetIds,
-        warnings: polish.warnings,
-      },
-      aiMetadata: {
-        provider: "json-generation",
-        costUsd: polish.usage.costUsd,
-        inputTokens: polish.usage.input,
-        outputTokens: polish.usage.output,
-      },
-      createdBy: user.id,
-    });
+    let version;
+    try {
+      version = await createAiStoryVersion(db, {
+        storyId,
+        structuredContent: draft,
+        sourceContextSnapshot: {
+          campaignId,
+          workspaceId: campaign.workspaceId,
+          assetIds,
+          warnings: polish.warnings,
+        },
+        aiMetadata: {
+          provider: "json-generation",
+          providerId: polish.accounting.provider,
+          model: polish.accounting.model,
+          providerRequestId: polish.accounting.providerRequestId,
+          planningExecutionId: accountingIdentity.executionId,
+          costUsd: polish.usage.costUsd,
+          costSource: polish.accounting.cost.costSource,
+          inputTokens: polish.usage.input,
+          outputTokens: polish.usage.output,
+        },
+        createdBy: user.id,
+      });
 
-    await setAiStoryStatus(db, storyId, "generating", "review");
+      await setAiStoryStatus(db, storyId, "generating", "review");
+    } catch (error) {
+      await db
+        .update(schema.aiStories)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(
+          and(
+            eq(schema.aiStories.id, storyId),
+            eq(schema.aiStories.status, "generating")
+          )
+        );
+      console.error("[ai-story-planning] application_persistence_failure", {
+        storyId,
+        executionId: accountingIdentity.executionId,
+      });
+      throw error;
+    }
+    console.info("[ai-story-planning] succeeded", {
+      storyId,
+      executionId: accountingIdentity.executionId,
+      planningProviderMs: polish.timings.planningProviderMs,
+      planningDecodeMs: polish.timings.planningDecodeMs,
+      planningValidationMs: polish.timings.planningValidationMs,
+      planningUsagePersistMs: persistence.usagePersistMs,
+      planningCostPersistMs: persistence.costPersistMs,
+    });
 
     return apiSuccess({
       storyId,

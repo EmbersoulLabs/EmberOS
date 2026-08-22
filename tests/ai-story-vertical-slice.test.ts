@@ -260,9 +260,12 @@ describe("AI Story vertical slice (V1)", () => {
   describe("AI polish service", () => {
     it("validates provider output strictly", async () => {
       vi.doMock("../packages/agents/src/llm", () => ({
-        callJsonModel: vi.fn(async () => ({
+        callStructuredJsonModel: vi.fn(async () => ({
           result: { title: "Only title" },
+          providerRequestId: "chatcmpl-malformed",
+          modelVersion: "gpt-4o-mini-2024-07-18",
           usage: { input: 1, output: 1, costUsd: 0 },
+          timings: { providerMs: 10, decodeMs: 1 },
         })),
       }));
 
@@ -274,14 +277,18 @@ describe("AI Story vertical slice (V1)", () => {
       });
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error).toContain("malformed");
+        expect(result.failureCode).toBe("AI_STORY_PLANNING_OUTPUT_CONTRACT_INVALID");
+        expect(result.errorStage).toBe("validation");
+        expect(result.validationIssueCodes).toContain("MISSING_REQUIRED_FIELD");
+        expect(result.accounting?.providerRequestId).toBe("chatcmpl-malformed");
+        expect(result.accounting?.usage.total).toBe(2);
       }
     });
 
     it("returns structured draft for valid provider output", async () => {
       vi.resetModules();
       vi.doMock("../packages/agents/src/llm", () => ({
-        callJsonModel: vi.fn(async () => ({
+        callStructuredJsonModel: vi.fn(async () => ({
           result: {
             title: "Launch",
             summary: "Summary",
@@ -295,7 +302,10 @@ describe("AI Story vertical slice (V1)", () => {
             assetReferences: [],
             warnings: [],
           },
+          providerRequestId: "chatcmpl-valid",
+          modelVersion: "gpt-4o-mini-2024-07-18",
           usage: { input: 10, output: 20, costUsd: 0.01 },
+          timings: { providerMs: 10, decodeMs: 1 },
         })),
       }));
 

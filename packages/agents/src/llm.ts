@@ -1,4 +1,6 @@
 import OpenAI from "openai";
+import { zodResponseFormat } from "openai/helpers/zod";
+import type { ZodType } from "zod";
 import { LLM_BUDGET_PER_TASK_USD, CEO_MAX_RETRIES } from "@ceo-agent/shared";
 import type { TaskGraph } from "@ceo-agent/shared";
 
@@ -6,6 +8,110 @@ export function getOpenAI() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
   return new OpenAI({ apiKey });
+}
+
+export type StructuredJsonDecodeIssue =
+  | "INVALID_JSON"
+  | "MISSING_CONTENT"
+  | "PROVIDER_REFUSAL";
+
+export type StructuredJsonModelCompletion = {
+  result: unknown;
+  decodeIssue?: StructuredJsonDecodeIssue;
+  providerRequestId: string;
+  modelVersion: string;
+  usage: { input: number; output: number; costUsd: number };
+  timings: { providerMs: number; decodeMs: number };
+};
+
+function openAiTokenCost(
+  model: "gpt-4o-mini" | "gpt-4o",
+  input: number,
+  output: number
+): number {
+  // Canonical pricing authority for the currently allowed JSON models.
+  const [inRate, outRate] = model === "gpt-4o" ? [2.5, 10] : [0.15, 0.6];
+  return (input * inRate + output * outRate) / 1_000_000;
+}
+
+/**
+ * Strict structured-output call derived directly from a canonical Zod schema.
+ * The response body is decoded but never retained here. Canonical application
+ * validation remains the caller's responsibility.
+ */
+export async function callStructuredJsonModel<T>(input: {
+  system: string;
+  user: string;
+  schema: ZodType<T>;
+  schemaName: string;
+  model?: "gpt-4o-mini" | "gpt-4o";
+}): Promise<StructuredJsonModelCompletion> {
+  const openai = getOpenAI();
+  const model = input.model ?? "gpt-4o-mini";
+  const providerStartedAt = performance.now();
+  const response = await openai.chat.completions.create(
+    {
+      model,
+      response_format: zodResponseFormat(input.schema, input.schemaName),
+      messages: [
+        { role: "system", content: input.system },
+        { role: "user", content: input.user },
+      ],
+      temperature: 0.7,
+    },
+    { maxRetries: 0 }
+  );
+  const providerMs = performance.now() - providerStartedAt;
+  const message = response.choices[0]?.message;
+  const inputTokens = response.usage?.prompt_tokens ?? 0;
+  const outputTokens = response.usage?.completion_tokens ?? 0;
+  const usage = {
+    input: inputTokens,
+    output: outputTokens,
+    costUsd: openAiTokenCost(model, inputTokens, outputTokens),
+  };
+
+  const decodeStartedAt = performance.now();
+  const content = message?.content;
+  if (message?.refusal) {
+    return {
+      result: null,
+      decodeIssue: "PROVIDER_REFUSAL",
+      providerRequestId: response.id,
+      modelVersion: response.model,
+      usage,
+      timings: { providerMs, decodeMs: performance.now() - decodeStartedAt },
+    };
+  }
+  if (!content) {
+    return {
+      result: null,
+      decodeIssue: "MISSING_CONTENT",
+      providerRequestId: response.id,
+      modelVersion: response.model,
+      usage,
+      timings: { providerMs, decodeMs: performance.now() - decodeStartedAt },
+    };
+  }
+  try {
+    const result: unknown = JSON.parse(content);
+    return {
+      result,
+      providerRequestId: response.id,
+      modelVersion: response.model,
+      usage,
+      timings: { providerMs, decodeMs: performance.now() - decodeStartedAt },
+    };
+  } catch {
+    return {
+      result: null,
+      decodeIssue: "INVALID_JSON",
+      providerRequestId: response.id,
+      modelVersion: response.model,
+      usage,
+      timings: { providerMs, decodeMs: performance.now() - decodeStartedAt },
+    };
+  }
 }
 
 export async function callJsonModel<T>(
@@ -29,9 +135,7 @@ export async function callJsonModel<T>(
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;
   const output = response.usage?.completion_tokens ?? 0;
-  // gpt-4o: $2.50/1M in + $10/1M out; gpt-4o-mini: $0.15/1M in + $0.60/1M out
-  const [inRate, outRate] = model === "gpt-4o" ? [2.5, 10] : [0.15, 0.6];
-  const costUsd = (input * inRate + output * outRate) / 1_000_000;
+  const costUsd = openAiTokenCost(model, input, output);
 
   return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
 }
