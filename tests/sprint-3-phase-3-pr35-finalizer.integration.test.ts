@@ -228,19 +228,66 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     expect(cost?.count).toBe(1);
     expect(scenes?.count).toBe(1);
 
-    const approvalStartedAt = performance.now();
     const approvalService = new GeneratedSceneReviewService({
       now: () => new Date("2026-08-05T13:05:00.000Z"),
     });
-    const approval = await approvalService.approve({
+    const approvalInput = {
       executionPlanId: outcome.sceneResult.executionPlanId,
       sceneExecutionId: outcome.sceneResult.sceneExecutionId,
       attemptId: outcome.sceneResult.providerAttemptId,
       actorUserId: PR32_USER_A,
       workspaceId: dispatch.workspaceId,
-      // The service consumes persisted execution authority; the route owns
-      // construction/validation of this already-certified authorization.
       executionAuthorization: {} as never,
+    };
+
+    // A deterministic persistence failure must roll the decision back.
+    await sql.unsafe(`
+      CREATE OR REPLACE FUNCTION emberos_ci_fail_scene_review_update()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        RAISE EXCEPTION 'forced generated review persistence failure';
+      END $$
+    `);
+    await sql.unsafe(`
+      CREATE TRIGGER emberos_ci_fail_scene_review_update
+      BEFORE UPDATE ON ai_story_generated_scene_reviews
+      FOR EACH ROW EXECUTE FUNCTION emberos_ci_fail_scene_review_update()
+    `);
+    await expect(approvalService.approve(approvalInput)).rejects.toBeTruthy();
+    await sql.unsafe(`DROP TRIGGER emberos_ci_fail_scene_review_update ON ai_story_generated_scene_reviews`);
+    await sql.unsafe(`DROP FUNCTION emberos_ci_fail_scene_review_update()`);
+    const [afterPersistenceFailure] = await sql<{ decision: string; decided_at: Date | null }[]>`
+      SELECT decision, decided_at FROM ai_story_generated_scene_reviews
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    expect(afterPersistenceFailure).toMatchObject({ decision: "PENDING_REVIEW", decided_at: null });
+
+    // A conflicting canonical plan lock must fail within the repository's
+    // bounded lock timeout and leave the review pending.
+    let releasePlanLock!: () => void;
+    const planLockHeld = new Promise<void>((resolve) => { releasePlanLock = resolve; });
+    const planLockOwner = sql.begin(async (tx) => {
+      await tx`SELECT id FROM ai_story_execution_plans
+        WHERE id = ${outcome.sceneResult.executionPlanId} FOR UPDATE`;
+      await planLockHeld;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const lockFailureStartedAt = performance.now();
+    await expect(approvalService.approve(approvalInput)).rejects.toBeTruthy();
+    expect(performance.now() - lockFailureStartedAt).toBeLessThan(15_000);
+    releasePlanLock();
+    await planLockOwner;
+    const [afterLockFailure] = await sql<{ decision: string; decided_at: Date | null }[]>`
+      SELECT decision, decided_at FROM ai_story_generated_scene_reviews
+      WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}
+        AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    expect(afterLockFailure).toMatchObject({ decision: "PENDING_REVIEW", decided_at: null });
+
+    const approvalStartedAt = performance.now();
+    const approval = await approvalService.approve({
+      ...approvalInput,
     });
     expect(performance.now() - approvalStartedAt).toBeLessThan(15_000);
     expect(approval.review.decision).toBe("APPROVED");
@@ -250,12 +297,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     expect(approval.review.decidedAt).toBe("2026-08-05T13:05:00.000Z");
 
     const replay = await approvalService.approve({
-      executionPlanId: outcome.sceneResult.executionPlanId,
-      sceneExecutionId: outcome.sceneResult.sceneExecutionId,
-      attemptId: outcome.sceneResult.providerAttemptId,
-      actorUserId: PR32_USER_A,
-      workspaceId: dispatch.workspaceId,
-      executionAuthorization: {} as never,
+      ...approvalInput,
     });
     expect(replay.review.generatedSceneReviewId).toBe(
       approval.review.generatedSceneReviewId
