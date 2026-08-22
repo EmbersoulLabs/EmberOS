@@ -148,6 +148,8 @@ jobs:
           done
           curl -sf http://localhost:3000/api/health | tee /tmp/health.json
           pnpm smoke:prod -- --url http://localhost:3000
+          kill "$web_pid" 2>/dev/null || true
+          wait "$web_pid" 2>/dev/null || true
 
   e2e-production:
     name: E2E pipeline (optional)
