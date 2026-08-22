@@ -504,9 +504,10 @@ export class ProviderWorkerResultFinalizerBridge {
     attemptId: string
   ): Promise<number> {
     const humanAuthorizedGeneration = bundle.correlation.retryGeneration ?? 1;
-    const listAttempts = this.dependencies.ledger.listAttempts;
-    if (!listAttempts) return humanAuthorizedGeneration;
-    const existing = await listAttempts(bundle.providerExecutionId);
+    if (!this.dependencies.ledger.listAttempts) return humanAuthorizedGeneration;
+    const existing = await this.dependencies.ledger.listAttempts(
+      bundle.providerExecutionId
+    );
     return Math.max(
       humanAuthorizedGeneration,
       nextProviderAttemptNumber(existing, attemptId)
