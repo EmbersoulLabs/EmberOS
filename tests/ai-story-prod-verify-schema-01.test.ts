@@ -52,7 +52,7 @@ describe("PROD-VERIFY-SCHEMA-01 production verification fail-closed repair", () 
     const productExecute = read(productExecutePath);
     const verifyExecute = read(verifyExecutePath);
     expect(access).toContain("verificationFixture:");
-    expect(access).toContain("sourceContextSnapshot?.verificationFixture === true");
+    expect(access).toContain("sourceContextSnapshot} @> '{\"verificationFixture\": true}'::jsonb");
     expect(productExecute).toContain("AI_STORY_PRODUCTION_VERIFICATION_REQUIRED");
     expect(verifyExecute).toContain("AI_STORY_PRODUCTION_VERIFICATION_INCOMPLETE");
     expect(verifyExecute).toContain('ctx.storyStatus !== "ready_for_execution"');

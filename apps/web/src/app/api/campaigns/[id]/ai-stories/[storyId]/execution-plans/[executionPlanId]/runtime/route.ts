@@ -24,6 +24,7 @@ import {
   executionPlanRouteErrorResponse,
   ExecutionPlanLoadTimingRecorder,
   resolveAuthorizedExecutionPlan,
+  StoryLoadTimingRecorder,
 } from "@/lib/ai-story-execution-plan-access";
 import {
   RuntimeReadDeadlineError,
@@ -75,6 +76,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const recorder = new RuntimeReadStageRecorder(deadline.signal);
   const reviewSubstageRecorder = new GeneratedSceneReviewReadSubstageRecorder();
   const executionPlanReviewRecorder = new ExecutionPlanReviewProjectionTimingRecorder();
+  const storyLoadRecorder = new StoryLoadTimingRecorder();
   const executionPlanLoadRecorder = new ExecutionPlanLoadTimingRecorder();
   const reviewPathTrace: Array<Record<string, unknown>> = [];
   const recordReviewPathMarker = (marker: {
@@ -106,6 +108,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       stageTimings: recorder.snapshot(),
       generatedSceneReviewStageTimings: reviewSubstageRecorder.snapshot(),
       executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
+      storyLoadStageTimings: storyLoadRecorder.snapshot(),
       executionPlanLoadStageTimings: executionPlanLoadRecorder.snapshot(),
       generatedSceneReviewPathTrace: reviewPathTrace,
     }, { status, headers: { "x-emberos-request-correlation-id": requestCorrelationId } });
@@ -121,6 +124,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       executionPlanId,
       minRole: "client_viewer",
       observeStage: (stage, operation) => recorder.run(stage, operation),
+      storyLoadTimingRecorder: storyLoadRecorder,
       executionPlanLoadTimingRecorder: executionPlanLoadRecorder,
     });
 
@@ -179,6 +183,7 @@ export async function GET(request: Request, { params }: RouteParams) {
           const timedOutStage = recorder.markTimedOut();
           reviewSubstageRecorder.markTimedOut();
           executionPlanReviewRecorder.markTimedOut();
+          storyLoadRecorder.markTimedOut();
           executionPlanLoadRecorder.markTimedOut();
           deadline.abort();
           reject(new RuntimeReadDeadlineError(timedOutStage, recorder.elapsedMs()));
