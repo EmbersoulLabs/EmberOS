@@ -4,7 +4,7 @@
  */
 import { and, eq, isNull, sql } from "drizzle-orm";
 import {
-  assertExecutionPlanOwnershipChain,
+  assertExecutionPlanOwnershipChainInSingleQuery,
   getDb,
   schema,
 } from "@ceo-agent/db";
@@ -13,6 +13,38 @@ import { apiError } from "@/lib/api";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 
 type Db = ReturnType<typeof getDb>;
+export type RouteOwnershipValidationTiming = {
+  readonly stage: "ownership_validation.compact_server_chain_proof";
+  readonly status: "COMPLETED" | "TIMED_OUT" | "FAILED" | "NOT_REACHED";
+  readonly durationMs: number | null;
+  readonly queryCount: 1;
+  readonly roundTripCount: 1;
+  readonly rowCount: number | null;
+  readonly poolWaitMs: number | null;
+};
+export class RouteOwnershipValidationTimingRecorder {
+  private startedAt: number | null = null;
+  private row: RouteOwnershipValidationTiming = { stage: "ownership_validation.compact_server_chain_proof", status: "NOT_REACHED", durationMs: null, queryCount: 1, roundTripCount: 1, rowCount: null, poolWaitMs: null };
+  async run(operation: () => Promise<void>): Promise<void> {
+    const startedAt = performance.now();
+    this.startedAt = startedAt;
+    try {
+      await operation();
+      this.row = { ...this.row, status: "COMPLETED", durationMs: Math.round(performance.now() - startedAt), rowCount: 1 };
+      this.startedAt = null;
+    } catch (error) {
+      this.row = { ...this.row, status: "FAILED", durationMs: Math.round(performance.now() - startedAt) };
+      this.startedAt = null;
+      throw error;
+    }
+  }
+  markTimedOut(): void {
+    if (this.startedAt === null) return;
+    this.row = { ...this.row, status: "TIMED_OUT", durationMs: Math.round(performance.now() - this.startedAt) };
+    this.startedAt = null;
+  }
+  snapshot(): readonly RouteOwnershipValidationTiming[] { return [this.row]; }
+}
 export type StoryLoadTiming = {
   readonly stage: "story_load.story_authority_current_version_read";
   readonly status: "COMPLETED" | "TIMED_OUT" | "FAILED" | "NOT_REACHED";
@@ -133,6 +165,7 @@ export async function resolveAuthorizedExecutionPlan(input: {
   readonly observeStage?: <T>(stage: "workspace_authorization" | "story_load" | "execution_plan_load" | "ownership_validation", operation: () => Promise<T>) => Promise<T>;
   readonly storyLoadTimingRecorder?: StoryLoadTimingRecorder;
   readonly executionPlanLoadTimingRecorder?: ExecutionPlanLoadTimingRecorder;
+  readonly routeOwnershipValidationTimingRecorder?: RouteOwnershipValidationTimingRecorder;
 }): Promise<AuthorizedExecutionPlanContext> {
   const { userId, campaignId, storyId, executionPlanId, minRole } = input;
   const observe = input.observeStage ?? (async (_stage, operation) => operation());
@@ -226,7 +259,10 @@ export async function resolveAuthorizedExecutionPlan(input: {
     throw new ExecutionPlanRouteNotFoundError("Execution Plan not found");
   }
 
-  await observe("ownership_validation", () => assertExecutionPlanOwnershipChain(plan, db));
+  const ownershipTiming = input.routeOwnershipValidationTimingRecorder ?? new RouteOwnershipValidationTimingRecorder();
+  await observe("ownership_validation", () => ownershipTiming.run(
+    () => assertExecutionPlanOwnershipChainInSingleQuery(plan, db)
+  ));
 
   return {
     db,

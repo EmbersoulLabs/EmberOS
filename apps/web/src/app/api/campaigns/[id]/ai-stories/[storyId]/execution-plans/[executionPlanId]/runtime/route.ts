@@ -24,6 +24,7 @@ import {
   executionPlanRouteErrorResponse,
   ExecutionPlanLoadTimingRecorder,
   resolveAuthorizedExecutionPlan,
+  RouteOwnershipValidationTimingRecorder,
   StoryLoadTimingRecorder,
 } from "@/lib/ai-story-execution-plan-access";
 import {
@@ -78,6 +79,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const executionPlanReviewRecorder = new ExecutionPlanReviewProjectionTimingRecorder();
   const storyLoadRecorder = new StoryLoadTimingRecorder();
   const executionPlanLoadRecorder = new ExecutionPlanLoadTimingRecorder();
+  const routeOwnershipValidationRecorder = new RouteOwnershipValidationTimingRecorder();
   const reviewPathTrace: Array<Record<string, unknown>> = [];
   const recordReviewPathMarker = (marker: {
     readonly marker: string;
@@ -110,6 +112,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
       storyLoadStageTimings: storyLoadRecorder.snapshot(),
       executionPlanLoadStageTimings: executionPlanLoadRecorder.snapshot(),
+      routeOwnershipValidationStageTimings: routeOwnershipValidationRecorder.snapshot(),
       generatedSceneReviewPathTrace: reviewPathTrace,
     }, { status, headers: { "x-emberos-request-correlation-id": requestCorrelationId } });
 
@@ -126,6 +129,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       observeStage: (stage, operation) => recorder.run(stage, operation),
       storyLoadTimingRecorder: storyLoadRecorder,
       executionPlanLoadTimingRecorder: executionPlanLoadRecorder,
+      routeOwnershipValidationTimingRecorder: routeOwnershipValidationRecorder,
     });
 
     const membership = await recorder.run("workspace_authorization", () =>
@@ -185,6 +189,7 @@ export async function GET(request: Request, { params }: RouteParams) {
           executionPlanReviewRecorder.markTimedOut();
           storyLoadRecorder.markTimedOut();
           executionPlanLoadRecorder.markTimedOut();
+          routeOwnershipValidationRecorder.markTimedOut();
           deadline.abort();
           reject(new RuntimeReadDeadlineError(timedOutStage, recorder.elapsedMs()));
         }, SERVER_RUNTIME_DEADLINE_MS);
