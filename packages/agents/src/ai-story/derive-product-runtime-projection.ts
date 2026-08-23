@@ -22,6 +22,7 @@ import {
   AssemblyValidationRepositoryImpl,
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
+  type ExecutionPlanReviewProjectionTimingRecorder,
   FinalStoryResultRepositoryImpl,
   AiStorySceneReleaseRepository,
   RuntimeAuthorizationPersistenceRepository,
@@ -195,7 +196,8 @@ export type DeriveProductRuntimeProjectionInput = {
   readonly executionPlanId: string;
   readonly callerRole: WorkspaceRole | string | null;
   readonly derivedAt?: string;
-  readonly observeStage?: <T>(stage: "runtime_authorization_read" | "release_state_read" | "provider_attempt_read" | "scene_result_read" | "generated_scene_review_read" | "cost_usage_projection" | "runtime_projection_build", operation: () => Promise<T>) => Promise<T>;
+  readonly observeStage?: <T>(stage: "runtime_authorization_read" | "execution_plan_review_projection_read" | "release_state_read" | "provider_attempt_read" | "scene_result_read" | "generated_scene_review_read" | "cost_usage_projection" | "runtime_projection_build", operation: () => Promise<T>) => Promise<T>;
+  readonly executionPlanReviewProjectionTimingRecorder?: ExecutionPlanReviewProjectionTimingRecorder;
   readonly onGeneratedSceneReviewReadTiming?: (timing: GeneratedSceneReviewReadTiming) => void;
   readonly onGeneratedSceneReviewPathMarker?: GeneratedSceneReviewPathMarkerSink;
   readonly generatedSceneReviewReadSubstageRecorder?: GeneratedSceneReviewReadSubstageRecorder;
@@ -222,7 +224,13 @@ export async function deriveProductRuntimeProjection(
   const releaseRepo = new AiStorySceneReleaseRepository();
 
   const [review, assembly, authFact, fsr, compilation] = await Promise.all([
-    observe("generated_scene_review_read", () => reviewRepo.getLogicalProjection(executionPlanId)),
+    observe("execution_plan_review_projection_read", () =>
+      reviewRepo.getLogicalProjection(
+        executionPlanId,
+        undefined,
+        input.executionPlanReviewProjectionTimingRecorder
+      )
+    ),
     observe("runtime_projection_build", () => assemblyRepo.getProjection(executionPlanId)),
     observe("runtime_authorization_read", () => authRepo.getByExecutionPlanId(executionPlanId)),
     observe("scene_result_read", () => fsrRepo.getByExecutionPlanId(executionPlanId)),

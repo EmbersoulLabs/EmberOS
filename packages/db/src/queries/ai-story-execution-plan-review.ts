@@ -39,6 +39,75 @@ type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type QueryDb = Db | Tx;
 
+export const EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION =
+  "execution-plan-review-stage-attribution.v1" as const;
+export const EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES = [
+  "execution_plan_review.plan_read",
+  "execution_plan_review.ownership_chain_read",
+  "execution_plan_review.opened_fact_read",
+  "execution_plan_review.scene_review_fact_read",
+  "execution_plan_review.story_review_fact_read",
+  "execution_plan_review.required_scene_read",
+  "execution_plan_review.projection_assembly",
+] as const;
+export type ExecutionPlanReviewProjectionSubstage =
+  (typeof EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES)[number];
+export type ExecutionPlanReviewProjectionSubstageTiming = {
+  readonly stage: ExecutionPlanReviewProjectionSubstage;
+  readonly status: "COMPLETED" | "TIMED_OUT" | "FAILED" | "NOT_REACHED";
+  readonly durationMs: number | null;
+  readonly queryCount: number;
+  readonly roundTripCount: number;
+  readonly rowCount: number | null;
+};
+
+const executionPlanReviewQueryCounts: Record<ExecutionPlanReviewProjectionSubstage, number> = {
+  "execution_plan_review.plan_read": 1,
+  "execution_plan_review.ownership_chain_read": 6,
+  "execution_plan_review.opened_fact_read": 1,
+  "execution_plan_review.scene_review_fact_read": 1,
+  "execution_plan_review.story_review_fact_read": 1,
+  "execution_plan_review.required_scene_read": 1,
+  "execution_plan_review.projection_assembly": 0,
+};
+
+export class ExecutionPlanReviewProjectionTimingRecorder {
+  private active: { stage: ExecutionPlanReviewProjectionSubstage; startedAt: number } | null = null;
+  private readonly rows = new Map<ExecutionPlanReviewProjectionSubstage, ExecutionPlanReviewProjectionSubstageTiming>(
+    EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES.map((stage) => [stage, {
+      stage,
+      status: "NOT_REACHED",
+      durationMs: null,
+      queryCount: executionPlanReviewQueryCounts[stage],
+      roundTripCount: executionPlanReviewQueryCounts[stage],
+      rowCount: null,
+    }])
+  );
+  async run<T>(stage: ExecutionPlanReviewProjectionSubstage, operation: () => Promise<T>, rowCount: (value: T) => number | null): Promise<T> {
+    const startedAt = performance.now();
+    this.active = { stage, startedAt };
+    try {
+      const value = await operation();
+      this.rows.set(stage, { ...this.rows.get(stage)!, status: "COMPLETED", durationMs: Math.round(performance.now() - startedAt), rowCount: rowCount(value) });
+      this.active = null;
+      return value;
+    } catch (error) {
+      this.rows.set(stage, { ...this.rows.get(stage)!, status: "FAILED", durationMs: Math.round(performance.now() - startedAt) });
+      this.active = null;
+      throw error;
+    }
+  }
+  markTimedOut(): void {
+    if (!this.active) return;
+    const { stage, startedAt } = this.active;
+    this.rows.set(stage, { ...this.rows.get(stage)!, status: "TIMED_OUT", durationMs: Math.round(performance.now() - startedAt) });
+    this.active = null;
+  }
+  snapshot(): readonly ExecutionPlanReviewProjectionSubstageTiming[] {
+    return EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES.map((stage) => this.rows.get(stage)!);
+  }
+}
+
 const REVIEWER_MIN_ROLE: WorkspaceRole = "operator";
 
 export class ExecutionPlanReviewIdentityConflictError extends Error {
@@ -597,11 +666,17 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
 
   async getLogicalProjection(
     executionPlanId: string,
-    db: QueryDb = this.db
+    db: QueryDb = this.db,
+    timingRecorder: ExecutionPlanReviewProjectionTimingRecorder =
+      new ExecutionPlanReviewProjectionTimingRecorder()
   ): Promise<LogicalReviewProjection | null> {
-    const plan = await this.requirePlanOrNull(executionPlanId, db);
+    const plan = await timingRecorder.run(
+      "execution_plan_review.plan_read",
+      () => this.requirePlanOrNull(executionPlanId, db),
+      (row) => row ? 1 : 0
+    );
     if (!plan) return null;
-    return this.readProjection(executionPlanId, plan, db);
+    return this.readProjection(executionPlanId, plan, db, timingRecorder);
   }
 
   private async requirePlanOrNull(executionPlanId: string, db: QueryDb) {
@@ -671,16 +746,27 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   private async readProjection(
     executionPlanId: string,
     plan: typeof schema.aiStoryExecutionPlans.$inferSelect,
-    db: QueryDb
+    db: QueryDb,
+    timingRecorder: ExecutionPlanReviewProjectionTimingRecorder =
+      new ExecutionPlanReviewProjectionTimingRecorder()
   ): Promise<LogicalReviewProjection> {
-    await assertExecutionPlanOwnershipChain(plan, db);
+    await timingRecorder.run(
+      "execution_plan_review.ownership_chain_read",
+      () => assertExecutionPlanOwnershipChain(plan, db),
+      () => 6
+    );
     const expected = planOwnershipFromRow(plan);
 
-    const [openedRow] = await db
-      .select()
-      .from(schema.aiStoryReviewOpenedFacts)
-      .where(eq(schema.aiStoryReviewOpenedFacts.executionPlanId, executionPlanId))
-      .limit(1);
+    const openedRows = await timingRecorder.run(
+      "execution_plan_review.opened_fact_read",
+      () => db
+        .select()
+        .from(schema.aiStoryReviewOpenedFacts)
+        .where(eq(schema.aiStoryReviewOpenedFacts.executionPlanId, executionPlanId))
+        .limit(1),
+      (rows) => rows.length
+    );
+    const [openedRow] = openedRows;
     if (openedRow) {
       assertPlanOwnershipColumnsMatch(expected, {
         orgId: openedRow.orgId,
@@ -692,11 +778,15 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
         executionPlanId: openedRow.executionPlanId,
       }, "ReviewOpenedFact");
     }
-    const sceneRows = await db
-      .select()
-      .from(schema.aiStorySceneIntentReviewFacts)
-      .where(eq(schema.aiStorySceneIntentReviewFacts.executionPlanId, executionPlanId))
-      .orderBy(asc(schema.aiStorySceneIntentReviewFacts.acceptedAt));
+    const sceneRows = await timingRecorder.run(
+      "execution_plan_review.scene_review_fact_read",
+      () => db
+        .select()
+        .from(schema.aiStorySceneIntentReviewFacts)
+        .where(eq(schema.aiStorySceneIntentReviewFacts.executionPlanId, executionPlanId))
+        .orderBy(asc(schema.aiStorySceneIntentReviewFacts.acceptedAt)),
+      (rows) => rows.length
+    );
     for (const row of sceneRows) {
       assertPlanOwnershipColumnsMatch(expected, {
         orgId: row.orgId,
@@ -708,11 +798,15 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
         executionPlanId: row.executionPlanId,
       }, "SceneIntentReviewFact");
     }
-    const storyRows = await db
-      .select()
-      .from(schema.aiStoryStoryReviewFacts)
-      .where(eq(schema.aiStoryStoryReviewFacts.executionPlanId, executionPlanId))
-      .orderBy(asc(schema.aiStoryStoryReviewFacts.acceptedAt));
+    const storyRows = await timingRecorder.run(
+      "execution_plan_review.story_review_fact_read",
+      () => db
+        .select()
+        .from(schema.aiStoryStoryReviewFacts)
+        .where(eq(schema.aiStoryStoryReviewFacts.executionPlanId, executionPlanId))
+        .orderBy(asc(schema.aiStoryStoryReviewFacts.acceptedAt)),
+      (rows) => rows.length
+    );
     for (const row of storyRows) {
       assertPlanOwnershipColumnsMatch(expected, {
         orgId: row.orgId,
@@ -733,11 +827,15 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
       ? StoryReviewDecisionSchema.parse(storyRows[storyRows.length - 1]!.fact)
       : null;
 
-    const requiredSceneRows = await db
-      .select()
-      .from(schema.aiStorySceneExecutions)
-      .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
-      .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder));
+    const requiredSceneRows = await timingRecorder.run(
+      "execution_plan_review.required_scene_read",
+      () => db
+        .select()
+        .from(schema.aiStorySceneExecutions)
+        .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
+        .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder)),
+      (rows) => rows.length
+    );
     for (const scene of requiredSceneRows) {
       assertSceneMatchesPlan(plan, scene);
     }
@@ -745,7 +843,9 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     const latest = latestSceneDecisions(sceneDecisions);
     const latestSceneDecisionBySceneExecutionId = Object.fromEntries(latest.entries());
 
-    return LogicalReviewProjectionSchema.parse({
+    return timingRecorder.run(
+      "execution_plan_review.projection_assembly",
+      async () => LogicalReviewProjectionSchema.parse({
       executionPlanId,
       orgId: plan.orgId,
       workspaceId: plan.workspaceId,
@@ -760,6 +860,8 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
       latestSceneDecisionBySceneExecutionId,
       storyDecision,
       derivedAt: new Date().toISOString(),
-    });
+      }),
+      () => 1
+    );
   }
 }

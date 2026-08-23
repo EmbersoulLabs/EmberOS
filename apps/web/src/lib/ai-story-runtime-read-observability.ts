@@ -3,7 +3,7 @@ export const SERVER_RUNTIME_DEADLINE_MS = 15_000;
 export const RUNTIME_READ_STAGES = [
   "route_entry", "request_parse", "auth", "workspace_authorization",
   "story_load", "execution_plan_load", "ownership_validation",
-  "runtime_authorization_read", "release_state_read", "provider_attempt_read",
+  "runtime_authorization_read", "execution_plan_review_projection_read", "release_state_read", "provider_attempt_read",
   "scene_result_read", "generated_scene_review_read", "durable_attestation_read",
   "media_playback_resolution", "cost_usage_projection", "runtime_projection_build",
   "response_schema_validation", "response_serialization",

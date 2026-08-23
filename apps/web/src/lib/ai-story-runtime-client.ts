@@ -39,6 +39,7 @@ export type AiStoryRuntimeReadTimeoutTrace = {
   readonly timedOutStage: string | null;
   readonly stageTimings: readonly AiStoryRuntimeReadStageTiming[];
   readonly generatedSceneReviewStageTimings: readonly AiStoryRuntimeReadSubstageTiming[];
+  readonly executionPlanReviewStageTimings: readonly AiStoryRuntimeReadSubstageTiming[];
   readonly generatedSceneReviewPathTrace: readonly AiStoryRuntimeReviewPathMarker[];
 };
 
@@ -79,6 +80,16 @@ export function parseRuntimeTimeoutTrace(body: Record<string, unknown>, correlat
           typeof value.roundTripCount === "number";
       })
     : [];
+  const executionPlanReviewStageTimings = Array.isArray(body.executionPlanReviewStageTimings)
+    ? body.executionPlanReviewStageTimings.filter((row): row is AiStoryRuntimeReadSubstageTiming => {
+        if (!row || typeof row !== "object") return false;
+        const value = row as Record<string, unknown>;
+        return typeof value.stage === "string" &&
+          ["COMPLETED", "TIMED_OUT", "FAILED", "NOT_REACHED"].includes(String(value.status)) &&
+          typeof value.queryCount === "number" &&
+          typeof value.roundTripCount === "number";
+      })
+    : [];
   const generatedSceneReviewPathTrace = Array.isArray(body.generatedSceneReviewPathTrace)
     ? body.generatedSceneReviewPathTrace.filter((row): row is AiStoryRuntimeReviewPathMarker => {
         if (!row || typeof row !== "object") return false;
@@ -100,6 +111,7 @@ export function parseRuntimeTimeoutTrace(body: Record<string, unknown>, correlat
     timedOutStage: typeof body.timedOutStage === "string" ? body.timedOutStage : null,
     stageTimings,
     generatedSceneReviewStageTimings,
+    executionPlanReviewStageTimings,
     generatedSceneReviewPathTrace,
   };
 }

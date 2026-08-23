@@ -9,7 +9,10 @@ import {
   deriveProductRuntimeProjection,
   GeneratedSceneReviewReadSubstageRecorder,
 } from "@ceo-agent/agents";
-import { getWorkspaceMembership } from "@ceo-agent/db";
+import {
+  ExecutionPlanReviewProjectionTimingRecorder,
+  getWorkspaceMembership,
+} from "@ceo-agent/db";
 import {
   PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS,
   ProductRuntimeProjectionSchema,
@@ -70,6 +73,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const deadline = new AbortController();
   const recorder = new RuntimeReadStageRecorder(deadline.signal);
   const reviewSubstageRecorder = new GeneratedSceneReviewReadSubstageRecorder();
+  const executionPlanReviewRecorder = new ExecutionPlanReviewProjectionTimingRecorder();
   const reviewPathTrace: Array<Record<string, unknown>> = [];
   const recordReviewPathMarker = (marker: {
     readonly marker: string;
@@ -99,6 +103,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       elapsedMs: recorder.elapsedMs(),
       stageTimings: recorder.snapshot(),
       generatedSceneReviewStageTimings: reviewSubstageRecorder.snapshot(),
+      executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
       generatedSceneReviewPathTrace: reviewPathTrace,
     }, { status, headers: { "x-emberos-request-correlation-id": requestCorrelationId } });
 
@@ -122,6 +127,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       executionPlanId: ctx.executionPlanId,
       callerRole: membership?.role ?? null,
       observeStage: (stage, operation) => recorder.run(stage, operation),
+      executionPlanReviewProjectionTimingRecorder: executionPlanReviewRecorder,
       onGeneratedSceneReviewPathMarker: (marker) =>
         recordReviewPathMarker({ ...marker, executionPlanId: ctx.executionPlanId }),
       generatedSceneReviewReadSubstageRecorder: reviewSubstageRecorder,
@@ -168,6 +174,7 @@ export async function GET(request: Request, { params }: RouteParams) {
         deadlineTimer = setTimeout(() => {
           const timedOutStage = recorder.markTimedOut();
           reviewSubstageRecorder.markTimedOut();
+          executionPlanReviewRecorder.markTimedOut();
           deadline.abort();
           reject(new RuntimeReadDeadlineError(timedOutStage, recorder.elapsedMs()));
         }, SERVER_RUNTIME_DEADLINE_MS);
