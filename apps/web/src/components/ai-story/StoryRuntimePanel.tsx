@@ -77,7 +77,7 @@ export function StoryRuntimePanel({
       if (gen !== requestGen.current) return null;
       setError(
         err instanceof StoryRuntimeClientError
-          ? `${err.message}${err.requestCorrelationId ? ` (reference ${err.requestCorrelationId})` : ""}`
+          ? `${err.message}${err.requestCorrelationId ? ` Reference: ${err.requestCorrelationId}` : ""}`
           : err instanceof Error
             ? err.message
             : "Story review could not be loaded."

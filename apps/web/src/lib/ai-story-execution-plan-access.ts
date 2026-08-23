@@ -59,35 +59,37 @@ export async function resolveAuthorizedExecutionPlan(input: {
   readonly storyId: string;
   readonly executionPlanId: string;
   readonly minRole: WorkspaceRole;
+  readonly observeStage?: <T>(stage: "workspace_authorization" | "story_load" | "execution_plan_load" | "ownership_validation", operation: () => Promise<T>) => Promise<T>;
 }): Promise<AuthorizedExecutionPlanContext> {
   const { userId, campaignId, storyId, executionPlanId, minRole } = input;
+  const observe = input.observeStage ?? (async (_stage, operation) => operation());
   if (!isUuid(campaignId) || !isUuid(storyId) || !isUuid(executionPlanId)) {
     throw new ExecutionPlanRouteValidationError("Invalid id");
   }
 
   const db = getDb();
-  const [campaign] = await db
+  const [campaign] = await observe("workspace_authorization", () => db
     .select()
     .from(schema.campaigns)
     .where(eq(schema.campaigns.id, campaignId))
-    .limit(1);
+    .limit(1));
   if (!campaign) {
     throw new ExecutionPlanRouteNotFoundError("Campaign not found");
   }
 
-  await authorizeAiStoryAccess({
+  await observe("workspace_authorization", () => authorizeAiStoryAccess({
     user: { id: userId },
     orgId: campaign.orgId,
     workspaceId: campaign.workspaceId,
     minRole,
-  });
+  }));
 
-  const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
+  const loaded = await observe("story_load", () => loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId));
   if (!loaded) {
     throw new ExecutionPlanRouteNotFoundError("AI Story not found");
   }
 
-  const [plan] = await db
+  const [plan] = await observe("execution_plan_load", () => db
     .select()
     .from(schema.aiStoryExecutionPlans)
     .where(
@@ -99,14 +101,14 @@ export async function resolveAuthorizedExecutionPlan(input: {
         eq(schema.aiStoryExecutionPlans.orgId, campaign.orgId)
       )
     )
-    .limit(1);
+    .limit(1));
 
   if (!plan) {
     // Same response for missing and foreign — do not leak tenant existence.
     throw new ExecutionPlanRouteNotFoundError("Execution Plan not found");
   }
 
-  await assertExecutionPlanOwnershipChain(plan, db);
+  await observe("ownership_validation", () => assertExecutionPlanOwnershipChain(plan, db));
 
   return {
     db,

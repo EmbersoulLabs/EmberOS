@@ -86,7 +86,9 @@ async function requestRuntimeRead<T>(input: string): Promise<T> {
   if (!res.ok) {
     throw new StoryRuntimeClientError(
       typeof body.error === "string" ? body.error : "Request failed",
-      typeof body.code === "string" ? body.code : "UNKNOWN",
+      typeof body.errorCode === "string"
+        ? body.errorCode
+        : typeof body.code === "string" ? body.code : "UNKNOWN",
       res.status,
       responseCorrelationId
     );

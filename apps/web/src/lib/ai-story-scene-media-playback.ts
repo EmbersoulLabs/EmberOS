@@ -81,7 +81,9 @@ export async function mintSceneResultPlayback(input: {
   readonly sceneExecutionId: string;
   readonly providerAttemptId: string;
   readonly sceneResultId: string;
+  readonly observeStage?: <T>(stage: "durable_attestation_read" | "media_playback_resolution", operation: () => Promise<T>) => Promise<T>;
 }): Promise<{ readonly deliveryUrl: string; readonly expiresAt: string }> {
+  const observe = input.observeStage ?? (async (_stage, operation) => operation());
   const db = getDb();
   const [row] = await db
     .select()
@@ -98,7 +100,7 @@ export async function mintSceneResultPlayback(input: {
     .limit(1);
   if (!row) throw new Error("Scene media is not available");
 
-  const [attestationRow] = await db
+  const [attestationRow] = await observe("durable_attestation_read", () => db
     .select()
     .from(schema.aiStoryDurableSceneMediaAttestations)
     .where(
@@ -118,7 +120,7 @@ export async function mintSceneResultPlayback(input: {
         )
       )
     )
-    .limit(1);
+    .limit(1));
   if (!attestationRow) {
     throw new Error("Scene media preview is temporarily unavailable");
   }
@@ -131,9 +133,11 @@ export async function mintSceneResultPlayback(input: {
     attestation,
   });
   const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
-  const { data, error } = await createAdminClient().storage
-    .from(bucket)
-    .createSignedUrl(objectKey, AI_STORY_SCENE_PLAYBACK_TTL_SECONDS);
+  const { data, error } = await observe("media_playback_resolution", () =>
+    createAdminClient().storage
+      .from(bucket)
+      .createSignedUrl(objectKey, AI_STORY_SCENE_PLAYBACK_TTL_SECONDS)
+  );
   if (error || !data?.signedUrl) {
     throw new Error("Scene media preview is temporarily unavailable");
   }

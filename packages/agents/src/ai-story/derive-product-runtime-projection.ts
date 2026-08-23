@@ -190,6 +190,7 @@ export type DeriveProductRuntimeProjectionInput = {
   readonly executionPlanId: string;
   readonly callerRole: WorkspaceRole | string | null;
   readonly derivedAt?: string;
+  readonly observeStage?: <T>(stage: "runtime_authorization_read" | "release_state_read" | "provider_attempt_read" | "scene_result_read" | "generated_scene_review_read" | "cost_usage_projection" | "runtime_projection_build", operation: () => Promise<T>) => Promise<T>;
 };
 
 /**
@@ -201,6 +202,7 @@ export async function deriveProductRuntimeProjection(
 ): Promise<ProductRuntimeProjection> {
   const executionPlanId = input.executionPlanId;
   const derivedAt = input.derivedAt ?? new Date().toISOString();
+  const observe = input.observeStage ?? (async (_stage, operation) => operation());
 
   const reviewRepo = new ExecutionPlanReviewRepository();
   const assemblyRepo = new ExecutionPlanAssemblyRepository();
@@ -212,11 +214,11 @@ export async function deriveProductRuntimeProjection(
   const releaseRepo = new AiStorySceneReleaseRepository();
 
   const [review, assembly, authFact, fsr, compilation] = await Promise.all([
-    reviewRepo.getLogicalProjection(executionPlanId),
-    assemblyRepo.getProjection(executionPlanId),
-    authRepo.getByExecutionPlanId(executionPlanId),
-    fsrRepo.getByExecutionPlanId(executionPlanId),
-    persistence.getByExecutionPlanId(executionPlanId),
+    observe("generated_scene_review_read", () => reviewRepo.getLogicalProjection(executionPlanId)),
+    observe("runtime_projection_build", () => assemblyRepo.getProjection(executionPlanId)),
+    observe("runtime_authorization_read", () => authRepo.getByExecutionPlanId(executionPlanId)),
+    observe("scene_result_read", () => fsrRepo.getByExecutionPlanId(executionPlanId)),
+    observe("provider_attempt_read", () => persistence.getByExecutionPlanId(executionPlanId)),
   ]);
 
   const orderedSceneExecutionIds =
@@ -244,7 +246,7 @@ export async function deriveProductRuntimeProjection(
     scenesHaveNonBlockingQc,
   });
 
-  const sceneResults = await validation.listCanonicalSceneResults(executionPlanId);
+  const sceneResults = await observe("scene_result_read", () => validation.listCanonicalSceneResults(executionPlanId));
   const latestByScene = latestRowBySceneExecutionId(sceneResults, (left, right) =>
     left.acceptedAt.localeCompare(right.acceptedAt)
   );
@@ -254,8 +256,8 @@ export async function deriveProductRuntimeProjection(
     (r) => r.status === "FAILED" || r.status === "REJECTED" || r.status === "TIMEOUT"
   ).length;
 
-  const generatedSceneReviewBase = await new GeneratedSceneReviewService().loadPlanReadModel(
-    executionPlanId
+  const generatedSceneReviewBase = await observe("generated_scene_review_read", () =>
+    new GeneratedSceneReviewService().loadPlanReadModel(executionPlanId)
   ).catch(() => []);
   const sceneResultById = new Map(latestResults.map((row) => [row.sceneResultId, row]));
   const generatedSceneReviews = generatedSceneReviewBase.map((review) => {
@@ -291,7 +293,7 @@ export async function deriveProductRuntimeProjection(
   const approvedSceneCount = generatedSceneReviews.filter(
     (row) => row.reviewState === "APPROVED"
   ).length;
-  const releaseRows = authFact ? await releaseRepo.list(executionPlanId) : [];
+  const releaseRows = authFact ? await observe("release_state_read", () => releaseRepo.list(executionPlanId)) : [];
   const sceneReleaseStates = releaseRows.map((row) => ({
     sceneExecutionId: row.sceneExecutionId,
     sceneOrder: row.sceneOrder,
@@ -357,10 +359,10 @@ export async function deriveProductRuntimeProjection(
   });
 
   const providerSpend = authFact
-    ? await reconstructAiStoryProviderSpendForPlan(executionPlanId)
+    ? await observe("cost_usage_projection", () => reconstructAiStoryProviderSpendForPlan(executionPlanId))
     : emptyAiStoryProviderSpendProjection();
 
-  return ProductRuntimeProjectionSchema.parse({
+  return observe("runtime_projection_build", async () => ProductRuntimeProjectionSchema.parse({
     contractVersion: PRODUCT_RUNTIME_STATUS_CONTRACT_VERSION,
     executionPlanId,
     runtimeAuthorizationId: authFact?.runtimeAuthorizationId ?? null,
@@ -387,5 +389,5 @@ export async function deriveProductRuntimeProjection(
     remainingReleasePermitted,
     heldSceneCount,
     derivedAt,
-  });
+  }));
 }

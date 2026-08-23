@@ -18,6 +18,11 @@ import {
   executionPlanRouteErrorResponse,
   resolveAuthorizedExecutionPlan,
 } from "@/lib/ai-story-execution-plan-access";
+import {
+  RuntimeReadDeadlineError,
+  RuntimeReadStageRecorder,
+  SERVER_RUNTIME_DEADLINE_MS,
+} from "@/lib/ai-story-runtime-read-observability";
 
 type RouteParams = {
   params: Promise<{ id: string; storyId: string; executionPlanId: string }>;
@@ -55,38 +60,42 @@ function assertNoForbiddenKeys(payload: unknown): void {
 
 export async function GET(request: Request, { params }: RouteParams) {
   const requestCorrelationId = correlationId(request);
-  const startedAt = performance.now();
-  const timings: Record<string, number> = {};
-  const mark = (name: string, since: number) => {
-    timings[name] = Math.round(performance.now() - since);
-  };
-  try {
-    let stageStartedAt = performance.now();
-    const user = await requireAuth();
-    mark("auth_ms", stageStartedAt);
-    stageStartedAt = performance.now();
-    const { id: campaignId, storyId, executionPlanId } = await params;
-    mark("request_parse_ms", stageStartedAt);
+  const deadline = new AbortController();
+  const recorder = new RuntimeReadStageRecorder(deadline.signal);
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const timingResponse = (status: number, errorCode: string, message: string, timedOutStage?: string) =>
+    Response.json({
+      error: message,
+      errorCode,
+      correlationId: requestCorrelationId,
+      lastCompletedStage: recorder.lastCompletedStage(),
+      timedOutStage: timedOutStage ?? null,
+      elapsedMs: recorder.elapsedMs(),
+      stageTimings: recorder.snapshot(),
+    }, { status, headers: { "x-emberos-request-correlation-id": requestCorrelationId } });
 
-    stageStartedAt = performance.now();
+  const execute = async () => {
+    const { id: campaignId, storyId, executionPlanId } = await recorder.run("request_parse", () => params);
+    const user = await recorder.run("auth", () => requireAuth());
+
     const ctx = await resolveAuthorizedExecutionPlan({
       userId: user.id,
       campaignId,
       storyId,
       executionPlanId,
       minRole: "client_viewer",
+      observeStage: (stage, operation) => recorder.run(stage, operation),
     });
-    mark("workspace_authorization_ms", stageStartedAt);
 
-    stageStartedAt = performance.now();
-    const membership = await getWorkspaceMembership(ctx.workspaceId, user.id);
+    const membership = await recorder.run("workspace_authorization", () =>
+      getWorkspaceMembership(ctx.workspaceId, user.id)
+    );
     const projection = await deriveProductRuntimeProjection({
       executionPlanId: ctx.executionPlanId,
       callerRole: membership?.role ?? null,
+      observeStage: (stage, operation) => recorder.run(stage, operation),
     });
-    mark("runtime_projection_ms", stageStartedAt);
 
-    stageStartedAt = performance.now();
     const generatedSceneReviews = await Promise.all(
       (projection.generatedSceneReviews ?? []).map(async (scene) => {
         if (!scene.generatedMedia) return scene;
@@ -98,61 +107,71 @@ export async function GET(request: Request, { params }: RouteParams) {
               sceneExecutionId: scene.sceneExecutionId,
               providerAttemptId: scene.generatedMedia.providerAttemptId,
               sceneResultId: scene.generatedMedia.sceneResultId,
+              observeStage: (stage, operation) => recorder.run(stage, operation),
             }),
             PLAYBACK_SIGNING_TIMEOUT_MS
           );
-          return {
-            ...scene,
-            generatedMedia: {
-              ...scene.generatedMedia,
-              ...delivery,
-              deliveryStatus: "READY" as const,
-              safeError: null,
-            },
-          };
+          return { ...scene, generatedMedia: { ...scene.generatedMedia, ...delivery, deliveryStatus: "READY" as const, safeError: null } };
         } catch {
-          return {
-            ...scene,
-            generatedMedia: {
-              ...scene.generatedMedia,
-              deliveryUrl: null,
-              expiresAt: null,
-              deliveryStatus: "UNAVAILABLE" as const,
-              safeError: "Scene media preview is temporarily unavailable.",
-            },
-          };
+          return { ...scene, generatedMedia: { ...scene.generatedMedia, deliveryUrl: null, expiresAt: null, deliveryStatus: "UNAVAILABLE" as const, safeError: "Scene media preview is temporarily unavailable." } };
         }
       })
     );
-    mark("private_signing_ms", stageStartedAt);
-    stageStartedAt = performance.now();
-    const deliveredProjection = ProductRuntimeProjectionSchema.parse({
-      ...projection,
-      generatedSceneReviews,
-    });
-    mark("response_serialization_ms", stageStartedAt);
-
+    const deliveredProjection = await recorder.run("response_schema_validation", async () =>
+      ProductRuntimeProjectionSchema.parse({ ...projection, generatedSceneReviews })
+    );
     assertNoForbiddenKeys(deliveredProjection);
-    timings.total_request_ms = Math.round(performance.now() - startedAt);
-    console.info("ai_story_runtime_read", {
+    const response = await recorder.run("response_serialization", async () => apiSuccess(deliveredProjection));
+    response.headers.set("x-emberos-request-correlation-id", requestCorrelationId);
+    return { response, storyId, executionPlanId };
+  };
+
+  try {
+    const result = await Promise.race([
+      execute(),
+      new Promise<never>((_resolve, reject) => {
+        deadlineTimer = setTimeout(() => {
+          const timedOutStage = recorder.markTimedOut();
+          deadline.abort();
+          reject(new RuntimeReadDeadlineError(timedOutStage, recorder.elapsedMs()));
+        }, SERVER_RUNTIME_DEADLINE_MS);
+      }),
+    ]);
+    console.info("ai_story_runtime_read_timing", {
       requestCorrelationId,
-      storyId,
-      executionPlanId,
-      timings,
+      storyId: result.storyId,
+      executionPlanId: result.executionPlanId,
+      totalDurationMs: recorder.elapsedMs(),
+      runtime_projection_ms: recorder.duration("runtime_projection_build"),
+      private_signing_ms: recorder.duration("media_playback_resolution"),
+      total_request_ms: recorder.elapsedMs(),
+      lastCompletedStage: recorder.lastCompletedStage(),
+      timedOutStage: null,
+      stageTimings: recorder.snapshot(),
       outcome: "success",
     });
-    const response = apiSuccess(deliveredProjection);
-    response.headers.set("x-emberos-request-correlation-id", requestCorrelationId);
-    return response;
+    return result.response;
   } catch (error) {
-    timings.total_request_ms = Math.round(performance.now() - startedAt);
-    console.error("ai_story_runtime_read_failed", {
+    const timedOutStage = error instanceof RuntimeReadDeadlineError ? error.timedOutStage : null;
+    console.error("ai_story_runtime_read_timing", {
       requestCorrelationId,
-      timings,
+      totalDurationMs: recorder.elapsedMs(),
+      runtime_projection_ms: recorder.duration("runtime_projection_build"),
+      private_signing_ms: recorder.duration("media_playback_resolution"),
+      total_request_ms: recorder.elapsedMs(),
+      lastCompletedStage: recorder.lastCompletedStage(),
+      timedOutStage,
+      stageTimings: recorder.snapshot(),
+      outcome: timedOutStage ? "timeout" : "failure",
       errorClass: error instanceof Error ? error.name : "UnknownError",
     });
+    if (error instanceof RuntimeReadDeadlineError) {
+      return timingResponse(504, error.code, error.message, error.timedOutStage);
+    }
     const response = executionPlanRouteErrorResponse(error) ?? handleApiError(error);
     response.headers.set("x-emberos-request-correlation-id", requestCorrelationId);
     return response;
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
   }
 }
