@@ -84,6 +84,15 @@ async function requestRuntimeRead<T>(input: string): Promise<T> {
     res.headers.get("x-emberos-request-correlation-id") ??
     (typeof body.requestCorrelationId === "string" ? body.requestCorrelationId : requestCorrelationId);
   if (!res.ok) {
+    if (body.errorCode === "AI_STORY_RUNTIME_READ_TIMEOUT") {
+      console.info("ai_story_runtime_read_timeout", {
+        correlationId: responseCorrelationId,
+        elapsedMs: typeof body.elapsedMs === "number" ? body.elapsedMs : null,
+        lastCompletedStage: typeof body.lastCompletedStage === "string" ? body.lastCompletedStage : null,
+        timedOutStage: typeof body.timedOutStage === "string" ? body.timedOutStage : null,
+        stageTimings: Array.isArray(body.stageTimings) ? body.stageTimings : [],
+      });
+    }
     throw new StoryRuntimeClientError(
       typeof body.error === "string" ? body.error : "Request failed",
       typeof body.errorCode === "string"

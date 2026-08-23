@@ -16,6 +16,7 @@ describe("R3 Runtime server deadline observability", () => {
   it("keeps the server deadline ahead of the browser abort", () => {
     expect(SERVER_RUNTIME_DEADLINE_MS).toBe(15_000);
     expect(client).toContain("RUNTIME_READ_TIMEOUT_MS = 20_000");
+    expect(client).toContain('console.info("ai_story_runtime_read_timeout"');
     expect(SERVER_RUNTIME_DEADLINE_MS).toBeLessThan(20_000);
   });
 
