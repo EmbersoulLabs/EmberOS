@@ -133,6 +133,10 @@ async function requestRuntimeRead<T>(input: string): Promise<T> {
       timeoutTrace
     );
   }
+  const reviewProjectionTiming = res.headers.get("x-emberos-review-projection-timing");
+  if (reviewProjectionTiming) {
+    console.info("ai_story_generated_scene_review_read_timing", reviewProjectionTiming);
+  }
   return body as T;
 }
 

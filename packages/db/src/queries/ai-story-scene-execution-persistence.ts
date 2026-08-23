@@ -400,6 +400,21 @@ export class AiStorySceneExecutionPersistenceRepository
     return row ? this.hydratePlan(row, db) : null;
   }
 
+  /** Compact read used by review projections that only require frozen Scene identities. */
+  async listIntentsByExecutionPlanId(
+    executionPlanId: string,
+    db: QueryDb = this.db
+  ): Promise<readonly AiStorySceneExecutionIntent[]> {
+    const rows = await db
+      .select({ intent: schema.aiStorySceneExecutions.intent })
+      .from(schema.aiStorySceneExecutions)
+      .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
+      .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder));
+    return deepFreeze(
+      rows.map((row) => AiStorySceneExecutionIntentSchema.parse(row.intent))
+    );
+  }
+
   async getByDeterministicFingerprint(
     fingerprint: string
   ): Promise<PersistedSceneExecutionCompilation | null> {

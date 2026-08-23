@@ -29,7 +29,10 @@ import {
   getDb,
   schema,
 } from "@ceo-agent/db";
-import { GeneratedSceneReviewService } from "./generated-scene-review-service";
+import {
+  GeneratedSceneReviewService,
+  type GeneratedSceneReviewReadTiming,
+} from "./generated-scene-review-service";
 
 const OPERATOR_ROLES: ReadonlySet<string> = new Set(["admin", "operator"]);
 
@@ -191,6 +194,7 @@ export type DeriveProductRuntimeProjectionInput = {
   readonly callerRole: WorkspaceRole | string | null;
   readonly derivedAt?: string;
   readonly observeStage?: <T>(stage: "runtime_authorization_read" | "release_state_read" | "provider_attempt_read" | "scene_result_read" | "generated_scene_review_read" | "cost_usage_projection" | "runtime_projection_build", operation: () => Promise<T>) => Promise<T>;
+  readonly onGeneratedSceneReviewReadTiming?: (timing: GeneratedSceneReviewReadTiming) => void;
 };
 
 /**
@@ -257,7 +261,9 @@ export async function deriveProductRuntimeProjection(
   ).length;
 
   const generatedSceneReviewBase = await observe("generated_scene_review_read", () =>
-    new GeneratedSceneReviewService().loadPlanReadModel(executionPlanId)
+    new GeneratedSceneReviewService({
+      onLoadPlanReadModelTiming: input.onGeneratedSceneReviewReadTiming,
+    }).loadPlanReadModel(executionPlanId)
   ).catch(() => []);
   const sceneResultById = new Map(latestResults.map((row) => [row.sceneResultId, row]));
   const generatedSceneReviews = generatedSceneReviewBase.map((review) => {

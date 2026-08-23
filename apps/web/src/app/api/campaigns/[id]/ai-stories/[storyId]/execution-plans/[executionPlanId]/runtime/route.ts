@@ -5,7 +5,10 @@
  *
  * Read-only. Zero execution side effects.
  */
-import { deriveProductRuntimeProjection } from "@ceo-agent/agents";
+import {
+  deriveProductRuntimeProjection,
+  type GeneratedSceneReviewReadTiming,
+} from "@ceo-agent/agents";
 import { getWorkspaceMembership } from "@ceo-agent/db";
 import {
   PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS,
@@ -62,6 +65,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const requestCorrelationId = correlationId(request);
   const deadline = new AbortController();
   const recorder = new RuntimeReadStageRecorder(deadline.signal);
+  let generatedSceneReviewReadTiming: GeneratedSceneReviewReadTiming | null = null;
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const timingResponse = (status: number, errorCode: string, message: string, timedOutStage?: string) =>
     Response.json({
@@ -94,6 +98,9 @@ export async function GET(request: Request, { params }: RouteParams) {
       executionPlanId: ctx.executionPlanId,
       callerRole: membership?.role ?? null,
       observeStage: (stage, operation) => recorder.run(stage, operation),
+      onGeneratedSceneReviewReadTiming: (timing) => {
+        generatedSceneReviewReadTiming = timing;
+      },
     });
 
     const generatedSceneReviews = await Promise.all(
@@ -123,6 +130,12 @@ export async function GET(request: Request, { params }: RouteParams) {
     assertNoForbiddenKeys(deliveredProjection);
     const response = await recorder.run("response_serialization", async () => apiSuccess(deliveredProjection));
     response.headers.set("x-emberos-request-correlation-id", requestCorrelationId);
+    if (generatedSceneReviewReadTiming) {
+      response.headers.set(
+        "x-emberos-review-projection-timing",
+        JSON.stringify(generatedSceneReviewReadTiming)
+      );
+    }
     return { response, storyId, executionPlanId };
   };
 

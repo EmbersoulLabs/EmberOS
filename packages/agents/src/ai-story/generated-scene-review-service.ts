@@ -36,6 +36,26 @@ import {
 
 export { GeneratedSceneReviewError };
 
+export type GeneratedSceneReviewReadTiming = {
+  readonly executionPlanId: string;
+  readonly sceneExecutionListMs: number;
+  readonly providerAttemptCostRecordsMs: number;
+  readonly generatedSceneReviewListMs: number;
+  readonly readModelAssemblyMs: number;
+  readonly totalLoadPlanReadModelMs: number;
+  readonly sceneExecutionRowCount: number;
+  readonly providerAttemptCostRecordCount: number;
+  readonly generatedSceneReviewRowCount: number;
+  readonly sceneExecutionQueryCount: 1;
+  readonly sceneExecutionRoundTripCount: 1;
+  readonly providerAttemptCostQueryCount: 1;
+  readonly providerAttemptCostRoundTripCount: 1;
+  readonly generatedSceneReviewQueryCount: 1;
+  readonly generatedSceneReviewRoundTripCount: 1;
+  readonly connectionAcquireCount: 1;
+  readonly secondCheckoutAttempts: 0;
+};
+
 export class GeneratedSceneReviewService {
   constructor(
     private readonly dependencies: {
@@ -45,6 +65,8 @@ export class GeneratedSceneReviewService {
       readonly schedulingCoordinator?: SceneSchedulingCoordinator;
       readonly router?: ProviderRouter;
       readonly now?: () => Date;
+      readonly onLoadPlanReadModelTiming?: (timing: GeneratedSceneReviewReadTiming) => void;
+      readonly providerAttemptCostRecordLoader?: typeof listAiStoryProviderAttemptCostRecords;
     } = {}
   ) {}
 
@@ -357,22 +379,37 @@ export class GeneratedSceneReviewService {
   async loadPlanReadModel(
     executionPlanId: string
   ): Promise<readonly GeneratedSceneReviewReadModel[]> {
+    const totalStartedAt = performance.now();
     const persistence =
       this.dependencies.persistenceRepository ??
       new AiStorySceneExecutionPersistenceRepository();
-    const compilation = await persistence.getByExecutionPlanId(executionPlanId);
+    const sceneExecutionStartedAt = performance.now();
+    const intents = await persistence.listIntentsByExecutionPlanId(executionPlanId);
+    const sceneExecutionListMs = performance.now() - sceneExecutionStartedAt;
+
+    const providerAttemptStartedAt = performance.now();
+    const costRecords = await (
+      this.dependencies.providerAttemptCostRecordLoader ??
+      listAiStoryProviderAttemptCostRecords
+    )(executionPlanId);
+    const providerAttemptCostRecordsMs = performance.now() - providerAttemptStartedAt;
     const reconstructed = reconstructAiStoryProviderSpend(
-      await listAiStoryProviderAttemptCostRecords(executionPlanId)
+      costRecords
     );
+
+    const reviewStartedAt = performance.now();
     const reviews = await this.reviewRepo.listByExecutionPlanId(executionPlanId);
+    const generatedSceneReviewListMs = performance.now() - reviewStartedAt;
+
+    const assemblyStartedAt = performance.now();
     const snapshotByScene = groupReviews(reviews);
     const maxAttempts = resolveAiStorySceneMaxAttempts();
-    const intents = (compilation?.intents ?? [])
+    const orderedIntents = intents
       .slice()
       .sort((a, b) => a.identity.sceneOrder - b.identity.sceneOrder);
 
     const models: GeneratedSceneReviewReadModel[] = [];
-    for (const intent of intents) {
+    for (const intent of orderedIntents) {
       models.push(
         await this.buildReadModel({
           executionPlanId,
@@ -391,6 +428,31 @@ export class GeneratedSceneReviewService {
         })
       );
     }
+    const readModelAssemblyMs = performance.now() - assemblyStartedAt;
+    const timing: GeneratedSceneReviewReadTiming = {
+      executionPlanId,
+      sceneExecutionListMs,
+      providerAttemptCostRecordsMs,
+      generatedSceneReviewListMs,
+      readModelAssemblyMs,
+      totalLoadPlanReadModelMs: performance.now() - totalStartedAt,
+      sceneExecutionRowCount: intents.length,
+      providerAttemptCostRecordCount: costRecords.length,
+      generatedSceneReviewRowCount: reviews.length,
+      sceneExecutionQueryCount: 1,
+      sceneExecutionRoundTripCount: 1,
+      providerAttemptCostQueryCount: 1,
+      providerAttemptCostRoundTripCount: 1,
+      generatedSceneReviewQueryCount: 1,
+      generatedSceneReviewRoundTripCount: 1,
+      connectionAcquireCount: 1,
+      secondCheckoutAttempts: 0,
+    };
+    this.dependencies.onLoadPlanReadModelTiming?.(timing);
+    console.info(JSON.stringify({
+      event: "ai_story_generated_scene_review_read_timing",
+      ...timing,
+    }));
     return models;
   }
 
