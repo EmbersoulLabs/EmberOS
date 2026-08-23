@@ -27,6 +27,7 @@ import {
 } from "./ai-story-scene-execution-persistence";
 import {
   assertExecutionPlanOwnershipChain,
+  assertExecutionPlanOwnershipChainInSingleQuery,
   assertPlanOwnershipColumnsMatch,
   assertSceneMatchesPlan,
   assertSnapshotMatchesWorkspace,
@@ -63,7 +64,7 @@ export type ExecutionPlanReviewProjectionSubstageTiming = {
 
 const executionPlanReviewQueryCounts: Record<ExecutionPlanReviewProjectionSubstage, number> = {
   "execution_plan_review.plan_read": 1,
-  "execution_plan_review.ownership_chain_read": 6,
+  "execution_plan_review.ownership_chain_read": 1,
   "execution_plan_review.opened_fact_read": 1,
   "execution_plan_review.scene_review_fact_read": 1,
   "execution_plan_review.story_review_fact_read": 1,
@@ -752,8 +753,8 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   ): Promise<LogicalReviewProjection> {
     await timingRecorder.run(
       "execution_plan_review.ownership_chain_read",
-      () => assertExecutionPlanOwnershipChain(plan, db),
-      () => 6
+      () => assertExecutionPlanOwnershipChainInSingleQuery(plan, db),
+      () => 1
     );
     const expected = planOwnershipFromRow(plan);
 
