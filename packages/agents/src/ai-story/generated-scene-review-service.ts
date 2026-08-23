@@ -45,6 +45,19 @@ export const GENERATED_SCENE_REVIEW_READ_SUBSTAGES = [
 
 export type GeneratedSceneReviewReadSubstage =
   (typeof GENERATED_SCENE_REVIEW_READ_SUBSTAGES)[number];
+export type GeneratedSceneReviewPathMarker = {
+  readonly marker:
+    | "review_parent_entry.v1"
+    | "review_projection_caller.v1"
+    | "review_load_plan_read_model_entry.v1"
+    | "review_first_repository_call.v1";
+  readonly sourceModule: string;
+  readonly sourceFunction: string;
+  readonly traceVersion: "review-helper-entry-path.v1";
+};
+export type GeneratedSceneReviewPathMarkerSink = (
+  marker: GeneratedSceneReviewPathMarker
+) => void;
 export type GeneratedSceneReviewReadSubstageTiming = {
   readonly stage: GeneratedSceneReviewReadSubstage;
   readonly status: "COMPLETED" | "TIMED_OUT" | "FAILED" | "NOT_REACHED";
@@ -454,8 +467,15 @@ export class GeneratedSceneReviewService {
 
   async loadPlanReadModel(
     executionPlanId: string,
-    requestSubstageRecorder?: GeneratedSceneReviewReadSubstageRecorder
+    requestSubstageRecorder?: GeneratedSceneReviewReadSubstageRecorder,
+    onPathMarker?: GeneratedSceneReviewPathMarkerSink
   ): Promise<readonly GeneratedSceneReviewReadModel[]> {
+    onPathMarker?.({
+      marker: "review_load_plan_read_model_entry.v1",
+      sourceModule: "packages/agents/src/ai-story/generated-scene-review-service.ts",
+      sourceFunction: "GeneratedSceneReviewService.loadPlanReadModel",
+      traceVersion: "review-helper-entry-path.v1",
+    });
     const totalStartedAt = performance.now();
     const persistence =
       this.dependencies.persistenceRepository ??
@@ -465,6 +485,12 @@ export class GeneratedSceneReviewService {
       this.dependencies.readSubstageRecorder ??
       new GeneratedSceneReviewReadSubstageRecorder();
     const sceneExecutionStartedAt = performance.now();
+    onPathMarker?.({
+      marker: "review_first_repository_call.v1",
+      sourceModule: "packages/agents/src/ai-story/generated-scene-review-service.ts",
+      sourceFunction: "GeneratedSceneReviewService.loadPlanReadModel",
+      traceVersion: "review-helper-entry-path.v1",
+    });
     const intents = await substageRecorder.run(
       "generated_scene_review.scene_execution_list",
       () => persistence.listIntentsByExecutionPlanId(executionPlanId),

@@ -37,6 +37,16 @@ describe("R3 single initial Runtime read policy", () => {
         roundTripCount: 1,
         rowCount: null,
       }],
+      generatedSceneReviewPathTrace: [{
+        marker: "review_load_plan_read_model_entry.v1",
+        correlationId: "test-correlation",
+        executionPlanId: "test-plan",
+        releaseRevision: "test-release",
+        elapsedMs: 42,
+        sourceModule: "packages/agents/src/ai-story/generated-scene-review-service.ts",
+        sourceFunction: "GeneratedSceneReviewService.loadPlanReadModel",
+        traceVersion: "review-helper-entry-path.v1",
+      }],
     }, "test-correlation");
     expect(trace).toEqual(expect.objectContaining({
       errorCode: "AI_STORY_RUNTIME_READ_TIMEOUT",
@@ -51,6 +61,14 @@ describe("R3 single initial Runtime read policy", () => {
         stage: "generated_scene_review.provider_attempt_cost_records",
         status: "TIMED_OUT",
         durationMs: 5000,
+      }),
+    ]);
+    expect(trace?.generatedSceneReviewPathTrace).toEqual([
+      expect.objectContaining({
+        marker: "review_load_plan_read_model_entry.v1",
+        correlationId: "test-correlation",
+        releaseRevision: "test-release",
+        elapsedMs: 42,
       }),
     ]);
   });

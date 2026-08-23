@@ -35,6 +35,27 @@ describe("R3 generated Scene review projection latency repair", () => {
     ).toBe(true);
   });
 
+  it("emits service entry before the first repository-call marker", async () => {
+    const intents = makePhase2aCompilation().intents;
+    const markers: string[] = [];
+    const service = new GeneratedSceneReviewService({
+      persistenceRepository: { listIntentsByExecutionPlanId: async () => intents } as never,
+      providerAttemptCostRecordLoader: async () => [],
+      reviewRepository: { listByExecutionPlanId: async () => [] } as never,
+    });
+
+    await service.loadPlanReadModel(
+      makePhase2aCompilation().plan.storyExecutionId,
+      new GeneratedSceneReviewReadSubstageRecorder(),
+      (event) => markers.push(event.marker)
+    );
+
+    expect(markers).toEqual([
+      "review_load_plan_read_model_entry.v1",
+      "review_first_repository_call.v1",
+    ]);
+  });
+
   it("uses one compact indexed Scene-intent projection", async () => {
     const source = await readFile(persistencePath, "utf8");
     expect(source).toContain("async listIntentsByExecutionPlanId(");

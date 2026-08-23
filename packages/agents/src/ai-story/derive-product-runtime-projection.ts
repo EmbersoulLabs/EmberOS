@@ -32,6 +32,7 @@ import {
 import {
   GeneratedSceneReviewService,
   type GeneratedSceneReviewReadTiming,
+  type GeneratedSceneReviewPathMarkerSink,
   type GeneratedSceneReviewReadSubstageRecorder,
 } from "./generated-scene-review-service";
 
@@ -196,6 +197,7 @@ export type DeriveProductRuntimeProjectionInput = {
   readonly derivedAt?: string;
   readonly observeStage?: <T>(stage: "runtime_authorization_read" | "release_state_read" | "provider_attempt_read" | "scene_result_read" | "generated_scene_review_read" | "cost_usage_projection" | "runtime_projection_build", operation: () => Promise<T>) => Promise<T>;
   readonly onGeneratedSceneReviewReadTiming?: (timing: GeneratedSceneReviewReadTiming) => void;
+  readonly onGeneratedSceneReviewPathMarker?: GeneratedSceneReviewPathMarkerSink;
   readonly generatedSceneReviewReadSubstageRecorder?: GeneratedSceneReviewReadSubstageRecorder;
 };
 
@@ -262,14 +264,27 @@ export async function deriveProductRuntimeProjection(
     (r) => r.status === "FAILED" || r.status === "REJECTED" || r.status === "TIMEOUT"
   ).length;
 
-  const generatedSceneReviewBase = await observe("generated_scene_review_read", () =>
-    new GeneratedSceneReviewService({
+  input.onGeneratedSceneReviewPathMarker?.({
+    marker: "review_parent_entry.v1",
+    sourceModule: "packages/agents/src/ai-story/derive-product-runtime-projection.ts",
+    sourceFunction: "deriveProductRuntimeProjection",
+    traceVersion: "review-helper-entry-path.v1",
+  });
+  const generatedSceneReviewBase = await observe("generated_scene_review_read", () => {
+    input.onGeneratedSceneReviewPathMarker?.({
+      marker: "review_projection_caller.v1",
+      sourceModule: "packages/agents/src/ai-story/derive-product-runtime-projection.ts",
+      sourceFunction: "deriveProductRuntimeProjection",
+      traceVersion: "review-helper-entry-path.v1",
+    });
+    return new GeneratedSceneReviewService({
       onLoadPlanReadModelTiming: input.onGeneratedSceneReviewReadTiming,
     }).loadPlanReadModel(
       executionPlanId,
-      input.generatedSceneReviewReadSubstageRecorder
-    )
-  ).catch(() => []);
+      input.generatedSceneReviewReadSubstageRecorder,
+      input.onGeneratedSceneReviewPathMarker
+    );
+  }).catch(() => []);
   const sceneResultById = new Map(latestResults.map((row) => [row.sceneResultId, row]));
   const generatedSceneReviews = generatedSceneReviewBase.map((review) => {
     const latestAttempt = review.attempts.find(

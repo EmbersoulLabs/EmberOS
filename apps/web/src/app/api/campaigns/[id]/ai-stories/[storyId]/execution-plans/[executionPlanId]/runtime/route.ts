@@ -63,9 +63,31 @@ function assertNoForbiddenKeys(payload: unknown): void {
 
 export async function GET(request: Request, { params }: RouteParams) {
   const requestCorrelationId = correlationId(request);
+  const releaseRevision =
+    process.env.EMBEROS_RELEASE_REVISION?.trim() ||
+    process.env.VERCEL_GIT_COMMIT_SHA?.trim() ||
+    "unknown";
   const deadline = new AbortController();
   const recorder = new RuntimeReadStageRecorder(deadline.signal);
   const reviewSubstageRecorder = new GeneratedSceneReviewReadSubstageRecorder();
+  const reviewPathTrace: Array<Record<string, unknown>> = [];
+  const recordReviewPathMarker = (marker: {
+    readonly marker: string;
+    readonly sourceModule: string;
+    readonly sourceFunction: string;
+    readonly traceVersion: string;
+    readonly executionPlanId?: string;
+  }) => {
+    const event = {
+      ...marker,
+      correlationId: requestCorrelationId,
+      executionPlanId: typeof marker.executionPlanId === "string" ? marker.executionPlanId : null,
+      releaseRevision,
+      elapsedMs: recorder.elapsedMs(),
+    };
+    reviewPathTrace.push(event);
+    console.info("ai_story_runtime_review_helper_path", event);
+  };
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const timingResponse = (status: number, errorCode: string, message: string, timedOutStage?: string) =>
     Response.json({
@@ -77,6 +99,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       elapsedMs: recorder.elapsedMs(),
       stageTimings: recorder.snapshot(),
       generatedSceneReviewStageTimings: reviewSubstageRecorder.snapshot(),
+      generatedSceneReviewPathTrace: reviewPathTrace,
     }, { status, headers: { "x-emberos-request-correlation-id": requestCorrelationId } });
 
   const execute = async () => {
@@ -99,6 +122,8 @@ export async function GET(request: Request, { params }: RouteParams) {
       executionPlanId: ctx.executionPlanId,
       callerRole: membership?.role ?? null,
       observeStage: (stage, operation) => recorder.run(stage, operation),
+      onGeneratedSceneReviewPathMarker: (marker) =>
+        recordReviewPathMarker({ ...marker, executionPlanId: ctx.executionPlanId }),
       generatedSceneReviewReadSubstageRecorder: reviewSubstageRecorder,
     });
 
