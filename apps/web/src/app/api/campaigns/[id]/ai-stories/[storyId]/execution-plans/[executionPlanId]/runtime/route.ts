@@ -10,6 +10,7 @@ import {
   GeneratedSceneReviewReadSubstageRecorder,
 } from "@ceo-agent/agents";
 import {
+  EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
   ExecutionPlanReviewProjectionTimingRecorder,
   getWorkspaceMembership,
 } from "@ceo-agent/db";
@@ -108,6 +109,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       timedOutStage: timedOutStage ?? null,
       elapsedMs: recorder.elapsedMs(),
       stageTimings: recorder.snapshot(),
+      executionPlanReviewTraceVersion: EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
       generatedSceneReviewStageTimings: reviewSubstageRecorder.snapshot(),
       executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
       storyLoadStageTimings: storyLoadRecorder.snapshot(),
@@ -206,6 +208,8 @@ export async function GET(request: Request, { params }: RouteParams) {
       lastCompletedStage: recorder.lastCompletedStage(),
       timedOutStage: null,
       stageTimings: recorder.snapshot(),
+      executionPlanReviewTraceVersion: EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
+      executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
       outcome: "success",
     });
     return result.response;
@@ -220,6 +224,8 @@ export async function GET(request: Request, { params }: RouteParams) {
       lastCompletedStage: recorder.lastCompletedStage(),
       timedOutStage,
       stageTimings: recorder.snapshot(),
+      executionPlanReviewTraceVersion: EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
+      executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
       outcome: timedOutStage ? "timeout" : "failure",
       errorClass: error instanceof Error ? error.name : "UnknownError",
     });

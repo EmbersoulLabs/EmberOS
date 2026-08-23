@@ -38,6 +38,7 @@ export type AiStoryRuntimeReadTimeoutTrace = {
   readonly lastCompletedStage: string | null;
   readonly timedOutStage: string | null;
   readonly stageTimings: readonly AiStoryRuntimeReadStageTiming[];
+  readonly executionPlanReviewTraceVersion: string | null;
   readonly generatedSceneReviewStageTimings: readonly AiStoryRuntimeReadSubstageTiming[];
   readonly executionPlanReviewStageTimings: readonly AiStoryRuntimeReadSubstageTiming[];
   readonly storyLoadStageTimings: readonly AiStoryRuntimeReadSubstageTiming[];
@@ -140,6 +141,10 @@ export function parseRuntimeTimeoutTrace(body: Record<string, unknown>, correlat
     lastCompletedStage: typeof body.lastCompletedStage === "string" ? body.lastCompletedStage : null,
     timedOutStage: typeof body.timedOutStage === "string" ? body.timedOutStage : null,
     stageTimings,
+    executionPlanReviewTraceVersion:
+      typeof body.executionPlanReviewTraceVersion === "string"
+        ? body.executionPlanReviewTraceVersion
+        : null,
     generatedSceneReviewStageTimings,
     executionPlanReviewStageTimings,
     storyLoadStageTimings,

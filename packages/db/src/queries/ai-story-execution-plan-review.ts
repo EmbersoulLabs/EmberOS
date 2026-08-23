@@ -41,7 +41,7 @@ type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type QueryDb = Db | Tx;
 
 export const EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION =
-  "execution-plan-review-stage-attribution.v1" as const;
+  "execution-plan-review-post-story-fact-trace.v1" as const;
 export const EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES = [
   "execution_plan_review.plan_read",
   "execution_plan_review.ownership_chain_read",
