@@ -12,14 +12,49 @@ export class StoryRuntimeClientError extends Error {
   readonly code: string;
   readonly status: number;
   readonly requestCorrelationId: string | null;
+  readonly timeoutTrace: AiStoryRuntimeReadTimeoutTrace | null;
 
-  constructor(message: string, code: string, status: number, requestCorrelationId: string | null = null) {
+  constructor(message: string, code: string, status: number, requestCorrelationId: string | null = null, timeoutTrace: AiStoryRuntimeReadTimeoutTrace | null = null) {
     super(message);
     this.name = "StoryRuntimeClientError";
     this.code = code;
     this.status = status;
     this.requestCorrelationId = requestCorrelationId;
+    this.timeoutTrace = timeoutTrace;
   }
+}
+
+export type AiStoryRuntimeReadStageTiming = {
+  readonly stage: string;
+  readonly startedAt: number | null;
+  readonly durationMs: number | null;
+  readonly status: "COMPLETED" | "TIMED_OUT" | "FAILED" | "NOT_REACHED";
+};
+
+export type AiStoryRuntimeReadTimeoutTrace = {
+  readonly errorCode: "AI_STORY_RUNTIME_READ_TIMEOUT";
+  readonly correlationId: string | null;
+  readonly elapsedMs: number;
+  readonly lastCompletedStage: string | null;
+  readonly timedOutStage: string | null;
+  readonly stageTimings: readonly AiStoryRuntimeReadStageTiming[];
+};
+
+export function parseRuntimeTimeoutTrace(body: Record<string, unknown>, correlationId: string | null): AiStoryRuntimeReadTimeoutTrace | null {
+  if (body.errorCode !== "AI_STORY_RUNTIME_READ_TIMEOUT" || typeof body.elapsedMs !== "number" || !Array.isArray(body.stageTimings)) return null;
+  const stageTimings = body.stageTimings.filter((row): row is AiStoryRuntimeReadStageTiming => {
+    if (!row || typeof row !== "object") return false;
+    const value = row as Record<string, unknown>;
+    return typeof value.stage === "string" && ["COMPLETED", "TIMED_OUT", "FAILED", "NOT_REACHED"].includes(String(value.status));
+  });
+  return {
+    errorCode: "AI_STORY_RUNTIME_READ_TIMEOUT",
+    correlationId,
+    elapsedMs: body.elapsedMs,
+    lastCompletedStage: typeof body.lastCompletedStage === "string" ? body.lastCompletedStage : null,
+    timedOutStage: typeof body.timedOutStage === "string" ? body.timedOutStage : null,
+    stageTimings,
+  };
 }
 
 function plansBase(campaignId: string, storyId: string, executionPlanId: string): string {
@@ -84,14 +119,9 @@ async function requestRuntimeRead<T>(input: string): Promise<T> {
     res.headers.get("x-emberos-request-correlation-id") ??
     (typeof body.requestCorrelationId === "string" ? body.requestCorrelationId : requestCorrelationId);
   if (!res.ok) {
-    if (body.errorCode === "AI_STORY_RUNTIME_READ_TIMEOUT") {
-      console.info("ai_story_runtime_read_timeout", {
-        correlationId: responseCorrelationId,
-        elapsedMs: typeof body.elapsedMs === "number" ? body.elapsedMs : null,
-        lastCompletedStage: typeof body.lastCompletedStage === "string" ? body.lastCompletedStage : null,
-        timedOutStage: typeof body.timedOutStage === "string" ? body.timedOutStage : null,
-        stageTimings: Array.isArray(body.stageTimings) ? body.stageTimings : [],
-      });
+    const timeoutTrace = parseRuntimeTimeoutTrace(body, responseCorrelationId);
+    if (timeoutTrace) {
+      console.info("ai_story_runtime_read_timeout", JSON.stringify(timeoutTrace));
     }
     throw new StoryRuntimeClientError(
       typeof body.error === "string" ? body.error : "Request failed",
@@ -99,7 +129,8 @@ async function requestRuntimeRead<T>(input: string): Promise<T> {
         ? body.errorCode
         : typeof body.code === "string" ? body.code : "UNKNOWN",
       res.status,
-      responseCorrelationId
+      responseCorrelationId,
+      timeoutTrace
     );
   }
   return body as T;

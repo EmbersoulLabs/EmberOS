@@ -26,10 +26,11 @@ describe("R3 Scene result fresh-visit recovery", () => {
     }
   });
 
-  it("retries only the read-only server runtime projection during initial hydration", async () => {
+  it("reads the server runtime projection once during initial hydration", async () => {
     const source = await readFile(runtimePath, "utf8");
-    expect(source).toContain("INITIAL_SERVER_READ_ATTEMPTS = 3");
-    expect(source).toContain("next = await refresh()");
+    expect(source).toContain("next = await readInitialRuntimeOnce(refresh)");
+    expect(source).toContain("readRuntimeAfterUserRetry(refresh)");
+    expect(source).not.toContain("INITIAL_SERVER_READ_ATTEMPTS = 3");
     expect(source).not.toContain("postCanonicalExecute({ campaignId, storyId, executionPlanId });\n        next = await refresh()");
   });
 

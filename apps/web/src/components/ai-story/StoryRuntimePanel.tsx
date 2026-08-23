@@ -16,6 +16,8 @@ import {
   postCanonicalExecute,
   postReleaseRemainingScenes,
 } from "@/lib/ai-story-runtime-client";
+import type { AiStoryRuntimeReadTimeoutTrace } from "@/lib/ai-story-runtime-client";
+import { readInitialRuntimeOnce, readRuntimeAfterUserRetry } from "@/lib/ai-story-runtime-initial-read-policy";
 import {
   PRODUCT_RUNTIME_POLL_INTERVAL_MS,
   canShowExecuteButton,
@@ -28,9 +30,6 @@ type Props = {
   executionPlanId: string;
   workspaceRole: WorkspaceRole | string | null;
 };
-
-const INITIAL_SERVER_READ_ATTEMPTS = 3;
-const INITIAL_SERVER_READ_RETRY_MS = 750;
 
 function statusKey(status: string | null | undefined): TranslationKey {
   const key = `aiStory.runtime.status.${status ?? "NOT_READY"}`;
@@ -50,6 +49,7 @@ export function StoryRuntimePanel({
   const [executing, setExecuting] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [timeoutTrace, setTimeoutTrace] = useState<AiStoryRuntimeReadTimeoutTrace | null>(null);
   const executeInFlight = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestGen = useRef(0);
@@ -63,6 +63,7 @@ export function StoryRuntimePanel({
 
   const refresh = useCallback(async () => {
     const gen = ++requestGen.current;
+    setLoading(true);
     try {
       const next = await getProductRuntimeProjection({
         campaignId,
@@ -72,9 +73,11 @@ export function StoryRuntimePanel({
       if (gen !== requestGen.current) return next;
       setProjection(next);
       setError(null);
+      setTimeoutTrace(null);
       return next;
     } catch (err) {
       if (gen !== requestGen.current) return null;
+      setTimeoutTrace(err instanceof StoryRuntimeClientError ? err.timeoutTrace : null);
       setError(
         err instanceof StoryRuntimeClientError
           ? `${err.message}${err.requestCorrelationId ? ` Reference: ${err.requestCorrelationId}` : ""}`
@@ -102,12 +105,7 @@ export function StoryRuntimePanel({
   useEffect(() => {
     setLoading(true);
     void (async () => {
-      let next: ProductRuntimeProjection | null = null;
-      for (let attempt = 1; attempt <= INITIAL_SERVER_READ_ATTEMPTS; attempt += 1) {
-        next = await refresh();
-        if (next || attempt === INITIAL_SERVER_READ_ATTEMPTS) break;
-        await new Promise((resolve) => setTimeout(resolve, INITIAL_SERVER_READ_RETRY_MS));
-      }
+      const next = await readInitialRuntimeOnce(refresh);
       ensurePolling(next?.status);
     })();
     return () => {
@@ -268,10 +266,17 @@ export function StoryRuntimePanel({
         {error ? (
           <div className="space-y-2" data-testid="story-runtime-error">
             <p className="text-sm text-red-700">{error}</p>
+            {timeoutTrace ? (
+              <dl className="grid gap-1 text-xs text-ink-secondary" data-testid="story-runtime-timeout-trace">
+                <div>Last completed: {timeoutTrace.lastCompletedStage ?? "none"}</div>
+                <div>Timed out: {timeoutTrace.timedOutStage ?? "unknown"}</div>
+                <div>Elapsed: {timeoutTrace.elapsedMs} ms</div>
+              </dl>
+            ) : null}
             <button
               type="button"
               className="rounded-lg border border-border px-3 py-1.5 text-sm"
-              onClick={() => void refresh()}
+              onClick={() => void readRuntimeAfterUserRetry(refresh)}
               disabled={loading}
               data-testid="story-runtime-read-retry"
             >
