@@ -13,6 +13,28 @@ const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 describe("R3 generated Scene review projection latency repair", () => {
+  it("mutates the exact request recorder passed directly to the helper", async () => {
+    const intents = makePhase2aCompilation().intents;
+    const requestRecorder = new GeneratedSceneReviewReadSubstageRecorder();
+    const isolatedDependencyRecorder = new GeneratedSceneReviewReadSubstageRecorder();
+    const service = new GeneratedSceneReviewService({
+      persistenceRepository: { listIntentsByExecutionPlanId: async () => intents } as never,
+      providerAttemptCostRecordLoader: async () => [],
+      reviewRepository: { listByExecutionPlanId: async () => [] } as never,
+      readSubstageRecorder: isolatedDependencyRecorder,
+    });
+
+    await service.loadPlanReadModel(
+      makePhase2aCompilation().plan.storyExecutionId,
+      requestRecorder
+    );
+
+    expect(requestRecorder.snapshot().every((row) => row.status === "COMPLETED")).toBe(true);
+    expect(
+      isolatedDependencyRecorder.snapshot().every((row) => row.status === "NOT_REACHED")
+    ).toBe(true);
+  });
+
   it("uses one compact indexed Scene-intent projection", async () => {
     const source = await readFile(persistencePath, "utf8");
     expect(source).toContain("async listIntentsByExecutionPlanId(");

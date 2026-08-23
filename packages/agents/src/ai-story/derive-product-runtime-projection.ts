@@ -265,8 +265,10 @@ export async function deriveProductRuntimeProjection(
   const generatedSceneReviewBase = await observe("generated_scene_review_read", () =>
     new GeneratedSceneReviewService({
       onLoadPlanReadModelTiming: input.onGeneratedSceneReviewReadTiming,
-      readSubstageRecorder: input.generatedSceneReviewReadSubstageRecorder,
-    }).loadPlanReadModel(executionPlanId)
+    }).loadPlanReadModel(
+      executionPlanId,
+      input.generatedSceneReviewReadSubstageRecorder
+    )
   ).catch(() => []);
   const sceneResultById = new Map(latestResults.map((row) => [row.sceneResultId, row]));
   const generatedSceneReviews = generatedSceneReviewBase.map((review) => {

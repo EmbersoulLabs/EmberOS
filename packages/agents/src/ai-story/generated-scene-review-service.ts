@@ -453,13 +453,15 @@ export class GeneratedSceneReviewService {
   }
 
   async loadPlanReadModel(
-    executionPlanId: string
+    executionPlanId: string,
+    requestSubstageRecorder?: GeneratedSceneReviewReadSubstageRecorder
   ): Promise<readonly GeneratedSceneReviewReadModel[]> {
     const totalStartedAt = performance.now();
     const persistence =
       this.dependencies.persistenceRepository ??
       new AiStorySceneExecutionPersistenceRepository();
     const substageRecorder =
+      requestSubstageRecorder ??
       this.dependencies.readSubstageRecorder ??
       new GeneratedSceneReviewReadSubstageRecorder();
     const sceneExecutionStartedAt = performance.now();
