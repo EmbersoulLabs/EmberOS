@@ -5,7 +5,7 @@
  * Never mutates plans, scenes, snapshots, or QC rows. Never unlocks execution
  * or creates Queue / Outbox / Provider work.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import {
   AI_STORY_EXECUTION_CONTRACT_VERSION,
   LogicalReviewProjectionSchema,
@@ -802,10 +802,20 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     const storyRows = await timingRecorder.run(
       "execution_plan_review.story_review_fact_read",
       () => db
-        .select()
+        .select({
+          orgId: schema.aiStoryStoryReviewFacts.orgId,
+          workspaceId: schema.aiStoryStoryReviewFacts.workspaceId,
+          campaignId: schema.aiStoryStoryReviewFacts.campaignId,
+          storyId: schema.aiStoryStoryReviewFacts.storyId,
+          storyVersionId: schema.aiStoryStoryReviewFacts.storyVersionId,
+          animationPackageId: schema.aiStoryStoryReviewFacts.animationPackageId,
+          executionPlanId: schema.aiStoryStoryReviewFacts.executionPlanId,
+          fact: schema.aiStoryStoryReviewFacts.fact,
+        })
         .from(schema.aiStoryStoryReviewFacts)
         .where(eq(schema.aiStoryStoryReviewFacts.executionPlanId, executionPlanId))
-        .orderBy(asc(schema.aiStoryStoryReviewFacts.acceptedAt)),
+        .orderBy(desc(schema.aiStoryStoryReviewFacts.acceptedAt))
+        .limit(1),
       (rows) => rows.length
     );
     for (const row of storyRows) {
@@ -824,8 +834,8 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     const sceneDecisions = sceneRows.map((row) =>
       SceneIntentReviewDecisionSchema.parse(row.fact)
     );
-    const storyDecision = storyRows[storyRows.length - 1]
-      ? StoryReviewDecisionSchema.parse(storyRows[storyRows.length - 1]!.fact)
+    const storyDecision = storyRows[0]
+      ? StoryReviewDecisionSchema.parse(storyRows[0].fact)
       : null;
 
     const requiredSceneRows = await timingRecorder.run(
