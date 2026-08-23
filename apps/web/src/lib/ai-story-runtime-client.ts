@@ -34,6 +34,8 @@ async function parseJson(res: Response): Promise<Record<string, unknown>> {
   }
 }
 
+const RUNTIME_READ_TIMEOUT_MS = 20_000;
+
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   const res = await fetch(input, init);
   const body = await parseJson(res);
@@ -51,12 +53,53 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+async function requestRuntimeRead<T>(input: string): Promise<T> {
+  const requestCorrelationId = crypto.randomUUID();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), RUNTIME_READ_TIMEOUT_MS);
+  let res: Response;
+  try {
+    res = await fetch(input, {
+      credentials: "same-origin",
+      signal: controller.signal,
+      headers: {
+        "x-emberos-request-correlation-id": requestCorrelationId,
+      },
+    });
+  } catch (error) {
+    const timedOut = controller.signal.aborted;
+    throw new StoryRuntimeClientError(
+      timedOut
+        ? "Story review is taking too long to load. Retry this read-only request."
+        : "Story review could not be loaded. Check the connection and retry.",
+      timedOut ? "RUNTIME_READ_TIMEOUT" : "RUNTIME_READ_NETWORK_ERROR",
+      0,
+      requestCorrelationId
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+  const body = await parseJson(res);
+  const responseCorrelationId =
+    res.headers.get("x-emberos-request-correlation-id") ??
+    (typeof body.requestCorrelationId === "string" ? body.requestCorrelationId : requestCorrelationId);
+  if (!res.ok) {
+    throw new StoryRuntimeClientError(
+      typeof body.error === "string" ? body.error : "Request failed",
+      typeof body.code === "string" ? body.code : "UNKNOWN",
+      res.status,
+      responseCorrelationId
+    );
+  }
+  return body as T;
+}
+
 export async function getProductRuntimeProjection(input: {
   campaignId: string;
   storyId: string;
   executionPlanId: string;
 }): Promise<ProductRuntimeProjection> {
-  return requestJson(
+  return requestRuntimeRead(
     plansBase(input.campaignId, input.storyId, input.executionPlanId) + "/runtime"
   );
 }

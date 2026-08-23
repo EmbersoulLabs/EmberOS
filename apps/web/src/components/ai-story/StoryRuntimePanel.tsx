@@ -75,7 +75,13 @@ export function StoryRuntimePanel({
       return next;
     } catch (err) {
       if (gen !== requestGen.current) return null;
-      setError(err instanceof Error ? err.message : "Failed to load runtime status");
+      setError(
+        err instanceof StoryRuntimeClientError
+          ? `${err.message}${err.requestCorrelationId ? ` (reference ${err.requestCorrelationId})` : ""}`
+          : err instanceof Error
+            ? err.message
+            : "Story review could not be loaded."
+      );
       return null;
     } finally {
       if (gen === requestGen.current) setLoading(false);
@@ -260,9 +266,18 @@ export function StoryRuntimePanel({
         ) : null}
 
         {error ? (
-          <p className="text-sm text-red-700" data-testid="story-runtime-error">
-            {error}
-          </p>
+          <div className="space-y-2" data-testid="story-runtime-error">
+            <p className="text-sm text-red-700">{error}</p>
+            <button
+              type="button"
+              className="rounded-lg border border-border px-3 py-1.5 text-sm"
+              onClick={() => void refresh()}
+              disabled={loading}
+              data-testid="story-runtime-read-retry"
+            >
+              Retry loading review
+            </button>
+          </div>
         ) : null}
       </section>
 
