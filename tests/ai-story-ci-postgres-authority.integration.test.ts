@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres, { type Sql } from "postgres";
 import {
+  assertExecutionPlanOwnershipChainInSingleQuery,
+  closeDb,
+  getDb,
+} from "@ceo-agent/db";
+import {
   RUN_DB_INTEGRATION,
   assertIsolatedTestDatabase,
   createIntegrationSql,
@@ -117,5 +122,58 @@ describeIntegration("ephemeral PostgreSQL integration authority", () => {
     release();
     await owner;
     await second;
+  });
+
+  it("certifies the compact ownership proof standalone and captures its SQL plan", async () => {
+    const authority = {
+      id: "71000000-0000-4000-8000-000000000006",
+      orgId: "71000000-0000-4000-8000-000000000001",
+      workspaceId: "71000000-0000-4000-8000-000000000002",
+      campaignId: "71000000-0000-4000-8000-000000000003",
+      storyId: "71000000-0000-4000-8000-000000000004",
+      storyVersionId: "71000000-0000-4000-8000-000000000005",
+      animationPackageId: "71000000-0000-4000-8000-000000000007",
+    } as const;
+    try {
+      await sql`insert into organizations (id, name, slug) values (${authority.orgId}, 'Ownership probe', 'ownership-probe')`;
+      await sql`insert into workspaces (id, org_id, name, slug) values (${authority.workspaceId}, ${authority.orgId}, 'Ownership probe', 'ownership-probe')`;
+      await sql`insert into campaigns (id, org_id, workspace_id, name) values (${authority.campaignId}, ${authority.orgId}, ${authority.workspaceId}, 'Ownership probe')`;
+      await sql`insert into ai_stories (id, org_id, workspace_id, campaign_id, title, original_idea) values (${authority.storyId}, ${authority.orgId}, ${authority.workspaceId}, ${authority.campaignId}, 'Ownership probe', 'Ownership probe')`;
+      await sql`insert into ai_story_versions (id, story_id, version_number, structured_content, frozen_at) values (${authority.storyVersionId}, ${authority.storyId}, 1, ${sql.json({})}, now())`;
+      await sql`insert into ai_story_animation_packages (id, org_id, workspace_id, campaign_id, story_id, story_version_id, status, payload) values (${authority.animationPackageId}, ${authority.orgId}, ${authority.workspaceId}, ${authority.campaignId}, ${authority.storyId}, ${authority.storyVersionId}, 'ready_for_execution', ${sql.json({ scenePlan: [] })})`;
+
+      const startedAt = performance.now();
+      await assertExecutionPlanOwnershipChainInSingleQuery(authority, getDb());
+      const standaloneMs = performance.now() - startedAt;
+
+      const [explainRow] = await sql.unsafe<Array<{ "QUERY PLAN": unknown }>>(`
+        explain (analyze, buffers, format json)
+        select (
+          exists (select 1 from organizations o where o.id = '${authority.orgId}'::uuid)
+          and exists (select 1 from workspaces w where w.id = '${authority.workspaceId}'::uuid and w.org_id = '${authority.orgId}'::uuid)
+          and exists (select 1 from campaigns c where c.id = '${authority.campaignId}'::uuid and c.workspace_id = '${authority.workspaceId}'::uuid and c.org_id = '${authority.orgId}'::uuid)
+          and exists (select 1 from ai_stories s where s.id = '${authority.storyId}'::uuid and s.campaign_id = '${authority.campaignId}'::uuid and s.workspace_id = '${authority.workspaceId}'::uuid and s.org_id = '${authority.orgId}'::uuid)
+          and exists (select 1 from ai_story_versions v where v.id = '${authority.storyVersionId}'::uuid and v.story_id = '${authority.storyId}'::uuid)
+          and exists (select 1 from ai_story_animation_packages p where p.id = '${authority.animationPackageId}'::uuid and p.story_id = '${authority.storyId}'::uuid and p.story_version_id = '${authority.storyVersionId}'::uuid and p.campaign_id = '${authority.campaignId}'::uuid and p.workspace_id = '${authority.workspaceId}'::uuid and p.org_id = '${authority.orgId}'::uuid)
+        ) as valid
+      `);
+      const queryPlan = explainRow?.["QUERY PLAN"];
+      console.info("ai_story_ownership_query_ci_timing", JSON.stringify({
+        standaloneMs: Number(standaloneMs.toFixed(3)),
+        queryCount: 1,
+        roundTripCount: 1,
+        queryPlan,
+      }));
+      expect(standaloneMs).toBeLessThan(250);
+      expect(JSON.stringify(queryPlan)).toContain("Execution Time");
+    } finally {
+      await closeDb();
+      await sql`delete from ai_story_animation_packages where id = ${authority.animationPackageId}`;
+      await sql`delete from ai_story_versions where id = ${authority.storyVersionId}`;
+      await sql`delete from ai_stories where id = ${authority.storyId}`;
+      await sql`delete from campaigns where id = ${authority.campaignId}`;
+      await sql`delete from workspaces where id = ${authority.workspaceId}`;
+      await sql`delete from organizations where id = ${authority.orgId}`;
+    }
   });
 });

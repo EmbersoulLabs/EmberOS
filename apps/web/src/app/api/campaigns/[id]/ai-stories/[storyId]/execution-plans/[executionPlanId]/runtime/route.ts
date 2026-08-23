@@ -77,7 +77,9 @@ export async function GET(request: Request, { params }: RouteParams) {
   const deadline = new AbortController();
   const recorder = new RuntimeReadStageRecorder(deadline.signal);
   const reviewSubstageRecorder = new GeneratedSceneReviewReadSubstageRecorder();
-  const executionPlanReviewRecorder = new ExecutionPlanReviewProjectionTimingRecorder();
+  const executionPlanReviewRecorder = new ExecutionPlanReviewProjectionTimingRecorder(
+    () => SERVER_RUNTIME_DEADLINE_MS - recorder.elapsedMs()
+  );
   const storyLoadRecorder = new StoryLoadTimingRecorder();
   const executionPlanLoadRecorder = new ExecutionPlanLoadTimingRecorder();
   const routeOwnershipValidationRecorder = new RouteOwnershipValidationTimingRecorder();

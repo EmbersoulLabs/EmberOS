@@ -65,6 +65,17 @@ export type AiStoryRuntimeReadSubstageTiming = {
   readonly queryCount: number;
   readonly roundTripCount: number;
   readonly rowCount: number | null;
+  readonly ownershipQueryPhaseTiming?: {
+    readonly remainingRuntimeBudgetMsAtEntry: number | null;
+    readonly connectionAcquireMs: number | null;
+    readonly poolWaitMs: number | null;
+    readonly queryDispatchMs: number | null;
+    readonly dbExecutionMs: number | null;
+    readonly networkReturnMs: number | null;
+    readonly dbExecutionAndNetworkMs: number | null;
+    readonly rowDecodeMs: number | null;
+    readonly totalWallMs: number | null;
+  };
 };
 
 export function parseRuntimeTimeoutTrace(body: Record<string, unknown>, correlationId: string | null): AiStoryRuntimeReadTimeoutTrace | null {

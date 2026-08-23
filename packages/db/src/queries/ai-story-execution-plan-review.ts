@@ -60,6 +60,19 @@ export type ExecutionPlanReviewProjectionSubstageTiming = {
   readonly queryCount: number;
   readonly roundTripCount: number;
   readonly rowCount: number | null;
+  readonly ownershipQueryPhaseTiming?: ExecutionPlanOwnershipQueryPhaseTiming;
+};
+
+export type ExecutionPlanOwnershipQueryPhaseTiming = {
+  readonly remainingRuntimeBudgetMsAtEntry: number | null;
+  readonly connectionAcquireMs: number | null;
+  readonly poolWaitMs: number | null;
+  readonly queryDispatchMs: number | null;
+  readonly dbExecutionMs: number | null;
+  readonly networkReturnMs: number | null;
+  readonly dbExecutionAndNetworkMs: number | null;
+  readonly rowDecodeMs: number | null;
+  readonly totalWallMs: number | null;
 };
 
 const executionPlanReviewQueryCounts: Record<ExecutionPlanReviewProjectionSubstage, number> = {
@@ -73,7 +86,15 @@ const executionPlanReviewQueryCounts: Record<ExecutionPlanReviewProjectionSubsta
 };
 
 export class ExecutionPlanReviewProjectionTimingRecorder {
-  private active: { stage: ExecutionPlanReviewProjectionSubstage; startedAt: number } | null = null;
+  private active: {
+    stage: ExecutionPlanReviewProjectionSubstage;
+    startedAt: number;
+    dispatchedAt: number | null;
+    remainingRuntimeBudgetMsAtEntry: number | null;
+  } | null = null;
+  constructor(
+    private readonly remainingRuntimeBudgetMs?: () => number
+  ) {}
   private readonly rows = new Map<ExecutionPlanReviewProjectionSubstage, ExecutionPlanReviewProjectionSubstageTiming>(
     EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES.map((stage) => [stage, {
       stage,
@@ -86,10 +107,40 @@ export class ExecutionPlanReviewProjectionTimingRecorder {
   );
   async run<T>(stage: ExecutionPlanReviewProjectionSubstage, operation: () => Promise<T>, rowCount: (value: T) => number | null): Promise<T> {
     const startedAt = performance.now();
-    this.active = { stage, startedAt };
+    const isOwnershipQuery = stage === "execution_plan_review.ownership_chain_read";
+    const remainingRuntimeBudgetMsAtEntry = isOwnershipQuery
+      ? Math.max(0, Math.round(this.remainingRuntimeBudgetMs?.() ?? 0)) || null
+      : null;
+    this.active = { stage, startedAt, dispatchedAt: null, remainingRuntimeBudgetMsAtEntry };
+    const dispatchStartedAt = performance.now();
     try {
-      const value = await operation();
-      this.rows.set(stage, { ...this.rows.get(stage)!, status: "COMPLETED", durationMs: Math.round(performance.now() - startedAt), rowCount: rowCount(value) });
+      const pendingOperation = operation();
+      const dispatchedAt = performance.now();
+      if (this.active?.stage === stage) this.active.dispatchedAt = dispatchedAt;
+      const value = await pendingOperation;
+      const returnedAt = performance.now();
+      const rowCountStartedAt = performance.now();
+      const completedRowCount = rowCount(value);
+      const completedAt = performance.now();
+      this.rows.set(stage, {
+        ...this.rows.get(stage)!,
+        status: "COMPLETED",
+        durationMs: Math.round(completedAt - startedAt),
+        rowCount: completedRowCount,
+        ...(isOwnershipQuery ? {
+          ownershipQueryPhaseTiming: {
+            remainingRuntimeBudgetMsAtEntry,
+            connectionAcquireMs: null,
+            poolWaitMs: null,
+            queryDispatchMs: Math.round(dispatchedAt - dispatchStartedAt),
+            dbExecutionMs: null,
+            networkReturnMs: null,
+            dbExecutionAndNetworkMs: Math.round(returnedAt - dispatchedAt),
+            rowDecodeMs: Math.round(completedAt - rowCountStartedAt),
+            totalWallMs: Math.round(completedAt - startedAt),
+          },
+        } : {}),
+      });
       this.active = null;
       return value;
     } catch (error) {
@@ -100,8 +151,30 @@ export class ExecutionPlanReviewProjectionTimingRecorder {
   }
   markTimedOut(): void {
     if (!this.active) return;
-    const { stage, startedAt } = this.active;
-    this.rows.set(stage, { ...this.rows.get(stage)!, status: "TIMED_OUT", durationMs: Math.round(performance.now() - startedAt) });
+    const { stage, startedAt, dispatchedAt, remainingRuntimeBudgetMsAtEntry } = this.active;
+    const timedOutAt = performance.now();
+    const isOwnershipQuery = stage === "execution_plan_review.ownership_chain_read";
+    const existing = this.rows.get(stage)!;
+    this.rows.set(stage, {
+      ...existing,
+      status: "TIMED_OUT",
+      durationMs: Math.round(timedOutAt - startedAt),
+      ...(isOwnershipQuery ? {
+        ownershipQueryPhaseTiming: {
+          remainingRuntimeBudgetMsAtEntry:
+            remainingRuntimeBudgetMsAtEntry,
+          connectionAcquireMs: null,
+          poolWaitMs: null,
+          queryDispatchMs: dispatchedAt === null ? null : Math.round(dispatchedAt - startedAt),
+          dbExecutionMs: null,
+          networkReturnMs: null,
+          dbExecutionAndNetworkMs:
+            dispatchedAt === null ? null : Math.round(timedOutAt - dispatchedAt),
+          rowDecodeMs: null,
+          totalWallMs: Math.round(timedOutAt - startedAt),
+        },
+      } : {}),
+    });
     this.active = null;
   }
   snapshot(): readonly ExecutionPlanReviewProjectionSubstageTiming[] {
