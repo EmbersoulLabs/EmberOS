@@ -22,6 +22,7 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { mintSceneResultPlayback } from "@/lib/ai-story-scene-media-playback";
 import {
   executionPlanRouteErrorResponse,
+  ExecutionPlanLoadTimingRecorder,
   resolveAuthorizedExecutionPlan,
 } from "@/lib/ai-story-execution-plan-access";
 import {
@@ -74,6 +75,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const recorder = new RuntimeReadStageRecorder(deadline.signal);
   const reviewSubstageRecorder = new GeneratedSceneReviewReadSubstageRecorder();
   const executionPlanReviewRecorder = new ExecutionPlanReviewProjectionTimingRecorder();
+  const executionPlanLoadRecorder = new ExecutionPlanLoadTimingRecorder();
   const reviewPathTrace: Array<Record<string, unknown>> = [];
   const recordReviewPathMarker = (marker: {
     readonly marker: string;
@@ -104,6 +106,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       stageTimings: recorder.snapshot(),
       generatedSceneReviewStageTimings: reviewSubstageRecorder.snapshot(),
       executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
+      executionPlanLoadStageTimings: executionPlanLoadRecorder.snapshot(),
       generatedSceneReviewPathTrace: reviewPathTrace,
     }, { status, headers: { "x-emberos-request-correlation-id": requestCorrelationId } });
 
@@ -118,6 +121,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       executionPlanId,
       minRole: "client_viewer",
       observeStage: (stage, operation) => recorder.run(stage, operation),
+      executionPlanLoadTimingRecorder: executionPlanLoadRecorder,
     });
 
     const membership = await recorder.run("workspace_authorization", () =>
@@ -175,6 +179,7 @@ export async function GET(request: Request, { params }: RouteParams) {
           const timedOutStage = recorder.markTimedOut();
           reviewSubstageRecorder.markTimedOut();
           executionPlanReviewRecorder.markTimedOut();
+          executionPlanLoadRecorder.markTimedOut();
           deadline.abort();
           reject(new RuntimeReadDeadlineError(timedOutStage, recorder.elapsedMs()));
         }, SERVER_RUNTIME_DEADLINE_MS);
