@@ -29,6 +29,14 @@ describe("R3 single initial Runtime read policy", () => {
       lastCompletedStage: "execution_plan_load",
       timedOutStage: "generated_scene_review_read",
       stageTimings: [{ stage: "execution_plan_load", startedAt: 4, durationMs: 10, status: "COMPLETED" }],
+      generatedSceneReviewStageTimings: [{
+        stage: "generated_scene_review.provider_attempt_cost_records",
+        status: "TIMED_OUT",
+        durationMs: 5000,
+        queryCount: 1,
+        roundTripCount: 1,
+        rowCount: null,
+      }],
     }, "test-correlation");
     expect(trace).toEqual(expect.objectContaining({
       errorCode: "AI_STORY_RUNTIME_READ_TIMEOUT",
@@ -38,6 +46,13 @@ describe("R3 single initial Runtime read policy", () => {
       timedOutStage: "generated_scene_review_read",
     }));
     expect(trace?.stageTimings).toHaveLength(1);
+    expect(trace?.generatedSceneReviewStageTimings).toEqual([
+      expect.objectContaining({
+        stage: "generated_scene_review.provider_attempt_cost_records",
+        status: "TIMED_OUT",
+        durationMs: 5000,
+      }),
+    ]);
   });
 
   it("does not fabricate timeout fields for unknown failures", () => {

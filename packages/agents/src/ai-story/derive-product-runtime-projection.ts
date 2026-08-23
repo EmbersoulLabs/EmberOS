@@ -32,6 +32,7 @@ import {
 import {
   GeneratedSceneReviewService,
   type GeneratedSceneReviewReadTiming,
+  type GeneratedSceneReviewReadSubstageRecorder,
 } from "./generated-scene-review-service";
 
 const OPERATOR_ROLES: ReadonlySet<string> = new Set(["admin", "operator"]);
@@ -195,6 +196,7 @@ export type DeriveProductRuntimeProjectionInput = {
   readonly derivedAt?: string;
   readonly observeStage?: <T>(stage: "runtime_authorization_read" | "release_state_read" | "provider_attempt_read" | "scene_result_read" | "generated_scene_review_read" | "cost_usage_projection" | "runtime_projection_build", operation: () => Promise<T>) => Promise<T>;
   readonly onGeneratedSceneReviewReadTiming?: (timing: GeneratedSceneReviewReadTiming) => void;
+  readonly generatedSceneReviewReadSubstageRecorder?: GeneratedSceneReviewReadSubstageRecorder;
 };
 
 /**
@@ -263,6 +265,7 @@ export async function deriveProductRuntimeProjection(
   const generatedSceneReviewBase = await observe("generated_scene_review_read", () =>
     new GeneratedSceneReviewService({
       onLoadPlanReadModelTiming: input.onGeneratedSceneReviewReadTiming,
+      readSubstageRecorder: input.generatedSceneReviewReadSubstageRecorder,
     }).loadPlanReadModel(executionPlanId)
   ).catch(() => []);
   const sceneResultById = new Map(latestResults.map((row) => [row.sceneResultId, row]));

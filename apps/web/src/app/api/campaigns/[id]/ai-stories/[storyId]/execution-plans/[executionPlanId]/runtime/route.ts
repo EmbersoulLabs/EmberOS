@@ -7,7 +7,7 @@
  */
 import {
   deriveProductRuntimeProjection,
-  type GeneratedSceneReviewReadTiming,
+  GeneratedSceneReviewReadSubstageRecorder,
 } from "@ceo-agent/agents";
 import { getWorkspaceMembership } from "@ceo-agent/db";
 import {
@@ -65,7 +65,7 @@ export async function GET(request: Request, { params }: RouteParams) {
   const requestCorrelationId = correlationId(request);
   const deadline = new AbortController();
   const recorder = new RuntimeReadStageRecorder(deadline.signal);
-  let generatedSceneReviewReadTiming: GeneratedSceneReviewReadTiming | null = null;
+  const reviewSubstageRecorder = new GeneratedSceneReviewReadSubstageRecorder();
   let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
   const timingResponse = (status: number, errorCode: string, message: string, timedOutStage?: string) =>
     Response.json({
@@ -76,6 +76,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       timedOutStage: timedOutStage ?? null,
       elapsedMs: recorder.elapsedMs(),
       stageTimings: recorder.snapshot(),
+      generatedSceneReviewStageTimings: reviewSubstageRecorder.snapshot(),
     }, { status, headers: { "x-emberos-request-correlation-id": requestCorrelationId } });
 
   const execute = async () => {
@@ -98,9 +99,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       executionPlanId: ctx.executionPlanId,
       callerRole: membership?.role ?? null,
       observeStage: (stage, operation) => recorder.run(stage, operation),
-      onGeneratedSceneReviewReadTiming: (timing) => {
-        generatedSceneReviewReadTiming = timing;
-      },
+      generatedSceneReviewReadSubstageRecorder: reviewSubstageRecorder,
     });
 
     const generatedSceneReviews = await Promise.all(
@@ -130,12 +129,10 @@ export async function GET(request: Request, { params }: RouteParams) {
     assertNoForbiddenKeys(deliveredProjection);
     const response = await recorder.run("response_serialization", async () => apiSuccess(deliveredProjection));
     response.headers.set("x-emberos-request-correlation-id", requestCorrelationId);
-    if (generatedSceneReviewReadTiming) {
-      response.headers.set(
-        "x-emberos-review-projection-timing",
-        JSON.stringify(generatedSceneReviewReadTiming)
-      );
-    }
+    response.headers.set(
+      "x-emberos-review-projection-timing",
+      JSON.stringify(reviewSubstageRecorder.snapshot())
+    );
     return { response, storyId, executionPlanId };
   };
 
@@ -145,6 +142,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       new Promise<never>((_resolve, reject) => {
         deadlineTimer = setTimeout(() => {
           const timedOutStage = recorder.markTimedOut();
+          reviewSubstageRecorder.markTimedOut();
           deadline.abort();
           reject(new RuntimeReadDeadlineError(timedOutStage, recorder.elapsedMs()));
         }, SERVER_RUNTIME_DEADLINE_MS);

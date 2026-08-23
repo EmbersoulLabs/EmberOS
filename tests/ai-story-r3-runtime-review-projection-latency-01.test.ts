@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
-import { GeneratedSceneReviewService } from "@ceo-agent/agents";
+import {
+  GeneratedSceneReviewReadSubstageRecorder,
+  GeneratedSceneReviewService,
+} from "@ceo-agent/agents";
 import { makePhase2aCompilation } from "./helpers/ai-story-phase-2a";
 
 const persistencePath =
@@ -16,6 +19,70 @@ describe("R3 generated Scene review projection latency repair", () => {
     expect(source).toContain("select({ intent: schema.aiStorySceneExecutions.intent })");
     expect(source).toContain("aiStorySceneExecutions.executionPlanId, executionPlanId");
     expect(source).toContain("orderBy(asc(schema.aiStorySceneExecutions.sceneOrder))");
+  });
+
+  it("retains completed timing when the cost read is marked timed out", async () => {
+    const intents = makePhase2aCompilation().intents;
+    const recorder = new GeneratedSceneReviewReadSubstageRecorder();
+    let releaseCost!: () => void;
+    const costBlocked = new Promise<void>((resolve) => { releaseCost = resolve; });
+    const service = new GeneratedSceneReviewService({
+      persistenceRepository: { listIntentsByExecutionPlanId: async () => intents } as never,
+      providerAttemptCostRecordLoader: async () => { await costBlocked; return []; },
+      reviewRepository: { listByExecutionPlanId: async () => [] } as never,
+      readSubstageRecorder: recorder,
+    });
+    const pending = service.loadPlanReadModel(makePhase2aCompilation().plan.storyExecutionId);
+    await delay(10);
+    recorder.markTimedOut();
+    expect(recorder.snapshot().map(({ stage, status }) => ({ stage, status }))).toEqual([
+      { stage: "generated_scene_review.scene_execution_list", status: "COMPLETED" },
+      { stage: "generated_scene_review.provider_attempt_cost_records", status: "TIMED_OUT" },
+      { stage: "generated_scene_review.review_list", status: "NOT_REACHED" },
+      { stage: "generated_scene_review.read_model_assembly", status: "NOT_REACHED" },
+    ]);
+    releaseCost();
+    await pending;
+  });
+
+  it("retains the first two timings when the review read is marked timed out", async () => {
+    const intents = makePhase2aCompilation().intents;
+    const recorder = new GeneratedSceneReviewReadSubstageRecorder();
+    let releaseReviews!: () => void;
+    const reviewsBlocked = new Promise<void>((resolve) => { releaseReviews = resolve; });
+    const service = new GeneratedSceneReviewService({
+      persistenceRepository: { listIntentsByExecutionPlanId: async () => intents } as never,
+      providerAttemptCostRecordLoader: async () => [],
+      reviewRepository: { listByExecutionPlanId: async () => { await reviewsBlocked; return []; } } as never,
+      readSubstageRecorder: recorder,
+    });
+    const pending = service.loadPlanReadModel(makePhase2aCompilation().plan.storyExecutionId);
+    await delay(10);
+    recorder.markTimedOut();
+    expect(recorder.snapshot().map(({ stage, status }) => ({ stage, status }))).toEqual([
+      { stage: "generated_scene_review.scene_execution_list", status: "COMPLETED" },
+      { stage: "generated_scene_review.provider_attempt_cost_records", status: "COMPLETED" },
+      { stage: "generated_scene_review.review_list", status: "TIMED_OUT" },
+      { stage: "generated_scene_review.read_model_assembly", status: "NOT_REACHED" },
+    ]);
+    releaseReviews();
+    await pending;
+  });
+
+  it("publishes a complete exclusive success trace", async () => {
+    const intents = makePhase2aCompilation().intents;
+    const recorder = new GeneratedSceneReviewReadSubstageRecorder();
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const service = new GeneratedSceneReviewService({
+      persistenceRepository: { listIntentsByExecutionPlanId: async () => intents } as never,
+      providerAttemptCostRecordLoader: async () => [],
+      reviewRepository: { listByExecutionPlanId: async () => [] } as never,
+      readSubstageRecorder: recorder,
+    });
+    await service.loadPlanReadModel(makePhase2aCompilation().plan.storyExecutionId);
+    expect(recorder.snapshot().every((row) => row.status === "COMPLETED")).toBe(true);
+    expect(recorder.snapshot().every((row) => row.durationMs !== null)).toBe(true);
+    vi.restoreAllMocks();
   });
 
   it("preserves the read model while reporting each serial boundary", async () => {

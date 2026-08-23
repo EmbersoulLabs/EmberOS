@@ -38,6 +38,16 @@ export type AiStoryRuntimeReadTimeoutTrace = {
   readonly lastCompletedStage: string | null;
   readonly timedOutStage: string | null;
   readonly stageTimings: readonly AiStoryRuntimeReadStageTiming[];
+  readonly generatedSceneReviewStageTimings: readonly AiStoryRuntimeReadSubstageTiming[];
+};
+
+export type AiStoryRuntimeReadSubstageTiming = {
+  readonly stage: string;
+  readonly status: "COMPLETED" | "TIMED_OUT" | "FAILED" | "NOT_REACHED";
+  readonly durationMs: number | null;
+  readonly queryCount: number;
+  readonly roundTripCount: number;
+  readonly rowCount: number | null;
 };
 
 export function parseRuntimeTimeoutTrace(body: Record<string, unknown>, correlationId: string | null): AiStoryRuntimeReadTimeoutTrace | null {
@@ -47,6 +57,16 @@ export function parseRuntimeTimeoutTrace(body: Record<string, unknown>, correlat
     const value = row as Record<string, unknown>;
     return typeof value.stage === "string" && ["COMPLETED", "TIMED_OUT", "FAILED", "NOT_REACHED"].includes(String(value.status));
   });
+  const generatedSceneReviewStageTimings = Array.isArray(body.generatedSceneReviewStageTimings)
+    ? body.generatedSceneReviewStageTimings.filter((row): row is AiStoryRuntimeReadSubstageTiming => {
+        if (!row || typeof row !== "object") return false;
+        const value = row as Record<string, unknown>;
+        return typeof value.stage === "string" &&
+          ["COMPLETED", "TIMED_OUT", "FAILED", "NOT_REACHED"].includes(String(value.status)) &&
+          typeof value.queryCount === "number" &&
+          typeof value.roundTripCount === "number";
+      })
+    : [];
   return {
     errorCode: "AI_STORY_RUNTIME_READ_TIMEOUT",
     correlationId,
@@ -54,6 +74,7 @@ export function parseRuntimeTimeoutTrace(body: Record<string, unknown>, correlat
     lastCompletedStage: typeof body.lastCompletedStage === "string" ? body.lastCompletedStage : null,
     timedOutStage: typeof body.timedOutStage === "string" ? body.timedOutStage : null,
     stageTimings,
+    generatedSceneReviewStageTimings,
   };
 }
 

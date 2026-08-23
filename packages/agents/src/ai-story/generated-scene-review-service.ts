@@ -36,6 +36,81 @@ import {
 
 export { GeneratedSceneReviewError };
 
+export const GENERATED_SCENE_REVIEW_READ_SUBSTAGES = [
+  "generated_scene_review.scene_execution_list",
+  "generated_scene_review.provider_attempt_cost_records",
+  "generated_scene_review.review_list",
+  "generated_scene_review.read_model_assembly",
+] as const;
+
+export type GeneratedSceneReviewReadSubstage =
+  (typeof GENERATED_SCENE_REVIEW_READ_SUBSTAGES)[number];
+export type GeneratedSceneReviewReadSubstageTiming = {
+  readonly stage: GeneratedSceneReviewReadSubstage;
+  readonly status: "COMPLETED" | "TIMED_OUT" | "FAILED" | "NOT_REACHED";
+  readonly durationMs: number | null;
+  readonly queryCount: number;
+  readonly roundTripCount: number;
+  readonly rowCount: number | null;
+};
+
+export class GeneratedSceneReviewReadSubstageRecorder {
+  private active: { stage: GeneratedSceneReviewReadSubstage; startedAt: number } | null = null;
+  private readonly rows = new Map<GeneratedSceneReviewReadSubstage, GeneratedSceneReviewReadSubstageTiming>(
+    GENERATED_SCENE_REVIEW_READ_SUBSTAGES.map((stage) => [stage, {
+      stage,
+      status: "NOT_REACHED",
+      durationMs: null,
+      queryCount: stage === "generated_scene_review.read_model_assembly" ? 0 : 1,
+      roundTripCount: stage === "generated_scene_review.read_model_assembly" ? 0 : 1,
+      rowCount: null,
+    }])
+  );
+
+  async run<T>(
+    stage: GeneratedSceneReviewReadSubstage,
+    operation: () => Promise<T>,
+    rowCount: (value: T) => number | null
+  ): Promise<T> {
+    const startedAt = performance.now();
+    this.active = { stage, startedAt };
+    try {
+      const value = await operation();
+      this.rows.set(stage, {
+        ...this.rows.get(stage)!,
+        status: "COMPLETED",
+        durationMs: Math.round(performance.now() - startedAt),
+        rowCount: rowCount(value),
+      });
+      this.active = null;
+      return value;
+    } catch (error) {
+      this.rows.set(stage, {
+        ...this.rows.get(stage)!,
+        status: "FAILED",
+        durationMs: Math.round(performance.now() - startedAt),
+      });
+      this.active = null;
+      throw error;
+    }
+  }
+
+  markTimedOut(): void {
+    if (!this.active) return;
+    const { stage, startedAt } = this.active;
+    this.rows.set(stage, {
+      ...this.rows.get(stage)!,
+      status: "TIMED_OUT",
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    this.active = null;
+  }
+
+  snapshot(): readonly GeneratedSceneReviewReadSubstageTiming[] {
+    return GENERATED_SCENE_REVIEW_READ_SUBSTAGES.map((stage) => this.rows.get(stage)!);
+  }
+}
+
 export type GeneratedSceneReviewReadTiming = {
   readonly executionPlanId: string;
   readonly sceneExecutionListMs: number;
@@ -67,6 +142,7 @@ export class GeneratedSceneReviewService {
       readonly now?: () => Date;
       readonly onLoadPlanReadModelTiming?: (timing: GeneratedSceneReviewReadTiming) => void;
       readonly providerAttemptCostRecordLoader?: typeof listAiStoryProviderAttemptCostRecords;
+      readonly readSubstageRecorder?: GeneratedSceneReviewReadSubstageRecorder;
     } = {}
   ) {}
 
@@ -383,51 +459,68 @@ export class GeneratedSceneReviewService {
     const persistence =
       this.dependencies.persistenceRepository ??
       new AiStorySceneExecutionPersistenceRepository();
+    const substageRecorder =
+      this.dependencies.readSubstageRecorder ??
+      new GeneratedSceneReviewReadSubstageRecorder();
     const sceneExecutionStartedAt = performance.now();
-    const intents = await persistence.listIntentsByExecutionPlanId(executionPlanId);
+    const intents = await substageRecorder.run(
+      "generated_scene_review.scene_execution_list",
+      () => persistence.listIntentsByExecutionPlanId(executionPlanId),
+      (rows) => rows.length
+    );
     const sceneExecutionListMs = performance.now() - sceneExecutionStartedAt;
 
     const providerAttemptStartedAt = performance.now();
-    const costRecords = await (
-      this.dependencies.providerAttemptCostRecordLoader ??
-      listAiStoryProviderAttemptCostRecords
-    )(executionPlanId);
+    const costRecords = await substageRecorder.run(
+      "generated_scene_review.provider_attempt_cost_records",
+      () => (this.dependencies.providerAttemptCostRecordLoader ??
+        listAiStoryProviderAttemptCostRecords)(executionPlanId),
+      (rows) => rows.length
+    );
     const providerAttemptCostRecordsMs = performance.now() - providerAttemptStartedAt;
     const reconstructed = reconstructAiStoryProviderSpend(
       costRecords
     );
 
     const reviewStartedAt = performance.now();
-    const reviews = await this.reviewRepo.listByExecutionPlanId(executionPlanId);
+    const reviews = await substageRecorder.run(
+      "generated_scene_review.review_list",
+      () => this.reviewRepo.listByExecutionPlanId(executionPlanId),
+      (rows) => rows.length
+    );
     const generatedSceneReviewListMs = performance.now() - reviewStartedAt;
 
     const assemblyStartedAt = performance.now();
-    const snapshotByScene = groupReviews(reviews);
-    const maxAttempts = resolveAiStorySceneMaxAttempts();
-    const orderedIntents = intents
-      .slice()
-      .sort((a, b) => a.identity.sceneOrder - b.identity.sceneOrder);
-
-    const models: GeneratedSceneReviewReadModel[] = [];
-    for (const intent of orderedIntents) {
-      models.push(
-        await this.buildReadModel({
-          executionPlanId,
-          sceneExecutionId: intent.identity.sceneExecutionId,
-          sceneId: intent.identity.sceneId,
-          sceneOrder: intent.identity.sceneOrder,
-          reviews: snapshotByScene.get(intent.identity.sceneExecutionId) ?? [],
-          spendAttempts: reconstructed.attempts.filter(
-            (attempt) => attempt.sceneExecutionId === intent.identity.sceneExecutionId
-          ),
-          sceneKnownCost:
-            reconstructed.projection.scenes.find(
-              (row) => row.sceneExecutionId === intent.identity.sceneExecutionId
-            )?.knownAmount ?? null,
-          maxAttempts,
-        })
-      );
-    }
+    const models = await substageRecorder.run(
+      "generated_scene_review.read_model_assembly",
+      async () => {
+        const snapshotByScene = groupReviews(reviews);
+        const maxAttempts = resolveAiStorySceneMaxAttempts();
+        const orderedIntents = intents
+          .slice()
+          .sort((a, b) => a.identity.sceneOrder - b.identity.sceneOrder);
+        const assembled: GeneratedSceneReviewReadModel[] = [];
+        for (const intent of orderedIntents) {
+          assembled.push(await this.buildReadModel({
+            executionPlanId,
+            sceneExecutionId: intent.identity.sceneExecutionId,
+            sceneId: intent.identity.sceneId,
+            sceneOrder: intent.identity.sceneOrder,
+            reviews: snapshotByScene.get(intent.identity.sceneExecutionId) ?? [],
+            spendAttempts: reconstructed.attempts.filter(
+              (attempt) => attempt.sceneExecutionId === intent.identity.sceneExecutionId
+            ),
+            sceneKnownCost:
+              reconstructed.projection.scenes.find(
+                (row) => row.sceneExecutionId === intent.identity.sceneExecutionId
+              )?.knownAmount ?? null,
+            maxAttempts,
+          }));
+        }
+        return assembled;
+      },
+      (rows) => rows.length
+    );
     const readModelAssemblyMs = performance.now() - assemblyStartedAt;
     const timing: GeneratedSceneReviewReadTiming = {
       executionPlanId,
