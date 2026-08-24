@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
-import { requireSuperAdmin, SuperAdminError } from "@/lib/require-superadmin";
-import { AuthError } from "@/lib/auth";
+import { requireAuth, AuthError } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +45,7 @@ export async function GET(request: NextRequest) {
   const ordinal = ++invocationCount;
   try {
     const authStarted = performance.now();
-    await requireSuperAdmin();
+    await requireAuth();
     const authEnded = performance.now();
     const mode = request.nextUrl.searchParams.get("mode") as DiagnosticMode | null;
     if (!mode || !["no-db", "select1", "pk", "five", "one-five"].includes(mode)) {
@@ -134,12 +133,9 @@ export async function GET(request: NextRequest) {
       },
     });
     response.headers.set("Cache-Control", "private, no-store, max-age=0");
-    response.headers.set("X-EmberOS-Diagnostic-Guard", "super-admin");
+    response.headers.set("X-EmberOS-Diagnostic-Guard", "authenticated");
     return response;
   } catch (error) {
-    if (error instanceof SuperAdminError) {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-    }
     if (error instanceof AuthError) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -7,14 +7,14 @@ const source = readFileSync(
 ).replace(/\r\n/g, "\n");
 const clientSource = readFileSync("packages/db/src/client.ts", "utf8").replace(/\r\n/g, "\n");
 const pageSource = readFileSync(
-  "apps/web/src/app/admin/db-roundtrip-baseline/page.tsx",
+  "apps/web/src/app/diagnostics/db-roundtrip-baseline/page.tsx",
   "utf8"
 ).replace(/\r\n/g, "\n");
 
 describe("production DB round-trip infrastructure baseline", () => {
-  it("keeps the diagnostic surface super-admin guarded and read-only", () => {
-    expect(source).toContain("await requireSuperAdmin()");
-    expect(source).toContain('X-EmberOS-Diagnostic-Guard", "super-admin"');
+  it("keeps the diagnostic surface authenticated and read-only", () => {
+    expect(source).toContain("await requireAuth()");
+    expect(source).toContain('X-EmberOS-Diagnostic-Guard", "authenticated"');
     expect(source).not.toMatch(/\.insert\(|\.update\(|\.delete\(/);
     expect(source).not.toContain("DATABASE_URL:");
     expect(source).not.toContain("parsed.password");
@@ -42,7 +42,7 @@ describe("production DB round-trip infrastructure baseline", () => {
     expect(clientSource).toContain("connect_timeout: connectTimeout");
   });
 
-  it("exposes results only through an unlinked Super Admin page wrapper", () => {
+  it("exposes results only through an unlinked authenticated page wrapper", () => {
     expect(pageSource).toContain("runDbRoundtripBaseline(request)");
     expect(pageSource).toContain('export const dynamic = "force-dynamic"');
     expect(pageSource).not.toContain("fetch(");
