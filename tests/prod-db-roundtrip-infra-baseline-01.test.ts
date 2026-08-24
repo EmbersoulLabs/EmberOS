@@ -6,6 +6,10 @@ const source = readFileSync(
   "utf8"
 ).replace(/\r\n/g, "\n");
 const clientSource = readFileSync("packages/db/src/client.ts", "utf8").replace(/\r\n/g, "\n");
+const pageSource = readFileSync(
+  "apps/web/src/app/admin/db-roundtrip-baseline/page.tsx",
+  "utf8"
+).replace(/\r\n/g, "\n");
 
 describe("production DB round-trip infrastructure baseline", () => {
   it("keeps the diagnostic surface super-admin guarded and read-only", () => {
@@ -36,5 +40,11 @@ describe("production DB round-trip infrastructure baseline", () => {
     expect(clientSource).toContain("isServerless ? 1 : 10");
     expect(clientSource).toContain("idle_timeout: 20");
     expect(clientSource).toContain("connect_timeout: connectTimeout");
+  });
+
+  it("exposes results only through an unlinked Super Admin page wrapper", () => {
+    expect(pageSource).toContain("runDbRoundtripBaseline(request)");
+    expect(pageSource).toContain('export const dynamic = "force-dynamic"');
+    expect(pageSource).not.toContain("fetch(");
   });
 });
