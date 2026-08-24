@@ -113,6 +113,7 @@ export type SeedanceAssetAccessResolver = {
     readonly assetId: string;
     readonly workspaceId: string;
     readonly orgId: string;
+    readonly campaignId: string;
     readonly storagePath?: string;
     readonly existingUri?: string;
   }): Promise<string>;
@@ -248,22 +249,27 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
       );
     }
     let uri = asset.uri;
-    if (!uri && asset.storagePath) {
-      if (looksLikePrivateStoragePath(asset.storagePath)) {
-        if (!input.assetAccessResolver) {
-          throw new SeedanceMappingError(
-            "Private storage paths cannot be sent to Seedance; signed URI required"
-          );
-        }
-        uri = await input.assetAccessResolver.resolveProviderAccessibleUri({
-          assetId: asset.assetId,
-          workspaceId: input.envelope.workspaceId,
-          orgId: input.envelope.tenantId,
-          storagePath: asset.storagePath,
-        });
-      } else {
-        uri = asset.storagePath;
+    if (!uri && input.assetAccessResolver) {
+      const campaignId = input.envelope.canonicalRequest.executionIdentity.campaignId;
+      if (!campaignId) {
+        throw new SeedanceMappingError(
+          "Campaign authority is required to resolve a product reference"
+        );
       }
+      uri = await input.assetAccessResolver.resolveProviderAccessibleUri({
+        assetId: asset.assetId,
+        workspaceId: input.envelope.workspaceId,
+        orgId: input.envelope.tenantId,
+        campaignId,
+        ...(asset.storagePath ? { storagePath: asset.storagePath } : {}),
+      });
+    } else if (!uri && asset.storagePath) {
+      if (looksLikePrivateStoragePath(asset.storagePath)) {
+        throw new SeedanceMappingError(
+          "Private storage paths cannot be sent to Seedance; signed URI required"
+        );
+      }
+      uri = asset.storagePath;
     }
     if (!uri) {
       throw new SeedanceMappingError(
