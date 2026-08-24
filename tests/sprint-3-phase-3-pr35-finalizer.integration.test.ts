@@ -13,8 +13,10 @@ import {
   SceneFinalizationCoordinatorError,
 } from "../packages/agents/src/ai-story/scene-finalization-coordinator";
 import { GeneratedSceneReviewService } from "../packages/agents/src/ai-story/generated-scene-review-service";
+import { releaseNextEligibleScene } from "../packages/agents/src/ai-story/release-next-eligible-scene";
 import {
   closeDb,
+  AiStorySceneReleaseRepository,
   createGeneratedSceneReviewConnectionMetrics,
   ExecutionEnvelopeRepository,
   GeneratedSceneReviewRepository,
@@ -150,9 +152,10 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     await closeDb();
   }, 60_000);
 
-  async function scheduleScene() {
+  async function scheduleScene(sceneOrder?: readonly number[]) {
     const prepared = await prepareAuthorizedSchedulingPlan({
       purpose: "pr35r1",
+      sceneOrder,
     });
     const scheduled = await new SceneSchedulingCoordinator({
       router: new FixedSeedanceRouter(),
@@ -401,6 +404,64 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
         AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
     `;
     expect(reviewCount?.count).toBe(1);
+  }, 180_000);
+
+  it("concurrent next-scene release transitions Scene 2 once and leaves Scene 3 held", async () => {
+    const { prepared, dispatch } = await scheduleScene([0, 1, 2]);
+    await seedTerminalSuccessWorker(dispatch.dispatchId);
+    const outcome = await coordinator().finalizeAndProject({ dispatchId: dispatch.dispatchId });
+    expect(outcome.outcome).toBe("PROJECTED");
+    if (outcome.outcome !== "PROJECTED") throw new Error("expected PROJECTED");
+
+    await new GeneratedSceneReviewService({
+      now: () => new Date("2026-08-05T14:00:00.000Z"),
+    }).approve({
+      executionPlanId: prepared.executionPlanId,
+      sceneExecutionId: prepared.sceneExecutionIds[0]!,
+      attemptId: outcome.sceneResult.providerAttemptId,
+      actorUserId: PR32_USER_A,
+      workspaceId: dispatch.workspaceId,
+      executionAuthorization: {} as never,
+    });
+
+    const release = () => releaseNextEligibleScene({
+      executionPlanId: prepared.executionPlanId,
+      workspaceId: dispatch.workspaceId,
+      actorUserId: PR32_USER_A,
+      executionAuthorization: {
+        allowed: true,
+        accessMode: "ops",
+        settlementMode: "none",
+        authorizedBy: "ACTIVE_PLATFORM_ADMIN",
+        policyVersion: "ai-story-exec-03.v1",
+        reason: "next-scene-concurrency-test",
+        providerCostAccounting: "ALLOWED",
+      },
+      router: new FixedSeedanceRouter(),
+      now: () => new Date("2026-08-05T14:01:00.000Z"),
+    });
+    const outcomes = await Promise.allSettled([release(), release()]);
+    expect(outcomes.filter((result) => result.status === "fulfilled")).toHaveLength(2);
+    const releaseResults = outcomes
+      .filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof release>>> => result.status === "fulfilled")
+      .map((result) => result.value);
+    expect(releaseResults.filter((result) => result.newlyReleasedSceneCount === 1)).toHaveLength(1);
+    expect(releaseResults.filter((result) => result.newlyReleasedSceneCount === 0)).toHaveLength(1);
+
+    const rows = await new AiStorySceneReleaseRepository().list(prepared.executionPlanId);
+    expect(rows.filter((row) => row.sceneOrder === 2 && row.releaseState === "RELEASED")).toHaveLength(1);
+    expect(rows.filter((row) => row.sceneOrder === 3 && row.releaseState === "RELEASED")).toHaveLength(0);
+    expect(rows.find((row) => row.sceneOrder === 3)?.releaseState).toBe("AUTHORIZED_NOT_RELEASED");
+    const [scene2Units] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM ai_story_scene_scheduling_correlations
+      WHERE scene_execution_id = ${prepared.sceneExecutionIds[1]!}
+    `;
+    const [scene3Units] = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM ai_story_scene_scheduling_correlations
+      WHERE scene_execution_id = ${prepared.sceneExecutionIds[2]!}
+    `;
+    expect(scene2Units?.count).toBe(1);
+    expect(scene3Units?.count).toBe(0);
   }, 180_000);
 
   it("replay converges without re-invoking Finalizer / rewriting usage", async () => {

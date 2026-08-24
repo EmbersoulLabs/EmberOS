@@ -297,6 +297,18 @@ export async function postReleaseRemainingScenes(input: {
   });
 }
 
+export async function postReleaseNextEligibleScene(input: {
+  campaignId: string; storyId: string; executionPlanId: string;
+}): Promise<{
+  selectedSceneExecutionId: string;
+  selectedSceneOrder: number;
+  correlationId: string;
+}> {
+  return requestJson(plansBase(input.campaignId, input.storyId, input.executionPlanId) + "/release-next-scene", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}),
+  });
+}
+
 export async function postGeneratedSceneReviewDecision(input: {
   campaignId: string;
   storyId: string;

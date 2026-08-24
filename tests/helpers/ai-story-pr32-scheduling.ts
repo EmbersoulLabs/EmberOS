@@ -157,6 +157,9 @@ export async function cleanupPr32Tenant(
   await sql`DELETE FROM ai_story_assembly_job_facts WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_assembly_jobs WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_generated_scene_reviews WHERE org_id = ${ids.orgId}`;
+  // Release rows bind to the exact approved Scene Result and must be removed
+  // before their result/attempt authorities during isolated fixture cleanup.
+  await sql`DELETE FROM ai_story_scene_release_states WHERE workspace_id = ${ids.workspaceId}`;
   await sql`DELETE FROM ai_story_durable_scene_media_attestations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_results WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_projection_correlations WHERE org_id = ${ids.orgId}`;
@@ -177,7 +180,6 @@ export async function cleanupPr32Tenant(
        )
   `;
   await sql`DELETE FROM ai_story_execute_verifications WHERE workspace_id = ${ids.workspaceId}`;
-  await sql`DELETE FROM ai_story_scene_release_states WHERE workspace_id = ${ids.workspaceId}`;
   await sql`DELETE FROM ai_story_scene_scheduling_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_routing_decisions WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_runtime_authorized_facts WHERE org_id = ${ids.orgId}`;

@@ -334,9 +334,16 @@ export async function deriveProductRuntimeProjection(
     releaseState: row.releaseState === "RELEASED" ? "RELEASED" as const : "AUTHORIZED_NOT_RELEASED" as const,
   }));
   const heldSceneCount = sceneReleaseStates.filter((row) => row.releaseState === "AUTHORIZED_NOT_RELEASED").length;
-  const firstSceneId = sceneReleaseStates.find((row) => row.sceneOrder === 1)?.sceneExecutionId;
-  const firstApproved = generatedSceneReviews.some((row) => row.sceneExecutionId === firstSceneId && row.reviewState === "APPROVED");
-  const remainingReleasePermitted = Boolean(authFact && heldSceneCount > 0 && firstApproved);
+  const nextHeldScene = sceneReleaseStates.find((row) => row.releaseState === "AUTHORIZED_NOT_RELEASED");
+  const everyPriorSceneApproved = nextHeldScene
+    ? sceneReleaseStates
+      .filter((row) => row.sceneOrder < nextHeldScene.sceneOrder)
+      .every((row) => row.releaseState === "RELEASED" && generatedSceneReviews.some(
+        (review) => review.sceneExecutionId === row.sceneExecutionId && review.reviewState === "APPROVED"
+      ))
+    : false;
+  const remainingReleasePermitted = Boolean(authFact && nextHeldScene && everyPriorSceneApproved);
+  const nextEligibleSceneOrder = remainingReleasePermitted ? nextHeldScene?.sceneOrder ?? null : null;
   const runningSceneCount = generatedSceneReviews.filter((row) => row.running).length;
 
   const terminalSceneExecutionIds = new Set(
@@ -421,6 +428,7 @@ export async function deriveProductRuntimeProjection(
     approvedSceneCount,
     sceneReleaseStates,
     remainingReleasePermitted,
+    nextEligibleSceneOrder,
     heldSceneCount,
     derivedAt,
   }));

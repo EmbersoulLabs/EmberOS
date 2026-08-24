@@ -14,7 +14,7 @@ import {
   StoryRuntimeClientError,
   getProductRuntimeProjection,
   postCanonicalExecute,
-  postReleaseRemainingScenes,
+  postReleaseNextEligibleScene,
 } from "@/lib/ai-story-runtime-client";
 import type { AiStoryRuntimeReadTimeoutTrace } from "@/lib/ai-story-runtime-client";
 import { readInitialRuntimeOnce, readRuntimeAfterUserRetry } from "@/lib/ai-story-runtime-initial-read-policy";
@@ -142,14 +142,14 @@ export function StoryRuntimePanel({
     }
   }
 
-  async function onReleaseRemaining() {
+  async function onReleaseNextScene() {
     if (!projection?.remainingReleasePermitted || releasing) return;
     setReleasing(true); setError(null);
     try {
-      await postReleaseRemainingScenes({ campaignId, storyId, executionPlanId });
+      await postReleaseNextEligibleScene({ campaignId, storyId, executionPlanId });
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Release remaining scenes failed");
+      setError(err instanceof Error ? err.message : "Release next Scene failed");
     } finally { setReleasing(false); }
   }
 
@@ -224,9 +224,9 @@ export function StoryRuntimePanel({
                 : t("aiStory.runtime.execute")}
             </button>
             {projection?.remainingReleasePermitted ? (
-              <button type="button" disabled={releasing} onClick={() => void onReleaseRemaining()}
-                className="brand-btn-primary" data-testid="release-remaining-scenes">
-                {releasing ? "Releasing…" : "Release remaining scenes"}
+              <button type="button" disabled={releasing} onClick={() => void onReleaseNextScene()}
+                className="brand-btn-primary" data-testid="release-next-scene">
+                {releasing ? "Releasing…" : `Release Scene ${projection.nextEligibleSceneOrder ?? "Next"}`}
               </button>
             ) : null}
           </div>
@@ -248,8 +248,8 @@ export function StoryRuntimePanel({
         {(projection?.heldSceneCount ?? 0) > 0 ? (
           <p className="text-sm text-ink-secondary" data-testid="held-scenes-status">
             {projection?.remainingReleasePermitted
-              ? `${projection.heldSceneCount} remaining scene(s) ready for operator release`
-              : `${projection?.heldSceneCount} scene(s) waiting for first-scene approval`}
+              ? `Scene ${projection.nextEligibleSceneOrder ?? "next"} is ready for operator release`
+              : `${projection?.heldSceneCount} scene(s) waiting for prior-scene approval`}
           </p>
         ) : null}
 

@@ -61,6 +61,29 @@ describe("EXEC-07 durable staged Scene release", () => {
     expect(route).not.toMatch(/sceneExecutionId|providerId|accessMode|settlementMode/);
   });
 
+  it("uses the canonical next-Scene-only action for the R3 operator flow", () => {
+    const repo = read("packages/db/src/queries/ai-story-scene-release.ts");
+    const service = read("packages/agents/src/ai-story/release-next-eligible-scene.ts");
+    const route = read("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/release-next-scene/route.ts");
+    const projection = read("packages/agents/src/ai-story/derive-product-runtime-projection.ts");
+    const panel = read("apps/web/src/components/ai-story/StoryRuntimePanel.tsx");
+
+    expect(repo).toContain("releaseNextEligible");
+    expect(repo).toContain("rows.find((row) => row.releaseState === \"AUTHORIZED_NOT_RELEASED\")");
+    expect(repo).toContain("pg_advisory_xact_lock");
+    expect(repo).toContain("row.sceneOrder < candidate.sceneOrder");
+    const nextOnlyMethod = repo.slice(repo.indexOf("async releaseNextEligible"));
+    expect(nextOnlyMethod).not.toContain("for (const row of held)");
+    expect(service.match(/scheduleAuthorizedScene\(/g)).toHaveLength(1);
+    expect(route).toContain("releaseNextEligibleScene");
+    expect(route).not.toMatch(/sceneOrder.*request|sceneExecutionId.*request/);
+    expect(projection).toContain("everyPriorSceneApproved");
+    expect(projection).toContain("nextEligibleSceneOrder");
+    expect(panel).toContain('data-testid="release-next-scene"');
+    expect(panel).toContain("Release Scene");
+    expect(panel).not.toContain('data-testid="release-remaining-scenes"');
+  });
+
   it("keeps provider routing and unrelated frozen products outside the change", () => {
     const service = read("packages/agents/src/ai-story/release-remaining-scenes.ts");
     expect(service).not.toMatch(/seedance|minimax|photoroom|stripe|quota|publishing/i);

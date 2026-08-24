@@ -105,6 +105,7 @@ export const ProductRuntimeProjectionSchema = z.object({
     releaseState: z.enum(["AUTHORIZED_NOT_RELEASED", "RELEASED"]),
   })).optional(),
   remainingReleasePermitted: z.boolean().optional(),
+  nextEligibleSceneOrder: z.number().int().positive().nullable().optional(),
   heldSceneCount: z.number().int().nonnegative().optional(),
   derivedAt: z.string().datetime(),
 });
