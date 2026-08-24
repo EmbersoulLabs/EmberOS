@@ -82,6 +82,30 @@ export async function downloadStorageReference(
   await downloadStorageFile(resolveExpectedStoragePath(reference, expectedStoragePath), localPath);
 }
 
+/**
+ * Mint a short-lived read URL for a server-authorized private object.
+ * The URL is returned only to the provider request mapper; it is never persisted or logged.
+ */
+export async function createSignedStorageReadUrl(
+  storagePath: string,
+  expiresInSeconds = 600,
+  options?: { readonly bucket?: string }
+): Promise<string> {
+  return withNetworkRetry("sign provider asset", async () => {
+    const supabase = getAdminClient();
+    const bucket = options?.bucket ?? getBucket();
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .createSignedUrl(storagePath, expiresInSeconds);
+    if (error || !data?.signedUrl) {
+      throw new Error(
+        `Failed to create provider asset access${error?.message ? ` — ${error.message}` : ""}`
+      );
+    }
+    return data.signedUrl;
+  });
+}
+
 export async function uploadStorageFile(
   storagePath: string,
   localPath: string,
