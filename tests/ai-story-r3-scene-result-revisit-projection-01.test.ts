@@ -36,7 +36,8 @@ describe("R3 Scene result fresh-visit recovery", () => {
 
   it("keeps persisted server projection as result and review authority", async () => {
     const source = await readFile(runtimePath, "utf8");
-    expect(source).toContain("setProjection(next)");
+    expect(source).toContain("setProjection((current)");
+    expect(source).toContain("stabilizeRuntimeMediaSources(current, next)");
     expect(source).toContain("projection?.generatedSceneReviews ?? []");
     expect(source).not.toContain("sessionStorage");
   });

@@ -21,7 +21,9 @@ import { readInitialRuntimeOnce, readRuntimeAfterUserRetry } from "@/lib/ai-stor
 import {
   PRODUCT_RUNTIME_POLL_INTERVAL_MS,
   canShowExecuteButton,
-  shouldPollProductRuntime,
+  isWaitingForHumanReview,
+  shouldPollRuntimeProjection,
+  stabilizeRuntimeMediaSources,
 } from "@/lib/ai-story-runtime-ui";
 
 type Props = {
@@ -53,6 +55,8 @@ export function StoryRuntimePanel({
   const executeInFlight = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestGen = useRef(0);
+  const runtimeReadInFlight = useRef<Promise<ProductRuntimeProjection | null> | null>(null);
+  const runtimeReadAbort = useRef<AbortController | null>(null);
 
   const clearPoll = useCallback(() => {
     if (pollTimer.current) {
@@ -61,41 +65,58 @@ export function StoryRuntimePanel({
     }
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback((): Promise<ProductRuntimeProjection | null> => {
+    if (runtimeReadInFlight.current) return runtimeReadInFlight.current;
     const gen = ++requestGen.current;
+    const controller = new AbortController();
+    runtimeReadAbort.current = controller;
     setLoading(true);
-    try {
-      const next = await getProductRuntimeProjection({
+    const read = (async () => {
+      try {
+        const next = await getProductRuntimeProjection({
         campaignId,
         storyId,
         executionPlanId,
+        signal: controller.signal,
       });
-      if (gen !== requestGen.current) return next;
-      setProjection(next);
-      setError(null);
-      setTimeoutTrace(null);
-      return next;
-    } catch (err) {
-      if (gen !== requestGen.current) return null;
-      setTimeoutTrace(err instanceof StoryRuntimeClientError ? err.timeoutTrace : null);
-      setError(
-        err instanceof StoryRuntimeClientError
-          ? `${err.message}${err.requestCorrelationId ? ` Reference: ${err.requestCorrelationId}` : ""}`
-          : err instanceof Error
-            ? err.message
-            : "Story review could not be loaded."
-      );
-      return null;
-    } finally {
-      if (gen === requestGen.current) setLoading(false);
-    }
+        if (gen !== requestGen.current) return next;
+        let stable = next;
+        setProjection((current) => {
+          stable = stabilizeRuntimeMediaSources(current, next);
+          return stable;
+        });
+        setError(null);
+        setTimeoutTrace(null);
+        return stable;
+      } catch (err) {
+        if (gen !== requestGen.current) return null;
+        setTimeoutTrace(err instanceof StoryRuntimeClientError ? err.timeoutTrace : null);
+        setError(
+          err instanceof StoryRuntimeClientError
+            ? `${err.message}${err.requestCorrelationId ? ` Reference: ${err.requestCorrelationId}` : ""}`
+            : err instanceof Error
+              ? err.message
+              : "Story review could not be loaded."
+        );
+        return null;
+      } finally {
+        if (gen === requestGen.current) {
+          runtimeReadInFlight.current = null;
+          runtimeReadAbort.current = null;
+          setLoading(false);
+        }
+      }
+    })();
+    runtimeReadInFlight.current = read;
+    return read;
   }, [campaignId, storyId, executionPlanId]);
 
   const ensurePolling = useCallback(
-    (status: ProductRuntimeProjection["status"] | undefined) => {
+    (nextProjection: ProductRuntimeProjection | null | undefined) => {
       clearPoll();
-      if (!shouldPollProductRuntime(status)) return;
+      if (!shouldPollRuntimeProjection(nextProjection)) return;
       pollTimer.current = setInterval(() => {
+        if (document.visibilityState === "hidden" || runtimeReadInFlight.current) return;
         void refresh();
       }, PRODUCT_RUNTIME_POLL_INTERVAL_MS);
     },
@@ -106,17 +127,20 @@ export function StoryRuntimePanel({
     setLoading(true);
     void (async () => {
       const next = await readInitialRuntimeOnce(refresh);
-      ensurePolling(next?.status);
+      ensurePolling(next);
     })();
     return () => {
       requestGen.current += 1;
+      runtimeReadAbort.current?.abort();
+      runtimeReadAbort.current = null;
+      runtimeReadInFlight.current = null;
       clearPoll();
     };
   }, [refresh, ensurePolling, clearPoll]);
 
   useEffect(() => {
-    ensurePolling(projection?.status);
-  }, [projection?.status, ensurePolling]);
+    ensurePolling(projection);
+  }, [projection, ensurePolling]);
 
   async function onExecute() {
     if (!showExecuteChrome) return;
@@ -129,7 +153,7 @@ export function StoryRuntimePanel({
     try {
       await postCanonicalExecute({ campaignId, storyId, executionPlanId });
       const next = await refresh();
-      ensurePolling(next?.status ?? "AUTHORIZED");
+      ensurePolling(next);
     } catch (err) {
       if (err instanceof StoryRuntimeClientError) {
         setError(err.message);
@@ -153,7 +177,10 @@ export function StoryRuntimePanel({
     } finally { setReleasing(false); }
   }
 
-  const statusLabel = t(statusKey(projection?.status));
+  const waitingForHumanReview = isWaitingForHumanReview(projection);
+  const statusLabel = waitingForHumanReview
+    ? t("aiStory.runtime.waitingForHumanReview")
+    : t(statusKey(projection?.status));
   const canExecute =
     showExecuteChrome && Boolean(projection?.canExecute) && !executing && !loading;
 
@@ -235,6 +262,16 @@ export function StoryRuntimePanel({
             {t("aiStory.runtime.viewerReadonly")}
           </p>
         )}
+
+        <button
+          type="button"
+          className="rounded-lg border border-border px-3 py-1.5 text-sm"
+          disabled={loading}
+          onClick={() => void refresh()}
+          data-testid="story-runtime-manual-refresh"
+        >
+          {loading ? t("aiStory.runtime.refreshing") : t("aiStory.runtime.refresh")}
+        </button>
 
         {projection?.status === "RECONCILIATION_REQUIRED" ? (
           <div
