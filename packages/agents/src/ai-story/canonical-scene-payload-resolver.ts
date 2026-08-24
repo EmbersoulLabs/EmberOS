@@ -13,6 +13,23 @@ import type {
 } from "@ceo-agent/shared";
 import type { MinimaxPayloadResolver } from "./minimax-request-mapping";
 import type { SeedancePayloadResolver } from "./seedance-request-mapping";
+import { integrityHash } from "./scene-execution-compiler";
+
+export const CANONICAL_PRODUCT_REFERENCE_ROLE = "PRODUCT_REFERENCE" as const;
+
+export type CanonicalProductReference = {
+  readonly assetId: string;
+  readonly role: typeof CANONICAL_PRODUCT_REFERENCE_ROLE;
+  readonly continuityScope: "STORY";
+};
+
+export type ProductIdentityCapsule = {
+  readonly productAssetId?: string;
+  readonly productReferencePresent: boolean;
+  readonly continuityFromSceneId?: string;
+  readonly referenceRoles: readonly [typeof CANONICAL_PRODUCT_REFERENCE_ROLE] | readonly [];
+  readonly identityFingerprint: string;
+};
 
 export type CanonicalScenePayloadForAdapter = {
   readonly kind: "animation-video-generation";
@@ -26,17 +43,69 @@ export type CanonicalScenePayloadForAdapter = {
     readonly order: number;
     readonly durationMs: number;
   }[];
-  /** Text-to-video only unless signed provider-accessible URIs are supplied. */
-  readonly assetReferences: readonly [];
+  /** Stable Campaign Asset identities only. Provider access is resolved just-in-time. */
+  readonly assetReferences: readonly CanonicalProductReference[];
+  readonly productIdentityCapsule: ProductIdentityCapsule;
 };
+
+function sortedUnique(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+function sameValues(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+export function assertCrossSceneProductAssetContinuity(
+  intents: readonly AiStorySceneExecutionIntent[]
+): void {
+  const ordered = [...intents].sort(
+    (left, right) => left.identity.sceneOrder - right.identity.sceneOrder
+  );
+  const expected = sortedUnique(ordered[0]?.referencedAssetIds ?? []);
+  for (const intent of ordered.slice(1)) {
+    const actual = sortedUnique(intent.referencedAssetIds);
+    if (!sameValues(expected, actual)) {
+      throw new Error(
+        `Cross-Scene product asset mismatch at sceneId=${intent.identity.sceneId}`
+      );
+    }
+  }
+}
 
 export function mapCompiledInstructionsToCanonicalScenePayload(input: {
   readonly instructions: AiStorySceneCompiledInstructions;
   readonly intent?: AiStorySceneExecutionIntent;
+  readonly continuityFromSceneId?: string;
   /** Provider-specific minimal-cost override (e.g. Seedance 480p, MiniMax 768P). */
   readonly resolution?: string;
 }): CanonicalScenePayloadForAdapter {
   const instructions = input.instructions;
+  const instructionAssetIds = sortedUnique(instructions.referencedAssetIds);
+  const intentAssetIds = input.intent
+    ? sortedUnique(input.intent.referencedAssetIds)
+    : instructionAssetIds;
+  if (!sameValues(instructionAssetIds, intentAssetIds)) {
+    throw new Error("Compiled Scene intent and instruction product assets do not match");
+  }
+  const assetReferences: CanonicalProductReference[] = intentAssetIds.map((assetId) => ({
+    assetId,
+    role: CANONICAL_PRODUCT_REFERENCE_ROLE,
+    continuityScope: "STORY",
+  }));
+  const productIdentityCapsule: ProductIdentityCapsule = {
+    ...(intentAssetIds[0] ? { productAssetId: intentAssetIds[0] } : {}),
+    productReferencePresent: intentAssetIds.length > 0,
+    ...(input.continuityFromSceneId
+      ? { continuityFromSceneId: input.continuityFromSceneId }
+      : {}),
+    referenceRoles: intentAssetIds.length > 0 ? [CANONICAL_PRODUCT_REFERENCE_ROLE] : [],
+    identityFingerprint: integrityHash({
+      kind: "ai-story-product-identity-capsule",
+      productAssetIds: intentAssetIds,
+      continuityFromSceneId: input.continuityFromSceneId ?? null,
+    }),
+  };
   const shotLines = [...instructions.shots]
     .sort(
       (left, right) =>
@@ -81,7 +150,8 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
         order: shot.order,
         durationMs: shot.durationMs,
       })),
-    assetReferences: [],
+    assetReferences,
+    productIdentityCapsule,
   };
 }
 
@@ -145,10 +215,27 @@ export function createCompilationBackedCanonicalPayloadResolver(
       const intent = compilation.intents.find(
         (candidate) => candidate.identity.sceneExecutionId === sceneExecutionId
       );
+      if (!intent) {
+        throw new Error(
+          `Compiled intent missing for sceneExecutionId=${sceneExecutionId}`
+        );
+      }
+      assertCrossSceneProductAssetContinuity(compilation.intents);
+      const previousIntent = [...compilation.intents]
+        .filter(
+          (candidate) =>
+            candidate.identity.sceneOrder < intent.identity.sceneOrder
+        )
+        .sort(
+          (left, right) => right.identity.sceneOrder - left.identity.sceneOrder
+        )[0];
 
       return mapCompiledInstructionsToCanonicalScenePayload({
         instructions,
         intent,
+        ...(previousIntent
+          ? { continuityFromSceneId: previousIntent.identity.sceneId }
+          : {}),
         resolution: deps.resolution,
       });
     },

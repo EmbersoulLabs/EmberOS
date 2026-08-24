@@ -11,13 +11,16 @@ import {
   loadSeedanceAdapterConfig,
   type CanonicalAdapterRegistry as Registry,
   type MinimaxPayloadResolver,
+  type MinimaxAssetAccessResolver,
   type SeedancePayloadResolver,
+  type SeedanceAssetAccessResolver,
 } from "@ceo-agent/agents";
 import { getAiProviderConfig, isAiProviderReady } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
   ExecutionEnvelopeRepository,
 } from "@ceo-agent/db";
+import { createWorkerProviderAssetAccessResolver } from "./ai-story-provider-asset-access";
 
 export type ProductionAiStoryAdapterRegistryOptions = {
   /** Injected registry for tests (deterministic adapters). */
@@ -27,6 +30,7 @@ export type ProductionAiStoryAdapterRegistryOptions = {
   readonly requireEnabled?: boolean;
   readonly seedancePayloadResolver?: SeedancePayloadResolver;
   readonly minimaxPayloadResolver?: MinimaxPayloadResolver;
+  readonly assetAccessResolver?: SeedanceAssetAccessResolver & MinimaxAssetAccessResolver;
 };
 
 /**
@@ -65,6 +69,8 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
   const registry = new CanonicalAdapterRegistry();
   const env = options.env ?? process.env;
   const requireEnabled = options.requireEnabled === true;
+  const assetAccessResolver =
+    options.assetAccessResolver ?? createWorkerProviderAssetAccessResolver();
   // Minimal-cost defaults when product instructions omit resolution.
   const seedanceResolver =
     options.seedancePayloadResolver ??
@@ -88,6 +94,7 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
       registerSeedanceCanonicalAdapter(registry, {
         config: seedance,
         payloadResolver: seedanceResolver,
+        assetAccessResolver,
       });
     } else {
       console.warn("[ai-story-adapters] Seedance not registered: disabled or not executable");
@@ -107,6 +114,7 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
       registerMinimaxCanonicalAdapter(registry, {
         config: minimax,
         payloadResolver: minimaxResolver,
+        assetAccessResolver,
       });
     } else {
       console.warn("[ai-story-adapters] MiniMax not registered: disabled or not executable");
