@@ -16,6 +16,11 @@ import {
   SEEDANCE_SUPPORTED_DURATIONS_SEC,
   SEEDANCE_SUPPORTED_RESOLUTIONS,
 } from "./seedance-capability";
+import {
+  assertProductGroundingPreDispatch,
+  PRODUCT_GROUNDED_VIDEO_MODE,
+  ProductGroundingContractSchema,
+} from "./product-grounding-contract";
 
 const CanonicalScenePayloadSchema = z
   .object({
@@ -52,6 +57,10 @@ const CanonicalScenePayloadSchema = z
       )
       .optional(),
     kind: z.string().optional(),
+    generationMode: z
+      .enum(["PRODUCT_GROUNDED_VIDEO", "CREATIVE_T2V"])
+      .optional(),
+    productGrounding: ProductGroundingContractSchema.optional(),
   })
   .passthrough();
 
@@ -232,6 +241,24 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   }
 
   const assets = payload.assetReferences ?? [];
+  if (payload.generationMode === PRODUCT_GROUNDED_VIDEO_MODE) {
+    if (!payload.productGrounding) {
+      throw new SeedanceMappingError(
+        "Product-grounded Provider dispatch requires a grounding contract"
+      );
+    }
+    try {
+      assertProductGroundingPreDispatch({
+        grounding: payload.productGrounding,
+        prompt,
+        assetReferences: assets,
+      });
+    } catch (error) {
+      throw new SeedanceMappingError(
+        String((error as { message?: string })?.message ?? error)
+      );
+    }
+  }
   if (assets.length > SEEDANCE_MAX_REFERENCE_IMAGES) {
     throw new SeedanceMappingError(
       `Seedance accepts at most ${SEEDANCE_MAX_REFERENCE_IMAGES} reference images`

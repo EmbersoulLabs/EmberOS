@@ -14,8 +14,18 @@ import type {
 import type { MinimaxPayloadResolver } from "./minimax-request-mapping";
 import type { SeedancePayloadResolver } from "./seedance-request-mapping";
 import { integrityHash } from "./scene-execution-compiler";
+import {
+  buildProductGroundingContract,
+  CREATIVE_T2V_MODE,
+  PRIMARY_PRODUCT_REFERENCE_ROLE,
+  PRODUCT_GROUNDED_VIDEO_MODE,
+  PRODUCT_LOCK_PROMPT,
+  type ProductAuthorityAssessment,
+  type ProductGroundedProviderMode,
+  type ProductGroundingContract,
+} from "./product-grounding-contract";
 
-export const CANONICAL_PRODUCT_REFERENCE_ROLE = "PRODUCT_REFERENCE" as const;
+export const CANONICAL_PRODUCT_REFERENCE_ROLE = PRIMARY_PRODUCT_REFERENCE_ROLE;
 
 export type CanonicalProductReference = {
   readonly assetId: string;
@@ -33,6 +43,9 @@ export type ProductIdentityCapsule = {
 
 export type CanonicalScenePayloadForAdapter = {
   readonly kind: "animation-video-generation";
+  readonly generationMode:
+    | typeof PRODUCT_GROUNDED_VIDEO_MODE
+    | typeof CREATIVE_T2V_MODE;
   readonly prompt: string;
   readonly durationMs: number;
   readonly aspectRatio: "9:16";
@@ -46,6 +59,7 @@ export type CanonicalScenePayloadForAdapter = {
   /** Stable Campaign Asset identities only. Provider access is resolved just-in-time. */
   readonly assetReferences: readonly CanonicalProductReference[];
   readonly productIdentityCapsule: ProductIdentityCapsule;
+  readonly productGrounding?: ProductGroundingContract;
 };
 
 function sortedUnique(values: readonly string[]): string[] {
@@ -77,6 +91,11 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
   readonly instructions: AiStorySceneCompiledInstructions;
   readonly intent?: AiStorySceneExecutionIntent;
   readonly continuityFromSceneId?: string;
+  /** Server-certified visual comparison. Missing comparison fails closed for later Scenes. */
+  readonly productAuthorityAssessment?: ProductAuthorityAssessment;
+  /** Provider-mode certification is explicit; generic reference T2V is never inferred as exact. */
+  readonly productGroundedProviderMode?: ProductGroundedProviderMode;
+  readonly productGroundedProviderModeCertified?: boolean;
   /** Provider-specific minimal-cost override (e.g. Seedance 480p, MiniMax 768P). */
   readonly resolution?: string;
 }): CanonicalScenePayloadForAdapter {
@@ -116,11 +135,15 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
         `${index + 1}. ${shot.shotId}: ${shot.information} (${shot.cameraType}, ${shot.emotion})`
     );
   const promptParts = [
+    intentAssetIds.length > 0
+      ? "Image 1 = the canonical Campaign Product Asset and PRIMARY_PRODUCT authority."
+      : "",
     instructions.purpose.trim(),
     instructions.continuityNotes?.trim()
       ? `Continuity: ${instructions.continuityNotes.trim()}`
       : "",
     shotLines.length > 0 ? `Shots:\n${shotLines.join("\n")}` : "",
+    intentAssetIds.length > 0 ? PRODUCT_LOCK_PROMPT : "",
   ].filter(Boolean);
   const prompt = promptParts.join("\n\n");
   if (!prompt.trim()) {
@@ -135,6 +158,8 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
 
   return {
     kind: "animation-video-generation",
+    generationMode:
+      intentAssetIds.length > 0 ? PRODUCT_GROUNDED_VIDEO_MODE : CREATIVE_T2V_MODE,
     prompt,
     durationMs: durationMs > 0 ? durationMs : 4000,
     aspectRatio: "9:16",
@@ -152,6 +177,29 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
       })),
     assetReferences,
     productIdentityCapsule,
+    ...(intentAssetIds[0]
+      ? {
+          productGrounding: buildProductGroundingContract({
+            productAssetId: intentAssetIds[0],
+            instructions,
+            ...(input.continuityFromSceneId
+              ? { continuityFromSceneId: input.continuityFromSceneId }
+              : {}),
+            ...(input.productAuthorityAssessment
+              ? { authorityAssessment: input.productAuthorityAssessment }
+              : {}),
+            ...(input.productGroundedProviderMode
+              ? { providerMode: input.productGroundedProviderMode }
+              : {}),
+            ...(input.productGroundedProviderModeCertified !== undefined
+              ? {
+                  providerModeCertified:
+                    input.productGroundedProviderModeCertified,
+                }
+              : {}),
+          }),
+        }
+      : {}),
   };
 }
 

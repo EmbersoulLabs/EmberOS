@@ -1,7 +1,7 @@
 /**
  * Sprint 3 PR 3.4A — Seedance Adapter unit/contract tests (mocked HTTP).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createExecutionEnvelope } from "@ceo-agent/shared";
 import {
   SEEDANCE_ADAPTER_VERSION,
@@ -37,6 +37,7 @@ import {
   runSeedanceControlledValidation,
 } from "../packages/agents/src/ai-story/seedance-controlled-validation";
 import { seedanceErrorPolicy } from "../packages/agents/src/ai-story/seedance-error-classification";
+import { PRODUCT_LOCK_PROMPT } from "../packages/agents/src/ai-story/product-grounding-contract";
 import { SceneProviderWorkerRuntime } from "../packages/agents/src/ai-story/scene-provider-worker-runtime";
 import {
   buildPr33ValidatedBundle,
@@ -306,6 +307,67 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
     });
     expect(lookup.canonicalProviderState).toBe("SUCCEEDED");
     expect(lookup.terminalMedia?.uriReference).toContain("out.mp4");
+  });
+
+  it("blocks a conflicting product authority before the Seedance HTTP call", async () => {
+    const create = vi.fn(() => ({
+      status: 200,
+      body: { id: "must-not-be-created" },
+    }));
+    const { envelope, resolver } = await envelopeFor(
+      basePayload({
+        generationMode: "PRODUCT_GROUNDED_VIDEO",
+        prompt: `Image 1 = the canonical Campaign Product Asset and PRIMARY_PRODUCT authority. ${PRODUCT_LOCK_PROMPT}`,
+        assetReferences: [
+          {
+            assetId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            uri: "https://cdn.example.com/signed/product.png",
+            role: "PRIMARY_PRODUCT",
+            mediaType: "image/png",
+          },
+        ],
+        productGrounding: {
+          contractVersion: "1",
+          generationMode: "PRODUCT_GROUNDED_VIDEO",
+          primaryAuthority: {
+            kind: "CAMPAIGN_PRODUCT_ASSET",
+            assetId: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            referenceRole: "PRIMARY_PRODUCT",
+          },
+          secondaryAuthority: {
+            kind: "APPROVED_PREVIOUS_SCENE_MEDIA",
+            sceneId: "scene-1",
+            mayOverrideProductIdentity: false,
+          },
+          authorityStatus: "CONFLICT",
+          conflictDimensions: ["MAJOR_ARRANGEMENT_STRUCTURE"],
+          providerMode: "GENERIC_REFERENCE_T2V",
+          providerModeCertified: false,
+          directorCameraPolicy: {
+            compatible: true,
+            cameraMoves: ["Close-up: Static"],
+            violations: [],
+          },
+        },
+      })
+    );
+    const adapter = new SeedanceCanonicalAdapter({
+      config: seedanceConfig(),
+      payloadResolver: resolver,
+      http: mockHttp({ create }),
+    });
+
+    const result = await adapter.submit({
+      envelope,
+      providerAttemptId: "attempt-blocked",
+      dispatchId: "dispatch-blocked",
+      idempotencyKey: "grounding-conflict",
+      timeoutDeadline: envelope.executionContext.timeoutDeadline,
+    });
+
+    expect(result.acceptanceClassification).toBe("NOT_ACCEPTED");
+    expect(result.failureClassification?.code).toBe("PROVIDER_NOT_ACCEPTED");
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("HTTP 200 without task id is ACCEPTANCE_UNKNOWN, never ACCEPTED", async () => {
