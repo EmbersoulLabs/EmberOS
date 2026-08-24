@@ -192,6 +192,64 @@ async function countOpenReconciliations(
   return reconDispatchIds.size;
 }
 
+export function deriveGeneratedSceneRuntimeState(input: {
+  readonly released: boolean;
+  readonly approved: boolean;
+  readonly running: boolean;
+  readonly reviewAvailable: boolean;
+  readonly preDispatchBlocked: boolean;
+}): import("@ceo-agent/shared").GeneratedSceneRuntimeState {
+  if (!input.released) return "AUTHORIZED_NOT_RELEASED";
+  if (input.approved) return "APPROVED";
+  if (input.running) return "RUNNING";
+  if (input.reviewAvailable) return "PENDING_REVIEW";
+  if (input.preDispatchBlocked) return "PRE_DISPATCH_BLOCKED";
+  return "QUEUED";
+}
+
+async function loadPreDispatchBlockedSceneIds(
+  executionPlanId: string
+): Promise<ReadonlySet<string>> {
+  const db = getDb();
+  const rows = await db
+    .select({
+      sceneExecutionId:
+        schema.aiStorySceneSchedulingCorrelations.sceneExecutionId,
+      workerState: schema.aiStoryWorkerExecutionResults.workerState,
+      providerRequestId:
+        schema.aiStoryWorkerExecutionResults.providerRequestId,
+    })
+    .from(schema.aiStorySceneSchedulingCorrelations)
+    .innerJoin(
+      schema.providerExecutionDispatches,
+      eq(
+        schema.providerExecutionDispatches.jobId,
+        schema.aiStorySceneSchedulingCorrelations.outboxJobId
+      )
+    )
+    .innerJoin(
+      schema.aiStoryWorkerExecutionResults,
+      eq(
+        schema.aiStoryWorkerExecutionResults.dispatchId,
+        schema.providerExecutionDispatches.dispatchId
+      )
+    )
+    .where(
+      and(
+        eq(
+          schema.aiStorySceneSchedulingCorrelations.executionPlanId,
+          executionPlanId
+        ),
+        eq(schema.aiStoryWorkerExecutionResults.workerState, "NOT_ACCEPTED")
+      )
+    );
+  return new Set(
+    rows
+      .filter((row) => row.providerRequestId === null)
+      .map((row) => row.sceneExecutionId)
+  );
+}
+
 export type DeriveProductRuntimeProjectionInput = {
   readonly executionPlanId: string;
   readonly callerRole: WorkspaceRole | string | null;
@@ -294,6 +352,13 @@ export async function deriveProductRuntimeProjection(
     );
   }).catch(() => []);
   const sceneResultById = new Map(latestResults.map((row) => [row.sceneResultId, row]));
+  const releaseRows = authFact ? await observe("release_state_read", () => releaseRepo.list(executionPlanId)) : [];
+  const releaseStateByScene = new Map(
+    releaseRows.map((row) => [row.sceneExecutionId, row.releaseState] as const)
+  );
+  const preDispatchBlockedSceneIds = authFact
+    ? await loadPreDispatchBlockedSceneIds(executionPlanId)
+    : new Set<string>();
   const generatedSceneReviews = generatedSceneReviewBase.map((review) => {
     const latestAttempt = review.attempts.find(
       (attempt) => attempt.attemptId === review.latestAttemptId
@@ -319,15 +384,36 @@ export async function deriveProductRuntimeProjection(
             safeError: null,
           }
         : null;
-    return { ...review, generatedMedia: media };
+    const releaseState = releaseStateByScene.get(review.sceneExecutionId);
+    const reviewAvailable = Boolean(media && review.latestAttemptId);
+    const runtimeState = deriveGeneratedSceneRuntimeState({
+      released: releaseState === "RELEASED",
+      approved: Boolean(
+        review.reviewState === "APPROVED" && review.approvedAttemptId
+      ),
+      running: review.running,
+      reviewAvailable,
+      preDispatchBlocked: preDispatchBlockedSceneIds.has(
+        review.sceneExecutionId
+      ),
+    });
+    return {
+      ...review,
+      generatedMedia: media,
+      runtimeState,
+      reviewAvailable,
+      recoveryMode:
+        runtimeState === "PRE_DISPATCH_BLOCKED"
+          ? "HUMAN_RETRY_FROM_PRE_PROVIDER_FAILURE" as const
+          : null,
+    };
   });
   const pendingReviewSceneCount = generatedSceneReviews.filter(
-    (row) => row.reviewState === "PENDING_REVIEW"
+    (row) => row.runtimeState === "PENDING_REVIEW"
   ).length;
   const approvedSceneCount = generatedSceneReviews.filter(
     (row) => row.reviewState === "APPROVED"
   ).length;
-  const releaseRows = authFact ? await observe("release_state_read", () => releaseRepo.list(executionPlanId)) : [];
   const sceneReleaseStates = releaseRows.map((row) => ({
     sceneExecutionId: row.sceneExecutionId,
     sceneOrder: row.sceneOrder,

@@ -635,12 +635,24 @@ export class GeneratedSceneReviewService {
     const reviewState = approved
       ? "APPROVED"
       : latestReview?.decision ?? "PENDING_REVIEW";
+    const reviewAvailable = Boolean(
+      latestReview?.sceneResultId && latestReview.providerAttemptId
+    );
     const attemptCount = Math.max(attempts.length, input.reviews.length);
     return GeneratedSceneReviewReadModelSchema.parse({
       sceneExecutionId: input.sceneExecutionId,
       sceneId: input.sceneId,
       sceneOrder: input.sceneOrder,
       reviewState: running && reviewState === "RETRY_REQUESTED" ? "RETRY_REQUESTED" : reviewState,
+      runtimeState: approved
+        ? "APPROVED"
+        : running
+          ? "RUNNING"
+          : reviewAvailable
+            ? "PENDING_REVIEW"
+            : "QUEUED",
+      reviewAvailable,
+      recoveryMode: null,
       approvedAttemptId: approved?.providerAttemptId ?? null,
       approvedSceneResultId: approved?.sceneResultId ?? null,
       latestAttemptId: latestAttempt?.attemptId ?? latestReview?.providerAttemptId ?? null,
@@ -698,6 +710,9 @@ function buildDecisionSceneReadModel(
     sceneId: snapshot.sceneId,
     sceneOrder: snapshot.sceneOrder,
     reviewState: decision.decision,
+    runtimeState: decision.decision === "APPROVED" ? "APPROVED" : "PENDING_REVIEW",
+    reviewAvailable: Boolean(decision.sceneResultId && latest),
+    recoveryMode: null,
     approvedAttemptId: decision.decision === "APPROVED" ? decision.providerAttemptId : null,
     approvedSceneResultId: decision.decision === "APPROVED" ? decision.sceneResultId : null,
     latestAttemptId: latest?.attemptId ?? null,

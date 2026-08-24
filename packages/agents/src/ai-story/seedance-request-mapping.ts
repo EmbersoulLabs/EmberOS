@@ -22,6 +22,7 @@ import {
   assertProductGroundingPreDispatch,
   PRODUCT_GROUNDED_VIDEO_MODE,
   ProductGroundingContractSchema,
+  ProductVisualAuthorityCertificationSchema,
 } from "./product-grounding-contract";
 
 const CanonicalScenePayloadSchema = z
@@ -63,6 +64,8 @@ const CanonicalScenePayloadSchema = z
       .enum(["PRODUCT_GROUNDED_VIDEO", "CREATIVE_T2V"])
       .optional(),
     productGrounding: ProductGroundingContractSchema.optional(),
+    visualAuthorityCertification:
+      ProductVisualAuthorityCertificationSchema.optional(),
   })
   .passthrough();
 
@@ -249,9 +252,26 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
         "Product-grounded Provider dispatch requires a grounding contract"
       );
     }
+    const certification = payload.visualAuthorityCertification;
+    const trace = input.envelope.executionContext.trace ?? {};
+    if (
+      !certification ||
+      certification.orgId !== input.envelope.tenantId ||
+      certification.workspaceId !== input.envelope.workspaceId ||
+      certification.campaignId !==
+        input.envelope.canonicalRequest.executionIdentity.campaignId ||
+      certification.executionPlanId !== trace.executionPlanId ||
+      certification.sceneExecutionId !== trace.sceneExecutionId
+    ) {
+      throw new SeedanceMappingError(
+        "Product visual authority uncertified: certification does not match the Execution Envelope"
+      );
+    }
     try {
       assertProductGroundingPreDispatch({
         grounding: payload.productGrounding,
+        visualAuthorityCertification:
+          payload.visualAuthorityCertification,
         prompt,
         assetReferences: assets,
       });

@@ -97,6 +97,32 @@ export type ProductAuthorityAssessment = {
   readonly operatorResolutionDecision?: ProductAuthorityOperatorDecision;
 };
 
+/**
+ * Server-produced proof that the stable Campaign Asset may be used as the
+ * canonical product visual authority. This proof contains stable identities
+ * and boolean checks only; provider URLs are deliberately excluded.
+ */
+export const ProductVisualAuthorityCertificationSchema = z.object({
+  contractVersion: z.literal("1"),
+  certificationSource: z.literal("SERVER_AUTHORITY"),
+  status: z.literal("CERTIFIED"),
+  productAssetId: z.string().uuid(),
+  orgId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  executionPlanId: z.string().uuid(),
+  sceneExecutionId: z.string().uuid(),
+  assetExists: z.literal(true),
+  ownershipBound: z.literal(true),
+  campaignProductBinding: z.literal(true),
+  providerAccessibleFirstFrame: z.literal(true),
+  authorityConflictAbsent: z.literal(true),
+  previousSceneVisualAuthorityUsed: z.literal(false),
+}).strict();
+export type ProductVisualAuthorityCertification = z.infer<
+  typeof ProductVisualAuthorityCertificationSchema
+>;
+
 export type ProductGroundingGateResult = {
   readonly status: "ALLOWED" | "BLOCKED_PRE_DISPATCH";
   readonly blockers: readonly string[];
@@ -139,6 +165,7 @@ export function buildProductGroundingContract(input: {
   readonly productAssetId: string;
   readonly instructions: Pick<AiStorySceneCompiledInstructions, "shots">;
   readonly continuityFromSceneId?: string;
+  readonly previousSceneVisualAuthorityUsed?: boolean;
   readonly authorityAssessment?: ProductAuthorityAssessment;
   readonly providerMode?: ProductGroundedProviderMode;
   readonly providerModeCertified?: boolean;
@@ -155,7 +182,8 @@ export function buildProductGroundingContract(input: {
       assetId: input.productAssetId,
       referenceRole: PRIMARY_PRODUCT_REFERENCE_ROLE,
     },
-    ...(input.continuityFromSceneId
+    ...(input.continuityFromSceneId &&
+    (input.previousSceneVisualAuthorityUsed ?? true)
       ? {
           secondaryAuthority: {
             kind: "APPROVED_PREVIOUS_SCENE_MEDIA",
@@ -180,6 +208,7 @@ export function buildProductGroundingContract(input: {
 
 export function evaluateProductGroundingPreDispatch(input: {
   readonly grounding: ProductGroundingContract;
+  readonly visualAuthorityCertification?: ProductVisualAuthorityCertification;
   readonly prompt: string;
   readonly assetReferences: readonly {
     readonly assetId: string;
@@ -188,6 +217,11 @@ export function evaluateProductGroundingPreDispatch(input: {
 }): ProductGroundingGateResult {
   const blockers: string[] = [];
   const grounding = ProductGroundingContractSchema.parse(input.grounding);
+  const certification = input.visualAuthorityCertification
+    ? ProductVisualAuthorityCertificationSchema.parse(
+        input.visualAuthorityCertification
+      )
+    : null;
   const primaryReferences = input.assetReferences.filter(
     (reference) =>
       reference.role === PRIMARY_PRODUCT_REFERENCE_ROLE &&
@@ -200,6 +234,13 @@ export function evaluateProductGroundingPreDispatch(input: {
         ? "PRODUCT_VISUAL_AUTHORITY_CONFLICT"
         : "PRODUCT_VISUAL_AUTHORITY_UNCERTIFIED"
     );
+  }
+  if (
+    !certification ||
+    certification.productAssetId !== grounding.primaryAuthority.assetId ||
+    !certification.authorityConflictAbsent
+  ) {
+    blockers.push("PRODUCT_VISUAL_AUTHORITY_UNCERTIFIED");
   }
   if (primaryReferences.length !== 1) {
     blockers.push("CANONICAL_PRODUCT_REFERENCE_INVALID");
@@ -223,9 +264,10 @@ export function evaluateProductGroundingPreDispatch(input: {
     blockers.push("PRODUCT_LOCK_PROMPT_MISSING");
   }
 
+  const uniqueBlockers = [...new Set(blockers)];
   return {
-    status: blockers.length === 0 ? "ALLOWED" : "BLOCKED_PRE_DISPATCH",
-    blockers,
+    status: uniqueBlockers.length === 0 ? "ALLOWED" : "BLOCKED_PRE_DISPATCH",
+    blockers: uniqueBlockers,
   };
 }
 
@@ -243,6 +285,7 @@ export class ProductGroundingGateError extends Error {
 
 export function assertProductGroundingPreDispatch(input: {
   readonly grounding: ProductGroundingContract;
+  readonly visualAuthorityCertification?: ProductVisualAuthorityCertification;
   readonly prompt: string;
   readonly assetReferences: readonly {
     readonly assetId: string;

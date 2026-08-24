@@ -14,6 +14,26 @@ import { makePhase2aCompilation } from "./helpers/ai-story-phase-2a";
 const R3_PRODUCT_ASSET_ID = "c0e04afc-01fc-4578-8697-ec76fb6d0a82";
 const R3_SCENE_1_ID = "0209531f-1385-55b5-bf52-a4439c2ceb1e";
 
+function serverCertification(assetId = R3_PRODUCT_ASSET_ID) {
+  return {
+    contractVersion: "1" as const,
+    certificationSource: "SERVER_AUTHORITY" as const,
+    status: "CERTIFIED" as const,
+    productAssetId: assetId,
+    orgId: "10000000-0000-4000-8000-000000000002",
+    workspaceId: "10000000-0000-4000-8000-000000000003",
+    campaignId: "10000000-0000-4000-8000-000000000004",
+    executionPlanId: "10000000-0000-4000-8000-000000000101",
+    sceneExecutionId: "10000000-0000-4000-8000-000000000201",
+    assetExists: true as const,
+    ownershipBound: true as const,
+    campaignProductBinding: true as const,
+    providerAccessibleFirstFrame: true as const,
+    authorityConflictAbsent: true as const,
+    previousSceneVisualAuthorityUsed: false as const,
+  };
+}
+
 describe("AI Story canonical product authority and fail-closed grounding", () => {
   it("detects the certified R3 authority conflict and blocks Attempt 3", () => {
     const compilation = makePhase2aCompilation();
@@ -82,6 +102,7 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
 
     const gate = evaluateProductGroundingPreDispatch({
       grounding: payload.productGrounding!,
+      visualAuthorityCertification: payload.visualAuthorityCertification,
       prompt: payload.prompt,
       assetReferences: payload.assetReferences,
     });
@@ -110,12 +131,16 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
         })),
       },
       productAuthorityAssessment: { status: "RESOLVED" },
+      visualAuthorityCertification: serverCertification(
+        scene.referencedAssetIds[0]
+      ),
       productGroundedProviderMode: "FIRST_FRAME_I2V",
       productGroundedProviderModeCertified: true,
     });
 
     const gate = evaluateProductGroundingPreDispatch({
       grounding: payload.productGrounding!,
+      visualAuthorityCertification: payload.visualAuthorityCertification,
       prompt: payload.prompt,
       assetReferences: payload.assetReferences,
     });
@@ -139,6 +164,9 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
           ? { continuityFromSceneId: compilation.intents[index - 1]!.identity.sceneId }
           : {}),
         productAuthorityAssessment: { status: "RESOLVED" },
+        visualAuthorityCertification: serverCertification(
+          intent.referencedAssetIds[0]
+        ),
         productGroundedProviderMode: "FIRST_FRAME_I2V",
         productGroundedProviderModeCertified: true,
       })
@@ -148,6 +176,7 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
       expect(
         evaluateProductGroundingPreDispatch({
           grounding: payload.productGrounding!,
+          visualAuthorityCertification: payload.visualAuthorityCertification,
           prompt: payload.prompt,
           assetReferences: payload.assetReferences,
         })
@@ -171,6 +200,9 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
         ]!,
       continuityFromSceneId: R3_SCENE_1_ID,
       productAuthorityAssessment: { status: "RESOLVED" },
+      visualAuthorityCertification: serverCertification(
+        scene.referencedAssetIds[0]
+      ),
       productGroundedProviderMode: "FIRST_FRAME_I2V",
       productGroundedProviderModeCertified: true,
     });
@@ -178,8 +210,9 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
     expect(payload.productGrounding?.primaryAuthority.kind).toBe(
       "CAMPAIGN_PRODUCT_ASSET"
     );
+    expect(payload.productGrounding?.secondaryAuthority).toBeUndefined();
     expect(
-      payload.productGrounding?.secondaryAuthority?.mayOverrideProductIdentity
+      payload.visualAuthorityCertification?.previousSceneVisualAuthorityUsed
     ).toBe(false);
   });
 
