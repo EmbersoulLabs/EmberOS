@@ -3,6 +3,7 @@ import postgres, { type Sql } from "postgres";
 import {
   assertExecutionPlanOwnershipChainInSingleQuery,
   closeDb,
+  getExecutionPlanReviewPlanAuthority,
   getDb,
 } from "@ceo-agent/db";
 import {
@@ -141,6 +142,21 @@ describeIntegration("ephemeral PostgreSQL integration authority", () => {
       await sql`insert into ai_stories (id, org_id, workspace_id, campaign_id, title, original_idea) values (${authority.storyId}, ${authority.orgId}, ${authority.workspaceId}, ${authority.campaignId}, 'Ownership probe', 'Ownership probe')`;
       await sql`insert into ai_story_versions (id, story_id, version_number, structured_content, frozen_at) values (${authority.storyVersionId}, ${authority.storyId}, 1, ${sql.json({})}, now())`;
       await sql`insert into ai_story_animation_packages (id, org_id, workspace_id, campaign_id, story_id, story_version_id, status, payload) values (${authority.animationPackageId}, ${authority.orgId}, ${authority.workspaceId}, ${authority.campaignId}, ${authority.storyId}, ${authority.storyVersionId}, 'ready_for_execution', ${sql.json({ scenePlan: [] })})`;
+      const compiledPlan = {
+        scenes: [{ id: "scene-1", compiledPayload: "x".repeat(512 * 1024) }],
+      };
+      await sql`
+        insert into ai_story_execution_plans (
+          id, org_id, workspace_id, campaign_id, story_id, story_version_id,
+          animation_package_id, status, contract_version, compilation_hash,
+          deterministic_fingerprint, plan, compiled_at
+        ) values (
+          ${authority.id}, ${authority.orgId}, ${authority.workspaceId},
+          ${authority.campaignId}, ${authority.storyId}, ${authority.storyVersionId},
+          ${authority.animationPackageId}, 'PLANNED', 'ci-v1', 'ci-plan-hash',
+          'ci-plan-read-fingerprint', ${sql.json(compiledPlan)}, now()
+        )
+      `;
 
       const startedAt = performance.now();
       await assertExecutionPlanOwnershipChainInSingleQuery(authority, getDb());
@@ -166,8 +182,66 @@ describeIntegration("ephemeral PostgreSQL integration authority", () => {
       }));
       expect(standaloneMs).toBeLessThan(250);
       expect(JSON.stringify(queryPlan)).toContain("Execution Time");
+
+      const preStartedAt = performance.now();
+      const preRows = await sql`
+        select * from ai_story_execution_plans
+        where id = ${authority.id}
+        limit 1
+      `;
+      const preFixStandaloneMs = performance.now() - preStartedAt;
+      const preFixResponseBytesApprox = new TextEncoder().encode(JSON.stringify(preRows)).byteLength;
+
+      const postStartedAt = performance.now();
+      const postRows = await sql`
+        select id, org_id, workspace_id, campaign_id, story_id,
+          story_version_id, animation_package_id, status
+        from ai_story_execution_plans
+        where id = ${authority.id}
+        limit 1
+      `;
+      const postFixStandaloneMs = performance.now() - postStartedAt;
+      const postFixResponseBytesApprox = new TextEncoder().encode(JSON.stringify(postRows)).byteLength;
+      const productionProjection = await getExecutionPlanReviewPlanAuthority(authority.id, getDb());
+
+      const [planReadExplainRow] = await sql.unsafe<Array<{ "QUERY PLAN": unknown }>>(`
+        explain (analyze, buffers, format json)
+        select id, org_id, workspace_id, campaign_id, story_id,
+          story_version_id, animation_package_id, status
+        from ai_story_execution_plans
+        where id = '${authority.id}'::uuid
+        limit 1
+      `);
+      const planReadQueryPlan = planReadExplainRow?.["QUERY PLAN"];
+      console.info("ai_story_review_plan_read_ci_timing", JSON.stringify({
+        preFixStandaloneMs: Number(preFixStandaloneMs.toFixed(3)),
+        postFixStandaloneMs: Number(postFixStandaloneMs.toFixed(3)),
+        preFixQueryCount: 1,
+        postFixQueryCount: 1,
+        preFixRoundTripCount: 1,
+        postFixRoundTripCount: 1,
+        preFixRowCount: preRows.length,
+        postFixRowCount: postRows.length,
+        preFixResponseBytesApprox,
+        postFixResponseBytesApprox,
+        queryPlan: planReadQueryPlan,
+      }));
+      expect(productionProjection).toEqual({
+        id: authority.id,
+        orgId: authority.orgId,
+        workspaceId: authority.workspaceId,
+        campaignId: authority.campaignId,
+        storyId: authority.storyId,
+        storyVersionId: authority.storyVersionId,
+        animationPackageId: authority.animationPackageId,
+        status: "PLANNED",
+      });
+      expect(postFixStandaloneMs).toBeLessThan(250);
+      expect(postFixResponseBytesApprox).toBeLessThan(preFixResponseBytesApprox / 10);
+      expect(JSON.stringify(planReadQueryPlan)).toContain("Execution Time");
     } finally {
       await closeDb();
+      await sql`delete from ai_story_execution_plans where id = ${authority.id}`;
       await sql`delete from ai_story_animation_packages where id = ${authority.animationPackageId}`;
       await sql`delete from ai_story_versions where id = ${authority.storyVersionId}`;
       await sql`delete from ai_stories where id = ${authority.storyId}`;

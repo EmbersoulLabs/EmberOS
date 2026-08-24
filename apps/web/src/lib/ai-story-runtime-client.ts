@@ -65,6 +65,13 @@ export type AiStoryRuntimeReadSubstageTiming = {
   readonly queryCount: number;
   readonly roundTripCount: number;
   readonly rowCount: number | null;
+  readonly planReadPhaseTiming?: {
+    readonly remainingRuntimeBudgetMsAtEntry: number | null;
+    readonly poolWaitMs: number | null;
+    readonly dbExecutionMs: number | null;
+    readonly appWallMs: number | null;
+    readonly responseBytesApprox: number | null;
+  };
   readonly ownershipQueryPhaseTiming?: {
     readonly remainingRuntimeBudgetMsAtEntry: number | null;
     readonly connectionAcquireMs: number | null;

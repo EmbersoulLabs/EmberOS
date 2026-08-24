@@ -60,7 +60,16 @@ export type ExecutionPlanReviewProjectionSubstageTiming = {
   readonly queryCount: number;
   readonly roundTripCount: number;
   readonly rowCount: number | null;
+  readonly planReadPhaseTiming?: ExecutionPlanReviewPlanReadPhaseTiming;
   readonly ownershipQueryPhaseTiming?: ExecutionPlanOwnershipQueryPhaseTiming;
+};
+
+export type ExecutionPlanReviewPlanReadPhaseTiming = {
+  readonly remainingRuntimeBudgetMsAtEntry: number | null;
+  readonly poolWaitMs: number | null;
+  readonly dbExecutionMs: number | null;
+  readonly appWallMs: number | null;
+  readonly responseBytesApprox: number | null;
 };
 
 export type ExecutionPlanOwnershipQueryPhaseTiming = {
@@ -107,8 +116,9 @@ export class ExecutionPlanReviewProjectionTimingRecorder {
   );
   async run<T>(stage: ExecutionPlanReviewProjectionSubstage, operation: () => Promise<T>, rowCount: (value: T) => number | null): Promise<T> {
     const startedAt = performance.now();
+    const isPlanRead = stage === "execution_plan_review.plan_read";
     const isOwnershipQuery = stage === "execution_plan_review.ownership_chain_read";
-    const remainingRuntimeBudgetMsAtEntry = isOwnershipQuery
+    const remainingRuntimeBudgetMsAtEntry = isPlanRead || isOwnershipQuery
       ? Math.max(0, Math.round(this.remainingRuntimeBudgetMs?.() ?? 0)) || null
       : null;
     this.active = { stage, startedAt, dispatchedAt: null, remainingRuntimeBudgetMsAtEntry };
@@ -122,11 +132,23 @@ export class ExecutionPlanReviewProjectionTimingRecorder {
       const rowCountStartedAt = performance.now();
       const completedRowCount = rowCount(value);
       const completedAt = performance.now();
+      const responseBytesApprox = isPlanRead
+        ? new TextEncoder().encode(JSON.stringify(value)).byteLength
+        : null;
       this.rows.set(stage, {
         ...this.rows.get(stage)!,
         status: "COMPLETED",
         durationMs: Math.round(completedAt - startedAt),
         rowCount: completedRowCount,
+        ...(isPlanRead ? {
+          planReadPhaseTiming: {
+            remainingRuntimeBudgetMsAtEntry,
+            poolWaitMs: null,
+            dbExecutionMs: null,
+            appWallMs: Math.round(completedAt - startedAt),
+            responseBytesApprox,
+          },
+        } : {}),
         ...(isOwnershipQuery ? {
           ownershipQueryPhaseTiming: {
             remainingRuntimeBudgetMsAtEntry,
@@ -153,12 +175,22 @@ export class ExecutionPlanReviewProjectionTimingRecorder {
     if (!this.active) return;
     const { stage, startedAt, dispatchedAt, remainingRuntimeBudgetMsAtEntry } = this.active;
     const timedOutAt = performance.now();
+    const isPlanRead = stage === "execution_plan_review.plan_read";
     const isOwnershipQuery = stage === "execution_plan_review.ownership_chain_read";
     const existing = this.rows.get(stage)!;
     this.rows.set(stage, {
       ...existing,
       status: "TIMED_OUT",
       durationMs: Math.round(timedOutAt - startedAt),
+      ...(isPlanRead ? {
+        planReadPhaseTiming: {
+          remainingRuntimeBudgetMsAtEntry,
+          poolWaitMs: null,
+          dbExecutionMs: null,
+          appWallMs: Math.round(timedOutAt - startedAt),
+          responseBytesApprox: null,
+        },
+      } : {}),
       ...(isOwnershipQuery ? {
         ownershipQueryPhaseTiming: {
           remainingRuntimeBudgetMsAtEntry:
@@ -348,6 +380,39 @@ function buildStoryDecisionFingerprint(input: {
     kind: "story-review",
     ...input,
   });
+}
+
+export type ExecutionPlanReviewPlanAuthority = Pick<
+  typeof schema.aiStoryExecutionPlans.$inferSelect,
+  | "id"
+  | "orgId"
+  | "workspaceId"
+  | "campaignId"
+  | "storyId"
+  | "storyVersionId"
+  | "animationPackageId"
+  | "status"
+>;
+
+export async function getExecutionPlanReviewPlanAuthority(
+  executionPlanId: string,
+  db: QueryDb = getDb()
+): Promise<ExecutionPlanReviewPlanAuthority | null> {
+  const [plan] = await db
+    .select({
+      id: schema.aiStoryExecutionPlans.id,
+      orgId: schema.aiStoryExecutionPlans.orgId,
+      workspaceId: schema.aiStoryExecutionPlans.workspaceId,
+      campaignId: schema.aiStoryExecutionPlans.campaignId,
+      storyId: schema.aiStoryExecutionPlans.storyId,
+      storyVersionId: schema.aiStoryExecutionPlans.storyVersionId,
+      animationPackageId: schema.aiStoryExecutionPlans.animationPackageId,
+      status: schema.aiStoryExecutionPlans.status,
+    })
+    .from(schema.aiStoryExecutionPlans)
+    .where(eq(schema.aiStoryExecutionPlans.id, executionPlanId))
+    .limit(1);
+  return plan ?? null;
 }
 
 export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
@@ -754,12 +819,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   }
 
   private async requirePlanOrNull(executionPlanId: string, db: QueryDb) {
-    const [plan] = await db
-      .select()
-      .from(schema.aiStoryExecutionPlans)
-      .where(eq(schema.aiStoryExecutionPlans.id, executionPlanId))
-      .limit(1);
-    return plan ?? null;
+    return getExecutionPlanReviewPlanAuthority(executionPlanId, db);
   }
 
   private async requirePlan(executionPlanId: string, db: QueryDb) {
@@ -819,7 +879,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
 
   private async readProjection(
     executionPlanId: string,
-    plan: typeof schema.aiStoryExecutionPlans.$inferSelect,
+    plan: ExecutionPlanReviewPlanAuthority,
     db: QueryDb,
     timingRecorder: ExecutionPlanReviewProjectionTimingRecorder =
       new ExecutionPlanReviewProjectionTimingRecorder()

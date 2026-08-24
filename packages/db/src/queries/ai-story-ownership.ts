@@ -38,6 +38,10 @@ export type PlanOwnedRow = CanonicalOwnershipColumns & {
   readonly executionPlanId: string;
 };
 
+export type ExecutionPlanOwnershipAuthority = CanonicalOwnershipColumns & {
+  readonly id: string;
+};
+
 /**
  * Fail closed when duplicated ownership columns drift from the expected Aggregate Root.
  */
@@ -223,7 +227,7 @@ export async function assertExecutionPlanOwnershipChainInSingleQuery(
 }
 
 export function planOwnershipFromRow(
-  plan: typeof schema.aiStoryExecutionPlans.$inferSelect
+  plan: ExecutionPlanOwnershipAuthority
 ): PlanOwnedRow {
   return {
     orgId: plan.orgId,
@@ -237,7 +241,7 @@ export function planOwnershipFromRow(
 }
 
 export function assertSceneMatchesPlan(
-  plan: typeof schema.aiStoryExecutionPlans.$inferSelect,
+  plan: ExecutionPlanOwnershipAuthority,
   scene: typeof schema.aiStorySceneExecutions.$inferSelect
 ): void {
   assertPlanOwnershipColumnsMatch(
