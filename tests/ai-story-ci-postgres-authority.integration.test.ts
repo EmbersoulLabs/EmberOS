@@ -125,6 +125,50 @@ describeIntegration("ephemeral PostgreSQL integration authority", () => {
     await second;
   });
 
+  it("certifies trivial-query and primary-key round-trip baselines", async () => {
+    await sql`
+      insert into emberos_ci_authority_probe (id, value)
+      values (99, 'roundtrip-baseline')
+      on conflict (id) do update set value = excluded.value
+    `;
+    const measure = async (operation: () => Promise<unknown>) => {
+      const startedAt = performance.now();
+      await operation();
+      return performance.now() - startedAt;
+    };
+    const select1ValuesMs: number[] = [];
+    const pkLookupValuesMs: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      select1ValuesMs.push(await measure(() => sql`select 1 as value`));
+    }
+    for (let index = 0; index < 5; index += 1) {
+      pkLookupValuesMs.push(await measure(() => sql`
+        select id from emberos_ci_authority_probe where id = 99
+      `));
+    }
+    const oneQueryMs = await measure(() => sql`
+      select 1 as value_1, 1 as value_2, 1 as value_3, 1 as value_4, 1 as value_5
+    `);
+    const fiveQueryValuesMs: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      fiveQueryValuesMs.push(await measure(() => sql`select 1 as value`));
+    }
+    const [explainRow] = await sql.unsafe<Array<{ "QUERY PLAN": unknown }>>(
+      "explain (analyze, format json) select 1 as value"
+    );
+    console.info("prod_db_roundtrip_ci_baseline", JSON.stringify({
+      select1ValuesMs: select1ValuesMs.map((value) => Number(value.toFixed(3))),
+      pkLookupValuesMs: pkLookupValuesMs.map((value) => Number(value.toFixed(3))),
+      oneQueryMs: Number(oneQueryMs.toFixed(3)),
+      fiveQueryValuesMs: fiveQueryValuesMs.map((value) => Number(value.toFixed(3))),
+      fiveQueryTotalMs: Number(fiveQueryValuesMs.reduce((sum, value) => sum + value, 0).toFixed(3)),
+      queryPlan: explainRow?.["QUERY PLAN"],
+    }));
+    expect(select1ValuesMs).toHaveLength(5);
+    expect(pkLookupValuesMs).toHaveLength(5);
+    expect(JSON.stringify(explainRow?.["QUERY PLAN"])).toContain("Execution Time");
+  });
+
   it("certifies the compact ownership proof standalone and captures its SQL plan", async () => {
     const authority = {
       id: "71000000-0000-4000-8000-000000000006",
