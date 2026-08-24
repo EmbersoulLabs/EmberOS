@@ -66,6 +66,14 @@ export function shouldPollRuntimeProjection(
   projection: ProductRuntimeProjection | null | undefined
 ): boolean {
   if (!projection || isWaitingForHumanReview(projection)) return false;
+  const scenes = projection.generatedSceneReviews ?? [];
+  const waitingForPreDispatchRecovery = scenes.some(
+    (scene) => scene.runtimeState === "PRE_DISPATCH_BLOCKED"
+  );
+  const activeSceneWork = scenes.some(
+    (scene) => scene.runtimeState === "RUNNING" || scene.running
+  );
+  if (waitingForPreDispatchRecovery && !activeSceneWork) return false;
   return shouldPollProductRuntime(projection.status);
 }
 

@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import {
+  type ProductVisualAuthorityCertification,
   type MinimaxAssetAccessResolver,
   type SeedanceAssetAccessResolver,
 } from "@ceo-agent/agents";
@@ -21,6 +22,102 @@ export type WorkerProviderAssetAccessDependencies = {
   ) => Promise<AuthorizedAsset | null>;
   readonly mintSignedUrl?: (storagePath: string) => Promise<string>;
 };
+
+export type ProductVisualAuthorityCertificationInput = {
+  readonly productAssetId: string;
+  readonly orgId: string;
+  readonly workspaceId: string;
+  readonly campaignId: string;
+  readonly executionPlanId: string;
+  readonly sceneExecutionId: string;
+};
+
+type VisualAuthorityRow = {
+  readonly assetId: string;
+  readonly orgId: string;
+  readonly workspaceId: string;
+  readonly campaignId: string;
+  readonly storagePath: string;
+  readonly mimeType: string | null;
+};
+
+async function loadVisualAuthorityRow(
+  input: ProductVisualAuthorityCertificationInput
+): Promise<VisualAuthorityRow | null> {
+  const [row] = await getDb()
+    .select({
+      assetId: schema.assets.id,
+      orgId: schema.assets.orgId,
+      workspaceId: schema.assets.workspaceId,
+      campaignId: schema.campaignAssetRefs.campaignId,
+      storagePath: schema.assets.storagePath,
+      mimeType: schema.assets.mimeType,
+    })
+    .from(schema.assets)
+    .innerJoin(
+      schema.campaignAssetRefs,
+      eq(schema.campaignAssetRefs.assetId, schema.assets.id)
+    )
+    .where(
+      and(
+        eq(schema.assets.id, input.productAssetId),
+        eq(schema.assets.orgId, input.orgId),
+        eq(schema.assets.workspaceId, input.workspaceId),
+        eq(schema.campaignAssetRefs.campaignId, input.campaignId)
+      )
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+/**
+ * Certify stable visual authority from live server-owned rows. A prior Scene ID
+ * is continuity metadata only here: no prior Scene media is promoted into the
+ * Provider request, so it cannot override or conflict with Image 1 authority.
+ */
+export function createWorkerProductVisualAuthorityCertifier(
+  deps: {
+    readonly load?: (
+      input: ProductVisualAuthorityCertificationInput
+    ) => Promise<VisualAuthorityRow | null>;
+  } = {}
+) {
+  const load = deps.load ?? loadVisualAuthorityRow;
+  return async function certifyWorkerProductVisualAuthority(
+    input: ProductVisualAuthorityCertificationInput
+  ): Promise<ProductVisualAuthorityCertification> {
+    const row = await load(input);
+    if (
+      !row ||
+      !row.storagePath.trim() ||
+      !row.mimeType?.toLowerCase().startsWith("image/")
+    ) {
+      throw new Error(
+        "Canonical Campaign Product Asset visual authority is not certifiable"
+      );
+    }
+    return {
+      contractVersion: "1",
+      certificationSource: "SERVER_AUTHORITY",
+      status: "CERTIFIED",
+      productAssetId: row.assetId,
+      orgId: row.orgId,
+      workspaceId: row.workspaceId,
+      campaignId: row.campaignId,
+      executionPlanId: input.executionPlanId,
+      sceneExecutionId: input.sceneExecutionId,
+      assetExists: true,
+      ownershipBound: true,
+      campaignProductBinding: true,
+      providerAccessibleFirstFrame: true,
+      authorityConflictAbsent: true,
+      previousSceneVisualAuthorityUsed: false,
+    };
+  };
+}
+
+export const certifyWorkerProductVisualAuthority =
+  createWorkerProductVisualAuthorityCertifier();
 
 async function loadAuthorizedAsset(
   input: ProviderAssetAccessInput

@@ -20,7 +20,10 @@ import {
   AiStorySceneExecutionPersistenceRepository,
   ExecutionEnvelopeRepository,
 } from "@ceo-agent/db";
-import { createWorkerProviderAssetAccessResolver } from "./ai-story-provider-asset-access";
+import {
+  certifyWorkerProductVisualAuthority,
+  createWorkerProviderAssetAccessResolver,
+} from "./ai-story-provider-asset-access";
 
 export type ProductionAiStoryAdapterRegistryOptions = {
   /** Injected registry for tests (deterministic adapters). */
@@ -57,6 +60,7 @@ export function createEnvelopeBackedCanonicalPayloadResolver(
       envelopes.getEnvelopeByPayloadReference(payloadReference),
     getCompilationByExecutionPlanId: (executionPlanId) =>
       persistence.getByExecutionPlanId(executionPlanId),
+    certifyProductVisualAuthority: certifyWorkerProductVisualAuthority,
     resolution: options.resolution,
     ...(options.productGroundedProviderMode
       ? { productGroundedProviderMode: options.productGroundedProviderMode }

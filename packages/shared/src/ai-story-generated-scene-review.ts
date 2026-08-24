@@ -126,6 +126,19 @@ export type GeneratedSceneMediaReadModel = z.infer<
   typeof GeneratedSceneMediaReadModelSchema
 >;
 
+export const GeneratedSceneRuntimeStateSchema = z.enum([
+  "AUTHORIZED_NOT_RELEASED",
+  "QUEUED",
+  "PRE_DISPATCH_BLOCKED",
+  "RUNNING",
+  "PENDING_REVIEW",
+  "APPROVED",
+  "FAILED",
+]);
+export type GeneratedSceneRuntimeState = z.infer<
+  typeof GeneratedSceneRuntimeStateSchema
+>;
+
 /** Browser-safe per-Scene generated-media review projection. No secrets/URLs. */
 export const GeneratedSceneReviewReadModelSchema = z
   .object({
@@ -133,6 +146,12 @@ export const GeneratedSceneReviewReadModelSchema = z
     sceneId: z.string().min(1),
     sceneOrder: z.number().int().nonnegative(),
     reviewState: GeneratedSceneReviewStateSchema,
+    runtimeState: GeneratedSceneRuntimeStateSchema.default("QUEUED"),
+    reviewAvailable: z.boolean().default(false),
+    recoveryMode: z
+      .literal("HUMAN_RETRY_FROM_PRE_PROVIDER_FAILURE")
+      .nullable()
+      .default(null),
     approvedAttemptId: z.string().nullable(),
     approvedSceneResultId: z.string().uuid().nullable(),
     latestAttemptId: z.string().nullable(),

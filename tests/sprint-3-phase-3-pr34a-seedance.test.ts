@@ -101,7 +101,10 @@ async function envelopeFor(payload: unknown) {
         externalProcessingAllowed: true,
         providerTrainingAllowed: false,
       },
-      trace: {},
+      trace: {
+        executionPlanId: "10000000-0000-4000-8000-000000000101",
+        sceneExecutionId: "10000000-0000-4000-8000-000000000201",
+      },
     },
     capabilityId: "animation-video-generation",
     capabilityVersion: "1.0.0",
@@ -351,6 +354,23 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
             violations: [],
           },
         },
+        visualAuthorityCertification: {
+          contractVersion: "1",
+          certificationSource: "SERVER_AUTHORITY",
+          status: "CERTIFIED",
+          productAssetId,
+          orgId: "10000000-0000-4000-8000-000000000001",
+          workspaceId: "10000000-0000-4000-8000-000000000002",
+          campaignId: "10000000-0000-4000-8000-000000000003",
+          executionPlanId: "10000000-0000-4000-8000-000000000101",
+          sceneExecutionId: "10000000-0000-4000-8000-000000000201",
+          assetExists: true,
+          ownershipBound: true,
+          campaignProductBinding: true,
+          providerAccessibleFirstFrame: true,
+          authorityConflictAbsent: true,
+          previousSceneVisualAuthorityUsed: false,
+        },
       })
     );
 
@@ -379,6 +399,23 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
 
   it("blocks generic reference fallback and missing first-frame authority", async () => {
     const productAssetId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const visualAuthorityCertification = {
+      contractVersion: "1",
+      certificationSource: "SERVER_AUTHORITY",
+      status: "CERTIFIED",
+      productAssetId,
+      orgId: "10000000-0000-4000-8000-000000000001",
+      workspaceId: "10000000-0000-4000-8000-000000000002",
+      campaignId: "10000000-0000-4000-8000-000000000003",
+      executionPlanId: "10000000-0000-4000-8000-000000000101",
+      sceneExecutionId: "10000000-0000-4000-8000-000000000201",
+      assetExists: true,
+      ownershipBound: true,
+      campaignProductBinding: true,
+      providerAccessibleFirstFrame: true,
+      authorityConflictAbsent: true,
+      previousSceneVisualAuthorityUsed: false,
+    };
     const grounding = {
       contractVersion: "1",
       generationMode: "PRODUCT_GROUNDED_VIDEO",
@@ -409,6 +446,7 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
           },
         ],
         productGrounding: grounding,
+        visualAuthorityCertification,
       })
     );
     await expect(
@@ -429,6 +467,7 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
           ...grounding,
           providerMode: "FIRST_FRAME_I2V",
         },
+        visualAuthorityCertification,
       })
     );
     await expect(

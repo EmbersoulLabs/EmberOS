@@ -21,6 +21,7 @@ import {
   PRODUCT_GROUNDED_VIDEO_MODE,
   PRODUCT_LOCK_PROMPT,
   type ProductAuthorityAssessment,
+  type ProductVisualAuthorityCertification,
   type ProductGroundedProviderMode,
   type ProductGroundingContract,
 } from "./product-grounding-contract";
@@ -60,6 +61,7 @@ export type CanonicalScenePayloadForAdapter = {
   readonly assetReferences: readonly CanonicalProductReference[];
   readonly productIdentityCapsule: ProductIdentityCapsule;
   readonly productGrounding?: ProductGroundingContract;
+  readonly visualAuthorityCertification?: ProductVisualAuthorityCertification;
 };
 
 function sortedUnique(values: readonly string[]): string[] {
@@ -93,6 +95,8 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
   readonly continuityFromSceneId?: string;
   /** Server-certified visual comparison. Missing comparison fails closed for later Scenes. */
   readonly productAuthorityAssessment?: ProductAuthorityAssessment;
+  /** Server-authoritative proof; never supplied by browser/client input. */
+  readonly visualAuthorityCertification?: ProductVisualAuthorityCertification;
   /** Provider-mode certification is explicit; generic reference T2V is never inferred as exact. */
   readonly productGroundedProviderMode?: ProductGroundedProviderMode;
   readonly productGroundedProviderModeCertified?: boolean;
@@ -185,6 +189,13 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
             ...(input.continuityFromSceneId
               ? { continuityFromSceneId: input.continuityFromSceneId }
               : {}),
+            ...(input.visualAuthorityCertification
+              ? {
+                  previousSceneVisualAuthorityUsed:
+                    input.visualAuthorityCertification
+                      .previousSceneVisualAuthorityUsed,
+                }
+              : {}),
             ...(input.productAuthorityAssessment
               ? { authorityAssessment: input.productAuthorityAssessment }
               : {}),
@@ -198,6 +209,12 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
                 }
               : {}),
           }),
+          ...(input.visualAuthorityCertification
+            ? {
+                visualAuthorityCertification:
+                  input.visualAuthorityCertification,
+              }
+            : {}),
         }
       : {}),
   };
@@ -218,6 +235,14 @@ export type CompilationBackedPayloadResolverDeps = {
   /** Provider-owned request-shape certification; authority assessment remains separate. */
   readonly productGroundedProviderMode?: ProductGroundedProviderMode;
   readonly productGroundedProviderModeCertified?: boolean;
+  readonly certifyProductVisualAuthority?: (input: {
+    readonly productAssetId: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly executionPlanId: string;
+    readonly sceneExecutionId: string;
+  }) => Promise<ProductVisualAuthorityCertification>;
 };
 
 /**
@@ -280,12 +305,30 @@ export function createCompilationBackedCanonicalPayloadResolver(
         .sort(
           (left, right) => right.identity.sceneOrder - left.identity.sceneOrder
         )[0];
+      const productAssetId = sortedUnique(intent.referencedAssetIds)[0];
+      const visualAuthorityCertification =
+        productAssetId && deps.certifyProductVisualAuthority
+          ? await deps.certifyProductVisualAuthority({
+              productAssetId,
+              orgId: intent.identity.tenantId,
+              workspaceId: intent.identity.workspaceId,
+              campaignId: intent.identity.campaignId,
+              executionPlanId,
+              sceneExecutionId,
+            })
+          : undefined;
 
       return mapCompiledInstructionsToCanonicalScenePayload({
         instructions,
         intent,
         ...(previousIntent
           ? { continuityFromSceneId: previousIntent.identity.sceneId }
+          : {}),
+        ...(visualAuthorityCertification
+          ? {
+              productAuthorityAssessment: { status: "RESOLVED" as const },
+              visualAuthorityCertification,
+            }
           : {}),
         ...(deps.productGroundedProviderMode
           ? { productGroundedProviderMode: deps.productGroundedProviderMode }

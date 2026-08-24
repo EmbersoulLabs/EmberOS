@@ -28,11 +28,14 @@ function shortId(value: string): string {
   return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 }
 
-const STATE_KEYS: Record<GeneratedSceneReviewReadModel["reviewState"], TranslationKey> = {
+const STATE_KEYS: Record<GeneratedSceneReviewReadModel["runtimeState"], TranslationKey> = {
+  AUTHORIZED_NOT_RELEASED: "aiStory.generatedReview.state.AUTHORIZED_NOT_RELEASED",
+  QUEUED: "aiStory.generatedReview.state.QUEUED",
+  PRE_DISPATCH_BLOCKED: "aiStory.generatedReview.state.PRE_DISPATCH_BLOCKED",
+  RUNNING: "aiStory.generatedReview.state.RUNNING",
   PENDING_REVIEW: "aiStory.generatedReview.state.PENDING_REVIEW",
   APPROVED: "aiStory.generatedReview.state.APPROVED",
-  RETRY_REQUESTED: "aiStory.generatedReview.state.RETRY_REQUESTED",
-  REJECTED_TERMINAL: "aiStory.generatedReview.state.REJECTED_TERMINAL",
+  FAILED: "aiStory.generatedReview.state.FAILED",
 };
 
 export function GeneratedSceneReviewPanel({
@@ -96,7 +99,11 @@ export function GeneratedSceneReviewPanel({
       </div>
       <div className="space-y-3">
         {scenes.map((scene) => {
-          const pending = scene.reviewState === "PENDING_REVIEW" && !scene.running;
+          const pending =
+            scene.runtimeState === "PENDING_REVIEW" &&
+            scene.reviewAvailable &&
+            Boolean(scene.latestAttemptId && scene.generatedMedia) &&
+            !scene.running;
           const canRetry =
             pending && scene.retryRemaining > 0 && scene.reviewState !== "REJECTED_TERMINAL";
           return (
@@ -113,7 +120,7 @@ export function GeneratedSceneReviewPanel({
                   })}
                 </p>
                 <span className="text-xs text-ink-secondary">
-                  {t(STATE_KEYS[scene.reviewState])}
+                  {t(STATE_KEYS[scene.runtimeState])}
                 </span>
               </div>
               <p className="mt-1 text-xs text-ink-secondary">
@@ -185,6 +192,21 @@ export function GeneratedSceneReviewPanel({
                   >
                     {t("aiStory.generatedReview.reject")}
                   </button>
+                </div>
+              ) : null}
+              {canDecide && scene.runtimeState === "PRE_DISPATCH_BLOCKED" ? (
+                <div className="mt-3" data-testid={`generated-scene-pre-dispatch-recovery-${scene.sceneOrder}`}>
+                  <button
+                    type="button"
+                    className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900"
+                    disabled
+                    aria-disabled="true"
+                  >
+                    {t("aiStory.generatedReview.preDispatchRecovery")}
+                  </button>
+                  <p className="mt-1 text-xs text-ink-secondary">
+                    {t("aiStory.generatedReview.preDispatchRecoveryHint")}
+                  </p>
                 </div>
               ) : null}
             </div>
