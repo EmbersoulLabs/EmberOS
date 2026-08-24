@@ -12,10 +12,17 @@ import { z } from "zod";
 import type { ExecutionEnvelope } from "@ceo-agent/shared";
 import {
   SEEDANCE_MAX_REFERENCE_IMAGES,
+  SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE,
   SEEDANCE_SUPPORTED_ASPECT_RATIOS,
   SEEDANCE_SUPPORTED_DURATIONS_SEC,
   SEEDANCE_SUPPORTED_RESOLUTIONS,
+  seedanceSupportsFirstFrameI2v,
 } from "./seedance-capability";
+import {
+  assertProductGroundingPreDispatch,
+  PRODUCT_GROUNDED_VIDEO_MODE,
+  ProductGroundingContractSchema,
+} from "./product-grounding-contract";
 
 const CanonicalScenePayloadSchema = z
   .object({
@@ -52,6 +59,10 @@ const CanonicalScenePayloadSchema = z
       )
       .optional(),
     kind: z.string().optional(),
+    generationMode: z
+      .enum(["PRODUCT_GROUNDED_VIDEO", "CREATIVE_T2V"])
+      .optional(),
+    productGrounding: ProductGroundingContractSchema.optional(),
   })
   .passthrough();
 
@@ -232,6 +243,37 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   }
 
   const assets = payload.assetReferences ?? [];
+  if (payload.generationMode === PRODUCT_GROUNDED_VIDEO_MODE) {
+    if (!payload.productGrounding) {
+      throw new SeedanceMappingError(
+        "Product-grounded Provider dispatch requires a grounding contract"
+      );
+    }
+    try {
+      assertProductGroundingPreDispatch({
+        grounding: payload.productGrounding,
+        prompt,
+        assetReferences: assets,
+      });
+    } catch (error) {
+      throw new SeedanceMappingError(
+        String((error as { message?: string })?.message ?? error)
+      );
+    }
+    if (
+      payload.productGrounding.providerMode !==
+      SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE
+    ) {
+      throw new SeedanceMappingError(
+        "Seedance PRODUCT_GROUNDED_VIDEO requires certified FIRST_FRAME_I2V"
+      );
+    }
+    if (!seedanceSupportsFirstFrameI2v(input.model)) {
+      throw new SeedanceMappingError(
+        `Seedance model ${input.model} is not certified for FIRST_FRAME_I2V`
+      );
+    }
+  }
   if (assets.length > SEEDANCE_MAX_REFERENCE_IMAGES) {
     throw new SeedanceMappingError(
       `Seedance accepts at most ${SEEDANCE_MAX_REFERENCE_IMAGES} reference images`
@@ -279,8 +321,25 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
     content.push({
       type: "image_url",
       image_url: { url: assertHttpsUri(uri, `Asset ${asset.assetId}`) },
-      role: mapImageRole(asset.role),
+      role:
+        payload.generationMode === PRODUCT_GROUNDED_VIDEO_MODE &&
+        payload.productGrounding?.providerMode === "FIRST_FRAME_I2V" &&
+        payload.productGrounding.primaryAuthority.assetId === asset.assetId
+          ? "first_frame"
+          : mapImageRole(asset.role),
     });
+  }
+
+  if (payload.generationMode === PRODUCT_GROUNDED_VIDEO_MODE) {
+    const firstFrames = content.filter(
+      (item): item is SeedanceModelArkImageContent =>
+        item.type === "image_url" && item.role === "first_frame"
+    );
+    if (firstFrames.length !== 1) {
+      throw new SeedanceMappingError(
+        "Seedance FIRST_FRAME_I2V requires exactly one canonical first frame"
+      );
+    }
   }
 
   return {

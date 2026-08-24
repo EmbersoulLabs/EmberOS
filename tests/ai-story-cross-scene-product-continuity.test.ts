@@ -148,7 +148,7 @@ describe("AI Story cross-Scene product continuity", () => {
     );
   });
 
-  it("maps the stable product ID to one Seedance reference image without a paid call", async () => {
+  it("blocks an uncertified product-grounded request before URI resolution or paid work", async () => {
     const compilation = makePhase2aCompilation();
     const [scene1, scene2] = compilation.intents;
     const payload = mapCompiledInstructionsToCanonicalScenePayload({
@@ -161,29 +161,17 @@ describe("AI Story cross-Scene product continuity", () => {
     const resolveProviderAccessibleUri = vi.fn(async () =>
       "https://storage.invalid/signed/product.png"
     );
-    const request = await mapCanonicalEnvelopeToSeedanceRequest({
-      envelope: await makeEnvelope(),
-      idempotencyKey: "preview-only",
-      model: "dreamina-seedance-2-0-260128",
-      payloadResolver: { resolve: async () => payload },
-      assetAccessResolver: { resolveProviderAccessibleUri },
-    });
+    await expect(
+      mapCanonicalEnvelopeToSeedanceRequest({
+        envelope: await makeEnvelope(),
+        idempotencyKey: "preview-only",
+        model: "dreamina-seedance-2-0-260128",
+        payloadResolver: { resolve: async () => payload },
+        assetAccessResolver: { resolveProviderAccessibleUri },
+      })
+    ).rejects.toThrow(/blocked|uncertified/i);
 
-    expect(resolveProviderAccessibleUri).toHaveBeenCalledWith({
-      assetId: PHASE_2A_IDS.assetId,
-      orgId: PHASE_2A_IDS.orgId,
-      workspaceId: PHASE_2A_IDS.workspaceId,
-      campaignId: PHASE_2A_IDS.campaignId,
-    });
-    expect(request.content).toContainEqual({
-      type: "image_url",
-      image_url: { url: "https://storage.invalid/signed/product.png" },
-      role: "reference_image",
-    });
-    expect(request.content[0]).toMatchObject({
-      type: "text",
-      text: expect.stringMatching(/Preserve continuity/),
-    });
+    expect(resolveProviderAccessibleUri).not.toHaveBeenCalled();
   });
 
   it("authorizes private asset delivery by the full server-owned tenant chain", async () => {

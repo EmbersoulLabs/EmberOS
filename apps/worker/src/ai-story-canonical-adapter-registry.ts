@@ -46,7 +46,11 @@ export function createEnvelopeBackedCanonicalPayloadResolver(
     AiStorySceneExecutionPersistenceRepository,
     "getByExecutionPlanId"
   > = new AiStorySceneExecutionPersistenceRepository(),
-  options: { readonly resolution?: string } = {}
+  options: {
+    readonly resolution?: string;
+    readonly productGroundedProviderMode?: "FIRST_FRAME_I2V";
+    readonly productGroundedProviderModeCertified?: boolean;
+  } = {}
 ): SeedancePayloadResolver & MinimaxPayloadResolver {
   return createCompilationBackedCanonicalPayloadResolver({
     getEnvelopeByPayloadReference: (payloadReference) =>
@@ -54,6 +58,15 @@ export function createEnvelopeBackedCanonicalPayloadResolver(
     getCompilationByExecutionPlanId: (executionPlanId) =>
       persistence.getByExecutionPlanId(executionPlanId),
     resolution: options.resolution,
+    ...(options.productGroundedProviderMode
+      ? { productGroundedProviderMode: options.productGroundedProviderMode }
+      : {}),
+    ...(options.productGroundedProviderModeCertified !== undefined
+      ? {
+          productGroundedProviderModeCertified:
+            options.productGroundedProviderModeCertified,
+        }
+      : {}),
   });
 }
 
@@ -77,7 +90,11 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
     createEnvelopeBackedCanonicalPayloadResolver(
       new ExecutionEnvelopeRepository(),
       new AiStorySceneExecutionPersistenceRepository(),
-      { resolution: "480p" }
+      {
+        resolution: "480p",
+        productGroundedProviderMode: "FIRST_FRAME_I2V",
+        productGroundedProviderModeCertified: true,
+      }
     );
   const minimaxResolver =
     options.minimaxPayloadResolver ??
