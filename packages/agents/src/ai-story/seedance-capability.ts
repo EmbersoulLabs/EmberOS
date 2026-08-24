@@ -30,6 +30,26 @@ export const SEEDANCE_SUPPORTED_RESOLUTIONS = ["480p", "720p", "1080p"] as const
 export const SEEDANCE_MAX_REFERENCE_IMAGES = 4 as const;
 
 /**
+ * Exact model authority for the bounded EmberOS first-frame mapping. BytePlus
+ * documents first-frame and first/last-frame I2V for this deployed model. This
+ * certifies request-shape support, not deterministic visual identity.
+ */
+export const SEEDANCE_FIRST_FRAME_I2V_MODELS = [
+  "dreamina-seedance-2-0-260128",
+] as const;
+
+export const SEEDANCE_PRODUCT_CONTINUITY_LEVEL =
+  "PROBABILISTIC_STRONG_GROUNDING" as const;
+export const SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE =
+  "FIRST_FRAME_I2V" as const;
+
+export function seedanceSupportsFirstFrameI2v(model: string): boolean {
+  return (SEEDANCE_FIRST_FRAME_I2V_MODELS as readonly string[]).includes(
+    model.trim()
+  );
+}
+
+/**
  * Callback support for this Adapter version.
  * Seedance HTTP contract used here is polling-only; do not fabricate callbacks.
  */
@@ -48,7 +68,12 @@ export type SeedanceCapabilityDetails = {
   readonly nativeIdempotency: false;
   readonly modelIdentifiers: readonly string[];
   readonly audioSupport: false;
-  readonly firstLastFrameSupport: false;
+  readonly referenceImageT2vSupport: true;
+  readonly firstFrameI2vSupport: boolean;
+  readonly firstLastFrameSupport: boolean;
+  readonly multiImageReferenceSupport: true;
+  readonly deterministicExactProductLock: false;
+  readonly productContinuityLevel: typeof SEEDANCE_PRODUCT_CONTINUITY_LEVEL;
   readonly concurrencyClass: "provider-rate-limited";
 };
 
@@ -117,7 +142,12 @@ export function seedanceCapabilityDetails(input?: {
     nativeIdempotency: false,
     modelIdentifiers: [model],
     audioSupport: false,
-    firstLastFrameSupport: false,
+    referenceImageT2vSupport: true,
+    firstFrameI2vSupport: seedanceSupportsFirstFrameI2v(model),
+    firstLastFrameSupport: seedanceSupportsFirstFrameI2v(model),
+    multiImageReferenceSupport: true,
+    deterministicExactProductLock: false,
+    productContinuityLevel: SEEDANCE_PRODUCT_CONTINUITY_LEVEL,
     concurrencyClass: "provider-rate-limited",
   };
 }

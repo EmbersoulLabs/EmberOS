@@ -215,6 +215,9 @@ export type CompilationBackedPayloadResolverDeps = {
   } | null>;
   /** Optional provider-owned resolution override for minimal-cost acceptance. */
   readonly resolution?: string;
+  /** Provider-owned request-shape certification; authority assessment remains separate. */
+  readonly productGroundedProviderMode?: ProductGroundedProviderMode;
+  readonly productGroundedProviderModeCertified?: boolean;
 };
 
 /**
@@ -283,6 +286,15 @@ export function createCompilationBackedCanonicalPayloadResolver(
         intent,
         ...(previousIntent
           ? { continuityFromSceneId: previousIntent.identity.sceneId }
+          : {}),
+        ...(deps.productGroundedProviderMode
+          ? { productGroundedProviderMode: deps.productGroundedProviderMode }
+          : {}),
+        ...(deps.productGroundedProviderModeCertified !== undefined
+          ? {
+              productGroundedProviderModeCertified:
+                deps.productGroundedProviderModeCertified,
+            }
           : {}),
         resolution: deps.resolution,
       });

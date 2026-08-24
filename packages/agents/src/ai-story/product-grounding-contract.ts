@@ -9,7 +9,7 @@ export const PRODUCT_LOCK_PROMPT = [
   "PRODUCT LOCK:",
   "Use Image 1 as the canonical Campaign Product Asset and primary product identity authority.",
   "Preserve the same exact product, wrapping or container, major composition, dominant colors, and every hero element.",
-  "Do not add, remove, replace, redesign, morph, or reveal invented product structure.",
+  "Do not add a gift box, remove wrapping, replace flowers or the product, redesign, morph, or reveal invented product structure.",
 ].join(" ");
 
 export const ProductAuthorityConflictDimensionSchema = z.enum([
@@ -25,6 +25,7 @@ export type ProductAuthorityConflictDimension = z.infer<
 
 export const ProductGroundedProviderModeSchema = z.enum([
   "GENERIC_REFERENCE_T2V",
+  "REFERENCE_IMAGE_T2V",
   "FIRST_FRAME_I2V",
   "FIRST_LAST_FRAME_I2V",
   "PROVIDER_GROUNDED_VIDEO",
@@ -209,7 +210,10 @@ export function evaluateProductGroundingPreDispatch(input: {
   if (!grounding.providerModeCertified) {
     blockers.push("PRODUCT_GROUNDED_PROVIDER_MODE_UNCERTIFIED");
   }
-  if (grounding.providerMode === "GENERIC_REFERENCE_T2V") {
+  if (
+    grounding.providerMode === "GENERIC_REFERENCE_T2V" ||
+    grounding.providerMode === "REFERENCE_IMAGE_T2V"
+  ) {
     blockers.push("GENERIC_REFERENCE_T2V_INSUFFICIENT");
   }
   if (!grounding.directorCameraPolicy.compatible) {

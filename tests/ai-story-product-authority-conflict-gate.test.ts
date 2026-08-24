@@ -45,6 +45,8 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
           "HERO_OBJECT_IDENTITY",
         ],
       },
+      productGroundedProviderMode: "FIRST_FRAME_I2V",
+      productGroundedProviderModeCertified: true,
     });
 
     expect(payload.generationMode).toBe(PRODUCT_GROUNDED_VIDEO_MODE);
@@ -66,8 +68,8 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
         mayOverrideProductIdentity: false,
       },
       authorityStatus: "CONFLICT",
-      providerMode: "GENERIC_REFERENCE_T2V",
-      providerModeCertified: false,
+      providerMode: "FIRST_FRAME_I2V",
+      providerModeCertified: true,
       directorCameraPolicy: {
         compatible: false,
         cameraMoves: ["Medium shot: Pan"],
@@ -85,8 +87,8 @@ describe("AI Story canonical product authority and fail-closed grounding", () =>
     });
     expect(gate.status).toBe("BLOCKED_PRE_DISPATCH");
     expect(gate.blockers).toContain("PRODUCT_VISUAL_AUTHORITY_CONFLICT");
-    expect(gate.blockers).toContain("PRODUCT_GROUNDED_PROVIDER_MODE_UNCERTIFIED");
-    expect(gate.blockers).toContain("GENERIC_REFERENCE_T2V_INSUFFICIENT");
+    expect(gate.blockers).not.toContain("PRODUCT_GROUNDED_PROVIDER_MODE_UNCERTIFIED");
+    expect(gate.blockers).not.toContain("GENERIC_REFERENCE_T2V_INSUFFICIENT");
     expect(gate.blockers).toContain(
       "DIRECTOR_CAMERA_INCOMPATIBLE_WITH_PRODUCT_LOCK"
     );

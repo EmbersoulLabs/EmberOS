@@ -7,7 +7,9 @@ import {
   SEEDANCE_ADAPTER_VERSION,
   SEEDANCE_CALLBACKS_SUPPORTED,
   SEEDANCE_NATIVE_IDEMPOTENCY_SUPPORTED,
+  SEEDANCE_PRODUCT_CONTINUITY_LEVEL,
   SEEDANCE_PROVIDER_ID,
+  SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE,
   buildSeedanceCapabilityDeclaration,
   seedanceCapabilityDetails,
 } from "../packages/agents/src/ai-story/seedance-capability";
@@ -193,7 +195,15 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
     const details = seedanceCapabilityDetails();
     expect(details.nativeIdempotency).toBe(false);
     expect(details.audioSupport).toBe(false);
-    expect(details.firstLastFrameSupport).toBe(false);
+    expect(details.referenceImageT2vSupport).toBe(true);
+    expect(details.firstFrameI2vSupport).toBe(true);
+    expect(details.firstLastFrameSupport).toBe(true);
+    expect(details.multiImageReferenceSupport).toBe(true);
+    expect(details.deterministicExactProductLock).toBe(false);
+    expect(details.productContinuityLevel).toBe(
+      SEEDANCE_PRODUCT_CONTINUITY_LEVEL
+    );
+    expect(SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE).toBe("FIRST_FRAME_I2V");
     expect(details.callbacks).toBe(false);
   });
 
@@ -307,6 +317,128 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
     });
     expect(lookup.canonicalProviderState).toBe("SUCCEEDED");
     expect(lookup.terminalMedia?.uriReference).toContain("out.mp4");
+  });
+
+  it("maps a certified product authority to the Seedance first frame", async () => {
+    const productAssetId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const { envelope, resolver } = await envelopeFor(
+      basePayload({
+        generationMode: "PRODUCT_GROUNDED_VIDEO",
+        prompt: `Image 1 = the canonical Campaign Product Asset and PRIMARY_PRODUCT authority. ${PRODUCT_LOCK_PROMPT}`,
+        assetReferences: [
+          {
+            assetId: productAssetId,
+            uri: "https://cdn.example.com/signed/product.png",
+            role: "PRIMARY_PRODUCT",
+            mediaType: "image/png",
+          },
+        ],
+        productGrounding: {
+          contractVersion: "1",
+          generationMode: "PRODUCT_GROUNDED_VIDEO",
+          primaryAuthority: {
+            kind: "CAMPAIGN_PRODUCT_ASSET",
+            assetId: productAssetId,
+            referenceRole: "PRIMARY_PRODUCT",
+          },
+          authorityStatus: "RESOLVED",
+          conflictDimensions: [],
+          providerMode: "FIRST_FRAME_I2V",
+          providerModeCertified: true,
+          directorCameraPolicy: {
+            compatible: true,
+            cameraMoves: ["Close-up: Static"],
+            violations: [],
+          },
+        },
+      })
+    );
+
+    const mapped = await mapCanonicalEnvelopeToSeedanceRequest({
+      envelope,
+      idempotencyKey: "first-frame-preview-only",
+      model: "dreamina-seedance-2-0-260128",
+      payloadResolver: resolver,
+    });
+
+    expect(mapped.content).toEqual([
+      expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining(PRODUCT_LOCK_PROMPT),
+      }),
+      {
+        type: "image_url",
+        image_url: { url: "https://cdn.example.com/signed/product.png" },
+        role: "first_frame",
+      },
+    ]);
+    expect(mapped.content.filter((item) => item.type === "image_url")).toEqual([
+      expect.objectContaining({ role: "first_frame" }),
+    ]);
+  });
+
+  it("blocks generic reference fallback and missing first-frame authority", async () => {
+    const productAssetId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const grounding = {
+      contractVersion: "1",
+      generationMode: "PRODUCT_GROUNDED_VIDEO",
+      primaryAuthority: {
+        kind: "CAMPAIGN_PRODUCT_ASSET",
+        assetId: productAssetId,
+        referenceRole: "PRIMARY_PRODUCT",
+      },
+      authorityStatus: "RESOLVED",
+      conflictDimensions: [],
+      providerMode: "REFERENCE_IMAGE_T2V",
+      providerModeCertified: true,
+      directorCameraPolicy: {
+        compatible: true,
+        cameraMoves: ["Close-up: Static"],
+        violations: [],
+      },
+    };
+    const generic = await envelopeFor(
+      basePayload({
+        generationMode: "PRODUCT_GROUNDED_VIDEO",
+        prompt: `Image 1 = the canonical Campaign Product Asset and PRIMARY_PRODUCT authority. ${PRODUCT_LOCK_PROMPT}`,
+        assetReferences: [
+          {
+            assetId: productAssetId,
+            uri: "https://cdn.example.com/signed/product.png",
+            role: "PRIMARY_PRODUCT",
+          },
+        ],
+        productGrounding: grounding,
+      })
+    );
+    await expect(
+      mapCanonicalEnvelopeToSeedanceRequest({
+        envelope: generic.envelope,
+        idempotencyKey: "generic-blocked",
+        model: "dreamina-seedance-2-0-260128",
+        payloadResolver: generic.resolver,
+      })
+    ).rejects.toThrow(/insufficient|FIRST_FRAME_I2V/i);
+
+    const missing = await envelopeFor(
+      basePayload({
+        generationMode: "PRODUCT_GROUNDED_VIDEO",
+        prompt: `Image 1 = the canonical Campaign Product Asset and PRIMARY_PRODUCT authority. ${PRODUCT_LOCK_PROMPT}`,
+        assetReferences: [],
+        productGrounding: {
+          ...grounding,
+          providerMode: "FIRST_FRAME_I2V",
+        },
+      })
+    );
+    await expect(
+      mapCanonicalEnvelopeToSeedanceRequest({
+        envelope: missing.envelope,
+        idempotencyKey: "missing-first-frame",
+        model: "dreamina-seedance-2-0-260128",
+        payloadResolver: missing.resolver,
+      })
+    ).rejects.toThrow(/blocked|reference/i);
   });
 
   it("blocks a conflicting product authority before the Seedance HTTP call", async () => {
