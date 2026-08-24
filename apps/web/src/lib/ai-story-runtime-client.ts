@@ -203,9 +203,11 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-async function requestRuntimeRead<T>(input: string): Promise<T> {
+async function requestRuntimeRead<T>(input: string, externalSignal?: AbortSignal): Promise<T> {
   const requestCorrelationId = crypto.randomUUID();
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+  externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
   const timeout = setTimeout(() => controller.abort(), RUNTIME_READ_TIMEOUT_MS);
   let res: Response;
   try {
@@ -228,6 +230,7 @@ async function requestRuntimeRead<T>(input: string): Promise<T> {
     );
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromCaller);
   }
   const body = await parseJson(res);
   const responseCorrelationId =
@@ -259,9 +262,11 @@ export async function getProductRuntimeProjection(input: {
   campaignId: string;
   storyId: string;
   executionPlanId: string;
+  signal?: AbortSignal;
 }): Promise<ProductRuntimeProjection> {
   return requestRuntimeRead(
-    plansBase(input.campaignId, input.storyId, input.executionPlanId) + "/runtime"
+    plansBase(input.campaignId, input.storyId, input.executionPlanId) + "/runtime",
+    input.signal
   );
 }
 
