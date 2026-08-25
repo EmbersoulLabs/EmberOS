@@ -4,27 +4,33 @@ const PASSWORD_KEY = "emberos.auth.password";
 
 export interface RememberedCredentials {
   email: string;
-  password: string;
   remember: boolean;
+}
+
+/** Remove the legacy plaintext credential without changing identifier preference. */
+export function removeLegacyRememberedPassword(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(PASSWORD_KEY);
 }
 
 export function loadRememberedCredentials(): RememberedCredentials | null {
   if (typeof window === "undefined") return null;
+  removeLegacyRememberedPassword();
   if (localStorage.getItem(REMEMBER_KEY) !== "1") return null;
   const email = localStorage.getItem(EMAIL_KEY) ?? "";
-  const password = localStorage.getItem(PASSWORD_KEY) ?? "";
   if (!email) return null;
-  return { email, password, remember: true };
+  return { email, remember: true };
 }
 
-export function saveRememberedCredentials(email: string, password: string): void {
+export function saveRememberedCredentials(email: string): void {
+  removeLegacyRememberedPassword();
   localStorage.setItem(REMEMBER_KEY, "1");
   localStorage.setItem(EMAIL_KEY, email);
-  localStorage.setItem(PASSWORD_KEY, password);
 }
 
 export function clearRememberedCredentials(): void {
+  if (typeof window === "undefined") return;
   localStorage.removeItem(REMEMBER_KEY);
   localStorage.removeItem(EMAIL_KEY);
-  localStorage.removeItem(PASSWORD_KEY);
+  removeLegacyRememberedPassword();
 }

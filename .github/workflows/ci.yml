@@ -40,6 +40,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -52,6 +54,25 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Enforce hybrid migration intent and protected-domain guards
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base_revision="${PR_BASE_SHA:-HEAD^}"
+          mapfile -t intents < <(git diff --name-only "$base_revision"...HEAD -- '.migration-intents/*.json')
+          if [ "${#intents[@]}" -eq 0 ]; then
+            if [[ "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}" == wave* ]]; then
+              echo "Wave branches require exactly one migration intent."
+              exit 1
+            fi
+            echo "No Wave migration intent changed; guard not applicable."
+          elif [ "${#intents[@]}" -ne 1 ]; then
+            echo "Exactly one migration intent is required; found ${#intents[@]}."
+            exit 1
+          else
+            pnpm verify:hybrid-migration -- --base "$base_revision" --head HEAD --intent "${intents[0]}"
+          fi
 
       - name: Verify test database mutation guard
         run: pnpm exec vitest run --config vitest.config.ts tests/test-db-authority-guard.test.ts
@@ -104,6 +125,12 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+      - name: Install browser for auth security E2E
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Auth browser E2E
+        run: pnpm test:auth-browser
 
       - name: Typecheck
         run: pnpm typecheck

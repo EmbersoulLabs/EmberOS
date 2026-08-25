@@ -112,7 +112,7 @@
   "auth.passwordMismatch": "Kata laluan tidak sepadan.",
   "auth.passwordUpdated": "Kata laluan dikemas kini. Mengalihkan…",
   "auth.privacyLink": "Dasar Privasi",
-  "auth.rememberPassword": "Ingat kata laluan",
+  "auth.rememberPassword": "Ingat saya",
   "auth.resetLinkInvalid": "Pautan reset tidak sah atau tamat tempoh. Minta pautan baharu dari halaman log masuk.",
   "auth.resetPassword": "Kemas kini kata laluan",
   "auth.resetPasswordSubtitle": "Pilih kata laluan baharu untuk akaun anda.",
