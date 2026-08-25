@@ -110,6 +110,18 @@ describe("AI Story pre-dispatch recovery service", () => {
     expect(worker).toContain("dispatchNextProviderExecution");
   });
 
+  it("uses one lease identity from recovery claim through terminal finalization", () => {
+    const worker = readFileSync(
+      "apps/worker/src/ai-story-provider-worker-cycle.ts",
+      "utf8"
+    );
+    expect(worker).toContain("const AI_STORY_RUNTIME_LEASE_OWNER");
+    expect(worker).toContain("workerId: leaseOwner");
+    expect(worker).toContain("workerId: options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER");
+    expect(worker).toContain("leaseOwner,");
+    expect(worker).not.toContain("ai-story-recovery:${process.pid}");
+  });
+
   it("normalizes Date and production postgres-js timestamp hydration", () => {
     expect(normalizeTimestampToIso(new Date("2026-08-25T03:00:00.123Z"))).toBe(
       "2026-08-25T03:00:00.123Z"

@@ -195,6 +195,58 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     return worker;
   }
 
+  it("finalizes an active claim under the same lease owner and concurrent replay converges", async () => {
+    const { dispatch } = await scheduleScene();
+    const worker = await seedTerminalSuccessWorker(dispatch.dispatchId);
+    const leaseOwner = "ai-story-runtime:integration";
+    await sql`
+      UPDATE provider_outbox_jobs
+      SET status = 'CLAIMED',
+          lease_owner = ${leaseOwner},
+          lease_expires_at = now() + interval '5 minutes',
+          updated_at = now()
+      WHERE job_id = ${dispatch.jobId}
+    `;
+
+    const chain = projectionRepo();
+    const sameOwnerCoordinator = new SceneFinalizationCoordinator({
+      chain,
+      bridge: { ledger: ledger(), outbox: outbox(), workerId: leaseOwner },
+      productionFinalizer: finalizer(),
+      projection: chain,
+    });
+    const outcomes = await Promise.all([
+      sameOwnerCoordinator.finalizeAndProject({ dispatchId: dispatch.dispatchId }),
+      sameOwnerCoordinator.finalizeAndProject({ dispatchId: dispatch.dispatchId }),
+    ]);
+    expect(outcomes.every((outcome) => outcome.outcome === "PROJECTED")).toBe(true);
+
+    const [counts] = await sql<{
+      attempts: number;
+      usages: number;
+      costs: number;
+      results: number;
+      reviews: number;
+      completed_jobs: number;
+    }[]>`
+      SELECT
+        (SELECT count(*)::int FROM provider_attempts WHERE execution_id = ${dispatch.executionId}) AS attempts,
+        (SELECT count(*)::int FROM provider_attempt_usage WHERE attempt_id = ${worker.providerAttemptId}) AS usages,
+        (SELECT count(*)::int FROM provider_attempt_costs WHERE attempt_id = ${worker.providerAttemptId}) AS costs,
+        (SELECT count(*)::int FROM ai_story_scene_results WHERE provider_attempt_id = ${worker.providerAttemptId}) AS results,
+        (SELECT count(*)::int FROM ai_story_generated_scene_reviews WHERE provider_attempt_id = ${worker.providerAttemptId}) AS reviews,
+        (SELECT count(*)::int FROM provider_outbox_jobs WHERE job_id = ${dispatch.jobId} AND status = 'COMPLETED') AS completed_jobs
+    `;
+    expect(counts).toEqual({
+      attempts: 1,
+      usages: 1,
+      costs: 1,
+      results: 1,
+      reviews: 1,
+      completed_jobs: 1,
+    });
+  }, 180_000);
+
   it("successful finalization and approval certification", async () => {
     const { dispatch } = await scheduleScene();
     await seedTerminalSuccessWorker(dispatch.dispatchId);
