@@ -16,11 +16,14 @@ import {
   type GeneratedSceneReviewFact,
   type GeneratedSceneReviewReadModel,
   type GeneratedSceneAttemptReadModel,
+  type SceneAttemptInputRevisionFact,
+  type SceneRetryAuthorizationFact,
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
   GeneratedSceneReviewError,
   GeneratedSceneReviewRepository,
+  DifferentiatedRetryRepository,
   RuntimeAuthorizationPersistenceRepository,
   listAiStoryProviderAttemptCostRecords,
   snapshotApprovedReview,
@@ -156,6 +159,11 @@ export class GeneratedSceneReviewService {
       readonly onLoadPlanReadModelTiming?: (timing: GeneratedSceneReviewReadTiming) => void;
       readonly providerAttemptCostRecordLoader?: typeof listAiStoryProviderAttemptCostRecords;
       readonly readSubstageRecorder?: GeneratedSceneReviewReadSubstageRecorder;
+      readonly differentiatedRetryRepository?: {
+        getAuthorization(id: string): Promise<SceneRetryAuthorizationFact | null>;
+        getRevision(id: string): Promise<SceneAttemptInputRevisionFact | null>;
+        markAuthorizationConsumed(id: string): Promise<SceneRetryAuthorizationFact>;
+      };
     } = {}
   ) {}
 
@@ -349,9 +357,27 @@ export class GeneratedSceneReviewService {
     readonly actorUserId: string;
     readonly workspaceId: string;
     readonly executionAuthorization: AiStoryExecutionAuthorization;
+    readonly retryAuthorizationId?: string;
   }): Promise<GeneratedSceneReviewDecisionResponse> {
     try {
-      let retryGeneration = 0;
+      if (!input.retryAuthorizationId) {
+        throw new GeneratedSceneReviewError(
+          "GENERATED_SCENE_RETRY_NOT_ELIGIBLE",
+          "A human retry authorization is required"
+        );
+      }
+      const differentiated =
+        this.dependencies.differentiatedRetryRepository ??
+        new DifferentiatedRetryRepository();
+      const authorization = await differentiated.getAuthorization(input.retryAuthorizationId);
+      if (!authorization || authorization.sceneExecutionId !== input.sceneExecutionId || authorization.executionPlanId !== input.executionPlanId || authorization.workspaceId !== input.workspaceId) {
+        throw new GeneratedSceneReviewError("GENERATED_SCENE_RETRY_NOT_ELIGIBLE", "Retry authorization does not match this Scene");
+      }
+      const revision = await differentiated.getRevision(authorization.retryInputRevisionId);
+      if (!revision || revision.canonicalFingerprint !== authorization.retryInputFingerprint) {
+        throw new GeneratedSceneReviewError("GENERATED_SCENE_RETRY_NOT_ELIGIBLE", "Retry input revision authority is missing");
+      }
+      const retryGeneration = authorization.authorizedAttemptNumber;
       const review = await this.reviewRepo.transactDecision(
         {
           executionPlanId: input.executionPlanId,
@@ -367,26 +393,16 @@ export class GeneratedSceneReviewService {
             );
           }
           const latest = snapshotLatestReview(snapshot);
-          if (latest?.decision === "REJECTED_TERMINAL") {
-            throw new GeneratedSceneReviewError(
-              "GENERATED_SCENE_RETRY_NOT_ELIGIBLE",
-              "Rejected Scene cannot be retried"
-            );
-          }
           if (snapshotHasInFlightProviderExecution(snapshot)) {
             throw new GeneratedSceneReviewError(
               "GENERATED_SCENE_RETRY_IN_FLIGHT",
               "A provider attempt is already running for this Scene"
             );
           }
-          if (
-            !latest ||
-            (latest.decision !== "PENDING_REVIEW" &&
-              latest.decision !== "RETRY_REQUESTED")
-          ) {
+          if (!latest || latest.decision !== "REJECTED" || latest.generatedSceneReviewId !== authorization.sourceReviewId || latest.providerAttemptId !== authorization.sourceAttemptId) {
             throw new GeneratedSceneReviewError(
               "GENERATED_SCENE_RETRY_NOT_ELIGIBLE",
-              "No reviewable or failed generated Scene output to retry"
+              "The exact rejected generated output is required"
             );
           }
           const maxAttempts = snapshot.maxAttempts;
@@ -396,16 +412,8 @@ export class GeneratedSceneReviewService {
               "Scene retry limit reached"
             );
           }
-          retryGeneration = snapshot.attemptCount + 1;
-          if (latest.decision === "RETRY_REQUESTED") {
-            return latest;
-          }
-          return this.reviewRepo.writeDecisionInTransaction(tx, {
-            current: latest,
-            decision: "RETRY_REQUESTED",
-            decidedBy: input.actorUserId,
-            decidedAt: this.nowIso(),
-          });
+          if (snapshot.attemptCount + 1 !== retryGeneration) throw new GeneratedSceneReviewError("GENERATED_SCENE_RETRY_NOT_ELIGIBLE", "Retry authorization attempt number is stale");
+          return latest;
         }
       );
 
@@ -439,7 +447,9 @@ export class GeneratedSceneReviewService {
           executionAuthorization: input.executionAuthorization,
           actorUserId: input.actorUserId,
           retryGeneration,
+          retryInputRevision: revision,
         });
+        await differentiated.markAuthorizationConsumed(authorization.retryAuthorizationId);
       } catch (error) {
         if (error instanceof SceneSchedulingError) {
           throw new GeneratedSceneReviewError(
@@ -511,11 +521,26 @@ export class GeneratedSceneReviewService {
     );
 
     const reviewStartedAt = performance.now();
-    const reviews = await substageRecorder.run(
+    const reviewRepository = this.reviewRepo;
+    const reviewAuthorityRows = await substageRecorder.run(
       "generated_scene_review.review_list",
-      () => this.reviewRepo.listByExecutionPlanId(executionPlanId),
+      () =>
+        typeof reviewRepository.listWithRetryAuthorityByExecutionPlanId ===
+        "function"
+          ? reviewRepository.listWithRetryAuthorityByExecutionPlanId(
+              executionPlanId
+            )
+          : reviewRepository.listByExecutionPlanId(executionPlanId).then((rows) =>
+              rows.map((review) => ({
+                review,
+                retryEligibility: null,
+                retryInputRevisionId: null,
+                retryAuthorizationId: null,
+              }))
+            ),
       (rows) => rows.length
     );
+    const reviews = reviewAuthorityRows.map((row) => row.review);
     const generatedSceneReviewListMs = performance.now() - reviewStartedAt;
 
     const assemblyStartedAt = performance.now();
@@ -523,6 +548,9 @@ export class GeneratedSceneReviewService {
       "generated_scene_review.read_model_assembly",
       async () => {
         const snapshotByScene = groupReviews(reviews);
+        const retryAuthorityByReview = new Map(
+          reviewAuthorityRows.map((row) => [row.review.generatedSceneReviewId, row])
+        );
         const maxAttempts = resolveAiStorySceneMaxAttempts();
         const orderedIntents = intents
           .slice()
@@ -535,6 +563,7 @@ export class GeneratedSceneReviewService {
             sceneId: intent.identity.sceneId,
             sceneOrder: intent.identity.sceneOrder,
             reviews: snapshotByScene.get(intent.identity.sceneExecutionId) ?? [],
+            retryAuthorityByReview,
             spendAttempts: reconstructed.attempts.filter(
               (attempt) => attempt.sceneExecutionId === intent.identity.sceneExecutionId
             ),
@@ -599,6 +628,14 @@ export class GeneratedSceneReviewService {
     readonly sceneId: string;
     readonly sceneOrder: number;
     readonly reviews: readonly GeneratedSceneReviewFact[];
+    readonly retryAuthorityByReview: ReadonlyMap<
+      string,
+      {
+        readonly retryEligibility: string | null;
+        readonly retryInputRevisionId: string | null;
+        readonly retryAuthorizationId: string | null;
+      }
+    >;
     readonly spendAttempts: readonly import("@ceo-agent/shared").AiStoryProviderAttemptCostEvidence[];
     readonly sceneKnownCost: number | null;
     readonly maxAttempts: number;
@@ -630,6 +667,9 @@ export class GeneratedSceneReviewService {
       });
     const approved = input.reviews.find((row) => row.decision === "APPROVED") ?? null;
     const latestReview = input.reviews[input.reviews.length - 1] ?? null;
+    const retryAuthority = latestReview
+      ? input.retryAuthorityByReview.get(latestReview.generatedSceneReviewId)
+      : null;
     const latestAttempt = attempts[attempts.length - 1] ?? null;
     const running = latestAttempt?.outcome === "unknown" && latestReview?.decision === "RETRY_REQUESTED";
     const reviewState = approved
@@ -648,6 +688,10 @@ export class GeneratedSceneReviewService {
         ? "APPROVED"
         : running
           ? "RUNNING"
+          : retryAuthority?.retryAuthorizationId
+            ? "RETRY_AUTHORIZED"
+          : latestReview?.decision === "REJECTED"
+            ? "REJECTED"
           : reviewAvailable
             ? "PENDING_REVIEW"
             : "QUEUED",
@@ -656,6 +700,16 @@ export class GeneratedSceneReviewService {
       approvedAttemptId: approved?.providerAttemptId ?? null,
       approvedSceneResultId: approved?.sceneResultId ?? null,
       latestAttemptId: latestAttempt?.attemptId ?? latestReview?.providerAttemptId ?? null,
+      latestReviewId: latestReview?.generatedSceneReviewId ?? null,
+      retryEligibility:
+        retryAuthority?.retryEligibility === "ELIGIBLE" ||
+        retryAuthority?.retryEligibility === "INELIGIBLE_MAX_ATTEMPTS" ||
+        retryAuthority?.retryEligibility === "INELIGIBLE_TERMINAL_POLICY" ||
+        retryAuthority?.retryEligibility === "INELIGIBLE_AUTHORITY_CONFLICT"
+          ? retryAuthority.retryEligibility
+          : null,
+      retryInputRevisionId: retryAuthority?.retryInputRevisionId ?? null,
+      retryAuthorizationId: retryAuthority?.retryAuthorizationId ?? null,
       latestAttemptNumber: latestAttempt?.attemptNumber ?? (attemptCount > 0 ? attemptCount : null),
       latestAttemptStatus: latestAttempt?.status ?? (running ? "running" : null),
       attemptCount,
@@ -710,12 +764,16 @@ function buildDecisionSceneReadModel(
     sceneId: snapshot.sceneId,
     sceneOrder: snapshot.sceneOrder,
     reviewState: decision.decision,
-    runtimeState: decision.decision === "APPROVED" ? "APPROVED" : "PENDING_REVIEW",
+    runtimeState: decision.decision === "APPROVED" ? "APPROVED" : decision.decision === "REJECTED" ? "REJECTED" : "PENDING_REVIEW",
     reviewAvailable: Boolean(decision.sceneResultId && latest),
     recoveryMode: null,
     approvedAttemptId: decision.decision === "APPROVED" ? decision.providerAttemptId : null,
     approvedSceneResultId: decision.decision === "APPROVED" ? decision.sceneResultId : null,
     latestAttemptId: latest?.attemptId ?? null,
+    latestReviewId: decision.generatedSceneReviewId,
+    retryEligibility: null,
+    retryInputRevisionId: null,
+    retryAuthorizationId: null,
     latestAttemptNumber: latest?.attemptNumber ?? null,
     latestAttemptStatus: latest?.status ?? null,
     attemptCount: Math.max(snapshot.attemptCount, attempts.length),

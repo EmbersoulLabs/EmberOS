@@ -25,6 +25,7 @@ import {
   type ProductGroundedProviderMode,
   type ProductGroundingContract,
 } from "./product-grounding-contract";
+import { applyRetryInputRevision } from "./differentiated-retry-service";
 
 export const CANONICAL_PRODUCT_REFERENCE_ROLE = PRIMARY_PRODUCT_REFERENCE_ROLE;
 
@@ -230,6 +231,9 @@ export type CompilationBackedPayloadResolverDeps = {
       Record<string, AiStorySceneCompiledInstructions>
     >;
   } | null>;
+  readonly getRetryInputRevisionById?: (
+    retryInputRevisionId: string
+  ) => Promise<import("@ceo-agent/shared").SceneAttemptInputRevisionFact | null>;
   /** Optional provider-owned resolution override for minimal-cost acceptance. */
   readonly resolution?: string;
   /** Provider-owned request-shape certification; authority assessment remains separate. */
@@ -280,13 +284,23 @@ export function createCompilationBackedCanonicalPayloadResolver(
         );
       }
 
-      const instructions =
+      const baseInstructions =
         compilation.instructionsBySceneExecutionId[sceneExecutionId];
-      if (!instructions) {
+      if (!baseInstructions) {
         throw new Error(
           `Compiled instructions missing for sceneExecutionId=${sceneExecutionId}`
         );
       }
+      const retryInputRevisionId = trace.retryInputRevisionId?.trim();
+      const retryInputRevision = retryInputRevisionId
+        ? await deps.getRetryInputRevisionById?.(retryInputRevisionId)
+        : null;
+      if (retryInputRevisionId && (!retryInputRevision || retryInputRevision.sceneExecutionId !== sceneExecutionId || retryInputRevision.executionPlanId !== executionPlanId || retryInputRevision.workspaceId !== envelope.workspaceId || retryInputRevision.providerModeRequirement !== "FIRST_FRAME_I2V")) {
+        throw new Error("Retry input revision authority is missing or conflicts with the Execution Envelope");
+      }
+      const instructions = retryInputRevision
+        ? applyRetryInputRevision(baseInstructions, retryInputRevision)
+        : baseInstructions;
 
       const intent = compilation.intents.find(
         (candidate) => candidate.identity.sceneExecutionId === sceneExecutionId

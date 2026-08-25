@@ -9,7 +9,7 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { executionPlanRouteErrorResponse } from "@/lib/ai-story-execution-plan-access";
 import {
   authorizeGeneratedSceneReviewWrite,
-  createdGeneratedSceneReviewService,
+  createDifferentiatedRetryService,
   rejectForgedGeneratedSceneReviewBody,
 } from "@/lib/ai-story-generated-scene-review-access";
 
@@ -53,12 +53,12 @@ export async function POST(request: Request, { params }: RouteParams) {
       clientClaims: body,
     });
 
-    const result = await createdGeneratedSceneReviewService().reject({
+    const result = await createDifferentiatedRetryService().rejectCreative({
       executionPlanId: ctx.executionPlanId,
       sceneExecutionId,
       actorUserId: user.id,
       workspaceId: ctx.workspaceId,
-      executionAuthorization,
+      command: body,
     });
     return apiSuccess(result);
   } catch (error) {

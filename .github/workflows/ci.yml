@@ -59,6 +59,9 @@ jobs:
       - name: Apply canonical Drizzle schema
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
 
+      - name: Apply differentiated human retry contract
+        run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
+
       - name: Certify ephemeral PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
 
@@ -66,7 +69,7 @@ jobs:
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/sprint-3-phase-3-pr35-finalizer.integration.test.ts
-          -t "successful finalization and approval certification"
+          -t "successful finalization and approval certification|differentiated human retry contract certification"
 
   verify:
     name: Test, typecheck, build

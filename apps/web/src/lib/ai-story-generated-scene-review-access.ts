@@ -6,6 +6,7 @@ import {
   authorizeAiStoryExecution,
   GeneratedSceneReviewError,
   GeneratedSceneReviewService,
+  DifferentiatedRetryService,
 } from "@ceo-agent/agents";
 import { isUuid, rejectForgedGeneratedSceneReviewBody } from "@ceo-agent/shared";
 import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
@@ -45,4 +46,8 @@ export function createdGeneratedSceneReviewService() {
   return new GeneratedSceneReviewService({
     router: createCanonicalExecuteProviderRouter(),
   });
+}
+
+export function createDifferentiatedRetryService() {
+  return new DifferentiatedRetryService();
 }

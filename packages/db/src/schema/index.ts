@@ -1632,6 +1632,7 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
     routingDecisionHash: text("routing_decision_hash").notNull(),
     authorizationHash: text("authorization_hash").notNull(),
     schedulingIdentityHash: text("scheduling_identity_hash").notNull(),
+    retryInputRevisionId: uuid("retry_input_revision_id"),
     contractVersion: text("contract_version").notNull(),
     scheduledBy: uuid("scheduled_by").notNull(),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
@@ -2901,6 +2902,104 @@ export const aiStoryGeneratedSceneReviews = pgTable(
       t.workspaceId,
       t.createdAt
     ),
+  ]
+);
+
+/** Human creative rejection policy, independent from Provider technical truth. */
+export const aiStorySceneRetryEligibilityFacts = pgTable(
+  "ai_story_scene_retry_eligibility_facts",
+  {
+    retryEligibilityId: uuid("retry_eligibility_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sourceReviewId: uuid("source_review_id").notNull().references(() => aiStoryGeneratedSceneReviews.generatedSceneReviewId, { onDelete: "restrict" }),
+    sourceAttemptId: text("source_attempt_id").notNull(),
+    eligibility: text("eligibility").notNull(),
+    nextAttemptNumber: integer("next_attempt_number"),
+    reason: text("reason").notNull(),
+    canonicalFingerprint: text("canonical_fingerprint").notNull(),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").SceneRetryEligibilityFact>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_retry_eligibility_review_unique").on(t.sourceReviewId),
+    unique("ai_story_scene_retry_eligibility_hash_unique").on(t.canonicalFingerprint),
+    index("ai_story_scene_retry_eligibility_scene_idx").on(t.sceneExecutionId, t.createdAt),
+    index("ai_story_scene_retry_eligibility_workspace_idx").on(t.workspaceId, t.createdAt),
+  ]
+);
+
+/** Immutable Director/shot input revision for one human-authorized retry. */
+export const aiStorySceneAttemptInputRevisions = pgTable(
+  "ai_story_scene_attempt_input_revisions",
+  {
+    retryInputRevisionId: uuid("retry_input_revision_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    revisionNumber: integer("revision_number").notNull(),
+    parentRevisionId: uuid("parent_revision_id"),
+    sourceAttemptId: text("source_attempt_id").notNull(),
+    sourceReviewId: uuid("source_review_id").notNull().references(() => aiStoryGeneratedSceneReviews.generatedSceneReviewId, { onDelete: "restrict" }),
+    retryReason: text("retry_reason").notNull(),
+    creativeDirection: jsonb("creative_direction").$type<import("@ceo-agent/shared").SceneRetryCreativeDirection>().notNull(),
+    productAssetId: uuid("product_asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+    productAuthorityHash: text("product_authority_hash").notNull(),
+    visualAuthorityCertificationHash: text("visual_authority_certification_hash").notNull(),
+    providerModeRequirement: text("provider_mode_requirement").notNull(),
+    canonicalFingerprint: text("canonical_fingerprint").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").SceneAttemptInputRevisionFact>().notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_attempt_input_revision_number_unique").on(t.sceneExecutionId, t.revisionNumber),
+    unique("ai_story_scene_attempt_input_revision_hash_unique").on(t.canonicalFingerprint),
+    index("ai_story_scene_attempt_input_revision_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/** Human authorization to spend exactly one bounded next attempt. */
+export const aiStorySceneRetryAuthorizations = pgTable(
+  "ai_story_scene_retry_authorizations",
+  {
+    retryAuthorizationId: uuid("retry_authorization_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sourceReviewId: uuid("source_review_id").notNull().references(() => aiStoryGeneratedSceneReviews.generatedSceneReviewId, { onDelete: "restrict" }),
+    sourceAttemptId: text("source_attempt_id").notNull(),
+    authorizedAttemptNumber: integer("authorized_attempt_number").notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    reason: text("reason").notNull(),
+    retryInputRevisionId: uuid("retry_input_revision_id").notNull().references(() => aiStorySceneAttemptInputRevisions.retryInputRevisionId, { onDelete: "restrict" }),
+    retryInputFingerprint: text("retry_input_fingerprint").notNull(),
+    status: text("status").notNull(),
+    canonicalFingerprint: text("canonical_fingerprint").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").SceneRetryAuthorizationFact>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_scene_retry_authorization_attempt_unique").on(t.sceneExecutionId, t.authorizedAttemptNumber),
+    unique("ai_story_scene_retry_authorization_revision_unique").on(t.retryInputRevisionId),
+    unique("ai_story_scene_retry_authorization_hash_unique").on(t.canonicalFingerprint),
+    index("ai_story_scene_retry_authorization_workspace_idx").on(t.workspaceId, t.createdAt),
   ]
 );
 

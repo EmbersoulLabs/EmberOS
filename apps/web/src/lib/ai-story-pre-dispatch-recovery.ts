@@ -12,11 +12,12 @@ import {
   PreDispatchRecoveryRepositoryError,
   AiStorySceneExecutionPersistenceRepository,
   ExecutionEnvelopeRepository,
+  DifferentiatedRetryRepository,
   getDb,
   schema,
 } from "@ceo-agent/db";
 
-async function certifyVisualAuthority(input: {
+export async function certifyVisualAuthority(input: {
   readonly productAssetId: string;
   readonly orgId: string;
   readonly workspaceId: string;
@@ -98,6 +99,8 @@ export async function certifyPreDispatchRecoveryGrounding(input: {
       envelopes.getEnvelopeByPayloadReference(reference),
     getCompilationByExecutionPlanId: (executionPlanId) =>
       new AiStorySceneExecutionPersistenceRepository().getByExecutionPlanId(executionPlanId),
+    getRetryInputRevisionById: (retryInputRevisionId) =>
+      new DifferentiatedRetryRepository().getRevision(retryInputRevisionId),
     certifyProductVisualAuthority: certifyVisualAuthority,
     resolution: "480p",
     productGroundedProviderMode: "FIRST_FRAME_I2V",

@@ -108,6 +108,8 @@ export const SceneProviderSchedulingCorrelationSchema = z.object({
   scheduledBy: z.string().uuid(),
   /** Human-authorized Scene attempt ordinal. Absent on legacy/initial rows. */
   retryGeneration: z.number().int().positive().optional(),
+  retryInputRevisionId: z.string().uuid().optional(),
+  retryInputFingerprint: IntegrityHashSchema.optional(),
 });
 
 export type SceneProviderSchedulingCorrelation = z.infer<
