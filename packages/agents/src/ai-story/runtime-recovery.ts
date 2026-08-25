@@ -142,6 +142,13 @@ export class RuntimeRecoveryOrchestrator {
             "Rebuilt Admin Runtime read model, Execution Timeline, and Durable Media diagnostics from persisted facts.";
           break;
         }
+        case "RecoverAiStoryPreDispatch": {
+          throw new RuntimeRecoveryError(
+            "RUNTIME_RECOVERY_TARGET_REQUIRED",
+            "AI Story pre-dispatch recovery requires the Scene-scoped canonical recovery route",
+            400
+          );
+        }
       }
     } catch (error) {
       if (error instanceof AdminRuntimeOperationsError) {

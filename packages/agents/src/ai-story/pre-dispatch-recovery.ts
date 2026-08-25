@@ -24,6 +24,68 @@ export type PreDispatchRecoveryPreview = z.infer<
   typeof PreDispatchRecoveryPreviewSchema
 >;
 
+export type PreDispatchGroundingCertification = {
+  readonly visualAuthorityCertified: true;
+  readonly productAuthorityResolved: true;
+  readonly providerMode: "FIRST_FRAME_I2V";
+  readonly firstFramePresent: true;
+  readonly directorSafe: true;
+  readonly preDispatchGate: "PASS";
+};
+
+export type PreDispatchRecoveryCommandPort<TResult> = {
+  recover(input: {
+    readonly executionPlanId: string;
+    readonly sceneExecutionId: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly actorUserId: string;
+    readonly idempotencyKey: string;
+    readonly reason: string;
+  }): Promise<TResult>;
+};
+
+/**
+ * Executable application service. Grounding is revalidated immediately before
+ * the atomic repository command; browsers cannot supply certification facts.
+ */
+export class PreDispatchRecoveryService<TResult> {
+  constructor(
+    private readonly dependencies: {
+      readonly repository: PreDispatchRecoveryCommandPort<TResult>;
+      readonly certifyGrounding: (input: {
+        readonly executionPlanId: string;
+        readonly sceneExecutionId: string;
+        readonly orgId: string;
+        readonly workspaceId: string;
+      }) => Promise<PreDispatchGroundingCertification>;
+    }
+  ) {}
+
+  async recover(input: {
+    readonly executionPlanId: string;
+    readonly sceneExecutionId: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly actorUserId: string;
+    readonly idempotencyKey: string;
+    readonly reason: string;
+  }): Promise<TResult> {
+    const certification = await this.dependencies.certifyGrounding(input);
+    if (
+      !certification.visualAuthorityCertified ||
+      !certification.productAuthorityResolved ||
+      certification.providerMode !== "FIRST_FRAME_I2V" ||
+      !certification.firstFramePresent ||
+      !certification.directorSafe ||
+      certification.preDispatchGate !== "PASS"
+    ) {
+      throw new Error("Pre-dispatch grounding revalidation failed closed");
+    }
+    return this.dependencies.repository.recover(input);
+  }
+}
+
 /**
  * Read-only recovery classification. It never rearms queue state or creates a
  * provider attempt; a later explicitly authorized command owns that mutation.

@@ -8,7 +8,7 @@
  * - Terminal normalized evidence → immutable insert-only WorkerExecutionResult
  * - Never DELETE / UPDATE / replace accepted WorkerExecutionResult rows
  */
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import {
   PersistedSceneRoutingDecisionSchema,
   RuntimeAuthorizedFactSchema,
@@ -264,7 +264,15 @@ export class SceneProviderWorkerRuntimeRepository {
     const [row] = await this.db
       .select()
       .from(schema.aiStoryWorkerAttemptObservations)
-      .where(eq(schema.aiStoryWorkerAttemptObservations.dispatchId, dispatchId))
+      .where(
+        and(
+          eq(schema.aiStoryWorkerAttemptObservations.dispatchId, dispatchId),
+          ne(
+            schema.aiStoryWorkerAttemptObservations.observationKind,
+            "PRE_DISPATCH_BLOCKED"
+          )
+        )
+      )
       .orderBy(desc(schema.aiStoryWorkerAttemptObservations.producedAt))
       .limit(1);
     return row ? WorkerExecutionResultSchema.parse(row.observation) : null;

@@ -338,6 +338,23 @@ export async function postGeneratedSceneReviewDecision(input: {
   });
 }
 
+export async function postPreDispatchRecovery(input: {
+  campaignId: string;
+  storyId: string;
+  executionPlanId: string;
+  sceneExecutionId: string;
+}): Promise<void> {
+  const path = `${plansBase(input.campaignId, input.storyId, input.executionPlanId)}/scenes/${input.sceneExecutionId}/recover-pre-dispatch`;
+  await requestJson(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-emberos-request-correlation-id": crypto.randomUUID(),
+    },
+    body: JSON.stringify({}),
+  });
+}
+
 export async function getFinalStoryResultReadModel(input: {
   campaignId: string;
   storyId: string;

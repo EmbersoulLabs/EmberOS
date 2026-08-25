@@ -38,3 +38,4 @@ export * from "./queries/ai-story-generated-scene-review";
 export * from "./queries/ai-story-scene-release";
 export * from "./queries/campaign-asset-refs";
 export * from "./queries/admin-runtime-operations";
+export * from "./queries/ai-story-pre-dispatch-recovery";
