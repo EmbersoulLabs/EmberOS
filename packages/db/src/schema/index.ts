@@ -165,11 +165,15 @@ export const assets = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: uuid("org_id").notNull(),
     workspaceId: uuid("workspace_id").notNull(),
-    campaignId: uuid("campaign_id")
-      .notNull()
-      .references(() => campaigns.id, { onDelete: "cascade" }),
+    /** Legacy origin Campaign. New Workspace Library assets leave this null. */
+    campaignId: uuid("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     type: text("type").notNull(),
     storagePath: text("storage_path").notNull(),
+    displayName: text("display_name"),
+    originalFilename: text("original_filename"),
+    status: text("status").notNull().default("ready"),
+    source: text("source").notNull().default("campaign_upload"),
+    uploadedBy: uuid("uploaded_by"),
     mimeType: text("mime_type"),
     durationSec: numeric("duration_sec"),
     width: integer("width"),
@@ -178,8 +182,15 @@ export const assets = pgTable(
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
     contentHash: text("content_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
-  (t) => [index("assets_campaign_idx").on(t.campaignId)]
+  (t) => [
+    index("assets_campaign_idx").on(t.campaignId),
+    index("assets_workspace_idx").on(t.workspaceId),
+    index("assets_workspace_deleted_idx").on(t.workspaceId, t.deletedAt),
+    index("assets_workspace_content_hash_idx").on(t.workspaceId, t.contentHash),
+  ]
 );
 
 /** Campaign → Asset references (Photo Scene / Asset Library). File ownership stays on assets. */
@@ -539,7 +550,10 @@ export const stories = pgTable(
     orgId: uuid("org_id").notNull(),
     workspaceId: uuid("workspace_id").notNull(),
     name: text("name").notNull(),
+    description: text("description"),
     status: text("status").notNull().default("draft"),
+    coverAssetId: uuid("cover_asset_id").references(() => assets.id, { onDelete: "set null" }),
+    version: integer("version").notNull().default(1),
     createdBy: uuid("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
