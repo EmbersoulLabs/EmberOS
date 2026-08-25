@@ -1,0 +1,61 @@
+{
+  "ticketId": "EMBEROS-STAGING-MAIN-HYBRID-MIGRATION-WAVE-2-BUSINESS-PROFILE-01",
+  "wave": 2,
+  "changeKind": "HYBRID_MIGRATION",
+  "reason": "Restore the Blueprint-approved Business Profile presentation, Default Publishing Platforms, and truthful mobile sticky save status while preserving main API, authorization, tenant, and AI analysis authority.",
+  "sourceAuthority": "BLUEPRINT",
+  "targetModule": "Business Profile",
+  "allowedSourcePaths": [
+    "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:apps/web/src/components/business-profile/**",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:packages/shared/src/publishing-platforms.ts",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:packages/db/**/business-profile*"
+  ],
+  "allowedTargetPaths": [
+    ".migration-intents/**",
+    ".github/workflows/ci.yml",
+    "apps/web/src/app/api/workspaces/**/business-profile/**",
+    "apps/web/src/app/w/**/business-profile/**",
+    "apps/web/src/components/business-profile/**",
+    "apps/web/src/lib/business-profile-*.ts",
+    "packages/shared/src/types/business-profile.ts",
+    "packages/shared/src/publishing-platforms.ts",
+    "packages/shared/src/index.ts",
+    "packages/shared/src/i18n/**",
+    "packages/db/src/schema/index.ts",
+    "packages/db/src/queries/business-profile.ts",
+    "packages/db/sql/business-profile-wave2-v1.sql",
+    "packages/db/scripts/apply-business-profile-wave2-v1.ts",
+    "tests/business-profile-wave2*.test.ts",
+    "e2e/business-profile-wave2.spec.ts",
+    "docs/architecture/**",
+    "config/hybrid-migration-guards.json"
+  ],
+  "protectedDomainsExpectedToChange": [],
+  "protectedDomainsMustNotChange": [
+    "AI_STORY_RUNTIME",
+    "AI_STORY_REVIEW",
+    "AI_STORY_STAGED_RELEASE",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "PRIVATE_MEDIA_DELIVERY",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING",
+    "COMMERCIAL_AUTH",
+    "TENANT_WORKSPACE_ISOLATION"
+  ],
+  "requiredTests": [
+    "tests/business-profile-wave2.test.ts",
+    "tests/business-profile-wave2.integration.test.ts",
+    "tests/business-profile-ui.test.ts",
+    "tests/business-profile-api.test.ts",
+    "tests/business-profile-ai.test.ts",
+    "tests/business-profile-rls.integration.test.ts",
+    "e2e/business-profile-wave2.spec.ts",
+    "tests/asset-library-wave1.test.ts",
+    "tests/tenant-access.test.ts",
+    "tests/workspace-isolation.test.ts"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}
