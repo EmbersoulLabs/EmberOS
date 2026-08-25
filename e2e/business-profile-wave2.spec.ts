@@ -127,6 +127,7 @@ async function authenticate(page: Page) {
   await page.locator('input[type="email"]').fill("operator@example.com");
   await page.locator('input[type="password"]').fill("synthetic-only");
   await page.locator('button[type="submit"]').click();
+  await page.waitForURL("**/workspaces");
 }
 
 async function mockProfile(page: Page, failSave = false) {
