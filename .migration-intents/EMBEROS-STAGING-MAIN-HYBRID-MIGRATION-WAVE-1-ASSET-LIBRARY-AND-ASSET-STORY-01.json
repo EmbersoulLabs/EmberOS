@@ -1,0 +1,62 @@
+{
+  "ticketId": "EMBEROS-STAGING-MAIN-HYBRID-MIGRATION-WAVE-1-ASSET-LIBRARY-AND-ASSET-STORY-01",
+  "wave": 1,
+  "changeKind": "HYBRID_MIGRATION",
+  "reason": "Migrate the Blueprint-approved Workspace Asset Library and Asset Story capabilities while preserving certified main runtime and media authorities.",
+  "sourceAuthority": "BLUEPRINT",
+  "targetModule": "Workspace Asset Library + Asset Story",
+  "allowedSourcePaths": [
+    "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:apps/web/src/**/asset*",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:apps/web/src/**/library*",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:packages/db/**/asset-library*"
+  ],
+  "allowedTargetPaths": [
+    ".migration-intents/**",
+    "apps/web/src/app/api/workspaces/**/library/**",
+    "apps/web/src/app/api/workspaces/**/stories/**",
+    "apps/web/src/app/w/**/assets/**",
+    "apps/web/src/components/asset-library/**",
+    "apps/web/src/components/AppShell.tsx",
+    "apps/web/src/lib/asset-library-*.ts",
+    "apps/web/src/lib/library-upload.ts",
+    "packages/shared/src/asset-library.ts",
+    "packages/shared/src/constants.ts",
+    "packages/shared/src/index.ts",
+    "packages/shared/src/i18n/**",
+    "packages/db/src/schema/index.ts",
+    "packages/db/src/queries/asset-library.ts",
+    "packages/db/src/index.ts",
+    "packages/db/sql/asset-library-wave1-v1.sql",
+    "packages/db/scripts/apply-asset-library-wave1-v1.ts",
+    "tests/asset-library-wave1*.test.ts",
+    "e2e/asset-library-wave1.spec.ts",
+    "docs/architecture/**",
+    "config/hybrid-migration-guards.json"
+  ],
+  "protectedDomainsExpectedToChange": [
+    "TENANT_WORKSPACE_ISOLATION"
+  ],
+  "protectedDomainsMustNotChange": [
+    "AI_STORY_RUNTIME",
+    "AI_STORY_REVIEW",
+    "AI_STORY_STAGED_RELEASE",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "COMMERCIAL_AUTH",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING"
+  ],
+  "requiredTests": [
+    "tests/asset-library-wave1.test.ts",
+    "tests/asset-library-wave1.integration.test.ts",
+    "e2e/asset-library-wave1.spec.ts",
+    "tests/ai-story-product-visual-authority-propagation.test.ts",
+    "tests/photo-scene-10c-official-scene.test.ts",
+    "tests/vs-rc-fix-01-tenant-safe-artifacts.test.ts",
+    "tests/tenant-access.test.ts",
+    "tests/workspace-isolation.test.ts"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}
