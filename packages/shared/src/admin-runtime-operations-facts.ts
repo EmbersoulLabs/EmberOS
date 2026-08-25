@@ -96,5 +96,17 @@ export function explanationForRecoveryCommand(
           "Alter Commercial Authorization",
         ],
       };
+    case "RecoverAiStoryPreDispatch":
+      return {
+        willHappen: [
+          "Revalidate product grounding and rearm one existing AI Story Dispatch",
+          "Reuse the existing Provider Execution, Outbox Job, and Dispatch identities",
+        ],
+        willNotHappen: [
+          "Release a Scene or create duplicate scheduling lineage",
+          "Bypass the product-grounding gate",
+          "Call a provider inside the recovery command",
+        ],
+      };
   }
 }

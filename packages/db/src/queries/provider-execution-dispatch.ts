@@ -134,6 +134,57 @@ export class ExecutionDispatchRepository {
       : null;
   }
 
+  /**
+   * Claims one explicitly authorized pre-dispatch recovery without creating a
+   * new Dispatch. The marker can only be written by the atomic recovery
+   * transaction; ordinary PENDING jobs are deliberately excluded.
+   */
+  async claimAuthorizedRecoveryDispatch(input: {
+    readonly workerId: string;
+    readonly now?: Date;
+    readonly leaseMs?: number;
+  }): Promise<ExecutionDispatch | null> {
+    const now = input.now ?? new Date();
+    const leaseExpiresAt = new Date(now.getTime() + (input.leaseMs ?? 60_000));
+    return this.db.transaction(async (tx) => {
+      const rows = (await tx.execute(sql`
+        select dispatch.dispatch_id
+        from provider_outbox_jobs job
+        join provider_execution_dispatches dispatch on dispatch.job_id = job.job_id
+        join admin_runtime_recovery_receipts receipt
+          on receipt.command_type = 'RecoverAiStoryPreDispatch'
+         and receipt.target_id = dispatch.dispatch_id
+        where job.operator_notes = concat('ai-story-pre-dispatch-recovery:', receipt.recovery_receipt_id::text)
+          and job.next_visible_at <= ${now.toISOString()}::timestamptz
+          and (
+            job.status = 'PENDING'
+            or (job.status = 'CLAIMED' and job.lease_expires_at < ${now.toISOString()}::timestamptz)
+          )
+        order by job.next_visible_at asc, job.created_at asc
+        for update of job skip locked
+        limit 1
+      `)) as unknown as Array<{ dispatch_id: string }>;
+      const selected = rows[0];
+      if (!selected) return null;
+      await tx.execute(sql`
+        update provider_outbox_jobs job
+        set status = 'CLAIMED',
+            lease_owner = ${input.workerId},
+            lease_expires_at = ${leaseExpiresAt.toISOString()}::timestamptz,
+            updated_at = ${now.toISOString()}::timestamptz
+        from provider_execution_dispatches dispatch
+        where dispatch.job_id = job.job_id
+          and dispatch.dispatch_id = ${selected.dispatch_id}
+      `);
+      const [row] = await tx
+        .select()
+        .from(schema.providerExecutionDispatches)
+        .where(eq(schema.providerExecutionDispatches.dispatchId, selected.dispatch_id))
+        .limit(1);
+      return row ? validateExecutionDispatch(toDispatch(row)) : null;
+    });
+  }
+
   async createDispatch(input: ExecutionDispatch): Promise<ExecutionDispatch> {
     const dispatch = await validateExecutionDispatch(input);
     return this.db.transaction(async (tx) => {

@@ -159,6 +159,9 @@ describe("product visual authority certification propagation", () => {
     expect(source).toContain("scene.reviewAvailable");
     expect(source).toContain("scene.generatedMedia");
     expect(source).toContain("generated-scene-pre-dispatch-recovery");
+    expect(source).toContain("postPreDispatchRecovery");
+    expect(source).toContain('scene.recoveryMode === "HUMAN_RETRY_FROM_PRE_PROVIDER_FAILURE"');
+    expect(source).not.toContain('aria-disabled="true"');
   });
 
   it("certifies the truthful Runtime UI state matrix", () => {

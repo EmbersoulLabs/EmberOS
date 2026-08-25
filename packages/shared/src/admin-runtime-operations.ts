@@ -20,6 +20,7 @@ export const RUNTIME_RECOVERY_COMMAND_TYPES = [
   "ReconcileProviderAcceptance",
   "RetryProjection",
   "RebuildReadModel",
+  "RecoverAiStoryPreDispatch",
 ] as const;
 
 export const RuntimeRecoveryCommandTypeSchema = z.enum(

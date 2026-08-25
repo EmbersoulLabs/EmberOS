@@ -31,6 +31,7 @@ import {
   DurableSceneMediaAttestationRepositoryImpl,
   FinalStoryResultRepositoryImpl,
   ProviderExecutionFinalizationRepository,
+  ExecutionDispatchRepository,
   ProviderLedgerRepository,
   ProviderOutboxRepository,
   SceneProjectionRepositoryImpl,
@@ -237,9 +238,13 @@ export async function runAiStoryProviderWorkerCycle(
   readonly ownership?: "AI_STORY_SCENE" | "GENERIC_PROVIDER" | "MISSING_DISPATCH";
   readonly continuation?: AiStoryContinuationOutcome;
 }> {
-  const dispatchOutcome = await dispatchNextProviderExecution({
-    ownership: "AI_STORY_SCENE",
-  });
+  const recoveryDispatch = await new ExecutionDispatchRepository()
+    .claimAuthorizedRecoveryDispatch({
+      workerId: `ai-story-recovery:${process.pid}`,
+    });
+  const dispatchOutcome = recoveryDispatch
+    ? { status: "DISPATCHED" as const, dispatch: recoveryDispatch }
+    : await dispatchNextProviderExecution({ ownership: "AI_STORY_SCENE" });
   if (dispatchOutcome.status !== "DISPATCHED") {
     return { dispatchStatus: "NO_JOB" };
   }

@@ -11,6 +11,7 @@ import type { TranslationKey } from "@ceo-agent/shared/i18n";
 import {
   StoryRuntimeClientError,
   postGeneratedSceneReviewDecision,
+  postPreDispatchRecovery,
 } from "@/lib/ai-story-runtime-client";
 
 type Props = {
@@ -79,6 +80,36 @@ export function GeneratedSceneReviewPanel({
           : err instanceof Error
             ? err.message
             : t("aiStory.generatedReview.error")
+      );
+    } finally {
+      inFlight.current = false;
+      setBusyScene(null);
+    }
+  }
+
+  async function recover(scene: GeneratedSceneReviewReadModel) {
+    if (
+      !canDecide ||
+      inFlight.current ||
+      scene.runtimeState !== "PRE_DISPATCH_BLOCKED" ||
+      scene.recoveryMode !== "HUMAN_RETRY_FROM_PRE_PROVIDER_FAILURE"
+    ) return;
+    inFlight.current = true;
+    setBusyScene(scene.sceneExecutionId);
+    setError(null);
+    try {
+      await postPreDispatchRecovery({
+        campaignId,
+        storyId,
+        executionPlanId,
+        sceneExecutionId: scene.sceneExecutionId,
+      });
+      await onChanged();
+    } catch (err) {
+      setError(
+        err instanceof StoryRuntimeClientError
+          ? `${err.message}${err.requestCorrelationId ? ` (reference ${err.requestCorrelationId})` : ""}`
+          : err instanceof Error ? err.message : t("aiStory.generatedReview.error")
       );
     } finally {
       inFlight.current = false;
@@ -194,13 +225,16 @@ export function GeneratedSceneReviewPanel({
                   </button>
                 </div>
               ) : null}
-              {canDecide && scene.runtimeState === "PRE_DISPATCH_BLOCKED" ? (
+              {canDecide &&
+              scene.runtimeState === "PRE_DISPATCH_BLOCKED" &&
+              scene.recoveryMode === "HUMAN_RETRY_FROM_PRE_PROVIDER_FAILURE" ? (
                 <div className="mt-3" data-testid={`generated-scene-pre-dispatch-recovery-${scene.sceneOrder}`}>
                   <button
                     type="button"
                     className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm text-amber-900"
-                    disabled
-                    aria-disabled="true"
+                    disabled={busyScene === scene.sceneExecutionId}
+                    onClick={() => void recover(scene)}
+                    data-testid={`generated-scene-recover-pre-dispatch-${scene.sceneOrder}`}
                   >
                     {t("aiStory.generatedReview.preDispatchRecovery")}
                   </button>
