@@ -19,7 +19,7 @@ export default function LoginPage() {
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [rememberPassword, setRememberPassword] = useState(false);
+  const [rememberIdentifier, setRememberIdentifier] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [mode, setMode] = useState<AuthMode>("signIn");
   const [message, setMessage] = useState("");
@@ -31,8 +31,7 @@ export default function LoginPage() {
     const saved = loadRememberedCredentials();
     if (!saved) return;
     setEmail(saved.email);
-    setPassword(saved.password);
-    setRememberPassword(true);
+    setRememberIdentifier(true);
   }, []);
 
   function switchMode(next: AuthMode) {
@@ -68,8 +67,8 @@ export default function LoginPage() {
       if (error) {
         setMessage(error.message);
       } else {
-        if (rememberPassword) {
-          saveRememberedCredentials(email, password);
+        if (rememberIdentifier) {
+          saveRememberedCredentials(email);
         } else {
           clearRememberedCredentials();
         }
@@ -162,8 +161,8 @@ export default function LoginPage() {
             <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-secondary">
               <input
                 type="checkbox"
-                checked={rememberPassword}
-                onChange={(e) => setRememberPassword(e.target.checked)}
+                checked={rememberIdentifier}
+                onChange={(e) => setRememberIdentifier(e.target.checked)}
                 className="h-4 w-4 rounded border-border text-navy focus:ring-brand-blue/30"
               />
               {t("auth.rememberPassword")}

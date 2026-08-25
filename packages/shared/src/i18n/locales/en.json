@@ -112,7 +112,7 @@
   "auth.passwordMismatch": "Passwords do not match.",
   "auth.passwordUpdated": "Password updated. Redirecting…",
   "auth.privacyLink": "Privacy Policy",
-  "auth.rememberPassword": "Remember password",
+  "auth.rememberPassword": "Remember me",
   "auth.resetLinkInvalid": "This reset link is invalid or has expired. Request a new one from the sign-in page.",
   "auth.resetPassword": "Update password",
   "auth.resetPasswordSubtitle": "Choose a new password for your account.",
