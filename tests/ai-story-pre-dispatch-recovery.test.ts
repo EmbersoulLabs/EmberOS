@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { PreDispatchRecoveryService } from "../packages/agents/src/ai-story/pre-dispatch-recovery";
-import { assertRecoverablePreDispatchState } from "../packages/db/src/queries/ai-story-pre-dispatch-recovery";
+import {
+  PreDispatchRecoveryRepositoryError,
+  assertRecoverablePreDispatchState,
+  normalizeTimestampToIso,
+} from "../packages/db/src/queries/ai-story-pre-dispatch-recovery";
 
 const input = {
   executionPlanId: "a98ac267-71a5-51aa-a276-de3c4b36b387",
@@ -105,4 +109,34 @@ describe("AI Story pre-dispatch recovery service", () => {
     expect(worker).toContain("claimAuthorizedRecoveryDispatch");
     expect(worker).toContain("dispatchNextProviderExecution");
   });
+
+  it("normalizes Date and production postgres-js timestamp hydration", () => {
+    expect(normalizeTimestampToIso(new Date("2026-08-25T03:00:00.123Z"))).toBe(
+      "2026-08-25T03:00:00.123Z"
+    );
+    expect(normalizeTimestampToIso("2026-08-25 03:00:00.123+00")).toBe(
+      "2026-08-25T03:00:00.123Z"
+    );
+    expect(normalizeTimestampToIso("2026-08-25 11:00:00.123+08")).toBe(
+      "2026-08-25T03:00:00.123Z"
+    );
+    expect(normalizeTimestampToIso("2026-08-25T03:00:00.123Z")).toBe(
+      "2026-08-25T03:00:00.123Z"
+    );
+  });
+
+  it.each([null, undefined, "", "not-a-timestamp", "2026-08-25 03:00:00.123", {}])(
+    "fails closed for invalid or timezone-ambiguous timestamp input %#",
+    (value) => {
+      try {
+        normalizeTimestampToIso(value);
+        throw new Error("expected timestamp normalization to fail");
+      } catch (error) {
+        expect(error).toBeInstanceOf(PreDispatchRecoveryRepositoryError);
+        expect((error as PreDispatchRecoveryRepositoryError).code).toBe(
+          "RECOVERY_INVALID_TIMESTAMP"
+        );
+      }
+    }
+  );
 });

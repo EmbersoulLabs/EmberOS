@@ -18,6 +18,7 @@ export type PreDispatchRecoveryFailureCode =
   | "RECOVERY_NOT_FOUND"
   | "RECOVERY_ACCESS_DENIED"
   | "RECOVERY_STATE_STALE"
+  | "RECOVERY_INVALID_TIMESTAMP"
   | "PRODUCT_VISUAL_AUTHORITY_UNCERTIFIED"
   | "AUTHORITY_CONFLICT"
   | "PROVIDER_MODE_UNCERTIFIED"
@@ -72,7 +73,7 @@ type RecoveryRow = {
   worker_state: string;
   worker_result: unknown;
   worker_integrity_hash: string;
-  produced_at: Date;
+  produced_at: Date | string;
   attempt_count: number;
   result_count: number;
   review_count: number;
@@ -109,6 +110,36 @@ function integrityHash(value: unknown): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
+const TIMESTAMP_WITH_EXPLICIT_TIMEZONE =
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}(?::?\d{2})?)$/i;
+
+/**
+ * Normalizes timestamp values returned by either Drizzle's Date mapper or a
+ * raw postgres-js query. Timestamp strings must carry an explicit timezone so
+ * the recovery archive never reinterprets a database instant in local time.
+ */
+export function normalizeTimestampToIso(value: unknown): string {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      throw new PreDispatchRecoveryRepositoryError(
+        "RECOVERY_INVALID_TIMESTAMP",
+        "Recovery evidence timestamp is invalid"
+      );
+    }
+    return value.toISOString();
+  }
+
+  if (typeof value === "string" && TIMESTAMP_WITH_EXPLICIT_TIMEZONE.test(value.trim())) {
+    const parsed = new Date(value.trim());
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  }
+
+  throw new PreDispatchRecoveryRepositoryError(
+    "RECOVERY_INVALID_TIMESTAMP",
+    "Recovery evidence timestamp is missing, invalid, or lacks an explicit timezone"
+  );
+}
+
 function responseFromReceipt(row: {
   result_body: unknown;
   provider_execution_id: string;
@@ -133,7 +164,10 @@ function responseFromReceipt(row: {
  * outbox, dispatch, provider-attempt, result, or review identities.
  */
 export class AiStoryPreDispatchRecoveryRepository {
-  constructor(private readonly db: Db = getDb()) {}
+  constructor(
+    private readonly db: Db = getDb(),
+    private readonly normalizeTimestamp: (value: unknown) => string = normalizeTimestampToIso
+  ) {}
 
   async recover(input: PreDispatchRecoveryCommandInput): Promise<PreDispatchRecoveryCommandResult> {
     return this.db.transaction(async (tx) => {
@@ -224,6 +258,10 @@ export class AiStoryPreDispatchRecoveryRepository {
         resultCount: Number(row.result_count),
         generatedReviewCount: Number(row.review_count),
       });
+      // Raw postgres-js query results hydrate timestamptz columns as strings in
+      // production. Normalize before the first durable mutation so invalid
+      // evidence fails closed and the transaction remains untouched.
+      const producedAtIso = this.normalizeTimestamp(row.produced_at);
 
       const receiptId = deterministicPersistenceUuid("ai-story-pre-dispatch-recovery-receipt", {
         executionPlanId: input.executionPlanId,
@@ -278,7 +316,7 @@ export class AiStoryPreDispatchRecoveryRepository {
           ${row.provider_execution_id}, ${row.provider_attempt_id}, ${row.dispatch_id},
           ${row.outbox_job_id}, null, 'PRE_DISPATCH_BLOCKED', false,
           ${row.worker_integrity_hash}, ${JSON.stringify(row.worker_result)}::jsonb,
-          ${row.produced_at.toISOString()}::timestamptz
+          ${producedAtIso}::timestamptz
         ) on conflict (observation_id) do nothing
       `);
       await tx.execute(sql`
