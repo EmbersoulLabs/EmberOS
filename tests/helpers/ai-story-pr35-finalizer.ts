@@ -140,6 +140,7 @@ export class InMemoryBridgeLedger {
 
 export class InMemoryBridgeOutbox {
   claims: string[] = [];
+  claimOwners: string[] = [];
   completions: string[] = [];
   releases: string[] = [];
   statusByJob = new Map<string, string>();
@@ -157,6 +158,7 @@ export class InMemoryBridgeOutbox {
     leaseDurationMs: number;
   }): Promise<void> {
     this.claims.push(input.jobId);
+    this.claimOwners.push(input.leaseOwner);
     this.statusByJob.set(input.jobId, "CLAIMED");
   }
 

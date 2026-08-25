@@ -138,6 +138,25 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
     expect(outbox.claims).toEqual([worker.outboxJobId]);
   });
 
+  it("continues terminal finalization under the caller's canonical lease owner", async () => {
+    const bundle = await buildPr35ProjectionBundle();
+    const worker = buildTerminalSuccessWorkerResult(bundle);
+    const outbox = new InMemoryBridgeOutbox();
+    const bridge = new ProviderWorkerResultFinalizerBridge({
+      ledger: new InMemoryBridgeLedger(),
+      outbox,
+      workerId: "ai-story-runtime:42",
+    });
+
+    const prepared = await bridge.prepareFinalizerInput({
+      bundle,
+      workerResult: worker,
+    });
+
+    expect(outbox.claimOwners).toEqual(["ai-story-runtime:42"]);
+    expect(prepared.finalizerInput.workerId).toBe("ai-story-runtime:42");
+  });
+
   it("only Production Finalizer writes usage/cost/execution/outbox terminal", async () => {
     const deps = buildCoordinatorDeps();
     const dispatchId = await deps.getDispatchId();

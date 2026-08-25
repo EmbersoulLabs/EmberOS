@@ -54,11 +54,19 @@ export type AiStoryProviderWorkerCycleOptions = {
   readonly artifactRoot?: string;
   readonly durableObjectRoot?: string;
   readonly coordinator?: AiStoryRuntimeContinuationCoordinator;
+  /**
+   * Canonical owner for the complete claim -> provider -> finalization cycle.
+   * Recovery claims and terminal finalization must use this same identity.
+   */
+  readonly leaseOwner?: string;
 };
+
+const AI_STORY_RUNTIME_LEASE_OWNER = `ai-story-runtime:${process.pid}`;
 
 let cachedCoordinator: AiStoryRuntimeContinuationCoordinator | undefined;
 let cachedArtifactRoot: string | undefined;
 let cachedDurableObjectRoot: string | undefined;
+let cachedLeaseOwner: string | undefined;
 
 async function resolveArtifactRoot(explicit?: string): Promise<string> {
   if (explicit) {
@@ -128,6 +136,7 @@ export async function createProductionAiStoryContinuationCoordinator(
     finalization: {
       chain: projectionRepo,
       bridge: {
+        workerId: options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER,
         ledger: new ProviderLedgerRepository(),
         outbox: {
           findJob: (jobId: string) => new ProviderOutboxRepository().findJob(jobId),
@@ -212,13 +221,19 @@ export async function getProductionAiStoryContinuationCoordinator(
   options: AiStoryProviderWorkerCycleOptions = {}
 ): Promise<AiStoryRuntimeContinuationCoordinator> {
   if (options.coordinator) return options.coordinator;
+  const leaseOwner = options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER;
   if (
     !cachedCoordinator ||
     options.adapters ||
     options.artifactRoot ||
-    options.durableObjectRoot
+    options.durableObjectRoot ||
+    cachedLeaseOwner !== leaseOwner
   ) {
-    cachedCoordinator = await createProductionAiStoryContinuationCoordinator(options);
+    cachedCoordinator = await createProductionAiStoryContinuationCoordinator({
+      ...options,
+      leaseOwner,
+    });
+    cachedLeaseOwner = leaseOwner;
   }
   return cachedCoordinator;
 }
@@ -238,9 +253,10 @@ export async function runAiStoryProviderWorkerCycle(
   readonly ownership?: "AI_STORY_SCENE" | "GENERIC_PROVIDER" | "MISSING_DISPATCH";
   readonly continuation?: AiStoryContinuationOutcome;
 }> {
+  const leaseOwner = options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER;
   const recoveryDispatch = await new ExecutionDispatchRepository()
     .claimAuthorizedRecoveryDispatch({
-      workerId: `ai-story-recovery:${process.pid}`,
+      workerId: leaseOwner,
     });
   const dispatchOutcome = recoveryDispatch
     ? { status: "DISPATCHED" as const, dispatch: recoveryDispatch }
@@ -260,7 +276,10 @@ export async function runAiStoryProviderWorkerCycle(
     );
   }
 
-  const coordinator = await getProductionAiStoryContinuationCoordinator(options);
+  const coordinator = await getProductionAiStoryContinuationCoordinator({
+    ...options,
+    leaseOwner,
+  });
   const continuation = await coordinator.continueFromDispatch(
     dispatchOutcome.dispatch.dispatchId
   );
