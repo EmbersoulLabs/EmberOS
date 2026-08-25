@@ -7,6 +7,7 @@ import {
   ExecutionEnvelopeRepository,
   SceneProviderWorkerRuntimeRepository,
   closeDb,
+  getDb,
 } from "@ceo-agent/db";
 import { SceneProviderWorkerRuntime } from "../packages/agents/src/ai-story/scene-provider-worker-runtime";
 import { SceneSchedulingCoordinator } from "../packages/agents/src/ai-story/scene-scheduling-coordinator";
@@ -140,6 +141,92 @@ describeIntegration("atomic AI Story pre-dispatch recovery", () => {
       receipts: 1,
       archives: 1,
       terminal_results: 0,
+    });
+  }, 120_000);
+
+  it("rolls back every recovery mutation when timestamp normalization fails", async () => {
+    const prepared = await prepareAuthorizedSchedulingPlan({
+      purpose: "pre-dispatch-recovery-invalid-timestamp",
+    });
+    const scheduled = await new SceneSchedulingCoordinator({
+      router: new FixedSeedanceRouter(),
+    }).scheduleAuthorizedScene({
+      executionPlanId: prepared.executionPlanId,
+      sceneExecutionId: prepared.sceneExecutionIds[0]!,
+      runtimeAuthorizationId: prepared.acceptedAuthorization.runtimeAuthorizationId,
+      commercialAuthorizationId: prepared.commercialAuthorizationId,
+      actorUserId: PR32_USER_A,
+    });
+    const envelope = await new ExecutionEnvelopeRepository().getEnvelope(scheduled.envelopeId);
+    expect(envelope).toBeTruthy();
+    const dispatch = await createExecutionDispatch({
+      version: "1",
+      dispatchId: `dispatch:${scheduled.outboxJobId}`,
+      jobId: scheduled.outboxJobId,
+      executionId: scheduled.providerExecutionId,
+      envelopeId: scheduled.envelopeId,
+      payloadReference: scheduled.payloadReference,
+      correlationId: scheduled.correlation.correlationId,
+      tenantId: scheduled.correlation.ownership.orgId,
+      workspaceId: scheduled.correlation.ownership.workspaceId,
+      capabilityId: scheduled.routingDecision.capabilityId,
+      capabilityVersion: scheduled.routingDecision.capabilityVersion,
+      requestHash: scheduled.requestHash,
+      envelopeHash: scheduled.envelopeHash,
+      workerHandoff: {
+        envelopeId: scheduled.envelopeId,
+        payloadReference: scheduled.payloadReference,
+        dispatchContractVersion: "1",
+      },
+      status: "DISPATCHED",
+      createdAt: scheduled.correlation.scheduledAt,
+    });
+    await new ExecutionDispatchRepository().createDispatch(dispatch);
+    const worker = new SceneProviderWorkerRuntime({
+      repository: new SceneProviderWorkerRuntimeRepository(),
+      adapters: createPr33TestAdapterRegistry("not_accepted"),
+    });
+    await worker.processDispatch({ dispatchId: dispatch.dispatchId });
+
+    const repository = new AiStoryPreDispatchRecoveryRepository(getDb(), () => {
+      throw new Error("injected invalid timestamp");
+    });
+    await expect(repository.recover({
+      executionPlanId: prepared.executionPlanId,
+      sceneExecutionId: prepared.sceneExecutionIds[0]!,
+      orgId: scheduled.correlation.ownership.orgId,
+      workspaceId: scheduled.correlation.ownership.workspaceId,
+      actorUserId: PR32_USER_A,
+      idempotencyKey: `recovery-invalid-timestamp:${dispatch.dispatchId}`,
+      reason: "rollback proof",
+    })).rejects.toThrow("injected invalid timestamp");
+
+    const [state] = await sqlClient<{
+      attempts: number;
+      receipts: number;
+      archives: number;
+      terminal_results: number;
+      outbox_status: string;
+      outbox_notes: string | null;
+      dispatches: number;
+    }[]>`
+      select
+        (select count(*)::int from provider_attempts where execution_id = ${scheduled.providerExecutionId}) attempts,
+        (select count(*)::int from admin_runtime_recovery_receipts where target_id = ${dispatch.dispatchId}) receipts,
+        (select count(*)::int from ai_story_worker_attempt_observations where dispatch_id = ${dispatch.dispatchId} and observation_kind = 'PRE_DISPATCH_BLOCKED') archives,
+        (select count(*)::int from ai_story_worker_execution_results where dispatch_id = ${dispatch.dispatchId}) terminal_results,
+        (select status from provider_outbox_jobs where job_id = ${scheduled.outboxJobId}) outbox_status,
+        (select operator_notes from provider_outbox_jobs where job_id = ${scheduled.outboxJobId}) outbox_notes,
+        (select count(*)::int from provider_execution_dispatches where job_id = ${scheduled.outboxJobId}) dispatches
+    `;
+    expect(state).toEqual({
+      attempts: 0,
+      receipts: 0,
+      archives: 0,
+      terminal_results: 1,
+      outbox_status: "PENDING",
+      outbox_notes: null,
+      dispatches: 1,
     });
   }, 120_000);
 });
