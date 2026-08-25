@@ -739,7 +739,7 @@ describe("EXEC-06 human review authorization", () => {
           providerCostAccounting: "ALLOWED",
         } as never,
       })
-    ).rejects.toMatchObject({ code: "GENERATED_SCENE_RETRY_LIMIT_EXHAUSTED" });
+    ).rejects.toMatchObject({ code: "GENERATED_SCENE_RETRY_NOT_ELIGIBLE" });
     expect(schedule).not.toHaveBeenCalled();
   });
 });

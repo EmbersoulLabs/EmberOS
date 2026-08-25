@@ -7,6 +7,7 @@
  * plan/intent AI QC + mandatory human generated-media review (this module).
  */
 import { z } from "zod";
+import { RetryEligibilitySchema } from "./ai-story-differentiated-retry";
 
 export const AI_STORY_GENERATED_SCENE_REVIEW_CONTRACT_VERSION = "1" as const;
 export const AI_STORY_SCENE_MAX_ATTEMPTS_ENV = "AI_STORY_SCENE_MAX_ATTEMPTS";
@@ -14,6 +15,7 @@ export const AI_STORY_SCENE_MAX_ATTEMPTS_DEFAULT = 3;
 
 export const GENERATED_SCENE_REVIEW_STATES = [
   "PENDING_REVIEW",
+  "REJECTED",
   "APPROVED",
   "RETRY_REQUESTED",
   "REJECTED_TERMINAL",
@@ -132,6 +134,8 @@ export const GeneratedSceneRuntimeStateSchema = z.enum([
   "PRE_DISPATCH_BLOCKED",
   "RUNNING",
   "PENDING_REVIEW",
+  "REJECTED",
+  "RETRY_AUTHORIZED",
   "APPROVED",
   "FAILED",
 ]);
@@ -155,6 +159,10 @@ export const GeneratedSceneReviewReadModelSchema = z
     approvedAttemptId: z.string().nullable(),
     approvedSceneResultId: z.string().uuid().nullable(),
     latestAttemptId: z.string().nullable(),
+    latestReviewId: z.string().uuid().nullable().default(null),
+    retryEligibility: RetryEligibilitySchema.nullable().default(null),
+    retryInputRevisionId: z.string().uuid().nullable().default(null),
+    retryAuthorizationId: z.string().uuid().nullable().default(null),
     latestAttemptNumber: z.number().int().positive().nullable(),
     latestAttemptStatus: z.string().nullable(),
     attemptCount: z.number().int().nonnegative(),

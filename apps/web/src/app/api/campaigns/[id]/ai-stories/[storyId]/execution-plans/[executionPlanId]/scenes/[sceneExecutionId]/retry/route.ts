@@ -28,6 +28,13 @@ export async function POST(request: Request, { params }: RouteParams) {
     const { id: campaignId, storyId, executionPlanId, sceneExecutionId } =
       await params;
     const body = await request.json().catch(() => ({}));
+    const retryAuthorizationId =
+      body && typeof body === "object" && typeof (body as { retryAuthorizationId?: unknown }).retryAuthorizationId === "string"
+        ? (body as { retryAuthorizationId: string }).retryAuthorizationId
+        : null;
+    if (!retryAuthorizationId) {
+      return apiError("Human retry authorization is required", "GENERATED_SCENE_RETRY_NOT_ELIGIBLE", 409);
+    }
     const forged = rejectForgedGeneratedSceneReviewBody(body);
     if (forged) {
       return apiError(
@@ -59,6 +66,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       actorUserId: user.id,
       workspaceId: ctx.workspaceId,
       executionAuthorization,
+      retryAuthorizationId,
     });
     return apiSuccess(result);
   } catch (error) {

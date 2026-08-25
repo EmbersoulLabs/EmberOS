@@ -1088,6 +1088,7 @@ export class SceneSchedulingRepository {
         routingDecisionHash: correlation.routingDecisionHash,
         authorizationHash: correlation.authorizationHash,
         schedulingIdentityHash: correlation.schedulingIdentityHash,
+        retryInputRevisionId: correlation.retryInputRevisionId ?? null,
         contractVersion: correlation.contractVersion,
         scheduledBy: correlation.scheduledBy,
         scheduledAt: new Date(correlation.scheduledAt),

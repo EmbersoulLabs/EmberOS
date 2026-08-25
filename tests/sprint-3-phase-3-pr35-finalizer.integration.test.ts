@@ -18,6 +18,7 @@ import {
   closeDb,
   AiStorySceneReleaseRepository,
   createGeneratedSceneReviewConnectionMetrics,
+  DifferentiatedRetryRepository,
   ExecutionEnvelopeRepository,
   GeneratedSceneReviewRepository,
   ProviderExecutionFinalizationError,
@@ -44,6 +45,7 @@ import {
   buildTerminalSuccessWorkerResult,
 } from "./helpers/ai-story-pr35-finalizer";
 import type { SceneProjectionValidatedBundle } from "@ceo-agent/shared";
+import { PHASE_2A_IDS } from "./helpers/ai-story-phase-2a";
 
 const integrationDbUrl = getIntegrationDbUrl();
 if (RUN_DB_INTEGRATION && !integrationDbUrl) {
@@ -152,9 +154,12 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     await closeDb();
   }, 60_000);
 
-  async function scheduleScene(sceneOrder?: readonly number[]) {
+  async function scheduleScene(
+    sceneOrder?: readonly number[],
+    purpose = "pr35r1"
+  ) {
     const prepared = await prepareAuthorizedSchedulingPlan({
-      purpose: "pr35r1",
+      purpose,
       sceneOrder,
     });
     const scheduled = await new SceneSchedulingCoordinator({
@@ -456,6 +461,100 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
         AND provider_attempt_id = ${outcome.sceneResult.providerAttemptId}
     `;
     expect(reviewCount?.count).toBe(1);
+  }, 180_000);
+
+  it("differentiated human retry contract certification", async () => {
+    const { dispatch } = await scheduleScene(undefined, "differentiated-retry");
+    await seedTerminalSuccessWorker(dispatch.dispatchId);
+    const outcome = await coordinator().finalizeAndProject({
+      dispatchId: dispatch.dispatchId,
+    });
+    expect(outcome.outcome).toBe("PROJECTED");
+    if (outcome.outcome !== "PROJECTED") throw new Error("expected PROJECTED");
+
+    const repo = new DifferentiatedRetryRepository();
+    const rejection = await repo.rejectCreative({
+      executionPlanId: outcome.sceneResult.executionPlanId,
+      sceneExecutionId: outcome.sceneResult.sceneExecutionId,
+      workspaceId: dispatch.workspaceId,
+      actorUserId: PR32_USER_A,
+      reason: "INSUFFICIENT_SCENE_DIFFERENTIATION",
+    });
+    expect(rejection.eligibility.eligibility).toBe("ELIGIBLE");
+    expect(rejection.eligibility.nextAttemptNumber).toBe(2);
+
+    const [providerTruth] = await sql<{ status: string; decision: string }[]>`
+      SELECT pa.status, review.decision
+      FROM provider_attempts pa
+      JOIN ai_story_generated_scene_reviews review
+        ON review.provider_attempt_id = pa.attempt_id
+      WHERE pa.attempt_id = ${outcome.sceneResult.providerAttemptId}
+    `;
+    expect(providerTruth).toEqual({ status: "SUCCEEDED", decision: "REJECTED" });
+
+    const revisionInput = {
+      executionPlanId: outcome.sceneResult.executionPlanId,
+      sceneExecutionId: outcome.sceneResult.sceneExecutionId,
+      workspaceId: dispatch.workspaceId,
+      actorUserId: PR32_USER_A,
+      sourceReviewId: rejection.reviewId,
+      creativeDirection: {
+        visualRole: "SECONDARY_DETAIL_REVEAL",
+        cameraInstruction: "MINOR_LATERAL_DOLLY",
+        focusProgression: ["PRIMARY_PRODUCT_DETAIL", "SECONDARY_PRODUCT_DETAIL"],
+        shotEmphasis: "DISTINCT_SCENE_VISUAL_BEAT",
+        pacing: "SMALL_BOUNDED",
+      },
+      expectedProductAssetId: PHASE_2A_IDS.assetId,
+      productAuthorityHash: `sha256:${"a".repeat(64)}`,
+      visualAuthorityCertificationHash: `sha256:${"b".repeat(64)}`,
+    } as const;
+    const [revisionA, revisionB] = await Promise.all([
+      repo.createInputRevision(revisionInput),
+      repo.createInputRevision(revisionInput),
+    ]);
+    expect(revisionA.retryInputRevisionId).toBe(revisionB.retryInputRevisionId);
+    expect(revisionA.revisionNumber).toBe(2);
+    expect(revisionA.parentRevisionId).toBeTruthy();
+    expect(revisionA.providerModeRequirement).toBe("FIRST_FRAME_I2V");
+
+    const authorizationInput = {
+      executionPlanId: outcome.sceneResult.executionPlanId,
+      sceneExecutionId: outcome.sceneResult.sceneExecutionId,
+      workspaceId: dispatch.workspaceId,
+      actorUserId: PR32_USER_A,
+      sourceReviewId: rejection.reviewId,
+      retryInputRevisionId: revisionA.retryInputRevisionId,
+    };
+    const [authorizationA, authorizationB] = await Promise.all([
+      repo.authorizeRetry(authorizationInput),
+      repo.authorizeRetry(authorizationInput),
+    ]);
+    expect(authorizationA.retryAuthorizationId).toBe(
+      authorizationB.retryAuthorizationId
+    );
+    expect(authorizationA.authorizedAttemptNumber).toBe(2);
+
+    await expect(
+      repo.authorizeRetry({ ...authorizationInput, workspaceId: crypto.randomUUID() })
+    ).rejects.toMatchObject({ code: "RETRY_ACCESS_DENIED" });
+    await expect(
+      sql`UPDATE ai_story_scene_attempt_input_revisions SET revision_number = 3 WHERE retry_input_revision_id = ${revisionA.retryInputRevisionId}`
+    ).rejects.toThrow(/AI_STORY_ATTEMPT_INPUT_REVISION_IMMUTABLE/);
+
+    const [counts] = await sql<{
+      revisions: number;
+      authorizations: number;
+      attempts: number;
+      outboxes: number;
+    }[]>`
+      SELECT
+        (SELECT count(*)::int FROM ai_story_scene_attempt_input_revisions WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}) AS revisions,
+        (SELECT count(*)::int FROM ai_story_scene_retry_authorizations WHERE scene_execution_id = ${outcome.sceneResult.sceneExecutionId}) AS authorizations,
+        (SELECT count(*)::int FROM provider_attempts WHERE attempt_id = ${outcome.sceneResult.providerAttemptId}) AS attempts,
+        (SELECT count(*)::int FROM provider_outbox_jobs WHERE job_id = ${dispatch.jobId}) AS outboxes
+    `;
+    expect(counts).toEqual({ revisions: 2, authorizations: 1, attempts: 1, outboxes: 1 });
   }, 180_000);
 
   it("concurrent next-scene release transitions Scene 2 once and leaves Scene 3 held", async () => {

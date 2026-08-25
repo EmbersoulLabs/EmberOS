@@ -197,6 +197,60 @@ export class GeneratedSceneReviewRepository {
     return rows.map(toFact);
   }
 
+  async listWithRetryAuthorityByExecutionPlanId(executionPlanId: string) {
+    const rows = await this.db
+      .select({
+        reviewFact: schema.aiStoryGeneratedSceneReviews.fact,
+        eligibility: schema.aiStorySceneRetryEligibilityFacts.eligibility,
+        retryInputRevisionId:
+          schema.aiStorySceneAttemptInputRevisions.retryInputRevisionId,
+        retryAuthorizationId:
+          schema.aiStorySceneRetryAuthorizations.retryAuthorizationId,
+        retryAuthorizationStatus: schema.aiStorySceneRetryAuthorizations.status,
+      })
+      .from(schema.aiStoryGeneratedSceneReviews)
+      .leftJoin(
+        schema.aiStorySceneRetryEligibilityFacts,
+        eq(
+          schema.aiStorySceneRetryEligibilityFacts.sourceReviewId,
+          schema.aiStoryGeneratedSceneReviews.generatedSceneReviewId
+        )
+      )
+      .leftJoin(
+        schema.aiStorySceneAttemptInputRevisions,
+        and(
+          eq(
+            schema.aiStorySceneAttemptInputRevisions.sourceReviewId,
+            schema.aiStoryGeneratedSceneReviews.generatedSceneReviewId
+          ),
+          eq(
+            schema.aiStorySceneAttemptInputRevisions.revisionNumber,
+            schema.aiStorySceneRetryEligibilityFacts.nextAttemptNumber
+          )
+        )
+      )
+      .leftJoin(
+        schema.aiStorySceneRetryAuthorizations,
+        eq(
+          schema.aiStorySceneRetryAuthorizations.retryInputRevisionId,
+          schema.aiStorySceneAttemptInputRevisions.retryInputRevisionId
+        )
+      )
+      .where(
+        eq(schema.aiStoryGeneratedSceneReviews.executionPlanId, executionPlanId)
+      )
+      .orderBy(asc(schema.aiStoryGeneratedSceneReviews.createdAt));
+    return rows.map((row) => ({
+      review: GeneratedSceneReviewFactSchema.parse(row.reviewFact),
+      retryEligibility: row.eligibility,
+      retryInputRevisionId: row.retryInputRevisionId,
+      retryAuthorizationId:
+        row.retryAuthorizationStatus === "AUTHORIZED"
+          ? row.retryAuthorizationId
+          : null,
+    }));
+  }
+
   async listApprovedSceneResultIds(
     executionPlanId: string
   ): Promise<readonly string[]> {

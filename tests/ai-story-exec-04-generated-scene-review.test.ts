@@ -27,6 +27,9 @@ const ORG = "10000000-0000-4000-8000-000000000002";
 const WORKSPACE = "10000000-0000-4000-8000-000000000003";
 const HASH =
   "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const REVIEW_ID = "10000000-0000-4000-8000-000000000801";
+const RETRY_REVISION_ID = "10000000-0000-4000-8000-000000000901";
+const RETRY_AUTHORIZATION_ID = "10000000-0000-4000-8000-000000000902";
 
 function sceneResult(id: string, status: "SUCCEEDED" | "FAILED" = "SUCCEEDED") {
   return {
@@ -171,7 +174,7 @@ describe("EXEC-04 retry authorization service", () => {
       storyId: STORY,
       reviews: [
         {
-          generatedSceneReviewId: "10000000-0000-4000-8000-000000000801",
+          generatedSceneReviewId: REVIEW_ID,
           orgId: ORG,
           workspaceId: WORKSPACE,
           campaignId: "10000000-0000-4000-8000-000000000004",
@@ -278,7 +281,7 @@ describe("EXEC-04 retry authorization service", () => {
     expect(write).toHaveBeenCalled();
   });
 
-  it("F/G: exhausted retry does not enqueue a provider job", async () => {
+  it("F/G: retry without a separately durable human authorization is denied", async () => {
     const schedule = vi.fn();
     const service = new GeneratedSceneReviewService({
       reviewRepository: {
@@ -298,18 +301,13 @@ describe("EXEC-04 retry authorization service", () => {
         workspaceId: WORKSPACE,
         executionAuthorization: auth,
       })
-    ).rejects.toMatchObject({ code: "GENERATED_SCENE_RETRY_LIMIT_EXHAUSTED" });
+    ).rejects.toMatchObject({ code: "GENERATED_SCENE_RETRY_NOT_ELIGIBLE" });
     expect(schedule).not.toHaveBeenCalled();
   });
 
   it("G/H: explicit human retry creates generation 2 and duplicate requests converge", async () => {
     const snapshot = pendingSnapshot(1);
-    snapshot.results[0] = {
-      providerAttemptId: "attempt-1",
-      status: "FAILED",
-      sceneResultId: SCENE_RESULT_1,
-    };
-    snapshot.providerExecutions.set("exec-1", { status: "TERMINAL_FAILURE" });
+    snapshot.reviews[0]!.decision = "REJECTED";
     const scheduledIdentities = new Set<string>();
     const schedule = vi.fn(async (input: { retryGeneration: number }) => {
       scheduledIdentities.add(`${SCENE_EXEC}:${input.retryGeneration}`);
@@ -337,6 +335,29 @@ describe("EXEC-04 retry authorization service", () => {
         getByExecutionPlanId: async () => ({ intents: [{}] }),
       } as never,
       schedulingCoordinator: { scheduleAuthorizedScene: schedule } as never,
+      differentiatedRetryRepository: {
+        getAuthorization: async () => ({
+          retryAuthorizationId: RETRY_AUTHORIZATION_ID,
+          sceneExecutionId: SCENE_EXEC,
+          executionPlanId: PLAN,
+          workspaceId: WORKSPACE,
+          sourceReviewId: REVIEW_ID,
+          sourceAttemptId: "attempt-1",
+          authorizedAttemptNumber: 2,
+          retryInputRevisionId: RETRY_REVISION_ID,
+          retryInputFingerprint: HASH,
+        }) as never,
+        getRevision: async () => ({
+          retryInputRevisionId: RETRY_REVISION_ID,
+          sceneExecutionId: SCENE_EXEC,
+          executionPlanId: PLAN,
+          workspaceId: WORKSPACE,
+          revisionNumber: 2,
+          providerModeRequirement: "FIRST_FRAME_I2V",
+          canonicalFingerprint: HASH,
+        }) as never,
+        markAuthorizationConsumed: async () => ({}) as never,
+      },
     });
     vi.spyOn(service, "loadPlanReadModel").mockResolvedValue([
       {
@@ -366,6 +387,7 @@ describe("EXEC-04 retry authorization service", () => {
       actorUserId: USER,
       workspaceId: WORKSPACE,
       executionAuthorization: auth,
+      retryAuthorizationId: RETRY_AUTHORIZATION_ID,
     };
     const first = await service.retry(retryInput);
     const duplicate = await service.retry(retryInput);
@@ -384,7 +406,7 @@ describe("EXEC-04 retry authorization service", () => {
     expect(scheduledIdentities.size).toBe(1);
   });
 
-  it("H: in-flight retry is fail-closed and does not enqueue again", async () => {
+  it("H: an unauthorised retry cannot enqueue even when an attempt is in-flight", async () => {
     const snapshot = pendingSnapshot(1);
     snapshot.providerExecutions.set("exec-1", { status: "PENDING" });
     const schedule = vi.fn();
@@ -406,7 +428,7 @@ describe("EXEC-04 retry authorization service", () => {
         workspaceId: WORKSPACE,
         executionAuthorization: auth,
       })
-    ).rejects.toMatchObject({ code: "GENERATED_SCENE_RETRY_IN_FLIGHT" });
+    ).rejects.toMatchObject({ code: "GENERATED_SCENE_RETRY_NOT_ELIGIBLE" });
     expect(schedule).not.toHaveBeenCalled();
   });
 

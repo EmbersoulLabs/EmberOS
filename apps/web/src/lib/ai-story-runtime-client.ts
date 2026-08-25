@@ -321,6 +321,8 @@ export async function postGeneratedSceneReviewDecision(input: {
   sceneExecutionId: string;
   action: "approve" | "retry" | "reject";
   attemptId?: string;
+  rejection?: { reason: import("@ceo-agent/shared").HumanCreativeRejectionReason; note?: string };
+  retryAuthorizationId?: string;
 }): Promise<void> {
   const base = `${plansBase(input.campaignId, input.storyId, input.executionPlanId)}/scenes/${input.sceneExecutionId}`;
   const path =
@@ -334,8 +336,24 @@ export async function postGeneratedSceneReviewDecision(input: {
       "Content-Type": "application/json",
       "x-emberos-request-correlation-id": requestCorrelationId,
     },
-    body: JSON.stringify({}),
+    body: JSON.stringify(
+      input.action === "reject"
+        ? input.rejection ?? {}
+        : input.action === "retry"
+          ? { retryAuthorizationId: input.retryAuthorizationId }
+          : {}
+    ),
   });
+}
+
+export async function postSceneRetryInputRevision(input:{campaignId:string;storyId:string;executionPlanId:string;sceneExecutionId:string;sourceReviewId:string;creativeDirection:import("@ceo-agent/shared").SceneRetryCreativeDirection}){
+  const base=`${plansBase(input.campaignId,input.storyId,input.executionPlanId)}/scenes/${input.sceneExecutionId}`;
+  return requestJson<import("@ceo-agent/shared").SceneAttemptInputRevisionFact>(`${base}/retry-input-revisions`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceReviewId:input.sourceReviewId,creativeDirection:input.creativeDirection})});
+}
+
+export async function postSceneRetryAuthorization(input:{campaignId:string;storyId:string;executionPlanId:string;sceneExecutionId:string;sourceReviewId:string;retryInputRevisionId:string}){
+  const base=`${plansBase(input.campaignId,input.storyId,input.executionPlanId)}/scenes/${input.sceneExecutionId}`;
+  return requestJson<import("@ceo-agent/shared").SceneRetryAuthorizationFact>(`${base}/retry-authorizations`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sourceReviewId:input.sourceReviewId,retryInputRevisionId:input.retryInputRevisionId})});
 }
 
 export async function postPreDispatchRecovery(input: {

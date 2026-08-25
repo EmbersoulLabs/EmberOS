@@ -12,6 +12,7 @@ export * from "./release-remaining-scenes";
 export * from "./release-next-eligible-scene";
 export * from "./ai-story-execution-authorization";
 export * from "./generated-scene-review-service";
+export * from "./differentiated-retry-service";
 export * from "./canonical-execute-router";
 export * from "./provider-execution-eligibility";
 export * from "./bounded-timeout";

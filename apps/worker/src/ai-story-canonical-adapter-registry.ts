@@ -19,6 +19,7 @@ import { getAiProviderConfig, isAiProviderReady } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
   ExecutionEnvelopeRepository,
+  DifferentiatedRetryRepository,
 } from "@ceo-agent/db";
 import {
   certifyWorkerProductVisualAuthority,
@@ -60,6 +61,8 @@ export function createEnvelopeBackedCanonicalPayloadResolver(
       envelopes.getEnvelopeByPayloadReference(payloadReference),
     getCompilationByExecutionPlanId: (executionPlanId) =>
       persistence.getByExecutionPlanId(executionPlanId),
+    getRetryInputRevisionById: (retryInputRevisionId) =>
+      new DifferentiatedRetryRepository().getRevision(retryInputRevisionId),
     certifyProductVisualAuthority: certifyWorkerProductVisualAuthority,
     resolution: options.resolution,
     ...(options.productGroundedProviderMode

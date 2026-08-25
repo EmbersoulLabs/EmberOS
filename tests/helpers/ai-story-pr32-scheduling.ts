@@ -156,6 +156,9 @@ export async function cleanupPr32Tenant(
   await sql`DELETE FROM ai_story_assembly_artifacts WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_assembly_job_facts WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_assembly_jobs WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_retry_authorizations WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_attempt_input_revisions WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_retry_eligibility_facts WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_generated_scene_reviews WHERE org_id = ${ids.orgId}`;
   // Release rows bind to the exact approved Scene Result and must be removed
   // before their result/attempt authorities during isolated fixture cleanup.
