@@ -51,6 +51,8 @@ function resolveBackHref(pathname: string): string | null {
 
   if (rest[0] === "business-profile") return `/w/${slug}/campaigns`;
 
+  if (rest[0] === "assets") return `/w/${slug}/campaigns`;
+
   return "/workspaces";
 }
 
@@ -102,6 +104,9 @@ export function AppShell({
     Boolean(workspaceSlug) &&
     (pathname === businessProfileHref ||
       pathname === `/w/${workspaceSlug}/business-profile`);
+  const assetLibraryHref = workspaceSlug ? `/w/${workspaceSlug}/assets` : null;
+  const assetLibraryActive = Boolean(assetLibraryHref) &&
+    (pathname === assetLibraryHref || pathname.startsWith(`${assetLibraryHref}/`));
 
   useEffect(() => {
     fetch("/api/me")
@@ -123,6 +128,14 @@ export function AppShell({
         current: businessProfileActive,
       });
     }
+    if (assetLibraryHref) {
+      items.push({
+        id: "asset-library",
+        label: t("assetLibrary.nav"),
+        href: assetLibraryHref,
+        current: assetLibraryActive,
+      });
+    }
     if (showAdminNav && isSuperAdmin && !pathname.startsWith("/admin")) {
       items.push({ id: "admin", label: t("nav.admin"), href: "/admin" });
     }
@@ -139,6 +152,8 @@ export function AppShell({
     resolvedHome,
     businessProfileHref,
     businessProfileActive,
+    assetLibraryHref,
+    assetLibraryActive,
     showAdminNav,
     isSuperAdmin,
     pathname,

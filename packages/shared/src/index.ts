@@ -52,6 +52,7 @@ export * from "./photo-scene-ops";
 export * from "./photo-scene-official-scene";
 export * from "./photo-scene-marketing";
 export * from "./photo-scene-production-ops";
+export * from "./asset-library";
 export * from "./ai-story";
 export * from "./ai-story-execution";
 export * from "./ai-story-human-review";
