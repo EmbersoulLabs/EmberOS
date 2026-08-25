@@ -24,9 +24,11 @@
     "packages/shared/src/i18n/**",
     "packages/db/src/schema/index.ts",
     "packages/db/src/queries/business-profile.ts",
+    "packages/db/package.json",
     "packages/db/sql/business-profile-wave2-v1.sql",
     "packages/db/scripts/apply-business-profile-wave2-v1.ts",
     "tests/business-profile-wave2*.test.ts",
+    "tests/business-profile-api.test.ts",
     "e2e/business-profile-wave2.spec.ts",
     "docs/architecture/**",
     "config/hybrid-migration-guards.json"

@@ -17,6 +17,7 @@
     "sql:campaign-brief": "tsx scripts/apply-campaign-brief.ts",
     "sql:business-profile": "tsx scripts/apply-business-profile.ts",
     "sql:business-profile-v1-1": "tsx scripts/apply-business-profile-v1-1.ts",
+    "sql:business-profile-wave2": "tsx scripts/apply-business-profile-wave2-v1.ts",
     "sql:rls": "tsx scripts/apply-rls.ts",
     "sql:source-asset-content-hash-v1": "tsx scripts/apply-source-asset-content-hash-v1.ts",
     "sql:campaign-video-generation-identity-v1": "tsx scripts/apply-campaign-video-generation-identity-v1.ts",

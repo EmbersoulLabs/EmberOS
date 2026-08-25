@@ -12,6 +12,7 @@ export * from "./types/business-profile-ai";
 export * from "./dictionaries/industry-dictionary";
 export * from "./business-profile/business-hours";
 export * from "./business-profile/timezone";
+export * from "./publishing-platforms";
 export * from "./types/marketing-os";
 export * from "./render";
 export * from "./clip-download";

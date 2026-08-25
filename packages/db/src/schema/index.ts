@@ -116,6 +116,10 @@ export const businessProfiles = pgTable(
     brandFonts: text("brand_fonts").array().notNull().default([]),
     brandImages: text("brand_images").array().notNull().default([]),
     supportedLanguages: text("supported_languages").array().notNull().default([]),
+    defaultPublishingPlatforms: text("default_publishing_platforms")
+      .array()
+      .notNull()
+      .default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid("created_by"),

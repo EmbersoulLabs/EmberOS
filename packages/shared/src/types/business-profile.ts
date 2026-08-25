@@ -6,6 +6,10 @@ import {
   resolveIndustryLabel,
   INDUSTRY_CUSTOM_ID,
 } from "../dictionaries/industry-dictionary";
+import {
+  PublishingPlatformsSchema,
+  normalizeStoredPublishingPlatforms,
+} from "../publishing-platforms";
 
 const optionalUrl = z
   .string()
@@ -58,6 +62,8 @@ export const BusinessProfileRecordSchema = z.object({
   brandFonts: z.array(z.string().trim()).default([]),
   brandImages: z.array(z.string().trim()).default([]),
   supportedLanguages: z.array(z.string().trim()).default([]),
+  defaultPublishingPlatforms: PublishingPlatformsSchema.default([]),
+  unrecognizedPublishingPlatforms: z.array(z.string()).default([]),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   createdBy: z.string().uuid().nullable().optional(),
@@ -102,6 +108,7 @@ export const BusinessProfileUpdateSchema = z.object({
   brandFonts: z.array(z.string().trim()).optional(),
   brandImages: z.array(z.string().trim()).optional(),
   supportedLanguages: z.array(z.string().trim().min(1)).optional(),
+  defaultPublishingPlatforms: PublishingPlatformsSchema.optional(),
   version: z.number().int().min(1).optional(),
 });
 
@@ -287,11 +294,14 @@ export function normalizeBusinessProfileRecord(raw: Record<string, unknown>): Bu
       : {};
 
   const businessHours = normalizeBusinessHours(raw.businessHours);
+  const platforms = normalizeStoredPublishingPlatforms(raw.defaultPublishingPlatforms);
 
   return BusinessProfileRecordSchema.parse({
     ...raw,
     ...migratedIndustry,
     businessHours,
+    defaultPublishingPlatforms: platforms.recognized,
+    unrecognizedPublishingPlatforms: platforms.unrecognized,
   });
 }
 

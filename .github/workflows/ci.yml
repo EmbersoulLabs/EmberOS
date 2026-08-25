@@ -89,6 +89,9 @@ jobs:
       - name: Certify Wave 1 Asset Library PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/asset-library-wave1.integration.test.ts
 
+      - name: Certify Wave 2 Business Profile PostgreSQL behavior
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/business-profile-wave2.integration.test.ts
+
       - name: Certify generated Scene approval on PostgreSQL
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
@@ -137,6 +140,9 @@ jobs:
 
       - name: Wave 1 Asset Library browser E2E
         run: pnpm exec playwright test e2e/asset-library-wave1.spec.ts
+
+      - name: Wave 2 Business Profile browser E2E
+        run: pnpm exec playwright test e2e/business-profile-wave2.spec.ts
 
       - name: Typecheck
         run: pnpm typecheck
