@@ -117,7 +117,7 @@ async function main() {
   const request = await mapCanonicalEnvelopeToSeedanceRequest({
     envelope,
     idempotencyKey: `dry-run:${dispatchId}`,
-    model: seedance.model,
+    model: seedance.defaultModel,
     payloadResolver: { resolve: async () => payload },
     assetAccessResolver: createWorkerProviderAssetAccessResolver(),
   });
