@@ -7,6 +7,7 @@ import {
   type BusinessProfileRecord,
   type BusinessProfileUpdate,
   type Locale,
+  type PublishingPlatformId,
 } from "@ceo-agent/shared";
 
 export type BusinessProfileFormValues = {
@@ -42,6 +43,7 @@ export type BusinessProfileFormValues = {
   brandFonts: string[];
   brandImages: string[];
   supportedLanguages: string[];
+  defaultPublishingPlatforms: PublishingPlatformId[];
 };
 
 export type BusinessProfileApiWarning = {
@@ -57,6 +59,34 @@ export type BusinessProfileLoadStatus =
   | "forbidden"
   | "not_found"
   | "error";
+
+export type BusinessProfileSaveStatus =
+  | "idle"
+  | "saving"
+  | "saved"
+  | "failed"
+  | "conflict"
+  | "invalid";
+
+export type BusinessProfileSaveView = "clean" | "dirty" | "saving" | "error";
+
+export function resolveBusinessProfileSaveView(
+  status: BusinessProfileSaveStatus,
+  isDirty: boolean
+): BusinessProfileSaveView {
+  if (status === "saving") return "saving";
+  if (status === "failed" || status === "conflict" || status === "invalid") {
+    return "error";
+  }
+  return isDirty ? "dirty" : "clean";
+}
+
+export function canApplyBusinessProfileSaveResponse(
+  responseSequence: number,
+  latestAppliedSequence: number
+): boolean {
+  return responseSequence >= latestAppliedSequence;
+}
 
 export function createEmptyBusinessProfileDraft(
   orgId: string,
@@ -100,6 +130,8 @@ export function createEmptyBusinessProfileDraft(
     brandFonts: [],
     brandImages: [],
     supportedLanguages: [],
+    defaultPublishingPlatforms: [],
+    unrecognizedPublishingPlatforms: [],
     createdAt: now,
     updatedAt: now,
     createdBy: null,
@@ -149,6 +181,7 @@ export function profileToFormValues(
     brandFonts: profile.brandFonts ?? [],
     brandImages: profile.brandImages ?? [],
     supportedLanguages: profile.supportedLanguages ?? [],
+    defaultPublishingPlatforms: profile.defaultPublishingPlatforms ?? [],
   };
 }
 
@@ -275,6 +308,12 @@ export function buildBusinessProfilePatch(
   setChangedList("supportedLanguages", values.supportedLanguages, base.supportedLanguages, {
     allowEmptyClear: true,
   });
+  setChangedList(
+    "defaultPublishingPlatforms",
+    values.defaultPublishingPlatforms,
+    base.defaultPublishingPlatforms,
+    { allowEmptyClear: true }
+  );
 
   const curCustom = values.industryId === INDUSTRY_CUSTOM_ID;
   const prevCustom = base.industryId === INDUSTRY_CUSTOM_ID;
