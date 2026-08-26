@@ -16,7 +16,6 @@ import {
   postCanonicalExecute,
   postReleaseNextEligibleScene,
 } from "@/lib/ai-story-runtime-client";
-import type { AiStoryRuntimeReadTimeoutTrace } from "@/lib/ai-story-runtime-client";
 import { readInitialRuntimeOnce, readRuntimeAfterUserRetry } from "@/lib/ai-story-runtime-initial-read-policy";
 import {
   PRODUCT_RUNTIME_POLL_INTERVAL_MS,
@@ -51,7 +50,6 @@ export function StoryRuntimePanel({
   const [executing, setExecuting] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [timeoutTrace, setTimeoutTrace] = useState<AiStoryRuntimeReadTimeoutTrace | null>(null);
   const executeInFlight = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestGen = useRef(0);
@@ -86,14 +84,12 @@ export function StoryRuntimePanel({
           return stable;
         });
         setError(null);
-        setTimeoutTrace(null);
         return stable;
       } catch (err) {
         if (gen !== requestGen.current) return null;
-        setTimeoutTrace(err instanceof StoryRuntimeClientError ? err.timeoutTrace : null);
         setError(
           err instanceof StoryRuntimeClientError
-            ? `${err.message}${err.requestCorrelationId ? ` Reference: ${err.requestCorrelationId}` : ""}`
+            ? err.message
             : err instanceof Error
               ? err.message
               : "Story review could not be loaded."
@@ -188,9 +184,9 @@ export function StoryRuntimePanel({
     <div className="space-y-4" data-testid="story-runtime-panel">
       <section className="space-y-4 rounded-2xl border border-border bg-white p-5">
         <div>
-          <h2 className="text-lg font-bold text-navy">{t("aiStory.runtime.title")}</h2>
+          <h2 className="text-lg font-bold text-navy">Scene generation</h2>
           <p className="mt-1 text-sm text-ink-secondary">
-            {t("aiStory.runtime.subtitle")}
+            Follow each Scene from generation through human review. Progress comes from saved server state.
           </p>
         </div>
 
@@ -219,9 +215,6 @@ export function StoryRuntimePanel({
               {projection.failedSceneCount > 0
                 ? ` · ${projection.failedSceneCount} failed`
                 : ""}
-              {projection.reconciliationCount > 0
-                ? ` · ${projection.reconciliationCount} reconciliation`
-                : ""}
               {projection.providerSpend && projection.providerSpend.attemptCount > 0
                 ? ` · ${
                     projection.providerSpend.storyKnownAmount == null
@@ -248,12 +241,12 @@ export function StoryRuntimePanel({
             >
               {executing
                 ? t("aiStory.runtime.executing")
-                : t("aiStory.runtime.execute")}
+                : "Generate Animation"}
             </button>
             {projection?.remainingReleasePermitted ? (
-              <button type="button" disabled={releasing} onClick={() => void onReleaseNextScene()}
-                className="brand-btn-primary" data-testid="release-next-scene">
-                {releasing ? "Releasing…" : `Release Scene ${projection.nextEligibleSceneOrder ?? "Next"}`}
+               <button type="button" disabled={releasing} onClick={() => void onReleaseNextScene()}
+                 className="brand-btn-primary" data-testid="release-next-scene" data-authority-action="Release Scene">
+                {releasing ? "Continuing…" : `Continue to Scene ${projection.nextEligibleSceneOrder ?? "Next"}`}
               </button>
             ) : null}
           </div>
@@ -303,13 +296,6 @@ export function StoryRuntimePanel({
         {error ? (
           <div className="space-y-2" data-testid="story-runtime-error">
             <p className="text-sm text-red-700">{error}</p>
-            {timeoutTrace ? (
-              <dl className="grid gap-1 text-xs text-ink-secondary" data-testid="story-runtime-timeout-trace">
-                <div>Last completed: {timeoutTrace.lastCompletedStage ?? "none"}</div>
-                <div>Timed out: {timeoutTrace.timedOutStage ?? "unknown"}</div>
-                <div>Elapsed: {timeoutTrace.elapsedMs} ms</div>
-              </dl>
-            ) : null}
             <button
               type="button"
               className="rounded-lg border border-border px-3 py-1.5 text-sm"

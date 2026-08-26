@@ -153,6 +153,9 @@ jobs:
       - name: Wave 4 Campaign Workspace browser E2E
         run: pnpm exec playwright test e2e/campaign-workspace-wave4.spec.ts
 
+      - name: Wave 5 AI Story normal-user UI browser E2E
+        run: pnpm exec playwright test e2e/ai-story-ui-wave5.spec.ts
+
       - name: Typecheck
         run: pnpm typecheck
 

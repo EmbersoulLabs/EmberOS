@@ -28,6 +28,8 @@ import { AiStoryStructuredDraftSchema } from "@ceo-agent/shared";
 
 const BodySchema = z.object({
   rewriteBrief: z.string().trim().max(4000).optional(),
+  previewOnly: z.boolean().optional().default(false),
+  structuredContent: AiStoryStructuredDraftSchema.optional(),
 });
 
 export async function POST(
@@ -67,14 +69,16 @@ export async function POST(
       return apiError("Story cannot be rewritten in its current state", "VALIDATION_ERROR", 409);
     }
 
-    await setAiStoryStatus(db, storyId, status, "generating");
+    if (!body.data.previewOnly) {
+      await setAiStoryStatus(db, storyId, status, "generating");
+    }
 
     const profileRow = await getBusinessProfileByWorkspace(campaign.workspaceId);
     const profile = profileRow
       ? normalizeBusinessProfileRecord(profileRow as Record<string, unknown>)
       : null;
     const completion = profile ? assessBusinessProfileCompletion(profile) : null;
-    const draft = AiStoryStructuredDraftSchema.parse(
+    const draft = body.data.structuredContent ?? AiStoryStructuredDraftSchema.parse(
       loaded.currentVersion.structuredContent
     );
     const assetIds = loaded.assetLinks.map((link) => link.assetId);
@@ -116,7 +120,9 @@ export async function POST(
     });
 
     if (!rewritten.ok) {
-      await setAiStoryStatus(db, storyId, "generating", "failed");
+      if (!body.data.previewOnly) {
+        await setAiStoryStatus(db, storyId, "generating", "failed");
+      }
       return apiError(rewritten.error, "AI_GENERATION_FAILED", 502);
     }
 
@@ -130,6 +136,15 @@ export async function POST(
         ...rewritten.draft.warnings,
       ],
     };
+
+    if (body.data.previewOnly) {
+      return apiSuccess({
+        storyId,
+        status,
+        previewOnly: true,
+        draft: nextDraft,
+      });
+    }
 
     const version = await createAiStoryVersion(db, {
       storyId,
