@@ -151,6 +151,17 @@ export const campaigns = pgTable(
     objectives: text("objectives").array().default([]),
     status: text("status").notNull().default("draft"),
     campaignBrief: text("campaign_brief"),
+    objective: text("objective"),
+    objectiveCustom: text("objective_custom"),
+    targetAudience: jsonb("target_audience").$type<{
+      summary: string;
+      demographics: string[];
+      interests: string[];
+      needs: string[];
+      locations: string[];
+      notes?: string;
+    }>(),
+    creationIdempotencyKey: uuid("creation_idempotency_key"),
     voicePreset: text("voice_preset").default("auto"),
     contentStyle: text("content_style"),
     campaignGoal: text("campaign_goal"),
@@ -160,7 +171,11 @@ export const campaigns = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("campaigns_workspace_idx").on(t.workspaceId)]
+  (t) => [
+    index("campaigns_workspace_idx").on(t.workspaceId),
+    uniqueIndex("campaigns_workspace_creation_idempotency_idx")
+      .on(t.workspaceId, t.creationIdempotencyKey),
+  ]
 );
 
 export const assets = pgTable(

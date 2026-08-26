@@ -145,6 +145,13 @@ export async function startOrReuseCampaignRun(
     const brief = parseCampaignCreativeBrief({ ...lockedCampaign, metadata: effectiveMetadata });
     const contentLocale = resolvePipelineContentLocale(effectiveMetadata, lockedCampaign.goal);
     const renderPreferences = resolveRenderPreferences({ campaignMetadata: effectiveMetadata });
+    const campaignTargetAudience =
+      lockedCampaign.targetAudience &&
+      typeof lockedCampaign.targetAudience === "object" &&
+      typeof lockedCampaign.targetAudience.summary === "string"
+        ? lockedCampaign.targetAudience.summary.trim() || null
+        : null;
+    const effectiveTargetAudience = campaignTargetAudience ?? brand.targetAudience ?? null;
     const capsule = normalizeCampaignVideoGenerationIdentityV1({
       version: 1,
       executionContract: CAMPAIGN_VIDEO_EXECUTION_CONTRACT,
@@ -157,7 +164,7 @@ export async function startOrReuseCampaignRun(
         campaignName: lockedCampaign.name,
         effectiveGoal: effectiveCampaignGoal(brief, lockedCampaign.goal, contentLocale),
         campaignBrief: brief.campaignBrief ?? null,
-        targetAudience: brand.targetAudience ?? null,
+        targetAudience: effectiveTargetAudience,
         platforms: PlatformSchema.array().parse(lockedCampaign.platforms),
         contentLocale,
         treatment: {
@@ -172,7 +179,7 @@ export async function startOrReuseCampaignRun(
           tone: brand.tone ?? null,
           bannedWords: brand.bannedWords,
           cta: brand.cta ?? null,
-          targetAudience: brand.targetAudience ?? null,
+          targetAudience: effectiveTargetAudience,
           locale: brand.locale,
           logoObjectReference: logoObjectReference(brand.logoUrl),
         },

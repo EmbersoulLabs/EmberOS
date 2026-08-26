@@ -28,6 +28,7 @@ export * from "./billing";
 export * from "./finished-ad-detect";
 export * from "./i18n/index";
 export * from "./campaign-brief";
+export * from "./create-campaign";
 export * from "./content-locale";
 export * from "./content-subject";
 export * from "./content-grounding";

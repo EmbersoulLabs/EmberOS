@@ -29,6 +29,7 @@ export function checkMemoryRateLimit(
 /** Per-route HTTP rate limits (requests per window). */
 export const API_RATE_LIMITS = {
   campaignRun: { limit: 10, windowMs: 60_000 },
+  campaignAssist: { limit: 12, windowMs: 60_000 },
   uploadUrl: { limit: 30, windowMs: 60_000 },
   export: { limit: 20, windowMs: 60_000 },
   portalDecide: { limit: 15, windowMs: 60_000 },

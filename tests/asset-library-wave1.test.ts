@@ -39,7 +39,8 @@ describe("Wave 1 Workspace Asset Library contracts", () => {
     const aiStoryPersistence = readFileSync("packages/db/src/queries/ai-story-scene-execution-persistence.ts", "utf8");
     const migration = readFileSync("packages/db/sql/asset-library-wave1-v1.sql", "utf8");
     expect(campaignAssets).toContain("asc(schema.assets.createdAt), asc(schema.assets.id)");
-    expect(campaignAssets).not.toMatch(/campaignAssetRefs|campaignStoryRefs/);
+    expect(campaignAssets).toContain("campaignAssetRefs");
+    expect(campaignAssets).toContain("eq(schema.assets.campaignId, campaignId)");
     expect(campaignRefs).toContain("persistSameWorkspaceCampaignAssetRef");
     expect(aiStoryPersistence).toContain("campaignAssetRefs");
     expect(migration).toContain("Historical rows retain their IDs");

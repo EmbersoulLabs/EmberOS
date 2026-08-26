@@ -1,4 +1,4 @@
-import { eq, and, asc } from "drizzle-orm";
+import { eq, and, asc, or } from "drizzle-orm";
 import type { getDb } from "@ceo-agent/db";
 import { schema } from "@ceo-agent/db";
 import {
@@ -19,9 +19,43 @@ type Db = {
 
 export async function getCampaignAssets(db: Db, campaignId: string, workspaceId: string) {
   return db
-    .select()
+    .select({
+      id: schema.assets.id,
+      orgId: schema.assets.orgId,
+      workspaceId: schema.assets.workspaceId,
+      campaignId: schema.assets.campaignId,
+      type: schema.assets.type,
+      storagePath: schema.assets.storagePath,
+      displayName: schema.assets.displayName,
+      originalFilename: schema.assets.originalFilename,
+      status: schema.assets.status,
+      source: schema.assets.source,
+      uploadedBy: schema.assets.uploadedBy,
+      mimeType: schema.assets.mimeType,
+      durationSec: schema.assets.durationSec,
+      width: schema.assets.width,
+      height: schema.assets.height,
+      fileSizeBytes: schema.assets.fileSizeBytes,
+      metadata: schema.assets.metadata,
+      contentHash: schema.assets.contentHash,
+      createdAt: schema.assets.createdAt,
+      updatedAt: schema.assets.updatedAt,
+      deletedAt: schema.assets.deletedAt,
+    })
     .from(schema.assets)
-    .where(and(eq(schema.assets.campaignId, campaignId), eq(schema.assets.workspaceId, workspaceId)))
+    .leftJoin(
+      schema.campaignAssetRefs,
+      eq(schema.campaignAssetRefs.assetId, schema.assets.id)
+    )
+    .where(
+      and(
+        eq(schema.assets.workspaceId, workspaceId),
+        or(
+          eq(schema.assets.campaignId, campaignId),
+          eq(schema.campaignAssetRefs.campaignId, campaignId)
+        )
+      )
+    )
     .orderBy(asc(schema.assets.createdAt), asc(schema.assets.id));
 }
 
