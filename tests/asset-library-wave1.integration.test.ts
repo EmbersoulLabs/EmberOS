@@ -58,7 +58,7 @@ suite.sequential("Wave 1 Asset Library PostgreSQL authority", () => {
 
   it("preserves the historical Campaign source resolver and adds references without rewriting IDs", async () => {
     const assets = await getCampaignAssets(getDb(), ids.campaignA, ids.wsA);
-    expect(assets.map((asset) => asset.id)).toEqual([ids.legacy]);
+    expect(assets.map((asset) => asset.id)).toEqual([ids.legacy, ids.libraryA]);
     const refs = await sql<{ asset_id: string }[]>`
       select asset_id from campaign_asset_refs where campaign_id=${ids.campaignA} order by sort_order,asset_id
     `;
