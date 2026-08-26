@@ -1,0 +1,56 @@
+{
+  "ticketId": "EMBEROS-STAGING-MAIN-HYBRID-MIGRATION-WAVE-4-CAMPAIGN-WORKSPACE-SHELL-01",
+  "wave": 4,
+  "changeKind": "HYBRID_MIGRATION",
+  "reason": "Migrate only the Blueprint-approved Campaign Workspace information architecture and responsive presentation while retaining every current main module engine, authorization boundary, private-media contract, and durable state authority.",
+  "sourceAuthority": "BLUEPRINT",
+  "targetModule": "Campaign Workspace Shell",
+  "allowedSourcePaths": [
+    "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:apps/web/src/components/campaign/CampaignWorkspace.tsx",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:apps/web/src/app/w/[slug]/campaigns/[id]/page.tsx"
+  ],
+  "allowedTargetPaths": [
+    ".migration-intents/**",
+    "apps/web/src/app/w/**/campaigns/**",
+    "apps/web/src/app/api/campaigns/**",
+    "apps/web/src/components/campaign/CampaignWorkspace*",
+    "apps/web/src/components/campaign/CampaignDashboard.tsx",
+    "apps/web/src/lib/campaign-workspace.ts",
+    "tests/campaign-workspace-wave4*.test.ts",
+    "tests/ai-story-vertical-slice.test.ts",
+    "e2e/campaign-workspace-wave4.spec.ts",
+    ".github/workflows/ci.yml",
+    "config/hybrid-migration-guards.json",
+    "docs/architecture/**"
+  ],
+  "protectedDomainsExpectedToChange": [],
+  "protectedDomainsMustNotChange": [
+    "AI_STORY_RUNTIME",
+    "AI_STORY_REVIEW",
+    "AI_STORY_STAGED_RELEASE",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "PRIVATE_MEDIA_DELIVERY",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING",
+    "TENANT_WORKSPACE_ISOLATION",
+    "COMMERCIAL_AUTH"
+  ],
+  "requiredTests": [
+    "tests/campaign-workspace-wave4.test.ts",
+    "tests/campaign-workspace-wave4-api.test.ts",
+    "e2e/campaign-workspace-wave4.spec.ts",
+    "tests/asset-library-wave1.test.ts",
+    "tests/business-profile-wave2.test.ts",
+    "tests/create-campaign-wave3.test.ts",
+    "tests/ai-story-runtime-ui-refresh-loop-01.test.ts",
+    "tests/vs-rc-ux-01b-result-recovery.test.ts",
+    "tests/photo-scene-10c-official-scene.test.ts",
+    "tests/vs-rc-fix-01-tenant-safe-artifacts.test.ts",
+    "tests/tenant-access.test.ts",
+    "tests/workspace-isolation.test.ts"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}

@@ -150,6 +150,9 @@ jobs:
       - name: Wave 3 Create Campaign browser E2E
         run: pnpm exec playwright test e2e/create-campaign-wave3.spec.ts
 
+      - name: Wave 4 Campaign Workspace browser E2E
+        run: pnpm exec playwright test e2e/campaign-workspace-wave4.spec.ts
+
       - name: Typecheck
         run: pnpm typecheck
 

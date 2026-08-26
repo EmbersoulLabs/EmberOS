@@ -128,6 +128,13 @@ export default function CampaignListPage() {
                 </Link>
                 <div className="flex shrink-0 items-center gap-2">
                   <StatusBadge status={c.status} />
+                  <Link
+                    href={`/w/${slug}/campaigns/${c.id}`}
+                    aria-label={`Open ${c.name}`}
+                    className="inline-flex min-h-11 items-center rounded-lg border border-border px-3 text-xs font-semibold text-navy hover:bg-surface-muted"
+                  >
+                    Open
+                  </Link>
                   {(c.canDelete ?? isCampaignDeletable(c.status)) && (
                     <button
                       type="button"
