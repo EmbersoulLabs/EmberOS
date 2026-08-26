@@ -338,9 +338,9 @@ describe("AI Story vertical slice (V1)", () => {
       "utf8"
     );
 
-    it("keeps campaign generate action and adds Create Story entry", () => {
-      expect(dashboard).toContain("RunCeoButton");
-      expect(dashboard).toContain("aiStory.entry.create");
+    it("keeps the main AI Story entry without restoring the superseded initial Generate action", () => {
+      expect(dashboard).not.toContain("RunCeoButton");
+      expect(dashboard).toContain("Create AI Story");
       expect(dashboard).toContain("/ai-stories/new");
       expect(dashboard).toContain("/ai-stories/");
     });

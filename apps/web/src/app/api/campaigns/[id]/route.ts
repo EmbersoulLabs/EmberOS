@@ -1,4 +1,4 @@
-import { eq, and, desc, asc } from "drizzle-orm";
+import { eq, and, desc, asc, getTableColumns, isNull } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
@@ -24,10 +24,50 @@ export async function GET(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "client_viewer");
 
-    const assets = await db
+    const legacyAssets = await db
       .select()
       .from(schema.assets)
-      .where(and(eq(schema.assets.campaignId, id), eq(schema.assets.workspaceId, campaign.workspaceId)));
+      .where(
+        and(
+          eq(schema.assets.campaignId, id),
+          eq(schema.assets.workspaceId, campaign.workspaceId),
+          isNull(schema.assets.deletedAt)
+        )
+      );
+
+    const referencedAssets = await db
+      .select(getTableColumns(schema.assets))
+      .from(schema.campaignAssetRefs)
+      .innerJoin(schema.assets, eq(schema.assets.id, schema.campaignAssetRefs.assetId))
+      .where(
+        and(
+          eq(schema.campaignAssetRefs.campaignId, id),
+          eq(schema.assets.workspaceId, campaign.workspaceId),
+          isNull(schema.assets.deletedAt)
+        )
+      )
+      .orderBy(asc(schema.campaignAssetRefs.sortOrder));
+
+    const assets = [...referencedAssets, ...legacyAssets].filter(
+      (asset, index, rows) => rows.findIndex((candidate) => candidate.id === asset.id) === index
+    );
+
+    const assetStories = await db
+      .select({
+        id: schema.stories.id,
+        name: schema.stories.name,
+        status: schema.stories.status,
+        coverAssetId: schema.stories.coverAssetId,
+      })
+      .from(schema.campaignStoryRefs)
+      .innerJoin(schema.stories, eq(schema.stories.id, schema.campaignStoryRefs.storyId))
+      .where(
+        and(
+          eq(schema.campaignStoryRefs.campaignId, id),
+          eq(schema.stories.workspaceId, campaign.workspaceId),
+          isNull(schema.stories.deletedAt)
+        )
+      );
 
     const [task] = await db
       .select()
@@ -66,6 +106,7 @@ export async function GET(
     return apiSuccess({
       campaign: campaignRecord,
       assets,
+      assetStories,
       task: task ? { ...task, stepProgress: deliveredProgress } : null,
       creative: deliveredCreatives[0] ?? null,
       creatives: deliveredCreatives,

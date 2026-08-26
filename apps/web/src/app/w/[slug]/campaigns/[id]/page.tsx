@@ -9,12 +9,6 @@ import {
 import { isCampaignDeletable } from "@/lib/campaigns";
 import { useI18n } from "@/lib/i18n/provider";
 
-const POLL_MS = 3000;
-
-function isTaskActive(status?: string): boolean {
-  return status === "queued" || status === "running";
-}
-
 export default function CampaignDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -34,34 +28,18 @@ export default function CampaignDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | undefined;
     let cancelled = false;
 
     async function refresh() {
       const next = await loadCampaign();
       if (cancelled || !next) return;
       setData(next);
-
-      const taskStatus = next.task?.status as string | undefined;
-      if (isTaskActive(taskStatus) && !interval) {
-        interval = setInterval(async () => {
-          const polled = await loadCampaign();
-          if (!cancelled && polled) {
-            setData(polled);
-            if (!isTaskActive(polled.task?.status as string | undefined)) {
-              clearInterval(interval);
-              interval = undefined;
-            }
-          }
-        }, POLL_MS);
-      }
     }
 
     refresh();
 
     return () => {
       cancelled = true;
-      if (interval) clearInterval(interval);
     };
   }, [loadCampaign]);
 
