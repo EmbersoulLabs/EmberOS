@@ -71,7 +71,8 @@ describe("VS-RC-01A.3B Campaign task generation identity", () => {
     expect(typeof getCampaignAssets).toBe("function");
     const source = readFileSync("apps/web/src/lib/campaign-assets.ts", "utf8");
     expect(source).toContain("asc(schema.assets.createdAt), asc(schema.assets.id)");
-    expect(source).not.toMatch(/campaignAssetRefs|campaignStoryRefs|ai-story/i);
+    expect(source).toContain("campaignAssetRefs");
+    expect(source).not.toMatch(/campaignStoryRefs|ai-story/i);
   });
 
   it("migration enforces paired nullable identity without uniqueness or backfill", () => {
