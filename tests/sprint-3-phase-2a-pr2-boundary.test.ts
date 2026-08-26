@@ -71,14 +71,14 @@ describe("Sprint 3 Phase 2A PR2 boundary regression", () => {
     expect(reviewRoute.toLowerCase()).not.toContain("persist plan");
   });
 
-  it("UI exposes Plan Saved and does not expose Execute/Retry/Regenerate/Export", () => {
+  it("UI exposes product-facing generation review and not legacy execution actions", () => {
     const page = readFileSync(
       resolve(
         "apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/[storyId]/page.tsx"
       ),
       "utf8"
     );
-    expect(page).toContain("Plan Saved");
+    expect(page).toContain("Generation review ready");
     expect(page).toContain("Generate Review");
     expect(page).not.toContain("Confirm Execute");
     expect(page).not.toContain("Regenerate One");

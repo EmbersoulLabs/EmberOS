@@ -7,7 +7,6 @@
 import { useRef, useState } from "react";
 import type { GeneratedSceneReviewReadModel, WorkspaceRole, HumanCreativeRejectionReason } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
-import type { TranslationKey } from "@ceo-agent/shared/i18n";
 import {
   StoryRuntimeClientError,
   postGeneratedSceneReviewDecision,
@@ -27,21 +26,18 @@ type Props = {
 
 const OPERATOR_ROLES = new Set(["admin", "operator"]);
 
-function shortId(value: string): string {
-  return value.length > 16 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
+function productStateLabel(state: GeneratedSceneReviewReadModel["runtimeState"]): string {
+  switch (state) {
+    case "AUTHORIZED_NOT_RELEASED": return "Waiting for prior Scene approval";
+    case "QUEUED": case "RETRY_AUTHORIZED": return "Queued";
+    case "PRE_DISPATCH_BLOCKED": return "Generation couldn't start";
+    case "RUNNING": return "Generating";
+    case "PENDING_REVIEW": return "Pending review";
+    case "REJECTED": return "Rejected — revision available";
+    case "APPROVED": return "Approved";
+    case "FAILED": return "Generation failed";
+  }
 }
-
-const STATE_KEYS: Record<GeneratedSceneReviewReadModel["runtimeState"], TranslationKey> = {
-  AUTHORIZED_NOT_RELEASED: "aiStory.generatedReview.state.AUTHORIZED_NOT_RELEASED",
-  QUEUED: "aiStory.generatedReview.state.QUEUED",
-  PRE_DISPATCH_BLOCKED: "aiStory.generatedReview.state.PRE_DISPATCH_BLOCKED",
-  RUNNING: "aiStory.generatedReview.state.RUNNING",
-  PENDING_REVIEW: "aiStory.generatedReview.state.PENDING_REVIEW",
-  REJECTED: "aiStory.generatedReview.state.PENDING_REVIEW",
-  RETRY_AUTHORIZED: "aiStory.generatedReview.state.QUEUED",
-  APPROVED: "aiStory.generatedReview.state.APPROVED",
-  FAILED: "aiStory.generatedReview.state.FAILED",
-};
 
 export function GeneratedSceneReviewPanel({
   campaignId,
@@ -102,7 +98,7 @@ export function GeneratedSceneReviewPanel({
     } catch (err) {
       setError(
         err instanceof StoryRuntimeClientError
-          ? `${err.message}${err.requestCorrelationId ? ` (reference ${err.requestCorrelationId})` : ""}`
+          ? err.message
           : err instanceof Error
             ? err.message
             : t("aiStory.generatedReview.error")
@@ -196,7 +192,7 @@ export function GeneratedSceneReviewPanel({
     } catch (err) {
       setError(
         err instanceof StoryRuntimeClientError
-          ? `${err.message}${err.requestCorrelationId ? ` (reference ${err.requestCorrelationId})` : ""}`
+          ? err.message
           : err instanceof Error ? err.message : t("aiStory.generatedReview.error")
       );
     } finally {
@@ -211,9 +207,9 @@ export function GeneratedSceneReviewPanel({
       data-testid="generated-scene-review-panel"
     >
       <div>
-        <h2 className="text-lg font-bold text-navy">{t("aiStory.generatedReview.title")}</h2>
+        <h2 className="text-lg font-bold text-navy">Scene review</h2>
         <p className="mt-1 text-sm text-ink-secondary">
-          {t("aiStory.generatedReview.subtitle")}
+          Review each generated Scene. Approval continues the Story; rejection preserves the result and lets an authorized operator prepare a revised paid attempt.
         </p>
       </div>
       <div className="space-y-3">
@@ -229,8 +225,6 @@ export function GeneratedSceneReviewPanel({
             scene.reviewAvailable &&
             Boolean(scene.latestAttemptId && scene.generatedMedia) &&
             !scene.running;
-          const canRetry =
-            pending && scene.retryRemaining > 0 && scene.reviewState !== "REJECTED_TERMINAL";
           return (
             <div
               key={scene.sceneExecutionId}
@@ -239,13 +233,10 @@ export function GeneratedSceneReviewPanel({
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-medium text-navy">
-                  {t("aiStory.generatedReview.sceneLabel", {
-                    order: scene.sceneOrder + 1,
-                    sceneId: scene.sceneId,
-                  })}
+                  Scene {scene.sceneOrder + 1}
                 </p>
                 <span className="text-xs text-ink-secondary">
-                  {t(STATE_KEYS[scene.runtimeState])}
+                  {productStateLabel(scene.runtimeState)}
                 </span>
               </div>
               <p className="mt-1 text-xs text-ink-secondary">
@@ -282,10 +273,6 @@ export function GeneratedSceneReviewPanel({
                         "Scene media preview is temporarily unavailable."}
                     </p>
                   )}
-                  <p className="text-xs text-ink-secondary">
-                    Result {shortId(scene.generatedMedia.sceneResultId)} · Attempt{" "}
-                    {shortId(scene.generatedMedia.providerAttemptId)}
-                  </p>
                 </div>
               ) : null}
               {canDecide && pending ? (
@@ -319,15 +306,6 @@ export function GeneratedSceneReviewPanel({
                     onClick={() => void decide(scene, "approve")}
                   >
                     {t("aiStory.generatedReview.approve")}
-                  </button>
-                  <button
-                    type="button"
-                    className="rounded-lg border border-border px-3 py-1.5 text-sm"
-                    disabled={busyScene === scene.sceneExecutionId || !canRetry}
-                    data-testid={`generated-scene-retry-${scene.sceneOrder}`}
-                    onClick={() => void decide(scene, "retry")}
-                  >
-                    {t("aiStory.generatedReview.retry")}
                   </button>
                   <button
                     type="button"
@@ -373,10 +351,10 @@ export function GeneratedSceneReviewPanel({
                     onClick={() => void recover(scene)}
                     data-testid={`generated-scene-recover-pre-dispatch-${scene.sceneOrder}`}
                   >
-                    {t("aiStory.generatedReview.preDispatchRecovery")}
+                    Recover generation
                   </button>
                   <p className="mt-1 text-xs text-ink-secondary">
-                    {t("aiStory.generatedReview.preDispatchRecoveryHint")}
+                    Generation couldn&apos;t start. Review the issue and retry only when you are ready. No paid attempt starts automatically.
                   </p>
                 </div>
               ) : null}

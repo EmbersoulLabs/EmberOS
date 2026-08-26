@@ -1,0 +1,63 @@
+{
+  "ticketId": "EMBEROS-STAGING-MAIN-HYBRID-MIGRATION-WAVE-5-AI-STORY-NORMAL-USER-UI-NORMALIZATION-01",
+  "wave": 5,
+  "changeKind": "HYBRID_MIGRATION",
+  "reason": "Normalize only the Blueprint-approved AI Story normal-user presentation and internal-planning visibility boundary while preserving every current main execution, review, retry, staged-release, grounding, media, authorization, and cost contract.",
+  "sourceAuthority": "BLUEPRINT",
+  "targetModule": "AI Story Normal-User UI",
+  "allowedSourcePaths": [
+    "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25:UI-SPEC-011",
+    "origin/staging@0add4c65aed02433aeeb96dfb943e4e3fbc075c8:apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/[storyId]/page.tsx"
+  ],
+  "allowedTargetPaths": [
+    ".migration-intents/**",
+    "apps/web/src/app/w/**/campaigns/**/ai-stories/**",
+    "apps/web/src/app/api/campaigns/**/ai-stories/**",
+    "apps/web/src/components/ai-story/**",
+    "tests/**ai-story-ui*",
+    "tests/ai-story-vertical-slice.test.ts",
+    "tests/sprint-3-phase-2a-pr2-boundary.test.ts",
+    "tests/ai-story-runtime-ui-refresh-loop-01.test.ts",
+    "tests/ai-story-exec-04-generated-scene-review.test.ts",
+    "e2e/**ai-story-ui*",
+    "config/hybrid-migration-guards.json",
+    ".github/workflows/ci.yml",
+    "docs/**"
+  ],
+  "protectedDomainsExpectedToChange": [
+    "AI_STORY_REVIEW"
+  ],
+  "protectedDomainsMustNotChange": [
+    "AI_STORY_RUNTIME",
+    "AI_STORY_STAGED_RELEASE",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "AI_STORY_PRIVATE_MEDIA",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "PRIVATE_MEDIA_DELIVERY",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING",
+    "TENANT_WORKSPACE_ISOLATION",
+    "COMMERCIAL_AUTH"
+  ],
+  "requiredTests": [
+    "tests/ai-story-ui-wave5.test.ts",
+    "tests/ai-story-ui-wave5-source-boundary.test.ts",
+    "tests/ai-story-vertical-slice.test.ts",
+    "tests/sprint-3-phase-2a-pr2-boundary.test.ts",
+    "e2e/ai-story-ui-wave5.spec.ts",
+    "tests/ai-story-exec-04-generated-scene-review.test.ts",
+    "tests/ai-story-runtime-ui-refresh-loop-01.test.ts",
+    "tests/ai-story-exec-07-staged-release.test.ts",
+    "tests/ai-story-pre-dispatch-recovery.test.ts",
+    "tests/ai-story-differentiated-human-retry-contract.test.ts",
+    "tests/ai-story-product-visual-authority-propagation.test.ts",
+    "tests/sprint-3-phase-3-pr36-runtime-media.test.ts",
+    "tests/vs-rc-ux-01b-result-recovery.test.ts",
+    "tests/photo-scene-10c-official-scene.test.ts",
+    "tests/campaign-workspace-wave4.test.ts",
+    "tests/tenant-access.test.ts",
+    "tests/workspace-isolation.test.ts"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}

@@ -25,7 +25,9 @@ export async function GET(_request: Request, { params }: RouteParams) {
       campaignId,
       storyId,
       executionPlanId,
-      minRole: "client_viewer",
+      // The full planning-review projection contains internal execution-plan
+      // diagnostics. Product-facing runtime reads remain available separately.
+      minRole: "operator",
     });
     const readModel = await buildExecutionPlanReviewAssemblyReadModel(ctx);
     return apiSuccess(readModel);

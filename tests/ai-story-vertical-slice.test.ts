@@ -352,17 +352,21 @@ describe("AI Story vertical slice (V1)", () => {
       expect(createPage).toContain("/generate");
     });
 
-    it("review page supports edit, approve, and ready_for_animation display", () => {
-      expect(reviewPage).toContain("Approve & freeze");
+    it("review page exposes the product flow and keeps planning behind diagnostics", () => {
+      expect(reviewPage).toContain("Your Story");
+      expect(reviewPage).toContain("AI Polish");
+      expect(reviewPage).toContain("Story Review");
+      expect(reviewPage).toContain("Generate Animation");
       expect(reviewPage).toContain("ready_for_animation");
-      expect(reviewPage).toContain("Ready for Animation");
-      expect(reviewPage).toContain("Save edits");
-      expect(reviewPage).toContain("Generate All Planning");
+      expect(reviewPage).toContain("story-save-state");
+      expect(reviewPage).not.toContain("Save edits");
+      expect(reviewPage).toContain("advanced-planning-diagnostics");
+      expect(reviewPage).toContain("Prepare Animation");
       expect(reviewPage).toContain("Generate Creative Context");
       expect(reviewPage).toContain("Generate Director Thinking");
-      expect(reviewPage).toContain("Rewrite Story");
-      expect(reviewPage).toContain("Animation Package");
-      expect(reviewPage).toContain("READY FOR EXECUTION");
+      expect(reviewPage).toContain("AI Polish Preview");
+      expect(reviewPage).toContain("AnimationPackagePayload");
+      expect(reviewPage).toContain("Generation review ready");
     });
   });
 
