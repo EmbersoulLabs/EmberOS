@@ -1,0 +1,50 @@
+{
+  "ticketId": "EMBEROS-STAGING-MAIN-HYBRID-MIGRATION-WAVE-6-STAGING-MAIN-PRODUCTION-PARITY-CERTIFICATION-01",
+  "wave": 6,
+  "changeKind": "GOVERNANCE",
+  "reason": "Certify one canonical origin/main release candidate across Staging and Production without changing any product or certified runtime behavior.",
+  "sourceAuthority": "origin/main",
+  "targetModule": "Release / Environment Parity",
+  "allowedSourcePaths": [
+    "origin/main"
+  ],
+  "allowedTargetPaths": [
+    ".migration-intents/**",
+    "docs/releases/**"
+  ],
+  "protectedDomainsExpectedToChange": [],
+  "protectedDomainsMustNotChange": [
+    "ASSET_LIBRARY",
+    "BUSINESS_PROFILE",
+    "CREATE_CAMPAIGN",
+    "CAMPAIGN_WORKSPACE",
+    "AI_STORY_RUNTIME",
+    "AI_STORY_REVIEW",
+    "AI_STORY_STAGED_RELEASE",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "AI_STORY_PRIVATE_MEDIA",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "PRIVATE_MEDIA_DELIVERY",
+    "AUTHORIZATION",
+    "COMMERCIAL_AUTH",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING"
+  ],
+  "requiredTests": [
+    "tests/hybrid-migration-guards.test.ts",
+    "tests/asset-library-wave1.test.ts",
+    "tests/business-profile-wave2.test.ts",
+    "tests/create-campaign-wave3.test.ts",
+    "tests/campaign-workspace-wave4.test.ts",
+    "tests/ai-story-ui-wave5.test.ts",
+    "tests/ai-story-runtime-ui-refresh-loop-01.test.ts",
+    "tests/vs-rc-ux-01b-result-recovery.test.ts",
+    "tests/photo-scene-10c-official-scene.test.ts",
+    "tests/tenant-access.test.ts",
+    "tests/workspace-isolation.test.ts",
+    "tests/sprint-3-phase-3-pr31-authorization.test.ts",
+    "tests/sprint-3-phase-3-pr36-runtime-media.test.ts"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}
