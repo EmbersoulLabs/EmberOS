@@ -50,7 +50,7 @@ async function main() {
       const listed = await fetch(`/api/campaigns/${campaignId}/ai-stories`);
       const listBody = await listed.json();
       const existing = Array.isArray(listBody.stories) ? listBody.stories.find((story: Record<string, unknown>) => story.title === fixtureTitle) : null;
-      if (existing && typeof existing.id === "string") return { story: existing, reused: true, status: listed.status };
+      if (existing && typeof existing.id === "string") return { story: existing, reused: true, status: listed.status, errorCode: null };
       const response = await fetch(`/api/campaigns/${campaignId}/ai-stories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -61,11 +61,11 @@ async function main() {
         }),
       });
       const body = await response.json();
-      return { story: body.story ?? null, reused: false, status: response.status };
+      return { story: body.story ?? null, reused: false, status: response.status, errorCode: typeof body.code === "string" ? body.code : null };
     }, { campaignId, fixtureTitle });
     const story = created.story && typeof created.story === "object" ? created.story as Record<string, unknown> : null;
     const storyId = story && typeof story.id === "string" ? story.id : null;
-    if (!storyId || ![200, 201].includes(created.status)) throw new Error("Canonical fixture creation failed");
+    if (!storyId || ![200, 201].includes(created.status)) { console.error(JSON.stringify({ fixtureReadiness: false, phase, canonicalCreateStatus: created.status, canonicalCreateErrorCode: created.errorCode ?? "UNCLASSIFIED", providerCalls })); throw new Error("Canonical fixture creation failed"); }
     const route = `/w/${slug}/campaigns/${campaignId}/ai-stories/${storyId}`;
     phase = "FIXTURE_ROUTE";
     await page.goto(`${baseUrl}${route}`, { waitUntil: "domcontentloaded" });
