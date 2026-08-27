@@ -32,7 +32,19 @@ try {
   await page.locator('input[type="email"]').fill(email);
   await page.locator('input[type="password"]').fill(password);
   await page.locator('button[type="submit"]').click();
-  await page.waitForURL(/\/workspaces(?:\?|$)/, { timeout: 30_000, waitUntil: "domcontentloaded" });
+  try {
+    await page.waitForURL(/\/workspaces(?:\?|$)/, { timeout: 30_000, waitUntil: "domcontentloaded" });
+  } catch {
+    const loginMessages = (await page.locator("form p").allTextContents()).map((value) => value.trim()).filter(Boolean);
+    console.log(JSON.stringify({
+      productSmoke: false,
+      previewProtectionAccess: result.previewProtectionAccess,
+      loginFailurePath: new URL(page.url()).pathname,
+      loginMessages,
+      providerCalls,
+    }));
+    throw new Error("Staging login did not reach /workspaces");
+  }
   result.stagingLogin = true;
   result.passwordPersistenceAbsent = await page.evaluate(() => {
     for (let index = 0; index < localStorage.length; index += 1) {
