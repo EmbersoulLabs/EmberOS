@@ -7,6 +7,8 @@ const password = process.env.STAGING_CERT_USER_PASSWORD?.trim();
 const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
 if (!email || !password || !bypass) throw new Error("Encrypted Preview certification secrets are required");
 
+let phase = "INITIAL";
+
 async function main() {
   let providerCalls = 0;
   const browser = await chromium.launch({ headless: true });
@@ -22,23 +24,28 @@ async function main() {
   });
   const page = await context.newPage();
   try {
+    phase = "LOGIN_PAGE";
     await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
     await page.locator('input[type="email"]').fill(email);
     await page.locator('input[type="password"]').fill(password);
     await page.locator('button[type="submit"]').click();
+    phase = "LOGIN_SUBMITTED";
     await page.waitForURL(/\/workspaces(?:\?|$)/, { timeout: 30_000, waitUntil: "domcontentloaded" });
+    phase = "ACCOUNT_READ";
     const me = await page.evaluate(async () => (await fetch("/api/me")).json()) as Record<string, unknown>;
     const workspaces = Array.isArray(me.workspaces) ? me.workspaces as Array<Record<string, unknown>> : [];
     const workspace = workspaces[0] ?? null;
     const workspaceId = workspace && typeof workspace.id === "string" ? workspace.id : null;
     const slug = workspace && typeof workspace.slug === "string" ? workspace.slug : null;
     if (!workspaceId || !slug) throw new Error("Certification Workspace is unavailable");
+    phase = "CAMPAIGN_LIST";
     await page.goto(`${baseUrl}/w/${slug}/campaigns`, { waitUntil: "domcontentloaded" });
     const campaignLink = page.locator('a[aria-label^="Open "]').first();
     await campaignLink.waitFor({ state: "visible", timeout: 15_000 });
     const href = await campaignLink.getAttribute("href");
     const campaignId = href?.match(/\/campaigns\/([0-9a-f-]{36})(?:\/|$)/i)?.[1] ?? null;
     if (!campaignId) throw new Error("Certification Campaign identity is unavailable");
+    phase = "CANONICAL_CREATE_OR_REUSE";
     const created = await page.evaluate(async ({ campaignId, fixtureTitle }) => {
       const listed = await fetch(`/api/campaigns/${campaignId}/ai-stories`);
       const listBody = await listed.json();
@@ -60,6 +67,7 @@ async function main() {
     const storyId = story && typeof story.id === "string" ? story.id : null;
     if (!storyId || ![200, 201].includes(created.status)) throw new Error("Canonical fixture creation failed");
     const route = `/w/${slug}/campaigns/${campaignId}/ai-stories/${storyId}`;
+    phase = "FIXTURE_ROUTE";
     await page.goto(`${baseUrl}${route}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("heading", { name: "Your Story" }).waitFor();
     const text = await page.locator("body").innerText();
@@ -114,6 +122,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(JSON.stringify({ fixtureReadiness: false, safeErrorCategory: error instanceof Error ? error.name : "UNKNOWN", providerCalls: 0 }));
+  console.error(JSON.stringify({ fixtureReadiness: false, phase, safeErrorCategory: error instanceof Error ? error.name : "UNKNOWN", providerCalls: 0 }));
   process.exitCode = 1;
 });
