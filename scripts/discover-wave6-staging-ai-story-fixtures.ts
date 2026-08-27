@@ -39,6 +39,8 @@ async function safeGet(page: Page, path: string) {
   }, path);
 }
 
+let phase = "INITIAL";
+
 async function main() {
   let providerCalls = 0;
   const browser = await chromium.launch({ headless: true });
@@ -54,11 +56,14 @@ async function main() {
   });
   const page = await context.newPage();
   try {
+    phase = "LOGIN_PAGE";
     await page.goto(`${baseUrl}/login`, { waitUntil: "domcontentloaded" });
     await page.locator('input[type="email"]').fill(email);
     await page.locator('input[type="password"]').fill(password);
     await page.locator('button[type="submit"]').click();
+    phase = "LOGIN_SUBMITTED";
     await page.waitForURL(/\/workspaces(?:\?|$)/, { timeout: 30_000, waitUntil: "domcontentloaded" });
+    phase = "ACCOUNT_READ";
     const meResult = await safeGet(page, "/api/me");
     const me = meResult.body && typeof meResult.body === "object" ? meResult.body as Record<string, unknown> : {};
     const workspaces = Array.isArray(me.workspaces) ? me.workspaces as Array<Record<string, unknown>> : [];
@@ -66,10 +71,12 @@ async function main() {
     const workspaceId = workspace && typeof workspace.id === "string" ? workspace.id : null;
     const slug = workspace && typeof workspace.slug === "string" ? workspace.slug : null;
     if (!workspaceId || !slug) throw new Error("Certification Workspace is unavailable");
+    phase = "CAMPAIGN_LIST";
     await page.goto(`${baseUrl}/w/${slug}/campaigns`, { waitUntil: "domcontentloaded" });
     await page.locator('a[aria-label^="Open "]').first().waitFor({ state: "visible", timeout: 15_000 });
     const hrefs = await page.locator('a[aria-label^="Open "]').evaluateAll((links) => links.map((link) => (link as HTMLAnchorElement).getAttribute("href")).filter(Boolean));
     const campaignIds = [...new Set(hrefs.map((href) => String(href).match(/\/campaigns\/([0-9a-f-]{36})(?:\/|$)/i)?.[1]).filter((id): id is string => Boolean(id)))];
+    phase = "STORY_INVENTORY";
     const candidates: Candidate[] = [];
     for (const campaignId of campaignIds) {
       const listed = await safeGet(page, `/api/campaigns/${campaignId}/ai-stories`);
@@ -146,6 +153,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(JSON.stringify({ fixtureDiscovery: false, safeErrorCategory: error instanceof Error ? error.name : "UNKNOWN", providerCalls: 0 }));
+  console.error(JSON.stringify({ fixtureDiscovery: false, phase, safeErrorCategory: error instanceof Error ? error.name : "UNKNOWN", providerCalls: 0 }));
   process.exitCode = 1;
 });
