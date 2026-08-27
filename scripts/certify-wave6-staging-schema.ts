@@ -124,33 +124,6 @@ const semanticIndexPresent = (name: string) => {
   const definition = actualIndexDefinitions.get(alias.actual);
   return Boolean(definition?.startsWith("create unique index ") && definition.includes(alias.signature));
 };
-const actualIndexDefinitions = new Map(actualIndexes.map((row) => [row.indexname, row.indexdef.toLowerCase().replace(/\s+/g, " ")]));
-const semanticIndexAliases: Record<string, { actual: string; signature: string }> = {
-  ai_story_asset_links_story_id_asset_id_unique: { actual: "ai_story_asset_links_pkey", signature: "on public.ai_story_asset_links using btree (story_id, asset_id)" },
-  ai_story_execute_verification_outbox_unique: { actual: "ai_story_execute_verifications_outbox_job_id_key", signature: "on public.ai_story_execute_verifications using btree (outbox_job_id)" },
-  ai_story_execute_verification_runtime_auth_unique: { actual: "ai_story_execute_verifications_runtime_authorization_id_key", signature: "on public.ai_story_execute_verifications using btree (runtime_authorization_id)" },
-  ai_story_execution_outputs_job_index_unique: { actual: "ai_story_execution_outputs_execution_job_id_output_index_key", signature: "on public.ai_story_execution_outputs using btree (execution_job_id, output_index)" },
-  ai_story_scene_executions_idempotency_unique: { actual: "ai_story_scene_executions_idempotency_key_key", signature: "on public.ai_story_scene_executions using btree (idempotency_key)" },
-  ai_story_scene_instruction_snapshots_snapshot_id_unique: { actual: "ai_story_scene_instruction_snapshots_snapshot_id_key", signature: "on public.ai_story_scene_instruction_snapshots using btree (snapshot_id)" },
-  ai_story_versions_story_id_version_number_unique: { actual: "ai_story_versions_story_id_version_number_key", signature: "on public.ai_story_versions using btree (story_id, version_number)" },
-  campaign_asset_refs_campaign_id_asset_id_unique: { actual: "campaign_asset_refs_campaign_id_asset_id_key", signature: "on public.campaign_asset_refs using btree (campaign_id, asset_id)" },
-  campaign_story_refs_campaign_id_story_id_unique: { actual: "campaign_story_refs_campaign_id_story_id_key", signature: "on public.campaign_story_refs using btree (campaign_id, story_id)" },
-  photo_scene_official_scene_versions_scene_id_version_unique: { actual: "photo_scene_official_scene_versions_scene_id_version_key", signature: "on public.photo_scene_official_scene_versions using btree (scene_id, version)" },
-  photo_scene_official_scenes_slug_unique: { actual: "photo_scene_official_scenes_slug_key", signature: "on public.photo_scene_official_scenes using btree (slug)" },
-  photo_scene_scene_selections_workspace_id_campaign_id_unique: { actual: "photo_scene_scene_selections_workspace_id_campaign_id_key", signature: "on public.photo_scene_scene_selections using btree (workspace_id, campaign_id)" },
-  provider_attempts_execution_number_unique: { actual: "provider_attempts_execution_id_attempt_number_key", signature: "on public.provider_attempts using btree (execution_id, attempt_number)" },
-  provider_execution_dispatches_job_unique: { actual: "provider_execution_dispatches_job_id_key", signature: "on public.provider_execution_dispatches using btree (job_id)" },
-  provider_execution_envelopes_payload_reference_unique: { actual: "provider_execution_envelopes_payload_reference_key", signature: "on public.provider_execution_envelopes using btree (payload_reference)" },
-  provider_executions_idempotency_key_unique: { actual: "provider_executions_idempotency_key_key", signature: "on public.provider_executions using btree (idempotency_key)" },
-  provider_outbox_jobs_execution_unique: { actual: "provider_outbox_jobs_execution_id_key", signature: "on public.provider_outbox_jobs using btree (execution_id)" },
-  story_assets_story_id_asset_id_unique: { actual: "story_assets_story_id_asset_id_key", signature: "on public.story_assets using btree (story_id, asset_id)" },
-};
-const semanticIndexPresent = (name: string) => {
-  const alias = semanticIndexAliases[name];
-  if (!alias) return false;
-  const definition = actualIndexDefinitions.get(alias.actual);
-  return Boolean(definition?.startsWith("create unique index ") && definition.includes(alias.signature));
-};
 const actualFkSet = new Set(actualFkRows.map((row) => `${row.source_table}(${row.source_columns.join(",")})->${row.target_table}(${row.target_columns.join(",")})`));
 const actualPolicySet = new Set(actualPolicies.map((row) => `${row.tablename}:${row.policyname}`));
 const actualRlsSet = new Set(actualRls.map((row) => row.table_name));
@@ -175,22 +148,10 @@ const approvedExtraColumns = new Set([
   "campaigns.generate_status",
   "campaigns.generate_summary",
 ]);
-const approvedExtraColumns = new Set([
-  "campaigns.description",
-  "campaigns.target_audience_override",
-  "campaigns.output_language",
-  "campaigns.subtitle_language",
-  "campaigns.cta_language",
-  "campaigns.hashtag_language",
-  "campaigns.generate_status",
-  "campaigns.generate_summary",
-]);
 const unexpectedColumns = [...actualColumnMap.keys()].filter((key) => {
   const [table] = key.split(".");
   return expectedTables.has(table!) && !expectedColumns.some((column) => `${column.table}.${column.column}` === key);
 });
-const unapprovedUnexpectedColumns = unexpectedColumns.filter((key) => !approvedExtraColumns.has(key));
-const approvedStructuralSupersetColumns = unexpectedColumns.filter((key) => approvedExtraColumns.has(key));
 const unapprovedUnexpectedColumns = unexpectedColumns.filter((key) => !approvedExtraColumns.has(key));
 const approvedStructuralSupersetColumns = unexpectedColumns.filter((key) => approvedExtraColumns.has(key));
 const missingIndexes = [...expectedIndexes].filter((name) => !actualIndexSet.has(name) && !semanticIndexPresent(name));
