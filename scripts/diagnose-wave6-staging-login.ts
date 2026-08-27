@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { chromium } from "@playwright/test";
 
 const baseUrl = "https://emberos-git-staging-kahliantoo-8279s-projects.vercel.app";
@@ -5,6 +6,8 @@ const expectedProject = "voofxbuzpocyjzoxrpfi";
 const email = process.env.STAGING_CERT_USER_EMAIL?.trim();
 const password = process.env.STAGING_CERT_USER_PASSWORD?.trim();
 const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
+const e2eEmail = process.env.E2E_USER_EMAIL?.trim();
+const e2ePassword = process.env.E2E_USER_PASSWORD?.trim();
 if (!email || !password || !bypass) throw new Error("Encrypted Preview certification secrets are required");
 
 type AuthObservation = {
@@ -110,6 +113,8 @@ async function main() {
     const workspaceResponse = await page.goto(`${baseUrl}/workspaces`, { waitUntil: "domcontentloaded" });
     const finalPath = new URL(page.url()).pathname;
     console.log(JSON.stringify({
+      credentialAliasEmailMatch: Boolean(e2eEmail && e2eEmail.toLowerCase() === email.toLowerCase()),
+      credentialAliasPasswordMatch: Boolean(e2ePassword && timingSafeEqual(Buffer.from(e2ePassword), Buffer.from(password))),
       previewProtectionAccess,
       loginFormSubmitted: true,
       expectedProject,
