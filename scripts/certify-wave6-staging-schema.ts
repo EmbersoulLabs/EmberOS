@@ -8,7 +8,13 @@ import * as schema from "../packages/db/src/schema/index";
 async function main() {
 const connection = process.env.STAGING_CERT_DATABASE_URL?.trim();
 if (!connection) throw new Error("STAGING_CERT_DATABASE_URL is required");
-const sql = postgres(connection, { max: 1, prepare: false, idle_timeout: 5 });
+const directUrl = new URL(connection);
+if (!directUrl.hostname.includes("voofxbuzpocyjzoxrpfi")) throw new Error("Refusing non-Staging database target");
+const poolerUrl = new URL(connection);
+poolerUrl.hostname = "aws-0-ap-northeast-1.pooler.supabase.com";
+poolerUrl.port = "6543";
+poolerUrl.username = `${decodeURIComponent(directUrl.username)}.voofxbuzpocyjzoxrpfi`;
+const sql = postgres(poolerUrl.toString(), { max: 1, prepare: false, idle_timeout: 5 });
 
 type ExpectedColumn = { table: string; column: string; type: string };
 const tables = Object.values(schema).filter((value): value is Table => is(value, Table));
