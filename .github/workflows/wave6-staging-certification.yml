@@ -1,0 +1,35 @@
+name: Wave 6 Staging certification remaining gates
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/wave6-staging-certification.yml"
+      - "scripts/certify-wave6-staging-schema.ts"
+      - "scripts/certify-wave6-staging-product-smoke.ts"
+
+jobs:
+  remaining-gates:
+    if: github.head_ref == 'wave6/staging-certification-remaining-gates'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: Preview
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Read-only Staging schema parity
+        env:
+          STAGING_CERT_DATABASE_URL: ${{ secrets.STAGING_CERT_DATABASE_URL }}
+        run: pnpm exec tsx scripts/certify-wave6-staging-schema.ts
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Authenticated Staging product smoke
+        env:
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: pnpm exec tsx scripts/certify-wave6-staging-product-smoke.ts
