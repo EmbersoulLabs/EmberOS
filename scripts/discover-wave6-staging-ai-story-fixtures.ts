@@ -67,7 +67,8 @@ async function main() {
     const slug = workspace && typeof workspace.slug === "string" ? workspace.slug : null;
     if (!workspaceId || !slug) throw new Error("Certification Workspace is unavailable");
     await page.goto(`${baseUrl}/w/${slug}/campaigns`, { waitUntil: "domcontentloaded" });
-    const hrefs = await page.locator('a[href*="/campaigns/"]').evaluateAll((links) => links.map((link) => (link as HTMLAnchorElement).getAttribute("href")).filter(Boolean));
+    await page.locator('a[aria-label^="Open "]').first().waitFor({ state: "visible", timeout: 15_000 });
+    const hrefs = await page.locator('a[aria-label^="Open "]').evaluateAll((links) => links.map((link) => (link as HTMLAnchorElement).getAttribute("href")).filter(Boolean));
     const campaignIds = [...new Set(hrefs.map((href) => String(href).match(/\/campaigns\/([0-9a-f-]{36})(?:\/|$)/i)?.[1]).filter((id): id is string => Boolean(id)))];
     const candidates: Candidate[] = [];
     for (const campaignId of campaignIds) {
