@@ -32,7 +32,7 @@ try {
   await page.locator('input[type="email"]').fill(email);
   await page.locator('input[type="password"]').fill(password);
   await page.locator('button[type="submit"]').click();
-  await page.waitForURL(/\/workspaces(?:\?|$)/, { timeout: 30_000 });
+  await page.waitForURL(/\/workspaces(?:\?|$)/, { timeout: 30_000, waitUntil: "domcontentloaded" });
   result.stagingLogin = true;
   result.passwordPersistenceAbsent = await page.evaluate(() => {
     for (let index = 0; index < localStorage.length; index += 1) {
