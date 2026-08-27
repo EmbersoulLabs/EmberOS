@@ -8,6 +8,7 @@ on:
       - "scripts/certify-wave6-staging-product-smoke.ts"
       - "scripts/diagnose-wave6-staging-login.ts"
       - "scripts/discover-wave6-staging-ai-story-fixtures.ts"
+      - "scripts/ensure-wave6-staging-ai-story-fixture.ts"
 
 jobs:
   remaining-gates:
@@ -45,6 +46,12 @@ jobs:
           STAGING_CERT_USER_PASSWORD: ${{ secrets.STAGING_CERT_USER_PASSWORD }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: pnpm exec tsx scripts/discover-wave6-staging-ai-story-fixtures.ts
+      - name: Ensure canonical zero-provider AI Story fixture
+        env:
+          STAGING_CERT_USER_EMAIL: ${{ secrets.STAGING_CERT_USER_EMAIL }}
+          STAGING_CERT_USER_PASSWORD: ${{ secrets.STAGING_CERT_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: pnpm exec tsx scripts/ensure-wave6-staging-ai-story-fixture.ts
       - name: Secret-safe Staging login diagnosis
         timeout-minutes: 2
         env:
