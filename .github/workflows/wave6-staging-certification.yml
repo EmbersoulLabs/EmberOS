@@ -6,6 +6,7 @@ on:
       - ".github/workflows/wave6-staging-certification.yml"
       - "scripts/certify-wave6-staging-schema.ts"
       - "scripts/certify-wave6-staging-product-smoke.ts"
+      - "scripts/diagnose-wave6-staging-login.ts"
 
 jobs:
   remaining-gates:
@@ -37,6 +38,12 @@ jobs:
         run: pnpm exec tsx scripts/certify-wave6-staging-schema.ts
       - name: Install Chromium
         run: pnpm exec playwright install --with-deps chromium
+      - name: Secret-safe Staging login diagnosis
+        env:
+          STAGING_CERT_USER_EMAIL: ${{ secrets.STAGING_CERT_USER_EMAIL }}
+          STAGING_CERT_USER_PASSWORD: ${{ secrets.STAGING_CERT_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: pnpm exec tsx scripts/diagnose-wave6-staging-login.ts
       - name: Authenticated Staging product smoke
         env:
           E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
