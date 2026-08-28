@@ -86,6 +86,9 @@ jobs:
       - name: Certify ephemeral PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
 
+      - name: Certify AI Story Writer Outline PostgreSQL authority
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-outline-authority.integration.test.ts
+
       - name: Certify Wave 1 Asset Library PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/asset-library-wave1.integration.test.ts
 

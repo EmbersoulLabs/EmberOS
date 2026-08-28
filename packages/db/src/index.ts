@@ -42,3 +42,4 @@ export * from "./queries/asset-library";
 export * from "./queries/create-campaign";
 export * from "./queries/admin-runtime-operations";
 export * from "./queries/ai-story-pre-dispatch-recovery";
+export * from "./queries/ai-story-outline";

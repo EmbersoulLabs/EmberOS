@@ -31,6 +31,7 @@
     "sql:provider-execution-envelope": "tsx scripts/apply-provider-execution-envelope.ts",
     "sql:provider-execution-dispatch": "tsx scripts/apply-provider-execution-dispatch.ts",
     "sql:ai-story": "tsx scripts/apply-ai-story-v1.ts",
+    "sql:ai-story-outline": "tsx scripts/apply-ai-story-outline-v1.ts",
     "sql:ai-story-planning": "tsx scripts/apply-ai-story-planning-v1.ts",
     "sql:ai-story-execution": "tsx scripts/apply-ai-story-execution-v1.ts",
     "sql:ai-story-scene-persistence": "tsx scripts/apply-ai-story-scene-execution-persistence-v1.ts",
