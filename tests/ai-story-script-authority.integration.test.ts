@@ -15,7 +15,6 @@ describeIntegration("AI Story Script additive persistence and authority",()=>{
   beforeAll(async()=>{
     sql=createIntegrationSql();fixture=await seedRlsFixture(sql);
     await sql.unsafe(`DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$; CREATE SCHEMA IF NOT EXISTS auth; CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;`);
-    await sql.unsafe(readFileSync(resolve(process.cwd(),"packages/db/sql/ai-story-v1.sql"),"utf8"));
     await sql.unsafe(readFileSync(resolve(process.cwd(),"packages/db/sql/ai-story-outline-v1.sql"),"utf8"));
     await sql.unsafe(readFileSync(resolve(process.cwd(),"packages/db/sql/ai-story-script-v1.sql"),"utf8"));
     await sql.unsafe("GRANT USAGE ON SCHEMA public TO authenticated; GRANT SELECT ON workspace_members,ai_story_outline_versions,ai_story_script_versions TO authenticated; GRANT INSERT,UPDATE ON ai_story_script_versions TO authenticated");
