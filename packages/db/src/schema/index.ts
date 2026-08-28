@@ -717,6 +717,38 @@ export const aiStoryOutlineVersions = pgTable(
   ]
 );
 
+/** Provider-neutral, immutable-after-freeze Script Scene authority. */
+export const aiStoryScriptVersions = pgTable(
+  "ai_story_script_versions",
+  {
+    scriptVersionId: uuid("script_version_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    outlineVersionId: uuid("outline_version_id").notNull().references(() => aiStoryOutlineVersions.outlineVersionId, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    profileId: text("profile_id").notNull(),
+    profileVersion: integer("profile_version").notNull(),
+    outlineSourceHash: text("outline_source_hash").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    status: text("status").notNull(),
+    supersedesScriptVersionId: uuid("supersedes_script_version_id"),
+    script: jsonb("script").$type<import("@ceo-agent/shared").AiStoryScriptVersion>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    approvedBy: uuid("approved_by"), approvedAt: timestamp("approved_at", { withTimezone: true }), frozenAt: timestamp("frozen_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("ai_story_script_story_version_unique").on(t.storyId, t.version),
+    unique("ai_story_script_source_unique").on(t.storyId, t.sourceHash),
+    index("ai_story_script_workspace_idx").on(t.workspaceId, t.storyId, t.version),
+    index("ai_story_script_outline_idx").on(t.outlineVersionId, t.version),
+  ],
+);
+
 export const aiStoryAssetLinks = pgTable(
   "ai_story_asset_links",
   {

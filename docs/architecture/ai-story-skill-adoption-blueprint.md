@@ -1,10 +1,12 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline authority implemented; downstream layers remain future work
+Status: Writer/Outline and Script authority implemented; Director and Motion remain future work
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
 Writer implementation: `EMBEROS-AI-STORY-WRITER-OUTLINE-AUTHORITY-CONTRACT-01`
+
+Script implementation: `EMBEROS-AI-STORY-SCRIPT-SCENE-BEAT-CONTRACT-01`
 
 ## Certified invariants
 
@@ -26,7 +28,10 @@ CAMPAIGN / USER BRIEF
   -> OUTLINE VALIDATION
   -> HUMAN APPROVAL
   -> OUTLINE FREEZE
-  -> FUTURE SCRIPT
+  -> SCRIPT VERSION
+  -> SCRIPT VALIDATION
+  -> HUMAN APPROVAL
+  -> SCRIPT FREEZE
   -> FUTURE DIRECTOR
   -> FUTURE MOTION
   -> PROVIDER ADAPTER
@@ -68,12 +73,31 @@ Implemented gates:
 Historical AI Stories remain readable through a compatibility projection with
 no silent Outline materialization.
 
-## Future Script boundary
+## Implemented Script authority
 
-Script will claim Writer Beats and define typed Scene narrative authority in a
-separate ticket. This implementation does not add ACTION/DIALOGUE/VO sequences,
-Scene Functions, Scene state, Script-to-Director handoff, Director Visual Roles,
-Shot Purposes, Motion planning, Shot Recipes, or Provider enrichment.
+`AiStoryScriptVersion` is the provider-neutral authority for what happens in a
+Scene. It binds the exact frozen Outline and source hash, owns stable ordered
+Script Scenes, explicit exclusive/splittable Beat claims, versioned semantic
+Scene Functions, typed state deltas, ordered ACTION/DIALOGUE/VO entries,
+duration ranges, authority references, information/evidence/action deltas, and
+must-keep/must-avoid constraints. Its lifecycle is:
+
+```text
+DRAFT -> VALIDATED -> APPROVED -> FROZEN -> SUPERSEDED
+```
+
+Deterministic gates cover Outline lineage, Beat cardinality, stable references,
+visible action, dialogue/VO owners, timing feasibility, state continuity, and
+duplicate story work before Director. Historical dialogue and Scene Plan data
+remain compatibility-only; no Script is silently materialized for legacy or R4
+Stories.
+
+## Future Script-to-Director boundary
+
+Script does not own camera, lens, framing, shot size, blocking execution,
+camera movement, visual roles, shot purposes, physical motion paths, Provider
+syntax, retry, or execution. Script-to-Director handoff, Director authority,
+Motion planning, Shot Recipes, and Provider enrichment remain unimplemented.
 
 ## Implementation sequence
 
