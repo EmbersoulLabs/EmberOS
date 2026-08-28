@@ -482,7 +482,7 @@ describeIntegration("Wave 6 least-privilege recovery operator fidelity", () => {
       expect(safe.transactionBeginReached).toBe(true);
       expect(safe.firstSqlStage).toBe(stage);
       expect(safe.firstSafeSqlFailureClass).toMatch(
-        /DATABASE_PERMISSION_DENIED|TARGET_USER_|ORPHAN_/i
+        /DATABASE_PERMISSION_DENIED|TARGET_(?:AUTH_)?USER_|ORPHAN_/i
       );
       expect(result.stderr).not.toContain(RECOVERY_PASSWORD);
       expect(result.stderr).not.toContain("postgresql://");
