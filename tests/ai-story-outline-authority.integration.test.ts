@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Sql } from "postgres";
-import { AiStoryOutlineAuthorityService } from "@ceo-agent/db";
+import { AiStoryOutlineAuthorityService, closeDb } from "@ceo-agent/db";
 import { buildAiStoryOutlineVersion } from "@ceo-agent/shared/server";
 import {
   RUN_DB_INTEGRATION,
@@ -33,8 +33,15 @@ describeIntegration("AI Story Outline additive persistence and isolation", () =>
   beforeAll(async () => {
     sql = createIntegrationSql();
     fixture = await seedRlsFixture(sql);
+    await sql.unsafe(`
+      DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+      CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
+      $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
+    `);
     await sql.unsafe(readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-v1.sql"), "utf8"));
     await sql.unsafe(readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-outline-v1.sql"), "utf8"));
+    await sql.unsafe("GRANT USAGE ON SCHEMA public TO authenticated; GRANT SELECT ON workspace_members, ai_story_outline_versions TO authenticated; GRANT UPDATE ON ai_story_outline_versions TO authenticated");
     await sql`insert into ai_stories(id,org_id,workspace_id,campaign_id,title,original_idea,status)
       values(${STORY_ID}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${fixture.campaignAId}::uuid,'Outline test','Idea','draft')`;
     await sql`insert into ai_story_versions(id,story_id,version_number,structured_content)
@@ -75,6 +82,7 @@ describeIntegration("AI Story Outline additive persistence and isolation", () =>
   }, 30_000);
 
   afterAll(async () => {
+    await closeDb();
     if (!sql) return;
     await sql`delete from ai_story_outline_versions where story_id=${STORY_ID}::uuid`;
     await sql`delete from ai_story_versions where story_id=${STORY_ID}::uuid`;
