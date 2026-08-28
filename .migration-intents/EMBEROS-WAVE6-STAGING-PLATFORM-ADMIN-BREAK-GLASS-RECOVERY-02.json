@@ -1,0 +1,67 @@
+{
+  "ticketId": "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-02",
+  "wave": 6,
+  "changeKind": "SECURITY_REPAIR",
+  "reason": "Use origin/main canonical Platform Admin authority and the Wave 6 certified authority-deadlock evidence to add post-bootstrap grant management plus a bounded, separately authorized, Staging-only break-glass recovery command. This change does not execute recovery in CI, create a permanent alternate authority model, weaken ai_story.access, change normal Workspace Admin semantics, or modify Production.",
+  "sourceAuthority": "SECURITY_AUDIT",
+  "targetModule": "Platform Admin Recovery / Post-Bootstrap Grant Management",
+  "allowedSourcePaths": [
+    "origin/main:packages/db/src/queries/platform-admin.ts",
+    "origin/main:packages/db/src/queries/platform-admin-resolution.ts",
+    "origin/main:packages/db/src/queries/admin-audit.ts",
+    "origin/main:packages/shared/src/platform-admin-command.ts",
+    "origin/main:packages/shared/src/platform-admin-facts.ts",
+    "WAVE6_CERTIFIED_DEADLOCK:orphaned ACTIVE PLATFORM_SUPER_ADMIN grant with absent Auth principal"
+  ],
+  "allowedTargetPaths": [
+    ".migration-intents/EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-02.json",
+    "package.json",
+    "packages/db/src/index.ts",
+    "packages/db/src/queries/platform-admin-break-glass.ts",
+    "packages/db/src/queries/platform-admin-management.ts",
+    "scripts/wave6-staging-platform-admin-recovery-02.ts",
+    "config/hybrid-migration-guards.json",
+    "scripts/hybrid-migration-guards.ts",
+    "tests/hybrid-migration-guards.test.ts",
+    "tests/wave6-platform-admin-management.test.ts",
+    "tests/wave6-platform-admin-recovery.integration.test.ts"
+  ],
+  "protectedDomainsExpectedToChange": [
+    "PLATFORM_ADMIN"
+  ],
+  "protectedDomainsMustNotChange": [
+    "AI_STORY_RUNTIME",
+    "AI_STORY_REVIEW",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "PRIVATE_MEDIA_DELIVERY",
+    "CAMPAIGN",
+    "ASSET_LIBRARY",
+    "BUSINESS_PROFILE",
+    "CREATE_CAMPAIGN",
+    "CAMPAIGN_WORKSPACE",
+    "PROVIDER_ADAPTERS",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING",
+    "BILLING",
+    "PRODUCTION_DEPLOYMENT_BEHAVIOR",
+    "NORMAL_WORKSPACE_ADMIN_AUTHORIZATION",
+    "TENANT_WORKSPACE_ISOLATION",
+    "COMMERCIAL_AUTH"
+  ],
+  "requiredTests": [
+    "pnpm verify:hybrid-migration",
+    "tests/wave6-platform-admin-management.test.ts",
+    "tests/wave6-platform-admin-recovery.integration.test.ts",
+    "tests/sprint-3-phase-3-pr37-phase-e-http-security.integration.test.ts",
+    "tests/ai-story-exec-03-authorization.test.ts",
+    "tests/tenant-access.test.ts",
+    "tests/workspace-isolation.test.ts",
+    "tests/workspace-isolation.integration.test.ts",
+    "pnpm typecheck",
+    "pnpm --filter @ceo-agent/web build",
+    "pnpm --filter @ceo-agent/worker build"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}

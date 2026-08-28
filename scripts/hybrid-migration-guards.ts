@@ -23,6 +23,7 @@ type GuardManifest = {
   protectedDomains: Record<string, { patterns: string[]; requiredTests: string[] }>;
   forbiddenStagingSurfaces: string[];
   waveScopes: Record<string, string[]>;
+  intentScopedWavePathAllowances?: Record<string, string[]>;
   preWave6SkillTokens: string[];
 };
 
@@ -81,6 +82,9 @@ export function evaluateMigration(input: GuardInput): GuardResult {
 
   validateIntent(input.intent, manifest, errors);
   const wavePatterns = manifest.waveScopes[String(input.intent.wave)] ?? [];
+  const intentScopedWavePaths = new Set(
+    (manifest.intentScopedWavePathAllowances?.[input.intent.ticketId] ?? []).map(normalize)
+  );
 
   for (const file of changedFiles) {
     const classification = manifest.classifications.find((rule) => matchesAny(file, rule.patterns));
@@ -88,7 +92,9 @@ export function evaluateMigration(input: GuardInput): GuardResult {
     else classifications[file] = classification.name;
 
     if (!matchesAny(file, input.intent.allowedTargetPaths)) errors.push(`TARGET_PATH_NOT_DECLARED:${file}`);
-    if (!matchesAny(file, wavePatterns)) errors.push(`WAVE_${input.intent.wave}_SCOPE_VIOLATION:${file}`);
+    if (!matchesAny(file, wavePatterns) && !intentScopedWavePaths.has(file)) {
+      errors.push(`WAVE_${input.intent.wave}_SCOPE_VIOLATION:${file}`);
+    }
 
     for (const [domain, contract] of Object.entries(manifest.protectedDomains)) {
       if (matchesAny(file, contract.patterns)) touched.add(domain);
