@@ -20,6 +20,7 @@
     "packages/db/src/queries/platform-admin-break-glass.ts",
     "packages/db/src/queries/platform-admin-management.ts",
     "scripts/wave6-staging-platform-admin-recovery-02.ts",
+    ".github/workflows/ci.yml",
     "config/hybrid-migration-guards.json",
     "scripts/hybrid-migration-guards.ts",
     "tests/hybrid-migration-guards.test.ts",
