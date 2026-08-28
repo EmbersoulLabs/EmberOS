@@ -781,6 +781,38 @@ export const aiStoryScriptDirectorHandoffs = pgTable(
   ],
 );
 
+/** Provider-neutral visual realization authority derived from an immutable Script handoff. */
+export const aiStoryDirectorPlanVersions = pgTable(
+  "ai_story_director_plan_versions",
+  {
+    directorPlanId: uuid("director_plan_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    outlineVersionId: uuid("outline_version_id").notNull().references(() => aiStoryOutlineVersions.outlineVersionId, { onDelete: "restrict" }),
+    scriptVersionId: uuid("script_version_id").notNull().references(() => aiStoryScriptVersions.scriptVersionId, { onDelete: "restrict" }),
+    handoffId: uuid("handoff_id").notNull().references(() => aiStoryScriptDirectorHandoffs.handoffId, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    sourceHandoffFingerprint: text("source_handoff_fingerprint").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    directorFingerprint: text("director_fingerprint").notNull(),
+    status: text("status").notNull(),
+    supersedesDirectorPlanId: uuid("supersedes_director_plan_id"),
+    directorPlan: jsonb("director_plan").$type<import("@ceo-agent/shared").AiStoryDirectorPlan>().notNull(),
+    createdBy: uuid("created_by").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    approvedBy: uuid("approved_by"), approvedAt: timestamp("approved_at", { withTimezone: true }), frozenAt: timestamp("frozen_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("ai_story_director_plan_story_version_unique").on(t.storyId, t.version),
+    unique("ai_story_director_plan_source_unique").on(t.storyId, t.sourceHash),
+    unique("ai_story_director_plan_fingerprint_unique").on(t.storyId, t.directorFingerprint),
+    index("ai_story_director_plan_workspace_idx").on(t.workspaceId, t.storyId, t.version),
+  ],
+);
+
 export const aiStoryAssetLinks = pgTable(
   "ai_story_asset_links",
   {
