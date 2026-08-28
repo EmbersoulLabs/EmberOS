@@ -52,6 +52,154 @@ export type Wave6RecoveryResult = {
   replayed: boolean;
 };
 
+export type Wave6RecoveryStage =
+  | "COMMAND_VALIDATION"
+  | "TRANSACTION_BEGIN"
+  | "ADVISORY_LOCK"
+  | "TARGET_USER_LOOKUP"
+  | "ORPHAN_PRINCIPAL_LOOKUP"
+  | "ORPHAN_GRANT_LOCK"
+  | "TARGET_GRANT_LOCK"
+  | "ACTIVE_ADMIN_COUNT"
+  | "AUDIT_ACCEPTED_WRITE"
+  | "REVOCATION_WRITE"
+  | "ORPHAN_REVOKE"
+  | "TARGET_GRANT_WRITE"
+  | "AUDIT_SUCCEEDED_WRITE"
+  | "POSTCONDITION";
+
+export type Wave6RecoveryTrace = {
+  stage: Wave6RecoveryStage;
+  transactionBeginReached: boolean;
+  firstSqlStage: Wave6RecoveryStage | null;
+};
+
+export type Wave6SanitizedOperatorError = {
+  correlationId: string;
+  stage: Wave6RecoveryStage;
+  errorClass: string;
+  safeMessage: string;
+  exitCode: number;
+  databaseSqlState?: string;
+  databaseConstraint?: string;
+  databaseObjectClass?: "TABLE" | "CONSTRAINT" | "FUNCTION" | "SCHEMA";
+  transactionBeginReached: boolean;
+  firstSqlStage: Wave6RecoveryStage | null;
+  firstSafeSqlFailureClass: string;
+  timestamp: string;
+};
+
+export class Wave6RecoveryExecutionError extends Error {
+  constructor(
+    readonly trace: Wave6RecoveryTrace,
+    readonly originalError: unknown
+  ) {
+    super("Wave 6 recovery execution failed");
+    this.name = "Wave6RecoveryExecutionError";
+  }
+}
+
+function safeIdentifier(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]{1,128}$/.test(value)
+    ? value
+    : undefined;
+}
+
+function errorFacts(error: unknown): {
+  code?: string;
+  constraint?: string;
+  table?: string;
+  schema?: string;
+  routine?: string;
+  message?: string;
+} {
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && current; depth += 1) {
+    if (typeof current !== "object" || current === null) break;
+    const item = current as Record<string, unknown>;
+    const facts = {
+      code: safeIdentifier(item.code),
+      constraint: safeIdentifier(item.constraint),
+      table: safeIdentifier(item.table),
+      schema: safeIdentifier(item.schema),
+      routine: safeIdentifier(item.routine),
+      message: typeof item.message === "string" ? item.message : undefined,
+    };
+    if (facts.code || facts.constraint || facts.table || facts.schema || facts.routine) {
+      return facts;
+    }
+    current = item.cause ?? item.originalError;
+  }
+  return typeof error === "object" && error !== null
+    ? { message: (error as { message?: string }).message }
+    : {};
+}
+
+/** Redacts credential-bearing text before it can enter a structured report. */
+export function redactWave6RecoverySensitiveText(value: string): string {
+  return value
+    .replace(/postgres(?:ql)?:\/\/[^\s/@:]+:[^\s/@]+@[^\s]+/gi, "[REDACTED_DATABASE_URL]")
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [REDACTED]")
+    .replace(/\b(?:gh[opsu]_|github_pat_|vercel_|sb_(?:secret|service)_)[A-Za-z0-9._-]+/gi, "[REDACTED_SECRET]")
+    .replace(/([?&](?:password|token|secret|key)=)[^&\s]+/gi, "$1[REDACTED]");
+}
+
+export function sanitizeWave6RecoveryOperatorError(
+  error: unknown,
+  input: { exitCode: number; timestamp?: string }
+): Wave6SanitizedOperatorError {
+  const execution =
+    error instanceof Wave6RecoveryExecutionError ? error : undefined;
+  const trace = execution?.trace ?? {
+    stage: "COMMAND_VALIDATION" as const,
+    transactionBeginReached: false,
+    firstSqlStage: null,
+  };
+  const original = execution?.originalError ?? error;
+  const facts = errorFacts(original);
+  const sqlState = facts.code && /^[0-9A-Z]{5}$/.test(facts.code) ? facts.code : undefined;
+  const guard = original instanceof Wave6RecoveryGuardError ? original : undefined;
+  const connectionFailure =
+    facts.code === "ECONNREFUSED" || facts.code === "ETIMEDOUT" || facts.code === "28P01";
+  const errorClass = guard?.code ??
+    (facts.code === "42501" ? "DATABASE_PERMISSION_DENIED" :
+      connectionFailure ? "DATABASE_CONNECTION_FAILED" :
+      sqlState?.startsWith("23") ? "DATABASE_CONSTRAINT_FAILED" :
+      sqlState ? "DATABASE_SQL_FAILURE" : "RECOVERY_OPERATOR_FAILURE");
+  const safeMessage = guard
+    ? redactWave6RecoverySensitiveText(guard.message)
+    : facts.code === "42501"
+      ? `Database permission denied during ${trace.stage}.`
+      : connectionFailure
+        ? "Database authentication or connection failed."
+        : `Recovery operator failed during ${trace.stage}.`;
+  const databaseConstraint = safeIdentifier(facts.constraint);
+  const databaseObjectClass = databaseConstraint
+    ? "CONSTRAINT" as const
+    : facts.table
+      ? "TABLE" as const
+      : facts.schema
+        ? "SCHEMA" as const
+        : facts.routine
+          ? "FUNCTION" as const
+          : undefined;
+
+  return {
+    correlationId: `${WAVE6_RECOVERY_TICKET}:request`,
+    stage: trace.stage,
+    errorClass,
+    safeMessage,
+    exitCode: input.exitCode,
+    ...(sqlState ? { databaseSqlState: sqlState } : {}),
+    ...(databaseConstraint ? { databaseConstraint } : {}),
+    ...(databaseObjectClass ? { databaseObjectClass } : {}),
+    transactionBeginReached: trace.transactionBeginReached,
+    firstSqlStage: trace.firstSqlStage,
+    firstSafeSqlFailureClass: errorClass,
+    timestamp: input.timestamp ?? new Date().toISOString(),
+  };
+}
+
 export class Wave6RecoveryGuardError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
@@ -87,15 +235,25 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
   input: Wave6RecoveryInput,
   db: Db = getDb()
 ): Promise<Wave6RecoveryResult> {
-  assertWave6RecoveryHardGuard(input);
+  const trace: Wave6RecoveryTrace = {
+    stage: "COMMAND_VALIDATION",
+    transactionBeginReached: false,
+    firstSqlStage: null,
+  };
+  try {
+    assertWave6RecoveryHardGuard(input);
+    trace.stage = "TRANSACTION_BEGIN";
 
-  return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtext(${WAVE6_RECOVERY_TICKET}))`
-    );
-    await tx.execute(sql`set local lock_timeout = '5s'`);
-    await tx.execute(sql`set local statement_timeout = '15s'`);
+    return await db.transaction(async (tx) => {
+      trace.transactionBeginReached = true;
+      trace.stage = "ADVISORY_LOCK";
+      trace.firstSqlStage = "ADVISORY_LOCK";
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${WAVE6_RECOVERY_TICKET}))`);
+      await tx.execute(sql`set local lock_timeout = '5s'`);
+      await tx.execute(sql`set local statement_timeout = '15s'`);
 
+    trace.stage = "TARGET_USER_LOOKUP";
+    trace.firstSqlStage = "TARGET_USER_LOOKUP";
     const targetUsers = await tx.execute<{
       id: string;
       email_confirmed_at: Date | null;
@@ -120,6 +278,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       );
     }
 
+    trace.stage = "ORPHAN_PRINCIPAL_LOOKUP";
+    trace.firstSqlStage = "ORPHAN_PRINCIPAL_LOOKUP";
     const orphanPrincipals = await tx.execute<{ count: number }>(sql`
       select count(*)::int as count
       from auth.users
@@ -132,6 +292,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       );
     }
 
+    trace.stage = "ORPHAN_GRANT_LOCK";
+    trace.firstSqlStage = "ORPHAN_GRANT_LOCK";
     const orphanRows = await tx
       .select()
       .from(schema.platformAdminGrants)
@@ -161,6 +323,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       reason: input.reason,
       identitySeed: `${WAVE6_RECOVERY_TICKET}:${targetUser.id}`,
     });
+    trace.stage = "TARGET_GRANT_LOCK";
+    trace.firstSqlStage = "TARGET_GRANT_LOCK";
     const existingTargetRows = await tx
       .select()
       .from(schema.platformAdminGrants)
@@ -184,6 +348,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
           "Orphan is revoked but deterministic target grant is not active"
         );
       }
+      trace.stage = "POSTCONDITION";
+      trace.firstSqlStage = "POSTCONDITION";
       return verifyResult(tx, targetUser.id, targetAssignment, true);
     }
 
@@ -194,6 +360,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       );
     }
 
+    trace.stage = "ACTIVE_ADMIN_COUNT";
+    trace.firstSqlStage = "ACTIVE_ADMIN_COUNT";
     const activeBefore = await tx.execute<{ count: number }>(sql`
       select count(*)::int as count
       from platform_admin_grants
@@ -242,6 +410,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       createdAt: input.occurredAt,
     });
 
+    trace.stage = "AUDIT_ACCEPTED_WRITE";
+    trace.firstSqlStage = "AUDIT_ACCEPTED_WRITE";
     await tx.insert(schema.adminAuditEvents).values({
       adminAuditEventId: acceptedAudit.adminAuditEventId,
       commandId: acceptedAudit.commandId,
@@ -267,6 +437,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       event: acceptedAudit,
     });
 
+    trace.stage = "REVOCATION_WRITE";
+    trace.firstSqlStage = "REVOCATION_WRITE";
     await tx.insert(schema.platformAdminRevocations).values({
       platformAdminRevocationId: revocation.platformAdminRevocationId,
       platformAdminAssignmentId: revocation.platformAdminAssignmentId,
@@ -279,6 +451,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       contractVersion: revocation.contractVersion,
       revocation,
     });
+    trace.stage = "ORPHAN_REVOKE";
+    trace.firstSqlStage = "ORPHAN_REVOKE";
     await tx
       .update(schema.platformAdminGrants)
       .set({ status: "REVOKED" })
@@ -288,6 +462,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
           WAVE6_ORPHAN_GRANT
         )
       );
+    trace.stage = "TARGET_GRANT_WRITE";
+    trace.firstSqlStage = "TARGET_GRANT_WRITE";
     await tx.insert(schema.platformAdminGrants).values({
       platformAdminAssignmentId: targetAssignment.platformAdminAssignmentId,
       userId: targetAssignment.userId,
@@ -321,6 +497,8 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       payloadDigest,
       createdAt: input.occurredAt,
     });
+    trace.stage = "AUDIT_SUCCEEDED_WRITE";
+    trace.firstSqlStage = "AUDIT_SUCCEEDED_WRITE";
     await tx.insert(schema.adminAuditEvents).values({
       adminAuditEventId: succeededAudit.adminAuditEventId,
       commandId: succeededAudit.commandId,
@@ -346,8 +524,14 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       event: succeededAudit,
     });
 
+    trace.stage = "POSTCONDITION";
+    trace.firstSqlStage = "POSTCONDITION";
     return verifyResult(tx, targetUser.id, targetAssignment, false);
-  });
+    });
+  } catch (error) {
+    if (error instanceof Wave6RecoveryExecutionError) throw error;
+    throw new Wave6RecoveryExecutionError({ ...trace }, error);
+  }
 }
 
 async function verifyResult(

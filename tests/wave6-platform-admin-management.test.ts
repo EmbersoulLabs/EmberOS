@@ -14,6 +14,9 @@ import {
   WAVE6_RECOVERY_TICKET,
   WAVE6_STAGING_PROJECT,
   WAVE6_TARGET_EMAIL,
+  Wave6RecoveryExecutionError,
+  redactWave6RecoverySensitiveText,
+  sanitizeWave6RecoveryOperatorError,
 } from "@ceo-agent/db";
 
 const ACTOR_ID = "11111111-1111-4111-8111-111111111111";
@@ -171,5 +174,56 @@ describe("Wave 6 break-glass hard guard", () => {
     expect(() =>
       assertWave6RecoveryHardGuard({ ...valid, [field]: value })
     ).toThrow(/hard guard|denied|mismatch/i);
+  });
+});
+
+describe("Wave 6 recovery safe operator errors", () => {
+  it("redacts database URLs, bearer tokens, platform secrets, and credential queries", () => {
+    const raw = [
+      "postgresql://operator:do-not-retain@db.example.test/postgres",
+      "Bearer eyJhbGciOiJIUzI1NiJ9.secret.signature",
+      "github_pat_secretmaterial",
+      "vercel_secretmaterial",
+      "https://example.test/callback?password=hidden&token=also-hidden",
+    ].join(" ");
+    const redacted = redactWave6RecoverySensitiveText(raw);
+
+    expect(redacted).not.toContain("do-not-retain");
+    expect(redacted).not.toContain("eyJhbGci");
+    expect(redacted).not.toContain("secretmaterial");
+    expect(redacted).not.toContain("hidden");
+    expect(redacted).toContain("[REDACTED");
+  });
+
+  it("retains only structured safe database facts", () => {
+    const databaseError = Object.assign(
+      new Error("password=do-not-retain postgresql://u:p@host/db"),
+      { code: "42501", table: "admin_audit_events" }
+    );
+    const error = new Wave6RecoveryExecutionError(
+      {
+        stage: "AUDIT_ACCEPTED_WRITE",
+        transactionBeginReached: true,
+        firstSqlStage: "AUDIT_ACCEPTED_WRITE",
+      },
+      databaseError
+    );
+    const safe = sanitizeWave6RecoveryOperatorError(error, {
+      exitCode: 1,
+      timestamp: NOW,
+    });
+
+    expect(safe).toMatchObject({
+      stage: "AUDIT_ACCEPTED_WRITE",
+      errorClass: "DATABASE_PERMISSION_DENIED",
+      databaseSqlState: "42501",
+      databaseObjectClass: "TABLE",
+      transactionBeginReached: true,
+      firstSqlStage: "AUDIT_ACCEPTED_WRITE",
+      firstSafeSqlFailureClass: "DATABASE_PERMISSION_DENIED",
+      exitCode: 1,
+    });
+    expect(JSON.stringify(safe)).not.toContain("do-not-retain");
+    expect(JSON.stringify(safe)).not.toContain("postgresql://");
   });
 });

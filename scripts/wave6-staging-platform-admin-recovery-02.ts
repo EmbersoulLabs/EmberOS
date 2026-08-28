@@ -8,6 +8,7 @@ import {
   WAVE6_RECOVERY_TICKET,
   WAVE6_STAGING_PROJECT,
   WAVE6_TARGET_EMAIL,
+  sanitizeWave6RecoveryOperatorError,
 } from "@ceo-agent/db";
 
 function requireRecoveryDatabaseUrl(): string {
@@ -15,7 +16,13 @@ function requireRecoveryDatabaseUrl(): string {
   if (!value) throw new Error("Recovery database URL is missing");
   const parsed = new URL(value);
   const identity = `${parsed.hostname}/${decodeURIComponent(parsed.username)}`;
-  if (!identity.includes(WAVE6_STAGING_PROJECT)) {
+  const ephemeralCi =
+    process.env.WAVE6_RECOVERY_ALLOW_EPHEMERAL === "1" &&
+    process.env.EMBEROS_TEST_DB_ENVIRONMENT === "test" &&
+    process.env.RUN_DB_INTEGRATION_TESTS === "1" &&
+    ["127.0.0.1", "localhost", "::1"].includes(parsed.hostname) &&
+    parsed.pathname === "/emberos_test";
+  if (!ephemeralCi && !identity.includes(WAVE6_STAGING_PROJECT)) {
     throw new Error("Recovery database URL is not bound to the certified Staging project");
   }
   if (!decodeURIComponent(parsed.username).startsWith("emberos_staging_platform_admin_recovery")) {
@@ -70,8 +77,10 @@ async function main() {
 
 main()
   .catch((error) => {
-    const message = error instanceof Error ? error.message : "Unknown recovery failure";
-    process.stderr.write(`WAVE6_STAGING_RECOVERY_FAILED: ${message}\n`);
+    const sanitized = sanitizeWave6RecoveryOperatorError(error, { exitCode: 1 });
+    process.stderr.write(
+      JSON.stringify({ kind: "WAVE6_RECOVERY_OPERATOR_ERROR", ...sanitized }) + "\n"
+    );
     process.exitCode = 1;
   })
   .finally(async () => {
