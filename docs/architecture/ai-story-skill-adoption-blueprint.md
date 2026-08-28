@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, and immutable Script-to-Director handoff authority implemented; Director and Motion remain future work
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, and Director visual authority implemented; Motion remains future work
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -9,6 +9,8 @@ Writer implementation: `EMBEROS-AI-STORY-WRITER-OUTLINE-AUTHORITY-CONTRACT-01`
 Script implementation: `EMBEROS-AI-STORY-SCRIPT-SCENE-BEAT-CONTRACT-01`
 
 Script-to-Director handoff implementation: `EMBEROS-AI-STORY-SCRIPT-DIRECTOR-HANDOFF-CONTRACT-01`
+
+Director implementation: `EMBEROS-AI-DIRECTOR-SCENE-FUNCTION-AND-DIFFERENTIATION-CONTRACT-01`
 
 ## Certified invariants
 
@@ -35,7 +37,8 @@ CAMPAIGN / USER BRIEF
   -> HUMAN APPROVAL
   -> SCRIPT FREEZE
   -> IMMUTABLE SCRIPT-TO-DIRECTOR HANDOFF
-  -> FUTURE DIRECTOR
+  -> DIRECTOR PLAN
+  -> DIRECTOR VALIDATION / HUMAN APPROVAL / FREEZE
   -> FUTURE MOTION
   -> PROVIDER ADAPTER
 ```
@@ -110,8 +113,27 @@ source content hash; they do not duplicate Product authority.
 
 Legacy Director Thinking, Scene Plan, Shot Plan, and Animation Package inputs
 remain compatibility-only for historical Stories. They do not outrank a
-canonical handoff. Director generation, Director creative authority, Motion
-planning, Shot Recipes, and Provider enrichment remain unimplemented.
+canonical handoff or Director Plan.
+
+## Implemented Director authority
+
+`AiStoryDirectorPlan` is versioned, durable, provider-neutral authority for how
+the immutable handoff is visually realized. It owns semantic Scene Visual Role,
+Shot Purpose and size, camera intent/family, focus and progression, composition,
+Product emphasis, new audience information, high-level blocking intent, and an
+explicit differentiation requirement. Its lifecycle is `DRAFT -> VALIDATED ->
+APPROVED -> FROZEN -> SUPERSEDED`; frozen content is immutable.
+
+Director context is open-semantic: it is derived from frozen Script action,
+state, authority references, evidence, and preservation constraints. Core has
+no Product-category, Product-action, or Product-scene allowlist. Namespaced
+semantic registry extensions allow new visual treatments without changing Core.
+Deterministic gates reject invented Script action, unknown focus/Product
+authority, unsafe identity-threatening camera treatments, stale lineage, and
+materially duplicate visual realizations without a new action, evidence,
+information, composition, or context delta. Camera-family reuse alone is never
+duplication. Motion execution, Shot Recipes, and Provider enrichment remain
+unimplemented.
 
 ## Implementation sequence
 

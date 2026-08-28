@@ -34,6 +34,7 @@
     "sql:ai-story-outline": "tsx scripts/apply-ai-story-outline-v1.ts",
     "sql:ai-story-script": "tsx scripts/apply-ai-story-script-v1.ts",
     "sql:ai-story-script-director-handoff": "tsx scripts/apply-ai-story-script-director-handoff-v1.ts",
+    "sql:ai-story-director-plan": "tsx scripts/apply-ai-story-director-plan-v1.ts",
     "sql:ai-story-planning": "tsx scripts/apply-ai-story-planning-v1.ts",
     "sql:ai-story-execution": "tsx scripts/apply-ai-story-execution-v1.ts",
     "sql:ai-story-scene-persistence": "tsx scripts/apply-ai-story-scene-execution-persistence-v1.ts",

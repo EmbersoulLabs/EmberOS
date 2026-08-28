@@ -59,6 +59,7 @@ export * from "./ai-story";
 export * from "./ai-story-outline";
 export * from "./ai-story-script";
 export * from "./ai-story-script-director-handoff";
+export * from "./ai-story-director-plan";
 export * from "./ai-story-execution";
 export * from "./ai-story-human-review";
 export * from "./ai-story-assembly";
