@@ -685,6 +685,38 @@ export const aiStoryVersions = pgTable(
   ]
 );
 
+/** Provider-neutral, immutable-after-freeze Writer/Outline authority. */
+export const aiStoryOutlineVersions = pgTable(
+  "ai_story_outline_versions",
+  {
+    outlineVersionId: uuid("outline_version_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    profileId: text("profile_id").notNull(),
+    profileVersion: integer("profile_version").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    status: text("status").notNull(),
+    supersedesOutlineVersionId: uuid("supersedes_outline_version_id"),
+    outline: jsonb("outline").$type<import("@ceo-agent/shared").AiStoryOutlineVersion>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    approvedBy: uuid("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    frozenAt: timestamp("frozen_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("ai_story_outline_story_version_unique").on(t.storyId, t.version),
+    unique("ai_story_outline_source_unique").on(t.storyId, t.sourceHash),
+    index("ai_story_outline_workspace_idx").on(t.workspaceId, t.storyId, t.version),
+    index("ai_story_outline_story_version_idx").on(t.storyVersionId, t.version),
+  ]
+);
+
 export const aiStoryAssetLinks = pgTable(
   "ai_story_asset_links",
   {
