@@ -749,6 +749,38 @@ export const aiStoryScriptVersions = pgTable(
   ],
 );
 
+/** Immutable frozen projection of Script-owned truth for future Director consumption. */
+export const aiStoryScriptDirectorHandoffs = pgTable(
+  "ai_story_script_director_handoffs",
+  {
+    handoffId: uuid("handoff_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    outlineVersionId: uuid("outline_version_id").notNull().references(() => aiStoryOutlineVersions.outlineVersionId, { onDelete: "restrict" }),
+    scriptVersionId: uuid("script_version_id").notNull().references(() => aiStoryScriptVersions.scriptVersionId, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    scriptSourceHash: text("script_source_hash").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    handoffFingerprint: text("handoff_fingerprint").notNull(),
+    authorityStatus: text("authority_status").notNull().default("CURRENT"),
+    supersedesHandoffId: uuid("supersedes_handoff_id"),
+    handoff: jsonb("handoff").$type<import("@ceo-agent/shared").AiStoryScriptDirectorHandoff>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    frozenAt: timestamp("frozen_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_director_handoff_script_unique").on(t.scriptVersionId),
+    unique("ai_story_director_handoff_story_version_unique").on(t.storyId, t.version),
+    unique("ai_story_director_handoff_story_fingerprint_unique").on(t.storyId, t.handoffFingerprint),
+    index("ai_story_director_handoff_workspace_idx").on(t.workspaceId, t.storyId, t.version),
+  ],
+);
+
 export const aiStoryAssetLinks = pgTable(
   "ai_story_asset_links",
   {

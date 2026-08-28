@@ -1,12 +1,14 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline and Script authority implemented; Director and Motion remain future work
+Status: Writer/Outline, Script, and immutable Script-to-Director handoff authority implemented; Director and Motion remain future work
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
 Writer implementation: `EMBEROS-AI-STORY-WRITER-OUTLINE-AUTHORITY-CONTRACT-01`
 
 Script implementation: `EMBEROS-AI-STORY-SCRIPT-SCENE-BEAT-CONTRACT-01`
+
+Script-to-Director handoff implementation: `EMBEROS-AI-STORY-SCRIPT-DIRECTOR-HANDOFF-CONTRACT-01`
 
 ## Certified invariants
 
@@ -32,6 +34,7 @@ CAMPAIGN / USER BRIEF
   -> SCRIPT VALIDATION
   -> HUMAN APPROVAL
   -> SCRIPT FREEZE
+  -> IMMUTABLE SCRIPT-TO-DIRECTOR HANDOFF
   -> FUTURE DIRECTOR
   -> FUTURE MOTION
   -> PROVIDER ADAPTER
@@ -92,12 +95,23 @@ duplicate story work before Director. Historical dialogue and Scene Plan data
 remain compatibility-only; no Script is silently materialized for legacy or R4
 Stories.
 
-## Future Script-to-Director boundary
+## Implemented Script-to-Director boundary
 
 Script does not own camera, lens, framing, shot size, blocking execution,
 camera movement, visual roles, shot purposes, physical motion paths, Provider
-syntax, retry, or execution. Script-to-Director handoff, Director authority,
-Motion planning, Shot Recipes, and Provider enrichment remain unimplemented.
+syntax, retry, or execution. `AiStoryScriptDirectorHandoff` is an immutable,
+versioned projection created only from a frozen Script. It preserves exact Scene
+identity/order, Beat claims, Scene Functions, state truth, ACTION, DIALOGUE, VO,
+authority references, duration, information/evidence/action outcomes, and
+must-keep/must-avoid constraints. Exact Script lineage, a source hash, and a
+canonical content fingerprint make mutation, mismatch, and stale handoffs hard
+failures. Product bindings retain the existing Product/asset identity and exact
+source content hash; they do not duplicate Product authority.
+
+Legacy Director Thinking, Scene Plan, Shot Plan, and Animation Package inputs
+remain compatibility-only for historical Stories. They do not outrank a
+canonical handoff. Director generation, Director creative authority, Motion
+planning, Shot Recipes, and Provider enrichment remain unimplemented.
 
 ## Implementation sequence
 

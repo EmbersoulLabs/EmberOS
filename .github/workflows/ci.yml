@@ -92,6 +92,9 @@ jobs:
       - name: Certify AI Story Script Scene PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-script-authority.integration.test.ts
 
+      - name: Certify immutable Script Director handoff PostgreSQL authority
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-script-director-handoff.integration.test.ts
+
       - name: Certify Wave 1 Asset Library PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/asset-library-wave1.integration.test.ts
 
