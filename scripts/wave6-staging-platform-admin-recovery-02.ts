@@ -3,13 +3,23 @@ import {
   closeDb,
   recoverWave6OrphanedPlatformAdminGrant,
   resolvePlatformAdminAccess,
+  WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET,
   WAVE6_ORPHAN_GRANT,
   WAVE6_ORPHAN_USER,
-  WAVE6_RECOVERY_TICKET,
+  WAVE6_RECOVERY_IMPLEMENTATION_TICKET,
   WAVE6_STAGING_PROJECT,
   WAVE6_TARGET_EMAIL,
   sanitizeWave6RecoveryOperatorError,
 } from "@ceo-agent/db";
+
+function requireExecutionAuthorizationTicket(): string {
+  const value = process.env.WAVE6_EXECUTION_AUTHORIZATION_TICKET_ID;
+  if (!value) throw new Error("Execution authorization ticket is missing");
+  if (value !== WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET) {
+    throw new Error("Execution authorization ticket is not the certified expected ticket");
+  }
+  return value;
+}
 
 function requireRecoveryDatabaseUrl(): string {
   const value = process.env.STAGING_PLATFORM_ADMIN_RECOVERY_DATABASE_URL;
@@ -32,6 +42,7 @@ function requireRecoveryDatabaseUrl(): string {
 }
 
 async function main() {
+  const executionAuthorizationTicketId = requireExecutionAuthorizationTicket();
   const databaseUrl = requireRecoveryDatabaseUrl();
   process.env.DATABASE_URL = databaseUrl;
   process.env.EMBEROS_ENVIRONMENT = "STAGING";
@@ -39,7 +50,8 @@ async function main() {
   const result = await recoverWave6OrphanedPlatformAdminGrant({
     environment: "STAGING",
     projectId: WAVE6_STAGING_PROJECT,
-    ticketId: WAVE6_RECOVERY_TICKET,
+    implementationTicketId: WAVE6_RECOVERY_IMPLEMENTATION_TICKET,
+    executionAuthorizationTicketId,
     orphanGrantId: WAVE6_ORPHAN_GRANT,
     orphanUserId: WAVE6_ORPHAN_USER,
     targetEmail: WAVE6_TARGET_EMAIL,
@@ -87,4 +99,5 @@ main()
     await closeDb();
     delete process.env.DATABASE_URL;
     delete process.env.STAGING_PLATFORM_ADMIN_RECOVERY_DATABASE_URL;
+    delete process.env.WAVE6_EXECUTION_AUTHORIZATION_TICKET_ID;
   });

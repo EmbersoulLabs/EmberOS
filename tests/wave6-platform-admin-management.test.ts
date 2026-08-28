@@ -11,7 +11,8 @@ import {
   assertWave6RecoveryHardGuard,
   WAVE6_ORPHAN_GRANT,
   WAVE6_ORPHAN_USER,
-  WAVE6_RECOVERY_TICKET,
+  WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET,
+  WAVE6_RECOVERY_IMPLEMENTATION_TICKET,
   WAVE6_STAGING_PROJECT,
   WAVE6_TARGET_EMAIL,
   Wave6RecoveryExecutionError,
@@ -151,7 +152,9 @@ describe("Wave 6 break-glass hard guard", () => {
   const valid = {
     environment: "STAGING",
     projectId: WAVE6_STAGING_PROJECT,
-    ticketId: WAVE6_RECOVERY_TICKET,
+    implementationTicketId: WAVE6_RECOVERY_IMPLEMENTATION_TICKET,
+    executionAuthorizationTicketId:
+      WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET,
     orphanGrantId: WAVE6_ORPHAN_GRANT,
     orphanUserId: WAVE6_ORPHAN_USER,
     targetEmail: WAVE6_TARGET_EMAIL,
@@ -159,14 +162,20 @@ describe("Wave 6 break-glass hard guard", () => {
     occurredAt: NOW,
   };
 
-  it("accepts only the exact certified facts", () => {
+  it("accepts the exact implementation and explicitly authorized execution tickets", () => {
     expect(() => assertWave6RecoveryHardGuard(valid)).not.toThrow();
   });
 
   it.each([
     ["environment", "PRODUCTION"],
     ["projectId", "wrong-project"],
-    ["ticketId", "wrong-ticket"],
+    ["implementationTicketId", "wrong-implementation-ticket"],
+    ["executionAuthorizationTicketId", ""],
+    ["executionAuthorizationTicketId", "wrong-execution-ticket"],
+    [
+      "executionAuthorizationTicketId",
+      "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-EXECUTION-04",
+    ],
     ["orphanGrantId", "11111111-1111-4111-8111-111111111111"],
     ["orphanUserId", "11111111-1111-4111-8111-111111111111"],
     ["targetEmail", "other@example.com"],

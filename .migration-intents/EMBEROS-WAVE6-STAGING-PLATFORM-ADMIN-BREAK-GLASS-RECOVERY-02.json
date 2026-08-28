@@ -2,7 +2,7 @@
   "ticketId": "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-02",
   "wave": 6,
   "changeKind": "SECURITY_REPAIR",
-  "reason": "Use origin/main canonical Platform Admin authority and the Wave 6 certified authority-deadlock evidence to add post-bootstrap grant management plus a bounded, separately authorized, Staging-only break-glass recovery command. This change does not execute recovery in CI, create a permanent alternate authority model, weaken ai_story.access, change normal Workspace Admin semantics, or modify Production.",
+  "reason": "Use origin/main canonical Platform Admin authority and the Wave 6 certified authority-deadlock evidence to add post-bootstrap grant management plus a bounded, separately authorized, Staging-only break-glass recovery command. The command distinguishes the fixed implementation ticket from an exact, CI-certified human execution-authorization ticket; audit and idempotency facts bind both identities and reject arbitrary or cross-authorization replay. This change does not execute recovery in CI, create a permanent alternate authority model, weaken ai_story.access, change normal Workspace Admin semantics, or modify Production.",
   "sourceAuthority": "SECURITY_AUDIT",
   "targetModule": "Platform Admin Recovery / Post-Bootstrap Grant Management",
   "allowedSourcePaths": [

@@ -6,9 +6,10 @@ import type { Sql } from "postgres";
 import {
   closeDb,
   recoverWave6OrphanedPlatformAdminGrant,
+  WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET,
   WAVE6_ORPHAN_GRANT,
   WAVE6_ORPHAN_USER,
-  WAVE6_RECOVERY_TICKET,
+  WAVE6_RECOVERY_IMPLEMENTATION_TICKET,
   WAVE6_STAGING_PROJECT,
   WAVE6_TARGET_EMAIL,
 } from "@ceo-agent/db";
@@ -123,7 +124,9 @@ describeIntegration("Wave 6 Platform Admin orphan recovery", () => {
     return {
       environment: "STAGING",
       projectId: WAVE6_STAGING_PROJECT,
-      ticketId: WAVE6_RECOVERY_TICKET,
+      implementationTicketId: WAVE6_RECOVERY_IMPLEMENTATION_TICKET,
+      executionAuthorizationTicketId:
+        WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET,
       orphanGrantId: WAVE6_ORPHAN_GRANT,
       orphanUserId: WAVE6_ORPHAN_USER,
       targetEmail: WAVE6_TARGET_EMAIL,
@@ -319,7 +322,9 @@ describeIntegration("Wave 6 least-privilege recovery operator fidelity", () => {
     return url.toString();
   }
 
-  function runRealOperator() {
+  function runRealOperator(
+    executionAuthorizationTicketId = WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET
+  ) {
     const result = spawnSync(
       process.execPath,
       [
@@ -337,6 +342,8 @@ describeIntegration("Wave 6 least-privilege recovery operator fidelity", () => {
           EMBEROS_TEST_DB_ENVIRONMENT: "test",
           RUN_DB_INTEGRATION_TESTS: "1",
           WAVE6_RECOVERY_ALLOW_EPHEMERAL: "1",
+          WAVE6_EXECUTION_AUTHORIZATION_TICKET_ID:
+            executionAuthorizationTicketId,
         },
       }
     );
@@ -360,6 +367,37 @@ describeIntegration("Wave 6 least-privilege recovery operator fidelity", () => {
       firstSafeSqlFailureClass: string;
     };
   }
+
+  it("denies the real operator for a new execution ticket without explicit authorization", async () => {
+    await seedOperatorDeadlock();
+    await createRecoveryRole();
+    try {
+      const result = runRealOperator(
+        "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-EXECUTION-04"
+      );
+      expect(result.status).toBe(1);
+      expect(parseSafeError(result.stderr)).toMatchObject({
+        kind: "WAVE6_RECOVERY_OPERATOR_ERROR",
+        stage: "COMMAND_VALIDATION",
+        transactionBeginReached: false,
+        firstSqlStage: null,
+      });
+      const [facts] = await sql<{
+        orphan_status: string;
+        target_count: number;
+        audit_count: number;
+      }[]>`select
+        (select status from platform_admin_grants
+          where platform_admin_assignment_id=${WAVE6_ORPHAN_GRANT}::uuid) orphan_status,
+        (select count(*)::int from platform_admin_grants
+          where user_id=${TARGET_USER_ID}::uuid) target_count,
+        (select count(*)::int from admin_audit_events
+          where action='WAVE6_ORPHANED_PLATFORM_ADMIN_RECOVERY') audit_count`;
+      expect(facts).toEqual({ orphan_status: "ACTIVE", target_count: 0, audit_count: 0 });
+    } finally {
+      await cleanupOperatorFixture();
+    }
+  });
 
   it("executes the real operator as the exact non-superuser BYPASSRLS role", async () => {
     await seedOperatorDeadlock();
@@ -438,6 +476,8 @@ describeIntegration("Wave 6 least-privilege recovery operator fidelity", () => {
         revocation_count: number;
         accepted_audit_count: number;
         succeeded_audit_count: number;
+        both_ticket_audit_count: number;
+        execution_request_count: number;
       }[]>`select
         (select status from platform_admin_grants
           where platform_admin_assignment_id = ${WAVE6_ORPHAN_GRANT}::uuid) orphan_status,
@@ -450,13 +490,24 @@ describeIntegration("Wave 6 least-privilege recovery operator fidelity", () => {
             and event_type='COMMAND_ACCEPTED') accepted_audit_count,
         (select count(*)::int from admin_audit_events
           where action='WAVE6_ORPHANED_PLATFORM_ADMIN_RECOVERY'
-            and event_type='COMMAND_SUCCEEDED') succeeded_audit_count`;
+            and event_type='COMMAND_SUCCEEDED') succeeded_audit_count,
+        (select count(*)::int from admin_audit_events
+          where action='WAVE6_ORPHANED_PLATFORM_ADMIN_RECOVERY'
+            and reason like ${`%implementationTicketId=${WAVE6_RECOVERY_IMPLEMENTATION_TICKET}%`}
+            and reason like ${`%executionAuthorizationTicketId=${WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET}%`}
+        ) both_ticket_audit_count,
+        (select count(*)::int from admin_audit_events
+          where request_id = ${`${WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET}:request`}
+            and idempotency_key = ${`${WAVE6_RECOVERY_IMPLEMENTATION_TICKET}:${WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET}:once`}
+        ) execution_request_count`;
       expect(facts).toEqual({
         orphan_status: "REVOKED",
         active_count: 1,
         revocation_count: 1,
         accepted_audit_count: 1,
         succeeded_audit_count: 1,
+        both_ticket_audit_count: 2,
+        execution_request_count: 2,
       });
     } finally {
       await cleanupOperatorFixture();

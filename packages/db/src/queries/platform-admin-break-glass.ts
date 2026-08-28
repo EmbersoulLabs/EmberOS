@@ -16,8 +16,10 @@ import {
 } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 
-export const WAVE6_RECOVERY_TICKET =
+export const WAVE6_RECOVERY_IMPLEMENTATION_TICKET =
   "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-02" as const;
+export const WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET =
+  "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-EXECUTION-03" as const;
 export const WAVE6_STAGING_PROJECT = "voofxbuzpocyjzoxrpfi" as const;
 export const WAVE6_ORPHAN_GRANT =
   "aa623ac7-f084-5ab8-979b-85f5177bde38" as const;
@@ -26,7 +28,7 @@ export const WAVE6_ORPHAN_USER =
 export const WAVE6_TARGET_EMAIL = "yanyitoo1025@gmail.com" as const;
 export const WAVE6_BREAK_GLASS_ACTOR = deterministicUuidFromFingerprint(
   "wave6-staging-break-glass-operator",
-  WAVE6_RECOVERY_TICKET
+  WAVE6_RECOVERY_IMPLEMENTATION_TICKET
 );
 
 type Db = ReturnType<typeof getDb>;
@@ -34,7 +36,8 @@ type Db = ReturnType<typeof getDb>;
 export type Wave6RecoveryInput = {
   environment: string;
   projectId: string;
-  ticketId: string;
+  implementationTicketId: string;
+  executionAuthorizationTicketId: string;
   orphanGrantId: string;
   orphanUserId: string;
   targetEmail: string;
@@ -60,6 +63,7 @@ export type Wave6RecoveryStage =
   | "ORPHAN_PRINCIPAL_LOOKUP"
   | "ORPHAN_GRANT_LOCK"
   | "TARGET_GRANT_LOCK"
+  | "REPLAY_IDENTITY_CHECK"
   | "ACTIVE_ADMIN_COUNT"
   | "AUDIT_ACCEPTED_WRITE"
   | "REVOCATION_WRITE"
@@ -185,7 +189,7 @@ export function sanitizeWave6RecoveryOperatorError(
           : undefined;
 
   return {
-    correlationId: `${WAVE6_RECOVERY_TICKET}:request`,
+    correlationId: `${WAVE6_RECOVERY_IMPLEMENTATION_TICKET}:request`,
     stage: trace.stage,
     errorClass,
     safeMessage,
@@ -208,10 +212,24 @@ export class Wave6RecoveryGuardError extends Error {
 }
 
 export function assertWave6RecoveryHardGuard(input: Wave6RecoveryInput): void {
+  const executionTicketPattern =
+    /^EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-EXECUTION-0*[1-9][0-9]*$/;
   const checks: Array<[boolean, string]> = [
     [input.environment === "STAGING", "environment"],
     [input.projectId === WAVE6_STAGING_PROJECT, "project"],
-    [input.ticketId === WAVE6_RECOVERY_TICKET, "ticket"],
+    [
+      input.implementationTicketId === WAVE6_RECOVERY_IMPLEMENTATION_TICKET,
+      "implementation ticket",
+    ],
+    [
+      executionTicketPattern.test(input.executionAuthorizationTicketId),
+      "execution authorization ticket format",
+    ],
+    [
+      input.executionAuthorizationTicketId ===
+        WAVE6_EXPECTED_EXECUTION_AUTHORIZATION_TICKET,
+      "execution authorization ticket",
+    ],
     [input.orphanGrantId === WAVE6_ORPHAN_GRANT, "orphan grant"],
     [input.orphanUserId === WAVE6_ORPHAN_USER, "orphan user"],
     [input.targetEmail.toLowerCase() === WAVE6_TARGET_EMAIL, "target account"],
@@ -248,7 +266,9 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       trace.transactionBeginReached = true;
       trace.stage = "ADVISORY_LOCK";
       trace.firstSqlStage = "ADVISORY_LOCK";
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${WAVE6_RECOVERY_TICKET}))`);
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${WAVE6_RECOVERY_IMPLEMENTATION_TICKET}))`
+      );
       await tx.execute(sql`set local lock_timeout = '5s'`);
       await tx.execute(sql`set local statement_timeout = '15s'`);
 
@@ -321,7 +341,27 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       grantedAt: input.occurredAt,
       grantedByUserId: null,
       reason: input.reason,
-      identitySeed: `${WAVE6_RECOVERY_TICKET}:${targetUser.id}`,
+      identitySeed: `${WAVE6_RECOVERY_IMPLEMENTATION_TICKET}:${targetUser.id}`,
+    });
+    const commandId = deterministicUuidFromFingerprint(
+      "wave6-staging-break-glass-command",
+      `${WAVE6_RECOVERY_IMPLEMENTATION_TICKET}:${input.executionAuthorizationTicketId}`
+    );
+    const requestId = `${input.executionAuthorizationTicketId}:request`;
+    const idempotencyKey =
+      `${WAVE6_RECOVERY_IMPLEMENTATION_TICKET}:${input.executionAuthorizationTicketId}:once`;
+    const auditReason = [
+      `implementationTicketId=${WAVE6_RECOVERY_IMPLEMENTATION_TICKET}`,
+      `executionAuthorizationTicketId=${input.executionAuthorizationTicketId}`,
+      `reason=${input.reason}`,
+    ].join("; ");
+    const payloadDigest = sha256CanonicalIntegrityHash({
+      implementationTicketId: WAVE6_RECOVERY_IMPLEMENTATION_TICKET,
+      executionAuthorizationTicketId: input.executionAuthorizationTicketId,
+      orphanGrantId: WAVE6_ORPHAN_GRANT,
+      targetUserId: targetUser.id,
+      targetAssignmentId: targetAssignment.platformAdminAssignmentId,
+      reason: auditReason,
     });
     trace.stage = "TARGET_GRANT_LOCK";
     trace.firstSqlStage = "TARGET_GRANT_LOCK";
@@ -346,6 +386,22 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
         throw new Wave6RecoveryGuardError(
           "WAVE6_RECOVERY_PARTIAL_STATE",
           "Orphan is revoked but deterministic target grant is not active"
+        );
+      }
+      trace.stage = "REPLAY_IDENTITY_CHECK";
+      trace.firstSqlStage = "REPLAY_IDENTITY_CHECK";
+      const replayAudits = await tx.execute<{ count: number }>(sql`
+        select count(*)::int as count
+        from admin_audit_events
+        where action = 'WAVE6_ORPHANED_PLATFORM_ADMIN_RECOVERY'
+          and event_type = 'COMMAND_SUCCEEDED'
+          and idempotency_key = ${idempotencyKey}
+          and request_id = ${requestId}
+      `);
+      if (Number(replayAudits[0]?.count ?? -1) !== 1) {
+        throw new Wave6RecoveryGuardError(
+          "WAVE6_RECOVERY_AUTHORIZATION_REPLAY_MISMATCH",
+          "Converged recovery belongs to a different execution authorization"
         );
       }
       trace.stage = "POSTCONDITION";
@@ -380,19 +436,6 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       revokedByUserId: WAVE6_BREAK_GLASS_ACTOR,
       reason: input.reason,
     });
-    const commandId = deterministicUuidFromFingerprint(
-      "wave6-staging-break-glass-command",
-      WAVE6_RECOVERY_TICKET
-    );
-    const requestId = `${WAVE6_RECOVERY_TICKET}:request`;
-    const idempotencyKey = `${WAVE6_RECOVERY_TICKET}:once`;
-    const payloadDigest = sha256CanonicalIntegrityHash({
-      ticketId: WAVE6_RECOVERY_TICKET,
-      orphanGrantId: WAVE6_ORPHAN_GRANT,
-      targetUserId: targetUser.id,
-      targetAssignmentId: targetAssignment.platformAdminAssignmentId,
-      reason: input.reason,
-    });
     const acceptedAudit = buildAdminAuditEvent({
       commandId,
       eventType: "COMMAND_ACCEPTED",
@@ -402,7 +445,7 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       action: "WAVE6_ORPHANED_PLATFORM_ADMIN_RECOVERY",
       targetType: "PLATFORM_ADMIN_ASSIGNMENT",
       targetId: WAVE6_ORPHAN_GRANT,
-      reason: input.reason,
+      reason: auditReason,
       beforeReference: { kind: "ORPHANED_ACTIVE_GRANT", id: WAVE6_ORPHAN_GRANT },
       requestId,
       idempotencyKey,
@@ -486,7 +529,7 @@ export async function recoverWave6OrphanedPlatformAdminGrant(
       action: "WAVE6_ORPHANED_PLATFORM_ADMIN_RECOVERY",
       targetType: "PLATFORM_ADMIN_ASSIGNMENT",
       targetId: targetAssignment.platformAdminAssignmentId,
-      reason: input.reason,
+      reason: auditReason,
       beforeReference: { kind: "ORPHANED_ACTIVE_GRANT", id: WAVE6_ORPHAN_GRANT },
       afterReference: {
         kind: "ACTIVE_PLATFORM_SUPER_ADMIN",
