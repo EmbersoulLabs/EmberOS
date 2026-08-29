@@ -30,8 +30,21 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryScriptScope, m
 
 async function resolveKnownReferences(db: Pick<Db, "select">, scope: AiStoryScriptScope, script: AiStoryScriptVersion) {
   const known = new Set<string>();
-  for (const ref of script.authorityReferences.filter((ref) => ["CHARACTER", "LOCATION", "PROP"].includes(ref.authorityType))) {
-    // These are upstream stable references; no durable Character/World owner exists yet.
+  const characterRefs = script.authorityReferences.filter((ref) => ref.authorityType === "CHARACTER");
+  const characterVersionIds = characterRefs.flatMap((ref) => ref.authorityVersionId ? [ref.authorityVersionId] : []);
+  if (characterVersionIds.length) {
+    const rows = await db.select().from(schema.aiStoryCharacterVersions).where(and(
+      inArray(schema.aiStoryCharacterVersions.characterVersionId, characterVersionIds),
+      eq(schema.aiStoryCharacterVersions.orgId, scope.orgId), eq(schema.aiStoryCharacterVersions.workspaceId, scope.workspaceId),
+      eq(schema.aiStoryCharacterVersions.campaignId, scope.campaignId),
+    ));
+    for (const row of rows) {
+      const ref = characterRefs.find((item) => item.authorityId === row.characterId && item.authorityVersionId === row.characterVersionId);
+      if (ref?.authorityFingerprint === row.fingerprint) known.add(`CHARACTER:${ref.authorityId}`);
+    }
+  }
+  for (const ref of script.authorityReferences.filter((ref) => ["LOCATION", "PROP"].includes(ref.authorityType))) {
+    // Durable World authority is outside this bounded Character ticket.
     known.add(`${ref.authorityType}:${ref.authorityId}`);
   }
   const ids = [...new Set(script.authorityReferences.filter((ref) => ref.authorityType === "ASSET" || ref.authorityType === "PRODUCT").map((ref) => ref.authorityId))];

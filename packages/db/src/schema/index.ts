@@ -685,6 +685,54 @@ export const aiStoryVersions = pgTable(
   ]
 );
 
+/** Campaign-owned mutable Character aggregate. Historical truth lives in immutable versions. */
+export const aiStoryCharacters = pgTable(
+  "ai_story_characters",
+  {
+    characterId: uuid("character_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    currentVersion: integer("current_version").notNull(),
+    currentCharacterVersionId: uuid("current_character_version_id").notNull(),
+    status: text("status").notNull(),
+    name: text("name").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("ai_story_characters_campaign_idx").on(t.campaignId, t.status, t.name),
+    index("ai_story_characters_workspace_idx").on(t.workspaceId, t.campaignId),
+  ],
+);
+
+/** Immutable snapshot of the exact Character facts consumed by creative artifacts. */
+export const aiStoryCharacterVersions = pgTable(
+  "ai_story_character_versions",
+  {
+    characterVersionId: uuid("character_version_id").primaryKey(),
+    characterId: uuid("character_id").notNull().references(() => aiStoryCharacters.characterId, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    status: text("status").notNull(),
+    supersedesCharacterVersionId: uuid("supersedes_character_version_id"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryCharacterAuthorityVersion>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_character_version_unique").on(t.characterId, t.version),
+    unique("ai_story_character_fingerprint_unique").on(t.characterId, t.fingerprint),
+    index("ai_story_character_versions_campaign_idx").on(t.campaignId, t.characterId, t.version),
+  ],
+);
+
 /** Provider-neutral, immutable-after-freeze Writer/Outline authority. */
 export const aiStoryOutlineVersions = pgTable(
   "ai_story_outline_versions",

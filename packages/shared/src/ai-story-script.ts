@@ -26,7 +26,12 @@ export const AiStoryScriptAuthorityReferenceSchema = z.object({
   authorityType: z.enum(["CHARACTER", "LOCATION", "PROP", "ASSET", "PRODUCT"]),
   authorityId: Id,
   authorityVersionId: Id.optional(),
-}).strict();
+  authorityFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.authorityType === "CHARACTER" && Boolean(value.authorityVersionId) !== Boolean(value.authorityFingerprint)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Character compatibility references may omit snapshot identity, but canonical references require both version and fingerprint" });
+  }
+});
 
 export const AiStoryScriptStateFactSchema = z.object({
   dimension: z.enum(["KNOWLEDGE", "POSSESSION", "RELATIONSHIP", "LOCATION", "COMMITMENT", "PHYSICAL_CONDITION", "OPTION_SET", "DEADLINE", "COST", "PRODUCT_STATE"]),
@@ -121,6 +126,18 @@ export function validateAiStoryScript(
   if (script.profileId !== outline.profile.profileId || script.profileVersion !== outline.profile.profileVersion) block("OUTLINE_LINEAGE_GATE", "Script profile must bind the exact selected Outline profile version");
   if (!isContiguous(script.scenes) || new Set(script.scenes.map((scene) => scene.scriptSceneId)).size !== script.scenes.length) block("SCRIPT_REFERENCE_INTEGRITY_GATE", "Script Scene identity and ordering must be unique and contiguous");
   const beats = new Map(outline.beats.map((beat) => [beat.id, beat]));
+  const outlineCharacterRefs = new Map(
+    [...outline.authorityReferences, ...outline.beats.flatMap((beat) => beat.authorityReferences), ...outline.requiredSceneOutcomes.flatMap((outcome) => outcome.authorityReferences)]
+      .filter((ref) => ref.authorityType === "CHARACTER")
+      .map((ref) => [ref.authorityId, ref]),
+  );
+  for (const ref of script.authorityReferences.filter((item) => item.authorityType === "CHARACTER")) {
+    if (!ref.authorityVersionId && !ref.authorityFingerprint) continue;
+    const source = outlineCharacterRefs.get(ref.authorityId);
+    if (!source || source.authorityVersionId !== ref.authorityVersionId || source.authorityFingerprint !== ref.authorityFingerprint) {
+      block("OUTLINE_LINEAGE_GATE", `Script Character ${ref.authorityId} does not bind the exact Outline Character snapshot`);
+    }
+  }
   const claims = script.scenes.flatMap((scene) => scene.outlineBeatClaims.map((claim) => ({ ...claim, sceneId: scene.scriptSceneId })));
   for (const claim of claims) {
     const beat = beats.get(claim.outlineBeatId);
