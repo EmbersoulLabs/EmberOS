@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, and unified Pre-Generation QC implemented
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, and Product Story Writer profile implemented
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -15,6 +15,8 @@ Director implementation: `EMBEROS-AI-DIRECTOR-SCENE-FUNCTION-AND-DIFFERENTIATION
 Motion implementation: `EMBEROS-AI-STORY-MOTION-ACTION-STATE-AND-PRODUCT-CAUSALITY-CONTRACT-01`
 
 Pre-Generation QC implementation: `EMBEROS-AI-STORY-PRE-GENERATION-DIRECTOR-QC-GATES-01`
+
+Product Story profile implementation: `EMBEROS-AI-STORY-PRODUCT-STORY-WRITER-PROFILE-01`
 
 ## Certified invariants
 
@@ -60,7 +62,8 @@ Provider syntax, dispatch, retry policy, or generated-media acceptance.
 `AiStoryOutlineVersion` is provider-neutral and versioned. Its lineage binds the
 Story, Story Version, organization, Workspace, upstream authority identity,
 contract/profile versions, superseded Outline, and a canonical SHA-256 source
-fingerprint. The `CORE` profile is the only implemented profile.
+fingerprint. `CORE` remains the generic baseline and `PRODUCT_STORY` is the
+first additive, versioned Writer profile.
 
 Lifecycle:
 
@@ -185,8 +188,27 @@ canonical fingerprint. Superseded upstream authority makes historical QC stale
 for dispatch without rewriting its evidence. The additive durable table uses
 tenant/workspace RLS and immutable update/delete enforcement.
 
-The Provider Adapter, Product Story profile, Shot Recipe registry, Seedance
-Director enrichment, and Short Drama profile remain unimplemented.
+## Implemented Product Story Writer profile
+
+`PRODUCT_STORY` v1 extends Core without replacing it. Frozen Outline authority
+binds the Campaign objective, exact Product authority, semantic progression
+goals, claim/evidence relationships, user creative intent, CTA/packshot policy,
+and the immutable profile-policy fingerprint. Script Scenes preserve explicit
+open-semantic Product contributions through the immutable Director handoff.
+
+The profile requires meaningful information progression and blocks repeated
+hero-only display without new information, evidence, action, context, state, or
+consequence. It does not prescribe a Scene count, Scene order, Product category,
+camera treatment, environment, action vocabulary, CTA, or packshot globally.
+Current Campaign objectives determine only bounded requirements; subjective
+evidence diversity remains a warning. Unsupported Product claims require repair
+at Product/Writer authority rather than invention downstream.
+
+Unified Pre-Generation QC consumes the profile validator and maps deterministic
+failures to the existing earliest-owner gates. It does not duplicate QC logic,
+silently repair the Story, or change Provider compilation/runtime behavior.
+Shot Recipes, Seedance Director enrichment, and the Short Drama profile remain
+unimplemented.
 
 ## Implementation sequence
 

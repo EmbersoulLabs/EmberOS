@@ -9,6 +9,7 @@ import {
   AiStoryScriptVoEntrySchema,
   type AiStoryScriptVersion,
 } from "./ai-story-script";
+import { AiStoryProductStorySceneContributionSchema } from "./ai-story-product-story-profile";
 
 export const AI_STORY_SCRIPT_DIRECTOR_HANDOFF_CONTRACT_VERSION = "ai-story-script-director-handoff.v1" as const;
 const Id = z.string().uuid();
@@ -46,6 +47,7 @@ export const AiStoryDirectorSceneHandoffSchema = z.object({
   newEvidence: z.array(Text.max(1000)),
   newActionOutcomes: z.array(Text.max(1000)),
   productEvidence: z.array(Text.max(1000)),
+  productStoryContributions: z.array(AiStoryProductStorySceneContributionSchema).optional(),
   targetDurationRange: DurationRange,
   mustKeep: z.array(Text.max(1000)),
   mustAvoid: z.array(Text.max(1000)),
@@ -122,6 +124,7 @@ export function projectAiStoryScriptSceneHandoffs(script: AiStoryScriptVersion):
     assetIds: [...scene.assetIds], productAuthorityRefs: [...scene.productAuthorityRefs],
     newInformation: [...scene.newInformation], newEvidence: [...scene.newEvidence],
     newActionOutcomes: [...scene.newActionOutcomes], productEvidence: [...scene.productEvidence],
+    ...(scene.productStoryContributions ? { productStoryContributions: structuredClone(scene.productStoryContributions) } : {}),
     targetDurationRange: { ...scene.targetDurationRange }, mustKeep: [...scene.mustKeep], mustAvoid: [...scene.mustAvoid],
   }));
 }
@@ -148,6 +151,7 @@ export function validateAiStoryScriptDirectorHandoff(
     if (!same(actual.dialogueEntries, scene.dialogueEntries) || !same(actual.voiceOverEntries, scene.voiceOverEntries) || !same(actual.entryOrder, scene.entryOrder)) block("DIALOGUE_BINDING_GATE", `Dialogue, VO, speaker, language, or order changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.sceneStateIn, scene.sceneStateIn) || !same(actual.sceneStateDeltas, scene.sceneStateDeltas) || !same(actual.sceneStateOut, scene.sceneStateOut)) block("STATE_BINDING_GATE", `State truth changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.productAuthorityRefs, scene.productAuthorityRefs) || !same(actual.productEvidence, scene.productEvidence) || !same(actual.assetIds, scene.assetIds)) block("PRODUCT_AUTHORITY_BINDING_GATE", `Product or source-asset authority changed for Scene ${scene.scriptSceneId}`);
+    if (!same(actual.productStoryContributions, scene.productStoryContributions)) block("PRODUCT_AUTHORITY_BINDING_GATE", `Product Story profile contribution changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.targetDurationRange, scene.targetDurationRange)) block("DURATION_BINDING_GATE", `Target duration changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.mustKeep, scene.mustKeep) || !same(actual.mustAvoid, scene.mustAvoid)) block("PRESERVATION_CONSTRAINT_GATE", `mustKeep/mustAvoid changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.newInformation, scene.newInformation) || !same(actual.newEvidence, scene.newEvidence) || !same(actual.newActionOutcomes, scene.newActionOutcomes)) block("ACTION_TRUTH_BINDING_GATE", `Certified information/evidence/action outcome changed for Scene ${scene.scriptSceneId}`);
