@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, and canonical Scene/Location continuity authority implemented
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, canonical Scene/Location continuity authority, and Seedance Director Adapter enrichment implemented
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -25,6 +25,8 @@ Character authority implementation: `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CO
 Cast scope implementation: `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR-SCOPE-01`
 
 Scene and Location authority implementation: `EMBEROS-AI-STORY-SCENE-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
+
+Seedance Director Adapter enrichment: `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
 
 ## Certified invariants
 
@@ -216,7 +218,7 @@ at Product/Writer authority rather than invention downstream.
 Unified Pre-Generation QC consumes the profile validator and maps deterministic
 failures to the existing earliest-owner gates. It does not duplicate QC logic,
 silently repair the Story, or change Provider compilation/runtime behavior.
-Seedance Director enrichment and the Short Drama profile remain unimplemented.
+The Short Drama profile remains unimplemented.
 
 ## Implemented semantic Shot Recipe Registry
 
@@ -237,8 +239,8 @@ existence, version, fingerprint, Director compatibility, canonical evidence,
 Motion compatibility, and constraints. Recipe identity alone never determines
 duplication, while repeated visual dimensions with a real information delta may
 warn. `ACTIVE`, `DEPRECATED`, and `RETIRED` lifecycle states preserve historical
-readability and deny new retired selection. Seedance translation remains future
-Provider Adapter work.
+readability and deny new retired selection. The Seedance Adapter consumes Recipe
+semantics without embedding Provider prompt prose in the Recipe Registry.
 
 ## Implemented Campaign Character authority
 
@@ -266,8 +268,8 @@ authority; there is no Character binary store, Workspace Character Library, or
 cross-Campaign catalog. Legacy Creative Context remains readable as a
 compatibility surface. AI Screenwriter output is proposal-only until explicitly
 accepted through Campaign Character authority. Character presence does not
-force I2V. Seedance Character mapping and Provider reference-limit policy remain
-not implemented.
+force I2V. The Seedance Adapter consumes explicit execution-level visual
+identity requirements without inventing a native Character reference role.
 
 ## Implemented Supporting Cast and Ephemeral Actor scope
 
@@ -291,9 +293,9 @@ Supporting-to-Campaign promotion preserves lineage; there is no automatic
 promotion or demotion and historical references are not rewritten.
 
 `visualIdentityRequirement` is explicit as `NONE`, `PREFERRED`, or `REQUIRED`
-for every scope and does not itself select T2V or I2V. Seedance Cast mapping,
-Provider reference ordering, and Provider reference-budget allocation remain
-not implemented.
+for every scope and does not itself select T2V or I2V. The Seedance Adapter maps
+selected visual authority through the certified generic `reference_image` role;
+scope labels never select mode or reference priority.
 
 ## Implemented canonical Scene and Location authority
 
@@ -322,8 +324,33 @@ Unified Pre-Generation QC binds current frozen Scene-version identities and
 denies stale or invalid Scene authority before dispatch. Legacy Scene Plan and
 runtime `sceneExecutionId` remain compatibility/execution identities and do not
 outrank canonical Scene authority. Location scope and Scene role do not choose
-T2V/I2V. Seedance Scene/Location mapping, chaining, and reference budgeting
-remain not implemented.
+T2V/I2V. The Seedance Adapter now consumes this authority; chaining remains
+uncertified and unavailable.
+
+## Implemented Seedance Director Adapter enrichment
+
+`AiStorySceneExecutionPackage` is the immutable, versioned compilation boundary
+for one frozen canonical Scene. It binds exact Story, Script, handoff, Director,
+Motion, Recipe, QC, Scene, Cast, Location, Product, generation-mode, capability,
+and Adapter mapping authority. Canonical Scene authority takes priority for new
+Stories; the legacy prompt-shaped Scene payload remains compatibility-only.
+
+`TEXT_TO_VIDEO` and `FIRST_FRAME_IMAGE_TO_VIDEO` are explicit first-class modes.
+Entity presence and Cast/Location scope never choose the mode. Required visual
+authority blocks when the selected mode cannot represent it; preferred and
+optional authority use structured deterministic degradation. T2V never injects
+available references implicitly, while first-frame I2V requires exactly one
+selected first frame.
+
+The Adapter builds one bounded semantic plan for both modes in stable section
+order, preserving Scene purpose, Cast/Location/Product authority, Entry State,
+Script events, Motion Start/Path/End, Director treatment, Recipe semantics,
+terminal state, evidence, and constraints. It serializes only the certified
+ModelArk fields. All image conditioning shares the four-reference budget and
+uses only `first_frame` or generic `reference_image`; required references are
+never dropped. Character, Product, Location, style, last-frame, multi-shot,
+chaining, extension, audio, 4K, and other uncertified structured roles/features
+are not invented or enabled.
 
 ## Implementation sequence
 
@@ -338,5 +365,6 @@ remain not implemented.
 9. `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
 10. `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR-SCOPE-01`
 11. `EMBEROS-AI-STORY-SCENE-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
+12. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
 12. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
 13. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`

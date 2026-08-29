@@ -31,8 +31,8 @@ export const SEEDANCE_MAX_REFERENCE_IMAGES = 4 as const;
 
 /**
  * Exact model authority for the bounded EmberOS first-frame mapping. BytePlus
- * documents first-frame and first/last-frame I2V for this deployed model. This
- * certifies request-shape support, not deterministic visual identity.
+ * documents first-frame I2V for this deployed model. First/last-frame remains
+ * outside the EmberOS-certified capability envelope.
  */
 export const SEEDANCE_FIRST_FRAME_I2V_MODELS = [
   "dreamina-seedance-2-0-260128",
@@ -144,7 +144,7 @@ export function seedanceCapabilityDetails(input?: {
     audioSupport: false,
     referenceImageT2vSupport: true,
     firstFrameI2vSupport: seedanceSupportsFirstFrameI2v(model),
-    firstLastFrameSupport: seedanceSupportsFirstFrameI2v(model),
+    firstLastFrameSupport: false,
     multiImageReferenceSupport: true,
     deterministicExactProductLock: false,
     productContinuityLevel: SEEDANCE_PRODUCT_CONTINUITY_LEVEL,

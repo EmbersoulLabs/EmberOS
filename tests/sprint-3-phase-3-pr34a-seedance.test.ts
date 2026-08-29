@@ -200,7 +200,7 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
     expect(details.audioSupport).toBe(false);
     expect(details.referenceImageT2vSupport).toBe(true);
     expect(details.firstFrameI2vSupport).toBe(true);
-    expect(details.firstLastFrameSupport).toBe(true);
+    expect(details.firstLastFrameSupport).toBe(false);
     expect(details.multiImageReferenceSupport).toBe(true);
     expect(details.deterministicExactProductLock).toBe(false);
     expect(details.productContinuityLevel).toBe(

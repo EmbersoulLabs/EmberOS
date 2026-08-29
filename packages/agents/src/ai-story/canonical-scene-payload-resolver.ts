@@ -7,6 +7,7 @@
  * the Scene covered by the Envelope trace.
  */
 import type {
+  AiStorySceneExecutionPackage,
   AiStorySceneCompiledInstructions,
   AiStorySceneExecutionIntent,
   ExecutionEnvelope,
@@ -222,6 +223,14 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
 }
 
 export type CompilationBackedPayloadResolverDeps = {
+  /** Canonical Scene execution packages outrank legacy compiled Scene payloads. */
+  readonly getSceneExecutionPackageBySceneExecutionId?: (input: {
+    readonly executionPlanId: string;
+    readonly sceneExecutionId: string;
+    readonly envelope: ExecutionEnvelope;
+  }) => Promise<AiStorySceneExecutionPackage | null>;
+  /** New canonical Stories fail closed instead of falling back to legacy Scene Plan payloads. */
+  readonly requireCanonicalSceneExecutionPackage?: boolean;
   readonly getEnvelopeByPayloadReference: (
     payloadReference: string
   ) => Promise<ExecutionEnvelope | null>;
@@ -274,6 +283,16 @@ export function createCompilationBackedCanonicalPayloadResolver(
         throw new Error(
           "Execution Envelope trace is missing executionPlanId/sceneExecutionId"
         );
+      }
+
+      const canonicalPackage = await deps.getSceneExecutionPackageBySceneExecutionId?.({
+        executionPlanId,
+        sceneExecutionId,
+        envelope,
+      });
+      if (canonicalPackage) return canonicalPackage;
+      if (deps.requireCanonicalSceneExecutionPackage) {
+        throw new Error("Canonical Scene execution package is required; legacy Scene payload fallback is denied");
       }
 
       const compilation =

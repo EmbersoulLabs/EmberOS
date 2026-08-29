@@ -20,8 +20,10 @@ export function buildCertifiedSeedancePreGenerationQcCapabilitySnapshot():Certif
   return {
     capabilityId:SEEDANCE_CAPABILITY_ID,
     capabilityVersion:`seedance-adapter.${SEEDANCE_ADAPTER_VERSION}`,
-    supportedExecutionModes:details.firstFrameI2vSupport?[SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE]:[],
-    supportedReferenceRoles:details.referenceImageT2vSupport?["PRODUCT_REFERENCE"]:[],
+    supportedExecutionModes:details.firstFrameI2vSupport
+      ? ["TEXT_TO_VIDEO", "IMAGE_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO", SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE]
+      : ["TEXT_TO_VIDEO"],
+    supportedReferenceRoles:details.referenceImageT2vSupport?["GENERIC_REFERENCE_IMAGE", "PRODUCT_REFERENCE"]:[],
     supportedTimingStructures:["SINGLE_SCENE"],
     estimatedAttemptCostUsd:declaration.routing.estimatedCostUsd??null,
     verified:details.firstFrameI2vSupport&&declaration.capabilityId===SEEDANCE_CAPABILITY_ID,
