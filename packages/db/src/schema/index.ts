@@ -1679,6 +1679,67 @@ export const providerAttemptCosts = pgTable(
   }
 );
 
+/** Immutable canonical AI Story Provider compilation authority. */
+export const aiStoryCompiledProviderRequests = pgTable(
+  "ai_story_compiled_provider_requests",
+  {
+    compiledRequestId: uuid("compiled_request_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    generationMode: text("generation_mode").notNull(),
+    providerId: text("provider_id").notNull(),
+    modelId: text("model_id").notNull(),
+    adapterVersion: text("adapter_version").notNull(),
+    mappingVersion: text("mapping_version").notNull(),
+    capabilityVersion: text("capability_version").notNull(),
+    qcEvaluationId: uuid("qc_evaluation_id").notNull(),
+    qcFingerprint: text("qc_fingerprint").notNull(),
+    compiledRequest: jsonb("compiled_request").$type<import("@ceo-agent/shared").AiStoryCompiledProviderRequest>().notNull(),
+    compiledAt: timestamp("compiled_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_compiled_request_fingerprint_unique").on(t.requestFingerprint),
+    index("ai_story_compiled_request_scene_idx").on(t.sceneExecutionId, t.compiledAt),
+    index("ai_story_compiled_request_workspace_idx").on(t.workspaceId, t.compiledAt),
+  ]
+);
+
+/** Mutable operational state around immutable Attempt input binding. */
+export const aiStoryProviderAttemptCompiledBindings = pgTable(
+  "ai_story_provider_attempt_compiled_bindings",
+  {
+    providerAttemptId: text("provider_attempt_id").primaryKey().references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    compiledRequestId: uuid("compiled_request_id").notNull().references(() => aiStoryCompiledProviderRequests.compiledRequestId, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    attemptInputFingerprint: text("attempt_input_fingerprint").notNull(),
+    status: text("status").notNull(),
+    providerTaskId: text("provider_task_id"),
+    submissionClaimOwner: text("submission_claim_owner"),
+    submissionClaimedAt: timestamp("submission_claimed_at", { withTimezone: true }),
+    pollCount: integer("poll_count").notNull().default(0),
+    failureClass: text("failure_class"),
+    binding: jsonb("binding").$type<import("@ceo-agent/shared").AiStoryProviderAttemptBinding>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_provider_attempt_binding_idempotency_unique").on(t.idempotencyKey),
+    unique("ai_story_provider_attempt_binding_input_unique").on(t.attemptInputFingerprint),
+    index("ai_story_provider_attempt_binding_scene_idx").on(t.sceneExecutionId, t.createdAt),
+    index("ai_story_provider_attempt_binding_workspace_idx").on(t.workspaceId, t.createdAt),
+  ]
+);
+
 export const providerOutboxJobs = pgTable(
   "provider_outbox_jobs",
   {

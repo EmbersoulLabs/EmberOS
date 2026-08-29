@@ -9,7 +9,7 @@
  * }
  */
 import { z } from "zod";
-import { AiStorySceneExecutionPackageSchema, type ExecutionEnvelope } from "@ceo-agent/shared";
+import { AiStoryCompiledProviderRequestSchema, AiStorySceneExecutionPackageSchema, type ExecutionEnvelope } from "@ceo-agent/shared";
 import {
   SEEDANCE_MAX_REFERENCE_IMAGES,
   SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE,
@@ -25,6 +25,7 @@ import {
   ProductVisualAuthorityCertificationSchema,
 } from "./product-grounding-contract";
 import { compileSceneExecutionPackageForSeedance } from "./seedance-director-adapter";
+import { validateAiStoryCompiledRequestFingerprint } from "./provider-runtime-dispatch-integration";
 
 const CanonicalScenePayloadSchema = z
   .object({
@@ -202,6 +203,19 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   const payloadRaw = await input.payloadResolver.resolve(
     input.envelope.canonicalRequest.normalizedPayloadReference
   );
+  const compiledRequestResult = AiStoryCompiledProviderRequestSchema.safeParse(payloadRaw);
+  if (
+    typeof payloadRaw === "object" &&
+    payloadRaw !== null &&
+    "contractVersion" in payloadRaw &&
+    payloadRaw.contractVersion === "ai-story-compiled-provider-request.v1" &&
+    !compiledRequestResult.success
+  ) {
+    throw new SeedanceMappingError("Immutable compiled Provider request is invalid");
+  }
+  if (compiledRequestResult.success && !validateAiStoryCompiledRequestFingerprint(compiledRequestResult.data)) {
+    throw new SeedanceMappingError("Immutable compiled Provider request fingerprint mismatch");
+  }
   const packageResult = AiStorySceneExecutionPackageSchema.safeParse(payloadRaw);
   if (
     typeof payloadRaw === "object" &&
@@ -212,14 +226,29 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   ) {
     throw new SeedanceMappingError("Canonical Scene execution package is invalid; legacy payload fallback is denied");
   }
-  const directorCompilation = packageResult.success
+  const directorCompilation = !compiledRequestResult.success && packageResult.success
     ? compileSceneExecutionPackageForSeedance(packageResult.data)
     : null;
   if (directorCompilation && directorCompilation.requestFacts.model !== input.model) {
     throw new SeedanceMappingError("Scene execution package model binding does not match the configured Seedance model");
   }
   const payload = CanonicalScenePayloadSchema.parse(
-    directorCompilation
+    compiledRequestResult.success
+      ? {
+          prompt: compiledRequestResult.data.compiledPrompt,
+          durationSec: compiledRequestResult.data.structuredRequest.duration,
+          aspectRatio: compiledRequestResult.data.structuredRequest.ratio,
+          resolution: compiledRequestResult.data.structuredRequest.resolution,
+          watermark: compiledRequestResult.data.structuredRequest.watermark,
+          generationMode: compiledRequestResult.data.generationMode,
+          assetReferences: compiledRequestResult.data.referenceMappings.map((reference) => ({
+            assetId: reference.assetId,
+            ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
+            ...(reference.mediaType ? { mediaType: reference.mediaType } : {}),
+            role: reference.wireRole,
+          })),
+        }
+      : directorCompilation
       ? {
           prompt: directorCompilation.prompt,
           durationSec: directorCompilation.requestFacts.duration,

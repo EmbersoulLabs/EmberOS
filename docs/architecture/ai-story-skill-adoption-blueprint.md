@@ -352,6 +352,30 @@ never dropped. Character, Product, Location, style, last-frame, multi-shot,
 chaining, extension, audio, 4K, and other uncertified structured roles/features
 are not invented or enabled.
 
+## Implemented compiled-request runtime dispatch integration
+
+`AiStoryCompiledProviderRequest` is the immutable boundary between Provider
+compilation and runtime. It preserves exact Scene, QC, Director, Motion, Cast,
+Location, Product, generation-mode, capability, mapping, semantic-plan,
+reference, estimated-cost, and request-fingerprint facts. Durable Provider
+Attempts bind that exact request and never substitute newer authority snapshots.
+
+The Worker job carries only Attempt, Workspace, and Scene identities. The
+Worker loads the immutable compiled request, verifies ownership and fingerprints,
+atomically claims submission, and performs transport serialization only.
+Short-lived Asset access URLs are resolved just in time and are not durable
+media authority. T2V and first-frame I2V share the same Attempt lifecycle and
+their mode/reference lineage cannot be changed by Worker code.
+
+Accepted Provider task identity is persisted before polling. Redelivery,
+concurrent claims, ambiguous submit outcomes, and post-submit crashes converge
+without blind paid resubmission. Successful artifacts enter private-media
+authority before the prepared Post-Generation QC hook; Provider success never
+releases a Scene or bypasses human review. Media-ingestion failure is recoverable
+and never triggers regeneration. Automatic paid retry, Provider fallback,
+audio, multi-shot, chaining, extension, first/last-frame mode, and 4K remain
+disabled.
+
 ## Implementation sequence
 
 1. `EMBEROS-AI-STORY-WRITER-OUTLINE-AUTHORITY-CONTRACT-01`
@@ -366,5 +390,5 @@ are not invented or enabled.
 10. `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR-SCOPE-01`
 11. `EMBEROS-AI-STORY-SCENE-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
 12. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
-12. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
-13. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`
+13. `EMBEROS-AI-STORY-PROVIDER-COMPILATION-RUNTIME-DISPATCH-INTEGRATION-01`
+14. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`
