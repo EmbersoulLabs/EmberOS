@@ -83,9 +83,6 @@ jobs:
       - name: Apply differentiated human retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
 
-      - name: Apply immutable AI Story Provider runtime contract
-        run: pnpm --filter @ceo-agent/db sql:ai-story-provider-runtime
-
       - name: Certify ephemeral PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
 
