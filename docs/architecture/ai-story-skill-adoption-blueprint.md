@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, and Motion authority implemented; Pre-Generation QC remains future work
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, and unified Pre-Generation QC implemented
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -13,6 +13,8 @@ Script-to-Director handoff implementation: `EMBEROS-AI-STORY-SCRIPT-DIRECTOR-HAN
 Director implementation: `EMBEROS-AI-DIRECTOR-SCENE-FUNCTION-AND-DIFFERENTIATION-CONTRACT-01`
 
 Motion implementation: `EMBEROS-AI-STORY-MOTION-ACTION-STATE-AND-PRODUCT-CAUSALITY-CONTRACT-01`
+
+Pre-Generation QC implementation: `EMBEROS-AI-STORY-PRE-GENERATION-DIRECTOR-QC-GATES-01`
 
 ## Certified invariants
 
@@ -43,6 +45,7 @@ CAMPAIGN / USER BRIEF
   -> DIRECTOR VALIDATION / HUMAN APPROVAL / FREEZE
   -> MOTION PLAN
   -> MOTION VALIDATION / HUMAN APPROVAL / FREEZE
+  -> PRE-GENERATION QC
   -> PROVIDER ADAPTER
 ```
 
@@ -159,7 +162,31 @@ force response, Product causality breaks, silent object disappearance,
 exclusive-state conflicts, excessive configured complexity, continuity resets,
 stale lineage, and fingerprint mismatch. Normal handling, carrying, using, or
 wearing a Product is not rejected merely because the Product moves. Provider
-syntax, capability mapping, dispatch, and Pre-Generation QC remain unimplemented.
+syntax, capability mapping, and dispatch remain unimplemented.
+
+## Implemented Pre-Generation QC authority
+
+`AiStoryPreGenerationQcEvaluation` is an immutable, versioned, provider-neutral
+decision and evidence artifact. It consumes exact frozen Writer-to-Motion
+lineage, canonical Product authority, a certified Provider capability snapshot,
+and a provider-neutral Scene execution request. It evaluates the ordered
+structural gates before any paid dispatch and produces only
+`DISPATCH_ELIGIBLE`, `DISPATCH_ELIGIBLE_WITH_WARNINGS`, or
+`DISPATCH_BLOCKED`; it never rewrites creative input, dispatches a Provider,
+creates a Provider Attempt, owns billing, or authorizes retry.
+
+Hard gates remain deterministic and contractual. Camera-family repetition,
+unknown Product categories, unfamiliar but coherent actions, ordinary Product
+movement, and human/Product context do not become hard failures by vocabulary
+or category. Subjective quality assistance remains `AI_QC` or
+`HUMAN_PREVIEW`. Each failure retains its earliest canonical repair owner,
+safe evidence, evaluated artifact identities, gate and policy versions, and a
+canonical fingerprint. Superseded upstream authority makes historical QC stale
+for dispatch without rewriting its evidence. The additive durable table uses
+tenant/workspace RLS and immutable update/delete enforcement.
+
+The Provider Adapter, Product Story profile, Shot Recipe registry, Seedance
+Director enrichment, and Short Drama profile remain unimplemented.
 
 ## Implementation sequence
 

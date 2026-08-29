@@ -49,6 +49,7 @@ export * from "./assembly-engine-provenance";
 export * from "./durable-assembly-blob-store";
 export * from "./durable-assembly-media-access";
 export * from "./seedance-capability";
+export * from "./pre-generation-qc-capability";
 export * from "./seedance-config";
 export * from "./seedance-request-mapping";
 export * from "./seedance-http-client";
