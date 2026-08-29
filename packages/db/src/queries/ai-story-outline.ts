@@ -5,7 +5,7 @@ import {
   validateAiStoryOutline,
   type AiStoryOutlineVersion,
 } from "@ceo-agent/shared";
-import { computeAiStoryOutlineSourceHash } from "@ceo-agent/shared/server";
+import { computeAiStoryOutlineSourceHash, validateAiStoryProductStoryProfile } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 
 type Db = ReturnType<typeof getDb>;
@@ -165,7 +165,8 @@ export class AiStoryOutlineAuthorityService {
       if (to === "VALIDATED") {
         const knownAuthorityReferences = await resolveKnownAuthorityReferences(tx, scope, current);
         const issues = validateAiStoryOutline(current, { knownAuthorityReferences });
-        if (issues.length) throw new AiStoryOutlineAuthorityError("OUTLINE_VALIDATION_FAILED", JSON.stringify(issues));
+        const profileIssues = validateAiStoryProductStoryProfile(current);
+        if (issues.length || profileIssues.some((issue) => issue.severity === "BLOCK")) throw new AiStoryOutlineAuthorityError("OUTLINE_VALIDATION_FAILED", JSON.stringify([...issues, ...profileIssues]));
       }
       const now = new Date();
       const next = AiStoryOutlineVersionSchema.parse({

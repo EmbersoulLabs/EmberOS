@@ -3,7 +3,7 @@ import {
   AiStoryOutlineVersionSchema, AiStoryScriptVersionSchema, assertAiStoryScriptLifecycleTransition,
   validateAiStoryScript, type AiStoryScriptVersion,
 } from "@ceo-agent/shared";
-import { computeAiStoryScriptSourceHash } from "@ceo-agent/shared/server";
+import { computeAiStoryScriptSourceHash, validateAiStoryProductStoryProfile } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 
 type Db = ReturnType<typeof getDb>;
@@ -106,7 +106,8 @@ export class AiStoryScriptAuthorityService {
         if (!outlineRows[0]) throw new AiStoryScriptAuthorityError("SCRIPT_OUTLINE_LINEAGE_INVALID", "Outline authority not found");
         const outline = AiStoryOutlineVersionSchema.parse({ ...outlineRows[0].outline, status: outlineRows[0].status, approvedBy: outlineRows[0].approvedBy, approvedAt: outlineRows[0].approvedAt?.toISOString() ?? null, frozenAt: outlineRows[0].frozenAt?.toISOString() ?? null });
         const issues = validateAiStoryScript(current, outline, { knownAuthorityReferences: await resolveKnownReferences(tx, scope, current) });
-        if (issues.some((issue) => issue.severity === "BLOCK")) throw new AiStoryScriptAuthorityError("SCRIPT_VALIDATION_FAILED", JSON.stringify(issues));
+        const profileIssues = validateAiStoryProductStoryProfile(outline, current);
+        if (issues.some((issue) => issue.severity === "BLOCK") || profileIssues.some((issue) => issue.severity === "BLOCK")) throw new AiStoryScriptAuthorityError("SCRIPT_VALIDATION_FAILED", JSON.stringify([...issues, ...profileIssues]));
       }
       const now = new Date();
       const next = AiStoryScriptVersionSchema.parse({ ...current, status: to, approvedBy: to === "APPROVED" ? actor : current.approvedBy, approvedAt: to === "APPROVED" ? now.toISOString() : current.approvedAt, frozenAt: to === "FROZEN" ? now.toISOString() : current.frozenAt });

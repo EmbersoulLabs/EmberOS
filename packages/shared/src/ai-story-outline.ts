@@ -1,5 +1,12 @@
 import { z } from "zod";
 import { StoryBeatSchema } from "./ai-story";
+import {
+  AI_STORY_PRODUCT_STORY_PROFILE_ID,
+  AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
+  AI_STORY_PRODUCT_STORY_PROFILE_VERSION,
+  AiStoryProductStoryOutlinePolicySchema,
+  AiStoryProductStoryProfileReferenceSchema,
+} from "./ai-story-product-story-profile";
 
 export const AI_STORY_OUTLINE_CONTRACT_VERSION = "ai-story-outline.v1" as const;
 export const AI_STORY_OUTLINE_STATUSES = [
@@ -70,13 +77,24 @@ export const AiStoryRequiredSceneOutcomeSchema = z.object({
   authorityReferences: z.array(AiStoryOutlineAuthorityReferenceSchema).default([]),
 }).strict();
 
-export const AiStoryOutlineProfileReferenceSchema = z.object({
+export const AiStoryOutlineCoreProfileReferenceSchema = z.object({
   profileId: z.literal("CORE"),
   profileVersion: z.literal(1),
 }).strict();
 
+export const AiStoryOutlineProfileReferenceSchema = z.union([
+  AiStoryOutlineCoreProfileReferenceSchema,
+  AiStoryProductStoryProfileReferenceSchema,
+]);
+
 export const AI_STORY_OUTLINE_PROFILE_REGISTRY = Object.freeze({
   CORE: Object.freeze({ profileId: "CORE" as const, profileVersion: 1 as const, hookRequired: false }),
+  PRODUCT_STORY: Object.freeze({
+    profileId: AI_STORY_PRODUCT_STORY_PROFILE_ID,
+    profileVersion: AI_STORY_PRODUCT_STORY_PROFILE_VERSION,
+    policyFingerprint: AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
+    hookRequired: false,
+  }),
 });
 
 export const AiStoryOutlineVersionSchema = z.object({
@@ -88,6 +106,7 @@ export const AiStoryOutlineVersionSchema = z.object({
   version: z.number().int().positive(),
   contractVersion: z.literal(AI_STORY_OUTLINE_CONTRACT_VERSION),
   profile: AiStoryOutlineProfileReferenceSchema,
+  productStoryProfile: AiStoryProductStoryOutlinePolicySchema.optional(),
   premise: Text.max(4000),
   coreClaim: Text.max(2000),
   storyUnits: z.array(AiStoryOutlineStoryUnitSchema),
@@ -105,7 +124,14 @@ export const AiStoryOutlineVersionSchema = z.object({
   approvedBy: Id.nullable(),
   approvedAt: z.string().datetime().nullable(),
   frozenAt: z.string().datetime().nullable(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  if (value.profile.profileId === "PRODUCT_STORY" && !value.productStoryProfile) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["productStoryProfile"], message: "PRODUCT_STORY requires its versioned Outline policy" });
+  }
+  if (value.profile.profileId === "CORE" && value.productStoryProfile) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["productStoryProfile"], message: "Core Outline cannot claim PRODUCT_STORY authority" });
+  }
+});
 
 export type AiStoryOutlineVersion = z.infer<typeof AiStoryOutlineVersionSchema>;
 export type AiStoryOutlineStatus = AiStoryOutlineVersion["status"];
@@ -177,6 +203,7 @@ export function validateAiStoryOutline(
   for (const outcome of outline.requiredSceneOutcomes) for (const beatId of outcome.beatIds) if (!beatIds.has(beatId)) issues.push({ gate: "OUTLINE_REFERENCE_INTEGRITY_GATE", message: `Outcome ${outcome.outcomeId} references unknown Beat` });
   const profile = AI_STORY_OUTLINE_PROFILE_REGISTRY[outline.profile.profileId];
   if (!profile || profile.profileVersion !== outline.profile.profileVersion) issues.push({ gate: "PROFILE_REFERENCE_GATE", message: "Unknown Outline profile" });
+  if (outline.profile.profileId === "PRODUCT_STORY" && outline.profile.policyFingerprint !== AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT) issues.push({ gate: "PROFILE_REFERENCE_GATE", message: "PRODUCT_STORY policy fingerprint mismatch" });
   if (options.knownAuthorityReferences) {
     for (const ref of [...outline.authorityReferences, ...outline.beats.flatMap((beat) => beat.authorityReferences), ...outline.requiredSceneOutcomes.flatMap((outcome) => outcome.authorityReferences)]) {
       if (!options.knownAuthorityReferences.has(`${ref.authorityType}:${ref.authorityId}`)) issues.push({ gate: "AUTHORITY_REFERENCE_GATE", message: `Unknown authority reference ${ref.authorityType}:${ref.authorityId}` });

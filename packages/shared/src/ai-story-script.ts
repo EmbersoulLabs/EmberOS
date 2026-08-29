@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type AiStoryOutlineVersion } from "./ai-story-outline";
+import { AiStoryProductStorySceneContributionSchema } from "./ai-story-product-story-profile";
 
 export const AI_STORY_SCRIPT_CONTRACT_VERSION = "ai-story-script.v1" as const;
 export const AI_STORY_SCRIPT_STATUSES = ["DRAFT", "VALIDATED", "APPROVED", "FROZEN", "SUPERSEDED"] as const;
@@ -77,13 +78,14 @@ export const AiStoryScriptSceneSchema = z.object({
   mustKeep: z.array(Text.max(1000)), mustAvoid: z.array(Text.max(1000)),
   newInformation: z.array(Text.max(1000)), newEvidence: z.array(Text.max(1000)),
   newActionOutcomes: z.array(Text.max(1000)), productEvidence: z.array(Text.max(1000)),
+  productStoryContributions: z.array(AiStoryProductStorySceneContributionSchema).optional(),
 }).strict();
 
 export const AiStoryScriptVersionSchema = z.object({
   scriptVersionId: Id, storyId: Id, storyVersionId: Id, outlineVersionId: Id,
   orgId: Id, workspaceId: Id, version: z.number().int().positive(),
   contractVersion: z.literal(AI_STORY_SCRIPT_CONTRACT_VERSION),
-  profileId: z.literal("CORE"), profileVersion: z.literal(1),
+  profileId: z.enum(["CORE", "PRODUCT_STORY"]), profileVersion: z.literal(1),
   outlineSourceHash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   scenes: z.array(AiStoryScriptSceneSchema).min(1),
   authorityReferences: z.array(AiStoryScriptAuthorityReferenceSchema),
@@ -116,6 +118,7 @@ export function validateAiStoryScript(
   if (outline.status !== "FROZEN" || script.outlineVersionId !== outline.outlineVersionId || script.storyId !== outline.storyId || script.storyVersionId !== outline.storyVersionId || script.outlineSourceHash !== outline.sourceHash) {
     block("OUTLINE_LINEAGE_GATE", "Canonical Script must bind the exact frozen Outline and source hash");
   }
+  if (script.profileId !== outline.profile.profileId || script.profileVersion !== outline.profile.profileVersion) block("OUTLINE_LINEAGE_GATE", "Script profile must bind the exact selected Outline profile version");
   if (!isContiguous(script.scenes) || new Set(script.scenes.map((scene) => scene.scriptSceneId)).size !== script.scenes.length) block("SCRIPT_REFERENCE_INTEGRITY_GATE", "Script Scene identity and ordering must be unique and contiguous");
   const beats = new Map(outline.beats.map((beat) => [beat.id, beat]));
   const claims = script.scenes.flatMap((scene) => scene.outlineBeatClaims.map((claim) => ({ ...claim, sceneId: scene.scriptSceneId })));
