@@ -60,6 +60,7 @@ export * from "./ai-story-character";
 export * from "./ai-story-cast";
 export * from "./ai-story-scene";
 export * from "./ai-story-scene-execution-package";
+export * from "./ai-story-provider-runtime";
 export * from "./ai-story-outline";
 export * from "./ai-story-script";
 export * from "./ai-story-script-director-handoff";

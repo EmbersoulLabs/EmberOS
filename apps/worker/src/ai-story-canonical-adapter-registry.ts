@@ -18,6 +18,7 @@ import {
 import { getAiProviderConfig, isAiProviderReady } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStoryProviderRuntimeRepository,
   ExecutionEnvelopeRepository,
   DifferentiatedRetryRepository,
 } from "@ceo-agent/db";
@@ -54,9 +55,19 @@ export function createEnvelopeBackedCanonicalPayloadResolver(
     readonly resolution?: string;
     readonly productGroundedProviderMode?: "FIRST_FRAME_I2V";
     readonly productGroundedProviderModeCertified?: boolean;
-  } = {}
+  } = {},
+  providerRuntime: Pick<
+    AiStoryProviderRuntimeRepository,
+    "getCompiledRequest" | "getCompiledRequestBySceneExecutionId"
+  > = new AiStoryProviderRuntimeRepository()
 ): SeedancePayloadResolver & MinimaxPayloadResolver {
   return createCompilationBackedCanonicalPayloadResolver({
+    getCompiledRequestBySceneExecutionId: async ({ envelope }) => {
+      const compiledRequestId = envelope.executionContext.trace?.compiledRequestId?.trim();
+      return compiledRequestId
+        ? providerRuntime.getCompiledRequest(compiledRequestId)
+        : null;
+    },
     getEnvelopeByPayloadReference: (payloadReference) =>
       envelopes.getEnvelopeByPayloadReference(payloadReference),
     getCompilationByExecutionPlanId: (executionPlanId) =>
@@ -101,14 +112,16 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
         resolution: "480p",
         productGroundedProviderMode: "FIRST_FRAME_I2V",
         productGroundedProviderModeCertified: true,
-      }
+      },
+      new AiStoryProviderRuntimeRepository()
     );
   const minimaxResolver =
     options.minimaxPayloadResolver ??
     createEnvelopeBackedCanonicalPayloadResolver(
       new ExecutionEnvelopeRepository(),
       new AiStorySceneExecutionPersistenceRepository(),
-      { resolution: "768P" }
+      { resolution: "768P" },
+      new AiStoryProviderRuntimeRepository()
     );
 
   try {

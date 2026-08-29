@@ -7,6 +7,7 @@
  * the Scene covered by the Envelope trace.
  */
 import type {
+  AiStoryCompiledProviderRequest,
   AiStorySceneExecutionPackage,
   AiStorySceneCompiledInstructions,
   AiStorySceneExecutionIntent,
@@ -223,6 +224,14 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
 }
 
 export type CompilationBackedPayloadResolverDeps = {
+  /** Immutable Provider compilation is the only canonical Worker input. */
+  readonly getCompiledRequestBySceneExecutionId?: (input: {
+    readonly executionPlanId: string;
+    readonly sceneExecutionId: string;
+    readonly envelope: ExecutionEnvelope;
+  }) => Promise<AiStoryCompiledProviderRequest | null>;
+  /** New canonical runtime fails closed instead of compiling inside Worker. */
+  readonly requireCompiledProviderRequest?: boolean;
   /** Canonical Scene execution packages outrank legacy compiled Scene payloads. */
   readonly getSceneExecutionPackageBySceneExecutionId?: (input: {
     readonly executionPlanId: string;
@@ -283,6 +292,17 @@ export function createCompilationBackedCanonicalPayloadResolver(
         throw new Error(
           "Execution Envelope trace is missing executionPlanId/sceneExecutionId"
         );
+      }
+
+      const compiledRequest = await deps.getCompiledRequestBySceneExecutionId?.({
+        executionPlanId,
+        sceneExecutionId,
+        envelope,
+      });
+      if (compiledRequest) return compiledRequest;
+      const canonicalCompiledRequestId = trace.compiledRequestId?.trim();
+      if (deps.requireCompiledProviderRequest || canonicalCompiledRequestId) {
+        throw new Error("Immutable compiled Provider request is required; Worker recompilation is denied");
       }
 
       const canonicalPackage = await deps.getSceneExecutionPackageBySceneExecutionId?.({
