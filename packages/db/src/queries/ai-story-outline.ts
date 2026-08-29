@@ -62,9 +62,29 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryOutlineScope, 
 async function resolveKnownAuthorityReferences(db: Pick<Db, "select">, scope: AiStoryOutlineScope, outline: AiStoryOutlineVersion) {
   const references = [...outline.authorityReferences, ...outline.beats.flatMap((beat) => beat.authorityReferences), ...outline.requiredSceneOutcomes.flatMap((outcome) => outcome.authorityReferences)];
   const known = new Set<string>([`CAMPAIGN:${scope.campaignId}`]);
-  for (const ref of references.filter((item) => item.authorityType === "CHARACTER" || item.authorityType === "WORLD")) {
-    // No durable Character/World authority exists yet; preserve the stable reference without creating a parallel owner.
-    known.add(`${ref.authorityType}:${ref.authorityId}`);
+  const characterRefs = references.filter((item) => item.authorityType === "CHARACTER");
+  const characterVersionIds = characterRefs.flatMap((ref) => ref.authorityVersionId ? [ref.authorityVersionId] : []);
+  if (characterVersionIds.length) {
+    const rows = await db.select({
+      characterId: schema.aiStoryCharacterVersions.characterId,
+      characterVersionId: schema.aiStoryCharacterVersions.characterVersionId,
+      fingerprint: schema.aiStoryCharacterVersions.fingerprint,
+    }).from(schema.aiStoryCharacterVersions).innerJoin(
+      schema.aiStoryCharacters, eq(schema.aiStoryCharacters.characterId, schema.aiStoryCharacterVersions.characterId),
+    ).where(and(
+      inArray(schema.aiStoryCharacterVersions.characterVersionId, characterVersionIds),
+      eq(schema.aiStoryCharacterVersions.orgId, scope.orgId), eq(schema.aiStoryCharacterVersions.workspaceId, scope.workspaceId),
+      eq(schema.aiStoryCharacterVersions.campaignId, scope.campaignId), eq(schema.aiStoryCharacters.status, "ACTIVE"),
+      eq(schema.aiStoryCharacters.currentCharacterVersionId, schema.aiStoryCharacterVersions.characterVersionId),
+    ));
+    for (const row of rows) {
+      const ref = characterRefs.find((item) => item.authorityId === row.characterId && item.authorityVersionId === row.characterVersionId);
+      if (ref?.authorityFingerprint === row.fingerprint) known.add(`CHARACTER:${ref.authorityId}`);
+    }
+  }
+  for (const ref of references.filter((item) => item.authorityType === "WORLD")) {
+    // World authority remains compatibility-only; this ticket creates no parallel World owner.
+    known.add(`WORLD:${ref.authorityId}`);
   }
   const assetIds = [...new Set(references.filter((item) => item.authorityType === "ASSET" || item.authorityType === "PRODUCT").map((item) => item.authorityId))];
   if (assetIds.length) {

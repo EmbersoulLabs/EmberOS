@@ -13,6 +13,10 @@ import { validateAiStoryProductStoryProfile } from "./ai-story-product-story-pro
 import { validateAiStoryShotRecipeBindings } from "./ai-story-shot-recipe.server";
 import { AI_STORY_SHOT_RECIPE_QC_GATES } from "./ai-story-shot-recipe";
 import {
+  validateCharacterAuthorityBindings,
+  type AiStoryCharacterAuthorityVersion,
+} from "./ai-story-character";
+import {
   AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION, AI_STORY_PRE_GENERATION_QC_GATE_ORDER,
   AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION, AiStoryPreGenerationQcCompilationRequestSchema,
   AiStoryPreGenerationQcEvaluationSchema, AiStoryPreGenerationQcProductAuthoritySchema,
@@ -30,6 +34,8 @@ export type AiStoryPreGenerationQcInput = {
   compilationRequest:{sceneExecutionId:string;requestedCapabilityId:string;executionMode:string;referenceRoles:string[];timingStructure:string;providerNeutralInputsComplete:boolean};
   currentAuthority:{outlineVersionId:string;scriptVersionId:string;handoffId:string;directorPlanId:string;motionPlanId:string};
   knownAuthorityReferences?:ReadonlySet<string>; evaluatedBy:string; evaluatedAt:string;
+  campaignId?:string; characterVersions?:readonly AiStoryCharacterAuthorityVersion[];
+  availableCharacterAssetIds?:ReadonlySet<string>;
   assistanceFindings?:Array<{classification:"AI_QC"|"HUMAN_PREVIEW";message:string}>;
 };
 
@@ -50,6 +56,15 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
   const ids={storyId:script.storyId,storyVersionId:script.storyVersionId,outlineVersionId:outline.outlineVersionId,scriptVersionId:script.scriptVersionId,handoffId:handoff.handoffId,directorPlanId:directorPlan.directorPlanId,motionPlanId:motionPlan.motionPlanId,sceneExecutionId:compilation.sceneExecutionId};
   const outlineIssues=validateAiStoryOutline(outline,{knownAuthorityReferences:raw.knownAuthorityReferences});
   const scriptIssues=validateAiStoryScript(script,outline,{knownAuthorityReferences:raw.knownAuthorityReferences});
+  const characterBindings=script.authorityReferences.filter((item)=>item.authorityType==="CHARACTER"&&item.authorityVersionId&&item.authorityFingerprint).map((item)=>({
+    characterId:item.authorityId,
+    characterVersionId:item.authorityVersionId!,
+    characterFingerprint:item.authorityFingerprint!,
+  }));
+  const characterIds=[...new Set(script.scenes.flatMap((scene)=>scene.characterIds))];
+  const dialogueSpeakerIds=[...new Set(script.scenes.flatMap((scene)=>scene.entries.flatMap((entry)=>entry.type==="DIALOGUE"?[entry.speakerId]:entry.type==="VO"?[entry.voiceOwnerId]:[])))];
+  const actionCharacterIds=[...new Set(script.scenes.flatMap((scene)=>scene.entries.flatMap((entry)=>entry.type==="ACTION"?[entry.subjectId,entry.objectId].filter((id):id is string=>Boolean(id&&scene.characterIds.includes(id))):[])))];
+  const characterIssues=characterBindings.length?validateCharacterAuthorityBindings({campaignId:raw.campaignId??raw.characterVersions?.[0]?.campaignId??"",bindings:characterBindings,versions:raw.characterVersions??[],referencedCharacterIds:characterIds,dialogueSpeakerIds,actionCharacterIds,availableAssetIds:raw.availableCharacterAssetIds}):[];
   const handoffIssues=validateAiStoryScriptDirectorHandoff(handoff,script,{expectedSourceHash:computeAiStoryScriptDirectorHandoffSourceHash(handoff),expectedFingerprint:computeAiStoryScriptDirectorHandoffFingerprint(handoff),currentScriptVersionId:raw.currentAuthority.scriptVersionId});
   const directorIssues=validateAiStoryDirectorPlan(directorPlan,handoff,{expectedSourceHash:computeAiStoryDirectorPlanSourceHash(directorPlan),expectedFingerprint:computeAiStoryDirectorPlanFingerprint(directorPlan),currentHandoffId:raw.currentAuthority.handoffId});
   const motionIssues=validateAiStoryMotionPlan(motionPlan,directorPlan,handoff,{expectedSourceHash:computeAiStoryMotionPlanSourceHash(motionPlan),expectedFingerprint:computeAiStoryMotionPlanFingerprint(motionPlan),currentDirectorPlanId:raw.currentAuthority.directorPlanId});
@@ -71,7 +86,10 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
   if(compilation.requestedCapabilityId!==capability.capabilityId||!capability.supportedExecutionModes.includes(compilation.executionMode)||!capability.supportedTimingStructures.includes(compilation.timingStructure)||compilation.referenceRoles.some(r=>!capability.supportedReferenceRoles.includes(r)))capabilityReasons.push(reason("PROVIDER_CAPABILITY_UNSUPPORTED","Requested execution requires an unsupported capability","PROVIDER_ADAPTER","PROVIDER_ADAPTER"));
   const results:AiStoryPreGenerationQcGateResult[]=[
     hard("UPSTREAM_ARTIFACT_INTEGRITY_GATE",[...upstream,...outlineIssues.map(i=>reason(i.gate,i.message,"OUTLINE","OUTLINE")),...profileIssues.filter(i=>i.severity==="BLOCK"&&i.gate==="PRODUCT_PROFILE_BINDING_GATE").map(i=>reason(i.reasonCode,i.message,"OUTLINE","OUTLINE")),...has(handoffIssues,["SCRIPT_FROZEN_GATE","SCRIPT_VERSION_BINDING_GATE","HANDOFF_FINGERPRINT_GATE","STALE_HANDOFF_GATE"],"HANDOFF","HANDOFF"),...has(directorIssues,["HANDOFF_FROZEN_GATE","HANDOFF_BINDING_GATE","DIRECTOR_FINGERPRINT_GATE","STALE_DIRECTOR_PLAN_GATE"],"DIRECTOR","DIRECTOR"),...has(motionIssues,["DIRECTOR_BINDING_GATE","MOTION_FINGERPRINT_GATE","STALE_DIRECTOR_GATE"],"MOTION","MOTION"),...recipeReasons(["RECIPE_EXISTS_GATE","RECIPE_VERSION_GATE","RECIPE_FINGERPRINT_GATE"],"DIRECTOR","DIRECTOR")],ids),
-    hard("SCRIPT_REFERENCE_INTEGRITY_GATE",has(scriptIssues,["SCRIPT_REFERENCE_INTEGRITY_GATE","DIALOGUE_SPEAKER_GATE"],"SCRIPT","SCRIPT"),ids),
+    hard("SCRIPT_REFERENCE_INTEGRITY_GATE",[
+      ...has(scriptIssues,["SCRIPT_REFERENCE_INTEGRITY_GATE","DIALOGUE_SPEAKER_GATE"],"SCRIPT","SCRIPT"),
+      ...characterIssues.map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),
+    ],ids),
     hard("BEAT_COVERAGE_GATE",has(scriptIssues,["BEAT_CLAIM_GATE","EXCLUSIVE_BEAT_CARDINALITY_GATE"],"SCRIPT","SCRIPT"),ids),
     hard("SCENE_FUNCTION_GATE",[...has(scriptIssues,["SCRIPT_SCENE_FUNCTION_GATE","ACTION_BEAT_PRESENCE_GATE"],"SCRIPT","SCRIPT"),...profileIssues.filter(i=>i.severity==="BLOCK"&&["PRODUCT_INFORMATION_PROGRESSION_GATE","OBJECTIVE_AWARE_BEAT_GATE","SCRIPT_PRODUCT_PROFILE_BINDING_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"SCRIPT","SCRIPT"))],ids),
     hard("SCRIPT_DUPLICATION_GATE",[...has(scriptIssues,["SCRIPT_SCENE_DUPLICATION_GATE"],"SCRIPT","SCRIPT"),...profileIssues.filter(i=>i.severity==="BLOCK"&&i.gate==="REPEATED_HERO_ONLY_GATE").map(i=>reason(i.reasonCode,i.message,"SCRIPT","SCRIPT"))],ids),

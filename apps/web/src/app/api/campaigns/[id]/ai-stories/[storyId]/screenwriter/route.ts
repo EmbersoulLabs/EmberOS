@@ -6,6 +6,7 @@ import {
 } from "@ceo-agent/db";
 import {
   generateStoryCharacters,
+  projectGeneratedCharactersToProposals,
   generateStoryDialogue,
   generateStoryNarrative,
   mergeCharactersIntoCreativeContext,
@@ -143,6 +144,7 @@ export async function POST(
           directorContext: {},
         });
 
+    let characterProposals = null;
     if (body.data.action === "characters") {
       const generated = await generateStoryCharacters({
         story,
@@ -155,6 +157,7 @@ export async function POST(
         generated.characters,
         generated.relationships
       );
+      characterProposals = projectGeneratedCharactersToProposals(generated.characters);
     } else if (body.data.action === "dialogue") {
       if (creativeContext.characterContext.characters.length === 0) {
         return apiError(
@@ -197,6 +200,8 @@ export async function POST(
       storyId,
       action: body.data.action,
       creativeContext: saved,
+      characterProposals,
+      canonicalCharacterAuthorityChanged: false,
     });
   } catch (error) {
     return handleApiError(error);

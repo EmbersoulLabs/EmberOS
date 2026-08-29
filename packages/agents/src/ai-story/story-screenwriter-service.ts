@@ -2,16 +2,35 @@
  * Screenwriter helpers for AI Story: rewrite, characters, dialogue, narrative.
  * Outputs feed Story Versions and/or Creative Context — planning only.
  */
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { callJsonModel } from "../llm";
 import {
   AiStoryStructuredDraftSchema,
   CreativeContextCharacterSchema,
   CreativeContextSchema,
+  type AiStoryCharacterProposal,
   type AiStoryStructuredDraft,
   type CreativeContext,
   type PlanningUsage,
 } from "@ceo-agent/shared";
+
+/** Projects legacy Screenwriter output into proposals; only the Character API may accept authority. */
+export function projectGeneratedCharactersToProposals(
+  characters: CreativeContext["characterContext"]["characters"]
+): AiStoryCharacterProposal[] {
+  return characters.map((character) => ({
+    proposalId: randomUUID(),
+    proposalOnly: true,
+    name: character.name,
+    identity: character.description,
+    appearance: character.visualNotes,
+    personality: character.motivation || character.description,
+    emotionalArc: character.motivation || "No canonical emotional arc proposed.",
+    relationships: [],
+    visualAssetIds: [],
+  }));
+}
 
 type Usage = PlanningUsage;
 

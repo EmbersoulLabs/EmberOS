@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { AppShell, StatusBadge } from "@/components/AppShell";
 import { StoryRuntimePanel } from "@/components/ai-story/StoryRuntimePanel";
 import { PlanningApprovalControl } from "@/components/ai-story/PlanningApprovalControl";
+import { CharacterPanel } from "@/components/ai-story/CharacterPanel";
 import { ExecutionPlanReviewPanel } from "@/components/ai-story-review/ExecutionPlanReviewPanel";
 import { executionPlanStorageKey } from "@/lib/ai-story-review-assembly-ui";
 import { fetchCurrentExecutionPlan } from "@/lib/ai-story-execution-plan-discovery-client";
@@ -272,6 +273,8 @@ export default function AiStoryReviewPage() {
           </div>
           {!readOnly ? <div className="flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={() => void requestPolishPreview()} className="rounded-lg border border-border px-4 py-2 text-sm font-medium">{busy ? "Polishing…" : "AI Polish"}</button><button type="button" disabled={busy || saveState === "SAVING"} onClick={() => void approveStoryForAnimation()} className="brand-btn-primary">Generate Animation</button></div> : null}
         </section>
+
+         <CharacterPanel campaignId={campaignId} canEdit={advancedAuthorized} />
 
         {polishPreview ? <section className="space-y-4 rounded-2xl border border-brand-blue/30 bg-brand-blue/5 p-5" data-testid="ai-polish-preview"><div><h2 className="text-lg font-bold text-navy">AI Polish Preview</h2><p className="mt-1 text-sm text-ink-secondary">Your current Story remains authoritative until you accept this preview.</p></div><StoryPreview draft={polishPreview} /><div className="flex flex-wrap gap-2"><button type="button" className="brand-btn-primary" disabled={busy} onClick={() => void acceptPolishPreview()}>Accept changes</button><button type="button" className="rounded-lg border border-border bg-white px-3 py-2 text-sm" disabled={busy} onClick={() => setPolishPreview(null)}>Cancel</button><button type="button" className="rounded-lg border border-border bg-white px-3 py-2 text-sm" disabled={busy} onClick={() => void requestPolishPreview()}>Regenerate</button></div></section> : null}
 

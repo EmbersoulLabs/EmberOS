@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, and semantic Shot Recipe Registry implemented
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, and Campaign Character authority implemented
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -19,6 +19,8 @@ Pre-Generation QC implementation: `EMBEROS-AI-STORY-PRE-GENERATION-DIRECTOR-QC-G
 Product Story profile implementation: `EMBEROS-AI-STORY-PRODUCT-STORY-WRITER-PROFILE-01`
 
 Shot Recipe Registry implementation: `EMBEROS-AI-STORY-SHOT-RECIPE-REGISTRY-01`
+
+Character authority implementation: `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
 
 ## Certified invariants
 
@@ -234,6 +236,35 @@ warn. `ACTIVE`, `DEPRECATED`, and `RETIRED` lifecycle states preserve historical
 readability and deny new retired selection. Seedance translation remains future
 Provider Adapter work.
 
+## Implemented Campaign Character authority
+
+`AiStoryCharacterAuthorityVersion` reconciles Character identity into one
+Campaign-owned, provider-neutral domain. A mutable Campaign aggregate points to
+immutable versions whose canonical fingerprint covers display name, identity,
+appearance, personality, emotional-arc context, stable Character relationships,
+optional generic Asset references, status, and lineage. Active Characters are
+reusable by multiple Stories in the same Campaign; cross-Campaign references
+are denied. Soft deletion preserves exact historical snapshots and prevents
+new binding to deleted authority.
+
+Outline and Script references bind the exact Character ID, authority-version
+ID, and fingerprint. The immutable handoff preserves those facts; Director and
+Motion remain downstream consumers and cannot redefine identity or appearance.
+Pre-Generation QC resolves Campaign scope, version, fingerprint, dialogue and
+Action participants, relationships, continuity, and optional Asset references.
+Character Core remains separate from Story/Scene state, so pose, expression,
+location, possession, physical condition, and authorized emotional or
+relationship evolution remain Story state rather than silent Core mutation.
+
+The normal-user AI Story Character panel supports Add, Edit, and soft Delete on
+desktop and mobile. Visual references are optional pointers into existing Asset
+authority; there is no Character binary store, Workspace Character Library, or
+cross-Campaign catalog. Legacy Creative Context remains readable as a
+compatibility surface. AI Screenwriter output is proposal-only until explicitly
+accepted through Campaign Character authority. Character presence does not
+force I2V. Seedance Character mapping and Provider reference-limit policy remain
+not implemented.
+
 ## Implementation sequence
 
 1. `EMBEROS-AI-STORY-WRITER-OUTLINE-AUTHORITY-CONTRACT-01`
@@ -244,5 +275,6 @@ Provider Adapter work.
 6. `EMBEROS-AI-STORY-PRE-GENERATION-DIRECTOR-QC-GATES-01`
 7. `EMBEROS-AI-STORY-PRODUCT-STORY-WRITER-PROFILE-01`
 8. `EMBEROS-AI-STORY-SHOT-RECIPE-REGISTRY-01`
-9. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
-10. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`
+9. `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
+10. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
+11. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`

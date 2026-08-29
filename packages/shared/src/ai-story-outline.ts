@@ -20,7 +20,12 @@ export const AiStoryOutlineAuthorityReferenceSchema = z.object({
   authorityType: z.enum(["CAMPAIGN", "PRODUCT", "ASSET", "CHARACTER", "WORLD"]),
   authorityId: Id,
   authorityVersionId: Id.optional(),
-}).strict();
+  authorityFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+}).strict().superRefine((value, ctx) => {
+  if (value.authorityType === "CHARACTER" && Boolean(value.authorityVersionId) !== Boolean(value.authorityFingerprint)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Character compatibility references may omit snapshot identity, but canonical references require both version and fingerprint" });
+  }
+});
 
 export const AiStoryOutlineBeatSchema = StoryBeatSchema.extend({
   id: Id,

@@ -103,3 +103,42 @@ test("mobile normal-user story flow remains reachable", async ({ page }) => {
   await expect(page.locator("body")).toHaveCSS("overflow-x", /^(visible|hidden|clip|auto)$/);
   expect(calls.providerCalls()).toBe(0);
 });
+
+test("operator manages Campaign Characters on mobile without Provider work", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const calls = await authenticate(page, "operator");
+  let characters: Array<Record<string, unknown>> = [];
+  await page.route(`**/api/campaigns/${campaignId}/characters**`, async (route) => {
+    const request = route.request();
+    if (request.method() === "POST") {
+      const body = request.postDataJSON();
+      characters = [{ characterId: "00000000-0000-4000-8000-000000000506", characterVersionId: "00000000-0000-4000-8000-000000000507", orgId: "00000000-0000-4000-8000-000000000508", workspaceId: "00000000-0000-4000-8000-000000000504", campaignId, version: 1, contractVersion: "ai-story-character.v1", name: body.name, canonicalFacts: { identity: body.identity, appearance: body.appearance, personality: body.personality, emotionalArc: body.emotionalArc, relationships: [] }, visualAssetReferences: [], status: "ACTIVE", fingerprint: `sha256:${"a".repeat(64)}`, supersedesCharacterVersionId: null, createdBy: userId, createdAt: "2026-08-29T00:00:00.000Z" }];
+      return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ character: characters[0] }) });
+    }
+    if (request.method() === "PATCH") {
+      const body = request.postDataJSON(); const current = characters[0]!;
+      characters = [{ ...current, version: 2, name: body.character.name, canonicalFacts: { ...(current.canonicalFacts as object), ...body.character } }];
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ character: characters[0] }) });
+    }
+    if (request.method() === "DELETE") { characters = []; return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({}) }); }
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ characters }) });
+  });
+  await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
+  await page.getByRole("button", { name: "Add Character" }).click();
+  await expect(page.getByRole("dialog", { name: "Add Character" })).toBeInViewport();
+  await page.getByLabel("Name").fill("Ada");
+  await page.getByLabel("Identity").fill("Returning Campaign founder");
+  await page.getByLabel("Appearance").fill("Cobalt jacket and silver pin");
+  await page.getByLabel("Personality").fill("Patient and direct");
+  await page.getByLabel("Emotional arc").fill("Guarded to trusting");
+  await page.getByRole("button", { name: "Save Character" }).click();
+  await expect(page.getByRole("heading", { name: "Ada" })).toBeVisible();
+  await page.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("Name").fill("Ada Ren");
+  await page.getByRole("button", { name: "Save Character" }).click();
+  await expect(page.getByRole("heading", { name: "Ada Ren" })).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("heading", { name: "Ada Ren" })).toHaveCount(0);
+  expect(calls.providerCalls()).toBe(0);
+});
