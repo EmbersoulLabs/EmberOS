@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { AiStoryScriptDirectorHandoff } from "./ai-story-script-director-handoff";
+import { AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
 
 export const AI_STORY_DIRECTOR_PLAN_CONTRACT_VERSION = "ai-story-director-plan.v1" as const;
 export const AI_STORY_DIRECTOR_REGISTRY_VERSION = 1 as const;
@@ -82,6 +83,7 @@ export const AiStoryDirectorSceneDirectionSchema = z.object({
   shots: z.array(AiStoryDirectorShotSchema).min(1),
   newAudienceInformation: z.array(Text),
   servedProductEvidence: z.array(Text),
+  shotRecipeBinding: AiStoryShotRecipeBindingSchema.optional(),
   differentiationRequirement: z.object({
     comparedToScriptSceneIds: z.array(Id),
     dimensions: z.array(z.enum(["VISUAL_ROLE", "SHOT_PURPOSE", "SHOT_SIZE", "CAMERA_FAMILY", "FOCUS", "COMPOSITION", "PRODUCT_EMPHASIS", "SCRIPT_ACTION", "BLOCKING", "AUDIENCE_INFORMATION", "PRODUCT_EVIDENCE"])).min(1),

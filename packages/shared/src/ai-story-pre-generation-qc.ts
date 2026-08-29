@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AI_STORY_SHOT_RECIPE_QC_GATES, AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
 
 export const AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION = "ai-story-pre-generation-qc.v1" as const;
 export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION = 1 as const;
@@ -50,6 +51,15 @@ export const AiStoryPreGenerationQcGateResultSchema = z.object({
   contractVersion: z.literal(AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION),
 }).strict();
 
+export const AiStoryPreGenerationQcRecipeGateResultSchema = z.object({
+  gateId: z.enum(AI_STORY_SHOT_RECIPE_QC_GATES),
+  gateVersion: z.number().int().positive(),
+  status: z.enum(["PASS", "WARN", "BLOCK"]),
+  reasonCodes: z.array(Text.max(160)),
+  safeEvidence: z.array(Text.max(1000)),
+  repairOwners: z.array(z.enum(["SCRIPT", "DIRECTOR", "MOTION"])),
+}).strict();
+
 export const AiStoryPreGenerationQcEvaluationSchema = z.object({
   qcEvaluationId: Id,
   orgId: Id,
@@ -68,6 +78,8 @@ export const AiStoryPreGenerationQcEvaluationSchema = z.object({
   providerCapabilityVersion: Text.max(160),
   productAuthorityIds: z.array(Id),
   gateResults: z.array(AiStoryPreGenerationQcGateResultSchema).min(AI_STORY_PRE_GENERATION_QC_GATE_ORDER.length),
+  recipeGateResults: z.array(AiStoryPreGenerationQcRecipeGateResultSchema).length(AI_STORY_SHOT_RECIPE_QC_GATES.length).optional(),
+  shotRecipeBindings: z.array(AiStoryShotRecipeBindingSchema).optional(),
   dispatchDecision: z.enum(["DISPATCH_ELIGIBLE", "DISPATCH_ELIGIBLE_WITH_WARNINGS", "DISPATCH_BLOCKED"]),
   preDispatchBlocked: z.boolean(),
   providerCallAvoided: z.boolean(),
@@ -86,6 +98,7 @@ export const AiStoryPreGenerationQcEvaluationSchema = z.object({
 export type AiStoryPreGenerationQcGateId = typeof AI_STORY_PRE_GENERATION_QC_GATE_ORDER[number];
 export type AiStoryPreGenerationQcGateResult = z.infer<typeof AiStoryPreGenerationQcGateResultSchema>;
 export type AiStoryPreGenerationQcEvaluation = z.infer<typeof AiStoryPreGenerationQcEvaluationSchema>;
+export type AiStoryPreGenerationQcRecipeGateResult = z.infer<typeof AiStoryPreGenerationQcRecipeGateResultSchema>;
 
 export const AiStoryPreGenerationQcProviderCapabilitySchema = z.object({
   capabilityId: Text.max(160),

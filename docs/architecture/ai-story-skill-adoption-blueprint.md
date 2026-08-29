@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, and Product Story Writer profile implemented
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, and semantic Shot Recipe Registry implemented
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -17,6 +17,8 @@ Motion implementation: `EMBEROS-AI-STORY-MOTION-ACTION-STATE-AND-PRODUCT-CAUSALI
 Pre-Generation QC implementation: `EMBEROS-AI-STORY-PRE-GENERATION-DIRECTOR-QC-GATES-01`
 
 Product Story profile implementation: `EMBEROS-AI-STORY-PRODUCT-STORY-WRITER-PROFILE-01`
+
+Shot Recipe Registry implementation: `EMBEROS-AI-STORY-SHOT-RECIPE-REGISTRY-01`
 
 ## Certified invariants
 
@@ -44,6 +46,7 @@ CAMPAIGN / USER BRIEF
   -> SCRIPT FREEZE
   -> IMMUTABLE SCRIPT-TO-DIRECTOR HANDOFF
   -> DIRECTOR PLAN
+  -> OPTIONAL SEMANTIC SHOT RECIPE SELECTION
   -> DIRECTOR VALIDATION / HUMAN APPROVAL / FREEZE
   -> MOTION PLAN
   -> MOTION VALIDATION / HUMAN APPROVAL / FREEZE
@@ -141,7 +144,7 @@ Deterministic gates reject invented Script action, unknown focus/Product
 authority, unsafe identity-threatening camera treatments, stale lineage, and
 materially duplicate visual realizations without a new action, evidence,
 information, composition, or context delta. Camera-family reuse alone is never
-duplication. Shot Recipes and Provider enrichment remain unimplemented.
+duplication. Provider enrichment remains unimplemented.
 
 ## Implemented Motion authority
 
@@ -207,8 +210,29 @@ at Product/Writer authority rather than invention downstream.
 Unified Pre-Generation QC consumes the profile validator and maps deterministic
 failures to the existing earliest-owner gates. It does not duplicate QC logic,
 silently repair the Story, or change Provider compilation/runtime behavior.
-Shot Recipes, Seedance Director enrichment, and the Short Drama profile remain
-unimplemented.
+Seedance Director enrichment and the Short Drama profile remain unimplemented.
+
+## Implemented semantic Shot Recipe Registry
+
+The v1 registry contains a bounded Core set: `DETAIL_REVEAL`,
+`RELATIONSHIP_COVERAGE`, `USAGE_DEMONSTRATION`, `CONTEXT_SCALE`,
+`REACTION_PAYOFF`, and `HERO_REVEAL`. Each immutable version describes semantic
+purpose, compatible Director roles/purposes, flexible Shot Size and Camera
+Family recommendations, focus/composition/high-level blocking patterns, Motion
+complexity, required evidence, constraints, profile compatibility, lifecycle,
+and a canonical fingerprint. Recipes contain no Provider prompts or
+Product-category policy.
+
+Selection is optional and remains Director authority. An unmatched valid Scene
+may use no Recipe. Where selected, the Director Plan binds exact Recipe ID,
+version, fingerprint, and Shot IDs; Motion must preserve that identity without
+substitution. Pre-Generation QC evaluates the ordered Recipe sub-gates for
+existence, version, fingerprint, Director compatibility, canonical evidence,
+Motion compatibility, and constraints. Recipe identity alone never determines
+duplication, while repeated visual dimensions with a real information delta may
+warn. `ACTIVE`, `DEPRECATED`, and `RETIRED` lifecycle states preserve historical
+readability and deny new retired selection. Seedance translation remains future
+Provider Adapter work.
 
 ## Implementation sequence
 
