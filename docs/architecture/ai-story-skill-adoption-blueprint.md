@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, and Story/Scene Cast scope authority implemented
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, and canonical Scene/Location continuity authority implemented
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -23,6 +23,8 @@ Shot Recipe Registry implementation: `EMBEROS-AI-STORY-SHOT-RECIPE-REGISTRY-01`
 Character authority implementation: `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
 
 Cast scope implementation: `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR-SCOPE-01`
+
+Scene and Location authority implementation: `EMBEROS-AI-STORY-SCENE-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
 
 ## Certified invariants
 
@@ -293,6 +295,36 @@ for every scope and does not itself select T2V or I2V. Seedance Cast mapping,
 Provider reference ordering, and Provider reference-budget allocation remain
 not implemented.
 
+## Implemented canonical Scene and Location authority
+
+`AiStoryCanonicalScene` is the durable, provider-neutral boundary between the
+frozen Script and downstream visual execution. Its stable `sceneId` is
+independent of order; immutable Scene versions bind the exact Story Version,
+Script Version, source Script Scene/entries, semantic role and importance,
+typed Cast and Product references, typed Location binding, Entry State,
+Script-derived events, Exit State, time relation, continuity constraints, and
+split/merge/reorder lineage. Script remains sole authority for Scene Function,
+Beat claims, ACTION, DIALOGUE, VO, state delta, and required outcome.
+
+Location scope follows continuity horizon through `CAMPAIGN_LOCATION`,
+`STORY_LOCATION`, or embedded `EPHEMERAL_ENVIRONMENT`. Campaign and Story
+Locations use stable durable IDs, immutable versions/fingerprints, bounded core
+continuity facts, and optional references to existing Asset authority.
+Ephemeral environments remain Scene-local facts and create no global table.
+Names, genres, Scene importance, and examples do not select scope. Explicit
+promotion may extend continuity horizon without rewriting prior Scene history;
+there is no automatic promotion or demotion.
+
+The atomic Scene-set validator preserves exact Script event coverage, stable
+ordering, Location/Cast/Product ownership, Entry-to-Exit continuity, declared
+discontinuities, purposeful transitions, and deterministic fingerprints.
+Unified Pre-Generation QC binds current frozen Scene-version identities and
+denies stale or invalid Scene authority before dispatch. Legacy Scene Plan and
+runtime `sceneExecutionId` remain compatibility/execution identities and do not
+outrank canonical Scene authority. Location scope and Scene role do not choose
+T2V/I2V. Seedance Scene/Location mapping, chaining, and reference budgeting
+remain not implemented.
+
 ## Implementation sequence
 
 1. `EMBEROS-AI-STORY-WRITER-OUTLINE-AUTHORITY-CONTRACT-01`
@@ -305,5 +337,6 @@ not implemented.
 8. `EMBEROS-AI-STORY-SHOT-RECIPE-REGISTRY-01`
 9. `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
 10. `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR-SCOPE-01`
-11. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
-12. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`
+11. `EMBEROS-AI-STORY-SCENE-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
+12. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
+13. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`

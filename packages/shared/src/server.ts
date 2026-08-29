@@ -10,6 +10,7 @@ export * from "./canonical-integrity";
 export * from "./ai-story-outline.server";
 export * from "./ai-story-character.server";
 export * from "./ai-story-cast.server";
+export * from "./ai-story-scene.server";
 export * from "./ai-story-script.server";
 export * from "./ai-story-script-director-handoff.server";
 export * from "./ai-story-director-plan.server";

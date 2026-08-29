@@ -804,6 +804,133 @@ export const aiStoryCastPromotions = pgTable(
   ],
 );
 
+/** Campaign/Story scoped Location aggregate. Scene-local environments remain embedded Scene facts. */
+export const aiStoryLocations = pgTable(
+  "ai_story_locations",
+  {
+    locationId: uuid("location_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").references(() => aiStories.id, { onDelete: "restrict" }),
+    scope: text("scope").notNull(),
+    currentVersion: integer("current_version").notNull(),
+    currentLocationVersionId: uuid("current_location_version_id").notNull(),
+    status: text("status").notNull(),
+    displayName: text("display_name").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("ai_story_locations_campaign_idx").on(t.campaignId, t.scope, t.status),
+    index("ai_story_locations_story_idx").on(t.storyId, t.scope, t.status),
+  ],
+);
+
+/** Immutable Location continuity facts bound by canonical Scenes. */
+export const aiStoryLocationVersions = pgTable(
+  "ai_story_location_versions",
+  {
+    locationVersionId: uuid("location_version_id").primaryKey(),
+    locationId: uuid("location_id").notNull().references(() => aiStoryLocations.locationId, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").references(() => aiStories.id, { onDelete: "restrict" }),
+    scope: text("scope").notNull(),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    status: text("status").notNull(),
+    supersedesLocationVersionId: uuid("supersedes_location_version_id"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryLocationAuthorityVersion>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_location_version_unique").on(t.locationId, t.version),
+    unique("ai_story_location_fingerprint_unique").on(t.locationId, t.fingerprint),
+    index("ai_story_location_versions_scope_idx").on(t.workspaceId, t.campaignId, t.storyId, t.locationId),
+  ],
+);
+
+/** Explicit upward continuity-horizon promotion; source history is never rewritten. */
+export const aiStoryLocationPromotions = pgTable(
+  "ai_story_location_promotions",
+  {
+    promotionId: uuid("promotion_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    sourceScope: text("source_scope").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    targetScope: text("target_scope").notNull(),
+    targetId: uuid("target_id").notNull(),
+    promotion: jsonb("promotion").$type<Record<string, unknown>>().notNull(),
+    promotedBy: uuid("promoted_by").notNull(),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_location_promotion_source_unique").on(t.sourceScope, t.sourceId),
+    index("ai_story_location_promotions_story_idx").on(t.storyId, t.promotedAt),
+  ],
+);
+
+/** Stable canonical Scene identity, independent of ordering and runtime Scene execution identity. */
+export const aiStoryCanonicalScenes = pgTable(
+  "ai_story_canonical_scenes",
+  {
+    sceneId: uuid("scene_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    currentVersion: integer("current_version").notNull(),
+    currentSceneVersionId: uuid("current_scene_version_id").notNull(),
+    status: text("status").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [index("ai_story_canonical_scenes_story_idx").on(t.storyId, t.status)],
+);
+
+/** Immutable canonical Scene revision and exact Script lineage snapshot. */
+export const aiStoryCanonicalSceneVersions = pgTable(
+  "ai_story_canonical_scene_versions",
+  {
+    sceneVersionId: uuid("scene_version_id").primaryKey(),
+    sceneId: uuid("scene_id").notNull().references(() => aiStoryCanonicalScenes.sceneId, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    scriptVersionId: uuid("script_version_id").notNull().references(() => aiStoryScriptVersions.scriptVersionId, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    sceneOrder: integer("scene_order").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    sourceHash: text("source_hash").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    status: text("status").notNull(),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryCanonicalScene>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    approvedBy: uuid("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    frozenAt: timestamp("frozen_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("ai_story_canonical_scene_version_unique").on(t.sceneId, t.version),
+    unique("ai_story_canonical_scene_fingerprint_unique").on(t.sceneId, t.fingerprint),
+    index("ai_story_canonical_scene_versions_story_order_idx").on(t.storyVersionId, t.sceneOrder),
+    index("ai_story_canonical_scene_versions_script_idx").on(t.scriptVersionId, t.sceneId),
+  ],
+);
+
 /** Provider-neutral, immutable-after-freeze Writer/Outline authority. */
 export const aiStoryOutlineVersions = pgTable(
   "ai_story_outline_versions",

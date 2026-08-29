@@ -46,9 +46,24 @@ async function resolveKnownReferences(db: Pick<Db, "select">, scope: AiStoryScri
       if (ref?.authorityFingerprint === row.fingerprint) known.add(`CHARACTER:${ref.authorityId}`);
     }
   }
-  for (const ref of script.authorityReferences.filter((ref) => ["LOCATION", "PROP"].includes(ref.authorityType))) {
-    // Durable World authority is outside this bounded Character ticket.
-    known.add(`${ref.authorityType}:${ref.authorityId}`);
+  const locationRefs = script.authorityReferences.filter((ref) => ref.authorityType === "LOCATION");
+  const locationVersionIds = locationRefs.flatMap((ref) => ref.authorityVersionId ? [ref.authorityVersionId] : []);
+  if (locationVersionIds.length) {
+    const rows = await db.select().from(schema.aiStoryLocationVersions).where(and(
+      inArray(schema.aiStoryLocationVersions.locationVersionId, locationVersionIds),
+      eq(schema.aiStoryLocationVersions.orgId, scope.orgId),
+      eq(schema.aiStoryLocationVersions.workspaceId, scope.workspaceId),
+      eq(schema.aiStoryLocationVersions.campaignId, scope.campaignId),
+    ));
+    for (const row of rows) {
+      const ref = locationRefs.find((item) => item.authorityId === row.locationId && item.authorityVersionId === row.locationVersionId);
+      if (ref?.authorityFingerprint === row.fingerprint && (row.scope === "CAMPAIGN_LOCATION" || row.storyId === scope.storyId)) {
+        known.add(`LOCATION:${ref.authorityId}`);
+      }
+    }
+  }
+  for (const ref of script.authorityReferences.filter((ref) => ref.authorityType === "PROP")) {
+    known.add(`PROP:${ref.authorityId}`);
   }
   const ids = [...new Set(script.authorityReferences.filter((ref) => ref.authorityType === "ASSET" || ref.authorityType === "PRODUCT").map((ref) => ref.authorityId))];
   if (ids.length) {

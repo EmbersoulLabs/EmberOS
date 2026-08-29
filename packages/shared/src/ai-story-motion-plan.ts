@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AiStoryDirectorPlan } from "./ai-story-director-plan";
 import type { AiStoryScriptDirectorHandoff } from "./ai-story-script-director-handoff";
 import { AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
+import { AiStorySceneAuthorityBindingSchema } from "./ai-story-scene";
 
 export const AI_STORY_MOTION_PLAN_CONTRACT_VERSION="ai-story-motion-plan.v1" as const;
 export const AI_STORY_MOTION_PLAN_STATUSES=["DRAFT","VALIDATED","APPROVED","FROZEN","SUPERSEDED"] as const;
@@ -30,6 +31,7 @@ export const AiStoryMotionPhysicalConstraintSchema=z.object({constraintId:Id,sem
 
 export const AiStorySceneMotionPlanSchema=z.object({
   sceneMotionPlanId:Id,directorSceneId:Id,scriptSceneId:Id,sceneOrder:z.number().int().nonnegative(),
+  canonicalSceneBinding:AiStorySceneAuthorityBindingSchema.optional(),
   actionExecutions:z.array(AiStoryMotionActionExecutionSchema),objectPersistence:z.array(AiStoryMotionObjectPersistenceSchema),
   blockingExecutions:z.array(AiStoryMotionBlockingExecutionSchema),cameraExecutions:z.array(AiStoryMotionCameraExecutionSchema),focusExecutions:z.array(AiStoryMotionFocusExecutionSchema),
   environmentalMotions:z.array(AiStoryEnvironmentalMotionSchema),motionBudget:AiStoryMotionBudgetSchema,physicalConstraints:z.array(AiStoryMotionPhysicalConstraintSchema),
@@ -41,7 +43,7 @@ export const AiStoryMotionPlanSchema=z.object({
   sourceHash:Hash,motionFingerprint:Hash,status:z.enum(AI_STORY_MOTION_PLAN_STATUSES),supersedesMotionPlanId:Id.nullable(),createdBy:Id,createdAt:z.string().datetime(),approvedBy:Id.nullable(),approvedAt:z.string().datetime().nullable(),frozenAt:z.string().datetime().nullable(),
 }).strict();
 export type AiStoryMotionPlan=z.infer<typeof AiStoryMotionPlanSchema>;export type AiStorySceneMotionPlan=z.infer<typeof AiStorySceneMotionPlanSchema>;
-export const AI_STORY_MOTION_GATES=["DIRECTOR_BINDING_GATE","SHOT_RECIPE_BINDING_GATE","SCRIPT_ACTION_TRUTH_GATE","START_STATE_GATE","ACTION_PATH_GATE","END_STATE_GATE","ACTION_COMPLETION_GATE","CONTACT_REQUIREMENT_GATE","FORCE_RESPONSE_GATE","PRODUCT_CAUSALITY_GATE","OBJECT_PERSISTENCE_GATE","BLOCKING_EXECUTION_GATE","CAMERA_EXECUTION_GATE","FOCUS_EXECUTION_GATE","PHYSICAL_PLAUSIBILITY_GATE","MOTION_BUDGET_GATE","PRODUCT_GROUNDED_MOTION_GATE","MOTION_CONTINUITY_GATE","MOTION_FINGERPRINT_GATE","STALE_DIRECTOR_GATE","MOTION_FREEZE_GATE"] as const;
+export const AI_STORY_MOTION_GATES=["DIRECTOR_BINDING_GATE","CANONICAL_SCENE_BINDING_GATE","SHOT_RECIPE_BINDING_GATE","SCRIPT_ACTION_TRUTH_GATE","START_STATE_GATE","ACTION_PATH_GATE","END_STATE_GATE","ACTION_COMPLETION_GATE","CONTACT_REQUIREMENT_GATE","FORCE_RESPONSE_GATE","PRODUCT_CAUSALITY_GATE","OBJECT_PERSISTENCE_GATE","BLOCKING_EXECUTION_GATE","CAMERA_EXECUTION_GATE","FOCUS_EXECUTION_GATE","PHYSICAL_PLAUSIBILITY_GATE","MOTION_BUDGET_GATE","PRODUCT_GROUNDED_MOTION_GATE","MOTION_CONTINUITY_GATE","MOTION_FINGERPRINT_GATE","STALE_DIRECTOR_GATE","MOTION_FREEZE_GATE"] as const;
 export type AiStoryMotionGate=(typeof AI_STORY_MOTION_GATES)[number];export type AiStoryMotionIssue={gate:AiStoryMotionGate;severity:"BLOCK"|"WARN";message:string};
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);const factKey=(f:{entityId:string;property:string})=>`${f.entityId}:${f.property}`;
 function stateMap(facts:z.infer<typeof AiStoryMotionPhysicalFactSchema>[]){return new Map(facts.map(f=>[factKey(f),f]));}
@@ -55,6 +57,7 @@ export function validateAiStoryMotionPlan(plan:AiStoryMotionPlan,director:AiStor
  if((options.expectedSourceHash&&plan.sourceHash!==options.expectedSourceHash)||(options.expectedFingerprint&&plan.motionFingerprint!==options.expectedFingerprint))add("MOTION_FINGERPRINT_GATE","Motion source hash or fingerprint mismatch");
  if(!same(plan.sceneMotionPlans.map(s=>[s.directorSceneId,s.scriptSceneId,s.sceneOrder]),director.sceneDirections.map(s=>[s.directorSceneId,s.scriptSceneId,s.sceneOrder])))add("DIRECTOR_BINDING_GATE","Motion Scene identity/count/order differs from Director authority");
  for(const scene of plan.sceneMotionPlans){const direction=director.sceneDirections.find(d=>d.directorSceneId===scene.directorSceneId);const source=handoff.sceneHandoffs.find(s=>s.scriptSceneId===scene.scriptSceneId);if(!direction||!source)continue;
+  if(!same(scene.canonicalSceneBinding??null,direction.canonicalSceneBinding??null))add("CANONICAL_SCENE_BINDING_GATE",`Motion changed or omitted canonical Scene authority binding for ${scene.scriptSceneId}`);
   if(!same(scene.shotRecipeBinding??null,direction.shotRecipeBinding??null))add("SHOT_RECIPE_BINDING_GATE",`Motion changed or omitted the Director Shot Recipe binding for ${scene.scriptSceneId}`);
   const sourceActions=new Map(source.actionEntries.map(a=>[a.entryId,a]));const plannedIds=scene.actionExecutions.map(a=>a.scriptActionEntryId);
   if(plannedIds.length!==sourceActions.size||new Set(plannedIds).size!==plannedIds.length||plannedIds.some(id=>!sourceActions.has(id)))add("SCRIPT_ACTION_TRUTH_GATE",`Motion must execute every Script ACTION exactly once for ${scene.scriptSceneId}`);

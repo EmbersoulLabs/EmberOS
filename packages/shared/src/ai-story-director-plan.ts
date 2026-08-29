@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AiStoryScriptDirectorHandoff } from "./ai-story-script-director-handoff";
 import { AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
+import { AiStorySceneAuthorityBindingSchema, type AiStoryCanonicalScene } from "./ai-story-scene";
 
 export const AI_STORY_DIRECTOR_PLAN_CONTRACT_VERSION = "ai-story-director-plan.v1" as const;
 export const AI_STORY_DIRECTOR_REGISTRY_VERSION = 1 as const;
@@ -70,6 +71,7 @@ export const AiStoryDirectorShotSchema = z.object({
 export const AiStoryDirectorSceneDirectionSchema = z.object({
   directorSceneId: Id,
   scriptSceneId: Id,
+  canonicalSceneBinding: AiStorySceneAuthorityBindingSchema.optional(),
   sceneOrder: z.number().int().nonnegative(),
   servedScriptSceneFunction: Text,
   sceneVisualRole: Registered(AI_STORY_SCENE_VISUAL_ROLES),
@@ -121,6 +123,7 @@ export type AiStoryDirectorPlanIssue = { gate: AiStoryDirectorPlanGate; severity
 
 export const AI_STORY_DIRECTOR_PLAN_GATES = [
   "HANDOFF_FROZEN_GATE", "HANDOFF_BINDING_GATE", "DIRECTOR_FINGERPRINT_GATE", "SCENE_IDENTITY_GATE",
+  "CANONICAL_SCENE_BINDING_GATE",
   "SCRIPT_TRUTH_BINDING_GATE", "SCRIPT_ACTION_SUPPORT_GATE", "FOCUS_REFERENCE_GATE", "PRODUCT_AUTHORITY_BINDING_GATE",
   "PRODUCT_CAMERA_SAFETY_GATE", "NEW_AUDIENCE_INFORMATION_GATE", "DIFFERENTIATION_REQUIREMENT_GATE",
   "DIRECTOR_VISUAL_DUPLICATION_GATE", "DIRECTOR_VALID_REPETITION_WARNING", "DIRECTOR_FREEZE_MUTATION_GATE", "STALE_DIRECTOR_PLAN_GATE",
@@ -134,7 +137,7 @@ const allAudienceInformation = (scene: AiStoryDirectorSceneDirection) => [...sce
 export function validateAiStoryDirectorPlan(
   plan: AiStoryDirectorPlan,
   handoff: AiStoryScriptDirectorHandoff,
-  options: { expectedSourceHash?: string; expectedFingerprint?: string; currentHandoffId?: string } = {},
+  options: { expectedSourceHash?: string; expectedFingerprint?: string; currentHandoffId?: string; canonicalScenes?: readonly AiStoryCanonicalScene[]; requireCanonicalSceneBindings?: boolean } = {},
 ): AiStoryDirectorPlanIssue[] {
   const issues: AiStoryDirectorPlanIssue[] = [];
   const issue = (gate: AiStoryDirectorPlanGate, severity: "BLOCK" | "WARN", message: string) => issues.push({ gate, severity, message });
@@ -147,6 +150,11 @@ export function validateAiStoryDirectorPlan(
   for (const scene of plan.sceneDirections) {
     const source = handoff.sceneHandoffs.find((candidate) => candidate.scriptSceneId === scene.scriptSceneId);
     if (!source) continue;
+    if (options.requireCanonicalSceneBindings && !scene.canonicalSceneBinding) issue("CANONICAL_SCENE_BINDING_GATE", "BLOCK", `Director Scene ${scene.scriptSceneId} lacks canonical Scene authority binding`);
+    if (scene.canonicalSceneBinding && options.canonicalScenes) {
+      const canonical = options.canonicalScenes?.find((candidate) => candidate.sceneVersionId === scene.canonicalSceneBinding?.sceneVersionId);
+      if (!canonical || canonical.status !== "FROZEN" || canonical.sceneId !== scene.canonicalSceneBinding.sceneId || canonical.fingerprint !== scene.canonicalSceneBinding.sceneFingerprint || !canonical.sourceScriptSceneIds.includes(scene.scriptSceneId) || !same(canonical.sourceScriptSceneIds, scene.canonicalSceneBinding.sourceScriptSceneIds)) issue("CANONICAL_SCENE_BINDING_GATE", "BLOCK", `Director Scene ${scene.scriptSceneId} does not bind exact frozen canonical Scene authority`);
+    }
     if (scene.servedScriptSceneFunction !== source.sceneFunction) issue("SCRIPT_TRUTH_BINDING_GATE", "BLOCK", `Director changed Scene Function for ${scene.scriptSceneId}`);
     const actionIds = new Set(source.actionEntries.map((entry) => entry.entryId));
     const stateIndexes = new Set(source.sceneStateDeltas.map((_entry, index) => index));

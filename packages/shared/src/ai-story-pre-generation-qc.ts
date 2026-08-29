@@ -26,7 +26,7 @@ export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER = [
 ] as const;
 
 export const AI_STORY_PRE_GENERATION_QC_CLASSIFICATIONS = ["HARD_GATE", "SOFT_WARNING", "AI_QC", "HUMAN_PREVIEW"] as const;
-export const AI_STORY_PRE_GENERATION_QC_LAYERS = ["OUTLINE", "SCRIPT", "HANDOFF", "DIRECTOR", "MOTION", "PRODUCT_AUTHORITY", "PRODUCT_GROUNDING", "PROVIDER_ADAPTER"] as const;
+export const AI_STORY_PRE_GENERATION_QC_LAYERS = ["OUTLINE", "SCRIPT", "SCENE", "LOCATION", "CAST", "HANDOFF", "DIRECTOR", "MOTION", "PRODUCT_AUTHORITY", "PRODUCT_GROUNDING", "PROVIDER_ADAPTER"] as const;
 export const AI_STORY_PRE_GENERATION_QC_REPAIR_OWNERS = [...AI_STORY_PRE_GENERATION_QC_LAYERS, "NONE"] as const;
 
 const Id = z.string().uuid();
@@ -36,6 +36,7 @@ const Text = z.string().trim().min(1);
 export const AiStoryPreGenerationQcArtifactIdsSchema = z.object({
   storyId: Id, storyVersionId: Id, outlineVersionId: Id, scriptVersionId: Id,
   handoffId: Id, directorPlanId: Id, motionPlanId: Id, sceneExecutionId: Id,
+  sceneVersionIds: z.array(Id).optional(),
 }).strict();
 
 export const AiStoryPreGenerationQcGateResultSchema = z.object({
@@ -72,6 +73,7 @@ export const AiStoryPreGenerationQcEvaluationSchema = z.object({
   directorPlanId: Id,
   motionPlanId: Id,
   sceneExecutionId: Id,
+  sceneVersionIds: z.array(Id).optional(),
   contractVersion: z.literal(AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION),
   gateSetVersion: z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION),
   providerCapabilityId: Text.max(160),
