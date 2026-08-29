@@ -11,6 +11,7 @@ export * from "./ai-story-outline.server";
 export * from "./ai-story-script.server";
 export * from "./ai-story-script-director-handoff.server";
 export * from "./ai-story-director-plan.server";
+export * from "./ai-story-motion-plan.server";
 export * from "./ai-story-assembly-runtime";
 export * from "./ai-story-assembly-runtime-execution";
 export * from "./ai-story-assembly-validation";

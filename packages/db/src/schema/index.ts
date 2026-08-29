@@ -813,6 +813,15 @@ export const aiStoryDirectorPlanVersions = pgTable(
   ],
 );
 
+/** Provider-neutral physical execution authority derived from a frozen Director Plan. */
+export const aiStoryMotionPlanVersions = pgTable(
+  "ai_story_motion_plan_versions",
+  {
+    motionPlanId:uuid("motion_plan_id").primaryKey(),orgId:uuid("org_id").notNull().references(()=>organizations.id,{onDelete:"restrict"}),workspaceId:uuid("workspace_id").notNull().references(()=>workspaces.id,{onDelete:"restrict"}),campaignId:uuid("campaign_id").notNull().references(()=>campaigns.id,{onDelete:"restrict"}),storyId:uuid("story_id").notNull().references(()=>aiStories.id,{onDelete:"restrict"}),storyVersionId:uuid("story_version_id").notNull().references(()=>aiStoryVersions.id,{onDelete:"restrict"}),outlineVersionId:uuid("outline_version_id").notNull().references(()=>aiStoryOutlineVersions.outlineVersionId,{onDelete:"restrict"}),scriptVersionId:uuid("script_version_id").notNull().references(()=>aiStoryScriptVersions.scriptVersionId,{onDelete:"restrict"}),handoffId:uuid("handoff_id").notNull().references(()=>aiStoryScriptDirectorHandoffs.handoffId,{onDelete:"restrict"}),directorPlanId:uuid("director_plan_id").notNull().references(()=>aiStoryDirectorPlanVersions.directorPlanId,{onDelete:"restrict"}),version:integer("version").notNull(),contractVersion:text("contract_version").notNull(),sourceDirectorFingerprint:text("source_director_fingerprint").notNull(),sourceHash:text("source_hash").notNull(),motionFingerprint:text("motion_fingerprint").notNull(),status:text("status").notNull(),supersedesMotionPlanId:uuid("supersedes_motion_plan_id"),motionPlan:jsonb("motion_plan").$type<import("@ceo-agent/shared").AiStoryMotionPlan>().notNull(),createdBy:uuid("created_by").notNull(),createdAt:timestamp("created_at",{withTimezone:true}).notNull(),approvedBy:uuid("approved_by"),approvedAt:timestamp("approved_at",{withTimezone:true}),frozenAt:timestamp("frozen_at",{withTimezone:true}),
+  },
+  (t)=>[unique("ai_story_motion_plan_story_version_unique").on(t.storyId,t.version),unique("ai_story_motion_plan_source_unique").on(t.storyId,t.sourceHash),unique("ai_story_motion_plan_fingerprint_unique").on(t.storyId,t.motionFingerprint),index("ai_story_motion_plan_workspace_idx").on(t.workspaceId,t.storyId,t.version)],
+);
+
 export const aiStoryAssetLinks = pgTable(
   "ai_story_asset_links",
   {

@@ -46,3 +46,4 @@ export * from "./queries/ai-story-outline";
 export * from "./queries/ai-story-script";
 export * from "./queries/ai-story-script-director-handoff";
 export * from "./queries/ai-story-director-plan";
+export * from "./queries/ai-story-motion-plan";

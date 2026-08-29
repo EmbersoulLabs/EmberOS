@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, and Director visual authority implemented; Motion remains future work
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, and Motion authority implemented; Pre-Generation QC remains future work
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -11,6 +11,8 @@ Script implementation: `EMBEROS-AI-STORY-SCRIPT-SCENE-BEAT-CONTRACT-01`
 Script-to-Director handoff implementation: `EMBEROS-AI-STORY-SCRIPT-DIRECTOR-HANDOFF-CONTRACT-01`
 
 Director implementation: `EMBEROS-AI-DIRECTOR-SCENE-FUNCTION-AND-DIFFERENTIATION-CONTRACT-01`
+
+Motion implementation: `EMBEROS-AI-STORY-MOTION-ACTION-STATE-AND-PRODUCT-CAUSALITY-CONTRACT-01`
 
 ## Certified invariants
 
@@ -39,7 +41,8 @@ CAMPAIGN / USER BRIEF
   -> IMMUTABLE SCRIPT-TO-DIRECTOR HANDOFF
   -> DIRECTOR PLAN
   -> DIRECTOR VALIDATION / HUMAN APPROVAL / FREEZE
-  -> FUTURE MOTION
+  -> MOTION PLAN
+  -> MOTION VALIDATION / HUMAN APPROVAL / FREEZE
   -> PROVIDER ADAPTER
 ```
 
@@ -132,8 +135,31 @@ Deterministic gates reject invented Script action, unknown focus/Product
 authority, unsafe identity-threatening camera treatments, stale lineage, and
 materially duplicate visual realizations without a new action, evidence,
 information, composition, or context delta. Camera-family reuse alone is never
-duplication. Motion execution, Shot Recipes, and Provider enrichment remain
-unimplemented.
+duplication. Shot Recipes and Provider enrichment remain unimplemented.
+
+## Implemented Motion authority
+
+`AiStoryMotionPlan` is versioned, durable, provider-neutral authority for how
+Script-authorized physical actions and frozen Director intent execute over time.
+It binds the exact Script, immutable handoff, and frozen Director fingerprints,
+then owns execution-relevant Start State, an ordered open-semantic Action Path,
+observable End State, completion assertions, object interaction, conditional
+contact/force response, object persistence, blocking execution, camera-motion
+execution, focus progression, environmental motion, configurable complexity
+budgets, and physical constraints. Its lifecycle is `DRAFT -> VALIDATED ->
+APPROVED -> FROZEN -> SUPERSEDED`; frozen content is immutable and approval is
+never automatic.
+
+Motion Core contains no Product-category, Product-interaction, or action
+allowlist. Unknown actions and Products remain valid when their semantic phases,
+causal state transitions, persistence, completion facts, and constraints are
+coherent. Deterministic pre-Provider gates reject missing terminal state,
+invented Script action, Director binding drift, absent required contact or
+force response, Product causality breaks, silent object disappearance,
+exclusive-state conflicts, excessive configured complexity, continuity resets,
+stale lineage, and fingerprint mismatch. Normal handling, carrying, using, or
+wearing a Product is not rejected merely because the Product moves. Provider
+syntax, capability mapping, dispatch, and Pre-Generation QC remain unimplemented.
 
 ## Implementation sequence
 
