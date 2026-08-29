@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, and Campaign Character authority implemented
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, and Story/Scene Cast scope authority implemented
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -21,6 +21,8 @@ Product Story profile implementation: `EMBEROS-AI-STORY-PRODUCT-STORY-WRITER-PRO
 Shot Recipe Registry implementation: `EMBEROS-AI-STORY-SHOT-RECIPE-REGISTRY-01`
 
 Character authority implementation: `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
+
+Cast scope implementation: `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR-SCOPE-01`
 
 ## Certified invariants
 
@@ -265,6 +267,32 @@ accepted through Campaign Character authority. Character presence does not
 force I2V. Seedance Character mapping and Provider reference-limit policy remain
 not implemented.
 
+## Implemented Supporting Cast and Ephemeral Actor scope
+
+`AiStoryCastReference` is the typed, provider-neutral identity boundary for
+`CAMPAIGN_CHARACTER`, `STORY_SUPPORTING_CHARACTER`, and `EPHEMERAL_ACTOR`.
+Scope follows required continuity horizon—not role labels, genre, appearance,
+or frequency. Existing Campaign Character authority remains unchanged.
+
+Story Supporting Characters are bounded Story-owned durable aggregates with
+stable IDs, immutable versions/fingerprints, Story-local appearance and
+continuity facts, typed relationships, and optional references to existing
+Asset authority. They may recur after absent Scenes without duplicate identity.
+Ephemeral Actors are embedded Scene/execution facts with Scene-local IDs; no
+global Actor table or global UI is introduced.
+
+Outline, Script entries, immutable handoff, Director, Motion, and Pre-Generation
+QC preserve typed Cast scope and identity. Dialogue, VO, Action, relationships,
+Story ownership, Scene ownership, versions, fingerprints, continuity, and
+visual references are deterministic gates. Explicit Ephemeral-to-Supporting and
+Supporting-to-Campaign promotion preserves lineage; there is no automatic
+promotion or demotion and historical references are not rewritten.
+
+`visualIdentityRequirement` is explicit as `NONE`, `PREFERRED`, or `REQUIRED`
+for every scope and does not itself select T2V or I2V. Seedance Cast mapping,
+Provider reference ordering, and Provider reference-budget allocation remain
+not implemented.
+
 ## Implementation sequence
 
 1. `EMBEROS-AI-STORY-WRITER-OUTLINE-AUTHORITY-CONTRACT-01`
@@ -276,5 +304,6 @@ not implemented.
 7. `EMBEROS-AI-STORY-PRODUCT-STORY-WRITER-PROFILE-01`
 8. `EMBEROS-AI-STORY-SHOT-RECIPE-REGISTRY-01`
 9. `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
-10. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
-11. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`
+10. `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR-SCOPE-01`
+11. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
+12. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`

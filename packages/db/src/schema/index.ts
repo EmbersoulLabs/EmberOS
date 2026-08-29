@@ -733,6 +733,77 @@ export const aiStoryCharacterVersions = pgTable(
   ],
 );
 
+/** Story-owned recurring supporting identity. Ephemeral actors remain embedded Scene facts. */
+export const aiStorySupportingCharacters = pgTable(
+  "ai_story_supporting_characters",
+  {
+    supportingCharacterId: uuid("supporting_character_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    currentVersion: integer("current_version").notNull(),
+    currentSupportingCharacterVersionId: uuid("current_supporting_character_version_id").notNull(),
+    status: text("status").notNull(),
+    displayName: text("display_name").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("ai_story_supporting_characters_story_idx").on(t.storyId, t.status, t.displayName),
+    index("ai_story_supporting_characters_scope_idx").on(t.workspaceId, t.campaignId, t.storyId),
+  ],
+);
+
+export const aiStorySupportingCharacterVersions = pgTable(
+  "ai_story_supporting_character_versions",
+  {
+    supportingCharacterVersionId: uuid("supporting_character_version_id").primaryKey(),
+    supportingCharacterId: uuid("supporting_character_id").notNull().references(() => aiStorySupportingCharacters.supportingCharacterId, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    status: text("status").notNull(),
+    supersedesSupportingCharacterVersionId: uuid("supersedes_supporting_character_version_id"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStorySupportingCharacterVersion>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_supporting_character_version_unique").on(t.supportingCharacterId, t.version),
+    unique("ai_story_supporting_character_fingerprint_unique").on(t.supportingCharacterId, t.fingerprint),
+    index("ai_story_supporting_character_versions_story_idx").on(t.storyId, t.supportingCharacterId, t.version),
+  ],
+);
+
+export const aiStoryCastPromotions = pgTable(
+  "ai_story_cast_promotions",
+  {
+    promotionId: uuid("promotion_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    sourceScope: text("source_scope").notNull(),
+    sourceId: uuid("source_id").notNull(),
+    targetScope: text("target_scope").notNull(),
+    targetId: uuid("target_id").notNull(),
+    promotion: jsonb("promotion").$type<import("@ceo-agent/shared").AiStoryCastPromotion>().notNull(),
+    promotedBy: uuid("promoted_by").notNull(),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_cast_promotion_source_unique").on(t.sourceScope, t.sourceId),
+    index("ai_story_cast_promotions_story_idx").on(t.storyId, t.promotedAt),
+  ],
+);
+
 /** Provider-neutral, immutable-after-freeze Writer/Outline authority. */
 export const aiStoryOutlineVersions = pgTable(
   "ai_story_outline_versions",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type AiStoryOutlineVersion } from "./ai-story-outline";
 import { AiStoryProductStorySceneContributionSchema } from "./ai-story-product-story-profile";
+import { AiStoryCastReferenceSchema, AiStorySceneCastRelationshipSchema, castReferenceKey } from "./ai-story-cast";
 
 export const AI_STORY_SCRIPT_CONTRACT_VERSION = "ai-story-script.v1" as const;
 export const AI_STORY_SCRIPT_STATUSES = ["DRAFT", "VALIDATED", "APPROVED", "FROZEN", "SUPERSEDED"] as const;
@@ -56,13 +57,16 @@ export const AiStoryScriptBeatClaimSchema = z.object({
 const EntryBase = z.object({ entryId: Id, order: z.number().int().nonnegative(), durationRange: DurationRange });
 export const AiStoryScriptActionEntrySchema = EntryBase.extend({
   type: z.literal("ACTION"), subjectId: Id, action: Text.max(2000), objectId: Id.optional(),
+  subjectCastReference: AiStoryCastReferenceSchema.optional(), objectCastReference: AiStoryCastReferenceSchema.optional(),
   storyEffect: Text.max(1000), stateDelta: AiStoryScriptStateDeltaSchema.optional(),
 }).strict();
 export const AiStoryScriptDialogueEntrySchema = EntryBase.extend({
   type: z.literal("DIALOGUE"), speakerId: Id, line: Text.max(4000), deliveryOrSubtext: Text.max(1000).optional(), language: Text.max(50),
+  speakerCastReference: AiStoryCastReferenceSchema.optional(),
 }).strict();
 export const AiStoryScriptVoEntrySchema = EntryBase.extend({
   type: z.literal("VO"), voiceOwnerId: Id, line: Text.max(4000), narrativePurpose: Text.max(1000), language: Text.max(50),
+  voiceOwnerCastReference: AiStoryCastReferenceSchema.optional(),
 }).strict();
 export const AiStoryScriptEntrySchema = z.discriminatedUnion("type", [
   AiStoryScriptActionEntrySchema, AiStoryScriptDialogueEntrySchema, AiStoryScriptVoEntrySchema,
@@ -79,6 +83,8 @@ export const AiStoryScriptSceneSchema = z.object({
   sceneStateOut: z.array(AiStoryScriptStateFactSchema),
   entries: z.array(AiStoryScriptEntrySchema).min(1),
   characterIds: z.array(Id), locationIds: z.array(Id), propIds: z.array(Id), assetIds: z.array(Id), productAuthorityRefs: z.array(Id),
+  castReferences: z.array(AiStoryCastReferenceSchema).optional(),
+  castRelationships: z.array(AiStorySceneCastRelationshipSchema).optional(),
   targetDurationRange: DurationRange,
   mustKeep: z.array(Text.max(1000)), mustAvoid: z.array(Text.max(1000)),
   newInformation: z.array(Text.max(1000)), newEvidence: z.array(Text.max(1000)),
@@ -155,6 +161,12 @@ export function validateAiStoryScript(
     }
   }
   for (const scene of script.scenes) {
+    const castReferences = scene.castReferences ?? [];
+    const castKeys = new Set(castReferences.map(castReferenceKey));
+    if (castKeys.size !== castReferences.length) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Scene ${scene.scriptSceneId} contains duplicate typed Cast references`);
+    if (options.knownAuthorityReferences) for (const reference of castReferences) if (!options.knownAuthorityReferences.has(castReferenceKey(reference))) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Unknown Cast reference ${castReferenceKey(reference)}`);
+    for (const reference of castReferences.filter((item) => item.scope === "EPHEMERAL_ACTOR")) if (reference.storyId !== script.storyId || reference.scriptSceneId !== scene.scriptSceneId) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Ephemeral Actor ${reference.id} is outside Scene scope`);
+    for (const relationship of scene.castRelationships ?? []) if (!castKeys.has(castReferenceKey(relationship.sourceCast)) || !castKeys.has(castReferenceKey(relationship.targetCast))) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Scene Cast relationship ${relationship.relationshipId} has an unresolved participant`);
     if (!AI_STORY_SCENE_FUNCTION_REGISTRY[scene.sceneFunction]) block("SCRIPT_SCENE_FUNCTION_GATE", `Unknown Scene Function ${scene.sceneFunction}`);
     if (!isContiguous(scene.entries)) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Entries in Scene ${scene.scriptSceneId} must be contiguous`);
     if (AI_STORY_SCENE_FUNCTION_REGISTRY[scene.sceneFunction].visibleActionRequired && !scene.entries.some((entry) => entry.type === "ACTION")) block("ACTION_BEAT_PRESENCE_GATE", `Scene ${scene.scriptSceneId} requires visible ACTION`);
@@ -168,6 +180,14 @@ export function validateAiStoryScript(
     for (const entry of scene.entries) {
       if (entry.type === "DIALOGUE" && !scene.characterIds.includes(entry.speakerId)) block("DIALOGUE_SPEAKER_GATE", `Dialogue speaker ${entry.speakerId} is not a Scene character`);
       if (entry.type === "VO" && !scene.characterIds.includes(entry.voiceOwnerId)) block("DIALOGUE_SPEAKER_GATE", `VO owner ${entry.voiceOwnerId} is not a Scene character`);
+      if (entry.type === "DIALOGUE" && castReferences.length && (!entry.speakerCastReference || !castKeys.has(castReferenceKey(entry.speakerCastReference)))) block("DIALOGUE_SPEAKER_GATE", `Dialogue speaker ${entry.speakerId} lacks a typed Cast binding`);
+      if (entry.type === "VO" && castReferences.length && (!entry.voiceOwnerCastReference || !castKeys.has(castReferenceKey(entry.voiceOwnerCastReference)))) block("DIALOGUE_SPEAKER_GATE", `VO owner ${entry.voiceOwnerId} lacks a typed Cast binding`);
+      if (entry.type === "DIALOGUE" && entry.speakerCastReference && entry.speakerCastReference.id !== entry.speakerId) block("DIALOGUE_SPEAKER_GATE", `Dialogue Cast reference does not match speaker ${entry.speakerId}`);
+      if (entry.type === "VO" && entry.voiceOwnerCastReference && entry.voiceOwnerCastReference.id !== entry.voiceOwnerId) block("DIALOGUE_SPEAKER_GATE", `VO Cast reference does not match owner ${entry.voiceOwnerId}`);
+      if (entry.type === "ACTION" && castReferences.length && scene.characterIds.includes(entry.subjectId) && (!entry.subjectCastReference || !castKeys.has(castReferenceKey(entry.subjectCastReference)))) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Action subject ${entry.subjectId} lacks a typed Cast binding`);
+      if (entry.type === "ACTION" && entry.objectId && castReferences.length && scene.characterIds.includes(entry.objectId) && (!entry.objectCastReference || !castKeys.has(castReferenceKey(entry.objectCastReference)))) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Action object ${entry.objectId} lacks a typed Cast binding`);
+      if (entry.type === "ACTION" && entry.subjectCastReference && entry.subjectCastReference.id !== entry.subjectId) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Action Cast reference does not match subject ${entry.subjectId}`);
+      if (entry.type === "ACTION" && entry.objectCastReference && entry.objectCastReference.id !== entry.objectId) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Action Cast reference does not match object ${entry.objectId}`);
       if (entry.type === "ACTION" && ![...scene.characterIds, ...scene.propIds, ...scene.assetIds, ...scene.productAuthorityRefs].includes(entry.subjectId)) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Action subject ${entry.subjectId} is unresolved`);
     }
     const entryMinimum = scene.entries.reduce((sum, entry) => sum + entry.durationRange.minSeconds, 0);

@@ -7,6 +7,7 @@ import {
 } from "@ceo-agent/shared";
 import { computeAiStoryOutlineSourceHash, validateAiStoryProductStoryProfile } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
+import { resolveKnownCastReferences } from "./ai-story-cast";
 
 type Db = ReturnType<typeof getDb>;
 export type AiStoryOutlineScope = {
@@ -62,6 +63,8 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryOutlineScope, 
 async function resolveKnownAuthorityReferences(db: Pick<Db, "select">, scope: AiStoryOutlineScope, outline: AiStoryOutlineVersion) {
   const references = [...outline.authorityReferences, ...outline.beats.flatMap((beat) => beat.authorityReferences), ...outline.requiredSceneOutcomes.flatMap((outcome) => outcome.authorityReferences)];
   const known = new Set<string>([`CAMPAIGN:${scope.campaignId}`]);
+  const castKnown = await resolveKnownCastReferences(db, scope, outline.castReferences ?? []);
+  for (const key of castKnown) known.add(key);
   const characterRefs = references.filter((item) => item.authorityType === "CHARACTER");
   const characterVersionIds = characterRefs.flatMap((ref) => ref.authorityVersionId ? [ref.authorityVersionId] : []);
   if (characterVersionIds.length) {

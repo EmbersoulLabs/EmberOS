@@ -38,6 +38,7 @@
     "sql:ai-story-motion-plan": "tsx scripts/apply-ai-story-motion-plan-v1.ts",
     "sql:ai-story-pre-generation-qc": "tsx scripts/apply-ai-story-pre-generation-qc-v1.ts",
     "sql:ai-story-character": "tsx scripts/apply-ai-story-character-v1.ts",
+    "sql:ai-story-cast": "tsx scripts/apply-ai-story-cast-v1.ts",
     "sql:ai-story-planning": "tsx scripts/apply-ai-story-planning-v1.ts",
     "sql:ai-story-execution": "tsx scripts/apply-ai-story-execution-v1.ts",
     "sql:ai-story-scene-persistence": "tsx scripts/apply-ai-story-scene-execution-persistence-v1.ts",

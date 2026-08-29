@@ -5,6 +5,7 @@ import {
 } from "@ceo-agent/shared";
 import { computeAiStoryScriptSourceHash, validateAiStoryProductStoryProfile } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
+import { resolveKnownCastReferences } from "./ai-story-cast";
 
 type Db = ReturnType<typeof getDb>;
 export type AiStoryScriptScope = { orgId: string; workspaceId: string; campaignId: string; storyId: string; storyVersionId: string; actorUserId: string };
@@ -30,6 +31,8 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryScriptScope, m
 
 async function resolveKnownReferences(db: Pick<Db, "select">, scope: AiStoryScriptScope, script: AiStoryScriptVersion) {
   const known = new Set<string>();
+  const castKnown = await resolveKnownCastReferences(db, scope, script.scenes.flatMap((scene) => scene.castReferences ?? []));
+  for (const key of castKnown) known.add(key);
   const characterRefs = script.authorityReferences.filter((ref) => ref.authorityType === "CHARACTER");
   const characterVersionIds = characterRefs.flatMap((ref) => ref.authorityVersionId ? [ref.authorityVersionId] : []);
   if (characterVersionIds.length) {

@@ -44,6 +44,7 @@ export * from "./queries/admin-runtime-operations";
 export * from "./queries/ai-story-pre-dispatch-recovery";
 export * from "./queries/ai-story-outline";
 export * from "./queries/ai-story-character";
+export * from "./queries/ai-story-cast";
 export * from "./queries/ai-story-script";
 export * from "./queries/ai-story-script-director-handoff";
 export * from "./queries/ai-story-director-plan";

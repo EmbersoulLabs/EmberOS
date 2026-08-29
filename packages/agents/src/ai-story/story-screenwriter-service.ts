@@ -9,11 +9,29 @@ import {
   AiStoryStructuredDraftSchema,
   CreativeContextCharacterSchema,
   CreativeContextSchema,
+  selectCastScopeFromContinuityHorizon,
   type AiStoryCharacterProposal,
+  type AiStoryCastReference,
   type AiStoryStructuredDraft,
   type CreativeContext,
   type PlanningUsage,
 } from "@ceo-agent/shared";
+
+/**
+ * Writer-side cast scope suggestion. Scope follows the requested identity
+ * continuity horizon; role and genre remain non-authoritative context only.
+ */
+export function proposeWriterCastScope(input: {
+  continuityHorizon: "CAMPAIGN" | "STORY" | "SCENE";
+  roleLabel?: string;
+  genre?: string;
+  userRequestedScope?: AiStoryCastReference["scope"];
+}) {
+  return {
+    proposalOnly: true as const,
+    scope: selectCastScopeFromContinuityHorizon(input),
+  };
+}
 
 /** Projects legacy Screenwriter output into proposals; only the Character API may accept authority. */
 export function projectGeneratedCharactersToProposals(
