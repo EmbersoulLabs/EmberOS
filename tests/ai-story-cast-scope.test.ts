@@ -24,6 +24,9 @@ describe("AI Story Supporting Cast and Ephemeral Actor scope", () => {
     expect(selectCastScopeFromContinuityHorizon({continuityHorizon:"SCENE",roleLabel:"romantic lead",genre:"romance"})).toBe("EPHEMERAL_ACTOR");
     expect(selectCastScopeFromContinuityHorizon({continuityHorizon:"CAMPAIGN",roleLabel:"suspect",genre:"unknown"})).toBe("CAMPAIGN_CHARACTER");
     expect(selectCastScopeFromContinuityHorizon({continuityHorizon:"STORY",roleLabel:"quantum-liaison-7",genre:"unseen-genre"})).toBe("STORY_SUPPORTING_CHARACTER");
+    for (const genre of ["romance", "mystery", "family", "commercial", "fantasy", "comedy", "drama", "unknown-genre-fixture"]) {
+      expect(selectCastScopeFromContinuityHorizon({ continuityHorizon: "STORY", roleLabel: "synthetic-role-fixture", genre })).toBe("STORY_SUPPORTING_CHARACTER");
+    }
     expect(AI_STORY_CAST_SCOPE_POLICY).toMatchObject({roleNameDeterminesScope:false,genreDeterminesScope:false,automaticPromotion:false,automaticDemotion:false,castScopeForcesGenerationMode:false});
     expect(proposeWriterCastScope({continuityHorizon:"STORY",roleLabel:"driver",genre:"mystery"})).toEqual({proposalOnly:true,scope:"STORY_SUPPORTING_CHARACTER"});
   });
