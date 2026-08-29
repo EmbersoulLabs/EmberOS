@@ -37,10 +37,12 @@ describeIntegration("AI Story canonical Location persistence and isolation",()=>
   afterAll(async()=>{
     await closeDb(); if(!sql)return;
     await sql`delete from ai_story_location_promotions where org_id=${fixture.orgId}::uuid`;
-    await sql`delete from ai_story_canonical_scene_versions where org_id=${fixture.orgId}::uuid`;
-    await sql`delete from ai_story_canonical_scenes where org_id=${fixture.orgId}::uuid`;
-    await sql`delete from ai_story_location_versions where org_id=${fixture.orgId}::uuid`;
-    await sql`delete from ai_story_locations where org_id=${fixture.orgId}::uuid`;
+    await sql.begin(async(tx)=>{
+      await tx`delete from ai_story_canonical_scene_versions where org_id=${fixture.orgId}::uuid`;
+      await tx`delete from ai_story_canonical_scenes where org_id=${fixture.orgId}::uuid`;
+      await tx`delete from ai_story_location_versions where org_id=${fixture.orgId}::uuid`;
+      await tx`delete from ai_story_locations where org_id=${fixture.orgId}::uuid`;
+    });
     await sql`delete from ai_stories where id in (${STORY_A}::uuid,${STORY_B}::uuid)`;
     await cleanupRlsFixture(sql,fixture); await sql.end();
   },30_000);
