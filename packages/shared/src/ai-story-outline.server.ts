@@ -5,8 +5,9 @@ export type CreateAiStoryOutlineInput = Omit<AiStoryOutlineVersion, "outlineVers
 
 export function computeAiStoryOutlineSourceHash(input: Pick<AiStoryOutlineVersion,
   "storyId" | "storyVersionId" | "upstreamAuthorityId" | "profile" | "premise" | "coreClaim" |
-  "storyUnits" | "beats" | "hooks" | "setupPayoffs" | "requiredSceneOutcomes" | "authorityReferences" | "productStoryProfile"
+  "storyUnits" | "beats" | "hooks" | "setupPayoffs" | "requiredSceneOutcomes" | "authorityReferences" | "castReferences" | "productStoryProfile"
 >) {
+  const castAuthority = input.castReferences ? { castReferences: input.castReferences } : {};
   return sha256CanonicalIntegrityHash({
     contractVersion: AI_STORY_OUTLINE_CONTRACT_VERSION,
     storyId: input.storyId,
@@ -22,6 +23,7 @@ export function computeAiStoryOutlineSourceHash(input: Pick<AiStoryOutlineVersio
     setupPayoffs: input.setupPayoffs,
     requiredSceneOutcomes: input.requiredSceneOutcomes,
     authorityReferences: input.authorityReferences,
+    ...castAuthority,
   });
 }
 

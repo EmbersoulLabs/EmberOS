@@ -1,0 +1,12 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const read=(path:string)=>readFileSync(resolve(process.cwd(),path),"utf8");
+
+describe("AI Story Cast authority integration boundaries",()=>{
+  it("binds typed Cast through Outline, Script, immutable handoff, Director and Motion",()=>{const outline=read("packages/shared/src/ai-story-outline.ts");const script=read("packages/shared/src/ai-story-script.ts");const handoff=read("packages/shared/src/ai-story-script-director-handoff.ts");const director=read("packages/shared/src/ai-story-director-plan.ts");const motion=read("packages/shared/src/ai-story-motion-plan.ts");expect(outline).toContain("castReferences");expect(outline).toContain("castReferenceKey");expect(script).toContain("speakerCastReference");expect(script).toContain("voiceOwnerCastReference");expect(script).toContain("subjectCastReference");expect(script).toContain("objectCastReference");expect(handoff).toContain("Typed Cast identity or scope changed");expect(handoff).toContain('"castIdentity", "castScope"');expect(director).toContain("source.characterIds");expect(motion).toContain("SCRIPT_ACTION_TRUTH_GATE");});
+  it("adds deterministic Cast QC without provider dispatch or creative mutation",()=>{const qc=read("packages/shared/src/ai-story-pre-generation-qc.server.ts");expect(qc).toContain("validateCastReferences");expect(qc).toContain("supportingCharacterVersions");expect(qc).toContain("castIssues");for(const forbidden of ["seedance character","provider cast mapping","autoPromote","automaticPromotion"])expect(qc.toLowerCase()).not.toContain(forbidden.toLowerCase());});
+  it("uses one bounded Story aggregate and no global Ephemeral Actor storage",()=>{const schema=read("packages/db/src/schema/index.ts");const sql=read("packages/db/sql/ai-story-cast-v1.sql");expect(schema).toContain("aiStorySupportingCharacters");expect(schema).toContain("aiStoryCastPromotions");expect(schema).not.toContain("aiStoryEphemeralActors");expect(sql).toContain("ENABLE ROW LEVEL SECURITY");expect(sql).not.toContain("CREATE TABLE IF NOT EXISTS ai_story_ephemeral_actors");});
+  it("keeps binary ownership and generation mode outside Cast Core",()=>{const contract=read("packages/shared/src/ai-story-cast.ts");expect(contract).toContain("AiStoryCharacterVisualAssetReferenceSchema");expect(contract).toContain("castScopeForcesGenerationMode: false");expect(contract).not.toContain("FIRST_FRAME_I2V");expect(contract.toLowerCase()).not.toContain("seedance");});
+});

@@ -16,6 +16,7 @@ import {
   validateCharacterAuthorityBindings,
   type AiStoryCharacterAuthorityVersion,
 } from "./ai-story-character";
+import { validateCastReferences, type AiStorySupportingCharacterVersion } from "./ai-story-cast";
 import {
   AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION, AI_STORY_PRE_GENERATION_QC_GATE_ORDER,
   AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION, AiStoryPreGenerationQcCompilationRequestSchema,
@@ -35,6 +36,7 @@ export type AiStoryPreGenerationQcInput = {
   currentAuthority:{outlineVersionId:string;scriptVersionId:string;handoffId:string;directorPlanId:string;motionPlanId:string};
   knownAuthorityReferences?:ReadonlySet<string>; evaluatedBy:string; evaluatedAt:string;
   campaignId?:string; characterVersions?:readonly AiStoryCharacterAuthorityVersion[];
+  supportingCharacterVersions?:readonly AiStorySupportingCharacterVersion[];
   availableCharacterAssetIds?:ReadonlySet<string>;
   assistanceFindings?:Array<{classification:"AI_QC"|"HUMAN_PREVIEW";message:string}>;
 };
@@ -65,6 +67,19 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
   const dialogueSpeakerIds=[...new Set(script.scenes.flatMap((scene)=>scene.entries.flatMap((entry)=>entry.type==="DIALOGUE"?[entry.speakerId]:entry.type==="VO"?[entry.voiceOwnerId]:[])))];
   const actionCharacterIds=[...new Set(script.scenes.flatMap((scene)=>scene.entries.flatMap((entry)=>entry.type==="ACTION"?[entry.subjectId,entry.objectId].filter((id):id is string=>Boolean(id&&scene.characterIds.includes(id))):[])))];
   const characterIssues=characterBindings.length?validateCharacterAuthorityBindings({campaignId:raw.campaignId??raw.characterVersions?.[0]?.campaignId??"",bindings:characterBindings,versions:raw.characterVersions??[],referencedCharacterIds:characterIds,dialogueSpeakerIds,actionCharacterIds,availableAssetIds:raw.availableCharacterAssetIds}):[];
+  const castReferences=script.scenes.flatMap((scene)=>scene.castReferences??[]);
+  const castIssues=castReferences.length?validateCastReferences({
+    campaignId:raw.campaignId??raw.characterVersions?.[0]?.campaignId??raw.supportingCharacterVersions?.[0]?.campaignId??"",
+    storyId:script.storyId,
+    sceneIds:new Set(script.scenes.map((scene)=>scene.scriptSceneId)),
+    references:castReferences,
+    campaignCharacters:(raw.characterVersions??[]).map((item)=>({characterId:item.characterId,characterVersionId:item.characterVersionId,campaignId:item.campaignId,fingerprint:item.fingerprint,status:item.status,visualAssetReferences:item.visualAssetReferences})),
+    supportingCharacters:raw.supportingCharacterVersions??[],
+    availableAssetIds:raw.availableCharacterAssetIds,
+    dialogueReferences:script.scenes.flatMap((scene)=>scene.entries.flatMap((entry)=>entry.type==="DIALOGUE"&&entry.speakerCastReference?[entry.speakerCastReference]:entry.type==="VO"&&entry.voiceOwnerCastReference?[entry.voiceOwnerCastReference]:[])),
+    actionReferences:script.scenes.flatMap((scene)=>scene.entries.flatMap((entry)=>entry.type==="ACTION"?[entry.subjectCastReference,entry.objectCastReference].filter((item):item is NonNullable<typeof item>=>Boolean(item)):[])),
+    sceneRelationships:script.scenes.flatMap((scene)=>scene.castRelationships??[]),
+  }):[];
   const handoffIssues=validateAiStoryScriptDirectorHandoff(handoff,script,{expectedSourceHash:computeAiStoryScriptDirectorHandoffSourceHash(handoff),expectedFingerprint:computeAiStoryScriptDirectorHandoffFingerprint(handoff),currentScriptVersionId:raw.currentAuthority.scriptVersionId});
   const directorIssues=validateAiStoryDirectorPlan(directorPlan,handoff,{expectedSourceHash:computeAiStoryDirectorPlanSourceHash(directorPlan),expectedFingerprint:computeAiStoryDirectorPlanFingerprint(directorPlan),currentHandoffId:raw.currentAuthority.handoffId});
   const motionIssues=validateAiStoryMotionPlan(motionPlan,directorPlan,handoff,{expectedSourceHash:computeAiStoryMotionPlanSourceHash(motionPlan),expectedFingerprint:computeAiStoryMotionPlanFingerprint(motionPlan),currentDirectorPlanId:raw.currentAuthority.directorPlanId});
@@ -89,6 +104,7 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
     hard("SCRIPT_REFERENCE_INTEGRITY_GATE",[
       ...has(scriptIssues,["SCRIPT_REFERENCE_INTEGRITY_GATE","DIALOGUE_SPEAKER_GATE"],"SCRIPT","SCRIPT"),
       ...characterIssues.map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),
+      ...castIssues.map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),
     ],ids),
     hard("BEAT_COVERAGE_GATE",has(scriptIssues,["BEAT_CLAIM_GATE","EXCLUSIVE_BEAT_CARDINALITY_GATE"],"SCRIPT","SCRIPT"),ids),
     hard("SCENE_FUNCTION_GATE",[...has(scriptIssues,["SCRIPT_SCENE_FUNCTION_GATE","ACTION_BEAT_PRESENCE_GATE"],"SCRIPT","SCRIPT"),...profileIssues.filter(i=>i.severity==="BLOCK"&&["PRODUCT_INFORMATION_PROGRESSION_GATE","OBJECTIVE_AWARE_BEAT_GATE","SCRIPT_PRODUCT_PROFILE_BINDING_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"SCRIPT","SCRIPT"))],ids),

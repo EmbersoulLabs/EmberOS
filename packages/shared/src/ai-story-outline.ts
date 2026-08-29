@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { StoryBeatSchema } from "./ai-story";
+import { AiStoryCastReferenceSchema, castReferenceKey } from "./ai-story-cast";
 import {
   AI_STORY_PRODUCT_STORY_PROFILE_ID,
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
@@ -120,6 +121,7 @@ export const AiStoryOutlineVersionSchema = z.object({
   setupPayoffs: z.array(AiStoryOutlineSetupPayoffSchema),
   requiredSceneOutcomes: z.array(AiStoryRequiredSceneOutcomeSchema),
   authorityReferences: z.array(AiStoryOutlineAuthorityReferenceSchema),
+  castReferences: z.array(AiStoryCastReferenceSchema).optional(),
   upstreamAuthorityId: Text.max(500),
   sourceHash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   status: z.enum(AI_STORY_OUTLINE_STATUSES),
@@ -212,6 +214,9 @@ export function validateAiStoryOutline(
   if (options.knownAuthorityReferences) {
     for (const ref of [...outline.authorityReferences, ...outline.beats.flatMap((beat) => beat.authorityReferences), ...outline.requiredSceneOutcomes.flatMap((outcome) => outcome.authorityReferences)]) {
       if (!options.knownAuthorityReferences.has(`${ref.authorityType}:${ref.authorityId}`)) issues.push({ gate: "AUTHORITY_REFERENCE_GATE", message: `Unknown authority reference ${ref.authorityType}:${ref.authorityId}` });
+    }
+    for (const ref of outline.castReferences ?? []) {
+      if (!options.knownAuthorityReferences.has(castReferenceKey(ref))) issues.push({ gate: "AUTHORITY_REFERENCE_GATE", message: `Unknown Cast reference ${castReferenceKey(ref)}` });
     }
   }
   return issues;
