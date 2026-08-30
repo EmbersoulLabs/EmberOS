@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, canonical Scene/Location continuity authority, and Seedance Director Adapter enrichment implemented
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, canonical Scene/Location continuity authority, Seedance Director Adapter enrichment, compiled Provider Runtime, Post-Generation QC, Visual Evidence, and Repair Classification implemented. Human Review is preserved. Scene/Cast/Location Review UX is not complete and full AI Story E2E is not certified.
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -27,6 +27,10 @@ Cast scope implementation: `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR
 Scene and Location authority implementation: `EMBEROS-AI-STORY-SCENE-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
 
 Seedance Director Adapter enrichment: `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
+
+Provider Runtime implementation: `EMBEROS-AI-STORY-PROVIDER-COMPILATION-RUNTIME-DISPATCH-INTEGRATION-01`
+
+Post-Generation QC implementation: `EMBEROS-AI-STORY-POST-GENERATION-QC-AND-EVIDENCE-CONTRACT-01`
 
 ## Certified invariants
 
@@ -60,6 +64,10 @@ CAMPAIGN / USER BRIEF
   -> MOTION VALIDATION / HUMAN APPROVAL / FREEZE
   -> PRE-GENERATION QC
   -> PROVIDER ADAPTER
+  -> IMMUTABLE COMPILED REQUEST / PROVIDER ATTEMPT / PRIVATE MEDIA
+  -> POST-GENERATION QC EVIDENCE
+  -> HUMAN REVIEW
+  -> STAGED RELEASE OR HUMAN-AUTHORIZED REPAIR
 ```
 
 Writer owns premise, core claim, optional Story Units, ordered major/minor Beats,
@@ -376,6 +384,27 @@ and never triggers regeneration. Automatic paid retry, Provider fallback,
 audio, multi-shot, chaining, extension, first/last-frame mode, and 4K remain
 disabled.
 
+## Implemented Post-Generation QC and Visual Evidence authority
+
+`AiStoryPostGenerationQcInputPackage` binds one exact Provider Attempt and
+durable private-media asset to frozen Scene, Script, handoff, Director, Motion,
+Recipe, Pre-Generation QC, compiled request, Cast, Location, Product, state,
+evidence, and constraint lineage. It never substitutes latest mutable authority
+or uses an expiring Provider URL as media truth.
+
+Observable evidence and QC interpretation are distinct structured records with
+explicit confidence. Deterministic media checks, provider-neutral AI visual
+evidence, and Human Review remain separate authorities. Required facts that
+cannot be verified route to human confirmation; subjective taste is never a
+universal hard rejection. No chain-of-thought is persisted.
+
+Post-QC evaluations are versioned, fingerprinted, idempotent, immutable, RLS
+protected, and stale when the durable media identity/hash changes. Repair
+classification distinguishes plan ownership from Provider execution or Adapter
+translation defects. It may recommend a same-input retry candidate but cannot
+approve, retry, spend, repair, or release. Existing generated Scene Human Review
+and staged release remain the final creative and release authorities.
+
 ## Implementation sequence
 
 1. `EMBEROS-AI-STORY-WRITER-OUTLINE-AUTHORITY-CONTRACT-01`
@@ -391,4 +420,6 @@ disabled.
 11. `EMBEROS-AI-STORY-SCENE-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
 12. `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
 13. `EMBEROS-AI-STORY-PROVIDER-COMPILATION-RUNTIME-DISPATCH-INTEGRATION-01`
-14. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`
+14. `EMBEROS-AI-STORY-POST-GENERATION-QC-AND-EVIDENCE-CONTRACT-01`
+15. `EMBEROS-AI-STORY-SCENE-CAST-LOCATION-REVIEW-UX-01`
+16. `EMBEROS-AI-STORY-SHORT-DRAMA-WRITER-PROFILE-01`

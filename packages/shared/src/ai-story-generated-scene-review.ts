@@ -8,6 +8,7 @@
  */
 import { z } from "zod";
 import { RetryEligibilitySchema } from "./ai-story-differentiated-retry";
+import { AiStoryPostQcHumanReviewEvidenceSchema } from "./ai-story-post-generation-qc";
 
 export const AI_STORY_GENERATED_SCENE_REVIEW_CONTRACT_VERSION = "1" as const;
 export const AI_STORY_SCENE_MAX_ATTEMPTS_ENV = "AI_STORY_SCENE_MAX_ATTEMPTS";
@@ -174,6 +175,7 @@ export const GeneratedSceneReviewReadModelSchema = z
     running: z.boolean(),
     attempts: z.array(GeneratedSceneAttemptReadModelSchema),
     generatedMedia: GeneratedSceneMediaReadModelSchema.nullable().default(null),
+    postGenerationQcEvidence: AiStoryPostQcHumanReviewEvidenceSchema.optional(),
   })
   .strict();
 

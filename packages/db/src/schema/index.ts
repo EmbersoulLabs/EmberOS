@@ -3391,6 +3391,34 @@ export const aiStoryGeneratedSceneReviews = pgTable(
   ]
 );
 
+/** Immutable Post-Generation QC evidence bound to one exact Attempt and durable media asset. */
+export const aiStoryPostGenerationQcEvaluations = pgTable(
+  "ai_story_post_generation_qc_evaluations",
+  {
+    postQcEvaluationId: uuid("post_qc_evaluation_id").primaryKey(),
+    postQcInputId: uuid("post_qc_input_id").notNull(),
+    evaluationVersion: integer("evaluation_version").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    providerAttemptId: text("provider_attempt_id").notNull().references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    mediaAssetId: uuid("media_asset_id").notNull().references(() => aiStoryDurableSceneMediaAttestations.mediaAttestationId, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    aggregateStatus: text("aggregate_status").notNull(),
+    evaluationFingerprint: text("evaluation_fingerprint").notNull(),
+    inputPackage: jsonb("input_package").$type<import("@ceo-agent/shared").AiStoryPostGenerationQcInputPackage>().notNull(),
+    evaluation: jsonb("evaluation").$type<import("@ceo-agent/shared").AiStoryPostGenerationQcEvaluation>().notNull(),
+    evaluatedAt: timestamp("evaluated_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_post_qc_input_version_unique").on(t.postQcInputId, t.evaluationVersion),
+    unique("ai_story_post_qc_fingerprint_unique").on(t.evaluationFingerprint),
+    index("ai_story_post_qc_attempt_idx").on(t.providerAttemptId, t.evaluatedAt),
+    index("ai_story_post_qc_workspace_idx").on(t.workspaceId, t.evaluatedAt),
+    index("ai_story_post_qc_media_idx").on(t.mediaAssetId, t.evaluatedAt),
+  ]
+);
+
 /** Human creative rejection policy, independent from Provider technical truth. */
 export const aiStorySceneRetryEligibilityFacts = pgTable(
   "ai_story_scene_retry_eligibility_facts",

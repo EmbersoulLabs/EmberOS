@@ -1,16 +1,9 @@
 /**
  * EMBEROS-AI-STORY-EXEC-06 — AI Story Self-Use V1 generated-media QC policy freeze.
  *
- * OPTION B: Plan/intent AI QC is authoritative for planning/structural validation
- * only. Generated-media acceptance is EXEC-04 persisted human Scene review.
- * This module does not implement media-aware QC, vision models, frame sampling,
- * or provider QC calls.
- *
- * Future-compatible extension (not implemented):
- *   generated artifact
- *   → optional automated media QC evidence
- *   → mandatory/optional human review policy
- *   → approved output
+ * Plan/intent QC remains structural. Post-Generation QC now contributes
+ * immutable structured evidence, but generated-media acceptance remains EXEC-04
+ * persisted human Scene review. Neither Plan QC nor Post-QC approves or releases.
  */
 import { z } from "zod";
 import {
@@ -33,6 +26,9 @@ export const FUTURE_MEDIA_AWARE_QC_PIPELINE = [
   "human_review_policy",
   "approved_output",
 ] as const;
+
+export const POST_GENERATION_QC_EVIDENCE_IMPLEMENTED = true as const;
+export const POST_GENERATION_QC_REPLACES_HUMAN_REVIEW = false as const;
 
 export type FutureMediaAwareQcPipelineStep =
   (typeof FUTURE_MEDIA_AWARE_QC_PIPELINE)[number];
