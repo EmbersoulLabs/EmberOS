@@ -1,5 +1,5 @@
-import { eq, and } from "drizzle-orm";
-import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
+import { eq } from "drizzle-orm";
+import { getDb, schema } from "@ceo-agent/db";
 import { enqueueRender } from "@ceo-agent/queue";
 import {
   CEO_MAX_RETRIES,
@@ -13,21 +13,14 @@ import {
   resolveAutoClipSourceAsset,
   resolvePipelineContentLocale,
   alignStrategyWithVision,
-  isPipelineStageComplete,
-  getPipelineStageOutput,
+  emitVideoStudioOpsEvent,
   type ContentLocale,
-  type ContentClassification,
-  type SubtitleTimelineSegment,
 } from "@ceo-agent/shared";
-import {
-  provideCampaignAIContext,
-  enrichCampaignAIContext,
-  provideCampaignAIContextFromCampaign,
-} from "./campaign-context-provider";
-import { failPipelineExecution } from "./pipeline-lifecycle";
-import { isVisionAnalysisTimeoutError } from "./vision-timeout";
+import { loadTrackedCampaignTaskInputs } from "./campaign-task-generation-identity";
 import { runCeoAgent, parseIntent } from "./ceo";
+import { runStrategyAgent } from "./strategy";
 import {
+  runMarketingContentAgent,
   contentPackageToHookSet,
   contentPackageToCopyVariants,
 } from "./marketing-content";
@@ -35,40 +28,17 @@ import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
 import { runScoreAgent } from "./score";
 import { runVisionAgent } from "./vision";
 import { runCopyAgentMix } from "./copy";
+import { runEditDirectorAgent } from "./edit";
 import { runComplianceAgent } from "./compliance";
 import { runPublishAgent } from "./publish";
 import type { Platform, StrategyPlan, HookSet, CopyVariant } from "@ceo-agent/shared";
 import { runContentTypeAgent } from "./content-type";
 import { resolveCopyMix, getPresetProfile } from "@ceo-agent/shared";
-import {
-  maybeFinalizeAutoClipTask,
-  runAutoClipPipeline,
-} from "./auto-clip-pipeline";
+import { buildImageMontageEditPlan, buildMixedMontageEditPlan, attachVoiceover } from "./motion-compose";
+import { runAutoClipPipeline } from "./auto-clip-pipeline";
+import { applyVoicePreset } from "./voice-preset";
 import type { VisionFrameInput } from "./vision";
 import { copyCacheKey, getCopyCache, setCopyCache } from "@ceo-agent/queue/copy-cache";
-import { buildPipelineExecutionPlan } from "./pipeline-router";
-import { mergePipelineContext } from "./merge-context";
-import {
-  runMarketingContentPipeline,
-  runStrategyPipeline,
-} from "./marketing-pipeline";
-import {
-  runCompositionPipeline,
-  type CompositionResult,
-} from "./composition-pipeline";
-import { assertMandatoryGatesComplete } from "./mandatory-gates";
-import {
-  adaptImageUnderstandingResult,
-  adaptMarketingPipelineResult,
-  adaptVideoPipelineResult,
-  preRenderVideoWarning,
-} from "./pipeline-adapters";
-import { executeCampaignPipelinePlan } from "./pipeline-executor";
-import { readCompletedPipelineResults } from "./pipeline-checkpoints";
-import { finalizeReviewAfterGates } from "./review-finalization";
-import type {
-  PipelineDependency,
-} from "./workflow-contracts";
 
 export interface VisionMediaPreparer {
   prepare(input: {
@@ -130,10 +100,15 @@ async function logAgent(
   }
 }
 
+/** Retry = Resume: completed stages remain in persisted stepProgress. */
+function isPipelineStageComplete(progress: StepProgress, stepId: string): boolean {
+  return progress[stepId]?.status === "completed";
+}
+
 export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
   const db = getDb();
-  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-  if (!task) throw new Error(`Task ${taskId} not found`);
+  const tracked = await loadTrackedCampaignTaskInputs(taskId);
+  const task = tracked.task;
 
   const [campaign] = await db
     .select()
@@ -149,388 +124,179 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     .limit(1);
 
   const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
-  const assets = await getCampaignAssets(db, campaign.id, task.workspaceId);
-  const persistedProgress = (task.stepProgress as StepProgress) ?? {};
-  const completedResults = readCompletedPipelineResults(persistedProgress);
+  const assets = tracked.assets;
+  const priorProgress = (task.stepProgress as StepProgress) ?? {};
+  for (const [stepId, step] of Object.entries(priorProgress)) {
+    if (isPipelineStageComplete(priorProgress, stepId)) {
+      console.log(`[pipeline] resume skip=${stepId} task=${taskId} status=${step?.status}`);
+    }
+  }
 
-  const dependencies: PipelineDependency[] = [
-    { id: "campaign", kind: "campaign", required: true, state: "READY" },
-    {
-      id: "business_profile",
-      kind: "business_profile",
-      required: true,
-      state: workspace ? "READY" : "WAITING",
-      ...(workspace ? {} : { reason: "Workspace Business Profile is unavailable" }),
-    },
-    ...assets.flatMap((asset) => [{
-      id: `asset-upload:${asset.id}`,
-      kind: "asset_upload" as const,
-      required: true,
-      state: asset.status === "ready" ? ("READY" as const) : ("WAITING" as const),
-      ...(asset.status === "ready" ? {} : { reason: `Asset status is ${asset.status}` }),
-      assetId: asset.id,
-    }, {
-      id: `asset-registration:${asset.id}`,
-      kind: "asset_registration" as const,
-      required: true,
-      state: asset.id ? ("READY" as const) : ("WAITING" as const),
-      assetId: asset.id,
-    }]),
-  ];
-  const routePlan = buildPipelineExecutionPlan({
-    campaignId: campaign.id,
-    workspaceId: task.workspaceId,
-    campaignObjective: campaign.goal ?? "",
-    selectedAssets: assets,
-    dependencies,
-    requestedOutputs: [],
-    enabledCapabilities: ["VIDEO", "IMAGE_UNDERSTANDING", "MARKETING"],
-    completedResults,
-    retryPipelineTypes:
-      task.status === "retrying"
-        ? (["VIDEO", "IMAGE_UNDERSTANDING"] as const).filter(
-            (pipelineType) => !completedResults[pipelineType]
-          )
-        : [],
-  });
-  const waitingRoutes = routePlan.routes.filter(
-    (route) =>
-      route.pipelineType !== "MARKETING" &&
-      route.state === "WAITING_FOR_DEPENDENCY"
-  );
-  const failedRoutes = routePlan.routes.filter(
-    (route) =>
-      route.pipelineType !== "MARKETING" &&
-      route.state === "FAILED_TERMINAL"
-  );
-  if (failedRoutes.length > 0) {
-    const message =
-      `Pipeline dependencies failed: ${failedRoutes
-        .map((route) => route.pipelineType)
-        .join(", ")}`;
-    await failPipelineExecution({ taskId, campaignId: campaign.id, message });
-    throw new Error(message);
+  const sourceVideo = resolveAutoClipSourceAsset(assets);
+  if (sourceVideo) {
+    console.log(
+      `[agent.pipeline] route=auto_clip task=${taskId} source=${sourceVideo.asset.id} dur=${sourceVideo.durationSec.toFixed(1)}s`
+    );
+    return runAutoClipPipeline(taskId, hooks);
   }
-  if (
-    routePlan.routes.every(
-      (route) =>
-        route.pipelineType === "MARKETING" || route.state === "NOT_REQUIRED"
-    )
-  ) {
-    const message = "No supported Campaign assets are ready for routing";
-    await failPipelineExecution({ taskId, campaignId: campaign.id, message });
-    throw new Error(message);
-  }
-  if (waitingRoutes.length > 0) {
-    await updateStep(taskId, "dependency_check", {
-      status: "pending",
-      output: {
-        pipelineState: "WAITING_FOR_DEPENDENCY",
-        routeKey: routePlan.deterministicKey,
-        pipelines: waitingRoutes.map((route) => route.pipelineType),
-      },
-    });
-    return {
-      taskId,
-      status: "waiting_for_dependency",
-      routeKey: routePlan.deterministicKey,
-    };
-  }
-  await updateStep(taskId, "pipeline_router", {
-    status: "completed",
-    completedAt: new Date().toISOString(),
-    output: routePlan,
-  });
-
-  type RoutedExecution =
-    | Awaited<ReturnType<typeof runAutoClipPipeline>>
-    | { taskId: string; creativeIds: string[]; status: "review_ready" }
-    | { taskId: string; status: "continue_general_agency" };
-  const execution = await executeCampaignPipelinePlan<RoutedExecution>(routePlan, {
-    VIDEO: async () => {
-      if (completedResults.VIDEO?.state === "COMPLETED") {
-        const finalized = await maybeFinalizeAutoClipTask(taskId);
-        return {
-          taskId,
-          creativeIds: completedResults.VIDEO.creativeIds,
-          status: finalized ? "review_ready" as const : "render_queued" as const,
-        };
-      }
-      const sourceVideo = resolveAutoClipSourceAsset(assets);
-      if (!sourceVideo) {
-        throw new Error("Router selected VIDEO without a playable source");
-      }
-      console.log(
-        `[agent.pipeline] router=${routePlan.deterministicKey.slice(0, 12)} route=auto_clip task=${taskId} source=${sourceVideo.asset.id} dur=${sourceVideo.durationSec.toFixed(1)}s`
-      );
-      return runAutoClipPipeline(taskId, hooks);
-    },
-    IMAGE_UNDERSTANDING: async () => {
-      console.log(
-        `[agent.pipeline] router=${routePlan.deterministicKey.slice(0, 12)} route=agency task=${taskId}`
-      );
-      return { taskId, status: "continue_general_agency" as const };
-    },
-  });
-  if (execution.status !== "continue_general_agency") return execution;
+  console.log(`[agent.pipeline] route=agency task=${taskId} (no playable source video)`);
 
   const creativeBrief = parseCampaignCreativeBrief(campaign);
   const campaignMeta = (campaign.metadata ?? {}) as Record<string, unknown>;
   const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign.goal);
   const videoAnalysis = buildVideoAnalysisPrompt(creativeBrief);
   const goal = effectiveCampaignGoal(creativeBrief, campaign.goal, contentLocale);
-  const campaignContext = provideCampaignAIContext({
-    businessProfile: brandProfile,
-    campaignObjective: goal,
-    publishingPlatforms: campaign.platforms ?? [],
-    targetAudience: campaign.targetAudienceOverride,
-    campaignBrief: creativeBrief.campaignBrief,
-    workspaceLanguage: contentLocale,
-    assets: assets.map((a) => ({ id: a.id, type: a.type })),
-    workflowMetadata: {
-      marketingExecution: {
-        campaignName: campaign.name,
-        creativeBrief,
-        videoAnalysis,
-        assetsUploaded: assets.length,
-      },
-    },
-  });
 
   await db
     .update(schema.tasks)
-    .set({
-      status: "running",
-      startedAt: task.startedAt ?? new Date(),
-      errorMessage: null,
-      completedAt: null,
-    })
+    .set({ status: "running", startedAt: new Date() })
     .where(eq(schema.tasks.id, taskId));
   await db
     .update(schema.campaigns)
     .set({ status: "processing" })
     .where(eq(schema.campaigns.id, campaign.id));
 
-  let totalCost = parseFloat(task.costUsd ?? "0");
+  let totalCost = 0;
   const budget = parseFloat(task.costBudgetUsd ?? "0.5");
-  const progressSnapshot = (task.stepProgress as StepProgress) ?? {};
-  const stageDone = (id: string) => isPipelineStageComplete(progressSnapshot, id);
 
   try {
-    let intent = getPipelineStageOutput<{ intent?: string }>(progressSnapshot, "parse_intent");
-    if (!stageDone("parse_intent")) {
-      await updateStep(taskId, "parse_intent", { status: "running", startedAt: new Date().toISOString() });
-      intent = parseIntent(goal, campaign.platforms);
-      await updateStep(taskId, "parse_intent", { status: "completed", completedAt: new Date().toISOString(), output: intent });
-    } else {
-      console.log(`[agent.pipeline] resume skip=parse_intent task=${taskId}`);
-    }
+    await updateStep(taskId, "parse_intent", { status: "running", startedAt: new Date().toISOString() });
+    const intent = parseIntent(goal, campaign.platforms);
+    await updateStep(taskId, "parse_intent", { status: "completed", completedAt: new Date().toISOString(), output: intent });
 
     // vision — runs FIRST so strategy/CEO are grounded in the actual assets.
+    await updateStep(taskId, "vision_analyze", { status: "running", startedAt: new Date().toISOString() });
     const videoAsset = assets.find((a) => a.type === "video");
     const imageAssets = assets.filter((a) => a.type === "image");
-    const primaryAsset = imageAssets[0];
-    if (!primaryAsset) {
-      throw new Error("Image Understanding requires a supported image Asset");
-    }
+    const primaryAsset = videoAsset ?? imageAssets[0];
+    if (!primaryAsset) throw new Error("No assets uploaded");
 
-    let vision = getPipelineStageOutput<import("@ceo-agent/shared").VisionAnalysis>(
-      progressSnapshot,
-      "vision_analyze"
-    );
-    let transcriptSummary: string | undefined = vision?.transcriptSummary;
-
-    if (!stageDone("vision_analyze") || !vision) {
-      await updateStep(taskId, "vision_analyze", { status: "running", startedAt: new Date().toISOString() });
-      let visionFrames: VisionFrameInput[] = [];
-      transcriptSummary = undefined;
-      if (hooks?.prepareVisionMedia) {
-        for (const asset of imageAssets.slice(0, 8)) {
-          const prepared = await hooks.prepareVisionMedia.prepare({
-            storagePath: asset.storagePath,
-            mediaType: "image",
-            durationSec: asset.durationSec ? parseFloat(asset.durationSec) : undefined,
-          });
-          visionFrames.push(...prepared.frames);
-          if (visionFrames.length >= 8) break;
+    let visionFrames: VisionFrameInput[] = [];
+    let transcriptSummary: string | undefined;
+    if (hooks?.prepareVisionMedia) {
+      const visionSources = videoAsset ? [videoAsset, ...imageAssets] : imageAssets;
+      for (const asset of visionSources.slice(0, 8)) {
+        const prepared = await hooks.prepareVisionMedia.prepare({
+          storagePath: asset.storagePath,
+          mediaType: asset.type as "video" | "image",
+          durationSec: asset.durationSec ? parseFloat(asset.durationSec) : undefined,
+        });
+        visionFrames.push(...prepared.frames);
+        if (!transcriptSummary && prepared.transcriptSummary) {
+          transcriptSummary = prepared.transcriptSummary;
         }
-        visionFrames = visionFrames.slice(0, 8);
+        if (visionFrames.length >= 8) break;
       }
-
-      const visionContext = enrichCampaignAIContext(campaignContext, {
-        transcript: transcriptSummary ?? null,
-      });
-      const { analysis, usage: visionUsage } = await runVisionAgent({
-        assetId: primaryAsset.id,
-        mediaType: "image",
-        durationSec: primaryAsset.durationSec ? parseFloat(primaryAsset.durationSec) : undefined,
-        campaignName: campaign.name,
-        videoAnalysis,
-        frames: visionFrames.length > 0 ? visionFrames : undefined,
-        transcriptSummary,
-        campaignContext: visionContext,
-      });
-      vision = analysis;
-      totalCost += visionUsage.costUsd;
-      await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
-      await updateStep(taskId, "vision_analyze", { status: "completed", completedAt: new Date().toISOString(), output: vision });
-    } else {
-      console.log(`[agent.pipeline] resume skip=vision_analyze task=${taskId}`);
+      visionFrames = visionFrames.slice(0, 8);
     }
+
+    const { analysis: vision, usage: visionUsage } = await runVisionAgent({
+      assetId: primaryAsset.id,
+      mediaType: primaryAsset.type as "video" | "image",
+      durationSec: primaryAsset.durationSec ? parseFloat(primaryAsset.durationSec) : undefined,
+      campaignName: campaign.name,
+      goal,
+      campaignBrief: creativeBrief.campaignBrief,
+      videoAnalysis,
+      frames: visionFrames.length > 0 ? visionFrames : undefined,
+      transcriptSummary,
+      contentLocale,
+    });
+    totalCost += visionUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "vision", visionUsage, vision);
+    await updateStep(taskId, "vision_analyze", { status: "completed", completedAt: new Date().toISOString(), output: vision });
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
-    // strategy_plan — built from the asset analysis (primary), then Campaign Brief + Target Audience.
-    const mediaOutputs = [
-      adaptImageUnderstandingResult({
-        assetIds: imageAssets.map((asset) => asset.id),
-        classification: vision.mediaType,
-        productDetection: vision.products,
-        subjectDetection: vision.subjects,
-        sceneDetection: vision.scenes,
-        confidence:
-          vision.confidence === undefined ? {} : { overall: vision.confidence },
-      }),
-    ];
-    await updateStep(taskId, "image_understanding_output", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: mediaOutputs[0],
+    // strategy_plan — built from the asset analysis (primary), then brief, then name.
+    await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
+    const { strategy: rawStrategy, industry, knowledgeSnippets, usage: strategyUsage } = await runStrategyAgent({
+      goal,
+      campaignName: campaign.name,
+      platforms: campaign.platforms,
+      brandProfile,
+      vision,
+      campaignBrief: creativeBrief.campaignBrief,
+      assetsUploaded: assets.length,
+      creativeBrief,
+      videoAnalysis,
+      contentLocale,
     });
-    const preStrategyMergedContext = mergePipelineContext(
-      enrichCampaignAIContext(campaignContext, {
-        vision,
-        transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
-      }),
-      mediaOutputs
-    );
-
-    let strategy = stageDone("strategy_plan")
-      ? normalizeStrategyPlan(
-          task.strategyJson ??
-            campaign.strategyJson ??
-            getPipelineStageOutput(progressSnapshot, "strategy_plan")
-        )
-      : undefined;
-    let knowledgeSnippets: Awaited<
-      ReturnType<typeof runStrategyPipeline>
-    >["output"]["knowledgeSnippets"] = [];
-
-    if (!stageDone("strategy_plan") || !strategy) {
-      await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
-      const strategyExecution = await runStrategyPipeline(
-        preStrategyMergedContext
-      );
-      const {
-        strategy: rawStrategy,
-        industry,
-        knowledgeSnippets: snippets,
-        usage: strategyUsage,
-      } = strategyExecution.output;
-      knowledgeSnippets = snippets;
-      strategy = alignStrategyWithVision(rawStrategy, vision, {
-        goal,
-        campaignBrief: creativeBrief.campaignBrief,
-        userNotes: creativeBrief.campaignBrief,
-        videoAnalysis: videoAnalysis ?? undefined,
-        campaignName: campaign.name,
-        locale: contentLocale === "zh" ? "zh" : "en",
-      });
-      totalCost += strategyUsage.costUsd;
-      await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
-      await db
-        .update(schema.tasks)
-        .set({ strategyJson: strategy })
-        .where(eq(schema.tasks.id, taskId));
-      await db
-        .update(schema.campaigns)
-        .set({
-          strategyJson: strategy,
-          industry: industry === "general" ? null : industry,
-          objectives: strategyObjectives(strategy),
-        })
-        .where(eq(schema.campaigns.id, campaign.id));
-      await updateStep(taskId, "strategy_plan", { status: "completed", completedAt: new Date().toISOString(), output: strategy });
-    } else {
-      console.log(`[agent.pipeline] resume skip=strategy_plan task=${taskId}`);
-    }
+    let strategy = alignStrategyWithVision(rawStrategy, vision, {
+      goal,
+      campaignBrief: creativeBrief.campaignBrief,
+      userNotes: creativeBrief.campaignBrief,
+      videoAnalysis: videoAnalysis ?? undefined,
+      campaignName: campaign.name,
+      locale: contentLocale === "zh" ? "zh" : "en",
+    });
+    totalCost += strategyUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategy);
+    await db
+      .update(schema.tasks)
+      .set({ strategyJson: strategy })
+      .where(eq(schema.tasks.id, taskId));
+    await db
+      .update(schema.campaigns)
+      .set({
+        strategyJson: strategy,
+        industry: industry === "general" ? null : industry,
+        objectives: strategyObjectives(strategy),
+      })
+      .where(eq(schema.campaigns.id, campaign.id));
+    await updateStep(taskId, "strategy_plan", { status: "completed", completedAt: new Date().toISOString(), output: strategy });
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
-
-    const mergedMarketingContext = mergePipelineContext(
-      enrichCampaignAIContext(campaignContext, {
-        vision,
-        strategy,
-        transcript: transcriptSummary ?? vision.transcriptSummary ?? null,
-      }),
-      mediaOutputs
-    );
-    const pipelineContext = mergedMarketingContext.campaignContext;
-    await updateStep(taskId, "merge_context", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: mergedMarketingContext,
-    });
 
     // ceo_plan
-    if (!stageDone("ceo_plan")) {
-      await updateStep(taskId, "ceo_plan", { status: "running", startedAt: new Date().toISOString() });
-      const assetSummary = assets.map((a) => `${a.type}:${a.id}`).join(", ");
-      const { taskGraph, usage: ceoUsage } = await runCeoAgent({
-        campaignContext: pipelineContext,
-        assetSummary,
-        costBudgetUsd: budget,
-        knowledgeSnippets,
-        campaignName: campaign.name,
-        videoAnalysis,
-      });
-      totalCost += ceoUsage.costUsd;
-      await logAgent(task.orgId, task.workspaceId, taskId, "ceo", ceoUsage, taskGraph);
-      await db.update(schema.tasks).set({ ceoPlan: taskGraph }).where(eq(schema.tasks.id, taskId));
-      await updateStep(taskId, "ceo_plan", { status: "completed", completedAt: new Date().toISOString(), output: taskGraph });
-    } else {
-      console.log(`[agent.pipeline] resume skip=ceo_plan task=${taskId}`);
-    }
+    await updateStep(taskId, "ceo_plan", { status: "running", startedAt: new Date().toISOString() });
+    const assetSummary = assets.map((a) => `${a.type}:${a.id}`).join(", ");
+    const { taskGraph, usage: ceoUsage } = await runCeoAgent({
+      goal,
+      platforms: campaign.platforms,
+      assetSummary,
+      brandProfile,
+      costBudgetUsd: budget,
+      strategyPlan: strategy,
+      knowledgeSnippets,
+      campaignName: campaign.name,
+      videoAnalysis,
+    });
+    totalCost += ceoUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "ceo", ceoUsage, taskGraph);
+    await db.update(schema.tasks).set({ ceoPlan: taskGraph }).where(eq(schema.tasks.id, taskId));
+    await updateStep(taskId, "ceo_plan", { status: "completed", completedAt: new Date().toISOString(), output: taskGraph });
 
     if (totalCost > budget) throw new Error("Cost budget exceeded");
 
     // content classify + preset
-    let classification = getPipelineStageOutput<ContentClassification>(
-      progressSnapshot,
-      "content_classify"
-    );
-    if (!stageDone("content_classify") || !classification) {
-      await updateStep(taskId, "content_classify", { status: "running", startedAt: new Date().toISOString() });
-      const { classification: classified, usage: classifyUsage } = await runContentTypeAgent({
-        campaignContext: pipelineContext,
-        vision,
-        videoAnalysis,
-        campaignName: campaign.name,
-      });
-      classification = classified;
-      totalCost += classifyUsage.costUsd;
-      await logAgent(task.orgId, task.workspaceId, taskId, "content_type", classifyUsage, classification);
-      const presetEarly = getPresetProfile(classification.presetId);
-      await db
-        .update(schema.campaigns)
-        .set({
-          industry: classification.industry === "general" ? null : classification.industry,
-          metadata: {
-            ...campaignMeta,
-            contentType: classification.contentType,
-            presetId: classification.presetId,
-          },
-        })
-        .where(eq(schema.campaigns.id, campaign.id));
-      await updateStep(taskId, "content_classify", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        output: { ...classification, presetLabel: presetEarly.labelZh },
-      });
-    } else {
-      console.log(`[agent.pipeline] resume skip=content_classify task=${taskId}`);
-    }
-    const preset = getPresetProfile(classification!.presetId);
+    await updateStep(taskId, "content_classify", { status: "running", startedAt: new Date().toISOString() });
+    const { classification, usage: classifyUsage } = await runContentTypeAgent({
+      goal,
+      videoAnalysis,
+      campaignName: campaign.name,
+      vision,
+      platforms: campaign.platforms,
+    });
+    totalCost += classifyUsage.costUsd;
+    await logAgent(task.orgId, task.workspaceId, taskId, "content_type", classifyUsage, classification);
+    const preset = getPresetProfile(classification.presetId);
+    await db
+      .update(schema.campaigns)
+      .set({
+        industry: classification.industry === "general" ? null : classification.industry,
+        metadata: {
+          ...campaignMeta,
+          contentType: classification.contentType,
+          presetId: classification.presetId,
+        },
+      })
+      .where(eq(schema.campaigns.id, campaign.id));
+    await updateStep(taskId, "content_classify", {
+      status: "completed",
+      completedAt: new Date().toISOString(),
+      output: { ...classification, presetLabel: preset.labelZh },
+    });
 
     const platforms = (campaign.platforms.length ? campaign.platforms : ["tiktok"]) as Platform[];
 
@@ -544,36 +310,41 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     let allVariants: CopyVariant[];
     let hookSet: HookSet;
-    let subtitleTimeline: SubtitleTimelineSegment[] | undefined;
+    let subtitleTimeline: Parameters<typeof attachVoiceover>[4];
 
-    if (stageDone("content_generate") && stageDone("copy_generate") && stageDone("hook_generate")) {
-      console.log(`[agent.pipeline] resume skip=content_generate/hooks/copy task=${taskId}`);
-      allVariants =
-        (getPipelineStageOutput<CopyVariant[]>(progressSnapshot, "copy_generate") as CopyVariant[]) ??
-        cachedVariants ??
-        [];
-      hookSet =
-        ((task.hooksJson as HookSet | null) ??
-          getPipelineStageOutput<HookSet>(progressSnapshot, "hook_generate")) as HookSet;
-      const pack = getPipelineStageOutput<{ subtitleTimeline?: typeof subtitleTimeline }>(
-        progressSnapshot,
-        "content_generate"
-      );
-      subtitleTimeline = pack?.subtitleTimeline;
-      if (!allVariants.length || !hookSet) {
-        throw new Error("Resume missing marketing outputs — cannot continue safely");
-      }
+    if (cachedVariants) {
+      console.log(`[orchestrator] copy cache hit campaignId=${campaign.id}`);
+      allVariants = cachedVariants;
+      hookSet = {
+        hooks: allVariants.map((v, i) => ({
+          id: `h-${i}`,
+          type:
+            v.template === "story"
+              ? "emotional"
+              : v.template === "review"
+                ? "offer"
+                : v.template === "comparison" || v.template === "listicle"
+                  ? "curiosity"
+                  : "problem",
+          text: v.hook,
+        })),
+        recommendedHookId: "h-0",
+      };
+      await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: { cached: true } });
+      await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
+      await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
     } else {
-      // Always generate the marketing pack for Review. Copy-variant cache only
-      // skips re-deriving platform variants when a prior run already produced them.
       await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-      const marketingExecution = await runMarketingContentPipeline(
-        mergedMarketingContext
-      );
-      const {
-        contentPackage: rawContentPackage,
-        usage: contentUsage,
-      } = marketingExecution.output;
+      const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
+        strategy,
+        vision,
+        videoAnalysis,
+        userNotes: creativeBrief.campaignBrief,
+        goal,
+        campaignName: campaign.name,
+        platforms: campaign.platforms,
+        contentLocale,
+      });
       totalCost += contentUsage.costUsd;
       const { contentPackage, usage: translateUsage } =
         await enrichMarketingPackTranslations(rawContentPackage);
@@ -582,18 +353,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       if (translateUsage.costUsd > 0) {
         await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
       }
-      await updateStep(taskId, "content_generate", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        output: contentPackage,
-      });
-      await updateStep(taskId, "marketing_pipeline_output", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        output: adaptMarketingPipelineResult(
-          contentPackage as unknown as Record<string, unknown>
-        ),
-      });
+      await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: contentPackage });
 
       if (totalCost > budget) throw new Error("Cost budget exceeded");
 
@@ -602,140 +362,75 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       await db.update(schema.tasks).set({ hooksJson: hookSet }).where(eq(schema.tasks.id, taskId));
       await updateStep(taskId, "hook_generate", { status: "completed", completedAt: new Date().toISOString(), output: hookSet });
 
-      if (cachedVariants) {
-        console.log(`[orchestrator] copy cache hit campaignId=${campaign.id}`);
-        allVariants = cachedVariants;
-      } else {
-        allVariants = contentPackageToCopyVariants(contentPackage, strategy!, platforms);
-        await setCopyCache(cacheKey, allVariants);
-      }
+      allVariants = contentPackageToCopyVariants(contentPackage, strategy, platforms);
       subtitleTimeline = contentPackage.subtitleTimeline;
       await logAgent(task.orgId, task.workspaceId, taskId, "copy", { input: 0, output: 0, costUsd: 0 }, allVariants);
-      await updateStep(taskId, "copy_generate", {
-        status: "completed",
-        completedAt: new Date().toISOString(),
-        output: allVariants,
-      });
+      await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
+
+      await setCopyCache(cacheKey, allVariants);
     }
-    const marketingPipelineResult = adaptMarketingPipelineResult(
-      {
-        copyVariants: allVariants,
-        hookSet,
-        subtitleTimeline: subtitleTimeline ?? [],
-      },
-      mergedMarketingContext.provenance
-    );
 
     const recommendedVariantId = allVariants.find((v) => v.locale === "en")?.id ?? allVariants[0]?.id ?? "v-en-1";
 
-    const existingDraft = (
-      await db
-        .select()
-        .from(schema.creatives)
-        .where(eq(schema.creatives.taskId, task.id))
-        .limit(1)
-    )[0];
-    const compositionResult = await runCompositionPipeline({
-      mode: "GENERAL",
-      mergedContext: mergedMarketingContext,
-      marketingResult: marketingPipelineResult,
-      campaignContext: pipelineContext,
-      vision: vision!,
-      preset,
-      copyVariants: allVariants,
-      platforms,
-      campaignGoal: goal,
-      campaignName: campaign.name,
-      videoAsset: videoAsset
-        ? {
-            id: videoAsset.id,
-            durationSec: videoAsset.durationSec
-              ? parseFloat(videoAsset.durationSec)
-              : 15,
-          }
-        : undefined,
-      imageAssetIds: imageAssets.map((asset) => asset.id),
-      subtitleTimeline,
-      voicePreset: creativeBrief.voicePreset,
-      selectedCopyId: recommendedVariantId,
-      selectedHookId: hookSet.recommendedHookId ?? hookSet.hooks[0]?.id,
-      resumeResult: getPipelineStageOutput<CompositionResult>(
-        progressSnapshot,
-        "VIDEO_COMPOSITION_COMPLETE"
-      ),
-      registry: {
-        registerDraft: async (draft) => {
-          if (existingDraft) {
-            await db
-              .update(schema.creatives)
-              .set({
-                copyVariants: draft.copyVariants,
-                selectedCopyId: draft.selectedCopyId,
-                selectedHookId: draft.selectedHookId,
-                editPlan: draft.editPlan,
-              })
-              .where(eq(schema.creatives.id, existingDraft.id));
-            return { creativeId: existingDraft.id };
-          }
-          const [created] = await db
-            .insert(schema.creatives)
-            .values({
-              orgId: task.orgId,
-              workspaceId: task.workspaceId,
-              campaignId: campaign.id,
-              taskId: task.id,
-              status: "processing",
-              copyVariants: draft.copyVariants,
-              selectedCopyId: draft.selectedCopyId,
-              selectedHookId: draft.selectedHookId,
-              editPlan: draft.editPlan,
-            })
-            .returning();
-          if (!created) throw new Error("Creative Draft registration failed");
-          return { creativeId: created.id };
-        },
-      },
-      persistCheckpoint: async (checkpoint, output) => {
-        await updateStep(taskId, checkpoint, {
-          status: "completed",
-          completedAt: new Date().toISOString(),
-          output,
-        });
-      },
-    });
-    const creativeId = compositionResult.creativeDrafts[0]?.creativeId;
-    if (!creativeId) throw new Error("Composition produced no Creative Draft");
+    // create creative
     const [creative] = await db
-      .select()
-      .from(schema.creatives)
-      .where(eq(schema.creatives.id, creativeId))
-      .limit(1);
-    if (!creative) throw new Error("Creative Draft registration was not persisted");
-    await logAgent(
-      task.orgId,
-      task.workspaceId,
-      taskId,
-      "edit",
-      { input: 0, output: 0, costUsd: 0 },
-      compositionResult
-    );
-    await updateStep(taskId, "edit_director_plan", {
-      status: "completed",
-      completedAt: new Date().toISOString(),
-      output: creative.editPlan,
-    });
+      .insert(schema.creatives)
+      .values({
+        orgId: task.orgId,
+        workspaceId: task.workspaceId,
+        campaignId: campaign.id,
+        taskId: task.id,
+        status: "processing",
+        copyVariants: allVariants,
+        selectedCopyId: recommendedVariantId,
+        selectedHookId: hookSet.recommendedHookId ?? hookSet.hooks[0]?.id,
+      })
+      .returning();
 
-    // enqueue ffmpeg render — skip if preview already ready
-    if (
-      stageDone("ffmpeg_render") &&
-      creative.renderStatus === "preview_ready" &&
-      Boolean(creative.videoUrl)
-    ) {
-      console.log(`[agent.pipeline] resume skip=ffmpeg_render task=${taskId}`);
-      await runComplianceAfterRender(taskId, creative.id);
-      return { taskId, creativeId: creative.id, status: "render_skipped_resume" };
+    // edit director
+    await updateStep(taskId, "edit_director_plan", { status: "running", startedAt: new Date().toISOString() });
+    let editPlan;
+    if (videoAsset && imageAssets.length > 0) {
+      editPlan = buildMixedMontageEditPlan({
+        vision,
+        preset,
+        copyVariants: allVariants,
+        videoAssetId: videoAsset.id,
+        imageAssetIds: imageAssets.map((a) => a.id),
+        sourceDurationSec: videoAsset.durationSec ? parseFloat(videoAsset.durationSec) : 15,
+      });
+      await logAgent(task.orgId, task.workspaceId, taskId, "edit", { input: 0, output: 0, costUsd: 0 }, editPlan);
+    } else if (videoAsset) {
+      const { editPlan: videoPlan, usage: editUsage } = await runEditDirectorAgent({
+        vision,
+        copyVariants: allVariants,
+        preset,
+        assetId: videoAsset.id,
+        durationSec: videoAsset.durationSec ? parseFloat(videoAsset.durationSec) : 15,
+        goal,
+        campaignName: campaign.name,
+      });
+      editPlan = videoPlan;
+      totalCost += editUsage.costUsd;
+      await logAgent(task.orgId, task.workspaceId, taskId, "edit", editUsage, editPlan);
+    } else {
+      editPlan = buildImageMontageEditPlan({
+        vision,
+        preset,
+        copyVariants: allVariants,
+        imageAssetIds: imageAssets.map((a) => a.id),
+      });
+      await logAgent(task.orgId, task.workspaceId, taskId, "edit", { input: 0, output: 0, costUsd: 0 }, editPlan);
     }
+    editPlan = attachVoiceover(editPlan, allVariants, platforms, goal, subtitleTimeline);
+    editPlan = applyVoicePreset(editPlan, creativeBrief.voicePreset);
+    await db
+      .update(schema.creatives)
+      .set({ editPlan })
+      .where(eq(schema.creatives.id, creative!.id));
+    await updateStep(taskId, "edit_director_plan", { status: "completed", completedAt: new Date().toISOString(), output: editPlan });
 
+    // enqueue ffmpeg render
     await updateStep(taskId, "ffmpeg_render", {
       status: "running",
       startedAt: new Date().toISOString(),
@@ -761,21 +456,19 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     return { taskId, creativeId: creative!.id, status: "render_queued" };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Pipeline failed";
-    await failPipelineExecution({
-      taskId,
-      campaignId: campaign.id,
-      message,
-      forceTerminal: isVisionAnalysisTimeoutError(error),
-    });
+    await db
+      .update(schema.tasks)
+      .set({ status: "failed", errorMessage: message, completedAt: new Date() })
+      .where(eq(schema.tasks.id, taskId));
+    await db
+      .update(schema.campaigns)
+      .set({ status: "failed" })
+      .where(eq(schema.campaigns.id, campaign.id));
     throw error;
   }
 }
 
-export async function runComplianceAfterRender(
-  taskId: string,
-  creativeId: string,
-  options: { finalizeReview?: boolean } = {}
-) {
+export async function runComplianceAfterRender(taskId: string, creativeId: string) {
   const db = getDb();
   const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
   const [creative] = await db
@@ -783,9 +476,7 @@ export async function runComplianceAfterRender(
     .from(schema.creatives)
     .where(eq(schema.creatives.id, creativeId))
     .limit(1);
-  if (!task || !creative) {
-    throw new Error("Cannot finalize Review without Task and Creative");
-  }
+  if (!task || !creative) return;
 
   const [workspace] = await db
     .select()
@@ -797,91 +488,11 @@ export async function runComplianceAfterRender(
   const editPlan = creative.editPlan as import("@ceo-agent/shared").EditPlan | null;
   const subtitles = editPlan?.subtitles?.map((s) => s.text) ?? [];
 
-  const [campaign] = await db
-    .select()
-    .from(schema.campaigns)
-    .where(eq(schema.campaigns.id, task.campaignId))
-    .limit(1);
-  const creativeBrief = campaign ? parseCampaignCreativeBrief(campaign) : null;
-  const campaignMeta = (campaign?.metadata ?? {}) as Record<string, unknown>;
-  const contentLocale = resolvePipelineContentLocale(campaignMeta, campaign?.goal);
-  const progress = (task.stepProgress as StepProgress) ?? {};
-  const vision = progress.vision_analyze?.output as import("@ceo-agent/shared").VisionAnalysis | undefined;
-  const rawStrategy =
-    task.strategyJson ?? campaign?.strategyJson ?? progress.strategy_plan?.output;
-  const strategy = rawStrategy ? normalizeStrategyPlan(rawStrategy) : undefined;
-  const campaignAssets = campaign
-    ? await getCampaignAssets(db, campaign.id, task.workspaceId)
-    : [];
-  const baseCampaignContext = campaign
-    ? provideCampaignAIContextFromCampaign({
-        brandProfile,
-        campaign,
-        vision: vision ?? null,
-        strategy: strategy ?? null,
-        assets: campaignAssets.map((a) => ({ id: a.id, type: a.type })),
-        transcript: vision?.transcriptSummary ?? null,
-      })
-    : provideCampaignAIContext({
-        businessProfile: brandProfile,
-        campaignObjective: "",
-        publishingPlatforms: [],
-        workspaceLanguage: contentLocale,
-      });
-  const persistedMerged = progress.merge_context?.output as
-    | ReturnType<typeof mergePipelineContext>
-    | undefined;
-  const gateMediaResults = [];
-  const videoAssets = campaignAssets.filter((asset) => asset.type === "video");
-  const imageAssets = campaignAssets.filter((asset) => asset.type === "image");
-  if (videoAssets.length > 0) {
-    gateMediaResults.push(
-      adaptVideoPipelineResult({
-        assetIds: videoAssets.map((asset) => asset.id),
-        transcript: vision?.transcriptSummary ?? null,
-        sceneAnalysis: vision?.scenes,
-        suggestedMoments: vision?.suggestedMoments,
-        warnings: [preRenderVideoWarning()],
-        complete: false,
-      })
-    );
-  }
-  if (imageAssets.length > 0) {
-    gateMediaResults.push(
-      adaptImageUnderstandingResult({
-        assetIds: imageAssets.map((asset) => asset.id),
-        classification: vision?.mediaType,
-        productDetection: vision?.products,
-        subjectDetection: vision?.subjects,
-        sceneDetection: vision?.scenes,
-        confidence:
-          vision?.confidence === undefined
-            ? {}
-            : { overall: vision.confidence },
-      })
-    );
-  }
-  const gateMergedContext =
-    persistedMerged?.campaignContext && persistedMerged.deterministicKey
-      ? persistedMerged
-      : mergePipelineContext(
-          enrichCampaignAIContext(baseCampaignContext, {
-            vision: vision ?? null,
-            strategy: strategy ?? null,
-          }),
-          gateMediaResults
-        );
-  const campaignContext = gateMergedContext.campaignContext;
-
   await updateStep(taskId, "compliance_check", { status: "running", startedAt: new Date().toISOString() });
-  const { result, usage } = await runComplianceAgent({
-    campaignContext,
-    copyVariants: variants,
-    subtitles,
-  });
+  const { result, usage } = await runComplianceAgent({ copyVariants: variants, subtitles, brandProfile });
   await logAgent(task.orgId, task.workspaceId, taskId, "compliance", usage, result);
 
-  const newStatus = result.passed ? "processing" : "compliance_failed";
+  const newStatus = result.passed ? "pending_internal_review" : "compliance_failed";
   await db
     .update(schema.creatives)
     .set({ complianceResult: result, status: newStatus })
@@ -895,46 +506,40 @@ export async function runComplianceAfterRender(
 
   if (!result.passed) {
     if (task.retryCount < CEO_MAX_RETRIES) {
-      try {
-        // retryPipelineStep increments retryCount and re-runs copy + compliance
-        await retryPipelineStep(taskId, "copy");
-      } catch (err) {
-        const message = err instanceof Error ? err.message : "Copy retry after compliance failed";
-        await failPipelineExecution({
-          taskId,
-          campaignId: task.campaignId,
-          message,
-        });
-        throw err;
-      }
+      await db
+        .update(schema.tasks)
+        .set({ retryCount: task.retryCount + 1 })
+        .where(eq(schema.tasks.id, taskId));
     } else {
-      await failPipelineExecution({
-        taskId,
-        campaignId: task.campaignId,
-        message:
-          result.flags?.[0]?.reason ??
-          `Compliance check failed (score=${result.score})`,
-      });
+      await db.update(schema.tasks).set({ status: "failed" }).where(eq(schema.tasks.id, taskId));
+      await db
+        .update(schema.campaigns)
+        .set({ status: "failed" })
+        .where(eq(schema.campaigns.id, task.campaignId));
     }
     return;
   }
 
-  // Agency path must enqueue Review the same way Auto Clip does — otherwise
-  // /api/reviews stays empty while campaign/creative sit in pending_internal_review.
+  const [campaign] = await db
+    .select()
+    .from(schema.campaigns)
+    .where(eq(schema.campaigns.id, task.campaignId))
+    .limit(1);
+  const progress = (task.stepProgress as StepProgress) ?? {};
+  const rawStrategy =
+    task.strategyJson ?? campaign?.strategyJson ?? progress.strategy_plan?.output;
+  const strategy = rawStrategy ? normalizeStrategyPlan(rawStrategy) : undefined;
   const hookSet =
     (task.hooksJson as HookSet | null) ??
     (progress.hook_generate?.output as HookSet);
+  const vision = progress.vision_analyze?.output as import("@ceo-agent/shared").VisionAnalysis;
   const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
+  const creativeBrief = campaign ? parseCampaignCreativeBrief(campaign) : null;
   const videoAnalysis = creativeBrief ? buildVideoAnalysisPrompt(creativeBrief) : null;
-  const scoreContext = enrichCampaignAIContext(campaignContext, {
-    vision: vision ?? null,
-    strategy: strategy ?? null,
-  });
 
   if (strategy && hookSet && vision) {
     await updateStep(taskId, "marketing_score", { status: "running", startedAt: new Date().toISOString() });
     const { score, usage: scoreUsage } = await runScoreAgent({
-      campaignContext: scoreContext,
       strategy,
       hookSet,
       vision,
@@ -970,18 +575,8 @@ export async function runComplianceAfterRender(
         platformFitScore: String(score.platformFitScore),
         improvements: score.improvements,
       });
-    } catch (scoreErr) {
-      const message = scoreErr instanceof Error ? scoreErr.message : String(scoreErr);
-      console.error(
-        JSON.stringify({
-          event: "marketing_score_persist_failed",
-          taskId,
-          campaignId: task.campaignId,
-          workspaceId: task.workspaceId,
-          error: message,
-        })
-      );
-      throw new Error(`Marketing score persistence failed: ${message}`);
+    } catch {
+      // Table may not be migrated yet; score still stored on task/creative JSON
     }
 
     await updateStep(taskId, "marketing_score", {
@@ -990,68 +585,18 @@ export async function runComplianceAfterRender(
       output: score,
     });
   } else {
-    const message = "Marketing Score prerequisites are unavailable";
-    await updateStep(taskId, "marketing_score", {
-      status: "failed",
-      completedAt: new Date().toISOString(),
-      error: message,
-    });
-    await failPipelineExecution({
-      taskId,
-      campaignId: task.campaignId,
-      message,
-    });
-    throw new Error(message);
+    await updateStep(taskId, "marketing_score", { status: "skipped", completedAt: new Date().toISOString() });
   }
 
-  const [gateTask] = await db
-    .select()
-    .from(schema.tasks)
-    .where(eq(schema.tasks.id, taskId))
-    .limit(1);
-  const [gateCreative] = await db
-    .select()
-    .from(schema.creatives)
-    .where(eq(schema.creatives.id, creativeId))
-    .limit(1);
-  if (options.finalizeReview === false) {
-    assertMandatoryGatesComplete({
-      progress: (gateTask?.stepProgress as StepProgress) ?? {},
-      creativeRegistered: Boolean(gateCreative),
-      outputReady:
-        gateCreative?.renderStatus === "preview_ready" && Boolean(gateCreative.videoUrl),
-    });
-    return { compliance: result, reviewCreated: false };
-  }
-
-  const reviewProgress = {
-    ...((gateTask?.stepProgress as StepProgress) ?? {}),
-    human_review: {
-      status: "pending" as const,
-      startedAt: new Date().toISOString(),
-    },
-  };
-  await finalizeReviewAfterGates(
-    [{
-      progress: (gateTask?.stepProgress as StepProgress) ?? {},
-      creativeRegistered: Boolean(gateCreative),
-      outputReady:
-        gateCreative?.renderStatus === "preview_ready" &&
-        Boolean(gateCreative.videoUrl),
-    }],
-    {
-      taskId,
-      campaignId: task.campaignId,
-      orgId: task.orgId,
-      workspaceId: task.workspaceId,
-      creativeIds: [creativeId],
-      finalOutputReferences: gateCreative?.videoUrl
-        ? [gateCreative.videoUrl]
-        : [],
-      progress: reviewProgress,
-    }
-  );
-  return { compliance: result, reviewCreated: true };
+  await db
+    .update(schema.tasks)
+    .set({ status: "completed", completedAt: new Date() })
+    .where(eq(schema.tasks.id, taskId));
+  await db
+    .update(schema.campaigns)
+    .set({ status: "pending_internal_review" })
+    .where(eq(schema.campaigns.id, task.campaignId));
+  await updateStep(taskId, "human_review", { status: "pending" });
 }
 
 export async function retryPipelineStep(
@@ -1059,26 +604,29 @@ export async function retryPipelineStep(
   step: "copy" | "edit" | "full"
 ) {
   const db = getDb();
-  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-  if (!task) throw new Error("Task not found");
-  // OPS-002 Rule 3 — no further resume once retries are exhausted.
-  if (task.status === "failed" || task.retryCount >= CEO_MAX_RETRIES) {
-    throw new Error("Max retries exceeded");
-  }
+  const tracked = await loadTrackedCampaignTaskInputs(taskId);
+  const task = tracked.task;
+  if (task.retryCount >= CEO_MAX_RETRIES) throw new Error("Max retries exceeded");
 
-  // OPS-002 Rule 2 — Retry = Resume (continuation of same execution).
+  // Retry = Resume — same task identity is preserved.
+  emitVideoStudioOpsEvent({
+    event: "pipeline.resume",
+    stage: "agent.pipeline",
+    outcome: "retrying",
+    orgId: task.orgId,
+    workspaceId: task.workspaceId,
+    campaignId: task.campaignId,
+    taskId,
+    recoveryKind: "pipeline_resume",
+    retryCount: task.retryCount + 1,
+  });
+
   await db
     .update(schema.tasks)
-    .set({
-      retryCount: task.retryCount + 1,
-      status: "retrying",
-      errorMessage: null,
-      completedAt: null,
-    })
+    .set({ retryCount: task.retryCount + 1, status: "running" })
     .where(eq(schema.tasks.id, taskId));
 
   if (step === "full") {
-    // runPipeline skips completed stages via isPipelineStageComplete.
     return runPipeline(taskId);
   }
 
@@ -1110,29 +658,12 @@ export async function retryPipelineStep(
       (progress?.hook_generate?.output as HookSet);
     const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
     const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
-    const campaignAssets = campaign
-      ? await getCampaignAssets(db, campaign.id, task.workspaceId)
-      : [];
-    const campaignContext = campaign
-      ? provideCampaignAIContextFromCampaign({
-          brandProfile,
-          campaign,
-          vision: vision ?? null,
-          strategy: strategy ?? null,
-          assets: campaignAssets.map((a) => ({ id: a.id, type: a.type })),
-          transcript: vision?.transcriptSummary ?? null,
-        })
-      : provideCampaignAIContext({
-          businessProfile: brandProfile,
-          campaignObjective: "",
-          publishingPlatforms: platforms,
-          workspaceLanguage: "en",
-        });
 
     const copyMix = resolveCopyMix(platforms);
     const { variants: allVariants } = await runCopyAgentMix({
-      campaignContext,
       vision,
+      brandProfile,
+      goal: campaign?.goal ?? "",
       campaignName: campaign?.name,
       strategyPlan: strategy,
       hookSet,

@@ -10,17 +10,6 @@ dist
 coverage
 .vercel
 tmp
-tmp-e2e-assets/
-tmp-e2e-*.json
-scripts/tmp-e2e-discover.ts
-scripts/tmp-inspect-task.ts
-scripts/tmp-verify-review-load.ts
 scripts/vercel-production.env
 *.tsbuildinfo
-
-# Local / CI artifacts
-.pnpm-store/
-test-results/
-playwright-report/
-blob-report/
-e2e/.auth/
+docs/architecture/photo-scene-provider-cert-live.json

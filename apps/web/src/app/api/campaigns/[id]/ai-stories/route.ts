@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { getDb, schema } from "@ceo-agent/db";
 import { AiStoryCreateBodySchema, isUuid } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
+import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
 import {
   assertCampaignAssets,
@@ -25,7 +26,7 @@ export async function GET(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "client_viewer");
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
 
     const stories = await listCampaignAiStories(db, campaignId, campaign.workspaceId);
     return apiSuccess({ stories });
@@ -55,7 +56,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
 
     const assetIds = parsed.data.assetIds ?? [];
     if (assetIds.length) {

@@ -8,7 +8,7 @@ import {
 } from "../dictionaries/industry-dictionary";
 import {
   PublishingPlatformsSchema,
-  sanitizePublishingPlatforms,
+  normalizeStoredPublishingPlatforms,
 } from "../publishing-platforms";
 
 const optionalUrl = z
@@ -63,6 +63,7 @@ export const BusinessProfileRecordSchema = z.object({
   brandImages: z.array(z.string().trim()).default([]),
   supportedLanguages: z.array(z.string().trim()).default([]),
   defaultPublishingPlatforms: PublishingPlatformsSchema.default([]),
+  unrecognizedPublishingPlatforms: z.array(z.string()).default([]),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
   createdBy: z.string().uuid().nullable().optional(),
@@ -293,14 +294,14 @@ export function normalizeBusinessProfileRecord(raw: Record<string, unknown>): Bu
       : {};
 
   const businessHours = normalizeBusinessHours(raw.businessHours);
+  const platforms = normalizeStoredPublishingPlatforms(raw.defaultPublishingPlatforms);
 
   return BusinessProfileRecordSchema.parse({
     ...raw,
     ...migratedIndustry,
     businessHours,
-    defaultPublishingPlatforms: sanitizePublishingPlatforms(
-      raw.defaultPublishingPlatforms
-    ),
+    defaultPublishingPlatforms: platforms.recognized,
+    unrecognizedPublishingPlatforms: platforms.unrecognized,
   });
 }
 

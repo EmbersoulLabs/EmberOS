@@ -2,7 +2,7 @@
  * Campaign-owned AI Story persistence helpers.
  */
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, schema, CampaignAssetRefError } from "@ceo-agent/db";
 import {
   assertAiStoryTransition,
   nextAiStoryVersionNumber,
@@ -46,7 +46,39 @@ export async function loadCampaignAiStory(
   const currentVersion =
     versions.find((v) => v.id === story.currentVersionId) ?? versions[0] ?? null;
 
-  return { story, versions, currentVersion, assetLinks };
+  let verificationFixtureState:
+    | "CREATING"
+    | "FAILED_INCOMPLETE"
+    | "LEGACY_PARTIAL_VERIFICATION_FIXTURE"
+    | "COMPLETED"
+    | null = null;
+  if (currentVersion?.sourceContextSnapshot?.verificationFixture === true) {
+    const plans = await db
+      .select({ id: schema.aiStoryExecutionPlans.id })
+      .from(schema.aiStoryExecutionPlans)
+      .where(eq(schema.aiStoryExecutionPlans.storyId, storyId));
+    const verificationRows = plans.length > 0
+      ? await db
+          .select({ executionPlanId: schema.aiStoryExecuteVerifications.executionPlanId })
+          .from(schema.aiStoryExecuteVerifications)
+          .where(
+            inArray(
+              schema.aiStoryExecuteVerifications.executionPlanId,
+              plans.map((plan) => plan.id)
+            )
+          )
+          .limit(1)
+      : [];
+    verificationFixtureState = verificationRows.length > 0
+      ? "COMPLETED"
+      : story.status === "failed" || story.status === "archived"
+        ? "FAILED_INCOMPLETE"
+        : story.status === "ready_for_execution"
+          ? "LEGACY_PARTIAL_VERIFICATION_FIXTURE"
+          : "CREATING";
+  }
+
+  return { story, versions, currentVersion, assetLinks, verificationFixtureState };
 }
 
 export async function listCampaignAiStories(
@@ -115,7 +147,10 @@ export async function assertCampaignAssets(
   const allowed = new Set(refs.map((r) => r.assetId));
   for (const id of assetIds) {
     if (!allowed.has(id)) {
-      throw new Error(`Asset ${id} is not linked to this Campaign`);
+      throw new CampaignAssetRefError(
+        "CAMPAIGN_ASSET_REF_MISSING",
+        `Asset ${id} is not linked to this Campaign`
+      );
     }
   }
   const assets = await db
@@ -124,8 +159,7 @@ export async function assertCampaignAssets(
     .where(
       and(
         eq(schema.assets.workspaceId, workspaceId),
-        inArray(schema.assets.id, assetIds),
-        isNull(schema.assets.deletedAt)
+        inArray(schema.assets.id, assetIds)
       )
     );
   if (assets.length !== assetIds.length) {

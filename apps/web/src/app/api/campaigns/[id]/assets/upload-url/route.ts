@@ -1,14 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { attachAssetsToCampaign, getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
+import { getDb, schema, requireWorkspaceRole, persistSameWorkspaceCampaignAssetRef } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
-import {
-  STORAGE_PATHS,
-  MAX_UPLOAD_SIZE_BYTES,
-  assessFinishedAdRisk,
-} from "@ceo-agent/shared";
+import { STORAGE_PATHS, MAX_UPLOAD_SIZE_BYTES, assessFinishedAdRisk } from "@ceo-agent/shared";
 import { validateNewAssetUpload } from "@/lib/campaign-assets";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -58,8 +54,7 @@ export async function POST(
 
     const assetId = randomUUID();
     const ext = filename.split(".").pop() ?? "mp4";
-    // PD-036: file lives in Workspace library; campaign only receives a reference.
-    const storagePath = STORAGE_PATHS.library(campaign.workspaceId, assetId, ext);
+    const storagePath = STORAGE_PATHS.source(campaign.workspaceId, campaignId, assetId, ext);
     const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
 
     const supabase = createAdminClient();
@@ -77,27 +72,28 @@ export async function POST(
 
     const filenameRisk = assessFinishedAdRisk({ type, filename });
 
-    await db.insert(schema.assets).values({
-      id: assetId,
-      orgId: campaign.orgId,
-      workspaceId: campaign.workspaceId,
-      type,
-      displayName: filename,
-      originalFilename: filename,
-      storagePath,
-      mimeType,
-      fileSizeBytes: size,
-      status: "uploading",
-      source: "campaign_upload",
-      uploadedBy: user.id,
-      metadata: {
-        originalFilename: filename,
-        finishedAdRisk: filenameRisk,
-        uploadContextCampaignId: campaignId,
-      },
+    await db.transaction(async (tx) => {
+      await tx.insert(schema.assets).values({
+        id: assetId,
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        campaignId,
+        type,
+        storagePath,
+        mimeType,
+        fileSizeBytes: size,
+        metadata: {
+          originalFilename: filename,
+          finishedAdRisk: filenameRisk,
+        },
+      });
+      await persistSameWorkspaceCampaignAssetRef(tx, {
+        campaignId,
+        assetId,
+        workspaceId: campaign.workspaceId,
+        orgId: campaign.orgId,
+      });
     });
-
-    await attachAssetsToCampaign(db, campaignId, [assetId]);
 
     return apiSuccess(
       {

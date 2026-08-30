@@ -9,11 +9,11 @@ type VisionLike = Pick<VisionAnalysis, "products" | "subjects" | "scenes"> &
 
 export interface ResolveContentSubjectOptions {
   goal?: string;
-  /** User-written Campaign Brief or related notes (preferred over campaign label). */
+  /** User-written brief / description (preferred over campaign label). */
   userNotes?: string;
   campaignBrief?: string;
   videoAnalysis?: string;
-  /** Internal project label — last resort when no Campaign Brief and no asset signal. */
+  /** Internal project label — last resort when no description and no asset signal. */
   campaignName?: string;
   locale?: ContentLocale;
 }
@@ -202,7 +202,7 @@ function pickCandidate(
 
 /**
  * Derive the primary subject for copy.
- * Priority: asset/vision → Campaign Brief → goal → campaign label (only if nothing else).
+ * Priority: asset/vision → description/brief → goal → campaign label (only if nothing else).
  */
 export function resolveContentSubject(
   vision: VisionLike,

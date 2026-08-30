@@ -42,10 +42,14 @@ async function withNetworkRetry<T>(label: string, fn: () => Promise<T>): Promise
   throw lastErr;
 }
 
-export async function downloadStorageFile(storagePath: string, localPath: string): Promise<void> {
+export async function downloadStorageFile(
+  storagePath: string,
+  localPath: string,
+  options?: { readonly bucket?: string }
+): Promise<void> {
   await withNetworkRetry(`download ${storagePath}`, async () => {
     const supabase = getAdminClient();
-    const bucket = getBucket();
+    const bucket = options?.bucket ?? getBucket();
     const { data, error } = await supabase.storage.from(bucket).download(storagePath);
     if (error || !data) {
       throw new Error(
@@ -55,18 +59,66 @@ export async function downloadStorageFile(storagePath: string, localPath: string
     await writeFile(localPath, Buffer.from(await data.arrayBuffer()));
   });
 }
+/** Resolve only the exact server-derived object, with bounded legacy URL support. */
+export function resolveExpectedStoragePath(
+  reference: string,
+  expectedStoragePath: string
+): string {
+  if (reference === expectedStoragePath) return expectedStoragePath;
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
+  if (!url) throw new Error("Supabase storage not configured");
+  const historicalPublicUrl = `${url}/storage/v1/object/public/${getBucket()}/${expectedStoragePath}`;
+  if (reference === historicalPublicUrl) return expectedStoragePath;
+
+  throw new Error("Artifact reference does not match server-owned storage identity");
+}
+
+export async function downloadStorageReference(
+  reference: string,
+  expectedStoragePath: string,
+  localPath: string
+): Promise<void> {
+  await downloadStorageFile(resolveExpectedStoragePath(reference, expectedStoragePath), localPath);
+}
+
+/**
+ * Mint a short-lived read URL for a server-authorized private object.
+ * The URL is returned only to the provider request mapper; it is never persisted or logged.
+ */
+export async function createSignedStorageReadUrl(
+  storagePath: string,
+  expiresInSeconds = 600,
+  options?: { readonly bucket?: string }
+): Promise<string> {
+  return withNetworkRetry("sign provider asset", async () => {
+    const supabase = getAdminClient();
+    const bucket = options?.bucket ?? getBucket();
+    const { data, error } = await supabase.storage
+      .from(bucket)
+      .createSignedUrl(storagePath, expiresInSeconds);
+    if (error || !data?.signedUrl) {
+      throw new Error(
+        `Failed to create provider asset access${error?.message ? ` — ${error.message}` : ""}`
+      );
+    }
+    return data.signedUrl;
+  });
+}
 
 export async function uploadStorageFile(
   storagePath: string,
   localPath: string,
-  contentType: string
+  contentType: string,
+  options?: { upsert?: boolean }
 ): Promise<void> {
+  const upsert = options?.upsert ?? true;
   await withNetworkRetry(`upload ${storagePath}`, async () => {
     const supabase = getAdminClient();
     const bucket = getBucket();
     const fileBuffer = await readFile(localPath);
     const { error } = await supabase.storage.from(bucket).upload(storagePath, fileBuffer, {
-      upsert: true,
+      upsert,
       contentType,
     });
     if (error) {
@@ -75,9 +127,20 @@ export async function uploadStorageFile(
   });
 }
 
-export function publicStorageUrl(storagePath: string): string {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const bucket = getBucket();
-  if (!url) throw new Error("Supabase storage not configured");
-  return `${url}/storage/v1/object/public/${bucket}/${storagePath}`;
+/** Immutable upload — never overwrites existing objects (upsert:false). */
+export async function uploadStorageFileImmutable(
+  storagePath: string,
+  localPath: string,
+  contentType: string
+): Promise<"created" | "already_exists"> {
+  try {
+    await uploadStorageFile(storagePath, localPath, contentType, { upsert: false });
+    return "created";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/already exists|Duplicate|409|resource already/i.test(message)) {
+      return "already_exists";
+    }
+    throw error;
+  }
 }

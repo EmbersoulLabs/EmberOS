@@ -1,8 +1,10 @@
 /**
- * Sprint 3 Phase 1 — provider-neutral AI QC Layer.
+ * Sprint 3 Phase 1 — provider-neutral Plan / Intent AI QC Layer.
  *
  * Pure validation: Scene Execution Intent → Validation Result.
  * Never mutates Intent, never invokes providers, never rewrites prompts.
+ * Never inspects generated image/video/audio artifacts. A passed result is
+ * Plan QC only and does not approve generated media (EXEC-06 Option B).
  */
 import {
   AI_STORY_EXECUTION_CONTRACT_VERSION,
@@ -287,7 +289,7 @@ export function validateSceneExecutionIntent(
         )
       );
     }
-    if (asset.campaignId && asset.campaignId !== ctx.campaignId) {
+    if (asset.campaignId !== ctx.campaignId) {
       errors.push(
         finding(
           "ASSET_CAMPAIGN_UNAUTHORIZED",
@@ -403,6 +405,7 @@ export function aggregateQcStatus(
   return "passed";
 }
 
+/** Plan QC may allow scheduling. It does not approve generated media. */
 export function qcAllowsExecution(results: readonly AiStoryAiQcResult[]): boolean {
   return aggregateQcStatus(results) !== "failed";
 }

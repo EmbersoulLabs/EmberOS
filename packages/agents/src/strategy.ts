@@ -13,8 +13,7 @@ import {
   isInternalPromptLeak,
   creativePreferencesForPrompt,
   substantiveCampaignBrief,
-  workspaceLanguageAsContentLocale,
-  type CampaignAIContext,
+  type BrandProfile,
   type ContentLocale,
   type StrategyPlan,
   type VisionAnalysis,
@@ -29,14 +28,14 @@ import {
 } from "./knowledge/query";
 
 export interface StrategyInput {
+  goal: string;
   campaignName: string;
-  /**
-   * AD-001 — complete Campaign AI Context (never partial).
-   * Required: campaignContext, campaignName
-   * Optional: assetsUploaded, videoAnalysis, imageAnalysis, productInformation, businessInformation, website, creativeBrief
-   * Consumes: campaignObjective, publishingPlatforms, businessProfile, campaignBrief, targetAudience, workspaceLanguage, vision, transcript, assets
-   */
-  campaignContext: CampaignAIContext;
+  platforms: string[];
+  brandProfile: BrandProfile;
+  /** PRIMARY signal — real asset analysis. Drives industry/product/angle. */
+  vision?: VisionAnalysis;
+  /** User-written description (preferred over videoAnalysis template). */
+  campaignBrief?: string | null;
   /** Count of uploaded assets — strategy must not ignore when assetAnalysis is missing. */
   assetsUploaded?: number;
   videoAnalysis?: string | null;
@@ -44,6 +43,7 @@ export interface StrategyInput {
   productInformation?: string | Record<string, unknown> | null;
   businessInformation?: string | Record<string, unknown> | null;
   website?: string | null;
+  contentLocale?: ContentLocale;
   /** Parsed creative brief for structured preferences (BGM, voice, style). */
   creativeBrief?: CampaignCreativeBrief;
 }
@@ -93,8 +93,7 @@ The system may provide:
 * Product Information
 * Business Information
 * Brand Profile
-* Campaign Brief
-* Target Audience
+* User Description
 * Website
 * Previous Marketing Assets
 
@@ -108,11 +107,10 @@ Infer intelligently.
 
 Decide product/service, industry, and marketing angle in THIS order:
 1. assetAnalysis (what the uploaded video/images actually show) — this is the PRIMARY truth.
-2. campaignBrief / business information (user-written Campaign Brief only).
-3. targetAudience (campaign Target Audience override — structured field, not part of Brief).
-4. goal (this is a marketing OBJECTIVE like "Brand awareness" — NEVER treat it as the product name).
-5. creativePreferences (BGM, voice, style, marketing goal labels) — execution preferences ONLY, never the product/subject/keywords.
-6. campaignLabel — internal project name, LAST RESORT only when 1–5 are all absent.
+2. userDescription / business information (user-written brief only).
+3. goal (this is a marketing OBJECTIVE like "Brand awareness" — NEVER treat it as the product name).
+4. creativePreferences (BGM, voice, style, marketing goal labels) — execution preferences ONLY, never the product/subject/keywords.
+5. campaignLabel — internal project name, LAST RESORT only when 1–4 are all absent.
 
 Never copy "VIDEO ANALYSIS", "User Brief:", "not provided — use automatic analysis", or creativePreferences values into product, keywords, or hashtags.
 
@@ -251,26 +249,12 @@ function platformLabels(platforms: string[]): string[] {
   return platforms.map((p) => labels[p] ?? p);
 }
 
-function strategyCtx(input: StrategyInput) {
-  const ctx = input.campaignContext;
-  return {
-    goal: ctx.campaignObjective,
-    platforms: ctx.publishingPlatforms,
-    brandProfile: ctx.businessProfile,
-    campaignBrief: ctx.campaignBrief,
-    targetAudience: ctx.targetAudience,
-    vision: (ctx.vision ?? undefined) as VisionAnalysis | undefined,
-    contentLocale: workspaceLanguageAsContentLocale(ctx.workspaceLanguage),
-  };
-}
-
 function resolveStrategyLocale(input: StrategyInput): ContentLocale {
-  const { goal, vision, contentLocale } = strategyCtx(input);
-  if (contentLocale) return contentLocale;
+  if (input.contentLocale) return input.contentLocale;
   const blob = [
-    goal,
+    input.goal,
     input.videoAnalysis,
-    vision?.transcriptSummary,
+    input.vision?.transcriptSummary,
     typeof input.businessInformation === "string" ? input.businessInformation : "",
   ]
     .filter(Boolean)
@@ -278,18 +262,16 @@ function resolveStrategyLocale(input: StrategyInput): ContentLocale {
   return /[\u4e00-\u9fff]/.test(blob) ? "zh" : "en";
 }
 
-/** Context for industry inference — assets first, then Campaign Brief (never internal LLM templates). */
+/** Context for industry inference — assets first, then user description (never internal LLM templates). */
 function strategyExtraContext(input: StrategyInput): string {
-  const { campaignBrief, targetAudience, vision } = strategyCtx(input);
-  const brief = substantiveCampaignBrief(campaignBrief, input.videoAnalysis);
+  const userDescription = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
   const legacyAnalysis =
     input.videoAnalysis && !isInternalVideoAnalysisPrompt(input.videoAnalysis)
       ? input.videoAnalysis
       : "";
   return [
-    visionSummaryText(vision, input.campaignName),
-    brief,
-    targetAudience?.trim() || "",
+    visionSummaryText(input.vision, input.campaignName),
+    userDescription,
     legacyAnalysis,
     typeof input.productInformation === "string" ? input.productInformation : "",
     typeof input.businessInformation === "string" ? input.businessInformation : "",
@@ -322,24 +304,17 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
   const angles = knowledge.filter((k) => k.category === "angle").map((k) => k.text);
   const ctas = knowledge.filter((k) => k.category === "cta").map((k) => k.text);
   const profile = INDUSTRY_FALLBACK[industry];
-  const { goal, platforms, brandProfile, campaignBrief, targetAudience, vision } =
-    strategyCtx(input);
-  // Priority: real asset (vision) → Campaign Brief → goal → campaign name.
-  const subject = resolveContentSubject(vision ?? { products: [], subjects: [], scenes: [] }, {
-    goal,
+  // Priority: real asset (vision) → description → goal → campaign name.
+  const subject = resolveContentSubject(input.vision ?? { products: [], subjects: [], scenes: [] }, {
+    goal: input.goal,
     userNotes:
-      substantiveCampaignBrief(campaignBrief, input.videoAnalysis) ??
-      targetAudience?.trim() ??
+      substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis) ??
       (typeof input.businessInformation === "string" ? input.businessInformation : undefined),
-    campaignBrief: substantiveCampaignBrief(campaignBrief, input.videoAnalysis),
+    campaignBrief: substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis),
     campaignName: input.campaignName,
     locale,
   });
-  const topic =
-    subject ||
-    targetAudience?.trim() ||
-    brandProfile.targetAudience ||
-    (zh ? "本商家" : "this business");
+  const topic = subject || input.brandProfile.targetAudience || (zh ? "本商家" : "this business");
   const product =
     (typeof input.productInformation === "string" ? input.productInformation : undefined) ??
     (subject || profile?.product || topic);
@@ -350,7 +325,7 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
         industry: industry === "general" ? "综合" : industry,
         businessType: profile?.businessType ?? "本地商户",
         product,
-        marketingGoal: profile?.marketingGoal ?? (goal || "品牌曝光"),
+        marketingGoal: profile?.marketingGoal ?? (input.goal || "品牌曝光"),
         marketingAngle: angles[0] ?? profile?.angle ?? `围绕「${topic}」用真实场景展示核心价值`,
         brandPersonality: profile?.brandPersonality ?? ["专业", "友好"],
         tone: profile?.tone ?? "友好",
@@ -361,12 +336,12 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
             "担心效果与宣传不符",
           ],
           desiredOutcome: profile?.audience.desiredOutcome ?? "获得可信赖的参考",
-          location: brandProfile.locale?.includes("SG") ? "新加坡" : undefined,
+          location: input.brandProfile.locale?.includes("SG") ? "新加坡" : undefined,
           interests: [],
         },
         customerJourney: profile?.customerJourney ?? "认知",
-        platformPriority: platformLabels(platforms),
-        ctaStrategy: brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "私信了解更多",
+        platformPriority: platformLabels(input.platforms),
+        ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "私信了解更多",
         keywords: profile?.keywords ?? [topic],
         hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
         confidence: 0.65,
@@ -379,7 +354,7 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
       industry: industry === "general" ? "general business" : industry,
       businessType: profile?.businessType ?? "Local business",
       product,
-      marketingGoal: profile?.marketingGoal ?? (goal || "Brand Awareness"),
+      marketingGoal: profile?.marketingGoal ?? (input.goal || "Brand Awareness"),
       marketingAngle: angles[0] ?? profile?.angle ?? `Show real value for ${topic}`,
       brandPersonality: profile?.brandPersonality ?? ["Professional", "Friendly"],
       tone: profile?.tone ?? "Professional",
@@ -393,8 +368,8 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
         interests: [],
       },
       customerJourney: profile?.customerJourney ?? "Awareness",
-      platformPriority: platformLabels(platforms),
-      ctaStrategy: brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "Learn More",
+      platformPriority: platformLabels(input.platforms),
+      ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "Learn More",
       keywords: profile?.keywords ?? [topic],
       hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
       confidence: 0.65,
@@ -408,34 +383,25 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   knowledgeSnippets: ReturnType<typeof queryKnowledge>;
   usage: { input: number; output: number; costUsd: number };
 }> {
-  const { goal, platforms, brandProfile, campaignBrief, targetAudience: audience, vision } =
-    strategyCtx(input);
-  const inferred = inferIndustry(goal, strategyExtraContext(input), brandProfile.industry);
+  const inferred = inferIndustry(input.goal, strategyExtraContext(input), input.brandProfile.industry);
   const locale = resolveStrategyLocale(input);
   const knowledgeLocale = locale === "zh" ? "zh-CN" : locale === "ms" ? "ms-MY" : "en-SG";
   const knowledgeSnippets = queryKnowledge(inferred, knowledgeLocale);
   const knowledgeBlock = formatKnowledgeForPrompt(knowledgeSnippets);
   const seeded = hasKnowledgeSeed(inferred);
 
-  const visionSummary = visionSummaryText(vision, input.campaignName);
+  const visionSummary = visionSummaryText(input.vision, input.campaignName);
   // Whisper transcript is always real spoken content — pass it even when frame labels are generic.
-  const spokenContent =
-    vision?.transcriptSummary?.trim() || input.campaignContext.transcript?.trim() || "";
-  const campaignBriefText = substantiveCampaignBrief(campaignBrief, input.videoAnalysis);
-  const targetAudience = audience?.trim() || "";
-  const goalIsContext = Boolean(goal?.trim()) && !isMarketingObjective(goal);
+  const spokenContent = input.vision?.transcriptSummary?.trim() || "";
+  const userDescription = substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis);
+  const goalIsContext = Boolean(input.goal?.trim()) && !isMarketingObjective(input.goal);
   const hasAnyContext = Boolean(
-    visionSummary ||
-      spokenContent ||
-      campaignBriefText ||
-      targetAudience ||
-      goalIsContext ||
-      strategyExtraContext(input)
+    visionSummary || spokenContent || userDescription || goalIsContext || strategyExtraContext(input)
   );
   const creativePreferences = input.creativeBrief
     ? creativePreferencesForPrompt(input.creativeBrief)
     : null;
-  const assetsUploaded = input.assetsUploaded ?? input.campaignContext.assets?.length ?? 0;
+  const assetsUploaded = input.assetsUploaded ?? 0;
 
   const user = JSON.stringify({
     // PRIMARY: what the uploaded assets actually show.
@@ -446,15 +412,14 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
       ? {
           assetsUploaded,
           assetAnalysisNote:
-            "User uploaded media but automatic frame analysis did not return labels — use campaignBrief or campaignLabel; never invent generic placeholders or copy internal system text.",
+            "User uploaded media but automatic frame analysis did not return labels — use userDescription or campaignLabel; never invent generic placeholders or copy internal system text.",
         }
       : {}),
-    ...(campaignBriefText ? { campaignBrief: campaignBriefText } : {}),
-    ...(targetAudience ? { targetAudience } : {}),
+    ...(userDescription ? { userDescription } : {}),
     ...(creativePreferences ? { creativePreferences } : {}),
-    goal,
-    platforms,
-    brandProfile,
+    goal: input.goal,
+    platforms: input.platforms,
+    brandProfile: input.brandProfile,
     inferredIndustry: inferred,
     hasSeededKnowledge: seeded,
     knowledge: knowledgeBlock,
@@ -479,7 +444,7 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
         ...parsed.data,
         platformPriority: parsed.data.platformPriority.length
           ? parsed.data.platformPriority
-          : platformLabels(platforms),
+          : platformLabels(input.platforms),
       }
     : buildFallbackStrategy(input, inferred);
 

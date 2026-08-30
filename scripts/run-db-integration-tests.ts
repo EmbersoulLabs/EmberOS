@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { config } from "dotenv";
 import { resolve } from "node:path";
+import { assertIsolatedTestDatabase } from "../tests/helpers/db-integration";
 
 // Prefer apps/worker/.env (same order as packages/db/scripts/apply-rls.ts).
 // Root .env.local may contain an unparseable DATABASE_URL that would shadow a valid one.
@@ -23,6 +24,16 @@ try {
   process.exit(1);
 }
 process.env.DATABASE_URL = databaseUrl;
+
+try {
+  const identity = assertIsolatedTestDatabase(databaseUrl);
+  console.log(`[test:integration] isolated authority ${identity.hostFingerprint}`);
+} catch (error) {
+  console.error(
+    `[test:integration] ${error instanceof Error ? error.message : "TEST_DB_AUTHORITY_DENIED"}`
+  );
+  process.exit(1);
+}
 
 process.env.RUN_DB_INTEGRATION_TESTS = "1";
 

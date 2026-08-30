@@ -413,7 +413,7 @@ export function ExecutionPlanReviewPanel({
                           <strong>{scene.decision ?? "Pending"}</strong>
                         </div>
                         <div className="mt-1">
-                          QC:{" "}
+                          Plan QC:{" "}
                           <strong>
                             {scene.qc?.status ?? "n/a"}
                             {scene.qc

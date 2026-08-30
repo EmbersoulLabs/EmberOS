@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { removeLegacyRememberedPassword } from "@/lib/auth-remember";
 import { useI18n } from "@/lib/i18n/provider";
 
 function MenuIcon() {
@@ -113,8 +114,10 @@ export function GlobalNavMenu({ items }: { items: GlobalNavItem[] }) {
 export function useLogoutAction() {
   const router = useRouter();
   return useCallback(async () => {
+    removeLegacyRememberedPassword();
     const supabase = createClient();
     await supabase.auth.signOut();
+    removeLegacyRememberedPassword();
     router.replace("/login");
   }, [router]);
 }

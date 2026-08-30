@@ -26,12 +26,15 @@ const IntegrityHashSchema = NonEmptyTextSchema;
 export const SCENE_SCHEDULING_ERROR_CODES = [
   "RUNTIME_AUTHORIZATION_REQUIRED",
   "RUNTIME_AUTHORIZATION_CONFLICT",
+  "COMMERCIAL_AUTHORIZATION_REQUIRED",
+  "COMMERCIAL_AUTHORIZATION_DENIED",
   "SCENE_NOT_AUTHORIZED",
   "SCENE_SCHEDULING_NOT_ELIGIBLE",
   "QC_BLOCKED",
   "OWNERSHIP_INTEGRITY_VIOLATION",
   "ROUTING_DECISION_CONFLICT",
   "NO_ELIGIBLE_PROVIDER",
+  "NO_EXECUTABLE_PROVIDER",
   "PROVIDER_BINDING_CONFLICT",
   "PROVIDER_EXECUTION_CONFLICT",
   "EXECUTION_ENVELOPE_CONFLICT",
@@ -103,6 +106,10 @@ export const SceneProviderSchedulingCorrelationSchema = z.object({
   contractVersion: z.literal(SCENE_SCHEDULING_CONTRACT_VERSION),
   scheduledAt: z.string().datetime(),
   scheduledBy: z.string().uuid(),
+  /** Human-authorized Scene attempt ordinal. Absent on legacy/initial rows. */
+  retryGeneration: z.number().int().positive().optional(),
+  retryInputRevisionId: z.string().uuid().optional(),
+  retryInputFingerprint: IntegrityHashSchema.optional(),
 });
 
 export type SceneProviderSchedulingCorrelation = z.infer<

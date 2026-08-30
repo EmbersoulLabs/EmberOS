@@ -3,7 +3,7 @@ import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDb, schema } from "@ceo-agent/db";
-import { runPublishAgent } from "@ceo-agent/agents";
+import { runPublishAgent, persistTaskExportFailure } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   getBgmTrackById,
@@ -14,6 +14,7 @@ import {
   platformPublishCopyText,
   encodeCopyExportBody,
   plainTextToDocHtml,
+  emitVideoStudioOpsEvent,
   type CopyVariant,
   type EditPlan,
   type MarketingContentPackage,
@@ -23,7 +24,7 @@ import {
 } from "@ceo-agent/shared";
 import { pickVideoUrlForExport } from "@ceo-agent/agents";
 import { createExportZip } from "../ffmpeg/pipeline";
-import { uploadStorageFile, publicStorageUrl } from "../storage";
+import { downloadStorageReference, uploadStorageFile } from "../storage";
 
 export interface TaskExportJobData {
   taskId: string;
@@ -60,14 +61,6 @@ export function musicCreditFor(editPlan: unknown): MusicCredit {
   }
 
   return { line: "No background music" };
-}
-
-async function downloadUrlToFile(url: string, localPath: string): Promise<void> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to download ${url} (${response.status})`);
-  }
-  await writeFile(localPath, Buffer.from(await response.arrayBuffer()));
 }
 
 async function writeCopyFiles(
@@ -137,7 +130,13 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
       }
 
       const videoLocal = join(workDir, `clip_${clipNum}.mp4`);
-      await downloadUrlToFile(videoUrl, videoLocal);
+      const expectedVideoPath =
+        resolution === "2k"
+          ? STORAGE_PATHS.export2k(data.workspaceId, data.campaignId, creative.id)
+          : resolution === "1080p"
+            ? STORAGE_PATHS.export(data.workspaceId, data.campaignId, creative.id)
+            : STORAGE_PATHS.preview(data.workspaceId, data.campaignId, creative.id);
+      await downloadStorageReference(videoUrl, expectedVideoPath, videoLocal);
       zipFiles.push({
         path: videoLocal,
         name: `clips/clip_${clipNum}.mp4`,
@@ -146,7 +145,11 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
       if (creative.coverUrl) {
         const coverLocal = join(workDir, `cover_${clipNum}.jpg`);
         try {
-          await downloadUrlToFile(creative.coverUrl, coverLocal);
+          await downloadStorageReference(
+            creative.coverUrl,
+            STORAGE_PATHS.cover(data.workspaceId, data.campaignId, creative.id),
+            coverLocal
+          );
           zipFiles.push({ path: coverLocal, name: `clips/cover_${clipNum}.jpg` });
         } catch {
           // cover optional
@@ -273,7 +276,7 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
       resolution
     );
     await uploadStorageFile(packPath, zipLocal, "application/zip");
-    const exportPackUrl = publicStorageUrl(packPath);
+    const exportPackUrl = packPath;
     const completedAt = new Date().toISOString();
 
     const packOutput = {
@@ -323,6 +326,23 @@ export async function processTaskExportJob(data: TaskExportJobData): Promise<voi
     console.log(
       `[ffmpeg.export_task] done task=${data.taskId} resolution=${resolution} file=${packFilename} url=${exportPackUrl}`
     );
+    emitVideoStudioOpsEvent({
+      event: "export.completed",
+      stage: "ffmpeg.export_task",
+      outcome: "completed",
+      orgId: data.orgId,
+      workspaceId: data.workspaceId,
+      campaignId: data.campaignId,
+      taskId: data.taskId,
+      resolution,
+    });
+  } catch (error) {
+    await persistTaskExportFailure({
+      taskId: data.taskId,
+      error: error instanceof Error ? error.message : String(error),
+      resolution,
+    });
+    throw error;
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }

@@ -9,6 +9,7 @@ import {
   SceneProviderSchedulingCorrelationSchema,
   SceneSchedulingBundleSchema,
   createExecutionEnvelope,
+  type AiStoryExecutionAuthorizationEvidence,
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
   type CanonicalProviderRequest,
@@ -25,9 +26,15 @@ import {
   RuntimeAuthorizationPersistenceRepository,
   SceneSchedulingError,
   SceneSchedulingRepository,
+  CommercialAuthorizationRepositoryImpl,
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
+  type CommercialAuthorizationRepository,
+  type ProductionVerificationAuthority,
+  type SceneSchedulingPersistenceBoundary,
+  type SceneSchedulingStepTiming,
 } from "@ceo-agent/db";
+import { commercialExecutionIdentityForPlan } from "@ceo-agent/shared/server";
 import {
   NoEligibleProviderError,
   type ProviderRouter,
@@ -35,6 +42,7 @@ import {
   type ProviderRoutingPolicy,
   type ProviderRoutingRequest,
 } from "../provider-router";
+import { applyRetryInputRevision } from "./differentiated-retry-service";
 import {
   SCENE_PROVIDER_CAPABILITY_ID,
   SCENE_PROVIDER_CAPABILITY_VERSION,
@@ -97,23 +105,43 @@ export type ScheduleAuthorizedSceneInput = {
   readonly sceneExecutionId: string;
   /** Required. Scheduling loads the canonical persisted RuntimeAuthorizedFact only. */
   readonly runtimeAuthorizationId: string;
+  /**
+   * Required for commercial settlement. Omitted when EXEC-03 ops/non-commercial
+   * authorization explicitly selected settlementMode=none.
+   */
+  readonly commercialAuthorizationId?: string;
+  readonly executionAuthorization?: AiStoryExecutionAuthorizationEvidence;
   readonly actorUserId: string;
   readonly routingPolicy?: ProviderRoutingPolicy;
   readonly preferredProviders?: readonly string[];
+  /**
+   * EXEC-04 product retry generation. 1 = first schedule (identity unchanged).
+   * Values > 1 create a new provider execution of the same frozen Scene.
+   */
+  readonly retryGeneration?: number;
+  readonly retryInputRevision?: import("@ceo-agent/shared").SceneAttemptInputRevisionFact;
+  /** Server-only PROD-VERIFY-01 authority; never populated from client input. */
+  readonly productionVerification?: ProductionVerificationAuthority;
+  /** Safe server-side performance observer; never used as authorization. */
+  readonly observeTiming?: (observation: SceneSchedulingStepTiming) => void;
+  readonly observePersistenceBoundary?: (
+    boundary: SceneSchedulingPersistenceBoundary
+  ) => void;
 };
 
 export type SceneSchedulingCoordinatorDependencies = {
   readonly router: ProviderRouter;
   readonly authRepo?: Pick<RuntimeAuthorizationPersistenceRepository, "getById">;
+  readonly commercialAuthRepo?: Pick<CommercialAuthorizationRepository, "getById">;
   readonly schedulingRepo?: Pick<
     SceneSchedulingRepository,
     | "scheduleAcceptedBundle"
     | "getRoutingDecisionBySceneExecutionId"
     | "getAcceptedBundleBySceneExecutionId"
-  >;
+  > & Partial<Pick<SceneSchedulingRepository, "getProductionVerification">>;
   readonly persistenceRepo?: Pick<
     AiStorySceneExecutionPersistenceRepository,
-    "getByExecutionPlanId" | "getValidationResults"
+    "getByExecutionPlanId"
   >;
   readonly assemblyRepo?: Pick<ExecutionPlanAssemblyRepository, "listMemberships">;
   readonly now?: () => Date;
@@ -152,22 +180,43 @@ function identitySeed(input: {
   readonly runtimeAuthorizationId: string;
   readonly instructionHash: string;
   readonly routingDecisionHash?: string;
+  readonly retryGeneration?: number;
+  readonly retryInputFingerprint?: string;
 }) {
   return {
     sceneExecutionId: input.sceneExecutionId,
     runtimeAuthorizationId: input.runtimeAuthorizationId,
     instructionHash: input.instructionHash,
     routingDecisionHash: input.routingDecisionHash ?? null,
+    ...(input.retryGeneration && input.retryGeneration > 1
+      ? { retryGeneration: input.retryGeneration }
+      : {}),
+    ...(input.retryInputFingerprint ? { retryInputFingerprint: input.retryInputFingerprint } : {}),
   };
+}
+
+function sanitizePreferredProviders(
+  preferred: readonly string[],
+  policy: ProviderRoutingPolicy
+): readonly string[] {
+  const allowed = policy.allowedProviders;
+  const denied = new Set(policy.deniedProviders ?? []);
+  return preferred.filter((providerId) => {
+    if (denied.has(providerId)) return false;
+    if (allowed && !allowed.includes(providerId)) return false;
+    return true;
+  });
 }
 
 function effectiveRoutingPolicy(input: ScheduleAuthorizedSceneInput): ProviderRoutingPolicy {
   const base = input.routingPolicy ?? DEFAULT_ROUTING_POLICY;
+  const preferred = sanitizePreferredProviders(
+    input.preferredProviders ? [...input.preferredProviders] : [...base.preferredProviders],
+    base
+  );
   return {
     ...base,
-    preferredProviders: input.preferredProviders
-      ? [...input.preferredProviders]
-      : [...base.preferredProviders],
+    preferredProviders: [...preferred],
   };
 }
 
@@ -201,9 +250,11 @@ function buildRoutingRequest(input: {
     requireCancellation: false,
     requireCallbacks: false,
     requireStreaming: false,
-    preferredProviders: input.preferredProviders
-      ? [...input.preferredProviders]
-      : [...input.policy.preferredProviders],
+    preferredProviders: [
+      ...(input.preferredProviders && input.preferredProviders.length > 0
+        ? input.preferredProviders
+        : input.policy.preferredProviders),
+    ],
     dataHandling: {
       sensitiveData: false,
       externalProcessingAllowed: true,
@@ -317,6 +368,8 @@ function buildCorrelation(input: {
   readonly correlationId: string;
   readonly scheduledAt: string;
   readonly scheduledBy: string;
+  readonly retryGeneration: number;
+  readonly retryInputRevision?: import("@ceo-agent/shared").SceneAttemptInputRevisionFact;
 }): SceneProviderSchedulingCorrelation {
   const schedulingIdentityHash = computeSceneSchedulingIdentityHash({
     ownership: input.fact.ownership,
@@ -349,20 +402,31 @@ function buildCorrelation(input: {
     contractVersion: SCENE_SCHEDULING_CONTRACT_VERSION,
     scheduledAt: input.scheduledAt,
     scheduledBy: input.scheduledBy,
+    ...(input.retryGeneration > 1
+      ? { retryGeneration: input.retryGeneration }
+      : {}),
+    ...(input.retryInputRevision ? {
+      retryInputRevisionId: input.retryInputRevision.retryInputRevisionId,
+      retryInputFingerprint: input.retryInputRevision.canonicalFingerprint,
+    } : {}),
   });
 }
 
 export class SceneSchedulingCoordinator {
   private readonly authRepo: Pick<RuntimeAuthorizationPersistenceRepository, "getById">;
+  private readonly commercialAuthRepo: Pick<
+    CommercialAuthorizationRepository,
+    "getById"
+  >;
   private readonly schedulingRepo: Pick<
     SceneSchedulingRepository,
     | "scheduleAcceptedBundle"
     | "getAcceptedBundleBySceneExecutionId"
     | "getRoutingDecisionBySceneExecutionId"
-  >;
+  > & Partial<Pick<SceneSchedulingRepository, "getProductionVerification">>;
   private readonly persistenceRepo: Pick<
     AiStorySceneExecutionPersistenceRepository,
-    "getByExecutionPlanId" | "getValidationResults"
+    "getByExecutionPlanId"
   >;
   private readonly assemblyRepo: Pick<ExecutionPlanAssemblyRepository, "listMemberships">;
   private readonly now: () => Date;
@@ -370,6 +434,9 @@ export class SceneSchedulingCoordinator {
   constructor(private readonly dependencies: SceneSchedulingCoordinatorDependencies) {
     this.authRepo =
       dependencies.authRepo ?? new RuntimeAuthorizationPersistenceRepository();
+    this.commercialAuthRepo =
+      dependencies.commercialAuthRepo ??
+      new CommercialAuthorizationRepositoryImpl();
     this.schedulingRepo =
       dependencies.schedulingRepo ?? new SceneSchedulingRepository();
     this.persistenceRepo =
@@ -382,8 +449,42 @@ export class SceneSchedulingCoordinator {
   async scheduleAuthorizedScene(
     input: ScheduleAuthorizedSceneInput
   ): Promise<SceneSchedulingBundle> {
+    const timings: SceneSchedulingStepTiming[] = [];
+    let persistenceBoundary: SceneSchedulingPersistenceBoundary | null = null;
+    const observeTiming = (observation: SceneSchedulingStepTiming) => {
+      timings.push(observation);
+      input.observeTiming?.(observation);
+    };
+    const measurePreTransaction = async <T>(
+      step: SceneSchedulingStepTiming["step"],
+      operation: () => Promise<T> | T,
+      outcome: (value: T) => SceneSchedulingStepTiming["outcome"] = () => "PASS"
+    ): Promise<T> => {
+      const startedAt = performance.now();
+      try {
+        const value = await operation();
+        observeTiming({
+          step,
+          durationMs: performance.now() - startedAt,
+          transactionAuthority: "none",
+          connectionAuthority: "pre_transaction",
+          outcome: outcome(value),
+        });
+        return value;
+      } catch (error) {
+        observeTiming({
+          step,
+          durationMs: performance.now() - startedAt,
+          transactionAuthority: "none",
+          connectionAuthority: "pre_transaction",
+          outcome: "FAIL",
+        });
+        throw error;
+      }
+    };
     try {
       const fact = await this.loadPersistedAuthorization(input);
+      await this.assertCommercialAuthorization(input, fact);
       if (fact.executionPlanId !== input.executionPlanId) {
         throw new SceneSchedulingError(
           "IDENTITY_CONFLICT",
@@ -397,11 +498,56 @@ export class SceneSchedulingCoordinator {
         );
       }
 
-      const acceptedBundle =
-        await this.schedulingRepo.getAcceptedBundleBySceneExecutionId(
-          input.sceneExecutionId
+      const retryGeneration = input.retryGeneration ?? 1;
+      if (
+        retryGeneration > 1 &&
+        (!input.retryInputRevision ||
+          input.retryInputRevision.revisionNumber !== retryGeneration ||
+          input.retryInputRevision.sceneExecutionId !== input.sceneExecutionId ||
+          input.retryInputRevision.executionPlanId !== input.executionPlanId ||
+          input.retryInputRevision.workspaceId !== fact.ownership.workspaceId ||
+          input.retryInputRevision.providerModeRequirement !== "FIRST_FRAME_I2V")
+      ) {
+        throw new SceneSchedulingError(
+          "SCENE_SCHEDULING_NOT_ELIGIBLE",
+          "Differentiated retry input authority is required"
         );
+      }
+      const acceptedBundle =
+        retryGeneration <= 1
+          ? await this.schedulingRepo.getAcceptedBundleBySceneExecutionId(
+              input.sceneExecutionId
+            )
+          : null;
       if (acceptedBundle) {
+        if (input.productionVerification) {
+          if (!this.schedulingRepo.getProductionVerification) {
+            throw new SceneSchedulingError(
+              "SCENE_SCHEDULING_NOT_ELIGIBLE",
+              "Production verification persistence authority is unavailable"
+            );
+          }
+          const verification = await this.schedulingRepo.getProductionVerification(
+            input.executionPlanId
+          );
+          if (
+            !verification ||
+            verification.outboxJobId !== acceptedBundle.outboxJobId ||
+            verification.runtimeAuthorizationId !== fact.runtimeAuthorizationId ||
+            verification.sceneExecutionId !== input.sceneExecutionId ||
+            verification.workspaceId !== fact.ownership.workspaceId ||
+            verification.verificationMode !== true ||
+            verification.verificationPolicyVersion !==
+              input.productionVerification.verificationPolicyVersion ||
+            verification.authorizedBy !== input.productionVerification.authorizedBy ||
+            verification.createdBy !== input.productionVerification.createdBy
+          ) {
+            throw new SceneSchedulingError(
+              "SCENE_SCHEDULING_NOT_ELIGIBLE",
+              "Accepted schedule is not owned by this production verification authority"
+            );
+          }
+        }
         this.assertAcceptedBundleMatchesInput(acceptedBundle, input, fact);
         return SceneSchedulingBundleSchema.parse({
           ...acceptedBundle,
@@ -459,8 +605,10 @@ export class SceneSchedulingCoordinator {
         );
       }
 
-      const validationResults = await this.persistenceRepo.getValidationResults(
-        input.sceneExecutionId
+      // The canonical compilation already contains the accepted QC facts. A
+      // second repository hydration here duplicated one production DB round trip.
+      const validationResults = compilation.validationResults.filter(
+        (result) => result.intentId === input.sceneExecutionId
       );
       if (
         validationResults.length === 0 ||
@@ -472,46 +620,67 @@ export class SceneSchedulingCoordinator {
         );
       }
 
-      const instructions = AiStorySceneCompiledInstructionsSchema.parse(
+      const baseInstructions = AiStorySceneCompiledInstructionsSchema.parse(
         compilation.instructionsBySceneExecutionId[input.sceneExecutionId]
       ) as AiStorySceneCompiledInstructions;
-      const instructionHash = sceneIntent.normalizedPayloadReference.contentHash;
+      const instructions = input.retryInputRevision
+        ? applyRetryInputRevision(baseInstructions, input.retryInputRevision)
+        : baseInstructions;
+      const instructionHash =
+        input.retryInputRevision?.canonicalFingerprint ??
+        sceneIntent.normalizedPayloadReference.contentHash;
       const seedBeforeRouting = identitySeed({
         sceneExecutionId: input.sceneExecutionId,
         runtimeAuthorizationId: fact.runtimeAuthorizationId,
         instructionHash,
+        retryGeneration,
+        retryInputFingerprint: input.retryInputRevision?.canonicalFingerprint,
       });
       const correlationId = deterministicPersistenceUuid(
         "ai-story-scene-scheduling-correlation",
         seedBeforeRouting
       );
-      const policy = effectiveRoutingPolicy(input);
-      const routingRequest = buildRoutingRequest({
-        fact,
-        sceneExecutionId: input.sceneExecutionId,
-        instructionHash,
-        correlationId,
-        policy,
-        preferredProviders: input.preferredProviders,
-      });
-      const route = await this.dependencies.router.route(routingRequest, policy);
-      const routingDecision = buildRoutingDecision({
-        fact,
-        sceneExecutionId: input.sceneExecutionId,
-        route,
-        policy,
-        decidedAt: route.createdAt || this.now().toISOString(),
-      });
+      const policy = await measurePreTransaction(
+        "provider_eligibility",
+        () => effectiveRoutingPolicy(input)
+      );
+      const preferredProviders = policy.preferredProviders;
       const existingRoutingDecision =
-        await this.schedulingRepo.getRoutingDecisionBySceneExecutionId(
-          input.sceneExecutionId
+        await measurePreTransaction(
+          "routing_decision_lookup",
+          () => this.schedulingRepo.getRoutingDecisionBySceneExecutionId(
+            input.sceneExecutionId
+          ),
+          (value) => value ? "CONVERGED" : "MISS"
         );
+      if (!existingRoutingDecision && policy.allowedProviders?.length === 0) {
+        throw new SceneSchedulingError(
+          "NO_EXECUTABLE_PROVIDER",
+          "No executable provider is available for Scene scheduling"
+        );
+      }
       const acceptedRoutingDecision = existingRoutingDecision
-        ? this.reuseEquivalentRoutingDecision(
-            existingRoutingDecision,
-            routingDecision
-          )
-        : routingDecision;
+        ? existingRoutingDecision
+        : await measurePreTransaction(
+            "routing_request_build",
+            async () => buildRoutingDecision({
+              fact,
+              sceneExecutionId: input.sceneExecutionId,
+              route: await this.dependencies.router.route(
+                buildRoutingRequest({
+                  fact,
+                  sceneExecutionId: input.sceneExecutionId,
+                  instructionHash,
+                  correlationId,
+                  policy,
+                  preferredProviders,
+                }),
+                policy
+              ),
+              policy,
+              decidedAt: this.now().toISOString(),
+            })
+          );
       // Derive schedule clocks from the authoritative routing decision time so
       // concurrent equivalent schedules converge on identical identity payloads.
       const scheduledAt = acceptedRoutingDecision.decidedAt;
@@ -523,6 +692,8 @@ export class SceneSchedulingCoordinator {
         runtimeAuthorizationId: fact.runtimeAuthorizationId,
         instructionHash,
         routingDecisionHash: acceptedRoutingDecision.deterministicIntegrityHash,
+        retryGeneration,
+        retryInputFingerprint: input.retryInputRevision?.canonicalFingerprint,
       });
       const outboxJobId = deterministicPersistenceUuid(
         "ai-story-scene-outbox-job",
@@ -540,6 +711,7 @@ export class SceneSchedulingCoordinator {
         correlationId,
         createdAt: scheduledAt,
         timeoutDeadline,
+        retryGeneration,
       });
       const providerExecution = buildProviderExecution({
         canonicalRequest: request.canonicalRequest,
@@ -568,6 +740,9 @@ export class SceneSchedulingCoordinator {
             executionPlanId: input.executionPlanId,
             sceneExecutionId: input.sceneExecutionId,
             runtimeAuthorizationId: fact.runtimeAuthorizationId,
+            ...(input.retryInputRevision
+              ? { retryInputRevisionId: input.retryInputRevision.retryInputRevisionId }
+              : {}),
           },
         },
         capabilityId: SCENE_PROVIDER_CAPABILITY_ID,
@@ -598,6 +773,8 @@ export class SceneSchedulingCoordinator {
         correlationId,
         scheduledAt,
         scheduledBy: input.actorUserId,
+        retryGeneration,
+        retryInputRevision: input.retryInputRevision,
       });
 
       const bundle = await this.schedulingRepo.scheduleAcceptedBundle({
@@ -615,7 +792,21 @@ export class SceneSchedulingCoordinator {
         },
         correlation,
         scheduledBy: input.actorUserId,
+        productionVerification: input.productionVerification,
+        observeTiming,
+        observeBoundary: (boundary) => {
+          persistenceBoundary = boundary;
+          input.observePersistenceBoundary?.(boundary);
+        },
       });
+
+      console.info(JSON.stringify({
+        event: "AI_STORY_POST_RELEASE_SCHEDULING_BOUNDARY_COMPLETED",
+        executionPlanId: input.executionPlanId,
+        sceneExecutionId: input.sceneExecutionId,
+        persistenceBoundary,
+        timings,
+      }));
 
       return SceneSchedulingBundleSchema.parse({
         ...bundle,
@@ -625,7 +816,12 @@ export class SceneSchedulingCoordinator {
       });
     } catch (error) {
       if (error instanceof NoEligibleProviderError) {
-        throw new SceneSchedulingError("NO_ELIGIBLE_PROVIDER", error.message);
+        throw new SceneSchedulingError(
+          error.details.exclusions.length === 0
+            ? "NO_EXECUTABLE_PROVIDER"
+            : "NO_ELIGIBLE_PROVIDER",
+          error.message
+        );
       }
       throw error;
     }
@@ -642,6 +838,61 @@ export class SceneSchedulingCoordinator {
       );
     }
     return fact;
+  }
+
+  private async assertCommercialAuthorization(
+    input: ScheduleAuthorizedSceneInput,
+    fact: RuntimeAuthorizedFact
+  ): Promise<void> {
+    const evidence =
+      input.executionAuthorization ?? fact.executionAuthorization;
+    if (evidence?.settlementMode === "none") {
+      if (evidence.accessMode !== "ops") {
+        throw new SceneSchedulingError(
+          "COMMERCIAL_AUTHORIZATION_DENIED",
+          "Non-commercial scheduling requires ops accessMode"
+        );
+      }
+      if (input.commercialAuthorizationId?.trim()) {
+        throw new SceneSchedulingError(
+          "COMMERCIAL_AUTHORIZATION_DENIED",
+          "Ops execution must not carry a commercial authorization id"
+        );
+      }
+      return;
+    }
+
+    if (!input.commercialAuthorizationId?.trim()) {
+      throw new SceneSchedulingError(
+        "COMMERCIAL_AUTHORIZATION_REQUIRED",
+        "Commercial Authorization ID is required for billable scheduling"
+      );
+    }
+    const authorization = await this.commercialAuthRepo.getById(
+      input.commercialAuthorizationId
+    );
+    if (!authorization) {
+      throw new SceneSchedulingError(
+        "COMMERCIAL_AUTHORIZATION_REQUIRED",
+        "Commercial Authorization was not found"
+      );
+    }
+    const expectedIdentity = commercialExecutionIdentityForPlan(
+      input.executionPlanId
+    );
+    if (
+      authorization.orgId !== fact.ownership.orgId ||
+      authorization.workspaceId !== fact.ownership.workspaceId ||
+      authorization.capabilityKey !== "ai_story.execute" ||
+      authorization.executionIdentity !== expectedIdentity ||
+      authorization.commercialAuthorizationId !==
+        input.commercialAuthorizationId
+    ) {
+      throw new SceneSchedulingError(
+        "COMMERCIAL_AUTHORIZATION_DENIED",
+        "Commercial Authorization does not match Execution Plan ownership"
+      );
+    }
   }
 
   private assertAcceptedBundleMatchesInput(

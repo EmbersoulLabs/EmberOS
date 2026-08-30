@@ -4,6 +4,8 @@ import {
   ProviderCostSchema,
   ProviderUsageSchema,
   type CanonicalProviderResult,
+  type ProviderCost,
+  type ProviderUsage,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 
@@ -38,6 +40,40 @@ export interface ProviderExecutionFinalizationRecord {
   readonly jobId: string;
   readonly workerId: string;
   readonly result: CanonicalProviderResult;
+  readonly completedAt: string;
+  readonly completionMetadata: Readonly<Record<string, unknown>>;
+  readonly terminalKind?: "SUCCEEDED";
+}
+
+export interface ProviderExecutionTerminalFailureInput {
+  readonly jobId: string;
+  readonly executionId: string;
+  readonly attemptId: string;
+  readonly workerId: string;
+  readonly providerId: string;
+  readonly adapterVersion: string;
+  readonly failureCode: string;
+  readonly failureReason: string;
+  readonly resultReference: string;
+  readonly requestHash: string;
+  readonly responseHash: string;
+  readonly dispatchTimestamp: string;
+  readonly executionDurationMs: number;
+  readonly usage?: ProviderUsage;
+  readonly cost?: ProviderCost;
+  readonly completionMetadata?: Readonly<Record<string, unknown>>;
+  readonly now?: Date;
+}
+
+export interface ProviderExecutionTerminalFailureRecord {
+  readonly executionId: string;
+  readonly attemptId: string;
+  readonly jobId: string;
+  readonly workerId: string;
+  readonly terminalKind: "TERMINAL_FAILURE";
+  readonly failureCode: string;
+  readonly resultReference: string;
+  readonly responseHash: string;
   readonly completedAt: string;
   readonly completionMetadata: Readonly<Record<string, unknown>>;
 }
@@ -94,7 +130,11 @@ export class ProviderExecutionFinalizationRepository {
       if (!execution) {
         throw new ProviderExecutionFinalizationError("Provider execution not found");
       }
-      if (execution.acceptedResult || execution.status === "SUCCEEDED") {
+      if (
+        execution.acceptedResult ||
+        execution.status === "SUCCEEDED" ||
+        execution.status === "TERMINAL_FAILURE"
+      ) {
         throw new ProviderExecutionFinalizationError(
           "Provider execution is already finalized"
         );
@@ -246,6 +286,240 @@ export class ProviderExecutionFinalizationRepository {
         jobId: input.jobId,
         workerId: input.workerId,
         result,
+        completedAt: now.toISOString(),
+        completionMetadata,
+        terminalKind: "SUCCEEDED" as const,
+      };
+    });
+  }
+
+  /**
+   * Tx A terminal failure path — sole Production Finalizer authority.
+   * Writes attempt-bound TERMINAL_FAILURE, DEAD_LETTER, and truthful usage/cost.
+   * Does NOT invent cost amount 0 when cost is unknown.
+   */
+  async finalizeTerminalFailure(
+    input: ProviderExecutionTerminalFailureInput
+  ): Promise<ProviderExecutionTerminalFailureRecord> {
+    if (!input.workerId.trim()) {
+      throw new ProviderExecutionFinalizationError("workerId is required");
+    }
+    if (!input.failureCode.trim() || !input.failureReason.trim()) {
+      throw new ProviderExecutionFinalizationError(
+        "failureCode and failureReason are required"
+      );
+    }
+    if (!input.resultReference.trim()) {
+      throw new ProviderExecutionFinalizationError("resultReference is required");
+    }
+    if (!Number.isFinite(input.executionDurationMs) || input.executionDurationMs < 0) {
+      throw new ProviderExecutionFinalizationError(
+        "executionDurationMs must be non-negative"
+      );
+    }
+    const now = input.now ?? new Date();
+    const completionMetadata = {
+      providerId: input.providerId,
+      adapterVersion: input.adapterVersion,
+      dispatchTimestamp: input.dispatchTimestamp,
+      executionDurationMs: input.executionDurationMs,
+      terminalKind: "TERMINAL_FAILURE",
+      failureCode: input.failureCode,
+      failureReason: input.failureReason,
+      resultReference: input.resultReference,
+      responseHash: input.responseHash,
+      requestHash: input.requestHash,
+      ...(input.completionMetadata ?? {}),
+    };
+
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`
+        select ${schema.providerExecutions.executionId}
+        from ${schema.providerExecutions}
+        where ${schema.providerExecutions.executionId} = ${input.executionId}
+        for update
+      `);
+      await tx.execute(sql`
+        select ${schema.providerOutboxJobs.jobId}
+        from ${schema.providerOutboxJobs}
+        where ${schema.providerOutboxJobs.jobId} = ${input.jobId}
+        for update
+      `);
+
+      const [execution] = await tx
+        .select()
+        .from(schema.providerExecutions)
+        .where(eq(schema.providerExecutions.executionId, input.executionId))
+        .limit(1);
+      if (!execution) {
+        throw new ProviderExecutionFinalizationError("Provider execution not found");
+      }
+      if (execution.status === "SUCCEEDED" || execution.acceptedResult) {
+        throw new ProviderExecutionFinalizationError(
+          "Provider execution is already successfully finalized"
+        );
+      }
+      if (execution.status === "TERMINAL_FAILURE") {
+        throw new ProviderExecutionFinalizationError(
+          "Provider execution is already finalized"
+        );
+      }
+
+      const [attempt] = await tx
+        .select()
+        .from(schema.providerAttempts)
+        .where(
+          and(
+            eq(schema.providerAttempts.attemptId, input.attemptId),
+            eq(schema.providerAttempts.executionId, input.executionId)
+          )
+        )
+        .limit(1);
+      if (!attempt) {
+        throw new ProviderExecutionFinalizationError(
+          "Provider attempt does not belong to execution"
+        );
+      }
+      if (attempt.status !== "TERMINAL_FAILURE") {
+        throw new ProviderExecutionFinalizationError(
+          "Only a TERMINAL_FAILURE Provider attempt may be failure-finalized"
+        );
+      }
+      if (
+        attempt.providerId !== input.providerId ||
+        attempt.requestHash !== input.requestHash ||
+        (attempt.responseHash && attempt.responseHash !== input.responseHash)
+      ) {
+        throw new ProviderExecutionFinalizationError(
+          "Failure finalization conflicts with Ledger attempt facts"
+        );
+      }
+
+      const [job] = await tx
+        .select()
+        .from(schema.providerOutboxJobs)
+        .where(eq(schema.providerOutboxJobs.jobId, input.jobId))
+        .limit(1);
+      if (
+        !job ||
+        job.executionId !== input.executionId ||
+        job.status !== "CLAIMED" ||
+        job.leaseOwner !== input.workerId ||
+        !job.leaseExpiresAt ||
+        job.leaseExpiresAt.getTime() <= now.getTime()
+      ) {
+        throw new ProviderExecutionFinalizationError(
+          "Active Outbox lease is required for finalization"
+        );
+      }
+
+      const usage = ProviderUsageSchema.parse(input.usage ?? {});
+      const cost = ProviderCostSchema.parse(
+        input.cost ?? {
+          amount: null,
+          currency: "USD",
+          estimated: true,
+          costSource: "UNKNOWN",
+        }
+      );
+      const usageRows = await tx
+        .insert(schema.providerAttemptUsage)
+        .values({ attemptId: input.attemptId, usage })
+        .onConflictDoNothing()
+        .returning();
+      if (!usageRows[0]) {
+        const [existing] = await tx
+          .select()
+          .from(schema.providerAttemptUsage)
+          .where(eq(schema.providerAttemptUsage.attemptId, input.attemptId))
+          .limit(1);
+        if (!existing || !sameJson(existing.usage, usage)) {
+          throw new ProviderExecutionFinalizationError(
+            "Provider usage conflicts with persisted facts"
+          );
+        }
+      }
+
+      const costRows = await tx
+        .insert(schema.providerAttemptCosts)
+        .values({ attemptId: input.attemptId, cost })
+        .onConflictDoNothing()
+        .returning();
+      if (!costRows[0]) {
+        const [existing] = await tx
+          .select()
+          .from(schema.providerAttemptCosts)
+          .where(eq(schema.providerAttemptCosts.attemptId, input.attemptId))
+          .limit(1);
+        if (!existing || !sameJson(existing.cost, cost)) {
+          throw new ProviderExecutionFinalizationError(
+            "Provider cost conflicts with persisted facts"
+          );
+        }
+      }
+
+      const terminalized = await tx
+        .update(schema.providerExecutions)
+        .set({
+          status: "TERMINAL_FAILURE",
+          acceptedAttemptId: input.attemptId,
+          acceptedResult: null,
+          acceptedResponseHash: input.responseHash,
+          acceptedAt: now,
+          completedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.providerExecutions.executionId, input.executionId),
+            sql`${schema.providerExecutions.status} <> 'SUCCEEDED'`,
+            sql`${schema.providerExecutions.status} <> 'TERMINAL_FAILURE'`,
+            sql`${schema.providerExecutions.acceptedResult} is null`
+          )
+        )
+        .returning({ executionId: schema.providerExecutions.executionId });
+      if (!terminalized[0]) {
+        throw new ProviderExecutionFinalizationError(
+          "Concurrent Provider terminal failure conflict"
+        );
+      }
+
+      const deadLettered = await tx
+        .update(schema.providerOutboxJobs)
+        .set({
+          status: "DEAD_LETTER",
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          deadLetterReason: `${input.failureCode}: ${input.failureReason}`,
+          deadLetterAt: now,
+          completionWorkerId: input.workerId,
+          completionMetadata,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(schema.providerOutboxJobs.jobId, input.jobId),
+            eq(schema.providerOutboxJobs.executionId, input.executionId),
+            eq(schema.providerOutboxJobs.status, "CLAIMED"),
+            eq(schema.providerOutboxJobs.leaseOwner, input.workerId),
+            gt(schema.providerOutboxJobs.leaseExpiresAt, now)
+          )
+        )
+        .returning({ jobId: schema.providerOutboxJobs.jobId });
+      if (!deadLettered[0]) {
+        throw new ProviderExecutionFinalizationError(
+          "Concurrent Outbox dead-letter conflict"
+        );
+      }
+
+      return {
+        executionId: input.executionId,
+        attemptId: input.attemptId,
+        jobId: input.jobId,
+        workerId: input.workerId,
+        terminalKind: "TERMINAL_FAILURE" as const,
+        failureCode: input.failureCode,
+        resultReference: input.resultReference,
+        responseHash: input.responseHash,
         completedAt: now.toISOString(),
         completionMetadata,
       };

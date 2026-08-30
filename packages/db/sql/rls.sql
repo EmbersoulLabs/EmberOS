@@ -107,3 +107,51 @@ CREATE POLICY business_profiles_update ON business_profiles
 CREATE POLICY business_profiles_delete ON business_profiles
   FOR DELETE
   USING (workspace_id IN (SELECT user_workspace_ids()));
+
+-- ── campaign_asset_refs (Photo Scene 10A) ───────────────────────────────────
+ALTER TABLE campaign_asset_refs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS campaign_asset_refs_all ON campaign_asset_refs;
+CREATE POLICY campaign_asset_refs_all ON campaign_asset_refs
+  FOR ALL USING (
+    campaign_id IN (SELECT id FROM campaigns WHERE workspace_id IN (SELECT user_workspace_ids()))
+  );
+
+-- ── photo_scene_generations (Photo Scene 10B) ───────────────────────────────
+ALTER TABLE photo_scene_generations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS photo_scene_generations_all ON photo_scene_generations;
+CREATE POLICY photo_scene_generations_all ON photo_scene_generations
+  FOR ALL USING (
+    workspace_id IN (SELECT user_workspace_ids())
+    AND campaign_id IN (SELECT id FROM campaigns WHERE workspace_id IN (SELECT user_workspace_ids()))
+  );
+
+-- ── photo_scene official scenes (Photo Scene 10C) ───────────────────────────
+-- Global catalog: authenticated read of published/retired versions. No tenant writes.
+ALTER TABLE photo_scene_official_scenes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE photo_scene_official_scene_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE photo_scene_scene_selections ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS photo_scene_official_scenes_select ON photo_scene_official_scenes;
+CREATE POLICY photo_scene_official_scenes_select ON photo_scene_official_scenes
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS photo_scene_official_scene_versions_select ON photo_scene_official_scene_versions;
+CREATE POLICY photo_scene_official_scene_versions_select ON photo_scene_official_scene_versions
+  FOR SELECT USING (
+    auth.uid() IS NOT NULL
+    AND status IN ('published', 'retired')
+  );
+
+DROP POLICY IF EXISTS photo_scene_scene_selections_all ON photo_scene_scene_selections;
+CREATE POLICY photo_scene_scene_selections_all ON photo_scene_scene_selections
+  FOR ALL USING (
+    workspace_id IN (SELECT user_workspace_ids())
+    AND campaign_id IN (SELECT id FROM campaigns WHERE workspace_id IN (SELECT user_workspace_ids()))
+  )
+  WITH CHECK (
+    workspace_id IN (SELECT user_workspace_ids())
+    AND org_id = (SELECT org_id FROM workspaces WHERE id = workspace_id)
+    AND campaign_id IN (SELECT id FROM campaigns WHERE workspace_id IN (SELECT user_workspace_ids()))
+  );

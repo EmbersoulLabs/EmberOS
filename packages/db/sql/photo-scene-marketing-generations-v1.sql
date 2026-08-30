@@ -1,0 +1,11 @@
+-- Photo Scene 10D — marketing_image operation on existing photo_scene_generations.
+-- Additive documentation only. No new generation table.
+-- operation text already accepts marketing_image; inflight unique index includes operation.
+
+-- Expected 10D lifecycle:
+-- queued -> processing -> ready | failed
+-- source_asset_id = extracted_product
+-- provider_key = deterministic_compositor
+-- cost_usd = 0 for local composition
+-- input_capsule = photo-scene-marketing-image-v1
+-- READY is persisted only after marketing_image asset + campaign_asset_refs exist.

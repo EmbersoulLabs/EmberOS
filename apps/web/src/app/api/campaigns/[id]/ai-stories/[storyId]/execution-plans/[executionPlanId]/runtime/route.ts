@@ -1,0 +1,278 @@
+/**
+ * Sprint 3 PR 3.7 Phase E — GET product runtime projection.
+ *
+ * GET /api/campaigns/:id/ai-stories/:storyId/execution-plans/:executionPlanId/runtime
+ *
+ * Read-only. Zero execution side effects.
+ */
+import {
+  buildAiStoryPostQcHumanReviewEvidence,
+  deriveProductRuntimeProjection,
+  GeneratedSceneReviewReadSubstageRecorder,
+} from "@ceo-agent/agents";
+import {
+  AiStoryPostGenerationQcRepository,
+  EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
+  ExecutionPlanReviewProjectionTimingRecorder,
+  getWorkspaceMembership,
+  loadAiStorySceneReviewPresentations,
+} from "@ceo-agent/db";
+import {
+  PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS,
+  ProductRuntimeProjectionSchema,
+} from "@ceo-agent/shared";
+import { apiSuccess } from "@/lib/api";
+import { handleApiError, requireAuth } from "@/lib/auth";
+import { mintSceneResultPlayback } from "@/lib/ai-story-scene-media-playback";
+import {
+  executionPlanRouteErrorResponse,
+  ExecutionPlanLoadTimingRecorder,
+  resolveAuthorizedExecutionPlan,
+  RouteOwnershipValidationTimingRecorder,
+  StoryLoadTimingRecorder,
+} from "@/lib/ai-story-execution-plan-access";
+import {
+  RuntimeReadDeadlineError,
+  RuntimeReadStageRecorder,
+  SERVER_RUNTIME_DEADLINE_MS,
+} from "@/lib/ai-story-runtime-read-observability";
+
+type RouteParams = {
+  params: Promise<{ id: string; storyId: string; executionPlanId: string }>;
+};
+
+const PLAYBACK_SIGNING_TIMEOUT_MS = 8_000;
+
+async function withDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("Scene media signing timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+function correlationId(request: Request): string {
+  const supplied = request.headers.get("x-emberos-request-correlation-id")?.trim();
+  return supplied && supplied.length <= 128 ? supplied : crypto.randomUUID();
+}
+
+function assertNoForbiddenKeys(payload: unknown): void {
+  if (!payload || typeof payload !== "object") return;
+  for (const key of PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      throw new Error(`Forbidden runtime response key leaked: ${key}`);
+    }
+  }
+}
+
+export async function GET(request: Request, { params }: RouteParams) {
+  const requestCorrelationId = correlationId(request);
+  const releaseRevision =
+    process.env.EMBEROS_RELEASE_REVISION?.trim() ||
+    process.env.VERCEL_GIT_COMMIT_SHA?.trim() ||
+    "unknown";
+  const deadline = new AbortController();
+  const recorder = new RuntimeReadStageRecorder(deadline.signal);
+  const reviewSubstageRecorder = new GeneratedSceneReviewReadSubstageRecorder();
+  const executionPlanReviewRecorder = new ExecutionPlanReviewProjectionTimingRecorder(
+    () => SERVER_RUNTIME_DEADLINE_MS - recorder.elapsedMs()
+  );
+  const storyLoadRecorder = new StoryLoadTimingRecorder();
+  const executionPlanLoadRecorder = new ExecutionPlanLoadTimingRecorder();
+  const routeOwnershipValidationRecorder = new RouteOwnershipValidationTimingRecorder();
+  const reviewPathTrace: Array<Record<string, unknown>> = [];
+  const recordReviewPathMarker = (marker: {
+    readonly marker: string;
+    readonly sourceModule: string;
+    readonly sourceFunction: string;
+    readonly traceVersion: string;
+    readonly executionPlanId?: string;
+  }) => {
+    const event = {
+      ...marker,
+      correlationId: requestCorrelationId,
+      executionPlanId: typeof marker.executionPlanId === "string" ? marker.executionPlanId : null,
+      releaseRevision,
+      elapsedMs: recorder.elapsedMs(),
+    };
+    reviewPathTrace.push(event);
+    console.info("ai_story_runtime_review_helper_path", event);
+  };
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  const timingResponse = (status: number, errorCode: string, message: string, timedOutStage?: string) =>
+    Response.json({
+      error: message,
+      errorCode,
+      correlationId: requestCorrelationId,
+      lastCompletedStage: recorder.lastCompletedStage(),
+      timedOutStage: timedOutStage ?? null,
+      elapsedMs: recorder.elapsedMs(),
+      stageTimings: recorder.snapshot(),
+      executionPlanReviewTraceVersion: EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
+      generatedSceneReviewStageTimings: reviewSubstageRecorder.snapshot(),
+      executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
+      storyLoadStageTimings: storyLoadRecorder.snapshot(),
+      executionPlanLoadStageTimings: executionPlanLoadRecorder.snapshot(),
+      routeOwnershipValidationStageTimings: routeOwnershipValidationRecorder.snapshot(),
+      generatedSceneReviewPathTrace: reviewPathTrace,
+    }, { status, headers: { "x-emberos-request-correlation-id": requestCorrelationId } });
+
+  const execute = async () => {
+    const { id: campaignId, storyId, executionPlanId } = await recorder.run("request_parse", () => params);
+    const user = await recorder.run("auth", () => requireAuth());
+
+    const ctx = await resolveAuthorizedExecutionPlan({
+      userId: user.id,
+      campaignId,
+      storyId,
+      executionPlanId,
+      minRole: "client_viewer",
+      observeStage: (stage, operation) => recorder.run(stage, operation),
+      storyLoadTimingRecorder: storyLoadRecorder,
+      executionPlanLoadTimingRecorder: executionPlanLoadRecorder,
+      routeOwnershipValidationTimingRecorder: routeOwnershipValidationRecorder,
+    });
+
+    const membership = await recorder.run("workspace_authorization", () =>
+      getWorkspaceMembership(ctx.workspaceId, user.id)
+    );
+    const projection = await deriveProductRuntimeProjection({
+      executionPlanId: ctx.executionPlanId,
+      callerRole: membership?.role ?? null,
+      observeStage: (stage, operation) => recorder.run(stage, operation),
+      executionPlanReviewProjectionTimingRecorder: executionPlanReviewRecorder,
+      onGeneratedSceneReviewPathMarker: (marker) =>
+        recordReviewPathMarker({ ...marker, executionPlanId: ctx.executionPlanId }),
+      generatedSceneReviewReadSubstageRecorder: reviewSubstageRecorder,
+    });
+
+    const sceneIdentities = (projection.generatedSceneReviews ?? []).map((scene) => ({
+      sceneExecutionId: scene.sceneExecutionId,
+      sceneId: scene.sceneId,
+      sceneOrder: scene.sceneOrder,
+      latestAttemptId: scene.latestAttemptId,
+    }));
+    const attemptIds = sceneIdentities.flatMap((scene) => scene.latestAttemptId ? [scene.latestAttemptId] : []);
+    const [presentations, postQcByAttempt] = await Promise.all([
+      loadAiStorySceneReviewPresentations({
+        workspaceId: ctx.workspaceId,
+        campaignId,
+        storyId,
+        scenes: sceneIdentities,
+      }),
+      new AiStoryPostGenerationQcRepository().getLatestByProviderAttemptIds({
+        workspaceId: ctx.workspaceId,
+        providerAttemptIds: attemptIds,
+      }),
+    ]);
+    const generatedSceneReviews = await Promise.all(
+      (projection.generatedSceneReviews ?? []).map(async (scene) => {
+        const presentation = presentations.get(scene.sceneExecutionId);
+        const evaluation = scene.latestAttemptId ? postQcByAttempt.get(scene.latestAttemptId) : undefined;
+        const postGenerationQcEvidence = evaluation
+          ? buildAiStoryPostQcHumanReviewEvidence({
+              evaluation,
+              sceneSummary: presentation?.summary ?? `Scene ${scene.sceneOrder + 1}`,
+            })
+          : undefined;
+        const enriched = {
+          ...scene,
+          ...(presentation ? { presentation } : {}),
+          ...(postGenerationQcEvidence ? { postGenerationQcEvidence } : {}),
+        };
+        if (!scene.generatedMedia) return enriched;
+        try {
+          const delivery = await withDeadline(
+            mintSceneResultPlayback({
+              workspaceId: ctx.workspaceId,
+              executionPlanId: ctx.executionPlanId,
+              sceneExecutionId: scene.sceneExecutionId,
+              providerAttemptId: scene.generatedMedia.providerAttemptId,
+              sceneResultId: scene.generatedMedia.sceneResultId,
+              observeStage: (stage, operation) => recorder.run(stage, operation),
+            }),
+            PLAYBACK_SIGNING_TIMEOUT_MS
+          );
+          return { ...enriched, generatedMedia: { ...scene.generatedMedia, ...delivery, deliveryStatus: "READY" as const, safeError: null } };
+        } catch {
+          return { ...enriched, generatedMedia: { ...scene.generatedMedia, deliveryUrl: null, expiresAt: null, deliveryStatus: "UNAVAILABLE" as const, safeError: "Scene media preview is temporarily unavailable." } };
+        }
+      })
+    );
+    const deliveredProjection = await recorder.run("response_schema_validation", async () =>
+      ProductRuntimeProjectionSchema.parse({ ...projection, generatedSceneReviews })
+    );
+    assertNoForbiddenKeys(deliveredProjection);
+    const response = await recorder.run("response_serialization", async () => apiSuccess(deliveredProjection));
+    response.headers.set("x-emberos-request-correlation-id", requestCorrelationId);
+    response.headers.set(
+      "x-emberos-review-projection-timing",
+      JSON.stringify(reviewSubstageRecorder.snapshot())
+    );
+    return { response, storyId, executionPlanId };
+  };
+
+  try {
+    const result = await Promise.race([
+      execute(),
+      new Promise<never>((_resolve, reject) => {
+        deadlineTimer = setTimeout(() => {
+          const timedOutStage = recorder.markTimedOut();
+          reviewSubstageRecorder.markTimedOut();
+          executionPlanReviewRecorder.markTimedOut();
+          storyLoadRecorder.markTimedOut();
+          executionPlanLoadRecorder.markTimedOut();
+          routeOwnershipValidationRecorder.markTimedOut();
+          deadline.abort();
+          reject(new RuntimeReadDeadlineError(timedOutStage, recorder.elapsedMs()));
+        }, SERVER_RUNTIME_DEADLINE_MS);
+      }),
+    ]);
+    console.info("ai_story_runtime_read_timing", {
+      requestCorrelationId,
+      storyId: result.storyId,
+      executionPlanId: result.executionPlanId,
+      totalDurationMs: recorder.elapsedMs(),
+      runtime_projection_ms: recorder.duration("runtime_projection_build"),
+      private_signing_ms: recorder.duration("media_playback_resolution"),
+      total_request_ms: recorder.elapsedMs(),
+      lastCompletedStage: recorder.lastCompletedStage(),
+      timedOutStage: null,
+      stageTimings: recorder.snapshot(),
+      executionPlanReviewTraceVersion: EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
+      executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
+      outcome: "success",
+    });
+    return result.response;
+  } catch (error) {
+    const timedOutStage = error instanceof RuntimeReadDeadlineError ? error.timedOutStage : null;
+    console.error("ai_story_runtime_read_timing", {
+      requestCorrelationId,
+      totalDurationMs: recorder.elapsedMs(),
+      runtime_projection_ms: recorder.duration("runtime_projection_build"),
+      private_signing_ms: recorder.duration("media_playback_resolution"),
+      total_request_ms: recorder.elapsedMs(),
+      lastCompletedStage: recorder.lastCompletedStage(),
+      timedOutStage,
+      stageTimings: recorder.snapshot(),
+      executionPlanReviewTraceVersion: EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
+      executionPlanReviewStageTimings: executionPlanReviewRecorder.snapshot(),
+      outcome: timedOutStage ? "timeout" : "failure",
+      errorClass: error instanceof Error ? error.name : "UnknownError",
+    });
+    if (error instanceof RuntimeReadDeadlineError) {
+      return timingResponse(504, error.code, error.message, error.timedOutStage);
+    }
+    const response = executionPlanRouteErrorResponse(error) ?? handleApiError(error);
+    response.headers.set("x-emberos-request-correlation-id", requestCorrelationId);
+    return response;
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
+  }
+}

@@ -1,66 +1,95 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import { CampaignWorkspace } from "@/components/campaign/CampaignWorkspace";
-import { AppShell } from "@/components/AppShell";
+import { useParams, useRouter } from "next/navigation";
+import {
+  CampaignDashboard,
+  type CampaignDashboardData,
+} from "@/components/campaign/CampaignDashboard";
+import { isCampaignDeletable } from "@/lib/campaigns";
 import { useI18n } from "@/lib/i18n/provider";
 
-export default function CampaignWorkspacePage() {
+export default function CampaignDetailPage() {
   const params = useParams();
-  const slug = params.slug as string;
-  const campaignId = params.id as string;
+  const router = useRouter();
   const { t } = useI18n();
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
-  const [workspaceName, setWorkspaceName] = useState("");
-  const [workspaceRole, setWorkspaceRole] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const slug = params.slug as string;
+  const id = params.id as string;
 
-  const load = useCallback(async () => {
-    setError("");
-    try {
-      const meRes = await fetch("/api/me");
-      const me = await meRes.json();
-      if (!meRes.ok) throw new Error(me.error ?? t("error.loadAccount"));
-      const ws = me.workspaces?.find((w: { slug: string }) => w.slug === slug) as
-        | { id: string; name?: string; role?: string }
-        | undefined;
-      if (!ws) throw new Error(t("error.workspaceNotFound"));
-      setWorkspaceId(ws.id);
-      setWorkspaceName(ws.name ?? slug);
-      setWorkspaceRole(ws.role ?? null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-    }
-  }, [slug, t]);
+  const [data, setData] = useState<CampaignDashboardData | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const loadCampaign = useCallback(async () => {
+    const res = await fetch(`/api/campaigns/${id}`);
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body as CampaignDashboardData;
+  }, [id]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
 
-  if (error) {
+    async function refresh() {
+      const next = await loadCampaign();
+      if (cancelled || !next) return;
+      setData(next);
+    }
+
+    refresh();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadCampaign]);
+
+  async function deleteCampaign() {
+    const name = (data?.campaign?.name as string) ?? "this campaign";
+    setDeleteError("");
+    if (!confirm(t("campaigns.deleteConfirm", { name }))) return;
+
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/campaigns/${id}`, { method: "DELETE" });
+      const body = await res.json();
+      if (!res.ok) {
+        setDeleteError(body.error ?? t("error.deleteCampaign"));
+        return;
+      }
+      router.push(`/w/${slug}/campaigns`);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  if (!data) {
     return (
-      <AppShell>
-        <p className="text-sm text-red-600">{error}</p>
-      </AppShell>
+      <div className="mx-auto max-w-6xl px-4 py-12">
+        <div className="h-8 w-48 animate-pulse rounded-lg bg-surface-muted" />
+        <div className="mt-6 grid gap-5 lg:grid-cols-2">
+          <div className="h-40 animate-pulse rounded-xl bg-surface-muted/60" />
+          <div className="h-40 animate-pulse rounded-xl bg-surface-muted/60" />
+        </div>
+      </div>
     );
   }
 
-  if (!workspaceId) {
-    return (
-      <AppShell>
-        <p className="text-sm text-ink-secondary">{t("campaign.workspace.loading")}</p>
-      </AppShell>
+  const canDelete =
+    data.canDelete ??
+    isCampaignDeletable(
+      data.campaign.status as string,
+      data.task?.status as string | undefined,
+      (data.task?.stepProgress as Record<string, { status?: string }>) ?? null
     );
-  }
 
   return (
-    <CampaignWorkspace
+    <CampaignDashboard
       slug={slug}
-      workspaceId={workspaceId}
-      workspaceName={workspaceName}
-      campaignId={campaignId}
-      workspaceRole={workspaceRole}
+      campaignId={id}
+      data={{ ...data, canDelete }}
+      deleting={deleting}
+      deleteError={deleteError}
+      onDelete={deleteCampaign}
     />
   );
 }

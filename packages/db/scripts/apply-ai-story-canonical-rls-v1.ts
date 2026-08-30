@@ -7,6 +7,9 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
+import { refuseProductionAiStoryApply } from "./refuse-production-ai-story-apply";
+
+refuseProductionAiStoryApply();
 
 const directory = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(directory, "../../../apps/worker/.env") });

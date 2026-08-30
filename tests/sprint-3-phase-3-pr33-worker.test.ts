@@ -209,6 +209,7 @@ describe("Sprint 3 PR 3.3 worker contracts", () => {
     });
     expect(submitted.result.providerRequestId).toBeTruthy();
     repository.results.clear();
+    repository.observations.clear();
     const resumed = await worker.processDispatch({
       dispatchId: bundle.dispatch.dispatchId,
       mode: "lookup",
@@ -223,20 +224,39 @@ describe("Sprint 3 PR 3.3 worker contracts", () => {
   it("rejects conflicting Worker result replay", async () => {
     const bundle = await buildPr33ValidatedBundle();
     const repository = new InMemoryWorkerRuntimeRepository(bundle);
-    const worker = new SceneProviderWorkerRuntime({
-      repository,
-      adapters: createPr33TestAdapterRegistry("accepted_async"),
-      now: () => new Date("2026-08-04T12:10:00.000Z"),
-    });
-    const first = await worker.processDispatch({
+    const withoutHash = {
+      workerExecutionResultId: "10000000-0000-5000-8000-000000000901",
+      providerExecutionId: bundle.providerExecutionId,
+      providerAttemptId: "10000000-0000-5000-8000-000000000902",
       dispatchId: bundle.dispatch.dispatchId,
+      outboxJobId: bundle.outboxJobId,
+      routingDecisionId: bundle.routingDecision.routingDecisionId,
+      providerId: bundle.routingDecision.selectedProviderId,
+      adapterVersion: bundle.routingDecision.selectedAdapterVersion,
+      routerVersion: SCENE_ROUTER_VERSION,
+      providerRequestId: "req-terminal",
+      workerState: "TERMINAL_SUCCESS" as const,
+      acceptanceClassification: "ACCEPTED" as const,
+      canonicalProviderState: "SUCCEEDED" as const,
+      reconciliationRequired: false,
+      workerContractVersion: WORKER_RUNTIME_CONTRACT_VERSION,
+      attemptContractVersion: WORKER_ATTEMPT_CONTRACT_VERSION,
+      producedAt: "2026-08-04T12:10:00.000Z",
+      executionAllowed: false as const,
+      executionLockCode: PHASE1_EXECUTION_LOCKED,
+      automaticFallbackEnabled: false as const,
+    };
+    const terminal = WorkerExecutionResultSchema.parse({
+      ...withoutHash,
+      deterministicIntegrityHash: computeWorkerExecutionResultHash(withoutHash),
     });
+    await repository.acceptOrReturnWorkerExecutionResult(terminal);
     const conflicting = WorkerExecutionResultSchema.parse({
-      ...first.result,
+      ...terminal,
       canonicalProviderState: "FAILED",
       workerState: "TERMINAL_FAILURE",
       deterministicIntegrityHash: computeWorkerExecutionResultHash({
-        ...first.result,
+        ...terminal,
         canonicalProviderState: "FAILED",
         workerState: "TERMINAL_FAILURE",
       }),

@@ -5,11 +5,9 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { isUuid, isSubtitleLanguagePair, isSubtitleStylePreset } from "@ceo-agent/shared";
 import { isLocale } from "@ceo-agent/shared/i18n";
 import { executeCampaignGenerate } from "@/lib/campaign-generate";
+import { pendingAiExecutionProjection } from "@/lib/ai-execution-truth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
-/**
- * Authoritative Campaign Generate — validates inputs and enqueues agent.pipeline.
- */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -31,7 +29,6 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
     let contentLocale: string | undefined;
@@ -60,26 +57,14 @@ export async function POST(
       contentLocale,
       renderPreferences,
     });
-
-    if (!result.ok) {
-      return apiError(result.error, result.code, result.status);
-    }
-
-    const [updated] = await db
-      .select()
-      .from(schema.campaigns)
-      .where(eq(schema.campaigns.id, campaignId))
-      .limit(1);
+    if (!result.ok) return apiError(result.error, result.code, result.status);
 
     return apiSuccess(
       {
-        campaign: updated,
         taskId: result.taskId,
         status: result.status,
         reused: result.reused,
-        summary: result.summary,
-        generateStatus: "processing",
-        aiInvoked: true,
+        ...pendingAiExecutionProjection(),
       },
       result.reused ? 200 : 202
     );

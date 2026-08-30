@@ -177,6 +177,24 @@ describe("GET /api/workspaces/[id]/business-profile", () => {
     expect(body.profile.logo).toBe(logoUrl);
   });
 
+  it("GET returns canonical Default Publishing Platforms", async () => {
+    getBusinessProfileByWorkspace.mockResolvedValue(
+      incompleteProfileRow({
+        defaultPublishingPlatforms: ["google_business", "instagram", "instagram"],
+      })
+    );
+    const { GET } = await loadRoute();
+    const res = await GET(new Request("http://localhost/api"), {
+      params: Promise.resolve({ id: workspaceA }),
+    });
+    const body = await res.json();
+    expect(res.status).toBe(200);
+    expect(body.profile.defaultPublishingPlatforms).toEqual([
+      "instagram",
+      "googleBusiness",
+    ]);
+  });
+
   it("GET returns 404 when profile does not exist (no lazy create)", async () => {
     getBusinessProfileByWorkspace.mockResolvedValue(null);
     const { GET } = await loadRoute();
@@ -254,7 +272,7 @@ describe("Business Profile logo persistence", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(storageFrom).toHaveBeenCalledWith("campaign-assets");
+    expect(storageFrom).toHaveBeenCalledWith("business-branding");
     expect(storageUpload).toHaveBeenCalledWith(
       expect.stringMatching(
         /^aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
@@ -268,7 +286,7 @@ describe("Business Profile logo persistence", () => {
       userId,
       expect.objectContaining({
         logo: expect.stringMatching(
-          /^https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/campaign-assets\/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
+          /^https:\/\/example\.supabase\.co\/storage\/v1\/object\/public\/business-branding\/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\/brand\/business-logo-.+\.png$/
         ),
       })
     );
@@ -414,6 +432,53 @@ describe("PATCH /api/workspaces/[id]/business-profile", () => {
     expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("VALIDATION_ERROR");
+    expect(updateBusinessProfile).not.toHaveBeenCalled();
+  });
+
+  it("PATCH validates and persists Default Publishing Platforms", async () => {
+    updateBusinessProfile.mockResolvedValue(
+      incompleteProfileRow({
+        defaultPublishingPlatforms: ["tiktok", "linkedin"],
+        version: 2,
+      })
+    );
+    const { PATCH } = await loadRoute();
+    const res = await PATCH(
+      new Request("http://localhost/api", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          defaultPublishingPlatforms: ["linkedin", "tiktok", "linkedin"],
+          version: 1,
+        }),
+      }),
+      { params: Promise.resolve({ id: workspaceA }) }
+    );
+    expect(res.status).toBe(200);
+    expect(updateBusinessProfile).toHaveBeenCalledWith(
+      orgA,
+      workspaceA,
+      userId,
+      expect.objectContaining({
+        defaultPublishingPlatforms: ["tiktok", "linkedin"],
+      })
+    );
+  });
+
+  it("PATCH rejects unknown Default Publishing Platforms", async () => {
+    const { PATCH } = await loadRoute();
+    const res = await PATCH(
+      new Request("http://localhost/api", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          defaultPublishingPlatforms: ["unknown-network"],
+          version: 1,
+        }),
+      }),
+      { params: Promise.resolve({ id: workspaceA }) }
+    );
+    expect(res.status).toBe(400);
     expect(updateBusinessProfile).not.toHaveBeenCalled();
   });
 

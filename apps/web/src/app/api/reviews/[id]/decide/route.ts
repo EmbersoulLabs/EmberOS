@@ -1,17 +1,14 @@
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError, generateToken } from "@/lib/api";
 import { enqueueFinalRenderForCreative } from "@/lib/render-queue";
+import { withSignedCreativeArtifacts } from "@/lib/video-artifact-delivery";
 import {
   createClientInvite,
   resolveWorkspaceReviewSettings,
   syncCampaignStatusFromCreatives,
 } from "@/lib/review-flow";
-import {
-  ReviewDecideBodySchema,
-  assertPhase1ExecutionLocked,
-} from "@ceo-agent/shared";
 
 export async function POST(
   request: Request,
@@ -20,12 +17,11 @@ export async function POST(
   try {
     const user = await requireAuth();
     const { id } = await params;
-    const raw = await request.json().catch(() => null);
-    const parsed = ReviewDecideBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      return apiError("Invalid review decision payload", "VALIDATION_ERROR", 400);
-    }
-    const { decision, comment } = parsed.data;
+    const body = await request.json();
+    const { decision, comment } = body as {
+      decision: "approved" | "rejected";
+      comment?: string;
+    };
 
     const db = getDb();
     const [review] = await db
@@ -37,39 +33,15 @@ export async function POST(
     if (!review) return apiError("Review not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(review.workspaceId, user.id, "reviewer");
 
-    const [aiStoryExecutionOutput] = await db
-      .select({ id: schema.aiStoryExecutionOutputs.id })
-      .from(schema.aiStoryExecutionOutputs)
-      .where(eq(schema.aiStoryExecutionOutputs.creativeId, review.creativeId))
-      .limit(1);
-    if (aiStoryExecutionOutput) {
-      assertPhase1ExecutionLocked();
-    }
-
-    // OPS-002 Rule 4 — only Pending → Approved|Rejected; reject repeats.
-    if (review.decision !== "pending") {
-      return apiError(
-        `Review already decided (${review.decision})`,
-        "ALREADY_DECIDED",
-        409
-      );
-    }
-
     const [updatedReview] = await db
       .update(schema.reviews)
       .set({
         decision,
-        comment: comment ?? null,
+        comment,
         decidedAt: new Date(),
       })
-      .where(
-        and(eq(schema.reviews.id, id), eq(schema.reviews.decision, "pending"))
-      )
+      .where(eq(schema.reviews.id, id))
       .returning();
-
-    if (!updatedReview) {
-      return apiError("Review already decided", "ALREADY_DECIDED", 409);
-    }
 
     const [creative] = await db
       .select()
@@ -149,20 +121,6 @@ export async function POST(
       .set({ status: newCreativeStatus })
       .where(eq(schema.creatives.id, creative.id));
 
-    // Keep AI Story execution outputs in sync with review decisions.
-    const executionOutputStatus =
-      newCreativeStatus === "approved"
-        ? "approved"
-        : decision === "rejected"
-          ? "rejected"
-          : null;
-    if (executionOutputStatus) {
-      await db
-        .update(schema.aiStoryExecutionOutputs)
-        .set({ status: executionOutputStatus, updatedAt: new Date() })
-        .where(eq(schema.aiStoryExecutionOutputs.creativeId, creative.id));
-    }
-
     const newCampaignStatus = await syncCampaignStatusFromCreatives(
       db,
       creative.campaignId,
@@ -208,7 +166,7 @@ export async function POST(
 
     return apiSuccess({
       review: updatedReview,
-      creative: { ...creative, status: newCreativeStatus },
+      creative: await withSignedCreativeArtifacts({ ...creative, status: newCreativeStatus }),
       campaignStatus: newCampaignStatus,
       nextAction,
       inviteUrl,

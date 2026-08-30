@@ -5,9 +5,34 @@ import {
   AUTO_CLIP,
   FREE_EXPORT_RESOLUTION,
   PAID_EXPORT_RESOLUTION,
+  boundOpsDiagnosticMessage,
+  type RenderStatus,
   type TaskExportResolution,
   type StepProgress,
 } from "@ceo-agent/shared";
+
+const TASK_EXPORT_READY_RENDER_STATUSES = new Set<RenderStatus>([
+  "preview_ready",
+  "final_ready",
+]);
+
+/** Preview or final rendition is terminal-ready for task ZIP export. Fail-closed otherwise. */
+export function isCreativeReadyForTaskExport(
+  renderStatus: string | null | undefined
+): boolean {
+  return TASK_EXPORT_READY_RENDER_STATUSES.has(renderStatus as RenderStatus);
+}
+
+/** Complete three-output package with usable 720p artifacts. Missing/in-flight/failed denied. */
+export function isTaskPackageReadyForFreeExport(
+  creatives: Array<{ renderStatus: string | null; videoUrl: string | null }>
+): boolean {
+  if (creatives.length < AUTO_CLIP.CLIP_COUNT) return false;
+  const ready = creatives.filter(
+    (c) => isCreativeReadyForTaskExport(c.renderStatus) && Boolean(c.videoUrl)
+  ).length;
+  return ready >= AUTO_CLIP.CLIP_COUNT;
+}
 
 export interface TaskExportRequestState {
   resolution: TaskExportResolution;
@@ -34,11 +59,7 @@ export function countFinalRenderProgress(
   ).length;
   const finalRendering = creatives.filter((c) => c.renderStatus === "final_rendering").length;
   const previewReady = creatives.filter(
-    (c) =>
-      Boolean(c.videoUrl) &&
-      (c.renderStatus === "preview_ready" ||
-        c.renderStatus === "final_ready" ||
-        c.renderStatus === "final_rendering")
+    (c) => isCreativeReadyForTaskExport(c.renderStatus) && Boolean(c.videoUrl)
   ).length;
   return { total, finalReady, finalRendering, previewReady };
 }
@@ -103,6 +124,51 @@ function anyRenditionRendering(
     ).finalRendering > 0;
   }
   return false;
+}
+
+/** Pure merge: persist export failure without replacing unrelated stepProgress. */
+export function applyTaskExportFailure(
+  stepProgress: StepProgress | Record<string, unknown> | null | undefined,
+  input: { error: string; resolution?: TaskExportResolution }
+): StepProgress {
+  const progress: StepProgress = { ...((stepProgress as StepProgress) ?? {}) };
+  const priorStep = progress.export_request;
+  const prior = priorStep?.output as TaskExportRequestState | undefined;
+  const error = boundOpsDiagnosticMessage(input.error);
+  const requestedAt = prior?.requestedAt ?? new Date().toISOString();
+  const resolution = prior?.resolution ?? input.resolution ?? FREE_EXPORT_RESOLUTION;
+  progress.export_request = {
+    status: "failed",
+    startedAt: priorStep?.startedAt ?? requestedAt,
+    completedAt: new Date().toISOString(),
+    error,
+    output: {
+      resolution,
+      status: "failed",
+      requestedAt,
+      error,
+    } satisfies TaskExportRequestState,
+  };
+  return progress;
+}
+
+export async function persistTaskExportFailure(input: {
+  taskId: string;
+  error: string;
+  resolution?: TaskExportResolution;
+}): Promise<void> {
+  const db = getDb();
+  const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, input.taskId)).limit(1);
+  if (!task) return;
+  await db
+    .update(schema.tasks)
+    .set({
+      stepProgress: applyTaskExportFailure(task.stepProgress as StepProgress, {
+        error: input.error,
+        resolution: input.resolution,
+      }),
+    })
+    .where(eq(schema.tasks.id, input.taskId));
 }
 
 export async function setTaskExportRequest(

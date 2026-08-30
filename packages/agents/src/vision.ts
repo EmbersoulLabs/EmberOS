@@ -1,13 +1,6 @@
 import { z } from "zod";
 import { callJsonModel, callVisionJsonModel } from "./llm";
-import { getVisionAnalysisTimeoutMs, withVisionAnalysisTimeout } from "./vision-timeout";
-import {
-  outputLanguagePrompt,
-  resolveContentSubject,
-  workspaceLanguageAsContentLocale,
-  type CampaignAIContext,
-  type ContentLocale,
-} from "@ceo-agent/shared";
+import { outputLanguagePrompt, isChineseText, resolveContentSubject, type ContentLocale } from "@ceo-agent/shared";
 import type { VisionAnalysis } from "@ceo-agent/shared";
 
 export interface VisionFrameInput {
@@ -15,12 +8,6 @@ export interface VisionFrameInput {
   dataUrl: string;
 }
 
-/**
- * Vision AI — AD-001
- * Required: campaignContext, assetId, mediaType
- * Optional: frames, transcriptSummary, campaignName, videoAnalysis, durationSec, frameDescriptions
- * Consumes from context: campaignObjective, campaignBrief, targetAudience, workspaceLanguage, businessProfile, publishingPlatforms
- */
 export interface VisionInput {
   assetId: string;
   mediaType: "video" | "image";
@@ -30,13 +17,19 @@ export interface VisionInput {
   frames?: VisionFrameInput[];
   transcriptSummary?: string;
   campaignName?: string;
+  goal?: string;
+  campaignBrief?: string;
+  userNotes?: string;
   videoAnalysis?: string | null;
-  /** PD-044 — complete Campaign AI context (unused fields may be ignored by the prompt). */
-  campaignContext: CampaignAIContext;
+  contentLocale?: ContentLocale;
 }
 
 function resolveVisionLocale(input: VisionInput): ContentLocale {
-  return workspaceLanguageAsContentLocale(input.campaignContext.workspaceLanguage);
+  if (input.contentLocale) return input.contentLocale;
+  const blob = [input.goal, input.campaignBrief, input.userNotes, input.videoAnalysis]
+    .filter(Boolean)
+    .join("");
+  return isChineseText(blob) ? "zh" : "en";
 }
 
 const EMPTY_VISION: Pick<VisionAnalysis, "products" | "subjects" | "scenes"> = {
@@ -48,11 +41,10 @@ const EMPTY_VISION: Pick<VisionAnalysis, "products" | "subjects" | "scenes"> = {
 function buildFallbackAnalysis(input: VisionInput): VisionAnalysis {
   const locale = resolveVisionLocale(input);
   const zh = locale === "zh";
-  const ctx = input.campaignContext;
   const topic = resolveContentSubject(EMPTY_VISION, {
-    goal: ctx.campaignObjective,
-    userNotes: ctx.targetAudience ?? undefined,
-    campaignBrief: ctx.campaignBrief ?? undefined,
+    goal: input.goal,
+    userNotes: input.userNotes,
+    campaignBrief: input.campaignBrief,
     campaignName: input.campaignName,
     locale,
   });
@@ -161,13 +153,11 @@ function clamp01(n: number): number {
 }
 
 /** Unwrap a single nested envelope like { analysis: {...} } the model sometimes adds. */
-export function unwrapVisionResult(result: unknown): unknown {
+function unwrapVisionResult(result: unknown): unknown {
   if (result && typeof result === "object" && !Array.isArray(result)) {
     const obj = result as Record<string, unknown>;
     if (!("subjects" in obj) && !("products" in obj) && !("scenes" in obj)) {
-      // GPT-4o may use the schema-hint name itself as the JSON envelope.
-      const nested =
-        obj.analysis ?? obj.visionAnalysis ?? obj.VisionAnalysis ?? obj.result ?? obj.data;
+      const nested = obj.analysis ?? obj.visionAnalysis ?? obj.result ?? obj.data;
       if (nested && typeof nested === "object") return nested;
     }
   }
@@ -330,11 +320,6 @@ export async function runVisionAgent(input: VisionInput): Promise<{
   usage: { input: number; output: number; costUsd: number };
 }> {
   const locale = resolveVisionLocale(input);
-  const ctx = input.campaignContext;
-  const goal = ctx.campaignObjective;
-  const campaignBrief = ctx.campaignBrief ?? undefined;
-  const targetAudience = ctx.targetAudience ?? undefined;
-  const transcriptSummary = input.transcriptSummary ?? ctx.transcript ?? undefined;
   const validFrames = (input.frames ?? []).filter((f) => f.dataUrl.length > 200);
   const hasFrames = validFrames.length > 0;
   console.log(
@@ -353,42 +338,28 @@ Output JSON with arrays for subjects, products, scenes, hooks, suggestedMoments.
     assetId: input.assetId,
     mediaType: input.mediaType,
     durationSec: input.durationSec,
-    goal,
-    ...(campaignBrief ? { campaignBrief } : {}),
-    ...(targetAudience ? { userNotes: targetAudience } : {}),
+    goal: input.goal,
+    ...(input.campaignBrief ? { campaignBrief: input.campaignBrief } : {}),
+    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
     frameTimestamps: input.frames?.map((f) => f.atSec) ?? [],
-    transcript: transcriptSummary,
+    transcript: input.transcriptSummary,
     legacyFrameNotes: input.frameDescriptions ?? [],
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
-    ...(input.campaignName && !goal && !campaignBrief && !targetAudience && !input.videoAnalysis
+    ...(input.campaignName && !input.goal && !input.campaignBrief && !input.userNotes && !input.videoAnalysis
       ? { campaignLabel: input.campaignName }
       : {}),
-    // PD-044 — full Campaign AI Context is always present; prompt may ignore unused fields.
-    campaignContext: {
-      campaignObjective: ctx.campaignObjective,
-      publishingPlatforms: ctx.publishingPlatforms,
-      targetAudience: ctx.targetAudience,
-      campaignBrief: ctx.campaignBrief,
-      workspaceLanguage: ctx.workspaceLanguage,
-      businessProfile: ctx.businessProfile,
-    },
   });
 
   const schemaHint = "VisionAnalysis";
 
-  const timeoutMs = getVisionAnalysisTimeoutMs();
-  const { result, usage } = await withVisionAnalysisTimeout(
-    (signal) => hasFrames
-      ? callVisionJsonModel<unknown>(
-          system,
-          user,
-          validFrames.map((f) => f.dataUrl),
-          schemaHint,
-          { signal, timeoutMs }
-        )
-      : callJsonModel<unknown>(system, user, schemaHint, { signal, timeoutMs }),
-    timeoutMs
-  );
+  const { result, usage } = hasFrames
+    ? await callVisionJsonModel<unknown>(
+        system,
+        user,
+        validFrames.map((f) => f.dataUrl),
+        schemaHint
+      )
+    : await callJsonModel<unknown>(system, user, schemaHint);
 
   const coerced = coerceVisionResult(result, input);
   const source = coerced ? ("model" as const) : ("fallback" as const);

@@ -1,0 +1,40 @@
+{
+  "manifestVersion": 1,
+  "manifestId": "ai-story-post-generation-qc-v1-staging",
+  "authorityModel": "ORDERED_STATE_CERTIFIED_HYBRID_CONVERGENCE",
+  "databaseAuthorityRevision": "fa6386ae58f67f04a5883df559a1b1d546e646ee",
+  "target": {
+    "environment": "staging",
+    "railwayProjectId": "b2004ec8-7747-4fae-bca4-4167a3385d49",
+    "railwayEnvironmentId": "de092159-8b57-4729-a8ef-1b4ac0c2b33f"
+  },
+  "orderedMigrations": [
+    {
+      "order": 11,
+      "id": "ai-story-post-generation-qc-v1",
+      "path": "packages/db/sql/ai-story-post-generation-qc-v1.sql",
+      "sha256": "bb2fced7968eb41f2d629d4c486ead88311f78c92cd0c1489e6537fc98cece51"
+    }
+  ],
+  "predecessor": {
+    "requiredParentTable": "ai_story_scene_executions",
+    "requiredParentPrimaryKey": "id",
+    "requiredAbsentTable": "ai_story_post_generation_qc_evaluations",
+    "fixtureCampaignId": "73c428ee-c768-42fa-8700-4ca975a7b68a",
+    "fixtureStoryId": "78aa7ccc-6377-475a-80a6-949b1a0b735e"
+  },
+  "result": {
+    "table": "ai_story_post_generation_qc_evaluations",
+    "sceneExecutionForeignKeyTarget": "ai_story_scene_executions.id",
+    "uniqueConstraints": [
+      {
+        "name": "ai_story_post_qc_fingerprint_unique",
+        "columns": ["evaluation_fingerprint"]
+      },
+      {
+        "name": "ai_story_post_qc_input_version_unique",
+        "columns": ["post_qc_input_id", "evaluation_version"]
+      }
+    ]
+  }
+}

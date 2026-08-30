@@ -1,0 +1,55 @@
+{
+  "ticketId": "EMBEROS-STAGING-MAIN-HYBRID-MIGRATION-WAVE-0-AUTHORITY-SECURITY-AND-MIGRATION-GUARDS-01",
+  "wave": 0,
+  "changeKind": "SECURITY_REPAIR",
+  "reason": "Pin Blueprint authority, remove plaintext Remember-Me passwords, and enforce bounded migration guards.",
+  "sourceAuthority": "SECURITY_AUDIT",
+  "targetModule": "Wave 0 governance and authentication security",
+  "allowedSourcePaths": [
+    "C:/Users/USER/Desktop/EmberSoullabs/EmberSoul-Labs-Blueprint/**",
+    "origin/main:apps/web/src/lib/auth-remember.ts"
+  ],
+  "allowedTargetPaths": [
+    "apps/web/src/app/login/**",
+    "apps/web/src/lib/auth-remember.ts",
+    "apps/web/src/components/GlobalNavMenu.tsx",
+    "packages/shared/src/i18n/**",
+    "tests/auth-remember-security.test.ts",
+    "e2e/auth-remember-security.spec.ts",
+    "config/**",
+    "schemas/**",
+    "scripts/hybrid-migration-guards.ts",
+    "scripts/verify-hybrid-migration-guards.ts",
+    "tests/hybrid-migration-guards.test.ts",
+    "docs/architecture/**",
+    ".migration-intents/**",
+    ".github/workflows/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "playwright.config.ts"
+  ],
+  "protectedDomainsExpectedToChange": ["AUTHORIZATION"],
+  "protectedDomainsMustNotChange": [
+    "AI_STORY_RUNTIME",
+    "AI_STORY_REVIEW",
+    "AI_STORY_STAGED_RELEASE",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "AI_STORY_PRIVATE_MEDIA",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "PRIVATE_MEDIA_DELIVERY",
+    "ENTITLEMENTS",
+    "COMMERCIAL_AUTH",
+    "PLATFORM_ADMIN",
+    "TENANT_WORKSPACE_ISOLATION",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING",
+    "PRODUCTION_REGION_DB_SAFETY"
+  ],
+  "requiredTests": [
+    "tests/auth-remember-security.test.ts",
+    "e2e/auth-remember-security.spec.ts",
+    "tests/hybrid-migration-guards.test.ts"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}

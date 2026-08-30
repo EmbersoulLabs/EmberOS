@@ -19,6 +19,7 @@ import {
   isRlsEnabled,
   withAuthenticatedUser,
 } from "./helpers/db-integration";
+import { applyPhaseECommercialAuthorizationSql } from "./helpers/commercial-phase-e-sql";
 import {
   PHASE_2A_IDS,
   PHASE_2A_WORKSPACE_B_IDS,
@@ -168,6 +169,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling RLS", () => {
     ]) {
       await applySqlFile(sql, relative);
     }
+    await applyPhaseECommercialAuthorizationSql(sql);
 
     await cleanupPr32Tenant(sql, PHASE_2A_IDS);
     await cleanupPr32Tenant(sql, PHASE_2A_WORKSPACE_B_IDS);
@@ -202,6 +204,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling RLS", () => {
       executionPlanId: preparedA.executionPlanId,
       sceneExecutionId: sceneAId,
       runtimeAuthorizationId: authAId,
+      commercialAuthorizationId: preparedA.commercialAuthorizationId,
       actorUserId: PR32_USER_A,
     });
     routingAId = scheduled.routingDecision.routingDecisionId;
@@ -210,6 +213,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling RLS", () => {
       executionPlanId: preparedA.executionPlanId,
       sceneExecutionId: preparedA.sceneExecutionIds[1]!,
       runtimeAuthorizationId: authAId,
+      commercialAuthorizationId: preparedA.commercialAuthorizationId,
       actorUserId: PR32_USER_A,
       router: new FixedSeedanceRouter({
         registrySnapshotHash:

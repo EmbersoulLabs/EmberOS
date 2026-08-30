@@ -6,7 +6,7 @@
  * Never unlocks execution. Never creates Queue / Worker / Outbox / Provider /
  * Story Video / media work.
  */
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import {
   AI_STORY_EXECUTION_CONTRACT_VERSION,
   AssemblyProjectionSchema,
@@ -32,7 +32,7 @@ import {
   planOwnershipFromRow,
 } from "./ai-story-ownership";
 import { deriveLogicalReviewStatus } from "./ai-story-execution-plan-review";
-import { getWorkspaceMembership, ROLE_HIERARCHY } from "./tenant";
+import { ROLE_HIERARCHY } from "./tenant";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -371,7 +371,7 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
     return this.db.transaction(async (tx) => {
       const plan = await this.requirePlan(input.executionPlanId, tx);
       await assertExecutionPlanOwnershipChain(plan, tx);
-      await this.assertCreatorAuthorized(plan.workspaceId, input.createdBy);
+      await this.assertCreatorAuthorized(plan.workspaceId, input.createdBy, tx);
 
       const sceneRows = await tx
         .select()
@@ -611,22 +611,25 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
     return [...verified.memberships];
   }
 
-  async getProjection(executionPlanId: string): Promise<AssemblyProjection | null> {
-    const plan = await this.requirePlanOrNull(executionPlanId, this.db);
+  async getProjection(
+    executionPlanId: string,
+    db: QueryDb = this.db
+  ): Promise<AssemblyProjection | null> {
+    const plan = await this.requirePlanOrNull(executionPlanId, db);
     if (!plan) return null;
 
-    const verified = await this.loadVerifiedAssemblyByPlanId(executionPlanId, this.db);
+    const verified = await this.loadVerifiedAssemblyByPlanId(executionPlanId, db);
     const definition = verified?.definition ?? null;
     const memberships = verified?.memberships ?? [];
 
-    const sceneRows = await this.db
+    const sceneRows = await db
       .select({ id: schema.aiStorySceneExecutions.id })
       .from(schema.aiStorySceneExecutions)
       .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
       .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder));
     const requiredIds = sceneRows.map((row) => row.id);
 
-    const reviewApproved = await this.isReviewApproved(executionPlanId, this.db);
+    const reviewApproved = await this.isReviewApproved(executionPlanId, db);
     // Projection ordering and counts are derived only from relational membership rows.
     const orderedSceneExecutionIds = memberships.map(
       (membership) => membership.sceneExecutionId
@@ -722,8 +725,23 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
     }
   }
 
-  private async assertCreatorAuthorized(workspaceId: string, userId: string) {
-    const member = await getWorkspaceMembership(workspaceId, userId);
+  private async assertCreatorAuthorized(
+    workspaceId: string,
+    userId: string,
+    db: QueryDb
+  ) {
+    // Creator authorization is part of assembly creation's transaction. Reuse
+    // that connection so Vercel's max:1 pool never needs a nested checkout.
+    const [member] = await db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(
+        and(
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+          eq(schema.workspaceMembers.userId, userId)
+        )
+      )
+      .limit(1);
     if (!member) {
       throw new AssemblyOwnershipError(
         "Creator is not a member of this workspace"

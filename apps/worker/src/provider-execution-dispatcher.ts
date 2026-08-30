@@ -14,7 +14,10 @@ export interface DispatcherJob {
 }
 
 export interface DispatcherRepository {
-  selectEligibleJob(now?: Date): Promise<DispatcherJob | null>;
+  selectEligibleJob(
+    now?: Date,
+    options?: { readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER" }
+  ): Promise<DispatcherJob | null>;
   createDispatch(dispatch: ExecutionDispatch): Promise<ExecutionDispatch>;
   getDispatchByJobId(jobId: string): Promise<ExecutionDispatch | null>;
 }
@@ -72,14 +75,18 @@ export class ProviderExecutionDispatcher {
     this.now = options.now ?? (() => new Date());
   }
 
-  async dispatchNext(): Promise<DispatcherOutcome> {
+  async dispatchNext(
+    options: { readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER" } = {}
+  ): Promise<DispatcherOutcome> {
     const selectedAt = this.now();
     this.logger.log({
       event: "provider_dispatcher.started",
       status: "SELECTING",
       timestamp: selectedAt.toISOString(),
     });
-    const job = await this.repository.selectEligibleJob(selectedAt);
+    const job = await this.repository.selectEligibleJob(selectedAt, {
+      ownership: options.ownership ?? "ANY",
+    });
     if (!job) {
       const timestamp = this.now().toISOString();
       this.logger.log({

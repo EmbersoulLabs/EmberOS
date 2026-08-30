@@ -1,149 +1,71 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
-import {
-  assertAssetsInWorkspace,
-  getDb,
-  replaceStoryAssets,
-  requireWorkspaceRole,
-  schema,
-} from "@ceo-agent/db";
-import { isUuid, StoryUpdateBodySchema } from "@ceo-agent/shared";
-import { requireAuth, handleApiError } from "@/lib/auth";
-import { apiSuccess, apiError } from "@/lib/api";
+import { and, eq, isNull } from "drizzle-orm";
+import { assertAssetsInWorkspace, getDb, loadAssetStory, replaceAssetStoryAssets, requireWorkspaceRole, schema } from "@ceo-agent/db";
+import { AssetStoryUpdateBodySchema, isUuid } from "@ceo-agent/shared";
+import { apiError, apiSuccess } from "@/lib/api";
+import { handleApiError, requireAuth } from "@/lib/auth";
 
-async function loadStoryWithAssets(db: ReturnType<typeof getDb>, storyId: string, workspaceId: string) {
-  const [story] = await db
-    .select()
-    .from(schema.stories)
-    .where(
-      and(
-        eq(schema.stories.id, storyId),
-        eq(schema.stories.workspaceId, workspaceId),
-        isNull(schema.stories.deletedAt)
-      )
-    )
-    .limit(1);
-  if (!story) return null;
-
-  const links = await db
-    .select({
-      asset: schema.assets,
-      sortOrder: schema.storyAssets.sortOrder,
-    })
-    .from(schema.storyAssets)
-    .innerJoin(schema.assets, eq(schema.assets.id, schema.storyAssets.assetId))
-    .where(and(eq(schema.storyAssets.storyId, storyId), isNull(schema.assets.deletedAt)))
-    .orderBy(asc(schema.storyAssets.sortOrder));
-
-  return {
-    ...story,
-    assets: links.map((l) => ({ ...l.asset, sortOrder: l.sortOrder })),
-  };
-}
-
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ id: string; storyId: string }> }
-) {
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string; storyId: string }> }) {
   try {
     const user = await requireAuth();
     const { id: workspaceId, storyId } = await params;
-    if (!isUuid(workspaceId) || !isUuid(storyId)) {
-      return apiError("Invalid ids", "VALIDATION_ERROR", 400);
-    }
-    await requireWorkspaceRole(workspaceId, user.id, "client_viewer");
-
-    const db = getDb();
-    const story = await loadStoryWithAssets(db, storyId, workspaceId);
-    if (!story) return apiError("Story not found", "NOT_FOUND", 404);
-    return apiSuccess({ story });
-  } catch (error) {
-    return handleApiError(error);
-  }
+    if (!isUuid(workspaceId) || !isUuid(storyId)) return apiError("Invalid identity", "VALIDATION_ERROR", 400);
+    const member = await requireWorkspaceRole(workspaceId, user.id, "client_viewer");
+    const story = await loadAssetStory(getDb(), { storyId, orgId: member.orgId, workspaceId });
+    return story ? apiSuccess({ story }) : apiError("Asset Story not found", "NOT_FOUND", 404);
+  } catch (error) { return handleApiError(error); }
 }
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ id: string; storyId: string }> }
-) {
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string; storyId: string }> }) {
   try {
     const user = await requireAuth();
     const { id: workspaceId, storyId } = await params;
-    if (!isUuid(workspaceId) || !isUuid(storyId)) {
-      return apiError("Invalid ids", "VALIDATION_ERROR", 400);
-    }
-    await requireWorkspaceRole(workspaceId, user.id, "operator");
-
-    const parsed = StoryUpdateBodySchema.safeParse(await request.json());
-    if (!parsed.success) {
-      return apiError("Invalid story payload", "VALIDATION_ERROR", 400);
-    }
-
+    if (!isUuid(workspaceId) || !isUuid(storyId)) return apiError("Invalid identity", "VALIDATION_ERROR", 400);
+    const member = await requireWorkspaceRole(workspaceId, user.id, "operator");
+    const parsed = AssetStoryUpdateBodySchema.safeParse(await request.json());
+    if (!parsed.success) return apiError("Invalid Asset Story update", "VALIDATION_ERROR", 400);
     const db = getDb();
-    const [existing] = await db
-      .select()
-      .from(schema.stories)
-      .where(
-        and(
-          eq(schema.stories.id, storyId),
-          eq(schema.stories.workspaceId, workspaceId),
-          isNull(schema.stories.deletedAt)
-        )
-      )
-      .limit(1);
-    if (!existing) return apiError("Story not found", "NOT_FOUND", 404);
-
-    if (parsed.data.assetIds) {
-      const assetCheck = await assertAssetsInWorkspace(db, workspaceId, parsed.data.assetIds);
-      if (!assetCheck.ok) return apiError(assetCheck.error, "VALIDATION_ERROR", 400);
-      await replaceStoryAssets(db, storyId, parsed.data.assetIds);
-    }
-
-    const [updated] = await db
-      .update(schema.stories)
-      .set({
+    const updated = await db.transaction(async (tx) => {
+      const existing = await loadAssetStory(tx, { storyId, orgId: member.orgId, workspaceId });
+      if (!existing) return "NOT_FOUND" as const;
+      if (existing.version !== parsed.data.expectedVersion) return "CONFLICT" as const;
+      const assetIds = parsed.data.assetIds ?? existing.assets.map((asset) => asset.id);
+      await assertAssetsInWorkspace(tx, { orgId: member.orgId, workspaceId }, assetIds);
+      const requestedCover = parsed.data.coverAssetId === undefined ? existing.coverAssetId : parsed.data.coverAssetId;
+      const coverAssetId = requestedCover && assetIds.includes(requestedCover) ? requestedCover : assetIds[0] ?? null;
+      const [row] = await tx.update(schema.stories).set({
         name: parsed.data.name ?? existing.name,
+        description: parsed.data.description ?? existing.description,
         status: parsed.data.status ?? existing.status,
+        coverAssetId,
+        version: existing.version + 1,
         updatedAt: new Date(),
-      })
-      .where(eq(schema.stories.id, storyId))
-      .returning();
-
-    const full = await loadStoryWithAssets(db, updated.id, workspaceId);
-    return apiSuccess({ story: full });
-  } catch (error) {
-    return handleApiError(error);
-  }
+      }).where(and(
+        eq(schema.stories.id, storyId), eq(schema.stories.orgId, member.orgId),
+        eq(schema.stories.workspaceId, workspaceId), eq(schema.stories.version, parsed.data.expectedVersion),
+        isNull(schema.stories.deletedAt)
+      )).returning({ id: schema.stories.id });
+      if (!row) return "CONFLICT" as const;
+      if (parsed.data.assetIds) await replaceAssetStoryAssets(tx, { storyId, orgId: member.orgId, workspaceId, assetIds });
+      return "UPDATED" as const;
+    });
+    if (updated === "NOT_FOUND") return apiError("Asset Story not found", "NOT_FOUND", 404);
+    if (updated === "CONFLICT") return apiError("Asset Story changed; reload before saving", "VERSION_CONFLICT", 409);
+    return apiSuccess({ story: await loadAssetStory(db, { storyId, orgId: member.orgId, workspaceId }) });
+  } catch (error) { return handleApiError(error); }
 }
 
-/** Soft delete Story — does not delete Assets (PD-037). */
-export async function DELETE(
-  _request: Request,
-  { params }: { params: Promise<{ id: string; storyId: string }> }
-) {
+export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string; storyId: string }> }) {
   try {
     const user = await requireAuth();
     const { id: workspaceId, storyId } = await params;
-    if (!isUuid(workspaceId) || !isUuid(storyId)) {
-      return apiError("Invalid ids", "VALIDATION_ERROR", 400);
-    }
-    await requireWorkspaceRole(workspaceId, user.id, "operator");
-
+    if (!isUuid(workspaceId) || !isUuid(storyId)) return apiError("Invalid identity", "VALIDATION_ERROR", 400);
+    const member = await requireWorkspaceRole(workspaceId, user.id, "operator");
     const db = getDb();
-    const [updated] = await db
-      .update(schema.stories)
-      .set({ deletedAt: new Date(), updatedAt: new Date() })
-      .where(
-        and(
-          eq(schema.stories.id, storyId),
-          eq(schema.stories.workspaceId, workspaceId),
-          isNull(schema.stories.deletedAt)
-        )
-      )
-      .returning();
-
-    if (!updated) return apiError("Story not found", "NOT_FOUND", 404);
-    return apiSuccess({ story: updated });
-  } catch (error) {
-    return handleApiError(error);
-  }
+    const [campaignRef] = await db.select({ storyId: schema.campaignStoryRefs.storyId }).from(schema.campaignStoryRefs)
+      .where(eq(schema.campaignStoryRefs.storyId, storyId)).limit(1);
+    if (campaignRef) return apiError("Referenced Asset Stories cannot be archived", "VERSION_CONFLICT", 409);
+    const [story] = await db.update(schema.stories).set({ status: "archived", deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(schema.stories.id, storyId), eq(schema.stories.orgId, member.orgId), eq(schema.stories.workspaceId, workspaceId), isNull(schema.stories.deletedAt))).returning();
+    return story ? apiSuccess({ story }) : apiError("Asset Story not found", "NOT_FOUND", 404);
+  } catch (error) { return handleApiError(error); }
 }

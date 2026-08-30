@@ -3,6 +3,10 @@ import { NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const releaseRevision =
+    process.env.EMBEROS_RELEASE_REVISION?.trim() ||
+    process.env.VERCEL_GIT_COMMIT_SHA?.trim() ||
+    "UNSET";
   const checks: Record<string, string | number> = {
     web: "ok",
   };
@@ -42,7 +46,8 @@ export async function GET() {
     {
       ok: ready,
       service: "emberos-web",
-      version: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev",
+      version: releaseRevision,
+      releaseRevision,
       checks,
       queue,
       timestamp: new Date().toISOString(),

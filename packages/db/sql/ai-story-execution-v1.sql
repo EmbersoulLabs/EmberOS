@@ -1,6 +1,6 @@
 -- Sprint 3 AI Story Execution Engine (video only — corrects Flux/marketing_outputs mistake)
-DROP TABLE IF EXISTS ai_story_marketing_outputs;
-DROP TABLE IF EXISTS ai_story_execution_outputs;
+-- EXEC-02: DROP statements removed. Overlay migrations must remain additive and must not
+-- destroy leftover production AI Story rows. Obsolete columns may remain unused.
 
 CREATE TABLE IF NOT EXISTS ai_story_execution_jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -28,9 +28,6 @@ CREATE TABLE IF NOT EXISTS ai_story_execution_jobs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Drop obsolete columns if an earlier Sprint 3 apply created them
-ALTER TABLE ai_story_execution_jobs DROP COLUMN IF EXISTS media_kind;
-ALTER TABLE ai_story_execution_jobs DROP COLUMN IF EXISTS prompt_package;
 ALTER TABLE ai_story_execution_jobs ADD COLUMN IF NOT EXISTS execution_manifest JSONB;
 ALTER TABLE ai_story_execution_jobs ALTER COLUMN capability_id SET DEFAULT 'animation-video-generation';
 

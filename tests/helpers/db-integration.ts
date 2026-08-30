@@ -3,6 +3,36 @@ import postgres, { type Sql } from "postgres";
 /** Set RUN_DB_INTEGRATION_TESTS=1 and DATABASE_URL to run against real Postgres/Supabase. */
 export const RUN_DB_INTEGRATION = process.env.RUN_DB_INTEGRATION_TESTS === "1";
 
+const FORBIDDEN_PROJECTS = new Set([
+  "egkgybrjmzukzmkcrpag",
+  "voofxbuzpocyjzoxrpfi",
+]);
+
+export function assertIsolatedTestDatabase(urlValue: string): {
+  environment: "test";
+  hostFingerprint: string;
+} {
+  if (process.env.EMBEROS_TEST_DB_ENVIRONMENT !== "test") {
+    throw new Error("TEST_DB_IDENTITY_REQUIRED: EMBEROS_TEST_DB_ENVIRONMENT=test");
+  }
+  const url = new URL(urlValue);
+  const identity = `${url.hostname}/${url.pathname}`.toLowerCase();
+  for (const project of FORBIDDEN_PROJECTS) {
+    if (identity.includes(project)) {
+      throw new Error("TEST_DB_FORBIDDEN_AUTHORITY: production/staging database denied");
+    }
+  }
+  const local = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+  const explicitlyIsolated = process.env.EMBEROS_TEST_DB_ISOLATED === "1";
+  if (!local && !explicitlyIsolated) {
+    throw new Error("TEST_DB_ISOLATION_UNPROVEN");
+  }
+  return {
+    environment: "test",
+    hostFingerprint: `${url.hostname}:${url.port || "5432"}/${url.pathname.replace(/^\//, "")}`,
+  };
+}
+
 export function getIntegrationDbUrl(): string | null {
   if (!RUN_DB_INTEGRATION) return null;
   return process.env.DATABASE_URL?.trim() || null;
@@ -13,6 +43,7 @@ export function createIntegrationSql(): Sql {
   if (!url) {
     throw new Error("DATABASE_URL is required when RUN_DB_INTEGRATION_TESTS=1");
   }
+  assertIsolatedTestDatabase(url);
   return postgres(url, { max: 1, prepare: false });
 }
 

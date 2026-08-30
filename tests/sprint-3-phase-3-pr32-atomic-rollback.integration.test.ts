@@ -16,6 +16,7 @@ import {
   createIntegrationSql,
   getIntegrationDbUrl,
 } from "./helpers/db-integration";
+import type { Phase2aIdSet } from "./helpers/ai-story-phase-2a";
 import {
   FixedSeedanceRouter,
   PR32_USER_A,
@@ -30,6 +31,18 @@ if (RUN_DB_INTEGRATION && !integrationDbUrl) {
   throw new Error("DATABASE_URL is required when RUN_DB_INTEGRATION_TESTS=1");
 }
 const describeIntegration = RUN_DB_INTEGRATION ? describe : describe.skip;
+
+function freshIds(): Phase2aIdSet {
+  return {
+    orgId: crypto.randomUUID(),
+    workspaceId: crypto.randomUUID(),
+    campaignId: crypto.randomUUID(),
+    storyId: crypto.randomUUID(),
+    storyVersionId: crypto.randomUUID(),
+    animationPackageId: crypto.randomUUID(),
+    assetId: crypto.randomUUID(),
+  };
+}
 
 const FAILURE_STAGES = [
   "runtime_authorization",
@@ -97,67 +110,68 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling atomic rollback", () => {
       "../packages/db/sql/ai-story-scene-scheduling-v1.sql",
       "../packages/db/sql/ai-story-scene-routing-router-version-v1.sql",
       "../packages/db/sql/ai-story-scene-scheduling-rls-v1.sql",
+      "../packages/db/sql/ai-story-staged-release-v1.sql",
+      "../packages/db/sql/commercial-persistence-v1.sql",
+      "../packages/db/sql/credits-settlement-v1.sql",
+      "../packages/db/sql/commercial-authorization-v1.sql",
     ]) {
       await applySqlFile(sql, relative);
     }
-    await cleanupPr32Tenant(sql);
-    await seedPr32Tenant(sql, undefined, PR32_USER_A, "pr32-rollback");
   }, 120_000);
 
   afterAll(async () => {
-    await cleanupPr32Tenant(sql);
     await sql.end();
     await closeDb();
   }, 60_000);
 
   for (const stage of FAILURE_STAGES) {
     it(`rolls back all six scheduling families after ${stage}`, async () => {
-      const prepared = await prepareAuthorizedSchedulingPlan({
-        purpose: `rollback-${stage}`,
-        persistAuthorization: false,
-      });
-      const captured = await captureScheduleAcceptedBundleInput({
-        executionPlanId: prepared.executionPlanId,
-        sceneExecutionId: prepared.sceneExecutionIds[0]!,
-        runtimeAuthorizationId:
-          prepared.issuedAuthorization.runtimeAuthorizationId,
-        actorUserId: PR32_USER_A,
-        router: new FixedSeedanceRouter(),
-        authRepo: {
-          getById: async (runtimeAuthorizationId) =>
-            runtimeAuthorizationId ===
-            prepared.issuedAuthorization.runtimeAuthorizationId
-              ? prepared.issuedAuthorization
-              : null,
-        },
-      });
-      expect(await countSchedulingRows(sql, captured)).toEqual({
-        auth_count: 0,
-        routing_count: 0,
-        provider_count: 0,
-        envelope_count: 0,
-        outbox_count: 0,
-        correlation_count: 0,
-      });
+      const ids = freshIds();
+      await seedPr32Tenant(sql, ids, PR32_USER_A, `pr32-rollback-${stage}`);
+      try {
+        const prepared = await prepareAuthorizedSchedulingPlan({
+          purpose: `rollback-${stage}`,
+          ids,
+        });
+        const captured = await captureScheduleAcceptedBundleInput({
+          executionPlanId: prepared.executionPlanId,
+          sceneExecutionId: prepared.sceneExecutionIds[0]!,
+          runtimeAuthorizationId:
+            prepared.issuedAuthorization.runtimeAuthorizationId,
+          commercialAuthorizationId: prepared.commercialAuthorizationId!,
+          actorUserId: PR32_USER_A,
+          router: new FixedSeedanceRouter(),
+        });
+        expect(await countSchedulingRows(sql, captured)).toEqual({
+          auth_count: 1,
+          routing_count: 0,
+          provider_count: 0,
+          envelope_count: 0,
+          outbox_count: 0,
+          correlation_count: 0,
+        });
 
-      await expect(
-        new SceneSchedulingRepository().scheduleAcceptedBundle({
-          ...captured,
-          testFailureAfter: stage,
-        })
-      ).rejects.toMatchObject({
-        code: "IDENTITY_CONFLICT",
-        message: `test failure after ${stage}`,
-      });
+        await expect(
+          new SceneSchedulingRepository().scheduleAcceptedBundle({
+            ...captured,
+            testFailureAfter: stage,
+          })
+        ).rejects.toMatchObject({
+          code: "IDENTITY_CONFLICT",
+          message: `test failure after ${stage}`,
+        });
 
-      expect(await countSchedulingRows(sql, captured)).toEqual({
-        auth_count: 0,
-        routing_count: 0,
-        provider_count: 0,
-        envelope_count: 0,
-        outbox_count: 0,
-        correlation_count: 0,
-      });
+        expect(await countSchedulingRows(sql, captured)).toEqual({
+          auth_count: 1,
+          routing_count: 0,
+          provider_count: 0,
+          envelope_count: 0,
+          outbox_count: 0,
+          correlation_count: 0,
+        });
+      } finally {
+        await cleanupPr32Tenant(sql, ids);
+      }
     }, 120_000);
   }
 });

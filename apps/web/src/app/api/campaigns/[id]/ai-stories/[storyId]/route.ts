@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { getDb, schema } from "@ceo-agent/db";
 import {
   AiStoryStructuredDraftSchema,
   AiStoryUpdateDraftBodySchema,
@@ -7,6 +7,7 @@ import {
   type AiStoryStatus,
 } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
+import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
 import {
   createAiStoryVersion,
@@ -32,11 +33,18 @@ export async function GET(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "client_viewer");
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
 
+    if (loaded.verificationFixtureState === "LEGACY_PARTIAL_VERIFICATION_FIXTURE") {
+      return apiSuccess({
+        ...loaded,
+        story: { ...loaded.story, status: "failed" },
+        persistedStoryStatus: loaded.story.status,
+      });
+    }
     return apiSuccess(loaded);
   } catch (error) {
     return handleApiError(error);
@@ -66,7 +74,7 @@ export async function PATCH(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);

@@ -1,142 +1,52 @@
-import { and, asc, eq, isNull, or, sql } from "drizzle-orm";
-import {
-  assertAssetsInWorkspace,
-  getDb,
-  replaceStoryAssets,
-  requireWorkspaceRole,
-  schema,
-} from "@ceo-agent/db";
-import { isUuid, StoryCreateBodySchema } from "@ceo-agent/shared";
-import { requireAuth, handleApiError } from "@/lib/auth";
-import { apiSuccess, apiError } from "@/lib/api";
+import { and, desc, eq, isNull, or, sql } from "drizzle-orm";
+import { assertAssetsInWorkspace, getDb, loadAssetStory, replaceAssetStoryAssets, requireWorkspaceRole, schema } from "@ceo-agent/db";
+import { AssetStoryCreateBodySchema, isUuid } from "@ceo-agent/shared";
+import { apiError, apiSuccess } from "@/lib/api";
+import { handleApiError, requireAuth } from "@/lib/auth";
 
-async function loadStoryWithAssets(db: ReturnType<typeof getDb>, storyId: string, workspaceId: string) {
-  const [story] = await db
-    .select()
-    .from(schema.stories)
-    .where(
-      and(
-        eq(schema.stories.id, storyId),
-        eq(schema.stories.workspaceId, workspaceId),
-        isNull(schema.stories.deletedAt)
-      )
-    )
-    .limit(1);
-  if (!story) return null;
-
-  const links = await db
-    .select({
-      asset: schema.assets,
-      sortOrder: schema.storyAssets.sortOrder,
-    })
-    .from(schema.storyAssets)
-    .innerJoin(schema.assets, eq(schema.assets.id, schema.storyAssets.assetId))
-    .where(and(eq(schema.storyAssets.storyId, storyId), isNull(schema.assets.deletedAt)))
-    .orderBy(asc(schema.storyAssets.sortOrder));
-
-  return {
-    ...story,
-    assets: links.map((l) => ({ ...l.asset, sortOrder: l.sortOrder })),
-  };
-}
-
-export async function GET(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireAuth();
     const { id: workspaceId } = await params;
-    if (!isUuid(workspaceId)) {
-      return apiError("workspace id must be a valid UUID", "VALIDATION_ERROR", 400);
-    }
-    await requireWorkspaceRole(workspaceId, user.id, "client_viewer");
-
+    if (!isUuid(workspaceId)) return apiError("Invalid Workspace", "VALIDATION_ERROR", 400);
+    const member = await requireWorkspaceRole(workspaceId, user.id, "client_viewer");
     const url = new URL(request.url);
-    const q = url.searchParams.get("q")?.trim() ?? "";
-    const status = url.searchParams.get("status")?.trim() ?? "";
+    const query = url.searchParams.get("q")?.trim().toLowerCase() ?? "";
     const includeArchived = url.searchParams.get("includeArchived") === "1";
-
+    const conditions = [eq(schema.stories.orgId, member.orgId), eq(schema.stories.workspaceId, workspaceId), isNull(schema.stories.deletedAt)];
+    if (!includeArchived) conditions.push(or(eq(schema.stories.status, "draft"), eq(schema.stories.status, "ready"))!);
+    if (query) conditions.push(sql`lower(${schema.stories.name}) like ${`%${query}%`}`);
     const db = getDb();
-    const conditions = [
-      eq(schema.stories.workspaceId, workspaceId),
-      isNull(schema.stories.deletedAt),
-    ];
-    if (status && ["draft", "ready", "archived"].includes(status)) {
-      conditions.push(eq(schema.stories.status, status));
-    } else if (!includeArchived) {
-      conditions.push(
-        or(eq(schema.stories.status, "draft"), eq(schema.stories.status, "ready"))!
-      );
-    }
-    if (q) {
-      const like = `%${q.toLowerCase()}%`;
-      conditions.push(sql`lower(${schema.stories.name}) like ${like}`);
-    }
-
-    const stories = await db
-      .select()
-      .from(schema.stories)
-      .where(and(...conditions))
-      .orderBy(sql`${schema.stories.updatedAt} desc`)
-      .limit(200);
-
-    const enriched = await Promise.all(
-      stories.map(async (story) => {
-        const full = await loadStoryWithAssets(db, story.id, workspaceId);
-        return full ?? { ...story, assets: [] };
-      })
-    );
-
-    return apiSuccess({ stories: enriched });
-  } catch (error) {
-    return handleApiError(error);
-  }
+    const rows = await db.select({ id: schema.stories.id }).from(schema.stories).where(and(...conditions)).orderBy(desc(schema.stories.updatedAt)).limit(200);
+    const stories = (await Promise.all(rows.map(({ id }) => loadAssetStory(db, { storyId: id, orgId: member.orgId, workspaceId })))).filter(Boolean);
+    return apiSuccess({ stories });
+  } catch (error) { return handleApiError(error); }
 }
 
-export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await requireAuth();
     const { id: workspaceId } = await params;
-    if (!isUuid(workspaceId)) {
-      return apiError("workspace id must be a valid UUID", "VALIDATION_ERROR", 400);
-    }
-    await requireWorkspaceRole(workspaceId, user.id, "operator");
-
-    const parsed = StoryCreateBodySchema.safeParse(await request.json());
-    if (!parsed.success) {
-      return apiError("Invalid story payload", "VALIDATION_ERROR", 400);
-    }
-
+    if (!isUuid(workspaceId)) return apiError("Invalid Workspace", "VALIDATION_ERROR", 400);
+    const member = await requireWorkspaceRole(workspaceId, user.id, "operator");
+    const parsed = AssetStoryCreateBodySchema.safeParse(await request.json());
+    if (!parsed.success) return apiError("Invalid Asset Story", "VALIDATION_ERROR", 400);
     const db = getDb();
-    const [workspace] = await db
-      .select()
-      .from(schema.workspaces)
-      .where(eq(schema.workspaces.id, workspaceId))
-      .limit(1);
-    if (!workspace) return apiError("Workspace not found", "NOT_FOUND", 404);
-
-    const assetCheck = await assertAssetsInWorkspace(db, workspaceId, parsed.data.assetIds);
-    if (!assetCheck.ok) return apiError(assetCheck.error, "VALIDATION_ERROR", 400);
-
-    const [story] = await db
-      .insert(schema.stories)
-      .values({
-        orgId: workspace.orgId,
+    const storyId = await db.transaction(async (tx) => {
+      await assertAssetsInWorkspace(tx, { orgId: member.orgId, workspaceId }, parsed.data.assetIds);
+      const [story] = await tx.insert(schema.stories).values({
+        orgId: member.orgId,
         workspaceId,
         name: parsed.data.name,
+        description: parsed.data.description,
         status: parsed.data.status ?? "draft",
+        coverAssetId: parsed.data.coverAssetId ?? parsed.data.assetIds[0] ?? null,
         createdBy: user.id,
-      })
-      .returning();
-
-    await replaceStoryAssets(db, story.id, parsed.data.assetIds);
-    const full = await loadStoryWithAssets(db, story.id, workspaceId);
-    return apiSuccess({ story: full }, 201);
-  } catch (error) {
-    return handleApiError(error);
-  }
+      }).returning({ id: schema.stories.id });
+      await replaceAssetStoryAssets(tx, { storyId: story.id, orgId: member.orgId, workspaceId, assetIds: parsed.data.assetIds });
+      return story.id;
+    });
+    return apiSuccess({ story: await loadAssetStory(db, { storyId, orgId: member.orgId, workspaceId }) }, 201);
+  } catch (error) { return handleApiError(error); }
 }
+

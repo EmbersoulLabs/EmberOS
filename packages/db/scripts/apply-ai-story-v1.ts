@@ -8,6 +8,10 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
+import { refuseProductionAiStoryApply } from "./refuse-production-ai-story-apply";
+
+refuseProductionAiStoryApply();
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 config({ path: resolve(__dirname, "../../../apps/worker/.env") });

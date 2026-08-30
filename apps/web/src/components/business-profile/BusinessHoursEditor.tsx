@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  BUSINESS_HOURS_DAYS,
-  patchBusinessHoursDay,
-  type BusinessHours,
-  type BusinessHoursDayEntry,
-} from "@ceo-agent/shared";
+import { BUSINESS_HOURS_DAYS, type BusinessHours, type BusinessHoursDayEntry } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 
 interface BusinessHoursEditorProps {
@@ -17,25 +12,20 @@ export function BusinessHoursEditor({ value, onChange }: BusinessHoursEditorProp
   const { t } = useI18n();
 
   function patchDay(day: BusinessHoursDayEntry["day"], patch: Partial<BusinessHoursDayEntry>) {
-    onChange(patchBusinessHoursDay(value, day, patch));
+    onChange(value.map((entry) => (entry.day === day ? { ...entry, ...patch } : entry)));
   }
 
   return (
     <div className="space-y-3">
       {BUSINESS_HOURS_DAYS.map((day) => {
         const entry = value.find((e) => e.day === day) ?? { day, isOpen: false };
-        const checkboxId = `business-hours-${day.toLowerCase()}`;
         return (
           <div
             key={day}
             className="grid gap-3 rounded-xl border border-border/70 bg-surface-muted/30 p-3 sm:grid-cols-[120px_1fr_1fr_1fr]"
           >
-            <label
-              htmlFor={checkboxId}
-              className="flex cursor-pointer items-center gap-2 text-sm font-medium text-navy"
-            >
+            <label className="flex items-center gap-2 text-sm font-medium text-navy">
               <input
-                id={checkboxId}
                 type="checkbox"
                 checked={entry.isOpen}
                 onChange={(e) =>

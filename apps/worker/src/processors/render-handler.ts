@@ -2,15 +2,8 @@ import { eq } from "drizzle-orm";
 import { mkdir, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
-import {
-  buildRenderSpecification,
-  runComplianceAfterRender,
-  maybeFinalizeAutoClipTask,
-  maybeTriggerPendingTaskExport,
-  type CompositionResult,
-  type RenderSpecification,
-} from "@ceo-agent/agents";
+import { getDb, schema } from "@ceo-agent/db";
+import { runComplianceAfterRender, maybeFinalizeAutoClipTask, maybeTriggerPendingTaskExport, loadTrackedCampaignTaskInputs } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   baseClipFingerprint,
@@ -20,7 +13,8 @@ import {
   mergeStoredRendition,
   profileKeyForDownloadResolution,
   BrandProfileSchema,
-  getRenderProfile,
+  hexToAssColor,
+  resolveLogoStorageReference,
   resolveRenderPreferences,
   stampRenderPreferences,
   type ClipDownloadResolution,
@@ -29,16 +23,14 @@ import {
   type RenderStatus,
 } from "@ceo-agent/shared";
 import type { EditPlan } from "@ceo-agent/shared";
-import { downloadStorageFile, uploadStorageFile, publicStorageUrl } from "../storage";
 import {
-  runRenderOrchestrator,
-  type RenderOrchestrationResult,
-} from "../render-orchestrator";
-import { createTaskRenderPersistence } from "../render-persistence";
-import {
-  renderFingerprint,
-  type RenderProviderCapability,
-} from "../render-providers/contracts";
+  renderVideo,
+  extractCover,
+  extractCoverFromImage,
+  probeVideo,
+  type RenderAssetMap,
+} from "../ffmpeg/pipeline";
+import { downloadStorageFile, uploadStorageFile } from "../storage";
 
 export interface RenderJobData {
   taskId: string;
@@ -51,57 +43,11 @@ export interface RenderJobData {
   outputResolution?: ClipDownloadResolution;
   /** @deprecated use mode */
   resolution?: "preview" | "export";
-  retryAttempt?: number;
 }
 
 function resolveMode(data: RenderJobData): RenderMode {
   if (data.mode) return data.mode;
   return data.resolution === "export" ? "final" : "preview";
-}
-
-function resolveCompositionResult(
-  stepProgress: Record<string, unknown>,
-  creativeId: string,
-  editPlan: EditPlan
-): CompositionResult {
-  const compositionStep = stepProgress.VIDEO_COMPOSITION_COMPLETE as
-    | { output?: CompositionResult }
-    | undefined;
-  const canonical = compositionStep?.output;
-  if (
-    canonical?.creativeDrafts.some(
-      (draft) => draft.creativeId === creativeId
-    )
-  ) {
-    return canonical;
-  }
-  // Historical tasks predate PR-3A.3 and require a compatibility projection.
-  const renderSpecification = buildRenderSpecification(editPlan);
-  const stableKey = renderFingerprint({
-    creativeId,
-    renderSpecification: renderSpecification.deterministicKey,
-  });
-  const body = {
-    contractVersion: "1" as const,
-    pipelineType: "VIDEO_COMPOSITION" as const,
-    state: "COMPLETED" as const,
-    checkpoint: "VIDEO_COMPOSITION_COMPLETE" as const,
-    creativeDrafts: [
-      {
-        stableKey,
-        creativeId,
-        status: "draft" as const,
-        editPlan,
-        renderSpecification,
-      },
-    ],
-    warnings: [],
-    provenance: [],
-  };
-  return {
-    ...body,
-    deterministicKey: renderFingerprint(body),
-  };
 }
 
 async function updateRenderState(
@@ -212,13 +158,12 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     .where(eq(schema.creatives.id, data.creativeId))
     .limit(1);
   if (!creative?.editPlan) throw new Error("Edit plan not found");
-  const [renderTask] = await db
-    .select({ stepProgress: schema.tasks.stepProgress })
-    .from(schema.tasks)
-    .where(eq(schema.tasks.id, data.taskId))
-    .limit(1);
 
-  const assets = await getCampaignAssets(db, data.campaignId, data.workspaceId);
+  const tracked = await loadTrackedCampaignTaskInputs(data.taskId);
+  if (tracked.capsule.authority.campaignId !== data.campaignId) {
+    throw new Error("Render job campaign does not match frozen generation identity");
+  }
+  const assets = tracked.assets;
   if (assets.length === 0) throw new Error("No source asset");
 
   const [campaign] = await db
@@ -311,10 +256,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
       }
     }
 
-    const assetMap = new Map<
-      string,
-      { path: string; type: "video" | "image" }
-    >();
+    const assetMap: RenderAssetMap = new Map();
     const sourceVideo = resolveAutoClipSourceAsset(assets);
     const videoAsset = sourceVideo?.asset;
     const imageAssets = assets.filter((a) => a.type === "image");
@@ -335,7 +277,8 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
       }
     }
 
-    if (assetMap.size === 0 && !cachedBaseLocal) {
+    const renderInput: RenderAssetMap = assetMap;
+    if (renderInput.size === 0 && !cachedBaseLocal) {
       throw new Error("No downloadable assets");
     }
 
@@ -344,18 +287,54 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
     const effectiveMode: RenderMode =
       cachedBaseLocal && !isRenditionJob && mode !== "final" ? "subtitles_only" : mode;
 
-    const sourceDurationSec = sourceVideo?.durationSec ?? 0;
+    let sourceDurationSec = sourceVideo?.durationSec ?? 0;
+    if (sourceDurationSec <= 0 && videoAsset && assetMap.has(videoAsset.id)) {
+      try {
+        sourceDurationSec = (await probeVideo(assetMap.get(videoAsset.id)!.path)).durationSec;
+      } catch {
+        sourceDurationSec = editPlan.targetDurationSec;
+      }
+    }
 
     let logoLocalPath: string | undefined;
+    let brandColorAss: string | null = null;
     const logoUrl = brandProfile?.logoUrl?.trim();
     if (logoUrl) {
       try {
         logoLocalPath = join(workDir, "brand-logo.png");
-        await downloadStorageFile(logoUrl, logoLocalPath);
+        const logoRef = resolveLogoStorageReference(logoUrl);
+        if (!logoRef) {
+          throw new Error("Logo object reference is empty");
+        }
+        await downloadStorageFile(logoRef.objectKey, logoLocalPath, { bucket: logoRef.bucket });
+        const { extractBrandColorFromLogo } = await import("../ffmpeg/brand-color");
+        const hex = await extractBrandColorFromLogo(logoLocalPath, workDir);
+        brandColorAss = hexToAssColor(hex);
+        if (hex) console.log(`[render] brand subtitle color from logo: ${hex} → ${brandColorAss}`);
       } catch (err) {
         console.warn("[render] brand logo download failed, skipping watermark:", err);
         logoLocalPath = undefined;
       }
+    }
+
+    const { usedCache } = await renderVideo(
+      renderInput,
+      editPlan,
+      outputLocal,
+      effectiveMode,
+      {
+        cachedBasePath: cachedBaseLocal,
+        cacheOutputPath: !cachedBaseLocal && effectiveMode !== "subtitles_only" ? cacheLocal : undefined,
+        sourceDurationSec,
+        onProgress,
+        profileKey,
+        logoPath: logoLocalPath,
+        brandColorAss,
+      }
+    );
+
+    if (!usedCache && effectiveMode !== "subtitles_only") {
+      await uploadStorageFile(cacheStoragePath, cacheLocal, "video/mp4");
     }
 
     const outputStoragePath =
@@ -364,146 +343,30 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         : outputResolution === "1080p" || mode === "final"
           ? STORAGE_PATHS.export(data.workspaceId, data.campaignId, data.creativeId)
           : STORAGE_PATHS.preview(data.workspaceId, data.campaignId, data.creativeId);
-    const coverLocal =
-      isPreviewPath && !creative.coverUrl
-        ? join(workDir, "cover.jpg")
-        : undefined;
-    const firstImage = imageAssets[0];
-    const compositionResult = resolveCompositionResult(
-      (renderTask?.stepProgress as Record<string, unknown> | null) ?? {},
-      data.creativeId,
-      editPlan
-    );
-    const creativeDraft = compositionResult.creativeDrafts.find(
-      (draft) => draft.creativeId === data.creativeId
-    );
-    if (!creativeDraft) throw new Error("Composition Creative Draft not found");
-    const renderSpecification = creativeDraft.renderSpecification;
-    const profile = getRenderProfile(
-      profileKey ??
-        (effectiveMode === "subtitles_only" ? "preview" : effectiveMode)
-    );
-    const requiredCapabilities: RenderProviderCapability[] = [
-      videoAsset ? "VIDEO" : "IMAGE",
-      "CACHE",
-      ...(editPlan.subtitles.length > 0 ? (["SUBTITLES"] as const) : []),
-      ...(editPlan.audio.voiceover?.enabled ? (["VOICEOVER"] as const) : []),
-      ...(editPlan.audio.bgm && editPlan.audio.bgm !== "none"
-        ? (["BGM"] as const)
-        : []),
-      ...(logoLocalPath ? (["BRAND_OVERLAY"] as const) : []),
-      ...(coverLocal ? (["COVER"] as const) : []),
-    ];
-    const correlation = {
-      taskId: data.taskId,
-      creativeId: data.creativeId,
-      campaignId: data.campaignId,
-      workspaceId: data.workspaceId,
-      orgId: data.orgId,
-      correlationId: `${data.taskId}:${data.creativeId}:${mode}`,
-    };
-    const renderCompletion = await runRenderOrchestrator({
-      compositionResult,
-      creativeDraftId: data.creativeId,
-      requestContext: {
-        sourceAssets: [...assetMap.entries()].map(([assetId, asset]) => ({
-          assetId,
-          uri: asset.path,
-          mediaType: asset.type,
-        })),
-        outputProfile: {
-          mode: effectiveMode,
-          resolution: outputResolution,
-          profileKey,
-        },
-        qualityProfile: {
-          width: profile.width,
-          height: profile.height,
-          frameRate: renderSpecification.output.frameRate,
-          videoBitrateKbps:
-            effectiveMode === "preview"
-              ? renderSpecification.output.videoBitrateTargetsKbps.preview
-              : renderSpecification.output.videoBitrateTargetsKbps.export,
-          audioBitrateKbps: renderSpecification.output.audio.bitrateKbps,
-        },
-        retry: {
-          attempt: data.retryAttempt ?? 1,
-          cachedOutputUri: cachedBaseLocal,
-        },
-        correlation,
-        destinations: {
-          outputUri: outputLocal,
-          cacheOutputUri:
-            !cachedBaseLocal && effectiveMode !== "subtitles_only"
-              ? cacheLocal
-              : undefined,
-          coverOutputUri: coverLocal,
-        },
-        cachedBaseUri: cachedBaseLocal,
-        sourceDurationSec,
-        cover: coverLocal
-          ? {
-              sourceAssetId:
-                !videoAsset && firstImage ? firstImage.id : videoAsset?.id,
-              atSec: editPlan.cover.atSec,
-            }
-          : undefined,
-        branding: logoLocalPath ? { logoUri: logoLocalPath } : undefined,
-        legacyEditPlan: editPlan,
-      },
-      requiredCapabilities,
-      persistence: createTaskRenderPersistence(data.taskId, correlation),
-      completedResult: (
-        (renderTask?.stepProgress as Record<string, unknown> | null)
-          ?.VIDEO_RENDER_COMPLETE as
-          | { output?: RenderOrchestrationResult }
-          | undefined
-      )?.output,
-      canReuseCompletedResult: async (completed) => {
-        try {
-          await Promise.all(
-            completed.renderResult.outputReferences
-              .filter((reference) => reference.role === "output")
-              .map((reference) => access(reference.uri))
-          );
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      onProgress: (progress) => {
-        const phase: RenderProgress["phase"] =
-          progress.stage === "PREPARING"
-            ? "downloading"
-            : progress.stage === "RENDERING"
-              ? "base_clip"
-              : progress.stage === "UPLOADING"
-                ? "upload"
-                : progress.stage === "COMPLETED" ||
-                    progress.stage === "FAILED"
-                  ? "done"
-                  : "queued";
-        return onProgress(progress.percent ?? 0, phase);
-      },
-    });
-    const renderResult = renderCompletion.renderResult;
-    const usedCache = renderResult.usedCache;
-
-    if (!usedCache && effectiveMode !== "subtitles_only") {
-      await uploadStorageFile(cacheStoragePath, cacheLocal, "video/mp4");
-    }
 
     await onProgress(92, "upload");
     await uploadStorageFile(outputStoragePath, outputLocal, "video/mp4");
 
     let coverUrl = creative.coverUrl;
-    if (coverLocal) {
+    if (isPreviewPath && !coverUrl) {
+      const coverLocal = join(workDir, "cover.jpg");
+      const firstImage = imageAssets[0];
+      if (!videoAsset && firstImage && assetMap.has(firstImage.id)) {
+        await extractCoverFromImage(assetMap.get(firstImage.id)!.path, coverLocal);
+      } else {
+        const coverSource =
+          cachedBaseLocal ??
+          (videoAsset ? assetMap.get(videoAsset.id)?.path : assetMap.values().next().value?.path);
+        if (!coverSource) throw new Error("No cover source");
+        await extractCover(coverSource, editPlan.cover.atSec, coverLocal);
+      }
       const coverPath = STORAGE_PATHS.cover(data.workspaceId, data.campaignId, data.creativeId);
       await uploadStorageFile(coverPath, coverLocal, "image/jpeg");
-      coverUrl = publicStorageUrl(coverPath);
+      coverUrl = coverPath;
     }
 
-    const videoUrl = publicStorageUrl(outputStoragePath);
+    // Durable object identity only. Authenticated delivery URLs are minted by web routes.
+    const videoUrl = outputStoragePath;
     const doneProgress = {
       percent: 100,
       phase: "done" as const,

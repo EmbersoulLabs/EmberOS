@@ -1,14 +1,9 @@
-import { UnrecoverableError, Worker, type WorkerOptions } from "bullmq";
-import { eq, and } from "drizzle-orm";
-import { getDb, schema, getCampaignAssets } from "@ceo-agent/db";
-import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig } from "@ceo-agent/queue";
-import {
-  failPipelineExecution,
-  isVisionAnalysisTimeoutError,
-  runPipeline,
-  runPublishAgent,
-  type PipelineHooks,
-} from "@ceo-agent/agents";
+import { Worker, type WorkerOptions } from "bullmq";
+import { eq, and, notInArray } from "drizzle-orm";
+import { getDb, schema } from "@ceo-agent/db";
+import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig, DEFAULT_JOB_ATTEMPTS } from "@ceo-agent/queue";
+import { runPublishAgent } from "@ceo-agent/agents";
+import { runPipeline, type PipelineHooks, failPipelineExecution, automaticPipelineFailureAuthority } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   MAX_UPLOAD_DURATION_SEC,
@@ -19,25 +14,29 @@ import {
   platformPublishCopyText,
   encodeCopyExportBody,
   plainTextToDocHtml,
+  emitVideoStudioOpsEvent,
+  boundOpsDiagnosticMessage,
+  emitPhotoSceneOpsEvent,
 } from "@ceo-agent/shared";
 import { createExportZip, probeVideo } from "../ffmpeg/pipeline";
 import { processRenderJob } from "./render-handler";
 import { processTaskExportJob, musicCreditFor } from "./export-handler";
+import { processPhotoSceneExtractJob, markPhotoSceneExtractJobFailed } from "./photo-scene-extract-handler";
+import { processPhotoSceneComposeJob, markPhotoSceneComposeJobFailed } from "./photo-scene-compose-handler";
 import { prepareVisionFromStorage } from "../media/vision-prep";
 import { ensureMergedSourceVideo } from "../media/merge-source-videos";
 import { mediaHasAudio } from "../ffmpeg/probe-audio";
 import { compressSourceVideo } from "../ffmpeg/compress-source";
+import { hashSourceAssetFile } from "../source-asset-content-hash";
 import {
   downloadStorageFile,
+  downloadStorageReference,
   uploadStorageFile,
-  publicStorageUrl,
 } from "../storage";
 import { mkdir, writeFile, readFile, rm, access, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { EditPlan, CopyVariant, Platform } from "@ceo-agent/shared";
-import { delayPipelineJobForDependencies } from "./dependency-delay";
-import { refreshAnalyzedAssetDisplayName } from "../asset-auto-name";
 
 const concurrency = parseInt(process.env.WORKER_CONCURRENCY ?? "2", 10);
 /** FFmpeg is memory-heavy — default 1 parallel render on Railway to avoid OOM slot deadlock. */
@@ -61,16 +60,17 @@ const pipelineHooks: PipelineHooks = {
 async function markTaskStepFailed(
   taskId: string,
   stepId: string,
-  message: string
+  message: string,
+  forceTerminal = false,
+  handleRetrying = false
 ): Promise<void> {
   const db = getDb();
   const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-  // Already terminal or recoverable — do not overwrite (OPS-002 Rule 3).
   if (
     !task ||
     task.status === "failed" ||
     task.status === "completed" ||
-    task.status === "retrying"
+    (task.status === "retrying" && !handleRetrying)
   ) {
     return;
   }
@@ -90,21 +90,25 @@ async function markTaskStepFailed(
       stepProgress: progress,
       currentStep: stepId,
     })
-    .where(eq(schema.tasks.id, taskId));
+    .where(
+      and(
+        eq(schema.tasks.id, taskId),
+        notInArray(schema.tasks.status, ["completed", "failed"])
+      )
+    );
 
   await failPipelineExecution({
     taskId,
     campaignId: task.campaignId,
     message,
+    forceTerminal,
   });
 }
 
 const PIPELINE_STEP_ORDER = [
   "parse_intent",
-  "vision_analyze",
   "strategy_plan",
-  "ceo_plan",
-  "content_classify",
+  "vision_analyze",
   "highlight_index",
   "content_generate",
   "hook_generate",
@@ -112,10 +116,8 @@ const PIPELINE_STEP_ORDER = [
   "copy_generate",
   "edit_director_plan",
   "ffmpeg_render",
-  "compliance_check",
   "marketing_score",
   "export_ready",
-  "human_review",
 ] as const;
 
 function formatAgentPipelineError(err: unknown): string {
@@ -158,41 +160,32 @@ export function startWorkers() {
     QUEUE_NAMES.AGENT,
     async (job) => {
       if (job.name === "agent.pipeline") {
-        const { taskId } = job.data as { taskId: string };
+        const { taskId, campaignId, workspaceId, orgId } = job.data as {
+          taskId: string;
+          campaignId?: string;
+          workspaceId?: string;
+          orgId?: string;
+        };
+        emitVideoStudioOpsEvent({
+          event: "pipeline.started",
+          stage: "agent.pipeline",
+          outcome: "started",
+          orgId,
+          workspaceId,
+          campaignId,
+          taskId,
+          jobId: job.id,
+          attempt: job.attemptsMade + 1,
+          recoveryKind: job.attemptsMade > 0 ? "queue_attempt" : undefined,
+        });
         console.log(`[agent.pipeline] start task=${taskId}`);
         await ensureMergedSourceVideo(taskId);
-        let result;
-        try {
-          result = await runPipeline(taskId, pipelineHooks);
-        } catch (error) {
-          // The pipeline has already persisted the terminal timeout state. Do not
-          // let BullMQ repeat the same provider call for a terminal task.
-          if (isVisionAnalysisTimeoutError(error)) {
-            throw new UnrecoverableError(error.message);
-          }
-          throw error;
-        }
-        await refreshAnalyzedAssetDisplayName(taskId);
+        const result = await runPipeline(taskId, pipelineHooks);
         const queued =
           result &&
           typeof result === "object" &&
           "status" in result &&
           (result as { status?: string }).status === "render_queued";
-        const waitingForDependency =
-          result &&
-          typeof result === "object" &&
-          "status" in result &&
-          (result as { status?: string }).status === "waiting_for_dependency";
-        if (waitingForDependency) {
-          const delayMs = parseInt(
-            process.env.PIPELINE_DEPENDENCY_RECHECK_MS ?? "5000",
-            10
-          );
-          console.log(
-            `[agent.pipeline] dependencies pending; delayed ${delayMs}ms task=${taskId}`
-          );
-          await delayPipelineJobForDependencies(job, delayMs);
-        }
         if (queued) {
           const meta = result as { creativeIds?: string[]; creativeId?: string };
           const count = meta.creativeIds?.length ?? (meta.creativeId ? 1 : 0);
@@ -272,16 +265,24 @@ export function startWorkers() {
         const { size: rawBytes } = await stat(localPath);
         let finalFileSizeBytes = rawBytes;
         let compressedMeta: Record<string, unknown> = {};
+        let finalContentHash: string;
         if (rawBytes > MAX_PROCESSED_SIZE_BYTES) {
+          await db
+            .update(schema.assets)
+            .set({ contentHash: null })
+            .where(eq(schema.assets.id, assetId));
           const originalMB = (rawBytes / 1024 / 1024).toFixed(0);
           console.log(`[probe] ${assetId} is ${originalMB}MB — compressing to ≤480MB…`);
           const compressedPath = join(workDir, "compressed.mp4");
           const result = await compressSourceVideo(localPath, compressedPath, probe.durationSec);
+          finalContentHash = await hashSourceAssetFile(compressedPath);
           const compressedMB = (result.outputBytes / 1024 / 1024).toFixed(0);
           console.log(`[probe] compressed ${originalMB}MB → ${compressedMB}MB — re-uploading…`);
           await uploadStorageFile(storagePath, compressedPath, "video/mp4");
           finalFileSizeBytes = result.outputBytes;
           compressedMeta = { compressedFromBytes: rawBytes };
+        } else {
+          finalContentHash = await hashSourceAssetFile(localPath);
         }
 
         await db
@@ -291,27 +292,21 @@ export function startWorkers() {
             width: probe.width,
             height: probe.height,
             fileSizeBytes: finalFileSizeBytes,
+            contentHash: finalContentHash,
             metadata: { ...meta, codec: probe.codec, finishedAdRisk, ...compressedMeta },
           })
           .where(eq(schema.assets.id, assetId));
 
-        // Resolve campaign via refs (PD-036) or legacy campaignId
-        let campaignIdForLimits = assetRow?.campaignId ?? null;
-        if (!campaignIdForLimits && assetRow?.workspaceId) {
-          const [ref] = await db
-            .select({ campaignId: schema.campaignAssetRefs.campaignId })
-            .from(schema.campaignAssetRefs)
-            .where(eq(schema.campaignAssetRefs.assetId, assetId))
-            .limit(1);
-          campaignIdForLimits = ref?.campaignId ?? null;
-        }
-
-        if (campaignIdForLimits && assetRow?.workspaceId) {
-          const campaignAssets = await getCampaignAssets(
-            db,
-            campaignIdForLimits,
-            assetRow.workspaceId
-          );
+        if (assetRow?.campaignId && assetRow.workspaceId) {
+          const campaignAssets = await db
+            .select()
+            .from(schema.assets)
+            .where(
+              and(
+                eq(schema.assets.campaignId, assetRow.campaignId),
+                eq(schema.assets.workspaceId, assetRow.workspaceId)
+              )
+            );
           const combined = sumUploadVideoDurationSec(campaignAssets);
           const combinedCheck = validateCombinedVideoDurationSec(combined);
           if (!combinedCheck.ok) {
@@ -345,10 +340,7 @@ export function startWorkers() {
       console.log(
         `[ffmpeg.render] start job=${job.id} task=${data.taskId} creative=${data.creativeId} attempt=${job.attemptsMade + 1}`
       );
-      await processRenderJob({
-        ...(job.data as Parameters<typeof processRenderJob>[0]),
-        retryAttempt: job.attemptsMade + 1,
-      });
+      await processRenderJob(job.data as Parameters<typeof processRenderJob>[0]);
     },
     { connection, prefix, concurrency: renderConcurrency, lockDuration: renderLockMs, ...workerOpts }
   );
@@ -407,23 +399,24 @@ export function startWorkers() {
 
       try {
         const exportPath = creative.videoExportUrl ?? creative.videoUrl;
-        if (!exportPath) throw new Error("No video URL on creative");
+        if (!exportPath) throw new Error("No video artifact on creative");
 
         const videoLocal = join(workDir, "video_9x16_1080p.mp4");
-        const response = await fetch(exportPath);
-        if (!response.ok) {
-          throw new Error(
-            `Failed to download video for export (${response.status}). Check storage bucket is public or worker can access Supabase.`
-          );
-        }
-        await writeFile(videoLocal, Buffer.from(await response.arrayBuffer()));
+        await downloadStorageReference(
+          exportPath,
+          creative.videoExportUrl
+            ? STORAGE_PATHS.export(data.workspaceId, data.campaignId, data.creativeId)
+            : STORAGE_PATHS.preview(data.workspaceId, data.campaignId, data.creativeId),
+          videoLocal
+        );
 
         if (creative.coverUrl) {
           const coverLocal = join(workDir, "cover.jpg");
-          const coverRes = await fetch(creative.coverUrl);
-          if (coverRes.ok) {
-            await writeFile(coverLocal, Buffer.from(await coverRes.arrayBuffer()));
-          }
+          await downloadStorageReference(
+            creative.coverUrl,
+            STORAGE_PATHS.cover(data.workspaceId, data.campaignId, data.creativeId),
+            coverLocal
+          );
         }
 
         await mkdir(join(workDir, "copy"), { recursive: true });
@@ -491,7 +484,7 @@ export function startWorkers() {
         );
         await uploadStorageFile(packPath, zipLocal, "application/zip");
 
-        const exportPackUrl = publicStorageUrl(packPath);
+        const exportPackUrl = packPath;
 
         await db.insert(schema.publishJobs).values({
           orgId: data.orgId,
@@ -537,46 +530,103 @@ export function startWorkers() {
 
   agentWorker.on("failed", async (job, err) => {
     console.error(`Agent job ${job?.id} failed:`, err);
+    const data = job?.data as {
+      taskId?: string;
+      campaignId?: string;
+      workspaceId?: string;
+      orgId?: string;
+    } | undefined;
+    if (job?.name === "agent.pipeline") {
+      emitVideoStudioOpsEvent({
+        event: "pipeline.job_failed",
+        stage: "agent.pipeline",
+        outcome: "failed",
+        orgId: data?.orgId,
+        workspaceId: data?.workspaceId,
+        campaignId: data?.campaignId,
+        taskId: data?.taskId,
+        jobId: job.id,
+        attempt: job.attemptsMade,
+        failureClass: "PIPELINE_FAILURE",
+        recoveryKind: "queue_attempt",
+        message: boundOpsDiagnosticMessage(err),
+      });
+    }
     if (job?.name !== "agent.pipeline") return;
 
-    const maxAttempts = job.opts.attempts ?? 3;
-    if (job.attemptsMade < maxAttempts) return;
+    const authority = automaticPipelineFailureAuthority({
+      attemptsMade: job.attemptsMade,
+      maxAttempts: job.opts.attempts ?? DEFAULT_JOB_ATTEMPTS,
+    });
 
     const taskId = (job.data as { taskId?: string })?.taskId;
     if (!taskId) return;
 
     const db = getDb();
     const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).limit(1);
-    // Pipeline catch already applied failPipelineExecution (retrying|failed).
-    if (
-      !task ||
-      task.status === "failed" ||
-      task.status === "completed" ||
-      task.status === "retrying"
-    ) {
-      return;
-    }
+    if (!task || task.status === "failed" || task.status === "completed") return;
 
     const message = formatAgentPipelineError(err);
     const progress = (task.stepProgress ?? {}) as Record<string, { status?: string }>;
     const stepId = resolveAgentFailureStep(message, progress);
-    await markTaskStepFailed(taskId, stepId, message);
+    await markTaskStepFailed(
+      taskId,
+      stepId,
+      message,
+      authority.outcome === "failed",
+      true
+    );
   });
   renderWorker.on("stalled", (jobId) => {
     console.warn(`[ffmpeg.render] stalled job=${jobId} — lock expired or worker unresponsive`);
   });
   renderWorker.on("completed", (job) => {
-    const data = job.data as { taskId?: string; creativeId?: string };
-    console.log(
-      `[ffmpeg.render] queue job=${job.id} completed task=${data.taskId} creative=${data.creativeId}`
-    );
+    const data = job.data as {
+      taskId?: string;
+      creativeId?: string;
+      workspaceId?: string;
+      campaignId?: string;
+      orgId?: string;
+    };
+    emitVideoStudioOpsEvent({
+      event: "render.completed",
+      stage: "ffmpeg.render",
+      outcome: "completed",
+      orgId: data.orgId,
+      workspaceId: data.workspaceId,
+      campaignId: data.campaignId,
+      taskId: data.taskId,
+      creativeId: data.creativeId,
+      jobId: job.id,
+      attempt: job.attemptsMade + 1,
+    });
   });
   renderWorker.on("failed", async (job, err) => {
-    const data = job?.data as { taskId?: string; creativeId?: string } | undefined;
+    const data = job?.data as {
+      taskId?: string;
+      creativeId?: string;
+      workspaceId?: string;
+      campaignId?: string;
+      orgId?: string;
+    } | undefined;
     console.error(
       `[ffmpeg.render] failed job=${job?.id} task=${data?.taskId} creative=${data?.creativeId}:`,
       err
     );
+    emitVideoStudioOpsEvent({
+      event: "render.failed",
+      stage: "ffmpeg.render",
+      outcome: "failed",
+      orgId: data?.orgId,
+      workspaceId: data?.workspaceId,
+      campaignId: data?.campaignId,
+      taskId: data?.taskId,
+      creativeId: data?.creativeId,
+      jobId: job?.id,
+      attempt: job?.attemptsMade,
+      failureClass: "RENDITION_FAILURE",
+      message: boundOpsDiagnosticMessage(err),
+    });
     const taskId = (job?.data as { taskId?: string })?.taskId;
     if (taskId) {
       await markTaskStepFailed(
@@ -588,22 +638,85 @@ export function startWorkers() {
   });
   exportWorker.on("failed", (job, err) => console.error(`Export job ${job?.id} failed:`, err));
 
+  const photoSceneWorker = new Worker(
+    QUEUE_NAMES.PHOTO_SCENE,
+    async (job) => {
+      if (job.name === "photo_scene.extract") {
+        const data = job.data as {
+          generationId: string;
+          workspaceId: string;
+          orgId: string;
+          campaignId: string;
+        };
+        await processPhotoSceneExtractJob(data);
+        return;
+      }
+      if (job.name !== "photo_scene.compose") return;
+      const data = job.data as {
+        generationId: string;
+        workspaceId: string;
+        orgId: string;
+        campaignId: string;
+      };
+      await processPhotoSceneComposeJob(data);
+    },
+    { connection, prefix, concurrency, lockDuration: 10 * 60 * 1000, ...workerOpts }
+  );
+  photoSceneWorker.on("failed", async (job, err) => {
+    const data = job?.data as {
+      generationId?: string;
+      workspaceId?: string;
+      orgId?: string;
+      campaignId?: string;
+    } | undefined;
+    const compose = job?.name === "photo_scene.compose";
+    console.error(
+      `[${compose ? "photo_scene.compose" : "photo_scene.extract"}] failed job=${job?.id} generation=${data?.generationId}:`,
+      err
+    );
+    emitPhotoSceneOpsEvent({
+      event: compose ? "composition.job_failed" : "extraction.job_failed",
+      stage: compose ? "photo_scene.compose" : "photo_scene.extract",
+      outcome: "failed",
+      orgId: data?.orgId,
+      workspaceId: data?.workspaceId,
+      campaignId: data?.campaignId,
+      generationId: data?.generationId,
+      attempt: job?.attemptsMade,
+      failureClass: compose ? "COMPOSITION_FAILED" : "PROVIDER_UNAVAILABLE",
+      message: boundOpsDiagnosticMessage(err),
+    });
+    if (compose) await markPhotoSceneComposeJobFailed(data ?? {});
+    else await markPhotoSceneExtractJobFailed(data ?? {});
+  });
+
   console.log(
-    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, provider-execution-loop`
+    `Workers started: agent (concurrency=${concurrency}), render (concurrency=${renderConcurrency}), probe, export, photo-scene, ai-story-runtime`
   );
 
-  // Production provider outbox cycle (capability-driven dispatch). No-op when empty.
   const providerLoopMs = parseInt(process.env.PROVIDER_EXECUTION_POLL_MS ?? "5000", 10);
   const providerLoop = setInterval(() => {
     void (async () => {
       try {
-        const { dispatchNextProviderExecution } = await import(
-          "../provider-execution-dispatch-entrypoint"
+        const { runAiStoryProviderWorkerCycle } = await import(
+          "../ai-story-provider-worker-cycle"
         );
-        await dispatchNextProviderExecution();
+        const outcome = await runAiStoryProviderWorkerCycle();
+        if (
+          outcome.dispatchStatus === "DISPATCHED" &&
+          outcome.continuation &&
+          outcome.continuation.status !== "SKIPPED_NON_SCENE"
+        ) {
+          console.log(
+            `[ai-story-runtime] dispatch continued status=${outcome.continuation.status}` +
+              (outcome.continuation.assemblyJobId
+                ? ` assembly=${outcome.continuation.assemblyJobId}`
+                : "")
+          );
+        }
       } catch (error) {
         console.warn(
-          "[provider-execution] cycle error:",
+          "[ai-story-runtime] cycle error:",
           error instanceof Error ? error.message : error
         );
       }
@@ -611,5 +724,5 @@ export function startWorkers() {
   }, Math.max(2000, providerLoopMs));
   providerLoop.unref?.();
 
-  return { agentWorker, probeWorker, renderWorker, exportWorker };
+  return { agentWorker, probeWorker, renderWorker, exportWorker, photoSceneWorker };
 }

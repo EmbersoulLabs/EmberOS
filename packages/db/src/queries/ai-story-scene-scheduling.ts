@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { and, eq, inArray, or, asc } from "drizzle-orm";
 import {
   PHASE1_EXECUTION_LOCKED,
   PersistedSceneRoutingDecisionSchema,
@@ -19,9 +19,8 @@ import {
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 import {
-  assertExecutionPlanOwnershipChain,
+  assertExecutionPlanOwnershipChainInSingleQuery,
   assertPlanOwnershipColumnsMatch,
-  assertSceneMatchesPlan,
   planOwnershipFromRow,
   type PlanOwnedRow,
   type QueryDb,
@@ -29,10 +28,7 @@ import {
 import {
   canonicalPersistenceHash,
 } from "./ai-story-scene-execution-persistence";
-import {
-  RuntimeAuthorizationPersistenceError,
-  acceptRuntimeAuthorizationFactInTransaction,
-} from "./ai-story-runtime-authorization";
+import { RuntimeAuthorizationPersistenceError } from "./ai-story-runtime-authorization";
 import {
   ProviderLedgerConflictError,
   createProviderExecution,
@@ -70,6 +66,9 @@ export type ScheduleAcceptedBundleInput = {
   readonly outboxJob: CreateOutboxJobInput;
   readonly correlation: SceneProviderSchedulingCorrelation;
   readonly scheduledBy: string;
+  readonly productionVerification?: ProductionVerificationAuthority;
+  readonly observeTiming?: (observation: SceneSchedulingStepTiming) => void;
+  readonly observeBoundary?: (boundary: SceneSchedulingPersistenceBoundary) => void;
   readonly testFailureAfter?:
     | "runtime_authorization"
     | "routing_decision"
@@ -77,6 +76,78 @@ export type ScheduleAcceptedBundleInput = {
     | "outbox"
     | "envelope"
     | "correlation";
+};
+
+export type SceneSchedulingTimingKey =
+  | "release_state_load"
+  | "released_scene_projection"
+  | "provider_eligibility"
+  | "routing_request_build"
+  | "routing_decision_lookup"
+  | "routing_decision_write"
+  | "verification_identity_lookup"
+  | "verification_identity_write"
+  | "scheduling_correlation_lookup"
+  | "scheduling_correlation_write"
+  | "provider_execution_lookup_or_create"
+  | "verification_outbox_lookup"
+  | "verification_outbox_write"
+  | "transaction_commit";
+
+export type SceneSchedulingStepTiming = {
+  readonly step: SceneSchedulingTimingKey;
+  readonly durationMs: number;
+  readonly transactionAuthority: "none" | "canonical_post_release_tx";
+  readonly connectionAuthority: "pre_transaction" | "scene_scheduling_pool";
+  readonly outcome: "PASS" | "MISS" | "CONVERGED" | "NOT_REQUIRED" | "FAIL";
+};
+
+export type SceneSchedulingPersistenceBoundary = {
+  readonly connectionAcquireCount: number;
+  readonly transactionCount: number;
+  readonly secondCheckoutAttempts: number;
+  readonly serialDbRoundTripCount: number;
+  readonly poolWaitMs: number;
+  readonly commitMs: number;
+};
+
+async function observeStep<T>(
+  input: ScheduleAcceptedBundleInput,
+  step: SceneSchedulingTimingKey,
+  operation: () => Promise<T>,
+  outcome: (value: T) => SceneSchedulingStepTiming["outcome"] = () => "PASS"
+): Promise<T> {
+  const startedAt = performance.now();
+  try {
+    const value = await operation();
+    input.observeTiming?.({
+      step,
+      durationMs: performance.now() - startedAt,
+      transactionAuthority: "canonical_post_release_tx",
+      connectionAuthority: "scene_scheduling_pool",
+      outcome: outcome(value),
+    });
+    return value;
+  } catch (error) {
+    input.observeTiming?.({
+      step,
+      durationMs: performance.now() - startedAt,
+      transactionAuthority: "canonical_post_release_tx",
+      connectionAuthority: "scene_scheduling_pool",
+      outcome: "FAIL",
+    });
+    throw error;
+  }
+}
+
+export const AI_STORY_PRODUCTION_VERIFICATION_POLICY_VERSION =
+  "ai-story-prod-verify.v1" as const;
+
+export type ProductionVerificationAuthority = {
+  readonly verificationMode: true;
+  readonly verificationPolicyVersion: typeof AI_STORY_PRODUCTION_VERIFICATION_POLICY_VERSION;
+  readonly authorizedBy: "ACTIVE_PLATFORM_ADMIN";
+  readonly createdBy: string;
 };
 
 function failAfterTestStage(
@@ -118,17 +189,12 @@ function toCorrelation(
 }
 
 async function lockExecutionPlan(executionPlanId: string, db: QueryDb) {
-  await db.execute(sql`
-    select ${schema.aiStoryExecutionPlans.id}
-    from ${schema.aiStoryExecutionPlans}
-    where ${schema.aiStoryExecutionPlans.id} = ${executionPlanId}
-    for update
-  `);
   const [plan] = await db
     .select()
     .from(schema.aiStoryExecutionPlans)
     .where(eq(schema.aiStoryExecutionPlans.id, executionPlanId))
-    .limit(1);
+    .limit(1)
+    .for("update");
   if (!plan) {
     throw new SceneSchedulingError(
       "OWNERSHIP_INTEGRITY_VIOLATION",
@@ -238,8 +304,13 @@ export class SceneSchedulingRepository {
   async scheduleAcceptedBundle(
     input: ScheduleAcceptedBundleInput
   ): Promise<SceneSchedulingBundle> {
+    const transactionRequestedAt = performance.now();
+    let transactionBodyCompletedAt = transactionRequestedAt;
+    let poolWaitMs = 0;
+    let serialDbRoundTripCount = 0;
     try {
-      return await this.db.transaction(async (tx) => {
+      const bundle = await this.db.transaction(async (tx) => {
+        poolWaitMs = performance.now() - transactionRequestedAt;
         const authFact = RuntimeAuthorizedFactSchema.parse(input.runtimeAuthorizedFact);
         const routingDecision = PersistedSceneRoutingDecisionSchema.parse(
           input.routingDecision
@@ -249,27 +320,104 @@ export class SceneSchedulingRepository {
         );
         const envelope = await validateExecutionEnvelope(input.envelope);
 
+        serialDbRoundTripCount += 1;
         const plan = await lockExecutionPlan(authFact.executionPlanId, tx);
-        await assertExecutionPlanOwnershipChain(plan, tx);
+        serialDbRoundTripCount += 1;
+        await assertExecutionPlanOwnershipChainInSingleQuery(plan, tx);
         const expected = planOwnershipFromRow(plan);
 
-        const [scene] = await tx
-          .select()
+        const [releaseAuthority] = await observeStep(input, "release_state_load", async () => {
+          serialDbRoundTripCount += 1;
+          return tx
+          .select({
+            sceneExecutionId: schema.aiStorySceneExecutions.id,
+            sceneExecutionPlanId: schema.aiStorySceneExecutions.executionPlanId,
+            sceneOrgId: schema.aiStorySceneExecutions.orgId,
+            sceneWorkspaceId: schema.aiStorySceneExecutions.workspaceId,
+            sceneCampaignId: schema.aiStorySceneExecutions.campaignId,
+            sceneStoryId: schema.aiStorySceneExecutions.storyId,
+            sceneStoryVersionId: schema.aiStorySceneExecutions.storyVersionId,
+            sceneAnimationPackageId:
+              schema.aiStorySceneExecutions.animationPackageId,
+            releaseState: schema.aiStorySceneReleaseStates.releaseState,
+            persistedRuntimeFact: schema.aiStoryRuntimeAuthorizedFacts.fact,
+          })
           .from(schema.aiStorySceneExecutions)
+          .innerJoin(
+            schema.aiStorySceneReleaseStates,
+            and(
+              eq(
+                schema.aiStorySceneReleaseStates.sceneExecutionId,
+                schema.aiStorySceneExecutions.id
+              ),
+              eq(
+                schema.aiStorySceneReleaseStates.executionPlanId,
+                schema.aiStorySceneExecutions.executionPlanId
+              )
+            )
+          )
+          .innerJoin(
+            schema.aiStoryRuntimeAuthorizedFacts,
+            eq(
+              schema.aiStoryRuntimeAuthorizedFacts.runtimeAuthorizationId,
+              schema.aiStorySceneReleaseStates.runtimeAuthorizationId
+            )
+          )
           .where(
             and(
               eq(schema.aiStorySceneExecutions.id, routingDecision.sceneExecutionId),
-              eq(schema.aiStorySceneExecutions.executionPlanId, plan.id)
+              eq(schema.aiStorySceneExecutions.executionPlanId, plan.id),
+              eq(
+                schema.aiStorySceneReleaseStates.workspaceId,
+                expected.workspaceId
+              ),
+              eq(
+                schema.aiStorySceneReleaseStates.runtimeAuthorizationId,
+                authFact.runtimeAuthorizationId
+              ),
+              eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED")
             )
           )
           .limit(1);
-        if (!scene || !authFact.orderedSceneExecutionIds.includes(scene.id)) {
+        }, (value) => value[0] ? "PASS" : "MISS");
+        if (
+          !releaseAuthority ||
+          !authFact.orderedSceneExecutionIds.includes(releaseAuthority.sceneExecutionId)
+        ) {
           throw new SceneSchedulingError(
-            "SCENE_NOT_AUTHORIZED",
-            "Scene Execution is not covered by the RuntimeAuthorizedFact"
+            "SCENE_SCHEDULING_NOT_ELIGIBLE",
+            "Durable RELEASED Scene authority is required before provider scheduling"
           );
         }
-        assertSceneMatchesPlan(plan, scene);
+        const persistedAuth = await observeStep(
+          input,
+          "released_scene_projection",
+          async () => RuntimeAuthorizedFactSchema.parse(releaseAuthority.persistedRuntimeFact)
+        );
+        assertPlanOwned(
+          expected,
+          {
+            orgId: releaseAuthority.sceneOrgId,
+            workspaceId: releaseAuthority.sceneWorkspaceId,
+            campaignId: releaseAuthority.sceneCampaignId,
+            storyId: releaseAuthority.sceneStoryId,
+            storyVersionId: releaseAuthority.sceneStoryVersionId,
+            animationPackageId: releaseAuthority.sceneAnimationPackageId,
+            executionPlanId: releaseAuthority.sceneExecutionPlanId,
+          },
+          "Scene Execution"
+        );
+        if (
+          persistedAuth.runtimeAuthorizationId !== authFact.runtimeAuthorizationId ||
+          persistedAuth.executionPlanId !== authFact.executionPlanId ||
+          persistedAuth.deterministicIntegrityHash !==
+            authFact.deterministicIntegrityHash
+        ) {
+          throw new SceneSchedulingError(
+            "IDENTITY_CONFLICT",
+            "Persisted RuntimeAuthorizedFact conflicts with scheduling authority"
+          );
+        }
 
         for (const [label, ownership] of [
           ["RuntimeAuthorizedFact", authFact.ownership],
@@ -293,7 +441,7 @@ export class SceneSchedulingRepository {
 
         if (
           routingDecision.executionPlanId !== plan.id ||
-          routingDecision.sceneExecutionId !== scene.id ||
+          routingDecision.sceneExecutionId !== releaseAuthority.sceneExecutionId ||
           routingDecision.runtimeAuthorizationId !== authFact.runtimeAuthorizationId ||
           routingDecision.automaticFallbackEnabled !== false
         ) {
@@ -304,7 +452,7 @@ export class SceneSchedulingRepository {
         }
         if (
           correlation.executionPlanId !== plan.id ||
-          correlation.sceneExecutionId !== scene.id ||
+          correlation.sceneExecutionId !== releaseAuthority.sceneExecutionId ||
           correlation.runtimeAuthorizationId !== authFact.runtimeAuthorizationId ||
           correlation.routingDecisionId !== routingDecision.routingDecisionId ||
           correlation.providerExecutionId !== input.providerExecution.identity.executionId ||
@@ -333,40 +481,136 @@ export class SceneSchedulingRepository {
           );
         }
 
-        const acceptedAuth = await acceptRuntimeAuthorizationFactInTransaction(
-          tx,
-          authFact,
-          { lockPlan: false }
-        );
         failAfterTestStage(input, "runtime_authorization");
 
-        const acceptedRoutingDecision = await this.insertRoutingDecision(
-          tx,
-          routingDecision,
-          expected
+        const acceptedRoutingDecision = await observeStep(
+          input,
+          "routing_decision_write",
+          async () => {
+            serialDbRoundTripCount += 1;
+            return this.insertRoutingDecision(tx, routingDecision, expected);
+          }
         );
         failAfterTestStage(input, "routing_decision");
-        const providerExecution = await createProviderExecution(
-          tx,
-          input.providerExecution,
-          input.requestHash
+        const providerExecution = await observeStep(
+          input,
+          "provider_execution_lookup_or_create",
+          async () => {
+            serialDbRoundTripCount += 1;
+            return createProviderExecution(tx, input.providerExecution, input.requestHash);
+          }
         );
         failAfterTestStage(input, "provider_execution");
-        await this.createOutboxJobInTransaction(tx, input.outboxJob);
+        const outboxInserted = await observeStep(
+          input,
+          "verification_outbox_write",
+          async () => {
+            serialDbRoundTripCount += 1;
+            return this.createOutboxJobInTransaction(
+              tx,
+              input.outboxJob,
+              input.productionVerification
+            );
+          },
+          (inserted) => inserted ? "PASS" : "CONVERGED"
+        );
+        input.observeTiming?.({
+          step: "verification_outbox_lookup",
+          durationMs: 0,
+          transactionAuthority: "canonical_post_release_tx",
+          connectionAuthority: "scene_scheduling_pool",
+          outcome: outboxInserted ? "NOT_REQUIRED" : "CONVERGED",
+        });
+        if (input.productionVerification) {
+          const verification = input.productionVerification;
+          const insertedVerification = await observeStep(
+            input,
+            "verification_identity_write",
+            async () => {
+              serialDbRoundTripCount += 1;
+              return tx
+                .insert(schema.aiStoryExecuteVerifications)
+                .values({
+                  executionPlanId: plan.id,
+                  runtimeAuthorizationId: authFact.runtimeAuthorizationId,
+                  sceneExecutionId: releaseAuthority.sceneExecutionId,
+                  workspaceId: expected.workspaceId,
+                  outboxJobId: input.outboxJob.jobId,
+                  verificationMode: true,
+                  verificationPolicyVersion: verification.verificationPolicyVersion,
+                  authorizedBy: verification.authorizedBy,
+                  createdBy: verification.createdBy,
+                })
+                .onConflictDoNothing()
+                .returning();
+            },
+            (rows) => rows[0] ? "PASS" : "CONVERGED"
+          );
+          if (!insertedVerification[0]) {
+            const existingVerification = await observeStep(
+              input,
+              "verification_identity_lookup",
+              async () => {
+                serialDbRoundTripCount += 1;
+                return this.getProductionVerificationInTransaction(tx, plan.id);
+              },
+              (value) => value ? "CONVERGED" : "MISS"
+            );
+            if (
+              !existingVerification ||
+              existingVerification.runtimeAuthorizationId !==
+                authFact.runtimeAuthorizationId ||
+              existingVerification.sceneExecutionId !== releaseAuthority.sceneExecutionId ||
+              existingVerification.workspaceId !== expected.workspaceId ||
+              existingVerification.outboxJobId !== input.outboxJob.jobId ||
+              existingVerification.verificationMode !== true ||
+              existingVerification.verificationPolicyVersion !==
+                verification.verificationPolicyVersion ||
+              existingVerification.authorizedBy !==
+                verification.authorizedBy ||
+              existingVerification.createdBy !== verification.createdBy
+            ) {
+              throw new SceneSchedulingError(
+                "IDENTITY_CONFLICT",
+                "Production verification identity conflicts with persisted authority"
+              );
+            }
+          } else {
+            input.observeTiming?.({
+              step: "verification_identity_lookup",
+              durationMs: 0,
+              transactionAuthority: "canonical_post_release_tx",
+              connectionAuthority: "scene_scheduling_pool",
+              outcome: "NOT_REQUIRED",
+            });
+          }
+        }
         failAfterTestStage(input, "outbox");
+        serialDbRoundTripCount += 1;
         const acceptedEnvelope = await this.insertEnvelope(tx, envelope);
         failAfterTestStage(input, "envelope");
-        const acceptedCorrelation = await this.insertCorrelation(
-          tx,
-          correlation,
-          expected
+        const acceptedCorrelation = await observeStep(
+          input,
+          "scheduling_correlation_write",
+          async () => {
+            serialDbRoundTripCount += 1;
+            return this.insertCorrelation(tx, correlation, expected);
+          },
+          (value) => value.replayed ? "CONVERGED" : "PASS"
         );
+        input.observeTiming?.({
+          step: "scheduling_correlation_lookup",
+          durationMs: 0,
+          transactionAuthority: "canonical_post_release_tx",
+          connectionAuthority: "scene_scheduling_pool",
+          outcome: acceptedCorrelation.replayed ? "CONVERGED" : "NOT_REQUIRED",
+        });
         failAfterTestStage(input, "correlation");
 
-        return SceneSchedulingBundleSchema.parse({
+        const acceptedBundle = SceneSchedulingBundleSchema.parse({
           correlation: acceptedCorrelation.correlation,
           routingDecision: acceptedRoutingDecision,
-          runtimeAuthorization: acceptedAuth.fact,
+          runtimeAuthorization: persistedAuth,
           providerExecutionId: providerExecution.identity.executionId,
           envelopeId: acceptedEnvelope.envelopeId,
           outboxJobId: input.outboxJob.jobId,
@@ -378,10 +622,29 @@ export class SceneSchedulingRepository {
           executionLockCode: PHASE1_EXECUTION_LOCKED,
           automaticFallbackEnabled: false,
           authorizationContractVersion:
-            acceptedAuth.fact.authorizationContractVersion,
+            persistedAuth.authorizationContractVersion,
           schedulingContractVersion: SCENE_SCHEDULING_CONTRACT_VERSION,
         });
+        transactionBodyCompletedAt = performance.now();
+        return acceptedBundle;
       });
+      const commitMs = performance.now() - transactionBodyCompletedAt;
+      input.observeTiming?.({
+        step: "transaction_commit",
+        durationMs: commitMs,
+        transactionAuthority: "canonical_post_release_tx",
+        connectionAuthority: "scene_scheduling_pool",
+        outcome: "PASS",
+      });
+      input.observeBoundary?.({
+        connectionAcquireCount: 1,
+        transactionCount: 1,
+        secondCheckoutAttempts: 0,
+        serialDbRoundTripCount,
+        poolWaitMs,
+        commitMs,
+      });
+      return bundle;
     } catch (error) {
       return toSceneSchedulingError(error);
     }
@@ -394,6 +657,7 @@ export class SceneSchedulingRepository {
       .select()
       .from(schema.aiStorySceneSchedulingCorrelations)
       .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId))
+      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
       .limit(1);
     return row ? toCorrelation(row) : null;
   }
@@ -416,6 +680,7 @@ export class SceneSchedulingRepository {
       .select()
       .from(schema.aiStorySceneSchedulingCorrelations)
       .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId))
+      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
       .limit(1);
     if (!correlationRow) return null;
 
@@ -521,6 +786,10 @@ export class SceneSchedulingRepository {
       authorizationContractVersion: runtimeAuthorization.authorizationContractVersion,
       schedulingContractVersion: SCENE_SCHEDULING_CONTRACT_VERSION,
     });
+  }
+
+  async getProductionVerification(executionPlanId: string) {
+    return this.getProductionVerificationInTransaction(this.db, executionPlanId);
   }
 
   async listSchedulingCompletenessForPlan(
@@ -684,8 +953,9 @@ export class SceneSchedulingRepository {
 
   private async createOutboxJobInTransaction(
     tx: Tx,
-    input: CreateOutboxJobInput
-  ): Promise<void> {
+    input: CreateOutboxJobInput,
+    productionVerification?: ProductionVerificationAuthority
+  ): Promise<boolean> {
     const rows = await tx
       .insert(schema.providerOutboxJobs)
       .values({
@@ -694,12 +964,13 @@ export class SceneSchedulingRepository {
         executionId: input.executionId,
         payloadReference: input.payloadReference,
         correlationId: input.correlationId,
+        status: productionVerification ? "CANCELLED" : "PENDING",
         priority: input.priority ?? 0,
         nextVisibleAt: input.nextVisibleAt ?? new Date(),
       })
       .onConflictDoNothing()
       .returning({ jobId: schema.providerOutboxJobs.jobId });
-    if (rows[0]) return;
+    if (rows[0]) return true;
 
     const [existing] = await tx
       .select()
@@ -712,7 +983,27 @@ export class SceneSchedulingRepository {
         "Provider execution already owns a different outbox intent"
       );
     }
+    const expectedStatus = productionVerification ? "CANCELLED" : "PENDING";
+    if (existing.status !== expectedStatus) {
+      throw new SceneSchedulingError(
+        "OUTBOX_SCHEDULING_CONFLICT",
+        "Outbox dispatch disposition conflicts with persisted intent"
+      );
+    }
     assertSameOutboxJob(existing, input);
+    return false;
+  }
+
+  private async getProductionVerificationInTransaction(
+    db: Pick<Tx, "select">,
+    executionPlanId: string
+  ) {
+    const [row] = await db
+      .select()
+      .from(schema.aiStoryExecuteVerifications)
+      .where(eq(schema.aiStoryExecuteVerifications.executionPlanId, executionPlanId))
+      .limit(1);
+    return row ?? null;
   }
 
   private async insertEnvelope(tx: Tx, input: ExecutionEnvelope): Promise<ExecutionEnvelope> {
@@ -797,6 +1088,7 @@ export class SceneSchedulingRepository {
         routingDecisionHash: correlation.routingDecisionHash,
         authorizationHash: correlation.authorizationHash,
         schedulingIdentityHash: correlation.schedulingIdentityHash,
+        retryInputRevisionId: correlation.retryInputRevisionId ?? null,
         contractVersion: correlation.contractVersion,
         scheduledBy: correlation.scheduledBy,
         scheduledAt: new Date(correlation.scheduledAt),
@@ -814,8 +1106,8 @@ export class SceneSchedulingRepository {
       .from(schema.aiStorySceneSchedulingCorrelations)
       .where(
         eq(
-          schema.aiStorySceneSchedulingCorrelations.sceneExecutionId,
-          correlation.sceneExecutionId
+          schema.aiStorySceneSchedulingCorrelations.schedulingIdentityHash,
+          correlation.schedulingIdentityHash
         )
       )
       .limit(1);

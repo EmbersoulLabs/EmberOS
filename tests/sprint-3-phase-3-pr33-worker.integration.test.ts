@@ -26,6 +26,7 @@ import {
   createIntegrationSql,
   getIntegrationDbUrl,
 } from "./helpers/db-integration";
+import { applyPhaseECommercialAuthorizationSql } from "./helpers/commercial-phase-e-sql";
 import {
   FixedSeedanceRouter,
   PR32_USER_A,
@@ -76,6 +77,7 @@ describeIntegration("Sprint 3 PR 3.3 worker runtime integration", () => {
     ]) {
       await applySqlFile(sql, relative);
     }
+    await applyPhaseECommercialAuthorizationSql(sql);
     await cleanupPr32Tenant(sql);
     await seedPr32Tenant(sql, undefined, PR32_USER_A, "pr33-worker");
   }, 120_000);
@@ -97,6 +99,7 @@ describeIntegration("Sprint 3 PR 3.3 worker runtime integration", () => {
       sceneExecutionId: prepared.sceneExecutionIds[0]!,
       runtimeAuthorizationId:
         prepared.acceptedAuthorization.runtimeAuthorizationId,
+      commercialAuthorizationId: prepared.commercialAuthorizationId,
       actorUserId: PR32_USER_A,
     });
 

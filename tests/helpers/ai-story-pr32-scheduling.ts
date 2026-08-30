@@ -1,6 +1,7 @@
 import type { Sql } from "postgres";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStorySceneReleaseRepository,
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
   RuntimeAuthorizationPersistenceRepository,
@@ -24,6 +25,7 @@ import {
   PHASE_2A_IDS,
   type Phase2aIdSet,
 } from "./ai-story-phase-2a";
+import { acceptCommercialAuthorizationFixture } from "./commercial-billable-execute";
 
 export const PR32_USER_A = "10000000-0000-4000-8000-000000000040";
 export const PR32_USER_B = "20000000-0000-4000-8000-000000000040";
@@ -47,6 +49,15 @@ const SCENE_PLAN_PAYLOAD = {
       transition: "cut",
       continuityNotes: "",
       order: 1,
+    },
+    {
+      id: "scene-c",
+      beatIds: ["beat-2"],
+      purpose: "C",
+      durationSec: 3,
+      transition: "cut",
+      continuityNotes: "",
+      order: 2,
     },
   ],
 };
@@ -108,14 +119,97 @@ export async function cleanupPr32Tenant(
   sql: Sql,
   ids: Phase2aIdSet = PHASE_2A_IDS
 ): Promise<void> {
+  // Commercial facts are RESTRICT children of the shared deterministic tenant.
+  // Delete only rows owned by this fixture before runtime and tenant parents.
+  await sql`
+    DELETE FROM commercial_execution_authorizations
+    WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+  `;
+  await sql`
+    DELETE FROM credit_settlements
+    WHERE credit_reservation_id IN (
+      SELECT credit_reservation_id FROM credit_reservations
+      WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+    )
+  `;
+  await sql`
+    DELETE FROM credit_releases
+    WHERE credit_reservation_id IN (
+      SELECT credit_reservation_id FROM credit_reservations
+      WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+    )
+  `;
+  await sql`
+    DELETE FROM credit_reservations
+    WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+  `;
+  await sql`DELETE FROM product_usage_events WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}`;
+  await sql`DELETE FROM credit_ledger_entries WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM credit_wallets WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM effective_entitlement_projections WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM entitlement_revocations WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM entitlement_grants WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM subscription_projections WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM subscription_events WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM billing_accounts WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_final_story_results WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_assembly_artifacts WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_assembly_job_facts WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_assembly_jobs WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_retry_authorizations WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_attempt_input_revisions WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_retry_eligibility_facts WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_generated_scene_reviews WHERE org_id = ${ids.orgId}`;
+  // Release rows bind to the exact approved Scene Result and must be removed
+  // before their result/attempt authorities during isolated fixture cleanup.
+  await sql`DELETE FROM ai_story_scene_release_states WHERE workspace_id = ${ids.workspaceId}`;
+  await sql`DELETE FROM ai_story_durable_scene_media_attestations WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_results WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_scene_projection_correlations WHERE org_id = ${ids.orgId}`;
+  await sql`DELETE FROM ai_story_worker_attempt_observations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_worker_execution_results WHERE org_id = ${ids.orgId}`;
   await sql`
     DELETE FROM provider_execution_dispatches
-    WHERE workspace_id = ${ids.workspaceId}
+    WHERE org_id = ${ids.orgId}
+       OR workspace_id = ${ids.workspaceId}
+       OR execution_id IN (
+         SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+       )
+       OR job_id IN (
+         SELECT job_id FROM provider_outbox_jobs
+         WHERE execution_id IN (
+           SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+         )
+       )
   `;
+  await sql`DELETE FROM ai_story_execute_verifications WHERE workspace_id = ${ids.workspaceId}`;
   await sql`DELETE FROM ai_story_scene_scheduling_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_routing_decisions WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_runtime_authorized_facts WHERE org_id = ${ids.orgId}`;
+  await sql`
+    DELETE FROM provider_attempt_costs
+    WHERE attempt_id IN (
+      SELECT attempt_id FROM provider_attempts
+      WHERE execution_id IN (
+        SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+      )
+    )
+  `;
+  await sql`
+    DELETE FROM provider_attempt_usage
+    WHERE attempt_id IN (
+      SELECT attempt_id FROM provider_attempts
+      WHERE execution_id IN (
+        SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+      )
+    )
+  `;
+  await sql`
+    DELETE FROM provider_attempts
+    WHERE execution_id IN (
+      SELECT execution_id FROM provider_executions WHERE workspace_id = ${ids.workspaceId}
+    )
+  `;
   await sql`
     DELETE FROM provider_outbox_jobs
     WHERE execution_id IN (
@@ -149,6 +243,8 @@ export async function prepareAuthorizedSchedulingPlan(input: {
   readonly ids?: Phase2aIdSet;
   readonly userId?: string;
   readonly persistAuthorization?: boolean;
+  readonly sceneOrder?: readonly number[];
+  readonly skipCommercialAuthorization?: boolean;
 }) {
   const ids = input.ids ?? PHASE_2A_IDS;
   const userId = input.userId ?? PR32_USER_A;
@@ -157,6 +253,7 @@ export async function prepareAuthorizedSchedulingPlan(input: {
       makePhase2aCompilation({
         ids,
         instructionPurpose: `${input.purpose}-${crypto.randomUUID()}`,
+        sceneOrder: input.sceneOrder,
       })
     );
   const executionPlanId = persisted.plan.storyExecutionId;
@@ -223,6 +320,25 @@ export async function prepareAuthorizedSchedulingPlan(input: {
           issued.fact
         );
 
+  if (input.persistAuthorization !== false) {
+    await new AiStorySceneReleaseRepository().initialize({
+      executionPlanId,
+      runtimeAuthorizationId: acceptedAuthorization.fact.runtimeAuthorizationId,
+      workspaceId: ids.workspaceId,
+      orderedSceneExecutionIds: sceneExecutionIds,
+      actorUserId: userId,
+      releasedAt: new Date("2026-08-04T12:00:00.000Z"),
+    });
+  }
+
+  const commercial = input.skipCommercialAuthorization
+    ? null
+    : await acceptCommercialAuthorizationFixture({
+        orgId: ids.orgId,
+        workspaceId: ids.workspaceId,
+        executionPlanId,
+      });
+
   return {
     persisted,
     executionPlanId,
@@ -230,6 +346,7 @@ export async function prepareAuthorizedSchedulingPlan(input: {
     assembly,
     issuedAuthorization: issued.fact,
     acceptedAuthorization: acceptedAuthorization.fact,
+    commercialAuthorizationId: commercial?.commercialAuthorizationId,
     userId,
   };
 }
@@ -336,6 +453,7 @@ export async function captureScheduleAcceptedBundleInput(input: {
   readonly executionPlanId: string;
   readonly sceneExecutionId: string;
   readonly runtimeAuthorizationId: string;
+  readonly commercialAuthorizationId: string;
   readonly actorUserId?: string;
   readonly router?: ProviderRouter;
   readonly authRepo?: SceneSchedulingCoordinatorDependencies["authRepo"];
@@ -360,6 +478,7 @@ export async function captureScheduleAcceptedBundleInput(input: {
       executionPlanId: input.executionPlanId,
       sceneExecutionId: input.sceneExecutionId,
       runtimeAuthorizationId: input.runtimeAuthorizationId,
+      commercialAuthorizationId: input.commercialAuthorizationId,
       actorUserId: input.actorUserId ?? PR32_USER_A,
     });
   } catch (error) {

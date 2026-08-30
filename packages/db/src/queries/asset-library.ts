@@ -1,254 +1,24 @@
 import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import type { getDb } from "@ceo-agent/db";
-import { schema } from "@ceo-agent/db";
+import { getDb } from "../client";
+import * as schema from "../schema/index";
 
 type Db = ReturnType<typeof getDb>;
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type QueryDb = Db | Tx;
 
-type AssetRow = typeof schema.assets.$inferSelect;
-
-const MEDIA_REFS_AUTHORITATIVE_KEY = "mediaReferencesAuthoritative";
-
-export function shouldUseLegacyCampaignAssetFallback(
-  resolvedAssetCount: number,
-  campaignMetadata: unknown
-): boolean {
-  if (resolvedAssetCount > 0) return false;
-  if (!campaignMetadata || typeof campaignMetadata !== "object") return true;
-  return (
-    (campaignMetadata as Record<string, unknown>)[MEDIA_REFS_AUTHORITATIVE_KEY] !== true
-  );
-}
-
-/**
- * Resolve campaign media from PD-036 references:
- * - campaign_asset_refs
- * - campaign_story_refs → ordered story_assets
- * - legacy assets.campaign_id fallback for pre-migration rows only; scheduled for removal
- *   after historical data and consumers have fully migrated to reference tables
- */
-export async function getCampaignAssets(
-  db: Db,
-  campaignId: string,
-  workspaceId: string
-): Promise<AssetRow[]> {
-  const byId = new Map<string, AssetRow>();
-
-  const [campaign] = await db
-    .select({ metadata: schema.campaigns.metadata })
-    .from(schema.campaigns)
-    .where(eq(schema.campaigns.id, campaignId))
-    .limit(1);
-
-  const directRefs = await db
-    .select({ asset: schema.assets, sortOrder: schema.campaignAssetRefs.sortOrder })
-    .from(schema.campaignAssetRefs)
-    .innerJoin(schema.assets, eq(schema.assets.id, schema.campaignAssetRefs.assetId))
-    .where(
-      and(
-        eq(schema.campaignAssetRefs.campaignId, campaignId),
-        eq(schema.assets.workspaceId, workspaceId),
-        isNull(schema.assets.deletedAt)
-      )
-    )
-    .orderBy(asc(schema.campaignAssetRefs.sortOrder));
-
-  for (const row of directRefs) {
-    byId.set(row.asset.id, row.asset);
+export class AssetLibraryError extends Error {
+  constructor(
+    readonly code:
+      | "ASSET_REFERENCE_DENIED"
+      | "ASSET_STORY_NOT_FOUND"
+      | "ASSET_STORY_VERSION_CONFLICT",
+    message: string
+  ) {
+    super(message);
+    this.name = "AssetLibraryError";
   }
-
-  const storyRefs = await db
-    .select({ storyId: schema.campaignStoryRefs.storyId })
-    .from(schema.campaignStoryRefs)
-    .innerJoin(schema.stories, eq(schema.stories.id, schema.campaignStoryRefs.storyId))
-    .where(
-      and(
-        eq(schema.campaignStoryRefs.campaignId, campaignId),
-        eq(schema.stories.workspaceId, workspaceId),
-        eq(schema.stories.status, "ready"),
-        isNull(schema.stories.deletedAt)
-      )
-    );
-
-  if (storyRefs.length > 0) {
-    const storyIds = storyRefs.map((r) => r.storyId);
-    const storyAssets = await db
-      .select({ asset: schema.assets, sortOrder: schema.storyAssets.sortOrder, storyId: schema.storyAssets.storyId })
-      .from(schema.storyAssets)
-      .innerJoin(schema.assets, eq(schema.assets.id, schema.storyAssets.assetId))
-      .where(
-        and(
-          inArray(schema.storyAssets.storyId, storyIds),
-          eq(schema.assets.workspaceId, workspaceId),
-          isNull(schema.assets.deletedAt)
-        )
-      )
-      .orderBy(asc(schema.storyAssets.sortOrder));
-
-    for (const row of storyAssets) {
-      if (!byId.has(row.asset.id)) byId.set(row.asset.id, row.asset);
-    }
-  }
-
-  if (shouldUseLegacyCampaignAssetFallback(byId.size, campaign?.metadata)) {
-    const legacy = await db
-      .select()
-      .from(schema.assets)
-      .where(
-        and(
-          eq(schema.assets.campaignId, campaignId),
-          eq(schema.assets.workspaceId, workspaceId),
-          isNull(schema.assets.deletedAt)
-        )
-      );
-    for (const asset of legacy) byId.set(asset.id, asset);
-  }
-
-  return Array.from(byId.values());
 }
 
-export async function attachAssetsToCampaign(
-  db: Db,
-  campaignId: string,
-  assetIds: string[],
-  startSort = 0
-): Promise<void> {
-  if (assetIds.length === 0) return;
-  await db
-    .insert(schema.campaignAssetRefs)
-    .values(
-      assetIds.map((assetId, index) => ({
-        campaignId,
-        assetId,
-        sortOrder: startSort + index,
-      }))
-    )
-    .onConflictDoNothing();
-}
-
-export async function attachStoriesToCampaign(
-  db: Db,
-  campaignId: string,
-  storyIds: string[]
-): Promise<void> {
-  if (storyIds.length === 0) return;
-  await db
-    .insert(schema.campaignStoryRefs)
-    .values(storyIds.map((storyId) => ({ campaignId, storyId })))
-    .onConflictDoNothing();
-}
-
-/** Replace Campaign references so persistence exactly matches the current UI selection. */
-export async function replaceCampaignMediaReferences(
-  db: Db,
-  campaignId: string,
-  assetIds: string[],
-  storyIds: string[]
-): Promise<void> {
-  const uniqueAssetIds = [...new Set(assetIds)];
-  const uniqueStoryIds = [...new Set(storyIds)];
-
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(schema.campaignAssetRefs)
-      .where(eq(schema.campaignAssetRefs.campaignId, campaignId));
-    await tx
-      .delete(schema.campaignStoryRefs)
-      .where(eq(schema.campaignStoryRefs.campaignId, campaignId));
-
-    if (uniqueAssetIds.length > 0) {
-      await tx.insert(schema.campaignAssetRefs).values(
-        uniqueAssetIds.map((assetId, sortOrder) => ({
-          campaignId,
-          assetId,
-          sortOrder,
-        }))
-      );
-    }
-    if (uniqueStoryIds.length > 0) {
-      await tx.insert(schema.campaignStoryRefs).values(
-        uniqueStoryIds.map((storyId) => ({ campaignId, storyId }))
-      );
-    }
-
-    await tx
-      .update(schema.campaigns)
-      .set({
-        metadata: sql`coalesce(${schema.campaigns.metadata}, '{}'::jsonb) || '{"mediaReferencesAuthoritative":true}'::jsonb`,
-        updatedAt: new Date(),
-      })
-      .where(eq(schema.campaigns.id, campaignId));
-  });
-}
-
-export async function replaceStoryAssets(
-  db: Db,
-  storyId: string,
-  assetIds: string[]
-): Promise<void> {
-  await db.delete(schema.storyAssets).where(eq(schema.storyAssets.storyId, storyId));
-  if (assetIds.length === 0) return;
-  await db.insert(schema.storyAssets).values(
-    assetIds.map((assetId, index) => ({
-      storyId,
-      assetId,
-      sortOrder: index,
-    }))
-  );
-}
-
-export async function assertAssetsInWorkspace(
-  db: Db,
-  workspaceId: string,
-  assetIds: string[]
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (assetIds.length === 0) return { ok: true };
-  const rows = await db
-    .select({ id: schema.assets.id })
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.workspaceId, workspaceId),
-        inArray(schema.assets.id, assetIds),
-        isNull(schema.assets.deletedAt)
-      )
-    );
-  if (rows.length !== new Set(assetIds).size) {
-    return { ok: false, error: "One or more assets were not found in this workspace" };
-  }
-  return { ok: true };
-}
-
-export async function assertStoriesInWorkspace(
-  db: Db,
-  workspaceId: string,
-  storyIds: string[],
-  opts?: { readyOnly?: boolean }
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (storyIds.length === 0) return { ok: true };
-  const conditions = [
-    eq(schema.stories.workspaceId, workspaceId),
-    inArray(schema.stories.id, storyIds),
-    isNull(schema.stories.deletedAt),
-  ];
-  if (opts?.readyOnly) {
-    conditions.push(eq(schema.stories.status, "ready"));
-  }
-  const rows = await db
-    .select({ id: schema.stories.id, status: schema.stories.status })
-    .from(schema.stories)
-    .where(and(...conditions));
-  if (rows.length !== new Set(storyIds).size) {
-    return {
-      ok: false,
-      error: opts?.readyOnly
-        ? "Only Ready Stories can be attached to a Campaign"
-        : "One or more stories were not found in this workspace",
-    };
-  }
-  return { ok: true };
-}
-
-/** Search helper: filename + story name (expandable for AI metadata later). */
 export function assetSearchCondition(query: string) {
   const q = `%${query.trim().toLowerCase()}%`;
   return or(
@@ -256,4 +26,106 @@ export function assetSearchCondition(query: string) {
     sql`lower(coalesce(${schema.assets.originalFilename}, '')) like ${q}`,
     sql`lower(coalesce(${schema.assets.metadata}->>'originalFilename', '')) like ${q}`
   );
+}
+
+export async function assertAssetsInWorkspace(
+  db: QueryDb,
+  identity: { orgId: string; workspaceId: string },
+  assetIds: readonly string[]
+): Promise<void> {
+  const unique = [...new Set(assetIds)];
+  if (unique.length === 0) return;
+  const rows = await db
+    .select({ id: schema.assets.id })
+    .from(schema.assets)
+    .where(and(
+      eq(schema.assets.orgId, identity.orgId),
+      eq(schema.assets.workspaceId, identity.workspaceId),
+      inArray(schema.assets.id, unique),
+      isNull(schema.assets.deletedAt)
+    ));
+  if (rows.length !== unique.length) {
+    throw new AssetLibraryError(
+      "ASSET_REFERENCE_DENIED",
+      "One or more Asset references are outside the authorized Workspace"
+    );
+  }
+}
+
+export async function assertAssetStoriesInWorkspace(
+  db: QueryDb,
+  identity: { orgId: string; workspaceId: string },
+  storyIds: readonly string[],
+  readyOnly = false
+): Promise<void> {
+  const unique = [...new Set(storyIds)];
+  if (unique.length === 0) return;
+  const conditions = [
+    eq(schema.stories.orgId, identity.orgId),
+    eq(schema.stories.workspaceId, identity.workspaceId),
+    inArray(schema.stories.id, unique),
+    isNull(schema.stories.deletedAt),
+  ];
+  if (readyOnly) conditions.push(eq(schema.stories.status, "ready"));
+  const rows = await db.select({ id: schema.stories.id }).from(schema.stories).where(and(...conditions));
+  if (rows.length !== unique.length) {
+    throw new AssetLibraryError("ASSET_REFERENCE_DENIED", "One or more Asset Stories are not eligible for this Campaign");
+  }
+}
+
+export async function replaceAssetStoryAssets(
+  db: QueryDb,
+  input: { storyId: string; orgId: string; workspaceId: string; assetIds: readonly string[] }
+): Promise<void> {
+  await assertAssetsInWorkspace(db, input, input.assetIds);
+  await db.delete(schema.storyAssets).where(eq(schema.storyAssets.storyId, input.storyId));
+  if (input.assetIds.length > 0) {
+    await db.insert(schema.storyAssets).values(
+      input.assetIds.map((assetId, sortOrder) => ({ storyId: input.storyId, assetId, sortOrder }))
+    );
+  }
+}
+
+export async function loadAssetStory(
+  db: QueryDb,
+  input: { storyId: string; orgId: string; workspaceId: string }
+) {
+  const [story] = await db
+    .select()
+    .from(schema.stories)
+    .where(and(
+      eq(schema.stories.id, input.storyId),
+      eq(schema.stories.orgId, input.orgId),
+      eq(schema.stories.workspaceId, input.workspaceId),
+      isNull(schema.stories.deletedAt)
+    ))
+    .limit(1);
+  if (!story) return null;
+  const links = await db
+    .select({ asset: schema.assets, sortOrder: schema.storyAssets.sortOrder })
+    .from(schema.storyAssets)
+    .innerJoin(schema.assets, eq(schema.assets.id, schema.storyAssets.assetId))
+    .where(and(
+      eq(schema.storyAssets.storyId, story.id),
+      eq(schema.assets.orgId, input.orgId),
+      eq(schema.assets.workspaceId, input.workspaceId),
+      isNull(schema.assets.deletedAt)
+    ))
+    .orderBy(asc(schema.storyAssets.sortOrder));
+  return { ...story, assets: links.map(({ asset, sortOrder }) => ({ ...asset, sortOrder })) };
+}
+
+export async function findSameWorkspaceAssetByContentHash(
+  db: QueryDb,
+  input: { orgId: string; workspaceId: string; contentHash: string; excludeAssetId?: string }
+) {
+  const conditions = [
+    eq(schema.assets.orgId, input.orgId),
+    eq(schema.assets.workspaceId, input.workspaceId),
+    eq(schema.assets.contentHash, input.contentHash),
+    isNull(schema.assets.deletedAt),
+  ];
+  if (input.excludeAssetId) conditions.push(sql`${schema.assets.id} <> ${input.excludeAssetId}`);
+  const [asset] = await db.select().from(schema.assets).where(and(...conditions)).limit(1);
+  return asset ?? null;
 }

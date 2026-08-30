@@ -2,8 +2,13 @@
  * Sprint 3 PR 3.3 — Worker runtime persistence + validated Dispatch bundle loading.
  * Validates ownership/correlation/envelope/routing before Adapter invocation.
  * Does not finalize, write usage/cost, or unlock execution.
+ *
+ * PR 3.7 Phase C remediation (MODEL A):
+ * - Non-terminal Adapter outcomes → append-only Worker Attempt Observations
+ * - Terminal normalized evidence → immutable insert-only WorkerExecutionResult
+ * - Never DELETE / UPDATE / replace accepted WorkerExecutionResult rows
  */
-import { eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import {
   PersistedSceneRoutingDecisionSchema,
   RuntimeAuthorizedFactSchema,
@@ -21,6 +26,7 @@ import {
 } from "@ceo-agent/shared";
 import { getDb } from "../client";
 import * as schema from "../schema/index";
+import { deterministicPersistenceUuid } from "./ai-story-scene-execution-persistence";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -105,10 +111,8 @@ export class SceneProviderWorkerRuntimeRepository {
       )
       .limit(1);
     if (!correlationRow) {
-      throw new WorkerRuntimePersistenceError(
-        "WORKER_DISPATCH_INVALID",
-        "Scene scheduling correlation for Outbox Job does not exist"
-      );
+      // Soft miss: Dispatch may belong to generic Provider path (not AI Story Scene).
+      return null;
     }
     const correlation = SceneProviderSchedulingCorrelationSchema.parse(
       correlationRow.correlation
@@ -222,10 +226,164 @@ export class SceneProviderWorkerRuntimeRepository {
     return row ? WorkerExecutionResultSchema.parse(row.result) : null;
   }
 
+  /**
+   * Classify Dispatch ownership for the shared poll loop.
+   * AI_STORY_SCENE when scheduling correlation exists; otherwise GENERIC_PROVIDER.
+   */
+  async classifyDispatchOwnership(
+    dispatchId: string
+  ): Promise<"AI_STORY_SCENE" | "GENERIC_PROVIDER" | "MISSING_DISPATCH"> {
+    const [dispatchRow] = await this.db
+      .select({
+        dispatchId: schema.providerExecutionDispatches.dispatchId,
+        jobId: schema.providerExecutionDispatches.jobId,
+      })
+      .from(schema.providerExecutionDispatches)
+      .where(eq(schema.providerExecutionDispatches.dispatchId, dispatchId))
+      .limit(1);
+    if (!dispatchRow) return "MISSING_DISPATCH";
+
+    const [correlationRow] = await this.db
+      .select({
+        outboxJobId: schema.aiStorySceneSchedulingCorrelations.outboxJobId,
+      })
+      .from(schema.aiStorySceneSchedulingCorrelations)
+      .where(
+        eq(
+          schema.aiStorySceneSchedulingCorrelations.outboxJobId,
+          dispatchRow.jobId
+        )
+      )
+      .limit(1);
+    return correlationRow ? "AI_STORY_SCENE" : "GENERIC_PROVIDER";
+  }
+
+  async getLatestWorkerAttemptObservationByDispatchId(
+    dispatchId: string
+  ): Promise<WorkerExecutionResult | null> {
+    const [row] = await this.db
+      .select()
+      .from(schema.aiStoryWorkerAttemptObservations)
+      .where(
+        and(
+          eq(schema.aiStoryWorkerAttemptObservations.dispatchId, dispatchId),
+          ne(
+            schema.aiStoryWorkerAttemptObservations.observationKind,
+            "PRE_DISPATCH_BLOCKED"
+          )
+        )
+      )
+      .orderBy(desc(schema.aiStoryWorkerAttemptObservations.producedAt))
+      .limit(1);
+    return row ? WorkerExecutionResultSchema.parse(row.observation) : null;
+  }
+
+  /**
+   * Append-only operational observation for non-terminal Adapter outcomes.
+   * Never deletes or mutates prior observations / WorkerExecutionResults.
+   */
+  async appendWorkerAttemptObservation(
+    result: WorkerExecutionResult
+  ): Promise<{ result: WorkerExecutionResult; converged: boolean }> {
+    const parsed = WorkerExecutionResultSchema.parse(result);
+    if (isTerminalWorkerResultState(parsed)) {
+      throw new WorkerRuntimePersistenceError(
+        "WORKER_ATTEMPT_CONFLICT",
+        "Terminal Worker evidence must use acceptOrReturnWorkerExecutionResult"
+      );
+    }
+
+    const [correlationRow] = await this.db
+      .select()
+      .from(schema.aiStorySceneSchedulingCorrelations)
+      .where(
+        eq(
+          schema.aiStorySceneSchedulingCorrelations.outboxJobId,
+          parsed.outboxJobId
+        )
+      )
+      .limit(1);
+    if (!correlationRow) {
+      throw new WorkerRuntimePersistenceError(
+        "OWNERSHIP_INTEGRITY_VIOLATION",
+        "Cannot persist Worker observation without Scene scheduling correlation"
+      );
+    }
+
+    const observationId = deterministicPersistenceUuid(
+      "ai-story-worker-attempt-observation",
+      {
+        providerAttemptId: parsed.providerAttemptId,
+        dispatchId: parsed.dispatchId,
+        deterministicIntegrityHash: parsed.deterministicIntegrityHash,
+      }
+    );
+
+    const inserted = await this.db
+      .insert(schema.aiStoryWorkerAttemptObservations)
+      .values({
+        observationId,
+        orgId: correlationRow.orgId,
+        workspaceId: correlationRow.workspaceId,
+        providerExecutionId: parsed.providerExecutionId,
+        providerAttemptId: parsed.providerAttemptId,
+        dispatchId: parsed.dispatchId,
+        outboxJobId: parsed.outboxJobId,
+        providerRequestId: parsed.providerRequestId ?? null,
+        observationKind: parsed.workerState,
+        reconciliationRequired: parsed.reconciliationRequired,
+        deterministicIntegrityHash: parsed.deterministicIntegrityHash,
+        observation: parsed,
+        producedAt: new Date(parsed.producedAt),
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (inserted[0]) {
+      return {
+        result: WorkerExecutionResultSchema.parse(inserted[0].observation),
+        converged: false,
+      };
+    }
+
+    const [existing] = await this.db
+      .select()
+      .from(schema.aiStoryWorkerAttemptObservations)
+      .where(
+        eq(
+          schema.aiStoryWorkerAttemptObservations.deterministicIntegrityHash,
+          parsed.deterministicIntegrityHash
+        )
+      )
+      .limit(1);
+    if (!existing) {
+      throw new WorkerRuntimePersistenceError(
+        "WORKER_ATTEMPT_CONFLICT",
+        "Worker Attempt Observation identity conflict"
+      );
+    }
+    return {
+      result: WorkerExecutionResultSchema.parse(existing.observation),
+      converged: true,
+    };
+  }
+
+  /**
+   * Insert-only immutable terminal WorkerExecutionResult authority.
+   * Non-terminal results must use appendWorkerAttemptObservation (MODEL A).
+   * Never DELETE/UPDATE/replace accepted terminal evidence.
+   */
   async acceptOrReturnWorkerExecutionResult(
     result: WorkerExecutionResult
   ): Promise<{ result: WorkerExecutionResult; converged: boolean }> {
     const parsed = WorkerExecutionResultSchema.parse(result);
+
+    if (!isTerminalWorkerResultState(parsed)) {
+      throw new WorkerRuntimePersistenceError(
+        "WORKER_ATTEMPT_CONFLICT",
+        "Non-terminal Worker outcomes are observations, not immutable WorkerExecutionResult"
+      );
+    }
 
     const [correlationRow] = await this.db
       .select()
@@ -290,24 +448,38 @@ export class SceneProviderWorkerRuntimeRepository {
       );
     }
     const accepted = WorkerExecutionResultSchema.parse(existing.result);
-    if (accepted.deterministicIntegrityHash !== parsed.deterministicIntegrityHash) {
-      throw new WorkerRuntimePersistenceError(
-        "WORKER_ATTEMPT_CONFLICT",
-        "Conflicting Worker Execution Result for the same Dispatch"
-      );
+    if (accepted.deterministicIntegrityHash === parsed.deterministicIntegrityHash) {
+      if (
+        accepted.providerAttemptId !== parsed.providerAttemptId ||
+        accepted.providerId !== parsed.providerId ||
+        accepted.adapterVersion !== parsed.adapterVersion
+      ) {
+        throw new WorkerRuntimePersistenceError(
+          "WORKER_ATTEMPT_CONFLICT",
+          "Worker attempt identity conflicts with persisted result"
+        );
+      }
+      return { result: accepted, converged: true };
     }
-    if (
-      accepted.providerAttemptId !== parsed.providerAttemptId ||
-      accepted.providerId !== parsed.providerId ||
-      accepted.adapterVersion !== parsed.adapterVersion
-    ) {
-      throw new WorkerRuntimePersistenceError(
-        "WORKER_ATTEMPT_CONFLICT",
-        "Worker attempt identity conflicts with persisted result"
-      );
-    }
-    return { result: accepted, converged: true };
+
+    throw new WorkerRuntimePersistenceError(
+      "WORKER_ATTEMPT_CONFLICT",
+      "Conflicting Worker Execution Result for the same Dispatch"
+    );
   }
+}
+
+function isTerminalWorkerResultState(result: WorkerExecutionResult): boolean {
+  return (
+    result.workerState === "TERMINAL_SUCCESS" ||
+    result.workerState === "TERMINAL_FAILURE" ||
+    result.workerState === "NOT_ACCEPTED" ||
+    result.canonicalProviderState === "SUCCEEDED" ||
+    result.canonicalProviderState === "FAILED" ||
+    result.canonicalProviderState === "REJECTED" ||
+    result.canonicalProviderState === "TIMED_OUT" ||
+    result.acceptanceClassification === "NOT_ACCEPTED"
+  );
 }
 
 function assertOwnershipChain(

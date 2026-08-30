@@ -26,6 +26,7 @@ import {
   getIntegrationDbUrl,
 } from "./helpers/db-integration";
 import { makePhase2aCompilation, PHASE_2A_IDS } from "./helpers/ai-story-phase-2a";
+import { cleanupPr32Tenant } from "./helpers/ai-story-pr32-scheduling";
 
 const describeIntegration = RUN_DB_INTEGRATION && getIntegrationDbUrl() ? describe : describe.skip;
 
@@ -41,7 +42,6 @@ const scenePlanPayload = {
 
 describeIntegration("Sprint 3 Phase 2B PR 2B.2 assembly definition persistence", () => {
   let sql: Sql;
-  const orgIds = [PHASE_2A_IDS.orgId];
 
   beforeAll(async () => {
     sql = createIntegrationSql();
@@ -56,24 +56,7 @@ describeIntegration("Sprint 3 Phase 2B PR 2B.2 assembly definition persistence",
       }
     }
 
-    await sql`DELETE FROM ai_story_assembly_scene_memberships WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_assembly_definitions WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_story_review_facts WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_intent_review_facts WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_review_opened_facts WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_intent_validation_results WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_executions WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_execution_plans WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_instruction_snapshots WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM workspace_members WHERE workspace_id = ${PHASE_2A_IDS.workspaceId}`;
-    await sql`DELETE FROM campaign_asset_refs WHERE campaign_id = ${PHASE_2A_IDS.campaignId}`;
-    await sql`DELETE FROM assets WHERE id = ${PHASE_2A_IDS.assetId}`;
-    await sql`DELETE FROM ai_story_animation_packages WHERE id = ${PHASE_2A_IDS.animationPackageId}`;
-    await sql`DELETE FROM ai_story_versions WHERE id = ${PHASE_2A_IDS.storyVersionId}`;
-    await sql`DELETE FROM ai_stories WHERE id = ${PHASE_2A_IDS.storyId}`;
-    await sql`DELETE FROM campaigns WHERE id = ${PHASE_2A_IDS.campaignId}`;
-    await sql`DELETE FROM workspaces WHERE id = ${PHASE_2A_IDS.workspaceId}`;
-    await sql`DELETE FROM organizations WHERE id = ANY(${orgIds})`;
+    await cleanupPr32Tenant(sql);
 
     await sql`INSERT INTO organizations (id, name, slug) VALUES (${PHASE_2A_IDS.orgId}, 'Phase 2B.2', 'phase-2b2-assembly')`;
     await sql`INSERT INTO workspaces (id, org_id, name, slug) VALUES (${PHASE_2A_IDS.workspaceId}, ${PHASE_2A_IDS.orgId}, 'Phase 2B.2', 'phase-2b2')`;
@@ -87,24 +70,7 @@ describeIntegration("Sprint 3 Phase 2B PR 2B.2 assembly definition persistence",
   }, 60_000);
 
   afterAll(async () => {
-    await sql`DELETE FROM ai_story_assembly_scene_memberships WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_assembly_definitions WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_story_review_facts WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_intent_review_facts WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_review_opened_facts WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_intent_validation_results WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_executions WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_execution_plans WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM ai_story_scene_instruction_snapshots WHERE org_id = ANY(${orgIds})`;
-    await sql`DELETE FROM workspace_members WHERE workspace_id = ${PHASE_2A_IDS.workspaceId}`;
-    await sql`DELETE FROM campaign_asset_refs WHERE campaign_id = ${PHASE_2A_IDS.campaignId}`;
-    await sql`DELETE FROM assets WHERE id = ${PHASE_2A_IDS.assetId}`;
-    await sql`DELETE FROM ai_story_animation_packages WHERE id = ${PHASE_2A_IDS.animationPackageId}`;
-    await sql`DELETE FROM ai_story_versions WHERE id = ${PHASE_2A_IDS.storyVersionId}`;
-    await sql`DELETE FROM ai_stories WHERE id = ${PHASE_2A_IDS.storyId}`;
-    await sql`DELETE FROM campaigns WHERE id = ${PHASE_2A_IDS.campaignId}`;
-    await sql`DELETE FROM workspaces WHERE id = ${PHASE_2A_IDS.workspaceId}`;
-    await sql`DELETE FROM organizations WHERE id = ANY(${orgIds})`;
+    await cleanupPr32Tenant(sql);
     await sql.end();
     await closeDb();
   }, 60_000);

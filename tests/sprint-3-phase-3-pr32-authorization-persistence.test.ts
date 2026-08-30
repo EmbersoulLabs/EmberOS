@@ -93,5 +93,6 @@ describe("Sprint 3 PR 3.2 authorization persistence identity", () => {
     }
     expect(SCENE_SCHEDULING_ERROR_CODES).toContain("PHASE1_EXECUTION_LOCKED");
     expect(SCENE_SCHEDULING_ERROR_CODES).toContain("NO_ELIGIBLE_PROVIDER");
+    expect(SCENE_SCHEDULING_ERROR_CODES).toContain("NO_EXECUTABLE_PROVIDER");
   });
 });

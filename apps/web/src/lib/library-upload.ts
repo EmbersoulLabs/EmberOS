@@ -1,100 +1,34 @@
-import {
-  MAX_UPLOAD_SIZE_BYTES,
-  resolveLibraryAssetType,
-  resolveAssetDisplayLabel,
-} from "@ceo-agent/shared";
-import { putWithProgress } from "@/lib/upload-with-progress";
+import { MAX_UPLOAD_SIZE_BYTES, resolveLibraryAssetType } from "@ceo-agent/shared";
 
-export type LibraryUploadPhase = "uploading" | "processing" | "completed";
+export type LibraryUploadPhase = "uploading" | "finalizing" | "completed";
 
-export type LibraryUploadResult = {
-  assetId: string;
-  displayName: string;
-  originalFilename: string;
-  type: string;
-  mimeType: string;
-  status: string;
-};
-
-/**
- * Upload to Asset Library with explicit phases (QA-001 / QA-002 / QA-004).
- * Uploading → Processing → Completed; caller must return UI to idle after completed.
- */
 export async function uploadLibraryFile(
   workspaceId: string,
   file: File,
-  onPhase?: (phase: LibraryUploadPhase, detail?: string) => void
-): Promise<LibraryUploadResult> {
-  const typeCheck = resolveLibraryAssetType({
-    filename: file.name,
-    mimeType: file.type || "application/octet-stream",
+  onPhase?: (phase: LibraryUploadPhase) => void
+) {
+  const type = resolveLibraryAssetType({ filename: file.name, mimeType: file.type || "application/octet-stream" });
+  if (!type.ok) throw new Error(type.error);
+  if (file.size <= 0 || file.size > MAX_UPLOAD_SIZE_BYTES) throw new Error("File exceeds the upload limit");
+  onPhase?.("uploading");
+  const prepare = await fetch(`/api/workspaces/${workspaceId}/library`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: file.name, mimeType: file.type || "application/octet-stream", type: type.type, fileSizeBytes: file.size }),
   });
-  if (!typeCheck.ok) throw new Error(typeCheck.error);
-  if (file.size <= 0 || file.size > MAX_UPLOAD_SIZE_BYTES) {
-    throw new Error("File too large");
-  }
-
-  onPhase?.("uploading", file.name);
-  const urlRes = await fetch(`/api/workspaces/${workspaceId}/library`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      filename: file.name,
-      mimeType: file.type || "application/octet-stream",
-      type: typeCheck.type,
-      fileSizeBytes: file.size,
-    }),
+  const prepared = await prepare.json();
+  if (!prepare.ok || !prepared.uploadUrl || !prepared.assetId) throw new Error(prepared.error ?? "Upload preparation failed");
+  const uploaded = await fetch(prepared.uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "application/octet-stream" },
+    body: file,
   });
-  const urlData = await urlRes.json();
-  if (!urlRes.ok || !urlData.assetId || !urlData.uploadUrl) {
-    throw new Error(urlData.error ?? `Failed to prepare upload for ${file.name}`);
-  }
-
-  await putWithProgress(
-    urlData.uploadUrl as string,
-    file,
-    file.type || "application/octet-stream"
-  );
-
-  onPhase?.("processing", file.name);
-  const confirmRes = await fetch(
-    `/api/workspaces/${workspaceId}/library/${urlData.assetId}/confirm`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fileSizeBytes: file.size }),
-    }
-  );
-  const confirmData = await confirmRes.json();
-  if (!confirmRes.ok) {
-    throw new Error(confirmData.error ?? `Failed to confirm upload for ${file.name}`);
-  }
-
-  const asset = confirmData.asset as
-    | {
-        id?: string;
-        displayName?: string | null;
-        originalFilename?: string | null;
-        type?: string;
-        mimeType?: string | null;
-        status?: string;
-      }
-    | undefined;
-
-  const displayName = resolveAssetDisplayLabel({
-    displayName: asset?.displayName,
-    originalFilename: asset?.originalFilename ?? file.name,
-    id: (asset?.id || urlData.assetId) as string,
+  if (!uploaded.ok) throw new Error("Private object upload failed");
+  onPhase?.("finalizing");
+  const confirm = await fetch(`/api/workspaces/${workspaceId}/library/${prepared.assetId}/confirm`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ fileSizeBytes: file.size }),
   });
-
-  onPhase?.("completed", displayName);
-
-  return {
-    assetId: (asset?.id || urlData.assetId) as string,
-    displayName,
-    originalFilename: asset?.originalFilename ?? file.name,
-    type: asset?.type ?? typeCheck.type,
-    mimeType: asset?.mimeType ?? file.type ?? "application/octet-stream",
-    status: asset?.status ?? "ready",
-  };
+  const finalized = await confirm.json();
+  if (!confirm.ok) throw new Error(finalized.error ?? "Upload finalization failed");
+  onPhase?.("completed");
+  return finalized.asset;
 }

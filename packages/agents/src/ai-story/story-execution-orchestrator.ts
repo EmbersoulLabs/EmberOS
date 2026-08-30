@@ -4,7 +4,7 @@
  * Animation-video only (Seedance); Campaign Assets are resolved, never generated.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
@@ -113,20 +113,22 @@ async function loadResolvedCampaignAssets(
     .select({
       assetId: schema.assets.id,
       storagePath: schema.assets.storagePath,
-      displayName: schema.assets.displayName,
+      metadata: schema.assets.metadata,
     })
     .from(schema.assets)
     .where(
       and(
         eq(schema.assets.workspaceId, workspaceId),
-        inArray(schema.assets.id, [...assetIds]),
-        isNull(schema.assets.deletedAt)
+        inArray(schema.assets.id, [...assetIds])
       )
     );
   return rows.map((row) => ({
     assetId: row.assetId,
     storagePath: row.storagePath,
-    displayName: row.displayName,
+    displayName:
+      (typeof row.metadata?.originalFilename === "string" && row.metadata.originalFilename) ||
+      row.storagePath.split("/").pop() ||
+      row.assetId,
   }));
 }
 
@@ -189,11 +191,24 @@ export async function createGenerateReview(input: {
           .where(
             and(
               eq(schema.assets.workspaceId, input.workspaceId),
-              inArray(schema.assets.id, referencedAssetIds),
-              isNull(schema.assets.deletedAt)
+              inArray(schema.assets.id, referencedAssetIds)
             )
           )
       : [];
+
+  const campaignLinks =
+    referencedAssetIds.length > 0
+      ? await input.db
+          .select({ assetId: schema.campaignAssetRefs.assetId })
+          .from(schema.campaignAssetRefs)
+          .where(
+            and(
+              eq(schema.campaignAssetRefs.campaignId, input.campaignId),
+              inArray(schema.campaignAssetRefs.assetId, referencedAssetIds)
+            )
+          )
+      : [];
+  const linkedAssetIds = new Set(campaignLinks.map((row) => row.assetId));
 
   const assetsById = new Map<string, AiQcAssetFact>(
     assetRows.map((row) => [
@@ -201,7 +216,7 @@ export async function createGenerateReview(input: {
       {
         assetId: row.assetId,
         workspaceId: row.workspaceId,
-        campaignId: row.campaignId,
+        campaignId: linkedAssetIds.has(row.assetId) ? input.campaignId : null,
       },
     ])
   );
@@ -465,7 +480,9 @@ async function invokeProviderForOutput(input: {
     },
     timeoutPolicy: { timeoutMs: 600_000, reconciliationDelayMs: 5_000 },
     retryPolicy: {
-      maxAttempts: 3,
+      // Paid AI Story retries are created only by the explicit human Retry
+      // authority. One canonical request therefore permits one attempt.
+      maxAttempts: 1,
       initialDelayMs: 500,
       maximumDelayMs: 8_000,
       backoffMultiplier: 2,
@@ -640,14 +657,12 @@ export async function runExecutionJob(jobId: string): Promise<void> {
               workspaceId: job.workspaceId,
               campaignId: job.campaignId,
               type: "video",
-              displayName: variant.title,
               storagePath,
               mimeType: "video/mp4",
-              status: "ready",
-              source: "ai_story_execution",
               metadata: {
                 source: "ai_story_execution",
-                executionJobId: jobId,
+                originalFilename: variant.title,
+                executionJobId: job.id,
                 outputIndex: variant.outputIndex,
                 providerId,
               },
@@ -854,13 +869,11 @@ export async function regenerateSingleExecutionOutput(input: {
         workspaceId: job.workspaceId,
         campaignId: job.campaignId,
         type: "video",
-        displayName: output.title,
         storagePath,
         mimeType: "video/mp4",
-        status: "ready",
-        source: "ai_story_execution",
         metadata: {
           source: "ai_story_execution_regen",
+          originalFilename: output.title,
           executionJobId: job.id,
           outputIndex: output.outputIndex,
           providerId,

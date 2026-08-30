@@ -12,6 +12,7 @@ import {
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueuePreviewSubtitleRerender } from "@/lib/render-queue";
+import { withSignedCreativeArtifacts } from "@/lib/video-artifact-delivery";
 
 type ExternalBgmInput = {
   source: string;
@@ -253,7 +254,7 @@ export async function PATCH(
     }
 
     return apiSuccess({
-      creative: updated,
+      creative: updated ? await withSignedCreativeArtifacts(updated) : updated,
       rerenderQueued: true,
     });
   } catch (error) {

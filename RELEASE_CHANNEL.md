@@ -1,0 +1,39 @@
+# Release Channel
+
+Machine- and human-readable release channel map for EmberOS.
+
+Governance version: **v2.2**
+
+## Current Authority
+
+- Worktree: `worktrees/ai-story-self-use-v1-bounded`
+- Branch: `release/ai-story-self-use-v1-bounded`
+- Production overlay revision: `b52925aa20e4c66092f8fff0ea5cf7c30620ac6e`
+- Frozen product pin under the overlay: `b447f539400f2765958c1c94add708a979c86604`
+- Current release: Video Studio V1 RELEASED / FROZEN; Photo Scene V1 RELEASED / FROZEN
+- `VIDEO_STUDIO_V1_RELEASED`: YES
+- `PHOTO_SCENE_V1_RELEASED`: YES
+- AI Story Self-Use V1: **DEPLOYED / AWAITING REAL EPISODE CERT**
+- `AI_STORY_SELF_USE_V1_STATUS`: RELEASE_PENDING
+- `AI_STORY_PUBLIC_COMMERCIAL_RELEASE`: NO
+
+Production web: `emberos-iota.vercel.app` Vercel `dpl_GAaTzFEiDFvQMZdypQ1P7BwQboxH` @ `70273cd`
+
+Production worker: Railway `@ceo-agent/worker` `b5b0699d-425f-423f-998c-eaaf0e460b88` @ `b52925a`
+
+Do not mark AI Story RELEASED / FROZEN until complete-episode certification PASSes. Access remains Super Admin + Agency only.
+
+See also:
+
+- [`docs/releases/photo-scene-v1-bounded-assembly.md`](docs/releases/photo-scene-v1-bounded-assembly.md)
+- [`docs/releases/photo-scene-v1-migration-manifest.md`](docs/releases/photo-scene-v1-migration-manifest.md)
+- [`docs/releases/photo-scene-v1-infrastructure-manifest.md`](docs/releases/photo-scene-v1-infrastructure-manifest.md)
+- [`docs/releases/photo-scene-v1-production-readiness.md`](docs/releases/photo-scene-v1-production-readiness.md)
+- [`docs/releases/video-studio-v1-release-roadmap.md`](docs/releases/video-studio-v1-release-roadmap.md)
+
+## Other Channels
+
+- Video Studio development line: `worktrees/video-studio-v1-bounded`, branch `release/video-studio-v1-bounded`
+- Authority review branch: `worktrees/sprint4-phase-b`, branch `release/sprint-4-phase-b`
+
+Do not deploy full release HEAD. Do not deploy AUTH-01. Do not deploy Publishing, Flux, or a second Creative Studio product. Do not modify Renderer V1. Do not mark AI Story RELEASED. Next authorized production action is `EMBEROS-AI-STORY-SELF-USE-PROD-CERT-R2` from the real provider execution gate.

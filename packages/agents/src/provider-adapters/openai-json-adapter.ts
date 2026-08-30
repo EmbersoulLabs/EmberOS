@@ -221,10 +221,17 @@ export class OpenAIJsonCompatibilityAdapter implements ProviderAdapter {
       if (!completion.result || typeof completion.result !== "object") {
         throw new SyntaxError("OpenAI returned malformed structured output");
       }
+      const completionMeta = completion as typeof completion & {
+        providerRequestId?: string;
+        modelVersion?: string;
+      };
+      const providerRequestId =
+        completionMeta.providerRequestId ?? context.providerAttemptId;
+      const modelVersion = completionMeta.modelVersion ?? mappedRequest.model;
       const normalizedResponse = {
         output: completion.result,
-        providerRequestId: completion.providerRequestId,
-        modelVersion: completion.modelVersion,
+        providerRequestId,
+        modelVersion,
       };
       const mappedResponseHash = await responseHash(normalizedResponse);
 
@@ -233,19 +240,19 @@ export class OpenAIJsonCompatibilityAdapter implements ProviderAdapter {
         executionId: request.executionIdentity.executionId,
         providerAttemptId: context.providerAttemptId,
         normalizedOutput: completion.result,
-        resultReference: `provider-result://openai/${completion.providerRequestId}`,
+        resultReference: `provider-result://openai/${providerRequestId}`,
         warnings: [],
         providerMetadata: {
           providerId: this.providerId,
           providerVersion: OPENAI_PROVIDER_VERSION,
-          providerRequestId: completion.providerRequestId,
+          providerRequestId,
         },
         provenance: [
           {
             providerId: this.providerId,
             adapterVersion: this.adapterVersion,
-            modelVersion: completion.modelVersion,
-            providerRequestId: completion.providerRequestId,
+            modelVersion,
+            providerRequestId,
           },
         ],
         usage: {
@@ -258,7 +265,7 @@ export class OpenAIJsonCompatibilityAdapter implements ProviderAdapter {
           currency: "USD",
           estimated: true,
         },
-        modelVersion: completion.modelVersion,
+        modelVersion,
         requestHash: mappedRequestHash,
         responseHash: mappedResponseHash,
         retryable: false,

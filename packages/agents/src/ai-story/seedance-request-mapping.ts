@@ -9,13 +9,23 @@
  * }
  */
 import { z } from "zod";
-import type { ExecutionEnvelope } from "@ceo-agent/shared";
+import { AiStoryCompiledProviderRequestSchema, AiStorySceneExecutionPackageSchema, type ExecutionEnvelope } from "@ceo-agent/shared";
 import {
   SEEDANCE_MAX_REFERENCE_IMAGES,
+  SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE,
   SEEDANCE_SUPPORTED_ASPECT_RATIOS,
   SEEDANCE_SUPPORTED_DURATIONS_SEC,
   SEEDANCE_SUPPORTED_RESOLUTIONS,
+  seedanceSupportsFirstFrameI2v,
 } from "./seedance-capability";
+import {
+  assertProductGroundingPreDispatch,
+  PRODUCT_GROUNDED_VIDEO_MODE,
+  ProductGroundingContractSchema,
+  ProductVisualAuthorityCertificationSchema,
+} from "./product-grounding-contract";
+import { compileSceneExecutionPackageForSeedance } from "./seedance-director-adapter";
+import { validateAiStoryCompiledRequestFingerprint } from "./provider-runtime-dispatch-integration";
 
 const CanonicalScenePayloadSchema = z
   .object({
@@ -52,6 +62,13 @@ const CanonicalScenePayloadSchema = z
       )
       .optional(),
     kind: z.string().optional(),
+    generationMode: z
+      .enum(["PRODUCT_GROUNDED_VIDEO", "CREATIVE_T2V", "TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"])
+      .optional(),
+    watermark: z.boolean().optional(),
+    productGrounding: ProductGroundingContractSchema.optional(),
+    visualAuthorityCertification:
+      ProductVisualAuthorityCertificationSchema.optional(),
   })
   .passthrough();
 
@@ -63,7 +80,7 @@ export type SeedanceModelArkTextContent = {
 export type SeedanceModelArkImageContent = {
   readonly type: "image_url";
   readonly image_url: { readonly url: string };
-  readonly role: "reference_image" | "first_frame" | "last_frame";
+  readonly role: "reference_image" | "first_frame";
 };
 
 export type SeedanceModelArkContentItem =
@@ -80,7 +97,7 @@ export type SeedanceModelArkCreateRequest = {
   readonly ratio: string;
   readonly resolution: string;
   readonly generate_audio: false;
-  readonly watermark: false;
+  readonly watermark: boolean;
 };
 
 /** @deprecated Prefer SeedanceModelArkCreateRequest — kept for type alias clarity in tests. */
@@ -113,6 +130,7 @@ export type SeedanceAssetAccessResolver = {
     readonly assetId: string;
     readonly workspaceId: string;
     readonly orgId: string;
+    readonly campaignId: string;
     readonly storagePath?: string;
     readonly existingUri?: string;
   }): Promise<string>;
@@ -160,7 +178,7 @@ function mapImageRole(
     return "first_frame";
   }
   if (normalized === "last_frame" || normalized === "last-frame") {
-    return "last_frame";
+    throw new SeedanceMappingError("Seedance last-frame conditioning is not certified for EmberOS V1");
   }
   return "reference_image";
 }
@@ -185,7 +203,69 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   const payloadRaw = await input.payloadResolver.resolve(
     input.envelope.canonicalRequest.normalizedPayloadReference
   );
-  const payload = CanonicalScenePayloadSchema.parse(payloadRaw);
+  const compiledRequestResult = AiStoryCompiledProviderRequestSchema.safeParse(payloadRaw);
+  if (
+    typeof payloadRaw === "object" &&
+    payloadRaw !== null &&
+    "contractVersion" in payloadRaw &&
+    payloadRaw.contractVersion === "ai-story-compiled-provider-request.v1" &&
+    !compiledRequestResult.success
+  ) {
+    throw new SeedanceMappingError("Immutable compiled Provider request is invalid");
+  }
+  if (compiledRequestResult.success && !validateAiStoryCompiledRequestFingerprint(compiledRequestResult.data)) {
+    throw new SeedanceMappingError("Immutable compiled Provider request fingerprint mismatch");
+  }
+  const packageResult = AiStorySceneExecutionPackageSchema.safeParse(payloadRaw);
+  if (
+    typeof payloadRaw === "object" &&
+    payloadRaw !== null &&
+    "contractVersion" in payloadRaw &&
+    payloadRaw.contractVersion === "ai-story-scene-execution-package.v1" &&
+    !packageResult.success
+  ) {
+    throw new SeedanceMappingError("Canonical Scene execution package is invalid; legacy payload fallback is denied");
+  }
+  const directorCompilation = !compiledRequestResult.success && packageResult.success
+    ? compileSceneExecutionPackageForSeedance(packageResult.data)
+    : null;
+  if (directorCompilation && directorCompilation.requestFacts.model !== input.model) {
+    throw new SeedanceMappingError("Scene execution package model binding does not match the configured Seedance model");
+  }
+  const payload = CanonicalScenePayloadSchema.parse(
+    compiledRequestResult.success
+      ? {
+          prompt: compiledRequestResult.data.compiledPrompt,
+          durationSec: compiledRequestResult.data.structuredRequest.duration,
+          aspectRatio: compiledRequestResult.data.structuredRequest.ratio,
+          resolution: compiledRequestResult.data.structuredRequest.resolution,
+          watermark: compiledRequestResult.data.structuredRequest.watermark,
+          generationMode: compiledRequestResult.data.generationMode,
+          assetReferences: compiledRequestResult.data.referenceMappings.map((reference) => ({
+            assetId: reference.assetId,
+            ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
+            ...(reference.mediaType ? { mediaType: reference.mediaType } : {}),
+            role: reference.wireRole,
+          })),
+        }
+      : directorCompilation
+      ? {
+          prompt: directorCompilation.prompt,
+          durationSec: directorCompilation.requestFacts.duration,
+          aspectRatio: directorCompilation.requestFacts.ratio,
+          resolution: directorCompilation.requestFacts.resolution,
+          watermark: directorCompilation.requestFacts.watermark,
+          generationMode: directorCompilation.requestFacts.generationMode,
+          assetReferences: directorCompilation.selectedReferences.map((reference) => ({
+            assetId: reference.assetId,
+            ...(reference.uri ? { uri: reference.uri } : {}),
+            ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
+            ...(reference.mediaType ? { mediaType: reference.mediaType } : {}),
+            role: reference.firstFrame ? "first_frame" : "reference_image",
+          })),
+        }
+      : payloadRaw
+  );
 
   let prompt =
     payload.prompt?.trim() ||
@@ -231,6 +311,57 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   }
 
   const assets = payload.assetReferences ?? [];
+  const firstFrameMode =
+    payload.generationMode === PRODUCT_GROUNDED_VIDEO_MODE ||
+    payload.generationMode === "FIRST_FRAME_IMAGE_TO_VIDEO";
+  if (payload.generationMode === PRODUCT_GROUNDED_VIDEO_MODE) {
+    if (!payload.productGrounding) {
+      throw new SeedanceMappingError(
+        "Product-grounded Provider dispatch requires a grounding contract"
+      );
+    }
+    const certification = payload.visualAuthorityCertification;
+    const trace = input.envelope.executionContext.trace ?? {};
+    if (
+      !certification ||
+      certification.orgId !== input.envelope.tenantId ||
+      certification.workspaceId !== input.envelope.workspaceId ||
+      certification.campaignId !==
+        input.envelope.canonicalRequest.executionIdentity.campaignId ||
+      certification.executionPlanId !== trace.executionPlanId ||
+      certification.sceneExecutionId !== trace.sceneExecutionId
+    ) {
+      throw new SeedanceMappingError(
+        "Product visual authority uncertified: certification does not match the Execution Envelope"
+      );
+    }
+    try {
+      assertProductGroundingPreDispatch({
+        grounding: payload.productGrounding,
+        visualAuthorityCertification:
+          payload.visualAuthorityCertification,
+        prompt,
+        assetReferences: assets,
+      });
+    } catch (error) {
+      throw new SeedanceMappingError(
+        String((error as { message?: string })?.message ?? error)
+      );
+    }
+    if (
+      payload.productGrounding.providerMode !==
+      SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE
+    ) {
+      throw new SeedanceMappingError(
+        "Seedance PRODUCT_GROUNDED_VIDEO requires certified FIRST_FRAME_I2V"
+      );
+    }
+    if (!seedanceSupportsFirstFrameI2v(input.model)) {
+      throw new SeedanceMappingError(
+        `Seedance model ${input.model} is not certified for FIRST_FRAME_I2V`
+      );
+    }
+  }
   if (assets.length > SEEDANCE_MAX_REFERENCE_IMAGES) {
     throw new SeedanceMappingError(
       `Seedance accepts at most ${SEEDANCE_MAX_REFERENCE_IMAGES} reference images`
@@ -248,22 +379,27 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
       );
     }
     let uri = asset.uri;
-    if (!uri && asset.storagePath) {
-      if (looksLikePrivateStoragePath(asset.storagePath)) {
-        if (!input.assetAccessResolver) {
-          throw new SeedanceMappingError(
-            "Private storage paths cannot be sent to Seedance; signed URI required"
-          );
-        }
-        uri = await input.assetAccessResolver.resolveProviderAccessibleUri({
-          assetId: asset.assetId,
-          workspaceId: input.envelope.workspaceId,
-          orgId: input.envelope.tenantId,
-          storagePath: asset.storagePath,
-        });
-      } else {
-        uri = asset.storagePath;
+    if (!uri && input.assetAccessResolver) {
+      const campaignId = input.envelope.canonicalRequest.executionIdentity.campaignId;
+      if (!campaignId) {
+        throw new SeedanceMappingError(
+          "Campaign authority is required to resolve a product reference"
+        );
       }
+      uri = await input.assetAccessResolver.resolveProviderAccessibleUri({
+        assetId: asset.assetId,
+        workspaceId: input.envelope.workspaceId,
+        orgId: input.envelope.tenantId,
+        campaignId,
+        ...(asset.storagePath ? { storagePath: asset.storagePath } : {}),
+      });
+    } else if (!uri && asset.storagePath) {
+      if (looksLikePrivateStoragePath(asset.storagePath)) {
+        throw new SeedanceMappingError(
+          "Private storage paths cannot be sent to Seedance; signed URI required"
+        );
+      }
+      uri = asset.storagePath;
     }
     if (!uri) {
       throw new SeedanceMappingError(
@@ -273,8 +409,26 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
     content.push({
       type: "image_url",
       image_url: { url: assertHttpsUri(uri, `Asset ${asset.assetId}`) },
-      role: mapImageRole(asset.role),
+      role:
+        firstFrameMode &&
+        (asset.role === "first_frame" ||
+          (payload.productGrounding?.providerMode === "FIRST_FRAME_I2V" &&
+            payload.productGrounding.primaryAuthority.assetId === asset.assetId))
+          ? "first_frame"
+          : mapImageRole(asset.role),
     });
+  }
+
+  if (firstFrameMode) {
+    const firstFrames = content.filter(
+      (item): item is SeedanceModelArkImageContent =>
+        item.type === "image_url" && item.role === "first_frame"
+    );
+    if (firstFrames.length !== 1) {
+      throw new SeedanceMappingError(
+        "Seedance FIRST_FRAME_I2V requires exactly one canonical first frame"
+      );
+    }
   }
 
   return {
@@ -284,6 +438,6 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
     ratio,
     resolution,
     generate_audio: false,
-    watermark: false,
+    watermark: payload.watermark ?? false,
   };
 }

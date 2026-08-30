@@ -9,6 +9,7 @@ function isTaskActive(status?: string | null): boolean {
   return (
     status === "queued" ||
     status === "running" ||
+    status === "processing" ||
     status === "retrying" ||
     status === "resume"
   );
@@ -38,7 +39,7 @@ export function RunCeoButton({
   const label = running
     ? t("campaign.detail.running")
     : isRerun
-      ? t("campaign.detail.rerun")
+      ? t("campaign.detail.generateAgain")
       : t("campaign.detail.run");
 
   async function handleRun() {

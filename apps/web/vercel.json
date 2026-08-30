@@ -1,5 +1,6 @@
 {
   "framework": "nextjs",
+  "regions": ["sin1"],
   "installCommand": "cd ../.. && pnpm install",
   "buildCommand": "cd ../.. && pnpm --filter @ceo-agent/web build"
 }

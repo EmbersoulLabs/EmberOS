@@ -1,7 +1,7 @@
 /**
  * Stage-by-stage AI Story planning runner (persists Creative Context + drafts).
  */
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   getBusinessProfileByWorkspace,
   getDb,
@@ -29,6 +29,10 @@ import {
   type StoryPlanningStage,
 } from "@ceo-agent/shared";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
+import {
+  assetLabelFromProductionRow,
+  campaignPlanningFields,
+} from "@/lib/ai-story-production-compat";
 import {
   getLatestAnimationPackageForStory,
   loadLatestCreativeContextForStory,
@@ -98,26 +102,23 @@ async function loadPlanningContext(db: Db, campaignId: string, storyId: string) 
           await db
             .select({
               id: schema.assets.id,
-              displayName: schema.assets.displayName,
-              originalFilename: schema.assets.originalFilename,
+              storagePath: schema.assets.storagePath,
+              metadata: schema.assets.metadata,
             })
             .from(schema.assets)
             .where(
               and(
                 eq(schema.assets.workspaceId, campaign.workspaceId),
-                inArray(schema.assets.id, assetIds),
-                isNull(schema.assets.deletedAt)
+                inArray(schema.assets.id, assetIds)
               )
             )
-        ).map(
-          (asset) =>
-            asset.displayName?.trim() ||
-            asset.originalFilename?.trim() ||
-            `asset:${asset.id.slice(0, 8)}`
-        );
+        ).map((asset) => assetLabelFromProductionRow(asset));
 
   return {
-    campaign,
+    campaign: {
+      ...campaign,
+      ...campaignPlanningFields(campaign),
+    },
     loaded,
     storyDraft,
     brand: profile

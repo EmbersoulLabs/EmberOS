@@ -112,14 +112,26 @@ export const NormalizedUsageFactsSchema = z.object({
   durationMs: z.number().int().nonnegative().optional(),
   units: z.number().nonnegative().optional(),
   unitKind: NonEmptyTextSchema.optional(),
+  requestedDurationSeconds: z.number().nonnegative().optional(),
+  requestedResolution: NonEmptyTextSchema.optional(),
 });
 
 export type NormalizedUsageFacts = z.infer<typeof NormalizedUsageFactsSchema>;
 
 export const NormalizedCostMetadataSchema = z.object({
   currency: NonEmptyTextSchema.optional(),
-  amount: z.number().nonnegative().optional(),
+  amount: z.number().nonnegative().nullable().optional(),
   estimated: z.boolean().optional(),
+  costSource: z
+    .enum([
+      "PROVIDER_REPORTED",
+      "MODEL_PRICING_TABLE",
+      "CONFIGURED_ESTIMATE",
+      "UNKNOWN",
+      "LEGACY_UNKNOWN",
+    ])
+    .optional(),
+  modelKey: NonEmptyTextSchema.optional(),
 });
 
 export type NormalizedCostMetadata = z.infer<typeof NormalizedCostMetadataSchema>;

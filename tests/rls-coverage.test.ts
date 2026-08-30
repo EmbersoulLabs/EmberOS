@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-/** Tables with RLS enabled by packages/db/sql/rls.sql (+ asset-library-v1.sql) */
+/** Tables with RLS enabled by packages/db/sql/rls.sql */
 const RLS_ENABLED_TABLES = [
   "workspaces",
   "workspace_members",
@@ -18,31 +18,17 @@ const RLS_ENABLED_TABLES = [
   "content_analytics",
   "workspace_insights",
   "business_profiles",
-];
-
-const ASSET_LIBRARY_RLS_TABLES = [
-  "stories",
-  "story_assets",
   "campaign_asset_refs",
-  "campaign_story_refs",
+  "photo_scene_generations",
+  "photo_scene_official_scenes",
+  "photo_scene_official_scene_versions",
+  "photo_scene_scene_selections",
 ];
 
 describe("RLS coverage", () => {
   it("rls.sql enables RLS on all core tenant tables", () => {
     const sql = readFileSync(resolve(__dirname, "../packages/db/sql/rls.sql"), "utf8");
     for (const table of RLS_ENABLED_TABLES) {
-      expect(sql, `missing ENABLE ROW LEVEL SECURITY for ${table}`).toMatch(
-        new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i")
-      );
-    }
-  });
-
-  it("asset-library-v1.sql enables RLS on Story and Campaign reference tables", () => {
-    const sql = readFileSync(
-      resolve(__dirname, "../packages/db/sql/asset-library-v1.sql"),
-      "utf8"
-    );
-    for (const table of ASSET_LIBRARY_RLS_TABLES) {
       expect(sql, `missing ENABLE ROW LEVEL SECURITY for ${table}`).toMatch(
         new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`, "i")
       );
@@ -69,6 +55,11 @@ describe("RLS coverage", () => {
       "business_profiles_insert",
       "business_profiles_update",
       "business_profiles_delete",
+      "campaign_asset_refs_all",
+      "photo_scene_generations_all",
+      "photo_scene_official_scenes_select",
+      "photo_scene_official_scene_versions_select",
+      "photo_scene_scene_selections_all",
     ];
     for (const name of policyNames) {
       expect(sql, `missing policy ${name}`).toMatch(

@@ -5,7 +5,7 @@
  * Never mutates plans, scenes, snapshots, or QC rows. Never unlocks execution
  * or creates Queue / Outbox / Provider work.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import {
   AI_STORY_EXECUTION_CONTRACT_VERSION,
   LogicalReviewProjectionSchema,
@@ -27,17 +27,192 @@ import {
 } from "./ai-story-scene-execution-persistence";
 import {
   assertExecutionPlanOwnershipChain,
+  assertExecutionPlanOwnershipChainInSingleQuery,
   assertPlanOwnershipColumnsMatch,
   assertSceneMatchesPlan,
   assertSnapshotMatchesWorkspace,
   OwnershipIntegrityViolationError,
   planOwnershipFromRow,
 } from "./ai-story-ownership";
-import { getWorkspaceMembership, ROLE_HIERARCHY } from "./tenant";
+import { ROLE_HIERARCHY } from "./tenant";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type QueryDb = Db | Tx;
+
+export const EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION =
+  "execution-plan-review-post-story-fact-trace.v1" as const;
+export const EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES = [
+  "execution_plan_review.plan_read",
+  "execution_plan_review.ownership_chain_read",
+  "execution_plan_review.opened_fact_read",
+  "execution_plan_review.scene_review_fact_read",
+  "execution_plan_review.story_review_fact_read",
+  "execution_plan_review.required_scene_read",
+  "execution_plan_review.projection_assembly",
+] as const;
+export type ExecutionPlanReviewProjectionSubstage =
+  (typeof EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES)[number];
+export type ExecutionPlanReviewProjectionSubstageTiming = {
+  readonly stage: ExecutionPlanReviewProjectionSubstage;
+  readonly status: "COMPLETED" | "TIMED_OUT" | "FAILED" | "NOT_REACHED";
+  readonly durationMs: number | null;
+  readonly queryCount: number;
+  readonly roundTripCount: number;
+  readonly rowCount: number | null;
+  readonly planReadPhaseTiming?: ExecutionPlanReviewPlanReadPhaseTiming;
+  readonly ownershipQueryPhaseTiming?: ExecutionPlanOwnershipQueryPhaseTiming;
+};
+
+export type ExecutionPlanReviewPlanReadPhaseTiming = {
+  readonly remainingRuntimeBudgetMsAtEntry: number | null;
+  readonly poolWaitMs: number | null;
+  readonly dbExecutionMs: number | null;
+  readonly appWallMs: number | null;
+  readonly responseBytesApprox: number | null;
+};
+
+export type ExecutionPlanOwnershipQueryPhaseTiming = {
+  readonly remainingRuntimeBudgetMsAtEntry: number | null;
+  readonly connectionAcquireMs: number | null;
+  readonly poolWaitMs: number | null;
+  readonly queryDispatchMs: number | null;
+  readonly dbExecutionMs: number | null;
+  readonly networkReturnMs: number | null;
+  readonly dbExecutionAndNetworkMs: number | null;
+  readonly rowDecodeMs: number | null;
+  readonly totalWallMs: number | null;
+};
+
+const executionPlanReviewQueryCounts: Record<ExecutionPlanReviewProjectionSubstage, number> = {
+  "execution_plan_review.plan_read": 1,
+  "execution_plan_review.ownership_chain_read": 1,
+  "execution_plan_review.opened_fact_read": 1,
+  "execution_plan_review.scene_review_fact_read": 1,
+  "execution_plan_review.story_review_fact_read": 1,
+  "execution_plan_review.required_scene_read": 1,
+  "execution_plan_review.projection_assembly": 0,
+};
+
+export class ExecutionPlanReviewProjectionTimingRecorder {
+  private active: {
+    stage: ExecutionPlanReviewProjectionSubstage;
+    startedAt: number;
+    dispatchedAt: number | null;
+    remainingRuntimeBudgetMsAtEntry: number | null;
+  } | null = null;
+  constructor(
+    private readonly remainingRuntimeBudgetMs?: () => number
+  ) {}
+  private readonly rows = new Map<ExecutionPlanReviewProjectionSubstage, ExecutionPlanReviewProjectionSubstageTiming>(
+    EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES.map((stage) => [stage, {
+      stage,
+      status: "NOT_REACHED",
+      durationMs: null,
+      queryCount: executionPlanReviewQueryCounts[stage],
+      roundTripCount: executionPlanReviewQueryCounts[stage],
+      rowCount: null,
+    }])
+  );
+  async run<T>(stage: ExecutionPlanReviewProjectionSubstage, operation: () => Promise<T>, rowCount: (value: T) => number | null): Promise<T> {
+    const startedAt = performance.now();
+    const isPlanRead = stage === "execution_plan_review.plan_read";
+    const isOwnershipQuery = stage === "execution_plan_review.ownership_chain_read";
+    const remainingRuntimeBudgetMsAtEntry = isPlanRead || isOwnershipQuery
+      ? Math.max(0, Math.round(this.remainingRuntimeBudgetMs?.() ?? 0)) || null
+      : null;
+    this.active = { stage, startedAt, dispatchedAt: null, remainingRuntimeBudgetMsAtEntry };
+    const dispatchStartedAt = performance.now();
+    try {
+      const pendingOperation = operation();
+      const dispatchedAt = performance.now();
+      if (this.active?.stage === stage) this.active.dispatchedAt = dispatchedAt;
+      const value = await pendingOperation;
+      const returnedAt = performance.now();
+      const rowCountStartedAt = performance.now();
+      const completedRowCount = rowCount(value);
+      const completedAt = performance.now();
+      const responseBytesApprox = isPlanRead
+        ? new TextEncoder().encode(JSON.stringify(value)).byteLength
+        : null;
+      this.rows.set(stage, {
+        ...this.rows.get(stage)!,
+        status: "COMPLETED",
+        durationMs: Math.round(completedAt - startedAt),
+        rowCount: completedRowCount,
+        ...(isPlanRead ? {
+          planReadPhaseTiming: {
+            remainingRuntimeBudgetMsAtEntry,
+            poolWaitMs: null,
+            dbExecutionMs: null,
+            appWallMs: Math.round(completedAt - startedAt),
+            responseBytesApprox,
+          },
+        } : {}),
+        ...(isOwnershipQuery ? {
+          ownershipQueryPhaseTiming: {
+            remainingRuntimeBudgetMsAtEntry,
+            connectionAcquireMs: null,
+            poolWaitMs: null,
+            queryDispatchMs: Math.round(dispatchedAt - dispatchStartedAt),
+            dbExecutionMs: null,
+            networkReturnMs: null,
+            dbExecutionAndNetworkMs: Math.round(returnedAt - dispatchedAt),
+            rowDecodeMs: Math.round(completedAt - rowCountStartedAt),
+            totalWallMs: Math.round(completedAt - startedAt),
+          },
+        } : {}),
+      });
+      this.active = null;
+      return value;
+    } catch (error) {
+      this.rows.set(stage, { ...this.rows.get(stage)!, status: "FAILED", durationMs: Math.round(performance.now() - startedAt) });
+      this.active = null;
+      throw error;
+    }
+  }
+  markTimedOut(): void {
+    if (!this.active) return;
+    const { stage, startedAt, dispatchedAt, remainingRuntimeBudgetMsAtEntry } = this.active;
+    const timedOutAt = performance.now();
+    const isPlanRead = stage === "execution_plan_review.plan_read";
+    const isOwnershipQuery = stage === "execution_plan_review.ownership_chain_read";
+    const existing = this.rows.get(stage)!;
+    this.rows.set(stage, {
+      ...existing,
+      status: "TIMED_OUT",
+      durationMs: Math.round(timedOutAt - startedAt),
+      ...(isPlanRead ? {
+        planReadPhaseTiming: {
+          remainingRuntimeBudgetMsAtEntry,
+          poolWaitMs: null,
+          dbExecutionMs: null,
+          appWallMs: Math.round(timedOutAt - startedAt),
+          responseBytesApprox: null,
+        },
+      } : {}),
+      ...(isOwnershipQuery ? {
+        ownershipQueryPhaseTiming: {
+          remainingRuntimeBudgetMsAtEntry:
+            remainingRuntimeBudgetMsAtEntry,
+          connectionAcquireMs: null,
+          poolWaitMs: null,
+          queryDispatchMs: dispatchedAt === null ? null : Math.round(dispatchedAt - startedAt),
+          dbExecutionMs: null,
+          networkReturnMs: null,
+          dbExecutionAndNetworkMs:
+            dispatchedAt === null ? null : Math.round(timedOutAt - dispatchedAt),
+          rowDecodeMs: null,
+          totalWallMs: Math.round(timedOutAt - startedAt),
+        },
+      } : {}),
+    });
+    this.active = null;
+  }
+  snapshot(): readonly ExecutionPlanReviewProjectionSubstageTiming[] {
+    return EXECUTION_PLAN_REVIEW_PROJECTION_SUBSTAGES.map((stage) => this.rows.get(stage)!);
+  }
+}
 
 const REVIEWER_MIN_ROLE: WorkspaceRole = "operator";
 
@@ -207,13 +382,46 @@ function buildStoryDecisionFingerprint(input: {
   });
 }
 
+export type ExecutionPlanReviewPlanAuthority = Pick<
+  typeof schema.aiStoryExecutionPlans.$inferSelect,
+  | "id"
+  | "orgId"
+  | "workspaceId"
+  | "campaignId"
+  | "storyId"
+  | "storyVersionId"
+  | "animationPackageId"
+  | "status"
+>;
+
+export async function getExecutionPlanReviewPlanAuthority(
+  executionPlanId: string,
+  db: QueryDb = getDb()
+): Promise<ExecutionPlanReviewPlanAuthority | null> {
+  const [plan] = await db
+    .select({
+      id: schema.aiStoryExecutionPlans.id,
+      orgId: schema.aiStoryExecutionPlans.orgId,
+      workspaceId: schema.aiStoryExecutionPlans.workspaceId,
+      campaignId: schema.aiStoryExecutionPlans.campaignId,
+      storyId: schema.aiStoryExecutionPlans.storyId,
+      storyVersionId: schema.aiStoryExecutionPlans.storyVersionId,
+      animationPackageId: schema.aiStoryExecutionPlans.animationPackageId,
+      status: schema.aiStoryExecutionPlans.status,
+    })
+    .from(schema.aiStoryExecutionPlans)
+    .where(eq(schema.aiStoryExecutionPlans.id, executionPlanId))
+    .limit(1);
+  return plan ?? null;
+}
+
 export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   constructor(private readonly db: Db = getDb()) {}
 
   async openReview(input: OpenExecutionPlanReviewInput): Promise<ReviewOpenedFact> {
     return this.db.transaction(async (tx) => {
       const plan = await this.requirePlan(input.executionPlanId, tx);
-      await this.assertReviewerAuthorized(plan.workspaceId, input.openedBy);
+      await this.assertReviewerAuthorized(plan.workspaceId, input.openedBy, tx);
 
       const fingerprint = buildOpenedFingerprint(plan.id);
       const factId = deterministicPersistenceUuid("review-opened", fingerprint);
@@ -293,7 +501,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   ): Promise<SceneIntentReviewDecision> {
     return this.db.transaction(async (tx) => {
       const plan = await this.requirePlan(input.executionPlanId, tx);
-      await this.assertReviewerAuthorized(plan.workspaceId, input.reviewedBy);
+      await this.assertReviewerAuthorized(plan.workspaceId, input.reviewedBy, tx);
       await this.requireOpened(plan.id, tx);
 
       const projection = await this.readProjection(plan.id, plan, tx);
@@ -469,7 +677,7 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   async appendStoryDecision(input: AppendStoryReviewInput): Promise<StoryReviewDecision> {
     return this.db.transaction(async (tx) => {
       const plan = await this.requirePlan(input.executionPlanId, tx);
-      await this.assertReviewerAuthorized(plan.workspaceId, input.reviewedBy);
+      await this.assertReviewerAuthorized(plan.workspaceId, input.reviewedBy, tx);
       await this.requireOpened(plan.id, tx);
 
       const projection = await this.readProjection(plan.id, plan, tx);
@@ -596,20 +804,22 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
   }
 
   async getLogicalProjection(
-    executionPlanId: string
+    executionPlanId: string,
+    db: QueryDb = this.db,
+    timingRecorder: ExecutionPlanReviewProjectionTimingRecorder =
+      new ExecutionPlanReviewProjectionTimingRecorder()
   ): Promise<LogicalReviewProjection | null> {
-    const plan = await this.requirePlanOrNull(executionPlanId, this.db);
+    const plan = await timingRecorder.run(
+      "execution_plan_review.plan_read",
+      () => this.requirePlanOrNull(executionPlanId, db),
+      (row) => row ? 1 : 0
+    );
     if (!plan) return null;
-    return this.readProjection(executionPlanId, plan, this.db);
+    return this.readProjection(executionPlanId, plan, db, timingRecorder);
   }
 
   private async requirePlanOrNull(executionPlanId: string, db: QueryDb) {
-    const [plan] = await db
-      .select()
-      .from(schema.aiStoryExecutionPlans)
-      .where(eq(schema.aiStoryExecutionPlans.id, executionPlanId))
-      .limit(1);
-    return plan ?? null;
+    return getExecutionPlanReviewPlanAuthority(executionPlanId, db);
   }
 
   private async requirePlan(executionPlanId: string, db: QueryDb) {
@@ -635,8 +845,24 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     return ReviewOpenedFactSchema.parse(opened.fact);
   }
 
-  private async assertReviewerAuthorized(workspaceId: string, userId: string) {
-    const member = await getWorkspaceMembership(workspaceId, userId);
+  private async assertReviewerAuthorized(
+    workspaceId: string,
+    userId: string,
+    db: QueryDb
+  ) {
+    // Use the caller's transaction connection. Calling getWorkspaceMembership
+    // here would check out a second global-pool connection while the transaction
+    // already holds Vercel's sole max:1 connection, causing a self-deadlock.
+    const [member] = await db
+      .select()
+      .from(schema.workspaceMembers)
+      .where(
+        and(
+          eq(schema.workspaceMembers.workspaceId, workspaceId),
+          eq(schema.workspaceMembers.userId, userId)
+        )
+      )
+      .limit(1);
     if (!member) {
       throw new ExecutionPlanReviewOwnershipError(
         "Reviewer is not a member of this workspace"
@@ -653,17 +879,28 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
 
   private async readProjection(
     executionPlanId: string,
-    plan: typeof schema.aiStoryExecutionPlans.$inferSelect,
-    db: QueryDb
+    plan: ExecutionPlanReviewPlanAuthority,
+    db: QueryDb,
+    timingRecorder: ExecutionPlanReviewProjectionTimingRecorder =
+      new ExecutionPlanReviewProjectionTimingRecorder()
   ): Promise<LogicalReviewProjection> {
-    await assertExecutionPlanOwnershipChain(plan, db);
+    await timingRecorder.run(
+      "execution_plan_review.ownership_chain_read",
+      () => assertExecutionPlanOwnershipChainInSingleQuery(plan, db),
+      () => 1
+    );
     const expected = planOwnershipFromRow(plan);
 
-    const [openedRow] = await db
-      .select()
-      .from(schema.aiStoryReviewOpenedFacts)
-      .where(eq(schema.aiStoryReviewOpenedFacts.executionPlanId, executionPlanId))
-      .limit(1);
+    const openedRows = await timingRecorder.run(
+      "execution_plan_review.opened_fact_read",
+      () => db
+        .select()
+        .from(schema.aiStoryReviewOpenedFacts)
+        .where(eq(schema.aiStoryReviewOpenedFacts.executionPlanId, executionPlanId))
+        .limit(1),
+      (rows) => rows.length
+    );
+    const [openedRow] = openedRows;
     if (openedRow) {
       assertPlanOwnershipColumnsMatch(expected, {
         orgId: openedRow.orgId,
@@ -675,11 +912,15 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
         executionPlanId: openedRow.executionPlanId,
       }, "ReviewOpenedFact");
     }
-    const sceneRows = await db
-      .select()
-      .from(schema.aiStorySceneIntentReviewFacts)
-      .where(eq(schema.aiStorySceneIntentReviewFacts.executionPlanId, executionPlanId))
-      .orderBy(asc(schema.aiStorySceneIntentReviewFacts.acceptedAt));
+    const sceneRows = await timingRecorder.run(
+      "execution_plan_review.scene_review_fact_read",
+      () => db
+        .select()
+        .from(schema.aiStorySceneIntentReviewFacts)
+        .where(eq(schema.aiStorySceneIntentReviewFacts.executionPlanId, executionPlanId))
+        .orderBy(asc(schema.aiStorySceneIntentReviewFacts.acceptedAt)),
+      (rows) => rows.length
+    );
     for (const row of sceneRows) {
       assertPlanOwnershipColumnsMatch(expected, {
         orgId: row.orgId,
@@ -691,11 +932,25 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
         executionPlanId: row.executionPlanId,
       }, "SceneIntentReviewFact");
     }
-    const storyRows = await db
-      .select()
-      .from(schema.aiStoryStoryReviewFacts)
-      .where(eq(schema.aiStoryStoryReviewFacts.executionPlanId, executionPlanId))
-      .orderBy(asc(schema.aiStoryStoryReviewFacts.acceptedAt));
+    const storyRows = await timingRecorder.run(
+      "execution_plan_review.story_review_fact_read",
+      () => db
+        .select({
+          orgId: schema.aiStoryStoryReviewFacts.orgId,
+          workspaceId: schema.aiStoryStoryReviewFacts.workspaceId,
+          campaignId: schema.aiStoryStoryReviewFacts.campaignId,
+          storyId: schema.aiStoryStoryReviewFacts.storyId,
+          storyVersionId: schema.aiStoryStoryReviewFacts.storyVersionId,
+          animationPackageId: schema.aiStoryStoryReviewFacts.animationPackageId,
+          executionPlanId: schema.aiStoryStoryReviewFacts.executionPlanId,
+          fact: schema.aiStoryStoryReviewFacts.fact,
+        })
+        .from(schema.aiStoryStoryReviewFacts)
+        .where(eq(schema.aiStoryStoryReviewFacts.executionPlanId, executionPlanId))
+        .orderBy(desc(schema.aiStoryStoryReviewFacts.acceptedAt))
+        .limit(1),
+      (rows) => rows.length
+    );
     for (const row of storyRows) {
       assertPlanOwnershipColumnsMatch(expected, {
         orgId: row.orgId,
@@ -712,15 +967,19 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     const sceneDecisions = sceneRows.map((row) =>
       SceneIntentReviewDecisionSchema.parse(row.fact)
     );
-    const storyDecision = storyRows[storyRows.length - 1]
-      ? StoryReviewDecisionSchema.parse(storyRows[storyRows.length - 1]!.fact)
+    const storyDecision = storyRows[0]
+      ? StoryReviewDecisionSchema.parse(storyRows[0].fact)
       : null;
 
-    const requiredSceneRows = await db
-      .select()
-      .from(schema.aiStorySceneExecutions)
-      .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
-      .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder));
+    const requiredSceneRows = await timingRecorder.run(
+      "execution_plan_review.required_scene_read",
+      () => db
+        .select()
+        .from(schema.aiStorySceneExecutions)
+        .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
+        .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder)),
+      (rows) => rows.length
+    );
     for (const scene of requiredSceneRows) {
       assertSceneMatchesPlan(plan, scene);
     }
@@ -728,7 +987,9 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
     const latest = latestSceneDecisions(sceneDecisions);
     const latestSceneDecisionBySceneExecutionId = Object.fromEntries(latest.entries());
 
-    return LogicalReviewProjectionSchema.parse({
+    return timingRecorder.run(
+      "execution_plan_review.projection_assembly",
+      async () => LogicalReviewProjectionSchema.parse({
       executionPlanId,
       orgId: plan.orgId,
       workspaceId: plan.workspaceId,
@@ -743,6 +1004,8 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
       latestSceneDecisionBySceneExecutionId,
       storyDecision,
       derivedAt: new Date().toISOString(),
-    });
+      }),
+      () => 1
+    );
   }
 }

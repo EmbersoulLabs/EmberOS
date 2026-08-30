@@ -114,6 +114,7 @@ export type MinimaxAssetAccessResolver = {
     readonly assetId: string;
     readonly workspaceId: string;
     readonly orgId: string;
+    readonly campaignId: string;
     readonly storagePath?: string;
     readonly existingUri?: string;
   }): Promise<string>;
@@ -271,22 +272,27 @@ export async function mapCanonicalEnvelopeToMinimaxRequest(input: {
       );
     }
     let uri = asset.uri;
-    if (!uri && asset.storagePath) {
-      if (looksLikePrivateStoragePath(asset.storagePath)) {
-        if (!input.assetAccessResolver) {
-          throw new MinimaxMappingError(
-            "Private storage paths cannot be sent to MiniMax; signed URI required"
-          );
-        }
-        uri = await input.assetAccessResolver.resolveProviderAccessibleUri({
-          assetId: asset.assetId,
-          workspaceId: input.envelope.workspaceId,
-          orgId: input.envelope.tenantId,
-          storagePath: asset.storagePath,
-        });
-      } else {
-        uri = asset.storagePath;
+    if (!uri && input.assetAccessResolver) {
+      const campaignId = input.envelope.canonicalRequest.executionIdentity.campaignId;
+      if (!campaignId) {
+        throw new MinimaxMappingError(
+          "Campaign authority is required to resolve a product reference"
+        );
       }
+      uri = await input.assetAccessResolver.resolveProviderAccessibleUri({
+        assetId: asset.assetId,
+        workspaceId: input.envelope.workspaceId,
+        orgId: input.envelope.tenantId,
+        campaignId,
+        ...(asset.storagePath ? { storagePath: asset.storagePath } : {}),
+      });
+    } else if (!uri && asset.storagePath) {
+      if (looksLikePrivateStoragePath(asset.storagePath)) {
+        throw new MinimaxMappingError(
+          "Private storage paths cannot be sent to MiniMax; signed URI required"
+        );
+      }
+      uri = asset.storagePath;
     }
     if (!uri) {
       throw new MinimaxMappingError(

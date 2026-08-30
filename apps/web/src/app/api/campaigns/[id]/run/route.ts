@@ -5,12 +5,9 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { isSubtitleLanguagePair, isSubtitleStylePreset } from "@ceo-agent/shared";
 import { isLocale } from "@ceo-agent/shared/i18n";
 import { executeCampaignGenerate } from "@/lib/campaign-generate";
+import { pendingAiExecutionProjection } from "@/lib/ai-execution-truth";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
-/**
- * Compatibility alias — delegates to the authoritative Generate path.
- * Prefer POST /api/campaigns/:id/generate for new callers.
- */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -19,7 +16,6 @@ export async function POST(
     const user = await requireAuth();
     const limited = await enforceRateLimit(request, "campaignRun", user.id);
     if (limited) return limited;
-
     const { id: campaignId } = await params;
     const db = getDb();
 
@@ -58,17 +54,14 @@ export async function POST(
       contentLocale,
       renderPreferences,
     });
-
-    if (!result.ok) {
-      return apiError(result.error, result.code, result.status);
-    }
+    if (!result.ok) return apiError(result.error, result.code, result.status);
 
     return apiSuccess(
       {
         taskId: result.taskId,
         status: result.status,
         reused: result.reused,
-        aiInvoked: true,
+        ...pendingAiExecutionProjection(),
       },
       result.reused ? 200 : 202
     );

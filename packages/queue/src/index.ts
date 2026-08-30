@@ -1,8 +1,10 @@
 import { Queue, type ConnectionOptions } from "bullmq";
-import { assertPhase1ExecutionLocked } from "@ceo-agent/shared";
 import { QUEUE_NAMES } from "./jobs";
+import { assertPhase1ExecutionLocked, emitPhotoSceneOpsEvent, emitVideoStudioOpsEvent } from "@ceo-agent/shared";
 
 export { QUEUE_NAMES } from "./jobs";
+
+export const DEFAULT_JOB_ATTEMPTS = 3;
 
 let connection: ConnectionOptions | null = null;
 
@@ -55,7 +57,7 @@ export function getQueue(name: string): Queue {
         defaultJobOptions: {
           removeOnComplete: 100,
           removeOnFail: 50,
-          attempts: 3,
+          attempts: DEFAULT_JOB_ATTEMPTS,
           backoff: { type: "exponential", delay: 2000 },
         },
       })
@@ -68,16 +70,33 @@ export const agentQueue = () => getQueue(QUEUE_NAMES.AGENT);
 export const renderQueue = () => getQueue(QUEUE_NAMES.RENDER);
 export const exportQueue = () => getQueue(QUEUE_NAMES.EXPORT);
 export const probeQueue = () => getQueue(QUEUE_NAMES.PROBE);
+export const photoSceneQueue = () => getQueue(QUEUE_NAMES.PHOTO_SCENE);
 
 export async function enqueuePipeline(taskId: string, campaignId: string, workspaceId: string, orgId: string) {
   const queue = agentQueue();
-  return queue.add(
+  const job = await queue.add(
     "agent.pipeline",
     { taskId, campaignId, workspaceId, orgId },
     { jobId: `pipeline-${taskId}` }
   );
+  emitVideoStudioOpsEvent({
+    event: "pipeline.enqueued",
+    stage: "agent.pipeline",
+    outcome: "enqueued",
+    orgId,
+    workspaceId,
+    campaignId,
+    taskId,
+    jobId: job.id,
+    recoveryKind: "new_generation",
+  });
+  return job;
 }
 
+/**
+ * Phase-1 lock producer. Canonical Execute uses the provider outbox, not this
+ * queue path. The enqueue remains so tests and leftover callers fail closed.
+ */
 export async function enqueueStoryExecution(input: {
   executionJobId: string;
   storyId: string;
@@ -124,6 +143,17 @@ export async function enqueueRender(
   } catch {
     console.log(`[queue] render enqueued job=${job.id} creative=${data.creativeId} task=${data.taskId}`);
   }
+  emitVideoStudioOpsEvent({
+    event: "render.enqueued",
+    stage: "ffmpeg.render",
+    outcome: "enqueued",
+    orgId: data.orgId,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    taskId: data.taskId,
+    creativeId: data.creativeId,
+    jobId: job.id,
+  });
   return job;
 }
 
@@ -155,7 +185,19 @@ export async function enqueueTaskExport(data: {
   const queue = exportQueue();
   const resolution = data.resolution ?? "720p";
   const jobId = `export-task-${data.taskId}-${resolution}-${Date.now()}`;
-  return queue.add("ffmpeg.export_task", { ...data, resolution }, { jobId });
+  const job = await queue.add("ffmpeg.export_task", { ...data, resolution }, { jobId });
+  emitVideoStudioOpsEvent({
+    event: "export.enqueued",
+    stage: "ffmpeg.export_task",
+    outcome: "enqueued",
+    orgId: data.orgId,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    taskId: data.taskId,
+    jobId: job.id,
+    resolution,
+  });
+  return job;
 }
 
 export async function enqueueProbe(data: {
@@ -165,4 +207,73 @@ export async function enqueueProbe(data: {
 }) {
   const queue = probeQueue();
   return queue.add("ffmpeg.probe", data, { jobId: `probe-${data.assetId}` });
+}
+
+export async function enqueuePhotoSceneExtract(data: {
+  generationId: string;
+  workspaceId: string;
+  orgId: string;
+  campaignId: string;
+  attempt: number;
+}) {
+  const queue = photoSceneQueue();
+  const job = await queue.add(
+    "photo_scene.extract",
+    {
+      generationId: data.generationId,
+      workspaceId: data.workspaceId,
+      orgId: data.orgId,
+      campaignId: data.campaignId,
+    },
+    {
+      jobId: `photo-scene-extract-${data.generationId}-${data.attempt}`,
+      attempts: 1,
+    }
+  );
+  emitPhotoSceneOpsEvent({
+    event: "extraction.enqueued",
+    stage: "photo_scene.extract",
+    outcome: "enqueued",
+    orgId: data.orgId,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    generationId: data.generationId,
+    attempt: data.attempt,
+  });
+  return job;
+}
+
+export async function enqueuePhotoSceneCompose(data: {
+  generationId: string;
+  workspaceId: string;
+  orgId: string;
+  campaignId: string;
+  attempt: number;
+}) {
+  const queue = photoSceneQueue();
+  const job = await queue.add(
+    "photo_scene.compose",
+    {
+      generationId: data.generationId,
+      workspaceId: data.workspaceId,
+      orgId: data.orgId,
+      campaignId: data.campaignId,
+    },
+    {
+      jobId: `photo-scene-compose-${data.generationId}-${data.attempt}`,
+      attempts: 1,
+    }
+  );
+  emitPhotoSceneOpsEvent({
+    event: "composition.enqueued",
+    stage: "photo_scene.compose",
+    outcome: "enqueued",
+    orgId: data.orgId,
+    workspaceId: data.workspaceId,
+    campaignId: data.campaignId,
+    generationId: data.generationId,
+    attempt: data.attempt,
+    providerKey: "deterministic_compositor",
+  });
+  return job;
 }

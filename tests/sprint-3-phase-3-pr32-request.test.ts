@@ -65,6 +65,7 @@ describe("Sprint 3 PR 3.2 canonical scene provider request", () => {
     expect(request.executionIdentity.capabilityId).toBe(
       "animation-video-generation"
     );
+    expect(request.retryPolicy.maxAttempts).toBe(1);
   });
 
   it("is deterministic for the same inputs", () => {

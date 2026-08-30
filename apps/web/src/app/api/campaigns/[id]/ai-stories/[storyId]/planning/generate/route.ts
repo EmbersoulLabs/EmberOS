@@ -1,8 +1,7 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   getBusinessProfileByWorkspace,
   getDb,
-  requireWorkspaceRole,
   schema,
 } from "@ceo-agent/db";
 import { runFullStoryPlanningPipeline } from "@ceo-agent/agents";
@@ -15,6 +14,11 @@ import {
 } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
+import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
+import {
+  assetLabelFromProductionRow,
+  campaignPlanningFields,
+} from "@/lib/ai-story-production-compat";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 import {
   saveAnimationPackage,
@@ -39,7 +43,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
@@ -73,37 +77,25 @@ export async function POST(
           ? []
           : (
               await db
-                .select({
-                  id: schema.assets.id,
-                  displayName: schema.assets.displayName,
-                  originalFilename: schema.assets.originalFilename,
-                })
-                .from(schema.assets)
-                .where(
-                  and(
-                    eq(schema.assets.workspaceId, campaign.workspaceId),
-                    inArray(schema.assets.id, assetIds),
-                    isNull(schema.assets.deletedAt)
-                  )
+              .select({
+                id: schema.assets.id,
+                storagePath: schema.assets.storagePath,
+                metadata: schema.assets.metadata,
+              })
+              .from(schema.assets)
+              .where(
+                and(
+                  eq(schema.assets.workspaceId, campaign.workspaceId),
+                  inArray(schema.assets.id, assetIds)
                 )
-            ).map(
-              (asset) =>
-                asset.displayName?.trim() ||
-                asset.originalFilename?.trim() ||
-                `asset:${asset.id.slice(0, 8)}`
-            );
+              )
+            ).map((asset) => assetLabelFromProductionRow(asset));
 
       const animationPackage = await runFullStoryPlanningPipeline({
         storyDraft,
         campaign: {
           id: campaign.id,
-          name: campaign.name,
-          objective: campaign.objective,
-          objectiveCustom: campaign.objectiveCustom,
-          targetAudienceOverride: campaign.targetAudienceOverride,
-          campaignBrief: campaign.campaignBrief,
-          goal: campaign.goal,
-          platforms: campaign.platforms,
+          ...campaignPlanningFields(campaign),
         },
         brand: profile
           ? {

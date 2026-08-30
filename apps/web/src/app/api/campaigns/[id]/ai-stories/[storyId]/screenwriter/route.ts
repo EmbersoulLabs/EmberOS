@@ -2,11 +2,11 @@ import { eq } from "drizzle-orm";
 import {
   getBusinessProfileByWorkspace,
   getDb,
-  requireWorkspaceRole,
   schema,
 } from "@ceo-agent/db";
 import {
   generateStoryCharacters,
+  projectGeneratedCharactersToProposals,
   generateStoryDialogue,
   generateStoryNarrative,
   mergeCharactersIntoCreativeContext,
@@ -23,6 +23,8 @@ import {
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
+import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
+import { campaignPlanningFields } from "@/lib/ai-story-production-compat";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
 import {
   loadLatestCreativeContextForStory,
@@ -61,7 +63,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
@@ -102,14 +104,7 @@ export async function POST(
           description: profile.businessDescription,
         }
       : null;
-    const campaignCtx = {
-      name: campaign.name,
-      objective: campaign.objective,
-      objectiveCustom: campaign.objectiveCustom,
-      targetAudienceOverride: campaign.targetAudienceOverride,
-      campaignBrief: campaign.campaignBrief,
-      goal: campaign.goal,
-    };
+    const campaignCtx = campaignPlanningFields(campaign);
 
     const existing = await loadLatestCreativeContextForStory(db, {
       campaignId,
@@ -149,6 +144,7 @@ export async function POST(
           directorContext: {},
         });
 
+    let characterProposals = null;
     if (body.data.action === "characters") {
       const generated = await generateStoryCharacters({
         story,
@@ -161,6 +157,7 @@ export async function POST(
         generated.characters,
         generated.relationships
       );
+      characterProposals = projectGeneratedCharactersToProposals(generated.characters);
     } else if (body.data.action === "dialogue") {
       if (creativeContext.characterContext.characters.length === 0) {
         return apiError(
@@ -203,6 +200,8 @@ export async function POST(
       storyId,
       action: body.data.action,
       creativeContext: saved,
+      characterProposals,
+      canonicalCharacterAuthorityChanged: false,
     });
   } catch (error) {
     return handleApiError(error);

@@ -42,19 +42,8 @@ export type CreativeStatus = z.infer<typeof CreativeStatusSchema>;
 export const TaskStatusSchema = z.enum(["queued", "running", "completed", "failed"]);
 export type TaskStatus = z.infer<typeof TaskStatusSchema>;
 
-/** PD-036 supported Asset Types. */
-export const AssetTypeSchema = z.enum(["video", "image", "audio", "pdf"]);
+export const AssetTypeSchema = z.enum(["video", "image"]);
 export type AssetType = z.infer<typeof AssetTypeSchema>;
-
-/** Campaign pipeline media (MVP still video/image for generation). */
-export const CampaignMediaAssetTypeSchema = z.enum(["video", "image"]);
-export type CampaignMediaAssetType = z.infer<typeof CampaignMediaAssetTypeSchema>;
-
-export const StoryStatusSchema = z.enum(["draft", "ready", "archived"]);
-export type StoryStatus = z.infer<typeof StoryStatusSchema>;
-
-export const MediaAnalysisModeSchema = z.enum(["separate", "story"]);
-export type MediaAnalysisMode = z.infer<typeof MediaAnalysisModeSchema>;
 
 export const ReviewerTypeSchema = z.enum(["internal", "client"]);
 export type ReviewerType = z.infer<typeof ReviewerTypeSchema>;

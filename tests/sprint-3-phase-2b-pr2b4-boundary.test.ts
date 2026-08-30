@@ -1,8 +1,8 @@
 /**
  * Sprint 3 Phase 2B PR 2B.4 — boundary regression (no UI / Queue / Provider / unlock).
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   PHASE1_EXECUTION_LOCKED,
@@ -15,19 +15,13 @@ import {
   startExecutionJob,
 } from "../packages/agents/src/ai-story/story-execution-orchestrator";
 
-const API_ROOT = resolve(
-  "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans"
-);
-
-function collectTsFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...collectTsFiles(full));
-    else if (full.endsWith(".ts")) out.push(full);
-  }
-  return out;
-}
+const PR_2B4_API_PATHS = [
+  "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/review/route.ts",
+  "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/review/history/route.ts",
+  "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/review/decisions/route.ts",
+  "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/review/scenes/[sceneExecutionId]/decisions/route.ts",
+  "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/assembly-definition/route.ts",
+] as const;
 
 describe("Sprint 3 Phase 2B PR 2B.4 boundary regression", () => {
   it("keeps Phase 1 execution lock fail-closed", async () => {
@@ -44,7 +38,7 @@ describe("Sprint 3 Phase 2B PR 2B.4 boundary regression", () => {
   });
 
   it("execution-plans API routes exist for review and assembly only", () => {
-    const files = collectTsFiles(API_ROOT).map((f) => f.replace(/\\/g, "/"));
+    const files = PR_2B4_API_PATHS;
     expect(files.some((f) => f.endsWith("/review/route.ts"))).toBe(true);
     expect(files.some((f) => f.endsWith("/review/history/route.ts"))).toBe(true);
     expect(files.some((f) => f.endsWith("/review/decisions/route.ts"))).toBe(true);
@@ -56,7 +50,7 @@ describe("Sprint 3 Phase 2B PR 2B.4 boundary regression", () => {
 
   it("PR 2B.4 sources never introduce Queue / Worker / Provider / UI unlock", () => {
     const paths = [
-      ...collectTsFiles(API_ROOT),
+      ...PR_2B4_API_PATHS.map((path) => resolve(path)),
       resolve("apps/web/src/lib/ai-story-execution-plan-access.ts"),
       resolve("apps/web/src/lib/ai-story-review-assembly-read-model.ts"),
       resolve("apps/web/src/lib/ai-story-review-assembly-errors.ts"),

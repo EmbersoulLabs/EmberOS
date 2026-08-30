@@ -388,13 +388,31 @@ export class AiStorySceneExecutionPersistenceRepository
     });
   }
 
-  async getByExecutionPlanId(id: string): Promise<PersistedSceneExecutionCompilation | null> {
-    const [row] = await this.db
+  async getByExecutionPlanId(
+    id: string,
+    db: QueryDb = this.db
+  ): Promise<PersistedSceneExecutionCompilation | null> {
+    const [row] = await db
       .select()
       .from(schema.aiStoryExecutionPlans)
       .where(eq(schema.aiStoryExecutionPlans.id, id))
       .limit(1);
-    return row ? this.hydratePlan(row, this.db) : null;
+    return row ? this.hydratePlan(row, db) : null;
+  }
+
+  /** Compact read used by review projections that only require frozen Scene identities. */
+  async listIntentsByExecutionPlanId(
+    executionPlanId: string,
+    db: QueryDb = this.db
+  ): Promise<readonly AiStorySceneExecutionIntent[]> {
+    const rows = await db
+      .select({ intent: schema.aiStorySceneExecutions.intent })
+      .from(schema.aiStorySceneExecutions)
+      .where(eq(schema.aiStorySceneExecutions.executionPlanId, executionPlanId))
+      .orderBy(asc(schema.aiStorySceneExecutions.sceneOrder));
+    return deepFreeze(
+      rows.map((row) => AiStorySceneExecutionIntentSchema.parse(row.intent))
+    );
   }
 
   async getByDeterministicFingerprint(
@@ -625,7 +643,6 @@ export class AiStorySceneExecutionPersistenceRepository
         orgId: schema.assets.orgId,
         workspaceId: schema.assets.workspaceId,
         campaignId: schema.assets.campaignId,
-        deletedAt: schema.assets.deletedAt,
       })
       .from(schema.assets)
       .where(inArray(schema.assets.id, assetIds));
@@ -643,10 +660,9 @@ export class AiStorySceneExecutionPersistenceRepository
       const asset = ownedAssets.find((row) => row.id === assetId);
       if (
         !asset ||
-        asset.deletedAt ||
         asset.orgId !== first.tenantId ||
         asset.workspaceId !== first.workspaceId ||
-        (asset.campaignId !== first.campaignId && !linked.has(assetId))
+        !linked.has(assetId)
       ) {
         throw new ExecutionPlanOwnershipError("A referenced Campaign Asset is unauthorized");
       }

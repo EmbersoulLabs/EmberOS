@@ -1,0 +1,85 @@
+import { z } from "zod";
+import type { AiStoryDirectorPlan } from "./ai-story-director-plan";
+import type { AiStoryScriptDirectorHandoff } from "./ai-story-script-director-handoff";
+import { AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
+import { AiStorySceneAuthorityBindingSchema } from "./ai-story-scene";
+
+export const AI_STORY_MOTION_PLAN_CONTRACT_VERSION="ai-story-motion-plan.v1" as const;
+export const AI_STORY_MOTION_PLAN_STATUSES=["DRAFT","VALIDATED","APPROVED","FROZEN","SUPERSEDED"] as const;
+const Id=z.string().uuid();const Hash=z.string().regex(/^sha256:[0-9a-f]{64}$/);const Text=z.string().trim().min(1).max(2000);
+const SemanticId=z.string().regex(/^(?:[A-Z][A-Z0-9_]{1,63}|EXT:[a-z0-9.-]+:[A-Z][A-Z0-9_]{1,63})$/);
+
+export const AiStoryMotionPhysicalFactSchema=z.object({entityId:Id,property:z.enum(["POSSESSION","LOCATION","ORIENTATION","CONTACT","SPATIAL_RELATION","PRODUCT_STATE","PHYSICAL_CONDITION","CUSTOM"]),value:Text,exclusive:z.boolean()}).strict();
+export const AiStoryMotionStateChangeSchema=z.object({entityId:Id,property:z.enum(["POSSESSION","LOCATION","ORIENTATION","CONTACT","SPATIAL_RELATION","PRODUCT_STATE","PHYSICAL_CONDITION","CUSTOM"]),fromValue:Text.nullable(),toValue:Text,causalReason:Text}).strict();
+export const AiStoryMotionActionPhaseSchema=z.object({phaseId:Id,order:z.number().int().nonnegative(),semanticPhase:Text,subjectRefs:z.array(Id).min(1),objectRefs:z.array(Id),stateChanges:z.array(AiStoryMotionStateChangeSchema)}).strict();
+export const AiStoryMotionContactSchema=z.object({initiatorId:Id,targetId:Id,contactType:SemanticId,startsAtPhaseId:Id,persistsThroughPhaseIds:z.array(Id),releasesAtPhaseId:Id.nullable()}).strict();
+export const AiStoryMotionInteractionSchema=z.object({interactionId:Id,interactionType:SemanticId,initiatorId:Id,targetId:Id,contactRequired:z.boolean(),contact:AiStoryMotionContactSchema.nullable(),requiresForceResponse:z.boolean()}).strict();
+export const AiStoryMotionForceResponseSchema=z.object({interactionId:Id,anchorOrSupportRefs:z.array(Id),forceSourceId:Id,forceDirection:Text,expectedVisibleResponse:Text,terminalResponse:Text}).strict();
+export const AiStoryMotionActionExecutionSchema=z.object({
+  actionExecutionId:Id,scriptActionEntryId:Id,semanticAction:Text,dominance:z.enum(["DOMINANT","SUPPORTING"]),
+  startState:z.array(AiStoryMotionPhysicalFactSchema).min(1),actionPath:z.array(AiStoryMotionActionPhaseSchema).min(1),endState:z.array(AiStoryMotionPhysicalFactSchema).min(1),
+  completionAssertions:z.array(z.object({entityId:Id,property:AiStoryMotionPhysicalFactSchema.shape.property,expectedValue:Text}).strict()).min(1),
+  objectInteractions:z.array(AiStoryMotionInteractionSchema),forceResponses:z.array(AiStoryMotionForceResponseSchema),
+}).strict();
+export const AiStoryMotionObjectPersistenceSchema=z.object({objectId:Id,presentAtStart:z.boolean(),presentAtEnd:z.boolean(),authorizedRemovalOrTransformation:z.boolean(),reason:Text}).strict();
+export const AiStoryMotionBlockingExecutionSchema=z.object({blockingIntentId:Id,startPosition:Text,movementPath:Text,interactionPosition:Text,endPosition:Text,eyeline:Text.nullable()}).strict();
+export const AiStoryMotionCameraExecutionSchema=z.object({directorShotId:Id,cameraFamily:Text,startCameraState:Text,boundedMovement:Text,endCameraState:Text,subjectRelation:Text,timing:Text}).strict();
+export const AiStoryMotionFocusExecutionSchema=z.object({directorShotId:Id,progression:z.array(z.object({order:z.number().int().nonnegative(),targetKind:Text,authorityRefs:z.array(Id),semanticLabel:Text,timing:Text}).strict()).min(1)}).strict();
+export const AiStoryEnvironmentalMotionSchema=z.object({environmentalMotionId:Id,semanticMotion:Text,affectedAuthorityRefs:z.array(Id),dominance:z.literal("SUPPORTING"),timing:Text}).strict();
+export const AiStoryMotionBudgetSchema=z.object({policyId:Text,policyVersion:z.number().int().positive(),profileId:Text,maxDominantActions:z.number().int().positive(),maxCameraBehaviors:z.number().int().positive(),maxEnvironmentalMotions:z.number().int().nonnegative(),complexityThreshold:z.number().int().positive(),identitySensitiveProduct:z.boolean(),riskFactors:z.array(z.enum(["MULTIPLE_PEOPLE","FINE_HAND_WORK","OBJECT_TRANSFORMATION","MAJOR_OCCLUSION","UNSEEN_GEOMETRY","MULTIPLE_SIMULTANEOUS_INTERACTIONS","LARGE_PRODUCT_PERSPECTIVE_CHANGE"]))}).strict();
+export const AiStoryMotionPhysicalConstraintSchema=z.object({constraintId:Id,semanticConstraint:Text,authorityRefs:z.array(Id),satisfied:z.boolean()}).strict();
+
+export const AiStorySceneMotionPlanSchema=z.object({
+  sceneMotionPlanId:Id,directorSceneId:Id,scriptSceneId:Id,sceneOrder:z.number().int().nonnegative(),
+  canonicalSceneBinding:AiStorySceneAuthorityBindingSchema.optional(),
+  actionExecutions:z.array(AiStoryMotionActionExecutionSchema),objectPersistence:z.array(AiStoryMotionObjectPersistenceSchema),
+  blockingExecutions:z.array(AiStoryMotionBlockingExecutionSchema),cameraExecutions:z.array(AiStoryMotionCameraExecutionSchema),focusExecutions:z.array(AiStoryMotionFocusExecutionSchema),
+  environmentalMotions:z.array(AiStoryEnvironmentalMotionSchema),motionBudget:AiStoryMotionBudgetSchema,physicalConstraints:z.array(AiStoryMotionPhysicalConstraintSchema),
+  shotRecipeBinding:AiStoryShotRecipeBindingSchema.optional(),
+}).strict();
+export const AiStoryMotionPlanSchema=z.object({
+  motionPlanId:Id,storyId:Id,storyVersionId:Id,outlineVersionId:Id,scriptVersionId:Id,handoffId:Id,directorPlanId:Id,orgId:Id,workspaceId:Id,
+  version:z.number().int().positive(),contractVersion:z.literal(AI_STORY_MOTION_PLAN_CONTRACT_VERSION),sourceDirectorFingerprint:Hash,sceneMotionPlans:z.array(AiStorySceneMotionPlanSchema).min(1),
+  sourceHash:Hash,motionFingerprint:Hash,status:z.enum(AI_STORY_MOTION_PLAN_STATUSES),supersedesMotionPlanId:Id.nullable(),createdBy:Id,createdAt:z.string().datetime(),approvedBy:Id.nullable(),approvedAt:z.string().datetime().nullable(),frozenAt:z.string().datetime().nullable(),
+}).strict();
+export type AiStoryMotionPlan=z.infer<typeof AiStoryMotionPlanSchema>;export type AiStorySceneMotionPlan=z.infer<typeof AiStorySceneMotionPlanSchema>;
+export const AI_STORY_MOTION_GATES=["DIRECTOR_BINDING_GATE","CANONICAL_SCENE_BINDING_GATE","SHOT_RECIPE_BINDING_GATE","SCRIPT_ACTION_TRUTH_GATE","START_STATE_GATE","ACTION_PATH_GATE","END_STATE_GATE","ACTION_COMPLETION_GATE","CONTACT_REQUIREMENT_GATE","FORCE_RESPONSE_GATE","PRODUCT_CAUSALITY_GATE","OBJECT_PERSISTENCE_GATE","BLOCKING_EXECUTION_GATE","CAMERA_EXECUTION_GATE","FOCUS_EXECUTION_GATE","PHYSICAL_PLAUSIBILITY_GATE","MOTION_BUDGET_GATE","PRODUCT_GROUNDED_MOTION_GATE","MOTION_CONTINUITY_GATE","MOTION_FINGERPRINT_GATE","STALE_DIRECTOR_GATE","MOTION_FREEZE_GATE"] as const;
+export type AiStoryMotionGate=(typeof AI_STORY_MOTION_GATES)[number];export type AiStoryMotionIssue={gate:AiStoryMotionGate;severity:"BLOCK"|"WARN";message:string};
+const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);const factKey=(f:{entityId:string;property:string})=>`${f.entityId}:${f.property}`;
+function stateMap(facts:z.infer<typeof AiStoryMotionPhysicalFactSchema>[]){return new Map(facts.map(f=>[factKey(f),f]));}
+
+export function validateAiStoryMotionPlan(plan:AiStoryMotionPlan,director:AiStoryDirectorPlan,handoff:AiStoryScriptDirectorHandoff,options:{expectedSourceHash?:string;expectedFingerprint?:string;currentDirectorPlanId?:string}={}):AiStoryMotionIssue[]{
+ const issues:AiStoryMotionIssue[]=[];const add=(gate:AiStoryMotionGate,message:string,severity:"BLOCK"|"WARN"="BLOCK")=>issues.push({gate,severity,message});
+ if(director.status!=="FROZEN")add("DIRECTOR_BINDING_GATE","Canonical Motion requires a frozen Director Plan");
+ if(plan.directorPlanId!==director.directorPlanId||plan.handoffId!==director.handoffId||plan.scriptVersionId!==director.scriptVersionId||plan.storyId!==director.storyId||plan.storyVersionId!==director.storyVersionId||plan.outlineVersionId!==director.outlineVersionId||plan.orgId!==director.orgId||plan.workspaceId!==director.workspaceId||plan.sourceDirectorFingerprint!==director.directorFingerprint)add("DIRECTOR_BINDING_GATE","Motion lineage does not bind the exact Director authority");
+ if(director.handoffId!==handoff.handoffId||director.sourceHandoffFingerprint!==handoff.handoffFingerprint)add("DIRECTOR_BINDING_GATE","Director authority no longer binds the supplied Script handoff");
+ if(options.currentDirectorPlanId&&options.currentDirectorPlanId!==plan.directorPlanId)add("STALE_DIRECTOR_GATE","Motion Plan references stale Director authority");
+ if((options.expectedSourceHash&&plan.sourceHash!==options.expectedSourceHash)||(options.expectedFingerprint&&plan.motionFingerprint!==options.expectedFingerprint))add("MOTION_FINGERPRINT_GATE","Motion source hash or fingerprint mismatch");
+ if(!same(plan.sceneMotionPlans.map(s=>[s.directorSceneId,s.scriptSceneId,s.sceneOrder]),director.sceneDirections.map(s=>[s.directorSceneId,s.scriptSceneId,s.sceneOrder])))add("DIRECTOR_BINDING_GATE","Motion Scene identity/count/order differs from Director authority");
+ for(const scene of plan.sceneMotionPlans){const direction=director.sceneDirections.find(d=>d.directorSceneId===scene.directorSceneId);const source=handoff.sceneHandoffs.find(s=>s.scriptSceneId===scene.scriptSceneId);if(!direction||!source)continue;
+  if(!same(scene.canonicalSceneBinding??null,direction.canonicalSceneBinding??null))add("CANONICAL_SCENE_BINDING_GATE",`Motion changed or omitted canonical Scene authority binding for ${scene.scriptSceneId}`);
+  if(!same(scene.shotRecipeBinding??null,direction.shotRecipeBinding??null))add("SHOT_RECIPE_BINDING_GATE",`Motion changed or omitted the Director Shot Recipe binding for ${scene.scriptSceneId}`);
+  const sourceActions=new Map(source.actionEntries.map(a=>[a.entryId,a]));const plannedIds=scene.actionExecutions.map(a=>a.scriptActionEntryId);
+  if(plannedIds.length!==sourceActions.size||new Set(plannedIds).size!==plannedIds.length||plannedIds.some(id=>!sourceActions.has(id)))add("SCRIPT_ACTION_TRUTH_GATE",`Motion must execute every Script ACTION exactly once for ${scene.scriptSceneId}`);
+  for(const action of scene.actionExecutions){const truth=sourceActions.get(action.scriptActionEntryId);if(!truth||action.semanticAction!==truth.action)add("SCRIPT_ACTION_TRUTH_GATE",`Motion changed Script Action truth for ${action.scriptActionEntryId}`);
+   if(!action.startState.length)add("START_STATE_GATE",`Action ${action.actionExecutionId} lacks Start State`);if(!action.actionPath.length)add("ACTION_PATH_GATE",`Action ${action.actionExecutionId} lacks Action Path`);if(!action.endState.length)add("END_STATE_GATE",`Action ${action.actionExecutionId} lacks End State`);
+   const end=stateMap(action.endState);if(action.completionAssertions.some(c=>end.get(factKey(c))?.value!==c.expectedValue))add("ACTION_COMPLETION_GATE",`Action ${action.actionExecutionId} does not satisfy its terminal completion state`);
+   const phaseIds=new Set(action.actionPath.map(p=>p.phaseId));for(const interaction of action.objectInteractions){if(interaction.contactRequired&&!interaction.contact)add("CONTACT_REQUIREMENT_GATE",`Interaction ${interaction.interactionId} requires contact`);if(interaction.contact&&(!phaseIds.has(interaction.contact.startsAtPhaseId)||interaction.contact.persistsThroughPhaseIds.some(id=>!phaseIds.has(id))||(interaction.contact.releasesAtPhaseId&&!phaseIds.has(interaction.contact.releasesAtPhaseId))))add("CONTACT_REQUIREMENT_GATE",`Contact phases are not in Action Path for ${interaction.interactionId}`);if(interaction.requiresForceResponse&&!action.forceResponses.some(f=>f.interactionId===interaction.interactionId))add("FORCE_RESPONSE_GATE",`Interaction ${interaction.interactionId} lacks required force/response`);}
+   if(action.forceResponses.some(force=>!action.objectInteractions.some(i=>i.interactionId===force.interactionId&&i.contact)))add("FORCE_RESPONSE_GATE",`Force response has no causal contact in ${action.actionExecutionId}`);
+   const start=stateMap(action.startState);for(const terminal of action.endState){const prior=start.get(factKey(terminal));if(prior&&prior.value!==terminal.value){const transitioned=action.actionPath.some(p=>p.stateChanges.some(c=>factKey(c)===factKey(terminal)&&c.toValue===terminal.value));if(!transitioned)add(terminal.property==="POSSESSION"||terminal.property==="PRODUCT_STATE"?"PRODUCT_CAUSALITY_GATE":"PHYSICAL_PLAUSIBILITY_GATE",`State changed without causal path for ${factKey(terminal)}`);}}
+   for(const states of [action.startState,action.endState]){const exclusive=new Map<string,string>();for(const fact of states.filter(f=>f.exclusive)){const key=factKey(fact);if(exclusive.has(key)&&exclusive.get(key)!==fact.value)add("PHYSICAL_PLAUSIBILITY_GATE",`Exclusive physical state conflicts for ${key}`);exclusive.set(key,fact.value);}}
+  }
+  const requiredObjects=new Set([...source.assetIds,...source.productAuthorityRefs,...source.propIds]);const persisted=new Map(scene.objectPersistence.map(o=>[o.objectId,o]));for(const objectId of requiredObjects){const p=persisted.get(objectId);if(!p)add("OBJECT_PERSISTENCE_GATE",`Required object ${objectId} has no persistence fact`);else if(p.presentAtStart&&!p.presentAtEnd&&!p.authorizedRemovalOrTransformation)add("OBJECT_PERSISTENCE_GATE",`Required object ${objectId} silently disappears`);}
+  const blockingIds=new Set(direction.shots.flatMap(s=>s.blockingIntents.map(b=>b.blockingIntentId)));if(scene.blockingExecutions.length!==blockingIds.size||scene.blockingExecutions.some(b=>!blockingIds.has(b.blockingIntentId)))add("BLOCKING_EXECUTION_GATE",`Blocking execution does not bind every Director intent for ${scene.scriptSceneId}`);
+  const shots=new Map(direction.shots.map(s=>[s.directorShotId,s]));if(scene.cameraExecutions.length!==shots.size||scene.cameraExecutions.some(c=>shots.get(c.directorShotId)?.cameraFamily!==c.cameraFamily))add("CAMERA_EXECUTION_GATE",`Camera execution changed or omitted Director camera authority for ${scene.scriptSceneId}`);
+  if(scene.focusExecutions.length!==shots.size||scene.focusExecutions.some(f=>{const shot=shots.get(f.directorShotId);return !shot||!same(f.progression.map(p=>[p.targetKind,p.authorityRefs,p.semanticLabel]),shot.focusProgression.map(p=>[p.kind,p.authorityRefs,p.semanticLabel]));}))add("FOCUS_EXECUTION_GATE",`Focus execution changed or omitted Director focus progression for ${scene.scriptSceneId}`);
+  if(scene.physicalConstraints.some(c=>!c.satisfied))add("PHYSICAL_PLAUSIBILITY_GATE",`Unsatisfied physical constraint in ${scene.scriptSceneId}`);
+  const dominant=scene.actionExecutions.filter(a=>a.dominance==="DOMINANT").length;const cameras=new Set(scene.cameraExecutions.map(c=>c.cameraFamily)).size;const environment=scene.environmentalMotions.length;const risk=dominant+cameras+environment+scene.motionBudget.riskFactors.length;
+  if(dominant>scene.motionBudget.maxDominantActions||cameras>scene.motionBudget.maxCameraBehaviors||environment>scene.motionBudget.maxEnvironmentalMotions||risk>scene.motionBudget.complexityThreshold)add("MOTION_BUDGET_GATE",`Motion complexity exceeds configurable policy ${scene.motionBudget.policyId}`);
+  if(scene.motionBudget.identitySensitiveProduct&&scene.motionBudget.riskFactors.includes("LARGE_PRODUCT_PERSPECTIVE_CHANGE")&&scene.motionBudget.riskFactors.includes("MAJOR_OCCLUSION")&&scene.motionBudget.riskFactors.includes("OBJECT_TRANSFORMATION"))add("PRODUCT_GROUNDED_MOTION_GATE",`Identity-sensitive Product motion combines unsafe perspective, occlusion, and transformation`);
+ }
+ const ordered=[...plan.sceneMotionPlans].sort((a,b)=>a.sceneOrder-b.sceneOrder);for(let i=1;i<ordered.length;i++){const previous=ordered[i-1]!,current=ordered[i]!;const previousEnd=stateMap(previous.actionExecutions.flatMap(a=>a.endState));const currentStart=stateMap(current.actionExecutions.flatMap(a=>a.startState));for(const [key,fact] of previousEnd){const next=currentStart.get(key);if(next&&next.value!==fact.value)add("MOTION_CONTINUITY_GATE",`Motion state resets without transition between Scenes for ${key}`);}}
+ return issues;
+}
+export function assertAiStoryMotionPlanTransition(from:AiStoryMotionPlan["status"],to:AiStoryMotionPlan["status"]){const allowed:Record<AiStoryMotionPlan["status"],AiStoryMotionPlan["status"][]>={DRAFT:["VALIDATED"],VALIDATED:["APPROVED"],APPROVED:["FROZEN"],FROZEN:["SUPERSEDED"],SUPERSEDED:[]};if(!allowed[from].includes(to))throw new Error(`MOTION_PLAN_TRANSITION_DENIED:${from}->${to}`);}
+export function resolveMotionPlanningAuthority(input:{canonicalMotionPlan?:AiStoryMotionPlan|null;legacyMotion?:unknown}){if(input.canonicalMotionPlan)return{kind:"CANONICAL_MOTION_PLAN" as const,motionPlan:AiStoryMotionPlanSchema.parse(input.canonicalMotionPlan)};return{kind:"LEGACY_MOTION_COMPATIBILITY" as const,legacyMotion:input.legacyMotion??null};}

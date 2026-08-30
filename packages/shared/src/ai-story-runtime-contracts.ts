@@ -17,6 +17,7 @@
  */
 import { z } from "zod";
 import { PHASE1_EXECUTION_LOCKED } from "./ai-story-phase1-execution-lock";
+import { AiStoryExecutionAuthorizationEvidenceSchema } from "./ai-story-execution-authorization";
 
 export const RUNTIME_AUTHORIZATION_CONTRACT_VERSION = "1" as const;
 export const SCENE_RUNTIME_CONTRACT_VERSION = "1" as const;
@@ -216,6 +217,11 @@ export const RuntimeAuthorizedFactSchema = z.object({
   authorizedBy: z.string().uuid(),
   authorizedAt: z.string().datetime(),
   deterministicIntegrityHash: IntegrityHashSchema,
+  /**
+   * EXEC-03 product/settlement evidence. Optional so historical facts parse.
+   * Excluded from RuntimeAuthorizedFact integrity hash.
+   */
+  executionAuthorization: AiStoryExecutionAuthorizationEvidenceSchema.optional(),
 });
 
 export type RuntimeAuthorizedFact = z.infer<typeof RuntimeAuthorizedFactSchema>;
@@ -314,7 +320,7 @@ export const CanonicalSceneResultSchema = z.object({
   sceneId: NonEmptyTextSchema,
   sceneOrder: z.number().int().nonnegative(),
   ownership: RuntimeOwnershipIdentitySchema,
-  status: z.enum(["SUCCEEDED", "FAILED"]),
+  status: z.enum(["SUCCEEDED", "FAILED", "REJECTED", "TIMEOUT"]),
   failureClassification: RuntimeFailureClassificationSchema.nullable().default(null),
   mediaReference: RuntimeMediaReferenceSchema.nullable().default(null),
   durationMs: z.number().int().positive().nullable().default(null),
@@ -324,14 +330,21 @@ export const CanonicalSceneResultSchema = z.object({
 });
 
 export type CanonicalSceneResult = z.infer<typeof CanonicalSceneResultSchema>;
+export type CanonicalSceneResultStatus = CanonicalSceneResult["status"];
 
 /* -------------------------------------------------------------------------- */
 /* 5. Final Story Result Contract                                             */
 /* -------------------------------------------------------------------------- */
 
 /**
- * Immutable Final Story Result subordinate to the Execution Plan.
- * Contract only — does NOT implement assembly runtime.
+ * PR 3.1 language-only Final Story Result stub.
+ *
+ * NON-AUTHORITATIVE for Sprint 3 PR 3.7 persistence.
+ * Allows FAILED / nullable media semantics that must never be persisted as
+ * `ai_story_final_story_results` rows. Authoritative success-only persistence
+ * lives in `ai-story-final-story-result-persistence.ts` (server entry).
+ *
+ * Contract only — does NOT implement assembly runtime or persistence.
  */
 export const FinalStoryResultSchema = z.object({
   storyResultId: z.string().uuid(),

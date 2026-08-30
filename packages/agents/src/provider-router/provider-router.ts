@@ -239,12 +239,23 @@ function evaluate(
   return reasons.length > 0 ? exclusion(declaration, reasons) : null;
 }
 
+function effectivePreferredProviders(
+  requestPreferred: readonly string[] | undefined,
+  policyPreferred: readonly string[]
+): readonly string[] {
+  if (requestPreferred && requestPreferred.length > 0) return requestPreferred;
+  return policyPreferred;
+}
+
 function score(
   declaration: ProviderCapabilityDeclaration,
   request: ProviderRoutingRequest,
   policy: ProviderRoutingPolicy
 ): ProviderRoutingScore {
-  const preferred = request.preferredProviders ?? policy.preferredProviders;
+  const preferred = effectivePreferredProviders(
+    request.preferredProviders,
+    policy.preferredProviders
+  );
   const index = preferred.indexOf(declaration.providerId);
   const preferredProviderRank = index === -1 ? Number.MAX_SAFE_INTEGER : index;
   const routing = declaration.routing;

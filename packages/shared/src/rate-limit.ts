@@ -29,13 +29,10 @@ export function checkMemoryRateLimit(
 /** Per-route HTTP rate limits (requests per window). */
 export const API_RATE_LIMITS = {
   campaignRun: { limit: 10, windowMs: 60_000 },
+  campaignAssist: { limit: 12, windowMs: 60_000 },
   uploadUrl: { limit: 30, windowMs: 60_000 },
   export: { limit: 20, windowMs: 60_000 },
   portalDecide: { limit: 15, windowMs: 60_000 },
-  /** PD-041 Campaign Brief AI assistance (independent of upload URL quota). */
-  campaignBriefAssist: { limit: 20, windowMs: 60_000 },
-  /** PD-043 Target Audience AI Suggest. */
-  targetAudienceSuggest: { limit: 20, windowMs: 60_000 },
 } as const;
 
 export type ApiRateLimitScope = keyof typeof API_RATE_LIMITS;

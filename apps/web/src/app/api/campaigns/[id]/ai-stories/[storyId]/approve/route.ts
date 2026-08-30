@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { getDb, schema } from "@ceo-agent/db";
 import { isUuid, type AiStoryStatus } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
+import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
 import { freezeAiStoryVersion, loadCampaignAiStory } from "@/lib/ai-story-service";
 
@@ -23,7 +24,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);

@@ -1,23 +1,17 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
-import {
-  regeneratePlatformAsset,
-  provideCampaignAIContextFromCampaign,
-  contentPackageToCopyVariants,
-} from "@ceo-agent/agents";
+import { regeneratePlatformAsset } from "@ceo-agent/agents";
 import {
   MARKETING_PLATFORM_IDS,
   normalizeMarketingContentPackage,
   normalizeStrategyPlan,
+  parseCampaignCreativeBrief,
+  resolvePipelineContentLocale,
   resolvePlatformAssets,
-  BrandProfileSchema,
-  type BrandProfile,
   type MarketingCaptions,
   type MarketingPlatformId,
-  type Platform,
   type StepProgress,
   type VisionAnalysis,
-  type CopyVariant,
 } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
@@ -62,8 +56,9 @@ export async function POST(
     const strategy = normalizeStrategyPlan(rawStrategy);
 
     let campaignName: string | undefined;
-    let campaignRow: typeof schema.campaigns.$inferSelect | null = null;
-    let brandProfile: BrandProfile = BrandProfileSchema.parse({});
+    let goal: string | undefined;
+    let userNotes: string | undefined;
+    let metadata: Record<string, unknown> | null = null;
     if (task.campaignId) {
       const [campaign] = await db
         .select()
@@ -71,37 +66,25 @@ export async function POST(
         .where(eq(schema.campaigns.id, task.campaignId))
         .limit(1);
       if (campaign) {
-        campaignRow = campaign;
         campaignName = campaign.name;
+        goal = campaign.campaignGoal ?? campaign.goal ?? undefined;
+        metadata = campaign.metadata ?? null;
+        userNotes = parseCampaignCreativeBrief(campaign).campaignBrief;
       }
-      const [workspace] = await db
-        .select()
-        .from(schema.workspaces)
-        .where(eq(schema.workspaces.id, task.workspaceId))
-        .limit(1);
-      brandProfile = (workspace?.brandProfile ?? brandProfile) as BrandProfile;
     }
-    if (!campaignRow) {
-      return apiError("Campaign not found", "NOT_FOUND", 404);
-    }
+    const contentLocale = resolvePipelineContentLocale(metadata, goal);
 
     const prevAssets = resolvePlatformAssets(existing);
     const previousCaption = prevAssets[platformId]?.caption;
 
-    const campaignContext = provideCampaignAIContextFromCampaign({
-      brandProfile,
-      campaign: campaignRow,
-      vision,
-      strategy,
-      transcript: vision.transcriptSummary ?? null,
-    });
-
     const { asset, usage } = await regeneratePlatformAsset({
-      campaignContext,
       platformId,
       strategy,
       vision,
       campaignName,
+      goal,
+      userNotes,
+      contentLocale,
       previousCaption,
     });
 
@@ -135,31 +118,6 @@ export async function POST(
       .update(schema.tasks)
       .set({ stepProgress: updatedProgress })
       .where(eq(schema.tasks.id, id));
-
-    // Keep creative.copyVariants aligned with the regenerated marketing pack
-    const platforms = (campaignRow.platforms?.length
-      ? campaignRow.platforms
-      : ["tiktok"]) as Platform[];
-    const refreshedVariants = contentPackageToCopyVariants(updatedPackage, strategy, platforms);
-    const creatives = await db
-      .select()
-      .from(schema.creatives)
-      .where(eq(schema.creatives.taskId, id));
-    for (const creative of creatives) {
-      const prior = (creative.copyVariants ?? []) as CopyVariant[];
-      const merged =
-        refreshedVariants.length > 0
-          ? refreshedVariants
-          : prior.map((v) =>
-              v.platform === platformId
-                ? { ...v, body: asset.caption, hook: asset.caption.slice(0, 80) }
-                : v
-            );
-      await db
-        .update(schema.creatives)
-        .set({ copyVariants: merged, updatedAt: new Date() })
-        .where(eq(schema.creatives.id, creative.id));
-    }
 
     return apiSuccess({ contentPackage: updatedPackage, usage });
   } catch (error) {

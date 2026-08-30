@@ -9,14 +9,8 @@ importers:
   .:
     devDependencies:
       '@playwright/test':
-        specifier: ^1.51.0
+        specifier: 1.62.0
         version: 1.62.0
-      '@supabase/ssr':
-        specifier: ^0.5.2
-        version: 0.5.2(@supabase/supabase-js@2.108.2)
-      '@supabase/supabase-js':
-        specifier: ^2.47.10
-        version: 2.108.2
       dotenv:
         specifier: ^16.4.7
         version: 16.6.1

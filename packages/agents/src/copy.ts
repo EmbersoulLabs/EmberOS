@@ -2,7 +2,7 @@ import { callJsonModel } from "./llm";
 import { COPY_VARIANT_COUNT, isChineseText, resolveContentSubject } from "@ceo-agent/shared";
 import { getPlatformSpec, truncateForPlatform } from "@ceo-agent/shared/platform-specs";
 import type {
-  CampaignAIContext,
+  BrandProfile,
   CopyVariant,
   Platform,
   VisionAnalysis,
@@ -16,17 +16,13 @@ import { strategyAudienceSummary, strategyPainPoints } from "@ceo-agent/shared";
 
 const TEMPLATES = ["pain_point", "comparison", "story"] as const;
 
-/**
- * Copy / Copy Mix — AD-001
- * Required: campaignContext, vision (or on context), platform (CopyInput) / mix (CopyMixInput)
- * Optional: campaignName, strategyPlan, hookSet, locale, templates, slotIds, videoAnalysis
- * Consumes: campaignObjective, businessProfile, campaignBrief, strategy
- */
 export interface CopyInput {
-  campaignContext: CampaignAIContext;
-  vision?: VisionAnalysis;
+  vision: VisionAnalysis;
+  brandProfile: BrandProfile;
   platform: Platform;
+  goal: string;
   campaignName?: string;
+  userNotes?: string;
   strategyPlan?: StrategyPlan;
   hookSet?: HookSet;
   locale?: CopyLocale;
@@ -37,20 +33,6 @@ export interface CopyInput {
 
 export interface CopyMixInput extends Omit<CopyInput, "platform" | "locale" | "templates" | "slotIds"> {
   mix: CopyMixSlot[];
-}
-
-function resolveCopyFields(input: CopyInput | CopyMixInput) {
-  const vision = input.vision ?? input.campaignContext.vision;
-  if (!vision) {
-    throw new Error("Copy requires vision on CampaignAIContext");
-  }
-  return {
-    vision,
-    brandProfile: input.campaignContext.businessProfile,
-    goal: input.campaignContext.campaignObjective,
-    userNotes: input.campaignContext.campaignBrief ?? undefined,
-    strategyPlan: input.strategyPlan ?? input.campaignContext.strategy ?? undefined,
-  };
 }
 
 function matchesLocaleText(text: string, locale: CopyLocale): boolean {
@@ -70,13 +52,12 @@ function isCompleteCopy(v: Pick<CopyVariant, "hook" | "body" | "cta">, locale: C
 }
 
 function isWeddingFloristContext(input: CopyInput): boolean {
-  const { vision, goal } = resolveCopyFields(input);
   const blob = [
     input.campaignName,
-    goal,
-    vision.subjects.join(" "),
-    vision.products.map((p) => p.name).join(" "),
-    vision.transcriptSummary,
+    input.goal,
+    input.vision.subjects.join(" "),
+    input.vision.products.map((p) => p.name).join(" "),
+    input.vision.transcriptSummary,
   ]
     .filter(Boolean)
     .join(" ");
@@ -84,10 +65,9 @@ function isWeddingFloristContext(input: CopyInput): boolean {
 }
 
 function resolveTopicZh(input: CopyInput): string {
-  const { vision, goal, userNotes } = resolveCopyFields(input);
-  return resolveContentSubject(vision, {
-    goal,
-    userNotes,
+  return resolveContentSubject(input.vision, {
+    goal: input.goal,
+    userNotes: input.userNotes,
     campaignName: input.campaignName,
     locale: "zh",
   });
@@ -95,10 +75,9 @@ function resolveTopicZh(input: CopyInput): string {
 
 function resolveTopicEn(input: CopyInput): string {
   if (isWeddingFloristContext(input)) return "wedding car florals";
-  const { vision, goal, userNotes } = resolveCopyFields(input);
-  const raw = resolveContentSubject(vision, {
-    goal,
-    userNotes,
+  const raw = resolveContentSubject(input.vision, {
+    goal: input.goal,
+    userNotes: input.userNotes,
     campaignName: input.campaignName,
     locale: "en",
   });
@@ -134,7 +113,7 @@ function englishBodyForTemplate(template: CopyTemplate, topic: string, wedding: 
     };
     return map[template];
   }
-  const visionNote = resolveCopyFields(input).vision.transcriptSummary?.slice(0, 100);
+  const visionNote = input.vision.transcriptSummary?.slice(0, 100);
   const map: Record<CopyTemplate, string> = {
     pain_point: `Struggling with ${topic}? Here is what most people miss — and how to fix it for scroll-stopping results.${visionNote ? ` ${visionNote}` : ""}`,
     comparison: `Side by side: average ${topic} vs a pro approach. Color, layers, and on-camera impact make the difference.`,
@@ -257,16 +236,15 @@ function defaultCta(locale: CopyLocale, goal: string): string {
 }
 
 function buildFallbackVariants(input: CopyInput): CopyVariant[] {
-  const { brandProfile, goal: campaignGoal, strategyPlan } = resolveCopyFields(input);
-  const locale = input.locale ?? (isChineseText(campaignGoal) ? "zh" : "en");
+  const locale = input.locale ?? (isChineseText(input.goal) ? "zh" : "en");
   const templates = input.templates ?? [...TEMPLATES];
   const ids = input.slotIds ?? templates.map((_, i) => (locale === "zh" ? `v-zh-${i + 1}` : `v-en-${i + 1}`));
-  const strategy = strategyPlan;
+  const strategy = input.strategyPlan;
   const wedding = isWeddingFloristContext(input);
 
   if (locale === "zh") {
     const topic = resolveTopicZh(input);
-    const goal = campaignGoal || "种草";
+    const goal = input.goal || "种草";
     const hookTexts =
       input.hookSet?.hooks?.map((h) => h.text) ??
       (strategy
@@ -278,9 +256,9 @@ function buildFallbackVariants(input: CopyInput): CopyVariant[] {
       `${topic}实拍来了，效果比想象更好`,
     ];
     const ctas = [
-      strategy?.ctaStrategy ?? brandProfile.cta ?? "私信获取婚车花艺方案",
-      brandProfile.cta ?? "收藏备用",
-      brandProfile.cta ?? "关注我，看更多案例",
+      strategy?.ctaStrategy ?? input.brandProfile.cta ?? "私信获取婚车花艺方案",
+      input.brandProfile.cta ?? "收藏备用",
+      input.brandProfile.cta ?? "关注我，看更多案例",
     ];
 
     return templates.map((template, i) => ({
@@ -300,8 +278,8 @@ function buildFallbackVariants(input: CopyInput): CopyVariant[] {
   const topic = resolveTopicEn(input);
   const enCta = wedding
     ? "DM us for your wedding car floral plan"
-    : (brandProfile.cta && !isChineseText(brandProfile.cta)
-        ? brandProfile.cta
+    : (input.brandProfile.cta && !isChineseText(input.brandProfile.cta)
+        ? input.brandProfile.cta
         : "Follow for more ideas");
 
   return templates.map((template, i) => ({
@@ -310,7 +288,7 @@ function buildFallbackVariants(input: CopyInput): CopyVariant[] {
     hook: englishHooksForTemplate(template, topic, wedding),
     body: truncateForPlatform(englishBodyForTemplate(template, topic, wedding, input), input.platform, "body"),
     cta: enCta,
-    title: truncateForPlatform(wedding ? "Wedding car florals that photograph beautifully" : `${topic} | ${campaignGoal || "tips"}`, input.platform, "title"),
+    title: truncateForPlatform(wedding ? "Wedding car florals that photograph beautifully" : `${topic} | ${input.goal || "tips"}`, input.platform, "title"),
     tags: englishTags(input.platform, wedding),
     platform: input.platform,
     locale: "en" as const,
@@ -327,8 +305,7 @@ export async function runCopyAgent(input: CopyInput): Promise<{
   recommendedVariantId: string;
   usage: { input: number; output: number; costUsd: number };
 }> {
-  const { vision, brandProfile, goal, userNotes, strategyPlan } = resolveCopyFields(input);
-  const locale = input.locale ?? (isChineseText(goal) ? "zh" : "en");
+  const locale = input.locale ?? (isChineseText(input.goal) ? "zh" : "en");
   const templates = input.templates ?? [...TEMPLATES];
   const count = templates.length || COPY_VARIANT_COUNT;
   const spec = getPlatformSpec(input.platform);
@@ -338,41 +315,41 @@ Generate exactly ${count} distinct variant(s) using templates: ${templates.join(
 ${
   locale === "zh"
     ? "Write ALL copy in natural Chinese (简体中文). Do NOT use English except brand names."
-    : `Write ALL copy in natural English (${brandProfile.locale ?? spec.locale}). Do NOT use any Chinese characters — even if the campaign goal is in Chinese.`
+    : `Write ALL copy in natural English (${input.brandProfile.locale ?? spec.locale}). Do NOT use any Chinese characters — even if the campaign goal is in Chinese.`
 }
-Brand tone: ${brandProfile.tone ?? "engaging"}. Banned: ${(brandProfile.bannedWords ?? []).join(", ") || "none"}.
+Brand tone: ${input.brandProfile.tone ?? "engaging"}. Banned: ${(input.brandProfile.bannedWords ?? []).join(", ") || "none"}.
 Title max ${spec.titleMaxLength} chars. Body max ${spec.bodyMaxLength} chars.
 Structure: hook (0-3s, max 12 words / 16 Chinese chars) → concrete value → CTA.
 The campaignLabel in user JSON is an internal project name — never quote it in hook/body/title/tags.
-${strategyPlan ? `Strategy context (translate into ${locale === "zh" ? "Chinese" : "English"}): goal=${strategyPlan.marketingGoal}; angle=${strategyPlan.marketingAngle}; tone=${strategyPlan.tone}; pains=${strategyPainPoints(strategyPlan).join("; ")}; CTA=${strategyPlan.ctaStrategy}; audience=${strategyAudienceSummary(strategyPlan)}; product=${strategyPlan.product}.` : ""}
+${input.strategyPlan ? `Strategy context (translate into ${locale === "zh" ? "Chinese" : "English"}): goal=${input.strategyPlan.marketingGoal}; angle=${input.strategyPlan.marketingAngle}; tone=${input.strategyPlan.tone}; pains=${strategyPainPoints(input.strategyPlan).join("; ")}; CTA=${input.strategyPlan.ctaStrategy}; audience=${strategyAudienceSummary(input.strategyPlan)}; product=${input.strategyPlan.product}.` : ""}
 ${input.hookSet?.hooks?.length ? `Hook inspiration (translate/adapt to ${locale === "zh" ? "Chinese" : "English"}): ${input.hookSet.hooks.map((h) => `[${h.type}] ${h.text}`).join(" | ")}` : ""}
 Output JSON: { "variants": [{ "id", "template", "hook", "body", "cta", "title", "tags" }] }`;
 
   const user = JSON.stringify({
-    goal,
-    ...(userNotes ? { userNotes } : {}),
-    ...(input.campaignName && !goal?.trim() && !userNotes?.trim()
+    goal: input.goal,
+    ...(input.userNotes ? { userNotes: input.userNotes } : {}),
+    ...(input.campaignName && !input.goal?.trim() && !input.userNotes?.trim()
       ? { campaignLabel: input.campaignName }
       : {}),
     platform: input.platform,
     locale,
     templates,
     variantIds: input.slotIds,
-    strategy: strategyPlan,
+    strategy: input.strategyPlan,
     hooks: input.hookSet?.hooks,
     vision: {
-      subjects: vision.subjects,
-      hooks: vision.hooks,
-      products: vision.products,
-      scenes: vision.scenes,
-      transcript: vision.transcriptSummary,
+      subjects: input.vision.subjects,
+      hooks: input.vision.hooks,
+      products: input.vision.products,
+      scenes: input.vision.scenes,
+      transcript: input.vision.transcriptSummary,
     },
-    brand: brandProfile,
+    brand: input.brandProfile,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });
 
   const { result, usage } = await callJsonModel<unknown>(system, user, "CopyVariants");
-  const parsed = parseCopyVariants(result, input.platform, goal, locale, input.slotIds);
+  const parsed = parseCopyVariants(result, input.platform, input.goal, locale, input.slotIds);
 
   const variantsRaw =
     parsed && parsed.length > 0
@@ -414,16 +391,16 @@ export async function runCopyAgentMix(input: CopyMixInput): Promise<{
 
   for (const slot of input.mix) {
     const { variants, usage } = await runCopyAgent({
-      campaignContext: input.campaignContext,
       vision: input.vision,
+      brandProfile: input.brandProfile,
       platform: slot.platform,
+      goal: input.goal,
       campaignName: input.campaignName,
       strategyPlan: input.strategyPlan,
       hookSet: input.hookSet,
       locale: slot.locale,
       templates: [slot.template],
       slotIds: [slot.id],
-      videoAnalysis: input.videoAnalysis,
     });
 
     const variant = variants[0];
@@ -434,12 +411,7 @@ export async function runCopyAgentMix(input: CopyMixInput): Promise<{
         platform: slot.platform,
         locale: slot.locale,
         template: slot.template,
-        tags: normalizeTags(
-          variant.tags,
-          slot.platform,
-          input.campaignContext.campaignObjective,
-          slot.locale
-        ),
+        tags: normalizeTags(variant.tags, slot.platform, input.goal, slot.locale),
       });
     }
     usageTotal.input += usage.input;

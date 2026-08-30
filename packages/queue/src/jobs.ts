@@ -5,6 +5,7 @@ export const QUEUE_NAMES = {
   RENDER: "render",
   EXPORT: "export",
   PROBE: "probe",
+  PHOTO_SCENE: "photo-scene",
 } as const;
 
 export const AgentJobSchema = z.discriminatedUnion("name", [
@@ -117,6 +118,28 @@ export const ProbeJobSchema = z.object({
   }),
 });
 
+export const PhotoSceneExtractJobSchema = z.object({
+  name: z.literal("photo_scene.extract"),
+  data: z.object({
+    generationId: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    orgId: z.string().uuid(),
+    campaignId: z.string().uuid(),
+  }),
+});
+
+export const PhotoSceneComposeJobSchema = z.object({
+  name: z.literal("photo_scene.compose"),
+  data: z.object({
+    generationId: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    orgId: z.string().uuid(),
+    campaignId: z.string().uuid(),
+  }),
+});
+
 export type RenderJob = z.infer<typeof RenderJobSchema>;
 export type ExportJob = z.infer<typeof ExportJobSchema>;
 export type ProbeJob = z.infer<typeof ProbeJobSchema>;
+export type PhotoSceneExtractJob = z.infer<typeof PhotoSceneExtractJobSchema>;
+export type PhotoSceneComposeJob = z.infer<typeof PhotoSceneComposeJobSchema>;

@@ -182,7 +182,7 @@ describe("AI Story vertical slice (V1)", () => {
       "utf8"
     );
 
-    it("requires authentication and workspace role on all routes", () => {
+    it("requires authentication and canonical AI Story access on all routes", () => {
       for (const source of [
         listRoute,
         storyRoute,
@@ -195,7 +195,7 @@ describe("AI Story vertical slice (V1)", () => {
         screenwriterRoute,
       ]) {
         expect(source).toContain("requireAuth");
-        expect(source).toContain("requireWorkspaceRole");
+        expect(source).toContain("authorizeAiStoryAccess");
       }
     });
 
@@ -260,9 +260,12 @@ describe("AI Story vertical slice (V1)", () => {
   describe("AI polish service", () => {
     it("validates provider output strictly", async () => {
       vi.doMock("../packages/agents/src/llm", () => ({
-        callJsonModel: vi.fn(async () => ({
+        callStructuredJsonModel: vi.fn(async () => ({
           result: { title: "Only title" },
+          providerRequestId: "chatcmpl-malformed",
+          modelVersion: "gpt-4o-mini-2024-07-18",
           usage: { input: 1, output: 1, costUsd: 0 },
+          timings: { providerMs: 10, decodeMs: 1 },
         })),
       }));
 
@@ -274,14 +277,18 @@ describe("AI Story vertical slice (V1)", () => {
       });
       expect(result.ok).toBe(false);
       if (!result.ok) {
-        expect(result.error).toContain("malformed");
+        expect(result.failureCode).toBe("AI_STORY_PLANNING_OUTPUT_CONTRACT_INVALID");
+        expect(result.errorStage).toBe("validation");
+        expect(result.validationIssueCodes).toContain("MISSING_REQUIRED_FIELD");
+        expect(result.accounting?.providerRequestId).toBe("chatcmpl-malformed");
+        expect(result.accounting?.usage.total).toBe(2);
       }
     });
 
     it("returns structured draft for valid provider output", async () => {
       vi.resetModules();
       vi.doMock("../packages/agents/src/llm", () => ({
-        callJsonModel: vi.fn(async () => ({
+        callStructuredJsonModel: vi.fn(async () => ({
           result: {
             title: "Launch",
             summary: "Summary",
@@ -295,7 +302,10 @@ describe("AI Story vertical slice (V1)", () => {
             assetReferences: [],
             warnings: [],
           },
+          providerRequestId: "chatcmpl-valid",
+          modelVersion: "gpt-4o-mini-2024-07-18",
           usage: { input: 10, output: 20, costUsd: 0.01 },
+          timings: { providerMs: 10, decodeMs: 1 },
         })),
       }));
 
@@ -315,8 +325,8 @@ describe("AI Story vertical slice (V1)", () => {
   });
 
   describe("UI — Campaign-owned entry and review states", () => {
-    const workspace = readFileSync(
-      "apps/web/src/components/campaign/CampaignWorkspace.tsx",
+    const dashboard = readFileSync(
+      "apps/web/src/components/campaign/CampaignDashboard.tsx",
       "utf8"
     );
     const createPage = readFileSync(
@@ -328,11 +338,11 @@ describe("AI Story vertical slice (V1)", () => {
       "utf8"
     );
 
-    it("keeps Create Marketing generate action and adds Create Story entry", () => {
-      expect(workspace).toContain("campaign.workspace.generate");
-      expect(workspace).toContain("Create Story");
-      expect(workspace).toContain("/ai-stories/new");
-      expect(workspace).toContain("/ai-stories/");
+    it("keeps the main AI Story entry without restoring the superseded initial Generate action", () => {
+      expect(dashboard).not.toContain("RunCeoButton");
+      expect(dashboard).toContain("Create AI Story");
+      expect(dashboard).toContain("/ai-stories/new");
+      expect(dashboard).toContain("/ai-stories/");
     });
 
     it("create form collects plain-language idea and optional assets", () => {
@@ -342,17 +352,21 @@ describe("AI Story vertical slice (V1)", () => {
       expect(createPage).toContain("/generate");
     });
 
-    it("review page supports edit, approve, and ready_for_animation display", () => {
-      expect(reviewPage).toContain("Approve & freeze");
+    it("review page exposes the product flow and keeps planning behind diagnostics", () => {
+      expect(reviewPage).toContain("Your Story");
+      expect(reviewPage).toContain("AI Polish");
+      expect(reviewPage).toContain("Story Review");
+      expect(reviewPage).toContain("Generate Animation");
       expect(reviewPage).toContain("ready_for_animation");
-      expect(reviewPage).toContain("Ready for Animation");
-      expect(reviewPage).toContain("Save edits");
-      expect(reviewPage).toContain("Generate All Planning");
+      expect(reviewPage).toContain("story-save-state");
+      expect(reviewPage).not.toContain("Save edits");
+      expect(reviewPage).toContain("advanced-planning-diagnostics");
+      expect(reviewPage).toContain("Prepare Animation");
       expect(reviewPage).toContain("Generate Creative Context");
       expect(reviewPage).toContain("Generate Director Thinking");
-      expect(reviewPage).toContain("Rewrite Story");
-      expect(reviewPage).toContain("Animation Package");
-      expect(reviewPage).toContain("READY FOR EXECUTION");
+      expect(reviewPage).toContain("AI Polish Preview");
+      expect(reviewPage).toContain("AnimationPackagePayload");
+      expect(reviewPage).toContain("Generation review ready");
     });
   });
 

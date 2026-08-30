@@ -22,6 +22,16 @@ describe("workspace isolation", () => {
     expect(pathB).toContain(wsB);
     expect(pathA).not.toEqual(pathB);
   });
+
+  it("Photo Scene library objects are workspace-prefixed and isolated", () => {
+    const wsA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const wsB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const pathA = STORAGE_PATHS.library(wsA, "asset-1", "png");
+    const pathB = STORAGE_PATHS.library(wsB, "asset-1", "png");
+    expect(pathA).toBe(`${wsA}/library/asset-1.png`);
+    expect(pathB).toContain(wsB);
+    expect(pathA).not.toEqual(pathB);
+  });
 });
 
 describe("platform specs", () => {

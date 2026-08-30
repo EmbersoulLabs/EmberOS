@@ -3,6 +3,7 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { applyCreativeCopyPatch } from "@/lib/creative-copy-patch";
+import { withSignedCreativeArtifacts } from "@/lib/video-artifact-delivery";
 
 export async function GET(
   _request: Request,
@@ -41,7 +42,7 @@ export async function GET(
           .orderBy(asc(schema.creatives.createdAt))
       : [];
 
-    return apiSuccess({ creative, campaign, reviews, siblingCreatives, clipIndex: siblingCreatives.findIndex((c) => c.id === id) });
+    return apiSuccess({ creative: await withSignedCreativeArtifacts(creative), campaign, reviews, siblingCreatives, clipIndex: siblingCreatives.findIndex((c) => c.id === id) });
   } catch (error) {
     return handleApiError(error);
   }
@@ -72,7 +73,7 @@ export async function PATCH(
     }
 
     return apiSuccess({
-      creative: result.creative,
+      creative: result.creative ? await withSignedCreativeArtifacts(result.creative) : result.creative,
       rerenderQueued: result.rerenderQueued ?? false,
     });
   } catch (error) {

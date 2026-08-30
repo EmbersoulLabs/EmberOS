@@ -1,15 +1,10 @@
-import { eq, and, desc, asc } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole, getCampaignAssets } from "@ceo-agent/db";
+import { eq, and, desc, asc, getTableColumns, isNull } from "drizzle-orm";
+import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { isCampaignDeletable } from "@/lib/campaigns";
+import { withSignedCreativeArtifacts, withSignedTaskExportProgress } from "@/lib/video-artifact-delivery";
 import { deleteCampaignCascade } from "@/lib/campaign-delete";
-import {
-  isCampaignObjective,
-  isCampaignLanguageCode,
-  CAMPAIGN_OBJECTIVE_LABELS,
-  CampaignWorkspacePatchSchema,
-} from "@ceo-agent/shared";
 
 export async function GET(
   _request: Request,
@@ -29,20 +24,48 @@ export async function GET(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "client_viewer");
 
-    const assets = await getCampaignAssets(db, id, campaign.workspaceId);
+    const legacyAssets = await db
+      .select()
+      .from(schema.assets)
+      .where(
+        and(
+          eq(schema.assets.campaignId, id),
+          eq(schema.assets.workspaceId, campaign.workspaceId),
+          isNull(schema.assets.deletedAt)
+        )
+      );
 
-    const storyRefs = await db
+    const referencedAssets = await db
+      .select(getTableColumns(schema.assets))
+      .from(schema.campaignAssetRefs)
+      .innerJoin(schema.assets, eq(schema.assets.id, schema.campaignAssetRefs.assetId))
+      .where(
+        and(
+          eq(schema.campaignAssetRefs.campaignId, id),
+          eq(schema.assets.workspaceId, campaign.workspaceId),
+          isNull(schema.assets.deletedAt)
+        )
+      )
+      .orderBy(asc(schema.campaignAssetRefs.sortOrder));
+
+    const assets = [...referencedAssets, ...legacyAssets].filter(
+      (asset, index, rows) => rows.findIndex((candidate) => candidate.id === asset.id) === index
+    );
+
+    const assetStories = await db
       .select({
-        storyId: schema.campaignStoryRefs.storyId,
+        id: schema.stories.id,
         name: schema.stories.name,
         status: schema.stories.status,
+        coverAssetId: schema.stories.coverAssetId,
       })
       .from(schema.campaignStoryRefs)
       .innerJoin(schema.stories, eq(schema.stories.id, schema.campaignStoryRefs.storyId))
       .where(
         and(
           eq(schema.campaignStoryRefs.campaignId, id),
-          eq(schema.stories.status, "ready")
+          eq(schema.stories.workspaceId, campaign.workspaceId),
+          isNull(schema.stories.deletedAt)
         )
       );
 
@@ -52,15 +75,6 @@ export async function GET(
       .where(and(eq(schema.tasks.campaignId, id), eq(schema.tasks.workspaceId, campaign.workspaceId)))
       .orderBy(desc(schema.tasks.createdAt))
       .limit(1);
-
-    const [creative] = task
-      ? await db
-          .select()
-          .from(schema.creatives)
-          .where(eq(schema.creatives.taskId, task.id))
-          .orderBy(asc(schema.creatives.createdAt))
-          .limit(1)
-      : [null];
 
     const creatives = task
       ? await db
@@ -76,59 +90,26 @@ export async function GET(
     if (task?.status === "failed" && campaign.status === "processing") {
       const [synced] = await db
         .update(schema.campaigns)
-        .set({
-          status: "failed",
-          generateStatus: "failed",
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.campaigns.id, id))
-        .returning();
-      campaignRecord = synced ?? campaign;
-    } else if (
-      task?.status === "completed" &&
-      campaign.generateStatus === "processing"
-    ) {
-      const stepProgress = (task.stepProgress ?? {}) as Record<
-        string,
-        { status?: string; output?: unknown }
-      >;
-      const hasMarketingPack = stepProgress.content_generate?.status === "completed";
-      const [synced] = await db
-        .update(schema.campaigns)
-        .set({
-          generateStatus: "completed",
-          generateSummary: {
-            ...((campaign.generateSummary as Record<string, unknown> | null) ?? {}),
-            marketingPackageGenerated: hasMarketingPack,
-            completedAt: new Date().toISOString(),
-            taskId: task.id,
-          },
-          updatedAt: new Date(),
-        })
-        .where(eq(schema.campaigns.id, id))
-        .returning();
-      campaignRecord = synced ?? campaign;
-    } else if (
-      task?.status === "failed" &&
-      campaign.generateStatus === "processing"
-    ) {
-      const [synced] = await db
-        .update(schema.campaigns)
-        .set({ generateStatus: "failed", updatedAt: new Date() })
+        .set({ status: "failed", updatedAt: new Date() })
         .where(eq(schema.campaigns.id, id))
         .returning();
       campaignRecord = synced ?? campaign;
     }
 
+    const deliveredCreatives = await Promise.all(creatives.map((item) => withSignedCreativeArtifacts(item)));
+    const deliveredProgress = task
+      ? await withSignedTaskExportProgress(
+          task.stepProgress as Record<string, unknown> | null,
+          { taskId: task.id, workspaceId: task.workspaceId, campaignId: task.campaignId }
+        )
+      : null;
     return apiSuccess({
       campaign: campaignRecord,
       assets,
-      stories: storyRefs,
-      mediaAnalysisMode:
-        ((campaign.metadata ?? {}) as Record<string, unknown>).mediaAnalysisMode ?? null,
-      task: task ?? null,
-      creative: creative ?? null,
-      creatives,
+      assetStories,
+      task: task ? { ...task, stepProgress: deliveredProgress } : null,
+      creative: deliveredCreatives[0] ?? null,
+      creatives: deliveredCreatives,
       hasVideoAsset,
       clipCount: creatives.length,
       canDelete: isCampaignDeletable(
@@ -161,68 +142,12 @@ export async function PATCH(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
-    const parsed = CampaignWorkspacePatchSchema.safeParse(body);
-    if (!parsed.success) {
-      return apiError("Invalid campaign update", "VALIDATION_ERROR", 400);
-    }
-    const patch = parsed.data;
-
-    const nextObjective = patch.objective ?? campaign.objective;
-    const nextCustom =
-      patch.objectiveCustom !== undefined
-        ? patch.objectiveCustom
-        : campaign.objectiveCustom;
-
-    if (patch.objective != null && !isCampaignObjective(patch.objective)) {
-      return apiError("Invalid objective", "VALIDATION_ERROR", 400);
-    }
-    if (nextObjective === "other" && !String(nextCustom ?? "").trim()) {
-      return apiError(
-        "Custom objective is required when Other is selected",
-        "VALIDATION_ERROR",
-        400
-      );
-    }
-
-    for (const key of [
-      "outputLanguage",
-      "subtitleLanguage",
-      "ctaLanguage",
-      "hashtagLanguage",
-    ] as const) {
-      const value = patch[key];
-      if (value != null && !isCampaignLanguageCode(value)) {
-        return apiError(`Invalid ${key}`, "VALIDATION_ERROR", 400);
-      }
-    }
-
-    const objectiveLabel = isCampaignObjective(nextObjective)
-      ? nextObjective === "other"
-        ? String(nextCustom).trim()
-        : CAMPAIGN_OBJECTIVE_LABELS[nextObjective]
-      : campaign.goal;
-
     const [updated] = await db
       .update(schema.campaigns)
       .set({
-        name: patch.name ?? campaign.name,
-        goal: objectiveLabel ?? campaign.goal,
-        objective: (nextObjective as string | null) ?? campaign.objective,
-        objectiveCustom:
-          nextObjective === "other" ? String(nextCustom).trim() : null,
-        targetAudienceOverride:
-          patch.targetAudienceOverride !== undefined
-            ? patch.targetAudienceOverride
-            : campaign.targetAudienceOverride,
-        campaignBrief:
-          patch.campaignBrief !== undefined
-            ? patch.campaignBrief
-            : campaign.campaignBrief,
-        outputLanguage: patch.outputLanguage ?? campaign.outputLanguage,
-        subtitleLanguage: patch.subtitleLanguage ?? campaign.subtitleLanguage,
-        ctaLanguage: patch.ctaLanguage ?? campaign.ctaLanguage,
-        hashtagLanguage: patch.hashtagLanguage ?? campaign.hashtagLanguage,
-        platforms: patch.platforms ?? campaign.platforms,
+        name: body.name ?? campaign.name,
+        goal: body.goal ?? campaign.goal,
+        platforms: body.platforms ?? campaign.platforms,
         updatedAt: new Date(),
       })
       .where(eq(schema.campaigns.id, id))

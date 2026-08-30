@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "codex/**"]
   pull_request:
 
 concurrency:
@@ -10,6 +10,126 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  db-integration-authority:
+    name: Ephemeral PostgreSQL integration authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: emberos_test
+          POSTGRES_USER: emberos
+          POSTGRES_PASSWORD: emberos-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U emberos -d emberos_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      EMBEROS_TEST_DB_ENVIRONMENT: test
+      RUN_DB_INTEGRATION_TESTS: "1"
+      DB_POOL_MAX: "1"
+      DATABASE_URL: postgresql://emberos:emberos-ci-only@127.0.0.1:5432/emberos_test
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Enforce hybrid migration intent and protected-domain guards
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          base_revision="${PR_BASE_SHA:-HEAD^}"
+          mapfile -t intents < <(git diff --name-only "$base_revision"...HEAD -- '.migration-intents/*.json')
+          if [ "${#intents[@]}" -eq 0 ]; then
+            if [[ "${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}" == wave* ]]; then
+              echo "Wave branches require exactly one migration intent."
+              exit 1
+            fi
+            echo "No Wave migration intent changed; guard not applicable."
+          elif [ "${#intents[@]}" -ne 1 ]; then
+            echo "Exactly one migration intent is required; found ${#intents[@]}."
+            exit 1
+          else
+            pnpm verify:hybrid-migration -- --base "$base_revision" --head HEAD --intent "${intents[0]}"
+          fi
+
+      - name: Verify test database mutation guard
+        run: pnpm exec vitest run --config vitest.config.ts tests/test-db-authority-guard.test.ts
+
+      - name: Apply canonical Drizzle schema
+        run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
+
+      - name: Apply differentiated human retry contract
+        run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
+
+      - name: Detect masked SQL migration defects from predecessor schema
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-post-generation-qc-migration-predecessor.integration.test.ts
+
+      - name: Certify ephemeral PostgreSQL behavior
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
+
+      - name: Certify AI Story Writer Outline PostgreSQL authority
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-outline-authority.integration.test.ts
+
+      - name: Certify AI Story Script Scene PostgreSQL authority
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-script-authority.integration.test.ts
+
+      - name: Certify immutable Script Director handoff PostgreSQL authority
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-script-director-handoff.integration.test.ts
+
+      - name: Certify Campaign Character authority and continuity on PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-character-authority.integration.test.ts
+
+      - name: Certify Story Supporting Cast scope and promotion on PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-cast-scope.integration.test.ts
+
+      - name: Certify canonical Scene and Location continuity on PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-scene-authority.integration.test.ts
+
+      - name: Certify compiled request and Provider Attempt PostgreSQL authority
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-provider-runtime.integration.test.ts
+
+      - name: Certify Post-Generation QC evidence PostgreSQL authority
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-post-generation-qc.integration.test.ts
+
+      - name: Certify Wave 1 Asset Library PostgreSQL behavior
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/asset-library-wave1.integration.test.ts
+
+      - name: Certify Wave 2 Business Profile PostgreSQL behavior
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/business-profile-wave2.integration.test.ts
+
+      - name: Certify Wave 3 Create Campaign PostgreSQL behavior
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/create-campaign-wave3.integration.test.ts
+
+      - name: Certify generated Scene approval on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/sprint-3-phase-3-pr35-finalizer.integration.test.ts
+          -t "successful finalization and approval certification|differentiated human retry contract certification"
+
   verify:
     name: Test, typecheck, build
     runs-on: ubuntu-latest
@@ -44,6 +164,27 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: Install browser for auth security E2E
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Auth browser E2E
+        run: pnpm test:auth-browser
+
+      - name: Wave 1 Asset Library browser E2E
+        run: pnpm exec playwright test e2e/asset-library-wave1.spec.ts
+
+      - name: Wave 2 Business Profile browser E2E
+        run: pnpm exec playwright test e2e/business-profile-wave2.spec.ts
+
+      - name: Wave 3 Create Campaign browser E2E
+        run: pnpm exec playwright test e2e/create-campaign-wave3.spec.ts
+
+      - name: Wave 4 Campaign Workspace browser E2E
+        run: pnpm exec playwright test e2e/campaign-workspace-wave4.spec.ts
+
+      - name: Wave 5 AI Story normal-user UI browser E2E
+        run: pnpm exec playwright test e2e/ai-story-ui-wave5.spec.ts
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -55,6 +196,29 @@ jobs:
     runs-on: ubuntu-latest
     needs: verify
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
 
     env:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
@@ -85,16 +249,20 @@ jobs:
 
       - name: Start web and smoke /api/health
         run: |
-          pnpm --filter @ceo-agent/web exec next start -p 3000 &
+          setsid pnpm --filter @ceo-agent/web exec next start -p 3000 &
+          web_pid=$!
+          trap 'kill -- -"$web_pid" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:3000/api/health > /dev/null; then
+            if curl --connect-timeout 2 --max-time 5 -sf http://localhost:3000/api/health > /dev/null; then
               echo "Server ready"
               break
             fi
             sleep 2
           done
-          curl -sf http://localhost:3000/api/health | tee /tmp/health.json
+          curl --connect-timeout 2 --max-time 15 -sf http://localhost:3000/api/health | tee /tmp/health.json
           pnpm smoke:prod -- --url http://localhost:3000
+          kill -- -"$web_pid" 2>/dev/null || true
+          wait "$web_pid" 2>/dev/null || true
 
   e2e-production:
     name: E2E pipeline (optional)

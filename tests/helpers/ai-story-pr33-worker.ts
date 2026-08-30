@@ -245,6 +245,7 @@ export async function buildPr33ValidatedBundle(
 
 export class InMemoryWorkerRuntimeRepository implements WorkerRuntimeRepository {
   readonly results = new Map<string, WorkerExecutionResult>();
+  readonly observations = new Map<string, WorkerExecutionResult[]>();
   loadCalls = 0;
   bundle: WorkerValidatedBundle | null = null;
   loadError: WorkerRuntimeError | null = null;
@@ -269,10 +270,63 @@ export class InMemoryWorkerRuntimeRepository implements WorkerRuntimeRepository 
     return this.results.get(dispatchId) ?? null;
   }
 
+  async getLatestWorkerAttemptObservationByDispatchId(
+    dispatchId: string
+  ): Promise<WorkerExecutionResult | null> {
+    const list = this.observations.get(dispatchId) ?? [];
+    return list.length > 0 ? list[list.length - 1]! : null;
+  }
+
+  async appendWorkerAttemptObservation(
+    result: WorkerExecutionResult
+  ): Promise<{ result: WorkerExecutionResult; converged: boolean }> {
+    const parsed = WorkerExecutionResultSchema.parse(result);
+    if (
+      parsed.workerState === "TERMINAL_SUCCESS" ||
+      parsed.workerState === "TERMINAL_FAILURE" ||
+      parsed.workerState === "NOT_ACCEPTED" ||
+      parsed.canonicalProviderState === "SUCCEEDED" ||
+      parsed.canonicalProviderState === "FAILED" ||
+      parsed.canonicalProviderState === "REJECTED" ||
+      parsed.canonicalProviderState === "TIMED_OUT" ||
+      parsed.acceptanceClassification === "NOT_ACCEPTED"
+    ) {
+      throw new WorkerRuntimeError(
+        "WORKER_ATTEMPT_CONFLICT",
+        "Terminal Worker evidence must use acceptOrReturnWorkerExecutionResult"
+      );
+    }
+    const list = this.observations.get(parsed.dispatchId) ?? [];
+    const existing = list.find(
+      (row) => row.deterministicIntegrityHash === parsed.deterministicIntegrityHash
+    );
+    if (existing) return { result: existing, converged: true };
+    list.push(parsed);
+    this.observations.set(parsed.dispatchId, list);
+    return { result: parsed, converged: false };
+  }
+
   async acceptOrReturnWorkerExecutionResult(
     result: WorkerExecutionResult
   ): Promise<{ result: WorkerExecutionResult; converged: boolean }> {
     const parsed = WorkerExecutionResultSchema.parse(result);
+    if (
+      !(
+        parsed.workerState === "TERMINAL_SUCCESS" ||
+        parsed.workerState === "TERMINAL_FAILURE" ||
+        parsed.workerState === "NOT_ACCEPTED" ||
+        parsed.canonicalProviderState === "SUCCEEDED" ||
+        parsed.canonicalProviderState === "FAILED" ||
+        parsed.canonicalProviderState === "REJECTED" ||
+        parsed.canonicalProviderState === "TIMED_OUT" ||
+        parsed.acceptanceClassification === "NOT_ACCEPTED"
+      )
+    ) {
+      throw new WorkerRuntimeError(
+        "WORKER_ATTEMPT_CONFLICT",
+        "Non-terminal Worker outcomes are observations, not immutable WorkerExecutionResult"
+      );
+    }
     const existing = this.results.get(parsed.dispatchId);
     if (existing) {
       if (existing.deterministicIntegrityHash !== parsed.deterministicIntegrityHash) {

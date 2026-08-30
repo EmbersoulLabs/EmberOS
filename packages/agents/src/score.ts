@@ -6,7 +6,6 @@ import {
 } from "@ceo-agent/shared";
 import {
   MarketingScoreSchema,
-  type CampaignAIContext,
   type CopyVariant,
   type EditPlan,
   type MarketingScore,
@@ -16,33 +15,15 @@ import {
   type Platform,
 } from "@ceo-agent/shared";
 
-/**
- * Marketing Score — AD-001
- * Required: campaignContext, hookSet, copyVariants
- * Optional: strategy/vision/platforms from context; editPlan, selectedHookId, videoAnalysis
- */
 export interface ScoreInput {
-  campaignContext: CampaignAIContext;
-  strategy?: StrategyPlan;
+  strategy: StrategyPlan;
   hookSet: HookSet;
-  vision?: VisionAnalysis;
+  vision: VisionAnalysis;
   copyVariants: CopyVariant[];
   editPlan: EditPlan | null;
-  platforms?: Platform[];
+  platforms: Platform[];
   selectedHookId?: string;
   videoAnalysis?: string | null;
-}
-
-function resolveScoreFields(input: ScoreInput) {
-  const strategy = input.strategy ?? input.campaignContext.strategy ?? null;
-  const vision = input.vision ?? input.campaignContext.vision ?? null;
-  if (!strategy || !vision) {
-    throw new Error("Marketing Score requires strategy and vision on CampaignAIContext");
-  }
-  const platforms = (input.platforms?.length
-    ? input.platforms
-    : input.campaignContext.publishingPlatforms) as Platform[];
-  return { strategy, vision, platforms };
 }
 
 const MARKETING_SCORE_SCHEMA_HINT = `MarketingScore JSON object:
@@ -127,7 +108,6 @@ function normalizeLlmScore(raw: unknown): MarketingScore | null {
 }
 
 function buildFallbackScore(input: ScoreInput): MarketingScore {
-  const { strategy: _strategy, vision, platforms } = resolveScoreFields(input);
   const selectedHook =
     input.hookSet.hooks.find((h) => h.id === input.selectedHookId) ??
     input.hookSet.hooks.find((h) => h.id === input.hookSet.recommendedHookId) ??
@@ -136,13 +116,15 @@ function buildFallbackScore(input: ScoreInput): MarketingScore {
 
   const hookScore = selectedHook?.text.length >= 8 && selectedHook.text.length <= 40 ? 78 : 65;
   let visualScore =
-    vision.scenes.length >= 2 && (vision.confidence ?? 0.7) >= 0.5 ? 80 : 68;
-  if (isTemplatedVisionFallback(vision) || !hasSubstantiveVision(vision)) {
+    input.vision.scenes.length >= 2 && (input.vision.confidence ?? 0.7) >= 0.5 ? 80 : 68;
+  if (isTemplatedVisionFallback(input.vision) || !hasSubstantiveVision(input.vision)) {
     visualScore = 42;
   }
   const copyScore = primaryCopy?.hook && primaryCopy?.body && primaryCopy?.cta ? 75 : 60;
   const ctaScore = primaryCopy?.cta && primaryCopy.cta.length >= 4 ? 72 : 58;
-  const platformFitScore = input.copyVariants.some((v) => platforms.includes(v.platform))
+  const platformFitScore = input.copyVariants.some((v) =>
+    input.platforms.includes(v.platform)
+  )
     ? 76
     : 62;
 
@@ -177,7 +159,6 @@ export async function runScoreAgent(input: ScoreInput): Promise<{
   score: MarketingScore;
   usage: { input: number; output: number; costUsd: number };
 }> {
-  const { strategy, vision, platforms } = resolveScoreFields(input);
   const system = `You are the Marketing Score Agent for EmberOS.
 Score the creative 0-100 on: hookScore, visualScore, copyScore, ctaScore, platformFitScore.
 Compute overallScore as weighted average (hook 25%, visual 20%, copy 25%, cta 15%, platform 15%).
@@ -185,14 +166,14 @@ Provide 2-5 actionable improvements in Chinese if content is Chinese, else Engli
 Output JSON matching MarketingScore schema.`;
 
   const user = JSON.stringify({
-    strategy,
+    strategy: input.strategy,
     hooks: input.hookSet,
-    vision,
+    vision: input.vision,
     copyVariants: input.copyVariants,
     editPlan: input.editPlan
       ? { duration: input.editPlan.targetDurationSec, subtitles: input.editPlan.subtitles?.length }
       : null,
-    platforms,
+    platforms: input.platforms,
     selectedHookId: input.selectedHookId,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
   });
@@ -217,31 +198,18 @@ Output JSON matching MarketingScore schema.`;
   return { score: buildFallbackScore(input), usage };
 }
 
-/**
- * Auto Clip Score — AD-001
- * Required: campaignContext, copyVariants
- * Optional: vision, editPlan, platforms
- */
+/** Score auto-clip output without full agency strategy/hook steps. */
 export async function runAutoClipScoreAgent(input: {
-  campaignContext: CampaignAIContext;
-  vision?: VisionAnalysis;
+  vision: VisionAnalysis;
   copyVariants: CopyVariant[];
   editPlan: EditPlan | null;
-  platforms?: Platform[];
+  platforms: Platform[];
 }): Promise<{
   score: MarketingScore;
   usage: { input: number; output: number; costUsd: number };
 }> {
-  const vision = input.vision ?? input.campaignContext.vision;
-  if (!vision) {
-    throw new Error("Auto Clip Score requires vision on CampaignAIContext");
-  }
-  const platforms = (input.platforms?.length
-    ? input.platforms
-    : input.campaignContext.publishingPlatforms) as Platform[];
-
   const hookSet: HookSet = {
-    hooks: vision.hooks.slice(0, 4).map((text, i) => ({
+    hooks: input.vision.hooks.slice(0, 4).map((text, i) => ({
       id: `auto-${i}`,
       type: "curiosity" as const,
       text: text.slice(0, 80),
@@ -253,36 +221,30 @@ export async function runAutoClipScoreAgent(input: {
   }
 
   const primary = input.copyVariants[0];
-  const strategy: StrategyPlan =
-    input.campaignContext.strategy ?? {
-      industry: "general",
-      businessType: "Local business",
-      product: vision.products[0]?.name ?? "Content",
-      marketingGoal: "Brand Awareness",
-      marketingAngle: vision.hooks[0] ?? primary?.hook ?? "Product highlight",
-      brandPersonality: [],
-      tone: "Conversational",
-      videoStyle: "Product Showcase",
-      audience: { painPoints: [], interests: [] },
-      customerJourney: "Awareness",
-      platformPriority: platforms,
-      ctaStrategy: primary?.cta ?? "Take action",
-      keywords: [],
-      hashtags: { industry: [], local: [], trending: [], seo: [] },
-      confidence: 0.7,
-    };
+  const strategy: StrategyPlan = {
+    industry: "general",
+    businessType: "Local business",
+    product: input.vision.products[0]?.name ?? "Content",
+    marketingGoal: "Brand Awareness",
+    marketingAngle: input.vision.hooks[0] ?? primary?.hook ?? "Product highlight",
+    brandPersonality: [],
+    tone: "Conversational",
+    videoStyle: "Product Showcase",
+    audience: { painPoints: [], interests: [] },
+    customerJourney: "Awareness",
+    platformPriority: input.platforms,
+    ctaStrategy: primary?.cta ?? "Take action",
+    keywords: [],
+    hashtags: { industry: [], local: [], trending: [], seo: [] },
+    confidence: 0.7,
+  };
 
   return runScoreAgent({
-    campaignContext: {
-      ...input.campaignContext,
-      strategy,
-      vision,
-    },
     strategy,
     hookSet,
-    vision,
+    vision: input.vision,
     copyVariants: input.copyVariants,
     editPlan: input.editPlan,
-    platforms,
+    platforms: input.platforms,
   });
 }

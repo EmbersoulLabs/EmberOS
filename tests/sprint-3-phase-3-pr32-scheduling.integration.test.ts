@@ -118,6 +118,10 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
       "../packages/db/sql/ai-story-scene-scheduling-v1.sql",
       "../packages/db/sql/ai-story-scene-routing-router-version-v1.sql",
       "../packages/db/sql/ai-story-scene-scheduling-rls-v1.sql",
+      "../packages/db/sql/ai-story-staged-release-v1.sql",
+      "../packages/db/sql/commercial-persistence-v1.sql",
+      "../packages/db/sql/credits-settlement-v1.sql",
+      "../packages/db/sql/commercial-authorization-v1.sql",
     ]) {
       await applySqlFile(sql, relative);
     }
@@ -203,6 +207,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
       sceneExecutionId,
       runtimeAuthorizationId:
         prepared.acceptedAuthorization.runtimeAuthorizationId,
+      commercialAuthorizationId: prepared.commercialAuthorizationId,
       actorUserId: PR32_USER_A,
     });
 
@@ -273,6 +278,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
       sceneExecutionId: prepared.sceneExecutionIds[0]!,
       runtimeAuthorizationId:
         prepared.acceptedAuthorization.runtimeAuthorizationId,
+      commercialAuthorizationId: prepared.commercialAuthorizationId,
       actorUserId: PR32_USER_A,
     };
 
@@ -302,6 +308,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
           sceneExecutionId,
           runtimeAuthorizationId:
             prepared.acceptedAuthorization.runtimeAuthorizationId,
+          commercialAuthorizationId: prepared.commercialAuthorizationId,
           actorUserId: PR32_USER_A,
         })
       )
@@ -328,6 +335,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
       sceneExecutionId,
       runtimeAuthorizationId:
         prepared.acceptedAuthorization.runtimeAuthorizationId,
+      commercialAuthorizationId: prepared.commercialAuthorizationId,
       router: new FixedSeedanceRouter({
         registrySnapshotHash:
           "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -346,6 +354,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
         sceneExecutionId,
         runtimeAuthorizationId:
           prepared.acceptedAuthorization.runtimeAuthorizationId,
+        commercialAuthorizationId: prepared.commercialAuthorizationId,
         actorUserId: PR32_USER_A,
       })
     ).rejects.toMatchObject({ code: "ROUTING_DECISION_CONFLICT" });
@@ -365,6 +374,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
         sceneExecutionId: prepared.sceneExecutionIds[0]!,
         runtimeAuthorizationId:
           prepared.issuedAuthorization.runtimeAuthorizationId,
+        commercialAuthorizationId: prepared.commercialAuthorizationId,
         actorUserId: PR32_USER_A,
       })
     ).rejects.toMatchObject({ code: "RUNTIME_AUTHORIZATION_REQUIRED" });
@@ -411,6 +421,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
       sceneExecutionId: prepared.sceneExecutionIds[0]!,
       runtimeAuthorizationId:
         prepared.acceptedAuthorization.runtimeAuthorizationId,
+      commercialAuthorizationId: prepared.commercialAuthorizationId,
       actorUserId: PR32_USER_A,
     });
 

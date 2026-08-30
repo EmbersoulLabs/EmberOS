@@ -1,8 +1,7 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   getBusinessProfileByWorkspace,
   getDb,
-  requireWorkspaceRole,
   schema,
 } from "@ceo-agent/db";
 import { rewriteAiStoryDraft } from "@ceo-agent/agents";
@@ -15,6 +14,11 @@ import {
 import { z } from "zod";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
+import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
+import {
+  assetLabelFromProductionRow,
+  campaignPlanningFields,
+} from "@/lib/ai-story-production-compat";
 import {
   createAiStoryVersion,
   loadCampaignAiStory,
@@ -24,6 +28,8 @@ import { AiStoryStructuredDraftSchema } from "@ceo-agent/shared";
 
 const BodySchema = z.object({
   rewriteBrief: z.string().trim().max(4000).optional(),
+  previewOnly: z.boolean().optional().default(false),
+  structuredContent: AiStoryStructuredDraftSchema.optional(),
 });
 
 export async function POST(
@@ -50,7 +56,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
@@ -63,14 +69,16 @@ export async function POST(
       return apiError("Story cannot be rewritten in its current state", "VALIDATION_ERROR", 409);
     }
 
-    await setAiStoryStatus(db, storyId, status, "generating");
+    if (!body.data.previewOnly) {
+      await setAiStoryStatus(db, storyId, status, "generating");
+    }
 
     const profileRow = await getBusinessProfileByWorkspace(campaign.workspaceId);
     const profile = profileRow
       ? normalizeBusinessProfileRecord(profileRow as Record<string, unknown>)
       : null;
     const completion = profile ? assessBusinessProfileCompletion(profile) : null;
-    const draft = AiStoryStructuredDraftSchema.parse(
+    const draft = body.data.structuredContent ?? AiStoryStructuredDraftSchema.parse(
       loaded.currentVersion.structuredContent
     );
     const assetIds = loaded.assetLinks.map((link) => link.assetId);
@@ -80,36 +88,24 @@ export async function POST(
         : (
             await db
               .select({
-                displayName: schema.assets.displayName,
-                originalFilename: schema.assets.originalFilename,
+                id: schema.assets.id,
+                storagePath: schema.assets.storagePath,
+                metadata: schema.assets.metadata,
               })
               .from(schema.assets)
               .where(
                 and(
                   eq(schema.assets.workspaceId, campaign.workspaceId),
-                  inArray(schema.assets.id, assetIds),
-                  isNull(schema.assets.deletedAt)
+                  inArray(schema.assets.id, assetIds)
                 )
               )
-          ).map(
-            (asset) =>
-              asset.displayName?.trim() ||
-              asset.originalFilename?.trim() ||
-              "asset"
-          );
+          ).map((asset) => assetLabelFromProductionRow(asset));
 
     const rewritten = await rewriteAiStoryDraft({
       draft,
       originalIdea: loaded.story.originalIdea,
       rewriteBrief: body.data.rewriteBrief,
-      campaign: {
-        name: campaign.name,
-        objective: campaign.objective,
-        objectiveCustom: campaign.objectiveCustom,
-        targetAudienceOverride: campaign.targetAudienceOverride,
-        campaignBrief: campaign.campaignBrief,
-        goal: campaign.goal,
-      },
+      campaign: campaignPlanningFields(campaign),
       brand: profile
         ? {
             brandName: profile.companyName,
@@ -124,7 +120,9 @@ export async function POST(
     });
 
     if (!rewritten.ok) {
-      await setAiStoryStatus(db, storyId, "generating", "failed");
+      if (!body.data.previewOnly) {
+        await setAiStoryStatus(db, storyId, "generating", "failed");
+      }
       return apiError(rewritten.error, "AI_GENERATION_FAILED", 502);
     }
 
@@ -138,6 +136,15 @@ export async function POST(
         ...rewritten.draft.warnings,
       ],
     };
+
+    if (body.data.previewOnly) {
+      return apiSuccess({
+        storyId,
+        status,
+        previewOnly: true,
+        draft: nextDraft,
+      });
+    }
 
     const version = await createAiStoryVersion(db, {
       storyId,

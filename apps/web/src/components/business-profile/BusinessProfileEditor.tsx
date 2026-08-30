@@ -22,12 +22,14 @@ import { TagChipInput } from "./TagChipInput";
 import { BusinessHoursEditor } from "./BusinessHoursEditor";
 import { ProfileCard } from "./ProfileCard";
 import { BusinessProfileAiPanel } from "./BusinessProfileAiPanel";
-import { PublishingPlatformMultiSelect } from "@/components/campaign/PublishingPlatformMultiSelect";
+import { DefaultPublishingPlatformSelector } from "./DefaultPublishingPlatformSelector";
 import {
   buildBusinessProfilePatch,
+  canApplyBusinessProfileSaveResponse,
   extractApiWarnings,
   profileToFormValues,
   validateBusinessProfilePatch,
+  type BusinessProfileSaveStatus,
   type BusinessProfileApiWarning,
   type BusinessProfileFormValues,
 } from "@/lib/business-profile-form";
@@ -88,8 +90,6 @@ const TIMEZONE_OPTIONS = [
   "America/Los_Angeles",
   "UTC",
 ];
-
-type SaveStatus = "idle" | "saving" | "saved" | "failed" | "conflict" | "invalid";
 
 const FIELD_I18N: Record<BusinessProfileRequiredField, TranslationKey> = {
   companyName: "businessProfile.field.companyName",
@@ -188,7 +188,7 @@ export function BusinessProfileEditor({
   const { t, locale } = useI18n();
   const [values, setValues] = useState(() => profileToFormValues(initialProfile));
   const [version, setVersion] = useState(initialProfile.version);
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [saveStatus, setSaveStatus] = useState<BusinessProfileSaveStatus>("idle");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [apiWarnings, setApiWarnings] = useState(initialWarnings);
   const [retryToken, setRetryToken] = useState(0);
@@ -214,18 +214,23 @@ export function BusinessProfileEditor({
   const versionRef = useRef(version);
   versionRef.current = version;
   const baselineRef = useRef(profileToFormValues(initialProfile));
+  const editRevisionRef = useRef(0);
+  const activeSaveRef = useRef(false);
+  const activeSaveEditRevisionRef = useRef(0);
+  const queuedSaveRef = useRef(false);
+  const requestSequenceRef = useRef(0);
+  const latestResponseRef = useRef(0);
+  const lastAttemptedEditRevisionRef = useRef(-1);
+  const persistRef = useRef<() => Promise<void>>(async () => undefined);
 
   const completion = useMemo(() => completionPreview(values), [values]);
   const isDirty = useMemo(() => {
-    const payload = buildBusinessProfilePatch(
-      values,
-      version,
-      locale,
-      baselineRef.current
+    const parsed = validateBusinessProfilePatch(
+      buildBusinessProfilePatch(values, version, locale, baselineRef.current)
     );
-    const parsed = validateBusinessProfilePatch(payload);
-    if (!parsed.success) return true;
-    return Object.keys(parsed.data).some((k) => k !== "version");
+    return (
+      !parsed.success || Object.keys(parsed.data).some((key) => key !== "version")
+    );
   }, [values, version, locale]);
   const cardIncomplete = useCallback(
     (card: BusinessProfileCardId) => completion.incompleteCards.includes(card),
@@ -258,10 +263,20 @@ export function BusinessProfileEditor({
       return next;
     });
     setFieldErrors({});
+    editRevisionRef.current += 1;
     setSaveStatus("idle");
   }
 
   const persist = useCallback(async () => {
+    if (activeSaveRef.current) {
+      if (editRevisionRef.current > activeSaveEditRevisionRef.current) {
+        queuedSaveRef.current = true;
+      }
+      return;
+    }
+    const editRevisionAtStart = editRevisionRef.current;
+    lastAttemptedEditRevisionRef.current = editRevisionAtStart;
+    const requestSequence = ++requestSequenceRef.current;
     const payload = buildBusinessProfilePatch(
       valuesRef.current,
       versionRef.current,
@@ -288,6 +303,8 @@ export function BusinessProfileEditor({
     }
 
     setSaveStatus("saving");
+    activeSaveRef.current = true;
+    activeSaveEditRevisionRef.current = editRevisionAtStart;
     setFieldErrors({});
     try {
       const res = await fetch(`/api/workspaces/${workspaceId}/business-profile`, {
@@ -311,16 +328,32 @@ export function BusinessProfileEditor({
       }
       const nextProfile = normalizeBusinessProfileRecord(data.profile);
       const nextWarnings = extractApiWarnings(data);
+      if (!canApplyBusinessProfileSaveResponse(requestSequence, latestResponseRef.current)) {
+        return;
+      }
+      latestResponseRef.current = requestSequence;
       baselineRef.current = profileToFormValues(nextProfile);
       setVersion(nextProfile.version);
       versionRef.current = nextProfile.version;
       setApiWarnings(nextWarnings);
-      setSaveStatus("saved");
+      setSaveStatus(
+        editRevisionRef.current === editRevisionAtStart ? "saved" : "idle"
+      );
       onSynced?.(nextProfile, nextWarnings);
     } catch {
       setSaveStatus("failed");
+    } finally {
+      activeSaveRef.current = false;
+      if (
+        !conflictRef.current &&
+        (queuedSaveRef.current || editRevisionRef.current !== editRevisionAtStart)
+      ) {
+        queuedSaveRef.current = false;
+        window.setTimeout(() => void persistRef.current(), 0);
+      }
     }
   }, [workspaceId, locale, t, onSynced]);
+  persistRef.current = persist;
 
   const runAiAnalyze = useCallback(async () => {
     if (aiAnalyzing) return;
@@ -408,6 +441,7 @@ export function BusinessProfileEditor({
       targetAudience: update.targetAudience,
     };
     valuesRef.current = nextValues;
+    editRevisionRef.current += 1;
     setValues(nextValues);
     setFieldErrors({});
     setSaveStatus("idle");
@@ -428,7 +462,9 @@ export function BusinessProfileEditor({
     }
     if (conflictRef.current) return;
     const timer = window.setTimeout(() => {
-      void persist();
+      if (lastAttemptedEditRevisionRef.current !== editRevisionRef.current) {
+        void persist();
+      }
     }, 900);
     return () => window.clearTimeout(timer);
   }, [values, persist, retryToken]);
@@ -442,17 +478,14 @@ export function BusinessProfileEditor({
           ? t("businessProfile.saveStatus.failed")
           : t("businessProfile.saveStatus.idle");
 
-  const mobileStickyLabel =
+  const mobileSaveLabel =
     saveStatus === "saving"
       ? t("businessProfile.saveStatus.saving")
-      : saveStatus === "saved" && !isDirty
-        ? t("businessProfile.saveStatus.savedCheck")
+      : saveStatus === "failed" || saveStatus === "invalid" || saveStatus === "conflict"
+        ? t("businessProfile.saveStatus.failed")
         : isDirty
           ? t("businessProfile.saveChanges")
           : t("businessProfile.saveStatus.savedCheck");
-
-  const mobileStickyActionable =
-    isDirty && saveStatus !== "saving" && saveStatus !== "conflict";
 
   const qualityWarnings =
     apiWarnings.length > 0
@@ -1013,14 +1046,16 @@ export function BusinessProfileEditor({
         title={t("businessProfile.section.publishingPlatforms")}
         saveFailed={saveStatus === "failed" || saveStatus === "invalid"}
       >
-        <PublishingPlatformMultiSelect
-          label={t("businessProfile.field.defaultPublishingPlatforms")}
-          hint={t("businessProfile.publishingPlatformsHint")}
+        <DefaultPublishingPlatformSelector
           values={values.defaultPublishingPlatforms}
-          onChange={(defaultPublishingPlatforms) =>
-            patch({ defaultPublishingPlatforms })
-          }
+          onChange={(defaultPublishingPlatforms) => patch({ defaultPublishingPlatforms })}
+          disabled={saveStatus === "conflict"}
         />
+        {initialProfile.unrecognizedPublishingPlatforms.length > 0 && (
+          <p className="text-xs text-amber-800" role="status">
+            {t("businessProfile.publishingPlatformsLegacyWarning")}
+          </p>
+        )}
       </ProfileCard>
 
       <ProfileCard
@@ -1041,15 +1076,18 @@ export function BusinessProfileEditor({
         </p>
       )}
 
-      {/* PD-039 — mobile Bottom Sticky Status Bar (status; Save only when dirty). */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur md:hidden">
-        {mobileStickyActionable ? (
+      <div
+        className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur md:hidden"
+        data-testid="business-profile-mobile-save-status"
+        aria-live="polite"
+      >
+        {isDirty && saveStatus !== "saving" && saveStatus !== "conflict" ? (
           <button
             type="button"
             onClick={() => void persist()}
-            className="w-full rounded-xl bg-navy px-4 py-3 text-sm font-semibold text-white"
+            className="w-full rounded-xl bg-navy px-4 py-3 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-blue/40"
           >
-            {t("businessProfile.saveChanges")}
+            {mobileSaveLabel}
           </button>
         ) : (
           <p
@@ -1058,9 +1096,8 @@ export function BusinessProfileEditor({
                 ? "text-red-700"
                 : "text-navy"
             }`}
-            aria-live="polite"
           >
-            {mobileStickyLabel}
+            {mobileSaveLabel}
           </p>
         )}
       </div>
