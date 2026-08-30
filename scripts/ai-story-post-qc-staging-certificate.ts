@@ -207,8 +207,13 @@ async function certifyPost(sql: Sql): Promise<Record<string, unknown>> {
   const policies = await sql<{ policyname: string }[]>`
     SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename=${manifest.result.table} ORDER BY policyname
   `;
-  const [trigger] = await sql<{ trigger_name: string; function_name: string; definition: string }[]>`
-    SELECT tr.tgname AS trigger_name, p.proname AS function_name, pg_get_triggerdef(tr.oid) AS definition
+  const [trigger] = await sql<{ trigger_name: string; function_name: string; row_level: boolean;
+    before_event: boolean; on_delete: boolean; on_update: boolean }[]>`
+    SELECT tr.tgname AS trigger_name, p.proname AS function_name,
+      (tr.tgtype & 1) <> 0 AS row_level,
+      (tr.tgtype & 2) <> 0 AS before_event,
+      (tr.tgtype & 8) <> 0 AS on_delete,
+      (tr.tgtype & 16) <> 0 AS on_update
     FROM pg_trigger tr JOIN pg_class t ON t.oid=tr.tgrelid JOIN pg_namespace n ON n.oid=t.relnamespace
     JOIN pg_proc p ON p.oid=tr.tgfoid
     WHERE n.nspname='public' AND t.relname=${manifest.result.table} AND NOT tr.tgisinternal
@@ -236,7 +241,8 @@ async function certifyPost(sql: Sql): Promise<Record<string, unknown>> {
   const uniquePass = stable(uniqueCatalog) === stable(expectedUniqueCatalog);
   const immutablePass = trigger?.trigger_name === "ai_story_post_qc_immutable_v1"
     && trigger.function_name === "enforce_ai_story_post_qc_immutable_v1"
-    && /BEFORE UPDATE OR DELETE/.test(trigger.definition) && /immutable/.test(immutableFunction?.definition ?? "");
+    && trigger.row_level && trigger.before_event && trigger.on_delete && trigger.on_update
+    && /immutable/.test(immutableFunction?.definition ?? "");
   const policyPass = policies.map((row) => row.policyname).join(",") === "ai_story_post_qc_insert,ai_story_post_qc_select";
   const pass = missingTables.length === 0 && extraTables.length === 0 && originalParity && columnsPass
     && primaryKey?.columns?.join(",") === "post_qc_evaluation_id" && foreignKeysPass && checksPass && uniquePass
