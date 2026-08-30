@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { schema, withDbDeadline } from "@ceo-agent/db";
+import { getDb, schema, withDbDeadline } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess } from "@/lib/api";
 import { isSuperAdminUser } from "@/lib/superadmin";
@@ -7,7 +7,7 @@ import { isSuperAdminUser } from "@/lib/superadmin";
 export async function GET() {
   try {
     const user = await requireAuth();
-    return await withDbDeadline(async (db) => {
+    return await withDbDeadline(getDb(), async (db) => {
       const orgMemberships = await db
         .select({
           org: schema.organizations,

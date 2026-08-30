@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   DatabaseDependencyTimeoutError,
   closeDb,
+  getDb,
   withDbDeadline,
 } from "../packages/db/src/client";
 import { handleApiError } from "../apps/web/src/lib/auth";
@@ -26,6 +27,7 @@ describe("Staging protected API database dependency deadline", () => {
     process.env.VERCEL = "1";
 
     await expect(withDbDeadline(
+      getDb(),
       async () => await new Promise<never>(() => undefined),
       15,
     )).rejects.toMatchObject({
@@ -34,7 +36,7 @@ describe("Staging protected API database dependency deadline", () => {
       timeoutMs: 15,
     });
 
-    await expect(withDbDeadline(async () => "fresh-client", 50))
+    await expect(withDbDeadline(getDb(), async () => "fresh-client", 50))
       .resolves.toBe("fresh-client");
   });
 

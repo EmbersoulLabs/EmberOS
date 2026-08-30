@@ -26,7 +26,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const { id } = await params;
     if (!isUuid(id)) return apiError("Invalid Campaign", "VALIDATION_ERROR", 400);
     const user = await requireAuth();
-    return await withDbDeadline(async (db) => {
+    return await withDbDeadline(getDb(), async (db) => {
       const context = await authorityScope(id, false, { user, db });
       if (!context) return apiError("Campaign not found", "NOT_FOUND", 404);
       return apiSuccess({ characters: await new AiStoryCharacterAuthorityService(context.db).list(context.scope) });

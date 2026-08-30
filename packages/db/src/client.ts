@@ -64,10 +64,10 @@ async function discardDbClient() {
  * a warm serverless instance cannot remain poisoned for later requests.
  */
 export async function withDbDeadline<T>(
+  database: Db,
   operation: (database: Db) => Promise<T>,
   timeoutMs = SERVERLESS_DB_OPERATION_TIMEOUT_MS
 ): Promise<T> {
-  const database = getDb();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(

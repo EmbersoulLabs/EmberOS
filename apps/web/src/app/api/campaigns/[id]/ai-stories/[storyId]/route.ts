@@ -26,7 +26,7 @@ export async function GET(
       return apiError("Invalid id", "VALIDATION_ERROR", 400);
     }
 
-    return await withDbDeadline(async (db) => {
+    return await withDbDeadline(getDb(), async (db) => {
       const [campaign] = await db
         .select()
         .from(schema.campaigns)

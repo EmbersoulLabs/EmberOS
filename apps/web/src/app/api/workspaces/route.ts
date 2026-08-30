@@ -1,6 +1,7 @@
 import { eq, and } from "drizzle-orm";
 import {
   createWorkspaceWithBusinessProfile,
+  getDb,
   requireOrganizationMembership,
   schema,
   withDbDeadline,
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
       return apiError("orgId must be a valid UUID", "VALIDATION_ERROR", 400);
     }
 
-    return await withDbDeadline(async (db) => {
+    return await withDbDeadline(getDb(), async (db) => {
       if (orgId) {
         await requireOrganizationMembership(orgId, user.id);
       }
