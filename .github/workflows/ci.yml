@@ -119,6 +119,9 @@ jobs:
       - name: Certify Wave 3 Create Campaign PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/create-campaign-wave3.integration.test.ts
 
+      - name: Certify Wave 6 Platform Admin recovery on PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/wave6-platform-admin-recovery.integration.test.ts
+
       - name: Certify generated Scene approval on PostgreSQL
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
