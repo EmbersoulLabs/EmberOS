@@ -13,7 +13,8 @@ describe("Vercel and Supabase production region alignment", () => {
 
   it("preserves the certified transaction-pooler-compatible DB client", () => {
     expect(dbClient).toContain("prepare: false");
-    expect(dbClient).toContain("isServerless ? 1 : 10");
+    expect(dbClient).toContain("SERVERLESS_DB_MAX_CONNECTIONS = 3");
+    expect(dbClient).toContain("isServerless ? SERVERLESS_DB_MAX_CONNECTIONS : 10");
     expect(dbClient).toContain("idle_timeout: 20");
     expect(dbClient).toContain("connect_timeout: connectTimeout");
   });
