@@ -1,9 +1,9 @@
 import { eq, and } from "drizzle-orm";
 import {
   createWorkspaceWithBusinessProfile,
-  getDb,
   requireOrganizationMembership,
   schema,
+  withDbDeadline,
 } from "@ceo-agent/db";
 import { CreateWorkspaceBusinessLedSchema, isUuid } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
@@ -15,32 +15,33 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const orgId = searchParams.get("orgId");
 
-    if (orgId) {
-      if (!isUuid(orgId)) {
-        return apiError("orgId must be a valid UUID", "VALIDATION_ERROR", 400);
-      }
-      await requireOrganizationMembership(orgId, user.id);
+    if (orgId && !isUuid(orgId)) {
+      return apiError("orgId must be a valid UUID", "VALIDATION_ERROR", 400);
     }
 
-    const db = getDb();
-    const results = await db
-      .select({ workspace: schema.workspaces, role: schema.workspaceMembers.role })
-      .from(schema.workspaceMembers)
-      .innerJoin(schema.workspaces, eq(schema.workspaceMembers.workspaceId, schema.workspaces.id))
-      .where(
-        orgId
-          ? and(
-              eq(schema.workspaceMembers.userId, user.id),
-              eq(schema.workspaces.orgId, orgId)
-            )
-          : eq(schema.workspaceMembers.userId, user.id)
-      );
+    return await withDbDeadline(async (db) => {
+      if (orgId) {
+        await requireOrganizationMembership(orgId, user.id);
+      }
+      const results = await db
+        .select({ workspace: schema.workspaces, role: schema.workspaceMembers.role })
+        .from(schema.workspaceMembers)
+        .innerJoin(schema.workspaces, eq(schema.workspaceMembers.workspaceId, schema.workspaces.id))
+        .where(
+          orgId
+            ? and(
+                eq(schema.workspaceMembers.userId, user.id),
+                eq(schema.workspaces.orgId, orgId)
+              )
+            : eq(schema.workspaceMembers.userId, user.id)
+        );
 
-    return apiSuccess({
-      workspaces: results.map((w) => ({
-        ...w.workspace,
-        role: w.role,
-      })),
+      return apiSuccess({
+        workspaces: results.map((w) => ({
+          ...w.workspace,
+          role: w.role,
+        })),
+      });
     });
   } catch (error) {
     return handleApiError(error);

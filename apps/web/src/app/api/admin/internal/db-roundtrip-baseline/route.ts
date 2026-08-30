@@ -110,6 +110,8 @@ export async function GET(request: NextRequest) {
         max: process.env.VERCEL === "1" ? 1 : 10,
         idleTimeoutSeconds: 20,
         connectionTimeoutSeconds: 15,
+        operationDeadlineSeconds: 12,
+        serverStatementTimeoutAuthority: "SUPAVISOR",
         moduleScoped: true,
       },
       timings: {
@@ -128,6 +130,7 @@ export async function GET(request: NextRequest) {
       rowCount,
       observability: {
         poolAcquireSeparatelyObservable: false,
+        poolAcquireBoundedByOperationDeadline: true,
         dbServerExecutionSeparatelyObservable: false,
         networkReturnSeparatelyObservable: false,
       },

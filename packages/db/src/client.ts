@@ -7,7 +7,22 @@ let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
 
-function createPostgresClient(url: string, max: number, connectTimeout: number) {
+const SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000;
+
+export class DatabaseDependencyTimeoutError extends Error {
+  readonly code = "DATABASE_DEPENDENCY_TIMEOUT";
+
+  constructor(readonly timeoutMs: number) {
+    super(`Database dependency did not complete within ${timeoutMs}ms`);
+    this.name = "DatabaseDependencyTimeoutError";
+  }
+}
+
+function createPostgresClient(
+  url: string,
+  max: number,
+  connectTimeout: number
+) {
   return postgres(url, {
     prepare: false,
     max,
@@ -31,6 +46,47 @@ export function getDb() {
     db = drizzle(client, { schema });
   }
   return db;
+}
+
+async function discardDbClient() {
+  const staleClient = client;
+  client = null;
+  db = null;
+  if (staleClient) {
+    await staleClient.end({ timeout: 0 });
+  }
+}
+
+/**
+ * Bound one complete database dependency chain, including postgres-js pool
+ * acquisition. postgres-js bounds new connections but does not time out a
+ * query waiting in its pool queue. On deadline, destroy the occupied client so
+ * a warm serverless instance cannot remain poisoned for later requests.
+ */
+export async function withDbDeadline<T>(
+  operation: (database: Db) => Promise<T>,
+  timeoutMs = SERVERLESS_DB_OPERATION_TIMEOUT_MS
+): Promise<T> {
+  const database = getDb();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new DatabaseDependencyTimeoutError(timeoutMs)),
+      timeoutMs
+    );
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([operation(database), deadline]);
+  } catch (error) {
+    if (error instanceof DatabaseDependencyTimeoutError) {
+      await discardDbClient();
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**

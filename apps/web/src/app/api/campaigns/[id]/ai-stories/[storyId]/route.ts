@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, schema, withDbDeadline } from "@ceo-agent/db";
 import {
   AiStoryStructuredDraftSchema,
   AiStoryUpdateDraftBodySchema,
@@ -26,26 +26,27 @@ export async function GET(
       return apiError("Invalid id", "VALIDATION_ERROR", 400);
     }
 
-    const db = getDb();
-    const [campaign] = await db
-      .select()
-      .from(schema.campaigns)
-      .where(eq(schema.campaigns.id, campaignId))
-      .limit(1);
-    if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
+    return await withDbDeadline(async (db) => {
+      const [campaign] = await db
+        .select()
+        .from(schema.campaigns)
+        .where(eq(schema.campaigns.id, campaignId))
+        .limit(1);
+      if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+      await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
 
-    const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
-    if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
+      const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
+      if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
 
-    if (loaded.verificationFixtureState === "LEGACY_PARTIAL_VERIFICATION_FIXTURE") {
-      return apiSuccess({
-        ...loaded,
-        story: { ...loaded.story, status: "failed" },
-        persistedStoryStatus: loaded.story.status,
-      });
-    }
-    return apiSuccess(loaded);
+      if (loaded.verificationFixtureState === "LEGACY_PARTIAL_VERIFICATION_FIXTURE") {
+        return apiSuccess({
+          ...loaded,
+          story: { ...loaded.story, status: "failed" },
+          persistedStoryStatus: loaded.story.status,
+        });
+      }
+      return apiSuccess(loaded);
+    });
   } catch (error) {
     return handleApiError(error);
   }

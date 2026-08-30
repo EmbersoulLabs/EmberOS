@@ -1,13 +1,20 @@
 import { eq } from "drizzle-orm";
-import { AiStoryCharacterAuthorityService, getDb, schema } from "@ceo-agent/db";
+import { AiStoryCharacterAuthorityService, getDb, schema, withDbDeadline } from "@ceo-agent/db";
 import { AiStoryCharacterMutationInputSchema, isUuid } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 
-async function authorityScope(campaignId: string, mutation: boolean) {
-  const user = await requireAuth();
-  const db = getDb();
+type Db = ReturnType<typeof getDb>;
+type AuthUser = Awaited<ReturnType<typeof requireAuth>>;
+
+async function authorityScope(
+  campaignId: string,
+  mutation: boolean,
+  provided?: { user: AuthUser; db: Db }
+) {
+  const user = provided?.user ?? await requireAuth();
+  const db = provided?.db ?? getDb();
   const [campaign] = await db.select().from(schema.campaigns).where(eq(schema.campaigns.id, campaignId)).limit(1);
   if (!campaign) return null;
   await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: mutation ? "operator" : "client_viewer" });
@@ -18,9 +25,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   try {
     const { id } = await params;
     if (!isUuid(id)) return apiError("Invalid Campaign", "VALIDATION_ERROR", 400);
-    const context = await authorityScope(id, false);
-    if (!context) return apiError("Campaign not found", "NOT_FOUND", 404);
-    return apiSuccess({ characters: await new AiStoryCharacterAuthorityService(context.db).list(context.scope) });
+    const user = await requireAuth();
+    return await withDbDeadline(async (db) => {
+      const context = await authorityScope(id, false, { user, db });
+      if (!context) return apiError("Campaign not found", "NOT_FOUND", 404);
+      return apiSuccess({ characters: await new AiStoryCharacterAuthorityService(context.db).list(context.scope) });
+    });
   } catch (error) { return handleApiError(error); }
 }
 
