@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, canonical Scene/Location continuity authority, Seedance Director Adapter enrichment, compiled Provider Runtime, Post-Generation QC, Visual Evidence, and Repair Classification implemented. Human Review is preserved. Scene/Cast/Location Review UX is not complete and full AI Story E2E is not certified.
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, canonical Scene/Location continuity authority, Seedance Director Adapter enrichment, compiled Provider Runtime, Post-Generation QC, Visual Evidence, Repair Classification, and Scene/Cast/Location Review UX implemented. Human Review is preserved. Full AI Story E2E is not certified and the AI Story V1 release freeze is not ready.
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -404,6 +404,29 @@ classification distinguishes plan ownership from Provider execution or Adapter
 translation defects. It may recommend a same-input retry candidate but cannot
 approve, retry, spend, repair, or release. Existing generated Scene Human Review
 and staged release remain the final creative and release authorities.
+
+## Implemented Scene, Cast, Location, and generated Review UX
+
+The normal-user Story workspace now projects frozen canonical Scene authority
+into human-readable Scene cards: Who, Where, Product or important object, What
+happens, Entry/Exit continuity, generated private-media video, and Review. Scene
+order, Supporting Character re-entry, Scene-local actors, recurring and one-off
+Locations, Product participation, and historical compatibility are presented
+without exposing UUIDs, fingerprints, Provider tasks, reference budgets,
+Director/Motion internals, or raw QC repair enums.
+
+Post-QC PASS, WARN, REJECT, and human-confirmation states are translated into
+bounded evidence summaries and explicit Human Review decisions. PASS never
+approves automatically. Retry remains differentiated, cost authorization is an
+explicit human step, and no action silently regenerates. Existing private-media
+delivery, authorization, operator diagnostics, and generated Scene Review
+authority are preserved.
+
+Campaign Character photo controls use existing Asset authority. Supporting Cast
+and Location promotions are explicit, extend only future reuse authority, and
+do not rewrite frozen Story/Scene lineage. Temporary actors and environments do
+not pollute global panels. Full AI Story E2E certification and the V1 release
+freeze remain separate future gates.
 
 ## Implementation sequence
 

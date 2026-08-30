@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   AiStoryPostGenerationQcEvaluationSchema,
   type AiStoryPostGenerationQcEvaluation,
@@ -27,6 +27,30 @@ export class AiStoryPostGenerationQcRepository {
         eq(schema.aiStoryPostGenerationQcEvaluations.evaluationVersion, input.evaluationVersion),
       )).limit(1);
     return row ? AiStoryPostGenerationQcEvaluationSchema.parse(row.evaluation) : null;
+  }
+
+  async getLatestByProviderAttemptIds(input: {
+    workspaceId: string;
+    providerAttemptIds: readonly string[];
+  }): Promise<ReadonlyMap<string, AiStoryPostGenerationQcEvaluation>> {
+    if (input.providerAttemptIds.length === 0) return new Map();
+    const rows = await this.db.select({
+      providerAttemptId: schema.aiStoryPostGenerationQcEvaluations.providerAttemptId,
+      evaluation: schema.aiStoryPostGenerationQcEvaluations.evaluation,
+    }).from(schema.aiStoryPostGenerationQcEvaluations).where(and(
+      eq(schema.aiStoryPostGenerationQcEvaluations.workspaceId, input.workspaceId),
+      inArray(schema.aiStoryPostGenerationQcEvaluations.providerAttemptId, [...input.providerAttemptIds]),
+    )).orderBy(
+      desc(schema.aiStoryPostGenerationQcEvaluations.evaluationVersion),
+      desc(schema.aiStoryPostGenerationQcEvaluations.evaluatedAt),
+    );
+    const latest = new Map<string, AiStoryPostGenerationQcEvaluation>();
+    for (const row of rows) {
+      if (!latest.has(row.providerAttemptId)) {
+        latest.set(row.providerAttemptId, AiStoryPostGenerationQcEvaluationSchema.parse(row.evaluation));
+      }
+    }
+    return latest;
   }
 
   async accept(inputPackage: AiStoryPostGenerationQcInputPackage, evaluation: AiStoryPostGenerationQcEvaluation): Promise<{ evaluation: AiStoryPostGenerationQcEvaluation; replayed: boolean }>;

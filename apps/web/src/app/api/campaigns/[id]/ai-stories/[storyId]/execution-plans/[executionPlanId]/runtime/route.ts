@@ -6,13 +6,16 @@
  * Read-only. Zero execution side effects.
  */
 import {
+  buildAiStoryPostQcHumanReviewEvidence,
   deriveProductRuntimeProjection,
   GeneratedSceneReviewReadSubstageRecorder,
 } from "@ceo-agent/agents";
 import {
+  AiStoryPostGenerationQcRepository,
   EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
   ExecutionPlanReviewProjectionTimingRecorder,
   getWorkspaceMembership,
+  loadAiStorySceneReviewPresentations,
 } from "@ceo-agent/db";
 import {
   PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS,
@@ -149,9 +152,41 @@ export async function GET(request: Request, { params }: RouteParams) {
       generatedSceneReviewReadSubstageRecorder: reviewSubstageRecorder,
     });
 
+    const sceneIdentities = (projection.generatedSceneReviews ?? []).map((scene) => ({
+      sceneExecutionId: scene.sceneExecutionId,
+      sceneId: scene.sceneId,
+      sceneOrder: scene.sceneOrder,
+      latestAttemptId: scene.latestAttemptId,
+    }));
+    const attemptIds = sceneIdentities.flatMap((scene) => scene.latestAttemptId ? [scene.latestAttemptId] : []);
+    const [presentations, postQcByAttempt] = await Promise.all([
+      loadAiStorySceneReviewPresentations({
+        workspaceId: ctx.workspaceId,
+        campaignId,
+        storyId,
+        scenes: sceneIdentities,
+      }),
+      new AiStoryPostGenerationQcRepository().getLatestByProviderAttemptIds({
+        workspaceId: ctx.workspaceId,
+        providerAttemptIds: attemptIds,
+      }),
+    ]);
     const generatedSceneReviews = await Promise.all(
       (projection.generatedSceneReviews ?? []).map(async (scene) => {
-        if (!scene.generatedMedia) return scene;
+        const presentation = presentations.get(scene.sceneExecutionId);
+        const evaluation = scene.latestAttemptId ? postQcByAttempt.get(scene.latestAttemptId) : undefined;
+        const postGenerationQcEvidence = evaluation
+          ? buildAiStoryPostQcHumanReviewEvidence({
+              evaluation,
+              sceneSummary: presentation?.summary ?? `Scene ${scene.sceneOrder + 1}`,
+            })
+          : undefined;
+        const enriched = {
+          ...scene,
+          ...(presentation ? { presentation } : {}),
+          ...(postGenerationQcEvidence ? { postGenerationQcEvidence } : {}),
+        };
+        if (!scene.generatedMedia) return enriched;
         try {
           const delivery = await withDeadline(
             mintSceneResultPlayback({
@@ -164,9 +199,9 @@ export async function GET(request: Request, { params }: RouteParams) {
             }),
             PLAYBACK_SIGNING_TIMEOUT_MS
           );
-          return { ...scene, generatedMedia: { ...scene.generatedMedia, ...delivery, deliveryStatus: "READY" as const, safeError: null } };
+          return { ...enriched, generatedMedia: { ...scene.generatedMedia, ...delivery, deliveryStatus: "READY" as const, safeError: null } };
         } catch {
-          return { ...scene, generatedMedia: { ...scene.generatedMedia, deliveryUrl: null, expiresAt: null, deliveryStatus: "UNAVAILABLE" as const, safeError: "Scene media preview is temporarily unavailable." } };
+          return { ...enriched, generatedMedia: { ...scene.generatedMedia, deliveryUrl: null, expiresAt: null, deliveryStatus: "UNAVAILABLE" as const, safeError: "Scene media preview is temporarily unavailable." } };
         }
       })
     );

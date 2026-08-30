@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ProductRuntimeProjection, WorkspaceRole } from "@ceo-agent/shared";
 import type { TranslationKey } from "@ceo-agent/shared/i18n";
 import { FinalStoryResultViewer } from "@/components/ai-story/FinalStoryResultViewer";
-import { GeneratedSceneReviewPanel } from "@/components/ai-story/GeneratedSceneReviewPanel";
+import { SceneReviewWorkspacePanel } from "@/components/ai-story/SceneReviewWorkspacePanel";
 import { useI18n } from "@/lib/i18n/provider";
 import {
   StoryRuntimeClientError,
@@ -309,7 +309,7 @@ export function StoryRuntimePanel({
         ) : null}
       </section>
 
-      <GeneratedSceneReviewPanel
+      <SceneReviewWorkspacePanel
         campaignId={campaignId}
         storyId={storyId}
         executionPlanId={executionPlanId}
