@@ -34,8 +34,8 @@ async function installPredecessor(sql: Sql, schema: string): Promise<void> {
 
 describeIntegration("AI Story Post-QC migration predecessor-schema authority", () => {
   let sql: Sql;
-  const defectiveSchema = schemaName("post_qc_defective");
-  const correctedSchema = schemaName("post_qc_corrected");
+  const repairedSchema = schemaName("post_qc_repaired");
+  const defectiveSchema = schemaName("post_qc_defective_control");
 
   beforeAll(async () => {
     sql = createIntegrationSql();
@@ -49,40 +49,24 @@ describeIntegration("AI Story Post-QC migration predecessor-schema authority", (
 
   afterAll(async () => {
     if (!sql) return;
+    await sql.unsafe(`DROP SCHEMA IF EXISTS ${repairedSchema} CASCADE`);
     await sql.unsafe(`DROP SCHEMA IF EXISTS ${defectiveSchema} CASCADE`);
-    await sql.unsafe(`DROP SCHEMA IF EXISTS ${correctedSchema} CASCADE`);
     await sql.end();
   });
 
-  it("exercises the real CREATE TABLE path and detects the current invalid parent FK", async () => {
-    await installPredecessor(sql, defectiveSchema);
+  it("executes the repaired real migration through the unmasked CREATE TABLE path", async () => {
+    await installPredecessor(sql, repairedSchema);
     const before = await sql<{ table_name: string | null }[]>`
-      SELECT to_regclass(${`${defectiveSchema}.ai_story_post_generation_qc_evaluations`})::text AS table_name
+      SELECT to_regclass(${`${repairedSchema}.ai_story_post_generation_qc_evaluations`})::text AS table_name
     `;
     expect(before[0]?.table_name).toBeNull();
 
-    let errorCode: string | undefined;
-    try {
-      await sql.unsafe(`SET search_path TO ${defectiveSchema}, public; ${migration}`);
-    } catch (error) {
-      errorCode = (error as { code?: string }).code;
-    }
-    expect(errorCode).toBe("42703");
+    await sql.unsafe(`SET search_path TO ${repairedSchema}, public; ${migration}`);
 
     const after = await sql<{ table_name: string | null }[]>`
-      SELECT to_regclass(${`${defectiveSchema}.ai_story_post_generation_qc_evaluations`})::text AS table_name
+      SELECT to_regclass(${`${repairedSchema}.ai_story_post_generation_qc_evaluations`})::text AS table_name
     `;
-    expect(after[0]?.table_name).toBeNull();
-  });
-
-  it("proves the isolated predecessor can accept the bounded canonical target correction", async () => {
-    await installPredecessor(sql, correctedSchema);
-    const corrected = migration.replace(
-      "REFERENCES ai_story_scene_executions(scene_execution_id)",
-      "REFERENCES ai_story_scene_executions(id)",
-    );
-    expect(corrected).not.toBe(migration);
-    await sql.unsafe(`SET search_path TO ${correctedSchema}, public; ${corrected}`);
+    expect(after[0]?.table_name).toBe(`${repairedSchema}.ai_story_post_generation_qc_evaluations`);
 
     const foreignKeys = await sql<{ child_column: string; parent_column: string }[]>`
       SELECT child.attname AS child_column, parent.attname AS parent_column
@@ -93,10 +77,32 @@ describeIntegration("AI Story Post-QC migration predecessor-schema authority", (
       JOIN pg_attribute child ON child.attrelid = child_table.oid AND child.attnum = constraint_row.conkey[1]
       JOIN pg_attribute parent ON parent.attrelid = parent_table.oid AND parent.attnum = constraint_row.confkey[1]
       WHERE constraint_row.contype = 'f'
-        AND child_schema.nspname = ${correctedSchema}
+        AND child_schema.nspname = ${repairedSchema}
         AND child_table.relname = 'ai_story_post_generation_qc_evaluations'
         AND parent_table.relname = 'ai_story_scene_executions'
     `;
     expect(foreignKeys).toEqual([{ child_column: "scene_execution_id", parent_column: "id" }]);
+  });
+
+  it("keeps the formerly defective parent-column target as a failing control", async () => {
+    await installPredecessor(sql, defectiveSchema);
+    const defective = migration.replace(
+      "REFERENCES ai_story_scene_executions(id)",
+      "REFERENCES ai_story_scene_executions(scene_execution_id)",
+    );
+    expect(defective).not.toBe(migration);
+
+    let errorCode: string | undefined;
+    try {
+      await sql.unsafe(`SET search_path TO ${defectiveSchema}, public; ${defective}`);
+    } catch (error) {
+      errorCode = (error as { code?: string }).code;
+    }
+    expect(errorCode).toBe("42703");
+
+    const after = await sql<{ table_name: string | null }[]>`
+      SELECT to_regclass(${`${defectiveSchema}.ai_story_post_generation_qc_evaluations`})::text AS table_name
+    `;
+    expect(after[0]?.table_name).toBeNull();
   });
 });

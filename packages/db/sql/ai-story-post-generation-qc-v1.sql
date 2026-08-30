@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS ai_story_post_generation_qc_evaluations(
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
   provider_attempt_id text NOT NULL REFERENCES provider_attempts(attempt_id) ON DELETE RESTRICT,
   media_asset_id uuid NOT NULL REFERENCES ai_story_durable_scene_media_attestations(media_attestation_id) ON DELETE RESTRICT,
-  scene_execution_id uuid NOT NULL REFERENCES ai_story_scene_executions(scene_execution_id) ON DELETE RESTRICT,
+  scene_execution_id uuid NOT NULL REFERENCES ai_story_scene_executions(id) ON DELETE RESTRICT,
   aggregate_status text NOT NULL CHECK(aggregate_status IN('POST_QC_PASS','POST_QC_WARN','POST_QC_REJECT','POST_QC_REQUIRES_HUMAN_CONFIRMATION')),
   evaluation_fingerprint text NOT NULL UNIQUE CHECK(evaluation_fingerprint~'^sha256:[0-9a-f]{64}$'),
   input_package jsonb NOT NULL,
