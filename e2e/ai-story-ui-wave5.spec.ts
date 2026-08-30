@@ -107,12 +107,22 @@ test("mobile normal-user story flow remains reachable", async ({ page }) => {
 test("operator manages Campaign Characters on mobile without Provider work", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const calls = await authenticate(page, "operator");
+  const photoAssetId = "00000000-0000-4000-8000-000000000509";
   let characters: Array<Record<string, unknown>> = [];
+  await page.route(`**/api/campaigns/${campaignId}/assets/upload-url`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ assetId: photoAssetId, uploadUrl: "https://upload.example.test/character-photo" }) });
+  });
+  await page.route("https://upload.example.test/character-photo", async (route) => {
+    await route.fulfill({ status: 200, body: "" });
+  });
+  await page.route(`**/api/campaigns/${campaignId}/assets/${photoAssetId}/confirm`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ assetId: photoAssetId, status: "READY" }) });
+  });
   await page.route(`**/api/campaigns/${campaignId}/characters**`, async (route) => {
     const request = route.request();
     if (request.method() === "POST") {
       const body = request.postDataJSON();
-      characters = [{ characterId: "00000000-0000-4000-8000-000000000506", characterVersionId: "00000000-0000-4000-8000-000000000507", orgId: "00000000-0000-4000-8000-000000000508", workspaceId: "00000000-0000-4000-8000-000000000504", campaignId, version: 1, contractVersion: "ai-story-character.v1", name: body.name, canonicalFacts: { identity: body.identity, appearance: body.appearance, personality: body.personality, emotionalArc: body.emotionalArc, relationships: [] }, visualAssetReferences: [], status: "ACTIVE", fingerprint: `sha256:${"a".repeat(64)}`, supersedesCharacterVersionId: null, createdBy: userId, createdAt: "2026-08-29T00:00:00.000Z" }];
+      characters = [{ characterId: "00000000-0000-4000-8000-000000000506", characterVersionId: "00000000-0000-4000-8000-000000000507", orgId: "00000000-0000-4000-8000-000000000508", workspaceId: "00000000-0000-4000-8000-000000000504", campaignId, version: 1, contractVersion: "ai-story-character.v1", name: body.name, canonicalFacts: { identity: body.identity, appearance: body.appearance, personality: body.personality, emotionalArc: body.emotionalArc, relationships: [] }, visualAssetReferences: body.visualAssetIds.map((assetId: string) => ({ assetId, role: "REFERENCE" })), status: "ACTIVE", fingerprint: `sha256:${"a".repeat(64)}`, supersedesCharacterVersionId: null, createdBy: userId, createdAt: "2026-08-29T00:00:00.000Z" }];
       return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ character: characters[0] }) });
     }
     if (request.method() === "PATCH") {
@@ -131,8 +141,12 @@ test("operator manages Campaign Characters on mobile without Provider work", asy
   await page.getByLabel("Appearance").fill("Cobalt jacket and silver pin");
   await page.getByLabel("Personality").fill("Patient and direct");
   await page.getByLabel("Emotional arc").fill("Guarded to trusting");
+  await page.getByLabel("Choose Character reference photo").setInputFiles({ name: "ada.png", mimeType: "image/png", buffer: Buffer.from("synthetic-character-photo") });
+  await expect(page.getByRole("img", { name: "Character reference 1" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove photo" })).toBeVisible();
   await page.getByRole("button", { name: "Save Character" }).click();
   await expect(page.getByRole("heading", { name: "Ada" })).toBeVisible();
+  await expect(page.getByText("1 reference photo", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Edit" }).click();
   await page.getByLabel("Name").fill("Ada Ren");
   await page.getByRole("button", { name: "Save Character" }).click();
