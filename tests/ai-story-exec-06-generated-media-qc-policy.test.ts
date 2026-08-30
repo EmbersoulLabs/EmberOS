@@ -604,7 +604,7 @@ describe("EXEC-06 generated-media QC policy freeze", () => {
     expect(resolveAiStorySceneMaxAttempts({ AI_STORY_SCENE_MAX_ATTEMPTS: "5" })).toBe(5);
   });
 
-  it("does not implement a new media-aware QC pipeline", () => {
+  it("preserves human acceptance authority while Post-QC evidence remains provider-neutral", () => {
     expect(GENERATED_MEDIA_ACCEPTANCE_AUTHORITY).toBe("EXEC04_PERSISTED_SCENE_REVIEW");
     expect(FUTURE_MEDIA_AWARE_QC_PIPELINE).toEqual([
       "generated_artifact",
@@ -619,7 +619,8 @@ describe("EXEC-06 generated-media QC policy freeze", () => {
       join(ROOT, "packages/shared/src/ai-story-generated-media-qc-policy.ts"),
       "utf8"
     );
-    expect(policy).toMatch(/does not implement media-aware QC/);
+    expect(policy).toMatch(/Post-Generation QC now contributes/);
+    expect(policy).toMatch(/POST_GENERATION_QC_REPLACES_HUMAN_REVIEW = false/);
     expect(policy).not.toMatch(/openai\.|gemini\.|claude vision|video embedding|Seedance QC|MiniMax QC/i);
   });
 });
