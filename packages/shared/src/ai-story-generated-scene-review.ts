@@ -129,6 +129,49 @@ export type GeneratedSceneMediaReadModel = z.infer<
   typeof GeneratedSceneMediaReadModelSchema
 >;
 
+/**
+ * Browser-safe projection of the frozen Scene authority used by a generated
+ * attempt. It deliberately contains display facts only: no hashes, Provider
+ * identifiers, internal planning artifacts, or raw authority enums.
+ */
+export const AiStorySceneReviewPresentationSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  summary: z.string().trim().min(1).max(3000),
+  purpose: z.string().trim().min(1).max(1000),
+  importance: z.string().trim().min(1).max(100),
+  transitional: z.boolean(),
+  cast: z.array(z.object({
+    castId: z.string().uuid(),
+    kind: z.enum(["Character", "Supporting Character", "Scene actor"]),
+    displayName: z.string().trim().min(1).max(200),
+    description: z.string().trim().min(1).max(3000),
+    referenceAssetIds: z.array(z.string().uuid()),
+    recurringInStory: z.boolean(),
+  }).strict()),
+  location: z.object({
+    locationId: z.string().uuid(),
+    kind: z.enum(["Recurring Campaign location", "Story location", "Scene environment"]),
+    displayName: z.string().trim().min(1).max(300),
+    description: z.string().trim().min(1).max(3000),
+    referenceAssetIds: z.array(z.string().uuid()),
+    promotionAction: z.enum(["SAVE_FOR_STORY", "REUSE_IN_CAMPAIGN"]).nullable(),
+  }).strict().nullable(),
+  products: z.array(z.object({
+    productAuthorityId: z.string().uuid(),
+    displayName: z.string().trim().min(1).max(300),
+    referenceAssetId: z.string().uuid(),
+  }).strict()),
+  actionSummary: z.array(z.string().trim().min(1).max(3000)),
+  startsWith: z.array(z.string().trim().min(1).max(1200)),
+  endsWith: z.array(z.string().trim().min(1).max(1200)),
+  continuityNotes: z.array(z.string().trim().min(1).max(2000)),
+  legacyCompatibility: z.boolean(),
+}).strict();
+
+export type AiStorySceneReviewPresentation = z.infer<
+  typeof AiStorySceneReviewPresentationSchema
+>;
+
 export const GeneratedSceneRuntimeStateSchema = z.enum([
   "AUTHORIZED_NOT_RELEASED",
   "QUEUED",
@@ -176,6 +219,7 @@ export const GeneratedSceneReviewReadModelSchema = z
     attempts: z.array(GeneratedSceneAttemptReadModelSchema),
     generatedMedia: GeneratedSceneMediaReadModelSchema.nullable().default(null),
     postGenerationQcEvidence: AiStoryPostQcHumanReviewEvidenceSchema.optional(),
+    presentation: AiStorySceneReviewPresentationSchema.optional(),
   })
   .strict();
 
