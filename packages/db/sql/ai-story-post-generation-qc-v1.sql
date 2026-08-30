@@ -8,12 +8,12 @@ CREATE TABLE IF NOT EXISTS ai_story_post_generation_qc_evaluations(
   media_asset_id uuid NOT NULL REFERENCES ai_story_durable_scene_media_attestations(media_attestation_id) ON DELETE RESTRICT,
   scene_execution_id uuid NOT NULL REFERENCES ai_story_scene_executions(id) ON DELETE RESTRICT,
   aggregate_status text NOT NULL CHECK(aggregate_status IN('POST_QC_PASS','POST_QC_WARN','POST_QC_REJECT','POST_QC_REQUIRES_HUMAN_CONFIRMATION')),
-  evaluation_fingerprint text NOT NULL UNIQUE CHECK(evaluation_fingerprint~'^sha256:[0-9a-f]{64}$'),
+  evaluation_fingerprint text NOT NULL CONSTRAINT ai_story_post_qc_fingerprint_unique UNIQUE CHECK(evaluation_fingerprint~'^sha256:[0-9a-f]{64}$'),
   input_package jsonb NOT NULL,
   evaluation jsonb NOT NULL,
   evaluated_at timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(post_qc_input_id,evaluation_version)
+  CONSTRAINT ai_story_post_qc_input_version_unique UNIQUE(post_qc_input_id,evaluation_version)
 );
 CREATE INDEX IF NOT EXISTS ai_story_post_qc_attempt_idx ON ai_story_post_generation_qc_evaluations(provider_attempt_id,evaluated_at);
 CREATE INDEX IF NOT EXISTS ai_story_post_qc_workspace_idx ON ai_story_post_generation_qc_evaluations(workspace_id,evaluated_at);

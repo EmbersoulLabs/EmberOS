@@ -13,7 +13,7 @@
       "order": 11,
       "id": "ai-story-post-generation-qc-v1",
       "path": "packages/db/sql/ai-story-post-generation-qc-v1.sql",
-      "sha256": "608a21b2249ed6e9b3e57b74046e91f435a59b15f321ee0b8e1a31e7e45d8a16"
+      "sha256": "bb2fced7968eb41f2d629d4c486ead88311f78c92cd0c1489e6537fc98cece51"
     }
   ],
   "predecessor": {
@@ -25,6 +25,16 @@
   },
   "result": {
     "table": "ai_story_post_generation_qc_evaluations",
-    "sceneExecutionForeignKeyTarget": "ai_story_scene_executions.id"
+    "sceneExecutionForeignKeyTarget": "ai_story_scene_executions.id",
+    "uniqueConstraints": [
+      {
+        "name": "ai_story_post_qc_fingerprint_unique",
+        "columns": ["evaluation_fingerprint"]
+      },
+      {
+        "name": "ai_story_post_qc_input_version_unique",
+        "columns": ["post_qc_input_id", "evaluation_version"]
+      }
+    ]
   }
 }

@@ -187,6 +187,19 @@ async function certifyPost(sql: Sql): Promise<Record<string, unknown>> {
   const indexes = await sql<{ name: string }[]>`
     SELECT indexname AS name FROM pg_indexes WHERE schemaname='public' AND tablename=${manifest.result.table} ORDER BY indexname
   `;
+  const uniqueCatalog = await sql<{ name: string; columns: string[]; backing_index: string; index_is_unique: boolean }[]>`
+    SELECT c.conname AS name,
+      array_agg(a.attname ORDER BY key_column.ordinality)::text[] AS columns,
+      index_class.relname AS backing_index,
+      index_row.indisunique AS index_is_unique
+    FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid JOIN pg_namespace n ON n.oid=t.relnamespace
+    CROSS JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS key_column(attnum, ordinality)
+    JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum=key_column.attnum
+    JOIN pg_class index_class ON index_class.oid=c.conindid
+    JOIN pg_index index_row ON index_row.indexrelid=c.conindid
+    WHERE n.nspname='public' AND t.relname=${manifest.result.table} AND c.contype='u'
+    GROUP BY c.oid,index_class.relname,index_row.indisunique ORDER BY c.conname
+  `;
   const [rls] = await sql<{ enabled: boolean }[]>`
     SELECT c.relrowsecurity AS enabled FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='public' AND c.relname=${manifest.result.table}
@@ -214,7 +227,13 @@ async function certifyPost(sql: Sql): Promise<Record<string, unknown>> {
     "ai_story_post_qc_media_idx", "ai_story_post_qc_workspace_idx"];
   const indexPass = expectedIndexes.every((name) => indexes.some((row) => row.name === name));
   const checksPass = constraints.filter((row) => row.type === "c").length === 3;
-  const uniquePass = constraints.filter((row) => row.type === "u").length === 2;
+  const expectedUniqueCatalog = [
+    { name: "ai_story_post_qc_fingerprint_unique", columns: ["evaluation_fingerprint"],
+      backing_index: "ai_story_post_qc_fingerprint_unique", index_is_unique: true },
+    { name: "ai_story_post_qc_input_version_unique", columns: ["post_qc_input_id", "evaluation_version"],
+      backing_index: "ai_story_post_qc_input_version_unique", index_is_unique: true },
+  ];
+  const uniquePass = stable(uniqueCatalog) === stable(expectedUniqueCatalog);
   const immutablePass = trigger?.trigger_name === "ai_story_post_qc_immutable_v1"
     && trigger.function_name === "enforce_ai_story_post_qc_immutable_v1"
     && /BEFORE UPDATE OR DELETE/.test(trigger.definition) && /immutable/.test(immutableFunction?.definition ?? "");
@@ -228,7 +247,7 @@ async function certifyPost(sql: Sql): Promise<Record<string, unknown>> {
     originalTableParity: originalParity,
     postQc: { columns: columnsPass, typesAndDefaults: columns.length === expectedColumns.length && columns.every((c) => c.data_type.length > 0),
       primaryKey: primaryKey?.columns?.join(",") === "post_qc_evaluation_id", foreignKeys: foreignKeysPass,
-      constraints: checksPass && uniquePass, indexes: indexPass, rls: rls?.enabled === true, policies: policyPass,
+      constraints: checksPass && uniquePass, uniqueCatalog, indexes: indexPass, rls: rls?.enabled === true, policies: policyPass,
       grants: Number(publicPrivileges?.count ?? 0) === 0, immutability: immutablePass,
       sceneExecutionForeignKeyTarget: actualForeignKeys.includes("scene_execution_id:ai_story_scene_executions.id") }, pass });
   if (!pass) throw new Error(`POST_APPLICATION_CATALOG_DIVERGENT:${stable(result)}`);
