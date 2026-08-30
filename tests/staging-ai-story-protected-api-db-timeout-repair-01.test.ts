@@ -40,9 +40,10 @@ describe("Staging protected API database dependency deadline", () => {
       .resolves.toBe("fresh-client");
   });
 
-  it("keeps one serverless connection while bounding pool acquisition and query return", () => {
+  it("bounds the three concurrent protected read chains and query return", () => {
     const client = read("packages/db/src/client.ts");
-    expect(client).toContain("isServerless ? 1 : 10");
+    expect(client).toContain("SERVERLESS_DB_MAX_CONNECTIONS = 3");
+    expect(client).toContain("isServerless ? SERVERLESS_DB_MAX_CONNECTIONS : 10");
     expect(client).toContain("connect_timeout: connectTimeout");
     expect(client).toContain("SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000");
     expect(client).toContain("await staleClient.end({ timeout: 0 })");

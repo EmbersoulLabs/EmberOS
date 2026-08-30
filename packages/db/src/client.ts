@@ -8,6 +8,7 @@ let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 type Db = ReturnType<typeof drizzle<typeof schema>>;
 
 const SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000;
+const SERVERLESS_DB_MAX_CONNECTIONS = 3;
 
 export class DatabaseDependencyTimeoutError extends Error {
   readonly code = "DATABASE_DEPENDENCY_TIMEOUT";
@@ -38,11 +39,17 @@ export function getDb() {
     if (!url) {
       throw new Error("DATABASE_URL is not set");
     }
-    // Vercel serverless: cap at 1 connection per function instance so pgbouncer
-    // transaction-mode pooling isn't overwhelmed. Long-lived Worker processes use
-    // the default (10) to support concurrent FFmpeg jobs hitting the DB.
+    // The AI Story review surface starts three protected read chains together.
+    // Keep a small, fixed serverless pool so one slow query cannot force the other
+    // two into postgres-js's unbounded acquisition queue. Supavisor remains the
+    // transaction-mode pooling authority. Long-lived Workers retain their existing
+    // limit for concurrent FFmpeg jobs hitting the DB.
     const isServerless = process.env.VERCEL === "1";
-    client = createPostgresClient(url, isServerless ? 1 : 10, 15);
+    client = createPostgresClient(
+      url,
+      isServerless ? SERVERLESS_DB_MAX_CONNECTIONS : 10,
+      15
+    );
     db = drizzle(client, { schema });
   }
   return db;
