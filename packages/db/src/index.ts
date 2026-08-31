@@ -31,6 +31,7 @@ export * from "./queries/platform-admin-resolution";
 export * from "./queries/billing-account";
 export * from "./queries/subscription";
 export * from "./queries/entitlement";
+export * from "./queries/entitlement-administration";
 export * from "./queries/credits";
 export * from "./queries/commercial-authorization";
 export * from "./queries/ai-story-provider-attempt-cost";

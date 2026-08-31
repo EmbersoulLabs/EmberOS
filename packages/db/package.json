@@ -59,6 +59,7 @@
     "sql:commercial-persistence": "tsx scripts/apply-commercial-persistence-v1.ts",
     "sql:credits-settlement": "tsx scripts/apply-credits-settlement-v1.ts",
     "sql:commercial-authorization": "tsx scripts/apply-commercial-authorization-v1.ts",
+    "admin:staging-ai-story-execute": "tsx scripts/manage-staging-ai-story-execute-entitlement.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "echo ok"

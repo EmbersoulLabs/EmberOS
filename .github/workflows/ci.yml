@@ -130,6 +130,11 @@ jobs:
           tests/sprint-3-phase-3-pr35-finalizer.integration.test.ts
           -t "successful finalization and approval certification|differentiated human retry contract certification"
 
+      - name: Certify STAGING execute entitlement grant and revoke authority
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/staging-execute-entitlement-administration.integration.test.ts
+
   verify:
     name: Test, typecheck, build
     runs-on: ubuntu-latest
