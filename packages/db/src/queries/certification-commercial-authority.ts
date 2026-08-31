@@ -21,11 +21,31 @@ import {
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
+const providerPricingAuthorityFields = [
+  "contractVersion", "providerUsdPricingRuleId", "providerKey", "modelId", "generationMode",
+  "durationSeconds", "aspectRatio", "resolution", "inputVideoIncluded", "outputWidthPixels",
+  "outputHeightPixels", "outputFrameRate", "currency", "usdPerMillionTokens", "costBasis",
+  "sourceUrl", "version", "effectiveFrom", "effectiveTo",
+] as const;
+
+function assertSameProviderPricingAuthority(
+  current: ProviderUsdPricingRule,
+  requested: ProviderUsdPricingRule
+): void {
+  if (!providerPricingAuthorityFields.every((field) => current[field] === requested[field])) {
+    throw new CertificationCommercialError(
+      "PROVIDER_USD_PRICE_DIVERGENT",
+      "Existing Provider USD pricing identity has divergent authority fields"
+    );
+  }
+}
+
 export type CertificationCommercialErrorCode =
   | "CERTIFICATION_BILLING_MISSING"
   | "CERTIFICATION_SCOPE_MISSING"
   | "CERTIFICATION_SCOPE_INACTIVE"
   | "PROVIDER_USD_PRICE_MISSING"
+  | "PROVIDER_USD_PRICE_DIVERGENT"
   | "CERTIFICATION_BUDGET_EXCEEDED"
   | "CERTIFICATION_SUBMISSION_QUOTA_EXCEEDED"
   | "CERTIFICATION_SCOPE_MISMATCH"
@@ -203,8 +223,13 @@ export class CertificationCommercialAuthorityService {
 
   async provisionPrice(rule: ProviderUsdPricingRule): Promise<{ rule: ProviderUsdPricingRule; replayed: boolean }> {
     const parsed = ProviderUsdPricingRuleSchema.parse(rule);
-    const existing = await this.db.select().from(schema.providerUsdPricingRules).where(eq(schema.providerUsdPricingRules.integrityHash, parsed.integrityHash)).limit(1);
-    if (existing[0]) return { rule: ProviderUsdPricingRuleSchema.parse(existing[0].pricingBody), replayed: true };
+    const existing = await this.db.select().from(schema.providerUsdPricingRules)
+      .where(eq(schema.providerUsdPricingRules.providerUsdPricingRuleId, parsed.providerUsdPricingRuleId)).limit(1);
+    if (existing[0]) {
+      const current = ProviderUsdPricingRuleSchema.parse(existing[0].pricingBody);
+      assertSameProviderPricingAuthority(current, parsed);
+      return { rule: current, replayed: true };
+    }
     await this.db.insert(schema.providerUsdPricingRules).values({
       providerUsdPricingRuleId: parsed.providerUsdPricingRuleId, providerKey: parsed.providerKey,
       modelId: parsed.modelId, generationMode: parsed.generationMode, durationSeconds: parsed.durationSeconds,
@@ -217,8 +242,15 @@ export class CertificationCommercialAuthorityService {
       version: parsed.version, effectiveFrom: new Date(parsed.effectiveFrom), effectiveTo: parsed.effectiveTo ? new Date(parsed.effectiveTo) : null,
       createdBy: parsed.createdBy, createdAt: new Date(parsed.createdAt), integrityHash: parsed.integrityHash,
       contractVersion: parsed.contractVersion, pricingBody: parsed,
-    });
-    return { rule: parsed, replayed: false };
+    }).onConflictDoNothing();
+    const accepted = await this.db.select().from(schema.providerUsdPricingRules)
+      .where(eq(schema.providerUsdPricingRules.providerUsdPricingRuleId, parsed.providerUsdPricingRuleId)).limit(1);
+    if (!accepted[0]) {
+      throw new CertificationCommercialError("PROVIDER_USD_PRICE_DIVERGENT", "Provider USD price was not persisted");
+    }
+    const acceptedRule = ProviderUsdPricingRuleSchema.parse(accepted[0].pricingBody);
+    assertSameProviderPricingAuthority(acceptedRule, parsed);
+    return { rule: acceptedRule, replayed: acceptedRule.integrityHash !== parsed.integrityHash };
   }
 
   async revokeScope(input: { scopeId: string; actorUserId: string; reason: string; revokedAt: string }) {
