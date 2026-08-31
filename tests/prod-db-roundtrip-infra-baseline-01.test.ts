@@ -41,6 +41,9 @@ describe("production DB round-trip infrastructure baseline", () => {
     expect(clientSource).toContain("isServerless ? SERVERLESS_DB_MAX_CONNECTIONS : 10");
     expect(clientSource).toContain("idle_timeout: 20");
     expect(clientSource).toContain("connect_timeout: connectTimeout");
+    expect(source).toContain("SERVERLESS_DB_MAX_CONNECTIONS");
+    expect(source).toContain("SERVERLESS_DB_OPERATION_TIMEOUT_MS / 1_000");
+    expect(source).not.toContain('process.env.VERCEL === "1" ? 1 : 10');
   });
 
   it("exposes results only through an unlinked authenticated page wrapper", () => {

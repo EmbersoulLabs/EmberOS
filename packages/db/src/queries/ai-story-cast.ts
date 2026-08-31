@@ -93,6 +93,27 @@ export async function resolveKnownCastReferences(db: Pick<Db, "select">, scope: 
 export class AiStorySupportingCastAuthorityService {
   constructor(private readonly db: Db = getDb()) {}
 
+  private async listCurrentVersions(scope: AiStoryCastScope, includeDeleted: boolean) {
+    const rows = await this.db.select({ snapshot: schema.aiStorySupportingCharacterVersions.snapshot })
+      .from(schema.aiStorySupportingCharacters)
+      .innerJoin(
+        schema.aiStorySupportingCharacterVersions,
+        eq(
+          schema.aiStorySupportingCharacterVersions.supportingCharacterVersionId,
+          schema.aiStorySupportingCharacters.currentSupportingCharacterVersionId
+        )
+      )
+      .where(and(
+        eq(schema.aiStorySupportingCharacters.orgId, scope.orgId),
+        eq(schema.aiStorySupportingCharacters.workspaceId, scope.workspaceId),
+        eq(schema.aiStorySupportingCharacters.campaignId, scope.campaignId),
+        eq(schema.aiStorySupportingCharacters.storyId, scope.storyId),
+        ...(includeDeleted ? [] : [eq(schema.aiStorySupportingCharacters.status, "ACTIVE")]),
+      ))
+      .orderBy(asc(schema.aiStorySupportingCharacters.displayName));
+    return rows.map((row) => AiStorySupportingCharacterVersionSchema.parse(row.snapshot));
+  }
+
   async add(scope: AiStoryCastScope, raw: AiStorySupportingCharacterMutationInput, supportingCharacterId = randomUUID(), now = new Date().toISOString()) {
     const facts = AiStorySupportingCharacterMutationInputSchema.parse(raw);
     return this.db.transaction(async (tx) => {
@@ -129,10 +150,15 @@ export class AiStorySupportingCastAuthorityService {
 
   async list(scope: AiStoryCastScope, includeDeleted = false) {
     await assertStoryScope(this.db, scope, false);
-    const aggregates = await this.db.select().from(schema.aiStorySupportingCharacters).where(and(eq(schema.aiStorySupportingCharacters.orgId, scope.orgId), eq(schema.aiStorySupportingCharacters.workspaceId, scope.workspaceId), eq(schema.aiStorySupportingCharacters.campaignId, scope.campaignId), eq(schema.aiStorySupportingCharacters.storyId, scope.storyId), ...(includeDeleted ? [] : [eq(schema.aiStorySupportingCharacters.status, "ACTIVE")]))).orderBy(asc(schema.aiStorySupportingCharacters.displayName));
-    if (!aggregates.length) return [];
-    const versions = await this.db.select().from(schema.aiStorySupportingCharacterVersions).where(inArray(schema.aiStorySupportingCharacterVersions.supportingCharacterVersionId, aggregates.map((item) => item.currentSupportingCharacterVersionId)));
-    const byId = new Map(versions.map((row) => [row.supportingCharacterVersionId, parseVersion(row)])); return aggregates.map((item) => byId.get(item.currentSupportingCharacterVersionId)!).filter(Boolean);
+    return this.listCurrentVersions(scope, includeDeleted);
+  }
+
+  /**
+   * Read projection for an API orchestration that already completed canonical
+   * Story/workspace/tenant authorization in the same request.
+   */
+  async listForVerifiedScope(scope: AiStoryCastScope, includeDeleted = false) {
+    return this.listCurrentVersions(scope, includeDeleted);
   }
 
   async read(scope: AiStoryCastScope, id: string, includeDeleted = false) {

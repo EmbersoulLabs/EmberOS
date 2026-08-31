@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import {
+  getDb,
+  schema,
+  SERVERLESS_DB_MAX_CONNECTIONS,
+  SERVERLESS_DB_OPERATION_TIMEOUT_MS,
+} from "@ceo-agent/db";
 import { requireAuth, AuthError } from "@/lib/auth";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -107,10 +112,10 @@ export async function GET(request: NextRequest) {
       connection: connectionMetadata(),
       pool: {
         implementation: "postgres-js",
-        max: process.env.VERCEL === "1" ? 1 : 10,
+        max: process.env.VERCEL === "1" ? SERVERLESS_DB_MAX_CONNECTIONS : 10,
         idleTimeoutSeconds: 20,
         connectionTimeoutSeconds: 15,
-        operationDeadlineSeconds: 12,
+        operationDeadlineSeconds: SERVERLESS_DB_OPERATION_TIMEOUT_MS / 1_000,
         serverStatementTimeoutAuthority: "SUPAVISOR",
         moduleScoped: true,
       },

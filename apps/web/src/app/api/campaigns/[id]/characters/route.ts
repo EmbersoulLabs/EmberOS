@@ -29,7 +29,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     return await withDbDeadline(getDb(), async (db) => {
       const context = await authorityScope(id, false, { user, db });
       if (!context) return apiError("Campaign not found", "NOT_FOUND", 404);
-      return apiSuccess({ characters: await new AiStoryCharacterAuthorityService(context.db).list(context.scope) });
+      return apiSuccess({ characters: await new AiStoryCharacterAuthorityService(context.db).listForVerifiedScope(context.scope) });
     });
   } catch (error) { return handleApiError(error); }
 }

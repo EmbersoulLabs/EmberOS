@@ -5,12 +5,23 @@ import type { AiStorySupportingCharacterMutationInput, AiStorySupportingCharacte
 
 const empty: AiStorySupportingCharacterMutationInput = { displayName: "", identity: "", appearance: "", relationships: [], continuityFacts: [], visualAssetIds: [] };
 
-export function SupportingCastPanel({ campaignId, storyId, canEdit }: { campaignId: string; storyId: string; canEdit: boolean }) {
+export function SupportingCastPanel({ campaignId, storyId, canEdit, initialSupportingCharacters }: {
+  campaignId: string;
+  storyId: string;
+  canEdit: boolean;
+  initialSupportingCharacters?: AiStorySupportingCharacterVersion[];
+}) {
   const base = `/api/campaigns/${campaignId}/ai-stories/${storyId}/supporting-cast`;
-  const [cast, setCast] = useState<AiStorySupportingCharacterVersion[]>([]); const [editing, setEditing] = useState<AiStorySupportingCharacterVersion | null>(null);
+  const [cast, setCast] = useState<AiStorySupportingCharacterVersion[]>(initialSupportingCharacters ?? []); const [editing, setEditing] = useState<AiStorySupportingCharacterVersion | null>(null);
   const [form, setForm] = useState<AiStorySupportingCharacterMutationInput>(empty); const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [notice, setNotice] = useState("");
   const load = useCallback(async () => { const response = await fetch(base); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Supporting cast could not be loaded"); setCast(data.supportingCharacters ?? []); }, [base]);
-  useEffect(() => { void load().catch((reason) => setError(reason instanceof Error ? reason.message : "Supporting cast could not be loaded")); }, [load]);
+  useEffect(() => {
+    if (initialSupportingCharacters !== undefined) {
+      setCast(initialSupportingCharacters);
+      return;
+    }
+    void load().catch((reason) => setError(reason instanceof Error ? reason.message : "Supporting cast could not be loaded"));
+  }, [initialSupportingCharacters, load]);
   function beginAdd() { setEditing(null); setForm(empty); setOpen(true); }
   function beginEdit(value: AiStorySupportingCharacterVersion) { setEditing(value); setForm({ displayName: value.displayName, identity: value.identity, ...(value.storyRole ? { storyRole: value.storyRole } : {}), appearance: value.appearance, relationships: value.relationships, continuityFacts: value.continuityFacts, visualAssetIds: value.visualAssetReferences.map((asset) => asset.assetId) }); setOpen(true); }
   async function save() { setBusy(true); setError(""); try { const response = await fetch(editing ? `${base}/${editing.supportingCharacterId}` : base, { method: editing ? "PATCH" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editing ? { expectedVersion: editing.version, supportingCharacter: form } : form) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Supporting Character could not be saved"); setOpen(false); await load(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Supporting Character could not be saved"); } finally { setBusy(false); } }

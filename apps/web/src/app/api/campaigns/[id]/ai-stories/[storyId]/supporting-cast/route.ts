@@ -5,7 +5,7 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { resolveAiStoryCastApiScope } from "@/lib/ai-story-cast-access";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string; storyId: string }> }) {
-  try { const { id, storyId } = await params; if (!isUuid(id) || !isUuid(storyId)) return apiError("Invalid Cast scope", "VALIDATION_ERROR", 400); const user = await requireAuth(); return await withDbDeadline(getDb(), async (db) => { const context = await resolveAiStoryCastApiScope(id, storyId, false, { user, db }); if (!context) return apiError("Story not found", "NOT_FOUND", 404); return apiSuccess({ supportingCharacters: await new AiStorySupportingCastAuthorityService(context.db).list(context.scope) }); }); } catch (error) { return handleApiError(error); }
+  try { const { id, storyId } = await params; if (!isUuid(id) || !isUuid(storyId)) return apiError("Invalid Cast scope", "VALIDATION_ERROR", 400); const user = await requireAuth(); return await withDbDeadline(getDb(), async (db) => { const context = await resolveAiStoryCastApiScope(id, storyId, false, { user, db }); if (!context) return apiError("Story not found", "NOT_FOUND", 404); return apiSuccess({ supportingCharacters: await new AiStorySupportingCastAuthorityService(context.db).listForVerifiedScope(context.scope) }); }); } catch (error) { return handleApiError(error); }
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; storyId: string }> }) {

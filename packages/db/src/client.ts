@@ -7,8 +7,8 @@ let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
 
-const SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000;
-const SERVERLESS_DB_MAX_CONNECTIONS = 3;
+export const SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000;
+export const SERVERLESS_DB_MAX_CONNECTIONS = 3;
 
 export class DatabaseDependencyTimeoutError extends Error {
   readonly code = "DATABASE_DEPENDENCY_TIMEOUT";
