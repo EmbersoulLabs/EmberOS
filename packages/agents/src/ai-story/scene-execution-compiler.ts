@@ -15,10 +15,12 @@ import {
   PRODUCT_IDENTITY_CONSTRAINTS,
   type AiStoryExecutionPlan,
   type AiStoryExecutionReviewEstimate,
+  type AiStoryEffectiveSceneGenerationAuthority,
   type AiStoryFrozenVersionReference,
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
   type AnimationPackagePayload,
+  type ScenePlanItem,
 } from "@ceo-agent/shared";
 import { collectReferencedAssetIds } from "./execution-compiler";
 
@@ -84,6 +86,48 @@ function durationSecToMs(sec: number): number {
   return ms > 0 ? ms : 1;
 }
 
+function sortedUnique(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+/** Deterministic planning → execution authority resolution. */
+export function resolveEffectiveSceneGenerationAuthority(
+  scene: ScenePlanItem,
+  storyReferenceIds: readonly string[]
+): AiStoryEffectiveSceneGenerationAuthority {
+  const authority = scene.generationAuthority;
+  if (authority?.referenceSource === "REFERENCE_FREE_T2V") {
+    return {
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      effectiveReferenceIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement:
+        authority.productVisualIdentityRequirement,
+    };
+  }
+  if (authority?.referenceSource === "SCENE_EXPLICIT") {
+    const tail = sortedUnique(
+      authority.referenceAssetIds.filter((id) => id !== authority.firstFrameAssetId)
+    );
+    return {
+      strategy: authority.strategy,
+      referenceSource: "SCENE_EXPLICIT",
+      effectiveReferenceIds: [authority.firstFrameAssetId, ...tail],
+      firstFrameAssetId: authority.firstFrameAssetId,
+      productVisualIdentityRequirement: "REQUIRED",
+    };
+  }
+  const inherited = sortedUnique(storyReferenceIds);
+  return {
+    strategy: "PRODUCT_GROUNDED_VIDEO",
+    referenceSource: "STORY_INHERITED",
+    effectiveReferenceIds: inherited,
+    firstFrameAssetId: inherited[0] ?? null,
+    productVisualIdentityRequirement: "REQUIRED",
+  };
+}
+
 /**
  * Compile one Scene Execution Intent per Animation Package scene.
  * Same inputs → identical ordering, identities, and hashes.
@@ -95,9 +139,8 @@ export function compileSceneExecutionIntents(
   const pkg = AnimationPackagePayloadSchema.parse(animationPackageInput);
   const compiledAt = ctx.compiledAt ?? new Date().toISOString();
   // Canonical collectReferencedAssetIds lives in execution-compiler; sort for Scene Intent determinism.
-  const referencedAssetIds = [...collectReferencedAssetIds(pkg)].sort((a, b) =>
-    a.localeCompare(b)
-  );
+  const referencedAssetIds = sortedUnique(collectReferencedAssetIds(pkg));
+  const storyReferencedAssetIds = sortedUnique(pkg.story.assetReferences ?? []);
 
   const scenesSorted = [...pkg.scenePlan].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const shotsSorted = [...pkg.shotPlan].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
@@ -121,7 +164,12 @@ export function compileSceneExecutionIntents(
     animationPackageId: ctx.animationPackageId,
     storyId: ctx.storyId,
     storyVersionId: ctx.storyVersionId,
-    scenePlan: scenesSorted.map((s) => ({ id: s.id, order: s.order, durationSec: s.durationSec })),
+    scenePlan: scenesSorted.map((s) => ({
+      id: s.id,
+      order: s.order,
+      durationSec: s.durationSec,
+      ...(s.generationAuthority ? { generationAuthority: s.generationAuthority } : {}),
+    })),
     shotPlan: shotsSorted.map((s) => ({
       id: s.id,
       sceneId: s.sceneId,
@@ -157,6 +205,14 @@ export function compileSceneExecutionIntents(
   const instructionsBySceneExecutionId: Record<string, AiStorySceneCompiledInstructions> = {};
 
   for (const scene of scenesSorted) {
+    const generationAuthority = resolveEffectiveSceneGenerationAuthority(
+      scene,
+      storyReferencedAssetIds
+    );
+    const persistedGenerationAuthority = scene.generationAuthority
+      ? generationAuthority
+      : undefined;
+    const sceneReferencedAssetIds = generationAuthority.effectiveReferenceIds;
     const sceneShots = shotsSorted.filter((s) => s.sceneId === scene.id);
     const shotReferences = sceneShots.map((shot) => ({
       shotId: shot.id,
@@ -207,7 +263,10 @@ export function compileSceneExecutionIntents(
         information: shot.information,
       })),
       characterReferences,
-      referencedAssetIds,
+      referencedAssetIds: sceneReferencedAssetIds,
+      ...(persistedGenerationAuthority
+        ? { generationAuthority: persistedGenerationAuthority }
+        : {}),
       worldContinuity: pkg.worldContinuity as unknown as Record<string, unknown>,
       productIdentityConstraints: [...PRODUCT_IDENTITY_CONSTRAINTS],
     });
@@ -251,7 +310,10 @@ export function compileSceneExecutionIntents(
       frozenStoryVersion,
       animationPackage: animationPackageRef,
       shotReferences,
-      referencedAssetIds,
+      referencedAssetIds: sceneReferencedAssetIds,
+      ...(persistedGenerationAuthority
+        ? { generationAuthority: persistedGenerationAuthority }
+        : {}),
       normalizedPayloadReference: {
         uri: `memory://ai-story/scene-instructions/${sceneExecutionId}`,
         contentHash: instructionHash,

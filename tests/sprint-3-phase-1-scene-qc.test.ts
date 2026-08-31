@@ -18,8 +18,10 @@ import {
   validateAllSceneExecutionIntents,
   validateSceneExecutionIntent,
 } from "../packages/agents/src/ai-story/ai-qc-validator";
+import { mapCompiledInstructionsToCanonicalScenePayload } from "../packages/agents/src/ai-story/canonical-scene-payload-resolver";
 
 const ASSET_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+const ASSET_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const ORG = "11111111-1111-1111-1111-111111111111";
 const WS = "22222222-2222-2222-2222-222222222222";
 const CAMP = "33333333-3333-3333-3333-333333333333";
@@ -257,9 +259,173 @@ describe("Phase 1 Scene Execution Compiler", () => {
       );
     }
   });
+
+  it("compiles mixed explicit T2V, inherited I2V, and explicit-reference I2V per Scene", () => {
+    const pkg = samplePackage();
+    const mutable = pkg as any;
+    mutable.scenePlan[0].generationAuthority = {
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      referenceAssetIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE",
+    };
+    mutable.storyBeats.push({
+      id: "beat-003",
+      name: "Closing",
+      purpose: "Close with a distinct visual authority",
+      order: 2,
+      summary: "The gift is shared.",
+    });
+    mutable.scenePlan.push({
+      id: "scene-003",
+      beatIds: ["beat-003"],
+      purpose: "Closing",
+      durationSec: 5,
+      transition: "Cut",
+      continuityNotes: "Same morning",
+      order: 2,
+      generationAuthority: {
+        strategy: "FIRST_FRAME_IMAGE_TO_VIDEO",
+        referenceSource: "SCENE_EXPLICIT",
+        referenceAssetIds: [ASSET_B],
+        firstFrameAssetId: ASSET_B,
+        productVisualIdentityRequirement: "REQUIRED",
+      },
+    });
+    mutable.shotPlan.push({
+      id: "shot-004",
+      sceneId: "scene-003",
+      cameraType: "Medium",
+      cameraMovement: "Static",
+      composition: "Gift exchange",
+      framing: "Vertical",
+      lensSuggestion: "50mm",
+      durationSec: 5,
+      focus: "Gift recipient",
+      emotion: "Delight",
+      information: "Gift is shared",
+      order: 0,
+    });
+
+    const parsed = AnimationPackagePayloadSchema.parse(pkg);
+    const first = compileSceneExecutionIntents(parsed, baseCtx);
+    const second = compileSceneExecutionIntents(parsed, baseCtx);
+    expect(first.intents.map((intent) => intent.referencedAssetIds)).toEqual([
+      [],
+      [ASSET_A],
+      [ASSET_B],
+    ]);
+    expect(first.intents[0]!.generationAuthority).toMatchObject({
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      effectiveReferenceIds: [],
+    });
+    expect(first.intents[1]!.generationAuthority).toBeUndefined();
+    expect(first.intents[2]!.generationAuthority).toMatchObject({
+      strategy: "FIRST_FRAME_IMAGE_TO_VIDEO",
+      referenceSource: "SCENE_EXPLICIT",
+      effectiveReferenceIds: [ASSET_B],
+      firstFrameAssetId: ASSET_B,
+    });
+    expect(first.intents.map((intent) => intent.identity.deterministicFingerprint)).toEqual(
+      second.intents.map((intent) => intent.identity.deterministicFingerprint)
+    );
+
+    const payloads = first.intents.map((intent) =>
+      mapCompiledInstructionsToCanonicalScenePayload({
+        intent,
+        instructions:
+          first.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!,
+      })
+    );
+    expect(payloads.map((payload) => payload.generationMode)).toEqual([
+      "CREATIVE_T2V",
+      "PRODUCT_GROUNDED_VIDEO",
+      "PRODUCT_GROUNDED_VIDEO",
+    ]);
+    expect(payloads.map((payload) => payload.assetReferences.map((ref) => ref.assetId))).toEqual([
+      [],
+      [ASSET_A],
+      [ASSET_B],
+    ]);
+    expect(payloads[1]!.assetReferences[0]!.continuityScope).toBe("STORY");
+    expect(payloads[2]!.assetReferences[0]!.continuityScope).toBe("SCENE");
+  });
+
+  it("keeps legacy inheritance and requires explicit authority for reference-free T2V", () => {
+    const legacy = compileSceneExecutionIntents(samplePackage(), baseCtx);
+    expect(legacy.intents.every((intent) => intent.generationAuthority === undefined)).toBe(true);
+    expect(legacy.intents.every((intent) => intent.referencedAssetIds[0] === ASSET_A)).toBe(true);
+
+    const invalid = compileSceneExecutionIntents(samplePackage([]), baseCtx);
+    const intent = invalid.intents[0]!;
+    const instructions = invalid.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!;
+    const qc = validateSceneExecutionIntent(intent, {
+      storyVersionFrozenAt: baseCtx.storyVersionFrozenAt,
+      animationPackageStatus: "ready_for_execution",
+      workspaceId: WS,
+      campaignId: CAMP,
+      assetsById: new Map(),
+      instructions,
+      validatedAt: "2026-08-02T01:00:00.000Z",
+    });
+    expect(qc.errors.some((error) => error.code === "PRODUCT_IDENTITY_REFERENCE_MISSING")).toBe(true);
+    expect(() =>
+      mapCompiledInstructionsToCanonicalScenePayload({ intent, instructions })
+    ).toThrow(/explicit TEXT_TO_VIDEO/);
+  });
 });
 
 describe("Phase 1 AI QC Layer", () => {
+  it("accepts explicit reference-free T2V without weakening other QC rules", () => {
+    const pkg = samplePackage();
+    (pkg.scenePlan[0] as any).generationAuthority = {
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      referenceAssetIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE",
+    };
+    const compiled = compileSceneExecutionIntents(pkg, baseCtx);
+    const intent = compiled.intents[0]!;
+    const result = validateSceneExecutionIntent(intent, {
+      storyVersionFrozenAt: baseCtx.storyVersionFrozenAt,
+      animationPackageStatus: "ready_for_execution",
+      workspaceId: WS,
+      campaignId: CAMP,
+      assetsById: new Map(),
+      instructions:
+        compiled.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!,
+      validatedAt: "2026-08-02T01:00:00.000Z",
+    });
+    expect(result.errors.some((error) => error.code === "PRODUCT_IDENTITY_REFERENCE_MISSING")).toBe(false);
+    expect(result.status).not.toBe("failed");
+  });
+
+  it("rejects an explicit T2V authority that conflicts with required product identity", () => {
+    const pkg = samplePackage();
+    (pkg.scenePlan[0] as any).generationAuthority = {
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      referenceAssetIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "REQUIRED",
+    };
+    const compiled = compileSceneExecutionIntents(pkg, baseCtx);
+    const intent = compiled.intents[0]!;
+    const result = validateSceneExecutionIntent(intent, {
+      storyVersionFrozenAt: baseCtx.storyVersionFrozenAt,
+      animationPackageStatus: "ready_for_execution",
+      workspaceId: WS,
+      campaignId: CAMP,
+      assetsById: new Map(),
+      instructions:
+        compiled.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!,
+      validatedAt: "2026-08-02T01:00:00.000Z",
+    });
+    expect(result.errors.some((error) => error.code === "T2V_PRODUCT_IDENTITY_AUTHORITY_CONFLICT")).toBe(true);
+  });
   it("passes a valid intent with resolved assets (warnings allowed)", () => {
     const compiled = compileSceneExecutionIntents(samplePackage(), baseCtx);
     const assetsById = new Map([

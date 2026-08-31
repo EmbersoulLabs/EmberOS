@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AiStorySeedanceSemanticPlanSchema } from "./ai-story-scene-execution-package";
+import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 
 export const AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION =
   "ai-story-compiled-provider-request.v1" as const;
@@ -66,6 +67,7 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
   sceneExecutionId: Id,
   sceneExecutionPackageId: Id,
   generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   providerId: z.literal("seedance"),
   modelId: z.literal("dreamina-seedance-2-0-260128"),
   adapterVersion: Text,
@@ -131,6 +133,7 @@ export const AiStoryProviderAttemptBindingSchema = z.object({
   storyVersionId: Id,
   sceneExecutionId: Id,
   generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   providerId: z.literal("seedance"),
   modelId: z.literal("dreamina-seedance-2-0-260128"),
   adapterVersion: Text,

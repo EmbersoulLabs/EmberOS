@@ -118,17 +118,27 @@ describe("AI Story cross-Scene product continuity", () => {
     expect(payload2.productIdentityCapsule).not.toHaveProperty("url");
   });
 
-  it("creates no fake reference when the frozen Scene has no product asset", () => {
+  it("creates no fake reference for an explicitly reference-free T2V Scene", () => {
     const compilation = makePhase2aCompilation();
+    const generationAuthority = {
+      strategy: "TEXT_TO_VIDEO" as const,
+      referenceSource: "REFERENCE_FREE_T2V" as const,
+      effectiveReferenceIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE" as const,
+    };
     const intent = {
       ...compilation.intents[0]!,
       referencedAssetIds: [],
+      generationAuthority,
     };
     const instructions = {
       ...compilation.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!,
       referencedAssetIds: [],
+      generationAuthority,
     };
     const payload = mapCompiledInstructionsToCanonicalScenePayload({ intent, instructions });
+    expect(payload.generationMode).toBe("CREATIVE_T2V");
     expect(payload.assetReferences).toEqual([]);
     expect(payload.productIdentityCapsule.productReferencePresent).toBe(false);
     expect(payload.productIdentityCapsule.productAssetId).toBeUndefined();

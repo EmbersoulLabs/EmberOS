@@ -174,6 +174,13 @@ describe("Sprint 3 PR 3.7 Phase F boundaries + bypass", () => {
         ],
         characterReferences: [],
         referencedAssetIds: [],
+        generationAuthority: {
+          strategy: "TEXT_TO_VIDEO",
+          referenceSource: "REFERENCE_FREE_T2V",
+          effectiveReferenceIds: [],
+          firstFrameAssetId: null,
+          productVisualIdentityRequirement: "NONE",
+        },
         worldContinuity: { location: "studio" },
         productIdentityConstraints: ["preserve silhouette"],
       },

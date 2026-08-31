@@ -10,6 +10,7 @@
  * retries, assembly, or export.
  */
 import { z } from "zod";
+import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 
 export const AI_STORY_EXECUTION_CONTRACT_VERSION = "1" as const;
 
@@ -112,6 +113,7 @@ export const AiStorySceneExecutionPlanSchema = z.object({
   animationPackage: AiStoryAnimationPackageExecutionReferenceSchema,
   shotReferences: z.array(AiStorySceneShotReferenceSchema).min(1),
   referencedAssetIds: z.array(z.string().uuid()).default([]),
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   normalizedPayloadReference: ImmutableReferenceSchema,
   plannedDurationMs: z.number().int().positive(),
   compiledAt: z.string().datetime(),
@@ -174,6 +176,7 @@ export const AiStorySceneCompiledInstructionsSchema = z.object({
     .min(1),
   characterReferences: z.array(AiStorySceneCharacterReferenceSchema).default([]),
   referencedAssetIds: z.array(z.string().uuid()).default([]),
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   worldContinuity: z.record(z.unknown()).default({}),
   productIdentityConstraints: z.array(NonEmptyTextSchema).min(1),
 });
@@ -315,6 +318,9 @@ export const AI_STORY_AI_QC_ERROR_CODES = [
   "ASSET_WORKSPACE_MISMATCH",
   "ASSET_CAMPAIGN_UNAUTHORIZED",
   "PRODUCT_IDENTITY_REFERENCE_MISSING",
+  "GENERATION_AUTHORITY_INVALID",
+  "T2V_PRODUCT_IDENTITY_AUTHORITY_CONFLICT",
+  "I2V_FIRST_FRAME_AUTHORITY_MISSING",
   "IDENTITY_UNSTABLE",
   "DETERMINISM_HASH_MISMATCH",
   "EXECUTION_PARAMETER_INVALID",
