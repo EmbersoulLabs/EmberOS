@@ -14,6 +14,8 @@ import { fetchCurrentExecutionPlan } from "@/lib/ai-story-execution-plan-discove
 import {
   STORY_PLANNING_STAGE_ORDER,
   type AnimationPackagePayload,
+  type AiStoryCharacterAuthorityVersion,
+  type AiStorySupportingCharacterVersion,
   type AiStoryStructuredDraft,
   type CreativeContext,
   type StoryPlanningDraft,
@@ -82,6 +84,8 @@ export default function AiStoryReviewPage() {
   const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | string | null>(null);
   const [storyVersionId, setStoryVersionId] = useState<string | null>(null);
   const [animationPackageRecordId, setAnimationPackageRecordId] = useState<string | null>(null);
+  const [initialCharacters, setInitialCharacters] = useState<AiStoryCharacterAuthorityVersion[] | undefined>();
+  const [initialSupportingCharacters, setInitialSupportingCharacters] = useState<AiStorySupportingCharacterVersion[] | undefined>();
   const persistedDraftFingerprint = useRef("");
   const saveGeneration = useRef(0);
   const advancedAuthorized = isAdvancedOperator(workspaceRole);
@@ -108,6 +112,8 @@ export default function AiStoryReviewPage() {
       if (!res.ok) throw new Error(data.error ?? "Failed to load story");
       const nextStatus = String(data.story.status);
       setStatus(nextStatus);
+      setInitialCharacters(Array.isArray(data.characters) ? data.characters : undefined);
+      setInitialSupportingCharacters(Array.isArray(data.supportingCharacters) ? data.supportingCharacters : undefined);
       setStoryVersionId(typeof data.currentVersion?.id === "string" ? data.currentVersion.id : null);
       const content = data.currentVersion?.structuredContent as AiStoryStructuredDraft | undefined;
       if (content) {
@@ -275,8 +281,8 @@ export default function AiStoryReviewPage() {
           {!readOnly ? <div className="flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={() => void requestPolishPreview()} className="rounded-lg border border-border px-4 py-2 text-sm font-medium">{busy ? "Polishing…" : "AI Polish"}</button><button type="button" disabled={busy || saveState === "SAVING"} onClick={() => void approveStoryForAnimation()} className="brand-btn-primary">Generate Animation</button></div> : null}
         </section>
 
-         <CharacterPanel campaignId={campaignId} canEdit={advancedAuthorized} />
-         <SupportingCastPanel campaignId={campaignId} storyId={storyId} canEdit={advancedAuthorized} />
+         <CharacterPanel campaignId={campaignId} canEdit={advancedAuthorized} initialCharacters={initialCharacters} />
+         <SupportingCastPanel campaignId={campaignId} storyId={storyId} canEdit={advancedAuthorized} initialSupportingCharacters={initialSupportingCharacters} />
 
         {polishPreview ? <section className="space-y-4 rounded-2xl border border-brand-blue/30 bg-brand-blue/5 p-5" data-testid="ai-polish-preview"><div><h2 className="text-lg font-bold text-navy">AI Polish Preview</h2><p className="mt-1 text-sm text-ink-secondary">Your current Story remains authoritative until you accept this preview.</p></div><StoryPreview draft={polishPreview} /><div className="flex flex-wrap gap-2"><button type="button" className="brand-btn-primary" disabled={busy} onClick={() => void acceptPolishPreview()}>Accept changes</button><button type="button" className="rounded-lg border border-border bg-white px-3 py-2 text-sm" disabled={busy} onClick={() => setPolishPreview(null)}>Cancel</button><button type="button" className="rounded-lg border border-border bg-white px-3 py-2 text-sm" disabled={busy} onClick={() => void requestPolishPreview()}>Regenerate</button></div></section> : null}
 

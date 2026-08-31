@@ -5,8 +5,12 @@ import type { AiStoryCharacterAuthorityVersion, AiStoryCharacterMutationInput } 
 
 const empty: AiStoryCharacterMutationInput = { name: "", identity: "", appearance: "", personality: "", emotionalArc: "", relationships: [], visualAssetIds: [] };
 
-export function CharacterPanel({ campaignId, canEdit }: { campaignId: string; canEdit: boolean }) {
-  const [characters, setCharacters] = useState<AiStoryCharacterAuthorityVersion[]>([]);
+export function CharacterPanel({ campaignId, canEdit, initialCharacters }: {
+  campaignId: string;
+  canEdit: boolean;
+  initialCharacters?: AiStoryCharacterAuthorityVersion[];
+}) {
+  const [characters, setCharacters] = useState<AiStoryCharacterAuthorityVersion[]>(initialCharacters ?? []);
   const [editing, setEditing] = useState<AiStoryCharacterAuthorityVersion | null>(null);
   const [form, setForm] = useState<AiStoryCharacterMutationInput>(empty);
   const [open, setOpen] = useState(false); const [busy, setBusy] = useState(false); const [error, setError] = useState("");
@@ -14,7 +18,13 @@ export function CharacterPanel({ campaignId, canEdit }: { campaignId: string; ca
   const [photoPreviews, setPhotoPreviews] = useState<Record<string, string>>({});
   const photoInput = useRef<HTMLInputElement>(null);
   const load = useCallback(async () => { const response = await fetch(`/api/campaigns/${campaignId}/characters`); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "Characters could not be loaded"); setCharacters(data.characters ?? []); }, [campaignId]);
-  useEffect(() => { void load().catch((reason) => setError(reason instanceof Error ? reason.message : "Characters could not be loaded")); }, [load]);
+  useEffect(() => {
+    if (initialCharacters !== undefined) {
+      setCharacters(initialCharacters);
+      return;
+    }
+    void load().catch((reason) => setError(reason instanceof Error ? reason.message : "Characters could not be loaded"));
+  }, [initialCharacters, load]);
   async function loadPhotoPreviews(assetIds: readonly string[]) { const entries = await Promise.all(assetIds.map(async (assetId) => { try { const response = await fetch(`/api/campaigns/${campaignId}/assets/${assetId}/preview`); const data = await response.json(); return response.ok && data.previewUrl ? [assetId, String(data.previewUrl)] as const : null; } catch { return null; } })); setPhotoPreviews(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => Boolean(entry)))); }
   function beginAdd() { setEditing(null); setForm(empty); setPhotoPreviews({}); setOpen(true); }
   function beginEdit(character: AiStoryCharacterAuthorityVersion) { const visualAssetIds = character.visualAssetReferences.map((asset) => asset.assetId); setEditing(character); setForm({ name: character.name, ...character.canonicalFacts, visualAssetIds }); setOpen(true); void loadPhotoPreviews(visualAssetIds); }

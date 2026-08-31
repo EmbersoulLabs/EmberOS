@@ -63,6 +63,23 @@ async function assertRelationships(db: Pick<Db, "select">, scope: AiStoryCharact
 export class AiStoryCharacterAuthorityService {
   constructor(private readonly db: Db = getDb()) {}
 
+  private async listCurrentVersions(scope: AiStoryCharacterScope, includeDeleted: boolean) {
+    const rows = await this.db.select({ snapshot: schema.aiStoryCharacterVersions.snapshot })
+      .from(schema.aiStoryCharacters)
+      .innerJoin(
+        schema.aiStoryCharacterVersions,
+        eq(schema.aiStoryCharacterVersions.characterVersionId, schema.aiStoryCharacters.currentCharacterVersionId)
+      )
+      .where(and(
+        eq(schema.aiStoryCharacters.orgId, scope.orgId),
+        eq(schema.aiStoryCharacters.workspaceId, scope.workspaceId),
+        eq(schema.aiStoryCharacters.campaignId, scope.campaignId),
+        ...(includeDeleted ? [] : [eq(schema.aiStoryCharacters.status, "ACTIVE")]),
+      ))
+      .orderBy(asc(schema.aiStoryCharacters.name));
+    return rows.map((row) => AiStoryCharacterAuthorityVersionSchema.parse(row.snapshot));
+  }
+
   async add(scope: AiStoryCharacterScope, raw: AiStoryCharacterMutationInput, characterId = randomUUID(), now = new Date().toISOString()) {
     const facts = AiStoryCharacterMutationInputSchema.parse(raw);
     return this.db.transaction(async (tx) => {
@@ -115,14 +132,15 @@ export class AiStoryCharacterAuthorityService {
 
   async list(scope: AiStoryCharacterScope, includeDeleted = false) {
     await assertCampaignScope(this.db, scope, false);
-    const aggregates = await this.db.select().from(schema.aiStoryCharacters).where(and(
-      eq(schema.aiStoryCharacters.orgId, scope.orgId), eq(schema.aiStoryCharacters.workspaceId, scope.workspaceId),
-      eq(schema.aiStoryCharacters.campaignId, scope.campaignId), ...(includeDeleted ? [] : [eq(schema.aiStoryCharacters.status, "ACTIVE")]),
-    )).orderBy(asc(schema.aiStoryCharacters.name));
-    if (!aggregates.length) return [];
-    const rows = await this.db.select().from(schema.aiStoryCharacterVersions).where(inArray(schema.aiStoryCharacterVersions.characterVersionId, aggregates.map((item) => item.currentCharacterVersionId)));
-    const byId = new Map(rows.map((row) => [row.characterVersionId, parseVersion(row)]));
-    return aggregates.map((item) => byId.get(item.currentCharacterVersionId)!).filter(Boolean);
+    return this.listCurrentVersions(scope, includeDeleted);
+  }
+
+  /**
+   * Read projection for an API orchestration that already completed canonical
+   * Campaign/workspace/tenant authorization in the same request.
+   */
+  async listForVerifiedScope(scope: AiStoryCharacterScope, includeDeleted = false) {
+    return this.listCurrentVersions(scope, includeDeleted);
   }
 
   async read(scope: AiStoryCharacterScope, characterId: string, includeDeleted = false) {
