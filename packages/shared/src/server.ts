@@ -42,5 +42,7 @@ export * from "./commercial-entitlements";
 export * from "./commercial-authorization";
 export * from "./commercial-subscription";
 export * from "./commercial-credits";
+export * from "./certification-commercial-authority";
+export * from "./ai-story-provider-runtime";
 export * from "./commercial-product-usage";
 export * from "./platform-admin";

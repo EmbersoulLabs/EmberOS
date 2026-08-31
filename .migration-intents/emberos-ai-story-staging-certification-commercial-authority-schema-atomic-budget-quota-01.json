@@ -1,0 +1,71 @@
+{
+  "ticketId": "EMBEROS-AI-STORY-STAGING-CERTIFICATION-COMMERCIAL-AUTHORITY-SCHEMA-ATOMIC-BUDGET-QUOTA-01",
+  "wave": 5,
+  "changeKind": "HYBRID_MIGRATION",
+  "reason": "Add the bounded STAGING certification commercial scope, official Provider USD pricing, and atomic pre-dispatch USD budget/global submission quota required for truthful real-provider V1 certification.",
+  "sourceAuthority": "USER_APPROVED_RELEASE_TICKET",
+  "targetModule": "AI Story Certification Commercial Authority",
+  "allowedSourcePaths": [
+    "origin/staging@5cd127d0f3ea399f00daf03aadf78c4aa3b5dca2",
+    "https://docs.byteplus.com/docs/ModelArk/1099320"
+  ],
+  "allowedTargetPaths": [
+    ".migration-intents/emberos-ai-story-staging-certification-commercial-authority-schema-atomic-budget-quota-01.json",
+    "docs/releases/ai-story-staging-certification-commercial-authority-manifest.md",
+    "packages/shared/src/certification-commercial-authority.ts",
+    "packages/shared/src/index.ts",
+    "packages/shared/src/server.ts",
+    "packages/db/package.json",
+    "packages/db/releases/certification-commercial-authority-v1-staging.json",
+    "packages/db/scripts/apply-certification-commercial-authority-v1.ts",
+    "packages/db/scripts/manage-certification-commercial-authority.ts",
+    "packages/db/sql/certification-commercial-authority-v1.sql",
+    "packages/db/src/index.ts",
+    "packages/db/src/schema/index.ts",
+    "packages/db/src/queries/certification-commercial-authority.ts",
+    "packages/agents/src/commercial/commercial-authorization-runtime.ts",
+    "packages/agents/src/ai-story/scene-provider-worker-runtime.ts",
+    "apps/worker/src/ai-story-certification-commercial-reservation.ts",
+    "apps/worker/src/ai-story-provider-worker-cycle.ts",
+    "tests/certification-commercial-authority.test.ts",
+    "tests/certification-commercial-authority.integration.test.ts",
+    "tests/ai-story-exec-03-authorization.test.ts",
+    "tests/sprint-3-phase-3-pr33-worker.test.ts",
+    "tests/ai-story-runtime-ui-refresh-loop-01.test.ts",
+    "tests/ai-story-vertical-slice.test.ts",
+    "tests/sprint-3-phase-3-pr31-authorization.test.ts",
+    "config/hybrid-migration-guards.json",
+    ".github/workflows/ci.yml",
+    "scripts/certification-commercial-authority-staging-certificate.ts"
+  ],
+  "protectedDomainsExpectedToChange": [
+    "AI_STORY_RUNTIME",
+    "COMMERCIAL_AUTH",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING"
+  ],
+  "protectedDomainsMustNotChange": [
+    "AI_STORY_REVIEW",
+    "AI_STORY_STAGED_RELEASE",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "AI_STORY_PRIVATE_MEDIA",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "PRIVATE_MEDIA_DELIVERY",
+    "PLATFORM_ADMIN"
+  ],
+  "requiredTests": [
+    "tests/certification-commercial-authority.test.ts",
+    "tests/certification-commercial-authority.integration.test.ts",
+    "tests/ai-story-exec-03-authorization.test.ts",
+    "tests/sprint-3-phase-3-pr33-worker.test.ts",
+    "tests/ai-story-runtime-ui-refresh-loop-01.test.ts",
+    "tests/ai-story-vertical-slice.test.ts",
+    "tests/sprint-3-phase-3-pr31-authorization.test.ts",
+    "tests/ai-story-exec-05-provider-cost.test.ts",
+    "tests/sprint-3-execution-engine.test.ts",
+    "tests/tenant-access.test.ts",
+    "tests/workspace-isolation.test.ts"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}

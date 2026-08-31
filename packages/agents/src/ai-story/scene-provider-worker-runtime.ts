@@ -100,6 +100,27 @@ export type ProcessDispatchOutcome = {
 export type SceneProviderWorkerRuntimeDependencies = {
   readonly repository: WorkerRuntimeRepository;
   readonly adapters: CanonicalAdapterRegistry;
+  readonly commercialReservation?: {
+    reserveBeforeSubmit(input: {
+      readonly bundle: WorkerValidatedBundle;
+      readonly providerAttemptId: string;
+      readonly reservedAt: string;
+    }): Promise<{ readonly reservationId: string }>;
+    loadForOutcome(input: {
+      readonly providerAttemptId: string;
+    }): Promise<{ readonly reservationId: string } | null>;
+    recordProviderOutcome(input: {
+      readonly reservationId: string;
+      readonly phase: "submit" | "lookup";
+      readonly acceptanceClassification: ProviderAcceptanceClassification;
+      readonly canonicalProviderState: CanonicalProviderState;
+      readonly normalizedUsageFacts?: WorkerExecutionResult["normalizedUsageFacts"];
+      readonly normalizedCostMetadata?: WorkerExecutionResult["normalizedCostMetadata"];
+      readonly occurredAt: string;
+    }): Promise<void>;
+  };
+  /** Production AI Story workers must fail closed when this dependency is absent. */
+  readonly requireCommercialReservation?: boolean;
   readonly expectedRegistrySnapshotHash?: string;
   readonly now?: () => Date;
 };
@@ -234,6 +255,25 @@ export class SceneProviderWorkerRuntime {
 
     const mode = canResumeLookup ? "lookup" : (input.mode ?? "submit");
 
+    if (this.dependencies.requireCommercialReservation && !this.dependencies.commercialReservation) {
+      throw new WorkerRuntimeError(
+        "OWNERSHIP_INTEGRITY_VIOLATION",
+        "Commercial reservation authority is required before Provider submission"
+      );
+    }
+
+    const reservation = this.dependencies.commercialReservation
+      ? mode === "submit"
+        ? await this.dependencies.commercialReservation.reserveBeforeSubmit({
+            bundle,
+            providerAttemptId,
+            reservedAt: this.now().toISOString(),
+          })
+        : await this.dependencies.commercialReservation.loadForOutcome({
+            providerAttemptId,
+          })
+      : undefined;
+
     let adapterResult:
       | {
           acceptanceClassification: ProviderAcceptanceClassification;
@@ -289,6 +329,22 @@ export class SceneProviderWorkerRuntime {
         failureClassification: classified,
         reconciliationRequired: classified.reconciliationRequired,
       };
+    }
+
+    if (this.dependencies.commercialReservation && reservation) {
+      await this.dependencies.commercialReservation.recordProviderOutcome({
+        reservationId: reservation.reservationId,
+        phase: mode,
+        acceptanceClassification: adapterResult.acceptanceClassification,
+        canonicalProviderState: adapterResult.canonicalProviderState,
+        ...(adapterResult.normalizedUsageFacts
+          ? { normalizedUsageFacts: adapterResult.normalizedUsageFacts }
+          : {}),
+        ...(adapterResult.normalizedCostMetadata
+          ? { normalizedCostMetadata: adapterResult.normalizedCostMetadata }
+          : {}),
+        occurredAt: this.now().toISOString(),
+      });
     }
 
     const workerState = mapWorkerState(

@@ -48,6 +48,7 @@ import {
   isSupabaseStorageConfigured,
 } from "./ai-story-durable-object-store";
 import { dispatchNextProviderExecution } from "./provider-execution-dispatch-entrypoint";
+import { AiStoryCertificationCommercialReservationGate } from "./ai-story-certification-commercial-reservation";
 
 export type AiStoryProviderWorkerCycleOptions = {
   readonly adapters?: CanonicalAdapterRegistry;
@@ -132,6 +133,8 @@ export async function createProductionAiStoryContinuationCoordinator(
     worker: {
       repository: workerRepo,
       adapters,
+      commercialReservation: new AiStoryCertificationCommercialReservationGate(),
+      requireCommercialReservation: true,
     },
     finalization: {
       chain: projectionRepo,
