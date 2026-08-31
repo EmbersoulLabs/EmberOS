@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import {
   AiStoryCompiledProviderRequestSchema,
   CERTIFICATION_COMMERCIAL_CONTRACT_VERSION,
@@ -165,7 +165,7 @@ export class CertificationCommercialAuthorityService {
       eq(schema.providerUsdPricingRules.providerKey, "BYTEPLUS_MODELARK"),
       eq(schema.providerUsdPricingRules.modelId, "dreamina-seedance-2-0-260128"),
       lte(schema.providerUsdPricingRules.effectiveFrom, new Date(at)),
-      or(isNull(schema.providerUsdPricingRules.effectiveTo), sql`${schema.providerUsdPricingRules.effectiveTo} > ${new Date(at)}`),
+      or(isNull(schema.providerUsdPricingRules.effectiveTo), gt(schema.providerUsdPricingRules.effectiveTo, new Date(at))),
     ));
     if (rows.length === 0) return null;
     const versions = [...new Set(rows.map((row) => row.version))].sort();
@@ -284,7 +284,7 @@ export class CertificationCommercialAuthorityService {
       eq(schema.providerUsdPricingRules.aspectRatio, input.aspectRatio),
       eq(schema.providerUsdPricingRules.resolution, input.resolution),
       lte(schema.providerUsdPricingRules.effectiveFrom, new Date(input.at)),
-      or(isNull(schema.providerUsdPricingRules.effectiveTo), sql`${schema.providerUsdPricingRules.effectiveTo} > ${new Date(input.at)}`),
+      or(isNull(schema.providerUsdPricingRules.effectiveTo), gt(schema.providerUsdPricingRules.effectiveTo, new Date(input.at))),
     )).orderBy(desc(schema.providerUsdPricingRules.effectiveFrom)).limit(1);
     return rows[0] ? ProviderUsdPricingRuleSchema.parse(rows[0].pricingBody) : null;
   }
