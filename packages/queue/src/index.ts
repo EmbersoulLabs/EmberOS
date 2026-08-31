@@ -3,6 +3,7 @@ import { QUEUE_NAMES } from "./jobs";
 import { assertPhase1ExecutionLocked, emitPhotoSceneOpsEvent, emitVideoStudioOpsEvent } from "@ceo-agent/shared";
 
 export { QUEUE_NAMES } from "./jobs";
+export * from "./provider-executor-authority";
 
 export const DEFAULT_JOB_ATTEMPTS = 3;
 

@@ -43,7 +43,9 @@ describe("PROD-VERIFY-01 no-provider canonical Execute", () => {
     );
     expect(route).toContain("resolveAuthorizedExecutionPlan");
     expect(route).toContain("authorizeAiStoryExecution");
-    expect(route).toContain("createCanonicalExecuteProviderRouter()");
+    expect(route).toContain("resolveCanonicalWebExecuteProviderAuthority");
+    expect(route).toContain("providerRouting.router");
+    expect(route).toContain("providerRouting.routingPolicy");
     expect(route).toContain("authorizeAndExecuteExecutionPlan");
     expect(execute).toContain("releases.initialize");
     expect(execute).toContain("[initialScene.sceneExecutionId]");
