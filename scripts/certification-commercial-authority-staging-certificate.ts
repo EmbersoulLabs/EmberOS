@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import postgres from "postgres";
 
+async function main(): Promise<void> {
 if ((process.env.RAILWAY_ENVIRONMENT_NAME ?? "").toLowerCase() !== "staging") {
   throw new Error("STAGING_ENVIRONMENT_REQUIRED");
 }
@@ -71,3 +72,9 @@ try {
 } finally {
   await sql.end();
 }
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : "CERTIFICATE_FAILED");
+  process.exitCode = 1;
+});
