@@ -22,7 +22,7 @@ describe("Staging protected API database dependency deadline", () => {
     else process.env.VERCEL = originalVercel;
   });
 
-  it("bounds a pool-queued operation and discards the occupied client", async () => {
+  it("bounds a pool-queued operation and retires the occupied client", async () => {
     process.env.DATABASE_URL = "postgres://user:password@127.0.0.1:5432/test";
     process.env.VERCEL = "1";
 
@@ -46,8 +46,39 @@ describe("Staging protected API database dependency deadline", () => {
     expect(client).toContain("isServerless ? SERVERLESS_DB_MAX_CONNECTIONS : 10");
     expect(client).toContain("connect_timeout: connectTimeout");
     expect(client).toContain("SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000");
-    expect(client).toContain("await staleClient.end({ timeout: 0 })");
-    expect(client).toContain("Promise.race([operation(database), deadline])");
+    expect(client).toContain("closeRetiredClientWhenIdle");
+    expect(client).toContain("state.activeOperations > 0");
+    expect(client).toContain("Promise.race([runningOperation, deadline])");
+  });
+
+  it("does not let one timed-out operation abort a sibling on the shared client", async () => {
+    process.env.DATABASE_URL = "postgres://user:password@127.0.0.1:5432/test";
+    process.env.VERCEL = "1";
+
+    const sharedDb = getDb();
+    let completeSibling: ((value: string) => void) | undefined;
+    let completeTimedOut: (() => void) | undefined;
+    const sibling = withDbDeadline(
+      sharedDb,
+      () => new Promise<string>((resolve) => { completeSibling = resolve; }),
+      100,
+    );
+    const timedOut = withDbDeadline(
+      sharedDb,
+      () => new Promise<void>((resolve) => {
+        completeTimedOut = resolve;
+      }),
+      15,
+    );
+
+    await expect(timedOut).rejects.toMatchObject({
+      code: "DATABASE_DEPENDENCY_TIMEOUT",
+    });
+    completeSibling?.("sibling-completed");
+    await expect(sibling).resolves.toBe("sibling-completed");
+    completeTimedOut?.();
+    await expect(withDbDeadline(getDb(), async () => "fresh-client", 50))
+      .resolves.toBe("fresh-client");
   });
 
   it("applies the bounded dependency chain to every certified protected GET", () => {
