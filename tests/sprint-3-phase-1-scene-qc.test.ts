@@ -19,6 +19,7 @@ import {
   validateSceneExecutionIntent,
 } from "../packages/agents/src/ai-story/ai-qc-validator";
 import { mapCompiledInstructionsToCanonicalScenePayload } from "../packages/agents/src/ai-story/canonical-scene-payload-resolver";
+import { validateApprovedAnimationPackageRevision } from "../apps/web/src/lib/ai-story-planning-service";
 
 const ASSET_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const ASSET_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
@@ -546,6 +547,70 @@ describe("Phase 1 AI QC Layer", () => {
     expect(result.status).toBe("failed");
     expect(result.errors.some((e) => e.code === "ANIMATION_PACKAGE_NOT_APPROVED")).toBe(
       true
+    );
+  });
+});
+
+describe("Approved Animation Package versioning authority", () => {
+  function appendReferenceFreeT2v(previous: AnimationPackagePayload) {
+    const next = structuredClone(previous);
+    next.storyBeats.push({
+      id: "beat-certification-reference-free-t2v",
+      name: "Spring atmosphere",
+      purpose: "Certify reference-free T2V",
+      order: next.storyBeats.length,
+      summary: "A pure atmospheric transition without product imagery.",
+    });
+    next.scenePlan.push({
+      id: "scene-certification-reference-free-t2v",
+      beatIds: ["beat-certification-reference-free-t2v"],
+      purpose: "Establish a spring transition without product visual identity.",
+      durationSec: 5,
+      transition: "Cut",
+      continuityNotes: "Ambient spring light; no product or media conditioning.",
+      order: next.scenePlan.length,
+      generationAuthority: {
+        strategy: "TEXT_TO_VIDEO",
+        referenceSource: "REFERENCE_FREE_T2V",
+        referenceAssetIds: [],
+        firstFrameAssetId: null,
+        productVisualIdentityRequirement: "NONE",
+      },
+    });
+    next.shotPlan.push({
+      id: "shot-certification-reference-free-t2v",
+      sceneId: "scene-certification-reference-free-t2v",
+      cameraType: "Wide",
+      cameraMovement: "Slow drift",
+      composition: "Open atmospheric composition",
+      framing: "Vertical",
+      lensSuggestion: "35mm",
+      durationSec: 5,
+      focus: "Spring morning light",
+      emotion: "Hopeful",
+      information: "Transition in time and mood",
+      order: 0,
+    });
+    return AnimationPackagePayloadSchema.parse(next);
+  }
+
+  it("preserves existing Scenes and references while appending one explicit T2V Scene", () => {
+    const previous = samplePackage();
+    const next = appendReferenceFreeT2v(previous);
+    expect(validateApprovedAnimationPackageRevision(previous, next)).toEqual(next);
+  });
+
+  it("rejects retained Scene mutation and implicit zero-reference fallback", () => {
+    const previous = samplePackage();
+    const changed = appendReferenceFreeT2v(previous);
+    changed.scenePlan[0]!.purpose = "tampered";
+    expect(() => validateApprovedAnimationPackageRevision(previous, changed)).toThrow(
+      /changed retained Scene/
+    );
+    const implicit = appendReferenceFreeT2v(previous);
+    delete (implicit.scenePlan.at(-1) as { generationAuthority?: unknown }).generationAuthority;
+    expect(() => validateApprovedAnimationPackageRevision(previous, implicit)).toThrow(
+      /explicitly reference-free TEXT_TO_VIDEO/
     );
   });
 });
