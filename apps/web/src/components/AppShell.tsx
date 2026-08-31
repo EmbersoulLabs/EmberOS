@@ -10,6 +10,28 @@ import { statusTranslationKey } from "@ceo-agent/shared/i18n";
 import { LocaleSwitcher } from "@/components/LocaleSwitcher";
 import { GlobalNavMenu, useLogoutAction, type GlobalNavItem } from "@/components/GlobalNavMenu";
 
+type CurrentUserProjection = {
+  isSuperAdmin?: boolean;
+  workspaces?: Array<{ slug: string; role: string }>;
+};
+
+let currentUserRequest: Promise<CurrentUserProjection> | null = null;
+
+/** Coalesce concurrent shell/page identity reads without caching across loads. */
+export function fetchCurrentUserProjection(): Promise<CurrentUserProjection> {
+  if (!currentUserRequest) {
+    currentUserRequest = fetch("/api/me")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Current user could not be loaded");
+        return await response.json() as CurrentUserProjection;
+      })
+      .finally(() => {
+        currentUserRequest = null;
+      });
+  }
+  return currentUserRequest;
+}
+
 function resolveHomeHref(pathname: string): string | null {
   if (pathname === "/workspaces") return null;
 
@@ -109,8 +131,7 @@ export function AppShell({
     (pathname === assetLibraryHref || pathname.startsWith(`${assetLibraryHref}/`));
 
   useEffect(() => {
-    fetch("/api/me")
-      .then((r) => r.json())
+    fetchCurrentUserProjection()
       .then((d) => setIsSuperAdmin(Boolean(d.isSuperAdmin)))
       .catch(() => setIsSuperAdmin(false));
   }, []);
