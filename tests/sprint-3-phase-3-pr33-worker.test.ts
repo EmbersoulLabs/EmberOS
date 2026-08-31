@@ -132,6 +132,63 @@ describe("Sprint 3 PR 3.3 worker contracts", () => {
     expect(second.result.providerAttemptId).toBe(first.result.providerAttemptId);
   });
 
+  it("fails closed before Adapter submit when production commercial reservation authority is absent", async () => {
+    const bundle = await buildPr33ValidatedBundle();
+    const repository = new InMemoryWorkerRuntimeRepository(bundle);
+    const adapter = new DeterministicCanonicalTestAdapter("accepted_async", {
+      providerId: "seedance",
+      adapterVersion: "1.0.0",
+    });
+    const adapters = createPr33TestAdapterRegistry("accepted_async");
+    adapters.register("seedance", "1.0.0", () => adapter);
+    const worker = new SceneProviderWorkerRuntime({
+      repository,
+      adapters,
+      requireCommercialReservation: true,
+    });
+    await expect(worker.processDispatch({ dispatchId: bundle.dispatch.dispatchId }))
+      .rejects.toThrow("Commercial reservation authority is required");
+    expect(adapter.submitCount).toBe(0);
+  });
+
+  it("reserves commercial budget/quota before the bound Adapter is invoked", async () => {
+    const bundle = await buildPr33ValidatedBundle();
+    const repository = new InMemoryWorkerRuntimeRepository(bundle);
+    const sequence: string[] = [];
+    const adapter = new DeterministicCanonicalTestAdapter("accepted_async", {
+      providerId: "seedance",
+      adapterVersion: "1.0.0",
+    });
+    const originalSubmit = adapter.submit.bind(adapter);
+    adapter.submit = async (input) => {
+      sequence.push("provider-submit");
+      return originalSubmit(input);
+    };
+    const adapters = createPr33TestAdapterRegistry("accepted_async");
+    adapters.register("seedance", "1.0.0", () => adapter);
+    const worker = new SceneProviderWorkerRuntime({
+      repository,
+      adapters,
+      requireCommercialReservation: true,
+      commercialReservation: {
+        reserveBeforeSubmit: async () => {
+          sequence.push("commercial-reservation");
+          return { reservationId: "reservation-1" };
+        },
+        loadForOutcome: async () => null,
+        recordProviderOutcome: async () => {
+          sequence.push("commercial-outcome");
+        },
+      },
+    });
+    await worker.processDispatch({ dispatchId: bundle.dispatch.dispatchId });
+    expect(sequence).toEqual([
+      "commercial-reservation",
+      "provider-submit",
+      "commercial-outcome",
+    ]);
+  });
+
   it("resolves Adapter only from persisted Routing Decision binding", async () => {
     const bundle = await buildPr33ValidatedBundle();
     const repository = new InMemoryWorkerRuntimeRepository(bundle);

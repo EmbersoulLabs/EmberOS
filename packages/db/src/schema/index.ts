@@ -12,6 +12,7 @@ import {
   unique,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -3167,6 +3168,131 @@ export const commercialExecutionAuthorizations = pgTable(
     index("commercial_execution_authorizations_execution_idx").on(
       t.executionIdentity
     ),
+  ]
+);
+
+/** Bounded, non-subscription STAGING certification commercial authority. */
+export const certificationCommercialScopes = pgTable(
+  "certification_commercial_scopes",
+  {
+    certificationScopeId: uuid("certification_scope_id").primaryKey(),
+    environment: text("environment").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    capabilityKey: text("capability_key").notNull(),
+    status: text("status").notNull(),
+    maxProviderCostUsd: numeric("max_provider_cost_usd", { precision: 12, scale: 2 }).notNull(),
+    maxProviderSubmissions: integer("max_provider_submissions").notNull(),
+    spentProviderCostUsd: numeric("spent_provider_cost_usd", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    reservedProviderCostUsd: numeric("reserved_provider_cost_usd", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    consumedProviderSubmissions: integer("consumed_provider_submissions").notNull().default(0),
+    reservedProviderSubmissions: integer("reserved_provider_submissions").notNull().default(0),
+    createdBy: uuid("created_by").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    scopeBody: jsonb("scope_body").$type<import("@ceo-agent/shared/server").CertificationCommercialScope>().notNull(),
+  },
+  (t) => [
+    unique("certification_commercial_scope_identity_unique").on(t.environment, t.orgId, t.workspaceId, t.capabilityKey),
+    unique("certification_commercial_scope_integrity_unique").on(t.integrityHash),
+    index("certification_commercial_scope_workspace_idx").on(t.workspaceId, t.status),
+    check("certification_commercial_scope_environment_check", sql`${t.environment} = 'STAGING'`),
+    check("certification_commercial_scope_capability_check", sql`${t.capabilityKey} = 'ai_story.execute'`),
+    check("certification_commercial_scope_status_check", sql`${t.status} in ('ACTIVE','CLOSED','REVOKED')`),
+    check("certification_commercial_scope_limits_check", sql`${t.maxProviderCostUsd} > 0 and ${t.maxProviderSubmissions} > 0`),
+    check("certification_commercial_scope_counters_check", sql`${t.spentProviderCostUsd} >= 0 and ${t.reservedProviderCostUsd} >= 0 and ${t.consumedProviderSubmissions} >= 0 and ${t.reservedProviderSubmissions} >= 0`),
+  ]
+);
+
+export const providerUsdPricingRules = pgTable(
+  "provider_usd_pricing_rules",
+  {
+    providerUsdPricingRuleId: uuid("provider_usd_pricing_rule_id").primaryKey(),
+    providerKey: text("provider_key").notNull(),
+    modelId: text("model_id").notNull(),
+    generationMode: text("generation_mode").notNull(),
+    durationSeconds: integer("duration_seconds").notNull(),
+    aspectRatio: text("aspect_ratio").notNull(),
+    resolution: text("resolution").notNull(),
+    currency: text("currency").notNull(),
+    inputVideoIncluded: boolean("input_video_included").notNull(),
+    outputWidthPixels: integer("output_width_pixels").notNull(),
+    outputHeightPixels: integer("output_height_pixels").notNull(),
+    outputFrameRate: integer("output_frame_rate").notNull(),
+    usdPerMillionTokens: numeric("usd_per_million_tokens", { precision: 12, scale: 4 }).notNull(),
+    costBasis: text("cost_basis").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    version: text("version").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    pricingBody: jsonb("pricing_body").$type<import("@ceo-agent/shared/server").ProviderUsdPricingRule>().notNull(),
+  },
+  (t) => [
+    unique("provider_usd_pricing_identity_unique").on(t.providerKey, t.modelId, t.generationMode, t.durationSeconds, t.aspectRatio, t.resolution, t.version),
+    unique("provider_usd_pricing_integrity_unique").on(t.integrityHash),
+    index("provider_usd_pricing_lookup_idx").on(t.providerKey, t.modelId, t.generationMode, t.effectiveFrom),
+    check("provider_usd_pricing_currency_check", sql`${t.currency} = 'USD'`),
+    check("provider_usd_pricing_cost_check", sql`${t.usdPerMillionTokens} > 0 and ${t.durationSeconds} > 0`),
+    check("provider_usd_pricing_dimensions_check", sql`${t.outputWidthPixels} > 0 and ${t.outputHeightPixels} > 0 and ${t.outputFrameRate} > 0`),
+  ]
+);
+
+export const certificationCommercialReservations = pgTable(
+  "certification_commercial_reservations",
+  {
+    certificationReservationId: uuid("certification_reservation_id").primaryKey(),
+    certificationScopeId: uuid("certification_scope_id").notNull().references(() => certificationCommercialScopes.certificationScopeId, { onDelete: "restrict" }),
+    providerUsdPricingRuleId: uuid("provider_usd_pricing_rule_id").notNull().references(() => providerUsdPricingRules.providerUsdPricingRuleId, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    executionIdentity: text("execution_identity").notNull(),
+    reservedCostUsd: numeric("reserved_cost_usd", { precision: 12, scale: 2 }).notNull(),
+    settledCostUsd: numeric("settled_cost_usd", { precision: 12, scale: 2 }),
+    status: text("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    reservationBody: jsonb("reservation_body").$type<import("@ceo-agent/shared/server").CertificationCommercialReservation>().notNull(),
+  },
+  (t) => [
+    unique("certification_reservation_execution_unique").on(t.certificationScopeId, t.executionIdentity),
+    unique("certification_reservation_integrity_unique").on(t.integrityHash),
+    index("certification_reservation_scope_status_idx").on(t.certificationScopeId, t.status),
+    check("certification_reservation_status_check", sql`${t.status} in ('RESERVED','SUBMITTED','SETTLED','RELEASED')`),
+    check("certification_reservation_cost_check", sql`${t.reservedCostUsd} > 0 and (${t.settledCostUsd} is null or ${t.settledCostUsd} >= 0)`),
+  ]
+);
+
+export const certificationCommercialEvents = pgTable(
+  "certification_commercial_events",
+  {
+    certificationCommercialEventId: uuid("certification_commercial_event_id").primaryKey(),
+    certificationScopeId: uuid("certification_scope_id").notNull().references(() => certificationCommercialScopes.certificationScopeId, { onDelete: "restrict" }),
+    certificationReservationId: uuid("certification_reservation_id").references(() => certificationCommercialReservations.certificationReservationId, { onDelete: "restrict" }),
+    eventType: text("event_type").notNull(),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 2 }),
+    actorUserId: uuid("actor_user_id"),
+    reason: text("reason").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    eventBody: jsonb("event_body").$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [
+    unique("certification_commercial_events_integrity_unique").on(t.integrityHash),
+    uniqueIndex("certification_commercial_events_reservation_type_unique").on(t.certificationReservationId, t.eventType).where(sql`${t.certificationReservationId} is not null`),
+    index("certification_commercial_events_scope_idx").on(t.certificationScopeId, t.occurredAt),
+    check("certification_commercial_events_type_check", sql`${t.eventType} in ('CREATED','RESERVED','SUBMITTED','SETTLED','RELEASED','CLOSED','REVOKED')`),
   ]
 );
 

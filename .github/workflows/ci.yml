@@ -88,6 +88,11 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/ai-story-post-generation-qc-migration-predecessor.integration.test.ts
 
+      - name: Certify certification commercial migration and atomic budget quota
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/certification-commercial-authority.integration.test.ts
+
       - name: Certify ephemeral PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
 

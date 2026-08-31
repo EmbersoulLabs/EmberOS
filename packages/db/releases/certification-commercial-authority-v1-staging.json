@@ -1,0 +1,39 @@
+{
+  "manifestVersion": 1,
+  "manifestId": "certification-commercial-authority-v1-staging",
+  "authorityModel": "ORDERED_STATE_CERTIFIED_HYBRID_CONVERGENCE",
+  "databaseAuthorityRevision": "fa6386ae58f67f04a5883df559a1b1d546e646ee",
+  "target": {
+    "environment": "staging",
+    "railwayProjectId": "b2004ec8-7747-4fae-bca4-4167a3385d49",
+    "railwayEnvironmentId": "de092159-8b57-4729-a8ef-1b4ac0c2b33f"
+  },
+  "orderedMigrations": [
+    {
+      "order": 12,
+      "id": "certification-commercial-authority-v1",
+      "path": "packages/db/sql/certification-commercial-authority-v1.sql",
+      "sha256": "856bd0e64e11a4df5cd81e34f6e620d477263c53aebbe1f39199165f33b74544"
+    }
+  ],
+  "predecessor": {
+    "requiredTables": ["organizations", "workspaces", "billing_accounts", "ai_story_compiled_provider_requests"],
+    "requiredAbsentTables": [
+      "certification_commercial_scopes",
+      "provider_usd_pricing_rules",
+      "certification_commercial_reservations",
+      "certification_commercial_events"
+    ]
+  },
+  "result": {
+    "tables": [
+      "certification_commercial_scopes",
+      "provider_usd_pricing_rules",
+      "certification_commercial_reservations",
+      "certification_commercial_events"
+    ],
+    "budgetUsd": "5.00",
+    "providerSubmissionQuota": 4,
+    "automaticPaidRetry": false
+  }
+}

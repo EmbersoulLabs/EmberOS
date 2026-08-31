@@ -261,7 +261,9 @@ describe("EXEC-03 commercial fail-closed", () => {
       { getProjectionByOrgId: vi.fn() } as never,
       { getEffectiveProjection: vi.fn(), rebuildEffectiveProjection: vi.fn() } as never,
       { reserveCredits: vi.fn() } as never,
-      { getByExecutionIdentity: vi.fn().mockResolvedValue(null), acceptOrConverge: vi.fn() } as never
+      { getByExecutionIdentity: vi.fn().mockResolvedValue(null), acceptOrConverge: vi.fn() } as never,
+      undefined,
+      { getActiveScope: vi.fn().mockResolvedValue(null) } as never
     );
     await expect(
       service.authorizeBillableExecute({
@@ -274,13 +276,52 @@ describe("EXEC-03 commercial fail-closed", () => {
     ).rejects.toMatchObject({ code: "COMMERCIAL_AUTH_BILLING_MISSING" });
   });
 
+  it("authorizes an exact STAGING certification scope while retaining billing, entitlement and Provider USD evidence", async () => {
+    const accepted = { value: { pricingRuleKey: "provider-usd:byteplus-modelark:dreamina-seedance-2-0-260128" }, replayed: false };
+    const service = new CommercialAuthorizationService(
+      { getByOrgId: vi.fn().mockResolvedValue({ billingAccountId: "ba" }) } as never,
+      { getProjectionByOrgId: vi.fn().mockResolvedValue(null) } as never,
+      {
+        getEffectiveProjection: vi.fn().mockResolvedValue({
+          entries: [{ capabilityKey: "ai_story.execute", entitlementGrantId: "g1" }],
+          integrityHash: HASH,
+        }),
+        rebuildEffectiveProjection: vi.fn(),
+      } as never,
+      { reserveCredits: vi.fn() } as never,
+      { getByExecutionIdentity: vi.fn().mockResolvedValue(null), acceptOrConverge: vi.fn().mockResolvedValue(accepted) } as never,
+      undefined,
+      {
+        getActiveScope: vi.fn().mockResolvedValue({
+          certificationScopeId: "10000000-0000-4000-8000-000000000099",
+        }),
+        getActivePricingEvidence: vi.fn().mockResolvedValue({
+          ruleKey: "provider-usd:byteplus-modelark:dreamina-seedance-2-0-260128",
+          ruleVersion: "byteplus-2026-08-01.v1",
+          integrityHash: HASH,
+        }),
+      } as never
+    );
+    const result = await service.authorizeBillableExecute({
+      orgId: ORG,
+      workspaceId: WORKSPACE,
+      capabilityKey: "ai_story.execute",
+      executionIdentity: `execution-plan:${PLAN_ID}`,
+      authorizedAt: "2026-08-31T00:00:00.000Z",
+    });
+    expect(result.pricingRule).toBeNull();
+    expect(result.authorization.pricingRuleKey).toContain("provider-usd:");
+  });
+
   it("CASE N: commercial authorization with missing subscription denied", async () => {
     const service = new CommercialAuthorizationService(
       { getByOrgId: vi.fn().mockResolvedValue({ billingAccountId: "ba" }) } as never,
       { getProjectionByOrgId: vi.fn().mockResolvedValue(null) } as never,
       { getEffectiveProjection: vi.fn(), rebuildEffectiveProjection: vi.fn() } as never,
       { reserveCredits: vi.fn() } as never,
-      { getByExecutionIdentity: vi.fn().mockResolvedValue(null), acceptOrConverge: vi.fn() } as never
+      { getByExecutionIdentity: vi.fn().mockResolvedValue(null), acceptOrConverge: vi.fn() } as never,
+      undefined,
+      { getActiveScope: vi.fn().mockResolvedValue(null) } as never
     );
     await expect(
       service.authorizeBillableExecute({

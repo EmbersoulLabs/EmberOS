@@ -34,6 +34,7 @@ export * from "./queries/entitlement";
 export * from "./queries/entitlement-administration";
 export * from "./queries/credits";
 export * from "./queries/commercial-authorization";
+export * from "./queries/certification-commercial-authority";
 export * from "./queries/ai-story-provider-attempt-cost";
 export * from "./queries/ai-story-generated-scene-review";
 export * from "./queries/ai-story-differentiated-retry";
