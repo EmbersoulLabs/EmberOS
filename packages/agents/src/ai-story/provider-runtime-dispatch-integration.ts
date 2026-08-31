@@ -113,6 +113,9 @@ export function compileImmutableSeedanceRequest(input: {
     sceneExecutionId: input.sceneExecutionId,
     sceneExecutionPackageId: input.package.sceneExecutionPackageId,
     generationMode: compiled.requestFacts.generationMode,
+    ...(input.package.generationAuthority
+      ? { generationAuthority: input.package.generationAuthority }
+      : {}),
     providerId: "seedance" as const,
     modelId: compiled.requestFacts.model,
     adapterVersion: SEEDANCE_RUNTIME_ADAPTER_VERSION,
@@ -275,6 +278,9 @@ export async function createAiStoryProviderAttempt(input: {
     storyVersionId: request.storyVersionId,
     sceneExecutionId: request.sceneExecutionId,
     generationMode: request.generationMode,
+    ...(request.generationAuthority
+      ? { generationAuthority: request.generationAuthority }
+      : {}),
     providerId: request.providerId,
     modelId: request.modelId,
     adapterVersion: request.adapterVersion,

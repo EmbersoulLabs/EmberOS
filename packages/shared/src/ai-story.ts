@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -243,6 +244,7 @@ export const ScenePlanItemSchema = z.object({
   transition: z.string().default(""),
   continuityNotes: z.string().default(""),
   order: z.number().int().nonnegative(),
+  generationAuthority: AiStorySceneGenerationAuthoritySchema.optional(),
 });
 
 export type ScenePlanItem = z.infer<typeof ScenePlanItemSchema>;

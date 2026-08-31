@@ -98,6 +98,29 @@ describe("Seedance Director Adapter enrichment",()=>{
   it("fails closed instead of treating a malformed canonical package as a legacy prompt payload",async()=>{const {envelope,resolver}=await envelopeFor({contractVersion:AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION,prompt:"unsafe legacy fallback"});await expect(mapCanonicalEnvelopeToSeedanceRequest({envelope,idempotencyKey:"local-only",model:"dreamina-seedance-2-0-260128",payloadResolver:resolver})).rejects.toThrow(/legacy payload fallback is denied/);});
   it("keeps last-frame conditioning outside the certified request surface",async()=>{const {envelope,resolver}=await envelopeFor({prompt:"legacy compatibility payload",durationSec:5,aspectRatio:"9:16",resolution:"720p",assetReferences:[{assetId:I.productAsset,uri:"https://cdn.example.com/last.png",role:"last_frame",mediaType:"image/png"}]});await expect(mapCanonicalEnvelopeToSeedanceRequest({envelope,idempotencyKey:"local-only",model:"dreamina-seedance-2-0-260128",payloadResolver:resolver})).rejects.toThrow(/not certified/);});
   it("keeps the translation matrix explicit and refuses uncertified features",()=>{expect(AI_STORY_SEEDANCE_TRANSLATION_MATRIX).toEqual(expect.arrayContaining([{concept:"first frame",translationClass:"CONDITIONING_MAPPING"},{concept:"multi-shot orchestration",translationClass:"NO_SAFE_MAPPING"},{concept:"audio",translationClass:"NO_SAFE_MAPPING"}]));});
+  it("preserves explicit Scene generation authority in compilation and fingerprints it",()=>{
+    const t2v=packageFixture({mode:"TEXT_TO_VIDEO",productRequirement:"NONE"});
+    t2v.generationAuthority={strategy:"TEXT_TO_VIDEO",referenceSource:"REFERENCE_FREE_T2V",effectiveReferenceIds:[],firstFrameAssetId:null,productVisualIdentityRequirement:"NONE"};
+    const {packageFingerprint:_,...t2vInput}=t2v;
+    t2v.packageFingerprint=seedanceSceneExecutionPackageFingerprint(t2vInput);
+    const t2vRequest=compileImmutableSeedanceRequest({package:t2v as any,sceneExecutionId:I.sceneExecution,compiledAt:"2026-08-29T12:00:00.000Z"});
+    expect(t2vRequest.generationAuthority).toEqual(t2v.generationAuthority);
+    expect(t2vRequest.referenceMappings).toEqual([]);
+
+    const inherited=packageFixture();
+    inherited.generationAuthority={strategy:"PRODUCT_GROUNDED_VIDEO",referenceSource:"STORY_INHERITED",effectiveReferenceIds:[I.productAsset],firstFrameAssetId:I.productAsset,productVisualIdentityRequirement:"REQUIRED"};
+    const {packageFingerprint:__,...inheritedInput}=inherited;
+    inherited.packageFingerprint=seedanceSceneExecutionPackageFingerprint(inheritedInput);
+    const explicit=structuredClone(inherited);
+    explicit.generationAuthority={...inherited.generationAuthority,referenceSource:"SCENE_EXPLICIT"};
+    const {packageFingerprint:___,...explicitInput}=explicit;
+    explicit.packageFingerprint=seedanceSceneExecutionPackageFingerprint(explicitInput);
+    const inheritedRequest=compileImmutableSeedanceRequest({package:inherited as any,sceneExecutionId:I.sceneExecution,compiledAt:"2026-08-29T12:00:00.000Z"});
+    const repeatedRequest=compileImmutableSeedanceRequest({package:inherited as any,sceneExecutionId:I.sceneExecution,compiledAt:"2026-08-29T12:00:00.000Z"});
+    const explicitRequest=compileImmutableSeedanceRequest({package:explicit as any,sceneExecutionId:I.sceneExecution,compiledAt:"2026-08-29T12:00:00.000Z"});
+    expect(inheritedRequest.requestFingerprint).toBe(repeatedRequest.requestFingerprint);
+    expect(inheritedRequest.requestFingerprint).not.toBe(explicitRequest.requestFingerprint);
+  });
 });
 
 function freshnessFor(request:any, overrides:Record<string,unknown>={}) { return {qcDispatchEligible:true,commercialAuthorizationValid:true,sceneFingerprint:request.sceneFingerprint,directorFingerprint:request.directorFingerprint,motionFingerprint:request.motionFingerprint,qcFingerprint:request.qcFingerprint,packageFingerprint:request.packageFingerprint,castSnapshotFingerprint:request.castSnapshotFingerprint,locationSnapshotFingerprint:request.locationSnapshotFingerprint,productSnapshotFingerprint:request.productSnapshotFingerprint,sceneSuperseded:false,directorSuperseded:false,motionSuperseded:false,authoritySnapshotsMatch:true,...overrides}; }

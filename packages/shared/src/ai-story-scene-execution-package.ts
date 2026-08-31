@@ -5,6 +5,7 @@ import { AiStorySceneMotionPlanSchema } from "./ai-story-motion-plan";
 import { AiStoryPreGenerationQcEvaluationSchema } from "./ai-story-pre-generation-qc";
 import { AiStoryCanonicalSceneSchema, AiStoryLocationAuthorityVersionSchema } from "./ai-story-scene";
 import { AiStoryShotRecipeSchema } from "./ai-story-shot-recipe";
+import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 
 export const AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION = "ai-story-scene-execution-package.v1" as const;
 export const AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION = "ai-story-seedance-semantic-plan.v1" as const;
@@ -90,6 +91,7 @@ export const AiStorySceneExecutionPackageSchema = z.object({
     cameraMappingRequirement: z.enum(["REQUIRED", "OPTIONAL"]),
   }).strict(),
   visualReferences: z.array(AiStoryExecutionVisualReferenceSchema),
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   providerBinding: z.object({
     providerId: z.literal("seedance"),
     model: z.literal("dreamina-seedance-2-0-260128"),

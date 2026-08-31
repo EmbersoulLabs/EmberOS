@@ -86,6 +86,66 @@ export function validateSceneExecutionIntent(
 
   const errors: AiStoryAiQcFinding[] = [];
   const id = intent.identity;
+  const generationAuthority = intent.generationAuthority;
+  const explicitReferenceFreeT2v =
+    generationAuthority?.strategy === "TEXT_TO_VIDEO" &&
+    generationAuthority.referenceSource === "REFERENCE_FREE_T2V" &&
+    generationAuthority.effectiveReferenceIds.length === 0 &&
+    generationAuthority.firstFrameAssetId === null;
+
+  if (
+    JSON.stringify(generationAuthority ?? null) !==
+    JSON.stringify(instructions.generationAuthority ?? null)
+  ) {
+    errors.push(
+      finding(
+        "GENERATION_AUTHORITY_INVALID",
+        "generationAuthority",
+        "Scene Intent and compiled instructions do not share the same generation authority."
+      )
+    );
+  }
+  if (
+    generationAuthority &&
+    JSON.stringify(generationAuthority.effectiveReferenceIds) !==
+      JSON.stringify(intent.referencedAssetIds)
+  ) {
+    errors.push(
+      finding(
+        "GENERATION_AUTHORITY_INVALID",
+        "generationAuthority.effectiveReferenceIds",
+        "Effective Scene references do not match the immutable Scene Intent references."
+      )
+    );
+  }
+  if (
+    explicitReferenceFreeT2v &&
+    generationAuthority.productVisualIdentityRequirement === "REQUIRED"
+  ) {
+    errors.push(
+      finding(
+        "T2V_PRODUCT_IDENTITY_AUTHORITY_CONFLICT",
+        "generationAuthority.productVisualIdentityRequirement",
+        "Reference-free TEXT_TO_VIDEO cannot satisfy required product visual identity authority."
+      )
+    );
+  }
+  if (
+    generationAuthority &&
+    generationAuthority.strategy !== "TEXT_TO_VIDEO" &&
+    (!generationAuthority.firstFrameAssetId ||
+      !generationAuthority.effectiveReferenceIds.includes(
+        generationAuthority.firstFrameAssetId
+      ))
+  ) {
+    errors.push(
+      finding(
+        "I2V_FIRST_FRAME_AUTHORITY_MISSING",
+        "generationAuthority.firstFrameAssetId",
+        "Image-conditioned execution requires a first-frame authority from the effective reference set."
+      )
+    );
+  }
 
   // Story / package
   if (!intent.frozenStoryVersion.storyVersionId) {
@@ -259,7 +319,7 @@ export function validateSceneExecutionIntent(
   }
 
   // Assets
-  if (intent.referencedAssetIds.length === 0) {
+  if (intent.referencedAssetIds.length === 0 && !explicitReferenceFreeT2v) {
     errors.push(
       finding(
         "PRODUCT_IDENTITY_REFERENCE_MISSING",

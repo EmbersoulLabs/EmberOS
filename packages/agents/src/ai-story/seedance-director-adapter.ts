@@ -143,6 +143,34 @@ function assertExactBindings(pkg: AiStorySceneExecutionPackage): void {
   if (pkg.directorDirection.shots.length !== 1) {
     throw new SeedanceDirectorAdapterError("MULTI_SHOT_UNCERTIFIED", "Seedance V1 Scene execution accepts one Director shot; multi-shot orchestration is not certified");
   }
+  const generationAuthority = pkg.generationAuthority;
+  if (generationAuthority) {
+    const actualReferenceIds = [...new Set(pkg.visualReferences.map((item) => item.assetId))].sort();
+    const effectiveReferenceIds = [...generationAuthority.effectiveReferenceIds].sort();
+    if (JSON.stringify(actualReferenceIds) !== JSON.stringify(effectiveReferenceIds)) {
+      throw new SeedanceDirectorAdapterError("GENERATION_REFERENCE_AUTHORITY_MISMATCH", "Scene generation authority does not match the execution package visual references", "SCENE");
+    }
+    if (generationAuthority.strategy === "TEXT_TO_VIDEO") {
+      if (
+        pkg.generation.mode !== "TEXT_TO_VIDEO" ||
+        generationAuthority.referenceSource !== "REFERENCE_FREE_T2V" ||
+        generationAuthority.firstFrameAssetId !== null ||
+        generationAuthority.productVisualIdentityRequirement !== "NONE"
+      ) {
+        throw new SeedanceDirectorAdapterError("T2V_GENERATION_AUTHORITY_CONFLICT", "TEXT_TO_VIDEO package authority is not explicitly reference-free", "SCENE");
+      }
+    } else {
+      const firstFrames = pkg.visualReferences.filter((item) => item.firstFrame);
+      if (
+        pkg.generation.mode !== "FIRST_FRAME_IMAGE_TO_VIDEO" ||
+        !generationAuthority.firstFrameAssetId ||
+        firstFrames.length !== 1 ||
+        firstFrames[0]?.assetId !== generationAuthority.firstFrameAssetId
+      ) {
+        throw new SeedanceDirectorAdapterError("I2V_FIRST_FRAME_AUTHORITY_CONFLICT", "Image-conditioned package does not preserve the canonical first-frame authority", "SCENE");
+      }
+    }
+  }
 }
 
 function requirementByAuthority(pkg: AiStorySceneExecutionPackage): Map<string, "NONE" | "PREFERRED" | "REQUIRED"> {
