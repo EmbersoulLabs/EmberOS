@@ -22,6 +22,7 @@ export type AiStoryExecutionSettlementMode = z.infer<
 export const AiStoryExecutionAuthorizedBySchema = z.enum([
   "ACTIVE_PLATFORM_ADMIN",
   "AGENCY_PLAN_CAPABILITY",
+  "EFFECTIVE_ENTITLEMENT",
 ]);
 export type AiStoryExecutionAuthorizedBy = z.infer<
   typeof AiStoryExecutionAuthorizedBySchema

@@ -50,8 +50,12 @@ function deps(input?: {
   platformAdminStatus?: "ACTIVE_GRANT" | "DENIED";
   membership?: ReturnType<typeof member> | "missing";
   plan?: string | null;
+  entitlementCapabilities?: readonly ("ai_story.access" | "ai_story.execute")[];
+  entitlementOrgId?: string;
+  entitlementWorkspaceId?: string;
 }) {
   const membership = input?.membership ?? member();
+  const capabilities = input?.entitlementCapabilities ?? [];
   return {
     requireWorkspaceRole:
       membership === "missing"
@@ -63,6 +67,23 @@ function deps(input?: {
         : { status: "DENIED", reason: "NO_ACTIVE_GRANT" }
     ),
     getOrganizationPlan: vi.fn().mockResolvedValue(input?.plan ?? "free"),
+    entitlementRepository: {
+      rebuildEffectiveProjection: vi.fn().mockResolvedValue({
+        contractVersion: "1",
+        orgId: input?.entitlementOrgId ?? ORG,
+        workspaceId: input?.entitlementWorkspaceId ?? WORKSPACE,
+        entries: capabilities.map((capabilityKey, index) => ({
+          capabilityKey,
+          source: "INTERNAL",
+          entitlementGrantId: `10000000-0000-4000-8000-${String(index + 700).padStart(12, "0")}`,
+          grantedAt: "2026-08-31T00:00:00.000Z",
+          expiresAt: null,
+        })),
+        projectedAt: "2026-08-31T00:00:00.000Z",
+        integrityHash: HASH,
+      }),
+    },
+    now: () => "2026-08-31T00:00:00.000Z",
   };
 }
 
@@ -80,6 +101,16 @@ const opsAdmin = {
   authorizedBy: "ACTIVE_PLATFORM_ADMIN" as const,
   policyVersion: AI_STORY_EXECUTION_AUTHORIZATION_POLICY_VERSION,
   reason: "test-ops",
+  providerCostAccounting: "ALLOWED" as const,
+};
+
+const commercialEntitlement = {
+  allowed: true as const,
+  accessMode: "commercial" as const,
+  settlementMode: "credits" as const,
+  authorizedBy: "EFFECTIVE_ENTITLEMENT" as const,
+  policyVersion: AI_STORY_EXECUTION_AUTHORIZATION_POLICY_VERSION,
+  reason: "test-explicit-entitlement",
   providerCostAccounting: "ALLOWED" as const,
 };
 
@@ -116,6 +147,69 @@ describe("EXEC-03 authorizeAiStoryExecution", () => {
   ] as const)("%s is denied (%s)", async (plan) => {
     await expect(authorizeAiStoryExecution(baseRequest, deps({ plan })))
       .rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
+  });
+
+  it("authorizes a free workspace with an explicit ai_story.execute entitlement for commercial settlement", async () => {
+    const dependencies = deps({
+      plan: "free",
+      entitlementCapabilities: ["ai_story.access", "ai_story.execute"],
+    });
+    const result = await authorizeAiStoryExecution(baseRequest, dependencies);
+    expect(result).toMatchObject({
+      allowed: true,
+      accessMode: "commercial",
+      settlementMode: "credits",
+      authorizedBy: "EFFECTIVE_ENTITLEMENT",
+      providerCostAccounting: "ALLOWED",
+    });
+    expect(
+      dependencies.entitlementRepository.rebuildEffectiveProjection
+    ).toHaveBeenCalledWith({
+      orgId: ORG,
+      workspaceId: WORKSPACE,
+      projectedAt: "2026-08-31T00:00:00.000Z",
+      now: "2026-08-31T00:00:00.000Z",
+    });
+  });
+
+  it("denies access-only entitlement and an entitlement projection for another workspace", async () => {
+    await expect(
+      authorizeAiStoryExecution(
+        baseRequest,
+        deps({ plan: "free", entitlementCapabilities: ["ai_story.access"] })
+      )
+    ).rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
+
+    await expect(
+      authorizeAiStoryExecution(
+        baseRequest,
+        deps({
+          plan: "free",
+          entitlementCapabilities: ["ai_story.execute"],
+          entitlementWorkspaceId: OTHER_WORKSPACE,
+        })
+      )
+    ).rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
+
+    await expect(
+      authorizeAiStoryExecution(
+        baseRequest,
+        deps({
+          plan: "free",
+          entitlementCapabilities: ["ai_story.execute"],
+          entitlementOrgId: OTHER_ORG,
+        })
+      )
+    ).rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
+  });
+
+  it("does not allow ordinary Admin membership to imply execute authority", async () => {
+    await expect(
+      authorizeAiStoryExecution(
+        baseRequest,
+        deps({ membership: member("admin"), plan: "free" })
+      )
+    ).rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
   });
 
   it("CASE I: missing membership denied", async () => {
@@ -161,6 +255,25 @@ describe("EXEC-03 authorizeAiStoryExecution", () => {
 });
 
 describe("EXEC-03 commercial fail-closed", () => {
+  it("denies explicit entitlement execution when billing authority is missing", async () => {
+    const service = new CommercialAuthorizationService(
+      { getByOrgId: vi.fn().mockResolvedValue(null) } as never,
+      { getProjectionByOrgId: vi.fn() } as never,
+      { getEffectiveProjection: vi.fn(), rebuildEffectiveProjection: vi.fn() } as never,
+      { reserveCredits: vi.fn() } as never,
+      { getByExecutionIdentity: vi.fn().mockResolvedValue(null), acceptOrConverge: vi.fn() } as never
+    );
+    await expect(
+      service.authorizeBillableExecute({
+        orgId: ORG,
+        workspaceId: WORKSPACE,
+        capabilityKey: "ai_story.execute",
+        executionIdentity: `execution-plan:${PLAN_ID}`,
+        authorizedAt: "2026-08-19T00:00:00.000Z",
+      })
+    ).rejects.toMatchObject({ code: "COMMERCIAL_AUTH_BILLING_MISSING" });
+  });
+
   it("CASE N: commercial authorization with missing subscription denied", async () => {
     const service = new CommercialAuthorizationService(
       { getByOrgId: vi.fn().mockResolvedValue({ billingAccountId: "ba" }) } as never,
@@ -212,6 +325,37 @@ describe("EXEC-03 commercial fail-closed", () => {
         authorizedAt: "2026-08-19T00:00:00.000Z",
       })
     ).rejects.toBeInstanceOf(CommercialAuthorizationError);
+  });
+
+  it("denies explicit entitlement execution when pricing authority is missing", async () => {
+    const service = new CommercialAuthorizationService(
+      { getByOrgId: vi.fn().mockResolvedValue({ billingAccountId: "ba" }) } as never,
+      {
+        getProjectionByOrgId: vi.fn().mockResolvedValue({
+          status: "ACTIVE",
+          planKey: "free",
+        }),
+      } as never,
+      {
+        getEffectiveProjection: vi.fn().mockResolvedValue({
+          entries: [{ capabilityKey: "ai_story.execute", entitlementGrantId: "g1" }],
+          integrityHash: HASH,
+        }),
+        rebuildEffectiveProjection: vi.fn(),
+      } as never,
+      { reserveCredits: vi.fn() } as never,
+      { getByExecutionIdentity: vi.fn().mockResolvedValue(null), acceptOrConverge: vi.fn() } as never
+    );
+    await expect(
+      service.authorizeBillableExecute({
+        orgId: ORG,
+        workspaceId: WORKSPACE,
+        capabilityKey: "ai_story.execute",
+        executionIdentity: `execution-plan:${PLAN_ID}`,
+        authorizedAt: "2026-08-19T00:00:00.000Z",
+        resolvePricingRule: () => null,
+      })
+    ).rejects.toMatchObject({ code: "COMMERCIAL_AUTH_PRICING_MISSING" });
   });
 });
 
@@ -328,7 +472,7 @@ describe("EXEC-03 ops execute create + queue", () => {
     });
   });
 
-  it("CASE N via Execute: commercial path without settlement remains denied", async () => {
+  it("explicit entitlement Execute still requires commercial settlement", async () => {
     const commercial = {
       authorizeExecutionPlanExecute: vi.fn().mockRejectedValue(
         new CommercialAuthorizationError(
@@ -357,6 +501,7 @@ describe("EXEC-03 ops execute create + queue", () => {
         } as never,
         schedulingCoordinator: { scheduleAuthorizedScene: vi.fn() } as never,
         commercialAuthorizationService: commercial as never,
+        executionAuthorization: commercialEntitlement,
         loadLatestQc: async () => [
           {
             qcResultId: "10000000-0000-4000-8000-000000000311",
