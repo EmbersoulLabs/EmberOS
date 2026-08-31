@@ -6,6 +6,16 @@ let client: ReturnType<typeof postgres> | null = null;
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
+type PostgresClient = ReturnType<typeof postgres>;
+type ClientState = {
+  client: PostgresClient;
+  activeOperations: number;
+  retired: boolean;
+  closeStarted: boolean;
+};
+
+const clientStateByDb = new WeakMap<Db, ClientState>();
+let currentClientState: ClientState | null = null;
 
 export const SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000;
 export const SERVERLESS_DB_MAX_CONNECTIONS = 3;
@@ -51,30 +61,66 @@ export function getDb() {
       15
     );
     db = drizzle(client, { schema });
+    currentClientState = {
+      client,
+      activeOperations: 0,
+      retired: false,
+      closeStarted: false,
+    };
+    clientStateByDb.set(db, currentClientState);
   }
   return db;
 }
 
-async function discardDbClient() {
-  const staleClient = client;
-  client = null;
-  db = null;
-  if (staleClient) {
-    await staleClient.end({ timeout: 0 });
+function closeRetiredClientWhenIdle(state: ClientState) {
+  if (!state.retired || state.activeOperations > 0 || state.closeStarted) return;
+  state.closeStarted = true;
+  void state.client.end({ timeout: 0 }).catch(() => undefined);
+}
+
+function retireDbClient(database: Db) {
+  const state = clientStateByDb.get(database);
+  if (!state) return;
+
+  state.retired = true;
+  if (db === database) {
+    client = null;
+    db = null;
+    currentClientState = null;
   }
+  closeRetiredClientWhenIdle(state);
 }
 
 /**
  * Bound one complete database dependency chain, including postgres-js pool
  * acquisition. postgres-js bounds new connections but does not time out a
- * query waiting in its pool queue. On deadline, destroy the occupied client so
- * a warm serverless instance cannot remain poisoned for later requests.
+ * query waiting in its pool queue. On deadline, retire the shared client so
+ * later requests receive a fresh pool. The retired pool is closed only after
+ * every operation already using it settles; immediately destroying a global
+ * client would abort unrelated protected reads that are still in flight.
  */
 export async function withDbDeadline<T>(
   database: Db,
   operation: (database: Db) => Promise<T>,
   timeoutMs = SERVERLESS_DB_OPERATION_TIMEOUT_MS
 ): Promise<T> {
+  const state = clientStateByDb.get(database);
+  if (state) state.activeOperations += 1;
+
+  const runningOperation = Promise.resolve().then(() => operation(database));
+  if (state) {
+    void runningOperation.then(
+      () => {
+        state.activeOperations -= 1;
+        closeRetiredClientWhenIdle(state);
+      },
+      () => {
+        state.activeOperations -= 1;
+        closeRetiredClientWhenIdle(state);
+      }
+    );
+  }
+
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -85,10 +131,10 @@ export async function withDbDeadline<T>(
   });
 
   try {
-    return await Promise.race([operation(database), deadline]);
+    return await Promise.race([runningOperation, deadline]);
   } catch (error) {
     if (error instanceof DatabaseDependencyTimeoutError) {
-      await discardDbClient();
+      retireDbClient(database);
     }
     throw error;
   } finally {
@@ -119,11 +165,14 @@ export async function withFreshDbContext<T>(
 }
 
 export async function closeDb() {
-  if (client) {
-    await client.end();
-    client = null;
-    db = null;
-  }
+  const state = currentClientState;
+  client = null;
+  db = null;
+  currentClientState = null;
+  if (!state || state.closeStarted) return;
+  state.retired = true;
+  state.closeStarted = true;
+  await state.client.end();
 }
 
 export { schema };
