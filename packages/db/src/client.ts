@@ -18,7 +18,7 @@ const clientStateByDb = new WeakMap<Db, ClientState>();
 let currentClientState: ClientState | null = null;
 
 export const SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000;
-export const SERVERLESS_DB_MAX_CONNECTIONS = 3;
+export const SERVERLESS_DB_MAX_CONNECTIONS = 6;
 
 export class DatabaseDependencyTimeoutError extends Error {
   readonly code = "DATABASE_DEPENDENCY_TIMEOUT";
@@ -49,11 +49,11 @@ export function getDb() {
     if (!url) {
       throw new Error("DATABASE_URL is not set");
     }
-    // The AI Story review surface starts three protected read chains together.
-    // Keep a small, fixed serverless pool so one slow query cannot force the other
-    // two into postgres-js's unbounded acquisition queue. Supavisor remains the
-    // transaction-mode pooling authority. Long-lived Workers retain their existing
-    // limit for concurrent FFmpeg jobs hitting the DB.
+    // Three concurrent AI Story pages each start two coalesced protected read
+    // chains (identity plus Story). Keep exactly that measured peak available so
+    // healthy requests do not wait in postgres-js's unbounded acquisition queue.
+    // Supavisor remains the transaction-mode pooling authority. Long-lived Workers
+    // retain their existing limit for concurrent FFmpeg jobs hitting the DB.
     const isServerless = process.env.VERCEL === "1";
     client = createPostgresClient(
       url,

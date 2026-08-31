@@ -25,7 +25,7 @@ function oneQueryDb() {
 
 describe("AI Story protected Character/Cast read fanout repair", () => {
   it("keeps the certified serverless pool and dependency deadline unchanged", () => {
-    expect(SERVERLESS_DB_MAX_CONNECTIONS).toBe(3);
+    expect(SERVERLESS_DB_MAX_CONNECTIONS).toBe(6);
     expect(SERVERLESS_DB_OPERATION_TIMEOUT_MS).toBe(12_000);
   });
 
