@@ -57,10 +57,20 @@ describe("Staging protected API database dependency deadline", () => {
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/route.ts",
       "apps/web/src/app/api/campaigns/[id]/characters/route.ts",
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/supporting-cast/route.ts",
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/runtime/route.ts",
     ];
     for (const route of routes) {
       expect(read(route), route).toContain("withDbDeadline");
     }
+  });
+
+  it("keeps the runtime projection fan-out within the three-connection Web pool", () => {
+    const projection = read("packages/agents/src/ai-story/derive-product-runtime-projection.ts");
+    expect(projection).toContain("const [review, assembly, compactAuthorities]");
+    expect(projection).toContain("const authFact = await observe");
+    expect(projection).toContain("const fsr = await observe");
+    expect(projection).toContain("const compilation = await observe");
+    expect(projection).not.toContain("const [review, assembly, authFact, fsr, compilation]");
   });
 
   it("maps dependency timeout to bounded JSON HTTP 503 handling", async () => {
