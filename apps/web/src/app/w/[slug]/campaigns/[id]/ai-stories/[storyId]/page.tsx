@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { AppShell, StatusBadge } from "@/components/AppShell";
+import { AppShell, fetchCurrentUserProjection, StatusBadge } from "@/components/AppShell";
 import { StoryRuntimePanel } from "@/components/ai-story/StoryRuntimePanel";
 import { PlanningApprovalControl } from "@/components/ai-story/PlanningApprovalControl";
 import { CharacterPanel } from "@/components/ai-story/CharacterPanel";
@@ -94,9 +94,7 @@ export default function AiStoryReviewPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const meRes = await fetch("/api/me");
-        if (!meRes.ok) return;
-        const me = await meRes.json();
+        const me = await fetchCurrentUserProjection();
         const ws = (me.workspaces as Array<{ slug: string; role: string }> | undefined)
           ?.find((workspace) => workspace.slug === slug);
         setWorkspaceRole(ws?.role ?? null);
@@ -121,29 +119,40 @@ export default function AiStoryReviewPage() {
         persistedDraftFingerprint.current = JSON.stringify(normalized);
         setDraft(normalized); setWarnings(normalized.warnings); setSaveState("CLEAN");
       }
-      if (advancedAuthorized && isPlanningStatus(nextStatus)) {
-        const planningRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`);
-        if (planningRes.ok) {
-          const planningData = await planningRes.json();
-          setCreativeContext((planningData.creativeContext?.payload as CreativeContext | undefined) ?? null);
-          setPlanningDraft((planningData.planningDraft as StoryPlanningDraft | undefined) ?? null);
-          setAnimationPackage((planningData.completePackage as AnimationPackagePayload | undefined) ??
-            (planningData.animationPackage?.payload && !("kind" in (planningData.animationPackage.payload as object))
-              ? (planningData.animationPackage.payload as AnimationPackagePayload) : null));
-          setAnimationPackageRecordId(typeof planningData.animationPackage?.id === "string"
-            ? planningData.animationPackage.id : null);
-        }
-      } else {
-        setCreativeContext(null); setPlanningDraft(null); setAnimationPackage(null);
-        setAnimationPackageRecordId(null);
-      }
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to load story");
     } finally {
       setLoading(false);
     }
-  }, [advancedAuthorized, campaignId, storyId]);
+  }, [campaignId, storyId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!advancedAuthorized || !isPlanningStatus(status)) {
+      setCreativeContext(null); setPlanningDraft(null); setAnimationPackage(null);
+      setAnimationPackageRecordId(null);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      try {
+        const planningRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`);
+        if (!planningRes.ok || !active) return;
+        const planningData = await planningRes.json();
+        if (!active) return;
+        setCreativeContext((planningData.creativeContext?.payload as CreativeContext | undefined) ?? null);
+        setPlanningDraft((planningData.planningDraft as StoryPlanningDraft | undefined) ?? null);
+        setAnimationPackage((planningData.completePackage as AnimationPackagePayload | undefined) ??
+          (planningData.animationPackage?.payload && !("kind" in (planningData.animationPackage.payload as object))
+            ? (planningData.animationPackage.payload as AnimationPackagePayload) : null));
+        setAnimationPackageRecordId(typeof planningData.animationPackage?.id === "string"
+          ? planningData.animationPackage.id : null);
+      } catch {
+        // Optional operator diagnostics must not invalidate the Story read.
+      }
+    })();
+    return () => { active = false; };
+  }, [advancedAuthorized, campaignId, status, storyId]);
 
   const persistDraft = useCallback(async (nextDraft: AiStoryStructuredDraft) => {
     const generation = ++saveGeneration.current;

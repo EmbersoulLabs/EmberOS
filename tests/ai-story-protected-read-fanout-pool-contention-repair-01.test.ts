@@ -89,4 +89,14 @@ describe("AI Story protected Character/Cast read fanout repair", () => {
     expect(characters).toContain("initialCharacters !== undefined");
     expect(cast).toContain("initialSupportingCharacters !== undefined");
   });
+
+  it("coalesces /api/me and does not reload the Story when operator identity resolves", () => {
+    const shell = read("apps/web/src/components/AppShell.tsx");
+    const page = read("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/[storyId]/page.tsx");
+    expect(shell).toContain("currentUserRequest");
+    expect(shell).toContain("fetchCurrentUserProjection()");
+    expect(page).toContain("await fetchCurrentUserProjection()");
+    expect(page).toContain("}, [campaignId, storyId]);");
+    expect(page).not.toContain("}, [advancedAuthorized, campaignId, storyId]);");
+  });
 });
