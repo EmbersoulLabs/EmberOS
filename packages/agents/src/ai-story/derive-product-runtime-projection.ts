@@ -281,7 +281,12 @@ export async function deriveProductRuntimeProjection(
   const fsrRepo = new FinalStoryResultRepositoryImpl();
   const releaseRepo = new AiStorySceneReleaseRepository();
 
-  const [review, assembly, authFact, fsr, compilation] = await Promise.all([
+  // The Web runtime uses a bounded max:3 postgres-js pool. Keep the initial
+  // projection fan-out at that same ceiling: each repository method can issue
+  // several sequential reads, so starting five independent chains here leaves
+  // later set-based reads queued behind the pool. The third chain deliberately
+  // performs its compact authority/result reads in sequence.
+  const [review, assembly, compactAuthorities] = await Promise.all([
     observe("execution_plan_review_projection_read", () =>
       reviewRepo.getLogicalProjection(
         executionPlanId,
@@ -290,10 +295,20 @@ export async function deriveProductRuntimeProjection(
       )
     ),
     observe("runtime_projection_build", () => assemblyRepo.getProjection(executionPlanId)),
-    observe("runtime_authorization_read", () => authRepo.getByExecutionPlanId(executionPlanId)),
-    observe("scene_result_read", () => fsrRepo.getByExecutionPlanId(executionPlanId)),
-    observe("provider_attempt_read", () => persistence.getByExecutionPlanId(executionPlanId)),
+    (async () => {
+      const authFact = await observe("runtime_authorization_read", () =>
+        authRepo.getByExecutionPlanId(executionPlanId)
+      );
+      const fsr = await observe("scene_result_read", () =>
+        fsrRepo.getByExecutionPlanId(executionPlanId)
+      );
+      const compilation = await observe("provider_attempt_read", () =>
+        persistence.getByExecutionPlanId(executionPlanId)
+      );
+      return { authFact, fsr, compilation };
+    })(),
   ]);
+  const { authFact, fsr, compilation } = compactAuthorities;
 
   const orderedSceneExecutionIds =
     (assembly?.orderedSceneExecutionIds?.length
