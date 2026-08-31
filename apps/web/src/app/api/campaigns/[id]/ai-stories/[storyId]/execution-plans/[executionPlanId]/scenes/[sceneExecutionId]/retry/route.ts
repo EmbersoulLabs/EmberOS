@@ -60,7 +60,8 @@ export async function POST(request: Request, { params }: RouteParams) {
       clientClaims: body,
     });
 
-    const result = await createdGeneratedSceneReviewService().retry({
+    const service = await createdGeneratedSceneReviewService();
+    const result = await service.retry({
       executionPlanId: ctx.executionPlanId,
       sceneExecutionId,
       actorUserId: user.id,

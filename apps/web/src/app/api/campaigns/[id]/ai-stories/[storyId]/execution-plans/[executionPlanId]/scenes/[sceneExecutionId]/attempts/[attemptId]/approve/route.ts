@@ -78,7 +78,8 @@ export async function POST(request: Request, { params }: RouteParams) {
     });
 
     stage = "approval_transaction";
-    const result = await createdGeneratedSceneReviewService().approve({
+    const service = await createdGeneratedSceneReviewService();
+    const result = await service.approve({
       executionPlanId: ctx.executionPlanId,
       sceneExecutionId,
       attemptId,

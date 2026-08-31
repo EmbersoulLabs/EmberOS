@@ -98,6 +98,23 @@ export class CanonicalAdapterRegistry {
   has(providerId: string, adapterVersion: string): boolean {
     return this.factories.has(bindingKey(providerId, adapterVersion));
   }
+
+  /**
+   * Non-secret Worker capability projection. Constructing an Adapter may read
+   * executor-local configuration, but this projection contains declarations
+   * only and never returns configuration or credential material.
+   */
+  describeRegisteredCapabilities(): ReadonlyArray<ProviderCapabilityDeclaration> {
+    return [...this.factories.values()]
+      .flatMap((factory) => factory().describeCapabilities())
+      .map((declaration) => structuredClone(declaration))
+      .sort(
+        (left, right) =>
+          left.providerId.localeCompare(right.providerId) ||
+          left.adapterVersion.localeCompare(right.adapterVersion) ||
+          left.capabilityId.localeCompare(right.capabilityId)
+      );
+  }
 }
 
 function bindingKey(providerId: string, adapterVersion: string): string {

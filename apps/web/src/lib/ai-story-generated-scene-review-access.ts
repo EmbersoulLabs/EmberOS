@@ -9,7 +9,7 @@ import {
   DifferentiatedRetryService,
 } from "@ceo-agent/agents";
 import { isUuid, rejectForgedGeneratedSceneReviewBody } from "@ceo-agent/shared";
-import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
+import { resolveCanonicalWebExecuteProviderAuthority } from "@/lib/ai-story-canonical-execute-router";
 import {
   resolveAuthorizedExecutionPlan,
   type AuthorizedExecutionPlanContext,
@@ -42,9 +42,10 @@ export async function authorizeGeneratedSceneReviewWrite(input: {
   return ctx;
 }
 
-export function createdGeneratedSceneReviewService() {
+export async function createdGeneratedSceneReviewService() {
+  const providerRouting = await resolveCanonicalWebExecuteProviderAuthority();
   return new GeneratedSceneReviewService({
-    router: createCanonicalExecuteProviderRouter(),
+    router: providerRouting.router,
   });
 }
 

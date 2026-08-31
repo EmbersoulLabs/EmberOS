@@ -4,6 +4,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startWorkers } from "./processors/index";
 import { logSubtitleFontStatus } from "./ffmpeg/subtitle-fonts.js";
+import { startProviderExecutorAuthorityHeartbeat } from "./provider-executor-authority-heartbeat";
 
 // Prefer IPv4 — Windows often times out on IPv6 routes to Supabase/Cloudflare.
 dns.setDefaultResultOrder("ipv4first");
@@ -22,9 +23,12 @@ if (!process.env.OPENAI_API_KEY?.trim()) {
 }
 console.log("[worker] pipeline=auto_clip_v1 + photo_scene + ai_story_execution");
 
+const stopProviderExecutorAuthorityHeartbeat =
+  startProviderExecutorAuthorityHeartbeat();
 startWorkers();
 
 process.on("SIGTERM", () => {
+  stopProviderExecutorAuthorityHeartbeat();
   console.log("Shutting down workers...");
   process.exit(0);
 });

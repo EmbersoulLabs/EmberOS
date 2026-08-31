@@ -3,7 +3,6 @@ import {
   authorizeAiStoryExecution,
   AiStoryExecutionDeniedError,
   CanonicalExecuteError,
-  resolveCanonicalExecuteRoutingPolicy,
 } from "@ceo-agent/agents";
 import { AI_STORY_PRODUCTION_VERIFICATION_POLICY_VERSION } from "@ceo-agent/db";
 import { CanonicalExecuteRequestSchema, PHASE1_EXECUTION_LOCKED } from "@ceo-agent/shared";
@@ -13,7 +12,7 @@ import {
   executionPlanRouteErrorResponse,
   resolveAuthorizedExecutionPlan,
 } from "@/lib/ai-story-execution-plan-access";
-import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
+import { resolveCanonicalWebExecuteProviderAuthority } from "@/lib/ai-story-canonical-execute-router";
 import { requirePlatformAdmin } from "@/lib/platform-admin-auth";
 
 type RouteParams = {
@@ -77,6 +76,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       );
     }
 
+    const providerRouting = await resolveCanonicalWebExecuteProviderAuthority();
     const result = await authorizeAndExecuteExecutionPlan({
       executionPlanId: ctx.executionPlanId,
       actorUserId: user.id,
@@ -89,8 +89,8 @@ export async function POST(request: Request, { params }: RouteParams) {
         animationPackageId: ctx.plan.animationPackageId,
         executionPlanId: ctx.executionPlanId,
       },
-      router: createCanonicalExecuteProviderRouter(),
-      routingPolicy: resolveCanonicalExecuteRoutingPolicy(),
+      router: providerRouting.router,
+      routingPolicy: providerRouting.routingPolicy,
       executionAuthorization,
       productionVerification: {
         verificationMode: true,

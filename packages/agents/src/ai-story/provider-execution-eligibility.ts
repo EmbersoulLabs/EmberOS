@@ -16,6 +16,7 @@ import {
   resetAiProviderConfigCache,
   type AiProviderConfig,
   type AiVideoProviderId,
+  type ProviderExecutorCapabilityAuthority,
 } from "@ceo-agent/shared";
 import type { ProviderRoutingPolicy } from "../provider-router/contracts";
 
@@ -30,6 +31,8 @@ export type ProviderExecutionEligibility = {
   readonly executable: boolean;
   readonly capabilityCompatible: boolean;
   readonly routingPolicyAllowed: boolean;
+  readonly executorKind: "LOCAL_EXECUTOR" | "REMOTE_CANONICAL_WORKER_EXECUTOR";
+  readonly modelSupported: boolean;
 };
 
 export type ProviderExecutionEligibilityInput = {
@@ -39,9 +42,16 @@ export type ProviderExecutionEligibilityInput = {
    * configuration readiness (enabled + required server config present).
    */
   readonly registeredProviderIds?: readonly string[];
+  /**
+   * Fresh non-secret capability facts published by a remote canonical Worker.
+   * Presence of this field (including an empty list) disables local credential
+   * inference and fails closed against the supplied Worker authority.
+   */
+  readonly executorAuthorities?: readonly ProviderExecutorCapabilityAuthority[];
   /** Explicit preferred ids. Invalid/disabled ids are dropped, never forged. */
   readonly preferredProviders?: readonly string[];
   readonly capabilityId?: string;
+  readonly requestedModel?: string;
 };
 
 export function isProviderRoutable(
@@ -71,20 +81,43 @@ export function resolveCanonicalVideoProviderEligibility(
   const registered = input.registeredProviderIds
     ? new Set(input.registeredProviderIds)
     : null;
+  const remoteAuthorities = input.executorAuthorities
+    ? new Map(input.executorAuthorities.map((authority) => [authority.providerId, authority]))
+    : null;
   const capabilityId = input.capabilityId ?? "animation-video-generation";
+  const requestedModel = input.requestedModel?.trim();
 
   return CANONICAL_VIDEO_PROVIDER_IDS.map((providerId) => {
-    const enabled = config.providers[providerId].enabled === true;
+    const remoteAuthority = remoteAuthorities?.get(providerId);
+    const enabled = remoteAuthorities
+      ? remoteAuthority?.productEnabled === true
+      : config.providers[providerId].enabled === true;
     const configured = isAiProviderReady(config, providerId);
-    const executable = registered
-      ? enabled && registered.has(providerId)
-      : enabled && configured;
+    const executable = remoteAuthorities
+      ? remoteAuthority?.executorRegistered === true &&
+        remoteAuthority.executorReady === true
+      : registered
+        ? enabled && registered.has(providerId)
+        : enabled && configured;
+    const capabilityCompatible = remoteAuthorities
+      ? remoteAuthority?.capabilityIds.includes(capabilityId) === true
+      : capabilityId === "animation-video-generation";
+    const modelSupported =
+      !requestedModel ||
+      (remoteAuthorities
+        ? remoteAuthority?.supportedModels.includes(requestedModel) === true
+        : config.providers[providerId].defaultModel === requestedModel);
     return {
       providerId,
       enabled,
       executable,
-      capabilityCompatible: capabilityId === "animation-video-generation",
-      routingPolicyAllowed: executable,
+      capabilityCompatible,
+      routingPolicyAllowed:
+        enabled && executable && capabilityCompatible && modelSupported,
+      executorKind: remoteAuthorities
+        ? "REMOTE_CANONICAL_WORKER_EXECUTOR"
+        : "LOCAL_EXECUTOR",
+      modelSupported,
     };
   });
 }
