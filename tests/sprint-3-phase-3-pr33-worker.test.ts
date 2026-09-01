@@ -171,6 +171,9 @@ describe("Sprint 3 PR 3.3 worker contracts", () => {
       adapters,
       requireCommercialReservation: true,
       commercialReservation: {
+        previewBeforeSubmit: async () => {
+          sequence.push("commercial-preview");
+        },
         reserveBeforeSubmit: async () => {
           sequence.push("commercial-reservation");
           return { reservationId: "reservation-1" };
@@ -183,10 +186,48 @@ describe("Sprint 3 PR 3.3 worker contracts", () => {
     });
     await worker.processDispatch({ dispatchId: bundle.dispatch.dispatchId });
     expect(sequence).toEqual([
+      "commercial-preview",
       "commercial-reservation",
       "provider-submit",
       "commercial-outcome",
     ]);
+  });
+
+  it("supports an explicit certification hold before reservation or Adapter invocation", async () => {
+    const bundle = await buildPr33ValidatedBundle();
+    const repository = new InMemoryWorkerRuntimeRepository(bundle);
+    const adapter = new DeterministicCanonicalTestAdapter("accepted_async", {
+      providerId: "seedance",
+      adapterVersion: "1.0.0",
+    });
+    const adapters = createPr33TestAdapterRegistry("accepted_async");
+    adapters.register("seedance", "1.0.0", () => adapter);
+    let reservations = 0;
+    let previews = 0;
+    const worker = new SceneProviderWorkerRuntime({
+      repository,
+      adapters,
+      requireCommercialReservation: true,
+      beforeCommercialReservation: () => {
+        throw new Error("AI_STORY_CERTIFICATION_NO_DISPATCH_HOLD");
+      },
+      commercialReservation: {
+        previewBeforeSubmit: async () => {
+          previews += 1;
+        },
+        reserveBeforeSubmit: async () => {
+          reservations += 1;
+          return { reservationId: "must-not-exist" };
+        },
+        loadForOutcome: async () => null,
+        recordProviderOutcome: async () => undefined,
+      },
+    });
+    await expect(worker.processDispatch({ dispatchId: bundle.dispatch.dispatchId }))
+      .rejects.toThrow("AI_STORY_CERTIFICATION_NO_DISPATCH_HOLD");
+    expect(previews).toBe(1);
+    expect(reservations).toBe(0);
+    expect(adapter.submitCount).toBe(0);
   });
 
   it("resolves Adapter only from persisted Routing Decision binding", async () => {

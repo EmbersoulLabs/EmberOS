@@ -133,6 +133,13 @@ export async function createProductionAiStoryContinuationCoordinator(
     worker: {
       repository: workerRepo,
       adapters,
+      ...(process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "certification_no_dispatch"
+        ? {
+            beforeCommercialReservation: () => {
+              throw new Error("AI_STORY_CERTIFICATION_NO_DISPATCH_HOLD");
+            },
+          }
+        : {}),
       commercialReservation: new AiStoryCertificationCommercialReservationGate(),
       requireCommercialReservation: true,
     },

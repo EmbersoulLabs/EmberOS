@@ -1,5 +1,6 @@
 import { CertificationCommercialAuthorityService } from "@ceo-agent/db";
 import type { SceneProviderWorkerRuntimeDependencies } from "@ceo-agent/agents";
+import { compiledProviderRequestIdForSchedule } from "@ceo-agent/agents";
 
 type CommercialGate = NonNullable<
   SceneProviderWorkerRuntimeDependencies["commercialReservation"]
@@ -17,11 +18,43 @@ export class AiStoryCertificationCommercialReservationGate implements Commercial
     private readonly authority = new CertificationCommercialAuthorityService()
   ) {}
 
+  private resolveCompiledRequestBinding(
+    input: Parameters<CommercialGate["reserveBeforeSubmit"]>[0]
+  ) {
+    const compiledRequestId =
+      input.bundle.envelope.executionContext.trace?.compiledRequestId?.trim() ??
+      compiledProviderRequestIdForSchedule({
+        sceneExecutionId: input.bundle.correlation.sceneExecutionId,
+        scheduledAt: input.bundle.correlation.scheduledAt,
+      });
+    const requestFingerprint =
+      input.bundle.envelope.executionContext.trace?.compiledRequestFingerprint?.trim();
+    return { compiledRequestId, requestFingerprint };
+  }
+
+  async previewBeforeSubmit(input: Parameters<CommercialGate["reserveBeforeSubmit"]>[0]) {
+    const { compiledRequestId, requestFingerprint } =
+      this.resolveCompiledRequestBinding(input);
+    await this.authority.previewForSceneExecution({
+      orgId: input.bundle.correlation.ownership.orgId,
+      workspaceId: input.bundle.envelope.workspaceId,
+      sceneExecutionId: input.bundle.correlation.sceneExecutionId,
+      compiledRequestId,
+      ...(requestFingerprint ? { requestFingerprint } : {}),
+      executionIdentity: input.providerAttemptId,
+      reservedAt: input.reservedAt,
+    });
+  }
+
   async reserveBeforeSubmit(input: Parameters<CommercialGate["reserveBeforeSubmit"]>[0]) {
+    const { compiledRequestId, requestFingerprint } =
+      this.resolveCompiledRequestBinding(input);
     const result = await this.authority.reserveForSceneExecution({
       orgId: input.bundle.correlation.ownership.orgId,
       workspaceId: input.bundle.envelope.workspaceId,
       sceneExecutionId: input.bundle.correlation.sceneExecutionId,
+      compiledRequestId,
+      ...(requestFingerprint ? { requestFingerprint } : {}),
       executionIdentity: input.providerAttemptId,
       reservedAt: input.reservedAt,
     });

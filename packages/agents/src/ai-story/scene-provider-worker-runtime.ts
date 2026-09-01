@@ -101,6 +101,11 @@ export type SceneProviderWorkerRuntimeDependencies = {
   readonly repository: WorkerRuntimeRepository;
   readonly adapters: CanonicalAdapterRegistry;
   readonly commercialReservation?: {
+    previewBeforeSubmit?(input: {
+      readonly bundle: WorkerValidatedBundle;
+      readonly providerAttemptId: string;
+      readonly reservedAt: string;
+    }): Promise<void>;
     reserveBeforeSubmit(input: {
       readonly bundle: WorkerValidatedBundle;
       readonly providerAttemptId: string;
@@ -121,6 +126,12 @@ export type SceneProviderWorkerRuntimeDependencies = {
   };
   /** Production AI Story workers must fail closed when this dependency is absent. */
   readonly requireCommercialReservation?: boolean;
+  /** Operational fail-closed hold used for non-paid lineage certification. */
+  readonly beforeCommercialReservation?: (input: {
+    readonly bundle: WorkerValidatedBundle;
+    readonly providerAttemptId: string;
+    readonly mode: "submit" | "lookup";
+  }) => Promise<void> | void;
   readonly expectedRegistrySnapshotHash?: string;
   readonly now?: () => Date;
 };
@@ -262,12 +273,27 @@ export class SceneProviderWorkerRuntime {
       );
     }
 
+    const reservationTimestamp = this.now().toISOString();
+    if (mode === "submit") {
+      await this.dependencies.commercialReservation?.previewBeforeSubmit?.({
+        bundle,
+        providerAttemptId,
+        reservedAt: reservationTimestamp,
+      });
+    }
+
+    await this.dependencies.beforeCommercialReservation?.({
+      bundle,
+      providerAttemptId,
+      mode,
+    });
+
     const reservation = this.dependencies.commercialReservation
       ? mode === "submit"
         ? await this.dependencies.commercialReservation.reserveBeforeSubmit({
             bundle,
             providerAttemptId,
-            reservedAt: this.now().toISOString(),
+            reservedAt: reservationTimestamp,
           })
         : await this.dependencies.commercialReservation.loadForOutcome({
             providerAttemptId,
