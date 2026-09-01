@@ -4,6 +4,7 @@ import {
   AI_STORY_POST_QC_DIMENSIONS,
   AI_STORY_POST_QC_POLICY_VERSION,
   AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION,
+  AiStoryPostGenerationQcInputPackageSchema,
   POST_QC_AUTO_RELEASE,
   POST_QC_AUTO_RETRY,
   POST_QC_CREATIVE_AUTHORITY,
@@ -46,7 +47,8 @@ function input(requirements: AiStoryPostQcRequirement[], mode: "TEXT_TO_VIDEO" |
   return {
     postQcInputId: ids[0]!, contractVersion: AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
     policyVersion: AI_STORY_POST_QC_POLICY_VERSION, orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!,
-    storyId: ids[4]!, storyVersionId: ids[5]!, scriptVersionId: ids[6]!, handoffId: ids[7]!, sceneExecutionId: ids[8]!,
+    storyId: ids[4]!, storyVersionId: ids[5]!, planningLineageSource: "FROZEN_SCRIPT_DIRECTOR",
+    scriptVersionId: ids[6]!, handoffId: ids[7]!, sceneExecutionId: ids[8]!,
     sceneId: "scene-1", sceneVersion: 1, sceneFingerprint: hash("a"), sceneExecutionFingerprint: hash("b"),
     providerAttemptId: "attempt-1", generationMode: mode, privateMediaAssetId: ids[9]!, privateMediaContentHash: hash("c"),
     compiledRequestId: ids[10]!, compiledRequestFingerprint: hash("d"), semanticPlanFingerprint: hash("e"),
@@ -115,11 +117,13 @@ describe("AI Story canonical Post-Generation QC", () => {
         productIdentityConstraints: [],
       } as never,
       preGenerationAuthority: {
+        planningLineageSource: "FROZEN_SCRIPT_DIRECTOR",
         qcEvaluationId: ids[11]!, qcFingerprint: hash("f"),
         scriptVersionId: ids[6]!, handoffId: ids[7]!, productGrounded: false,
+        handoffFingerprint: hash("1"),
         shotRecipeFingerprint: null,
       } as never,
-      handoffFingerprint: hash("1"), sceneVersion: 2, compiledRequest: compiled,
+      sceneVersion: 2, compiledRequest: compiled,
       attempt: {
         providerAttemptId: "attempt-1", compiledRequestId: ids[10]!, requestFingerprint: hash("d"),
         sceneExecutionId: ids[8]!, orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!,
@@ -140,12 +144,34 @@ describe("AI Story canonical Post-Generation QC", () => {
     ]));
   });
 
+  it("represents legacy compiled V1 lineage explicitly without fabricating Script or Handoff authority", () => {
+    const legacy = AiStoryPostGenerationQcInputPackageSchema.parse({
+      ...input([requirement()]),
+      planningLineageSource: "LEGACY_COMPILED_V1",
+      scriptVersionId: null,
+      handoffId: null,
+      handoffFingerprint: null,
+    });
+    expect(legacy).toMatchObject({
+      planningLineageSource: "LEGACY_COMPILED_V1",
+      scriptVersionId: null,
+      handoffId: null,
+      handoffFingerprint: null,
+      preGenerationQcEvaluationId: ids[11],
+      preGenerationQcFingerprint: hash("f"),
+    });
+    expect(() => AiStoryPostGenerationQcInputPackageSchema.parse({
+      ...legacy,
+      scriptVersionId: ids[6],
+    })).toThrow(/must not fabricate/i);
+  });
+
   it("fails closed when V1 compiled authority and Attempt binding diverge", () => {
     expect(() => buildAiStoryPostGenerationQcInputFromCompiledAuthority({
       intent: { identity: { sceneExecutionId: ids[8]!, sceneId: "scene-1" }, compilationHash: hash("a") } as never,
       instructions: { sceneId: "scene-1" } as never,
       preGenerationAuthority: { qcEvaluationId: ids[11]!, qcFingerprint: hash("f") } as never,
-      handoffFingerprint: hash("1"), sceneVersion: 1,
+      sceneVersion: 1,
       compiledRequest: { sceneExecutionId: ids[8]!, compiledRequestId: ids[10]!, requestFingerprint: hash("d"), qcEvaluationId: ids[11]!, qcFingerprint: hash("f"), sceneFingerprint: hash("a") } as never,
       attempt: { compiledRequestId: ids[12]! } as never,
       privateMedia: {} as never,

@@ -161,9 +161,14 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
   readonly instructions: AiStorySceneCompiledInstructions;
   readonly preGenerationAuthority: Pick<
     AiStoryPreGenerationQcEvaluation,
-    "qcEvaluationId" | "qcFingerprint" | "scriptVersionId" | "handoffId" | "productGrounded"
-  > & { readonly shotRecipeFingerprint: string | null };
-  readonly handoffFingerprint: string;
+    "qcEvaluationId" | "qcFingerprint" | "productGrounded"
+  > & {
+    readonly planningLineageSource: "FROZEN_SCRIPT_DIRECTOR" | "LEGACY_COMPILED_V1";
+    readonly scriptVersionId: string | null;
+    readonly handoffId: string | null;
+    readonly handoffFingerprint: string | null;
+    readonly shotRecipeFingerprint: string | null;
+  };
   readonly sceneVersion: number;
   readonly compiledRequest: AiStoryCompiledProviderRequest;
   readonly attempt: {
@@ -307,6 +312,7 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
     campaignId: compiled.campaignId,
     storyId: compiled.storyId,
     storyVersionId: compiled.storyVersionId,
+    planningLineageSource: qc.planningLineageSource,
     scriptVersionId: qc.scriptVersionId,
     handoffId: qc.handoffId,
     sceneExecutionId: compiled.sceneExecutionId,
@@ -323,7 +329,7 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
     semanticPlanFingerprint: compiled.semanticPlanFingerprint,
     preGenerationQcEvaluationId: qc.qcEvaluationId,
     preGenerationQcFingerprint: qc.qcFingerprint,
-    handoffFingerprint: input.handoffFingerprint,
+    handoffFingerprint: qc.handoffFingerprint,
     directorFingerprint: compiled.directorFingerprint,
     motionFingerprint: compiled.motionFingerprint,
     shotRecipeFingerprint: qc.shotRecipeFingerprint,

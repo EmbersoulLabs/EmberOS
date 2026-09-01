@@ -50,8 +50,9 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   campaignId: Id,
   storyId: Id,
   storyVersionId: Id,
-  scriptVersionId: Id,
-  handoffId: Id,
+  planningLineageSource: z.enum(["FROZEN_SCRIPT_DIRECTOR", "LEGACY_COMPILED_V1"]).default("FROZEN_SCRIPT_DIRECTOR"),
+  scriptVersionId: Id.nullable(),
+  handoffId: Id.nullable(),
   sceneExecutionId: Id,
   sceneId: Text.max(300),
   sceneVersion: z.number().int().positive(),
@@ -66,7 +67,7 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   semanticPlanFingerprint: Hash,
   preGenerationQcEvaluationId: Id,
   preGenerationQcFingerprint: Hash,
-  handoffFingerprint: Hash,
+  handoffFingerprint: Hash.nullable(),
   directorFingerprint: Hash,
   motionFingerprint: Hash,
   shotRecipeFingerprint: Hash.nullable(),
@@ -93,7 +94,16 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
     decodable: z.boolean(),
   }).strict(),
   createdAt: z.string().datetime(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.planningLineageSource === "FROZEN_SCRIPT_DIRECTOR" &&
+      (!value.scriptVersionId || !value.handoffId || !value.handoffFingerprint)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Frozen Script/Director lineage requires Script, Handoff, and Handoff fingerprint authority" });
+  }
+  if (value.planningLineageSource === "LEGACY_COMPILED_V1" &&
+      (value.scriptVersionId || value.handoffId || value.handoffFingerprint)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Legacy compiled V1 lineage must not fabricate Script or Handoff authority" });
+  }
+});
 
 export const AiStoryPostQcObservationSchema = z.object({
   observationId: Id,
