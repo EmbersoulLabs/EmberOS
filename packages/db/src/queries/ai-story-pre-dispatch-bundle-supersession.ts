@@ -1,7 +1,11 @@
 import { sql } from "drizzle-orm";
 import {
   AiStoryCompiledProviderRequestSchema,
+  AiStorySceneCompiledInstructionsSchema,
+  AiStorySceneExecutionIntentSchema,
+  PersistedSceneRoutingDecisionSchema,
   ProviderExecutionSchema,
+  RuntimeAuthorizedFactSchema,
   SceneProviderSchedulingCorrelationSchema,
   validateExecutionDispatch,
   validateExecutionEnvelope,
@@ -190,6 +194,107 @@ function failAfter(input: SupersedeAiStoryPreDispatchBundleInput, stage: NonNull
  */
 export class AiStoryPreDispatchBundleSupersessionRepository {
   constructor(private readonly db: Db = getDb()) {}
+
+  /** Read-only exact source capsule used by the canonical supersession command. */
+  async loadSourceBundle(input: {
+    readonly sceneExecutionId: string;
+    readonly source: PreDispatchBundleIdentity;
+  }): Promise<{
+    readonly bundle: ScheduleAcceptedBundleInput;
+    readonly dispatch: ExecutionDispatch;
+    readonly intent: import("@ceo-agent/shared").AiStorySceneExecutionIntent;
+    readonly instructions: import("@ceo-agent/shared").AiStorySceneCompiledInstructions;
+  }> {
+    const rows = (await this.db.execute(sql`
+      select runtime.fact as runtime_fact, routing.decision as routing_decision,
+             compiled.compiled_request, correlation.correlation,
+             execution.contract_version, execution.execution_id, execution.org_id,
+             execution.workspace_id, execution.campaign_id, execution.pipeline_run_id,
+             execution.capability_id, execution.capability_version, execution.idempotency_key,
+             execution.deterministic_fingerprint, execution.status as execution_status,
+             execution.execution_metadata, execution.accepted_attempt_id,
+             execution.created_at as execution_created_at, execution.completed_at,
+             envelope.version as envelope_version, envelope.envelope_id,
+             envelope.payload_reference, envelope.org_id as envelope_org_id,
+             envelope.workspace_id as envelope_workspace_id, envelope.execution_context,
+             envelope.capability_id as envelope_capability_id,
+             envelope.capability_version as envelope_capability_version,
+             envelope.provider_policy_snapshot, envelope.canonical_request,
+             envelope.request_hash, envelope.envelope_hash, envelope.created_at as envelope_created_at,
+             outbox.job_id, outbox.priority, outbox.next_visible_at,
+             dispatch.version as dispatch_version, dispatch.dispatch_id,
+             dispatch.worker_handoff, dispatch.dispatch_hash,
+             dispatch.status as dispatch_status, dispatch.created_at as dispatch_created_at,
+             correlation.scheduled_by, scene.intent, instruction.instructions
+      from ai_story_scene_scheduling_correlations correlation
+      join ai_story_runtime_authorized_facts runtime on runtime.runtime_authorization_id=correlation.runtime_authorization_id
+      join ai_story_scene_routing_decisions routing on routing.routing_decision_id=correlation.routing_decision_id
+      join ai_story_compiled_provider_requests compiled on compiled.compiled_request_id=${input.source.compiledRequestId}::uuid
+        and compiled.scene_execution_id=correlation.scene_execution_id
+      join provider_executions execution on execution.execution_id=correlation.provider_execution_id
+      join provider_execution_envelopes envelope on envelope.envelope_id=correlation.envelope_id
+      join provider_outbox_jobs outbox on outbox.job_id=correlation.outbox_job_id
+      join provider_execution_dispatches dispatch on dispatch.job_id=outbox.job_id
+      join ai_story_scene_executions scene on scene.id=correlation.scene_execution_id
+      join ai_story_scene_instruction_snapshots instruction on instruction.content_hash=scene.instruction_hash
+      where correlation.scene_execution_id=${input.sceneExecutionId}::uuid
+        and correlation.correlation_id=${input.source.correlationId}::uuid
+        and correlation.outbox_job_id=${input.source.outboxJobId}
+        and dispatch.dispatch_id=${input.source.dispatchId}
+        and compiled.request_fingerprint=${input.source.requestFingerprint}
+      limit 1
+    `)) as unknown as Array<Record<string, any>>;
+    const row = rows[0];
+    if (!row) throw new AiStoryPreDispatchBundleSupersessionError("SUPERSESSION_NOT_FOUND", "Exact source bundle was not found");
+    const runtimeAuthorizedFact = RuntimeAuthorizedFactSchema.parse(row.runtime_fact);
+    const routingDecision = PersistedSceneRoutingDecisionSchema.parse(row.routing_decision);
+    const compiledProviderRequest = AiStoryCompiledProviderRequestSchema.parse(row.compiled_request);
+    const correlation = SceneProviderSchedulingCorrelationSchema.parse(row.correlation);
+    const providerExecution = ProviderExecutionSchema.parse({
+      contractVersion: row.contract_version,
+      identity: {
+        executionId: row.execution_id, tenantId: row.org_id, workspaceId: row.workspace_id,
+        ...(row.campaign_id ? { campaignId: row.campaign_id } : {}), pipelineRunId: row.pipeline_run_id,
+        capabilityId: row.capability_id, capabilityVersion: row.capability_version,
+        idempotencyKey: row.idempotency_key, deterministicFingerprint: row.deterministic_fingerprint,
+      },
+      metadata: row.execution_metadata,
+      status: row.execution_status,
+      ...(row.accepted_attempt_id ? { acceptedAttemptId: row.accepted_attempt_id } : {}),
+      createdAt: new Date(row.execution_created_at).toISOString(),
+      ...(row.completed_at ? { completedAt: new Date(row.completed_at).toISOString() } : {}),
+    });
+    const envelope = await validateExecutionEnvelope({
+      version: row.envelope_version, envelopeId: row.envelope_id,
+      payloadReference: row.payload_reference, tenantId: row.envelope_org_id,
+      workspaceId: row.envelope_workspace_id, executionContext: row.execution_context,
+      capabilityId: row.envelope_capability_id, capabilityVersion: row.envelope_capability_version,
+      providerPolicySnapshot: row.provider_policy_snapshot, canonicalRequest: row.canonical_request,
+      requestHash: row.request_hash, envelopeHash: row.envelope_hash,
+      createdAt: new Date(row.envelope_created_at).toISOString(),
+    });
+    const dispatch = await validateExecutionDispatch({
+      version: row.dispatch_version, dispatchId: row.dispatch_id, jobId: row.job_id,
+      executionId: row.execution_id, envelopeId: row.envelope_id,
+      payloadReference: row.payload_reference, correlationId: correlation.correlationId,
+      tenantId: row.envelope_org_id, workspaceId: row.envelope_workspace_id,
+      capabilityId: row.envelope_capability_id, capabilityVersion: row.envelope_capability_version,
+      requestHash: row.request_hash, envelopeHash: row.envelope_hash,
+      workerHandoff: row.worker_handoff, dispatchHash: row.dispatch_hash,
+      status: row.dispatch_status, createdAt: new Date(row.dispatch_created_at).toISOString(),
+    });
+    return {
+      bundle: {
+        runtimeAuthorizedFact, routingDecision, providerExecution, compiledProviderRequest,
+        requestHash: envelope.requestHash, envelope,
+        outboxJob: { jobId: row.job_id, executionId: row.execution_id, payloadReference: row.payload_reference, correlationId: correlation.correlationId, priority: row.priority, nextVisibleAt: new Date(row.next_visible_at) },
+        correlation, scheduledBy: row.scheduled_by,
+      },
+      dispatch,
+      intent: AiStorySceneExecutionIntentSchema.parse(row.intent),
+      instructions: AiStorySceneCompiledInstructionsSchema.parse(row.instructions),
+    };
+  }
 
   async supersede(
     input: SupersedeAiStoryPreDispatchBundleInput

@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   AiStoryCompiledProviderRequestSchema,
   AiStoryProviderAttemptBindingSchema,
@@ -104,6 +104,42 @@ export class AiStoryProviderRuntimeRepository {
     return row ? AiStoryCompiledProviderRequestSchema.parse(row.request) : null;
   }
 
+  /** Canonical campaign_asset_refs-backed MIME/storage authority for compilation. */
+  async getReferenceAssetAuthorities(input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly assetIds: readonly string[];
+  }): Promise<readonly { assetId: string; mediaType: string; storagePath?: string }[]> {
+    if (input.assetIds.length === 0) return [];
+    const rows = await this.db.select({
+      assetId: schema.assets.id,
+      orgId: schema.assets.orgId,
+      workspaceId: schema.assets.workspaceId,
+      mediaType: schema.assets.mimeType,
+      storagePath: schema.assets.storagePath,
+      campaignOrgId: schema.campaigns.orgId,
+      campaignWorkspaceId: schema.campaigns.workspaceId,
+    }).from(schema.campaignAssetRefs)
+      .innerJoin(schema.campaigns, eq(schema.campaigns.id, schema.campaignAssetRefs.campaignId))
+      .innerJoin(schema.assets, eq(schema.assets.id, schema.campaignAssetRefs.assetId))
+      .where(and(
+        eq(schema.campaignAssetRefs.campaignId, input.campaignId),
+        inArray(schema.campaignAssetRefs.assetId, [...input.assetIds])
+      ));
+    const byId = new Map(rows.map((row) => [row.assetId, row]));
+    return input.assetIds.map((assetId) => {
+      const row = byId.get(assetId);
+      if (!row || row.orgId !== input.orgId || row.workspaceId !== input.workspaceId || row.campaignOrgId !== input.orgId || row.campaignWorkspaceId !== input.workspaceId || !row.mediaType?.trim() || !row.storagePath?.trim()) {
+        throw new AiStoryProviderRuntimePersistenceError(
+          "IMMUTABLE_CONFLICT",
+          "Canonical Campaign reference MIME/storage authority is missing or out of scope"
+        );
+      }
+      return { assetId, mediaType: row.mediaType, storagePath: row.storagePath };
+    });
+  }
+
   async convergeCompiledRequestForAcceptedBundle(input: {
     readonly bundle: SceneSchedulingBundle;
     readonly compiledProviderRequest: AiStoryCompiledProviderRequest;
@@ -147,6 +183,26 @@ export class AiStoryProviderRuntimeRepository {
         throw new AiStoryProviderRuntimePersistenceError(
           "IMMUTABLE_CONFLICT",
           "Accepted scheduling bundle cannot safely converge compiled request authority"
+        );
+      }
+      const [activeCompiled] = await tx.select({
+        compiledRequestId: schema.aiStoryCompiledProviderRequests.compiledRequestId,
+        requestFingerprint: schema.aiStoryCompiledProviderRequests.requestFingerprint,
+      }).from(schema.aiStoryCompiledProviderRequests).where(and(
+        eq(schema.aiStoryCompiledProviderRequests.sceneExecutionId, request.sceneExecutionId),
+        sql`not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_compiled_request_id = ${schema.aiStoryCompiledProviderRequests.compiledRequestId}
+        )`
+      )).orderBy(desc(schema.aiStoryCompiledProviderRequests.compiledAt)).limit(1).for("update");
+      if (
+        activeCompiled &&
+        (activeCompiled.compiledRequestId !== request.compiledRequestId ||
+          activeCompiled.requestFingerprint !== request.requestFingerprint)
+      ) {
+        throw new AiStoryProviderRuntimePersistenceError(
+          "IMMUTABLE_CONFLICT",
+          "Accepted scheduling bundle is bound to a different active compiled request; canonical supersession is required"
         );
       }
       return acceptAiStoryCompiledRequest(tx, request);

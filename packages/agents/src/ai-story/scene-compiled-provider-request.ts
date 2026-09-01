@@ -7,6 +7,7 @@ import {
   AiStoryProviderRuntimeError,
   compileImmutableSeedanceRequestFromSceneCompilation,
   type PersistedSceneProviderCompilationAuthority,
+  type AiStoryReferenceAssetAuthority,
 } from "./provider-runtime-dispatch-integration";
 
 export function compileImmutableSceneProviderRequest(input: {
@@ -17,6 +18,7 @@ export function compileImmutableSceneProviderRequest(input: {
   readonly authority: PersistedSceneProviderCompilationAuthority;
   readonly compiledAt: string;
   readonly resolution?: "480p" | "720p" | "1080p";
+  readonly referenceAssets?: readonly AiStoryReferenceAssetAuthority[];
 }): AiStoryCompiledProviderRequest {
   if (input.providerId !== "seedance") {
     throw new AiStoryProviderRuntimeError(
@@ -30,6 +32,7 @@ export function compileImmutableSceneProviderRequest(input: {
     authority: input.authority,
     adapterVersion: input.adapterVersion,
     compiledAt: input.compiledAt,
+    ...(input.referenceAssets ? { referenceAssets: input.referenceAssets } : {}),
     ...(input.resolution ? { resolution: input.resolution } : {}),
   });
 }

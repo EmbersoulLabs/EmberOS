@@ -152,7 +152,7 @@ export type SceneSchedulingCoordinatorDependencies = {
     AiStoryProviderRuntimeRepository,
     | "getCompilationAuthorityBySceneExecutionId"
     | "convergeCompiledRequestForAcceptedBundle"
-  >;
+  > & Partial<Pick<AiStoryProviderRuntimeRepository, "getReferenceAssetAuthorities">>;
   readonly now?: () => Date;
 };
 
@@ -444,6 +444,7 @@ export class SceneSchedulingCoordinator {
   private readonly providerRuntimeRepo: Pick<
     AiStoryProviderRuntimeRepository,
     | "getCompilationAuthorityBySceneExecutionId"
+    | "getReferenceAssetAuthorities"
     | "convergeCompiledRequestForAcceptedBundle"
   >;
   private readonly now: () => Date;
@@ -460,15 +461,11 @@ export class SceneSchedulingCoordinator {
       dependencies.persistenceRepo ?? new AiStorySceneExecutionPersistenceRepository();
     this.assemblyRepo =
       dependencies.assemblyRepo ?? new ExecutionPlanAssemblyRepository();
-    this.providerRuntimeRepo =
-      dependencies.providerRuntimeRepo ?? {
-        getCompilationAuthorityBySceneExecutionId: (authorityInput) =>
-          new AiStoryProviderRuntimeRepository()
-            .getCompilationAuthorityBySceneExecutionId(authorityInput),
-        convergeCompiledRequestForAcceptedBundle: (recoveryInput) =>
-          new AiStoryProviderRuntimeRepository()
-            .convergeCompiledRequestForAcceptedBundle(recoveryInput),
-      };
+    this.providerRuntimeRepo = {
+      getCompilationAuthorityBySceneExecutionId: dependencies.providerRuntimeRepo?.getCompilationAuthorityBySceneExecutionId.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().getCompilationAuthorityBySceneExecutionId(input)),
+      getReferenceAssetAuthorities: dependencies.providerRuntimeRepo?.getReferenceAssetAuthorities?.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().getReferenceAssetAuthorities(input)),
+      convergeCompiledRequestForAcceptedBundle: dependencies.providerRuntimeRepo?.convergeCompiledRequestForAcceptedBundle.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().convergeCompiledRequestForAcceptedBundle(input)),
+    };
     this.now = dependencies.now ?? (() => new Date());
   }
 
@@ -767,8 +764,14 @@ export class SceneSchedulingCoordinator {
           })),
         }),
       };
-      const compiledProviderRequest =
-        compileImmutableSceneProviderRequest({
+      const effectiveReferenceIds = (sceneIntent.generationAuthority ?? instructions.generationAuthority)?.effectiveReferenceIds ?? sceneIntent.referencedAssetIds;
+      const referenceAssets = await this.providerRuntimeRepo.getReferenceAssetAuthorities({
+        orgId: fact.ownership.orgId,
+        workspaceId: fact.ownership.workspaceId,
+        campaignId: fact.ownership.campaignId,
+        assetIds: effectiveReferenceIds,
+      });
+      const compiledProviderRequest = compileImmutableSceneProviderRequest({
           providerId: acceptedRoutingDecision.selectedProviderId,
           intent: sceneIntent,
           instructions,
@@ -776,6 +779,7 @@ export class SceneSchedulingCoordinator {
           adapterVersion: acceptedRoutingDecision.selectedAdapterVersion,
           compiledAt: scheduledAt,
           resolution: "480p",
+          referenceAssets,
         });
       if (acceptedBundle) {
         await this.providerRuntimeRepo.convergeCompiledRequestForAcceptedBundle({

@@ -44,12 +44,18 @@ function inputs(mode: "T2V" | "I2V") {
 }
 
 function compile(mode: "T2V" | "I2V") {
+  const selected = inputs(mode);
   return compileImmutableSeedanceRequestFromSceneCompilation({
-    ...inputs(mode),
+    ...selected,
     authority: AUTHORITY,
     adapterVersion: "1.0.0",
     compiledAt: "2026-09-01T00:00:00.000Z",
     resolution: "480p",
+    referenceAssets: selected.intent.referencedAssetIds.map((assetId) => ({
+      assetId,
+      mediaType: "image/jpeg",
+      storagePath: `${selected.intent.identity.workspaceId}/library/${assetId}.jpg`,
+    })),
   });
 }
 
@@ -89,5 +95,39 @@ describe("compiled Provider request scheduling authority", () => {
       adapterVersion: "1.0.0",
       compiledAt: "2026-09-01T00:00:00.000Z",
     })).toThrow(/explicit TEXT_TO_VIDEO authority/);
+  });
+
+  it("preserves continuity video lineage without projecting it as a Seedance image", () => {
+    const { intent, instructions } = inputs("I2V");
+    const firstFrame = intent.referencedAssetIds[0]!;
+    const supportingImage = "50000000-0000-4000-8000-000000000002";
+    const continuityVideo = "50000000-0000-4000-8000-000000000003";
+    const referenceIds = [firstFrame, supportingImage, continuityVideo];
+    const generationAuthority = {
+      strategy: "PRODUCT_GROUNDED_VIDEO" as const,
+      referenceSource: "STORY_INHERITED" as const,
+      effectiveReferenceIds: referenceIds,
+      firstFrameAssetId: firstFrame,
+      productVisualIdentityRequirement: "REQUIRED" as const,
+    };
+    const compiled = compileImmutableSeedanceRequestFromSceneCompilation({
+      intent: { ...intent, referencedAssetIds: referenceIds, generationAuthority },
+      instructions: { ...instructions, referencedAssetIds: referenceIds, generationAuthority },
+      authority: AUTHORITY,
+      adapterVersion: "1.0.0",
+      compiledAt: "2026-09-01T00:00:01.000Z",
+      referenceAssets: [
+        { assetId: firstFrame, mediaType: "image/jpeg", storagePath: "workspace/library/first.jpg" },
+        { assetId: supportingImage, mediaType: "image/jpeg", storagePath: "workspace/library/support.jpg" },
+        { assetId: continuityVideo, mediaType: "video/mp4", storagePath: "workspace/library/continuity.mp4" },
+      ],
+    });
+    expect(compiled.storyReferenceMappings).toHaveLength(3);
+    expect(compiled.referenceMappings.map((reference) => reference.assetId)).toEqual([firstFrame, supportingImage]);
+    expect(compiled.storyReferenceMappings?.find((reference) => reference.assetId === continuityVideo)).toMatchObject({
+      semanticRole: "STORY_CONTINUITY_REFERENCE",
+      providerEmitted: false,
+      mediaType: "video/mp4",
+    });
   });
 });

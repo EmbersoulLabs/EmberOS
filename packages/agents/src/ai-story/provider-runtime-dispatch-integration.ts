@@ -157,6 +157,20 @@ export function compileImmutableSeedanceRequest(input: {
       ...(reference.mediaType ? { mediaType: reference.mediaType } : {}),
       ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
     })),
+    storyReferenceMappings: input.package.visualReferences.map((reference) => {
+      const imageCompatible = !reference.mediaType || reference.mediaType.toLowerCase().startsWith("image/");
+      const semanticRole = reference.semanticRole ?? (reference.firstFrame ? "FIRST_FRAME" as const : imageCompatible ? "PROVIDER_IMAGE_REFERENCE" as const : "STORY_CONTINUITY_REFERENCE" as const);
+      const emitted = compiled.selectedReferences.some((candidate) => candidate.referenceId === reference.referenceId);
+      return {
+        referenceId: reference.referenceId,
+        assetId: reference.assetId,
+        semanticRole,
+        mediaType: reference.mediaType ?? "image/unknown",
+        providerEmitted: emitted,
+        ...(emitted ? { providerWireRole: reference.firstFrame ? "first_frame" as const : "reference_image" as const } : {}),
+        ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
+      };
+    }),
     referenceBudget: AI_STORY_SEEDANCE_REFERENCE_BUDGET,
     degradations: compiled.degradations.map((item) => ({ ...item })),
     blockedCapabilities: [
@@ -190,6 +204,12 @@ export type PersistedSceneProviderCompilationAuthority = {
   readonly motionFingerprint: string;
 };
 
+export type AiStoryReferenceAssetAuthority = {
+  readonly assetId: string;
+  readonly mediaType: string;
+  readonly storagePath?: string;
+};
+
 export function compiledProviderRequestIdForSchedule(input: {
   readonly sceneExecutionId: string;
   readonly scheduledAt: string;
@@ -217,6 +237,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   readonly adapterVersion: string;
   readonly compiledAt: string;
   readonly resolution?: "480p" | "720p" | "1080p";
+  readonly referenceAssets?: readonly AiStoryReferenceAssetAuthority[];
 }): AiStoryCompiledProviderRequest {
   const authority = input.intent.generationAuthority ?? input.instructions.generationAuthority;
   if (
@@ -250,6 +271,46 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       "COMPILED_REQUEST_INVALID",
       "Image-conditioned compilation is missing required references"
     );
+  }
+  const referenceAssetById = new Map((input.referenceAssets ?? []).map((asset) => [asset.assetId, asset]));
+  if (!explicitT2v) {
+    const missing = referenceIds.filter((assetId) => !referenceAssetById.has(assetId));
+    if (missing.length > 0) {
+      throw new AiStoryProviderRuntimeError(
+        "COMPILED_REQUEST_INVALID",
+        "Image-conditioned compilation requires canonical MIME/storage authority for every Story reference"
+      );
+    }
+  }
+  const firstFrameAssetId = explicitT2v ? null : authority?.firstFrameAssetId ?? referenceIds[0] ?? null;
+  if (!explicitT2v && !firstFrameAssetId) {
+    throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation is missing its canonical first frame");
+  }
+  const storyReferenceMappings = referenceIds.map((assetId, index) => {
+    const asset = referenceAssetById.get(assetId)!;
+    const imageCompatible = asset.mediaType.toLowerCase().startsWith("image/");
+    const semanticRole = assetId === firstFrameAssetId
+      ? "FIRST_FRAME" as const
+      : imageCompatible
+        ? "PROVIDER_IMAGE_REFERENCE" as const
+        : "STORY_CONTINUITY_REFERENCE" as const;
+    if (semanticRole === "FIRST_FRAME" && !imageCompatible) {
+      throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "FIRST_FRAME must use image media");
+    }
+    const providerEmitted = semanticRole !== "STORY_CONTINUITY_REFERENCE";
+    return {
+      referenceId: deterministicPersistenceUuid("ai-story-compiled-reference", { sceneExecutionId: input.intent.identity.sceneExecutionId, assetId, index }),
+      assetId,
+      semanticRole,
+      mediaType: asset.mediaType,
+      providerEmitted,
+      ...(providerEmitted ? { providerWireRole: semanticRole === "FIRST_FRAME" ? "first_frame" as const : "reference_image" as const } : {}),
+      ...(asset.storagePath ? { storagePath: asset.storagePath } : {}),
+    };
+  });
+  const providerReferenceMappings = storyReferenceMappings.filter((reference) => reference.providerEmitted);
+  if (!explicitT2v && providerReferenceMappings.filter((reference) => reference.providerWireRole === "first_frame").length !== 1) {
+    throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation requires exactly one image first frame");
   }
 
   const supportedDurations = [4, 5, 6, 8, 10, 12] as const;
@@ -366,21 +427,20 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       generateAudio: false as const,
       watermark: false,
     },
-    referenceMappings: referenceIds.map((assetId, index) => ({
-      referenceId: deterministicPersistenceUuid("ai-story-compiled-reference", {
-        sceneExecutionId,
-        assetId,
-        index,
-      }),
-      assetId,
+    referenceMappings: providerReferenceMappings.map((reference) => ({
+      referenceId: reference.referenceId,
+      assetId: reference.assetId,
       authorityType: "PRODUCT" as const,
-      authorityId: assetId,
+      authorityId: reference.assetId,
       authorityClass: "REQUIRED" as const,
-      wireRole: index === 0 ? "first_frame" as const : "reference_image" as const,
-      semanticBinding: index === 0
+      wireRole: reference.providerWireRole!,
+      semanticBinding: reference.semanticRole === "FIRST_FRAME"
         ? "Canonical first-frame Product authority"
-        : "Canonical Product reference authority",
+        : "Canonical Provider-compatible Product image reference authority",
+      mediaType: reference.mediaType,
+      ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
     })),
+    storyReferenceMappings,
     referenceBudget: AI_STORY_SEEDANCE_REFERENCE_BUDGET,
     degradations: [],
     blockedCapabilities: ["AUDIO", "FIRST_LAST_FRAME", "MULTI_SHOT", "CHAINING", "VIDEO_EXTENSION", "4K", "CANCELLATION"],

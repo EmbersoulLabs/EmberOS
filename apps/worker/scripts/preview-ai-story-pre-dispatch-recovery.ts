@@ -11,6 +11,7 @@ import {
 } from "@ceo-agent/agents";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStoryProviderRuntimeRepository,
   ExecutionDispatchRepository,
   ExecutionEnvelopeRepository,
   getDb,
@@ -44,6 +45,12 @@ async function main() {
   ) {
     throw new Error("Dispatch trace does not match requested Scene authority");
   }
+  const compiledRequestId = trace.compiledRequestId;
+  if (typeof compiledRequestId !== "string") {
+    throw new Error("Dispatch trace is missing compiled request authority");
+  }
+  const compiledRequest = await new AiStoryProviderRuntimeRepository().getCompiledRequest(compiledRequestId);
+  if (!compiledRequest) throw new Error("Compiled Provider request not found");
 
   const db = getDb();
   const [worker] = await db
@@ -122,6 +129,10 @@ async function main() {
   });
   const images = request.content.filter((item) => item.type === "image_url");
   const text = request.content.find((item) => item.type === "text");
+  const continuityReferences = compiledRequest.storyReferenceMappings?.filter(
+    (reference) => reference.semanticRole === "STORY_CONTINUITY_REFERENCE"
+  ) ?? [];
+  const emittedAssetIds = new Set(compiledRequest.referenceMappings.map((reference) => reference.assetId));
 
   console.log(JSON.stringify({
     contract: "ai-story-pre-dispatch-recovery-preview.v1",
@@ -140,6 +151,13 @@ async function main() {
     firstFramePresent: images.some((item) => item.role === "first_frame"),
     firstFrameAssetId:
       payload.visualAuthorityCertification?.productAssetId ?? null,
+    canonicalStoryReferenceCount: compiledRequest.storyReferenceMappings?.length ?? compiledRequest.referenceMappings.length,
+    providerEmittedInputCount: compiledRequest.referenceMappings.length,
+    providerEmittedMediaTypes: compiledRequest.referenceMappings.map((reference) => reference.mediaType ?? null),
+    wireImageInputCount: images.length,
+    continuityReferenceCount: continuityReferences.length,
+    continuityReferenceRetained: continuityReferences.length > 0,
+    continuityReferenceEmittedAsImage: continuityReferences.some((reference) => emittedAssetIds.has(reference.assetId)),
     explicitImageBinding: /Image 1\s*=\s*the canonical Campaign Product Asset/i.test(
       text && text.type === "text" ? text.text : ""
     ),
