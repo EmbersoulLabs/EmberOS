@@ -215,7 +215,12 @@ describeIntegration("AI Story pre-dispatch bundle supersession", () => {
     const dispatches = new ExecutionDispatchRepository();
     const oldRecovery = await dispatches.previewAuthorizedRecoveryDispatch();
     expect(oldRecovery?.dispatchId).not.toBe(sourceDispatch.dispatchId);
-    const candidate = await dispatches.previewAuthorizedSupersessionSuccessorDispatch();
+    const selectorNow = new Date(
+      Date.parse(successor.input.correlation.scheduledAt) + 1_000
+    );
+    const candidate = await dispatches.previewAuthorizedSupersessionSuccessorDispatch(
+      selectorNow
+    );
     expect(candidate).toMatchObject({
       lifecycleClass: "ACTIVE_SUPERSESSION_SUCCESSOR",
       sceneExecutionId: command.sceneExecutionId,
@@ -226,13 +231,19 @@ describeIntegration("AI Story pre-dispatch bundle supersession", () => {
         jobId: successor.input.outboxJob.jobId,
       },
     });
-    expect(await dispatches.selectEligibleJob(new Date(), {
+    expect(await dispatches.selectEligibleJob(selectorNow, {
       ownership: "AI_STORY_SCENE",
     })).toBeNull();
 
     const [claimA, claimB] = await Promise.all([
-      dispatches.claimAuthorizedSupersessionSuccessorDispatch({ workerId: "successor-worker-a" }),
-      dispatches.claimAuthorizedSupersessionSuccessorDispatch({ workerId: "successor-worker-b" }),
+      dispatches.claimAuthorizedSupersessionSuccessorDispatch({
+        workerId: "successor-worker-a",
+        now: selectorNow,
+      }),
+      dispatches.claimAuthorizedSupersessionSuccessorDispatch({
+        workerId: "successor-worker-b",
+        now: selectorNow,
+      }),
     ]);
     expect([claimA?.dispatchId ?? null, claimB?.dispatchId ?? null].sort()).toEqual([
       null,
@@ -248,7 +259,9 @@ describeIntegration("AI Story pre-dispatch bundle supersession", () => {
       attempt_count: 1,
     });
     expect(["successor-worker-a", "successor-worker-b"]).toContain(leased?.lease_owner);
-    expect(await dispatches.previewAuthorizedSupersessionSuccessorDispatch()).toBeNull();
+    expect(
+      await dispatches.previewAuthorizedSupersessionSuccessorDispatch(selectorNow)
+    ).toBeNull();
   }, 120_000);
 
   for (const stage of ["successor_compile", "successor_bundle", "supersession"] as const) {
