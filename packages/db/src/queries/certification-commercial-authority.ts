@@ -388,6 +388,28 @@ export class CertificationCommercialAuthorityService {
 
   async reserveForSceneExecution(input: {
     orgId: string; workspaceId: string; sceneExecutionId: string;
+    compiledRequestId: string; requestFingerprint?: string;
+    executionIdentity: string; reservedAt: string;
+  }) {
+    const { pricingRule } = await this.previewForSceneExecution(input);
+    return this.reserve({
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      executionIdentity: input.executionIdentity,
+      pricingRule,
+      createdAt: input.reservedAt,
+      claimSubmission: true,
+    });
+  }
+
+  /**
+   * Resolves the exact immutable request and Provider USD price without
+   * reserving budget or quota. This is the non-consuming certification gate
+   * used before an operational no-dispatch hold.
+   */
+  async previewForSceneExecution(input: {
+    orgId: string; workspaceId: string; sceneExecutionId: string;
+    compiledRequestId: string; requestFingerprint?: string;
     executionIdentity: string; reservedAt: string;
   }) {
     const rows = await this.db.select({ compiledRequest: schema.aiStoryCompiledProviderRequests.compiledRequest })
@@ -396,11 +418,25 @@ export class CertificationCommercialAuthorityService {
         eq(schema.aiStoryCompiledProviderRequests.orgId, input.orgId),
         eq(schema.aiStoryCompiledProviderRequests.workspaceId, input.workspaceId),
         eq(schema.aiStoryCompiledProviderRequests.sceneExecutionId, input.sceneExecutionId),
-      )).orderBy(desc(schema.aiStoryCompiledProviderRequests.compiledAt)).limit(1);
+        eq(schema.aiStoryCompiledProviderRequests.compiledRequestId, input.compiledRequestId),
+      )).limit(1);
     const request = rows[0]
       ? AiStoryCompiledProviderRequestSchema.parse(rows[0].compiledRequest)
       : null;
     if (!request) throw new CertificationCommercialError("PROVIDER_USD_PRICE_MISSING", "Compiled Provider request is required for USD pricing");
+    if (
+      request.compiledRequestId !== input.compiledRequestId ||
+      (input.requestFingerprint !== undefined &&
+        request.requestFingerprint !== input.requestFingerprint) ||
+      request.sceneExecutionId !== input.sceneExecutionId ||
+      request.orgId !== input.orgId ||
+      request.workspaceId !== input.workspaceId
+    ) {
+      throw new CertificationCommercialError(
+        "PROVIDER_USD_PRICE_MISSING",
+        "Compiled Provider request binding conflicts with Worker dispatch authority"
+      );
+    }
     const pricingRule = await this.resolvePrice({
       providerKey: "BYTEPLUS_MODELARK",
       modelId: request.modelId,
@@ -411,14 +447,7 @@ export class CertificationCommercialAuthorityService {
       at: input.reservedAt,
     });
     if (!pricingRule) throw new CertificationCommercialError("PROVIDER_USD_PRICE_MISSING", "Exact Provider USD pricing rule is required");
-    return this.reserve({
-      orgId: input.orgId,
-      workspaceId: input.workspaceId,
-      executionIdentity: input.executionIdentity,
-      pricingRule,
-      createdAt: input.reservedAt,
-      claimSubmission: true,
-    });
+    return { compiledRequest: request, pricingRule };
   }
 
   async settleFromProviderUsage(input: {

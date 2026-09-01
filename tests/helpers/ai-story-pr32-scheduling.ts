@@ -224,6 +224,21 @@ export async function cleanupPr32Tenant(
   await sql`DELETE FROM ai_story_scene_intent_review_facts WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_review_opened_facts WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_intent_validation_results WHERE org_id = ${ids.orgId}`;
+  // This database is ephemeral, but multiple integration suites intentionally
+  // reuse this fixture identity. Suspend only the immutable-history trigger
+  // during test teardown so its parent rows can be removed deterministically.
+  // No production runtime path receives this test-only authority.
+  await sql`DELETE FROM ai_story_provider_attempt_compiled_bindings WHERE org_id = ${ids.orgId}`;
+  await sql.unsafe(
+    "ALTER TABLE ai_story_compiled_provider_requests DISABLE TRIGGER ai_story_compiled_request_immutable_v1"
+  );
+  try {
+    await sql`DELETE FROM ai_story_compiled_provider_requests WHERE org_id = ${ids.orgId}`;
+  } finally {
+    await sql.unsafe(
+      "ALTER TABLE ai_story_compiled_provider_requests ENABLE TRIGGER ai_story_compiled_request_immutable_v1"
+    );
+  }
   await sql`DELETE FROM ai_story_scene_executions WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_execution_plans WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_instruction_snapshots WHERE org_id = ${ids.orgId}`;

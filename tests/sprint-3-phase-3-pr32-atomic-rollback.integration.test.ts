@@ -47,6 +47,7 @@ function freshIds(): Phase2aIdSet {
 const FAILURE_STAGES = [
   "runtime_authorization",
   "routing_decision",
+  "compiled_request",
   "provider_execution",
   "outbox",
   "envelope",
@@ -77,6 +78,7 @@ async function countSchedulingRows(sql: Sql, input: ScheduleAcceptedBundleInput)
     envelope_count: number;
     outbox_count: number;
     correlation_count: number;
+    compiled_request_count: number;
   }[]>`
     SELECT
       (SELECT count(*)::int FROM ai_story_runtime_authorized_facts
@@ -90,7 +92,9 @@ async function countSchedulingRows(sql: Sql, input: ScheduleAcceptedBundleInput)
       (SELECT count(*)::int FROM provider_outbox_jobs
         WHERE job_id = ${input.outboxJob.jobId}) AS outbox_count,
       (SELECT count(*)::int FROM ai_story_scene_scheduling_correlations
-        WHERE correlation_id = ${input.correlation.correlationId}) AS correlation_count
+        WHERE correlation_id = ${input.correlation.correlationId}) AS correlation_count,
+      (SELECT count(*)::int FROM ai_story_compiled_provider_requests
+        WHERE compiled_request_id = ${input.compiledProviderRequest.compiledRequestId}) AS compiled_request_count
   `;
   return rows[0]!;
 }
@@ -111,6 +115,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling atomic rollback", () => {
       "../packages/db/sql/ai-story-scene-routing-router-version-v1.sql",
       "../packages/db/sql/ai-story-scene-scheduling-rls-v1.sql",
       "../packages/db/sql/ai-story-staged-release-v1.sql",
+      "../packages/db/sql/ai-story-provider-runtime-v1.sql",
       "../packages/db/sql/commercial-persistence-v1.sql",
       "../packages/db/sql/credits-settlement-v1.sql",
       "../packages/db/sql/commercial-authorization-v1.sql",
@@ -149,6 +154,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling atomic rollback", () => {
           envelope_count: 0,
           outbox_count: 0,
           correlation_count: 0,
+          compiled_request_count: 0,
         });
 
         await expect(
@@ -168,6 +174,7 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling atomic rollback", () => {
           envelope_count: 0,
           outbox_count: 0,
           correlation_count: 0,
+          compiled_request_count: 0,
         });
       } finally {
         await cleanupPr32Tenant(sql, ids);

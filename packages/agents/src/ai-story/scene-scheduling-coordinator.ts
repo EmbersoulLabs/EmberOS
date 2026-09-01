@@ -26,6 +26,7 @@ import {
   RuntimeAuthorizationPersistenceRepository,
   SceneSchedulingError,
   SceneSchedulingRepository,
+  AiStoryProviderRuntimeRepository,
   CommercialAuthorizationRepositoryImpl,
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
@@ -50,6 +51,7 @@ import {
   SCENE_PROVIDER_RESULT_SCHEMA_VERSION,
   buildCanonicalSceneProviderRequest,
 } from "./canonical-scene-provider-request";
+import { compileImmutableSceneProviderRequest } from "./scene-compiled-provider-request";
 
 export { SceneSchedulingError };
 
@@ -144,6 +146,11 @@ export type SceneSchedulingCoordinatorDependencies = {
     "getByExecutionPlanId"
   >;
   readonly assemblyRepo?: Pick<ExecutionPlanAssemblyRepository, "listMemberships">;
+  readonly providerRuntimeRepo?: Pick<
+    AiStoryProviderRuntimeRepository,
+    | "getCompilationAuthorityBySceneExecutionId"
+    | "convergeCompiledRequestForAcceptedBundle"
+  >;
   readonly now?: () => Date;
 };
 
@@ -429,6 +436,11 @@ export class SceneSchedulingCoordinator {
     "getByExecutionPlanId"
   >;
   private readonly assemblyRepo: Pick<ExecutionPlanAssemblyRepository, "listMemberships">;
+  private readonly providerRuntimeRepo: Pick<
+    AiStoryProviderRuntimeRepository,
+    | "getCompilationAuthorityBySceneExecutionId"
+    | "convergeCompiledRequestForAcceptedBundle"
+  >;
   private readonly now: () => Date;
 
   constructor(private readonly dependencies: SceneSchedulingCoordinatorDependencies) {
@@ -443,6 +455,15 @@ export class SceneSchedulingCoordinator {
       dependencies.persistenceRepo ?? new AiStorySceneExecutionPersistenceRepository();
     this.assemblyRepo =
       dependencies.assemblyRepo ?? new ExecutionPlanAssemblyRepository();
+    this.providerRuntimeRepo =
+      dependencies.providerRuntimeRepo ?? {
+        getCompilationAuthorityBySceneExecutionId: (authorityInput) =>
+          new AiStoryProviderRuntimeRepository()
+            .getCompilationAuthorityBySceneExecutionId(authorityInput),
+        convergeCompiledRequestForAcceptedBundle: (recoveryInput) =>
+          new AiStoryProviderRuntimeRepository()
+            .convergeCompiledRequestForAcceptedBundle(recoveryInput),
+      };
     this.now = dependencies.now ?? (() => new Date());
   }
 
@@ -549,13 +570,6 @@ export class SceneSchedulingCoordinator {
           }
         }
         this.assertAcceptedBundleMatchesInput(acceptedBundle, input, fact);
-        return SceneSchedulingBundleSchema.parse({
-          ...acceptedBundle,
-          replayed: true,
-          executionAllowed: false,
-          executionLockCode: PHASE1_EXECUTION_LOCKED,
-          automaticFallbackEnabled: false,
-        });
       }
 
       const compilation = await this.persistenceRepo.getByExecutionPlanId(
@@ -713,6 +727,64 @@ export class SceneSchedulingCoordinator {
         timeoutDeadline,
         retryGeneration,
       });
+      const persistedCompilationAuthority =
+        await this.providerRuntimeRepo.getCompilationAuthorityBySceneExecutionId({
+          sceneExecutionId: input.sceneExecutionId,
+          orgId: fact.ownership.orgId,
+          workspaceId: fact.ownership.workspaceId,
+          storyId: fact.ownership.storyId,
+          storyVersionId: fact.ownership.storyVersionId,
+        });
+      const compilationAuthority = persistedCompilationAuthority ?? {
+        qcEvaluationId: deterministicPersistenceUuid(
+          "ai-story-scene-intent-validation-authority",
+          { sceneExecutionId: input.sceneExecutionId, validationResults }
+        ),
+        qcFingerprint: canonicalPersistenceHash({
+          kind: "ai-story-scene-intent-validation-authority.v1",
+          sceneExecutionId: input.sceneExecutionId,
+          validationResults,
+        }),
+        qcCapabilityVersion: "ai-story-scene-intent-validation.v1",
+        directorFingerprint: canonicalPersistenceHash({
+          kind: "ai-story-director-instruction-snapshot.v1",
+          sceneExecutionId: input.sceneExecutionId,
+          shots: instructions.shots,
+        }),
+        motionFingerprint: canonicalPersistenceHash({
+          kind: "ai-story-motion-instruction-snapshot.v1",
+          sceneExecutionId: input.sceneExecutionId,
+          durationMs: instructions.durationMs,
+          shots: instructions.shots.map((shot) => ({
+            shotId: shot.shotId,
+            durationMs: shot.durationMs,
+            cameraMovement: shot.cameraMovement,
+          })),
+        }),
+      };
+      const compiledProviderRequest =
+        compileImmutableSceneProviderRequest({
+          providerId: acceptedRoutingDecision.selectedProviderId,
+          intent: sceneIntent,
+          instructions,
+          authority: compilationAuthority,
+          adapterVersion: acceptedRoutingDecision.selectedAdapterVersion,
+          compiledAt: scheduledAt,
+          resolution: "480p",
+        });
+      if (acceptedBundle) {
+        await this.providerRuntimeRepo.convergeCompiledRequestForAcceptedBundle({
+          bundle: acceptedBundle,
+          compiledProviderRequest,
+        });
+        return SceneSchedulingBundleSchema.parse({
+          ...acceptedBundle,
+          replayed: true,
+          executionAllowed: false,
+          executionLockCode: PHASE1_EXECUTION_LOCKED,
+          automaticFallbackEnabled: false,
+        });
+      }
       const providerExecution = buildProviderExecution({
         canonicalRequest: request.canonicalRequest,
         correlationId,
@@ -740,6 +812,9 @@ export class SceneSchedulingCoordinator {
             executionPlanId: input.executionPlanId,
             sceneExecutionId: input.sceneExecutionId,
             runtimeAuthorizationId: fact.runtimeAuthorizationId,
+            compiledRequestId: compiledProviderRequest.compiledRequestId,
+            compiledRequestFingerprint:
+              compiledProviderRequest.requestFingerprint,
             ...(input.retryInputRevision
               ? { retryInputRevisionId: input.retryInputRevision.retryInputRevisionId }
               : {}),
@@ -781,6 +856,7 @@ export class SceneSchedulingCoordinator {
         runtimeAuthorizedFact: fact,
         routingDecision: acceptedRoutingDecision,
         providerExecution,
+        compiledProviderRequest,
         requestHash: envelope.requestHash,
         envelope,
         outboxJob: {

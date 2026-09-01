@@ -7,6 +7,7 @@ import {
   SCENE_SCHEDULING_ERROR_CODES,
   SceneProviderSchedulingCorrelationSchema,
   SceneSchedulingBundleSchema,
+  AiStoryCompiledProviderRequestSchema,
   isSceneSchedulingBundleComplete,
   validateExecutionEnvelope,
   type ExecutionEnvelope,
@@ -16,6 +17,7 @@ import {
   type SceneProviderSchedulingCorrelation,
   type SceneSchedulingBundle,
   type SceneSchedulingErrorCode,
+  type AiStoryCompiledProviderRequest,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 import {
@@ -34,6 +36,7 @@ import {
   createProviderExecution,
 } from "./provider-ledger";
 import type { CreateOutboxJobInput } from "./provider-outbox";
+import { acceptAiStoryCompiledRequest } from "./ai-story-provider-runtime";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -61,6 +64,7 @@ export type ScheduleAcceptedBundleInput = {
   readonly runtimeAuthorizedFact: RuntimeAuthorizedFact;
   readonly routingDecision: PersistedSceneRoutingDecision;
   readonly providerExecution: ProviderExecution;
+  readonly compiledProviderRequest: AiStoryCompiledProviderRequest;
   readonly requestHash: string;
   readonly envelope: ExecutionEnvelope;
   readonly outboxJob: CreateOutboxJobInput;
@@ -72,6 +76,7 @@ export type ScheduleAcceptedBundleInput = {
   readonly testFailureAfter?:
     | "runtime_authorization"
     | "routing_decision"
+    | "compiled_request"
     | "provider_execution"
     | "outbox"
     | "envelope"
@@ -85,6 +90,7 @@ export type SceneSchedulingTimingKey =
   | "routing_request_build"
   | "routing_decision_lookup"
   | "routing_decision_write"
+  | "compiled_request_write"
   | "verification_identity_lookup"
   | "verification_identity_write"
   | "scheduling_correlation_lookup"
@@ -319,6 +325,9 @@ export class SceneSchedulingRepository {
           input.correlation
         );
         const envelope = await validateExecutionEnvelope(input.envelope);
+        const compiledProviderRequest = AiStoryCompiledProviderRequestSchema.parse(
+          input.compiledProviderRequest
+        );
 
         serialDbRoundTripCount += 1;
         const plan = await lockExecutionPlan(authFact.executionPlanId, tx);
@@ -387,6 +396,25 @@ export class SceneSchedulingRepository {
           throw new SceneSchedulingError(
             "SCENE_SCHEDULING_NOT_ELIGIBLE",
             "Durable RELEASED Scene authority is required before provider scheduling"
+          );
+        }
+        if (
+          compiledProviderRequest.orgId !== expected.orgId ||
+          compiledProviderRequest.workspaceId !== expected.workspaceId ||
+          compiledProviderRequest.campaignId !== expected.campaignId ||
+          compiledProviderRequest.storyId !== expected.storyId ||
+          compiledProviderRequest.storyVersionId !== expected.storyVersionId ||
+          compiledProviderRequest.sceneExecutionId !== releaseAuthority.sceneExecutionId ||
+          compiledProviderRequest.providerId !== routingDecision.selectedProviderId ||
+          compiledProviderRequest.adapterVersion !== routingDecision.selectedAdapterVersion ||
+          envelope.executionContext.trace?.compiledRequestId !==
+            compiledProviderRequest.compiledRequestId ||
+          envelope.executionContext.trace?.compiledRequestFingerprint !==
+            compiledProviderRequest.requestFingerprint
+        ) {
+          throw new SceneSchedulingError(
+            "IDENTITY_CONFLICT",
+            "Compiled Provider request does not match the accepted scheduling authority"
           );
         }
         const persistedAuth = await observeStep(
@@ -492,6 +520,11 @@ export class SceneSchedulingRepository {
           }
         );
         failAfterTestStage(input, "routing_decision");
+        await observeStep(input, "compiled_request_write", async () => {
+          serialDbRoundTripCount += 1;
+          return acceptAiStoryCompiledRequest(tx, compiledProviderRequest);
+        });
+        failAfterTestStage(input, "compiled_request");
         const providerExecution = await observeStep(
           input,
           "provider_execution_lookup_or_create",
