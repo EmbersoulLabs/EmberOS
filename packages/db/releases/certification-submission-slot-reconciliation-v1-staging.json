@@ -1,0 +1,33 @@
+{
+  "manifestVersion": 1,
+  "manifestId": "certification-submission-slot-reconciliation-v1-staging",
+  "authorityModel": "ORDERED_APPEND_ONLY_STAGING_CONVERGENCE",
+  "target": {
+    "environment": "staging",
+    "railwayProjectId": "b2004ec8-7747-4fae-bca4-4167a3385d49",
+    "railwayEnvironmentId": "de092159-8b57-4729-a8ef-1b4ac0c2b33f"
+  },
+  "orderedMigrations": [
+    {
+      "order": 13,
+      "id": "certification-submission-slot-reconciliation-v1",
+      "path": "packages/db/sql/certification-submission-slot-reconciliation-v1.sql",
+      "sha256": "02b3a389f4fca03baae5aa5b0acc07c349009bd360375163518bd96be222da2c"
+    }
+  ],
+  "predecessor": {
+    "requiredTables": [
+      "certification_commercial_scopes",
+      "certification_commercial_reservations",
+      "certification_commercial_events",
+      "ai_story_scene_executions",
+      "provider_execution_dispatches"
+    ]
+  },
+  "result": {
+    "table": "certification_submission_slot_reconciliations",
+    "grossConsumptionPreserved": true,
+    "projection": "gross_consumed - reconciled_non_submissions",
+    "providerWork": false
+  }
+}

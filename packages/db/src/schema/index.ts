@@ -3307,6 +3307,7 @@ export const certificationCommercialReservations = pgTable(
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
     workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
     executionIdentity: text("execution_identity").notNull(),
+    sourceSlotReconciliationId: uuid("source_slot_reconciliation_id"),
     reservedCostUsd: numeric("reserved_cost_usd", { precision: 12, scale: 2 }).notNull(),
     settledCostUsd: numeric("settled_cost_usd", { precision: 12, scale: 2 }),
     status: text("status").notNull(),
@@ -3319,7 +3320,12 @@ export const certificationCommercialReservations = pgTable(
     reservationBody: jsonb("reservation_body").$type<import("@ceo-agent/shared/server").CertificationCommercialReservation>().notNull(),
   },
   (t) => [
-    unique("certification_reservation_execution_unique").on(t.certificationScopeId, t.executionIdentity),
+    uniqueIndex("certification_reservation_initial_execution_unique")
+      .on(t.certificationScopeId, t.executionIdentity)
+      .where(sql`${t.sourceSlotReconciliationId} is null`),
+    uniqueIndex("certification_reservation_reconciliation_unique")
+      .on(t.sourceSlotReconciliationId)
+      .where(sql`${t.sourceSlotReconciliationId} is not null`),
     unique("certification_reservation_integrity_unique").on(t.integrityHash),
     index("certification_reservation_scope_status_idx").on(t.certificationScopeId, t.status),
     check("certification_reservation_status_check", sql`${t.status} in ('RESERVED','SUBMITTED','SETTLED','RELEASED')`),
@@ -3346,6 +3352,43 @@ export const certificationCommercialEvents = pgTable(
     uniqueIndex("certification_commercial_events_reservation_type_unique").on(t.certificationReservationId, t.eventType).where(sql`${t.certificationReservationId} is not null`),
     index("certification_commercial_events_scope_idx").on(t.certificationScopeId, t.occurredAt),
     check("certification_commercial_events_type_check", sql`${t.eventType} in ('CREATED','RESERVED','SUBMITTED','SETTLED','RELEASED','CLOSED','REVOKED')`),
+  ]
+);
+
+/** Append-only correction for a gross slot consumption proven not to reach a Provider. */
+export const certificationSubmissionSlotReconciliations = pgTable(
+  "certification_submission_slot_reconciliations",
+  {
+    reconciliationId: uuid("reconciliation_id").primaryKey(),
+    environment: text("environment").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    certificationScopeId: uuid("certification_scope_id").notNull().references(() => certificationCommercialScopes.certificationScopeId, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    dispatchId: text("dispatch_id").notNull().references(() => providerExecutionDispatches.dispatchId, { onDelete: "restrict" }),
+    certificationReservationId: uuid("certification_reservation_id").notNull().references(() => certificationCommercialReservations.certificationReservationId, { onDelete: "restrict" }),
+    sourceConsumptionEventId: uuid("source_consumption_event_id").notNull().references(() => certificationCommercialEvents.certificationCommercialEventId, { onDelete: "restrict" }),
+    outcomeClassification: text("outcome_classification").notNull(),
+    reason: text("reason").notNull(),
+    actorUserId: uuid("actor_user_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull(),
+    quotaBefore: jsonb("quota_before").$type<Record<string, number>>().notNull(),
+    quotaAfter: jsonb("quota_after").$type<Record<string, number>>().notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("certification_slot_reconciliation_source_unique").on(t.sourceConsumptionEventId),
+    unique("certification_slot_reconciliation_idempotency_unique").on(t.idempotencyKey),
+    unique("certification_slot_reconciliation_integrity_unique").on(t.integrityHash),
+    index("certification_slot_reconciliation_scope_idx").on(t.certificationScopeId, t.createdAt),
+    index("certification_slot_reconciliation_scene_idx").on(t.sceneExecutionId, t.createdAt),
+    check("certification_slot_reconciliation_environment_check", sql`${t.environment} = 'STAGING'`),
+    check("certification_slot_reconciliation_outcome_check", sql`${t.outcomeClassification} = 'PROVEN_NOT_SUBMITTED'`),
+    check("certification_slot_reconciliation_reason_check", sql`${t.reason} = 'PROVEN_PROVIDER_NON_ACCEPTANCE_RECONCILIATION'`),
+    check("certification_slot_reconciliation_version_check", sql`${t.contractVersion} = 'certification-submission-slot-reconciliation.v1'`),
   ]
 );
 
