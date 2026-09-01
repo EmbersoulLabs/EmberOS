@@ -59,6 +59,7 @@ export type SceneSchedulingIntegrityInput = {
   readonly ownership: RuntimeAuthorizedFact["ownership"];
   readonly sceneExecutionId: string;
   readonly runtimeAuthorizationId: string;
+  readonly commercialAuthorizationId?: string;
   readonly authorizationHash: string;
   readonly routingDecisionHash: string;
   readonly requestHash: string;
@@ -77,6 +78,7 @@ export function buildSceneSchedulingIntegrityPayload(
     ownership: input.ownership,
     sceneExecutionId: input.sceneExecutionId,
     runtimeAuthorizationId: input.runtimeAuthorizationId,
+    commercialAuthorizationId: input.commercialAuthorizationId,
     authorizationHash: input.authorizationHash,
     routingDecisionHash: input.routingDecisionHash,
     requestHash: input.requestHash,
@@ -376,12 +378,14 @@ function buildCorrelation(input: {
   readonly scheduledAt: string;
   readonly scheduledBy: string;
   readonly retryGeneration: number;
+  readonly commercialAuthorizationId?: string;
   readonly retryInputRevision?: import("@ceo-agent/shared").SceneAttemptInputRevisionFact;
 }): SceneProviderSchedulingCorrelation {
   const schedulingIdentityHash = computeSceneSchedulingIdentityHash({
     ownership: input.fact.ownership,
     sceneExecutionId: input.routingDecision.sceneExecutionId,
     runtimeAuthorizationId: input.fact.runtimeAuthorizationId,
+    commercialAuthorizationId: input.commercialAuthorizationId,
     authorizationHash: input.fact.deterministicIntegrityHash,
     routingDecisionHash: input.routingDecision.deterministicIntegrityHash,
     requestHash: input.requestHash,
@@ -396,6 +400,7 @@ function buildCorrelation(input: {
     executionPlanId: input.fact.executionPlanId,
     sceneExecutionId: input.routingDecision.sceneExecutionId,
     runtimeAuthorizationId: input.fact.runtimeAuthorizationId,
+    commercialAuthorizationId: input.commercialAuthorizationId ?? null,
     routingDecisionId: input.routingDecision.routingDecisionId,
     providerExecutionId: input.providerExecutionId,
     envelopeId: input.envelopeId,
@@ -849,6 +854,7 @@ export class SceneSchedulingCoordinator {
         scheduledAt,
         scheduledBy: input.actorUserId,
         retryGeneration,
+        commercialAuthorizationId: input.commercialAuthorizationId,
         retryInputRevision: input.retryInputRevision,
       });
 

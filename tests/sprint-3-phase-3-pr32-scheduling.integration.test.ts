@@ -217,6 +217,9 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
     expect(bundle.executionLockCode).toBe(PHASE1_EXECUTION_LOCKED);
     expect(bundle.automaticFallbackEnabled).toBe(false);
     expect(bundle.routingDecision.selectedProviderId).toBe("seedance");
+    expect(bundle.correlation.commercialAuthorizationId).toBe(
+      prepared.commercialAuthorizationId
+    );
 
     const counts = await sql<{
       auth_count: number;
@@ -265,6 +268,9 @@ describeIntegration("Sprint 3 PR 3.2 scene scheduling integration", () => {
       );
     expect(replayed?.replayed).toBe(true);
     expect(replayed?.providerExecutionId).toBe(bundle.providerExecutionId);
+    expect(replayed?.correlation.commercialAuthorizationId).toBe(
+      prepared.commercialAuthorizationId
+    );
   }, 120_000);
 
   it("equivalent schedule replay converges without rerouting", async () => {
