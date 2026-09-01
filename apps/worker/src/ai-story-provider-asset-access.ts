@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import {
   type ProductVisualAuthorityCertification,
   type MinimaxAssetAccessResolver,
@@ -41,8 +41,20 @@ type VisualAuthorityRow = {
   readonly mimeType: string | null;
 };
 
-async function loadVisualAuthorityRow(
-  input: ProductVisualAuthorityCertificationInput
+type CanonicalCampaignAssetAuthorityInput = {
+  readonly assetId: string;
+  readonly orgId: string;
+  readonly workspaceId: string;
+  readonly campaignId: string;
+};
+
+/**
+ * Resolve Campaign membership from the canonical many-to-many authority. The
+ * nullable assets.campaign_id column records legacy upload origin and is not a
+ * current Campaign authorization boundary.
+ */
+export async function loadCanonicalCampaignAssetAuthority(
+  input: CanonicalCampaignAssetAuthorityInput
 ): Promise<VisualAuthorityRow | null> {
   const [row] = await getDb()
     .select({
@@ -56,18 +68,41 @@ async function loadVisualAuthorityRow(
     .from(schema.assets)
     .innerJoin(
       schema.campaignAssetRefs,
-      eq(schema.campaignAssetRefs.assetId, schema.assets.id)
+      and(
+        eq(schema.campaignAssetRefs.assetId, schema.assets.id),
+        eq(schema.campaignAssetRefs.campaignId, input.campaignId)
+      )
+    )
+    .innerJoin(
+      schema.campaigns,
+      and(
+        eq(schema.campaigns.id, schema.campaignAssetRefs.campaignId),
+        eq(schema.campaigns.orgId, input.orgId),
+        eq(schema.campaigns.workspaceId, input.workspaceId)
+      )
     )
     .where(
       and(
-        eq(schema.assets.id, input.productAssetId),
+        eq(schema.assets.id, input.assetId),
         eq(schema.assets.orgId, input.orgId),
         eq(schema.assets.workspaceId, input.workspaceId),
-        eq(schema.campaignAssetRefs.campaignId, input.campaignId)
+        eq(schema.assets.status, "ready"),
+        isNull(schema.assets.deletedAt)
       )
     )
     .limit(1);
   return row ?? null;
+}
+
+async function loadVisualAuthorityRow(
+  input: ProductVisualAuthorityCertificationInput
+): Promise<VisualAuthorityRow | null> {
+  return loadCanonicalCampaignAssetAuthority({
+    assetId: input.productAssetId,
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+  });
 }
 
 /**
@@ -122,22 +157,7 @@ export const certifyWorkerProductVisualAuthority =
 async function loadAuthorizedAsset(
   input: ProviderAssetAccessInput
 ): Promise<AuthorizedAsset | null> {
-  const [asset] = await getDb()
-    .select({
-      storagePath: schema.assets.storagePath,
-      mimeType: schema.assets.mimeType,
-    })
-    .from(schema.assets)
-    .where(
-      and(
-        eq(schema.assets.id, input.assetId),
-        eq(schema.assets.orgId, input.orgId),
-        eq(schema.assets.workspaceId, input.workspaceId),
-        eq(schema.assets.campaignId, input.campaignId)
-      )
-    )
-    .limit(1);
-  return asset ?? null;
+  return loadCanonicalCampaignAssetAuthority(input);
 }
 
 /**
