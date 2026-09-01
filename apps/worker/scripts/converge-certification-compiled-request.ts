@@ -43,11 +43,8 @@ async function main(): Promise<void> {
   if (!bundle || bundle.correlation.executionPlanId !== TARGET.executionPlanId) {
     throw new Error("ACCEPTED_T2V_SCHEDULING_BUNDLE_REQUIRED");
   }
-  if (
-    bundle.routingDecision.selectedProviderId !== TARGET.expectedProvider ||
-    bundle.routingDecision.selectedModelId !== TARGET.expectedModel
-  ) {
-    throw new Error("T2V_PROVIDER_MODEL_BINDING_CONFLICT");
+  if (bundle.routingDecision.selectedProviderId !== TARGET.expectedProvider) {
+    throw new Error("T2V_PROVIDER_BINDING_CONFLICT");
   }
 
   const [outbox] = await db
@@ -100,6 +97,9 @@ async function main(): Promise<void> {
   });
   if (expectedRequest.compiledRequestId !== expectedId) {
     throw new Error("COMPILED_REQUEST_IDENTITY_DIVERGENT");
+  }
+  if (expectedRequest.modelId !== TARGET.expectedModel) {
+    throw new Error("T2V_COMPILED_MODEL_BINDING_CONFLICT");
   }
 
   const before = await runtime.getCompiledRequest(expectedId);
