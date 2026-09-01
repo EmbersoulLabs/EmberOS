@@ -313,23 +313,55 @@ export class CertificationCommercialAuthorityService {
           eq(schema.providerUsdPricingRules.integrityHash, input.pricingRule.integrityHash),
         )).limit(1);
       if (!persistedPrice[0]) throw new CertificationCommercialError("PROVIDER_USD_PRICE_MISSING", "Persisted Provider USD price is required");
-      const existing = await tx.select().from(schema.certificationCommercialReservations).where(and(
+      const existingRows = await tx.select().from(schema.certificationCommercialReservations).where(and(
         eq(schema.certificationCommercialReservations.certificationScopeId, row.certificationScopeId),
         eq(schema.certificationCommercialReservations.executionIdentity, input.executionIdentity),
-      )).limit(1);
-      if (existing[0]) return { scope: scopeFromRow(row), reservation: reservationFromRow(existing[0]), replayed: true };
+      )).orderBy(desc(schema.certificationCommercialReservations.createdAt));
+      const activeExisting = existingRows.find((reservation) =>
+        ["RESERVED", "SUBMITTED", "SETTLED"].includes(reservation.status)
+      );
+      if (activeExisting) return { scope: scopeFromRow(row), reservation: reservationFromRow(activeExisting), replayed: true };
+
+      const releasedExisting = existingRows.find((reservation) => reservation.status === "RELEASED");
+      const reconciliationRows = releasedExisting
+        ? await tx.select({
+            reconciliationId: schema.certificationSubmissionSlotReconciliations.reconciliationId,
+          }).from(schema.certificationSubmissionSlotReconciliations).where(eq(
+            schema.certificationSubmissionSlotReconciliations.certificationReservationId,
+            releasedExisting.certificationReservationId
+          )).limit(1)
+        : [];
+      const sourceSlotReconciliationId = reconciliationRows[0]?.reconciliationId ?? null;
+      if (releasedExisting && !sourceSlotReconciliationId) {
+        return { scope: scopeFromRow(row), reservation: reservationFromRow(releasedExisting), replayed: true };
+      }
 
       const proposedCostUsd = estimateProviderCostUsd(input.pricingRule);
       const proposed = cents(proposedCostUsd);
       if (cents(row.spentProviderCostUsd) + cents(row.reservedProviderCostUsd) + proposed > cents(row.maxProviderCostUsd)) {
         throw new CertificationCommercialError("CERTIFICATION_BUDGET_EXCEEDED", "Certification USD budget exceeded");
       }
-      if (row.consumedProviderSubmissions + row.reservedProviderSubmissions + 1 > row.maxProviderSubmissions) {
+      const reconciliationCountRows = await tx.select({
+        count: sql<number>`count(*)::int`,
+      }).from(schema.certificationSubmissionSlotReconciliations).where(eq(
+        schema.certificationSubmissionSlotReconciliations.certificationScopeId,
+        row.certificationScopeId
+      ));
+      const reconciledNonSubmissions = Number(reconciliationCountRows[0]?.count ?? 0);
+      const effectiveConsumed = row.consumedProviderSubmissions - reconciledNonSubmissions;
+      if (effectiveConsumed < 0) {
+        throw new CertificationCommercialError("CERTIFICATION_RESERVATION_INVALID", "Certification quota reconciliation exceeds gross consumption");
+      }
+      if (effectiveConsumed + row.reservedProviderSubmissions + 1 > row.maxProviderSubmissions) {
         throw new CertificationCommercialError("CERTIFICATION_SUBMISSION_QUOTA_EXCEEDED", "Certification Provider submission quota exceeded");
       }
       const candidate = withIntegrity({
         contractVersion: CERTIFICATION_COMMERCIAL_CONTRACT_VERSION,
-        certificationReservationId: deterministicPersistenceUuid("certification-commercial-reservation", { scope: row.certificationScopeId, executionIdentity: input.executionIdentity }),
+        certificationReservationId: deterministicPersistenceUuid("certification-commercial-reservation", {
+          scope: row.certificationScopeId,
+          executionIdentity: input.executionIdentity,
+          sourceSlotReconciliationId,
+        }),
         certificationScopeId: row.certificationScopeId,
         providerUsdPricingRuleId: input.pricingRule.providerUsdPricingRuleId,
         orgId: input.orgId,
@@ -350,6 +382,7 @@ export class CertificationCommercialAuthorityService {
         providerUsdPricingRuleId: reservation.providerUsdPricingRuleId,
         orgId: reservation.orgId, workspaceId: reservation.workspaceId,
         executionIdentity: reservation.executionIdentity,
+        sourceSlotReconciliationId,
         reservedCostUsd: reservation.reservedCostUsd, settledCostUsd: null,
         status: reservation.status, createdAt: new Date(reservation.createdAt),
         submittedAt: reservation.submittedAt ? new Date(reservation.submittedAt) : null, settledAt: null, releasedAt: null,
@@ -382,7 +415,7 @@ export class CertificationCommercialAuthorityService {
   }): Promise<CertificationCommercialReservation | null> {
     const rows = await this.db.select().from(schema.certificationCommercialReservations).where(and(
       eq(schema.certificationCommercialReservations.executionIdentity, input.executionIdentity),
-    )).limit(1);
+    )).orderBy(desc(schema.certificationCommercialReservations.createdAt)).limit(1);
     return rows[0] ? reservationFromRow(rows[0]) : null;
   }
 

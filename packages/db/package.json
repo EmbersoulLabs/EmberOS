@@ -61,6 +61,8 @@
     "sql:credits-settlement": "tsx scripts/apply-credits-settlement-v1.ts",
     "sql:commercial-authorization": "tsx scripts/apply-commercial-authorization-v1.ts",
     "sql:certification-commercial-authority": "tsx scripts/apply-certification-commercial-authority-v1.ts",
+    "sql:certification-submission-slot-reconciliation": "tsx scripts/apply-certification-submission-slot-reconciliation-v1.ts",
+    "admin:reconcile-certification-submission-slot": "tsx scripts/reconcile-certification-submission-slot.ts",
     "admin:certification-commercial-authority": "tsx scripts/manage-certification-commercial-authority.ts",
     "admin:staging-ai-story-execute": "tsx scripts/manage-staging-ai-story-execute-entitlement.ts",
     "studio": "drizzle-kit studio",
