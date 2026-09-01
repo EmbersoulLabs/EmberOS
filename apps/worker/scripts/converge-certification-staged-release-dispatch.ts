@@ -9,10 +9,17 @@ import {
   AiStoryProviderRuntimeRepository,
   ExecutionDispatchRepository,
   ExecutionEnvelopeRepository,
+  RuntimeAuthorizationPersistenceRepository,
   SceneSchedulingRepository,
   getDb,
   schema,
 } from "@ceo-agent/db";
+import {
+  createCanonicalExecuteProviderRouter,
+  releaseNextEligibleScene,
+  resolveCanonicalExecuteRoutingPolicy,
+} from "@ceo-agent/agents";
+import { readProviderExecutorAuthority } from "@ceo-agent/queue";
 import { ProviderExecutionDispatcher } from "../src/provider-execution-dispatcher";
 
 const TARGET = {
@@ -71,6 +78,37 @@ async function main(): Promise<void> {
   const scheduling = new SceneSchedulingRepository(db);
   const runtime = new AiStoryProviderRuntimeRepository(db);
   const dispatches = new ExecutionDispatchRepository(db);
+  const before = await commercialCounts(db);
+  if (before.attempts !== 0 || before.tasks !== 0) {
+    throw new Error("I2V_PAID_EXECUTION_ALREADY_EXISTS");
+  }
+
+  if (apply) {
+    const runtimeAuthorization = await new RuntimeAuthorizationPersistenceRepository(
+      db
+    ).getByExecutionPlanId(TARGET.executionPlanId);
+    if (!runtimeAuthorization?.executionAuthorization) {
+      throw new Error("CANONICAL_RUNTIME_EXECUTION_AUTHORITY_REQUIRED");
+    }
+    const workerAuthority = await readProviderExecutorAuthority();
+    if (!workerAuthority) {
+      throw new Error("CANONICAL_WORKER_PROVIDER_AUTHORITY_REQUIRED");
+    }
+    const providerOptions = {
+      executorAuthorities: workerAuthority.capabilities,
+    };
+    await releaseNextEligibleScene({
+      executionPlanId: TARGET.executionPlanId,
+      workspaceId: runtimeAuthorization.ownership.workspaceId,
+      actorUserId: runtimeAuthorization.authorizedBy,
+      executionAuthorization: {
+        ...runtimeAuthorization.executionAuthorization,
+        allowed: true,
+      },
+      router: createCanonicalExecuteProviderRouter(providerOptions),
+      routingPolicy: resolveCanonicalExecuteRoutingPolicy(providerOptions),
+    });
+  }
 
   const bundle = await scheduling.getAcceptedBundleBySceneExecutionId(
     TARGET.sceneExecutionId
@@ -93,11 +131,6 @@ async function main(): Promise<void> {
     compiled.sceneExecutionId !== TARGET.sceneExecutionId
   ) {
     throw new Error("CANONICAL_I2V_COMPILED_REQUEST_REQUIRED");
-  }
-
-  const before = await commercialCounts(db);
-  if (before.attempts !== 0 || before.tasks !== 0) {
-    throw new Error("I2V_PAID_EXECUTION_ALREADY_EXISTS");
   }
 
   let dispatch = await dispatches.getDispatchByJobId(bundle.outboxJobId);
