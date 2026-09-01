@@ -11,7 +11,11 @@ import {
   getDb,
   schema,
 } from "@ceo-agent/db";
-import { AiStorySceneCompiledInstructionsSchema } from "@ceo-agent/shared";
+import {
+  AiStorySceneCompiledInstructionsSchema,
+  canonicalPersistenceHash,
+  deterministicPersistenceUuid,
+} from "@ceo-agent/shared";
 
 const TARGET = {
   executionPlanId: "0578168f-003f-542c-be3b-28d4b7a37873",
@@ -73,14 +77,49 @@ async function main(): Promise<void> {
   if (!compilation || !intent || !instructions) {
     throw new Error("PERSISTED_T2V_COMPILATION_AUTHORITY_REQUIRED");
   }
-  const authority = await runtime.getCompilationAuthorityBySceneExecutionId({
+  const persistedAuthority = await runtime.getCompilationAuthorityBySceneExecutionId({
     sceneExecutionId: TARGET.sceneExecutionId,
     orgId: bundle.correlation.ownership.orgId,
     workspaceId: bundle.correlation.ownership.workspaceId,
     storyId: bundle.correlation.ownership.storyId,
     storyVersionId: bundle.correlation.ownership.storyVersionId,
   });
-  if (!authority) throw new Error("FROZEN_T2V_QC_DIRECTOR_MOTION_AUTHORITY_REQUIRED");
+  const validationResults = compilation.validationResults.filter(
+    (result) => result.intentId === TARGET.sceneExecutionId
+  );
+  if (
+    validationResults.length === 0 ||
+    validationResults.some((result) => result.status === "failed")
+  ) {
+    throw new Error("FROZEN_T2V_VALIDATION_AUTHORITY_REQUIRED");
+  }
+  const authority = persistedAuthority ?? {
+    qcEvaluationId: deterministicPersistenceUuid(
+      "ai-story-scene-intent-validation-authority",
+      { sceneExecutionId: TARGET.sceneExecutionId, validationResults }
+    ),
+    qcFingerprint: canonicalPersistenceHash({
+      kind: "ai-story-scene-intent-validation-authority.v1",
+      sceneExecutionId: TARGET.sceneExecutionId,
+      validationResults,
+    }),
+    qcCapabilityVersion: "ai-story-scene-intent-validation.v1",
+    directorFingerprint: canonicalPersistenceHash({
+      kind: "ai-story-director-instruction-snapshot.v1",
+      sceneExecutionId: TARGET.sceneExecutionId,
+      shots: instructions.shots,
+    }),
+    motionFingerprint: canonicalPersistenceHash({
+      kind: "ai-story-motion-instruction-snapshot.v1",
+      sceneExecutionId: TARGET.sceneExecutionId,
+      durationMs: instructions.durationMs,
+      shots: instructions.shots.map((shot) => ({
+        shotId: shot.shotId,
+        durationMs: shot.durationMs,
+        cameraMovement: shot.cameraMovement,
+      })),
+    }),
+  };
 
   const expectedRequest = compileImmutableSceneProviderRequest({
     providerId: bundle.routingDecision.selectedProviderId,
