@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, asc } from "drizzle-orm";
+import { and, eq, inArray, or, asc, desc, sql } from "drizzle-orm";
 import {
   PHASE1_EXECUTION_LOCKED,
   PersistedSceneRoutingDecisionSchema,
@@ -689,8 +689,15 @@ export class SceneSchedulingRepository {
     const [row] = await this.db
       .select()
       .from(schema.aiStorySceneSchedulingCorrelations)
-      .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId))
-      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
+      .where(and(
+        eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId),
+        sql`not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_correlation_id = ${schema.aiStorySceneSchedulingCorrelations.correlationId}
+             or supersession.source_outbox_job_id = ${schema.aiStorySceneSchedulingCorrelations.outboxJobId}
+        )`
+      ))
+      .orderBy(desc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
       .limit(1);
     return row ? toCorrelation(row) : null;
   }
@@ -712,8 +719,15 @@ export class SceneSchedulingRepository {
     const [correlationRow] = await this.db
       .select()
       .from(schema.aiStorySceneSchedulingCorrelations)
-      .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId))
-      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
+      .where(and(
+        eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId),
+        sql`not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_correlation_id = ${schema.aiStorySceneSchedulingCorrelations.correlationId}
+             or supersession.source_outbox_job_id = ${schema.aiStorySceneSchedulingCorrelations.outboxJobId}
+        )`
+      ))
+      .orderBy(desc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
       .limit(1);
     if (!correlationRow) return null;
 
