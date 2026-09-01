@@ -18,6 +18,7 @@ import {
 import {
   computeWorkerAttemptId,
   computeWorkerExecutionResultHash,
+  classifyProviderSubmissionOutcome,
   SceneProviderWorkerRuntime,
   WorkerRuntimeError,
 } from "../packages/agents/src/ai-story/scene-provider-worker-runtime";
@@ -28,6 +29,29 @@ import {
 } from "./helpers/ai-story-pr33-worker";
 
 describe("Sprint 3 PR 3.3 worker contracts", () => {
+  it("classifies missing task evidence as ambiguous after a submission slot was consumed", () => {
+    expect(classifyProviderSubmissionOutcome({
+      durableNotSubmittedObservation: false,
+      durableAcceptedObservation: false,
+      providerTaskKnown: false,
+      commercialSubmissionClaimed: true,
+      adapterInvocationMayHaveStarted: true,
+    })).toBe("AMBIGUOUS_SUBMISSION_OUTCOME");
+    expect(classifyProviderSubmissionOutcome({
+      durableNotSubmittedObservation: true,
+      durableAcceptedObservation: false,
+      providerTaskKnown: false,
+      commercialSubmissionClaimed: false,
+      adapterInvocationMayHaveStarted: false,
+    })).toBe("PROVEN_NOT_SUBMITTED");
+    expect(classifyProviderSubmissionOutcome({
+      durableNotSubmittedObservation: false,
+      durableAcceptedObservation: false,
+      providerTaskKnown: true,
+      commercialSubmissionClaimed: true,
+      adapterInvocationMayHaveStarted: true,
+    })).toBe("PROVEN_ACCEPTED");
+  });
   it("freezes routerVersion=1 on Routing Decision", () => {
     expect(SCENE_ROUTER_VERSION).toBe(1);
     expect(pr33RoutingDecision().routerVersion).toBe(1);
@@ -191,6 +215,131 @@ describe("Sprint 3 PR 3.3 worker contracts", () => {
       "provider-submit",
       "commercial-outcome",
     ]);
+  });
+
+  it("persists and claims Provider Attempt authority before Adapter invocation", async () => {
+    const bundle = await buildPr33ValidatedBundle();
+    const repository = new InMemoryWorkerRuntimeRepository(bundle) as InMemoryWorkerRuntimeRepository & {
+      prepareProviderAttemptBeforeAdapter: (...args: any[]) => Promise<any>;
+      claimProviderAttemptForAdapter: (...args: any[]) => Promise<any>;
+      recordProviderAdapterOutcome: (...args: any[]) => Promise<void>;
+    };
+    const sequence: string[] = [];
+    repository.prepareProviderAttemptBeforeAdapter = async (input) => {
+      sequence.push(`attempt-committed:${input.commercialReservationId}`);
+      return { replayed: false };
+    };
+    repository.claimProviderAttemptForAdapter = async () => {
+      sequence.push("attempt-claimed");
+      return { adapterEligible: true };
+    };
+    repository.recordProviderAdapterOutcome = async (input) => {
+      sequence.push(`attempt-outcome:${input.acceptanceClassification}`);
+    };
+    const adapter = new DeterministicCanonicalTestAdapter("accepted_async", {
+      providerId: "seedance",
+      adapterVersion: "1.0.0",
+    });
+    const originalSubmit = adapter.submit.bind(adapter);
+    adapter.submit = async (input) => {
+      sequence.push("provider-submit");
+      return originalSubmit(input);
+    };
+    const adapters = createPr33TestAdapterRegistry("accepted_async");
+    adapters.register("seedance", "1.0.0", () => adapter);
+    const worker = new SceneProviderWorkerRuntime({
+      repository,
+      adapters,
+      requireCommercialReservation: true,
+      requireProviderAttemptAuthority: true,
+      workerId: "worker-a",
+      commercialReservation: {
+        reserveBeforeSubmit: async () => {
+          sequence.push("commercial-reservation");
+          return { reservationId: "reservation-1" };
+        },
+        loadForOutcome: async () => null,
+        claimSubmissionBeforeAdapter: async () => sequence.push("submission-slot-claimed"),
+        recordProviderOutcome: async () => sequence.push("commercial-outcome"),
+      },
+    });
+    await worker.processDispatch({ dispatchId: bundle.dispatch.dispatchId });
+    expect(sequence).toEqual([
+      "commercial-reservation",
+      "attempt-committed:reservation-1",
+      "submission-slot-claimed",
+      "attempt-claimed",
+      "provider-submit",
+      "attempt-outcome:ACCEPTED",
+      "commercial-outcome",
+    ]);
+  });
+
+  it("never invokes Adapter when Attempt persistence fails after reservation", async () => {
+    const bundle = await buildPr33ValidatedBundle();
+    const repository = new InMemoryWorkerRuntimeRepository(bundle) as InMemoryWorkerRuntimeRepository & {
+      prepareProviderAttemptBeforeAdapter: (...args: any[]) => Promise<any>;
+      claimProviderAttemptForAdapter: (...args: any[]) => Promise<any>;
+    };
+    repository.prepareProviderAttemptBeforeAdapter = async () => {
+      throw new Error("fixture attempt persistence failure");
+    };
+    repository.claimProviderAttemptForAdapter = async () => ({ adapterEligible: true });
+    const adapter = new DeterministicCanonicalTestAdapter("accepted_async", {
+      providerId: "seedance",
+      adapterVersion: "1.0.0",
+    });
+    const adapters = createPr33TestAdapterRegistry("accepted_async");
+    adapters.register("seedance", "1.0.0", () => adapter);
+    const worker = new SceneProviderWorkerRuntime({
+      repository,
+      adapters,
+      requireCommercialReservation: true,
+      requireProviderAttemptAuthority: true,
+      commercialReservation: {
+        reserveBeforeSubmit: async () => ({ reservationId: "reservation-1" }),
+        loadForOutcome: async () => null,
+        claimSubmissionBeforeAdapter: async () => undefined,
+        releaseBeforeAdapterFailure: async () => undefined,
+        recordProviderOutcome: async () => undefined,
+      },
+    });
+    await expect(worker.processDispatch({ dispatchId: bundle.dispatch.dispatchId }))
+      .rejects.toThrow("fixture attempt persistence failure");
+    expect(adapter.submitCount).toBe(0);
+  });
+
+  it("fails closed without resubmission when a durable Attempt is already DISPATCHING", async () => {
+    const bundle = await buildPr33ValidatedBundle();
+    const repository = new InMemoryWorkerRuntimeRepository(bundle) as InMemoryWorkerRuntimeRepository & {
+      prepareProviderAttemptBeforeAdapter: (...args: any[]) => Promise<any>;
+      claimProviderAttemptForAdapter: (...args: any[]) => Promise<any>;
+      recordProviderAdapterOutcome: (...args: any[]) => Promise<void>;
+    };
+    repository.prepareProviderAttemptBeforeAdapter = async () => ({ replayed: true });
+    repository.claimProviderAttemptForAdapter = async () => ({ adapterEligible: false });
+    repository.recordProviderAdapterOutcome = async () => undefined;
+    const adapter = new DeterministicCanonicalTestAdapter("accepted_async", {
+      providerId: "seedance",
+      adapterVersion: "1.0.0",
+    });
+    const adapters = createPr33TestAdapterRegistry("accepted_async");
+    adapters.register("seedance", "1.0.0", () => adapter);
+    const worker = new SceneProviderWorkerRuntime({
+      repository,
+      adapters,
+      requireCommercialReservation: true,
+      requireProviderAttemptAuthority: true,
+      commercialReservation: {
+        reserveBeforeSubmit: async () => ({ reservationId: "reservation-1" }),
+        loadForOutcome: async () => null,
+        claimSubmissionBeforeAdapter: async () => undefined,
+        recordProviderOutcome: async () => undefined,
+      },
+    });
+    await expect(worker.processDispatch({ dispatchId: bundle.dispatch.dispatchId }))
+      .rejects.toMatchObject({ code: "RECONCILIATION_REQUIRED" });
+    expect(adapter.submitCount).toBe(0);
   });
 
   it("supports an explicit certification hold before reservation or Adapter invocation", async () => {

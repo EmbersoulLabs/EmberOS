@@ -187,6 +187,8 @@ export const AiStoryProviderAttemptBindingSchema = z.object({
     amount: z.number().nonnegative().nullable(),
     source: z.enum(["CONFIGURED_ESTIMATE", "UNKNOWN"]),
   }).strict(),
+  /** Canonical commercial reservation consumed by this Attempt before submit. */
+  commercialReservationId: Id.optional(),
   status: z.enum(AI_STORY_PROVIDER_ATTEMPT_STATES),
   providerTaskId: Text.optional(),
   submissionClaimOwner: Text.optional(),

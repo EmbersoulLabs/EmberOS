@@ -49,7 +49,7 @@ export class AiStoryCertificationCommercialReservationGate implements Commercial
   async reserveBeforeSubmit(input: Parameters<CommercialGate["reserveBeforeSubmit"]>[0]) {
     const { compiledRequestId, requestFingerprint } =
       this.resolveCompiledRequestBinding(input);
-    const result = await this.authority.reserveForSceneExecution({
+    const { pricingRule } = await this.authority.previewForSceneExecution({
       orgId: input.bundle.correlation.ownership.orgId,
       workspaceId: input.bundle.envelope.workspaceId,
       sceneExecutionId: input.bundle.correlation.sceneExecutionId,
@@ -58,10 +58,42 @@ export class AiStoryCertificationCommercialReservationGate implements Commercial
       executionIdentity: input.providerAttemptId,
       reservedAt: input.reservedAt,
     });
-    if (result.replayed) {
-      throw new Error("CERTIFICATION_PROVIDER_SUBMISSION_ALREADY_CLAIMED");
-    }
+    const result = await this.authority.reserve({
+      orgId: input.bundle.correlation.ownership.orgId,
+      workspaceId: input.bundle.envelope.workspaceId,
+      executionIdentity: input.providerAttemptId,
+      pricingRule,
+      createdAt: input.reservedAt,
+      claimSubmission: false,
+    });
     return { reservationId: result.reservation.certificationReservationId };
+  }
+
+  async claimSubmissionBeforeAdapter(
+    input: Parameters<NonNullable<CommercialGate["claimSubmissionBeforeAdapter"]>>[0]
+  ) {
+    const reservation = await this.authority.getReservationByExecutionIdentity({
+      executionIdentity: input.providerAttemptId,
+    });
+    if (!reservation || reservation.certificationReservationId !== input.reservationId) {
+      throw new Error("CERTIFICATION_RESERVATION_ATTEMPT_BINDING_INVALID");
+    }
+    const result = await this.authority.markSubmitted(
+      input.reservationId,
+      input.claimedAt
+    );
+    if (!['SUBMITTED', 'SETTLED'].includes(result.reservation.status)) {
+      throw new Error("CERTIFICATION_SUBMISSION_SLOT_NOT_CLAIMED");
+    }
+  }
+
+  async releaseBeforeAdapterFailure(
+    input: Parameters<NonNullable<CommercialGate["releaseBeforeAdapterFailure"]>>[0]
+  ) {
+    const reservation = await this.authority.getReservationById(input.reservationId);
+    if (reservation?.status === "RESERVED") {
+      await this.authority.release(input.reservationId, input.occurredAt);
+    }
   }
 
   async loadForOutcome(input: Parameters<CommercialGate["loadForOutcome"]>[0]) {

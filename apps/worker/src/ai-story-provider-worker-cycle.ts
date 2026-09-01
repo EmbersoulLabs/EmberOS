@@ -145,6 +145,7 @@ export async function createProductionAiStoryContinuationCoordinator(
     worker: {
       repository: workerRepo,
       adapters,
+      workerId: options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER,
       ...(process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "certification_no_dispatch"
         ? {
             beforeCommercialReservation: () => {
@@ -154,6 +155,7 @@ export async function createProductionAiStoryContinuationCoordinator(
         : {}),
       commercialReservation: new AiStoryCertificationCommercialReservationGate(),
       requireCommercialReservation: true,
+      requireProviderAttemptAuthority: true,
     },
     finalization: {
       chain: projectionRepo,

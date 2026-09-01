@@ -386,6 +386,16 @@ export class CertificationCommercialAuthorityService {
     return rows[0] ? reservationFromRow(rows[0]) : null;
   }
 
+  async getReservationById(
+    reservationId: string
+  ): Promise<CertificationCommercialReservation | null> {
+    const rows = await this.db.select().from(schema.certificationCommercialReservations).where(eq(
+      schema.certificationCommercialReservations.certificationReservationId,
+      reservationId
+    )).limit(1);
+    return rows[0] ? reservationFromRow(rows[0]) : null;
+  }
+
   async reserveForSceneExecution(input: {
     orgId: string; workspaceId: string; sceneExecutionId: string;
     compiledRequestId: string; requestFingerprint?: string;
