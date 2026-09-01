@@ -214,6 +214,42 @@ export class ProviderLedgerRepository {
       .from(schema.providerAttempts)
       .where(eq(schema.providerAttempts.attemptId, attempt.attemptId))
       .limit(1);
+    if (
+      existing &&
+      existing.status === "PENDING" &&
+      existing.providerMetadata?.source === "ai-story-worker-pre-adapter-authority" &&
+      existing.executionId === attempt.executionId &&
+      existing.attemptNumber === attempt.attemptNumber &&
+      existing.providerId === attempt.providerId &&
+      existing.providerVersion === attempt.providerVersion &&
+      existing.modelVersion === attempt.modelVersion &&
+      existing.requestHash === attempt.requestHash
+    ) {
+      const [completed] = await this.db
+        .update(schema.providerAttempts)
+        .set({
+          providerRequestId: attempt.providerRequestId,
+          responseHash: attempt.responseHash,
+          status: attempt.status,
+          startedAt: attempt.startedAt ? new Date(attempt.startedAt) : existing.startedAt,
+          completedAt: attempt.completedAt ? new Date(attempt.completedAt) : undefined,
+          failure,
+          warnings: input.warnings ?? [],
+          providerMetadata: {
+            ...existing.providerMetadata,
+            ...(input.providerMetadata ?? {}),
+            preAdapterAuthorityRetained: true,
+          },
+        })
+        .where(
+          and(
+            eq(schema.providerAttempts.attemptId, attempt.attemptId),
+            eq(schema.providerAttempts.status, "PENDING")
+          )
+        )
+        .returning();
+      if (completed) return toAttempt(completed);
+    }
     if (!existing || !sameJson(toAttempt(existing), attempt)) {
       throw new ProviderLedgerConflictError("Attempt identity or history position conflicts");
     }
