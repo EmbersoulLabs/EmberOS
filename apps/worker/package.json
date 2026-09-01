@@ -8,6 +8,7 @@
     "inspect:queue": "tsx scripts/inspect-queue.ts",
     "preview:ai-story-pre-dispatch-recovery": "tsx scripts/preview-ai-story-pre-dispatch-recovery.ts",
     "certify:compiled-request-convergence": "tsx scripts/converge-certification-compiled-request.ts",
+    "certify:staged-release-dispatch-convergence": "tsx scripts/converge-certification-staged-release-dispatch.ts",
     "retry:renders": "tsx scripts/retry-failed-renders.ts",
     "clean:queue": "tsx scripts/clean-queue.ts",
     "purge:renders": "tsx scripts/purge-rendered-videos.ts",

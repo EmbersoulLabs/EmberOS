@@ -93,6 +93,12 @@ export const SceneProviderSchedulingCorrelationSchema = z.object({
   executionPlanId: z.string().uuid(),
   sceneExecutionId: z.string().uuid(),
   runtimeAuthorizationId: z.string().uuid(),
+  /**
+   * Immutable billable scheduling authority. Null for explicitly non-commercial
+   * ops schedules; optional only to preserve read compatibility with records
+   * accepted before the commercial propagation contract existed.
+   */
+  commercialAuthorizationId: z.string().uuid().nullable().optional(),
   routingDecisionId: z.string().uuid(),
   providerExecutionId: NonEmptyTextSchema,
   envelopeId: NonEmptyTextSchema,

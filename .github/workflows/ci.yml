@@ -135,6 +135,18 @@ jobs:
           tests/sprint-3-phase-3-pr35-finalizer.integration.test.ts
           -t "successful finalization and approval certification|differentiated human retry contract certification"
 
+      - name: Certify staged-release commercial lineage on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/sprint-3-phase-3-pr32-scheduling.integration.test.ts
+          -t "persists auth, routing, provider execution, envelope, outbox, and correlation|equivalent schedule replay converges without rerouting"
+
+      - name: Certify staged-release concurrent convergence on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/sprint-3-phase-3-pr35-finalizer.integration.test.ts
+          -t "concurrent next-scene release transitions Scene 2 once and leaves Scene 3 held"
+
       - name: Certify STAGING execute entitlement grant and revoke authority
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
