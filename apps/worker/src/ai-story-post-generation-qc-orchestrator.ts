@@ -56,7 +56,6 @@ export class AiStoryPostGenerationQcRuntimeOrchestrator {
         intent: authority.intent,
         instructions: authority.instructions,
         preGenerationAuthority: authority.preGenerationAuthority,
-        handoffFingerprint: authority.handoffFingerprint,
         sceneVersion: authority.sceneVersion,
         compiledRequest: compiled,
         attempt: {
