@@ -6,7 +6,7 @@ import {
   createExecutionDispatch,
   type ExecutionDispatch,
 } from "@ceo-agent/shared";
-import { buildAiStoryPreDispatchSuccessorBundle } from "@ceo-agent/agents";
+import { buildAiStoryPreDispatchSuccessorBundle } from "../packages/agents/src/ai-story/pre-dispatch-successor-bundle";
 import {
   AiStoryPreDispatchBundleSupersessionRepository,
   ExecutionDispatchRepository,
