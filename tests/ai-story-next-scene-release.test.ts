@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { releaseNextEligibleScene } from "../packages/agents/src/ai-story/release-next-eligible-scene";
 import type { StagedSceneReleaseError } from "../packages/agents/src/ai-story/release-remaining-scenes";
+import { SceneSchedulingError } from "../packages/agents/src/ai-story/scene-scheduling-coordinator";
 import { CommercialAuthorizationError } from "@ceo-agent/db";
 
 const PLAN = "8831afe0-e22b-561e-ba8a-9087996a9113";
@@ -289,5 +290,32 @@ describe("canonical next eligible Scene release", () => {
     expect(scheduleAuthorizedScene).toHaveBeenCalledTimes(2);
     expect(outcomes.filter((outcome) => outcome.newlyReleasedSceneCount === 1)).toHaveLength(1);
     expect(outcomes.filter((outcome) => outcome.converged)).toHaveLength(1);
+  });
+
+  it("re-reads once after a concurrent immutable scheduling conflict", async () => {
+    const scheduleAuthorizedScene = vi.fn()
+      .mockRejectedValueOnce(new SceneSchedulingError(
+        "OUTBOX_SCHEDULING_CONFLICT",
+        "Concurrent schedule won"
+      ))
+      .mockResolvedValueOnce({ replayed: true });
+    const outcome = await releaseNextEligibleScene({
+      executionPlanId: PLAN,
+      workspaceId: WORKSPACE,
+      actorUserId: USER,
+      executionAuthorization: authorization,
+      router: { route: vi.fn() } as never,
+      releaseRepository: { releaseNextEligible: vi.fn().mockResolvedValue({
+        rows: [], selectedSceneExecutionId: SCENE_2, selectedSceneOrder: 2, newlyReleased: false,
+      }) },
+      authorizationRepository: { getByExecutionPlanId: vi.fn().mockResolvedValue({
+        runtimeAuthorizationId: "44444444-4444-4444-8444-444444444444",
+        ownership: { orgId: ORG, workspaceId: WORKSPACE },
+      }) } as never,
+      schedulingCoordinator: { scheduleAuthorizedScene } as never,
+    });
+
+    expect(scheduleAuthorizedScene).toHaveBeenCalledTimes(2);
+    expect(outcome).toMatchObject({ scheduledSceneCount: 1, converged: true });
   });
 });

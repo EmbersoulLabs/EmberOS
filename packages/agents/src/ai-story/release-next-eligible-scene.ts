@@ -56,27 +56,55 @@ export async function releaseNextEligibleScene(input: {
   if (!released.selectedSceneExecutionId || !released.selectedSceneOrder) {
     throw new StagedSceneReleaseError("NO_NEXT_ELIGIBLE_SCENE", "No next eligible Scene", 409);
   }
+  const selectedSceneExecutionId = released.selectedSceneExecutionId;
 
   // RELEASED is durable release authority, not proof that scheduling completed.
   // Always converge the selected Scene so a crash/failure after the release
   // commit cannot strand RELEASED + missing scheduling authority.
   const coordinator = input.schedulingCoordinator ?? new SceneSchedulingCoordinator({ router: input.router });
+  const schedule = () => coordinator.scheduleAuthorizedScene({
+    executionPlanId: input.executionPlanId,
+    sceneExecutionId: selectedSceneExecutionId,
+    runtimeAuthorizationId: fact.runtimeAuthorizationId,
+    commercialAuthorizationId,
+    executionAuthorization: toAiStoryExecutionAuthorizationEvidence(input.executionAuthorization),
+    actorUserId: input.actorUserId,
+    routingPolicy: input.routingPolicy,
+  });
   let scheduling;
   try {
-    scheduling = await coordinator.scheduleAuthorizedScene({
-      executionPlanId: input.executionPlanId,
-      sceneExecutionId: released.selectedSceneExecutionId,
-      runtimeAuthorizationId: fact.runtimeAuthorizationId,
-      commercialAuthorizationId,
-      executionAuthorization: toAiStoryExecutionAuthorizationEvidence(input.executionAuthorization),
-      actorUserId: input.actorUserId,
-      routingPolicy: input.routingPolicy,
-    });
+    scheduling = await schedule();
   } catch (error) {
     if (error instanceof SceneSchedulingError) {
-      throw new StagedSceneReleaseError(error.code, error.message, 409);
+      // An equivalent concurrent continuation may win the immutable scheduling
+      // transaction after this request's pre-transaction read. Re-read once
+      // through the same coordinator; the accepted bundle must still pass every
+      // downstream identity/commercial check before it can converge.
+      if (
+        error.code === "ROUTING_DECISION_CONFLICT" ||
+        error.code === "PROVIDER_EXECUTION_CONFLICT" ||
+        error.code === "EXECUTION_ENVELOPE_CONFLICT" ||
+        error.code === "OUTBOX_SCHEDULING_CONFLICT" ||
+        error.code === "IDENTITY_CONFLICT"
+      ) {
+        try {
+          scheduling = await schedule();
+        } catch (retryError) {
+          if (retryError instanceof SceneSchedulingError) {
+            throw new StagedSceneReleaseError(
+              retryError.code,
+              retryError.message,
+              retryError.status
+            );
+          }
+          throw retryError;
+        }
+      } else {
+        throw new StagedSceneReleaseError(error.code, error.message, error.status);
+      }
+    } else {
+      throw error;
     }
-    throw error;
   }
 
   return {
