@@ -159,7 +159,10 @@ export function buildAiStoryPostGenerationQcInputPackage(input: {
 export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
   readonly intent: AiStorySceneExecutionIntent;
   readonly instructions: AiStorySceneCompiledInstructions;
-  readonly preGenerationQc: AiStoryPreGenerationQcEvaluation;
+  readonly preGenerationAuthority: Pick<
+    AiStoryPreGenerationQcEvaluation,
+    "qcEvaluationId" | "qcFingerprint" | "scriptVersionId" | "handoffId" | "productGrounded"
+  > & { readonly shotRecipeFingerprint: string | null };
   readonly handoffFingerprint: string;
   readonly sceneVersion: number;
   readonly compiledRequest: AiStoryCompiledProviderRequest;
@@ -193,11 +196,10 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
   };
   readonly createdAt?: string;
 }): AiStoryPostGenerationQcInputPackage {
-  const { intent, instructions, preGenerationQc: qc, compiledRequest: compiled, attempt } = input;
+  const { intent, instructions, preGenerationAuthority: qc, compiledRequest: compiled, attempt } = input;
   if (
     intent.identity.sceneExecutionId !== compiled.sceneExecutionId ||
     instructions.sceneId !== intent.identity.sceneId ||
-    qc.sceneExecutionId !== compiled.sceneExecutionId ||
     qc.qcEvaluationId !== compiled.qcEvaluationId ||
     qc.qcFingerprint !== compiled.qcFingerprint ||
     attempt.compiledRequestId !== compiled.compiledRequestId ||
@@ -324,7 +326,7 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
     handoffFingerprint: input.handoffFingerprint,
     directorFingerprint: compiled.directorFingerprint,
     motionFingerprint: compiled.motionFingerprint,
-    shotRecipeFingerprint: qc.shotRecipeBindings?.[0]?.recipeFingerprint ?? null,
+    shotRecipeFingerprint: qc.shotRecipeFingerprint,
     castSnapshotFingerprint: compiled.castSnapshotFingerprint,
     locationSnapshotFingerprint: compiled.locationSnapshotFingerprint,
     productSnapshotFingerprint: compiled.productSnapshotFingerprint,

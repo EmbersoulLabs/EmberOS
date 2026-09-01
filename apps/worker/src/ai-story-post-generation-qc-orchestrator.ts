@@ -55,7 +55,7 @@ export class AiStoryPostGenerationQcRuntimeOrchestrator {
       const input = buildAiStoryPostGenerationQcInputFromCompiledAuthority({
         intent: authority.intent,
         instructions: authority.instructions,
-        preGenerationQc: authority.preGenerationQc,
+        preGenerationAuthority: authority.preGenerationAuthority,
         handoffFingerprint: authority.handoffFingerprint,
         sceneVersion: authority.sceneVersion,
         compiledRequest: compiled,

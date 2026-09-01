@@ -114,9 +114,10 @@ describe("AI Story canonical Post-Generation QC", () => {
         shots: [{ shotId: "shot-1", information: "Petals move through warm light." }],
         productIdentityConstraints: [],
       } as never,
-      preGenerationQc: {
-        sceneExecutionId: ids[8]!, qcEvaluationId: ids[11]!, qcFingerprint: hash("f"),
+      preGenerationAuthority: {
+        qcEvaluationId: ids[11]!, qcFingerprint: hash("f"),
         scriptVersionId: ids[6]!, handoffId: ids[7]!, productGrounded: false,
+        shotRecipeFingerprint: null,
       } as never,
       handoffFingerprint: hash("1"), sceneVersion: 2, compiledRequest: compiled,
       attempt: {
@@ -143,7 +144,7 @@ describe("AI Story canonical Post-Generation QC", () => {
     expect(() => buildAiStoryPostGenerationQcInputFromCompiledAuthority({
       intent: { identity: { sceneExecutionId: ids[8]!, sceneId: "scene-1" }, compilationHash: hash("a") } as never,
       instructions: { sceneId: "scene-1" } as never,
-      preGenerationQc: { sceneExecutionId: ids[8]!, qcEvaluationId: ids[11]!, qcFingerprint: hash("f") } as never,
+      preGenerationAuthority: { qcEvaluationId: ids[11]!, qcFingerprint: hash("f") } as never,
       handoffFingerprint: hash("1"), sceneVersion: 1,
       compiledRequest: { sceneExecutionId: ids[8]!, compiledRequestId: ids[10]!, requestFingerprint: hash("d"), qcEvaluationId: ids[11]!, qcFingerprint: hash("f"), sceneFingerprint: hash("a") } as never,
       attempt: { compiledRequestId: ids[12]! } as never,

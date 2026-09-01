@@ -92,7 +92,10 @@ export class AiStoryPostGenerationQcRepository {
     readonly intent: AiStorySceneExecutionIntent;
     readonly instructions: AiStorySceneCompiledInstructions;
     readonly compiledRequest: AiStoryCompiledProviderRequest;
-    readonly preGenerationQc: AiStoryPreGenerationQcEvaluation;
+    readonly preGenerationAuthority: Pick<
+      AiStoryPreGenerationQcEvaluation,
+      "qcEvaluationId" | "qcFingerprint" | "scriptVersionId" | "handoffId" | "productGrounded"
+    > & { readonly shotRecipeFingerprint: string | null };
     readonly handoffFingerprint: string;
     readonly sceneVersion: number;
     readonly providerAttemptId: string;
@@ -140,13 +143,39 @@ export class AiStoryPostGenerationQcRepository {
       : null;
     if (!sceneRow || !compiled || !attemptRow[0] || !attestation) return null;
 
-    const [instructionRows, qcRows, sceneVersionRows] = await Promise.all([
+    const [instructionRows, qcRows, directorRows, motionRows, sceneVersionRows] = await Promise.all([
       this.db.select({ instructions: schema.aiStorySceneInstructionSnapshots.instructions })
         .from(schema.aiStorySceneInstructionSnapshots)
         .where(eq(schema.aiStorySceneInstructionSnapshots.contentHash, sceneRow.instructionHash)).limit(1),
       this.db.select({ evaluation: schema.aiStoryPreGenerationQcEvaluations.evaluation })
         .from(schema.aiStoryPreGenerationQcEvaluations)
         .where(eq(schema.aiStoryPreGenerationQcEvaluations.qcEvaluationId, compiled.qcEvaluationId)).limit(1),
+      this.db.select({
+        directorPlanId: schema.aiStoryDirectorPlanVersions.directorPlanId,
+        scriptVersionId: schema.aiStoryDirectorPlanVersions.scriptVersionId,
+        handoffId: schema.aiStoryDirectorPlanVersions.handoffId,
+      }).from(schema.aiStoryDirectorPlanVersions).where(and(
+        eq(schema.aiStoryDirectorPlanVersions.orgId, compiled.orgId),
+        eq(schema.aiStoryDirectorPlanVersions.workspaceId, compiled.workspaceId),
+        eq(schema.aiStoryDirectorPlanVersions.storyId, compiled.storyId),
+        eq(schema.aiStoryDirectorPlanVersions.storyVersionId, compiled.storyVersionId),
+        eq(schema.aiStoryDirectorPlanVersions.directorFingerprint, compiled.directorFingerprint),
+        eq(schema.aiStoryDirectorPlanVersions.status, "FROZEN"),
+      )).limit(1),
+      this.db.select({
+        motionPlanId: schema.aiStoryMotionPlanVersions.motionPlanId,
+        directorPlanId: schema.aiStoryMotionPlanVersions.directorPlanId,
+        scriptVersionId: schema.aiStoryMotionPlanVersions.scriptVersionId,
+        handoffId: schema.aiStoryMotionPlanVersions.handoffId,
+      })
+        .from(schema.aiStoryMotionPlanVersions).where(and(
+          eq(schema.aiStoryMotionPlanVersions.orgId, compiled.orgId),
+          eq(schema.aiStoryMotionPlanVersions.workspaceId, compiled.workspaceId),
+          eq(schema.aiStoryMotionPlanVersions.storyId, compiled.storyId),
+          eq(schema.aiStoryMotionPlanVersions.storyVersionId, compiled.storyVersionId),
+          eq(schema.aiStoryMotionPlanVersions.motionFingerprint, compiled.motionFingerprint),
+          eq(schema.aiStoryMotionPlanVersions.status, "FROZEN"),
+        )).limit(1),
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sceneRow.sceneId)
         ? this.db.select({ version: schema.aiStoryCanonicalSceneVersions.version })
             .from(schema.aiStoryCanonicalSceneVersions)
@@ -156,12 +185,22 @@ export class AiStoryPostGenerationQcRepository {
             )).orderBy(desc(schema.aiStoryCanonicalSceneVersions.version)).limit(1)
         : Promise.resolve([]),
     ]);
-    if (!instructionRows[0] || !qcRows[0]) return null;
-    const qc = AiStoryPreGenerationQcEvaluationSchema.parse(qcRows[0].evaluation);
+    if (!instructionRows[0]) return null;
+    const qc = qcRows[0]
+      ? AiStoryPreGenerationQcEvaluationSchema.parse(qcRows[0].evaluation)
+      : null;
+    const fallbackLineage = directorRows[0] && motionRows[0] &&
+      directorRows[0].directorPlanId === motionRows[0].directorPlanId &&
+      directorRows[0].scriptVersionId === motionRows[0].scriptVersionId &&
+      directorRows[0].handoffId === motionRows[0].handoffId
+      ? directorRows[0]
+      : null;
+    if (!qc && !fallbackLineage) return null;
+    const handoffId = qc?.handoffId ?? fallbackLineage!.handoffId;
     const [handoff] = await this.db.select({
       handoffFingerprint: schema.aiStoryScriptDirectorHandoffs.handoffFingerprint,
     }).from(schema.aiStoryScriptDirectorHandoffs)
-      .where(eq(schema.aiStoryScriptDirectorHandoffs.handoffId, qc.handoffId)).limit(1);
+      .where(eq(schema.aiStoryScriptDirectorHandoffs.handoffId, handoffId)).limit(1);
     if (!handoff) return null;
     const metadata = attemptRow[0].providerMetadata ?? {};
     return {
@@ -169,7 +208,25 @@ export class AiStoryPostGenerationQcRepository {
       intent: AiStorySceneExecutionIntentSchema.parse(sceneRow.intent),
       instructions: AiStorySceneCompiledInstructionsSchema.parse(instructionRows[0].instructions),
       compiledRequest: compiled,
-      preGenerationQc: qc,
+      preGenerationAuthority: qc ? {
+        qcEvaluationId: qc.qcEvaluationId,
+        qcFingerprint: qc.qcFingerprint,
+        scriptVersionId: qc.scriptVersionId,
+        handoffId: qc.handoffId,
+        productGrounded: qc.productGrounded,
+        shotRecipeFingerprint: qc.shotRecipeBindings?.[0]?.recipeFingerprint ?? null,
+      } : {
+        // Older V1 schedules used the persisted Scene-intent validation capsule
+        // as their canonical Pre-QC authority. Its immutable identity and
+        // fingerprint are carried by the compiled request; frozen
+        // Director/Motion/Handoff rows supply the remaining lineage.
+        qcEvaluationId: compiled.qcEvaluationId,
+        qcFingerprint: compiled.qcFingerprint,
+        scriptVersionId: fallbackLineage!.scriptVersionId,
+        handoffId: fallbackLineage!.handoffId,
+        productGrounded: compiled.generationAuthority?.strategy === "PRODUCT_GROUNDED_VIDEO",
+        shotRecipeFingerprint: null,
+      },
       handoffFingerprint: handoff.handoffFingerprint,
       // Legacy retained Scenes predate canonical Scene-version rows and are
       // contractually version 1. Canonical UUID Scenes resolve the persisted version.
