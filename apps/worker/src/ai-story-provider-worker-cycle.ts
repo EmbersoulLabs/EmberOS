@@ -298,12 +298,19 @@ export async function runAiStoryProviderWorkerCycle(
     return { dispatchStatus: "NO_JOB" };
   }
   const leaseOwner = options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER;
-  const recoveryDispatch = await new ExecutionDispatchRepository()
-    .claimAuthorizedRecoveryDispatch({
+  const dispatchRepository = new ExecutionDispatchRepository();
+  const supersessionSuccessorDispatch = await dispatchRepository
+    .claimAuthorizedSupersessionSuccessorDispatch({
       workerId: leaseOwner,
     });
-  const dispatchOutcome = recoveryDispatch
-    ? { status: "DISPATCHED" as const, dispatch: recoveryDispatch }
+  const recoveryDispatch = supersessionSuccessorDispatch
+    ? null
+    : await dispatchRepository.claimAuthorizedRecoveryDispatch({
+        workerId: leaseOwner,
+      });
+  const existingDispatch = supersessionSuccessorDispatch ?? recoveryDispatch;
+  const dispatchOutcome = existingDispatch
+    ? { status: "DISPATCHED" as const, dispatch: existingDispatch }
     : await dispatchNextProviderExecution({ ownership: "AI_STORY_SCENE" });
   if (dispatchOutcome.status !== "DISPATCHED") {
     return { dispatchStatus: "NO_JOB" };

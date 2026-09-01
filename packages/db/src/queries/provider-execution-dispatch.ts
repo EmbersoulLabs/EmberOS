@@ -4,6 +4,10 @@ import {
   type ExecutionDispatch,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
+import {
+  AI_STORY_PRE_DISPATCH_BUNDLE_SUPERSESSION_VERSION,
+} from "./ai-story-pre-dispatch-bundle-supersession";
+import { canonicalPersistenceHash } from "./ai-story-scene-execution-persistence";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -13,6 +17,93 @@ export interface DispatchableProviderJob {
   readonly payloadReference: string;
   readonly correlationId: string;
   readonly status: "PENDING";
+}
+
+export type SupersessionSuccessorDispatchCandidate = {
+  readonly lifecycleClass: "ACTIVE_SUPERSESSION_SUCCESSOR";
+  readonly supersessionId: string;
+  readonly sceneExecutionId: string;
+  readonly compiledRequestId: string;
+  readonly requestFingerprint: string;
+  readonly dispatch: ExecutionDispatch;
+};
+
+type SupersessionSuccessorRow = {
+  supersession_id: string;
+  org_id: string;
+  workspace_id: string;
+  scene_execution_id: string;
+  source_compiled_request_id: string;
+  source_request_fingerprint: string;
+  source_correlation_id: string;
+  source_outbox_job_id: string;
+  source_dispatch_id: string;
+  successor_compiled_request_id: string;
+  successor_request_fingerprint: string;
+  successor_correlation_id: string;
+  successor_outbox_job_id: string;
+  successor_dispatch_id: string;
+  reason: string;
+  actor_user_id: string;
+  idempotency_key: string;
+  target_contract_version: string;
+  authority_version: string;
+  paid_side_effect_evidence: Record<string, unknown>;
+  integrity_hash: string;
+  supersession_created_at: Date | string;
+};
+
+function assertSupersessionSuccessorIntegrity(row: SupersessionSuccessorRow): void {
+  const authorityBody = {
+    supersessionId: row.supersession_id,
+    orgId: row.org_id,
+    workspaceId: row.workspace_id,
+    sceneExecutionId: row.scene_execution_id,
+    source: {
+      compiledRequestId: row.source_compiled_request_id,
+      requestFingerprint: row.source_request_fingerprint,
+      correlationId: row.source_correlation_id,
+      outboxJobId: row.source_outbox_job_id,
+      dispatchId: row.source_dispatch_id,
+    },
+    successor: {
+      compiledRequestId: row.successor_compiled_request_id,
+      requestFingerprint: row.successor_request_fingerprint,
+      correlationId: row.successor_correlation_id,
+      outboxJobId: row.successor_outbox_job_id,
+      dispatchId: row.successor_dispatch_id,
+    },
+    reason: row.reason,
+    actorUserId: row.actor_user_id,
+    idempotencyKey: row.idempotency_key,
+    targetContractVersion: row.target_contract_version,
+    authorityVersion: row.authority_version,
+    paidSideEffectEvidence: row.paid_side_effect_evidence,
+    createdAt: new Date(row.supersession_created_at).toISOString(),
+  };
+  if (
+    row.authority_version !== AI_STORY_PRE_DISPATCH_BUNDLE_SUPERSESSION_VERSION ||
+    canonicalPersistenceHash(authorityBody) !== row.integrity_hash
+  ) {
+    throw new ExecutionDispatchConflictError(
+      "Supersession successor integrity authority is invalid"
+    );
+  }
+}
+
+async function toSupersessionSuccessorCandidate(
+  row: SupersessionSuccessorRow,
+  dispatchRow: typeof schema.providerExecutionDispatches.$inferSelect
+): Promise<SupersessionSuccessorDispatchCandidate> {
+  assertSupersessionSuccessorIntegrity(row);
+  return {
+    lifecycleClass: "ACTIVE_SUPERSESSION_SUCCESSOR",
+    supersessionId: row.supersession_id,
+    sceneExecutionId: row.scene_execution_id,
+    compiledRequestId: row.successor_compiled_request_id,
+    requestFingerprint: row.successor_request_fingerprint,
+    dispatch: await validateExecutionDispatch(toDispatch(dispatchRow)),
+  };
 }
 
 export class ExecutionDispatchConflictError extends Error {
@@ -109,6 +200,99 @@ export class ExecutionDispatchRepository {
       .where(eq(schema.providerExecutionDispatches.dispatchId, selected.dispatch_id))
       .limit(1);
     return row ? validateExecutionDispatch(toDispatch(row)) : null;
+  }
+
+  /**
+   * Reads an existing Dispatch that is the active successor side of a valid
+   * append-only pre-dispatch supersession. This lifecycle is distinct from a
+   * RecoverAiStoryPreDispatch recovery and therefore never relies on a
+   * recovery receipt or marker.
+   */
+  async previewAuthorizedSupersessionSuccessorDispatch(
+    now: Date = new Date()
+  ): Promise<SupersessionSuccessorDispatchCandidate | null> {
+    const rows = (await this.db.execute(sql`
+      select supersession.*,
+             supersession.created_at as supersession_created_at,
+             source_compiled.request_fingerprint as source_request_fingerprint,
+             successor_compiled.request_fingerprint as successor_request_fingerprint
+      from ai_story_pre_dispatch_bundle_supersessions supersession
+      join ai_story_compiled_provider_requests source_compiled
+        on source_compiled.compiled_request_id = supersession.source_compiled_request_id
+      join ai_story_compiled_provider_requests successor_compiled
+        on successor_compiled.compiled_request_id = supersession.successor_compiled_request_id
+       and successor_compiled.scene_execution_id = supersession.scene_execution_id
+       and successor_compiled.org_id = supersession.org_id
+       and successor_compiled.workspace_id = supersession.workspace_id
+      join ai_story_scene_scheduling_correlations correlation
+        on correlation.correlation_id = supersession.successor_correlation_id
+       and correlation.scene_execution_id = supersession.scene_execution_id
+       and correlation.outbox_job_id = supersession.successor_outbox_job_id
+       and correlation.org_id = supersession.org_id
+       and correlation.workspace_id = supersession.workspace_id
+      join ai_story_scene_release_states release
+        on release.scene_execution_id = supersession.scene_execution_id
+       and release.workspace_id = supersession.workspace_id
+       and release.execution_plan_id = correlation.execution_plan_id
+       and release.runtime_authorization_id = correlation.runtime_authorization_id
+       and release.release_state = 'RELEASED'
+      join provider_outbox_jobs job
+        on job.job_id = supersession.successor_outbox_job_id
+       and job.execution_id = correlation.provider_execution_id
+      join provider_execution_dispatches dispatch
+        on dispatch.dispatch_id = supersession.successor_dispatch_id
+       and dispatch.job_id = job.job_id
+       and dispatch.execution_id = job.execution_id
+       and dispatch.correlation_id = correlation.correlation_id::text
+       and dispatch.org_id = supersession.org_id
+       and dispatch.workspace_id = supersession.workspace_id
+       and dispatch.status = 'DISPATCHED'
+      join provider_executions execution
+        on execution.execution_id = job.execution_id
+      where not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions later
+          where later.source_dispatch_id = supersession.successor_dispatch_id
+             or later.source_outbox_job_id = supersession.successor_outbox_job_id
+        )
+        and job.next_visible_at <= ${now.toISOString()}::timestamptz
+        and (
+          job.status in ('PENDING', 'RETRY_WAIT')
+          or (job.status = 'CLAIMED' and job.lease_expires_at < ${now.toISOString()}::timestamptz)
+        )
+        and execution.status in ('PENDING', 'DISPATCHABLE')
+        and execution.accepted_attempt_id is null
+        and execution.accepted_result is null
+        and not exists (
+          select 1 from provider_attempts attempt
+          where attempt.execution_id = execution.execution_id
+        )
+        and not exists (
+          select 1 from ai_story_worker_execution_results result
+          where result.dispatch_id = dispatch.dispatch_id
+        )
+        and not exists (
+          select 1 from ai_story_scene_results result
+          where result.scene_execution_id = supersession.scene_execution_id
+        )
+        and not exists (
+          select 1 from certification_commercial_reservations reservation
+          where reservation.execution_identity in (
+            execution.execution_id,
+            supersession.scene_execution_id::text,
+            supersession.successor_compiled_request_id::text
+          )
+        )
+      order by job.next_visible_at asc, job.created_at asc, job.job_id asc
+      limit 1
+    `)) as unknown as SupersessionSuccessorRow[];
+    const row = rows[0];
+    if (!row) return null;
+    const [dispatchRow] = await this.db
+      .select()
+      .from(schema.providerExecutionDispatches)
+      .where(eq(schema.providerExecutionDispatches.dispatchId, row.successor_dispatch_id))
+      .limit(1);
+    return dispatchRow ? await toSupersessionSuccessorCandidate(row, dispatchRow) : null;
   }
 
   async selectEligibleJob(
@@ -230,6 +414,112 @@ export class ExecutionDispatchRepository {
         .where(eq(schema.providerExecutionDispatches.dispatchId, selected.dispatch_id))
         .limit(1);
       return row ? validateExecutionDispatch(toDispatch(row)) : null;
+    });
+  }
+
+  /**
+   * Claims the exact existing Dispatch on the active successor side of a
+   * canonical supersession. The outbox lease remains the single concurrency
+   * authority; no replacement Dispatch or recovery receipt is created.
+   */
+  async claimAuthorizedSupersessionSuccessorDispatch(input: {
+    readonly workerId: string;
+    readonly now?: Date;
+    readonly leaseMs?: number;
+  }): Promise<ExecutionDispatch | null> {
+    const now = input.now ?? new Date();
+    const leaseExpiresAt = new Date(now.getTime() + (input.leaseMs ?? 60_000));
+    return this.db.transaction(async (tx) => {
+      const rows = (await tx.execute(sql`
+        select supersession.*,
+               supersession.created_at as supersession_created_at,
+               source_compiled.request_fingerprint as source_request_fingerprint,
+               successor_compiled.request_fingerprint as successor_request_fingerprint
+        from ai_story_pre_dispatch_bundle_supersessions supersession
+        join ai_story_compiled_provider_requests source_compiled
+          on source_compiled.compiled_request_id = supersession.source_compiled_request_id
+        join ai_story_compiled_provider_requests successor_compiled
+          on successor_compiled.compiled_request_id = supersession.successor_compiled_request_id
+         and successor_compiled.scene_execution_id = supersession.scene_execution_id
+         and successor_compiled.org_id = supersession.org_id
+         and successor_compiled.workspace_id = supersession.workspace_id
+        join ai_story_scene_scheduling_correlations correlation
+          on correlation.correlation_id = supersession.successor_correlation_id
+         and correlation.scene_execution_id = supersession.scene_execution_id
+         and correlation.outbox_job_id = supersession.successor_outbox_job_id
+         and correlation.org_id = supersession.org_id
+         and correlation.workspace_id = supersession.workspace_id
+        join ai_story_scene_release_states release
+          on release.scene_execution_id = supersession.scene_execution_id
+         and release.workspace_id = supersession.workspace_id
+         and release.execution_plan_id = correlation.execution_plan_id
+         and release.runtime_authorization_id = correlation.runtime_authorization_id
+         and release.release_state = 'RELEASED'
+        join provider_outbox_jobs job
+          on job.job_id = supersession.successor_outbox_job_id
+         and job.execution_id = correlation.provider_execution_id
+        join provider_execution_dispatches dispatch
+          on dispatch.dispatch_id = supersession.successor_dispatch_id
+         and dispatch.job_id = job.job_id
+         and dispatch.execution_id = job.execution_id
+         and dispatch.correlation_id = correlation.correlation_id::text
+         and dispatch.org_id = supersession.org_id
+         and dispatch.workspace_id = supersession.workspace_id
+         and dispatch.status = 'DISPATCHED'
+        join provider_executions execution
+          on execution.execution_id = job.execution_id
+        where not exists (
+            select 1 from ai_story_pre_dispatch_bundle_supersessions later
+            where later.source_dispatch_id = supersession.successor_dispatch_id
+               or later.source_outbox_job_id = supersession.successor_outbox_job_id
+          )
+          and job.next_visible_at <= ${now.toISOString()}::timestamptz
+          and (
+            job.status in ('PENDING', 'RETRY_WAIT')
+            or (job.status = 'CLAIMED' and job.lease_expires_at < ${now.toISOString()}::timestamptz)
+          )
+          and execution.status in ('PENDING', 'DISPATCHABLE')
+          and execution.accepted_attempt_id is null
+          and execution.accepted_result is null
+          and not exists (select 1 from provider_attempts attempt where attempt.execution_id = execution.execution_id)
+          and not exists (select 1 from ai_story_worker_execution_results result where result.dispatch_id = dispatch.dispatch_id)
+          and not exists (select 1 from ai_story_scene_results result where result.scene_execution_id = supersession.scene_execution_id)
+          and not exists (
+            select 1 from certification_commercial_reservations reservation
+            where reservation.execution_identity in (
+              execution.execution_id,
+              supersession.scene_execution_id::text,
+              supersession.successor_compiled_request_id::text
+            )
+          )
+        order by job.next_visible_at asc, job.created_at asc, job.job_id asc
+        for update of job skip locked
+        limit 1
+      `)) as unknown as SupersessionSuccessorRow[];
+      const selected = rows[0];
+      if (!selected) return null;
+      assertSupersessionSuccessorIntegrity(selected);
+      const updated = await tx.execute(sql`
+        update provider_outbox_jobs
+        set status = 'CLAIMED',
+            lease_owner = ${input.workerId},
+            lease_expires_at = ${leaseExpiresAt.toISOString()}::timestamptz,
+            attempt_count = attempt_count + 1,
+            updated_at = ${now.toISOString()}::timestamptz
+        where job_id = ${selected.successor_outbox_job_id}
+          and (
+            status in ('PENDING', 'RETRY_WAIT')
+            or (status = 'CLAIMED' and lease_expires_at < ${now.toISOString()}::timestamptz)
+          )
+        returning job_id
+      `) as unknown as Array<{ job_id: string }>;
+      if (!updated[0]) return null;
+      const [dispatchRow] = await tx
+        .select()
+        .from(schema.providerExecutionDispatches)
+        .where(eq(schema.providerExecutionDispatches.dispatchId, selected.successor_dispatch_id))
+        .limit(1);
+      return dispatchRow ? validateExecutionDispatch(toDispatch(dispatchRow)) : null;
     });
   }
 

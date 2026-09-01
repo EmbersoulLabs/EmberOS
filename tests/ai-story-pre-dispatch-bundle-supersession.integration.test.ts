@@ -212,8 +212,56 @@ describeIntegration("AI Story pre-dispatch bundle supersession", () => {
 
     const active = await new SceneSchedulingRepository().getCorrelationBySceneExecutionId(command.sceneExecutionId);
     expect(active?.correlationId).toBe(successor.input.correlation.correlationId);
-    const oldRecovery = await new ExecutionDispatchRepository().previewAuthorizedRecoveryDispatch();
+    const dispatches = new ExecutionDispatchRepository();
+    const oldRecovery = await dispatches.previewAuthorizedRecoveryDispatch();
     expect(oldRecovery?.dispatchId).not.toBe(sourceDispatch.dispatchId);
+    const selectorNow = new Date(
+      Date.parse(successor.input.correlation.scheduledAt) + 1_000
+    );
+    const candidate = await dispatches.previewAuthorizedSupersessionSuccessorDispatch(
+      selectorNow
+    );
+    expect(candidate).toMatchObject({
+      lifecycleClass: "ACTIVE_SUPERSESSION_SUCCESSOR",
+      sceneExecutionId: command.sceneExecutionId,
+      compiledRequestId: successor.input.compiledProviderRequest.compiledRequestId,
+      requestFingerprint: successor.input.compiledProviderRequest.requestFingerprint,
+      dispatch: {
+        dispatchId: successor.dispatch.dispatchId,
+        jobId: successor.input.outboxJob.jobId,
+      },
+    });
+    expect(await dispatches.selectEligibleJob(selectorNow, {
+      ownership: "AI_STORY_SCENE",
+    })).toBeNull();
+
+    const [claimA, claimB] = await Promise.all([
+      dispatches.claimAuthorizedSupersessionSuccessorDispatch({
+        workerId: "successor-worker-a",
+        now: selectorNow,
+      }),
+      dispatches.claimAuthorizedSupersessionSuccessorDispatch({
+        workerId: "successor-worker-b",
+        now: selectorNow,
+      }),
+    ]);
+    expect([claimA?.dispatchId ?? null, claimB?.dispatchId ?? null].sort()).toEqual([
+      null,
+      successor.dispatch.dispatchId,
+    ].sort());
+    const [leased] = await sqlClient<{ status: string; lease_owner: string; attempt_count: number }[]>`
+      select status, lease_owner, attempt_count
+      from provider_outbox_jobs
+      where job_id = ${successor.input.outboxJob.jobId}
+    `;
+    expect(leased).toMatchObject({
+      status: "CLAIMED",
+      attempt_count: 1,
+    });
+    expect(["successor-worker-a", "successor-worker-b"]).toContain(leased?.lease_owner);
+    expect(
+      await dispatches.previewAuthorizedSupersessionSuccessorDispatch(selectorNow)
+    ).toBeNull();
   }, 120_000);
 
   for (const stage of ["successor_compile", "successor_bundle", "supersession"] as const) {
