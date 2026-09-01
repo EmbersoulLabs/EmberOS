@@ -21,6 +21,7 @@ export * from "./canonical-scene-provider-request";
 export * from "./canonical-scene-payload-resolver";
 export * from "./product-grounding-contract";
 export * from "./pre-dispatch-recovery";
+export * from "./pre-dispatch-bundle-supersession";
 export * from "./scene-scheduling-coordinator";
 export * from "./canonical-provider-adapter";
 export * from "./canonical-provider-test-adapters";

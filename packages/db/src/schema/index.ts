@@ -2140,6 +2140,59 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
 );
 
 /**
+ * Append-only authority for replacing a deterministically invalid bundle
+ * before any commercial reservation or Provider side effect exists.
+ *
+ * Source and successor payload rows remain immutable. Worker selectors derive
+ * executability from this authority: a Dispatch named as a source is
+ * historical and must never be claimed again.
+ */
+export const aiStoryPreDispatchBundleSupersessions = pgTable(
+  "ai_story_pre_dispatch_bundle_supersessions",
+  {
+    supersessionId: uuid("supersession_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sourceCompiledRequestId: uuid("source_compiled_request_id").notNull().references(() => aiStoryCompiledProviderRequests.compiledRequestId, { onDelete: "restrict" }),
+    sourceCorrelationId: uuid("source_correlation_id").notNull().references(() => aiStorySceneSchedulingCorrelations.correlationId, { onDelete: "restrict" }),
+    sourceOutboxJobId: text("source_outbox_job_id").notNull().references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    sourceDispatchId: text("source_dispatch_id").notNull().references(() => providerExecutionDispatches.dispatchId, { onDelete: "restrict" }),
+    successorCompiledRequestId: uuid("successor_compiled_request_id").notNull().references(() => aiStoryCompiledProviderRequests.compiledRequestId, { onDelete: "restrict" }),
+    successorCorrelationId: uuid("successor_correlation_id").notNull().references(() => aiStorySceneSchedulingCorrelations.correlationId, { onDelete: "restrict" }),
+    successorOutboxJobId: text("successor_outbox_job_id").notNull().references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    successorDispatchId: text("successor_dispatch_id").notNull().references(() => providerExecutionDispatches.dispatchId, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    actorUserId: uuid("actor_user_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    targetContractVersion: text("target_contract_version").notNull(),
+    authorityVersion: text("authority_version").notNull(),
+    paidSideEffectEvidence: jsonb("paid_side_effect_evidence").$type<Record<string, unknown>>().notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_bundle_supersession_source_unique").on(t.sourceCompiledRequestId),
+    unique("ai_story_bundle_supersession_source_correlation_unique").on(t.sourceCorrelationId),
+    unique("ai_story_bundle_supersession_source_outbox_unique").on(t.sourceOutboxJobId),
+    unique("ai_story_bundle_supersession_source_dispatch_unique").on(t.sourceDispatchId),
+    unique("ai_story_bundle_supersession_successor_compiled_unique").on(t.successorCompiledRequestId),
+    unique("ai_story_bundle_supersession_successor_correlation_unique").on(t.successorCorrelationId),
+    unique("ai_story_bundle_supersession_successor_outbox_unique").on(t.successorOutboxJobId),
+    unique("ai_story_bundle_supersession_successor_dispatch_unique").on(t.successorDispatchId),
+    unique("ai_story_bundle_supersession_idempotency_unique").on(t.idempotencyKey),
+    unique("ai_story_bundle_supersession_integrity_unique").on(t.integrityHash),
+    index("ai_story_bundle_supersession_scene_idx").on(t.sceneExecutionId, t.createdAt),
+    check("ai_story_bundle_supersession_reason_check", sql`${t.reason} in ('I2V_PROVIDER_INPUT_PROJECTION_DEFECT','DETERMINISTIC_PRE_DISPATCH_AUTHORITY_DEFECT')`),
+    check("ai_story_bundle_supersession_authority_version_check", sql`${t.authorityVersion} = 'ai-story-pre-dispatch-bundle-supersession.v1'`),
+    check("ai_story_bundle_supersession_distinct_compiled_check", sql`${t.sourceCompiledRequestId} <> ${t.successorCompiledRequestId}`),
+    check("ai_story_bundle_supersession_distinct_correlation_check", sql`${t.sourceCorrelationId} <> ${t.successorCorrelationId}`),
+    check("ai_story_bundle_supersession_distinct_outbox_check", sql`${t.sourceOutboxJobId} <> ${t.successorOutboxJobId}`),
+    check("ai_story_bundle_supersession_distinct_dispatch_check", sql`${t.sourceDispatchId} <> ${t.successorDispatchId}`),
+  ]
+);
+
+/**
  * Sprint 3 PR 3.3 — immutable Worker Execution Results (no Finalizer / Scene Result).
  * Terminal normalized Worker evidence only (MODEL A in PR 3.7 Phase C remediation).
  */

@@ -93,7 +93,13 @@ export class AiStoryProviderRuntimeRepository {
   async getCompiledRequestBySceneExecutionId(sceneExecutionId: string): Promise<AiStoryCompiledProviderRequest | null> {
     const [row] = await this.db.select({ request: schema.aiStoryCompiledProviderRequests.compiledRequest })
       .from(schema.aiStoryCompiledProviderRequests)
-      .where(eq(schema.aiStoryCompiledProviderRequests.sceneExecutionId, sceneExecutionId))
+      .where(and(
+        eq(schema.aiStoryCompiledProviderRequests.sceneExecutionId, sceneExecutionId),
+        sql`not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_compiled_request_id = ${schema.aiStoryCompiledProviderRequests.compiledRequestId}
+        )`
+      ))
       .orderBy(sql`${schema.aiStoryCompiledProviderRequests.compiledAt} desc`).limit(1);
     return row ? AiStoryCompiledProviderRequestSchema.parse(row.request) : null;
   }

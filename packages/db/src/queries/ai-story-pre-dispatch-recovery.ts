@@ -210,10 +210,19 @@ export class AiStoryPreDispatchRecoveryRepository {
          and correlation.execution_plan_id = ${input.executionPlanId}::uuid
         join provider_execution_dispatches dispatch
           on dispatch.job_id = correlation.outbox_job_id
+        join provider_execution_envelopes envelope
+          on envelope.envelope_id = correlation.envelope_id
         join ai_story_compiled_provider_requests compiled
           on compiled.scene_execution_id = correlation.scene_execution_id
+         and compiled.compiled_request_id::text =
+           envelope.execution_context #>> '{trace,compiledRequestId}'
         where receipt.command_type = ${AI_STORY_PRE_DISPATCH_RECOVERY_COMMAND}
           and receipt.target_id = dispatch.dispatch_id
+          and not exists (
+            select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+            where supersession.source_dispatch_id = dispatch.dispatch_id
+               or supersession.source_outbox_job_id = correlation.outbox_job_id
+          )
         order by receipt.accepted_at desc
         limit 1
       `)) as unknown as Array<{
@@ -268,14 +277,23 @@ export class AiStoryPreDispatchRecoveryRepository {
           on outbox.job_id = correlation.outbox_job_id
         join provider_execution_dispatches dispatch
           on dispatch.job_id = outbox.job_id
+        join provider_execution_envelopes envelope
+          on envelope.envelope_id = correlation.envelope_id
         join ai_story_compiled_provider_requests compiled
           on compiled.scene_execution_id = correlation.scene_execution_id
+         and compiled.compiled_request_id::text =
+           envelope.execution_context #>> '{trace,compiledRequestId}'
         join ai_story_scene_routing_decisions routing
           on routing.routing_decision_id = correlation.routing_decision_id
         left join ai_story_worker_execution_results worker
           on worker.dispatch_id = dispatch.dispatch_id
         where correlation.execution_plan_id = ${input.executionPlanId}::uuid
           and correlation.scene_execution_id = ${input.sceneExecutionId}::uuid
+          and not exists (
+            select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+            where supersession.source_dispatch_id = dispatch.dispatch_id
+               or supersession.source_outbox_job_id = correlation.outbox_job_id
+          )
         for update of release, execution, outbox, dispatch
       `)) as unknown as RecoveryRow[];
       const row = rows[0];

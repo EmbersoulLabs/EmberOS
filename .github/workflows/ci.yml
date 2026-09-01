@@ -117,6 +117,11 @@ jobs:
       - name: Certify compiled request and Provider Attempt PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-provider-runtime.integration.test.ts
 
+      - name: Certify append-only pre-dispatch bundle supersession authority
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-pre-dispatch-bundle-supersession.integration.test.ts
+
       - name: Certify Post-Generation QC evidence PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-post-generation-qc.integration.test.ts
 

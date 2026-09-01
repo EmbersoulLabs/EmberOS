@@ -88,6 +88,11 @@ export class ExecutionDispatchRepository {
         on receipt.command_type = 'RecoverAiStoryPreDispatch'
        and receipt.target_id = dispatch.dispatch_id
       where job.operator_notes = concat('ai-story-pre-dispatch-recovery:', receipt.recovery_receipt_id::text)
+        and not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_dispatch_id = dispatch.dispatch_id
+             or supersession.source_outbox_job_id = job.job_id
+        )
         and job.next_visible_at <= ${now.toISOString()}::timestamptz
         and (
           job.status = 'PENDING'
@@ -142,6 +147,10 @@ export class ExecutionDispatchRepository {
         and job.next_visible_at <= ${now.toISOString()}::timestamptz
         and execution.status in ('PENDING', 'DISPATCHABLE')
         and dispatch.dispatch_id is null
+        and not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_outbox_job_id = job.job_id
+        )
         ${ownershipPredicate}
       order by
         job.priority desc,
@@ -189,6 +198,11 @@ export class ExecutionDispatchRepository {
           on receipt.command_type = 'RecoverAiStoryPreDispatch'
          and receipt.target_id = dispatch.dispatch_id
         where job.operator_notes = concat('ai-story-pre-dispatch-recovery:', receipt.recovery_receipt_id::text)
+          and not exists (
+            select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+            where supersession.source_dispatch_id = dispatch.dispatch_id
+               or supersession.source_outbox_job_id = job.job_id
+          )
           and job.next_visible_at <= ${now.toISOString()}::timestamptz
           and (
             job.status = 'PENDING'
@@ -236,6 +250,17 @@ export class ExecutionDispatchRepository {
       }>;
       const job = jobs[0];
       if (!job) throw new ExecutionDispatchConflictError("Outbox job does not exist");
+      const superseded = (await tx.execute(sql`
+        select 1
+        from ai_story_pre_dispatch_bundle_supersessions
+        where source_outbox_job_id = ${dispatch.jobId}
+        limit 1
+      `)) as unknown as Array<{ "?column?": number }>;
+      if (superseded[0]) {
+        throw new ExecutionDispatchConflictError(
+          "Superseded outbox authority cannot create or recover a Dispatch"
+        );
+      }
       const [persisted] = await tx
         .select()
         .from(schema.providerExecutionDispatches)
