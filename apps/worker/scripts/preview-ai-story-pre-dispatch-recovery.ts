@@ -51,6 +51,8 @@ async function main() {
   }
   const compiledRequest = await new AiStoryProviderRuntimeRepository().getCompiledRequest(compiledRequestId);
   if (!compiledRequest) throw new Error("Compiled Provider request not found");
+  const successorCandidate = await new ExecutionDispatchRepository()
+    .previewAuthorizedSupersessionSuccessorDispatch();
 
   const db = getDb();
   const [worker] = await db
@@ -138,6 +140,15 @@ async function main() {
     contract: "ai-story-pre-dispatch-recovery-preview.v1",
     executionPlanId,
     sceneExecutionId,
+    successorClaimAuthority: {
+      lifecycleClass: successorCandidate?.lifecycleClass ?? null,
+      candidateCount: successorCandidate ? 1 : 0,
+      selectedOutboxId: successorCandidate?.dispatch.jobId ?? null,
+      selectedDispatchId: successorCandidate?.dispatch.dispatchId ?? null,
+      selectedCompiledRequestId: successorCandidate?.compiledRequestId ?? null,
+      selectedSceneExecutionId: successorCandidate?.sceneExecutionId ?? null,
+      claimed: false,
+    },
     recovery,
     existingReleaseState: "RELEASED",
     existingOutboxState: outbox.status,
