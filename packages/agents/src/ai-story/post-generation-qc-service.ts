@@ -14,6 +14,9 @@ import {
   type AiStoryPostQcRequirement,
   type AiStoryCompiledProviderRequest,
   type AiStoryProviderAttemptBinding,
+  type AiStoryPreGenerationQcEvaluation,
+  type AiStorySceneCompiledInstructions,
+  type AiStorySceneExecutionIntent,
   type AiStorySceneExecutionPackage,
 } from "@ceo-agent/shared";
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
@@ -143,6 +146,213 @@ export function buildAiStoryPostGenerationQcInputPackage(input: {
     newAudienceInformation: pkg.directorDirection.newAudienceInformation, requiredEvidence: pkg.productAuthorities.flatMap((product) => product.visibleEvidenceGoals),
     requirements, providerMetadata: { providerId: input.attempt.providerId, modelId: input.attempt.modelId, providerTaskId: input.attempt.providerTaskId ?? null, actualUsage: input.attempt.actualUsage ?? null },
     media: { durableObjectReference: input.privateMedia.durableObjectReference, mediaType: "video/mp4", byteSize: input.privateMedia.byteSize, durationMs: input.privateMedia.durationMs, width: input.privateMedia.width, height: input.privateMedia.height, readable: input.privateMedia.readable, decodable: input.privateMedia.decodable }, createdAt,
+  });
+}
+
+/**
+ * Builds the same immutable Post-QC contract for the persisted V1 compilation
+ * capsule used by the production scheduler.  Older V1 schedules persist the
+ * provider-neutral Intent/Instructions and compiled request separately rather
+ * than embedding the larger SceneExecutionPackage.  This adapter never treats
+ * UI state as authority and fails closed on every execution-significant edge.
+ */
+export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
+  readonly intent: AiStorySceneExecutionIntent;
+  readonly instructions: AiStorySceneCompiledInstructions;
+  readonly preGenerationQc: AiStoryPreGenerationQcEvaluation;
+  readonly handoffFingerprint: string;
+  readonly sceneVersion: number;
+  readonly compiledRequest: AiStoryCompiledProviderRequest;
+  readonly attempt: {
+    readonly providerAttemptId: string;
+    readonly compiledRequestId: string;
+    readonly requestFingerprint: string;
+    readonly sceneExecutionId: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+    readonly generationMode: "TEXT_TO_VIDEO" | "FIRST_FRAME_IMAGE_TO_VIDEO";
+    readonly providerId: "seedance";
+    readonly modelId: "dreamina-seedance-2-0-260128";
+    readonly providerTaskId?: string;
+    readonly actualUsage?: Record<string, unknown>;
+    readonly mediaAssetId?: string;
+  };
+  readonly privateMedia: {
+    readonly mediaAssetId: string;
+    readonly contentHash: string;
+    readonly durableObjectReference: string;
+    readonly byteSize: number;
+    readonly durationMs: number | null;
+    readonly width: number | null;
+    readonly height: number | null;
+    readonly readable: boolean;
+    readonly decodable: boolean;
+  };
+  readonly createdAt?: string;
+}): AiStoryPostGenerationQcInputPackage {
+  const { intent, instructions, preGenerationQc: qc, compiledRequest: compiled, attempt } = input;
+  if (
+    intent.identity.sceneExecutionId !== compiled.sceneExecutionId ||
+    instructions.sceneId !== intent.identity.sceneId ||
+    qc.sceneExecutionId !== compiled.sceneExecutionId ||
+    qc.qcEvaluationId !== compiled.qcEvaluationId ||
+    qc.qcFingerprint !== compiled.qcFingerprint ||
+    attempt.compiledRequestId !== compiled.compiledRequestId ||
+    attempt.requestFingerprint !== compiled.requestFingerprint ||
+    attempt.sceneExecutionId !== compiled.sceneExecutionId ||
+    attempt.orgId !== compiled.orgId || attempt.workspaceId !== compiled.workspaceId ||
+    attempt.campaignId !== compiled.campaignId || attempt.storyId !== compiled.storyId ||
+    attempt.storyVersionId !== compiled.storyVersionId ||
+    attempt.generationMode !== compiled.generationMode ||
+    attempt.providerId !== compiled.providerId || attempt.modelId !== compiled.modelId ||
+    (attempt.mediaAssetId !== undefined && attempt.mediaAssetId !== input.privateMedia.mediaAssetId) ||
+    intent.compilationHash !== compiled.sceneFingerprint
+  ) {
+    throw new Error("POST_QC_COMPILED_AUTHORITY_LINEAGE_MISMATCH");
+  }
+
+  const section = (name: string) =>
+    compiled.semanticPlan.sections.find((candidate) => candidate.section === name)?.facts ?? [];
+  const requirements: AiStoryPostQcRequirement[] = [];
+  requirements.push({
+    requirementId: "scene-purpose",
+    dimension: "SCENE_FIDELITY",
+    summary: instructions.purpose,
+    required: true,
+    waiverPolicy: "WAIVABLE_BY_HUMAN",
+    sourceOwner: "SCENE",
+    visuallyObservable: true,
+  });
+  instructions.shots.forEach((shot) => requirements.push({
+    requirementId: `action:${shot.shotId}`,
+    dimension: "ACTION_COMPLETION",
+    summary: shot.information,
+    required: true,
+    waiverPolicy: "WAIVABLE_BY_HUMAN",
+    sourceOwner: "MOTION",
+    visuallyObservable: true,
+  }));
+  if (instructions.continuityNotes.trim()) requirements.push({
+    requirementId: "continuity",
+    dimension: "CONTINUITY",
+    summary: instructions.continuityNotes,
+    required: true,
+    waiverPolicy: "WAIVABLE_BY_HUMAN",
+    sourceOwner: "SCENE",
+    visuallyObservable: true,
+  });
+  instructions.productIdentityConstraints.forEach((constraint, index) => requirements.push({
+    requirementId: `product-identity:${index + 1}`,
+    dimension: "PRODUCT_FIDELITY",
+    summary: constraint,
+    required: qc.productGrounded,
+    waiverPolicy: qc.productGrounded ? "NON_WAIVABLE_INTEGRITY" : "WAIVABLE_BY_HUMAN",
+    sourceOwner: "PRODUCT_AUTHORITY",
+    visuallyObservable: true,
+  }));
+  section("MUST_KEEP").forEach((fact, index) => requirements.push({
+    requirementId: `must-keep:${index + 1}`,
+    dimension: "MUST_KEEP",
+    summary: fact,
+    required: true,
+    waiverPolicy: "NON_WAIVABLE_INTEGRITY",
+    sourceOwner: "SCENE",
+    visuallyObservable: true,
+  }));
+  section("MUST_AVOID").forEach((fact, index) => requirements.push({
+    requirementId: `must-avoid:${index + 1}`,
+    dimension: "MUST_AVOID",
+    summary: fact,
+    required: true,
+    waiverPolicy: "NON_WAIVABLE_INTEGRITY",
+    sourceOwner: "SCENE",
+    visuallyObservable: true,
+  }));
+  requirements.push({
+    requirementId: "visual-artifact-integrity",
+    dimension: "VISUAL_ARTIFACTS",
+    summary: "No severe generated deformation, fusion, melting, instability, duplication, or frame corruption materially breaks acceptance.",
+    required: true,
+    waiverPolicy: "WAIVABLE_BY_HUMAN",
+    sourceOwner: "PROVIDER_EXECUTION",
+    visuallyObservable: true,
+  }, {
+    requirementId: "output-integrity",
+    dimension: "OUTPUT_INTEGRITY",
+    summary: "Durable video is readable, decodable, non-empty, and structurally usable.",
+    required: true,
+    waiverPolicy: "NON_WAIVABLE_INTEGRITY",
+    sourceOwner: "POST_PROCESSING",
+    visuallyObservable: false,
+  });
+
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  return AiStoryPostGenerationQcInputPackageSchema.parse({
+    postQcInputId: deterministicPersistenceUuid("ai-story-post-qc-input", {
+      sceneExecutionId: compiled.sceneExecutionId,
+      providerAttemptId: attempt.providerAttemptId,
+      mediaAssetId: input.privateMedia.mediaAssetId,
+      contentHash: input.privateMedia.contentHash,
+      contractVersion: AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
+    }),
+    contractVersion: AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
+    policyVersion: AI_STORY_POST_QC_POLICY_VERSION,
+    orgId: compiled.orgId,
+    workspaceId: compiled.workspaceId,
+    campaignId: compiled.campaignId,
+    storyId: compiled.storyId,
+    storyVersionId: compiled.storyVersionId,
+    scriptVersionId: qc.scriptVersionId,
+    handoffId: qc.handoffId,
+    sceneExecutionId: compiled.sceneExecutionId,
+    sceneId: intent.identity.sceneId,
+    sceneVersion: input.sceneVersion,
+    sceneFingerprint: compiled.sceneFingerprint,
+    sceneExecutionFingerprint: compiled.packageFingerprint,
+    providerAttemptId: attempt.providerAttemptId,
+    generationMode: compiled.generationMode,
+    privateMediaAssetId: input.privateMedia.mediaAssetId,
+    privateMediaContentHash: input.privateMedia.contentHash,
+    compiledRequestId: compiled.compiledRequestId,
+    compiledRequestFingerprint: compiled.requestFingerprint,
+    semanticPlanFingerprint: compiled.semanticPlanFingerprint,
+    preGenerationQcEvaluationId: qc.qcEvaluationId,
+    preGenerationQcFingerprint: qc.qcFingerprint,
+    handoffFingerprint: input.handoffFingerprint,
+    directorFingerprint: compiled.directorFingerprint,
+    motionFingerprint: compiled.motionFingerprint,
+    shotRecipeFingerprint: qc.shotRecipeBindings?.[0]?.recipeFingerprint ?? null,
+    castSnapshotFingerprint: compiled.castSnapshotFingerprint,
+    locationSnapshotFingerprint: compiled.locationSnapshotFingerprint,
+    productSnapshotFingerprint: compiled.productSnapshotFingerprint,
+    entryState: instructions.continuityNotes.trim() ? [instructions.continuityNotes] : [],
+    scriptActions: instructions.shots.map((shot) => shot.information),
+    requiredExitState: section("REQUIRED_EXIT_STATE"),
+    mustKeep: section("MUST_KEEP"),
+    mustAvoid: section("MUST_AVOID"),
+    newAudienceInformation: section("REQUIRED_EVIDENCE"),
+    requiredEvidence: section("REQUIRED_EVIDENCE"),
+    requirements,
+    providerMetadata: {
+      providerId: attempt.providerId,
+      modelId: attempt.modelId,
+      providerTaskId: attempt.providerTaskId ?? null,
+      actualUsage: attempt.actualUsage ?? null,
+    },
+    media: {
+      durableObjectReference: input.privateMedia.durableObjectReference,
+      mediaType: "video/mp4",
+      byteSize: input.privateMedia.byteSize,
+      durationMs: input.privateMedia.durationMs,
+      width: input.privateMedia.width,
+      height: input.privateMedia.height,
+      readable: input.privateMedia.readable,
+      decodable: input.privateMedia.decodable,
+    },
+    createdAt,
   });
 }
 

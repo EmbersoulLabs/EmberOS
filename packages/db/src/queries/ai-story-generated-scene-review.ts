@@ -30,6 +30,7 @@ export class GeneratedSceneReviewError extends Error {
       | "GENERATED_SCENE_RETRY_NOT_ELIGIBLE"
       | "GENERATED_SCENE_RETRY_LIMIT_EXHAUSTED"
       | "GENERATED_SCENE_RETRY_IN_FLIGHT"
+      | "GENERATED_SCENE_POST_QC_REQUIRED"
       | "GENERATED_SCENE_IDENTITY_FORGED",
     message: string,
     status = 409

@@ -49,12 +49,15 @@ import {
 } from "./ai-story-durable-object-store";
 import { dispatchNextProviderExecution } from "./provider-execution-dispatch-entrypoint";
 import { AiStoryCertificationCommercialReservationGate } from "./ai-story-certification-commercial-reservation";
+import { AiStoryPostGenerationQcRuntimeOrchestrator } from "./ai-story-post-generation-qc-orchestrator";
 
 export type AiStoryProviderWorkerCycleOptions = {
   readonly adapters?: CanonicalAdapterRegistry;
   readonly artifactRoot?: string;
   readonly durableObjectRoot?: string;
   readonly coordinator?: AiStoryRuntimeContinuationCoordinator;
+  readonly postGenerationQcOrchestrator?: AiStoryPostGenerationQcRuntimeOrchestrator;
+  readonly postGenerationQcRecovery?: { recoverNext(): Promise<unknown> };
   /**
    * Canonical owner for the complete claim -> provider -> finalization cycle.
    * Recovery claims and terminal finalization must use this same identity.
@@ -74,6 +77,7 @@ let cachedCoordinator: AiStoryRuntimeContinuationCoordinator | undefined;
 let cachedArtifactRoot: string | undefined;
 let cachedDurableObjectRoot: string | undefined;
 let cachedLeaseOwner: string | undefined;
+let cachedPostQcOrchestrator: AiStoryPostGenerationQcRuntimeOrchestrator | undefined;
 
 async function resolveArtifactRoot(explicit?: string): Promise<string> {
   if (explicit) {
@@ -119,6 +123,8 @@ export async function createProductionAiStoryContinuationCoordinator(
   await resolveArtifactRoot(options.artifactRoot);
   const durableObjectStore = await resolveProductionDurableObjectStore(options);
   const durableMediaRepository = new DurableSceneMediaAttestationRepositoryImpl();
+  const postGenerationQc = options.postGenerationQcOrchestrator ??
+    new AiStoryPostGenerationQcRuntimeOrchestrator(undefined, durableObjectStore);
   const blobStore = createDurableAssemblyArtifactBlobStore(durableObjectStore);
   const mediaAccess = createDurableAssemblyMediaAccessPort({
     store: durableObjectStore,
@@ -178,6 +184,8 @@ export async function createProductionAiStoryContinuationCoordinator(
     assemblyEngineSnapshotHash,
     durableMediaRepository,
     durableObjectStore,
+    postGenerationQc,
+    requirePostGenerationQc: true,
     requireDurableSceneMedia: true,
     loadAssemblyRuntimeSources: async ({ executionPlanId, job }) =>
       loadProductionAssemblyRuntimeSources({
@@ -269,6 +277,20 @@ export async function runAiStoryProviderWorkerCycle(
   readonly ownership?: "AI_STORY_SCENE" | "GENERIC_PROVIDER" | "MISSING_DISPATCH";
   readonly continuation?: AiStoryContinuationOutcome;
 }> {
+  // Durable media may already exist when a prior process crashed before Post-QC.
+  // Recovery is non-Provider work and therefore remains safe while the paid
+  // dispatch hold is active.
+  if (options.postGenerationQcRecovery) {
+    await options.postGenerationQcRecovery.recoverNext();
+  } else if (!options.coordinator) {
+    if (!cachedPostQcOrchestrator) {
+      cachedPostQcOrchestrator = new AiStoryPostGenerationQcRuntimeOrchestrator(
+        undefined,
+        await resolveProductionDurableObjectStore(options)
+      );
+    }
+    await cachedPostQcOrchestrator.recoverNext();
+  }
   // The certification hold is a pre-claim boundary. It must prevent both the
   // ordinary selector and the existing-Dispatch recovery selector from taking
   // a lease, so a non-paid recovery certification remains observational.

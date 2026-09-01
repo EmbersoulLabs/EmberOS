@@ -20,6 +20,7 @@ import {
   POST_QC_SUBJECTIVE_TASTE_HARD_REJECT,
   buildAiStoryPostQcHumanReviewEvidence,
   buildAiStoryPostGenerationQcInputPackage,
+  buildAiStoryPostGenerationQcInputFromCompiledAuthority,
   isAiStoryPostQcCurrentForMedia,
   postQcAllowsHumanApproval,
 } from "../packages/agents/src/ai-story/post-generation-qc-service";
@@ -93,6 +94,61 @@ describe("AI Story canonical Post-Generation QC", () => {
       attempt: {} as never,
       privateMedia: {} as never,
     })).toThrow("POST_QC_ATTEMPT_LINEAGE_MISMATCH");
+  });
+
+  it("builds the V1 runtime Post-QC input from persisted compilation authority", () => {
+    const compiled = {
+      compiledRequestId: ids[10]!, orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!,
+      storyId: ids[4]!, storyVersionId: ids[5]!, sceneExecutionId: ids[8]!,
+      generationMode: "TEXT_TO_VIDEO", providerId: "seedance", modelId: "dreamina-seedance-2-0-260128",
+      requestFingerprint: hash("d"), sceneFingerprint: hash("a"), packageFingerprint: hash("b"),
+      semanticPlanFingerprint: hash("e"), qcEvaluationId: ids[11]!, qcFingerprint: hash("f"),
+      directorFingerprint: hash("2"), motionFingerprint: hash("3"), castSnapshotFingerprint: hash("5"),
+      locationSnapshotFingerprint: hash("6"), productSnapshotFingerprint: hash("7"),
+      semanticPlan: { sections: [{ section: "MUST_AVOID", facts: ["unwanted text"] }] },
+    } as never;
+    const built = buildAiStoryPostGenerationQcInputFromCompiledAuthority({
+      intent: { identity: { sceneExecutionId: ids[8]!, sceneId: "scene-1" }, compilationHash: hash("a") } as never,
+      instructions: {
+        sceneId: "scene-1", purpose: "Atmospheric spring transition", continuityNotes: "Spring light grows.",
+        shots: [{ shotId: "shot-1", information: "Petals move through warm light." }],
+        productIdentityConstraints: [],
+      } as never,
+      preGenerationQc: {
+        sceneExecutionId: ids[8]!, qcEvaluationId: ids[11]!, qcFingerprint: hash("f"),
+        scriptVersionId: ids[6]!, handoffId: ids[7]!, productGrounded: false,
+      } as never,
+      handoffFingerprint: hash("1"), sceneVersion: 2, compiledRequest: compiled,
+      attempt: {
+        providerAttemptId: "attempt-1", compiledRequestId: ids[10]!, requestFingerprint: hash("d"),
+        sceneExecutionId: ids[8]!, orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!,
+        storyId: ids[4]!, storyVersionId: ids[5]!, generationMode: "TEXT_TO_VIDEO",
+        providerId: "seedance", modelId: "dreamina-seedance-2-0-260128", mediaAssetId: ids[9]!,
+      },
+      privateMedia: {
+        mediaAssetId: ids[9]!, contentHash: hash("c"), durableObjectReference: `${ids[2]}/result.mp4`,
+        byteSize: 4096, durationMs: 5000, width: 480, height: 854, readable: true, decodable: true,
+      }, createdAt: "2026-09-01T00:00:00.000Z",
+    });
+    expect(built).toMatchObject({
+      sceneExecutionId: ids[8], providerAttemptId: "attempt-1", generationMode: "TEXT_TO_VIDEO",
+      privateMediaAssetId: ids[9], sceneVersion: 2,
+    });
+    expect(built.requirements.map((item) => item.requirementId)).toEqual(expect.arrayContaining([
+      "scene-purpose", "action:shot-1", "output-integrity", "visual-artifact-integrity",
+    ]));
+  });
+
+  it("fails closed when V1 compiled authority and Attempt binding diverge", () => {
+    expect(() => buildAiStoryPostGenerationQcInputFromCompiledAuthority({
+      intent: { identity: { sceneExecutionId: ids[8]!, sceneId: "scene-1" }, compilationHash: hash("a") } as never,
+      instructions: { sceneId: "scene-1" } as never,
+      preGenerationQc: { sceneExecutionId: ids[8]!, qcEvaluationId: ids[11]!, qcFingerprint: hash("f") } as never,
+      handoffFingerprint: hash("1"), sceneVersion: 1,
+      compiledRequest: { sceneExecutionId: ids[8]!, compiledRequestId: ids[10]!, requestFingerprint: hash("d"), qcEvaluationId: ids[11]!, qcFingerprint: hash("f"), sceneFingerprint: hash("a") } as never,
+      attempt: { compiledRequestId: ids[12]! } as never,
+      privateMedia: {} as never,
+    })).toThrow("POST_QC_COMPILED_AUTHORITY_LINEAGE_MISMATCH");
   });
 
   it("separates observable evidence from interpretation and passes satisfied facts", async () => {
