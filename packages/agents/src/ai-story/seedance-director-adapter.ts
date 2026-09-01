@@ -185,6 +185,12 @@ function selectReferences(pkg: AiStorySceneExecutionPackage): { selected: AiStor
   const requirements = requirementByAuthority(pkg);
   const grouped = new Map<string, AiStoryExecutionVisualReference[]>();
   for (const reference of pkg.visualReferences) {
+    const imageCompatible = !reference.mediaType || reference.mediaType.toLowerCase().startsWith("image/");
+    const semanticRole = reference.semanticRole ?? (reference.firstFrame ? "FIRST_FRAME" : imageCompatible ? "PROVIDER_IMAGE_REFERENCE" : "STORY_CONTINUITY_REFERENCE");
+    if ((semanticRole === "FIRST_FRAME" || semanticRole === "PROVIDER_IMAGE_REFERENCE") && !imageCompatible) {
+      throw new SeedanceDirectorAdapterError("REFERENCE_MEDIA_TYPE_UNSUPPORTED", `Reference ${reference.referenceId} assigns a Provider image role to non-image media`);
+    }
+    if (semanticRole === "STORY_CONTINUITY_REFERENCE") continue;
     if (!requirements.has(reference.authorityId) && reference.authorityType !== "OTHER") {
       throw new SeedanceDirectorAdapterError("REFERENCE_AUTHORITY_UNKNOWN", `Reference ${reference.referenceId} does not resolve to a Scene authority`);
     }
@@ -216,7 +222,11 @@ function selectReferences(pkg: AiStorySceneExecutionPackage): { selected: AiStor
     chosen.push(candidates[0]);
     for (const omitted of candidates.slice(1)) degradations.push({ code: omitted.authorityClass === "OPTIONAL" ? "OPTIONAL_REFERENCE_OMITTED" : "PREFERRED_REFERENCE_OMITTED", authorityId, safeEvidence: "Redundant same-authority reference omitted by deterministic priority" });
   }
-  for (const reference of pkg.visualReferences.filter((candidate) => candidate.authorityType === "OTHER")) chosen.push(reference);
+  for (const reference of pkg.visualReferences.filter((candidate) => {
+    if (candidate.authorityType !== "OTHER") return false;
+    const imageCompatible = !candidate.mediaType || candidate.mediaType.toLowerCase().startsWith("image/");
+    return (candidate.semanticRole ?? (candidate.firstFrame ? "FIRST_FRAME" : imageCompatible ? "PROVIDER_IMAGE_REFERENCE" : "STORY_CONTINUITY_REFERENCE")) !== "STORY_CONTINUITY_REFERENCE";
+  })) chosen.push(reference);
 
   const required = chosen.filter((reference) => reference.authorityClass === "REQUIRED");
   if (required.length > AI_STORY_SEEDANCE_REFERENCE_BUDGET) throw new SeedanceDirectorAdapterError("REQUIRED_REFERENCE_OVER_BUDGET", `Required references exceed the certified shared budget of ${AI_STORY_SEEDANCE_REFERENCE_BUDGET}`);

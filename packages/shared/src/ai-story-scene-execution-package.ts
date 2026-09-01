@@ -28,6 +28,7 @@ export const AiStoryExecutionVisualReferenceSchema = z.object({
   semanticBinding: Text,
   selectionPriority: z.number().int().min(0).max(1000),
   firstFrame: z.boolean(),
+  semanticRole: z.enum(["FIRST_FRAME", "PROVIDER_IMAGE_REFERENCE", "STORY_CONTINUITY_REFERENCE"]).optional(),
   mediaType: z.string().trim().min(1).max(160).optional(),
   uri: z.string().url().optional(),
   storagePath: z.string().trim().min(1).optional(),

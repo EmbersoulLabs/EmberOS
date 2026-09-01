@@ -103,10 +103,10 @@ export async function seedPr32Tenant(
     )
   `;
   await sql`
-    INSERT INTO assets (id, org_id, workspace_id, campaign_id, type, storage_path)
+    INSERT INTO assets (id, org_id, workspace_id, campaign_id, type, mime_type, storage_path)
     VALUES (
       ${ids.assetId}, ${ids.orgId}, ${ids.workspaceId}, ${ids.campaignId},
-      'image', ${`${ids.workspaceId}/sprint-3-${label}/asset.png`}
+      'image', 'image/png', ${`${ids.workspaceId}/sprint-3-${label}/asset.png`}
     )
   `;
   await sql`

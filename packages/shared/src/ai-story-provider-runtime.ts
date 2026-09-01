@@ -51,6 +51,39 @@ export const AiStoryCompiledReferenceMappingSchema = z.object({
   storagePath: Text.optional(),
 }).strict();
 
+export const AI_STORY_COMPILED_REFERENCE_ROLES = [
+  "FIRST_FRAME",
+  "PROVIDER_IMAGE_REFERENCE",
+  "STORY_CONTINUITY_REFERENCE",
+] as const;
+
+/**
+ * Complete immutable Story-reference lineage. This is intentionally separate
+ * from `referenceMappings`, which contains only assets emitted on the Provider
+ * wire. A lineage reference therefore never becomes a Provider input merely
+ * because it belongs to the Scene.
+ */
+export const AiStoryCompiledStoryReferenceSchema = z.object({
+  referenceId: Id,
+  assetId: Id,
+  semanticRole: z.enum(AI_STORY_COMPILED_REFERENCE_ROLES),
+  mediaType: Text,
+  providerEmitted: z.boolean(),
+  providerWireRole: z.enum(["first_frame", "reference_image"]).optional(),
+  storagePath: Text.optional(),
+}).strict().superRefine((value, context) => {
+  const image = value.mediaType.toLowerCase().startsWith("image/");
+  if (value.semanticRole === "FIRST_FRAME" && (!image || value.providerWireRole !== "first_frame" || !value.providerEmitted)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "FIRST_FRAME must be an emitted image input" });
+  }
+  if (value.semanticRole === "PROVIDER_IMAGE_REFERENCE" && (!image || value.providerWireRole !== "reference_image" || !value.providerEmitted)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Provider image references must be emitted image inputs" });
+  }
+  if (value.semanticRole === "STORY_CONTINUITY_REFERENCE" && (value.providerEmitted || value.providerWireRole)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Story continuity references are lineage-only" });
+  }
+});
+
 /**
  * Immutable output of Provider compilation. URLs and credentials are deliberately
  * absent: the Worker resolves short-lived transport access from stable Asset IDs.
@@ -96,6 +129,8 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
     watermark: z.boolean(),
   }).strict(),
   referenceMappings: z.array(AiStoryCompiledReferenceMappingSchema).max(4),
+  /** Added append-only; absent only on historical v1 compiled requests. */
+  storyReferenceMappings: z.array(AiStoryCompiledStoryReferenceSchema).optional(),
   referenceBudget: z.literal(4),
   degradations: z.array(z.object({
     code: Text,
