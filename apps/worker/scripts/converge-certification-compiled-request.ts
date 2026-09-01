@@ -8,14 +8,12 @@ import {
   AiStorySceneExecutionPersistenceRepository,
   CertificationCommercialAuthorityService,
   SceneSchedulingRepository,
+  canonicalPersistenceHash,
+  deterministicPersistenceUuid,
   getDb,
   schema,
 } from "@ceo-agent/db";
-import {
-  AiStorySceneCompiledInstructionsSchema,
-  canonicalPersistenceHash,
-  deterministicPersistenceUuid,
-} from "@ceo-agent/shared";
+import { AiStorySceneCompiledInstructionsSchema } from "@ceo-agent/shared";
 
 const TARGET = {
   executionPlanId: "0578168f-003f-542c-be3b-28d4b7a37873",
