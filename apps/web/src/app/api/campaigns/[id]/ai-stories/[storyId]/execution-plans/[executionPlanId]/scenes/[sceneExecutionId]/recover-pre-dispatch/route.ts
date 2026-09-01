@@ -62,7 +62,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       workspaceId: context.workspaceId,
       actorUserId: user.id,
       idempotencyKey: `ai-story-pre-dispatch:${executionPlanId}:${sceneExecutionId}`,
-      reason: "Human-authorized recovery from pre-provider grounding validation block",
+      reason: "AI Story V1 STAGING certification pre-dispatch recovery",
     });
     console.info("ai_story_pre_dispatch_recovery_authorized", {
       requestCorrelationId,
