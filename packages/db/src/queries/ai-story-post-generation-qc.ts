@@ -151,6 +151,7 @@ export class AiStoryPostGenerationQcRepository {
         .from(schema.aiStoryPreGenerationQcEvaluations)
         .where(eq(schema.aiStoryPreGenerationQcEvaluations.qcEvaluationId, compiled.qcEvaluationId)).limit(1),
       this.db.select({
+        directorPlanId: schema.aiStoryDirectorPlanVersions.directorPlanId,
         scriptVersionId: schema.aiStoryDirectorPlanVersions.scriptVersionId,
         handoffId: schema.aiStoryDirectorPlanVersions.handoffId,
       }).from(schema.aiStoryDirectorPlanVersions).where(and(
@@ -161,7 +162,12 @@ export class AiStoryPostGenerationQcRepository {
         eq(schema.aiStoryDirectorPlanVersions.directorFingerprint, compiled.directorFingerprint),
         eq(schema.aiStoryDirectorPlanVersions.status, "FROZEN"),
       )).limit(1),
-      this.db.select({ motionPlanId: schema.aiStoryMotionPlanVersions.motionPlanId })
+      this.db.select({
+        motionPlanId: schema.aiStoryMotionPlanVersions.motionPlanId,
+        directorPlanId: schema.aiStoryMotionPlanVersions.directorPlanId,
+        scriptVersionId: schema.aiStoryMotionPlanVersions.scriptVersionId,
+        handoffId: schema.aiStoryMotionPlanVersions.handoffId,
+      })
         .from(schema.aiStoryMotionPlanVersions).where(and(
           eq(schema.aiStoryMotionPlanVersions.orgId, compiled.orgId),
           eq(schema.aiStoryMotionPlanVersions.workspaceId, compiled.workspaceId),
@@ -183,7 +189,10 @@ export class AiStoryPostGenerationQcRepository {
     const qc = qcRows[0]
       ? AiStoryPreGenerationQcEvaluationSchema.parse(qcRows[0].evaluation)
       : null;
-    const fallbackLineage = directorRows[0] && motionRows[0]
+    const fallbackLineage = directorRows[0] && motionRows[0] &&
+      directorRows[0].directorPlanId === motionRows[0].directorPlanId &&
+      directorRows[0].scriptVersionId === motionRows[0].scriptVersionId &&
+      directorRows[0].handoffId === motionRows[0].handoffId
       ? directorRows[0]
       : null;
     if (!qc && !fallbackLineage) return null;
