@@ -51,7 +51,6 @@ async function main() {
     .from(schema.aiStoryWorkerExecutionResults)
     .where(eq(schema.aiStoryWorkerExecutionResults.dispatchId, dispatchId))
     .limit(1);
-  if (!worker) throw new Error("Worker pre-dispatch result not found");
   const [[attempts], [results], [reviews], [correlation], [outbox], [providerExecution]] =
     await Promise.all([
       db.select({ value: count() }).from(schema.providerAttempts).where(
@@ -92,8 +91,8 @@ async function main() {
     providerExecutionId: providerExecution.executionId,
     outboxJobId: outbox.jobId,
     dispatchId,
-    workerState: worker.workerState,
-    providerRequestId: worker.providerRequestId,
+    workerState: worker?.workerState ?? "MISSING",
+    providerRequestId: worker?.providerRequestId ?? null,
     providerAttemptCount: Number(attempts?.value ?? 0),
     resultCount: Number(results?.value ?? 0),
     generatedReviewCount: Number(reviews?.value ?? 0),

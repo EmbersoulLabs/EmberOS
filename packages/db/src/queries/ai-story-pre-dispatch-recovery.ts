@@ -51,6 +51,11 @@ export type PreDispatchRecoveryCommandResult = {
   readonly providerExecutionId: string;
   readonly outboxJobId: string;
   readonly dispatchId: string;
+  readonly compiledRequestId: string;
+  readonly requestFingerprint: string;
+  readonly generationMode: string;
+  readonly providerId: string;
+  readonly modelId: string;
   readonly preRecoveryState: "PRE_DISPATCH_BLOCKED";
   readonly postRecoveryState: "RECOVERY_AUTHORIZED";
   readonly claimableAfterRecovery: true;
@@ -67,13 +72,19 @@ type RecoveryRow = {
   outbox_job_id: string;
   outbox_status: string;
   dispatch_id: string;
-  worker_execution_result_id: string;
-  provider_attempt_id: string;
+  compiled_request_id: string;
+  request_fingerprint: string;
+  generation_mode: string;
+  provider_id: string;
+  model_id: string;
+  selected_provider_id: string;
+  worker_execution_result_id: string | null;
+  provider_attempt_id: string | null;
   provider_request_id: string | null;
-  worker_state: string;
-  worker_result: unknown;
-  worker_integrity_hash: string;
-  produced_at: Date | string;
+  worker_state: string | null;
+  worker_result: unknown | null;
+  worker_integrity_hash: string | null;
+  produced_at: Date | string | null;
   attempt_count: number;
   result_count: number;
   review_count: number;
@@ -83,7 +94,7 @@ export function assertRecoverablePreDispatchState(input: {
   readonly releaseState: string;
   readonly providerExecutionStatus: string;
   readonly outboxStatus: string;
-  readonly workerState: string;
+  readonly workerState: string | null;
   readonly providerRequestId: string | null;
   readonly providerAttemptCount: number;
   readonly resultCount: number;
@@ -93,7 +104,7 @@ export function assertRecoverablePreDispatchState(input: {
     input.releaseState !== "RELEASED" ||
     !["PENDING", "DISPATCHABLE"].includes(input.providerExecutionStatus) ||
     !["PENDING", "CLAIMED"].includes(input.outboxStatus) ||
-    input.workerState !== "NOT_ACCEPTED" ||
+    ![null, "NOT_ACCEPTED"].includes(input.workerState) ||
     input.providerRequestId !== null ||
     input.providerAttemptCount !== 0 ||
     input.resultCount !== 0 ||
@@ -145,6 +156,11 @@ function responseFromReceipt(row: {
   provider_execution_id: string;
   outbox_job_id: string;
   dispatch_id: string;
+  compiled_request_id: string;
+  request_fingerprint: string;
+  generation_mode: string;
+  provider_id: string;
+  model_id: string;
 }): PreDispatchRecoveryCommandResult {
   return {
     recovery: RuntimeRecoveryCommandResultSchema.parse(row.result_body),
@@ -152,6 +168,11 @@ function responseFromReceipt(row: {
     providerExecutionId: row.provider_execution_id,
     outboxJobId: row.outbox_job_id,
     dispatchId: row.dispatch_id,
+    compiledRequestId: row.compiled_request_id,
+    requestFingerprint: row.request_fingerprint,
+    generationMode: row.generation_mode,
+    providerId: row.provider_id,
+    modelId: row.model_id,
     preRecoveryState: "PRE_DISPATCH_BLOCKED",
     postRecoveryState: "RECOVERY_AUTHORIZED",
     claimableAfterRecovery: true,
@@ -177,13 +198,20 @@ export class AiStoryPreDispatchRecoveryRepository {
         select receipt.result_body,
                correlation.provider_execution_id,
                correlation.outbox_job_id,
-               dispatch.dispatch_id
+               dispatch.dispatch_id,
+               compiled.compiled_request_id,
+               compiled.request_fingerprint,
+               compiled.generation_mode,
+               compiled.provider_id,
+               compiled.model_id
         from admin_runtime_recovery_receipts receipt
         join ai_story_scene_scheduling_correlations correlation
           on correlation.scene_execution_id = ${input.sceneExecutionId}::uuid
          and correlation.execution_plan_id = ${input.executionPlanId}::uuid
         join provider_execution_dispatches dispatch
           on dispatch.job_id = correlation.outbox_job_id
+        join ai_story_compiled_provider_requests compiled
+          on compiled.scene_execution_id = correlation.scene_execution_id
         where receipt.command_type = ${AI_STORY_PRE_DISPATCH_RECOVERY_COMMAND}
           and receipt.target_id = dispatch.dispatch_id
         order by receipt.accepted_at desc
@@ -193,6 +221,11 @@ export class AiStoryPreDispatchRecoveryRepository {
         provider_execution_id: string;
         outbox_job_id: string;
         dispatch_id: string;
+        compiled_request_id: string;
+        request_fingerprint: string;
+        generation_mode: string;
+        provider_id: string;
+        model_id: string;
       }>;
       if (existingRows[0]) return responseFromReceipt(existingRows[0]);
 
@@ -207,6 +240,12 @@ export class AiStoryPreDispatchRecoveryRepository {
                correlation.outbox_job_id,
                outbox.status as outbox_status,
                dispatch.dispatch_id,
+               compiled.compiled_request_id,
+               compiled.request_fingerprint,
+               compiled.generation_mode,
+               compiled.provider_id,
+               compiled.model_id,
+               routing.selected_provider_id,
                worker.worker_execution_result_id,
                worker.provider_attempt_id,
                worker.provider_request_id,
@@ -229,11 +268,15 @@ export class AiStoryPreDispatchRecoveryRepository {
           on outbox.job_id = correlation.outbox_job_id
         join provider_execution_dispatches dispatch
           on dispatch.job_id = outbox.job_id
-        join ai_story_worker_execution_results worker
+        join ai_story_compiled_provider_requests compiled
+          on compiled.scene_execution_id = correlation.scene_execution_id
+        join ai_story_scene_routing_decisions routing
+          on routing.routing_decision_id = correlation.routing_decision_id
+        left join ai_story_worker_execution_results worker
           on worker.dispatch_id = dispatch.dispatch_id
         where correlation.execution_plan_id = ${input.executionPlanId}::uuid
           and correlation.scene_execution_id = ${input.sceneExecutionId}::uuid
-        for update of release, execution, outbox, dispatch, worker
+        for update of release, execution, outbox, dispatch
       `)) as unknown as RecoveryRow[];
       const row = rows[0];
       if (!row) {
@@ -246,6 +289,12 @@ export class AiStoryPreDispatchRecoveryRepository {
         throw new PreDispatchRecoveryRepositoryError(
           "RECOVERY_ACCESS_DENIED",
           "Cross-workspace or cross-tenant recovery denied"
+        );
+      }
+      if (row.provider_id !== row.selected_provider_id) {
+        throw new PreDispatchRecoveryRepositoryError(
+          "AUTHORITY_CONFLICT",
+          "Compiled Provider authority conflicts with the accepted routing decision"
         );
       }
       assertRecoverablePreDispatchState({
@@ -261,7 +310,9 @@ export class AiStoryPreDispatchRecoveryRepository {
       // Raw postgres-js query results hydrate timestamptz columns as strings in
       // production. Normalize before the first durable mutation so invalid
       // evidence fails closed and the transaction remains untouched.
-      const producedAtIso = this.normalizeTimestamp(row.produced_at);
+      const producedAtIso = row.worker_execution_result_id
+        ? this.normalizeTimestamp(row.produced_at)
+        : null;
 
       const receiptId = deterministicPersistenceUuid("ai-story-pre-dispatch-recovery-receipt", {
         executionPlanId: input.executionPlanId,
@@ -283,14 +334,17 @@ export class AiStoryPreDispatchRecoveryRepository {
         explanation: {
           willHappen: [
             "Rearm the existing Scene provider dispatch for one Worker claim",
-            "Revalidate product grounding before any provider submission",
+            "Revalidate Scene generation and reference authority before any provider submission",
           ],
           willNotHappen: [
             "No Scene release, provider execution, outbox, or dispatch identity is created",
             "No provider call is performed by this command",
           ],
         },
-        outcomeSummary: "Existing pre-dispatch-blocked lineage authorized for one recovery claim",
+        outcomeSummary:
+          `Existing pre-dispatch-blocked lineage authorized for one recovery claim; ` +
+          `compiledRequest=${row.compiled_request_id}; fingerprint=${row.request_fingerprint}; ` +
+          `generationMode=${row.generation_mode}; provider=${row.provider_id}; model=${row.model_id}`,
         acceptedAt,
       };
       const recovery = RuntimeRecoveryCommandResultSchema.parse({
@@ -301,28 +355,35 @@ export class AiStoryPreDispatchRecoveryRepository {
       // The old NOT_ACCEPTED row is pre-provider validation evidence, not a
       // provider terminal result. Archive it append-only before freeing the
       // dispatch terminal slot for the real Attempt 1 result.
-      const observationId = deterministicPersistenceUuid("ai-story-pre-dispatch-blocked-archive", {
-        dispatchId: row.dispatch_id,
-        workerExecutionResultId: row.worker_execution_result_id,
-      });
-      await tx.execute(sql`
-        insert into ai_story_worker_attempt_observations (
-          observation_id, org_id, workspace_id, provider_execution_id,
-          provider_attempt_id, dispatch_id, outbox_job_id, provider_request_id,
-          observation_kind, reconciliation_required, deterministic_integrity_hash,
-          observation, produced_at
-        ) values (
-          ${observationId}::uuid, ${row.org_id}::uuid, ${row.workspace_id}::uuid,
-          ${row.provider_execution_id}, ${row.provider_attempt_id}, ${row.dispatch_id},
-          ${row.outbox_job_id}, null, 'PRE_DISPATCH_BLOCKED', false,
-          ${row.worker_integrity_hash}, ${JSON.stringify(row.worker_result)}::jsonb,
-          ${producedAtIso}::timestamptz
-        ) on conflict (observation_id) do nothing
-      `);
-      await tx.execute(sql`
-        delete from ai_story_worker_execution_results
-        where worker_execution_result_id = ${row.worker_execution_result_id}::uuid
-      `);
+      if (row.worker_execution_result_id) {
+        const observationId = deterministicPersistenceUuid("ai-story-pre-dispatch-blocked-archive", {
+          dispatchId: row.dispatch_id,
+          compiledRequestId: row.compiled_request_id,
+          requestFingerprint: row.request_fingerprint,
+          generationMode: row.generation_mode,
+          providerId: row.provider_id,
+          modelId: row.model_id,
+          workerExecutionResultId: row.worker_execution_result_id,
+        });
+        await tx.execute(sql`
+          insert into ai_story_worker_attempt_observations (
+            observation_id, org_id, workspace_id, provider_execution_id,
+            provider_attempt_id, dispatch_id, outbox_job_id, provider_request_id,
+            observation_kind, reconciliation_required, deterministic_integrity_hash,
+            observation, produced_at
+          ) values (
+            ${observationId}::uuid, ${row.org_id}::uuid, ${row.workspace_id}::uuid,
+            ${row.provider_execution_id}, ${row.provider_attempt_id}, ${row.dispatch_id},
+            ${row.outbox_job_id}, null, 'PRE_DISPATCH_BLOCKED', false,
+            ${row.worker_integrity_hash}, ${JSON.stringify(row.worker_result)}::jsonb,
+            ${producedAtIso}::timestamptz
+          ) on conflict (observation_id) do nothing
+        `);
+        await tx.execute(sql`
+          delete from ai_story_worker_execution_results
+          where worker_execution_result_id = ${row.worker_execution_result_id}::uuid
+        `);
+      }
       await tx.execute(sql`
         insert into admin_runtime_recovery_receipts (
           recovery_receipt_id, command_type, command_id, org_id, workspace_id,
@@ -357,6 +418,11 @@ export class AiStoryPreDispatchRecoveryRepository {
         providerExecutionId: row.provider_execution_id,
         outboxJobId: row.outbox_job_id,
         dispatchId: row.dispatch_id,
+        compiledRequestId: row.compiled_request_id,
+        requestFingerprint: row.request_fingerprint,
+        generationMode: row.generation_mode,
+        providerId: row.provider_id,
+        modelId: row.model_id,
         preRecoveryState: "PRE_DISPATCH_BLOCKED",
         postRecoveryState: "RECOVERY_AUTHORIZED",
         claimableAfterRecovery: true,

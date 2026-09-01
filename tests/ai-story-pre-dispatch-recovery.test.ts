@@ -31,6 +31,10 @@ describe("AI Story pre-dispatch recovery service", () => {
 
   it("defines a fail-closed recoverable-state matrix", () => {
     expect(() => assertRecoverablePreDispatchState(recoverable)).not.toThrow();
+    expect(() => assertRecoverablePreDispatchState({
+      ...recoverable,
+      workerState: null,
+    })).not.toThrow();
     for (const invalid of [
       { providerAttemptCount: 1 },
       { resultCount: 1 },
@@ -49,10 +53,13 @@ describe("AI Story pre-dispatch recovery service", () => {
   it("revalidates grounding before invoking the atomic recovery port", async () => {
     const recover = vi.fn().mockResolvedValue({ status: "RECOVERY_AUTHORIZED" });
     const certifyGrounding = vi.fn().mockResolvedValue({
+      generationMode: "PRODUCT_GROUNDED_VIDEO",
       visualAuthorityCertified: true,
       productAuthorityResolved: true,
       providerMode: "FIRST_FRAME_I2V",
       firstFramePresent: true,
+      referenceAuthority: "PRODUCT_GROUNDED",
+      referenceCount: 1,
       directorSafe: true,
       preDispatchGate: "PASS",
     });
@@ -70,15 +77,64 @@ describe("AI Story pre-dispatch recovery service", () => {
     expect(recover).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts explicit reference-free T2V recovery authority", async () => {
+    const recover = vi.fn().mockResolvedValue({ status: "RECOVERY_AUTHORIZED" });
+    const service = new PreDispatchRecoveryService({
+      repository: { recover },
+      certifyGrounding: vi.fn().mockResolvedValue({
+        generationMode: "CREATIVE_T2V",
+        visualAuthorityCertified: true,
+        productAuthorityResolved: true,
+        providerMode: "TEXT_TO_VIDEO",
+        firstFramePresent: false,
+        referenceAuthority: "REFERENCE_FREE_T2V",
+        referenceCount: 0,
+        directorSafe: true,
+        preDispatchGate: "PASS",
+      }),
+    });
+
+    await expect(service.recover(input)).resolves.toEqual({
+      status: "RECOVERY_AUTHORIZED",
+    });
+    expect(recover).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when a purported T2V recovery carries references", async () => {
+    const recover = vi.fn();
+    const service = new PreDispatchRecoveryService({
+      repository: { recover },
+      certifyGrounding: vi.fn().mockResolvedValue({
+        generationMode: "CREATIVE_T2V",
+        visualAuthorityCertified: true,
+        productAuthorityResolved: true,
+        providerMode: "TEXT_TO_VIDEO",
+        firstFramePresent: false,
+        referenceAuthority: "REFERENCE_FREE_T2V",
+        referenceCount: 1,
+        directorSafe: true,
+        preDispatchGate: "PASS",
+      } as never),
+    });
+
+    await expect(service.recover(input)).rejects.toThrow(
+      "Pre-dispatch grounding revalidation failed closed"
+    );
+    expect(recover).not.toHaveBeenCalled();
+  });
+
   it("fails closed without rearming when certification is incomplete", async () => {
     const recover = vi.fn();
     const service = new PreDispatchRecoveryService({
       repository: { recover },
       certifyGrounding: vi.fn().mockResolvedValue({
+        generationMode: "PRODUCT_GROUNDED_VIDEO",
         visualAuthorityCertified: false,
         productAuthorityResolved: true,
         providerMode: "FIRST_FRAME_I2V",
         firstFramePresent: true,
+        referenceAuthority: "PRODUCT_GROUNDED",
+        referenceCount: 1,
         directorSafe: true,
         preDispatchGate: "PASS",
       } as never),
@@ -97,6 +153,9 @@ describe("AI Story pre-dispatch recovery service", () => {
     expect(route).toContain("requireAuth()");
     expect(route).toContain('minRole: "operator"');
     expect(route).toContain("authorizeAiStoryExecution");
+    expect(route).toContain(
+      "AI Story V1 STAGING certification pre-dispatch recovery"
+    );
     expect(route).not.toContain("releaseNextEligibleScene");
     expect(route).not.toContain("release-next-scene");
   });
@@ -108,6 +167,34 @@ describe("AI Story pre-dispatch recovery service", () => {
     );
     expect(worker).toContain("claimAuthorizedRecoveryDispatch");
     expect(worker).toContain("dispatchNextProviderExecution");
+  });
+
+  it("enforces certification no-dispatch before either selector can claim", () => {
+    const worker = readFileSync(
+      "apps/worker/src/ai-story-provider-worker-cycle.ts",
+      "utf8"
+    );
+    const hold = worker.indexOf("if (isAiStoryProviderDispatchHeld())");
+    const recoveryClaim = worker.indexOf(".claimAuthorizedRecoveryDispatch");
+    const ordinarySelector = worker.indexOf("dispatchNextProviderExecution", hold);
+    expect(hold).toBeGreaterThan(-1);
+    expect(recoveryClaim).toBeGreaterThan(hold);
+    expect(ordinarySelector).toBeGreaterThan(hold);
+    expect(worker).toContain("return { dispatchStatus: \"NO_JOB\" }");
+  });
+
+  it("provides a non-consuming canonical recovery selector preview", () => {
+    const repository = readFileSync(
+      "packages/db/src/queries/provider-execution-dispatch.ts",
+      "utf8"
+    );
+    expect(repository).toContain("previewAuthorizedRecoveryDispatch");
+    const preview = repository.slice(
+      repository.indexOf("async previewAuthorizedRecoveryDispatch"),
+      repository.indexOf("async selectEligibleJob")
+    );
+    expect(preview).not.toContain("for update");
+    expect(preview).not.toContain("update provider_outbox_jobs");
   });
 
   it("uses one lease identity from recovery claim through terminal finalization", () => {
