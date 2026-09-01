@@ -64,6 +64,12 @@ export type AiStoryProviderWorkerCycleOptions = {
 
 const AI_STORY_RUNTIME_LEASE_OWNER = `ai-story-runtime:${process.pid}`;
 
+export function isAiStoryProviderDispatchHeld(
+  environment: NodeJS.ProcessEnv = process.env
+): boolean {
+  return environment.AI_STORY_PROVIDER_DISPATCH_MODE === "certification_no_dispatch";
+}
+
 let cachedCoordinator: AiStoryRuntimeContinuationCoordinator | undefined;
 let cachedArtifactRoot: string | undefined;
 let cachedDurableObjectRoot: string | undefined;
@@ -263,6 +269,12 @@ export async function runAiStoryProviderWorkerCycle(
   readonly ownership?: "AI_STORY_SCENE" | "GENERIC_PROVIDER" | "MISSING_DISPATCH";
   readonly continuation?: AiStoryContinuationOutcome;
 }> {
+  // The certification hold is a pre-claim boundary. It must prevent both the
+  // ordinary selector and the existing-Dispatch recovery selector from taking
+  // a lease, so a non-paid recovery certification remains observational.
+  if (isAiStoryProviderDispatchHeld()) {
+    return { dispatchStatus: "NO_JOB" };
+  }
   const leaseOwner = options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER;
   const recoveryDispatch = await new ExecutionDispatchRepository()
     .claimAuthorizedRecoveryDispatch({

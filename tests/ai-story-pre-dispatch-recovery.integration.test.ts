@@ -200,6 +200,10 @@ describeIntegration("atomic AI Story pre-dispatch recovery", () => {
     expect(first.requestFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
     expect(first.providerId).toBe(scheduled.routingDecision.selectedProviderId);
 
+    const dispatchRepository = new ExecutionDispatchRepository();
+    const preview = await dispatchRepository.previewAuthorizedRecoveryDispatch();
+    expect(preview?.dispatchId).toBe(dispatch.dispatchId);
+
     const [counts] = await sqlClient<{
       attempts: number;
       dispatches: number;
@@ -207,6 +211,8 @@ describeIntegration("atomic AI Story pre-dispatch recovery", () => {
       receipts: number;
       archives: number;
       terminal_results: number;
+      outbox_status: string;
+      lease_owner: string | null;
     }[]>`
       select
         (select count(*)::int from provider_attempts where execution_id = ${scheduled.providerExecutionId}) attempts,
@@ -214,7 +220,9 @@ describeIntegration("atomic AI Story pre-dispatch recovery", () => {
         (select count(*)::int from provider_outbox_jobs where job_id = ${scheduled.outboxJobId}) outbox_jobs,
         (select count(*)::int from admin_runtime_recovery_receipts where target_id = ${dispatch.dispatchId}) receipts,
         (select count(*)::int from ai_story_worker_attempt_observations where dispatch_id = ${dispatch.dispatchId}) archives,
-        (select count(*)::int from ai_story_worker_execution_results where dispatch_id = ${dispatch.dispatchId}) terminal_results
+        (select count(*)::int from ai_story_worker_execution_results where dispatch_id = ${dispatch.dispatchId}) terminal_results,
+        (select status from provider_outbox_jobs where job_id = ${scheduled.outboxJobId}) outbox_status,
+        (select lease_owner from provider_outbox_jobs where job_id = ${scheduled.outboxJobId}) lease_owner
     `;
     expect(counts).toEqual({
       attempts: 0,
@@ -223,6 +231,8 @@ describeIntegration("atomic AI Story pre-dispatch recovery", () => {
       receipts: 1,
       archives: 0,
       terminal_results: 0,
+      outbox_status: "PENDING",
+      lease_owner: null,
     });
   }, 120_000);
 

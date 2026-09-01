@@ -72,6 +72,40 @@ function assertEquivalentDispatch(
 export class ExecutionDispatchRepository {
   constructor(private readonly db: Db = getDb()) {}
 
+  /**
+   * Reads the next canonically authorized existing-Dispatch recovery without
+   * acquiring a lease or mutating outbox state. This is the non-consuming
+   * selector authority used while certification_no_dispatch is active.
+   */
+  async previewAuthorizedRecoveryDispatch(
+    now: Date = new Date()
+  ): Promise<ExecutionDispatch | null> {
+    const rows = (await this.db.execute(sql`
+      select dispatch.dispatch_id
+      from provider_outbox_jobs job
+      join provider_execution_dispatches dispatch on dispatch.job_id = job.job_id
+      join admin_runtime_recovery_receipts receipt
+        on receipt.command_type = 'RecoverAiStoryPreDispatch'
+       and receipt.target_id = dispatch.dispatch_id
+      where job.operator_notes = concat('ai-story-pre-dispatch-recovery:', receipt.recovery_receipt_id::text)
+        and job.next_visible_at <= ${now.toISOString()}::timestamptz
+        and (
+          job.status = 'PENDING'
+          or (job.status = 'CLAIMED' and job.lease_expires_at < ${now.toISOString()}::timestamptz)
+        )
+      order by job.next_visible_at asc, job.created_at asc
+      limit 1
+    `)) as unknown as Array<{ dispatch_id: string }>;
+    const selected = rows[0];
+    if (!selected) return null;
+    const [row] = await this.db
+      .select()
+      .from(schema.providerExecutionDispatches)
+      .where(eq(schema.providerExecutionDispatches.dispatchId, selected.dispatch_id))
+      .limit(1);
+    return row ? validateExecutionDispatch(toDispatch(row)) : null;
+  }
+
   async selectEligibleJob(
     now: Date = new Date(),
     options: { readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER" } = {}

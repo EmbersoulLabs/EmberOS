@@ -169,6 +169,34 @@ describe("AI Story pre-dispatch recovery service", () => {
     expect(worker).toContain("dispatchNextProviderExecution");
   });
 
+  it("enforces certification no-dispatch before either selector can claim", () => {
+    const worker = readFileSync(
+      "apps/worker/src/ai-story-provider-worker-cycle.ts",
+      "utf8"
+    );
+    const hold = worker.indexOf("if (isAiStoryProviderDispatchHeld())");
+    const recoveryClaim = worker.indexOf(".claimAuthorizedRecoveryDispatch");
+    const ordinarySelector = worker.indexOf("dispatchNextProviderExecution", hold);
+    expect(hold).toBeGreaterThan(-1);
+    expect(recoveryClaim).toBeGreaterThan(hold);
+    expect(ordinarySelector).toBeGreaterThan(hold);
+    expect(worker).toContain("return { dispatchStatus: \"NO_JOB\" }");
+  });
+
+  it("provides a non-consuming canonical recovery selector preview", () => {
+    const repository = readFileSync(
+      "packages/db/src/queries/provider-execution-dispatch.ts",
+      "utf8"
+    );
+    expect(repository).toContain("previewAuthorizedRecoveryDispatch");
+    const preview = repository.slice(
+      repository.indexOf("async previewAuthorizedRecoveryDispatch"),
+      repository.indexOf("async selectEligibleJob")
+    );
+    expect(preview).not.toContain("for update");
+    expect(preview).not.toContain("update provider_outbox_jobs");
+  });
+
   it("uses one lease identity from recovery claim through terminal finalization", () => {
     const worker = readFileSync(
       "apps/worker/src/ai-story-provider-worker-cycle.ts",
