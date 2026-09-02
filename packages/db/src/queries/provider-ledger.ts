@@ -1,11 +1,14 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
+  AI_STORY_PROVIDER_RUNTIME_VERSION,
+  AiStoryProviderAttemptBindingSchema,
   CanonicalProviderResultSchema,
   ProviderAttemptSchema,
   ProviderCostSchema,
   ProviderErrorSchema,
   ProviderExecutionSchema,
   ProviderUsageSchema,
+  WorkerExecutionResultSchema,
   type CanonicalProviderResult,
   type ProviderAttempt,
   type ProviderCost,
@@ -75,9 +78,24 @@ function toExecution(row: typeof schema.providerExecutions.$inferSelect): Provid
   });
 }
 
-function toAttempt(row: typeof schema.providerAttempts.$inferSelect): ProviderAttempt {
+export function decodeProviderAttemptLedgerRow(
+  row: typeof schema.providerAttempts.$inferSelect
+): ProviderAttempt {
+  if (
+    row.contractVersion !== "1" &&
+    row.contractVersion !== AI_STORY_PROVIDER_RUNTIME_VERSION
+  ) {
+    throw new ProviderLedgerConflictError(
+      `Unsupported Provider Attempt contract version: ${row.contractVersion}`
+    );
+  }
+  const status = row.contractVersion === AI_STORY_PROVIDER_RUNTIME_VERSION
+    ? row.status === "PENDING"
+      ? "CREATED"
+      : row.status
+    : row.status;
   return ProviderAttemptSchema.parse({
-    contractVersion: row.contractVersion,
+    contractVersion: "1",
     attemptId: row.attemptId,
     executionId: row.executionId,
     attemptNumber: row.attemptNumber,
@@ -87,11 +105,13 @@ function toAttempt(row: typeof schema.providerAttempts.$inferSelect): ProviderAt
     providerRequestId: row.providerRequestId ?? undefined,
     requestHash: row.requestHash,
     responseHash: row.responseHash ?? undefined,
-    status: row.status,
+    status,
     startedAt: row.startedAt?.toISOString(),
     completedAt: row.completedAt?.toISOString(),
   });
 }
+
+const toAttempt = decodeProviderAttemptLedgerRow;
 
 function assertExecutionIdentity(
   existing: typeof schema.providerExecutions.$inferSelect,
@@ -174,6 +194,149 @@ export async function createProviderExecution(
 export class ProviderLedgerRepository {
   constructor(private readonly db: Db = getDb()) {}
 
+  private async assertAiStoryRuntimeTerminalEvidence(
+    persisted: typeof schema.providerAttempts.$inferSelect,
+    terminalAttempt: ProviderAttempt
+  ): Promise<void> {
+    if (
+      persisted.contractVersion !== AI_STORY_PROVIDER_RUNTIME_VERSION ||
+      persisted.status !== "PENDING" ||
+      persisted.providerMetadata?.source !== "ai-story-worker-pre-adapter-authority"
+    ) {
+      throw new ProviderLedgerConflictError(
+        "Provider Attempt is not current AI Story pre-adapter authority"
+      );
+    }
+    const [bindingRow] = await this.db
+      .select()
+      .from(schema.aiStoryProviderAttemptCompiledBindings)
+      .where(
+        eq(
+          schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+          persisted.attemptId
+        )
+      )
+      .limit(1);
+    const binding = bindingRow
+      ? AiStoryProviderAttemptBindingSchema.parse(bindingRow.binding)
+      : null;
+    if (
+      !binding ||
+      binding.providerExecutionId !== persisted.executionId ||
+      binding.compiledRequestId !== persisted.providerMetadata.compiledRequestId ||
+      binding.commercialReservationId !==
+        persisted.providerMetadata.commercialReservationId ||
+      binding.providerTaskId !== terminalAttempt.providerRequestId ||
+      !["SUBMITTED", "RUNNING", "PROVIDER_RESULT_READY", "POST_GENERATION_QC_PENDING", "SUCCEEDED"].includes(
+        binding.status
+      )
+    ) {
+      throw new ProviderLedgerConflictError(
+        "AI Story compiled/Attempt/task binding conflicts with terminal finalization"
+      );
+    }
+    const [compiled] = await this.db
+      .select({
+        sceneExecutionId: schema.aiStoryCompiledProviderRequests.sceneExecutionId,
+        requestFingerprint: schema.aiStoryCompiledProviderRequests.requestFingerprint,
+      })
+      .from(schema.aiStoryCompiledProviderRequests)
+      .where(
+        eq(
+          schema.aiStoryCompiledProviderRequests.compiledRequestId,
+          binding.compiledRequestId
+        )
+      )
+      .limit(1);
+    if (
+      !compiled ||
+      compiled.sceneExecutionId !== binding.sceneExecutionId ||
+      compiled.requestFingerprint !== binding.requestFingerprint
+    ) {
+      throw new ProviderLedgerConflictError(
+        "AI Story compiled request authority conflicts with Attempt binding"
+      );
+    }
+    const [reservation] = binding.commercialReservationId
+      ? await this.db
+          .select()
+          .from(schema.certificationCommercialReservations)
+          .where(
+            eq(
+              schema.certificationCommercialReservations.certificationReservationId,
+              binding.commercialReservationId
+            )
+          )
+          .limit(1)
+      : [];
+    if (
+      !reservation ||
+      reservation.executionIdentity !== persisted.attemptId ||
+      reservation.orgId !== binding.orgId ||
+      reservation.workspaceId !== binding.workspaceId ||
+      reservation.status !== "SETTLED" ||
+      reservation.settledCostUsd === null
+    ) {
+      throw new ProviderLedgerConflictError(
+        "AI Story settled commercial reservation conflicts with terminal Attempt"
+      );
+    }
+    const observations = await this.db
+      .select()
+      .from(schema.aiStoryWorkerAttemptObservations)
+      .where(
+        eq(
+          schema.aiStoryWorkerAttemptObservations.providerAttemptId,
+          persisted.attemptId
+        )
+      );
+    const accepted = observations.filter(
+      (row) => row.observationKind === "ACCEPTED"
+    );
+    if (
+      accepted.length !== 1 ||
+      accepted[0]!.providerExecutionId !== persisted.executionId ||
+      accepted[0]!.providerRequestId !== terminalAttempt.providerRequestId ||
+      observations.some(
+        (row) =>
+          row.reconciliationRequired ||
+          (row.providerRequestId &&
+            row.providerRequestId !== terminalAttempt.providerRequestId) ||
+          ["NOT_ACCEPTED", "ACCEPTANCE_UNKNOWN"].includes(row.observationKind)
+      )
+    ) {
+      throw new ProviderLedgerConflictError(
+        "AI Story adapter observations conflict with accepted Provider task"
+      );
+    }
+    const workerRows = await this.db
+      .select()
+      .from(schema.aiStoryWorkerExecutionResults)
+      .where(
+        eq(
+          schema.aiStoryWorkerExecutionResults.providerAttemptId,
+          persisted.attemptId
+        )
+      );
+    const worker = workerRows.length === 1
+      ? WorkerExecutionResultSchema.parse(workerRows[0]!.result)
+      : null;
+    if (
+      !worker ||
+      worker.providerExecutionId !== persisted.executionId ||
+      worker.providerAttemptId !== terminalAttempt.attemptId ||
+      worker.providerRequestId !== terminalAttempt.providerRequestId ||
+      worker.workerState !== "TERMINAL_SUCCESS" ||
+      worker.acceptanceClassification !== "ACCEPTED" ||
+      worker.canonicalProviderState !== "SUCCEEDED" ||
+      worker.reconciliationRequired
+    ) {
+      throw new ProviderLedgerConflictError(
+        "AI Story terminal Worker Result conflicts with Provider Attempt/task"
+      );
+    }
+  }
+
   async createExecution(
     input: ProviderExecution,
     requestHash: string
@@ -214,6 +377,23 @@ export class ProviderLedgerRepository {
       .from(schema.providerAttempts)
       .where(eq(schema.providerAttempts.attemptId, attempt.attemptId))
       .limit(1);
+    if (
+      existing &&
+      existing.contractVersion === AI_STORY_PROVIDER_RUNTIME_VERSION &&
+      existing.status === "PENDING" &&
+      existing.executionId === attempt.executionId &&
+      existing.attemptNumber === attempt.attemptNumber &&
+      existing.providerId === attempt.providerId &&
+      existing.providerVersion === attempt.providerVersion &&
+      existing.modelVersion === attempt.modelVersion &&
+      existing.requestHash === attempt.requestHash
+    ) {
+      await this.assertAiStoryRuntimeTerminalEvidence(existing, attempt);
+      // Runtime v1 retains the pre-adapter row exactly as written. The generic
+      // terminal projection is returned only after the complete durable chain
+      // proves the same accepted task and terminal Worker Result.
+      return attempt;
+    }
     if (
       existing &&
       existing.status === "PENDING" &&

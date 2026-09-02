@@ -508,6 +508,10 @@ export class ProviderWorkerResultFinalizerBridge {
     const existing = await this.dependencies.ledger.listAttempts(
       bundle.providerExecutionId
     );
+    const persistedAttempt = existing.find(
+      (attempt) => attempt.attemptId === attemptId
+    );
+    if (persistedAttempt) return persistedAttempt.attemptNumber;
     return Math.max(
       humanAuthorizedGeneration,
       nextProviderAttemptNumber(existing, attemptId)
