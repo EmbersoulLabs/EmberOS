@@ -500,8 +500,13 @@ async function loadLockedSnapshot(
             providerExecutionId:
               schema.aiStoryWorkerExecutionResults.providerExecutionId,
             workerState: schema.aiStoryWorkerExecutionResults.workerState,
+            acceptanceClassification:
+              schema.aiStoryWorkerExecutionResults.acceptanceClassification,
+            canonicalProviderState:
+              schema.aiStoryWorkerExecutionResults.canonicalProviderState,
             reconciliationRequired:
               schema.aiStoryWorkerExecutionResults.reconciliationRequired,
+            result: schema.aiStoryWorkerExecutionResults.result,
           })
           .from(schema.aiStoryWorkerExecutionResults)
           .where(
@@ -532,7 +537,12 @@ async function loadLockedSnapshot(
           (row) =>
             !row.reconciliationRequired &&
             (row.workerState === "TERMINAL_SUCCESS" ||
-              row.workerState === "TERMINAL_FAILURE")
+              row.workerState === "TERMINAL_FAILURE" ||
+              (row.workerState === "NOT_ACCEPTED" &&
+                row.acceptanceClassification === "NOT_ACCEPTED" &&
+                row.canonicalProviderState === "NOT_ACCEPTED" &&
+                row.result.failureClassification?.terminal === true &&
+                row.result.failureClassification.reconciliationRequired === false))
         )
         .map((row) => row.providerExecutionId)
     ),
