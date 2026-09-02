@@ -384,6 +384,33 @@ export class GeneratedSceneReviewService {
         throw new GeneratedSceneReviewError("GENERATED_SCENE_RETRY_NOT_ELIGIBLE", "Retry input revision authority is missing");
       }
       const retryGeneration = authorization.authorizedAttemptNumber;
+      if (authorization.status === "CONSUMED") {
+        const review = (await this.reviewRepo.listByExecutionPlanId(
+          input.executionPlanId
+        )).find(
+          (candidate) =>
+            candidate.generatedSceneReviewId === authorization.sourceReviewId &&
+            candidate.sceneExecutionId === input.sceneExecutionId &&
+            candidate.providerAttemptId === authorization.sourceAttemptId &&
+            candidate.decision === "REJECTED"
+        );
+        if (!review) {
+          throw new GeneratedSceneReviewError(
+            "GENERATED_SCENE_RETRY_NOT_ELIGIBLE",
+            "Consumed retry authorization is missing its exact rejected review"
+          );
+        }
+        const scene = await this.loadSceneReadModel(
+          input.executionPlanId,
+          input.sceneExecutionId
+        );
+        return GeneratedSceneReviewDecisionResponseSchema.parse({
+          review,
+          scene,
+          retryEnqueued: true,
+          newAttemptNumber: retryGeneration,
+        });
+      }
       const review = await this.reviewRepo.transactDecision(
         {
           executionPlanId: input.executionPlanId,

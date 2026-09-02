@@ -352,6 +352,7 @@ describe("EXEC-04 retry authorization service", () => {
   it("G/H: explicit human retry creates generation 2 and duplicate requests converge", async () => {
     const snapshot = pendingSnapshot(1);
     snapshot.reviews[0]!.decision = "REJECTED";
+    let authorizationConsumed = false;
     const scheduledIdentities = new Set<string>();
     const schedule = vi.fn(async (input: { retryGeneration: number }) => {
       scheduledIdentities.add(`${SCENE_EXEC}:${input.retryGeneration}`);
@@ -359,6 +360,7 @@ describe("EXEC-04 retry authorization service", () => {
     });
     const service = new GeneratedSceneReviewService({
       reviewRepository: {
+        listByExecutionPlanId: async () => snapshot.reviews,
         transactDecision: async (
           _input: unknown,
           work: (tx: unknown, locked: unknown) => Promise<unknown>
@@ -390,6 +392,7 @@ describe("EXEC-04 retry authorization service", () => {
           authorizedAttemptNumber: 2,
           retryInputRevisionId: RETRY_REVISION_ID,
           retryInputFingerprint: HASH,
+          status: authorizationConsumed ? "CONSUMED" : "AUTHORIZED",
         }) as never,
         getRevision: async () => ({
           retryInputRevisionId: RETRY_REVISION_ID,
@@ -400,7 +403,10 @@ describe("EXEC-04 retry authorization service", () => {
           providerModeRequirement: "FIRST_FRAME_I2V",
           canonicalFingerprint: HASH,
         }) as never,
-        markAuthorizationConsumed: async () => ({}) as never,
+        markAuthorizationConsumed: async () => {
+          authorizationConsumed = true;
+          return {} as never;
+        },
       },
     });
     vi.spyOn(service, "loadPlanReadModel").mockResolvedValue([
@@ -438,13 +444,9 @@ describe("EXEC-04 retry authorization service", () => {
 
     expect(first.newAttemptNumber).toBe(2);
     expect(duplicate.newAttemptNumber).toBe(2);
-    expect(schedule).toHaveBeenCalledTimes(2);
+    expect(schedule).toHaveBeenCalledTimes(1);
     expect(schedule).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ retryGeneration: 2 })
-    );
-    expect(schedule).toHaveBeenNthCalledWith(
-      2,
       expect.objectContaining({ retryGeneration: 2 })
     );
     expect(scheduledIdentities.size).toBe(1);
