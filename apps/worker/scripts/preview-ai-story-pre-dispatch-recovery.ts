@@ -53,6 +53,8 @@ async function main() {
   if (!compiledRequest) throw new Error("Compiled Provider request not found");
   const successorCandidate = await new ExecutionDispatchRepository()
     .previewAuthorizedSupersessionSuccessorDispatch();
+  const postTerminalRetryCandidate = await new ExecutionDispatchRepository()
+    .previewAuthorizedPostTerminalRetryDispatch();
 
   const db = getDb();
   const [worker] = await db
@@ -147,6 +149,12 @@ async function main() {
       selectedDispatchId: successorCandidate?.dispatch.dispatchId ?? null,
       selectedCompiledRequestId: successorCandidate?.compiledRequestId ?? null,
       selectedSceneExecutionId: successorCandidate?.sceneExecutionId ?? null,
+      claimed: false,
+    },
+    postTerminalRetryClaimAuthority: {
+      candidateCount: postTerminalRetryCandidate ? 1 : 0,
+      selectedOutboxId: postTerminalRetryCandidate?.jobId ?? null,
+      selectedDispatchId: postTerminalRetryCandidate?.dispatchId ?? null,
       claimed: false,
     },
     recovery,

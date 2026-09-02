@@ -119,6 +119,35 @@ export async function cleanupPr32Tenant(
   sql: Sql,
   ids: Phase2aIdSet = PHASE_2A_IDS
 ): Promise<void> {
+  if (await sql`select to_regclass('public.ai_story_post_terminal_provider_retry_authorizations') as name`.then((rows) => Boolean(rows[0]?.name))) {
+    await sql.unsafe(
+      "ALTER TABLE ai_story_post_terminal_provider_retry_authorizations DISABLE TRIGGER ai_story_post_terminal_retry_immutable_v1"
+    );
+    try {
+      await sql`DELETE FROM ai_story_post_terminal_provider_retry_authorizations WHERE org_id = ${ids.orgId}`;
+    } finally {
+      await sql.unsafe(
+        "ALTER TABLE ai_story_post_terminal_provider_retry_authorizations ENABLE TRIGGER ai_story_post_terminal_retry_immutable_v1"
+      );
+    }
+  }
+  if (await sql`select to_regclass('public.certification_commercial_reservations') as name`.then((rows) => Boolean(rows[0]?.name))) {
+    await sql`
+      DELETE FROM certification_commercial_events
+      WHERE certification_scope_id IN (
+        SELECT certification_scope_id FROM certification_commercial_scopes
+        WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+      )
+    `;
+    await sql`
+      DELETE FROM certification_commercial_reservations
+      WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+    `;
+    await sql`
+      DELETE FROM certification_commercial_scopes
+      WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+    `;
+  }
   // Commercial facts are RESTRICT children of the shared deterministic tenant.
   // Delete only rows owned by this fixture before runtime and tenant parents.
   await sql`
@@ -204,6 +233,9 @@ export async function cleanupPr32Tenant(
       )
     )
   `;
+  // Compiled bindings RESTRICT their Provider Attempt parent and therefore
+  // must be removed before the attempt during isolated fixture teardown.
+  await sql`DELETE FROM ai_story_provider_attempt_compiled_bindings WHERE org_id = ${ids.orgId}`;
   await sql`
     DELETE FROM provider_attempts
     WHERE execution_id IN (
@@ -228,7 +260,6 @@ export async function cleanupPr32Tenant(
   // reuse this fixture identity. Suspend only the immutable-history trigger
   // during test teardown so its parent rows can be removed deterministically.
   // No production runtime path receives this test-only authority.
-  await sql`DELETE FROM ai_story_provider_attempt_compiled_bindings WHERE org_id = ${ids.orgId}`;
   await sql.unsafe(
     "ALTER TABLE ai_story_compiled_provider_requests DISABLE TRIGGER ai_story_compiled_request_immutable_v1"
   );

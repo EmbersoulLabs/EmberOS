@@ -2120,6 +2120,8 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
     authorizationHash: text("authorization_hash").notNull(),
     schedulingIdentityHash: text("scheduling_identity_hash").notNull(),
     retryInputRevisionId: uuid("retry_input_revision_id"),
+    postTerminalRetryAuthorizationId: uuid("post_terminal_retry_authorization_id"),
+    sourceProviderAttemptId: text("source_provider_attempt_id"),
     contractVersion: text("contract_version").notNull(),
     scheduledBy: uuid("scheduled_by").notNull(),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
@@ -2132,10 +2134,68 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
     unique("ai_story_scene_scheduling_provider_unique").on(t.providerExecutionId),
     unique("ai_story_scene_scheduling_outbox_unique").on(t.outboxJobId),
     unique("ai_story_scene_scheduling_identity_unique").on(t.schedulingIdentityHash),
+    unique("ai_story_scene_scheduling_post_terminal_retry_unique").on(
+      t.postTerminalRetryAuthorizationId
+    ),
     index("ai_story_scene_scheduling_plan_idx").on(t.executionPlanId, t.acceptedAt),
     index("ai_story_scene_scheduling_workspace_idx").on(t.workspaceId, t.acceptedAt),
     index("ai_story_scene_scheduling_auth_idx").on(t.runtimeAuthorizationId),
     index("ai_story_scene_scheduling_scene_idx").on(t.sceneExecutionId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Explicit human authority for exactly one append-only retry generation after
+ * a terminal Provider Attempt produced no Scene Result. The row never changes;
+ * consumption is represented by the unique scheduling-correlation reference.
+ */
+export const aiStoryPostTerminalProviderRetryAuthorizations = pgTable(
+  "ai_story_post_terminal_provider_retry_authorizations",
+  {
+    authorizationId: uuid("authorization_id").primaryKey(),
+    environment: text("environment").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sourceCompiledRequestId: uuid("source_compiled_request_id").notNull().references(() => aiStoryCompiledProviderRequests.compiledRequestId, { onDelete: "restrict" }),
+    sourceCompiledRequestFingerprint: text("source_compiled_request_fingerprint").notNull(),
+    priorProviderAttemptId: text("prior_provider_attempt_id").notNull().references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    priorWorkerResultId: uuid("prior_worker_result_id").notNull(),
+    priorReservationId: uuid("prior_reservation_id").notNull(),
+    failureClassification: text("failure_classification").notNull(),
+    failureCode: text("failure_code").notNull(),
+    retryReason: text("retry_reason").notNull(),
+    humanDecision: text("human_decision").notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    retryGeneration: integer("retry_generation").notNull(),
+    targetCompilerContractVersion: text("target_compiler_contract_version").notNull(),
+    targetMode: text("target_mode").notNull(),
+    commercialAuthorizationId: uuid("commercial_authorization_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").PostTerminalProviderRetryAuthorizationFact>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_post_terminal_retry_source_contract_unique").on(
+      t.priorProviderAttemptId,
+      t.failureClassification,
+      t.targetCompilerContractVersion
+    ),
+    unique("ai_story_post_terminal_retry_idempotency_unique").on(t.idempotencyKey),
+    unique("ai_story_post_terminal_retry_integrity_unique").on(t.integrityHash),
+    unique("ai_story_post_terminal_retry_worker_result_unique").on(t.priorWorkerResultId),
+    index("ai_story_post_terminal_retry_scene_idx").on(t.sceneExecutionId, t.createdAt),
+    index("ai_story_post_terminal_retry_workspace_idx").on(t.workspaceId, t.createdAt),
+    check("ai_story_post_terminal_retry_environment_check", sql`${t.environment} = 'STAGING'`),
+    check("ai_story_post_terminal_retry_human_decision_check", sql`${t.humanDecision} = 'AUTHORIZE_ONE_RETRY'`),
+    check("ai_story_post_terminal_retry_generation_check", sql`${t.retryGeneration} >= 2`),
+    check("ai_story_post_terminal_retry_contract_check", sql`${t.contractVersion} = 'ai-story-post-terminal-provider-retry.v1'`),
   ]
 );
 

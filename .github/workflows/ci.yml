@@ -83,6 +83,9 @@ jobs:
       - name: Apply differentiated human retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
 
+      - name: Apply post-terminal Provider retry contract
+        run: pnpm --filter @ceo-agent/db sql:ai-story-post-terminal-provider-retry
+
       - name: Detect masked SQL migration defects from predecessor schema
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
@@ -121,6 +124,11 @@ jobs:
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/ai-story-pre-dispatch-bundle-supersession.integration.test.ts
+
+      - name: Certify post-terminal Provider retry authorization
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-post-terminal-provider-retry.integration.test.ts
 
       - name: Certify Post-Generation QC evidence PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-post-generation-qc.integration.test.ts

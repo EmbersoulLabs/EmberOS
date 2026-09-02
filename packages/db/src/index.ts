@@ -39,6 +39,7 @@ export * from "./queries/certification-submission-slot-reconciliation";
 export * from "./queries/ai-story-provider-attempt-cost";
 export * from "./queries/ai-story-generated-scene-review";
 export * from "./queries/ai-story-differentiated-retry";
+export * from "./queries/ai-story-post-terminal-provider-retry";
 export * from "./queries/ai-story-scene-release";
 export * from "./queries/campaign-asset-refs";
 export * from "./queries/asset-library";
