@@ -177,6 +177,60 @@ export class PostTerminalProviderRetryRepository {
         );
       }
 
+      // Once the human authorization has produced its retry scheduling
+      // generation, the correlation count necessarily increases. Resolve the
+      // append-only source authority before deriving a new generation so an
+      // identical replay converges instead of attempting generation N+1.
+      const [existingAuthorizationRow] = await tx
+        .select({ fact: schema.aiStoryPostTerminalProviderRetryAuthorizations.fact })
+        .from(schema.aiStoryPostTerminalProviderRetryAuthorizations)
+        .where(
+          and(
+            eq(
+              schema.aiStoryPostTerminalProviderRetryAuthorizations.sceneExecutionId,
+              input.sceneExecutionId
+            ),
+            eq(
+              schema.aiStoryPostTerminalProviderRetryAuthorizations.priorProviderAttemptId,
+              input.priorProviderAttemptId
+            ),
+            eq(
+              schema.aiStoryPostTerminalProviderRetryAuthorizations.failureClassification,
+              input.failureClassification
+            ),
+            eq(
+              schema.aiStoryPostTerminalProviderRetryAuthorizations.targetCompilerContractVersion,
+              input.targetCompilerContractVersion
+            )
+          )
+        )
+        .limit(1);
+      if (existingAuthorizationRow) {
+        const existing = PostTerminalProviderRetryAuthorizationFactSchema.parse(
+          existingAuthorizationRow.fact
+        );
+        if (
+          existing.executionPlanId !== input.executionPlanId ||
+          existing.sceneExecutionId !== input.sceneExecutionId ||
+          existing.workspaceId !== input.workspaceId ||
+          existing.priorProviderAttemptId !== input.priorProviderAttemptId ||
+          existing.priorWorkerResultId !== input.priorWorkerResultId ||
+          existing.sourceCompiledRequestId !== input.sourceCompiledRequestId ||
+          existing.sourceCompiledRequestFingerprint !==
+            input.sourceCompiledRequestFingerprint ||
+          existing.commercialAuthorizationId !==
+            input.commercialAuthorizationId ||
+          existing.authorizedBy !== input.actorUserId ||
+          existing.humanDecision !== input.humanDecision
+        ) {
+          throw new PostTerminalProviderRetryError(
+            "POST_TERMINAL_RETRY_AUTHORIZATION_CONFLICT",
+            "A conflicting post-terminal retry authorization exists"
+          );
+        }
+        return existing;
+      }
+
       const [membership] = await tx
         .select({ userId: schema.workspaceMembers.userId })
         .from(schema.workspaceMembers)
