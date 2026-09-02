@@ -15,6 +15,7 @@ import {
   type GeneratedSceneReviewDecisionResponse,
   type GeneratedSceneReviewFact,
   type GeneratedSceneReviewReadModel,
+  type GeneratedSceneReviewState,
   type GeneratedSceneAttemptReadModel,
   type SceneAttemptInputRevisionFact,
   type SceneRetryAuthorizationFact,
@@ -584,11 +585,19 @@ export class GeneratedSceneReviewService {
                 retryEligibility: null,
                 retryInputRevisionId: null,
                 retryAuthorizationId: null,
+                retryPrepared: false,
               }))
             ),
       (rows) => rows.length
     );
-    const reviews = reviewAuthorityRows.map((row) => row.review);
+    const reviews = [
+      ...new Map(
+        reviewAuthorityRows.map((row) => [
+          row.review.generatedSceneReviewId,
+          row.review,
+        ])
+      ).values(),
+    ];
     const generatedSceneReviewListMs = performance.now() - reviewStartedAt;
 
     const assemblyStartedAt = performance.now();
@@ -596,9 +605,27 @@ export class GeneratedSceneReviewService {
       "generated_scene_review.read_model_assembly",
       async () => {
         const snapshotByScene = groupReviews(reviews);
-        const retryAuthorityByReview = new Map(
-          reviewAuthorityRows.map((row) => [row.review.generatedSceneReviewId, row])
-        );
+        const retryAuthorityByReview = new Map<
+          string,
+          {
+            readonly retryEligibility: string | null;
+            readonly retryInputRevisionId: string | null;
+            readonly retryAuthorizationId: string | null;
+            readonly retryPrepared: boolean;
+          }
+        >();
+        for (const row of reviewAuthorityRows) {
+          const reviewId = row.review.generatedSceneReviewId;
+          const current = retryAuthorityByReview.get(reviewId);
+          retryAuthorityByReview.set(reviewId, {
+            retryEligibility: row.retryEligibility ?? current?.retryEligibility ?? null,
+            retryInputRevisionId:
+              row.retryInputRevisionId ?? current?.retryInputRevisionId ?? null,
+            retryAuthorizationId:
+              row.retryAuthorizationId ?? current?.retryAuthorizationId ?? null,
+            retryPrepared: row.retryPrepared || current?.retryPrepared === true,
+          });
+        }
         const maxAttempts = resolveAiStorySceneMaxAttempts();
         const orderedIntents = intents
           .slice()
@@ -682,6 +709,7 @@ export class GeneratedSceneReviewService {
         readonly retryEligibility: string | null;
         readonly retryInputRevisionId: string | null;
         readonly retryAuthorizationId: string | null;
+        readonly retryPrepared: boolean;
       }
     >;
     readonly spendAttempts: readonly import("@ceo-agent/shared").AiStoryProviderAttemptCostEvidence[];
@@ -732,17 +760,14 @@ export class GeneratedSceneReviewService {
       sceneId: input.sceneId,
       sceneOrder: input.sceneOrder,
       reviewState: running && reviewState === "RETRY_REQUESTED" ? "RETRY_REQUESTED" : reviewState,
-      runtimeState: approved
-        ? "APPROVED"
-        : running
-          ? "RUNNING"
-          : retryAuthority?.retryAuthorizationId
-            ? "RETRY_AUTHORIZED"
-          : latestReview?.decision === "REJECTED"
-            ? "REJECTED"
-          : reviewAvailable
-            ? "PENDING_REVIEW"
-            : "QUEUED",
+      runtimeState: deriveGeneratedSceneReviewAuthorityState({
+        approved: Boolean(approved),
+        running,
+        latestDecision: latestReview?.decision ?? null,
+        retryAuthorized: Boolean(retryAuthority?.retryAuthorizationId),
+        retryPrepared: retryAuthority?.retryPrepared === true,
+        reviewAvailable,
+      }),
       reviewAvailable,
       recoveryMode: null,
       approvedAttemptId: approved?.providerAttemptId ?? null,
@@ -770,6 +795,22 @@ export class GeneratedSceneReviewService {
       attempts,
     });
   }
+}
+
+export function deriveGeneratedSceneReviewAuthorityState(input: {
+  readonly approved: boolean;
+  readonly running: boolean;
+  readonly latestDecision: GeneratedSceneReviewState | null;
+  readonly retryAuthorized: boolean;
+  readonly retryPrepared: boolean;
+  readonly reviewAvailable: boolean;
+}): GeneratedSceneReviewReadModel["runtimeState"] {
+  if (input.approved) return "APPROVED";
+  if (input.running) return "RUNNING";
+  if (input.retryAuthorized || input.retryPrepared) return "RETRY_AUTHORIZED";
+  if (input.latestDecision === "REJECTED") return "REJECTED";
+  if (input.reviewAvailable) return "PENDING_REVIEW";
+  return "QUEUED";
 }
 
 function buildDecisionSceneReadModel(

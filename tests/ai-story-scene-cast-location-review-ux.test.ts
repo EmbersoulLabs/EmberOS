@@ -58,6 +58,9 @@ describe("AI Story Scene, Cast, Location, and generated Review product UX", () =
     expect(component).toContain("role=\"status\"");
     expect(component).toContain("Nothing retries automatically");
     expect(component).toContain("No approval has been assumed");
+    expect(component).toContain("Retry ready");
+    expect(component).toContain("The corrected retry is ready.");
+    expect(component).toContain('scene.runtimeState === "RETRY_AUTHORIZED" && !retryAuthorizationId');
   });
 
   it("translates QC and repair outcomes while hiding normal-user runtime machinery", () => {

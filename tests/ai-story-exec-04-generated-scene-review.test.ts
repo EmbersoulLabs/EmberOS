@@ -17,7 +17,10 @@ import {
   GeneratedSceneReviewError,
   snapshotHasInFlightProviderExecution,
 } from "../packages/db/src/queries/ai-story-generated-scene-review";
-import { GeneratedSceneReviewService } from "../packages/agents/src/ai-story/generated-scene-review-service";
+import {
+  GeneratedSceneReviewService,
+  deriveGeneratedSceneReviewAuthorityState,
+} from "../packages/agents/src/ai-story/generated-scene-review-service";
 import { WorkspaceAccessError } from "@ceo-agent/db";
 import { commercialExecutionIdentityForPlan } from "@ceo-agent/shared/server";
 
@@ -34,6 +37,31 @@ const HASH =
 const REVIEW_ID = "10000000-0000-4000-8000-000000000801";
 const RETRY_REVISION_ID = "10000000-0000-4000-8000-000000000901";
 const RETRY_AUTHORIZATION_ID = "10000000-0000-4000-8000-000000000902";
+
+describe("generated Scene product-state precedence", () => {
+  it("keeps Needs changes visible and projects a prepared retry before a new result exists", () => {
+    expect(
+      deriveGeneratedSceneReviewAuthorityState({
+        approved: false,
+        running: false,
+        latestDecision: "REJECTED",
+        retryAuthorized: false,
+        retryPrepared: true,
+        reviewAvailable: true,
+      })
+    ).toBe("RETRY_AUTHORIZED");
+    expect(
+      deriveGeneratedSceneReviewAuthorityState({
+        approved: false,
+        running: false,
+        latestDecision: "PENDING_REVIEW",
+        retryAuthorized: false,
+        retryPrepared: false,
+        reviewAvailable: true,
+      })
+    ).toBe("PENDING_REVIEW");
+  });
+});
 
 function sceneResult(id: string, status: "SUCCEEDED" | "FAILED" = "SUCCEEDED") {
   return {
