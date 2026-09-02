@@ -25,6 +25,8 @@ export type BuildCanonicalSceneProviderRequestInput = {
   readonly timeoutDeadline: string;
   /** EXEC-04: >1 creates a new provider execution of the same frozen payload. */
   readonly retryGeneration?: number;
+  /** Immutable authority differentiating retry lifecycles that share a generation number. */
+  readonly retryAuthorityHash?: string;
 };
 
 export type BuildCanonicalSceneProviderRequestCompatInput = {
@@ -60,6 +62,9 @@ function fullIdentitySeed(input: BuildCanonicalSceneProviderRequestInput) {
     instructionHash: input.sceneIntent.normalizedPayloadReference.contentHash,
     routingDecisionHash: input.routingDecision.deterministicIntegrityHash,
     ...(retryGeneration > 1 ? { retryGeneration } : {}),
+    ...(retryGeneration > 1 && input.retryAuthorityHash
+      ? { retryAuthorityHash: input.retryAuthorityHash }
+      : {}),
   };
 }
 

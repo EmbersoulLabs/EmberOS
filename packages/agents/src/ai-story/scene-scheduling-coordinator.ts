@@ -775,6 +775,7 @@ export class SceneSchedulingCoordinator {
         createdAt: scheduledAt,
         timeoutDeadline,
         retryGeneration,
+        ...(retryGeneration > 1 ? { retryAuthorityHash: instructionHash } : {}),
       });
       const persistedCompilationAuthority =
         await this.providerRuntimeRepo.getCompilationAuthorityBySceneExecutionId({
