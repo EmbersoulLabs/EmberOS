@@ -251,6 +251,7 @@ export class GeneratedSceneReviewRepository {
         row.retryAuthorizationStatus === "AUTHORIZED"
           ? row.retryAuthorizationId
           : null,
+      retryPrepared: row.retryAuthorizationStatus === "CONSUMED",
     }));
   }
 

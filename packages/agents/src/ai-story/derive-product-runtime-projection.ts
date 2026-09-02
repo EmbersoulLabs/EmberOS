@@ -198,10 +198,13 @@ export function deriveGeneratedSceneRuntimeState(input: {
   readonly running: boolean;
   readonly reviewAvailable: boolean;
   readonly preDispatchBlocked: boolean;
+  readonly reviewRuntimeState: import("@ceo-agent/shared").GeneratedSceneRuntimeState;
 }): import("@ceo-agent/shared").GeneratedSceneRuntimeState {
   if (!input.released) return "AUTHORIZED_NOT_RELEASED";
   if (input.approved) return "APPROVED";
   if (input.running) return "RUNNING";
+  if (input.reviewRuntimeState === "RETRY_AUTHORIZED") return "RETRY_AUTHORIZED";
+  if (input.reviewRuntimeState === "REJECTED") return "REJECTED";
   if (input.reviewAvailable) return "PENDING_REVIEW";
   if (input.preDispatchBlocked) return "PRE_DISPATCH_BLOCKED";
   return "QUEUED";
@@ -411,6 +414,7 @@ export async function deriveProductRuntimeProjection(
       preDispatchBlocked: preDispatchBlockedSceneIds.has(
         review.sceneExecutionId
       ),
+      reviewRuntimeState: review.runtimeState,
     });
     return {
       ...review,
