@@ -13,6 +13,7 @@ import {
   DifferentiatedRetryService,
   applyRetryInputRevision,
 } from "../packages/agents/src/ai-story/differentiated-retry-service";
+import { assertGeneratedSceneRetryProviderTruth } from "../packages/db/src/queries/ai-story-differentiated-retry";
 
 const ID = (suffix: string) => `10000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
 const HASH = `sha256:${"a".repeat(64)}`;
@@ -57,6 +58,50 @@ function revision(overrides: Partial<SceneAttemptInputRevisionFact> = {}) {
 }
 
 describe("differentiated human retry contract", () => {
+  it("accepts current runtime v1 PENDING only with complete terminal success evidence", () => {
+    expect(() => assertGeneratedSceneRetryProviderTruth({
+      attempt: {
+        attemptId: "attempt-1", executionId: "execution-1",
+        contractVersion: "ai-story-provider-runtime.v1",
+        providerRequestId: "task-1", status: "PENDING",
+      },
+      result: { status: "SUCCEEDED", providerAttemptId: "attempt-1" },
+      workerResults: [{
+        providerAttemptId: "attempt-1", providerExecutionId: "execution-1",
+        providerRequestId: "task-1", workerState: "TERMINAL_SUCCESS",
+        acceptanceClassification: "ACCEPTED", canonicalProviderState: "SUCCEEDED",
+        reconciliationRequired: false,
+      }],
+      observations: [{
+        providerAttemptId: "attempt-1", providerExecutionId: "execution-1",
+        providerRequestId: "task-1", observationKind: "ACCEPTED",
+        reconciliationRequired: false,
+      }],
+    })).not.toThrow();
+  });
+
+  it("fails closed for conflicting current runtime retry evidence", () => {
+    expect(() => assertGeneratedSceneRetryProviderTruth({
+      attempt: {
+        attemptId: "attempt-1", executionId: "execution-1",
+        contractVersion: "ai-story-provider-runtime.v1",
+        providerRequestId: "task-1", status: "PENDING",
+      },
+      result: { status: "SUCCEEDED", providerAttemptId: "attempt-1" },
+      workerResults: [{
+        providerAttemptId: "attempt-1", providerExecutionId: "execution-1",
+        providerRequestId: "task-2", workerState: "TERMINAL_SUCCESS",
+        acceptanceClassification: "ACCEPTED", canonicalProviderState: "SUCCEEDED",
+        reconciliationRequired: false,
+      }],
+      observations: [{
+        providerAttemptId: "attempt-1", providerExecutionId: "execution-1",
+        providerRequestId: "task-1", observationKind: "ACCEPTED",
+        reconciliationRequired: false,
+      }],
+    })).toThrow(/incomplete or conflicting/);
+  });
+
   it("keeps Provider success independent from a creative human rejection", () => {
     const providerAttempt = Object.freeze({ attemptId: "attempt-1", status: "SUCCEEDED" });
     const review = GeneratedSceneReviewFactSchema.parse({

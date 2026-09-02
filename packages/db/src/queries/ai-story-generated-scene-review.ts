@@ -53,6 +53,7 @@ export type GeneratedSceneReviewLockSnapshot = {
   readonly reviews: readonly GeneratedSceneReviewFact[];
   readonly results: readonly (typeof schema.aiStorySceneResults.$inferSelect)[];
   readonly correlations: readonly (typeof schema.aiStorySceneSchedulingCorrelations.$inferSelect)[];
+  readonly supersededCorrelationIds: ReadonlySet<string>;
   readonly providerExecutions: ReadonlyMap<
     string,
     typeof schema.providerExecutions.$inferSelect
@@ -453,6 +454,35 @@ async function loadLockedSnapshot(
     )
     .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt));
 
+  const supersessions = await tx
+    .select({
+      sourceCorrelationId:
+        schema.aiStoryPreDispatchBundleSupersessions.sourceCorrelationId,
+    })
+    .from(schema.aiStoryPreDispatchBundleSupersessions)
+    .where(
+      eq(
+        schema.aiStoryPreDispatchBundleSupersessions.sceneExecutionId,
+        input.sceneExecutionId
+      )
+    );
+  const attemptRows = await tx
+    .select({ attemptId: schema.providerAttempts.attemptId })
+    .from(schema.aiStoryProviderAttemptCompiledBindings)
+    .innerJoin(
+      schema.providerAttempts,
+      eq(
+        schema.providerAttempts.attemptId,
+        schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId
+      )
+    )
+    .where(
+      eq(
+        schema.aiStoryProviderAttemptCompiledBindings.sceneExecutionId,
+        input.sceneExecutionId
+      )
+    );
+
   const executionIds = correlations.map((row) => row.providerExecutionId);
   const executions =
     executionIds.length === 0
@@ -474,8 +504,11 @@ async function loadLockedSnapshot(
     reviews: reviews.map(toFact),
     results,
     correlations,
+    supersededCorrelationIds: new Set(
+      supersessions.map((row) => row.sourceCorrelationId)
+    ),
     providerExecutions: new Map(executions.map((row) => [row.executionId, row])),
-    attemptCount: correlations.length,
+    attemptCount: new Set(attemptRows.map((row) => row.attemptId)).size,
     maxAttempts: resolveAiStorySceneMaxAttempts(),
   };
 }
@@ -484,6 +517,7 @@ export function snapshotHasInFlightProviderExecution(
   snapshot: GeneratedSceneReviewLockSnapshot
 ): boolean {
   for (const correlation of snapshot.correlations) {
+    if (snapshot.supersededCorrelationIds?.has(correlation.correlationId)) continue;
     const execution = snapshot.providerExecutions.get(correlation.providerExecutionId);
     if (!execution) return true;
     if (execution.status !== "SUCCEEDED" && execution.status !== "TERMINAL_FAILURE") {
