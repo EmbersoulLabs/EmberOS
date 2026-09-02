@@ -743,6 +743,7 @@ export class SceneSchedulingCoordinator {
       // the latter would collide with the already-executed source request.
       const scheduledAt =
         input.postTerminalRetryAuthorization?.authorizedAt ??
+        input.retryInputRevision?.createdAt ??
         acceptedRoutingDecision.decidedAt;
       const timeoutDeadline = new Date(
         Date.parse(scheduledAt) + 600_000
