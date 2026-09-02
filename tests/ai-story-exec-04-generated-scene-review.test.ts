@@ -13,7 +13,10 @@ import {
 import { buildCanonicalSceneProviderRequest } from "../packages/agents/src/ai-story/canonical-scene-provider-request";
 import { deriveSceneCompleteReadiness } from "../packages/agents/src/ai-story/ai-story-runtime-continuation-coordinator";
 import { authorizeAiStoryExecution } from "../packages/agents/src/ai-story/ai-story-execution-authorization";
-import { GeneratedSceneReviewError } from "../packages/db/src/queries/ai-story-generated-scene-review";
+import {
+  GeneratedSceneReviewError,
+  snapshotHasInFlightProviderExecution,
+} from "../packages/db/src/queries/ai-story-generated-scene-review";
 import { GeneratedSceneReviewService } from "../packages/agents/src/ai-story/generated-scene-review-service";
 import { WorkspaceAccessError } from "@ceo-agent/db";
 
@@ -62,6 +65,18 @@ function sceneResult(id: string, status: "SUCCEEDED" | "FAILED" = "SUCCEEDED") {
 }
 
 describe("EXEC-04 review contract", () => {
+  it("excludes a superseded pre-dispatch correlation from the in-flight gate", () => {
+    const sourceCorrelationId = "10000000-0000-4000-8000-000000000711";
+    expect(snapshotHasInFlightProviderExecution({
+      correlations: [{
+        correlationId: sourceCorrelationId,
+        providerExecutionId: "execution-superseded",
+      }],
+      supersededCorrelationIds: new Set([sourceCorrelationId]),
+      providerExecutions: new Map(),
+    } as never)).toBe(false);
+  });
+
   it("A: assembly authority binds the approved attempt only", () => {
     const approved = selectAssemblyAuthoritativeSceneResults({
       sceneResults: [sceneResult(SCENE_RESULT_1), sceneResult(SCENE_RESULT_2)],
