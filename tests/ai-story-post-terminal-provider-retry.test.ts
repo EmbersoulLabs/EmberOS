@@ -183,4 +183,15 @@ describe("AI Story post-terminal Provider retry authority", () => {
     );
     expect(coordinator).toContain("acceptedRoutingDecision.decidedAt");
   });
+
+  it("resolves an existing authorization before deriving the next generation", () => {
+    const repository = readFileSync(
+      "packages/db/src/queries/ai-story-post-terminal-provider-retry.ts",
+      "utf8"
+    );
+    expect(repository.indexOf("existingAuthorizationRow")).toBeLessThan(
+      repository.indexOf("const [generation]")
+    );
+    expect(repository).toContain("return existing;");
+  });
 });
