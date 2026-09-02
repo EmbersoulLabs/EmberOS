@@ -125,6 +125,8 @@ export type ScheduleAuthorizedSceneInput = {
    */
   readonly retryGeneration?: number;
   readonly retryInputRevision?: import("@ceo-agent/shared").SceneAttemptInputRevisionFact;
+  /** Exact rationale from the rejected generated result; server authority only. */
+  readonly retryHumanReviewCorrection?: string | null;
   readonly postTerminalRetryAuthorization?: PostTerminalProviderRetryAuthorizationFact;
   /** Server-only PROD-VERIFY-01 authority; never populated from client input. */
   readonly productionVerification?: ProductionVerificationAuthority;
@@ -675,7 +677,9 @@ export class SceneSchedulingCoordinator {
         compilation.instructionsBySceneExecutionId[input.sceneExecutionId]
       ) as AiStorySceneCompiledInstructions;
       const instructions = input.retryInputRevision
-        ? applyRetryInputRevision(baseInstructions, input.retryInputRevision)
+        ? applyRetryInputRevision(baseInstructions, input.retryInputRevision, {
+            latestHumanReviewCorrection: input.retryHumanReviewCorrection,
+          })
         : baseInstructions;
       const instructionHash =
         input.retryInputRevision?.canonicalFingerprint ??

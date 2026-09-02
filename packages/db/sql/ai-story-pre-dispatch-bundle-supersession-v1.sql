@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS ai_story_pre_dispatch_bundle_supersessions (
   successor_dispatch_id text NOT NULL REFERENCES provider_execution_dispatches(dispatch_id) ON DELETE RESTRICT,
   reason text NOT NULL CHECK (reason IN (
     'I2V_PROVIDER_INPUT_PROJECTION_DEFECT',
-    'DETERMINISTIC_PRE_DISPATCH_AUTHORITY_DEFECT'
+    'DETERMINISTIC_PRE_DISPATCH_AUTHORITY_DEFECT',
+    'REVIEW_RETRY_CREATIVE_INSTRUCTION_PRECEDENCE_DEFECT'
   )),
   actor_user_id uuid NOT NULL,
   idempotency_key text NOT NULL,
@@ -72,4 +73,3 @@ DROP TRIGGER IF EXISTS ai_story_bundle_supersession_immutable_v1
 CREATE TRIGGER ai_story_bundle_supersession_immutable_v1
   BEFORE UPDATE OR DELETE ON ai_story_pre_dispatch_bundle_supersessions
   FOR EACH ROW EXECUTE FUNCTION enforce_ai_story_bundle_supersession_immutable_v1();
-

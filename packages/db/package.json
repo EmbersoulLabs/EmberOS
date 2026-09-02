@@ -39,6 +39,7 @@
     "sql:ai-story-pre-generation-qc": "tsx scripts/apply-ai-story-pre-generation-qc-v1.ts",
     "sql:ai-story-provider-runtime": "tsx scripts/apply-ai-story-provider-runtime-v1.ts",
     "sql:ai-story-pre-dispatch-bundle-supersession": "tsx scripts/apply-ai-story-pre-dispatch-bundle-supersession-v1.ts",
+    "sql:ai-story-pre-dispatch-bundle-supersession-reason-v2": "tsx scripts/apply-ai-story-pre-dispatch-bundle-supersession-reason-v2.ts",
     "sql:ai-story-post-generation-qc": "tsx scripts/apply-ai-story-post-generation-qc-v1.ts",
     "sql:ai-story-character": "tsx scripts/apply-ai-story-character-v1.ts",
     "sql:ai-story-cast": "tsx scripts/apply-ai-story-cast-v1.ts",

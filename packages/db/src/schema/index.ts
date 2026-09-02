@@ -2243,7 +2243,7 @@ export const aiStoryPreDispatchBundleSupersessions = pgTable(
     unique("ai_story_bundle_supersession_idempotency_unique").on(t.idempotencyKey),
     unique("ai_story_bundle_supersession_integrity_unique").on(t.integrityHash),
     index("ai_story_bundle_supersession_scene_idx").on(t.sceneExecutionId, t.createdAt),
-    check("ai_story_bundle_supersession_reason_check", sql`${t.reason} in ('I2V_PROVIDER_INPUT_PROJECTION_DEFECT','DETERMINISTIC_PRE_DISPATCH_AUTHORITY_DEFECT')`),
+    check("ai_story_bundle_supersession_reason_check", sql`${t.reason} in ('I2V_PROVIDER_INPUT_PROJECTION_DEFECT','DETERMINISTIC_PRE_DISPATCH_AUTHORITY_DEFECT','REVIEW_RETRY_CREATIVE_INSTRUCTION_PRECEDENCE_DEFECT')`),
     check("ai_story_bundle_supersession_authority_version_check", sql`${t.authorityVersion} = 'ai-story-pre-dispatch-bundle-supersession.v1'`),
     check("ai_story_bundle_supersession_distinct_compiled_check", sql`${t.sourceCompiledRequestId} <> ${t.successorCompiledRequestId}`),
     check("ai_story_bundle_supersession_distinct_correlation_check", sql`${t.sourceCorrelationId} <> ${t.successorCorrelationId}`),
