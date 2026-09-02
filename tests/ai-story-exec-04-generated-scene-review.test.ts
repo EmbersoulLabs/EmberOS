@@ -77,6 +77,20 @@ describe("EXEC-04 review contract", () => {
     } as never)).toBe(false);
   });
 
+  it("uses canonical terminal Worker evidence when the execution row is still PENDING", () => {
+    expect(snapshotHasInFlightProviderExecution({
+      correlations: [{
+        correlationId: "10000000-0000-4000-8000-000000000712",
+        providerExecutionId: "execution-terminal-worker",
+      }],
+      supersededCorrelationIds: new Set(),
+      terminalWorkerExecutionIds: new Set(["execution-terminal-worker"]),
+      providerExecutions: new Map([
+        ["execution-terminal-worker", { status: "PENDING" }],
+      ]),
+    } as never)).toBe(false);
+  });
+
   it("A: assembly authority binds the approved attempt only", () => {
     const approved = selectAssemblyAuthoritativeSceneResults({
       sceneResults: [sceneResult(SCENE_RESULT_1), sceneResult(SCENE_RESULT_2)],
