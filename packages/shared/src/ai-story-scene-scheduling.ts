@@ -116,6 +116,8 @@ export const SceneProviderSchedulingCorrelationSchema = z.object({
   retryGeneration: z.number().int().positive().optional(),
   retryInputRevisionId: z.string().uuid().optional(),
   retryInputFingerprint: IntegrityHashSchema.optional(),
+  postTerminalRetryAuthorizationId: z.string().uuid().optional(),
+  sourceProviderAttemptId: NonEmptyTextSchema.optional(),
 });
 
 export type SceneProviderSchedulingCorrelation = z.infer<

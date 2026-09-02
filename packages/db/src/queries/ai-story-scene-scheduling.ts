@@ -18,6 +18,7 @@ import {
   type SceneSchedulingBundle,
   type SceneSchedulingErrorCode,
   type AiStoryCompiledProviderRequest,
+  PostTerminalProviderRetryAuthorizationFactSchema,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 import {
@@ -397,6 +398,46 @@ export class SceneSchedulingRepository {
             "SCENE_SCHEDULING_NOT_ELIGIBLE",
             "Durable RELEASED Scene authority is required before provider scheduling"
           );
+        }
+        if (correlation.postTerminalRetryAuthorizationId) {
+          const [retryAuthorityRow] = await tx
+            .select({
+              fact: schema.aiStoryPostTerminalProviderRetryAuthorizations.fact,
+            })
+            .from(schema.aiStoryPostTerminalProviderRetryAuthorizations)
+            .where(
+              eq(
+                schema.aiStoryPostTerminalProviderRetryAuthorizations
+                  .authorizationId,
+                correlation.postTerminalRetryAuthorizationId
+              )
+            )
+            .limit(1);
+          const retryAuthority = retryAuthorityRow
+            ? PostTerminalProviderRetryAuthorizationFactSchema.parse(
+                retryAuthorityRow.fact
+              )
+            : null;
+          if (
+            !retryAuthority ||
+            retryAuthority.sceneExecutionId !== correlation.sceneExecutionId ||
+            retryAuthority.executionPlanId !== correlation.executionPlanId ||
+            retryAuthority.orgId !== correlation.ownership.orgId ||
+            retryAuthority.workspaceId !== correlation.ownership.workspaceId ||
+            retryAuthority.retryGeneration !== correlation.retryGeneration ||
+            retryAuthority.priorProviderAttemptId !==
+              correlation.sourceProviderAttemptId ||
+            retryAuthority.commercialAuthorizationId !==
+              correlation.commercialAuthorizationId ||
+            retryAuthority.sourceCompiledRequestFingerprint ===
+              compiledProviderRequest.requestFingerprint ||
+            compiledProviderRequest.generationMode !== retryAuthority.targetMode
+          ) {
+            throw new SceneSchedulingError(
+              "SCENE_SCHEDULING_NOT_ELIGIBLE",
+              "Post-terminal retry authorization does not match the scheduling correlation"
+            );
+          }
         }
         if (
           compiledProviderRequest.orgId !== expected.orgId ||
@@ -1136,6 +1177,9 @@ export class SceneSchedulingRepository {
         authorizationHash: correlation.authorizationHash,
         schedulingIdentityHash: correlation.schedulingIdentityHash,
         retryInputRevisionId: correlation.retryInputRevisionId ?? null,
+        postTerminalRetryAuthorizationId:
+          correlation.postTerminalRetryAuthorizationId ?? null,
+        sourceProviderAttemptId: correlation.sourceProviderAttemptId ?? null,
         contractVersion: correlation.contractVersion,
         scheduledBy: correlation.scheduledBy,
         scheduledAt: new Date(correlation.scheduledAt),

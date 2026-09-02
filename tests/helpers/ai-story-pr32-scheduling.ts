@@ -119,6 +119,18 @@ export async function cleanupPr32Tenant(
   sql: Sql,
   ids: Phase2aIdSet = PHASE_2A_IDS
 ): Promise<void> {
+  if (await sql`select to_regclass('public.ai_story_post_terminal_provider_retry_authorizations') as name`.then((rows) => Boolean(rows[0]?.name))) {
+    await sql.unsafe(
+      "ALTER TABLE ai_story_post_terminal_provider_retry_authorizations DISABLE TRIGGER ai_story_post_terminal_retry_immutable_v1"
+    );
+    try {
+      await sql`DELETE FROM ai_story_post_terminal_provider_retry_authorizations WHERE org_id = ${ids.orgId}`;
+    } finally {
+      await sql.unsafe(
+        "ALTER TABLE ai_story_post_terminal_provider_retry_authorizations ENABLE TRIGGER ai_story_post_terminal_retry_immutable_v1"
+      );
+    }
+  }
   // Commercial facts are RESTRICT children of the shared deterministic tenant.
   // Delete only rows owned by this fixture before runtime and tenant parents.
   await sql`

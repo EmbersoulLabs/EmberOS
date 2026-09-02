@@ -1,5 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import {
+  PostTerminalProviderRetryAuthorizationFactSchema,
   validateExecutionDispatch,
   type ExecutionDispatch,
 } from "@ceo-agent/shared";
@@ -175,6 +176,10 @@ export class ExecutionDispatchRepository {
       select dispatch.dispatch_id
       from provider_outbox_jobs job
       join provider_execution_dispatches dispatch on dispatch.job_id = job.job_id
+      join ai_story_scene_scheduling_correlations correlation
+        on correlation.outbox_job_id = job.job_id
+       and correlation.provider_execution_id = job.execution_id
+      join provider_executions execution on execution.execution_id = job.execution_id
       join admin_runtime_recovery_receipts receipt
         on receipt.command_type = 'RecoverAiStoryPreDispatch'
        and receipt.target_id = dispatch.dispatch_id
@@ -183,6 +188,20 @@ export class ExecutionDispatchRepository {
           select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
           where supersession.source_dispatch_id = dispatch.dispatch_id
              or supersession.source_outbox_job_id = job.job_id
+        )
+        and execution.accepted_attempt_id is null
+        and execution.accepted_result is null
+        and not exists (
+          select 1 from provider_attempts attempt
+          where attempt.execution_id = execution.execution_id
+        )
+        and not exists (
+          select 1 from ai_story_worker_execution_results result
+          where result.dispatch_id = dispatch.dispatch_id
+        )
+        and not exists (
+          select 1 from ai_story_scene_results result
+          where result.scene_execution_id = correlation.scene_execution_id
         )
         and job.next_visible_at <= ${now.toISOString()}::timestamptz
         and (
@@ -295,6 +314,45 @@ export class ExecutionDispatchRepository {
     return dispatchRow ? await toSupersessionSuccessorCandidate(row, dispatchRow) : null;
   }
 
+  /** Selects only the one human-authorized post-terminal retry generation. */
+  async previewAuthorizedPostTerminalRetryDispatch(
+    now: Date = new Date()
+  ): Promise<ExecutionDispatch | null> {
+    const rows = (await this.db.execute(sql`
+      select dispatch.dispatch_id, authority.fact
+      from ai_story_post_terminal_provider_retry_authorizations authority
+      join ai_story_scene_scheduling_correlations correlation
+        on correlation.post_terminal_retry_authorization_id = authority.authorization_id
+       and correlation.scene_execution_id = authority.scene_execution_id
+       and correlation.source_provider_attempt_id = authority.prior_provider_attempt_id
+      join provider_outbox_jobs job on job.job_id = correlation.outbox_job_id
+      join provider_execution_dispatches dispatch on dispatch.job_id = job.job_id
+      join provider_executions execution on execution.execution_id = job.execution_id
+      join ai_story_worker_execution_results source_result
+        on source_result.worker_execution_result_id = authority.prior_worker_result_id
+       and source_result.provider_attempt_id = authority.prior_provider_attempt_id
+      where authority.environment = 'STAGING'
+        and source_result.worker_state = 'NOT_ACCEPTED'
+        and job.next_visible_at <= ${now.toISOString()}::timestamptz
+        and (job.status in ('PENDING','RETRY_WAIT')
+          or (job.status='CLAIMED' and job.lease_expires_at < ${now.toISOString()}::timestamptz))
+        and execution.status in ('PENDING','DISPATCHABLE')
+        and execution.accepted_attempt_id is null
+        and execution.accepted_result is null
+        and not exists (select 1 from provider_attempts a where a.execution_id=execution.execution_id)
+        and not exists (select 1 from ai_story_worker_execution_results r where r.dispatch_id=dispatch.dispatch_id)
+        and not exists (select 1 from ai_story_scene_results r where r.scene_execution_id=correlation.scene_execution_id)
+      order by job.next_visible_at, job.created_at
+      limit 1
+    `)) as unknown as Array<{ dispatch_id: string; fact: unknown }>;
+    const selected = rows[0];
+    if (!selected) return null;
+    PostTerminalProviderRetryAuthorizationFactSchema.parse(selected.fact);
+    const [row] = await this.db.select().from(schema.providerExecutionDispatches)
+      .where(eq(schema.providerExecutionDispatches.dispatchId, selected.dispatch_id)).limit(1);
+    return row ? validateExecutionDispatch(toDispatch(row)) : null;
+  }
+
   async selectEligibleJob(
     now: Date = new Date(),
     options: { readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER" } = {}
@@ -378,6 +436,10 @@ export class ExecutionDispatchRepository {
         select dispatch.dispatch_id
         from provider_outbox_jobs job
         join provider_execution_dispatches dispatch on dispatch.job_id = job.job_id
+        join ai_story_scene_scheduling_correlations correlation
+          on correlation.outbox_job_id = job.job_id
+         and correlation.provider_execution_id = job.execution_id
+        join provider_executions execution on execution.execution_id = job.execution_id
         join admin_runtime_recovery_receipts receipt
           on receipt.command_type = 'RecoverAiStoryPreDispatch'
          and receipt.target_id = dispatch.dispatch_id
@@ -386,6 +448,20 @@ export class ExecutionDispatchRepository {
             select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
             where supersession.source_dispatch_id = dispatch.dispatch_id
                or supersession.source_outbox_job_id = job.job_id
+          )
+          and execution.accepted_attempt_id is null
+          and execution.accepted_result is null
+          and not exists (
+            select 1 from provider_attempts attempt
+            where attempt.execution_id = execution.execution_id
+          )
+          and not exists (
+            select 1 from ai_story_worker_execution_results result
+            where result.dispatch_id = dispatch.dispatch_id
+          )
+          and not exists (
+            select 1 from ai_story_scene_results result
+            where result.scene_execution_id = correlation.scene_execution_id
           )
           and job.next_visible_at <= ${now.toISOString()}::timestamptz
           and (
@@ -520,6 +596,59 @@ export class ExecutionDispatchRepository {
         .where(eq(schema.providerExecutionDispatches.dispatchId, selected.successor_dispatch_id))
         .limit(1);
       return dispatchRow ? validateExecutionDispatch(toDispatch(dispatchRow)) : null;
+    });
+  }
+
+  async claimAuthorizedPostTerminalRetryDispatch(input: {
+    readonly workerId: string;
+    readonly now?: Date;
+    readonly leaseMs?: number;
+  }): Promise<ExecutionDispatch | null> {
+    const now = input.now ?? new Date();
+    const leaseExpiresAt = new Date(now.getTime() + (input.leaseMs ?? 60_000));
+    return this.db.transaction(async (tx) => {
+      const rows = (await tx.execute(sql`
+        select dispatch.dispatch_id, job.job_id, authority.fact
+        from ai_story_post_terminal_provider_retry_authorizations authority
+        join ai_story_scene_scheduling_correlations correlation
+          on correlation.post_terminal_retry_authorization_id=authority.authorization_id
+         and correlation.scene_execution_id=authority.scene_execution_id
+         and correlation.source_provider_attempt_id=authority.prior_provider_attempt_id
+        join provider_outbox_jobs job on job.job_id=correlation.outbox_job_id
+        join provider_execution_dispatches dispatch on dispatch.job_id=job.job_id
+        join provider_executions execution on execution.execution_id=job.execution_id
+        join ai_story_worker_execution_results source_result
+          on source_result.worker_execution_result_id=authority.prior_worker_result_id
+         and source_result.provider_attempt_id=authority.prior_provider_attempt_id
+        where authority.environment='STAGING'
+          and source_result.worker_state='NOT_ACCEPTED'
+          and job.next_visible_at <= ${now.toISOString()}::timestamptz
+          and (job.status in ('PENDING','RETRY_WAIT')
+            or (job.status='CLAIMED' and job.lease_expires_at < ${now.toISOString()}::timestamptz))
+          and execution.status in ('PENDING','DISPATCHABLE')
+          and execution.accepted_attempt_id is null and execution.accepted_result is null
+          and not exists (select 1 from provider_attempts a where a.execution_id=execution.execution_id)
+          and not exists (select 1 from ai_story_worker_execution_results r where r.dispatch_id=dispatch.dispatch_id)
+          and not exists (select 1 from ai_story_scene_results r where r.scene_execution_id=correlation.scene_execution_id)
+        order by job.next_visible_at, job.created_at
+        for update of job skip locked limit 1
+      `)) as unknown as Array<{ dispatch_id: string; job_id: string; fact: unknown }>;
+      const selected = rows[0];
+      if (!selected) return null;
+      PostTerminalProviderRetryAuthorizationFactSchema.parse(selected.fact);
+      const updated = (await tx.execute(sql`
+        update provider_outbox_jobs set status='CLAIMED', lease_owner=${input.workerId},
+          lease_expires_at=${leaseExpiresAt.toISOString()}::timestamptz,
+          attempt_count=attempt_count+1, updated_at=${now.toISOString()}::timestamptz
+        where job_id=${selected.job_id}
+          and (status in ('PENDING','RETRY_WAIT')
+            or (status='CLAIMED' and lease_expires_at < ${now.toISOString()}::timestamptz))
+        returning job_id
+      `)) as unknown as Array<{ job_id: string }>;
+      if (!updated[0]) return null;
+      const [row] = await tx.select().from(schema.providerExecutionDispatches)
+        .where(eq(schema.providerExecutionDispatches.dispatchId, selected.dispatch_id)).limit(1);
+      return row ? validateExecutionDispatch(toDispatch(row)) : null;
     });
   }
 

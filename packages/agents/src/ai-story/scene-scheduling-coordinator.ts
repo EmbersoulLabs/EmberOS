@@ -19,6 +19,7 @@ import {
   type SceneProviderSchedulingCorrelation,
   type SceneSchedulingBundle,
   type SceneSchedulingErrorCode,
+  type PostTerminalProviderRetryAuthorizationFact,
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
@@ -124,6 +125,7 @@ export type ScheduleAuthorizedSceneInput = {
    */
   readonly retryGeneration?: number;
   readonly retryInputRevision?: import("@ceo-agent/shared").SceneAttemptInputRevisionFact;
+  readonly postTerminalRetryAuthorization?: PostTerminalProviderRetryAuthorizationFact;
   /** Server-only PROD-VERIFY-01 authority; never populated from client input. */
   readonly productionVerification?: ProductionVerificationAuthority;
   /** Safe server-side performance observer; never used as authorization. */
@@ -191,6 +193,7 @@ function identitySeed(input: {
   readonly routingDecisionHash?: string;
   readonly retryGeneration?: number;
   readonly retryInputFingerprint?: string;
+  readonly postTerminalRetryAuthorizationHash?: string;
 }) {
   return {
     sceneExecutionId: input.sceneExecutionId,
@@ -201,6 +204,12 @@ function identitySeed(input: {
       ? { retryGeneration: input.retryGeneration }
       : {}),
     ...(input.retryInputFingerprint ? { retryInputFingerprint: input.retryInputFingerprint } : {}),
+    ...(input.postTerminalRetryAuthorizationHash
+      ? {
+          postTerminalRetryAuthorizationHash:
+            input.postTerminalRetryAuthorizationHash,
+        }
+      : {}),
   };
 }
 
@@ -380,6 +389,7 @@ function buildCorrelation(input: {
   readonly retryGeneration: number;
   readonly commercialAuthorizationId?: string;
   readonly retryInputRevision?: import("@ceo-agent/shared").SceneAttemptInputRevisionFact;
+  readonly postTerminalRetryAuthorization?: PostTerminalProviderRetryAuthorizationFact;
 }): SceneProviderSchedulingCorrelation {
   const schedulingIdentityHash = computeSceneSchedulingIdentityHash({
     ownership: input.fact.ownership,
@@ -421,6 +431,14 @@ function buildCorrelation(input: {
       retryInputRevisionId: input.retryInputRevision.retryInputRevisionId,
       retryInputFingerprint: input.retryInputRevision.canonicalFingerprint,
     } : {}),
+    ...(input.postTerminalRetryAuthorization
+      ? {
+          postTerminalRetryAuthorizationId:
+            input.postTerminalRetryAuthorization.authorizationId,
+          sourceProviderAttemptId:
+            input.postTerminalRetryAuthorization.priorProviderAttemptId,
+        }
+      : {}),
   });
 }
 
@@ -522,18 +540,35 @@ export class SceneSchedulingCoordinator {
       }
 
       const retryGeneration = input.retryGeneration ?? 1;
+      const retryAuthorityCount =
+        Number(Boolean(input.retryInputRevision)) +
+        Number(Boolean(input.postTerminalRetryAuthorization));
       if (
-        retryGeneration > 1 &&
-        (!input.retryInputRevision ||
-          input.retryInputRevision.revisionNumber !== retryGeneration ||
-          input.retryInputRevision.sceneExecutionId !== input.sceneExecutionId ||
-          input.retryInputRevision.executionPlanId !== input.executionPlanId ||
-          input.retryInputRevision.workspaceId !== fact.ownership.workspaceId ||
-          input.retryInputRevision.providerModeRequirement !== "FIRST_FRAME_I2V")
+        (retryGeneration <= 1 && retryAuthorityCount !== 0) ||
+        (retryGeneration > 1 &&
+        (retryAuthorityCount !== 1 ||
+          (input.retryInputRevision &&
+            (input.retryInputRevision.revisionNumber !== retryGeneration ||
+              input.retryInputRevision.sceneExecutionId !== input.sceneExecutionId ||
+              input.retryInputRevision.executionPlanId !== input.executionPlanId ||
+              input.retryInputRevision.workspaceId !== fact.ownership.workspaceId ||
+              input.retryInputRevision.providerModeRequirement !== "FIRST_FRAME_I2V")) ||
+          (input.postTerminalRetryAuthorization &&
+            (input.postTerminalRetryAuthorization.retryGeneration !== retryGeneration ||
+              input.postTerminalRetryAuthorization.sceneExecutionId !==
+                input.sceneExecutionId ||
+              input.postTerminalRetryAuthorization.executionPlanId !==
+                input.executionPlanId ||
+              input.postTerminalRetryAuthorization.workspaceId !==
+                fact.ownership.workspaceId ||
+              input.postTerminalRetryAuthorization.commercialAuthorizationId !==
+                input.commercialAuthorizationId ||
+              input.postTerminalRetryAuthorization.targetMode !==
+                "FIRST_FRAME_IMAGE_TO_VIDEO"))))
       ) {
         throw new SceneSchedulingError(
           "SCENE_SCHEDULING_NOT_ELIGIBLE",
-          "Differentiated retry input authority is required"
+          "Exactly one valid human retry authority is required"
         );
       }
       const acceptedBundle =
@@ -644,6 +679,7 @@ export class SceneSchedulingCoordinator {
         : baseInstructions;
       const instructionHash =
         input.retryInputRevision?.canonicalFingerprint ??
+        input.postTerminalRetryAuthorization?.integrityHash ??
         sceneIntent.normalizedPayloadReference.contentHash;
       const seedBeforeRouting = identitySeed({
         sceneExecutionId: input.sceneExecutionId,
@@ -651,6 +687,8 @@ export class SceneSchedulingCoordinator {
         instructionHash,
         retryGeneration,
         retryInputFingerprint: input.retryInputRevision?.canonicalFingerprint,
+        postTerminalRetryAuthorizationHash:
+          input.postTerminalRetryAuthorization?.integrityHash,
       });
       const correlationId = deterministicPersistenceUuid(
         "ai-story-scene-scheduling-correlation",
@@ -710,6 +748,8 @@ export class SceneSchedulingCoordinator {
         routingDecisionHash: acceptedRoutingDecision.deterministicIntegrityHash,
         retryGeneration,
         retryInputFingerprint: input.retryInputRevision?.canonicalFingerprint,
+        postTerminalRetryAuthorizationHash:
+          input.postTerminalRetryAuthorization?.integrityHash,
       });
       const outboxJobId = deterministicPersistenceUuid(
         "ai-story-scene-outbox-job",
@@ -827,6 +867,14 @@ export class SceneSchedulingCoordinator {
             ...(input.retryInputRevision
               ? { retryInputRevisionId: input.retryInputRevision.retryInputRevisionId }
               : {}),
+            ...(input.postTerminalRetryAuthorization
+              ? {
+                  postTerminalRetryAuthorizationId:
+                    input.postTerminalRetryAuthorization.authorizationId,
+                  sourceProviderAttemptId:
+                    input.postTerminalRetryAuthorization.priorProviderAttemptId,
+                }
+              : {}),
           },
         },
         capabilityId: SCENE_PROVIDER_CAPABILITY_ID,
@@ -860,6 +908,8 @@ export class SceneSchedulingCoordinator {
         retryGeneration,
         commercialAuthorizationId: input.commercialAuthorizationId,
         retryInputRevision: input.retryInputRevision,
+        postTerminalRetryAuthorization:
+          input.postTerminalRetryAuthorization,
       });
 
       const bundle = await this.schedulingRepo.scheduleAcceptedBundle({

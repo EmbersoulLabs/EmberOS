@@ -1,0 +1,36 @@
+{
+  "manifestVersion": 1,
+  "manifestId": "ai-story-post-terminal-provider-retry-v1-staging",
+  "authorityModel": "ORDERED_APPEND_ONLY_STAGING_CONVERGENCE",
+  "target": {
+    "environment": "staging",
+    "railwayProjectId": "b2004ec8-7747-4fae-bca4-4167a3385d49",
+    "railwayEnvironmentId": "de092159-8b57-4729-a8ef-1b4ac0c2b33f"
+  },
+  "orderedMigrations": [
+    {
+      "order": 14,
+      "id": "ai-story-post-terminal-provider-retry-v1",
+      "path": "packages/db/sql/ai-story-post-terminal-provider-retry-v1.sql",
+      "sha256": "20571f939cdd61ba13f1790437e0c54f2e5b865af6b51b38bef3a5bef4056205"
+    }
+  ],
+  "predecessor": {
+    "requiredTables": [
+      "ai_story_scene_executions",
+      "ai_story_compiled_provider_requests",
+      "provider_attempts",
+      "ai_story_worker_execution_results",
+      "certification_commercial_reservations",
+      "commercial_execution_authorizations",
+      "ai_story_scene_scheduling_correlations"
+    ]
+  },
+  "result": {
+    "table": "ai_story_post_terminal_provider_retry_authorizations",
+    "humanAuthorizationRequired": true,
+    "appendOnly": true,
+    "commercialMutation": false,
+    "providerWork": false
+  }
+}

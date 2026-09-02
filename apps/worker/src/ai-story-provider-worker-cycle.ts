@@ -301,16 +301,22 @@ export async function runAiStoryProviderWorkerCycle(
   }
   const leaseOwner = options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER;
   const dispatchRepository = new ExecutionDispatchRepository();
-  const supersessionSuccessorDispatch = await dispatchRepository
-    .claimAuthorizedSupersessionSuccessorDispatch({
+  const postTerminalRetryDispatch = await dispatchRepository
+    .claimAuthorizedPostTerminalRetryDispatch({
       workerId: leaseOwner,
     });
-  const recoveryDispatch = supersessionSuccessorDispatch
+  const supersessionSuccessorDispatch = postTerminalRetryDispatch
+    ? null
+    : await dispatchRepository.claimAuthorizedSupersessionSuccessorDispatch({
+        workerId: leaseOwner,
+      });
+  const recoveryDispatch = postTerminalRetryDispatch || supersessionSuccessorDispatch
     ? null
     : await dispatchRepository.claimAuthorizedRecoveryDispatch({
         workerId: leaseOwner,
       });
-  const existingDispatch = supersessionSuccessorDispatch ?? recoveryDispatch;
+  const existingDispatch =
+    postTerminalRetryDispatch ?? supersessionSuccessorDispatch ?? recoveryDispatch;
   const dispatchOutcome = existingDispatch
     ? { status: "DISPATCHED" as const, dispatch: existingDispatch }
     : await dispatchNextProviderExecution({ ownership: "AI_STORY_SCENE" });
