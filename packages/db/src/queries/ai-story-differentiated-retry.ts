@@ -252,7 +252,13 @@ export class DifferentiatedRetryRepository {
       .innerJoin(schema.providerAttempts, eq(schema.providerAttempts.attemptId, schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId))
       .where(eq(schema.aiStoryProviderAttemptCompiledBindings.sceneExecutionId, input.sceneExecutionId));
     if (!result || !attempt || !instruction) throw new DifferentiatedRetryError("RETRY_SOURCE_INCOMPLETE","Retry source authority is incomplete");
-    return { scene, review, result, attempt, workerResults, observations, instructions: instruction.instructions, intent: scene.intent, attemptCount: new Set(attemptRows.map((row) => row.attemptId)).size };
+    const boundAttemptCount = new Set(attemptRows.map((row) => row.attemptId)).size;
+    // A generated review is itself durable proof of at least one completed
+    // Provider Attempt. Older, still-readable executions predate the compiled
+    // binding table, so retain that source Attempt as the retry-generation
+    // baseline without treating scheduling correlations as paid attempts.
+    const attemptCount = Math.max(1, boundAttemptCount);
+    return { scene, review, result, attempt, workerResults, observations, instructions: instruction.instructions, intent: scene.intent, attemptCount };
   }
 
   private async getEligibilityInTx(db: Db|Tx, reviewId:string) { const [row]=await db.select().from(schema.aiStorySceneRetryEligibilityFacts).where(eq(schema.aiStorySceneRetryEligibilityFacts.sourceReviewId,reviewId)).limit(1); return row ? SceneRetryEligibilityFactSchema.parse(row.fact) : null; }
