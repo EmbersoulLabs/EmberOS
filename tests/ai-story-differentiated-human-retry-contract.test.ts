@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   AI_STORY_MAX_HUMAN_AUTHORIZED_ATTEMPTS,
   AuthorizeSceneRetryCommandSchema,
@@ -193,5 +194,22 @@ describe("differentiated human retry contract", () => {
     });
     expect(rejectCreative).toHaveBeenCalledOnce();
     expect(providerSubmit).not.toHaveBeenCalled();
+  });
+
+  it("derives review-directed retry compilation identity from the immutable input revision clock", () => {
+    const coordinator = readFileSync(
+      "packages/agents/src/ai-story/scene-scheduling-coordinator.ts",
+      "utf8"
+    );
+    const postTerminalClock = coordinator.indexOf(
+      "input.postTerminalRetryAuthorization?.authorizedAt ??"
+    );
+    const reviewRetryClock = coordinator.indexOf(
+      "input.retryInputRevision?.createdAt ??"
+    );
+    const baseClock = coordinator.indexOf("acceptedRoutingDecision.decidedAt", reviewRetryClock);
+    expect(postTerminalClock).toBeGreaterThan(-1);
+    expect(reviewRetryClock).toBeGreaterThan(postTerminalClock);
+    expect(baseClock).toBeGreaterThan(reviewRetryClock);
   });
 });
