@@ -1,8 +1,11 @@
 import { and, eq, gt, sql } from "drizzle-orm";
 import {
+  AI_STORY_PROVIDER_RUNTIME_VERSION,
+  AiStoryProviderAttemptBindingSchema,
   CanonicalProviderResultSchema,
   ProviderCostSchema,
   ProviderUsageSchema,
+  WorkerExecutionResultSchema,
   type CanonicalProviderResult,
   type ProviderCost,
   type ProviderUsage,
@@ -10,6 +13,7 @@ import {
 import { getDb, schema } from "../client";
 
 type Db = ReturnType<typeof getDb>;
+type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 export class ProviderExecutionFinalizationError extends Error {
   readonly code = "PROVIDER_EXECUTION_FINALIZATION_FAILED";
@@ -80,6 +84,183 @@ export interface ProviderExecutionTerminalFailureRecord {
 
 function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export function providerAttemptUsesCurrentAiStoryTerminalEvidence(input: {
+  readonly contractVersion: string;
+  readonly status: string;
+}): boolean {
+  if (input.contractVersion === "1") {
+    if (input.status !== "SUCCEEDED") {
+      throw new ProviderExecutionFinalizationError(
+        "Only a successful legacy Provider attempt may be finalized"
+      );
+    }
+    return false;
+  }
+  if (input.contractVersion === AI_STORY_PROVIDER_RUNTIME_VERSION) {
+    if (input.status !== "PENDING") {
+      throw new ProviderExecutionFinalizationError(
+        "Current AI Story Provider attempt has an unsupported persisted status"
+      );
+    }
+    return true;
+  }
+  throw new ProviderExecutionFinalizationError(
+    `Unsupported Provider Attempt contract version: ${input.contractVersion}`
+  );
+}
+
+async function assertCurrentAiStoryTerminalEvidence(input: {
+  readonly tx: Transaction;
+  readonly attempt: typeof schema.providerAttempts.$inferSelect;
+  readonly finalization: ProviderExecutionFinalizationInput;
+  readonly result: CanonicalProviderResult;
+}): Promise<void> {
+  const { tx, attempt, finalization, result } = input;
+  const providerRequestId = result.providerMetadata.providerRequestId;
+  if (
+    attempt.providerMetadata?.source !== "ai-story-worker-pre-adapter-authority" ||
+    !providerRequestId ||
+    attempt.providerRequestId !== providerRequestId
+  ) {
+    throw new ProviderExecutionFinalizationError(
+      "Current AI Story Provider Attempt lacks accepted task authority"
+    );
+  }
+
+  const bindingRows = await tx
+    .select()
+    .from(schema.aiStoryProviderAttemptCompiledBindings)
+    .where(
+      eq(
+        schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+        attempt.attemptId
+      )
+    );
+  const binding = bindingRows.length === 1
+    ? AiStoryProviderAttemptBindingSchema.parse(bindingRows[0]!.binding)
+    : null;
+  if (
+    !binding ||
+    binding.providerExecutionId !== finalization.executionId ||
+    binding.providerTaskId !== providerRequestId ||
+    !["SUBMITTED", "RUNNING", "PROVIDER_RESULT_READY", "POST_GENERATION_QC_PENDING", "SUCCEEDED"].includes(
+      binding.status
+    )
+  ) {
+    throw new ProviderExecutionFinalizationError(
+      "AI Story compiled/Attempt/task binding conflicts with finalization"
+    );
+  }
+
+  const [compiled] = await tx
+    .select()
+    .from(schema.aiStoryCompiledProviderRequests)
+    .where(
+      eq(
+        schema.aiStoryCompiledProviderRequests.compiledRequestId,
+        binding.compiledRequestId
+      )
+    )
+    .limit(1);
+  if (
+    !compiled ||
+    compiled.sceneExecutionId !== binding.sceneExecutionId ||
+    compiled.requestFingerprint !== binding.requestFingerprint ||
+    compiled.orgId !== binding.orgId ||
+    compiled.workspaceId !== binding.workspaceId ||
+    compiled.providerId !== attempt.providerId ||
+    compiled.modelId !== attempt.modelVersion
+  ) {
+    throw new ProviderExecutionFinalizationError(
+      "AI Story compiled request authority conflicts with finalization"
+    );
+  }
+
+  const [reservation] = binding.commercialReservationId
+    ? await tx
+        .select()
+        .from(schema.certificationCommercialReservations)
+        .where(
+          eq(
+            schema.certificationCommercialReservations.certificationReservationId,
+            binding.commercialReservationId
+          )
+        )
+        .limit(1)
+    : [];
+  if (
+    !reservation ||
+    reservation.executionIdentity !== attempt.attemptId ||
+    reservation.orgId !== binding.orgId ||
+    reservation.workspaceId !== binding.workspaceId ||
+    reservation.status !== "SETTLED" ||
+    reservation.settledCostUsd === null
+  ) {
+    throw new ProviderExecutionFinalizationError(
+      "AI Story reservation authority conflicts with finalization"
+    );
+  }
+
+  const observations = await tx
+    .select()
+    .from(schema.aiStoryWorkerAttemptObservations)
+    .where(
+      eq(
+        schema.aiStoryWorkerAttemptObservations.providerAttemptId,
+        attempt.attemptId
+      )
+    );
+  const accepted = observations.filter(
+    (row) => row.observationKind === "ACCEPTED"
+  );
+  if (
+    accepted.length !== 1 ||
+    accepted[0]!.providerExecutionId !== finalization.executionId ||
+    accepted[0]!.providerRequestId !== providerRequestId ||
+    accepted[0]!.outboxJobId !== finalization.jobId ||
+    observations.some(
+      (row) =>
+        row.reconciliationRequired ||
+        (row.providerRequestId && row.providerRequestId !== providerRequestId) ||
+        ["NOT_ACCEPTED", "ACCEPTANCE_UNKNOWN"].includes(row.observationKind)
+    )
+  ) {
+    throw new ProviderExecutionFinalizationError(
+      "AI Story Adapter observations conflict with successful finalization"
+    );
+  }
+
+  const workerRows = await tx
+    .select()
+    .from(schema.aiStoryWorkerExecutionResults)
+    .where(
+      eq(
+        schema.aiStoryWorkerExecutionResults.providerAttemptId,
+        attempt.attemptId
+      )
+    );
+  const worker = workerRows.length === 1
+    ? WorkerExecutionResultSchema.parse(workerRows[0]!.result)
+    : null;
+  if (
+    !worker ||
+    worker.providerExecutionId !== finalization.executionId ||
+    worker.providerAttemptId !== attempt.attemptId ||
+    worker.providerRequestId !== providerRequestId ||
+    worker.outboxJobId !== finalization.jobId ||
+    worker.providerId !== attempt.providerId ||
+    worker.workerState !== "TERMINAL_SUCCESS" ||
+    worker.acceptanceClassification !== "ACCEPTED" ||
+    worker.canonicalProviderState !== "SUCCEEDED" ||
+    worker.reconciliationRequired ||
+    worker.normalizedResultReference !== result.resultReference
+  ) {
+    throw new ProviderExecutionFinalizationError(
+      "AI Story Worker Result conflicts with successful finalization"
+    );
+  }
 }
 
 export class ProviderExecutionFinalizationRepository {
@@ -155,17 +336,22 @@ export class ProviderExecutionFinalizationRepository {
           "Provider attempt does not belong to execution"
         );
       }
-      if (attempt.status !== "SUCCEEDED") {
-        throw new ProviderExecutionFinalizationError(
-          "Only a successful Provider attempt may be finalized"
-        );
+      const usesCurrentAiStoryEvidence =
+        providerAttemptUsesCurrentAiStoryTerminalEvidence(attempt);
+      if (usesCurrentAiStoryEvidence) {
+        await assertCurrentAiStoryTerminalEvidence({
+          tx,
+          attempt,
+          finalization: input,
+          result,
+        });
       }
       if (
         result.executionId !== input.executionId ||
         result.providerAttemptId !== input.attemptId ||
         execution.requestHash !== result.requestHash ||
         attempt.requestHash !== result.requestHash ||
-        attempt.responseHash !== result.responseHash ||
+        (!usesCurrentAiStoryEvidence && attempt.responseHash !== result.responseHash) ||
         attempt.providerId !== input.providerId ||
         attempt.providerId !== result.providerMetadata.providerId ||
         attempt.providerVersion !== result.providerMetadata.providerVersion ||
