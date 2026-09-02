@@ -54,6 +54,7 @@ export type GeneratedSceneReviewLockSnapshot = {
   readonly results: readonly (typeof schema.aiStorySceneResults.$inferSelect)[];
   readonly correlations: readonly (typeof schema.aiStorySceneSchedulingCorrelations.$inferSelect)[];
   readonly supersededCorrelationIds: ReadonlySet<string>;
+  readonly terminalWorkerExecutionIds: ReadonlySet<string>;
   readonly providerExecutions: ReadonlyMap<
     string,
     typeof schema.providerExecutions.$inferSelect
@@ -491,6 +492,24 @@ async function loadLockedSnapshot(
           .select()
           .from(schema.providerExecutions)
           .where(inArray(schema.providerExecutions.executionId, executionIds));
+  const workerResults =
+    executionIds.length === 0
+      ? []
+      : await tx
+          .select({
+            providerExecutionId:
+              schema.aiStoryWorkerExecutionResults.providerExecutionId,
+            workerState: schema.aiStoryWorkerExecutionResults.workerState,
+            reconciliationRequired:
+              schema.aiStoryWorkerExecutionResults.reconciliationRequired,
+          })
+          .from(schema.aiStoryWorkerExecutionResults)
+          .where(
+            inArray(
+              schema.aiStoryWorkerExecutionResults.providerExecutionId,
+              executionIds
+            )
+          );
 
   return {
     sceneExecutionId: scene.id,
@@ -507,6 +526,16 @@ async function loadLockedSnapshot(
     supersededCorrelationIds: new Set(
       supersessions.map((row) => row.sourceCorrelationId)
     ),
+    terminalWorkerExecutionIds: new Set(
+      workerResults
+        .filter(
+          (row) =>
+            !row.reconciliationRequired &&
+            (row.workerState === "TERMINAL_SUCCESS" ||
+              row.workerState === "TERMINAL_FAILURE")
+        )
+        .map((row) => row.providerExecutionId)
+    ),
     providerExecutions: new Map(executions.map((row) => [row.executionId, row])),
     attemptCount: new Set(attemptRows.map((row) => row.attemptId)).size,
     maxAttempts: resolveAiStorySceneMaxAttempts(),
@@ -518,6 +547,7 @@ export function snapshotHasInFlightProviderExecution(
 ): boolean {
   for (const correlation of snapshot.correlations) {
     if (snapshot.supersededCorrelationIds?.has(correlation.correlationId)) continue;
+    if (snapshot.terminalWorkerExecutionIds?.has(correlation.providerExecutionId)) continue;
     const execution = snapshot.providerExecutions.get(correlation.providerExecutionId);
     if (!execution) return true;
     if (execution.status !== "SUCCEEDED" && execution.status !== "TERMINAL_FAILURE") {
