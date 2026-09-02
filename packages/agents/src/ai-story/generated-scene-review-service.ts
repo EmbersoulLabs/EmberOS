@@ -36,6 +36,8 @@ import {
   SceneSchedulingCoordinator,
   SceneSchedulingError,
 } from "./scene-scheduling-coordinator";
+import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
+import { resolveStagedReleaseCommercialAuthorization } from "./resolve-staged-release-commercial-authorization";
 
 export { GeneratedSceneReviewError };
 
@@ -164,6 +166,10 @@ export class GeneratedSceneReviewService {
         getRevision(id: string): Promise<SceneAttemptInputRevisionFact | null>;
         markAuthorizationConsumed(id: string): Promise<SceneRetryAuthorizationFact>;
       };
+      readonly commercialAuthorizationService?: Pick<
+        CommercialAuthorizationService,
+        "authorizeExecutionPlanExecute"
+      >;
     } = {}
   ) {}
 
@@ -439,11 +445,26 @@ export class GeneratedSceneReviewService {
         );
       }
 
+      const nonCommercialOps =
+        input.executionAuthorization.accessMode === "ops" &&
+        input.executionAuthorization.settlementMode === "none";
+      const commercialAuthorizationId = nonCommercialOps
+        ? undefined
+        : await resolveStagedReleaseCommercialAuthorization({
+            executionPlanId: input.executionPlanId,
+            orgId: fact.ownership.orgId,
+            workspaceId: fact.ownership.workspaceId,
+            executionAuthorization: input.executionAuthorization,
+            authorizedAt: new Date(this.nowIso()),
+            service: this.dependencies.commercialAuthorizationService,
+          });
+
       try {
         await this.schedulingCoordinator.scheduleAuthorizedScene({
           executionPlanId: input.executionPlanId,
           sceneExecutionId: input.sceneExecutionId,
           runtimeAuthorizationId: fact.runtimeAuthorizationId,
+          commercialAuthorizationId,
           executionAuthorization: input.executionAuthorization,
           actorUserId: input.actorUserId,
           retryGeneration,
