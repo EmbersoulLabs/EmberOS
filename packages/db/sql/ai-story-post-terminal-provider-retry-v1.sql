@@ -76,9 +76,11 @@ CREATE TRIGGER ai_story_post_terminal_retry_immutable_v1
 
 ALTER TABLE ai_story_post_terminal_provider_retry_authorizations ENABLE ROW LEVEL SECURITY;
 DO $$ BEGIN
-  DROP POLICY IF EXISTS ai_story_post_terminal_retry_service_role
-    ON ai_story_post_terminal_provider_retry_authorizations;
-  CREATE POLICY ai_story_post_terminal_retry_service_role
-    ON ai_story_post_terminal_provider_retry_authorizations
-    FOR ALL TO service_role USING (true) WITH CHECK (true);
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    DROP POLICY IF EXISTS ai_story_post_terminal_retry_service_role
+      ON ai_story_post_terminal_provider_retry_authorizations;
+    CREATE POLICY ai_story_post_terminal_retry_service_role
+      ON ai_story_post_terminal_provider_retry_authorizations
+      FOR ALL TO service_role USING (true) WITH CHECK (true);
+  END IF;
 END $$;
