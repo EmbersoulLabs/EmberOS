@@ -172,4 +172,15 @@ describe("AI Story post-terminal Provider retry authority", () => {
       worker.indexOf("claimAuthorizedSupersessionSuccessorDispatch")
     );
   });
+
+  it("derives the retry compilation clock from immutable human authorization", () => {
+    const coordinator = readFileSync(
+      "packages/agents/src/ai-story/scene-scheduling-coordinator.ts",
+      "utf8"
+    );
+    expect(coordinator).toContain(
+      "input.postTerminalRetryAuthorization?.authorizedAt ??"
+    );
+    expect(coordinator).toContain("acceptedRoutingDecision.decidedAt");
+  });
 });

@@ -737,7 +737,13 @@ export class SceneSchedulingCoordinator {
           );
       // Derive schedule clocks from the authoritative routing decision time so
       // concurrent equivalent schedules converge on identical identity payloads.
-      const scheduledAt = acceptedRoutingDecision.decidedAt;
+      // A post-terminal retry is a new append-only execution generation. Its
+      // immutable compiled-request identity must be derived from the retry
+      // authorization clock, not the original routing decision clock; reusing
+      // the latter would collide with the already-executed source request.
+      const scheduledAt =
+        input.postTerminalRetryAuthorization?.authorizedAt ??
+        acceptedRoutingDecision.decidedAt;
       const timeoutDeadline = new Date(
         Date.parse(scheduledAt) + 600_000
       ).toISOString();
