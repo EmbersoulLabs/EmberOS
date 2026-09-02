@@ -131,6 +131,23 @@ export async function cleanupPr32Tenant(
       );
     }
   }
+  if (await sql`select to_regclass('public.certification_commercial_reservations') as name`.then((rows) => Boolean(rows[0]?.name))) {
+    await sql`
+      DELETE FROM certification_commercial_events
+      WHERE certification_scope_id IN (
+        SELECT certification_scope_id FROM certification_commercial_scopes
+        WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+      )
+    `;
+    await sql`
+      DELETE FROM certification_commercial_reservations
+      WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+    `;
+    await sql`
+      DELETE FROM certification_commercial_scopes
+      WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}
+    `;
+  }
   // Commercial facts are RESTRICT children of the shared deterministic tenant.
   // Delete only rows owned by this fixture before runtime and tenant parents.
   await sql`
