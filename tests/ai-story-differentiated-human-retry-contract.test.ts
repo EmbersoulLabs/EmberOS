@@ -211,5 +211,11 @@ describe("differentiated human retry contract", () => {
     expect(postTerminalClock).toBeGreaterThan(-1);
     expect(reviewRetryClock).toBeGreaterThan(postTerminalClock);
     expect(baseClock).toBeGreaterThan(reviewRetryClock);
+    expect(coordinator).toContain("retryAuthorityHash: instructionHash");
+    const requestBuilder = readFileSync(
+      "packages/agents/src/ai-story/canonical-scene-provider-request.ts",
+      "utf8"
+    );
+    expect(requestBuilder).toContain("retryAuthorityHash: input.retryAuthorityHash");
   });
 });
