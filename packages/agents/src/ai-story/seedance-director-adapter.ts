@@ -1,7 +1,6 @@
 import {
   AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION,
   AI_STORY_SEEDANCE_MAPPING_VERSION,
-  AI_STORY_SEEDANCE_REFERENCE_BUDGET,
   AI_STORY_SEEDANCE_TRANSLATION_MATRIX,
   AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION,
   AiStorySceneExecutionPackageSchema,
@@ -183,20 +182,26 @@ function requirementByAuthority(pkg: AiStorySceneExecutionPackage): Map<string, 
 
 function selectReferences(pkg: AiStorySceneExecutionPackage): { selected: AiStoryExecutionVisualReference[]; degradations: SeedanceAdapterDegradation[] } {
   const requirements = requirementByAuthority(pkg);
-  const grouped = new Map<string, AiStoryExecutionVisualReference[]>();
   for (const reference of pkg.visualReferences) {
     const imageCompatible = !reference.mediaType || reference.mediaType.toLowerCase().startsWith("image/");
-    const semanticRole = reference.semanticRole ?? (reference.firstFrame ? "FIRST_FRAME" : imageCompatible ? "PROVIDER_IMAGE_REFERENCE" : "STORY_CONTINUITY_REFERENCE");
+    const semanticRole = reference.semanticRole ?? (reference.firstFrame
+      ? "FIRST_FRAME"
+      : imageCompatible
+        ? "STORY_VISUAL_REFERENCE"
+        : "STORY_CONTINUITY_REFERENCE");
     if ((semanticRole === "FIRST_FRAME" || semanticRole === "PROVIDER_IMAGE_REFERENCE") && !imageCompatible) {
       throw new SeedanceDirectorAdapterError("REFERENCE_MEDIA_TYPE_UNSUPPORTED", `Reference ${reference.referenceId} assigns a Provider image role to non-image media`);
     }
-    if (semanticRole === "STORY_CONTINUITY_REFERENCE") continue;
+    if (semanticRole === "PROVIDER_IMAGE_REFERENCE" && pkg.generation.mode === "FIRST_FRAME_IMAGE_TO_VIDEO") {
+      throw new SeedanceDirectorAdapterError(
+        "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID",
+        "FIRST_FRAME_IMAGE_TO_VIDEO forbids reference_image inputs"
+      );
+    }
+    if (semanticRole === "STORY_VISUAL_REFERENCE" || semanticRole === "STORY_CONTINUITY_REFERENCE") continue;
     if (!requirements.has(reference.authorityId) && reference.authorityType !== "OTHER") {
       throw new SeedanceDirectorAdapterError("REFERENCE_AUTHORITY_UNKNOWN", `Reference ${reference.referenceId} does not resolve to a Scene authority`);
     }
-    const list = grouped.get(reference.authorityId) ?? [];
-    list.push(reference);
-    grouped.set(reference.authorityId, list);
   }
 
   if (pkg.generation.mode === "TEXT_TO_VIDEO") {
@@ -208,40 +213,44 @@ function selectReferences(pkg: AiStorySceneExecutionPackage): { selected: AiStor
     };
   }
 
-  const chosen: AiStoryExecutionVisualReference[] = [];
+  const firstFrames = pkg.visualReferences.filter((reference) =>
+    (reference.semanticRole ?? (reference.firstFrame ? "FIRST_FRAME" : undefined)) === "FIRST_FRAME"
+  );
+  if (firstFrames.length !== 1) {
+    throw new SeedanceDirectorAdapterError(
+      "FIRST_FRAME_CARDINALITY",
+      "FIRST_FRAME_IMAGE_TO_VIDEO requires exactly one selected first frame"
+    );
+  }
+  const firstFrame = firstFrames[0]!;
+  if (firstFrame.mediaType && !firstFrame.mediaType.toLowerCase().startsWith("image/")) {
+    throw new SeedanceDirectorAdapterError(
+      "REFERENCE_MEDIA_TYPE_UNSUPPORTED",
+      "FIRST_FRAME_IMAGE_TO_VIDEO first frame must use image media"
+    );
+  }
+  if (!requirements.has(firstFrame.authorityId) && firstFrame.authorityType !== "OTHER") {
+    throw new SeedanceDirectorAdapterError(
+      "REFERENCE_AUTHORITY_UNKNOWN",
+      `Reference ${firstFrame.referenceId} does not resolve to a Scene authority`
+    );
+  }
   const degradations: SeedanceAdapterDegradation[] = [];
-  for (const [authorityId, requirement] of [...requirements.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    if (requirement === "NONE") continue;
-    const candidates = [...(grouped.get(authorityId) ?? [])].sort((left, right) => right.selectionPriority - left.selectionPriority || left.assetId.localeCompare(right.assetId));
-    if (!candidates[0]) {
-      if (requirement === "REQUIRED") throw new SeedanceDirectorAdapterError("REQUIRED_VISUAL_AUTHORITY_MISSING", `Required visual authority ${authorityId} has no authorized reference Asset`);
-      degradations.push({ code: "PREFERRED_REFERENCE_OMITTED", authorityId, safeEvidence: "Preferred visual authority had no authorized reference Asset" });
-      continue;
+  for (const [authorityId, requirement] of requirements) {
+    if (authorityId === firstFrame.authorityId || requirement === "NONE") continue;
+    if (requirement === "REQUIRED") {
+      throw new SeedanceDirectorAdapterError(
+        "REQUIRED_VISUAL_AUTHORITY_MISSING",
+        `Required visual authority ${authorityId} is not represented by the canonical first frame`
+      );
     }
-    if (candidates[0].authorityClass !== requirement) throw new SeedanceDirectorAdapterError("REFERENCE_AUTHORITY_CLASS_MISMATCH", `Reference classification for ${authorityId} does not match canonical visual identity requirement`);
-    chosen.push(candidates[0]);
-    for (const omitted of candidates.slice(1)) degradations.push({ code: omitted.authorityClass === "OPTIONAL" ? "OPTIONAL_REFERENCE_OMITTED" : "PREFERRED_REFERENCE_OMITTED", authorityId, safeEvidence: "Redundant same-authority reference omitted by deterministic priority" });
+    degradations.push({
+      code: "PREFERRED_REFERENCE_OMITTED",
+      authorityId,
+      safeEvidence: "FIRST_FRAME_IMAGE_TO_VIDEO retains supporting Story visuals as lineage-only evidence",
+    });
   }
-  for (const reference of pkg.visualReferences.filter((candidate) => {
-    if (candidate.authorityType !== "OTHER") return false;
-    const imageCompatible = !candidate.mediaType || candidate.mediaType.toLowerCase().startsWith("image/");
-    return (candidate.semanticRole ?? (candidate.firstFrame ? "FIRST_FRAME" : imageCompatible ? "PROVIDER_IMAGE_REFERENCE" : "STORY_CONTINUITY_REFERENCE")) !== "STORY_CONTINUITY_REFERENCE";
-  })) chosen.push(reference);
-
-  const required = chosen.filter((reference) => reference.authorityClass === "REQUIRED");
-  if (required.length > AI_STORY_SEEDANCE_REFERENCE_BUDGET) throw new SeedanceDirectorAdapterError("REQUIRED_REFERENCE_OVER_BUDGET", `Required references exceed the certified shared budget of ${AI_STORY_SEEDANCE_REFERENCE_BUDGET}`);
-  const ordered = [...chosen].sort((left, right) => {
-    const rank = { REQUIRED: 0, PREFERRED: 1, OPTIONAL: 2 } as const;
-    return rank[left.authorityClass] - rank[right.authorityClass] || right.selectionPriority - left.selectionPriority || left.assetId.localeCompare(right.assetId);
-  });
-  const selected = ordered.slice(0, AI_STORY_SEEDANCE_REFERENCE_BUDGET);
-  for (const omitted of ordered.slice(AI_STORY_SEEDANCE_REFERENCE_BUDGET)) {
-    if (omitted.authorityClass === "REQUIRED") throw new SeedanceDirectorAdapterError("REQUIRED_REFERENCE_OVER_BUDGET", "A required reference would be dropped");
-    degradations.push({ code: omitted.authorityClass === "PREFERRED" ? "PREFERRED_REFERENCE_OMITTED" : "OPTIONAL_REFERENCE_OMITTED", authorityId: omitted.authorityId, safeEvidence: "Reference omitted after deterministic shared-budget allocation" });
-  }
-  const firstFrames = selected.filter((reference) => reference.firstFrame);
-  if (firstFrames.length !== 1) throw new SeedanceDirectorAdapterError("FIRST_FRAME_CARDINALITY", "FIRST_FRAME_IMAGE_TO_VIDEO requires exactly one selected first frame");
-  return { selected, degradations };
+  return { selected: [firstFrame], degradations };
 }
 
 function buildSemanticPlan(pkg: AiStorySceneExecutionPackage, degradations: SeedanceAdapterDegradation[], selectedReferences: readonly AiStoryExecutionVisualReference[]): AiStorySeedanceSemanticPlan {

@@ -1,6 +1,8 @@
 import { and, desc, eq, gt, isNull, lte, or, sql } from "drizzle-orm";
 import {
   AiStoryCompiledProviderRequestSchema,
+  AiStoryProviderWireModeContractError,
+  assertAiStoryCompiledProviderWireModeCompatibility,
   CERTIFICATION_COMMERCIAL_CONTRACT_VERSION,
   CERTIFICATION_COMMERCIAL_REASON,
   CertificationCommercialReservationSchema,
@@ -46,6 +48,7 @@ export type CertificationCommercialErrorCode =
   | "CERTIFICATION_SCOPE_INACTIVE"
   | "PROVIDER_USD_PRICE_MISSING"
   | "PROVIDER_USD_PRICE_DIVERGENT"
+  | "PROVIDER_REQUEST_CONTRACT_INVALID"
   | "CERTIFICATION_BUDGET_EXCEEDED"
   | "CERTIFICATION_SUBMISSION_QUOTA_EXCEEDED"
   | "CERTIFICATION_SCOPE_MISMATCH"
@@ -479,6 +482,17 @@ export class CertificationCommercialAuthorityService {
         "PROVIDER_USD_PRICE_MISSING",
         "Compiled Provider request binding conflicts with Worker dispatch authority"
       );
+    }
+    try {
+      assertAiStoryCompiledProviderWireModeCompatibility(request);
+    } catch (error) {
+      if (error instanceof AiStoryProviderWireModeContractError) {
+        throw new CertificationCommercialError(
+          "PROVIDER_REQUEST_CONTRACT_INVALID",
+          error.message
+        );
+      }
+      throw error;
     }
     const pricingRule = await this.resolvePrice({
       providerKey: "BYTEPLUS_MODELARK",

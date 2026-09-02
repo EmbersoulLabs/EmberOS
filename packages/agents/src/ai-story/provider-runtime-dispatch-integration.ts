@@ -9,6 +9,7 @@ import {
   AiStoryPostGenerationQcInputSchema,
   AiStoryProviderAttemptBindingSchema,
   AiStoryProviderRuntimeJobSchema,
+  assertAiStoryCompiledProviderWireModeCompatibility,
   type AiStoryCompiledProviderRequest,
   type AiStoryPostGenerationQcInput,
   type AiStoryProviderAttemptBinding,
@@ -159,7 +160,11 @@ export function compileImmutableSeedanceRequest(input: {
     })),
     storyReferenceMappings: input.package.visualReferences.map((reference) => {
       const imageCompatible = !reference.mediaType || reference.mediaType.toLowerCase().startsWith("image/");
-      const semanticRole = reference.semanticRole ?? (reference.firstFrame ? "FIRST_FRAME" as const : imageCompatible ? "PROVIDER_IMAGE_REFERENCE" as const : "STORY_CONTINUITY_REFERENCE" as const);
+      const semanticRole = reference.semanticRole ?? (reference.firstFrame
+        ? "FIRST_FRAME" as const
+        : imageCompatible
+          ? "STORY_VISUAL_REFERENCE" as const
+          : "STORY_CONTINUITY_REFERENCE" as const);
       const emitted = compiled.selectedReferences.some((candidate) => candidate.referenceId === reference.referenceId);
       return {
         referenceId: reference.referenceId,
@@ -190,10 +195,12 @@ export function compileImmutableSeedanceRequest(input: {
     dispatchReady: true as const,
     compiledAt,
   };
-  return AiStoryCompiledProviderRequestSchema.parse({
+  const request = AiStoryCompiledProviderRequestSchema.parse({
     ...withoutFingerprint,
     requestFingerprint: computeAiStoryCompiledRequestFingerprint(withoutFingerprint),
   });
+  assertAiStoryCompiledProviderWireModeCompatibility(request);
+  return request;
 }
 
 export type PersistedSceneProviderCompilationAuthority = {
@@ -292,12 +299,12 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     const semanticRole = assetId === firstFrameAssetId
       ? "FIRST_FRAME" as const
       : imageCompatible
-        ? "PROVIDER_IMAGE_REFERENCE" as const
+        ? "STORY_VISUAL_REFERENCE" as const
         : "STORY_CONTINUITY_REFERENCE" as const;
     if (semanticRole === "FIRST_FRAME" && !imageCompatible) {
       throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "FIRST_FRAME must use image media");
     }
-    const providerEmitted = semanticRole !== "STORY_CONTINUITY_REFERENCE";
+    const providerEmitted = semanticRole === "FIRST_FRAME";
     return {
       referenceId: deterministicPersistenceUuid("ai-story-compiled-reference", { sceneExecutionId: input.intent.identity.sceneExecutionId, assetId, index }),
       assetId,
@@ -448,10 +455,12 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     dispatchReady: true as const,
     compiledAt: input.compiledAt,
   };
-  return AiStoryCompiledProviderRequestSchema.parse({
+  const request = AiStoryCompiledProviderRequestSchema.parse({
     ...withoutFingerprint,
     requestFingerprint: computeAiStoryCompiledRequestFingerprint(withoutFingerprint),
   });
+  assertAiStoryCompiledProviderWireModeCompatibility(request);
+  return request;
 }
 
 export type AiStoryRuntimeFreshness = {
