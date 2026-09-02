@@ -9,7 +9,13 @@
  * }
  */
 import { z } from "zod";
-import { AiStoryCompiledProviderRequestSchema, AiStorySceneExecutionPackageSchema, type ExecutionEnvelope } from "@ceo-agent/shared";
+import {
+  AiStoryCompiledProviderRequestSchema,
+  AiStoryProviderWireModeContractError,
+  AiStorySceneExecutionPackageSchema,
+  assertAiStoryCompiledProviderWireModeCompatibility,
+  type ExecutionEnvelope,
+} from "@ceo-agent/shared";
 import {
   SEEDANCE_MAX_REFERENCE_IMAGES,
   SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE,
@@ -104,10 +110,14 @@ export type SeedanceModelArkCreateRequest = {
 export type SeedanceGenerationRequest = SeedanceModelArkCreateRequest;
 
 export class SeedanceMappingError extends Error {
-  readonly code = "BUSINESS_VALIDATION_FAILED";
   readonly status = 400;
 
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code:
+      | "BUSINESS_VALIDATION_FAILED"
+      | "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID" = "BUSINESS_VALIDATION_FAILED"
+  ) {
     super(message);
     this.name = "SeedanceMappingError";
   }
@@ -215,6 +225,16 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   }
   if (compiledRequestResult.success && !validateAiStoryCompiledRequestFingerprint(compiledRequestResult.data)) {
     throw new SeedanceMappingError("Immutable compiled Provider request fingerprint mismatch");
+  }
+  if (compiledRequestResult.success) {
+    try {
+      assertAiStoryCompiledProviderWireModeCompatibility(compiledRequestResult.data);
+    } catch (error) {
+      if (error instanceof AiStoryProviderWireModeContractError) {
+        throw new SeedanceMappingError(error.message, error.code);
+      }
+      throw error;
+    }
   }
   const packageResult = AiStorySceneExecutionPackageSchema.safeParse(payloadRaw);
   if (
@@ -427,6 +447,16 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
     if (firstFrames.length !== 1) {
       throw new SeedanceMappingError(
         "Seedance FIRST_FRAME_I2V requires exactly one canonical first frame"
+      );
+    }
+    const referenceImages = content.filter(
+      (item): item is SeedanceModelArkImageContent =>
+        item.type === "image_url" && item.role === "reference_image"
+    );
+    if (referenceImages.length !== 0 || content.filter((item) => item.type === "image_url").length !== 1) {
+      throw new SeedanceMappingError(
+        "Seedance FIRST_FRAME_IMAGE_TO_VIDEO forbids reference_image inputs",
+        "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID"
       );
     }
   }

@@ -54,6 +54,7 @@ export const AiStoryCompiledReferenceMappingSchema = z.object({
 export const AI_STORY_COMPILED_REFERENCE_ROLES = [
   "FIRST_FRAME",
   "PROVIDER_IMAGE_REFERENCE",
+  "STORY_VISUAL_REFERENCE",
   "STORY_CONTINUITY_REFERENCE",
 ] as const;
 
@@ -79,8 +80,8 @@ export const AiStoryCompiledStoryReferenceSchema = z.object({
   if (value.semanticRole === "PROVIDER_IMAGE_REFERENCE" && (!image || value.providerWireRole !== "reference_image" || !value.providerEmitted)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Provider image references must be emitted image inputs" });
   }
-  if (value.semanticRole === "STORY_CONTINUITY_REFERENCE" && (value.providerEmitted || value.providerWireRole)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: "Story continuity references are lineage-only" });
+  if (["STORY_VISUAL_REFERENCE", "STORY_CONTINUITY_REFERENCE"].includes(value.semanticRole) && (value.providerEmitted || value.providerWireRole)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Story-only references are lineage-only" });
   }
 });
 
@@ -151,6 +152,50 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
 export type AiStoryCompiledProviderRequest = z.infer<
   typeof AiStoryCompiledProviderRequestSchema
 >;
+
+export const SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_ERROR =
+  "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID" as const;
+
+export class AiStoryProviderWireModeContractError extends Error {
+  readonly code = SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_ERROR;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "AiStoryProviderWireModeContractError";
+  }
+}
+
+/**
+ * Provider-mode compatibility is validated independently from Story lineage.
+ * V1 first-frame I2V is a one-image wire mode; additional Story images remain
+ * immutable lineage but cannot be projected as `reference_image`.
+ */
+export function assertAiStoryCompiledProviderWireModeCompatibility(
+  request: AiStoryCompiledProviderRequest
+): void {
+  if (request.generationMode !== "FIRST_FRAME_IMAGE_TO_VIDEO") return;
+  const firstFrames = request.referenceMappings.filter(
+    (reference) => reference.wireRole === "first_frame"
+  );
+  const referenceImages = request.referenceMappings.filter(
+    (reference) => reference.wireRole === "reference_image"
+  );
+  if (
+    request.referenceMappings.length !== 1 ||
+    firstFrames.length !== 1 ||
+    referenceImages.length !== 0
+  ) {
+    throw new AiStoryProviderWireModeContractError(
+      "FIRST_FRAME_IMAGE_TO_VIDEO requires exactly one first_frame and forbids reference_image inputs"
+    );
+  }
+  const firstFrame = firstFrames[0]!;
+  if (firstFrame.mediaType && !firstFrame.mediaType.toLowerCase().startsWith("image/")) {
+    throw new AiStoryProviderWireModeContractError(
+      "FIRST_FRAME_IMAGE_TO_VIDEO first_frame must use image media"
+    );
+  }
+}
 
 export const AiStoryProviderAttemptBindingSchema = z.object({
   providerAttemptId: Id,

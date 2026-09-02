@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertAiStoryCompiledProviderWireModeCompatibility,
+} from "@ceo-agent/shared";
+import {
+  computeAiStoryCompiledRequestFingerprint,
   compileImmutableSeedanceRequestFromSceneCompilation,
   validateAiStoryCompiledRequestFingerprint,
 } from "../packages/agents/src/ai-story/provider-runtime-dispatch-integration";
@@ -123,11 +127,43 @@ describe("compiled Provider request scheduling authority", () => {
       ],
     });
     expect(compiled.storyReferenceMappings).toHaveLength(3);
-    expect(compiled.referenceMappings.map((reference) => reference.assetId)).toEqual([firstFrame, supportingImage]);
+    expect(compiled.referenceMappings.map((reference) => reference.assetId)).toEqual([firstFrame]);
+    expect(compiled.storyReferenceMappings?.find((reference) => reference.assetId === supportingImage)).toMatchObject({
+      semanticRole: "STORY_VISUAL_REFERENCE",
+      providerEmitted: false,
+      mediaType: "image/jpeg",
+    });
     expect(compiled.storyReferenceMappings?.find((reference) => reference.assetId === continuityVideo)).toMatchObject({
       semanticRole: "STORY_CONTINUITY_REFERENCE",
       providerEmitted: false,
       mediaType: "video/mp4",
     });
+    expect(() => assertAiStoryCompiledProviderWireModeCompatibility(compiled)).not.toThrow();
+  });
+
+  it("fingerprints wire roles and rejects mixed first-frame/reference-image mode", () => {
+    const valid = compile("I2V");
+    const first = valid.referenceMappings[0]!;
+    const withoutFingerprint = {
+      ...valid,
+      referenceMappings: [
+        first,
+        {
+          ...first,
+          referenceId: "50000000-0000-4000-8000-000000000099",
+          assetId: "50000000-0000-4000-8000-000000000098",
+          wireRole: "reference_image" as const,
+        },
+      ],
+    };
+    const { requestFingerprint: _old, ...hashInput } = withoutFingerprint;
+    const mixed = {
+      ...withoutFingerprint,
+      requestFingerprint: computeAiStoryCompiledRequestFingerprint(hashInput),
+    };
+    expect(mixed.requestFingerprint).not.toBe(valid.requestFingerprint);
+    expect(() => assertAiStoryCompiledProviderWireModeCompatibility(mixed)).toThrowError(
+      expect.objectContaining({ code: "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID" })
+    );
   });
 });
