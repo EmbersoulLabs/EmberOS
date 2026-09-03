@@ -16,6 +16,11 @@ import {
   validateAiStoryPreGenerationQcFingerprint,
 } from "@ceo-agent/shared/server";
 import { integrityHash } from "./scene-execution-compiler";
+import {
+  canonicalSceneSnapshot,
+  projectNarrativeWorldState,
+  resolveCanonicalSceneActiveIntent,
+} from "./active-intent-world-state";
 
 export const SEEDANCE_CERTIFIED_CAMERA_PROMPT_SEMANTICS = Object.freeze({
   LOCKED: "locked camera",
@@ -255,24 +260,26 @@ function selectReferences(pkg: AiStorySceneExecutionPackage): { selected: AiStor
 
 function buildSemanticPlan(pkg: AiStorySceneExecutionPackage, degradations: SeedanceAdapterDegradation[], selectedReferences: readonly AiStoryExecutionVisualReference[]): AiStorySeedanceSemanticPlan {
   const scene = pkg.scene;
+  const activeIntent = resolveCanonicalSceneActiveIntent(scene);
+  const worldState = projectNarrativeWorldState([canonicalSceneSnapshot(scene)], scene.sceneId);
   const shot = pkg.directorDirection.shots[0]!;
   const camera = SEEDANCE_CERTIFIED_CAMERA_PROMPT_SEMANTICS[shot.cameraFamily as keyof typeof SEEDANCE_CERTIFIED_CAMERA_PROMPT_SEMANTICS];
   if (!camera && pkg.generation.cameraMappingRequirement === "REQUIRED") throw new SeedanceDirectorAdapterError("CAMERA_MAPPING_UNSAFE", `No certified Seedance prompt-semantic mapping exists for ${shot.cameraFamily}`, "DIRECTOR");
   if (!camera) degradations.push({ code: "OPTIONAL_CAMERA_OMITTED", safeEvidence: `Optional unmapped camera family ${shot.cameraFamily} was omitted` });
-  const actions = scene.events.filter((event) => event.type === "ACTION");
+  const activeCastIds = new Set(worldState.charactersPresent);
   const dialogue = scene.events.filter((event) => event.type === "DIALOGUE").map((event) => `Dialogue context only; do not synthesize audio: “${event.line}”`);
   const voiceOver = scene.events.filter((event) => event.type === "VO").map((event) => `Voice-over narrative context only; do not synthesize audio: “${event.line}”`);
   const locationCore = pkg.locationAuthority
     ? [pkg.locationAuthority.facts.identity, pkg.locationAuthority.facts.appearance, ...pkg.locationAuthority.facts.fixedElements, ...pkg.locationAuthority.facts.environmentalCharacteristics]
     : [scene.locationBinding.scope === "EPHEMERAL_ENVIRONMENT" ? scene.locationBinding.environmentDescription : ""];
   const sections = new Map<typeof sectionOrder[number], string[]>([
-    ["SCENE_CONTEXT", [`Order ${scene.order + 1}; role ${scene.sceneRole}; importance ${scene.importance}; time relation ${scene.timeRelation}`, ...scene.continuityFacts]],
-    ["CAST_AUTHORITY", pkg.castAuthorities.flatMap((cast) => [`${cast.displayName}: ${cast.identity}`, `Appearance: ${cast.appearance}`, ...cast.coreContinuityFacts, ...cast.sceneStateFacts])],
-    ["LOCATION_AUTHORITY", [...locationCore, ...Object.entries(scene.locationState).flatMap(([key, value]) => Array.isArray(value) ? value.map((item) => `${key}: ${item}`) : value ? [`${key}: ${value}`] : [])]],
-    ["PRODUCT_AUTHORITY", pkg.productAuthorities.flatMap((product) => [`${product.displayName}: ${product.identityFacts.join("; ")}`, ...product.sceneStateFacts])],
+    ["SCENE_CONTEXT", [`Order ${scene.order + 1}; role ${scene.sceneRole}; importance ${scene.importance}; time relation ${scene.timeRelation}`, `Active location: ${activeIntent.location.label}`, ...activeIntent.continuityRequirements]],
+    ["CAST_AUTHORITY", pkg.castAuthorities.filter((cast) => activeCastIds.has(cast.reference.id)).flatMap((cast) => [`${cast.displayName}: ${cast.identity}`, `Appearance: ${cast.appearance}`, ...cast.coreContinuityFacts, ...cast.sceneStateFacts])],
+    ["LOCATION_AUTHORITY", [`Current location authority: ${worldState.currentLocation.label}`, ...locationCore, ...Object.entries(scene.locationState).flatMap(([key, value]) => Array.isArray(value) ? value.map((item) => `${key}: ${item}`) : value ? [`${key}: ${value}`] : [])]],
+    ["PRODUCT_AUTHORITY", [...pkg.productAuthorities.flatMap((product) => [`${product.displayName}: ${product.identityFacts.join("; ")}`, ...product.sceneStateFacts]), ...worldState.possessions.map((possession) => `Current possession: ${possession.objectId} — ${possession.holder}`)]],
     ["ENTRY_STATE", scene.entryState.map((item) => fact(item.subjectId, item.dimension, item.value))],
-    ["SCENE_PURPOSE", [`${scene.sceneFunction}: ${pkg.directorDirection.servedScriptSceneFunction}`, ...pkg.directorDirection.newAudienceInformation]],
-    ["SCRIPT_ACTION", [...actions.map((event) => event.action), ...dialogue, ...voiceOver]],
+    ["SCENE_PURPOSE", [`${activeIntent.narrativePurpose}: ${pkg.directorDirection.servedScriptSceneFunction}`, ...pkg.directorDirection.newAudienceInformation]],
+    ["SCRIPT_ACTION", [...activeIntent.actions, ...dialogue, ...voiceOver]],
     ["ACTION_PROGRESSION", pkg.motionScenePlan.actionExecutions.flatMap((execution) => [`Start: ${execution.startState.map((item) => fact(item.entityId, item.property, item.value)).join("; ")}`, `Action: ${execution.semanticAction}`, `Path: ${[...execution.actionPath].sort((a, b) => a.order - b.order).map((phase) => phase.semanticPhase).join(" → ")}`, `End: ${execution.endState.map((item) => fact(item.entityId, item.property, item.value)).join("; ")}`])],
     ["REQUIRED_EXIT_STATE", scene.exitState.map((item) => fact(item.subjectId, item.dimension, item.value))],
     ["DIRECTOR_VISUAL_TREATMENT", [`Visual role ${pkg.directorDirection.sceneVisualRole}; shot purpose ${shot.shotPurpose}; shot size ${shot.shotSize}`, shot.cameraIntent]],
@@ -284,7 +291,7 @@ function buildSemanticPlan(pkg: AiStorySceneExecutionPackage, degradations: Seed
     ["ENVIRONMENTAL_MOTION", pkg.motionScenePlan.environmentalMotions.map((item) => `${item.semanticMotion}: ${item.timing}`)],
     ["REQUIRED_EVIDENCE", [...pkg.directorDirection.servedProductEvidence, ...pkg.productAuthorities.flatMap((product) => product.visibleEvidenceGoals)]],
     ["MUST_KEEP", [...scene.mustKeep, ...pkg.castAuthorities.flatMap((cast) => cast.mustKeep), ...pkg.productAuthorities.flatMap((product) => product.mustKeep), ...selectedReferences.map((reference) => `Reference conditioning: ${reference.semanticBinding}`)]],
-    ["MUST_AVOID", [...scene.mustAvoid, ...pkg.productAuthorities.flatMap((product) => product.mustAvoid)]],
+    ["MUST_AVOID", [...activeIntent.mustNotInherit, ...pkg.productAuthorities.flatMap((product) => product.mustAvoid)]],
   ]);
   return AiStorySeedanceSemanticPlanSchema.parse({
     contractVersion: AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION,
