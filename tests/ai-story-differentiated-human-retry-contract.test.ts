@@ -170,16 +170,21 @@ describe("differentiated human retry contract", () => {
         emotion: "calm", durationMs: 4000,
       })],
     });
-    const correction = "Mara carries the same bouquet through an urban walkway while a courier passes naturally in the background.";
+    const correction = JSON.stringify({
+      reason: "INSUFFICIENT_SCENE_DIFFERENTIATION",
+      note: "The result remains in a florist/workbench presentation setting instead of showing Mara carrying the bouquet through an urban walkway.",
+    });
     const revised = applyRetryInputRevision(original as never, revision(), {
       latestHumanReviewCorrection: correction,
     });
     const active = JSON.stringify(revised);
-    expect(revised.purpose).toContain(correction);
-    expect(revised.shots[0]?.information).toContain(correction);
+    expect(revised.purpose).toContain("Latest human review correction governs this retry");
+    expect(revised.purpose).toContain(DIFFERENT.visualRole);
+    expect(revised.shots[0]?.information).toContain(DIFFERENT.shotEmphasis);
     expect(revised.shots[0]?.cameraType).toBe("review-directed retry");
     expect(active).not.toContain("shop owner presenting the bouquet");
     expect(active).not.toContain("workbench presentation");
+    expect(active).not.toContain(correction);
     expect(JSON.stringify(original)).toContain("shop owner presenting the bouquet");
   });
 

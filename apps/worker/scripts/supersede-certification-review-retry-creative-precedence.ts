@@ -42,7 +42,6 @@ async function main() {
   const instructions = applyRetryInputRevision(loaded.instructions, revision, {
     latestHumanReviewCorrection: review.rationale,
   });
-  const activeText = JSON.stringify(instructions).toLowerCase();
   const sourceRequest = loaded.bundle.compiledProviderRequest;
   const referenceIds = (loaded.intent.generationAuthority ?? loaded.instructions.generationAuthority)?.effectiveReferenceIds ?? loaded.intent.referencedAssetIds;
   const referenceAssets = await new AiStoryProviderRuntimeRepository().getReferenceAssetAuthorities({
@@ -68,6 +67,9 @@ async function main() {
     resolution: sourceRequest.structuredRequest.resolution,
     referenceAssets,
   });
+  // Content readiness is a Provider-facing gate, so inspect the exact compiled
+  // prompt rather than the broader instruction object or immutable review prose.
+  const activeText = corrected.compiledPrompt.toLowerCase();
   const readiness = {
     urbanWalkway: /urban[^.]{0,80}walkway|urban pedestrian walkway/.test(activeText),
     maraCarryingBouquet: activeText.includes("mara") && /carr(?:y|ies|ying)[^.]*(?:bouquet)|bouquet[^.]*carr/.test(activeText),
