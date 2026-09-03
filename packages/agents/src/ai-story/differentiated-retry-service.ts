@@ -17,12 +17,17 @@ export function applyRetryInputRevision(
   options: { readonly latestHumanReviewCorrection?: string | null } = {}
 ): AiStorySceneCompiledInstructions {
   const direction = revision.creativeDirection;
-  const correction = options.latestHumanReviewCorrection?.trim();
-  const activePurpose = correction
-    ? `Human review correction: ${correction}\nRetry creative target: ${direction.visualRole}`
+  const hasHumanReviewCorrection = Boolean(options.latestHumanReviewCorrection?.trim());
+  // The immutable review rationale is evidence, not Provider prompt copy. It can
+  // describe the rejected composition (for example "workbench presentation").
+  // Projecting that prose verbatim would reactivate the very instruction the
+  // reviewer rejected. Its presence authorizes the higher-precedence retry
+  // target below; the historical rationale remains in the review ledger.
+  const activePurpose = hasHumanReviewCorrection
+    ? `Latest human review correction governs this retry and overrides conflicting inherited Scene wording.\nRetry creative target: ${direction.visualRole}`
     : direction.visualRole;
-  const activeAction = correction
-    ? `Human review correction: ${correction}\nRetry creative target: ${direction.shotEmphasis}`
+  const activeAction = hasHumanReviewCorrection
+    ? `Latest human review correction governs this retry.\nRetry creative target: ${direction.shotEmphasis}`
     : direction.shotEmphasis;
   const firstShot = instructions.shots[0]!;
   return {
