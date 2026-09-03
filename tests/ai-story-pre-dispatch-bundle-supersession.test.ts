@@ -57,7 +57,17 @@ describe("AI Story append-only pre-dispatch bundle supersession", () => {
     expect(migration).toContain("successor_compiled_request_id");
     expect(migration).toContain("source_dispatch_unique");
     expect(migration).toContain("successor_dispatch_unique");
+    expect(migration).toContain("REVIEW_RETRY_CREATIVE_INSTRUCTION_PRECEDENCE_DEFECT");
     expect(migration).toContain("BEFORE UPDATE OR DELETE");
+  });
+
+  it("scopes paid/result eligibility to the candidate bundle rather than prior Scene history", () => {
+    const repository = readFileSync(
+      "packages/db/src/queries/ai-story-pre-dispatch-bundle-supersession.ts",
+      "utf8"
+    );
+    expect(repository).toContain("result_attempt.execution_id=correlation.provider_execution_id");
+    expect(repository).not.toContain("correlation.scene_execution_id::text,\n                   compiled.compiled_request_id::text");
   });
 
   it("excludes superseded jobs from every Worker selection and recovery path", () => {

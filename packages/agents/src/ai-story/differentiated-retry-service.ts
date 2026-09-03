@@ -13,20 +13,34 @@ import { evaluateProductGroundedCameraPolicy, type ProductVisualAuthorityCertifi
 
 export function applyRetryInputRevision(
   instructions: AiStorySceneCompiledInstructions,
-  revision: SceneAttemptInputRevisionFact
+  revision: SceneAttemptInputRevisionFact,
+  options: { readonly latestHumanReviewCorrection?: string | null } = {}
 ): AiStorySceneCompiledInstructions {
   const direction = revision.creativeDirection;
+  const correction = options.latestHumanReviewCorrection?.trim();
+  const activePurpose = correction
+    ? `Human review correction: ${correction}\nRetry creative target: ${direction.visualRole}`
+    : direction.visualRole;
+  const activeAction = correction
+    ? `Human review correction: ${correction}\nRetry creative target: ${direction.shotEmphasis}`
+    : direction.shotEmphasis;
+  const firstShot = instructions.shots[0]!;
   return {
     ...instructions,
-    purpose: direction.visualRole,
+    purpose: activePurpose,
     transition: direction.cameraInstruction,
-    shots: instructions.shots.map((shot, index) => index === 0 ? {
-      ...shot,
+    // A review retry is a new active creative projection. Preserve the frozen
+    // Scene snapshot as history, but do not carry rejected shot wording into
+    // the Provider-facing request. The retry direction replaces that wording.
+    shots: [{
+      ...firstShot,
+      cameraType: "review-directed retry",
       cameraMovement: direction.cameraInstruction,
       focus: direction.focusProgression.join(" → "),
-      information: direction.shotEmphasis,
+      composition: direction.focusProgression.join(" → "),
+      information: activeAction,
       ...(direction.pacing ? { emotion: direction.pacing } : {}),
-    } : shot),
+    }],
   };
 }
 

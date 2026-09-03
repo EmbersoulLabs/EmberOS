@@ -497,6 +497,7 @@ export class GeneratedSceneReviewService {
           actorUserId: input.actorUserId,
           retryGeneration,
           retryInputRevision: revision,
+          retryHumanReviewCorrection: review.rationale,
         });
         await differentiated.markAuthorizationConsumed(authorization.retryAuthorizationId);
       } catch (error) {

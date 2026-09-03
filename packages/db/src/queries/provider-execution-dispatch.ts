@@ -291,13 +291,13 @@ export class ExecutionDispatchRepository {
         )
         and not exists (
           select 1 from ai_story_scene_results result
-          where result.scene_execution_id = supersession.scene_execution_id
+          join provider_attempts result_attempt on result_attempt.attempt_id=result.provider_attempt_id
+          where result_attempt.execution_id=execution.execution_id
         )
         and not exists (
           select 1 from certification_commercial_reservations reservation
           where reservation.execution_identity in (
             execution.execution_id,
-            supersession.scene_execution_id::text,
             supersession.successor_compiled_request_id::text
           )
         )
@@ -559,12 +559,15 @@ export class ExecutionDispatchRepository {
           and execution.accepted_result is null
           and not exists (select 1 from provider_attempts attempt where attempt.execution_id = execution.execution_id)
           and not exists (select 1 from ai_story_worker_execution_results result where result.dispatch_id = dispatch.dispatch_id)
-          and not exists (select 1 from ai_story_scene_results result where result.scene_execution_id = supersession.scene_execution_id)
+          and not exists (
+            select 1 from ai_story_scene_results result
+            join provider_attempts result_attempt on result_attempt.attempt_id=result.provider_attempt_id
+            where result_attempt.execution_id=execution.execution_id
+          )
           and not exists (
             select 1 from certification_commercial_reservations reservation
             where reservation.execution_identity in (
               execution.execution_id,
-              supersession.scene_execution_id::text,
               supersession.successor_compiled_request_id::text
             )
           )

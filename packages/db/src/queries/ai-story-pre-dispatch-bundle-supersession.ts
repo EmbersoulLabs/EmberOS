@@ -27,7 +27,8 @@ export const AI_STORY_PRE_DISPATCH_BUNDLE_SUPERSESSION_VERSION =
 
 export type AiStoryPreDispatchBundleSupersessionReason =
   | "I2V_PROVIDER_INPUT_PROJECTION_DEFECT"
-  | "DETERMINISTIC_PRE_DISPATCH_AUTHORITY_DEFECT";
+  | "DETERMINISTIC_PRE_DISPATCH_AUTHORITY_DEFECT"
+  | "REVIEW_RETRY_CREATIVE_INSTRUCTION_PRECEDENCE_DEFECT";
 
 export type PreDispatchBundleIdentity = {
   readonly compiledRequestId: string;
@@ -375,11 +376,11 @@ export class AiStoryPreDispatchBundleSupersessionRepository {
                (select count(*)::int from ai_story_worker_execution_results w
                  where w.dispatch_id = dispatch.dispatch_id) worker_result_count,
                (select count(*)::int from ai_story_scene_results r
-                 where r.scene_execution_id = correlation.scene_execution_id) scene_result_count,
+                 join provider_attempts result_attempt on result_attempt.attempt_id=r.provider_attempt_id
+                 where result_attempt.execution_id=correlation.provider_execution_id) scene_result_count,
                (select count(*)::int from certification_commercial_reservations reservation
                  where reservation.execution_identity in (
                    correlation.provider_execution_id,
-                   correlation.scene_execution_id::text,
                    compiled.compiled_request_id::text
                  ) or exists (
                    select 1 from ai_story_provider_attempt_compiled_bindings binding
@@ -445,9 +446,15 @@ export class AiStoryPreDispatchBundleSupersessionRepository {
       const activeRows = (await tx.execute(sql`
         select correlation.correlation_id
         from ai_story_scene_scheduling_correlations correlation
+        join provider_executions execution on execution.execution_id=correlation.provider_execution_id
+        join provider_outbox_jobs outbox on outbox.job_id=correlation.outbox_job_id
         join provider_execution_dispatches dispatch
           on dispatch.job_id = correlation.outbox_job_id
         where correlation.scene_execution_id = ${input.sceneExecutionId}::uuid
+          and execution.status in ('PENDING','DISPATCHABLE')
+          and outbox.status in ('PENDING','CLAIMED','RETRY_WAIT')
+          and not exists (select 1 from provider_attempts attempt where attempt.execution_id=execution.execution_id)
+          and not exists (select 1 from ai_story_worker_execution_results result where result.dispatch_id=dispatch.dispatch_id)
           and not exists (
             select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
             where supersession.source_dispatch_id = dispatch.dispatch_id
