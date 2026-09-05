@@ -11,6 +11,7 @@
  * Prefer not storing raw payloads unless needed for reconciliation/support.
  */
 import type {
+  AiStoryProviderCreateResponseDiagnostic,
   CanonicalProviderState,
   ProviderCallbackNormalizationInput,
   ProviderCallbackReceipt,
@@ -45,7 +46,9 @@ import {
 } from "./seedance-error-classification";
 import {
   createSeedanceHttpClient,
+  SeedanceHttpTransportError,
   type SeedanceHttpClient,
+  type SeedanceHttpResponse,
   type SeedanceFetch,
 } from "./seedance-http-client";
 import {
@@ -53,6 +56,12 @@ import {
   type SeedanceAssetAccessResolver,
   type SeedancePayloadResolver,
 } from "./seedance-request-mapping";
+import {
+  buildProviderCreateResponseDiagnostic,
+  buildProviderTransportFailureDiagnostic,
+  type AiStoryProviderCreateResponseDiagnosticSink,
+  type ProviderCreateResponseDiagnosticBinding,
+} from "./provider-create-response-diagnostic";
 
 export type SeedanceCanonicalAdapterOptions = {
   readonly config?: SeedanceAdapterConfig;
@@ -60,7 +69,28 @@ export type SeedanceCanonicalAdapterOptions = {
   readonly fetchImpl?: SeedanceFetch;
   readonly payloadResolver: SeedancePayloadResolver;
   readonly assetAccessResolver?: SeedanceAssetAccessResolver;
+  /**
+   * Durable create-response diagnostic sink. When omitted the adapter keeps
+   * its legacy behaviour and historical attempts stay valid records with the
+   * envelope simply NOT PERSISTED.
+   */
+  readonly diagnostics?: AiStoryProviderCreateResponseDiagnosticSink;
+  readonly now?: () => Date;
 };
+
+/**
+ * Raised when Provider evidence could not be committed durably. The adapter
+ * refuses to report a clean terminal outcome it cannot substantiate, so this
+ * surfaces as ACCEPTANCE_UNKNOWN with reconciliation rather than a fabricated
+ * rejection.
+ */
+export class SeedanceDiagnosticPersistenceError extends Error {
+  readonly code = "PROVIDER_CREATE_RESPONSE_DIAGNOSTIC_NOT_PERSISTED";
+  constructor(readonly cause: unknown) {
+    super("Provider create-response diagnostic evidence was not persisted");
+    this.name = "SeedanceDiagnosticPersistenceError";
+  }
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -351,6 +381,8 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
   private readonly http: SeedanceHttpClient;
   private readonly payloadResolver: SeedancePayloadResolver;
   private readonly assetAccessResolver?: SeedanceAssetAccessResolver;
+  private readonly diagnostics?: AiStoryProviderCreateResponseDiagnosticSink;
+  private readonly now: () => Date;
 
   constructor(options: SeedanceCanonicalAdapterOptions) {
     this.config = options.config ?? loadSeedanceAdapterConfig();
@@ -362,6 +394,8 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
       });
     this.payloadResolver = options.payloadResolver;
     this.assetAccessResolver = options.assetAccessResolver;
+    this.diagnostics = options.diagnostics;
+    this.now = options.now ?? (() => new Date());
   }
 
   describeCapabilities(): ReadonlyArray<ProviderCapabilityDeclaration> {
@@ -377,6 +411,7 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
   }
 
   async submit(input: CanonicalAdapterSubmitInput): Promise<CanonicalAdapterSubmitResult> {
+    const binding = this.diagnosticBinding(input);
     try {
       const mapped = await mapCanonicalEnvelopeToSeedanceRequest({
         envelope: input.envelope,
@@ -385,8 +420,32 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
         payloadResolver: this.payloadResolver,
         assetAccessResolver: this.assetAccessResolver,
       });
-      const response = await this.http.createGeneration(mapped);
+
+      let response: SeedanceHttpResponse;
+      try {
+        response = await this.http.createGeneration(mapped);
+      } catch (transportError) {
+        if (transportError instanceof SeedanceHttpTransportError) {
+          await this.persistTransportFailureDiagnostic(
+            input,
+            binding,
+            transportError
+          );
+        }
+        throw transportError;
+      }
+
+      // Provider-native detail is read off the raw response and committed
+      // durably before the Worker result lifecycle continues, so normalization
+      // can never be the reason the rejection reason is unrecoverable.
       const normalized = normalizeCreateStatus(response.body, response.status);
+      await this.persistCreateResponseDiagnostic({
+        input,
+        binding,
+        response,
+        normalized,
+      });
+
       return {
         acceptanceClassification: normalized.acceptanceClassification,
         canonicalProviderState: normalized.canonicalProviderState,
@@ -404,7 +463,109 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
         },
       };
     } catch (error) {
+      if (error instanceof SeedanceDiagnosticPersistenceError) {
+        // Never report a terminal Provider verdict that has no durable evidence.
+        return {
+          acceptanceClassification: "ACCEPTANCE_UNKNOWN",
+          canonicalProviderState: "ACCEPTANCE_UNKNOWN",
+          reconciliationRequired: true,
+          failureClassification: failureFromCode(
+            "PROVIDER_ACCEPTANCE_UNKNOWN",
+            "Provider evidence was not persisted; reconciliation required",
+            { terminal: false, reconciliationRequired: true }
+          ),
+        };
+      }
       return this.toSubmitFailure(error);
+    }
+  }
+
+  private diagnosticBinding(
+    input: CanonicalAdapterSubmitInput
+  ): ProviderCreateResponseDiagnosticBinding {
+    return {
+      provider: this.providerId,
+      model: this.config.defaultModel,
+      providerAttemptId: input.providerAttemptId,
+      compiledRequestId: input.envelope.envelopeId,
+      requestFingerprint: input.envelope.requestHash,
+      observedAt: this.now().toISOString(),
+    };
+  }
+
+  private async persistCreateResponseDiagnostic(args: {
+    readonly input: CanonicalAdapterSubmitInput;
+    readonly binding: ProviderCreateResponseDiagnosticBinding;
+    readonly response: SeedanceHttpResponse;
+    readonly normalized: ReturnType<typeof normalizeCreateStatus>;
+  }): Promise<void> {
+    if (!this.diagnostics) {
+      return;
+    }
+    const { input, binding, response, normalized } = args;
+    const responseHash =
+      response.bodyHash ??
+      canonicalPersistenceHash({
+        kind: "ai-story-provider-create-response-body",
+        status: response.status,
+        body: response.body ?? null,
+      });
+    const diagnostic = buildProviderCreateResponseDiagnostic({
+      binding,
+      httpStatus: response.status,
+      body: response.body,
+      responseHash,
+      ...(response.traceId ? { headerTraceId: response.traceId } : {}),
+      ...(normalized.providerRequestId
+        ? { taskId: normalized.providerRequestId }
+        : {}),
+      classification: {
+        accepted: normalized.acceptanceClassification === "ACCEPTED",
+        retryable: normalized.failureClassification?.retryable ?? false,
+        reconciliationRequired: normalized.reconciliationRequired,
+        normalizationResult: normalized.acceptanceClassification,
+      },
+    });
+    await this.appendDiagnostic(input, diagnostic);
+  }
+
+  private async persistTransportFailureDiagnostic(
+    input: CanonicalAdapterSubmitInput,
+    binding: ProviderCreateResponseDiagnosticBinding,
+    transportError: SeedanceHttpTransportError
+  ): Promise<void> {
+    if (!this.diagnostics) {
+      return;
+    }
+    const classified = this.classifyError({
+      error: transportError,
+      phase: "submit",
+    });
+    const diagnostic = buildProviderTransportFailureDiagnostic({
+      binding,
+      transportError,
+      classification: {
+        retryable: classified.retryable,
+        reconciliationRequired: classified.reconciliationRequired,
+        // Transport uncertainty is never a Provider rejection.
+        normalizationResult: "ACCEPTANCE_UNKNOWN",
+      },
+    });
+    await this.appendDiagnostic(input, diagnostic);
+  }
+
+  private async appendDiagnostic(
+    input: CanonicalAdapterSubmitInput,
+    diagnostic: AiStoryProviderCreateResponseDiagnostic
+  ): Promise<void> {
+    try {
+      await this.diagnostics!.appendProviderCreateResponseDiagnostic({
+        orgId: input.envelope.tenantId,
+        workspaceId: input.envelope.workspaceId,
+        diagnostic,
+      });
+    } catch (error) {
+      throw new SeedanceDiagnosticPersistenceError(error);
     }
   }
 

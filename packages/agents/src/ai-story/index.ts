@@ -52,6 +52,7 @@ export * from "./assembly-engine-provenance";
 export * from "./durable-assembly-blob-store";
 export * from "./durable-assembly-media-access";
 export * from "./seedance-capability";
+export * from "./provider-create-response-diagnostic";
 export * from "./seedance-director-adapter";
 export * from "./active-intent-world-state";
 export * from "./scene-input-preparation";
