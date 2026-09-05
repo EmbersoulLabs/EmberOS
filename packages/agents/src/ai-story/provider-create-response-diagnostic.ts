@@ -28,11 +28,15 @@ export const SEEDANCE_CREATE_ENDPOINT_FAMILY =
  * same Provider response must converge rather than write conflicting rows.
  */
 export type AiStoryProviderCreateResponseDiagnosticSink = {
+  /**
+   * Returns `unknown` so implementations may report convergence details
+   * without the adapter depending on them.
+   */
   appendProviderCreateResponseDiagnostic(input: {
     readonly orgId: string;
     readonly workspaceId: string;
     readonly diagnostic: AiStoryProviderCreateResponseDiagnostic;
-  }): Promise<void>;
+  }): Promise<unknown>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
