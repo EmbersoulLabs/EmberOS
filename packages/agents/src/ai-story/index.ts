@@ -55,6 +55,8 @@ export * from "./seedance-capability";
 export * from "./seedance-director-adapter";
 export * from "./active-intent-world-state";
 export * from "./scene-input-preparation";
+export * from "./scene-keyframe-preparation";
+export * from "./openai-scene-keyframe-adapter";
 export * from "./provider-runtime-dispatch-integration";
 export * from "./scene-compiled-provider-request";
 export * from "./post-generation-qc-service";
