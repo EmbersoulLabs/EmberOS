@@ -102,6 +102,7 @@ export * from "./platform-admin";
 export * from "./admin-runtime-operations";
 export * from "./provider-reliability-contracts";
 export * from "./provider-execution-envelope";
+export * from "./ai-story-provider-create-response-diagnostic";
 export * from "./provider-execution-dispatch";
 export * from "./provider-executor-authority";
 export * from "./organizations-plan-compatibility";

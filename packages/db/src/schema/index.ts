@@ -2356,6 +2356,80 @@ export const aiStoryWorkerAttemptObservations = pgTable(
 );
 
 /**
+ * ai-story-provider-create-response-diagnostic.v1 — append-only, secret-safe
+ * Provider create-response diagnostic evidence, captured before EmberOS
+ * normalization discards Provider-native detail.
+ *
+ * NULL evidence columns mean NOT PERSISTED / UNKNOWN. Historical attempts
+ * recorded before this table existed have no row and are never backfilled.
+ */
+
+export const aiStoryProviderCreateResponseDiagnostics = pgTable(
+  "ai_story_provider_create_response_diagnostics",
+  {
+    diagnosticId: uuid("diagnostic_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    providerAttemptId: text("provider_attempt_id").notNull(),
+    compiledRequestId: text("compiled_request_id").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    endpointFamily: text("endpoint_family").notNull(),
+    observationKind: text("observation_kind").notNull(),
+    httpStatus: integer("http_status"),
+    nativeErrorCode: text("native_error_code"),
+    nativeErrorType: text("native_error_type"),
+    nativeErrorMessage: text("native_error_message"),
+    providerTraceId: text("provider_trace_id"),
+    taskId: text("task_id"),
+    errorCategory: text("error_category").notNull(),
+    transportErrorMessage: text("transport_error_message"),
+    accepted: boolean("accepted").notNull(),
+    retryable: boolean("retryable").notNull(),
+    reconciliationRequired: boolean("reconciliation_required").notNull(),
+    responseHash: text("response_hash").notNull(),
+    normalizationResult: text("normalization_result").notNull(),
+    diagnosticFingerprint: text("diagnostic_fingerprint").notNull(),
+    diagnostic: jsonb("diagnostic")
+      .$type<
+        import("@ceo-agent/shared").AiStoryProviderCreateResponseDiagnostic
+      >()
+      .notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_provider_create_diagnostic_fingerprint_unique").on(
+      t.diagnosticFingerprint
+    ),
+    index("ai_story_provider_create_diagnostic_attempt_idx").on(
+      t.providerAttemptId,
+      t.observedAt
+    ),
+    index("ai_story_provider_create_diagnostic_compiled_idx").on(
+      t.compiledRequestId,
+      t.observedAt
+    ),
+    index("ai_story_provider_create_diagnostic_workspace_idx").on(
+      t.workspaceId,
+      t.acceptedAt
+    ),
+    index("ai_story_provider_create_diagnostic_category_idx").on(
+      t.errorCategory,
+      t.observedAt
+    ),
+  ]
+);
+
+/**
  * Sprint 3 PR 3.6 Phase 3 — immutable deterministic Assembly Job.
  * Subordinate to Execution Plan. No Final Story Result. No media assembly.
  */

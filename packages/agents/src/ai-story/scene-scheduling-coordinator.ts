@@ -53,6 +53,10 @@ import {
   buildCanonicalSceneProviderRequest,
 } from "./canonical-scene-provider-request";
 import { compileImmutableSceneProviderRequest } from "./scene-compiled-provider-request";
+import type {
+  PreparedSceneFrameAuthority,
+  SceneInputPreparationAuthority,
+} from "./scene-input-preparation";
 
 export { SceneSchedulingError };
 
@@ -157,7 +161,23 @@ export type SceneSchedulingCoordinatorDependencies = {
     | "getCompilationAuthorityBySceneExecutionId"
     | "convergeCompiledRequestForAcceptedBundle"
   > & Partial<Pick<AiStoryProviderRuntimeRepository, "getReferenceAssetAuthorities">>;
+  /**
+   * Resolves the active Scene input preparation authority. When it returns an
+   * authority, that authority is the sole first-frame authority for the
+   * compiled request and raw references become lineage only.
+   */
+  readonly sceneInputPreparationResolver?: (input: {
+    readonly sceneExecutionId: string;
+    readonly sceneId: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+  }) => Promise<SceneInputPreparationResolution | null>;
   readonly now?: () => Date;
+};
+
+export type SceneInputPreparationResolution = {
+  readonly preparation: SceneInputPreparationAuthority;
+  readonly preparedFrame?: PreparedSceneFrameAuthority | null;
 };
 
 const DEFAULT_ROUTING_POLICY: ProviderRoutingPolicy = {
@@ -817,11 +837,24 @@ export class SceneSchedulingCoordinator {
         }),
       };
       const effectiveReferenceIds = (sceneIntent.generationAuthority ?? instructions.generationAuthority)?.effectiveReferenceIds ?? sceneIntent.referencedAssetIds;
+      const sceneInputPreparation =
+        await this.dependencies.sceneInputPreparationResolver?.({
+          sceneExecutionId: input.sceneExecutionId,
+          sceneId: sceneIntent.identity.sceneId,
+          orgId: fact.ownership.orgId,
+          workspaceId: fact.ownership.workspaceId,
+        }) ?? null;
+      // A prepared derivative is not a Story reference, so its MIME/storage
+      // authority must be loaded alongside them to be bindable as first frame.
+      const preparedFrameAssetId =
+        sceneInputPreparation?.preparedFrame?.outputAssetId ?? null;
       const referenceAssets = await this.providerRuntimeRepo.getReferenceAssetAuthorities({
         orgId: fact.ownership.orgId,
         workspaceId: fact.ownership.workspaceId,
         campaignId: fact.ownership.campaignId,
-        assetIds: effectiveReferenceIds,
+        assetIds: preparedFrameAssetId && !effectiveReferenceIds.includes(preparedFrameAssetId)
+          ? [...effectiveReferenceIds, preparedFrameAssetId]
+          : effectiveReferenceIds,
       });
       const compiledProviderRequest = compileImmutableSceneProviderRequest({
           providerId: acceptedRoutingDecision.selectedProviderId,
@@ -832,6 +865,12 @@ export class SceneSchedulingCoordinator {
           compiledAt: scheduledAt,
           resolution: "480p",
           referenceAssets,
+          ...(sceneInputPreparation
+            ? {
+                sceneInputPreparation: sceneInputPreparation.preparation,
+                preparedSceneFrame: sceneInputPreparation.preparedFrame ?? null,
+              }
+            : {}),
         });
       if (acceptedBundle) {
         await this.providerRuntimeRepo.convergeCompiledRequestForAcceptedBundle({

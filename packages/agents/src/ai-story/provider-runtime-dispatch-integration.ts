@@ -23,6 +23,11 @@ import { deterministicPersistenceUuid } from "@ceo-agent/db";
 import { integrityHash } from "./scene-execution-compiler";
 import { compileSceneExecutionPackageForSeedance } from "./seedance-director-adapter";
 import type { SeedanceModelArkCreateRequest } from "./seedance-request-mapping";
+import {
+  resolveProviderReadySceneInput,
+  type PreparedSceneFrameAuthority,
+  type SceneInputPreparationAuthority,
+} from "./scene-input-preparation";
 
 export const SEEDANCE_RUNTIME_ADAPTER_VERSION = "seedance-canonical-runtime.v1" as const;
 
@@ -40,6 +45,7 @@ export class AiStoryProviderRuntimeError extends Error {
     readonly code:
       | "COMPILED_REQUEST_INVALID"
       | "COMPILED_REQUEST_STALE"
+      | "PROVIDER_READY_SCENE_INPUT_REQUIRED"
       | "REQUEST_TAMPERED"
       | "QC_NOT_ELIGIBLE"
       | "COMMERCIAL_AUTHORIZATION_REQUIRED"
@@ -217,6 +223,30 @@ export type AiStoryReferenceAssetAuthority = {
   readonly storagePath?: string;
 };
 
+/**
+ * Converts preparation evidence into the single Provider-ready first-frame
+ * authority. Every rejection is terminal: callers must not substitute the raw
+ * source asset when preparation is required but unsatisfied.
+ */
+function resolveProviderReadySceneInputOrFailClosed(input: {
+  readonly preparation: SceneInputPreparationAuthority;
+  readonly preparedFrame: PreparedSceneFrameAuthority | null;
+}) {
+  try {
+    return resolveProviderReadySceneInput({
+      preparation: input.preparation,
+      preparedFrame: input.preparedFrame,
+    });
+  } catch (error) {
+    throw new AiStoryProviderRuntimeError(
+      "PROVIDER_READY_SCENE_INPUT_REQUIRED",
+      `Scene ${input.preparation.sceneId} has no executable Provider-ready Scene input (${
+        error instanceof Error ? error.message : "UNKNOWN"
+      })`
+    );
+  }
+}
+
 export function compiledProviderRequestIdForSchedule(input: {
   readonly sceneExecutionId: string;
   readonly scheduledAt: string;
@@ -245,6 +275,9 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   readonly compiledAt: string;
   readonly resolution?: "480p" | "720p" | "1080p";
   readonly referenceAssets?: readonly AiStoryReferenceAssetAuthority[];
+  /** Active Scene input preparation authority, when Scene input preparation governs this Scene. */
+  readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
+  readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
 }): AiStoryCompiledProviderRequest {
   const authority = input.intent.generationAuthority ?? input.instructions.generationAuthority;
   if (
@@ -279,9 +312,30 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       "Image-conditioned compilation is missing required references"
     );
   }
+  const preparation = input.sceneInputPreparation ?? null;
+  if (preparation && explicitT2v) {
+    throw new AiStoryProviderRuntimeError(
+      "PROVIDER_READY_SCENE_INPUT_REQUIRED",
+      "Scene input preparation authority cannot be dropped by a reference-free TEXT_TO_VIDEO compilation"
+    );
+  }
+  // Fail closed. A preparation-governed Scene resolves its wire first frame only
+  // through the Provider-ready authority, and never degrades to the raw source.
+  const providerReadySceneInput = preparation
+    ? resolveProviderReadySceneInputOrFailClosed({
+        preparation,
+        preparedFrame: input.preparedSceneFrame ?? null,
+      })
+    : null;
   const referenceAssetById = new Map((input.referenceAssets ?? []).map((asset) => [asset.assetId, asset]));
+  const compiledReferenceIds = providerReadySceneInput
+    ? [
+        providerReadySceneInput.assetId,
+        ...referenceIds.filter((assetId) => assetId !== providerReadySceneInput.assetId),
+      ]
+    : referenceIds;
   if (!explicitT2v) {
-    const missing = referenceIds.filter((assetId) => !referenceAssetById.has(assetId));
+    const missing = compiledReferenceIds.filter((assetId) => !referenceAssetById.has(assetId));
     if (missing.length > 0) {
       throw new AiStoryProviderRuntimeError(
         "COMPILED_REQUEST_INVALID",
@@ -289,11 +343,13 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       );
     }
   }
-  const firstFrameAssetId = explicitT2v ? null : authority?.firstFrameAssetId ?? referenceIds[0] ?? null;
+  const firstFrameAssetId = explicitT2v
+    ? null
+    : providerReadySceneInput?.assetId ?? authority?.firstFrameAssetId ?? referenceIds[0] ?? null;
   if (!explicitT2v && !firstFrameAssetId) {
     throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation is missing its canonical first frame");
   }
-  const storyReferenceMappings = referenceIds.map((assetId, index) => {
+  const storyReferenceMappings = compiledReferenceIds.map((assetId, index) => {
     const asset = referenceAssetById.get(assetId)!;
     const imageCompatible = asset.mediaType.toLowerCase().startsWith("image/");
     const semanticRole = assetId === firstFrameAssetId
@@ -448,6 +504,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
     })),
     storyReferenceMappings,
+    ...(providerReadySceneInput ? { providerReadySceneInput } : {}),
     referenceBudget: AI_STORY_SEEDANCE_REFERENCE_BUDGET,
     degradations: [],
     blockedCapabilities: ["AUDIO", "FIRST_LAST_FRAME", "MULTI_SHOT", "CHAINING", "VIDEO_EXTENSION", "4K", "CANCELLATION"],
@@ -666,6 +723,28 @@ async function serializeTransportRequest(input: {
     generate_audio: false,
     watermark: input.request.structuredRequest.watermark,
   };
+}
+
+/**
+ * Non-submitting projection of the exact Provider wire request. Certification
+ * and preflight use this to prove what would reach the Provider without
+ * claiming a submission, creating an Attempt, or consuming commercial scope.
+ */
+export async function previewAiStorySeedanceWireRequest(input: {
+  readonly request: AiStoryCompiledProviderRequest;
+  readonly assetAccess: AiStoryRuntimeAssetAccess;
+}): Promise<SeedanceModelArkCreateRequest> {
+  if (!validateAiStoryCompiledRequestFingerprint(input.request)) {
+    throw new AiStoryProviderRuntimeError(
+      "REQUEST_TAMPERED",
+      "Cannot preview a compiled request whose fingerprint does not match its content"
+    );
+  }
+  assertAiStoryCompiledProviderWireModeCompatibility(input.request);
+  return serializeTransportRequest({
+    request: input.request,
+    assetAccess: input.assetAccess,
+  });
 }
 
 export class AiStoryCompiledRequestWorkerRuntime {

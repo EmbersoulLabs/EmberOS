@@ -85,6 +85,30 @@ export const AiStoryCompiledStoryReferenceSchema = z.object({
   }
 });
 
+export const AI_STORY_COMPILED_PROVIDER_READY_SCENE_INPUT_VERSION =
+  "ai-story-provider-ready-scene-input.v1" as const;
+
+/**
+ * Frozen Provider-ready Scene input authority that selected the wire first
+ * frame. Added append-only; absent only on compiled requests produced before
+ * Scene input preparation became an execution authority. When present it is
+ * the sole first-frame authority: the raw source asset is lineage only.
+ */
+export const AiStoryCompiledProviderReadySceneInputSchema = z.object({
+  contractVersion: z.literal(AI_STORY_COMPILED_PROVIDER_READY_SCENE_INPUT_VERSION),
+  preparationAuthorityId: Text,
+  preparationFingerprint: Hash,
+  sourceKind: z.enum(["RAW_DIRECT", "PREPARED_DERIVATIVE"]),
+  assetId: Id,
+  contentHash: Hash,
+  providerMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
+  fingerprint: Hash,
+}).strict();
+
+export type AiStoryCompiledProviderReadySceneInput = z.infer<
+  typeof AiStoryCompiledProviderReadySceneInputSchema
+>;
+
 /**
  * Immutable output of Provider compilation. URLs and credentials are deliberately
  * absent: the Worker resolves short-lived transport access from stable Asset IDs.
@@ -132,6 +156,8 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
   referenceMappings: z.array(AiStoryCompiledReferenceMappingSchema).max(4),
   /** Added append-only; absent only on historical v1 compiled requests. */
   storyReferenceMappings: z.array(AiStoryCompiledStoryReferenceSchema).optional(),
+  /** Added append-only; absent only on pre-preparation compiled requests. */
+  providerReadySceneInput: AiStoryCompiledProviderReadySceneInputSchema.optional(),
   referenceBudget: z.literal(4),
   degradations: z.array(z.object({
     code: Text,
@@ -173,7 +199,20 @@ export class AiStoryProviderWireModeContractError extends Error {
 export function assertAiStoryCompiledProviderWireModeCompatibility(
   request: AiStoryCompiledProviderRequest
 ): void {
-  if (request.generationMode !== "FIRST_FRAME_IMAGE_TO_VIDEO") return;
+  const providerReady = request.providerReadySceneInput;
+  if (providerReady && providerReady.providerMode !== request.generationMode) {
+    throw new AiStoryProviderWireModeContractError(
+      "Provider-ready Scene input mode conflicts with the compiled generation mode"
+    );
+  }
+  if (request.generationMode !== "FIRST_FRAME_IMAGE_TO_VIDEO") {
+    if (providerReady) {
+      throw new AiStoryProviderWireModeContractError(
+        "TEXT_TO_VIDEO compilation cannot carry a Provider-ready Scene input"
+      );
+    }
+    return;
+  }
   const firstFrames = request.referenceMappings.filter(
     (reference) => reference.wireRole === "first_frame"
   );
@@ -193,6 +232,13 @@ export function assertAiStoryCompiledProviderWireModeCompatibility(
   if (firstFrame.mediaType && !firstFrame.mediaType.toLowerCase().startsWith("image/")) {
     throw new AiStoryProviderWireModeContractError(
       "FIRST_FRAME_IMAGE_TO_VIDEO first_frame must use image media"
+    );
+  }
+  // Latest Authority Wins: once a Provider-ready Scene input is bound, no other
+  // asset (including the historical raw source) may occupy the wire first frame.
+  if (providerReady && firstFrame.assetId !== providerReady.assetId) {
+    throw new AiStoryProviderWireModeContractError(
+      "Compiled first_frame does not match the active Provider-ready Scene input"
     );
   }
 }

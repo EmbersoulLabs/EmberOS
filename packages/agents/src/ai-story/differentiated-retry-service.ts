@@ -10,6 +10,7 @@ import {
   canonicalPersistenceHash,
 } from "@ceo-agent/db";
 import { evaluateProductGroundedCameraPolicy, type ProductVisualAuthorityCertification } from "./product-grounding-contract";
+import { resolveActiveAuthorityProjection, type CreativeAuthorityLayer } from "./active-intent-world-state";
 
 export function applyRetryInputRevision(
   instructions: AiStorySceneCompiledInstructions,
@@ -23,12 +24,51 @@ export function applyRetryInputRevision(
   // Projecting that prose verbatim would reactivate the very instruction the
   // reviewer rejected. Its presence authorizes the higher-precedence retry
   // target below; the historical rationale remains in the review ledger.
-  const activePurpose = hasHumanReviewCorrection
-    ? `Latest human review correction governs this retry and overrides conflicting inherited Scene wording.\nRetry creative target: ${direction.visualRole}`
-    : direction.visualRole;
-  const activeAction = hasHumanReviewCorrection
-    ? `Latest human review correction governs this retry.\nRetry creative target: ${direction.shotEmphasis}`
-    : direction.shotEmphasis;
+  const retryValues = {
+    narrativePurpose: direction.visualRole,
+    actions: [direction.shotEmphasis],
+    changes: [direction.cameraInstruction],
+    mustNotInherit: ["conflicting inherited Scene wording"],
+  } as const;
+  const layers: CreativeAuthorityLayer[] = [{
+    authorityId: "historical-compiled-scene-instructions",
+    kind: "CANONICAL_SCENE_INTENT",
+    classification: "HISTORICAL_ONLY",
+    governs: ["narrativePurpose", "actions", "changes", "mustNotInherit"],
+    values: {
+      narrativePurpose: instructions.purpose,
+      actions: instructions.shots.map((shot) => shot.information),
+      changes: [instructions.transition],
+      mustNotInherit: [],
+    },
+  }, {
+    authorityId: revision.retryInputRevisionId,
+    kind: "REVIEW_RETRY_TARGET",
+    classification: "ACTIVE",
+    governs: ["narrativePurpose", "actions", "changes", "mustNotInherit"],
+    values: retryValues,
+  }];
+  if (hasHumanReviewCorrection) {
+    layers.push({
+      // The correction identity is deliberately non-secret and the rationale
+      // remains only in its immutable review record, never in Provider prose.
+      authorityId: revision.sourceReviewId,
+      kind: "HUMAN_REVIEW_CORRECTION",
+      classification: "ACTIVE",
+      governs: ["narrativePurpose", "actions", "changes", "mustNotInherit"],
+      values: {
+        ...retryValues,
+        narrativePurpose: `Latest human review correction governs this retry and overrides conflicting inherited Scene wording.\nRetry creative target: ${direction.visualRole}`,
+        actions: [`Latest human review correction governs this retry.\nRetry creative target: ${direction.shotEmphasis}`],
+      },
+    });
+  }
+  const active = resolveActiveAuthorityProjection(
+    layers,
+    ["narrativePurpose", "actions", "changes", "mustNotInherit"]
+  ).values;
+  const activePurpose = active.narrativePurpose!;
+  const activeAction = active.actions![0]!;
   const firstShot = instructions.shots[0]!;
   return {
     ...instructions,
