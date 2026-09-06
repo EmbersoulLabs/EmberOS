@@ -437,6 +437,77 @@ describe("ai-story-provider-create-response-diagnostic.v1 — contract shape", (
 });
 
 describe("ai-story-provider-create-response-diagnostic.v1 — adapter capture", () => {
+  it("awaits durable persistence before normalizing the Provider outcome", async () => {
+    const stages: string[] = [];
+    let signalPersistStarted!: () => void;
+    let releasePersistence!: () => void;
+    const persistStarted = new Promise<void>((resolve) => {
+      signalPersistStarted = resolve;
+    });
+    const persistenceBarrier = new Promise<void>((resolve) => {
+      releasePersistence = resolve;
+    });
+    const { envelope, resolver } = await envelopeFor();
+    const http = mockHttp({
+      status: 400,
+      traceId: "req-order-400",
+      body: {
+        error: {
+          code: "InvalidParameter",
+          type: "BadRequest",
+          message: "first_frame could not be decoded",
+        },
+      },
+    });
+    const adapter = new SeedanceCanonicalAdapter({
+      config: seedanceConfig(),
+      payloadResolver: resolver,
+      http: {
+        ...http,
+        async createGeneration(request) {
+          stages.push("createGeneration");
+          return http.createGeneration(request);
+        },
+      },
+      diagnostics: {
+        async appendProviderCreateResponseDiagnostic() {
+          signalPersistStarted();
+          await persistenceBarrier;
+        },
+      },
+      createResponseOrderObserver: (stage) => stages.push(stage),
+      now: () => new Date(OBSERVED_AT),
+    });
+
+    const outcomePromise = adapter.submit({
+      envelope,
+      providerAttemptId: ATTEMPT_ID,
+      dispatchId: "dispatch-create-diagnostic-order",
+      idempotencyKey: envelope.executionContext.idempotencyKey,
+      timeoutDeadline: envelope.executionContext.timeoutDeadline,
+    });
+
+    await persistStarted;
+    expect(stages).toEqual([
+      "createGeneration",
+      "extract",
+      "persist:start",
+    ]);
+    expect(stages).not.toContain("normalize");
+
+    releasePersistence();
+    const outcome = await outcomePromise;
+    expect(stages).toEqual([
+      "createGeneration",
+      "extract",
+      "persist:start",
+      "persist:complete",
+      "normalize",
+      "outcome",
+    ]);
+    expect(outcome.acceptanceClassification).toBe("NOT_ACCEPTED");
+  });
+
   it("retains HTTP status, native code/type/message, trace id on a 400 rejection", async () => {
     const { result, rows } = await submitWith({
       status: 400,
@@ -526,13 +597,37 @@ describe("ai-story-provider-create-response-diagnostic.v1 — adapter capture", 
     expect(evidence.transportErrorMessage).toBeUndefined();
   });
 
-  it("records successful acceptance with task id and status but no payload", async () => {
-    const { result, rows } = await submitWith({
-      status: 200,
-      traceId: "req-200-ok",
-      body: { id: "cgt-20260905-scene2", status: "queued" },
+  it("persists accepted response evidence before its normalized outcome", async () => {
+    const stages: string[] = [];
+    const { envelope, resolver } = await envelopeFor();
+    const { sink, rows } = memorySink();
+    const adapter = new SeedanceCanonicalAdapter({
+      config: seedanceConfig(),
+      payloadResolver: resolver,
+      http: mockHttp({
+        status: 200,
+        traceId: "req-200-ok",
+        body: { id: "cgt-20260905-scene2", status: "queued" },
+      }),
+      diagnostics: sink,
+      createResponseOrderObserver: (stage) => stages.push(stage),
+      now: () => new Date(OBSERVED_AT),
+    });
+    const result = await adapter.submit({
+      envelope,
+      providerAttemptId: ATTEMPT_ID,
+      dispatchId: "dispatch-create-diagnostic-accepted-order",
+      idempotencyKey: envelope.executionContext.idempotencyKey,
+      timeoutDeadline: envelope.executionContext.timeoutDeadline,
     });
     expect(result.acceptanceClassification).toBe("ACCEPTED");
+    expect(stages).toEqual([
+      "extract",
+      "persist:start",
+      "persist:complete",
+      "normalize",
+      "outcome",
+    ]);
     const evidence = rows[0]!.diagnostic;
     expect(evidence.httpStatus).toBe(200);
     expect(evidence.taskId).toBe("cgt-20260905-scene2");
@@ -656,16 +751,36 @@ describe("ai-story-provider-create-response-diagnostic.v1 — adapter capture", 
     expect(rows).toHaveLength(1);
   });
 
-  it("reports ACCEPTANCE_UNKNOWN rather than a verdict it cannot substantiate", async () => {
-    const { result } = await submitWith(
-      {
+  it("fails closed without normalization when diagnostic persistence fails", async () => {
+    const stages: string[] = [];
+    const { envelope, resolver } = await envelopeFor();
+    const adapter = new SeedanceCanonicalAdapter({
+      config: seedanceConfig(),
+      payloadResolver: resolver,
+      http: mockHttp({
         status: 400,
         body: { error: { code: "InvalidParameter", message: "bad field" } },
+      }),
+      diagnostics: {
+        async appendProviderCreateResponseDiagnostic() {
+          throw new Error("durable sink unavailable");
+        },
       },
-      { failOnAppend: true }
-    );
+      createResponseOrderObserver: (stage) => stages.push(stage),
+      now: () => new Date(OBSERVED_AT),
+    });
+    const result = await adapter.submit({
+      envelope,
+      providerAttemptId: ATTEMPT_ID,
+      dispatchId: "dispatch-create-diagnostic-persistence-failure",
+      idempotencyKey: envelope.executionContext.idempotencyKey,
+      timeoutDeadline: envelope.executionContext.timeoutDeadline,
+    });
     expect(result.acceptanceClassification).toBe("ACCEPTANCE_UNKNOWN");
     expect(result.reconciliationRequired).toBe(true);
+    expect(stages).toEqual(["extract", "persist:start"]);
+    expect(stages).not.toContain("normalize");
+    expect(stages).not.toContain("outcome");
   });
 
   it("remains legacy compatible when no diagnostic sink is configured", async () => {

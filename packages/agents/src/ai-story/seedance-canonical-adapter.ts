@@ -61,6 +61,7 @@ import {
   buildProviderTransportFailureDiagnostic,
   type AiStoryProviderCreateResponseDiagnosticSink,
   type ProviderCreateResponseDiagnosticBinding,
+  type ProviderCreateResponseDiagnosticClassification,
 } from "./provider-create-response-diagnostic";
 
 export type SeedanceCanonicalAdapterOptions = {
@@ -75,6 +76,10 @@ export type SeedanceCanonicalAdapterOptions = {
    * envelope simply NOT PERSISTED.
    */
   readonly diagnostics?: AiStoryProviderCreateResponseDiagnosticSink;
+  /** Deterministic runtime-order observation for non-provider certification tests. */
+  readonly createResponseOrderObserver?: (
+    stage: "extract" | "persist:start" | "persist:complete" | "normalize" | "outcome"
+  ) => void;
   readonly now?: () => Date;
 };
 
@@ -127,22 +132,93 @@ function readModelArkErrorText(record: Record<string, unknown>): string {
   );
 }
 
-function normalizeCreateStatus(body: unknown, httpStatus: number): {
+type SeedanceCreateResponseEvidence = {
+  readonly body: unknown;
+  readonly httpStatus: number;
+  readonly providerRequestId?: string;
+  readonly disposition:
+    | "PROVIDER_REJECTED"
+    | "PROVIDER_MODERATION_REJECTED"
+    | "TEMPORARY_FAILURE"
+    | "ACCEPTANCE_UNKNOWN"
+    | "TASK_REJECTED"
+    | "TASK_ACCEPTED";
+};
+
+/** Extracts classification inputs without producing the Worker outcome. */
+function extractCreateResponseEvidence(
+  body: unknown,
+  httpStatus: number
+): SeedanceCreateResponseEvidence {
+  const record = asRecord(body);
+  const providerRequestId = extractSeedanceProviderRequestId(body);
+  const status = (readString(record.status) ?? "").toLowerCase();
+  const errorText = readModelArkErrorText(record);
+  let disposition: SeedanceCreateResponseEvidence["disposition"];
+
+  if (httpStatus === 400 || httpStatus === 403 || httpStatus === 422) {
+    disposition =
+      httpStatus === 422 || /moderation|safety|sensitive|content.?policy/i.test(errorText)
+        ? "PROVIDER_MODERATION_REJECTED"
+        : "PROVIDER_REJECTED";
+  } else if (httpStatus >= 500 || httpStatus === 429) {
+    disposition = "TEMPORARY_FAILURE";
+  } else if (!providerRequestId) {
+    disposition =
+      httpStatus >= 200 && httpStatus < 300
+        ? "ACCEPTANCE_UNKNOWN"
+        : "PROVIDER_REJECTED";
+  } else if (
+    status === "failed" ||
+    status === "expired" ||
+    status === "cancelled" ||
+    /fail|reject|error/.test(status)
+  ) {
+    disposition = "TASK_REJECTED";
+  } else {
+    disposition = "TASK_ACCEPTED";
+  }
+
+  return {
+    body,
+    httpStatus,
+    ...(providerRequestId ? { providerRequestId } : {}),
+    disposition,
+  };
+}
+
+function diagnosticClassificationFromEvidence(
+  evidence: SeedanceCreateResponseEvidence
+): ProviderCreateResponseDiagnosticClassification {
+  return {
+    accepted: evidence.disposition === "TASK_ACCEPTED",
+    retryable: evidence.disposition === "TEMPORARY_FAILURE",
+    reconciliationRequired: evidence.disposition === "ACCEPTANCE_UNKNOWN",
+    normalizationResult:
+      evidence.disposition === "TASK_ACCEPTED"
+        ? "ACCEPTED"
+        : evidence.disposition === "TEMPORARY_FAILURE"
+          ? "NOT_SUBMITTED"
+          : evidence.disposition === "ACCEPTANCE_UNKNOWN"
+            ? "ACCEPTANCE_UNKNOWN"
+            : "NOT_ACCEPTED",
+  };
+}
+
+function normalizeCreateStatus(evidence: SeedanceCreateResponseEvidence): {
   readonly acceptanceClassification: CanonicalAdapterSubmitResult["acceptanceClassification"];
   readonly canonicalProviderState: CanonicalProviderState;
   readonly providerRequestId?: string;
   readonly reconciliationRequired: boolean;
   readonly failureClassification?: WorkerFailureClassification;
 } {
-  const record = asRecord(body);
-  const providerRequestId = extractSeedanceProviderRequestId(body);
-  const status = (readString(record.status) ?? "").toLowerCase();
-  const errorText = readModelArkErrorText(record);
+  const providerRequestId = evidence.providerRequestId;
 
-  if (httpStatus === 400 || httpStatus === 403 || httpStatus === 422) {
-    const moderation =
-      httpStatus === 422 ||
-      /moderation|safety|sensitive|content.?policy/i.test(errorText);
+  if (
+    evidence.disposition === "PROVIDER_REJECTED" ||
+    evidence.disposition === "PROVIDER_MODERATION_REJECTED"
+  ) {
+    const moderation = evidence.disposition === "PROVIDER_MODERATION_REJECTED";
     return {
       acceptanceClassification: "NOT_ACCEPTED",
       canonicalProviderState: "NOT_ACCEPTED",
@@ -156,7 +232,7 @@ function normalizeCreateStatus(body: unknown, httpStatus: number): {
     };
   }
 
-  if (httpStatus >= 500 || httpStatus === 429) {
+  if (evidence.disposition === "TEMPORARY_FAILURE") {
     return {
       acceptanceClassification: "NOT_SUBMITTED",
       canonicalProviderState: "NOT_SUBMITTED",
@@ -169,37 +245,20 @@ function normalizeCreateStatus(body: unknown, httpStatus: number): {
     };
   }
 
-  if (!providerRequestId) {
-    // HTTP 200 without task id must never be treated as ACCEPTED.
-    if (httpStatus >= 200 && httpStatus < 300) {
-      return {
-        acceptanceClassification: "ACCEPTANCE_UNKNOWN",
-        canonicalProviderState: "ACCEPTANCE_UNKNOWN",
-        reconciliationRequired: true,
-        failureClassification: failureFromCode(
-          "PROVIDER_ACCEPTANCE_UNKNOWN",
-          "Provider acceptance is unknown; reconciliation required",
-          { terminal: false, reconciliationRequired: true }
-        ),
-      };
-    }
+  if (evidence.disposition === "ACCEPTANCE_UNKNOWN") {
     return {
-      acceptanceClassification: "NOT_ACCEPTED",
-      canonicalProviderState: "NOT_ACCEPTED",
-      reconciliationRequired: false,
+      acceptanceClassification: "ACCEPTANCE_UNKNOWN",
+      canonicalProviderState: "ACCEPTANCE_UNKNOWN",
+      reconciliationRequired: true,
       failureClassification: failureFromCode(
-        "PROVIDER_NOT_ACCEPTED",
-        "Provider rejected the submission"
+        "PROVIDER_ACCEPTANCE_UNKNOWN",
+        "Provider acceptance is unknown; reconciliation required",
+        { terminal: false, reconciliationRequired: true }
       ),
     };
   }
 
-  if (
-    status === "failed" ||
-    status === "expired" ||
-    status === "cancelled" ||
-    /fail|reject|error/.test(status)
-  ) {
+  if (evidence.disposition === "TASK_REJECTED") {
     return {
       acceptanceClassification: "NOT_ACCEPTED",
       canonicalProviderState: "NOT_ACCEPTED",
@@ -382,6 +441,8 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
   private readonly payloadResolver: SeedancePayloadResolver;
   private readonly assetAccessResolver?: SeedanceAssetAccessResolver;
   private readonly diagnostics?: AiStoryProviderCreateResponseDiagnosticSink;
+  private readonly createResponseOrderObserver?:
+    SeedanceCanonicalAdapterOptions["createResponseOrderObserver"];
   private readonly now: () => Date;
 
   constructor(options: SeedanceCanonicalAdapterOptions) {
@@ -395,6 +456,7 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
     this.payloadResolver = options.payloadResolver;
     this.assetAccessResolver = options.assetAccessResolver;
     this.diagnostics = options.diagnostics;
+    this.createResponseOrderObserver = options.createResponseOrderObserver;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -435,16 +497,22 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
         throw transportError;
       }
 
-      // Provider-native detail is read off the raw response and committed
-      // durably before the Worker result lifecycle continues, so normalization
-      // can never be the reason the rejection reason is unrecoverable.
-      const normalized = normalizeCreateStatus(response.body, response.status);
-      await this.persistCreateResponseDiagnostic({
-        input,
+      // Extract and durably commit secret-safe Provider-native evidence before
+      // outcome normalization. Persistence is deliberately awaited.
+      const evidence = extractCreateResponseEvidence(response.body, response.status);
+      const diagnostic = this.buildCreateResponseDiagnostic({
         binding,
         response,
-        normalized,
+        evidence,
       });
+      this.createResponseOrderObserver?.("extract");
+      await this.persistCreateResponseDiagnostic({
+        input,
+        diagnostic,
+      });
+      this.createResponseOrderObserver?.("normalize");
+      const normalized = normalizeCreateStatus(evidence);
+      this.createResponseOrderObserver?.("outcome");
 
       return {
         acceptanceClassification: normalized.acceptanceClassification,
@@ -493,16 +561,12 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
     };
   }
 
-  private async persistCreateResponseDiagnostic(args: {
-    readonly input: CanonicalAdapterSubmitInput;
+  private buildCreateResponseDiagnostic(args: {
     readonly binding: ProviderCreateResponseDiagnosticBinding;
     readonly response: SeedanceHttpResponse;
-    readonly normalized: ReturnType<typeof normalizeCreateStatus>;
-  }): Promise<void> {
-    if (!this.diagnostics) {
-      return;
-    }
-    const { input, binding, response, normalized } = args;
+    readonly evidence: SeedanceCreateResponseEvidence;
+  }): AiStoryProviderCreateResponseDiagnostic {
+    const { binding, response, evidence } = args;
     const responseHash =
       response.bodyHash ??
       canonicalPersistenceHash({
@@ -510,23 +574,29 @@ export class SeedanceCanonicalAdapter implements CanonicalProviderAdapter {
         status: response.status,
         body: response.body ?? null,
       });
-    const diagnostic = buildProviderCreateResponseDiagnostic({
+    return buildProviderCreateResponseDiagnostic({
       binding,
       httpStatus: response.status,
       body: response.body,
       responseHash,
       ...(response.traceId ? { headerTraceId: response.traceId } : {}),
-      ...(normalized.providerRequestId
-        ? { taskId: normalized.providerRequestId }
+      ...(evidence.providerRequestId
+        ? { taskId: evidence.providerRequestId }
         : {}),
-      classification: {
-        accepted: normalized.acceptanceClassification === "ACCEPTED",
-        retryable: normalized.failureClassification?.retryable ?? false,
-        reconciliationRequired: normalized.reconciliationRequired,
-        normalizationResult: normalized.acceptanceClassification,
-      },
+      classification: diagnosticClassificationFromEvidence(evidence),
     });
-    await this.appendDiagnostic(input, diagnostic);
+  }
+
+  private async persistCreateResponseDiagnostic(args: {
+    readonly input: CanonicalAdapterSubmitInput;
+    readonly diagnostic: AiStoryProviderCreateResponseDiagnostic;
+  }): Promise<void> {
+    if (!this.diagnostics) {
+      return;
+    }
+    this.createResponseOrderObserver?.("persist:start");
+    await this.appendDiagnostic(args.input, args.diagnostic);
+    this.createResponseOrderObserver?.("persist:complete");
   }
 
   private async persistTransportFailureDiagnostic(
