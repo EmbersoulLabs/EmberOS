@@ -12,6 +12,105 @@ import { canonicalPersistenceHash } from "./ai-story-scene-execution-persistence
 
 type Db = ReturnType<typeof getDb>;
 
+export type ReviewRetryTerminalityEvidence = {
+  readonly historicalSceneResultExists: boolean;
+  readonly latestHumanReview: "APPROVED" | "REJECTED" | "PENDING_REVIEW" | null;
+  readonly validLaterReviewRetryLineage: boolean;
+  readonly currentProviderAttemptExists: boolean;
+  readonly currentWorkerResultExists: boolean;
+  readonly currentSceneResultExists: boolean;
+  readonly currentDispatchAlreadyTerminal: boolean;
+  readonly anotherExecutableSuccessorExists: boolean;
+};
+
+/** Pure policy projection used by focused selector regressions. */
+export function isReviewRetryDispatchExecutable(
+  evidence: ReviewRetryTerminalityEvidence
+): boolean {
+  if (
+    evidence.currentProviderAttemptExists ||
+    evidence.currentWorkerResultExists ||
+    evidence.currentSceneResultExists ||
+    evidence.currentDispatchAlreadyTerminal ||
+    evidence.anotherExecutableSuccessorExists
+  ) {
+    return false;
+  }
+  if (!evidence.historicalSceneResultExists) return true;
+  if (evidence.latestHumanReview === "APPROVED") return false;
+  return (
+    evidence.latestHumanReview === "REJECTED" &&
+    evidence.validLaterReviewRetryLineage
+  );
+}
+
+/**
+ * A Provider-successful Scene Result is not, by itself, terminal creative
+ * authority. Post-terminal Provider retries can be descendants of a
+ * review-directed retry even when the successor correlation does not repeat
+ * retry_input_revision_id. Follow the prior Attempt back to its scheduling
+ * correlation and require the complete rejected-review retry lineage.
+ *
+ * Current-generation results remain an unconditional duplicate-execution
+ * block. An APPROVED review later than the retry authority also remains
+ * terminal creative authority.
+ */
+const postTerminalReviewRetrySceneResultGate = sql`
+  and not exists (
+    select 1
+    from ai_story_scene_results current_result
+    where current_result.scene_execution_id = correlation.scene_execution_id
+      and current_result.provider_execution_id = execution.execution_id
+  )
+  and (
+    not exists (
+      select 1
+      from ai_story_scene_results historical_result
+      where historical_result.scene_execution_id = correlation.scene_execution_id
+    )
+    or exists (
+      select 1
+      from provider_attempts retry_source_attempt
+      join ai_story_scene_scheduling_correlations retry_source_correlation
+        on retry_source_correlation.provider_execution_id = retry_source_attempt.execution_id
+       and retry_source_correlation.scene_execution_id = authority.scene_execution_id
+       and retry_source_correlation.org_id = authority.org_id
+       and retry_source_correlation.workspace_id = authority.workspace_id
+      join ai_story_scene_attempt_input_revisions retry_input
+        on retry_input.retry_input_revision_id = retry_source_correlation.retry_input_revision_id
+       and retry_input.scene_execution_id = authority.scene_execution_id
+       and retry_input.org_id = authority.org_id
+       and retry_input.workspace_id = authority.workspace_id
+      join ai_story_scene_retry_authorizations review_retry
+        on review_retry.retry_input_revision_id = retry_input.retry_input_revision_id
+       and review_retry.source_review_id = retry_input.source_review_id
+       and review_retry.source_attempt_id = retry_input.source_attempt_id
+       and review_retry.scene_execution_id = authority.scene_execution_id
+       and review_retry.status in ('AUTHORIZED', 'CONSUMED')
+      join ai_story_generated_scene_reviews rejected_review
+        on rejected_review.generated_scene_review_id = review_retry.source_review_id
+       and rejected_review.provider_attempt_id = review_retry.source_attempt_id
+       and rejected_review.scene_execution_id = authority.scene_execution_id
+       and rejected_review.decision = 'REJECTED'
+      join ai_story_scene_results reviewed_result
+        on reviewed_result.scene_result_id = rejected_review.scene_result_id
+       and reviewed_result.provider_attempt_id = rejected_review.provider_attempt_id
+       and reviewed_result.scene_execution_id = authority.scene_execution_id
+       and reviewed_result.status = 'SUCCEEDED'
+      where retry_source_attempt.attempt_id = authority.prior_provider_attempt_id
+        and authority.authorized_at >= review_retry.authorized_at
+        and not exists (
+          select 1
+          from ai_story_generated_scene_reviews later_approved_review
+          where later_approved_review.scene_execution_id = authority.scene_execution_id
+            and later_approved_review.decision = 'APPROVED'
+            and coalesce(later_approved_review.decided_at, later_approved_review.created_at)
+                >= review_retry.authorized_at
+        )
+    )
+  )
+`;
+
 export interface DispatchableProviderJob {
   readonly jobId: string;
   readonly executionId: string;
@@ -341,7 +440,7 @@ export class ExecutionDispatchRepository {
         and execution.accepted_result is null
         and not exists (select 1 from provider_attempts a where a.execution_id=execution.execution_id)
         and not exists (select 1 from ai_story_worker_execution_results r where r.dispatch_id=dispatch.dispatch_id)
-        and not exists (select 1 from ai_story_scene_results r where r.scene_execution_id=correlation.scene_execution_id)
+        ${postTerminalReviewRetrySceneResultGate}
       order by job.next_visible_at, job.created_at
       limit 1
     `)) as unknown as Array<{ dispatch_id: string; fact: unknown }>;
@@ -632,7 +731,7 @@ export class ExecutionDispatchRepository {
           and execution.accepted_attempt_id is null and execution.accepted_result is null
           and not exists (select 1 from provider_attempts a where a.execution_id=execution.execution_id)
           and not exists (select 1 from ai_story_worker_execution_results r where r.dispatch_id=dispatch.dispatch_id)
-          and not exists (select 1 from ai_story_scene_results r where r.scene_execution_id=correlation.scene_execution_id)
+          ${postTerminalReviewRetrySceneResultGate}
         order by job.next_visible_at, job.created_at
         for update of job skip locked limit 1
       `)) as unknown as Array<{ dispatch_id: string; job_id: string; fact: unknown }>;
