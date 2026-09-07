@@ -261,34 +261,19 @@ export function sceneKeyframePrompt(brief: SceneKeyframeBrief): string {
   return lines.join("\n");
 }
 
-export type SceneKeyframeGenerationInput = Readonly<{
-  brief: SceneKeyframeBrief;
-  prompt: string;
-  references: readonly Readonly<{
-    reference: SceneKeyframeReference;
-    bytes: Buffer;
-  }>[];
-  idempotencyKey: string;
+/** AI Story-owned resolved identity reference; contains no Provider invocation contract. */
+export type ResolvedSceneKeyframeReference = Readonly<{
+  reference: SceneKeyframeReference;
+  bytes: Buffer;
 }>;
 
-export type SceneKeyframeGenerationOutput = Readonly<{
+/** Candidate image facts consumed by Narrative QC and asset persistence. */
+export type SceneKeyframeCandidateImage = Readonly<{
   bytes: Buffer;
   mimeType: "image/png" | "image/jpeg" | "image/webp";
   providerRequestId: string;
   revisedPrompt?: string;
 }>;
-
-export interface SceneKeyframeGenerationAdapter {
-  readonly providerId: string;
-  readonly modelId: string;
-  readonly adapterVersion: string;
-  readonly externalPaidCall: boolean;
-  readonly referenceConditioned: true;
-  readonly narrativeCharacterComposition: true;
-  readonly possessionComposition: true;
-  readonly actionStartStateComposition: true;
-  generate(input: SceneKeyframeGenerationInput): Promise<SceneKeyframeGenerationOutput>;
-}
 
 /** AI Story-owned certification that a shared adapter can compose narrative keyframes. */
 export type SceneKeyframeGenerationCapabilityProfile = Readonly<{
@@ -313,8 +298,8 @@ export interface SceneKeyframeQcAdapter {
   readonly externalPaidCall: boolean;
   evaluate(input: Readonly<{
     brief: SceneKeyframeBrief;
-    generated: SceneKeyframeGenerationOutput;
-    references: SceneKeyframeGenerationInput["references"];
+    generated: SceneKeyframeCandidateImage;
+    references: readonly ResolvedSceneKeyframeReference[];
   }>): Promise<SceneKeyframeQcEvidence>;
 }
 
@@ -347,7 +332,7 @@ export type PreparedSceneKeyframeAsset = Readonly<{
   executionContractVersion: typeof AI_STORY_SCENE_KEYFRAME_EXECUTION_VERSION;
   assetId: string;
   contentHash: string;
-  mimeType: SceneKeyframeGenerationOutput["mimeType"];
+  mimeType: SceneKeyframeCandidateImage["mimeType"];
   storagePath: string;
   scope: SceneKeyframeScope;
   sourceRawAssetId: string;
@@ -415,7 +400,7 @@ export function deriveSceneKeyframeExecutionIdentity(
 
 export function translateSceneKeyframeToCreativeImageRequest(input: {
   brief: SceneKeyframeBrief;
-  references: SceneKeyframeGenerationInput["references"];
+  references: readonly ResolvedSceneKeyframeReference[];
   executionIdentity: string;
   authorizationId: string;
 }): CreativeImageGenerationInput {
@@ -452,7 +437,7 @@ export function translateSceneKeyframeToCreativeImageRequest(input: {
   };
 }
 
-function generationOutput(result: Extract<CreativeImageExecutionResult, { status: "SUCCEEDED" }>): SceneKeyframeGenerationOutput {
+function candidateImage(result: Extract<CreativeImageExecutionResult, { status: "SUCCEEDED" }>): SceneKeyframeCandidateImage {
   return {
     bytes: result.output.bytes,
     mimeType: result.output.mimeType,
@@ -465,7 +450,7 @@ function outputHash(bytes: Buffer): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-function imageBytesMatchMime(bytes: Buffer, mimeType: SceneKeyframeGenerationOutput["mimeType"]): boolean {
+function imageBytesMatchMime(bytes: Buffer, mimeType: SceneKeyframeCandidateImage["mimeType"]): boolean {
   if (mimeType === "image/png") return bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   if (mimeType === "image/jpeg") return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes.at(-2) === 0xff && bytes.at(-1) === 0xd9;
   return bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP";
@@ -507,7 +492,7 @@ export function promotePreparedSceneKeyframe(input: {
   return { ...body, fingerprint: sha256CanonicalIntegrityHash({ kind: AI_STORY_PROVIDER_READY_SCENE_INPUT_CONTRACT_VERSION, authority: body }) };
 }
 
-function extension(mimeType: SceneKeyframeGenerationOutput["mimeType"]): string {
+function extension(mimeType: SceneKeyframeCandidateImage["mimeType"]): string {
   if (mimeType === "image/jpeg") return "jpg";
   if (mimeType === "image/webp") return "webp";
   return "png";
@@ -623,7 +608,7 @@ export async function executeSceneKeyframePreparation(input: {
       }),
     });
     if (creativeResult.status === "FAILED") return { status: "FAILED_CLOSED", code: `CREATIVE_IMAGE_${creativeResult.failure.code}` };
-    const generated = generationOutput(creativeResult);
+    const generated = candidateImage(creativeResult);
     if (generated.bytes.length === 0) throw new Error("SCENE_KEYFRAME_GENERATOR_OUTPUT_EMPTY");
     if (!imageBytesMatchMime(generated.bytes, generated.mimeType)) throw new Error("SCENE_KEYFRAME_GENERATOR_OUTPUT_INVALID");
     const report = createSceneKeyframeQcReport(await input.qcEvaluator.evaluate({ brief: input.brief, generated, references }));

@@ -12,9 +12,7 @@ import {
 } from "../packages/agents/src/creative-image";
 import {
   OPENAI_SCENE_KEYFRAME_QC_MODEL,
-  OpenAiSceneKeyframeAdapter,
-} from "../packages/agents/src/ai-story/openai-scene-keyframe-adapter";
-import type { SceneKeyframeGenerationInput } from "../packages/agents/src/ai-story/scene-keyframe-preparation";
+} from "../packages/agents/src/ai-story/openai-scene-keyframe-qc-adapter";
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
@@ -131,41 +129,6 @@ describe("OpenAI Creative Image adapter ownership", () => {
     expect(JSON.stringify(result)).not.toContain("sk-sensitive");
   });
 
-  it("preserves the AI Story compatibility input, idempotency, and output shape", async () => {
-    let sharedInput: Record<string, unknown> | undefined;
-    const shared = new OpenAiCreativeImageGenerationAdapter(mockClient({
-      data: [{ b64_json: PNG.toString("base64"), revised_prompt: "same revised prompt" }],
-    }, (_body, options) => { sharedInput = options; }));
-    const adapter = new OpenAiSceneKeyframeAdapter(shared);
-    const input = {
-      brief: {
-        SCENE_IDENTITY: {
-          tenantId: "tenant-1", workspaceId: "workspace-1", storyId: "story-1", sceneId: "scene-2", sceneVersionId: "scene-2-v1",
-        },
-      },
-      prompt: "Existing narrative prompt",
-      references: [{
-        reference: {
-          assetId: "product-1", contentHash: hash(PNG), mimeType: "image/png", role: "RAW_SUBJECT",
-          subjectId: "product", authorityId: "authority-1", authorityClassification: "ACTIVE",
-          tenantId: "tenant-1", workspaceId: "workspace-1", storyId: "story-1",
-        },
-        bytes: PNG,
-      }],
-      idempotencyKey: "existing-stable-key",
-    } as SceneKeyframeGenerationInput;
-
-    const output = await adapter.generate(input);
-    expect(sharedInput).toEqual({ maxRetries: 0, headers: { "Idempotency-Key": "existing-stable-key" } });
-    expect(output).toEqual({
-      bytes: PNG,
-      mimeType: "image/png",
-      providerRequestId: "openai-image:existing-stable-key",
-      revisedPrompt: "same revised prompt",
-    });
-    expect(adapter.adapterVersion).toBe("openai-scene-keyframe-edit.v1");
-  });
-
   it("keeps narrative QC in AI Story and has exactly one images.edit implementation", async () => {
     expect(OPENAI_SCENE_KEYFRAME_QC_MODEL).toBe("gpt-4o");
     const agentFiles = await sourceFiles(path.resolve("packages/agents/src"));
@@ -179,6 +142,9 @@ describe("OpenAI Creative Image adapter ownership", () => {
       .map(({ content }) => content)
       .join("\n");
     expect(aiStorySource).not.toMatch(/\.images\.edit\s*\(/);
+    expect(aiStorySource).not.toMatch(
+      /OpenAiSceneKeyframeAdapter|createOpenAiSceneKeyframeAdapter|SceneKeyframeGenerationAdapter|SceneKeyframeGenerationInput|SceneKeyframeGenerationOutput|OPENAI_SCENE_KEYFRAME_ADAPTER_VERSION/
+    );
     expect(aiStorySource).toContain("CreativeImageExecutionService");
     expect(aiStorySource).toContain('OPENAI_SCENE_KEYFRAME_QC_MODEL = "gpt-4o"');
 

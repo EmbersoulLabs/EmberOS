@@ -39,9 +39,8 @@ import {
 } from "../packages/shared/src/ai-story-keyframe-paid-authorization";
 import { keyframePaidAuthorizationIntegrityHash } from "../packages/shared/src/ai-story-keyframe-paid-authorization.server";
 import {
-  OpenAiSceneKeyframeAdapter,
   OpenAiSceneKeyframeQcAdapter,
-} from "../packages/agents/src/ai-story/openai-scene-keyframe-adapter";
+} from "../packages/agents/src/ai-story/openai-scene-keyframe-qc-adapter";
 
 const RAW_HASH = "sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 const CHARACTER_HASH = RAW_HASH;
@@ -536,16 +535,13 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     })).toThrow("SCENE_KEYFRAME_PROVIDER_READY_PROMOTION_DENIED");
   });
 
-  it("stops before an OpenAI paid image edit without explicit authorization", async () => {
+  it("stops before shared paid image execution without explicit authorization", async () => {
     const { brief, prep } = floristFixture();
-    let calls = 0;
-    const adapter = new OpenAiSceneKeyframeAdapter({
-      images: { edit: async () => { calls += 1; return { data: [] }; } },
-    } as never);
+    const generator = new DeterministicGenerator();
     const result = await executeSceneKeyframePreparation({
       brief,
       preparation: prep,
-      generationCapability: adapter,
+      generationCapability: generator,
       creativeImageExecutionService: { execute: async () => { throw new Error("UNEXPECTED_SHARED_EXECUTION"); } },
       qcEvaluator: new DeterministicQc(),
       repository: new MemoryRepository(),
@@ -554,26 +550,25 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     expect(result).toMatchObject({
       status: "AUTHORIZATION_REQUIRED",
       code: "LIVE_KEYFRAME_IMAGE_GENERATION_AUTHORIZATION_REQUIRED",
-      provider: "openai",
-      model: "gpt-image-2",
+      provider: generator.providerId,
+      model: generator.modelId,
       estimatedCallCount: 1,
     });
-    expect(calls).toBe(0);
+    expect(generator.calls).toBe(0);
   });
 
   it("rejects the legacy ephemeral authorization marker before a paid image call", async () => {
     const { brief, prep } = floristFixture();
-    let calls = 0;
-    const adapter = new OpenAiSceneKeyframeAdapter({ images: { edit: async () => { calls += 1; return { data: [] }; } } } as never);
+    const generator = new DeterministicGenerator();
     const result = await executeSceneKeyframePreparation({
-      brief, preparation: prep, generationCapability: adapter,
+      brief, preparation: prep, generationCapability: generator,
       creativeImageExecutionService: { execute: async () => { throw new Error("UNEXPECTED_SHARED_EXECUTION"); } },
       qcEvaluator: new DeterministicQc(),
       repository: new MemoryRepository(), readReferenceBytes: async () => PNG,
       paidExecutionAuthorization: { authorized: true, authorizationId: "legacy-marker" } as never,
     });
     expect(result.status).toBe("AUTHORIZATION_REQUIRED");
-    expect(calls).toBe(0);
+    expect(generator.calls).toBe(0);
   });
 
   it.each([
@@ -638,26 +633,14 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     expect(externalQc.calls).toBe(0);
   });
 
-  it("maps canonical references to one OpenAI image edit and parses independent visual QC", async () => {
+  it("parses independent AI Story visual QC for a provider-neutral generated candidate", async () => {
     const { brief } = floristFixture();
-    let imageEditBody: Record<string, unknown> | null = null;
-    const generator = new OpenAiSceneKeyframeAdapter({
-      images: {
-        edit: async (body: Record<string, unknown>) => {
-          imageEditBody = body;
-          return { data: [{ b64_json: PNG.toString("base64"), revised_prompt: "bounded revision" }] };
-        },
-      },
-    } as never);
-    const generation = await generator.generate({
-      brief,
-      prompt: sceneKeyframePrompt(brief),
-      references: brief.SOURCE_ASSET_REFERENCES.map((reference) => ({ reference, bytes: PNG })),
-      idempotencyKey: "fixture-idempotency",
-    });
-    expect(imageEditBody).toMatchObject({ model: "gpt-image-2", n: 1, quality: "high", size: "1536x1024" });
-    expect((imageEditBody as { image: unknown[] } | null)?.image).toHaveLength(brief.SOURCE_ASSET_REFERENCES.length);
-    expect(generation.bytes).toEqual(PNG);
+    const generation = {
+      bytes: PNG,
+      mimeType: "image/png" as const,
+      providerRequestId: "provider-request-1",
+      revisedPrompt: "bounded revision",
+    };
 
     const dimensions = Object.fromEntries(SCENE_KEYFRAME_QC_DIMENSIONS.map((dimension) => [
       dimension, { verdict: "PASS", note: "visible" },

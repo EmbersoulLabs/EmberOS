@@ -20,4 +20,6 @@ not EmberOS commercial pricing, charging, entitlement, or budget authority.
 
 AI Story maps its persisted domain authorization into the shared execution
 contract and uses `CreativeImageExecutionService` for canonical keyframe image
-generation. The old Scene-keyframe adapter remains compatibility-only.
+generation. Provider generation adapters and factories are exported only from
+the shared Creative Image namespace; AI Story retains its independent Narrative
+QC adapter.
