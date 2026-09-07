@@ -23,6 +23,8 @@ export * from "./ai-story-assembly-runtime-execution";
 export * from "./ai-story-assembly-validation";
 export * from "./ai-story-generated-scene-review";
 export * from "./ai-story-generated-media-qc-policy";
+export * from "./ai-story-keyframe-paid-authorization";
+export * from "./ai-story-keyframe-paid-authorization.server";
 export * from "./ai-story-final-story-result-persistence";
 export * from "./ai-story-durable-scene-media";
 export * from "./ai-story-assembly";

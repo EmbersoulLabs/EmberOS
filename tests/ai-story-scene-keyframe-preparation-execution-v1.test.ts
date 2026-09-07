@@ -479,6 +479,19 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     expect(calls).toBe(0);
   });
 
+  it("rejects the legacy ephemeral authorization marker before a paid image call", async () => {
+    const { brief, prep } = floristFixture();
+    let calls = 0;
+    const adapter = new OpenAiSceneKeyframeAdapter({ images: { edit: async () => { calls += 1; return { data: [] }; } } } as never);
+    const result = await executeSceneKeyframePreparation({
+      brief, preparation: prep, generator: adapter, qcEvaluator: new DeterministicQc(),
+      repository: new MemoryRepository(), readReferenceBytes: async () => PNG,
+      paidExecutionAuthorization: { authorized: true, authorizationId: "legacy-marker" } as never,
+    });
+    expect(result.status).toBe("AUTHORIZATION_REQUIRED");
+    expect(calls).toBe(0);
+  });
+
   it("maps canonical references to one OpenAI image edit and parses independent visual QC", async () => {
     const { brief } = floristFixture();
     let imageEditBody: Record<string, unknown> | null = null;

@@ -84,6 +84,7 @@ export * from "./ai-story-generated-scene-review";
 export * from "./ai-story-differentiated-retry";
 export * from "./ai-story-post-terminal-provider-retry";
 export * from "./ai-story-generated-media-qc-policy";
+export * from "./ai-story-keyframe-paid-authorization";
 export * from "./ai-story-product-runtime-status";
 export * from "./ai-story-final-story-result-read";
 export * from "./ai-story-scene-scheduling";
