@@ -221,10 +221,14 @@ describe("shared Creative Image execution boundary", () => {
     ]);
   });
 
-  it("is not wired through CreativeImageExecutionService or into Photo Scene runtime", async () => {
+  it("is wired into AI Story but not into Photo Scene runtime", async () => {
     const aiStoryFiles = await sourceFiles(path.resolve("packages/agents/src/ai-story"));
     const aiStoryContents = await Promise.all(aiStoryFiles.map((file) => readFile(file, "utf8")));
-    expect(aiStoryContents.join("\n")).not.toContain("CreativeImageExecutionService");
+    expect(aiStoryContents.join("\n")).toContain("CreativeImageExecutionService");
+    const canonical = await readFile(path.resolve("packages/agents/src/ai-story/scene-keyframe-preparation.ts"), "utf8");
+    const runtime = canonical.slice(canonical.indexOf("export async function executeSceneKeyframePreparation"));
+    expect(runtime).toContain("creativeImageExecutionService.execute");
+    expect(runtime).not.toMatch(/\b(?:generator|adapter)\.generate\s*\(/);
 
     const photoSceneFiles = await sourceFiles(path.resolve("packages/agents/src/photo-scene"));
     const photoSceneContents = await Promise.all(photoSceneFiles.map((file) => readFile(file, "utf8")));

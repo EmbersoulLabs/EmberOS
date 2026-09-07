@@ -179,7 +179,7 @@ describe("OpenAI Creative Image adapter ownership", () => {
       .map(({ content }) => content)
       .join("\n");
     expect(aiStorySource).not.toMatch(/\.images\.edit\s*\(/);
-    expect(aiStorySource).not.toContain("CreativeImageExecutionService");
+    expect(aiStorySource).toContain("CreativeImageExecutionService");
     expect(aiStorySource).toContain('OPENAI_SCENE_KEYFRAME_QC_MODEL = "gpt-4o"');
 
     const photoSceneSource = sources

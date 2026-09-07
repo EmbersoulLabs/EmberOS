@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import {
   CREATIVE_IMAGE_EXECUTION_CONTRACT_VERSION,
   CreativeImageAdapterError,
+  CreativeImageExecutionService,
   OPENAI_CREATIVE_IMAGE_ADAPTER_VERSION,
   OpenAiCreativeImageGenerationAdapter,
   createOpenAiCreativeImageGenerationAdapter,
@@ -9,6 +10,7 @@ import {
 } from "../creative-image";
 import type {
   SceneKeyframeGenerationAdapter,
+  SceneKeyframeGenerationCapabilityProfile,
   SceneKeyframeGenerationInput,
   SceneKeyframeGenerationOutput,
   SceneKeyframeQcAdapter,
@@ -169,14 +171,26 @@ export function createOpenAiSceneKeyframeAdapter(env: NodeJS.ProcessEnv = proces
 }
 
 export function createOpenAiSceneKeyframeRuntime(env: NodeJS.ProcessEnv = process.env): Readonly<{
-  generator: OpenAiSceneKeyframeAdapter;
+  generationCapability: SceneKeyframeGenerationCapabilityProfile;
+  creativeImageExecutionService: CreativeImageExecutionService;
   qcEvaluator: OpenAiSceneKeyframeQcAdapter;
 }> {
   const apiKey = env.AI_PROVIDER_OPENAI_API_KEY?.trim() || env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
   const client = new OpenAI({ apiKey, maxRetries: 0 });
+  const adapter = createOpenAiCreativeImageGenerationAdapter(env);
   return {
-    generator: createOpenAiSceneKeyframeAdapter(env),
+    generationCapability: {
+      providerId: adapter.providerId,
+      modelId: adapter.modelId,
+      adapterVersion: adapter.adapterVersion,
+      externalPaidCall: adapter.externalPaidCall,
+      referenceConditioned: true,
+      narrativeCharacterComposition: true,
+      possessionComposition: true,
+      actionStartStateComposition: true,
+    },
+    creativeImageExecutionService: new CreativeImageExecutionService({ adapter }),
     qcEvaluator: new OpenAiSceneKeyframeQcAdapter(client),
   };
 }
