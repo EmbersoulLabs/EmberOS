@@ -221,20 +221,21 @@ describe("shared Creative Image execution boundary", () => {
     ]);
   });
 
-  it("is not imported by existing AI Story or Photo Scene runtime paths", async () => {
-    const roots = [
-      path.resolve("packages/agents/src/ai-story"),
-      path.resolve("packages/agents/src/photo-scene"),
-    ];
-    const files = (await Promise.all(roots.map(sourceFiles))).flat();
-    const contents = await Promise.all(files.map((file) => readFile(file, "utf8")));
-    for (const content of contents) {
-      expect(content).not.toMatch(/CreativeImageExecutionService|from\s+["'][^"']*creative-image/);
-    }
+  it("is not wired through CreativeImageExecutionService or into Photo Scene runtime", async () => {
+    const aiStoryFiles = await sourceFiles(path.resolve("packages/agents/src/ai-story"));
+    const aiStoryContents = await Promise.all(aiStoryFiles.map((file) => readFile(file, "utf8")));
+    expect(aiStoryContents.join("\n")).not.toContain("CreativeImageExecutionService");
+
+    const photoSceneFiles = await sourceFiles(path.resolve("packages/agents/src/photo-scene"));
+    const photoSceneContents = await Promise.all(photoSceneFiles.map((file) => readFile(file, "utf8")));
+    expect(photoSceneContents.join("\n")).not.toMatch(/from\s+["'][^"']*creative-image/);
   });
 
-  it("contains no Provider SDK implementation in the shared namespace", async () => {
-    const files = await sourceFiles(path.resolve("packages/agents/src/creative-image"));
+  it("keeps Provider SDK implementation out of the generic contracts and service", async () => {
+    const files = [
+      path.resolve("packages/agents/src/creative-image/contracts.ts"),
+      path.resolve("packages/agents/src/creative-image/execution-service.ts"),
+    ];
     const contents = (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n");
     expect(contents).not.toMatch(/from\s+["']openai["']|new\s+OpenAI|images\.edit|images\.generate/);
   });

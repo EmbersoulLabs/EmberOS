@@ -1,4 +1,12 @@
-import OpenAI, { toFile } from "openai";
+import OpenAI from "openai";
+import {
+  CREATIVE_IMAGE_EXECUTION_CONTRACT_VERSION,
+  CreativeImageAdapterError,
+  OPENAI_CREATIVE_IMAGE_ADAPTER_VERSION,
+  OpenAiCreativeImageGenerationAdapter,
+  createOpenAiCreativeImageGenerationAdapter,
+  type OpenAiImagesClient,
+} from "../creative-image";
 import type {
   SceneKeyframeGenerationAdapter,
   SceneKeyframeGenerationInput,
@@ -9,11 +17,9 @@ import type {
 } from "./scene-keyframe-preparation";
 import { SCENE_KEYFRAME_QC_DIMENSIONS } from "./scene-keyframe-preparation";
 
-export const OPENAI_SCENE_KEYFRAME_ADAPTER_VERSION = "openai-scene-keyframe-edit.v1" as const;
-export const OPENAI_SCENE_KEYFRAME_MODEL = "gpt-image-2" as const;
+/** Temporary compatibility alias; canonical generation adapter version is shared-owned. */
+export const OPENAI_SCENE_KEYFRAME_ADAPTER_VERSION = OPENAI_CREATIVE_IMAGE_ADAPTER_VERSION;
 export const OPENAI_SCENE_KEYFRAME_QC_MODEL = "gpt-4o" as const;
-
-type OpenAiImagesClient = Pick<OpenAI, "images">;
 
 /**
  * Narrow adapter for reference-conditioned narrative keyframes. Construction is
@@ -21,7 +27,7 @@ type OpenAiImagesClient = Pick<OpenAI, "images">;
  */
 export class OpenAiSceneKeyframeAdapter implements SceneKeyframeGenerationAdapter {
   readonly providerId = "openai";
-  readonly modelId = OPENAI_SCENE_KEYFRAME_MODEL;
+  readonly modelId: OpenAiCreativeImageGenerationAdapter["modelId"];
   readonly adapterVersion = OPENAI_SCENE_KEYFRAME_ADAPTER_VERSION;
   readonly externalPaidCall = true;
   readonly referenceConditioned = true as const;
@@ -29,30 +35,67 @@ export class OpenAiSceneKeyframeAdapter implements SceneKeyframeGenerationAdapte
   readonly possessionComposition = true as const;
   readonly actionStartStateComposition = true as const;
 
-  constructor(private readonly client: OpenAiImagesClient) {}
+  private readonly adapter: OpenAiCreativeImageGenerationAdapter;
+
+  constructor(adapterOrClient: OpenAiCreativeImageGenerationAdapter | OpenAiImagesClient) {
+    this.adapter = adapterOrClient instanceof OpenAiCreativeImageGenerationAdapter
+      ? adapterOrClient
+      : new OpenAiCreativeImageGenerationAdapter(adapterOrClient);
+    this.modelId = this.adapter.modelId;
+  }
 
   async generate(input: SceneKeyframeGenerationInput): Promise<SceneKeyframeGenerationOutput> {
     if (input.references.length === 0) throw new Error("SCENE_KEYFRAME_REFERENCE_REQUIRED");
-    const images = await Promise.all(input.references.map(({ reference, bytes }) => {
-      const ext = reference.mimeType === "image/jpeg" ? "jpg" : reference.mimeType.split("/")[1] ?? "png";
-      return toFile(bytes, `${reference.role.toLowerCase()}-${reference.assetId}.${ext}`, { type: reference.mimeType });
-    }));
-    const response = await this.client.images.edit({
-      model: this.modelId,
-      image: images,
-      prompt: input.prompt,
-      n: 1,
-      quality: "high",
-      size: "1536x1024",
-    }, { maxRetries: 0, headers: { "Idempotency-Key": input.idempotencyKey } });
-    const item = response.data?.[0];
-    if (!item?.b64_json) throw new Error("SCENE_KEYFRAME_PROVIDER_OUTPUT_MISSING");
-    return {
-      bytes: Buffer.from(item.b64_json, "base64"),
-      mimeType: "image/png",
-      providerRequestId: `openai-image:${input.idempotencyKey}`,
-      revisedPrompt: item.revised_prompt,
-    };
+    try {
+      const output = await this.adapter.generate({
+        contractVersion: CREATIVE_IMAGE_EXECUTION_CONTRACT_VERSION,
+        scope: {
+          tenantId: input.brief.SCENE_IDENTITY.tenantId,
+          workspaceId: input.brief.SCENE_IDENTITY.workspaceId,
+          correlationId: `${input.brief.SCENE_IDENTITY.storyId}:${input.brief.SCENE_IDENTITY.sceneId}`,
+        },
+        executionIdentity: input.idempotencyKey,
+        idempotencyKey: input.idempotencyKey,
+        authorizationId: `ai-story-keyframe-compatibility:${input.idempotencyKey}`,
+        prompt: input.prompt,
+        references: input.references.map(({ reference, bytes }) => ({
+          assetId: reference.assetId,
+          contentHash: reference.contentHash,
+          mimeType: reference.mimeType,
+          bytes,
+          role: reference.role === "RAW_SUBJECT" ? "INPUT_IMAGE" : "REFERENCE_IMAGE",
+        })),
+        requestedOutput: {
+          mimeType: "image/png",
+          width: 1536,
+          height: 1024,
+          sizeConstraint: "1536x1024",
+          quality: "HIGH",
+        },
+        correlationMetadata: {
+          compatibilityBoundary: "ai-story-scene-keyframe",
+          storyId: input.brief.SCENE_IDENTITY.storyId,
+          sceneId: input.brief.SCENE_IDENTITY.sceneId,
+          sceneVersionId: input.brief.SCENE_IDENTITY.sceneVersionId,
+        },
+      });
+      return {
+        bytes: output.bytes,
+        mimeType: output.mimeType,
+        providerRequestId: output.providerRequestId,
+        ...(output.revisedPrompt ? { revisedPrompt: output.revisedPrompt } : {}),
+      };
+    } catch (error) {
+      if (error instanceof CreativeImageAdapterError) {
+        if (error.providerEvidence?.code === "OPENAI_IMAGE_REFERENCE_REQUIRED") {
+          throw new Error("SCENE_KEYFRAME_REFERENCE_REQUIRED");
+        }
+        if (error.providerEvidence?.code === "OPENAI_IMAGE_OUTPUT_MISSING") {
+          throw new Error("SCENE_KEYFRAME_PROVIDER_OUTPUT_MISSING");
+        }
+      }
+      throw error;
+    }
   }
 }
 
@@ -122,9 +165,7 @@ export class OpenAiSceneKeyframeQcAdapter implements SceneKeyframeQcAdapter {
 }
 
 export function createOpenAiSceneKeyframeAdapter(env: NodeJS.ProcessEnv = process.env): OpenAiSceneKeyframeAdapter {
-  const apiKey = env.AI_PROVIDER_OPENAI_API_KEY?.trim() || env.OPENAI_API_KEY?.trim();
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
-  return new OpenAiSceneKeyframeAdapter(new OpenAI({ apiKey, maxRetries: 0 }));
+  return new OpenAiSceneKeyframeAdapter(createOpenAiCreativeImageGenerationAdapter(env));
 }
 
 export function createOpenAiSceneKeyframeRuntime(env: NodeJS.ProcessEnv = process.env): Readonly<{
@@ -135,7 +176,7 @@ export function createOpenAiSceneKeyframeRuntime(env: NodeJS.ProcessEnv = proces
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
   const client = new OpenAI({ apiKey, maxRetries: 0 });
   return {
-    generator: new OpenAiSceneKeyframeAdapter(client),
+    generator: createOpenAiSceneKeyframeAdapter(env),
     qcEvaluator: new OpenAiSceneKeyframeQcAdapter(client),
   };
 }

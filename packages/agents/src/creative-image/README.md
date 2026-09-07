@@ -17,3 +17,9 @@ require a separately authorized persistence design; this extraction adds none.
 
 Provider usage or cost reported by an adapter is execution evidence only. It is
 not EmberOS commercial pricing, charging, entitlement, or budget authority.
+
+During the OpenAI adapter relocation, AI Story still owns its existing
+caller-side paid authorization and translates its keyframe request through a
+temporary compatibility wrapper. `CreativeImageExecutionService` is not yet on
+that runtime path; final authorization ownership convergence belongs to the
+separate AI Story rewiring ticket.
