@@ -1,105 +1,17 @@
 import OpenAI from "openai";
 import {
-  CREATIVE_IMAGE_EXECUTION_CONTRACT_VERSION,
-  CreativeImageAdapterError,
   CreativeImageExecutionService,
-  OPENAI_CREATIVE_IMAGE_ADAPTER_VERSION,
-  OpenAiCreativeImageGenerationAdapter,
   createOpenAiCreativeImageGenerationAdapter,
-  type OpenAiImagesClient,
 } from "../creative-image";
 import type {
-  SceneKeyframeGenerationAdapter,
   SceneKeyframeGenerationCapabilityProfile,
-  SceneKeyframeGenerationInput,
-  SceneKeyframeGenerationOutput,
   SceneKeyframeQcAdapter,
   SceneKeyframeQcDimension,
   SceneKeyframeQcEvidence,
 } from "./scene-keyframe-preparation";
 import { SCENE_KEYFRAME_QC_DIMENSIONS } from "./scene-keyframe-preparation";
 
-/** Temporary compatibility alias; canonical generation adapter version is shared-owned. */
-export const OPENAI_SCENE_KEYFRAME_ADAPTER_VERSION = OPENAI_CREATIVE_IMAGE_ADAPTER_VERSION;
 export const OPENAI_SCENE_KEYFRAME_QC_MODEL = "gpt-4o" as const;
-
-/**
- * Narrow adapter for reference-conditioned narrative keyframes. Construction is
- * side-effect free; executeSceneKeyframePreparation owns paid-call authorization.
- */
-export class OpenAiSceneKeyframeAdapter implements SceneKeyframeGenerationAdapter {
-  readonly providerId = "openai";
-  readonly modelId: OpenAiCreativeImageGenerationAdapter["modelId"];
-  readonly adapterVersion = OPENAI_SCENE_KEYFRAME_ADAPTER_VERSION;
-  readonly externalPaidCall = true;
-  readonly referenceConditioned = true as const;
-  readonly narrativeCharacterComposition = true as const;
-  readonly possessionComposition = true as const;
-  readonly actionStartStateComposition = true as const;
-
-  private readonly adapter: OpenAiCreativeImageGenerationAdapter;
-
-  constructor(adapterOrClient: OpenAiCreativeImageGenerationAdapter | OpenAiImagesClient) {
-    this.adapter = adapterOrClient instanceof OpenAiCreativeImageGenerationAdapter
-      ? adapterOrClient
-      : new OpenAiCreativeImageGenerationAdapter(adapterOrClient);
-    this.modelId = this.adapter.modelId;
-  }
-
-  async generate(input: SceneKeyframeGenerationInput): Promise<SceneKeyframeGenerationOutput> {
-    if (input.references.length === 0) throw new Error("SCENE_KEYFRAME_REFERENCE_REQUIRED");
-    try {
-      const output = await this.adapter.generate({
-        contractVersion: CREATIVE_IMAGE_EXECUTION_CONTRACT_VERSION,
-        scope: {
-          tenantId: input.brief.SCENE_IDENTITY.tenantId,
-          workspaceId: input.brief.SCENE_IDENTITY.workspaceId,
-          correlationId: `${input.brief.SCENE_IDENTITY.storyId}:${input.brief.SCENE_IDENTITY.sceneId}`,
-        },
-        executionIdentity: input.idempotencyKey,
-        idempotencyKey: input.idempotencyKey,
-        authorizationId: `ai-story-keyframe-compatibility:${input.idempotencyKey}`,
-        prompt: input.prompt,
-        references: input.references.map(({ reference, bytes }) => ({
-          assetId: reference.assetId,
-          contentHash: reference.contentHash,
-          mimeType: reference.mimeType,
-          bytes,
-          role: reference.role === "RAW_SUBJECT" ? "INPUT_IMAGE" : "REFERENCE_IMAGE",
-        })),
-        requestedOutput: {
-          mimeType: "image/png",
-          width: 1536,
-          height: 1024,
-          sizeConstraint: "1536x1024",
-          quality: "HIGH",
-        },
-        correlationMetadata: {
-          compatibilityBoundary: "ai-story-scene-keyframe",
-          storyId: input.brief.SCENE_IDENTITY.storyId,
-          sceneId: input.brief.SCENE_IDENTITY.sceneId,
-          sceneVersionId: input.brief.SCENE_IDENTITY.sceneVersionId,
-        },
-      });
-      return {
-        bytes: output.bytes,
-        mimeType: output.mimeType,
-        providerRequestId: output.providerRequestId,
-        ...(output.revisedPrompt ? { revisedPrompt: output.revisedPrompt } : {}),
-      };
-    } catch (error) {
-      if (error instanceof CreativeImageAdapterError) {
-        if (error.providerEvidence?.code === "OPENAI_IMAGE_REFERENCE_REQUIRED") {
-          throw new Error("SCENE_KEYFRAME_REFERENCE_REQUIRED");
-        }
-        if (error.providerEvidence?.code === "OPENAI_IMAGE_OUTPUT_MISSING") {
-          throw new Error("SCENE_KEYFRAME_PROVIDER_OUTPUT_MISSING");
-        }
-      }
-      throw error;
-    }
-  }
-}
 
 function imageDataUrl(bytes: Buffer, mimeType: string): string {
   return `data:${mimeType};base64,${bytes.toString("base64")}`;
@@ -164,10 +76,6 @@ export class OpenAiSceneKeyframeQcAdapter implements SceneKeyframeQcAdapter {
       throw error;
     }
   }
-}
-
-export function createOpenAiSceneKeyframeAdapter(env: NodeJS.ProcessEnv = process.env): OpenAiSceneKeyframeAdapter {
-  return new OpenAiSceneKeyframeAdapter(createOpenAiCreativeImageGenerationAdapter(env));
 }
 
 export function createOpenAiSceneKeyframeRuntime(env: NodeJS.ProcessEnv = process.env): Readonly<{

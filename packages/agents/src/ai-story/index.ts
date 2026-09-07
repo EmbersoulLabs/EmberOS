@@ -59,7 +59,7 @@ export * from "./scene-input-preparation";
 export * from "./provider-policy-eligibility";
 export * from "./scene-keyframe-preparation";
 export * from "./keyframe-paid-authorization";
-export * from "./openai-scene-keyframe-adapter";
+export * from "./openai-scene-keyframe-qc-adapter";
 export * from "./provider-runtime-dispatch-integration";
 export * from "./scene-compiled-provider-request";
 export * from "./post-generation-qc-service";
