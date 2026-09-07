@@ -2,6 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import type { AiStoryKeyframePaidAuthorizationFact } from "@ceo-agent/shared";
 import { isKeyframePaidAuthorizationIntegrityValid } from "@ceo-agent/shared/server";
+import {
+  CREATIVE_IMAGE_EXECUTION_CONTRACT_VERSION,
+  type CreativeImageExecutionResult,
+  type CreativeImageExecutionService,
+  type CreativeImageGenerationInput,
+} from "../creative-image";
+import { mapKeyframePaidAuthorizationToCreativeImage } from "./keyframe-paid-authorization";
 import type { NarrativeWorldState, ResolvedActiveSceneIntent } from "./active-intent-world-state";
 import {
   AI_STORY_PREPARED_SCENE_FRAME_CONTRACT_VERSION,
@@ -283,6 +290,18 @@ export interface SceneKeyframeGenerationAdapter {
   generate(input: SceneKeyframeGenerationInput): Promise<SceneKeyframeGenerationOutput>;
 }
 
+/** AI Story-owned certification that a shared adapter can compose narrative keyframes. */
+export type SceneKeyframeGenerationCapabilityProfile = Readonly<{
+  providerId: string;
+  modelId: string;
+  adapterVersion: string;
+  externalPaidCall: boolean;
+  referenceConditioned: true;
+  narrativeCharacterComposition: true;
+  possessionComposition: true;
+  actionStartStateComposition: true;
+}>;
+
 export type SceneKeyframeQcEvidence = Readonly<Record<SceneKeyframeQcDimension, Readonly<{
   verdict: SceneKeyframeQcVerdict;
   note: string;
@@ -376,7 +395,11 @@ export type SceneKeyframeExecutionResult =
       exactScene: SceneKeyframeScope;
     }>;
 
-function executionIdentity(brief: SceneKeyframeBrief, generator: SceneKeyframeGenerationAdapter, qc: SceneKeyframeQcAdapter): string {
+export function deriveSceneKeyframeExecutionIdentity(
+  brief: SceneKeyframeBrief,
+  generator: SceneKeyframeGenerationCapabilityProfile,
+  qc: Pick<SceneKeyframeQcAdapter, "evaluatorId" | "evaluatorVersion">
+): string {
   return sha256CanonicalIntegrityHash({
     kind: AI_STORY_SCENE_KEYFRAME_EXECUTION_VERSION,
     source: brief.SOURCE_ASSET_REFERENCES.map((reference) => ({ assetId: reference.assetId, contentHash: reference.contentHash })),
@@ -388,6 +411,54 @@ function executionIdentity(brief: SceneKeyframeBrief, generator: SceneKeyframeGe
     generator: { providerId: generator.providerId, modelId: generator.modelId, adapterVersion: generator.adapterVersion },
     qc: { evaluatorId: qc.evaluatorId, evaluatorVersion: qc.evaluatorVersion },
   });
+}
+
+export function translateSceneKeyframeToCreativeImageRequest(input: {
+  brief: SceneKeyframeBrief;
+  references: SceneKeyframeGenerationInput["references"];
+  executionIdentity: string;
+  authorizationId: string;
+}): CreativeImageGenerationInput {
+  return {
+    contractVersion: CREATIVE_IMAGE_EXECUTION_CONTRACT_VERSION,
+    scope: {
+      tenantId: input.brief.SCENE_IDENTITY.tenantId,
+      workspaceId: input.brief.SCENE_IDENTITY.workspaceId,
+      correlationId: `${input.brief.SCENE_IDENTITY.storyId}:${input.brief.SCENE_IDENTITY.sceneId}`,
+    },
+    executionIdentity: input.executionIdentity,
+    idempotencyKey: input.executionIdentity,
+    authorizationId: input.authorizationId,
+    prompt: sceneKeyframePrompt(input.brief),
+    references: input.references.map(({ reference, bytes }) => ({
+      assetId: reference.assetId,
+      contentHash: reference.contentHash,
+      mimeType: reference.mimeType,
+      bytes,
+      role: reference.role === "RAW_SUBJECT" ? "INPUT_IMAGE" : "REFERENCE_IMAGE",
+    })),
+    requestedOutput: {
+      mimeType: "image/png",
+      width: 1536,
+      height: 1024,
+      sizeConstraint: "1536x1024",
+      quality: "HIGH",
+    },
+    correlationMetadata: {
+      storyId: input.brief.SCENE_IDENTITY.storyId,
+      sceneId: input.brief.SCENE_IDENTITY.sceneId,
+      sceneVersionId: input.brief.SCENE_IDENTITY.sceneVersionId,
+    },
+  };
+}
+
+function generationOutput(result: Extract<CreativeImageExecutionResult, { status: "SUCCEEDED" }>): SceneKeyframeGenerationOutput {
+  return {
+    bytes: result.output.bytes,
+    mimeType: result.output.mimeType,
+    providerRequestId: result.output.providerRequestId,
+    ...(result.output.revisedPrompt ? { revisedPrompt: result.output.revisedPrompt } : {}),
+  };
 }
 
 function outputHash(bytes: Buffer): string {
@@ -449,12 +520,20 @@ function extension(mimeType: SceneKeyframeGenerationOutput["mimeType"]): string 
 export async function executeSceneKeyframePreparation(input: {
   brief: SceneKeyframeBrief;
   preparation: SceneInputPreparationAuthority;
-  generator: SceneKeyframeGenerationAdapter;
+  generationCapability: SceneKeyframeGenerationCapabilityProfile;
+  creativeImageExecutionService: Pick<CreativeImageExecutionService, "execute">;
   qcEvaluator: SceneKeyframeQcAdapter;
   repository: SceneKeyframeExecutionRepository;
   readReferenceBytes: (reference: SceneKeyframeReference) => Promise<Buffer>;
   /** Persisted AI Story authority. A legacy {authorized, authorizationId} marker is deliberately insufficient. */
   paidExecutionAuthorization?: AiStoryKeyframePaidAuthorizationFact;
+  /** Repository-backed verifier; required before any shared image execution. */
+  verifyPaidExecutionAuthorization?: (input: Readonly<{
+    authorizationId: string;
+    scope: SceneKeyframeScope;
+    providerId: string;
+    modelId: string;
+  }>) => Promise<AiStoryKeyframePaidAuthorizationFact>;
   /** Separate outer authority for an externally billed Narrative QC evaluation. */
   narrativeQcAuthorization?: Readonly<{ authorized: true; authorizationId: string }>;
   now?: () => string;
@@ -467,11 +546,12 @@ export async function executeSceneKeyframePreparation(input: {
     || input.brief.preparationAuthorityId !== input.preparation.preparationAuthorityId
     || input.brief.preparationFingerprint !== input.preparation.fingerprint
   ) return { status: "FAILED_CLOSED", code: "SCENE_KEYFRAME_PREPARATION_AUTHORITY_INVALID" };
-  if (!input.generator.referenceConditioned || !input.generator.narrativeCharacterComposition
-    || !input.generator.possessionComposition || !input.generator.actionStartStateComposition) {
+  const generator = input.generationCapability;
+  if (!generator.referenceConditioned || !generator.narrativeCharacterComposition
+    || !generator.possessionComposition || !generator.actionStartStateComposition) {
     return { status: "FAILED_CLOSED", code: "NARRATIVE_SCENE_KEYFRAME_GENERATOR_CAPABILITY_REQUIRED" };
   }
-  const identity = executionIdentity(input.brief, input.generator, input.qcEvaluator);
+  const identity = deriveSceneKeyframeExecutionIdentity(input.brief, generator, input.qcEvaluator);
   const prior = await input.repository.findByExecutionIdentity(identity, input.brief.SCENE_IDENTITY);
   if (prior) {
     if (prior.supersessionState !== "ACTIVE") return { status: "FAILED_CLOSED", code: "SCENE_KEYFRAME_IDEMPOTENT_OUTPUT_SUPERSEDED" };
@@ -481,29 +561,46 @@ export async function executeSceneKeyframePreparation(input: {
     }
     return { status: "NEEDS_REVIEW", asset: prior, reused: true };
   }
-  const paid = input.paidExecutionAuthorization;
-  const generationAuthorized = !input.generator.externalPaidCall || Boolean(
-    paid
-    && isKeyframePaidAuthorizationIntegrityValid(paid)
-    && paid.orgId === input.brief.SCENE_IDENTITY.tenantId
-    && paid.workspaceId === input.brief.SCENE_IDENTITY.workspaceId
-    && paid.storyId === input.brief.SCENE_IDENTITY.storyId
-    && paid.sceneId === input.brief.SCENE_IDENTITY.sceneId
-    && paid.sceneVersionId === input.brief.SCENE_IDENTITY.sceneVersionId
-    && paid.preparationAuthorityId === input.preparation.preparationAuthorityId
-    && paid.preparationFingerprint === input.preparation.fingerprint
-    && paid.keyframeBriefFingerprint === input.brief.fingerprint
-    && paid.authorizedProviderId === input.generator.providerId
-    && paid.authorizedModelId === input.generator.modelId
-    && paid.maximumImageProviderCalls === 1
+  const supplied = input.paidExecutionAuthorization;
+  const suppliedAuthorityMatches = Boolean(
+    supplied
+    && input.verifyPaidExecutionAuthorization
+    && isKeyframePaidAuthorizationIntegrityValid(supplied)
+    && supplied.orgId === input.brief.SCENE_IDENTITY.tenantId
+    && supplied.workspaceId === input.brief.SCENE_IDENTITY.workspaceId
+    && supplied.storyId === input.brief.SCENE_IDENTITY.storyId
+    && supplied.sceneId === input.brief.SCENE_IDENTITY.sceneId
+    && supplied.sceneVersionId === input.brief.SCENE_IDENTITY.sceneVersionId
+    && supplied.preparationAuthorityId === input.preparation.preparationAuthorityId
+    && supplied.preparationFingerprint === input.preparation.fingerprint
+    && supplied.keyframeBriefFingerprint === input.brief.fingerprint
+    && supplied.authorizedProviderId === generator.providerId
+    && supplied.authorizedModelId === generator.modelId
+    && supplied.maximumImageProviderCalls === 1
   );
+  let paid: AiStoryKeyframePaidAuthorizationFact | null = null;
+  if (suppliedAuthorityMatches) {
+    try {
+      const persisted = await input.verifyPaidExecutionAuthorization!({
+        authorizationId: supplied!.authorizationId,
+        scope: input.brief.SCENE_IDENTITY,
+        providerId: generator.providerId,
+        modelId: generator.modelId,
+      });
+      if (persisted.authorizationId === supplied!.authorizationId
+        && persisted.deterministicIntegrityHash === supplied!.deterministicIntegrityHash) paid = persisted;
+    } catch {
+      paid = null;
+    }
+  }
+  const generationAuthorized = paid !== null;
   const qcAuthorized = !input.qcEvaluator.externalPaidCall || input.narrativeQcAuthorization?.authorized === true;
   if (!generationAuthorized || !qcAuthorized) {
     return {
       status: "AUTHORIZATION_REQUIRED",
       code: "LIVE_KEYFRAME_IMAGE_GENERATION_AUTHORIZATION_REQUIRED",
-      provider: input.generator.providerId,
-      model: input.generator.modelId,
+      provider: generator.providerId,
+      model: generator.modelId,
       estimatedCallCount: 1 + Number(input.qcEvaluator.externalPaidCall),
       exactScene: input.brief.SCENE_IDENTITY,
     };
@@ -515,12 +612,18 @@ export async function executeSceneKeyframePreparation(input: {
       if (outputHash(bytes) !== reference.contentHash) throw new Error("SCENE_KEYFRAME_REFERENCE_CONTENT_HASH_MISMATCH");
       return { reference, bytes };
     }));
-    const generated = await input.generator.generate({
-      brief: input.brief,
-      prompt: sceneKeyframePrompt(input.brief),
-      references,
-      idempotencyKey: identity,
+    const request = translateSceneKeyframeToCreativeImageRequest({
+      brief: input.brief, references, executionIdentity: identity, authorizationId: paid!.authorizationId,
     });
+    const creativeResult = await input.creativeImageExecutionService.execute({
+      request,
+      authorization: mapKeyframePaidAuthorizationToCreativeImage({
+        fact: paid!, executionIdentity: identity,
+        adapter: { providerId: generator.providerId, modelId: generator.modelId },
+      }),
+    });
+    if (creativeResult.status === "FAILED") return { status: "FAILED_CLOSED", code: `CREATIVE_IMAGE_${creativeResult.failure.code}` };
+    const generated = generationOutput(creativeResult);
     if (generated.bytes.length === 0) throw new Error("SCENE_KEYFRAME_GENERATOR_OUTPUT_EMPTY");
     if (!imageBytesMatchMime(generated.bytes, generated.mimeType)) throw new Error("SCENE_KEYFRAME_GENERATOR_OUTPUT_INVALID");
     const report = createSceneKeyframeQcReport(await input.qcEvaluator.evaluate({ brief: input.brief, generated, references }));
@@ -544,9 +647,9 @@ export async function executeSceneKeyframePreparation(input: {
       preparationFingerprint: input.preparation.fingerprint,
       keyframeBriefFingerprint: input.brief.fingerprint,
       generationIdentity: {
-        providerId: input.generator.providerId,
-        modelId: input.generator.modelId,
-        adapterVersion: input.generator.adapterVersion,
+        providerId: generator.providerId,
+        modelId: generator.modelId,
+        adapterVersion: generator.adapterVersion,
         providerRequestId: generated.providerRequestId,
       },
       qc: report,

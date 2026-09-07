@@ -20,15 +20,24 @@ import {
   promotePreparedSceneKeyframe,
   sceneKeyframePrompt,
   sceneKeyframeUserState,
+  deriveSceneKeyframeExecutionIdentity,
+  translateSceneKeyframeToCreativeImageRequest,
   type PreparedSceneKeyframeAsset,
   type SceneKeyframeBrief,
   type SceneKeyframeExecutionRepository,
-  type SceneKeyframeGenerationAdapter,
+  type SceneKeyframeGenerationCapabilityProfile,
   type SceneKeyframeQcAdapter,
   type SceneKeyframeQcEvidence,
   type SceneKeyframeReference,
   type SceneKeyframeScope,
 } from "../packages/agents/src/ai-story/scene-keyframe-preparation";
+import { CreativeImageExecutionService, type CreativeImageGenerationAdapter } from "../packages/agents/src/creative-image";
+import {
+  AI_STORY_KEYFRAME_PAID_AUTHORIZATION_CONTRACT_VERSION,
+  AI_STORY_KEYFRAME_PAID_AUTHORIZATION_REASON,
+  type AiStoryKeyframePaidAuthorizationFact,
+} from "../packages/shared/src/ai-story-keyframe-paid-authorization";
+import { keyframePaidAuthorizationIntegrityHash } from "../packages/shared/src/ai-story-keyframe-paid-authorization.server";
 import {
   OpenAiSceneKeyframeAdapter,
   OpenAiSceneKeyframeQcAdapter,
@@ -39,11 +48,11 @@ const CHARACTER_HASH = RAW_HASH;
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 const scope: SceneKeyframeScope = {
-  tenantId: "org-1",
-  workspaceId: "workspace-1",
-  storyId: "story-1",
-  sceneId: "scene-2",
-  sceneVersionId: "scene-2-v1",
+  tenantId: "11111111-1111-5111-8111-111111111111",
+  workspaceId: "22222222-2222-5222-8222-222222222222",
+  storyId: "33333333-3333-5333-8333-333333333333",
+  sceneId: "44444444-4444-5444-8444-444444444444",
+  sceneVersionId: "55555555-5555-5555-8555-555555555555",
 };
 
 function intent(input: {
@@ -232,7 +241,7 @@ function passEvidence(overrides: Partial<SceneKeyframeQcEvidence> = {}): SceneKe
   ])) as SceneKeyframeQcEvidence;
 }
 
-class DeterministicGenerator implements SceneKeyframeGenerationAdapter {
+class DeterministicGenerator implements CreativeImageGenerationAdapter, SceneKeyframeGenerationCapabilityProfile {
   readonly providerId = "deterministic-certification";
   readonly modelId = "narrative-keyframe-fixture-v1";
   readonly adapterVersion = "1.0.0";
@@ -247,8 +256,27 @@ class DeterministicGenerator implements SceneKeyframeGenerationAdapter {
   async generate() {
     this.calls += 1;
     if (this.fail) throw new Error("SYNTHETIC_GENERATION_FAILED");
-    return { bytes: PNG, mimeType: "image/png" as const, providerRequestId: `fixture-${this.calls}` };
+    return {
+      bytes: PNG, mimeType: "image/png" as const, providerRequestId: `fixture-${this.calls}`,
+      providerId: this.providerId, modelId: this.modelId, adapterVersion: this.adapterVersion,
+    };
   }
+}
+
+function paidAuthority(brief: SceneKeyframeBrief, prep: SceneInputPreparationAuthority, generator: DeterministicGenerator): AiStoryKeyframePaidAuthorizationFact {
+  const core = {
+    authorizationId: "66666666-6666-5666-8666-666666666666",
+    contractVersion: AI_STORY_KEYFRAME_PAID_AUTHORIZATION_CONTRACT_VERSION,
+    orgId: brief.SCENE_IDENTITY.tenantId, workspaceId: brief.SCENE_IDENTITY.workspaceId,
+    storyId: brief.SCENE_IDENTITY.storyId, sceneId: brief.SCENE_IDENTITY.sceneId,
+    sceneVersionId: brief.SCENE_IDENTITY.sceneVersionId,
+    preparationAuthorityId: prep.preparationAuthorityId, preparationFingerprint: prep.fingerprint,
+    keyframeBriefFingerprint: brief.fingerprint, authorizedProviderId: generator.providerId,
+    authorizedModelId: generator.modelId, maximumImageProviderCalls: 1 as const,
+    authorizedBy: "77777777-7777-5777-8777-777777777777", authorizedAt: "2026-09-03T00:30:00.000Z",
+    authorizationReason: AI_STORY_KEYFRAME_PAID_AUTHORIZATION_REASON,
+  };
+  return { ...core, deterministicIntegrityHash: keyframePaidAuthorizationIntegrityHash(core) };
 }
 
 class DeterministicQc implements SceneKeyframeQcAdapter {
@@ -294,15 +322,20 @@ async function execute(brief: SceneKeyframeBrief, prep: SceneInputPreparationAut
   qc?: DeterministicQc;
   assetId?: string;
 } = {}) {
+  const generator = options.generator ?? new DeterministicGenerator();
+  const authorization = paidAuthority(brief, prep, generator);
   return executeSceneKeyframePreparation({
     brief,
     preparation: prep,
     repository: options.repository ?? new MemoryRepository(),
-    generator: options.generator ?? new DeterministicGenerator(),
+    generationCapability: generator,
+    creativeImageExecutionService: new CreativeImageExecutionService({ adapter: generator }),
     qcEvaluator: options.qc ?? new DeterministicQc(),
     readReferenceBytes: async () => PNG,
     newAssetId: () => options.assetId ?? "prepared-scene-2-v1",
     now: () => "2026-09-03T01:00:00.000Z",
+    paidExecutionAuthorization: authorization,
+    verifyPaidExecutionAuthorization: async () => authorization,
   });
 }
 
@@ -357,14 +390,35 @@ describe("AI Story V1 Scene Keyframe Brief", () => {
 });
 
 describe("AI Story V1 Scene Keyframe execution", () => {
+  it("translates the narrative brief into only provider-neutral execution facts", () => {
+    const { brief } = floristFixture();
+    const request = translateSceneKeyframeToCreativeImageRequest({
+      brief,
+      references: brief.SOURCE_ASSET_REFERENCES.map((reference) => ({ reference, bytes: PNG })),
+      executionIdentity: "execution-identity",
+      authorizationId: "authorization-id",
+    });
+    expect(request).toMatchObject({
+      executionIdentity: "execution-identity", idempotencyKey: "execution-identity", authorizationId: "authorization-id",
+      requestedOutput: { mimeType: "image/png", width: 1536, height: 1024, quality: "HIGH" },
+    });
+    expect(request.references.filter((reference) => reference.role === "INPUT_IMAGE")).toHaveLength(1);
+    expect(request).not.toHaveProperty("brief");
+    expect(request).not.toHaveProperty("worldState");
+    expect(request).not.toHaveProperty("providerPolicyEligibility");
+  });
+
   it("creates a distinct immutable derived asset and promotes only after all QC dimensions pass", async () => {
     const { brief, prep } = floristFixture();
-    const result = await execute(brief, prep);
+    const generator = new DeterministicGenerator();
+    const result = await execute(brief, prep, { generator });
     expect(result.status).toBe("READY");
     if (result.status !== "READY") return;
     expect(result.asset.contractVersion).toBe("ai-story-prepared-scene-frame.v1");
     expect(result.asset.assetId).not.toBe(prep.sourceRawAssetId);
     expect(result.asset.sourceRawAssetId).toBe("7ca6056f-adac-4539-a535-854908e78d66");
+    expect(result.asset.contentHash).toBe(RAW_HASH);
+    expect(result.asset.storagePath).toBe(`${scope.workspaceId}/ai-story/${scope.storyId}/scenes/${scope.sceneId}/prepared/prepared-scene-2-v1.png`);
     expect(result.asset.generationIdentity).toMatchObject({
       providerId: "deterministic-certification",
       modelId: "narrative-keyframe-fixture-v1",
@@ -378,6 +432,7 @@ describe("AI Story V1 Scene Keyframe execution", () => {
       sourceKind: "PREPARED_DERIVATIVE",
       assetId: result.asset.assetId,
     });
+    expect(generator.calls).toBe(1);
   });
 
   it("is idempotent for the same source/scene/intent/world/preparation/brief", async () => {
@@ -392,13 +447,39 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     expect(repository.assets).toHaveLength(1);
   });
 
+  it("preserves the legacy execution identity and reuses before authorization, shared execution, or QC", async () => {
+    const { brief, prep } = floristFixture();
+    const repository = new MemoryRepository();
+    const generator = new DeterministicGenerator();
+    const qc = new DeterministicQc();
+    const legacyIdentity = deriveSceneKeyframeExecutionIdentity(brief, generator, qc);
+    const rewiredProfile: SceneKeyframeGenerationCapabilityProfile = {
+      providerId: generator.providerId, modelId: generator.modelId, adapterVersion: generator.adapterVersion,
+      externalPaidCall: generator.externalPaidCall, referenceConditioned: true,
+      narrativeCharacterComposition: true, possessionComposition: true, actionStartStateComposition: true,
+    };
+    expect(deriveSceneKeyframeExecutionIdentity(brief, rewiredProfile, qc)).toBe(legacyIdentity);
+    expect((await execute(brief, prep, { repository, generator, qc })).status).toBe("READY");
+    let sharedCalls = 0;
+    const reused = await executeSceneKeyframePreparation({
+      brief, preparation: prep, generationCapability: rewiredProfile, qcEvaluator: qc, repository,
+      creativeImageExecutionService: { execute: async () => { sharedCalls += 1; throw new Error("MUST_NOT_EXECUTE"); } },
+      readReferenceBytes: async () => { throw new Error("MUST_NOT_READ"); },
+    });
+    expect(reused).toMatchObject({ status: "READY", reused: true });
+    expect(sharedCalls).toBe(0);
+    expect(qc.calls).toBe(1);
+  });
+
   it("fails closed without raw fallback and never automatically regenerates", async () => {
     const { brief, prep } = floristFixture();
     const generator = new DeterministicGenerator();
     generator.fail = true;
-    const result = await execute(brief, prep, { generator });
-    expect(result).toEqual({ status: "FAILED_CLOSED", code: "SYNTHETIC_GENERATION_FAILED" });
+    const qc = new DeterministicQc();
+    const result = await execute(brief, prep, { generator, qc });
+    expect(result).toEqual({ status: "FAILED_CLOSED", code: "CREATIVE_IMAGE_EXECUTION_FAILED" });
     expect(generator.calls).toBe(1);
+    expect(qc.calls).toBe(0);
     expect(JSON.stringify(result)).not.toContain(prep.sourceRawAssetId);
     expect(sceneKeyframeUserState(result)).toBe("NEEDS_YOUR_REVIEW");
   });
@@ -440,7 +521,7 @@ describe("AI Story V1 Scene Keyframe execution", () => {
 
     const current = floristFixture({
       authorityId: "intent-v2",
-      sceneVersionId: "scene-2-v2",
+      sceneVersionId: "88888888-8888-5888-8888-888888888888",
       location: "home",
       label: "Mara's home",
     });
@@ -464,7 +545,8 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     const result = await executeSceneKeyframePreparation({
       brief,
       preparation: prep,
-      generator: adapter,
+      generationCapability: adapter,
+      creativeImageExecutionService: { execute: async () => { throw new Error("UNEXPECTED_SHARED_EXECUTION"); } },
       qcEvaluator: new DeterministicQc(),
       repository: new MemoryRepository(),
       readReferenceBytes: async () => PNG,
@@ -484,12 +566,76 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     let calls = 0;
     const adapter = new OpenAiSceneKeyframeAdapter({ images: { edit: async () => { calls += 1; return { data: [] }; } } } as never);
     const result = await executeSceneKeyframePreparation({
-      brief, preparation: prep, generator: adapter, qcEvaluator: new DeterministicQc(),
+      brief, preparation: prep, generationCapability: adapter,
+      creativeImageExecutionService: { execute: async () => { throw new Error("UNEXPECTED_SHARED_EXECUTION"); } },
+      qcEvaluator: new DeterministicQc(),
       repository: new MemoryRepository(), readReferenceBytes: async () => PNG,
       paidExecutionAuthorization: { authorized: true, authorizationId: "legacy-marker" } as never,
     });
     expect(result.status).toBe("AUTHORIZATION_REQUIRED");
     expect(calls).toBe(0);
+  });
+
+  it.each([
+    ["wrong workspace", (authority: AiStoryKeyframePaidAuthorizationFact) => ({ ...authority, workspaceId: "99999999-9999-5999-8999-999999999999" })],
+    ["wrong Scene", (authority: AiStoryKeyframePaidAuthorizationFact) => ({ ...authority, sceneId: "99999999-9999-5999-8999-999999999999" })],
+    ["stale preparation", (authority: AiStoryKeyframePaidAuthorizationFact) => ({ ...authority, preparationAuthorityId: "stale-preparation" })],
+    ["stale brief", (authority: AiStoryKeyframePaidAuthorizationFact) => ({ ...authority, keyframeBriefFingerprint: `sha256:${"9".repeat(64)}` })],
+    ["wrong Provider", (authority: AiStoryKeyframePaidAuthorizationFact) => ({ ...authority, authorizedProviderId: "wrong-provider" })],
+    ["wrong model", (authority: AiStoryKeyframePaidAuthorizationFact) => ({ ...authority, authorizedModelId: "wrong-model" })],
+    ["more than one call", (authority: AiStoryKeyframePaidAuthorizationFact) => ({ ...authority, maximumImageProviderCalls: 2 })],
+  ])("fails closed for %s authority before shared execution", async (_label, change) => {
+    const { brief, prep } = floristFixture();
+    const generator = new DeterministicGenerator();
+    const changed = change(paidAuthority(brief, prep, generator)) as AiStoryKeyframePaidAuthorizationFact;
+    const { deterministicIntegrityHash: _oldHash, ...changedCore } = changed;
+    const invalid = {
+      ...changedCore,
+      deterministicIntegrityHash: keyframePaidAuthorizationIntegrityHash(changedCore as never),
+    } as AiStoryKeyframePaidAuthorizationFact;
+    let sharedCalls = 0;
+    const result = await executeSceneKeyframePreparation({
+      brief, preparation: prep, generationCapability: generator, qcEvaluator: new DeterministicQc(),
+      repository: new MemoryRepository(), readReferenceBytes: async () => PNG,
+      creativeImageExecutionService: { execute: async () => { sharedCalls += 1; throw new Error("MUST_NOT_EXECUTE"); } },
+      paidExecutionAuthorization: invalid, verifyPaidExecutionAuthorization: async () => invalid,
+    });
+    expect(result.status).toBe("AUTHORIZATION_REQUIRED");
+    expect(sharedCalls).toBe(0);
+  });
+
+  it("fails closed when the repository-backed verification does not return the supplied persisted fact", async () => {
+    const { brief, prep } = floristFixture();
+    const generator = new DeterministicGenerator();
+    const supplied = paidAuthority(brief, prep, generator);
+    const otherCore = { ...supplied, authorizationId: "99999999-9999-5999-8999-999999999999" };
+    const { deterministicIntegrityHash: _old, ...otherWithoutHash } = otherCore;
+    const other = { ...otherWithoutHash, deterministicIntegrityHash: keyframePaidAuthorizationIntegrityHash(otherWithoutHash) };
+    let sharedCalls = 0;
+    const result = await executeSceneKeyframePreparation({
+      brief, preparation: prep, generationCapability: generator, qcEvaluator: new DeterministicQc(),
+      repository: new MemoryRepository(), readReferenceBytes: async () => PNG,
+      creativeImageExecutionService: { execute: async () => { sharedCalls += 1; throw new Error("MUST_NOT_EXECUTE"); } },
+      paidExecutionAuthorization: supplied, verifyPaidExecutionAuthorization: async () => other,
+    });
+    expect(result.status).toBe("AUTHORIZATION_REQUIRED");
+    expect(sharedCalls).toBe(0);
+  });
+
+  it("requires separate Narrative QC authorization", async () => {
+    const { brief, prep } = floristFixture();
+    const generator = new DeterministicGenerator();
+    const authorization = paidAuthority(brief, prep, generator);
+    const externalQc = Object.assign(new DeterministicQc(), { externalPaidCall: true as const });
+    const result = await executeSceneKeyframePreparation({
+      brief, preparation: prep, generationCapability: generator,
+      creativeImageExecutionService: new CreativeImageExecutionService({ adapter: generator }),
+      qcEvaluator: externalQc, repository: new MemoryRepository(), readReferenceBytes: async () => PNG,
+      paidExecutionAuthorization: authorization, verifyPaidExecutionAuthorization: async () => authorization,
+    });
+    expect(result.status).toBe("AUTHORIZATION_REQUIRED");
+    expect(generator.calls).toBe(0);
+    expect(externalQc.calls).toBe(0);
   });
 
   it("maps canonical references to one OpenAI image edit and parses independent visual QC", async () => {
