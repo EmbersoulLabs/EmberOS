@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
+import type { AiStoryKeyframePaidAuthorizationFact } from "@ceo-agent/shared";
+import { isKeyframePaidAuthorizationIntegrityValid } from "@ceo-agent/shared/server";
 import type { NarrativeWorldState, ResolvedActiveSceneIntent } from "./active-intent-world-state";
 import {
   AI_STORY_PREPARED_SCENE_FRAME_CONTRACT_VERSION,
@@ -451,7 +453,10 @@ export async function executeSceneKeyframePreparation(input: {
   qcEvaluator: SceneKeyframeQcAdapter;
   repository: SceneKeyframeExecutionRepository;
   readReferenceBytes: (reference: SceneKeyframeReference) => Promise<Buffer>;
-  paidExecutionAuthorization?: Readonly<{ authorized: true; authorizationId: string }>;
+  /** Persisted AI Story authority. A legacy {authorized, authorizationId} marker is deliberately insufficient. */
+  paidExecutionAuthorization?: AiStoryKeyframePaidAuthorizationFact;
+  /** Separate outer authority for an externally billed Narrative QC evaluation. */
+  narrativeQcAuthorization?: Readonly<{ authorized: true; authorizationId: string }>;
   now?: () => string;
   newAssetId?: () => string;
 }): Promise<SceneKeyframeExecutionResult> {
@@ -476,7 +481,24 @@ export async function executeSceneKeyframePreparation(input: {
     }
     return { status: "NEEDS_REVIEW", asset: prior, reused: true };
   }
-  if ((input.generator.externalPaidCall || input.qcEvaluator.externalPaidCall) && !input.paidExecutionAuthorization?.authorized) {
+  const paid = input.paidExecutionAuthorization;
+  const generationAuthorized = !input.generator.externalPaidCall || Boolean(
+    paid
+    && isKeyframePaidAuthorizationIntegrityValid(paid)
+    && paid.orgId === input.brief.SCENE_IDENTITY.tenantId
+    && paid.workspaceId === input.brief.SCENE_IDENTITY.workspaceId
+    && paid.storyId === input.brief.SCENE_IDENTITY.storyId
+    && paid.sceneId === input.brief.SCENE_IDENTITY.sceneId
+    && paid.sceneVersionId === input.brief.SCENE_IDENTITY.sceneVersionId
+    && paid.preparationAuthorityId === input.preparation.preparationAuthorityId
+    && paid.preparationFingerprint === input.preparation.fingerprint
+    && paid.keyframeBriefFingerprint === input.brief.fingerprint
+    && paid.authorizedProviderId === input.generator.providerId
+    && paid.authorizedModelId === input.generator.modelId
+    && paid.maximumImageProviderCalls === 1
+  );
+  const qcAuthorized = !input.qcEvaluator.externalPaidCall || input.narrativeQcAuthorization?.authorized === true;
+  if (!generationAuthorized || !qcAuthorized) {
     return {
       status: "AUTHORIZATION_REQUIRED",
       code: "LIVE_KEYFRAME_IMAGE_GENERATION_AUTHORIZATION_REQUIRED",

@@ -86,6 +86,9 @@ jobs:
       - name: Apply post-terminal Provider retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-post-terminal-provider-retry
 
+      - name: Apply AI Story keyframe paid authorization contract
+        run: pnpm --filter @ceo-agent/db sql:ai-story-keyframe-paid-authorization
+
       - name: Detect masked SQL migration defects from predecessor schema
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts

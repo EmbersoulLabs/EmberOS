@@ -1909,6 +1909,37 @@ export const aiStoryRuntimeAuthorizedFacts = pgTable(
   ]
 );
 
+/** Immutable human authority for one paid AI Story keyframe image-generation call. */
+export const aiStoryKeyframePaidAuthorizations = pgTable(
+  "ai_story_keyframe_paid_authorizations",
+  {
+    authorizationId: uuid("authorization_id").primaryKey(),
+    contractVersion: text("contract_version").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    sceneId: uuid("scene_id").notNull(),
+    sceneVersionId: uuid("scene_version_id").notNull(),
+    preparationAuthorityId: text("preparation_authority_id").notNull(),
+    preparationFingerprint: text("preparation_fingerprint").notNull(),
+    keyframeBriefFingerprint: text("keyframe_brief_fingerprint").notNull(),
+    providerId: text("provider_id").notNull(),
+    modelId: text("model_id").notNull(),
+    maximumImageProviderCalls: integer("maximum_image_provider_calls").notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    authorizationReason: text("authorization_reason").notNull(),
+    deterministicIntegrityHash: text("deterministic_integrity_hash").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").AiStoryKeyframePaidAuthorizationFact>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_keyframe_paid_auth_integrity_unique").on(t.deterministicIntegrityHash),
+    index("ai_story_keyframe_paid_auth_scope_idx").on(t.workspaceId, t.storyId, t.sceneId, t.createdAt),
+    check("ai_story_keyframe_paid_auth_calls_check", sql`${t.maximumImageProviderCalls} = 1`),
+  ]
+);
+
 /** EXEC-07 — durable separation between plan authorization and provider release. */
 export const aiStorySceneReleaseStates = pgTable(
   "ai_story_scene_release_states",
