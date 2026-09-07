@@ -10,10 +10,15 @@ import {
   SEEDANCE_TEXT_TO_VIDEO_SCENE_INPUT_CAPABILITY,
   certifyPreparedSceneFrame,
   createSceneInputPreparationAuthority,
+  resolveProviderReadySceneInput,
   type PreparedSceneFrameAuthority,
   type RawBusinessAssetSceneAnalysis,
   type SceneInputPreparationAuthority,
 } from "../packages/agents/src/ai-story/scene-input-preparation";
+import {
+  resolveProviderPolicyEligibility,
+  type ProviderPolicyEligibilityAuthority,
+} from "../packages/agents/src/ai-story/provider-policy-eligibility";
 import {
   computeAiStoryCompiledRequestFingerprint,
   compileImmutableSeedanceRequestFromSceneCompilation,
@@ -179,9 +184,38 @@ const REFERENCE_ASSETS = [
 function compileScene2(overrides: {
   readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
   readonly compiledAt?: string;
 } = {}) {
   const selected = scene2Compilation();
+  let defaultPolicy: ProviderPolicyEligibilityAuthority | null = null;
+  if (overrides.sceneInputPreparation) {
+    try {
+      const providerReady = resolveProviderReadySceneInput({
+        preparation: overrides.sceneInputPreparation,
+        preparedFrame: overrides.preparedSceneFrame ?? null,
+      });
+      defaultPolicy = resolveProviderPolicyEligibility({
+        providerId: "seedance",
+        modelId: "dreamina-seedance-2-0-260128",
+        mode: providerReady.providerMode,
+        providerReadySceneInputFingerprint: providerReady.fingerprint,
+        narrativeWorldStateIdentity: overrides.sceneInputPreparation.narrativeWorldStateIdentity,
+        sceneContent: "PRODUCT_ONLY",
+        assetProvenance: "AI_GENERATED",
+        deliveryRoute: "RAW_SIGNED_HTTPS",
+        providerModeSupported: true,
+        officialHumanAssetRoute: "REQUIRES_ENABLEMENT",
+        portraitCapabilityEnabled: "UNPROVEN",
+        assetManagementEnabled: "UNPROVEN",
+        humanAuthorizationSatisfied: false,
+        sceneReady: true,
+        narrativeQc: "PASS",
+      });
+    } catch {
+      // Preserve the original preparation failure under test.
+    }
+  }
   return compileImmutableSeedanceRequestFromSceneCompilation({
     ...selected,
     authority: AUTHORITY,
@@ -194,6 +228,9 @@ function compileScene2(overrides: {
       : {}),
     ...(overrides.preparedSceneFrame !== undefined
       ? { preparedSceneFrame: overrides.preparedSceneFrame }
+      : {}),
+    ...((overrides.providerPolicyEligibility ?? defaultPolicy)
+      ? { providerPolicyEligibility: overrides.providerPolicyEligibility ?? defaultPolicy }
       : {}),
   });
 }
@@ -232,6 +269,34 @@ describe("Provider-ready keyframe compiled first-frame binding", () => {
     });
     expect(validateAiStoryCompiledRequestFingerprint(compiled)).toBe(true);
     expect(() => assertAiStoryCompiledProviderWireModeCompatibility(compiled)).not.toThrow();
+  });
+
+  it("does not compile a visually-ready human keyframe when the raw-URL Provider policy gate fails", () => {
+    const active = preparation();
+    const frame = preparedKeyframe({ preparation: active });
+    const providerReady = resolveProviderReadySceneInput({ preparation: active, preparedFrame: frame });
+    const policy = resolveProviderPolicyEligibility({
+      providerId: "seedance",
+      modelId: "dreamina-seedance-2-0-260128",
+      mode: "FIRST_FRAME_IMAGE_TO_VIDEO",
+      providerReadySceneInputFingerprint: providerReady.fingerprint,
+      narrativeWorldStateIdentity: active.narrativeWorldStateIdentity,
+      sceneContent: "PHOTOREALISTIC_HUMAN",
+      assetProvenance: "AI_GENERATED",
+      deliveryRoute: "RAW_SIGNED_HTTPS",
+      providerModeSupported: true,
+      officialHumanAssetRoute: "REQUIRES_ENABLEMENT",
+      portraitCapabilityEnabled: "UNPROVEN",
+      assetManagementEnabled: "UNPROVEN",
+      humanAuthorizationSatisfied: false,
+      sceneReady: true,
+      narrativeQc: "PASS",
+    });
+    expect(() => compileScene2({
+      sceneInputPreparation: active,
+      preparedSceneFrame: frame,
+      providerPolicyEligibility: policy,
+    })).toThrow("PROVIDER_POLICY_ELIGIBILITY_REQUIRED");
   });
 
   it("demotes the historical raw asset to lineage-only audit evidence", () => {

@@ -57,6 +57,7 @@ import type {
   PreparedSceneFrameAuthority,
   SceneInputPreparationAuthority,
 } from "./scene-input-preparation";
+import type { ProviderPolicyEligibilityAuthority } from "./provider-policy-eligibility";
 
 export { SceneSchedulingError };
 
@@ -178,6 +179,7 @@ export type SceneSchedulingCoordinatorDependencies = {
 export type SceneInputPreparationResolution = {
   readonly preparation: SceneInputPreparationAuthority;
   readonly preparedFrame?: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
 };
 
 const DEFAULT_ROUTING_POLICY: ProviderRoutingPolicy = {
@@ -869,6 +871,7 @@ export class SceneSchedulingCoordinator {
             ? {
                 sceneInputPreparation: sceneInputPreparation.preparation,
                 preparedSceneFrame: sceneInputPreparation.preparedFrame ?? null,
+                providerPolicyEligibility: sceneInputPreparation.providerPolicyEligibility ?? null,
               }
             : {}),
         });
