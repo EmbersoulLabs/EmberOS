@@ -13,6 +13,7 @@ import type {
   PreparedSceneFrameAuthority,
   SceneInputPreparationAuthority,
 } from "./scene-input-preparation";
+import type { ProviderPolicyEligibilityAuthority } from "./provider-policy-eligibility";
 
 export function compileImmutableSceneProviderRequest(input: {
   readonly providerId: string;
@@ -25,6 +26,7 @@ export function compileImmutableSceneProviderRequest(input: {
   readonly referenceAssets?: readonly AiStoryReferenceAssetAuthority[];
   readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
 }): AiStoryCompiledProviderRequest {
   if (input.providerId !== "seedance") {
     throw new AiStoryProviderRuntimeError(
@@ -45,6 +47,9 @@ export function compileImmutableSceneProviderRequest(input: {
       : {}),
     ...(input.preparedSceneFrame
       ? { preparedSceneFrame: input.preparedSceneFrame }
+      : {}),
+    ...(input.providerPolicyEligibility
+      ? { providerPolicyEligibility: input.providerPolicyEligibility }
       : {}),
   });
 }

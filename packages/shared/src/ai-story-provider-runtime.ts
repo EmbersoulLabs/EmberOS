@@ -158,6 +158,16 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
   storyReferenceMappings: z.array(AiStoryCompiledStoryReferenceSchema).optional(),
   /** Added append-only; absent only on pre-preparation compiled requests. */
   providerReadySceneInput: AiStoryCompiledProviderReadySceneInputSchema.optional(),
+  /** Added append-only; required by new preparation-governed compilation. */
+  providerPolicyEligibility: z.object({
+    contractVersion: z.literal("ai-story-provider-policy-eligibility.v1"),
+    fingerprint: Hash,
+    eligibility: z.literal("ELIGIBLE"),
+    selectedStrategy: z.enum([
+      "SEEDANCE_FIRST_FRAME_I2V",
+      "AUTHORIZED_HUMAN_ASSET_ROUTE",
+    ]),
+  }).strict().optional(),
   referenceBudget: z.literal(4),
   degradations: z.array(z.object({
     code: Text,

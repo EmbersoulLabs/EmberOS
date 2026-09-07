@@ -28,6 +28,10 @@ import {
   type PreparedSceneFrameAuthority,
   type SceneInputPreparationAuthority,
 } from "./scene-input-preparation";
+import {
+  promoteProviderExecutableSceneInput,
+  type ProviderPolicyEligibilityAuthority,
+} from "./provider-policy-eligibility";
 
 export const SEEDANCE_RUNTIME_ADAPTER_VERSION = "seedance-canonical-runtime.v1" as const;
 
@@ -231,12 +235,21 @@ export type AiStoryReferenceAssetAuthority = {
 function resolveProviderReadySceneInputOrFailClosed(input: {
   readonly preparation: SceneInputPreparationAuthority;
   readonly preparedFrame: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility: ProviderPolicyEligibilityAuthority | null;
 }) {
   try {
-    return resolveProviderReadySceneInput({
+    const providerReadySceneInput = resolveProviderReadySceneInput({
       preparation: input.preparation,
       preparedFrame: input.preparedFrame,
     });
+    if (!input.providerPolicyEligibility) {
+      throw new Error("PROVIDER_POLICY_ELIGIBILITY_REQUIRED");
+    }
+    promoteProviderExecutableSceneInput({
+      providerReadySceneInput,
+      providerPolicyEligibility: input.providerPolicyEligibility,
+    });
+    return providerReadySceneInput;
   } catch (error) {
     throw new AiStoryProviderRuntimeError(
       "PROVIDER_READY_SCENE_INPUT_REQUIRED",
@@ -278,6 +291,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   /** Active Scene input preparation authority, when Scene input preparation governs this Scene. */
   readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
 }): AiStoryCompiledProviderRequest {
   const authority = input.intent.generationAuthority ?? input.instructions.generationAuthority;
   if (
@@ -325,6 +339,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     ? resolveProviderReadySceneInputOrFailClosed({
         preparation,
         preparedFrame: input.preparedSceneFrame ?? null,
+        providerPolicyEligibility: input.providerPolicyEligibility ?? null,
       })
     : null;
   const referenceAssetById = new Map((input.referenceAssets ?? []).map((asset) => [asset.assetId, asset]));
@@ -505,6 +520,18 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     })),
     storyReferenceMappings,
     ...(providerReadySceneInput ? { providerReadySceneInput } : {}),
+    ...(providerReadySceneInput && input.providerPolicyEligibility
+      ? {
+          providerPolicyEligibility: {
+            contractVersion: input.providerPolicyEligibility.contractVersion,
+            fingerprint: input.providerPolicyEligibility.fingerprint,
+            eligibility: "ELIGIBLE" as const,
+            selectedStrategy: input.providerPolicyEligibility.selectedStrategy as
+              | "SEEDANCE_FIRST_FRAME_I2V"
+              | "AUTHORIZED_HUMAN_ASSET_ROUTE",
+          },
+        }
+      : {}),
     referenceBudget: AI_STORY_SEEDANCE_REFERENCE_BUDGET,
     degradations: [],
     blockedCapabilities: ["AUDIO", "FIRST_LAST_FRAME", "MULTI_SHOT", "CHAINING", "VIDEO_EXTENSION", "4K", "CANCELLATION"],
