@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
+import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -205,6 +206,10 @@ export const CreativeContextSchema = z.object({
     characters: z.array(CreativeContextCharacterSchema).default([]),
     relationships: z.array(z.string()).default([]),
   }),
+  /** Server-owned Planning projection; LLM prose is never Product identity authority. */
+  productAuthorities: z
+    .array(PlanningProductAuthorityProjectionSchema)
+    .default([]),
   worldContext: z.object({
     locations: z.array(z.string()).default([]),
     visualStyle: z.string().default(""),

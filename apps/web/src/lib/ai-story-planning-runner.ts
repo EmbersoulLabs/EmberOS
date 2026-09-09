@@ -10,6 +10,7 @@ import {
 } from "@ceo-agent/db";
 import {
   assertPlanningCharacterAuthorityCurrent,
+  assertPlanningProductAuthorityCurrent,
   buildAnimationPackage,
   generateCharacterContinuity,
   generateCreativeContext,
@@ -19,6 +20,7 @@ import {
   generateStoryBeats,
   generateWorldContinuity,
   projectAcceptedCharactersToPlanning,
+  projectStoryProductSourcesToPlanning,
 } from "@ceo-agent/agents";
 import {
   AiStoryStructuredDraftSchema,
@@ -32,6 +34,7 @@ import {
   type StoryPlanningStage,
 } from "@ceo-agent/shared";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
+import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
 import {
   assetLabelFromProductionRow,
   campaignPlanningFields,
@@ -114,6 +117,14 @@ async function loadPlanningContext(
     campaignId,
     characters,
   });
+  const productAuthorities = projectStoryProductSourcesToPlanning(
+    await resolveStoryProductSources(db, {
+      storyId,
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+    })
+  );
 
   const assetIds = loaded.assetLinks.map((link) => link.assetId);
   const assetLabels =
@@ -161,6 +172,7 @@ async function loadPlanningContext(
         : []),
     ],
     characterAuthorities,
+    productAuthorities,
   };
 }
 
@@ -237,6 +249,10 @@ export async function runSinglePlanningStage(input: {
       creativeContext: draft.creativeContext,
       characterAuthorities: ctx.characterAuthorities,
     });
+    assertPlanningProductAuthorityCurrent({
+      creativeContext: draft.creativeContext,
+      productAuthorities: ctx.productAuthorities,
+    });
   }
 
   let usage = draft.usage ?? emptyUsage();
@@ -258,7 +274,8 @@ export async function runSinglePlanningStage(input: {
         },
         ctx.brand,
         ctx.assetLabels,
-        ctx.characterAuthorities
+        ctx.characterAuthorities,
+        ctx.productAuthorities
       );
       usage = addUsage(usage, generated.usage);
       savedContext = await saveCreativeContext(db, {

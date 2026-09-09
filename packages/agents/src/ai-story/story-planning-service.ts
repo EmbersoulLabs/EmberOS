@@ -22,6 +22,7 @@ import {
   type DirectorThinking,
   type PlanningUsage,
   type PlanningCharacterAuthorityProjection,
+  type PlanningProductAuthorityProjection,
   type ScenePlanItem,
   type ShotPlanItem,
   type StoryBeat,
@@ -33,6 +34,10 @@ import {
   bindCreativeContextToCharacterAuthority,
   planningCharacterAuthorityPrompt,
 } from "./character-authority-planning";
+import {
+  bindCreativeContextToProductAuthority,
+  planningProductAuthorityPrompt,
+} from "./product-authority-planning";
 
 type Usage = PlanningUsage;
 
@@ -63,6 +68,7 @@ export type StoryPlanningPipelineInput = {
   brand?: AiStoryPlanningBrandContext | null;
   assetLabels?: readonly string[];
   characterAuthorities?: readonly PlanningCharacterAuthorityProjection[];
+  productAuthorities?: readonly PlanningProductAuthorityProjection[];
 };
 
 function addUsage(a: Usage, b: Usage): Usage {
@@ -146,7 +152,8 @@ export async function generateCreativeContext(
   campaign: AiStoryPlanningCampaignContext,
   brand?: AiStoryPlanningBrandContext | null,
   assetLabels: readonly string[] = [],
-  characterAuthorities: readonly PlanningCharacterAuthorityProjection[] = []
+  characterAuthorities: readonly PlanningCharacterAuthorityProjection[] = [],
+  productAuthorities: readonly PlanningProductAuthorityProjection[] = []
 ): Promise<{ creativeContext: CreativeContext; usage: Usage }> {
   const schemaHint = JSON.stringify({
     creativeContext: {
@@ -205,6 +212,8 @@ export async function generateCreativeContext(
       "Extract only durable creative context from the Story Draft, campaign, brand, and assets.",
       "Include story, character, world, and narrative context with concise dialogue lines when the story needs speech.",
       "Accepted canonical Character stable facts are read-only. Select them only by exact characterId; never rewrite identity or appearance. New Characters are proposals only.",
+      "Accepted Product IDs and source content hashes are server-owned and read-only. Use exact productAuthorityId for Product narrative intent; labels, filenames, prose, and generic props never establish Product authority.",
+      "Product authority availability does not require visual conditioning and must not select or change generation mode.",
       "Keep directorContext as an empty object; the director stage fills Director Thinking later.",
       "Return ONLY JSON.",
     ].join(" "),
@@ -212,6 +221,8 @@ export async function generateCreativeContext(
       campaignSummary(campaign, brand, assetLabels),
       "",
       planningCharacterAuthorityPrompt(characterAuthorities),
+      "",
+      planningProductAuthorityPrompt(productAuthorities),
       "",
       storySummary(storyDraft),
     ].join("\n"),
@@ -223,9 +234,12 @@ export async function generateCreativeContext(
     })
   );
   return {
-    creativeContext: bindCreativeContextToCharacterAuthority({
-      creativeContext: value,
-      characterAuthorities,
+    creativeContext: bindCreativeContextToProductAuthority({
+      creativeContext: bindCreativeContextToCharacterAuthority({
+        creativeContext: value,
+        characterAuthorities,
+      }),
+      productAuthorities,
     }),
     usage,
   };
@@ -496,7 +510,8 @@ export async function runFullStoryPlanningPipeline(
     input.campaign,
     input.brand,
     input.assetLabels ?? [],
-    input.characterAuthorities ?? []
+    input.characterAuthorities ?? [],
+    input.productAuthorities ?? []
   );
   usage = addUsage(usage, creative.usage);
 
