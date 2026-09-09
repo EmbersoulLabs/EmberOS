@@ -80,6 +80,11 @@ jobs:
       - name: Apply canonical Drizzle schema
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
 
+      - name: Certify Photo Scene exact-source extraction reuse migration
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/photo-scene-exact-source-extraction-reuse.integration.test.ts
+
       - name: Apply differentiated human retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
 

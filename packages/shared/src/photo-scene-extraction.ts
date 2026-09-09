@@ -211,10 +211,23 @@ export type ExtractionReuseCandidate = {
 
 export type ExtractionReuseDecision =
   | { reuse: true; generationId: string }
-  | { reuse: false; reason: "NO_CANDIDATE" | "FAILED" | "NOT_READY" | "MISSING_OUTPUT" | "INCOMPATIBLE" | "FOREIGN_WORKSPACE" | "HASH_MISMATCH" };
+  | {
+      reuse: false;
+      reason:
+        | "NO_CANDIDATE"
+        | "FAILED"
+        | "NOT_READY"
+        | "MISSING_OUTPUT"
+        | "INCOMPATIBLE"
+        | "FOREIGN_WORKSPACE"
+        | "SOURCE_ASSET_MISMATCH"
+        | "HASH_MISMATCH"
+        | "LINEAGE_MISMATCH";
+    };
 
 export function evaluateExtractionReuse(input: {
   workspaceId: string;
+  expectedSourceAssetId: string;
   fingerprint: string;
   sourceContentHash: SourceAssetContentHash;
   candidate: ExtractionReuseCandidate | null;
@@ -223,6 +236,9 @@ export function evaluateExtractionReuse(input: {
   const { generation, outputAsset } = input.candidate;
   if (generation.workspaceId !== input.workspaceId) {
     return { reuse: false, reason: "FOREIGN_WORKSPACE" };
+  }
+  if (generation.sourceAssetId !== input.expectedSourceAssetId) {
+    return { reuse: false, reason: "SOURCE_ASSET_MISMATCH" };
   }
   if (generation.status === "failed") return { reuse: false, reason: "FAILED" };
   if (generation.status !== "ready") return { reuse: false, reason: "NOT_READY" };
@@ -238,8 +254,26 @@ export function evaluateExtractionReuse(input: {
   if (outputAsset.workspaceId !== input.workspaceId) {
     return { reuse: false, reason: "FOREIGN_WORKSPACE" };
   }
-  const role = readPhotoSceneMetadata(outputAsset.metadata ?? undefined)?.role;
-  if (role !== "extracted_product") return { reuse: false, reason: "INCOMPATIBLE" };
+  const metadata = readPhotoSceneMetadata(outputAsset.metadata ?? undefined);
+  if (metadata?.role !== "extracted_product") {
+    return { reuse: false, reason: "INCOMPATIBLE" };
+  }
+  const lineage = metadata.lineage;
+  if (!lineage || lineage.operation !== "product_extraction") {
+    return { reuse: false, reason: "LINEAGE_MISMATCH" };
+  }
+  if (lineage.sourceAssetId !== input.expectedSourceAssetId) {
+    return { reuse: false, reason: "SOURCE_ASSET_MISMATCH" };
+  }
+  if (lineage.sourceContentHash !== input.sourceContentHash) {
+    return { reuse: false, reason: "HASH_MISMATCH" };
+  }
+  if (
+    lineage.generationId !== generation.id ||
+    lineage.generationFingerprint !== generation.inputFingerprint
+  ) {
+    return { reuse: false, reason: "LINEAGE_MISMATCH" };
+  }
   if (!isCanonicalSourceContentHash(outputAsset.contentHash)) {
     return { reuse: false, reason: "MISSING_OUTPUT" };
   }
@@ -280,10 +314,16 @@ export function evaluateExtractionRetry(input: {
 }
 
 export function evaluateGenerateAgain(input: {
+  previousSourceAssetId: string;
   previousFingerprint: string;
+  nextSourceAssetId: string;
   nextFingerprint: string;
 }): { newGenerationRequired: boolean } {
-  return { newGenerationRequired: input.previousFingerprint !== input.nextFingerprint };
+  return {
+    newGenerationRequired:
+      input.previousSourceAssetId !== input.nextSourceAssetId ||
+      input.previousFingerprint !== input.nextFingerprint,
+  };
 }
 
 export function clientPollCannotDeclareFailure(): false {
@@ -298,11 +338,15 @@ export type InflightGenerationJoin = {
 
 export function joinInflightExtraction(input: {
   workspaceId: string;
+  expectedSourceAssetId: string;
+  expectedSourceContentHash: SourceAssetContentHash;
   fingerprint: string;
   candidate: PhotoSceneGenerationSnapshot | null;
 }): InflightGenerationJoin | { join: false } {
   if (!input.candidate) return { join: false };
   if (input.candidate.workspaceId !== input.workspaceId) return { join: false };
+  if (input.candidate.sourceAssetId !== input.expectedSourceAssetId) return { join: false };
+  if (input.candidate.sourceContentHash !== input.expectedSourceContentHash) return { join: false };
   if (input.candidate.inputFingerprint !== input.fingerprint) return { join: false };
   if (
     input.candidate.status === "queued" ||
