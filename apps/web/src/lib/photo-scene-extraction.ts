@@ -203,12 +203,14 @@ export async function requestProductExtraction(
 
   const ready = await findReusablePhotoSceneExtraction(db, {
     workspaceId: input.campaign.workspaceId,
+    sourceAssetId: capsule.sourceAssetId,
     fingerprint,
   });
   if (ready) {
     const outputAsset = await loadOutputAsset(db, ready.workspaceId, ready.outputAssetId);
     const decision = evaluateExtractionReuse({
       workspaceId: input.campaign.workspaceId,
+      expectedSourceAssetId: capsule.sourceAssetId,
       fingerprint,
       sourceContentHash: capsule.sourceContentHash,
       candidate: { generation: asSnapshot(ready), outputAsset },
@@ -231,10 +233,13 @@ export async function requestProductExtraction(
 
   const inflight = await findInflightPhotoSceneExtraction(db, {
     workspaceId: input.campaign.workspaceId,
+    sourceAssetId: capsule.sourceAssetId,
     fingerprint,
   });
   const join = joinInflightExtraction({
     workspaceId: input.campaign.workspaceId,
+    expectedSourceAssetId: capsule.sourceAssetId,
+    expectedSourceContentHash: capsule.sourceContentHash,
     fingerprint,
     candidate: inflight ? asSnapshot(inflight) : null,
   });
@@ -267,17 +272,43 @@ export async function requestProductExtraction(
   } catch (err) {
     const raced = await findInflightPhotoSceneExtraction(db, {
       workspaceId: input.campaign.workspaceId,
+      sourceAssetId: capsule.sourceAssetId,
       fingerprint,
     });
-    if (raced) {
+    const racedJoin = joinInflightExtraction({
+      workspaceId: input.campaign.workspaceId,
+      expectedSourceAssetId: capsule.sourceAssetId,
+      expectedSourceContentHash: capsule.sourceContentHash,
+      fingerprint,
+      candidate: raced ? asSnapshot(raced) : null,
+    });
+    if (raced && racedJoin.join) {
       return { dto: await toGenerationDto(db, raced), status: 200 };
     }
     const reusedAfterRace = await findReusablePhotoSceneExtraction(db, {
       workspaceId: input.campaign.workspaceId,
+      sourceAssetId: capsule.sourceAssetId,
       fingerprint,
     });
     if (reusedAfterRace) {
-      return { dto: await toGenerationDto(db, reusedAfterRace, { reused: true }), status: 200 };
+      const outputAsset = await loadOutputAsset(
+        db,
+        reusedAfterRace.workspaceId,
+        reusedAfterRace.outputAssetId
+      );
+      const decision = evaluateExtractionReuse({
+        workspaceId: input.campaign.workspaceId,
+        expectedSourceAssetId: capsule.sourceAssetId,
+        fingerprint,
+        sourceContentHash: capsule.sourceContentHash,
+        candidate: { generation: asSnapshot(reusedAfterRace), outputAsset },
+      });
+      if (decision.reuse) {
+        return {
+          dto: await toGenerationDto(db, reusedAfterRace, { reused: true }),
+          status: 200,
+        };
+      }
     }
     throw err;
   }

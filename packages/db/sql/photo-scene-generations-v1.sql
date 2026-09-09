@@ -32,10 +32,10 @@ CREATE INDEX IF NOT EXISTS photo_scene_generations_campaign_idx
   ON photo_scene_generations (campaign_id, created_at);
 
 CREATE INDEX IF NOT EXISTS photo_scene_generations_reuse_idx
-  ON photo_scene_generations (workspace_id, operation, input_fingerprint, status);
+  ON photo_scene_generations (workspace_id, operation, source_asset_id, input_fingerprint, status);
 
 CREATE UNIQUE INDEX IF NOT EXISTS photo_scene_generations_inflight_fingerprint_idx
-  ON photo_scene_generations (workspace_id, operation, input_fingerprint)
+  ON photo_scene_generations (workspace_id, operation, source_asset_id, input_fingerprint)
   WHERE status IN ('queued', 'processing');
 
 ALTER TABLE photo_scene_generations ENABLE ROW LEVEL SECURITY;
