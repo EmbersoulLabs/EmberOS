@@ -49,6 +49,7 @@ export async function POST(
         db,
         campaignId,
         storyId,
+        actorUserId: user.id,
         stage,
         storyStatus: status,
       });
