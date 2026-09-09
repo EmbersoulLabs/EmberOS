@@ -9,6 +9,7 @@ import {
   listCampaignAiStories,
   replaceAiStoryAssetLinks,
 } from "@/lib/ai-story-service";
+import { assertAuthorizedStoryProductSourceSelection } from "@/lib/ai-story-product-sources";
 
 export async function GET(
   _request: Request,
@@ -58,10 +59,18 @@ export async function POST(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
 
-    const assetIds = parsed.data.assetIds ?? [];
+    const assetIds = parsed.data.assetIds;
+    const productAssetIds = parsed.data.productAssetIds;
     if (assetIds.length) {
       await assertCampaignAssets(db, campaignId, campaign.workspaceId, assetIds);
     }
+    await assertAuthorizedStoryProductSourceSelection(db, {
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+      assetIds,
+      productAssetIds,
+    });
 
     const [story] = await db
       .insert(schema.aiStories)
@@ -77,7 +86,9 @@ export async function POST(
       .returning();
 
     if (!story) return apiError("Failed to create AI Story", "INTERNAL", 500);
-    if (assetIds.length) await replaceAiStoryAssetLinks(db, story.id, assetIds);
+    if (assetIds.length) {
+      await replaceAiStoryAssetLinks(db, story.id, assetIds, productAssetIds);
+    }
 
     return apiSuccess({ story }, 201);
   } catch (error) {

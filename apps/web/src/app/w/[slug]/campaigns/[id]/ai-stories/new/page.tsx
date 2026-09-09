@@ -19,6 +19,7 @@ export default function CreateAiStoryPage() {
   const [idea, setIdea] = useState("");
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
+  const [productAssetIds, setProductAssetIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -31,6 +32,7 @@ export default function CreateAiStoryPage() {
     }
     setAssets(data.assets ?? []);
     setSelectedAssetIds((data.assets ?? []).map((a: AssetRow) => a.id));
+    setProductAssetIds([]);
   }, [campaignId]);
 
   useEffect(() => {
@@ -48,6 +50,7 @@ export default function CreateAiStoryPage() {
           title: title.trim(),
           originalIdea: idea.trim(),
           assetIds: selectedAssetIds,
+          productAssetIds,
         }),
       });
       const createData = await createRes.json();
@@ -109,22 +112,46 @@ export default function CreateAiStoryPage() {
           <div className="space-y-2">
             <p className="text-sm font-medium text-navy">Campaign assets (optional)</p>
             <ul className="space-y-2">
-              {assets.map((asset) => (
-                <li key={asset.id} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={selectedAssetIds.includes(asset.id)}
-                    onChange={(e) => {
-                      setSelectedAssetIds((prev) =>
-                        e.target.checked
-                          ? [...prev, asset.id]
-                          : prev.filter((id) => id !== asset.id)
-                      );
-                    }}
-                  />
-                  <span>{asset.displayName ?? asset.originalFilename ?? asset.id.slice(0, 8)}</span>
-                </li>
-              ))}
+              {assets.map((asset) => {
+                const included = selectedAssetIds.includes(asset.id);
+                const product = productAssetIds.includes(asset.id);
+                return (
+                  <li key={asset.id} className="space-y-1 text-sm">
+                    <label className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={included}
+                        onChange={(e) => {
+                          setSelectedAssetIds((prev) =>
+                            e.target.checked
+                              ? [...prev, asset.id]
+                              : prev.filter((id) => id !== asset.id)
+                          );
+                          if (!e.target.checked) {
+                            setProductAssetIds((prev) => prev.filter((id) => id !== asset.id));
+                          }
+                        }}
+                      />
+                      <span>Include in Story: {asset.displayName ?? asset.originalFilename ?? asset.id.slice(0, 8)}</span>
+                    </label>
+                    <label className="ml-6 flex items-center gap-2 text-ink-secondary">
+                      <input
+                        type="checkbox"
+                        disabled={!included}
+                        checked={included && product}
+                        onChange={(e) => {
+                          setProductAssetIds((prev) =>
+                            e.target.checked
+                              ? [...prev, asset.id]
+                              : prev.filter((id) => id !== asset.id)
+                          );
+                        }}
+                      />
+                      <span>This is a Product</span>
+                    </label>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ) : (

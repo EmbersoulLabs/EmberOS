@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
+import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -42,11 +43,12 @@ export const AiStoryStructuredDraftSchema = z.object({
 
 export type AiStoryStructuredDraft = z.infer<typeof AiStoryStructuredDraftSchema>;
 
-export const AiStoryCreateBodySchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  originalIdea: z.string().trim().min(1).max(8000),
-  assetIds: z.array(z.string().uuid()).max(32).optional(),
-});
+export const AiStoryCreateBodySchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    originalIdea: z.string().trim().min(1).max(8000),
+  })
+  .and(AiStoryAssetSelectionSchema);
 
 export const AiStoryUpdateDraftBodySchema = z.object({
   structuredContent: AiStoryStructuredDraftSchema,
