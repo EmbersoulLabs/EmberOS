@@ -21,12 +21,18 @@ import {
   type CreativeContext,
   type DirectorThinking,
   type PlanningUsage,
+  type PlanningCharacterAuthorityProjection,
   type ScenePlanItem,
   type ShotPlanItem,
   type StoryBeat,
   type WorldContinuity,
   WorldContinuitySchema,
 } from "@ceo-agent/shared";
+import {
+  bindCharacterContinuityToCharacterAuthority,
+  bindCreativeContextToCharacterAuthority,
+  planningCharacterAuthorityPrompt,
+} from "./character-authority-planning";
 
 type Usage = PlanningUsage;
 
@@ -56,6 +62,7 @@ export type StoryPlanningPipelineInput = {
   campaign: AiStoryPlanningCampaignContext;
   brand?: AiStoryPlanningBrandContext | null;
   assetLabels?: readonly string[];
+  characterAuthorities?: readonly PlanningCharacterAuthorityProjection[];
 };
 
 function addUsage(a: Usage, b: Usage): Usage {
@@ -138,7 +145,8 @@ export async function generateCreativeContext(
   storyDraft: AiStoryStructuredDraft,
   campaign: AiStoryPlanningCampaignContext,
   brand?: AiStoryPlanningBrandContext | null,
-  assetLabels: readonly string[] = []
+  assetLabels: readonly string[] = [],
+  characterAuthorities: readonly PlanningCharacterAuthorityProjection[] = []
 ): Promise<{ creativeContext: CreativeContext; usage: Usage }> {
   const schemaHint = JSON.stringify({
     creativeContext: {
@@ -155,7 +163,7 @@ export async function generateCreativeContext(
       characterContext: {
         characters: [
           {
-            id: "stable kebab-case id",
+            id: "exact canonical characterId UUID when selecting accepted authority; otherwise stable proposal id",
             name: "string",
             role: "string",
             description: "string",
@@ -196,10 +204,17 @@ export async function generateCreativeContext(
       "You are a screenwriter preparing an AI Story for animation planning.",
       "Extract only durable creative context from the Story Draft, campaign, brand, and assets.",
       "Include story, character, world, and narrative context with concise dialogue lines when the story needs speech.",
+      "Accepted canonical Character stable facts are read-only. Select them only by exact characterId; never rewrite identity or appearance. New Characters are proposals only.",
       "Keep directorContext as an empty object; the director stage fills Director Thinking later.",
       "Return ONLY JSON.",
     ].join(" "),
-    [campaignSummary(campaign, brand, assetLabels), "", storySummary(storyDraft)].join("\n"),
+    [
+      campaignSummary(campaign, brand, assetLabels),
+      "",
+      planningCharacterAuthorityPrompt(characterAuthorities),
+      "",
+      storySummary(storyDraft),
+    ].join("\n"),
     schemaHint,
     CreativeContextSchema,
     (result) => ({
@@ -207,7 +222,13 @@ export async function generateCreativeContext(
       directorContext: {},
     })
   );
-  return { creativeContext: value, usage };
+  return {
+    creativeContext: bindCreativeContextToCharacterAuthority({
+      creativeContext: value,
+      characterAuthorities,
+    }),
+    usage,
+  };
 }
 
 export async function generateDirectorThinking(
@@ -378,6 +399,7 @@ export async function generateCharacterContinuity(input: {
     [
       "You are a character continuity supervisor.",
       "Only create entries for characters present in creativeContext.characterContext.characters.",
+      "For canonical Characters, copy the exact characterId and treat canonical identity and appearance as immutable; generate only evolving emotion, costume, accessories, and pose state.",
       "Return stable identity, appearance, emotion, costume, accessories, age, and pose guidance.",
       "Return ONLY JSON.",
     ].join(" "),
@@ -386,7 +408,13 @@ export async function generateCharacterContinuity(input: {
     z.array(CharacterContinuityEntrySchema),
     (result) => result.characterContinuity
   );
-  return { characterContinuity: value, usage };
+  return {
+    characterContinuity: bindCharacterContinuityToCharacterAuthority({
+      creativeContext: input.creativeContext,
+      characterContinuity: value,
+    }),
+    usage,
+  };
 }
 
 export async function generateWorldContinuity(input: {
@@ -467,7 +495,8 @@ export async function runFullStoryPlanningPipeline(
     input.storyDraft,
     input.campaign,
     input.brand,
-    input.assetLabels ?? []
+    input.assetLabels ?? [],
+    input.characterAuthorities ?? []
   );
   usage = addUsage(usage, creative.usage);
 

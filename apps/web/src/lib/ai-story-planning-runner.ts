@@ -3,11 +3,13 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import {
+  AiStoryCharacterAuthorityService,
   getBusinessProfileByWorkspace,
   getDb,
   schema,
 } from "@ceo-agent/db";
 import {
+  assertPlanningCharacterAuthorityCurrent,
   buildAnimationPackage,
   generateCharacterContinuity,
   generateCreativeContext,
@@ -16,6 +18,7 @@ import {
   generateShotPlan,
   generateStoryBeats,
   generateWorldContinuity,
+  projectAcceptedCharactersToPlanning,
 } from "@ceo-agent/agents";
 import {
   AiStoryStructuredDraftSchema,
@@ -69,7 +72,12 @@ function requireStage(
   void stage;
 }
 
-async function loadPlanningContext(db: Db, campaignId: string, storyId: string) {
+async function loadPlanningContext(
+  db: Db,
+  campaignId: string,
+  storyId: string,
+  actorUserId: string
+) {
   const [campaign] = await db
     .select()
     .from(schema.campaigns)
@@ -93,6 +101,19 @@ async function loadPlanningContext(db: Db, campaignId: string, storyId: string) 
     ? normalizeBusinessProfileRecord(profileRow as Record<string, unknown>)
     : null;
   const completion = profile ? assessBusinessProfileCompletion(profile) : null;
+
+  const characters = await new AiStoryCharacterAuthorityService(db).list({
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    campaignId,
+    actorUserId,
+  });
+  const characterAuthorities = projectAcceptedCharactersToPlanning({
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    campaignId,
+    characters,
+  });
 
   const assetIds = loaded.assetLinks.map((link) => link.assetId);
   const assetLabels =
@@ -139,6 +160,7 @@ async function loadPlanningContext(db: Db, campaignId: string, storyId: string) 
         ? ["Business Profile incomplete; keep brand assumptions explicit."]
         : []),
     ],
+    characterAuthorities,
   };
 }
 
@@ -155,6 +177,7 @@ export async function runSinglePlanningStage(input: {
   db: Db;
   campaignId: string;
   storyId: string;
+  actorUserId: string;
   stage: StoryPlanningStage;
   storyStatus: string;
 }): Promise<{
@@ -170,7 +193,7 @@ export async function runSinglePlanningStage(input: {
     throw new Error(`Unknown planning stage: ${stage}`);
   }
 
-  const ctx = await loadPlanningContext(db, campaignId, storyId);
+  const ctx = await loadPlanningContext(db, campaignId, storyId, input.actorUserId);
   if (["ready_for_animation", "planning_review", "failed"].includes(input.storyStatus)) {
     await setAiStoryStatus(
       db,
@@ -209,6 +232,12 @@ export async function runSinglePlanningStage(input: {
         : (["creative_context", ...draft.completedStages] as StoryPlanningStage[]),
     };
   }
+  if (stage !== "creative_context" && draft.creativeContext) {
+    assertPlanningCharacterAuthorityCurrent({
+      creativeContext: draft.creativeContext,
+      characterAuthorities: ctx.characterAuthorities,
+    });
+  }
 
   let usage = draft.usage ?? emptyUsage();
   let savedContext: Awaited<ReturnType<typeof saveCreativeContext>> | null = null;
@@ -228,7 +257,8 @@ export async function runSinglePlanningStage(input: {
           platforms: ctx.campaign.platforms,
         },
         ctx.brand,
-        ctx.assetLabels
+        ctx.assetLabels,
+        ctx.characterAuthorities
       );
       usage = addUsage(usage, generated.usage);
       savedContext = await saveCreativeContext(db, {

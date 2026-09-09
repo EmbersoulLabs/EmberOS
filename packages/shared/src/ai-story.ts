@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -162,6 +163,18 @@ export const STORY_PLANNING_STAGE_ORDER = [
 
 const NonEmptyTextSchema = z.string().trim().min(1);
 
+export const PlanningCharacterAuthorityProjectionSchema = z.object({
+  characterId: z.string().uuid(),
+  characterVersionId: z.string().uuid(),
+  characterFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  name: NonEmptyTextSchema,
+  canonicalFacts: AiStoryCharacterCanonicalFactsSchema,
+}).strict();
+
+export type PlanningCharacterAuthorityProjection = z.infer<
+  typeof PlanningCharacterAuthorityProjectionSchema
+>;
+
 export const CreativeContextCharacterSchema = z.object({
   id: z.string().trim().min(1).optional(),
   name: NonEmptyTextSchema,
@@ -169,6 +182,10 @@ export const CreativeContextCharacterSchema = z.object({
   description: z.string().default(""),
   motivation: z.string().default(""),
   visualNotes: z.string().default(""),
+  /** Exact accepted authority. Legacy fields above are compatibility projections only. */
+  canonicalAuthority: PlanningCharacterAuthorityProjectionSchema.optional(),
+  /** LLM-created persistent Character data remains a proposal until accepted by the Character API. */
+  proposalOnly: z.literal(true).optional(),
 });
 
 export const CreativeContextSchema = z.object({
@@ -276,6 +293,11 @@ export const CharacterContinuityEntrySchema = z.object({
   age: z.string().default(""),
   pose: z.string().default(""),
   identity: NonEmptyTextSchema,
+  canonicalAuthority: PlanningCharacterAuthorityProjectionSchema.pick({
+    characterId: true,
+    characterVersionId: true,
+    characterFingerprint: true,
+  }).optional(),
 });
 
 export type CharacterContinuityEntry = z.infer<typeof CharacterContinuityEntrySchema>;
@@ -430,12 +452,45 @@ export function validatePlanningConsistency(
       character.name.trim().toLowerCase()
     )
   );
+  const canonicalCharactersById = new Map(
+    animationPackage.creativeContext.characterContext.characters
+      .filter((character) => character.canonicalAuthority)
+      .map((character) => [character.canonicalAuthority!.characterId, character] as const)
+  );
+  const canonicalCharacterNames = new Set(
+    [...canonicalCharactersById.values()].map((character) =>
+      character.name.trim().toLowerCase()
+    )
+  );
   for (const entry of animationPackage.characterContinuity) {
     const idMatches = entry.characterId
       ? characterIds.has(entry.characterId.trim().toLowerCase())
       : false;
-    const nameMatches = characterNames.has(entry.name.trim().toLowerCase());
-    if (!idMatches && !nameMatches) {
+    const normalizedEntryName = entry.name.trim().toLowerCase();
+    const nameMatches = characterNames.has(normalizedEntryName);
+    const canonicalCharacter = entry.characterId
+      ? canonicalCharactersById.get(entry.characterId)
+      : undefined;
+    const canonicalBindingMatches = canonicalCharacter
+      ? Boolean(
+          entry.canonicalAuthority &&
+            entry.canonicalAuthority.characterId ===
+              canonicalCharacter.canonicalAuthority!.characterId &&
+            entry.canonicalAuthority.characterVersionId ===
+              canonicalCharacter.canonicalAuthority!.characterVersionId &&
+            entry.canonicalAuthority.characterFingerprint ===
+              canonicalCharacter.canonicalAuthority!.characterFingerprint
+        )
+      : false;
+    if (canonicalCharacter && !canonicalBindingMatches) {
+      issues.push(
+        `Character continuity entry ${entry.name} does not preserve exact Character authority lineage`
+      );
+    } else if (!canonicalCharacter && canonicalCharacterNames.has(normalizedEntryName)) {
+      issues.push(
+        `Character continuity entry ${entry.name} uses a name without exact Character authority`
+      );
+    } else if (!idMatches && !nameMatches) {
       issues.push(`Character continuity entry ${entry.name} is not in character context`);
     }
   }

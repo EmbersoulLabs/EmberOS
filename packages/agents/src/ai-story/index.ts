@@ -1,5 +1,6 @@
 export * from "./story-polish-service";
 export * from "./story-planning-service";
+export * from "./character-authority-planning";
 export * from "./story-screenwriter-service";
 export * from "./execution-compiler";
 export * from "./scene-execution-compiler";
