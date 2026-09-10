@@ -211,9 +211,18 @@ describe("Photo Scene exact-source extraction reuse authority", () => {
     const runtime = readFileSync("apps/web/src/lib/photo-scene-extraction.ts", "utf8");
     const raceSection = runtime.slice(runtime.indexOf("} catch (err)"));
     expect(raceSection).toContain("sourceAssetId: capsule.sourceAssetId");
-    expect(raceSection).toContain("const decision = evaluateExtractionReuse");
-    expect(raceSection.indexOf("const decision = evaluateExtractionReuse")).toBeLessThan(
+    expect(raceSection).toContain("const authorized = await certifyAndAuthorizeReadyReuse");
+    expect(
+      raceSection.indexOf("const authorized = await certifyAndAuthorizeReadyReuse")
+    ).toBeLessThan(
       raceSection.indexOf("reused: true")
+    );
+    const certification = runtime.slice(
+      runtime.indexOf("async function certifyAndAuthorizeReadyReuse"),
+      runtime.indexOf("export async function requestProductExtraction")
+    );
+    expect(certification.indexOf("evaluateExtractionReuse")).toBeLessThan(
+      certification.indexOf("authorizeCertifiedReusableDerivativeForCampaign")
     );
   });
 

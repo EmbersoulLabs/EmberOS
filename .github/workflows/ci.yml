@@ -85,6 +85,11 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/photo-scene-exact-source-extraction-reuse.integration.test.ts
 
+      - name: Certify reused Product derivative Campaign authorization convergence
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/photo-scene-reused-derivative-campaign-authorization-convergence.integration.test.ts
+
       - name: Apply differentiated human retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
 

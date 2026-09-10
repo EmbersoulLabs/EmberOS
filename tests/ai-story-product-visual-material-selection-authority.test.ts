@@ -290,6 +290,28 @@ describe("AI Story Product visual material selection authority", () => {
     expect(result.selectedMaterial).toBeNull();
   });
 
+  it("converges to the exact derivative without changing Product authority", () => {
+    const before = deriveProductVisualMaterialSelectionAuthority(
+      selectionInput({
+        outcome: "OPAQUE_NOT_ISOLATED",
+        derivative: derivative("NOT_FOUND", ID.productA, HASH_A, "OUTPUT_UNAVAILABLE"),
+        preparationCertified: true,
+        referenceFree: false,
+      })
+    );
+    const after = deriveProductVisualMaterialSelectionAuthority(
+      selectionInput({
+        outcome: "OPAQUE_NOT_ISOLATED",
+        derivative: derivative("FOUND"),
+        preparationCertified: true,
+        referenceFree: false,
+      })
+    );
+    expect(before.selection).toBe("PRODUCT_PREPARATION_REQUIRED");
+    expect(after.selection).toBe("EXTRACTED_DERIVATIVE");
+    expect(after.productAuthority).toEqual(before.productAuthority);
+  });
+
   it("requires certified Photo Scene input capability for unsupported source preparation", () => {
     const certified = deriveProductVisualMaterialSelectionAuthority(
       selectionInput({

@@ -6,12 +6,14 @@ import {
   getPhotoSceneGeneration,
   insertPhotoSceneGeneration,
   latestCampaignPhotoSceneExtraction,
+  persistSameWorkspaceCampaignAssetRef,
   schema,
 } from "@ceo-agent/db";
 import { enqueuePhotoSceneExtract } from "@ceo-agent/queue";
 import { fingerprintPhotoSceneExtractionIdentityV1 } from "@ceo-agent/shared/photo-scene-extraction.server";
 import {
   PhotoSceneAssetAuthorityError,
+  EXTRACTED_PRODUCT_MIME,
   PhotoSceneExtractionError,
   assertPhotoSceneGenerationAccess,
   assertSameWorkspaceCampaignBind,
@@ -140,6 +142,80 @@ async function loadOutputAsset(
   return asset ?? null;
 }
 
+export function isCurrentCampaignReusableOutput(input: {
+  campaign: typeof schema.campaigns.$inferSelect;
+  generation: typeof schema.photoSceneGenerations.$inferSelect;
+  outputAsset: typeof schema.assets.$inferSelect;
+}): boolean {
+  return (
+    input.generation.orgId === input.campaign.orgId &&
+    input.generation.workspaceId === input.campaign.workspaceId &&
+    input.outputAsset.id === input.generation.outputAssetId &&
+    input.outputAsset.orgId === input.campaign.orgId &&
+    input.outputAsset.workspaceId === input.campaign.workspaceId &&
+    input.outputAsset.status === "ready" &&
+    input.outputAsset.deletedAt == null &&
+    input.outputAsset.type === "image" &&
+    input.outputAsset.mimeType?.toLowerCase().trim() === EXTRACTED_PRODUCT_MIME
+  );
+}
+
+async function authorizeCertifiedReusableDerivativeForCampaign(
+  db: Db,
+  input: {
+    campaign: typeof schema.campaigns.$inferSelect;
+    outputAssetId: string;
+  }
+): Promise<void> {
+  await persistSameWorkspaceCampaignAssetRef(db, {
+    campaignId: input.campaign.id,
+    assetId: input.outputAssetId,
+    workspaceId: input.campaign.workspaceId,
+    orgId: input.campaign.orgId,
+  });
+}
+
+async function certifyAndAuthorizeReadyReuse(
+  db: Db,
+  input: {
+    campaign: typeof schema.campaigns.$inferSelect;
+    generation: typeof schema.photoSceneGenerations.$inferSelect;
+    sourceAssetId: string;
+    sourceContentHash: PhotoSceneExtractionInputCapsuleV1["sourceContentHash"];
+    fingerprint: string;
+  }
+): Promise<boolean> {
+  const outputAsset = await loadOutputAsset(
+    db,
+    input.generation.workspaceId,
+    input.generation.outputAssetId
+  );
+  const decision = evaluateExtractionReuse({
+    workspaceId: input.campaign.workspaceId,
+    expectedSourceAssetId: input.sourceAssetId,
+    fingerprint: input.fingerprint,
+    sourceContentHash: input.sourceContentHash,
+    candidate: { generation: asSnapshot(input.generation), outputAsset },
+  });
+  if (
+    !decision.reuse ||
+    !outputAsset ||
+    !isCurrentCampaignReusableOutput({
+      campaign: input.campaign,
+      generation: input.generation,
+      outputAsset,
+    })
+  ) {
+    return false;
+  }
+
+  await authorizeCertifiedReusableDerivativeForCampaign(db, {
+    campaign: input.campaign,
+    outputAssetId: outputAsset.id,
+  });
+  return true;
+}
+
 export async function requestProductExtraction(
   db: Db,
   input: {
@@ -207,15 +283,14 @@ export async function requestProductExtraction(
     fingerprint,
   });
   if (ready) {
-    const outputAsset = await loadOutputAsset(db, ready.workspaceId, ready.outputAssetId);
-    const decision = evaluateExtractionReuse({
-      workspaceId: input.campaign.workspaceId,
-      expectedSourceAssetId: capsule.sourceAssetId,
-      fingerprint,
+    const authorized = await certifyAndAuthorizeReadyReuse(db, {
+      campaign: input.campaign,
+      generation: ready,
+      sourceAssetId: capsule.sourceAssetId,
       sourceContentHash: capsule.sourceContentHash,
-      candidate: { generation: asSnapshot(ready), outputAsset },
+      fingerprint,
     });
-    if (decision.reuse) {
+    if (authorized) {
       emitPhotoSceneOpsEvent({
         event: "extraction.reused",
         stage: "photo_scene.extract",
@@ -291,19 +366,14 @@ export async function requestProductExtraction(
       fingerprint,
     });
     if (reusedAfterRace) {
-      const outputAsset = await loadOutputAsset(
-        db,
-        reusedAfterRace.workspaceId,
-        reusedAfterRace.outputAssetId
-      );
-      const decision = evaluateExtractionReuse({
-        workspaceId: input.campaign.workspaceId,
-        expectedSourceAssetId: capsule.sourceAssetId,
-        fingerprint,
+      const authorized = await certifyAndAuthorizeReadyReuse(db, {
+        campaign: input.campaign,
+        generation: reusedAfterRace,
+        sourceAssetId: capsule.sourceAssetId,
         sourceContentHash: capsule.sourceContentHash,
-        candidate: { generation: asSnapshot(reusedAfterRace), outputAsset },
+        fingerprint,
       });
-      if (decision.reuse) {
+      if (authorized) {
         return {
           dto: await toGenerationDto(db, reusedAfterRace, { reused: true }),
           status: 200,
