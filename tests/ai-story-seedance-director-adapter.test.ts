@@ -42,7 +42,7 @@ function packageFixture(options: { mode?: "TEXT_TO_VIDEO"|"FIRST_FRAME_IMAGE_TO_
     locationBinding:{scope:"EPHEMERAL_ENVIRONMENT",id:I.environment,storyId:I.story,sceneId:I.scene,displayName:"Unclassified environment",environmentDescription:"A plausible open-semantic setting",visualIdentityRequirement:"NONE"},
     locationState:{timeOfDay:"day",weather:"calm",temporaryFacts:["A clear interaction area"]},
     castBindings:[{scope:"CAMPAIGN_CHARACTER",id:I.character,campaignId:I.campaign,authorityVersionId:I.characterVersion,authorityFingerprint:hash("c"),visualIdentityRequirement:"NONE"}],
-    productBindings:[{productAuthorityId:I.product,sourceAssetId:I.productAsset,sourceAssetContentHash:hash("p")}],
+    productBindings:[{productAuthorityId:I.product,sourceAssetId:I.productAsset,sourceAssetContentHash:hash("p"),visualIdentityRequirement:productRequirement}],
     entryState:[{dimension:"POSSESSION",subjectId:I.product,value:"held by the Character"}],
     events:[{entryId:I.entry,order:0,durationRange:{minSeconds:2,maxSeconds:5},type:"ACTION",subjectId:I.character,objectId:I.product,action:"The Character phase-aligns the unknown Product with the display surface.",storyEffect:"Usage evidence becomes visible"}],
     exitState:[{dimension:"PRODUCT_STATE",subjectId:I.product,value:"phase-aligned and visibly intact"}], continuityFacts:["Character and Product identities persist"], timeRelation:"UNSPECIFIED", discontinuity:null,

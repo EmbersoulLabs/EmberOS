@@ -5,9 +5,12 @@ import {
 import {
   AI_STORY_LOCATION_CONTRACT_VERSION,
   AI_STORY_SCENE_CONTRACT_VERSION,
+  AiStoryAuthoritativeSceneProductBindingSchema,
   AiStoryCanonicalSceneSchema,
   AiStoryLocationAuthorityVersionSchema,
   type AiStoryCanonicalScene,
+  type AiStoryAuthoritativeCanonicalScene,
+  type AiStoryAuthoritativeSceneProductBinding,
   type AiStoryLocationAuthorityVersion,
   type AiStorySceneIssue,
 } from "./ai-story-scene";
@@ -92,8 +95,10 @@ export function finalizeAiStoryCanonicalScene(
     | "approvedBy"
     | "approvedAt"
     | "frozenAt"
-  >,
-) {
+    | "productBindings"
+  > & { productBindings: AiStoryAuthoritativeSceneProductBinding[] },
+): AiStoryAuthoritativeCanonicalScene {
+  input.productBindings.forEach((binding) => AiStoryAuthoritativeSceneProductBindingSchema.parse(binding));
   const draft: AiStoryCanonicalScene = {
     ...input,
     sceneVersionId: "00000000-0000-4000-8000-000000000000",
@@ -115,7 +120,7 @@ export function finalizeAiStoryCanonicalScene(
       "ai-story-scene-version",
       `${input.sceneId}:${input.version}:${fingerprint}`,
     ),
-  });
+  }) as AiStoryAuthoritativeCanonicalScene;
 }
 
 function stateKey(fact: { dimension: string; subjectId: string }) {
@@ -232,6 +237,9 @@ export function validateAiStoryCanonicalScenes(
     }
     if (new Set(scene.productBindings.map((product) => product.productAuthorityId)).size !== scene.productBindings.length) {
       add("PRODUCT_BINDING_GATE", "Scene contains duplicate Product authority bindings", "PRODUCT_AUTHORITY");
+    }
+    if (scene.productBindings.some((product) => !AiStoryAuthoritativeSceneProductBindingSchema.safeParse(product).success)) {
+      add("PRODUCT_BINDING_GATE", "Scene Product visual identity requirement must be explicitly resolved", "PRODUCT_AUTHORITY");
     }
     const expectedProducts = new Set(sources.flatMap((source) => source?.productAuthorityRefs ?? []));
     const boundProducts = new Set(scene.productBindings.map((product) => product.productAuthorityId));

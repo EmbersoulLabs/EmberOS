@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   AiStoryCanonicalSceneSchema,
+  AiStoryAuthoritativeSceneProductBindingSchema,
   AiStoryLocationAuthorityVersionSchema,
   AiStoryLocationFactsSchema,
   AiStoryLocationPromotionSchema,
@@ -34,6 +35,15 @@ export class AiStorySceneAuthorityError extends Error {
   constructor(readonly code: string, message: string) {
     super(message);
     this.name = "AiStorySceneAuthorityError";
+  }
+}
+
+function assertExplicitProductVisualIdentityRequirements(scenes: readonly AiStoryCanonicalScene[]) {
+  if (scenes.some((scene) => scene.productBindings.some((binding) => !AiStoryAuthoritativeSceneProductBindingSchema.safeParse(binding).success))) {
+    throw new AiStorySceneAuthorityError(
+      "SCENE_PRODUCT_VISUAL_IDENTITY_REQUIREMENT_REQUIRED",
+      "Every new authoritative Scene Product binding requires an explicit visual identity requirement",
+    );
   }
 }
 
@@ -192,6 +202,7 @@ export class AiStoryCanonicalSceneAuthorityService {
 
   async proposeRevisionSet(scope: AiStoryScriptScope, scenes: readonly AiStoryCanonicalScene[]) {
     const parsed = scenes.map((scene) => AiStoryCanonicalSceneSchema.parse(scene));
+    assertExplicitProductVisualIdentityRequirements(parsed);
     if (parsed.some((scene) => scene.status !== "DRAFT" || scene.createdBy !== scope.actorUserId)) throw new AiStorySceneAuthorityError("SCENE_PROPOSAL_INVALID", "New canonical Scene revisions must be DRAFT proposals by the scoped actor");
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`canonical-scenes:${scope.storyVersionId}`}))`);
@@ -242,6 +253,7 @@ export class AiStoryCanonicalSceneAuthorityService {
       const rows = await tx.select().from(schema.aiStoryCanonicalSceneVersions).innerJoin(schema.aiStoryCanonicalScenes,eq(schema.aiStoryCanonicalScenes.currentSceneVersionId,schema.aiStoryCanonicalSceneVersions.sceneVersionId)).where(and(eq(schema.aiStoryCanonicalSceneVersions.storyVersionId,scope.storyVersionId),eq(schema.aiStoryCanonicalSceneVersions.storyId,scope.storyId))).orderBy(asc(schema.aiStoryCanonicalSceneVersions.sceneOrder)).for("update");
       if (!rows.length) throw new AiStorySceneAuthorityError("SCENE_SET_NOT_FOUND","Canonical Scene set not found");
       const current = rows.map((row)=>parseScene(row.ai_story_canonical_scene_versions));
+      assertExplicitProductVisualIdentityRequirements(current);
       current.forEach((scene)=>assertAiStorySceneTransition(scene.status,to));
       if(to==="VALIDATED"){
         const scriptRows=await tx.select().from(schema.aiStoryScriptVersions).where(eq(schema.aiStoryScriptVersions.scriptVersionId,current[0]!.scriptVersionId)).limit(1);
