@@ -58,6 +58,7 @@ export * from "./asset-library";
 export * from "./ai-story";
 export * from "./ai-story-asset-usage";
 export * from "./ai-story-product-planning";
+export * from "./ai-story-product-background-suitability";
 export * from "./ai-story-generation-authority";
 export * from "./ai-story-character";
 export * from "./ai-story-cast";
