@@ -230,6 +230,34 @@ describe("AI Story read-only exact Product derivative resolution", () => {
     expect(result).toMatchObject({ status: "NOT_FOUND", reason: "OUTPUT_UNAVAILABLE" });
   });
 
+  it("converges from OUTPUT_UNAVAILABLE to FOUND only after explicit Campaign authorization", async () => {
+    let currentCampaignAuthorized = false;
+    const dependencies = {
+      resolveSources: vi.fn().mockResolvedValue([source()]),
+      findReady: vi.fn().mockResolvedValue(generation()),
+      loadOutput: vi.fn().mockImplementation(async () => ({
+        asset: outputAsset(),
+        currentCampaignAuthorized,
+      })),
+    } as never;
+    const before = await resolveExactStoryProductDerivative({} as never, scope, dependencies);
+    expect(before).toMatchObject({ status: "NOT_FOUND", reason: "OUTPUT_UNAVAILABLE" });
+
+    currentCampaignAuthorized = true;
+    const after = await resolveExactStoryProductDerivative({} as never, scope, dependencies);
+    expect(after).toMatchObject({
+      status: "FOUND",
+      productAuthorityId: id(10),
+      sourceAssetId: id(10),
+      sourceAssetContentHash: hash("a"),
+      derivative: {
+        assetId: id(30),
+        generationId: id(20),
+        generationFingerprint: fingerprint(),
+      },
+    });
+  });
+
   it("fails closed when exact current Story product_source authority is absent", async () => {
     await expect(resolve({ sources: [] })).rejects.toThrowError(
       AiStoryExactProductDerivativeAuthorityError

@@ -92,6 +92,7 @@ describe.skipIf(!RUN).sequential("Photo Scene 10B durable runtime zero-paid-API"
     userBId: "",
     campaignAId: "",
     campaignBId: "",
+    campaignReuseId: "",
     sourceAId: "",
     sourceBId: "",
     sourceFailId: "",
@@ -131,6 +132,7 @@ describe.skipIf(!RUN).sequential("Photo Scene 10B durable runtime zero-paid-API"
     fixture.userBId = crypto.randomUUID();
     fixture.campaignAId = crypto.randomUUID();
     fixture.campaignBId = crypto.randomUUID();
+    fixture.campaignReuseId = crypto.randomUUID();
     fixture.sourceAId = crypto.randomUUID();
     fixture.sourceBId = crypto.randomUUID();
     fixture.sourceFailId = crypto.randomUUID();
@@ -155,7 +157,8 @@ describe.skipIf(!RUN).sequential("Photo Scene 10B durable runtime zero-paid-API"
       INSERT INTO campaigns (id, org_id, workspace_id, name, platforms, status)
       VALUES
         (${fixture.campaignAId}, ${fixture.orgId}, ${fixture.workspaceAId}, ${"Cert Campaign A"}, ${["tiktok"]}, ${"draft"}),
-        (${fixture.campaignBId}, ${fixture.orgId}, ${fixture.workspaceBId}, ${"Cert Campaign B"}, ${["tiktok"]}, ${"draft"})
+        (${fixture.campaignBId}, ${fixture.orgId}, ${fixture.workspaceBId}, ${"Cert Campaign B"}, ${["tiktok"]}, ${"draft"}),
+        (${fixture.campaignReuseId}, ${fixture.orgId}, ${fixture.workspaceAId}, ${"Cert Campaign Reuse"}, ${["tiktok"]}, ${"draft"})
     `;
 
     const bytesA = productPng(1);
@@ -206,7 +209,7 @@ describe.skipIf(!RUN).sequential("Photo Scene 10B durable runtime zero-paid-API"
     }
     if (sql && fixture.orgId) {
       await sql`DELETE FROM photo_scene_generations WHERE org_id = ${fixture.orgId}`;
-      await sql`DELETE FROM campaign_asset_refs WHERE campaign_id IN (${fixture.campaignAId}, ${fixture.campaignBId})`;
+      await sql`DELETE FROM campaign_asset_refs WHERE campaign_id IN (${fixture.campaignAId}, ${fixture.campaignBId}, ${fixture.campaignReuseId})`;
       await sql`DELETE FROM assets WHERE org_id = ${fixture.orgId}`;
       await sql`DELETE FROM campaigns WHERE org_id = ${fixture.orgId}`;
       await sql`DELETE FROM workspace_members WHERE org_id = ${fixture.orgId}`;
@@ -404,6 +407,82 @@ describe.skipIf(!RUN).sequential("Photo Scene 10B durable runtime zero-paid-API"
       if (out) storageKeys.push(out.storagePath);
     }
   }, 90_000);
+
+  it("authorizes one exact READY derivative for another same-workspace Campaign", async () => {
+    const db = getDb();
+    const [campaign] = await db
+      .select()
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, fixture.campaignReuseId))
+      .limit(1);
+    const [generationBefore] = await db
+      .select()
+      .from(schema.photoSceneGenerations)
+      .where(eq(schema.photoSceneGenerations.id, fixture.generationId))
+      .limit(1);
+    expect(generationBefore?.outputAssetId).toBeTruthy();
+    const [derivativeBefore] = await db
+      .select()
+      .from(schema.assets)
+      .where(eq(schema.assets.id, generationBefore!.outputAssetId!))
+      .limit(1);
+    const refsBefore = await sql<{ asset_id: string }[]>`
+      SELECT asset_id FROM campaign_asset_refs
+      WHERE campaign_id = ${fixture.campaignReuseId}
+        AND asset_id = ${generationBefore!.outputAssetId!}
+    `;
+    expect(refsBefore).toHaveLength(0);
+    const generationCountBefore = await sql<{ count: string }[]>`
+      SELECT count(*)::text AS count FROM photo_scene_generations
+      WHERE workspace_id = ${fixture.workspaceAId}
+        AND source_asset_id = ${fixture.sourceAId}
+    `;
+    const enqueuedBefore = opsLines.filter((line) => line.includes('"event":"extraction.enqueued"')).length;
+    const providerCallsBefore = getPhotoroomNetworkCallCount();
+
+    const first = await requestProductExtraction(db, {
+      campaign: campaign!,
+      sourceAssetId: fixture.sourceAId,
+      userId: fixture.userAId,
+    });
+    const second = await requestProductExtraction(db, {
+      campaign: campaign!,
+      sourceAssetId: fixture.sourceAId,
+      userId: fixture.userAId,
+    });
+
+    expect(first).toMatchObject({ status: 200, dto: { id: fixture.generationId, reused: true } });
+    expect(second).toMatchObject({ status: 200, dto: { id: fixture.generationId, reused: true } });
+    const refsAfter = await sql<{ asset_id: string }[]>`
+      SELECT asset_id FROM campaign_asset_refs
+      WHERE campaign_id = ${fixture.campaignReuseId}
+        AND asset_id = ${generationBefore!.outputAssetId!}
+    `;
+    expect(refsAfter).toHaveLength(1);
+    const generationCountAfter = await sql<{ count: string }[]>`
+      SELECT count(*)::text AS count FROM photo_scene_generations
+      WHERE workspace_id = ${fixture.workspaceAId}
+        AND source_asset_id = ${fixture.sourceAId}
+    `;
+    expect(generationCountAfter).toEqual(generationCountBefore);
+    expect(getPhotoroomNetworkCallCount()).toBe(providerCallsBefore);
+    expect(opsLines.filter((line) => line.includes('"event":"extraction.enqueued"'))).toHaveLength(
+      enqueuedBefore
+    );
+
+    const [generationAfter] = await db
+      .select()
+      .from(schema.photoSceneGenerations)
+      .where(eq(schema.photoSceneGenerations.id, fixture.generationId))
+      .limit(1);
+    const [derivativeAfter] = await db
+      .select()
+      .from(schema.assets)
+      .where(eq(schema.assets.id, generationBefore!.outputAssetId!))
+      .limit(1);
+    expect(generationAfter).toEqual(generationBefore);
+    expect(derivativeAfter).toEqual(derivativeBefore);
+  }, 30_000);
 
   it("fails closed then retries the same generation identity", async () => {
     const db = getDb();
