@@ -60,6 +60,7 @@
     "sql:ai-story-production-verification": "tsx scripts/apply-ai-story-production-verification-v1.ts",
     "sql:ai-story-worker-runtime": "tsx scripts/apply-ai-story-worker-runtime-v1.ts",
     "sql:ai-story-worker-attempt-observation": "tsx scripts/apply-ai-story-worker-attempt-observation-v1.ts",
+    "sql:ai-story-approved-animation-package-authority": "tsx scripts/apply-ai-story-current-approved-animation-package-authority-v1.ts",
     "sql:platform-admin": "tsx scripts/apply-platform-admin-v1.ts",
     "sql:commercial-persistence": "tsx scripts/apply-commercial-persistence-v1.ts",
     "sql:credits-settlement": "tsx scripts/apply-credits-settlement-v1.ts",

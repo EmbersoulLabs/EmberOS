@@ -3,7 +3,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { ApprovedAnimationPackageAuthorityError, getDb, schema } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
   CreativeContextSchema,
@@ -194,55 +194,127 @@ export async function approveAnimationPackage(
   db: Db,
   input: {
     packageId: string;
+    orgId: string;
     campaignId: string;
     storyId: string;
     workspaceId: string;
     approvedBy: string;
   }
 ) {
-  const [existing] = await db
-    .select()
-    .from(schema.aiStoryAnimationPackages)
-    .where(
-      and(
-        eq(schema.aiStoryAnimationPackages.id, input.packageId),
-        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
-        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
-        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId)
+  return db.transaction(async (tx) => {
+    const [candidate] = await tx
+      .select()
+      .from(schema.aiStoryAnimationPackages)
+      .where(
+        and(
+          eq(schema.aiStoryAnimationPackages.id, input.packageId),
+          eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+          eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+          eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+          eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId)
+        )
       )
-    )
-    .limit(1);
-  if (!existing) {
-    throw new Error("Animation Package not found");
-  }
-  if (isStoryPlanningDraft(existing.payload)) {
-    throw new Error("Planning draft is incomplete — assemble Animation Package first");
-  }
-  const payload = AnimationPackagePayloadSchema.parse(existing.payload);
-  const approvedPayload: AnimationPackagePayload = {
-    ...payload,
-    status: "ready_for_execution",
-  };
-  const [updated] = await db
-    .update(schema.aiStoryAnimationPackages)
-    .set({
+      .limit(1);
+    if (!candidate) throw new Error("Animation Package not found");
+
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${`ai-story-package-approval:${input.storyId}:${candidate.storyVersionId}`}))`
+    );
+
+    const [story] = await tx
+      .select()
+      .from(schema.aiStories)
+      .where(
+        and(
+          eq(schema.aiStories.id, input.storyId),
+          eq(schema.aiStories.orgId, input.orgId),
+          eq(schema.aiStories.workspaceId, input.workspaceId),
+          eq(schema.aiStories.campaignId, input.campaignId)
+        )
+      )
+      .limit(1)
+      .for("update");
+    if (!story) throw new Error("AI Story not found for Animation Package approval");
+    if (story.currentVersionId !== candidate.storyVersionId) {
+      throw new ApprovedAnimationPackageAuthorityError(
+        "ANIMATION_PACKAGE_STORY_VERSION_NOT_CURRENT",
+        "Animation Package does not belong to the current Story Version"
+      );
+    }
+
+    const packages = await tx
+      .select()
+      .from(schema.aiStoryAnimationPackages)
+      .where(
+        and(
+          eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+          eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+          eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+          eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+          eq(schema.aiStoryAnimationPackages.storyVersionId, candidate.storyVersionId)
+        )
+      )
+      .for("update");
+    const current = packages.find((row) => row.id === input.packageId);
+    if (!current) throw new Error("Animation Package changed during approval");
+    const approved = packages.filter((row) => row.status === "ready_for_execution");
+    if (approved.length > 1) {
+      throw new ApprovedAnimationPackageAuthorityError(
+        "CURRENT_APPROVED_ANIMATION_PACKAGE_AUTHORITY_AMBIGUOUS",
+        "Approved Animation Package authority is ambiguous for this Story Version"
+      );
+    }
+    const existingApproved = approved[0];
+    if (existingApproved && existingApproved.id !== current.id) {
+      throw new ApprovedAnimationPackageAuthorityError(
+        "ANIMATION_PACKAGE_ALREADY_APPROVED_FOR_STORY_VERSION",
+        "Another Animation Package is already approved for this Story Version"
+      );
+    }
+
+    if (current.status === "ready_for_execution") {
+      const approvedPayload = AnimationPackagePayloadSchema.parse(current.payload);
+      if (
+        approvedPayload.status !== "ready_for_execution" ||
+        !current.approvedAt ||
+        !current.approvedBy
+      ) {
+        throw new ApprovedAnimationPackageAuthorityError(
+          "ANIMATION_PACKAGE_APPROVAL_STATE_MISMATCH",
+          "Animation Package row and payload approval states disagree"
+        );
+      }
+      return current;
+    }
+    if (isStoryPlanningDraft(current.payload)) {
+      throw new Error("Planning draft is incomplete — assemble Animation Package first");
+    }
+    const payload = AnimationPackagePayloadSchema.parse(current.payload);
+    if (payload.status === "ready_for_execution") {
+      throw new ApprovedAnimationPackageAuthorityError(
+        "ANIMATION_PACKAGE_APPROVAL_STATE_MISMATCH",
+        "Animation Package row and payload approval states disagree"
+      );
+    }
+    const approvedPayload: AnimationPackagePayload = {
+      ...payload,
       status: "ready_for_execution",
-      payload: approvedPayload,
-      approvedAt: new Date(),
-      approvedBy: input.approvedBy,
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(schema.aiStoryAnimationPackages.id, input.packageId),
-        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
-        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
-        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId)
-      )
-    )
-    .returning();
-  if (!updated) throw new Error("Failed to approve Animation Package");
-  return updated;
+    };
+    const now = new Date();
+    const [updated] = await tx
+      .update(schema.aiStoryAnimationPackages)
+      .set({
+        status: "ready_for_execution",
+        payload: approvedPayload,
+        approvedAt: now,
+        approvedBy: input.approvedBy,
+        updatedAt: now,
+      })
+      .where(eq(schema.aiStoryAnimationPackages.id, current.id))
+      .returning();
+    if (!updated) throw new Error("Failed to approve Animation Package");
+    return updated;
+  });
 }
 
 export type ApprovedAnimationPackageRevisionInput = {

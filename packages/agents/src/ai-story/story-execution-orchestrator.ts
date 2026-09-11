@@ -5,7 +5,11 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import {
+  getDb,
+  resolveApprovedAnimationPackageForStoryVersion,
+  schema,
+} from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
   AiStoryExecutionProgressSchema,
@@ -137,7 +141,7 @@ export async function createGenerateReview(input: {
   campaignId: string;
   storyId: string;
   workspaceId: string;
-  orgId?: string;
+  orgId: string;
 }): Promise<
   AiStoryGenerateReviewResult & {
     animationPackageId: string;
@@ -145,19 +149,28 @@ export async function createGenerateReview(input: {
     estimateLegacy?: GenerateReviewEstimate;
   }
 > {
-  const [pkgRow] = await input.db
+  const [story] = await input.db
     .select()
-    .from(schema.aiStoryAnimationPackages)
+    .from(schema.aiStories)
     .where(
       and(
-        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
-        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
-        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
-        eq(schema.aiStoryAnimationPackages.status, "ready_for_execution")
+        eq(schema.aiStories.id, input.storyId),
+        eq(schema.aiStories.orgId, input.orgId),
+        eq(schema.aiStories.campaignId, input.campaignId),
+        eq(schema.aiStories.workspaceId, input.workspaceId)
       )
     )
-    .orderBy(desc(schema.aiStoryAnimationPackages.createdAt))
     .limit(1);
+  if (!story?.currentVersionId) {
+    throw new Error("Current Story Version not found");
+  }
+  const pkgRow = await resolveApprovedAnimationPackageForStoryVersion(input.db, {
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    storyVersionId: story.currentVersionId,
+  });
   if (!pkgRow) {
     throw new Error("Approved Animation Package (ready_for_execution) not found");
   }
