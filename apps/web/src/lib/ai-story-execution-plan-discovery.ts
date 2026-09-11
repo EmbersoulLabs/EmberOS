@@ -1,5 +1,9 @@
 import { and, desc, eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import {
+  getDb,
+  resolveApprovedAnimationPackageForStoryVersion,
+  schema,
+} from "@ceo-agent/db";
 import { isUuid } from "@ceo-agent/shared";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
@@ -59,25 +63,13 @@ export async function discoverCurrentExecutionPlan(input: {
     return { executionPlan: null } as const;
   }
 
-  const [currentPackage] = await db
-    .select({ id: schema.aiStoryAnimationPackages.id })
-    .from(schema.aiStoryAnimationPackages)
-    .where(
-      and(
-        eq(schema.aiStoryAnimationPackages.orgId, campaign.orgId),
-        eq(schema.aiStoryAnimationPackages.workspaceId, campaign.workspaceId),
-        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
-        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
-        eq(schema.aiStoryAnimationPackages.storyVersionId, currentVersionId),
-        eq(schema.aiStoryAnimationPackages.status, "ready_for_execution")
-      )
-    )
-    .orderBy(
-      desc(schema.aiStoryAnimationPackages.approvedAt),
-      desc(schema.aiStoryAnimationPackages.createdAt),
-      desc(schema.aiStoryAnimationPackages.id)
-    )
-    .limit(1);
+  const currentPackage = await resolveApprovedAnimationPackageForStoryVersion(db, {
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    storyVersionId: currentVersionId,
+  });
 
   if (!currentPackage) return { executionPlan: null } as const;
 

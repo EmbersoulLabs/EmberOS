@@ -1162,6 +1162,9 @@ export const aiStoryAnimationPackages = pgTable(
     approvedBy: uuid("approved_by"),
   },
   (t) => [
+    uniqueIndex("ai_story_animation_packages_one_ready_per_story_version_idx")
+      .on(t.storyId, t.storyVersionId)
+      .where(sql`${t.status} = 'ready_for_execution'`),
     index("ai_story_animation_packages_story_idx").on(t.storyId, t.createdAt),
     index("ai_story_animation_packages_workspace_idx").on(t.workspaceId, t.createdAt),
     index("ai_story_animation_packages_status_idx").on(t.status),

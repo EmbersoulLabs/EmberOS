@@ -90,6 +90,11 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/photo-scene-reused-derivative-campaign-authorization-convergence.integration.test.ts
 
+      - name: Certify current approved Animation Package authority
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-current-approved-animation-package-authority.integration.test.ts
+
       - name: Apply differentiated human retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
 
