@@ -47,7 +47,7 @@ function scene(source: AiStoryScriptVersion["scenes"][number], sceneId: string, 
     sceneId,orgId:I.org,workspaceId:I.workspace,campaignId:I.campaign,storyId:I.story,storyVersionId:I.storyVersion,scriptVersionId:script().scriptVersionId,
     version:1,order,sourceScriptSceneIds:[source.scriptSceneId],sourceScriptEntryIds:source.entries.map((entry)=>entry.entryId),sceneFunction:source.sceneFunction,
     sceneRole:importance==="TRANSITIONAL"?"TRANSITIONAL":"REVEAL",importance,locationBinding,locationState:{temporaryFacts:importance==="TRANSITIONAL"?["Passing context establishes travel"]:[]},
-    castBindings:[],productBindings:source.productAuthorityRefs.map(()=>({productAuthorityId:I.product,sourceAssetId:I.product,sourceAssetContentHash:assetHash})),
+    castBindings:[],productBindings:source.productAuthorityRefs.map(()=>({productAuthorityId:I.product,sourceAssetId:I.product,sourceAssetContentHash:assetHash,visualIdentityRequirement:"REQUIRED" as const})),
     entryState:source.sceneStateIn,events:source.entries,exitState:source.sceneStateOut,continuityFacts:source.newInformation,timeRelation:order===0?"UNSPECIFIED":"CONTINUOUS",discontinuity:null,
     mustKeep:source.mustKeep,mustAvoid:source.mustAvoid,lineageOperation:"CREATE",parentSceneVersionIds:[],createdBy:I.actor,createdAt:"2026-08-29T06:10:00.000Z",
   });
