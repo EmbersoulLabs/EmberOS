@@ -9,6 +9,7 @@ export * from "./campaign-video-generation-identity.server";
 export * from "./canonical-integrity";
 export * from "./ai-story-outline.server";
 export * from "./ai-story-outline-beat-promotion.server";
+export * from "./ai-story-product-story-outline-policy.server";
 export * from "./ai-story-character.server";
 export * from "./ai-story-cast.server";
 export * from "./ai-story-scene.server";
