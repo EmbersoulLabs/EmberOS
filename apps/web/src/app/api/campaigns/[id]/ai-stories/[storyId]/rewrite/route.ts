@@ -2,6 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import {
   getBusinessProfileByWorkspace,
   getDb,
+  resolveAiStoryOutlineProfileAuthority,
   schema,
 } from "@ceo-agent/db";
 import { rewriteAiStoryDraft } from "@ceo-agent/agents";
@@ -60,6 +61,12 @@ export async function POST(
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
+    await resolveAiStoryOutlineProfileAuthority(db, {
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+      storyId,
+    });
     if (!loaded.currentVersion) {
       return apiError("Generate or polish a Story Draft before rewrite", "VALIDATION_ERROR", 409);
     }

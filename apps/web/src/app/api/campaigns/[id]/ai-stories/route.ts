@@ -1,6 +1,10 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
-import { AiStoryCreateBodySchema, isUuid } from "@ceo-agent/shared";
+import {
+  AiStoryCreateBodySchema,
+  canonicalAiStoryOutlineProfileReference,
+  isUuid,
+} from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
@@ -80,6 +84,7 @@ export async function POST(
         campaignId,
         title: parsed.data.title,
         originalIdea: parsed.data.originalIdea,
+        outlineProfile: canonicalAiStoryOutlineProfileReference(parsed.data.outlineProfile),
         status: "draft",
         createdBy: user.id,
       })

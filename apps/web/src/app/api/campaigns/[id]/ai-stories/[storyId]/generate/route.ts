@@ -3,6 +3,7 @@ import {
   getDb,
   schema,
   getBusinessProfileByWorkspace,
+  resolveAiStoryOutlineProfileAuthority,
 } from "@ceo-agent/db";
 import {
   assessBusinessProfileCompletion,
@@ -51,6 +52,13 @@ export async function POST(
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
+
+    await resolveAiStoryOutlineProfileAuthority(db, {
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+      storyId,
+    });
 
     const status = loaded.story.status as AiStoryStatus;
     if (!["draft", "review", "failed"].includes(status)) {

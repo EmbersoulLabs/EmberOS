@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { useI18n } from "@/lib/i18n/provider";
+import { AI_STORY_OUTLINE_PROFILE_REGISTRY } from "@ceo-agent/shared";
 
 type AssetRow = { id: string; displayName?: string | null; originalFilename?: string | null };
 
@@ -17,6 +18,7 @@ export default function CreateAiStoryPage() {
 
   const [title, setTitle] = useState("");
   const [idea, setIdea] = useState("");
+  const [outlineProfileId, setOutlineProfileId] = useState<"" | "CORE" | "PRODUCT_STORY">("");
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [productAssetIds, setProductAssetIds] = useState<string[]>([]);
@@ -43,12 +45,24 @@ export default function CreateAiStoryPage() {
     setError("");
     setLoading(true);
     try {
+      if (!outlineProfileId) throw new Error("Select a Story type");
+      const outlineProfile = outlineProfileId === "CORE"
+        ? {
+            profileId: AI_STORY_OUTLINE_PROFILE_REGISTRY.CORE.profileId,
+            profileVersion: AI_STORY_OUTLINE_PROFILE_REGISTRY.CORE.profileVersion,
+          }
+        : {
+            profileId: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.profileId,
+            profileVersion: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.profileVersion,
+            policyFingerprint: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.policyFingerprint,
+          };
       const createRes = await fetch(`/api/campaigns/${campaignId}/ai-stories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
           originalIdea: idea.trim(),
+          outlineProfile,
           assetIds: selectedAssetIds,
           productAssetIds,
         }),
@@ -97,6 +111,30 @@ export default function CreateAiStoryPage() {
             placeholder="Spring launch story"
           />
         </label>
+
+        <fieldset className="space-y-2">
+          <legend className="text-sm font-medium text-navy">Story type</legend>
+          <label className="flex items-start gap-2 rounded-lg border border-border p-3">
+            <input
+              type="radio"
+              name="outlineProfile"
+              value="CORE"
+              checked={outlineProfileId === "CORE"}
+              onChange={() => setOutlineProfileId("CORE")}
+            />
+            <span><span className="block font-medium text-navy">General story</span><span className="text-sm text-ink-secondary">General narrative structure.</span></span>
+          </label>
+          <label className="flex items-start gap-2 rounded-lg border border-border p-3">
+            <input
+              type="radio"
+              name="outlineProfile"
+              value="PRODUCT_STORY"
+              checked={outlineProfileId === "PRODUCT_STORY"}
+              onChange={() => setOutlineProfileId("PRODUCT_STORY")}
+            />
+            <span><span className="block font-medium text-navy">Product-focused story</span><span className="text-sm text-ink-secondary">Marketing narrative centered on a product.</span></span>
+          </label>
+        </fieldset>
 
         <label className="block space-y-1">
           <span className="text-sm font-medium text-navy">Story idea</span>
@@ -164,7 +202,7 @@ export default function CreateAiStoryPage() {
 
         <button
           type="button"
-          disabled={loading || !title.trim() || !idea.trim()}
+          disabled={loading || !title.trim() || !idea.trim() || !outlineProfileId}
           onClick={() => void onCreate()}
           className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
         >

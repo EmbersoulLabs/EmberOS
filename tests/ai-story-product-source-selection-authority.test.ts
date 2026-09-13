@@ -82,6 +82,7 @@ describe("AI Story explicit Story Product source authority", () => {
       AiStoryCreateBodySchema.safeParse({
         title: "Story",
         originalIdea: "Show the product",
+        outlineProfile: { profileId: "CORE", profileVersion: 1 },
         assetIds: [id(10)],
         productAssetIds: [id(11)],
       }).success
@@ -93,6 +94,7 @@ describe("AI Story explicit Story Product source authority", () => {
     const legacy = AiStoryCreateBodySchema.parse({
       title: "Legacy Story",
       originalIdea: "Keep generic references generic",
+      outlineProfile: { profileId: "CORE", profileVersion: 1 },
       assetIds: [id(10)],
     });
     expect(legacy.productAssetIds).toEqual([]);

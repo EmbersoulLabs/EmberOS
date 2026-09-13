@@ -643,6 +643,8 @@ export const aiStories = pgTable(
       .references(() => campaigns.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     originalIdea: text("original_idea").notNull(),
+    outlineProfile: jsonb("outline_profile")
+      .$type<import("@ceo-agent/shared").AiStoryOutlineProfileReference>(),
     status: text("status").notNull().default("draft"),
     currentVersionId: uuid("current_version_id"),
     createdBy: uuid("created_by"),

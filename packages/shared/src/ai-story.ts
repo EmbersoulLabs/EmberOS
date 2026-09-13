@@ -3,6 +3,7 @@ import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-aut
 import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
 import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
+import { AiStoryOutlineProfileReferenceSchema } from "./ai-story-outline-profile";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -48,6 +49,7 @@ export const AiStoryCreateBodySchema = z
   .object({
     title: z.string().trim().min(1).max(200),
     originalIdea: z.string().trim().min(1).max(8000),
+    outlineProfile: AiStoryOutlineProfileReferenceSchema,
   })
   .and(AiStoryAssetSelectionSchema);
 
