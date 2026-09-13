@@ -47,6 +47,7 @@ describe("AI Story vertical slice (V1)", () => {
         AiStoryCreateBodySchema.safeParse({
           title: "Spring",
           originalIdea: "Tell our brand story",
+          outlineProfile: { profileId: "CORE", profileVersion: 1 },
         }).success
       ).toBe(true);
       expect(
