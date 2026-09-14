@@ -17,6 +17,8 @@ export type AiStoryOutlineScope = {
   storyId: string;
   storyVersionId: string;
   actorUserId: string;
+  /** Runtime producers set this so every lifecycle mutation rechecks current frozen Story authority. */
+  requireCurrentFrozenStoryVersion?: boolean;
 };
 
 export class AiStoryOutlineAuthorityError extends Error {
@@ -36,6 +38,90 @@ function parseRow(row: typeof schema.aiStoryOutlineVersions.$inferSelect) {
   });
 }
 
+export type CurrentFrozenOutlineScope = Omit<AiStoryOutlineScope, "actorUserId">;
+
+export type CurrentFrozenOutlineDependencies = {
+  loadCurrentStoryVersion: (db: Db, scope: CurrentFrozenOutlineScope) => Promise<boolean>;
+  loadFrozenRows: (
+    db: Db,
+    scope: CurrentFrozenOutlineScope,
+  ) => Promise<(typeof schema.aiStoryOutlineVersions.$inferSelect)[]>;
+};
+
+async function loadCurrentStoryVersion(db: Db, scope: CurrentFrozenOutlineScope) {
+  const rows = await db.select({ id: schema.aiStoryVersions.id })
+    .from(schema.aiStories)
+    .innerJoin(schema.aiStoryVersions, eq(schema.aiStoryVersions.id, schema.aiStories.currentVersionId))
+    .where(and(
+      eq(schema.aiStories.id, scope.storyId),
+      eq(schema.aiStories.orgId, scope.orgId),
+      eq(schema.aiStories.workspaceId, scope.workspaceId),
+      eq(schema.aiStories.campaignId, scope.campaignId),
+      eq(schema.aiStories.currentVersionId, scope.storyVersionId),
+      eq(schema.aiStoryVersions.storyId, scope.storyId),
+      eq(schema.aiStoryVersions.id, scope.storyVersionId),
+      isNull(schema.aiStories.archivedAt),
+      sql`${schema.aiStoryVersions.frozenAt} is not null`,
+    )).limit(1);
+  return rows.length === 1;
+}
+
+async function loadFrozenRows(db: Db, scope: CurrentFrozenOutlineScope) {
+  return db.select().from(schema.aiStoryOutlineVersions).where(and(
+    eq(schema.aiStoryOutlineVersions.orgId, scope.orgId),
+    eq(schema.aiStoryOutlineVersions.workspaceId, scope.workspaceId),
+    eq(schema.aiStoryOutlineVersions.campaignId, scope.campaignId),
+    eq(schema.aiStoryOutlineVersions.storyId, scope.storyId),
+    eq(schema.aiStoryOutlineVersions.storyVersionId, scope.storyVersionId),
+    eq(schema.aiStoryOutlineVersions.status, "FROZEN"),
+  ));
+}
+
+const currentFrozenOutlineDependencies: CurrentFrozenOutlineDependencies = {
+  loadCurrentStoryVersion,
+  loadFrozenRows,
+};
+
+/** SELECT-only exact current-FROZEN Outline resolution. No ordering selects authority. */
+export async function resolveCurrentFrozenOutlineForStoryVersion(
+  db: Db,
+  scope: CurrentFrozenOutlineScope,
+  dependencies: CurrentFrozenOutlineDependencies = currentFrozenOutlineDependencies,
+) {
+  if (!(await dependencies.loadCurrentStoryVersion(db, scope))) {
+    throw new AiStoryOutlineAuthorityError(
+      "CURRENT_FROZEN_STORY_VERSION_REQUIRED",
+      "Outline resolution requires the exact current frozen Story Version",
+    );
+  }
+  const rows = await dependencies.loadFrozenRows(db, scope);
+  if (rows.length === 0) return null;
+  if (rows.length !== 1) {
+    throw new AiStoryOutlineAuthorityError(
+      "CURRENT_FROZEN_OUTLINE_AMBIGUOUS",
+      "More than one FROZEN Outline claims authority for the current Story Version",
+    );
+  }
+  if (rows[0]!.outline.status !== rows[0]!.status || rows[0]!.sourceHash !== rows[0]!.outline.sourceHash) {
+    throw new AiStoryOutlineAuthorityError("OUTLINE_ROW_PAYLOAD_MISMATCH", "Outline row and payload authority disagree");
+  }
+  const outline = parseRow(rows[0]!);
+  if (
+    outline.orgId !== scope.orgId ||
+    outline.workspaceId !== scope.workspaceId ||
+    outline.storyId !== scope.storyId ||
+    outline.storyVersionId !== scope.storyVersionId ||
+    outline.status !== "FROZEN" ||
+    !outline.approvedBy || !outline.approvedAt || !outline.frozenAt
+  ) {
+    throw new AiStoryOutlineAuthorityError("CURRENT_FROZEN_OUTLINE_INVALID", "FROZEN Outline identity or lifecycle evidence is invalid");
+  }
+  if (computeAiStoryOutlineSourceHash(outline) !== outline.sourceHash) {
+    throw new AiStoryOutlineAuthorityError("OUTLINE_SOURCE_HASH_INVALID", "Outline source fingerprint is invalid");
+  }
+  return outline;
+}
+
 async function assertScope(db: Pick<Db, "execute">, scope: AiStoryOutlineScope, mutation: boolean) {
   const rows = await db.execute<{ ok: boolean }>(sql`
     select exists(
@@ -49,6 +135,9 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryOutlineScope, 
         and c.org_id=${scope.orgId}::uuid
         and c.workspace_id=${scope.workspaceId}::uuid
         and v.id=${scope.storyVersionId}::uuid
+        and (${!scope.requireCurrentFrozenStoryVersion} = true or (
+          s.current_version_id=v.id and v.frozen_at is not null
+        ))
         and exists(
           select 1 from workspace_members wm
           where wm.workspace_id=${scope.workspaceId}::uuid

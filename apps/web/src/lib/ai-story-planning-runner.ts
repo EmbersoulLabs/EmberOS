@@ -35,6 +35,7 @@ import {
 } from "@ceo-agent/shared";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
+import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
 import {
   assetLabelFromProductionRow,
   campaignPlanningFields,
@@ -229,7 +230,9 @@ export async function runSinglePlanningStage(input: {
   });
 
   let draft =
-    readPlanningDraftFromPackage(latestPackage) ??
+    readPlanningDraftFromPackage(
+      latestPackage?.storyVersionId === ctx.loaded.currentVersion!.id ? latestPackage : null
+    ) ??
     baseDraft(ctx.storyDraft);
   draft = {
     ...prunePlanningDraftAfterStage(draft, stage),
@@ -355,6 +358,14 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.storyBeats?.length),
         "Generate Story Beats before Scene Plan"
       );
+      await ensureCurrentFrozenCanonicalOutline({
+        db,
+        campaignId,
+        storyId,
+        storyVersionId: ctx.loaded.currentVersion!.id,
+        actorUserId: input.actorUserId,
+        proposedStoryBeats: draft.storyBeats!,
+      });
       const generated = await generateScenePlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
