@@ -250,11 +250,23 @@ export function validateAiStoryCanonicalScenes(
       add("PRODUCT_BINDING_GATE", "Scene Product bindings differ from Script authority", "PRODUCT_AUTHORITY");
     }
 
-    if (!scene.entryState.length && scene.importance !== "TRANSITIONAL") {
-      add("ENTRY_STATE_GATE", `Consequential Scene ${scene.sceneId} lacks Entry State`);
-    }
-    if (!scene.exitState.length && scene.importance !== "TRANSITIONAL") {
-      add("EXIT_STATE_GATE", `Consequential Scene ${scene.sceneId} lacks Exit State`);
+    const exactSource = sources.length === 1 ? sources[0] : undefined;
+    if (exactSource) {
+      if (!structurallyEqual(scene.entryState, exactSource.sceneStateIn)) {
+        add("ENTRY_STATE_GATE", `Scene ${scene.sceneId} Entry State rewrites Script truth`, "SCRIPT");
+      }
+      if (!structurallyEqual(scene.exitState, exactSource.sceneStateOut)) {
+        add("EXIT_STATE_GATE", `Scene ${scene.sceneId} Exit State rewrites Script truth`, "SCRIPT");
+      }
+    } else {
+      // Multi-source Scene state semantics remain compatibility authority until an
+      // explicit SPLIT/MERGE policy owns their composition.
+      if (!scene.entryState.length && scene.importance !== "TRANSITIONAL") {
+        add("ENTRY_STATE_GATE", `Consequential Scene ${scene.sceneId} lacks Entry State`);
+      }
+      if (!scene.exitState.length && scene.importance !== "TRANSITIONAL") {
+        add("EXIT_STATE_GATE", `Consequential Scene ${scene.sceneId} lacks Exit State`);
+      }
     }
     const hasPurpose =
       scene.events.length > 0 ||
