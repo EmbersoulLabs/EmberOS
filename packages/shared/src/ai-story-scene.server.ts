@@ -128,7 +128,7 @@ function stateKey(fact: { dimension: string; subjectId: string }) {
 }
 
 function structurallyEqual(left: unknown, right: unknown) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return sha256CanonicalIntegrityHash(left) === sha256CanonicalIntegrityHash(right);
 }
 
 export function validateAiStoryCanonicalScenes(

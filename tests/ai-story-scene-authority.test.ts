@@ -184,6 +184,50 @@ describe("AI Story canonical Scene and Location authority",()=>{
     expect(gates).toContain("SCENE_LINEAGE_GATE");
   });
 
+  it("accepts exact Script event values regardless of object-key insertion order",()=>{
+    const source=script();
+    const location={scope:"EPHEMERAL_ENVIRONMENT" as const,id:I.ephemeralA,storyId:I.story,sceneId:I.sceneA,displayName:"Passing",environmentDescription:"One-off environment",visualIdentityRequirement:"NONE" as const};
+    const candidate=structuredClone(scene(source.scenes[0]!,I.sceneA,0,location));
+    const entry=source.scenes[0]!.entries[0]!;
+    if(entry.type!=="ACTION") throw new Error("Expected ACTION fixture");
+    candidate.events=[{
+      entryId:entry.entryId,
+      order:entry.order,
+      durationRange:entry.durationRange,
+      storyEffect:entry.storyEffect,
+      action:entry.action,
+      subjectId:entry.subjectId,
+      type:entry.type,
+    }];
+    const secondLocation={scope:"EPHEMERAL_ENVIRONMENT" as const,id:I.ephemeralB,storyId:I.story,sceneId:I.sceneB,displayName:"Destination",environmentDescription:"Second one-off environment",visualIdentityRequirement:"NONE" as const};
+    const second=scene(source.scenes[1]!,I.sceneB,1,secondLocation);
+    expect(validateAiStoryCanonicalScenes([candidate,second],source).map((issue)=>issue.gate)).not.toContain("SCENE_LINEAGE_GATE");
+  });
+
+  it.each([
+    ["action",(candidate:AiStoryCanonicalScene)=>{if(candidate.events[0]?.type==="ACTION")candidate.events[0].action="Altered action";}],
+    ["storyEffect",(candidate:AiStoryCanonicalScene)=>{if(candidate.events[0]?.type==="ACTION")candidate.events[0].storyEffect="Altered effect";}],
+    ["durationRange",(candidate:AiStoryCanonicalScene)=>{if(candidate.events[0])candidate.events[0].durationRange={minSeconds:3,maxSeconds:5};}],
+  ])("blocks Script event %s changes",(_field,mutate)=>{
+    const source=script();
+    const location={scope:"EPHEMERAL_ENVIRONMENT" as const,id:I.ephemeralA,storyId:I.story,sceneId:I.sceneA,displayName:"Passing",environmentDescription:"One-off environment",visualIdentityRequirement:"NONE" as const};
+    const candidate=structuredClone(scene(source.scenes[0]!,I.sceneA,0,location));
+    mutate(candidate);
+    expect(validateAiStoryCanonicalScenes([candidate],source)).toContainEqual(expect.objectContaining({gate:"SCENE_LINEAGE_GATE",message:`Scene event ${I.entryA} rewrites Script truth`}));
+  });
+
+  it("keeps array ordering significant for exact Script state",()=>{
+    const source=structuredClone(script());
+    source.scenes[0]!.sceneStateIn=[
+      {dimension:"LOCATION",subjectId:I.character,value:"origin"},
+      {dimension:"PRODUCT_STATE",subjectId:I.product,value:"concealed"},
+    ];
+    const location={scope:"EPHEMERAL_ENVIRONMENT" as const,id:I.ephemeralA,storyId:I.story,sceneId:I.sceneA,displayName:"Passing",environmentDescription:"One-off environment",visualIdentityRequirement:"NONE" as const};
+    const candidate=structuredClone(scene(source.scenes[0]!,I.sceneA,0,location));
+    candidate.entryState.reverse();
+    expect(validateAiStoryCanonicalScenes([candidate],source).map((issue)=>issue.gate)).toContain("ENTRY_STATE_GATE");
+  });
+
   it("preserves existing multi-source state compatibility behavior",()=>{
     const source=script();
     const location={scope:"EPHEMERAL_ENVIRONMENT" as const,id:I.ephemeralA,storyId:I.story,sceneId:I.sceneA,displayName:"Combined",environmentDescription:"Compatibility-only merged environment",visualIdentityRequirement:"NONE" as const};
