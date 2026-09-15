@@ -135,6 +135,16 @@ jobs:
       - name: Certify canonical Scene and Location continuity on PostgreSQL
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-scene-authority.integration.test.ts
 
+      - name: Certify canonical Scene aggregate lifecycle v2
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-canonical-scene-aggregate-lifecycle-v2.integration.test.ts
+
+      - name: Certify canonical Scene service lifecycle
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-canonical-scene-service-lifecycle.integration.test.ts
+
       - name: Certify compiled request and Provider Attempt PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-provider-runtime.integration.test.ts
 

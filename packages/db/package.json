@@ -53,6 +53,7 @@
     "sql:ai-story-rls": "tsx scripts/apply-ai-story-canonical-rls-v1.ts",
     "sql:ai-story-scene-scheduling": "tsx scripts/apply-ai-story-scene-scheduling-v1.ts",
     "sql:ai-story-scene-scheduling-rls": "tsx scripts/apply-ai-story-scene-scheduling-rls-v1.ts",
+    "sql:ai-story-canonical-scene-aggregate-lifecycle-v2": "tsx scripts/apply-ai-story-canonical-scene-aggregate-lifecycle-v2.ts",
     "sql:ai-story-generated-scene-review": "tsx scripts/apply-ai-story-generated-scene-review-v1.ts",
     "sql:ai-story-differentiated-retry": "tsx scripts/apply-ai-story-differentiated-retry-v1.ts",
     "sql:ai-story-post-terminal-provider-retry": "tsx scripts/apply-ai-story-post-terminal-provider-retry-v1.ts",

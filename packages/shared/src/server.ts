@@ -14,6 +14,7 @@ export * from "./ai-story-canonical-outline-composer.server";
 export * from "./ai-story-character.server";
 export * from "./ai-story-cast.server";
 export * from "./ai-story-scene.server";
+export * from "./ai-story-canonical-scene-composer.server";
 export * from "./ai-story-script.server";
 export * from "./ai-story-script-semantic-writer.server";
 export * from "./ai-story-script-director-handoff.server";
