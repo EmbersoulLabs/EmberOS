@@ -1,0 +1,50 @@
+{
+  "ticketId": "EMBEROS-AI-STORY-V1-SELF-USE-REPAIR-PACKAGE-01",
+  "wave": 5,
+  "changeKind": "PRODUCTION_CORRECTNESS_REPAIR",
+  "reason": "Repair canonical Scene aggregate lifecycle persistence and complete current frozen Scene authority without changing downstream execution or commercial behavior.",
+  "sourceAuthority": "origin/staging",
+  "targetModule": "AI Story Canonical Scene Authority",
+  "allowedSourcePaths": [
+    "origin/staging@805e776989537d9ae3ecbb71f4ddf76be34188e6"
+  ],
+  "allowedTargetPaths": [
+    ".migration-intents/**",
+    "apps/web/src/lib/ai-story-**",
+    "packages/db/package.json",
+    "packages/db/scripts/apply-ai-story-canonical-scene-aggregate-lifecycle-v2.ts",
+    "packages/db/sql/ai-story-canonical-scene-aggregate-lifecycle-v2.sql",
+    "packages/db/src/queries/ai-story-scene-authority.ts",
+    "packages/shared/src/ai-story-scene.server.ts",
+    "packages/shared/src/server.ts",
+    "tests/**ai-story*"
+  ],
+  "protectedDomainsExpectedToChange": [
+    "AI_STORY_RUNTIME"
+  ],
+  "protectedDomainsMustNotChange": [
+    "AI_STORY_REVIEW",
+    "AI_STORY_STAGED_RELEASE",
+    "AI_STORY_RETRY_RECOVERY",
+    "AI_STORY_PRODUCT_GROUNDING",
+    "AI_STORY_PRIVATE_MEDIA",
+    "VIDEO_STUDIO_V1",
+    "PHOTO_SCENE_V1",
+    "PRIVATE_MEDIA_DELIVERY",
+    "AUTHORIZATION",
+    "ENTITLEMENTS",
+    "COMMERCIAL_AUTH",
+    "PLATFORM_ADMIN",
+    "TENANT_WORKSPACE_ISOLATION",
+    "PROVIDER_ATTEMPT_AND_COST_ACCOUNTING",
+    "PRODUCTION_REGION_DB_SAFETY"
+  ],
+  "requiredTests": [
+    "tests/ai-story-canonical-scene-aggregate-lifecycle-v2.integration.test.ts",
+    "tests/ai-story-canonical-scene-producer-lifecycle.test.ts",
+    "tests/ai-story-resolved-product-authority-runtime-resolution.test.ts",
+    "tests/ai-story-runtime-ui-refresh-loop-01.test.ts",
+    "tests/ai-story-vertical-slice.test.ts"
+  ],
+  "blueprintBaselineId": "EMBEROS-BLUEPRINT-V1.3-UI-AUTHORITY-2026-08-25"
+}
