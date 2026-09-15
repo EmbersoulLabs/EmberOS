@@ -8,6 +8,7 @@ import { z } from "zod";
 import { callJsonModel } from "../llm";
 import {
   AnimationPackagePayloadSchema,
+  AiStoryScriptVersionSchema,
   CharacterContinuityEntrySchema,
   CreativeContextSchema,
   DirectorThinkingSchema,
@@ -16,6 +17,7 @@ import {
   StoryBeatSchema,
   validatePlanningConsistency,
   type AiStoryStructuredDraft,
+  type AiStoryScriptVersion,
   type AnimationPackagePayload,
   type CharacterContinuityEntry,
   type CreativeContext,
@@ -64,6 +66,8 @@ export type AiStoryPlanningBrandContext = {
 
 export type StoryPlanningPipelineInput = {
   storyDraft: AiStoryStructuredDraft;
+  /** Legacy all-at-once compatibility only; normal runtime gates through runSinglePlanningStage. */
+  canonicalScript?: AiStoryScriptVersion;
   campaign: AiStoryPlanningCampaignContext;
   brand?: AiStoryPlanningBrandContext | null;
   assetLabels?: readonly string[];
@@ -347,7 +351,14 @@ export async function generateShotPlan(input: {
   directorThinking: DirectorThinking;
   storyBeats: StoryBeat[];
   scenePlan: ScenePlanItem[];
+  /** Required by the normal staged runtime; optional only for legacy all-at-once compatibility. */
+  canonicalScript?: AiStoryScriptVersion;
 }): Promise<{ shotPlan: ShotPlanItem[]; usage: Usage }> {
+  const canonicalScript = input.canonicalScript ? AiStoryScriptVersionSchema.parse(input.canonicalScript) : null;
+  if (canonicalScript && canonicalScript.status !== "FROZEN") throw new Error("CANONICAL_FROZEN_SCRIPT_REQUIRED_FOR_SHOT_PLAN");
+  if (canonicalScript && (canonicalScript.scenes.length !== input.scenePlan.length || canonicalScript.scenes.some((scene, index) => scene.order !== input.scenePlan[index]!.order))) {
+    throw new Error("CANONICAL_SCRIPT_SCENE_PLAN_MAPPING_INVALID");
+  }
   const schemaHint = JSON.stringify({
     shotPlan: [
       {
@@ -370,6 +381,11 @@ export async function generateShotPlan(input: {
     "Shot plan",
     [
       "You are an animation shot planner.",
+      ...(canonicalScript ? [
+        "The supplied Canonical Script is authoritative. Map Scene Plan items to Canonical Script Scenes by their exact shared order and preserve Script semantics.",
+        "Camera and shot choices must not change Script actions, Character IDs, Product authority, Outline Beat claims, dialogue, evidence, or action outcomes.",
+        "Do not add unsupported dialogue, action, Product facts, claims, or evidence.",
+      ] : []),
       "Every scene must receive at least one shot.",
       "Use sequential order values starting at 0 and stable shot ids.",
       "When Campaign Product Assets are present, treat the Scene as PRODUCT_GROUNDED_VIDEO: the Campaign Product Asset is primary product identity authority and approved prior Scene media may guide only framing, environment, and motion continuity.",
@@ -378,7 +394,7 @@ export async function generateShotPlan(input: {
       "Return planning-only camera language; no provider execution fields.",
       "Return ONLY JSON.",
     ].join(" "),
-    JSON.stringify(input, null, 2),
+    JSON.stringify({ ...input, ...(canonicalScript ? { canonicalScript } : {}) }, null, 2),
     schemaHint,
     z.array(ShotPlanItemSchema).min(1),
     (result) => result.shotPlan
@@ -539,6 +555,7 @@ export async function runFullStoryPlanningPipeline(
     directorThinking: director.directorThinking,
     storyBeats: beats.storyBeats,
     scenePlan: scenes.scenePlan,
+    canonicalScript: input.canonicalScript,
   });
   usage = addUsage(usage, shots.usage);
 

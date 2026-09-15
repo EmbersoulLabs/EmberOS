@@ -36,6 +36,7 @@ import {
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
 import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
+import { ensureCurrentFrozenCanonicalScript } from "@/lib/ai-story-canonical-script-producer";
 import {
   assetLabelFromProductionRow,
   campaignPlanningFields,
@@ -393,12 +394,29 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.scenePlan?.length),
         "Generate Scene Plan before Shot Plan"
       );
+      const canonical = await ensureCurrentFrozenCanonicalScript({
+        db,
+        orgId: ctx.campaign.orgId,
+        workspaceId: ctx.campaign.workspaceId,
+        campaignId,
+        storyId,
+        storyVersionId: ctx.loaded.currentVersion!.id,
+        actorUserId: input.actorUserId,
+        story: ctx.storyDraft,
+        storyBeats: draft.storyBeats!,
+        scenePlan: draft.scenePlan!,
+        creativeContext: draft.creativeContext!,
+        directorThinking: draft.directorThinking!,
+        characterAuthorities: ctx.characterAuthorities,
+      });
+      usage = addUsage(usage, canonical.usage);
       const generated = await generateShotPlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
         directorThinking: draft.directorThinking!,
         storyBeats: draft.storyBeats!,
         scenePlan: draft.scenePlan!,
+        canonicalScript: canonical.script,
       });
       usage = addUsage(usage, generated.usage);
       draft = {
