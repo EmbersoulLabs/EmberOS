@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import {
-  AiStoryCanonicalSceneAuthorityService,
+  resolveCurrentFrozenCanonicalSceneSet,
   getDb,
   schema,
 } from "@ceo-agent/db";
@@ -31,7 +31,7 @@ type Dependencies = {
     db: Db,
     input: CurrentSceneProductAuthorityInput
   ) => Promise<string | null>;
-  readCurrentScenes: (
+  resolveCurrentFrozenScenes: (
     db: Db,
     input: CurrentSceneProductAuthorityInput & { storyVersionId: string }
   ) => Promise<readonly AiStoryCanonicalScene[]>;
@@ -71,23 +71,22 @@ async function loadCurrentStoryVersionId(
   return story?.currentVersionId ?? null;
 }
 
-async function readCurrentScenes(
+async function resolveCurrentFrozenScenes(
   db: Db,
   input: CurrentSceneProductAuthorityInput & { storyVersionId: string }
 ) {
-  return new AiStoryCanonicalSceneAuthorityService(db).readCurrentSet({
+  return (await resolveCurrentFrozenCanonicalSceneSet(db, {
     orgId: input.orgId,
     workspaceId: input.workspaceId,
     campaignId: input.campaignId,
     storyId: input.storyId,
     storyVersionId: input.storyVersionId,
-    actorUserId: input.actorUserId,
-  });
+  })) ?? [];
 }
 
 const defaultDependencies: Dependencies = {
   loadCurrentStoryVersionId,
-  readCurrentScenes,
+  resolveCurrentFrozenScenes,
   resolveProductSources: resolveStoryProductSources,
 };
 
@@ -116,7 +115,7 @@ export async function resolveCurrentSceneProductAuthority(
     );
   }
 
-  const scenes = await dependencies.readCurrentScenes(db, {
+  const scenes = await dependencies.resolveCurrentFrozenScenes(db, {
     ...input,
     storyVersionId: currentStoryVersionId,
   });
@@ -127,7 +126,8 @@ export async function resolveCurrentSceneProductAuthority(
     scene.workspaceId !== input.workspaceId ||
     scene.campaignId !== input.campaignId ||
     scene.storyId !== input.storyId ||
-    scene.storyVersionId !== currentStoryVersionId
+    scene.storyVersionId !== currentStoryVersionId ||
+    scene.status !== "FROZEN"
   ) {
     throw new CurrentSceneProductAuthorityResolutionError(
       "CURRENT_CANONICAL_SCENE_REQUIRED",

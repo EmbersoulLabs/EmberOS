@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   AI_STORY_EXACT_PRODUCT_DERIVATIVE_RESOLUTION_VERSION,
+  AiStoryCanonicalSceneSchema,
   type AiStoryCanonicalScene,
 } from "@ceo-agent/shared";
 import {
@@ -24,7 +25,7 @@ function canonicalScene(
   requirement: "NONE" | "PREFERRED" | "REQUIRED" = "REQUIRED",
   sourceHash = hash("a")
 ) {
-  return finalizeAiStoryCanonicalScene({
+  const draft = finalizeAiStoryCanonicalScene({
     sceneId:I.scene,orgId:I.org,workspaceId:I.workspace,campaignId:I.campaign,storyId:I.story,storyVersionId:I.storyVersion,scriptVersionId:I.script,
     version:1,order:0,sourceScriptSceneIds:[I.scriptScene],sourceScriptEntryIds:[I.entry],sceneFunction:"PRODUCT_DETAIL_REVEAL",sceneRole:"REVEAL",importance:"MAJOR",
     locationBinding:{scope:"EPHEMERAL_ENVIRONMENT",id:I.environment,storyId:I.story,sceneId:I.scene,displayName:"Scene location",environmentDescription:"Canonical environment",visualIdentityRequirement:"NONE"},
@@ -45,6 +46,13 @@ function canonicalScene(
     ],
     continuityFacts:[],timeRelation:"UNSPECIFIED",discontinuity:null,mustKeep:["Scene-wide preservation"],mustAvoid:["Scene-wide prohibition"],lineageOperation:"CREATE",parentSceneVersionIds:[],createdBy:I.actor,createdAt:"2026-09-11T01:00:00.000Z",
   });
+  return AiStoryCanonicalSceneSchema.parse({
+    ...draft,
+    status: "FROZEN",
+    approvedBy: I.actor,
+    approvedAt: "2026-09-11T01:01:00.000Z",
+    frozenAt: "2026-09-11T01:02:00.000Z",
+  });
 }
 
 function source(assetId = I.productA, contentHash = hash("a")) {
@@ -57,7 +65,7 @@ function dependencies(options: {
   sources?: ReturnType<typeof source>[];
   sceneError?: Error;
 } = {}) {
-  const readCurrentScenes = vi.fn(async (_db: never, input: {storyVersionId:string}) => {
+  const resolveCurrentFrozenScenes = vi.fn(async (_db: never, input: {storyVersionId:string}) => {
     if (options.sceneError) throw options.sceneError;
     expect(input.storyVersionId).toBe(options.storyVersionId === undefined ? I.storyVersion : options.storyVersionId);
     return options.scenes ?? [canonicalScene()];
@@ -65,10 +73,10 @@ function dependencies(options: {
   return {
     value: {
       loadCurrentStoryVersionId:vi.fn(async () => options.storyVersionId === undefined ? I.storyVersion : options.storyVersionId),
-      readCurrentScenes,
+      resolveCurrentFrozenScenes,
       resolveProductSources:vi.fn(async () => options.sources ?? [source(),source(I.productB,hash("b"))]),
     },
-    readCurrentScenes,
+    readCurrentScenes: resolveCurrentFrozenScenes,
   };
 }
 
@@ -94,6 +102,10 @@ describe("current Scene Product runtime authority resolution", () => {
   it("uses the server current Story pointer and rejects a Scene from a historical Story version", async () => {
     const historical={...canonicalScene(),storyVersionId:id(90)};
     await expect(resolve({scenes:[historical]})).rejects.toMatchObject({code:"CURRENT_CANONICAL_SCENE_REQUIRED"});
+  });
+
+  it.each(["DRAFT", "VALIDATED", "APPROVED"] as const)("rejects %s Scene Product authority", async (status) => {
+    await expect(resolve({ scenes: [{ ...canonicalScene(), status }] })).rejects.toMatchObject({ code: "CURRENT_CANONICAL_SCENE_REQUIRED" });
   });
 
   it("propagates canonical Scene fingerprint rejection", async () => {
@@ -178,7 +190,7 @@ describe("current Scene Product runtime authority resolution", () => {
       expect(sourceText).not.toContain(forbidden);
     }
     expect(sourceText).toContain("schema.aiStories.currentVersionId");
-    expect(sourceText).toContain("AiStoryCanonicalSceneAuthorityService");
+    expect(sourceText).toContain("resolveCurrentFrozenCanonicalSceneSet");
     expect(sourceText).toContain("resolveStoryProductSources");
   });
 

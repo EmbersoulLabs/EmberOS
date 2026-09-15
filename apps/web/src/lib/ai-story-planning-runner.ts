@@ -37,6 +37,7 @@ import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
 import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
 import { ensureCurrentFrozenCanonicalScript } from "@/lib/ai-story-canonical-script-producer";
+import { ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
 import {
   assetLabelFromProductionRow,
   campaignPlanningFields,
@@ -519,6 +520,22 @@ export async function runSinglePlanningStage(input: {
         usage = addUsage(usage, generated.usage);
         draft = { ...draft, characterContinuity: generated.characterContinuity, usage };
       }
+      await ensureCurrentFrozenCanonicalSceneSet({
+        db,
+        orgId: ctx.campaign.orgId,
+        workspaceId: ctx.campaign.workspaceId,
+        campaignId,
+        storyId,
+        storyVersionId: ctx.loaded.currentVersion!.id,
+        actorUserId: input.actorUserId,
+        story: ctx.storyDraft,
+        storyBeats: draft.storyBeats!,
+        scenePlan: draft.scenePlan!,
+        creativeContext: draft.creativeContext!,
+        directorThinking: draft.directorThinking!,
+        worldContinuity: draft.worldContinuity!,
+        characterAuthorities: ctx.characterAuthorities,
+      });
       const animationPackagePayload = buildAnimationPackage({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,

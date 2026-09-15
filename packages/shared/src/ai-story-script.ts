@@ -108,6 +108,7 @@ export const AiStoryScriptVersionSchema = z.object({
 }).strict();
 
 export type AiStoryScriptVersion = z.infer<typeof AiStoryScriptVersionSchema>;
+export type AiStoryScriptScene = z.infer<typeof AiStoryScriptSceneSchema>;
 export type AiStoryScriptStatus = AiStoryScriptVersion["status"];
 export type AiStoryScriptValidationIssue = { gate: (typeof AI_STORY_SCRIPT_VALIDATION_GATES)[number]; severity: "BLOCK" | "WARN"; message: string };
 

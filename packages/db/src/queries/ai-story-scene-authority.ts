@@ -16,11 +16,16 @@ import {
   computeAiStoryLocationFingerprint,
   computeAiStorySceneFingerprint,
   computeAiStorySceneSourceHash,
+  canonicalAiStorySceneIdV1,
   validateAiStoryCanonicalScenes,
 } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 import { resolveKnownCastReferences } from "./ai-story-cast";
-import type { AiStoryScriptScope } from "./ai-story-script";
+import {
+  resolveCurrentFrozenScriptForStoryVersion,
+  type AiStoryScriptScope,
+  type CurrentFrozenScriptScope,
+} from "./ai-story-script";
 
 type Db = ReturnType<typeof getDb>;
 export type AiStoryLocationScope = {
@@ -71,10 +76,23 @@ async function assertStoryScope(
     where s.id=${scope.storyId}::uuid and s.org_id=${scope.orgId}::uuid and s.workspace_id=${scope.workspaceId}::uuid
       and s.campaign_id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid
       and v.id=${scope.storyVersionId}::uuid
+      and (${!scope.requireCurrentFrozenStoryVersion}=true or (s.current_version_id=v.id and v.frozen_at is not null))
       and exists(select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid and wm.user_id=${scope.actorUserId}::uuid
         and (${mutation}=false or wm.role in ('admin','operator')))
   ) as ok`);
   if (!rows[0]?.ok) throw new AiStorySceneAuthorityError("SCENE_SCOPE_DENIED", "Canonical Scene authority scope does not resolve");
+}
+
+async function assertCurrentFrozenScript(
+  db: Pick<Db, "select" | "execute">,
+  scope: AiStoryScriptScope,
+  scriptVersionId: string,
+) {
+  if (!scope.requireCurrentFrozenStoryVersion) return;
+  const current = await resolveCurrentFrozenScriptForStoryVersion(db as Db, scope);
+  if (!current || current.scriptVersionId !== scriptVersionId) {
+    throw new AiStorySceneAuthorityError("SCENE_SCRIPT_NOT_CURRENT", "Canonical Scene mutation requires the exact current FROZEN Script");
+  }
 }
 
 function parseLocation(row: typeof schema.aiStoryLocationVersions.$inferSelect) {
@@ -207,6 +225,8 @@ export class AiStoryCanonicalSceneAuthorityService {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`canonical-scenes:${scope.storyVersionId}`}))`);
       await assertStoryScope(tx, scope, true);
+      if (!parsed.length || new Set(parsed.map((scene) => scene.scriptVersionId)).size !== 1) throw new AiStorySceneAuthorityError("SCENE_PROPOSAL_INVALID", "Canonical Scene proposal requires one exact Script Version");
+      await assertCurrentFrozenScript(tx, scope, parsed[0]!.scriptVersionId);
       const scriptRows = await tx.select().from(schema.aiStoryScriptVersions).where(and(eq(schema.aiStoryScriptVersions.scriptVersionId, parsed[0]?.scriptVersionId ?? "00000000-0000-0000-0000-000000000000"),eq(schema.aiStoryScriptVersions.storyId,scope.storyId),eq(schema.aiStoryScriptVersions.storyVersionId,scope.storyVersionId),eq(schema.aiStoryScriptVersions.status,"FROZEN"))).limit(1).for("share");
       if (!scriptRows[0]) throw new AiStorySceneAuthorityError("SCENE_SCRIPT_NOT_FROZEN", "Canonical Scenes require the exact frozen Script Version");
       const script = scriptRows[0].script;
@@ -227,6 +247,8 @@ export class AiStoryCanonicalSceneAuthorityService {
         if (aggregate && (scene.version!==aggregate.currentVersion+1 || !scene.parentSceneVersionIds.includes(aggregate.currentSceneVersionId))) throw new AiStorySceneAuthorityError("SCENE_VERSION_LINEAGE_INVALID","Scene revision must extend its current version exactly once");
         if (!aggregate && scene.version!==1) throw new AiStorySceneAuthorityError("SCENE_VERSION_LINEAGE_INVALID","New Scene identity must begin at version 1");
         if (aggregate) {
+          const priorRows = await tx.select().from(schema.aiStoryCanonicalSceneVersions).where(eq(schema.aiStoryCanonicalSceneVersions.sceneVersionId, aggregate.currentSceneVersionId)).limit(1).for("update");
+          if (aggregate.status !== "FROZEN" || priorRows.length !== 1 || priorRows[0]!.status !== "FROZEN") throw new AiStorySceneAuthorityError("SCENE_REVISION_REQUIRES_FROZEN", "Only an exact current FROZEN Scene may be revised");
           await tx.update(schema.aiStoryCanonicalSceneVersions).set({status:"SUPERSEDED"}).where(eq(schema.aiStoryCanonicalSceneVersions.sceneVersionId,aggregate.currentSceneVersionId));
           await tx.update(schema.aiStoryCanonicalScenes).set({currentVersion:scene.version,currentSceneVersionId:scene.sceneVersionId,status:"DRAFT",updatedAt:new Date(scene.createdAt)}).where(eq(schema.aiStoryCanonicalScenes.sceneId,scene.sceneId));
         } else {
@@ -250,9 +272,11 @@ export class AiStoryCanonicalSceneAuthorityService {
   async transitionSet(scope: AiStoryScriptScope, to: "VALIDATED"|"APPROVED"|"FROZEN", at = new Date().toISOString()) {
     return this.db.transaction(async (tx) => {
       await assertStoryScope(tx, scope, true);
-      const rows = await tx.select().from(schema.aiStoryCanonicalSceneVersions).innerJoin(schema.aiStoryCanonicalScenes,eq(schema.aiStoryCanonicalScenes.currentSceneVersionId,schema.aiStoryCanonicalSceneVersions.sceneVersionId)).where(and(eq(schema.aiStoryCanonicalSceneVersions.storyVersionId,scope.storyVersionId),eq(schema.aiStoryCanonicalSceneVersions.storyId,scope.storyId))).orderBy(asc(schema.aiStoryCanonicalSceneVersions.sceneOrder)).for("update");
+      const rows = await tx.select().from(schema.aiStoryCanonicalSceneVersions).innerJoin(schema.aiStoryCanonicalScenes,eq(schema.aiStoryCanonicalScenes.currentSceneVersionId,schema.aiStoryCanonicalSceneVersions.sceneVersionId)).where(and(eq(schema.aiStoryCanonicalSceneVersions.orgId,scope.orgId),eq(schema.aiStoryCanonicalSceneVersions.workspaceId,scope.workspaceId),eq(schema.aiStoryCanonicalSceneVersions.campaignId,scope.campaignId),eq(schema.aiStoryCanonicalSceneVersions.storyVersionId,scope.storyVersionId),eq(schema.aiStoryCanonicalSceneVersions.storyId,scope.storyId))).orderBy(asc(schema.aiStoryCanonicalSceneVersions.sceneOrder)).for("update");
       if (!rows.length) throw new AiStorySceneAuthorityError("SCENE_SET_NOT_FOUND","Canonical Scene set not found");
       const current = rows.map((row)=>parseScene(row.ai_story_canonical_scene_versions));
+      if (new Set(current.map((scene)=>scene.scriptVersionId)).size !== 1) throw new AiStorySceneAuthorityError("SCENE_SET_LIFECYCLE_AMBIGUOUS","Canonical Scene set has mixed Script lineage");
+      await assertCurrentFrozenScript(tx, scope, current[0]!.scriptVersionId);
       assertExplicitProductVisualIdentityRequirements(current);
       current.forEach((scene)=>assertAiStorySceneTransition(scene.status,to));
       if(to==="VALIDATED"){
@@ -265,4 +289,78 @@ export class AiStoryCanonicalSceneAuthorityService {
       return next;
     });
   }
+}
+
+export type CurrentFrozenCanonicalSceneSetScope = CurrentFrozenScriptScope;
+
+export type CurrentFrozenCanonicalSceneSetDependencies = {
+  resolveCurrentScript: typeof resolveCurrentFrozenScriptForStoryVersion;
+  loadCurrentRows: (db: Db, scope: CurrentFrozenCanonicalSceneSetScope) => Promise<Array<{
+    version: typeof schema.aiStoryCanonicalSceneVersions.$inferSelect;
+    aggregate: typeof schema.aiStoryCanonicalScenes.$inferSelect;
+  }>>;
+  resolveLocations?: (db: Db, scope: AiStoryScriptScope, refs: readonly AiStoryLocationReference[]) => Promise<ReturnType<typeof parseLocation>[]>;
+};
+
+async function loadCurrentSceneRows(db: Db, scope: CurrentFrozenCanonicalSceneSetScope) {
+  const rows = await db.select({
+    version: schema.aiStoryCanonicalSceneVersions,
+    aggregate: schema.aiStoryCanonicalScenes,
+  }).from(schema.aiStoryCanonicalScenes)
+    .innerJoin(schema.aiStoryCanonicalSceneVersions, eq(schema.aiStoryCanonicalSceneVersions.sceneVersionId, schema.aiStoryCanonicalScenes.currentSceneVersionId))
+    .where(and(
+      eq(schema.aiStoryCanonicalScenes.orgId, scope.orgId),
+      eq(schema.aiStoryCanonicalScenes.workspaceId, scope.workspaceId),
+      eq(schema.aiStoryCanonicalScenes.campaignId, scope.campaignId),
+      eq(schema.aiStoryCanonicalScenes.storyId, scope.storyId),
+      eq(schema.aiStoryCanonicalSceneVersions.storyVersionId, scope.storyVersionId),
+    ));
+  return rows;
+}
+
+const currentFrozenSceneSetDependencies: CurrentFrozenCanonicalSceneSetDependencies = {
+  resolveCurrentScript: resolveCurrentFrozenScriptForStoryVersion,
+  loadCurrentRows: loadCurrentSceneRows,
+  resolveLocations,
+};
+
+/** SELECT-only resolver for the complete Scene set bound to the exact current FROZEN Script. */
+export async function resolveCurrentFrozenCanonicalSceneSet(
+  db: Db,
+  scope: CurrentFrozenCanonicalSceneSetScope,
+  dependencies: CurrentFrozenCanonicalSceneSetDependencies = currentFrozenSceneSetDependencies,
+) {
+  const script = await dependencies.resolveCurrentScript(db, scope);
+  if (!script) throw new AiStorySceneAuthorityError("CURRENT_FROZEN_SCRIPT_REQUIRED", "Canonical Scene resolution requires the exact current FROZEN Script");
+  const rows = await dependencies.loadCurrentRows(db, scope);
+  if (!rows.length) return null;
+  if (rows.length !== script.scenes.length) throw new AiStorySceneAuthorityError("CURRENT_FROZEN_SCENE_SET_INCOMPLETE", "Current canonical Scene set does not cover every Script Scene");
+  if (rows.some(({ version }) => version.scriptVersionId !== script.scriptVersionId)) {
+    throw new AiStorySceneAuthorityError("CURRENT_FROZEN_SCENE_SET_STALE_SCRIPT", "Current canonical Scene set is bound to a stale Script");
+  }
+  const scenes = rows.map(({ version, aggregate }) => {
+    if (version.sceneVersionId !== aggregate.currentSceneVersionId || version.version !== aggregate.currentVersion || version.status !== aggregate.status) {
+      throw new AiStorySceneAuthorityError("CURRENT_FROZEN_SCENE_SET_AMBIGUOUS", "Scene aggregate and current version authority disagree");
+    }
+    if (version.sourceHash !== (version.snapshot as AiStoryCanonicalScene).sourceHash || version.fingerprint !== (version.snapshot as AiStoryCanonicalScene).fingerprint) {
+      throw new AiStorySceneAuthorityError("SCENE_ROW_PAYLOAD_MISMATCH", "Scene row and payload authority disagree");
+    }
+    return parseScene(version);
+  }).sort((a, b) => a.order - b.order);
+  if (
+    scenes.some((scene, index) =>
+      scene.order !== index || scene.status !== "FROZEN" ||
+      scene.orgId !== scope.orgId || scene.workspaceId !== scope.workspaceId || scene.campaignId !== scope.campaignId ||
+      scene.storyId !== scope.storyId || scene.storyVersionId !== scope.storyVersionId ||
+      scene.sceneId !== canonicalAiStorySceneIdV1(scope.storyId, scope.storyVersionId, index) ||
+      !scene.approvedBy || !scene.approvedAt || !scene.frozenAt
+    ) || new Set(scenes.map((scene) => scene.sceneId)).size !== scenes.length
+  ) {
+    throw new AiStorySceneAuthorityError("CURRENT_FROZEN_SCENE_SET_AMBIGUOUS", "Current canonical Scene set is mixed, stale, or structurally ambiguous");
+  }
+  const locations = await (dependencies.resolveLocations ?? resolveLocations)(db, { ...scope, actorUserId: "00000000-0000-0000-0000-000000000000" }, scenes.map((scene) => scene.locationBinding));
+  if (validateAiStoryCanonicalScenes(scenes, script, locations).some((issue) => issue.severity === "BLOCK")) {
+    throw new AiStorySceneAuthorityError("CURRENT_FROZEN_SCENE_SET_INVALID", "Current canonical Scene set failed deterministic validation");
+  }
+  return scenes;
 }
