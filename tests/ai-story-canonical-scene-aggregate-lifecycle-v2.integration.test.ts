@@ -29,7 +29,7 @@ describeIntegration("AI Story canonical Scene aggregate lifecycle v2 migration",
     await sql.unsafe(readFileSync(resolve(process.cwd(),"packages/db/sql/ai-story-scene-authority-v1.sql"),"utf8"));
     await sql.unsafe(readFileSync(resolve(process.cwd(),"packages/db/sql/ai-story-canonical-scene-aggregate-lifecycle-v2.sql"),"utf8"));
   },30_000);
-  afterAll(async()=>{if(!sql)return;await sql`delete from ai_story_canonical_scene_versions where story_id=${STORY}::uuid`;await sql`delete from ai_story_canonical_scenes where story_id=${STORY}::uuid`;await sql`delete from ai_story_script_versions where story_id=${STORY}::uuid`;await sql`delete from ai_story_outline_versions where story_id=${STORY}::uuid`;await sql`delete from ai_story_versions where story_id=${STORY}::uuid`;await sql`delete from ai_stories where id=${STORY}::uuid`;await cleanupRlsFixture(sql,fixture);await sql.end();},30_000);
+  afterAll(async()=>{if(!sql)return;await sql.begin(async(tx)=>{await tx`delete from ai_story_canonical_scene_versions where story_id=${STORY}::uuid`;await tx`delete from ai_story_canonical_scenes where story_id=${STORY}::uuid`;});await sql`delete from ai_story_script_versions where story_id=${STORY}::uuid`;await sql`delete from ai_story_outline_versions where story_id=${STORY}::uuid`;await sql`delete from ai_story_versions where story_id=${STORY}::uuid`;await sql`delete from ai_stories where id=${STORY}::uuid`;await cleanupRlsFixture(sql,fixture);await sql.end();},30_000);
 
   async function seed(status:string){
     const sceneId=id(next++), versionId=id(next++);
