@@ -15,6 +15,7 @@ export * from "./ai-story-character.server";
 export * from "./ai-story-cast.server";
 export * from "./ai-story-scene.server";
 export * from "./ai-story-script.server";
+export * from "./ai-story-script-semantic-writer.server";
 export * from "./ai-story-script-director-handoff.server";
 export * from "./ai-story-director-plan.server";
 export * from "./ai-story-motion-plan.server";
