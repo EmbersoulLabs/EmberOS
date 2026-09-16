@@ -27,6 +27,7 @@ import {
   buildAiStoryScriptVersion,
   finalizeAiStoryCanonicalScene,
   buildAiStoryAnimationPackageCanonicalSceneAuthorityV1,
+  canonicalAiStorySceneIdV1,
   sha256CanonicalIntegrityHash,
 } from "@ceo-agent/shared/server";
 import { compileSceneExecutionIntents } from "../packages/agents/src/ai-story/scene-execution-compiler";
@@ -43,8 +44,8 @@ import {
 
 const describeIntegration=RUN_DB_INTEGRATION&&getIntegrationDbUrl()?describe:describe.skip;
 const id=(n:number)=>`9f000000-0000-4000-8000-${n.toString().padStart(12,"0")}`;
-const I={story:id(1),storyVersion:id(2),unit:id(3),beat:id(4),scriptScene:id(5),entry:id(6),character:id(7),scene:id(8),location:id(9)};
-const J={story:id(20),storyVersion:id(21),unit:id(22),beat:id(23),scriptScene:id(24),entry:id(25),scene:id(26),location:id(27)};
+const I={story:id(1),storyVersion:id(2),unit:id(3),beat:id(4),scriptScene:id(5),entry:id(6),character:id(7),scene:canonicalAiStorySceneIdV1(id(1),id(2),0),location:id(9)};
+const J={story:id(20),storyVersion:id(21),unit:id(22),beat:id(23),scriptScene:id(24),entry:id(25),scene:canonicalAiStorySceneIdV1(id(20),id(21),0),location:id(27)};
 
 let exactCharacterAuthority:{authorityType:"CHARACTER";authorityId:string;authorityVersionId:string;authorityFingerprint:string};
 let exactCast:{scope:"CAMPAIGN_CHARACTER";id:string;campaignId:string;authorityVersionId:string;authorityFingerprint:string;visualIdentityRequirement:"PREFERRED"};
@@ -86,6 +87,9 @@ describeIntegration("AI Story canonical Scene service lifecycle against aggregat
   it("persists exact canonical lineage, rejects stale revisions, and excludes legacy authority",async()=>{
     const db=getDb();
     const scope={orgId:fixture.orgId,workspaceId:fixture.workspaceAId,campaignId:fixture.campaignAId,storyId:I.story,storyVersionId:I.storyVersion};
+    const currentRowsV1=await sql`select a.scene_id,a.story_id,a.current_version,a.current_scene_version_id,a.status as aggregate_status,v.story_version_id,v.script_version_id,v.scene_order,v.version,v.status as version_status from ai_story_canonical_scenes a join ai_story_canonical_scene_versions v on v.scene_version_id=a.current_scene_version_id where a.story_id=${I.story}::uuid and v.story_version_id=${I.storyVersion}::uuid`;
+    expect(currentRowsV1).toHaveLength(1);
+    expect(currentRowsV1[0]).toMatchObject({scene_id:I.scene,story_id:I.story,current_version:1,current_scene_version_id:firstScene.sceneVersionId,aggregate_status:"FROZEN",story_version_id:I.storyVersion,script_version_id:firstScene.scriptVersionId,scene_order:0,version:1,version_status:"FROZEN"});
     const currentV1=await resolveCurrentFrozenCanonicalSceneSet(db,scope);
     expect(currentV1).toHaveLength(1);
     const packageFixture=animationPackageFixture("ready_for_execution");
@@ -116,6 +120,11 @@ describeIntegration("AI Story canonical Scene service lifecycle against aggregat
     const third=buildScene(3,"Another environment",[second.sceneVersionId]);
     await expect(sceneService.proposeRevisionSet(sceneScope,[third])).rejects.toMatchObject({code:"SCENE_REVISION_REQUIRES_FROZEN"});
     await sceneService.transitionSet(sceneScope,"VALIDATED");await sceneService.transitionSet(sceneScope,"APPROVED");await sceneService.transitionSet(sceneScope,"FROZEN");
+    const currentRowsV2=await sql`select a.scene_id,a.story_id,a.current_version,a.current_scene_version_id,a.status as aggregate_status,v.story_version_id,v.script_version_id,v.scene_order,v.version,v.status as version_status from ai_story_canonical_scenes a join ai_story_canonical_scene_versions v on v.scene_version_id=a.current_scene_version_id where a.story_id=${I.story}::uuid and v.story_version_id=${I.storyVersion}::uuid`;
+    expect(currentRowsV2).toHaveLength(1);
+    expect(currentRowsV2[0]).toMatchObject({scene_id:I.scene,story_id:I.story,current_version:2,current_scene_version_id:second.sceneVersionId,aggregate_status:"FROZEN",story_version_id:I.storyVersion,script_version_id:firstScene.scriptVersionId,scene_order:0,version:2,version_status:"FROZEN"});
+    const historicalRows=await sql`select scene_version_id,version,status from ai_story_canonical_scene_versions where scene_id=${I.scene}::uuid order by version`;
+    expect(historicalRows).toMatchObject([{scene_version_id:firstScene.sceneVersionId,version:1,status:"SUPERSEDED"},{scene_version_id:second.sceneVersionId,version:2,status:"FROZEN"}]);
     const currentV2=await resolveCurrentFrozenCanonicalSceneSet(db,scope);
     expect(currentV2).toHaveLength(1);
     expect(currentV2![0]!.sceneId).toBe(currentV1![0]!.sceneId);
