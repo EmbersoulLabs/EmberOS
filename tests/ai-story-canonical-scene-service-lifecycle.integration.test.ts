@@ -9,6 +9,7 @@ import {
   AiStoryOutlineAuthorityService,
   AiStoryScriptAuthorityService,
   AiStorySceneExecutionPersistenceRepository,
+  EntitlementRepositoryImpl,
   resolveApprovedAnimationPackageForStoryVersion,
   resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion,
   resolveCurrentFrozenCanonicalSceneSet,
@@ -21,12 +22,14 @@ import {
   AiStorySceneCompiledInstructionsSchema,
   AiStorySceneExecutionIntentSchema,
   AnimationPackagePayloadSchema,
+  effectiveProjectionHasCapability,
 } from "@ceo-agent/shared";
 import {
   buildAiStoryOutlineVersion,
   buildAiStoryScriptVersion,
   finalizeAiStoryCanonicalScene,
   buildAiStoryAnimationPackageCanonicalSceneAuthorityV1,
+  buildEntitlementGrant,
   canonicalAiStorySceneIdV1,
   sha256CanonicalIntegrityHash,
 } from "@ceo-agent/shared/server";
@@ -65,8 +68,9 @@ describeIntegration("AI Story canonical Scene service lifecycle against aggregat
     await sql`insert into ai_stories(id,org_id,workspace_id,campaign_id,title,original_idea,status) values(${J.story}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${fixture.campaignAId}::uuid,'Legacy execution test','Intent','planning')`;
     await sql`insert into ai_story_versions(id,story_id,version_number,structured_content,frozen_at) values(${J.storyVersion}::uuid,${J.story}::uuid,1,${sql.json({title:"Legacy Story",summary:"Summary",objective:"Objective",targetAudience:"Audience",tone:"Tone",estimatedDuration:"4s",story:{opening:"Open",development:"Develop",ending:"End"},keyMessages:[],cta:"CTA",assetReferences:[],warnings:[]})},now())`;
     await sql`update ai_stories set current_version_id=${J.storyVersion}::uuid where id=${J.story}::uuid`;
+    await new EntitlementRepositoryImpl().acceptOrConvergeGrant(buildEntitlementGrant({orgId:fixture.orgId,workspaceId:fixture.workspaceAId,capabilityKey:"ai_story.access",source:"INTERNAL",reason:"Canonical Scene service lifecycle integration fixture",grantedByUserId:fixture.userAId,grantedAt:new Date().toISOString(),identitySeed:`canonical-scene-service-access:${fixture.orgId}:${fixture.workspaceAId}`}));
   },30_000);
-  afterAll(async()=>{await closeDb();if(!sql)return;await sql`delete from ai_story_scene_intent_validation_results where org_id=${fixture.orgId}::uuid`;for(const storyId of [I.story,J.story]){await sql`delete from ai_story_scene_executions where story_id=${storyId}::uuid`;await sql`delete from ai_story_execution_plans where story_id=${storyId}::uuid`;await sql`delete from ai_story_animation_packages where story_id=${storyId}::uuid`;await sql.begin(async(tx)=>{await tx`delete from ai_story_canonical_scene_versions where story_id=${storyId}::uuid`;await tx`delete from ai_story_canonical_scenes where story_id=${storyId}::uuid`;});await sql`delete from ai_story_script_versions where story_id=${storyId}::uuid`;await sql`delete from ai_story_outline_versions where story_id=${storyId}::uuid`;await sql`delete from ai_story_versions where story_id=${storyId}::uuid`;await sql`delete from ai_stories where id=${storyId}::uuid`;}await sql`delete from ai_story_scene_instruction_snapshots where org_id=${fixture.orgId}::uuid`;await sql.begin(async(tx)=>{await tx`delete from ai_story_character_versions where character_id=${I.character}::uuid`;await tx`delete from ai_story_characters where character_id=${I.character}::uuid`;});await cleanupRlsFixture(sql,fixture);await sql.end();},30_000);
+  afterAll(async()=>{await closeDb();if(!sql)return;await sql`delete from ai_story_scene_intent_validation_results where org_id=${fixture.orgId}::uuid`;for(const storyId of [I.story,J.story]){await sql`delete from ai_story_scene_executions where story_id=${storyId}::uuid`;await sql`delete from ai_story_execution_plans where story_id=${storyId}::uuid`;await sql`delete from ai_story_animation_packages where story_id=${storyId}::uuid`;await sql.begin(async(tx)=>{await tx`delete from ai_story_canonical_scene_versions where story_id=${storyId}::uuid`;await tx`delete from ai_story_canonical_scenes where story_id=${storyId}::uuid`;});await sql`delete from ai_story_script_versions where story_id=${storyId}::uuid`;await sql`delete from ai_story_outline_versions where story_id=${storyId}::uuid`;await sql`delete from ai_story_versions where story_id=${storyId}::uuid`;await sql`delete from ai_stories where id=${storyId}::uuid`;}await sql`delete from ai_story_scene_instruction_snapshots where org_id=${fixture.orgId}::uuid`;await sql.begin(async(tx)=>{await tx`delete from ai_story_character_versions where character_id=${I.character}::uuid`;await tx`delete from ai_story_characters where character_id=${I.character}::uuid`;});await sql`delete from effective_entitlement_projections where org_id=${fixture.orgId}::uuid`;await sql`delete from entitlement_grants where org_id=${fixture.orgId}::uuid`;await cleanupRlsFixture(sql,fixture);await sql.end();},30_000);
 
   it("proposes, validates, approves, and freezes the initial canonical Scene",async()=>{
     const scope={orgId:fixture.orgId,workspaceId:fixture.workspaceAId,campaignId:fixture.campaignAId,storyId:I.story,storyVersionId:I.storyVersion,actorUserId:fixture.userAId,requireCurrentFrozenStoryVersion:true};
@@ -104,7 +108,13 @@ describeIntegration("AI Story canonical Scene service lifecycle against aggregat
     expect(persisted.intents[0]!.animationPackage.sceneSetFingerprint).toBe(payload.canonicalSceneAuthority.sceneSetFingerprint);
     expect(persisted.intents[0]!.identity).toMatchObject({sceneId:currentV1![0]!.sceneId,sceneVersionId:currentV1![0]!.sceneVersionId,sceneFingerprint:currentV1![0]!.fingerprint,scriptVersionId:currentV1![0]!.scriptVersionId});
     expect((await resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion(db,scope))?.id).toBe(packageId);
+    const accessGrantRows=await sql`select org_id,workspace_id,capability_key,granted_by_user_id from entitlement_grants where org_id=${fixture.orgId}::uuid`;
+    expect(accessGrantRows).toHaveLength(1);
+    expect(accessGrantRows[0]).toMatchObject({org_id:fixture.orgId,workspace_id:fixture.workspaceAId,capability_key:"ai_story.access",granted_by_user_id:fixture.userAId});
     const discovered=await discoverCurrentExecutionPlan({userId:fixture.userAId,campaignId:fixture.campaignAId,storyId:I.story});
+    const accessProjection=await new EntitlementRepositoryImpl().getEffectiveProjection({orgId:fixture.orgId,workspaceId:fixture.workspaceAId});
+    expect(accessProjection).toMatchObject({orgId:fixture.orgId,workspaceId:fixture.workspaceAId});
+    expect(effectiveProjectionHasCapability(accessProjection!,"ai_story.access")).toBe(true);
     expect(discovered.executionPlan?.executionPlanId).toBe(compiled.storyExecutionPlan.storyExecutionId);
     const [storedPackageBefore]=await db.select().from(schema.aiStoryAnimationPackages).where(eq(schema.aiStoryAnimationPackages.id,packageId));
     const [storedPlanBefore]=await db.select().from(schema.aiStoryExecutionPlans).where(eq(schema.aiStoryExecutionPlans.id,compiled.storyExecutionPlan.storyExecutionId));
