@@ -8,6 +8,7 @@ import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { executionPlanRouteErrorResponse, resolveAuthorizedExecutionPlan } from "@/lib/ai-story-execution-plan-access";
 import { resolveCanonicalWebExecuteProviderAuthority } from "@/lib/ai-story-canonical-execute-router";
+import { createCanonicalProductMaterialSchedulingCoordinator } from "@/lib/ai-story-product-material-scheduling";
 
 type RouteParams = { params: Promise<{ id: string; storyId: string; executionPlanId: string }> };
 
@@ -35,6 +36,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       executionPlanId, workspaceId: ctx.workspaceId, actorUserId: user.id,
       executionAuthorization,
       router: providerRouting.router,
+      schedulingCoordinator: createCanonicalProductMaterialSchedulingCoordinator(providerRouting.router),
       routingPolicy: providerRouting.routingPolicy,
     });
     return apiSuccess(result, result.converged ? 200 : 202);

@@ -141,6 +141,8 @@ export function buildAiStoryPostGenerationQcInputPackage(input: {
     shotRecipeFingerprint: pkg.motionScenePlan.shotRecipeBinding?.recipeFingerprint ?? null,
     castSnapshotFingerprint: input.compiledRequest.castSnapshotFingerprint, locationSnapshotFingerprint: input.compiledRequest.locationSnapshotFingerprint,
     productSnapshotFingerprint: input.compiledRequest.productSnapshotFingerprint,
+    ...(input.compiledRequest.productMaterialSelection
+      ? { productMaterialSelection: input.compiledRequest.productMaterialSelection } : {}),
     entryState: pkg.scene.entryState.map(textFact), scriptActions: pkg.scene.events.filter((event) => event.type === "ACTION").map((event) => event.action),
     requiredExitState: pkg.scene.exitState.map(textFact), mustKeep: pkg.scene.mustKeep, mustAvoid: pkg.scene.mustAvoid,
     newAudienceInformation: pkg.directorDirection.newAudienceInformation, requiredEvidence: pkg.productAuthorities.flatMap((product) => product.visibleEvidenceGoals),
@@ -336,6 +338,8 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
     castSnapshotFingerprint: compiled.castSnapshotFingerprint,
     locationSnapshotFingerprint: compiled.locationSnapshotFingerprint,
     productSnapshotFingerprint: compiled.productSnapshotFingerprint,
+    ...(compiled.productMaterialSelection
+      ? { productMaterialSelection: compiled.productMaterialSelection } : {}),
     entryState: instructions.continuityNotes.trim() ? [instructions.continuityNotes] : [],
     scriptActions: instructions.shots.map((shot) => shot.information),
     requiredExitState: section("REQUIRED_EXIT_STATE"),

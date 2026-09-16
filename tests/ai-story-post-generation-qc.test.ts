@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { AI_STORY_PRODUCT_VISUAL_MATERIAL_SELECTION_CONTRACT_VERSION } from "../packages/shared/src/ai-story-product-visual-material-selection";
+import { sha256CanonicalIntegrityHash } from "../packages/shared/src/server";
 import {
   AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
   AI_STORY_POST_QC_DIMENSIONS,
@@ -99,6 +101,22 @@ describe("AI Story canonical Post-Generation QC", () => {
   });
 
   it("builds the V1 runtime Post-QC input from persisted compilation authority", () => {
+    const materialBody = {
+      contractVersion: AI_STORY_PRODUCT_VISUAL_MATERIAL_SELECTION_CONTRACT_VERSION,
+      orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!, storyId: ids[4]!, storyVersionId: ids[5]!,
+      sceneId: ids[13]!, sceneVersionId: ids[14]!,
+      productAuthority: { productAuthorityId: ids[15]!, sourceAssetId: ids[15]!, sourceAssetContentHash: hash("8") },
+      visualRequirement: { sceneRequirement: "REQUIRED", effectiveGenerationRequirement: "REQUIRED", strategy: "PRODUCT_GROUNDED_VIDEO", referenceSource: "STORY_INHERITED" },
+      suitability: { authorityFingerprint: hash("9"), outcome: "TRANSPARENT_BACKGROUND_CERTIFIED" },
+      derivativeResolution: { contractVersion: "ai-story-exact-product-derivative-resolution.v1", status: "NOT_FOUND", reason: "NO_READY_EXTRACTION" },
+      preparationCapability: { status: "NOT_CERTIFIED" },
+      selection: "SOURCE_ASSET", selectedMaterial: { kind: "SOURCE_ASSET", assetId: ids[15]!, contentHash: hash("8") },
+      reason: "SOURCE_TRANSPARENCY_CERTIFIED",
+    };
+    const materialSelection = {
+      ...materialBody,
+      fingerprint: sha256CanonicalIntegrityHash({ kind: AI_STORY_PRODUCT_VISUAL_MATERIAL_SELECTION_CONTRACT_VERSION, authority: materialBody }),
+    };
     const compiled = {
       compiledRequestId: ids[10]!, orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!,
       storyId: ids[4]!, storyVersionId: ids[5]!, sceneExecutionId: ids[8]!,
@@ -108,6 +126,7 @@ describe("AI Story canonical Post-Generation QC", () => {
       directorFingerprint: hash("2"), motionFingerprint: hash("3"), castSnapshotFingerprint: hash("5"),
       locationSnapshotFingerprint: hash("6"), productSnapshotFingerprint: hash("7"),
       semanticPlan: { sections: [{ section: "MUST_AVOID", facts: ["unwanted text"] }] },
+      productMaterialSelection: materialSelection,
     } as never;
     const built = buildAiStoryPostGenerationQcInputFromCompiledAuthority({
       intent: { identity: { sceneExecutionId: ids[8]!, sceneId: "scene-1" }, compilationHash: hash("a") } as never,
@@ -138,6 +157,7 @@ describe("AI Story canonical Post-Generation QC", () => {
     expect(built).toMatchObject({
       sceneExecutionId: ids[8], providerAttemptId: "attempt-1", generationMode: "TEXT_TO_VIDEO",
       privateMediaAssetId: ids[9], sceneVersion: 2,
+      productMaterialSelection: materialSelection,
     });
     expect(built.requirements.map((item) => item.requirementId)).toEqual(expect.arrayContaining([
       "scene-purpose", "action:shot-1", "output-integrity", "visual-artifact-integrity",

@@ -17,8 +17,10 @@ import {
   type AiStorySceneExecutionPackage,
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
+  type ProductVisualMaterialSelectionAuthority,
   isAiStoryProviderAttemptTransitionAllowed,
 } from "@ceo-agent/shared";
+import { verifyProductVisualMaterialSelectionAuthority } from "@ceo-agent/shared/server";
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
 import { integrityHash } from "./scene-execution-compiler";
 import { compileSceneExecutionPackageForSeedance } from "./seedance-director-adapter";
@@ -225,6 +227,7 @@ export type AiStoryReferenceAssetAuthority = {
   readonly assetId: string;
   readonly mediaType: string;
   readonly storagePath?: string;
+  readonly contentHash?: string | null;
 };
 
 /**
@@ -288,6 +291,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   readonly compiledAt: string;
   readonly resolution?: "480p" | "720p" | "1080p";
   readonly referenceAssets?: readonly AiStoryReferenceAssetAuthority[];
+  readonly productMaterialSelection?: ProductVisualMaterialSelectionAuthority;
   /** Active Scene input preparation authority, when Scene input preparation governs this Scene. */
   readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
@@ -343,12 +347,47 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       })
     : null;
   const referenceAssetById = new Map((input.referenceAssets ?? []).map((asset) => [asset.assetId, asset]));
+  const productMaterial = input.productMaterialSelection ?? null;
+  if (productMaterial) {
+    const selected = productMaterial.selectedMaterial;
+    const selectedAsset = selected ? referenceAssetById.get(selected.assetId) : null;
+    if (
+      explicitT2v || !selected || !selectedAsset ||
+      productMaterial.selection !== selected.kind ||
+      !input.intent.identity.sceneVersionId ||
+      !verifyProductVisualMaterialSelectionAuthority(productMaterial, {
+        orgId: input.intent.identity.tenantId,
+        workspaceId: input.intent.identity.workspaceId,
+        campaignId: input.intent.identity.campaignId,
+        storyId: input.intent.identity.storyId,
+        storyVersionId: input.intent.identity.storyVersionId,
+        sceneId: input.intent.identity.sceneId,
+        sceneVersionId: input.intent.identity.sceneVersionId,
+        productAuthority: productMaterial.productAuthority,
+      }) ||
+      productMaterial.visualRequirement.effectiveGenerationRequirement !== "REQUIRED" ||
+      productMaterial.visualRequirement.strategy !== authority?.strategy ||
+      productMaterial.visualRequirement.referenceSource !== authority?.referenceSource ||
+      selectedAsset.contentHash !== selected.contentHash ||
+      !selectedAsset.mediaType.toLowerCase().startsWith("image/") ||
+      !selectedAsset.storagePath ||
+      /^https?:\/\//i.test(selectedAsset.storagePath) ||
+      (providerReadySceneInput && providerReadySceneInput.assetId !== selected.assetId)
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "COMPILED_REQUEST_INVALID",
+        "Selected Product material does not match current Scene compilation authority"
+      );
+    }
+  }
   const compiledReferenceIds = providerReadySceneInput
     ? [
         providerReadySceneInput.assetId,
         ...referenceIds.filter((assetId) => assetId !== providerReadySceneInput.assetId),
       ]
-    : referenceIds;
+    : productMaterial?.selectedMaterial
+      ? [productMaterial.selectedMaterial.assetId, ...referenceIds.filter((id) => id !== productMaterial.selectedMaterial?.assetId)]
+      : referenceIds;
   if (!explicitT2v) {
     const missing = compiledReferenceIds.filter((assetId) => !referenceAssetById.has(assetId));
     if (missing.length > 0) {
@@ -360,7 +399,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   }
   const firstFrameAssetId = explicitT2v
     ? null
-    : providerReadySceneInput?.assetId ?? authority?.firstFrameAssetId ?? referenceIds[0] ?? null;
+    : productMaterial?.selectedMaterial?.assetId ?? providerReadySceneInput?.assetId ?? authority?.firstFrameAssetId ?? referenceIds[0] ?? null;
   if (!explicitT2v && !firstFrameAssetId) {
     throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation is missing its canonical first frame");
   }
@@ -475,6 +514,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       ? "TEXT_TO_VIDEO" as const
       : "FIRST_FRAME_IMAGE_TO_VIDEO" as const,
     ...(authority ? { generationAuthority: authority } : {}),
+    ...(productMaterial ? { productMaterialSelection: productMaterial } : {}),
     providerId: "seedance" as const,
     modelId: "dreamina-seedance-2-0-260128" as const,
     adapterVersion: input.adapterVersion,
@@ -491,6 +531,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     productSnapshotFingerprint: snapshot("ai-story-product-instruction-snapshot.v1", {
       constraints: input.instructions.productIdentityConstraints,
       referenceIds,
+      ...(productMaterial ? { productMaterialSelection: productMaterial } : {}),
     }),
     packageFingerprint: semanticPlan.packageFingerprint,
     semanticPlan,

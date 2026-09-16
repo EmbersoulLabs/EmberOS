@@ -116,6 +116,7 @@ export class SeedanceMappingError extends Error {
     message: string,
     readonly code:
       | "BUSINESS_VALIDATION_FAILED"
+      | "PRODUCT_MATERIAL_AUTHORITY_INVALID"
       | "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID" = "BUSINESS_VALIDATION_FAILED"
   ) {
     super(message);
@@ -143,6 +144,7 @@ export type SeedanceAssetAccessResolver = {
     readonly campaignId: string;
     readonly storagePath?: string;
     readonly existingUri?: string;
+    readonly productMaterialSelection?: import("@ceo-agent/shared").ProductVisualMaterialSelectionAuthority;
   }): Promise<string>;
 };
 
@@ -334,6 +336,32 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   const firstFrameMode =
     payload.generationMode === PRODUCT_GROUNDED_VIDEO_MODE ||
     payload.generationMode === "FIRST_FRAME_IMAGE_TO_VIDEO";
+  const productMaterialSelection = compiledRequestResult.success
+    ? compiledRequestResult.data.productMaterialSelection
+    : undefined;
+  if (firstFrameMode && !productMaterialSelection) {
+    throw new SeedanceMappingError(
+      "Image-conditioned dispatch requires durable canonical Scene Product material authority",
+      "PRODUCT_MATERIAL_AUTHORITY_INVALID"
+    );
+  }
+  if (productMaterialSelection) {
+    const selected = productMaterialSelection.selectedMaterial;
+    if (
+      !firstFrameMode || !selected ||
+      productMaterialSelection.selection !== selected.kind ||
+      productMaterialSelection.orgId !== input.envelope.tenantId ||
+      productMaterialSelection.workspaceId !== input.envelope.workspaceId ||
+      productMaterialSelection.campaignId !== input.envelope.canonicalRequest.executionIdentity.campaignId ||
+      assets.length !== 1 || assets[0]?.assetId !== selected.assetId ||
+      assets[0]?.role !== "first_frame" || Boolean(assets[0]?.uri)
+    ) {
+      throw new SeedanceMappingError("Compiled Product material does not match the exact private Provider first frame", "PRODUCT_MATERIAL_AUTHORITY_INVALID");
+    }
+    if (!input.assetAccessResolver) {
+      throw new SeedanceMappingError("Private Product material requires just-in-time authorized Asset access", "PRODUCT_MATERIAL_AUTHORITY_INVALID");
+    }
+  }
   if (payload.generationMode === PRODUCT_GROUNDED_VIDEO_MODE) {
     if (!payload.productGrounding) {
       throw new SeedanceMappingError(
@@ -412,6 +440,7 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
         orgId: input.envelope.tenantId,
         campaignId,
         ...(asset.storagePath ? { storagePath: asset.storagePath } : {}),
+        ...(productMaterialSelection ? { productMaterialSelection } : {}),
       });
     } else if (!uri && asset.storagePath) {
       if (looksLikePrivateStoragePath(asset.storagePath)) {
