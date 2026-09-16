@@ -74,14 +74,7 @@ describeIntegration("AI Story compiled request runtime PostgreSQL authority", ()
       const sourceHash = `sha256:${"a".repeat(64)}`;
       await sql`update assets set content_hash=${sourceHash} where id=${ids.assetId}::uuid`;
       const compilation = makePhase2aCompilation({ ids, sceneOrder: [0] });
-      const validationResults = compilation.intents.map((intent) => ({
-        status: "passed" as const, intentId: intent.identity.sceneExecutionId,
-        sceneId: intent.identity.sceneId, validatedAt: "2026-09-01T00:00:00.000Z",
-        contractVersion: "1" as const, errors: [],
-      }));
-      await new AiStorySceneExecutionPersistenceRepository(getDb()).persistCompilation({
-        ...compilation, plan: compilation.storyExecutionPlan, validationResults,
-      });
+      await new AiStorySceneExecutionPersistenceRepository(getDb()).persistCompilation(compilation);
       const intent = compilation.intents[0]!;
       const instructions = compilation.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!;
       const sceneId = crypto.randomUUID();
