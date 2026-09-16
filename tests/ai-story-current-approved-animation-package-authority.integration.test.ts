@@ -17,6 +17,7 @@ import {
   buildAiStoryAnimationPackageCanonicalSceneAuthorityV1,
   buildAiStoryOutlineVersion,
   buildAiStoryScriptVersion,
+  canonicalAiStorySceneIdV1,
   finalizeAiStoryCanonicalScene,
 } from "@ceo-agent/shared/server";
 import { approveAnimationPackage } from "../apps/web/src/lib/ai-story-planning-service";
@@ -116,7 +117,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         const beatId = crypto.randomUUID();
         const scriptSceneId = crypto.randomUUID();
         const entryId = crypto.randomUUID();
-        const sceneId = crypto.randomUUID();
+        const sceneId = canonicalAiStorySceneIdV1(ids.story, storyVersionId, 0);
         const outline = buildAiStoryOutlineVersion({
           storyId: ids.story, storyVersionId, orgId: ids.org, workspaceId: ids.workspace,
           version: index + 1, profile: { profileId: "CORE", profileVersion: 1 },
