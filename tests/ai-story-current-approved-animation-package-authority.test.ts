@@ -76,7 +76,7 @@ describe("current approved Animation Package authority", () => {
       "utf8"
     );
     for (const source of [discovery, orchestrator]) {
-      expect(source).toContain("resolveApprovedAnimationPackageForStoryVersion");
+      expect(source).toContain("resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion");
       expect(source).not.toMatch(/aiStoryAnimationPackages\.approvedAt[\s\S]{0,300}limit\(1\)/);
     }
     const approval = readFileSync(

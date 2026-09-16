@@ -1,10 +1,16 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
   AnimationPackagePayloadSchema,
+  AuthoritativeAnimationPackagePayloadSchema,
   isStoryPlanningDraft,
   type AnimationPackagePayload,
 } from "@ceo-agent/shared";
+import {
+  AiStoryAnimationPackageCanonicalSceneBindingError,
+  assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent,
+} from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
+import { resolveCurrentFrozenCanonicalSceneSet } from "./ai-story-scene-authority";
 
 type Db = ReturnType<typeof getDb>;
 type AnimationPackageRow = typeof schema.aiStoryAnimationPackages.$inferSelect;
@@ -100,6 +106,42 @@ export async function resolveApprovedAnimationPackageForStoryVersion(
       )
     );
   return certifyApprovedAnimationPackageRows(rows);
+}
+
+/**
+ * Execution-facing resolver. Legacy approved Packages remain readable through
+ * resolveApprovedAnimationPackageForStoryVersion, but are never current
+ * canonical execution authority.
+ */
+export async function resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion(
+  db: Db,
+  input: {
+    orgId: string;
+    workspaceId: string;
+    campaignId: string;
+    storyId: string;
+    storyVersionId: string;
+  }
+): Promise<CanonicalApprovedAnimationPackage | null> {
+  const scenes = await resolveCurrentFrozenCanonicalSceneSet(db, input);
+  if (!scenes) return null;
+  const approved = await resolveApprovedAnimationPackageForStoryVersion(db, input);
+  if (!approved) return null;
+  const payload = AuthoritativeAnimationPackagePayloadSchema.safeParse(approved.payload);
+  if (!payload.success) return null;
+  try {
+    assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent({
+      storyId: input.storyId,
+      storyVersionId: input.storyVersionId,
+      scenePlan: payload.data.scenePlan,
+      canonicalScenes: scenes,
+      authority: payload.data.canonicalSceneAuthority,
+    });
+  } catch (error) {
+    if (error instanceof AiStoryAnimationPackageCanonicalSceneBindingError) return null;
+    throw error;
+  }
+  return { ...approved, payload: payload.data as CanonicalApprovedAnimationPackage["payload"] };
 }
 
 export type ApprovedAnimationPackageDuplicateGroup = {

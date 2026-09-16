@@ -167,10 +167,11 @@ describe("AI Story Canonical Scene Package 1",()=>{
     await expect(resolveCurrentFrozenCanonicalSceneSet({} as never,scope,dep([badRow,row(scenes[1]!)]) as never)).rejects.toBeInstanceOf(AiStorySceneAuthorityError);
   });
 
-  it("gates Animation Package construction without adding Scene bindings",()=>{
+  it("gates Animation Package construction and passes the exact frozen Scene set into the builder",()=>{
     const runner=readFileSync("apps/web/src/lib/ai-story-planning-runner.ts","utf8");
     const stage=runner.slice(runner.indexOf('case "animation_package"'),runner.indexOf("default:"));
     expect(stage.indexOf("ensureCurrentFrozenCanonicalSceneSet")).toBeLessThan(stage.indexOf("buildAnimationPackage"));
-    expect(stage).not.toMatch(/sceneVersionId|sceneFingerprint|canonicalScene/);
+    expect(stage).toContain("const canonicalScenes = await ensureCurrentFrozenCanonicalSceneSet");
+    expect(stage).toContain("canonicalScenes,");
   });
 });

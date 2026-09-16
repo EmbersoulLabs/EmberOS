@@ -19,6 +19,7 @@ import {
   type AiStoryStructuredDraft,
   type AiStoryScriptVersion,
   type AnimationPackagePayload,
+  type AiStoryCanonicalScene,
   type CharacterContinuityEntry,
   type CreativeContext,
   type DirectorThinking,
@@ -31,6 +32,7 @@ import {
   type WorldContinuity,
   WorldContinuitySchema,
 } from "@ceo-agent/shared";
+import { buildAiStoryAnimationPackageCanonicalSceneAuthorityV1 } from "@ceo-agent/shared/server";
 import {
   bindCharacterContinuityToCharacterAuthority,
   bindCreativeContextToCharacterAuthority,
@@ -488,6 +490,9 @@ export function buildAnimationPackage(input: {
   shotPlan: ShotPlanItem[];
   characterContinuity: CharacterContinuityEntry[];
   worldContinuity: WorldContinuity;
+  canonicalScenes: AiStoryCanonicalScene[];
+  storyId: string;
+  storyVersionId: string;
   usage?: Usage;
 }): AnimationPackagePayload {
   const creativeContext: CreativeContext = {
@@ -504,6 +509,12 @@ export function buildAnimationPackage(input: {
     shotPlan: input.shotPlan,
     characterContinuity: input.characterContinuity,
     worldContinuity: input.worldContinuity,
+    canonicalSceneAuthority: buildAiStoryAnimationPackageCanonicalSceneAuthorityV1({
+      storyId: input.storyId,
+      storyVersionId: input.storyVersionId,
+      scenePlan: input.scenePlan,
+      canonicalScenes: input.canonicalScenes,
+    }),
     narrative: creativeContext.narrativeContext,
     narrativeIntegration: { consistent: false, issues: [], links: [] },
     status: "review",
@@ -577,15 +588,27 @@ export async function runFullStoryPlanningPipeline(
   });
   usage = addUsage(usage, worldContinuity.usage);
 
-  return buildAnimationPackage({
+  const creativeContext = {
+    ...creative.creativeContext,
+    directorContext: director.directorThinking,
+  };
+  const legacyPackage = AnimationPackagePayloadSchema.parse({
     story: input.storyDraft,
-    creativeContext: creative.creativeContext,
+    characters: creativeContext.characterContext.characters,
+    creativeContext,
     directorThinking: director.directorThinking,
     storyBeats: beats.storyBeats,
     scenePlan: scenes.scenePlan,
     shotPlan: shots.shotPlan,
     characterContinuity: characterContinuity.characterContinuity,
     worldContinuity: worldContinuity.worldContinuity,
+    narrative: creativeContext.narrativeContext,
+    narrativeIntegration: { consistent: false, issues: [], links: [] },
+    status: "review",
     usage,
+  });
+  return AnimationPackagePayloadSchema.parse({
+    ...legacyPackage,
+    narrativeIntegration: validatePlanningConsistency(legacyPackage),
   });
 }

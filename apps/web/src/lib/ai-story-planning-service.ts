@@ -3,8 +3,9 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { ApprovedAnimationPackageAuthorityError, getDb, schema } from "@ceo-agent/db";
+import { ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, schema } from "@ceo-agent/db";
 import {
+  AuthoritativeAnimationPackagePayloadSchema,
   AnimationPackagePayloadSchema,
   CreativeContextSchema,
   StoryPlanningDraftSchema,
@@ -15,6 +16,7 @@ import {
   type NarrativeIntegrationReport,
   type StoryPlanningDraft,
 } from "@ceo-agent/shared";
+import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent } from "@ceo-agent/shared/server";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -123,7 +125,7 @@ export async function saveAnimationPackage(
     payload: AnimationPackagePayload;
   }
 ) {
-  const parsed = AnimationPackagePayloadSchema.parse(input.payload);
+  const parsed = AuthoritativeAnimationPackagePayloadSchema.parse(input.payload);
   const consistencyReport: NarrativeIntegrationReport = validatePlanningConsistency(parsed);
   const payload: AnimationPackagePayload = {
     ...parsed,
@@ -201,6 +203,33 @@ export async function approveAnimationPackage(
     approvedBy: string;
   }
 ) {
+  const [preflightCandidate] = await db
+    .select()
+    .from(schema.aiStoryAnimationPackages)
+    .where(
+      and(
+        eq(schema.aiStoryAnimationPackages.id, input.packageId),
+        eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId)
+      )
+    )
+    .limit(1);
+  if (!preflightCandidate) throw new Error("Animation Package not found");
+  const canonicalScenes = await resolveCurrentFrozenCanonicalSceneSet(db, {
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    storyVersionId: preflightCandidate.storyVersionId,
+  });
+  if (!canonicalScenes) {
+    throw new ApprovedAnimationPackageAuthorityError(
+      "CURRENT_FROZEN_SCENE_SET_REQUIRED",
+      "Animation Package approval requires the current FROZEN Canonical Scene set"
+    );
+  }
   return db.transaction(async (tx) => {
     const [candidate] = await tx
       .select()
@@ -273,7 +302,14 @@ export async function approveAnimationPackage(
     }
 
     if (current.status === "ready_for_execution") {
-      const approvedPayload = AnimationPackagePayloadSchema.parse(current.payload);
+      const approvedPayload = AuthoritativeAnimationPackagePayloadSchema.parse(current.payload);
+      assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent({
+        storyId: input.storyId,
+        storyVersionId: current.storyVersionId,
+        scenePlan: approvedPayload.scenePlan,
+        canonicalScenes,
+        authority: approvedPayload.canonicalSceneAuthority,
+      });
       if (
         approvedPayload.status !== "ready_for_execution" ||
         !current.approvedAt ||
@@ -289,7 +325,14 @@ export async function approveAnimationPackage(
     if (isStoryPlanningDraft(current.payload)) {
       throw new Error("Planning draft is incomplete — assemble Animation Package first");
     }
-    const payload = AnimationPackagePayloadSchema.parse(current.payload);
+    const payload = AuthoritativeAnimationPackagePayloadSchema.parse(current.payload);
+    assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent({
+      storyId: input.storyId,
+      storyVersionId: current.storyVersionId,
+      scenePlan: payload.scenePlan,
+      canonicalScenes,
+      authority: payload.canonicalSceneAuthority,
+    });
     if (payload.status === "ready_for_execution") {
       throw new ApprovedAnimationPackageAuthorityError(
         "ANIMATION_PACKAGE_APPROVAL_STATE_MISMATCH",

@@ -399,6 +399,27 @@ export function prunePlanningDraftAfterStage(
   };
 }
 
+export const AI_STORY_ANIMATION_PACKAGE_CANONICAL_SCENE_BINDING_CONTRACT_VERSION =
+  "ai-story-animation-package-canonical-scene-binding.v1" as const;
+
+export const AiStoryAnimationPackageCanonicalSceneBindingSchema = z.object({
+  order: z.number().int().nonnegative(),
+  planningSceneId: NonEmptyTextSchema,
+  sceneId: z.string().uuid(),
+  sceneVersionId: z.string().uuid(),
+  sceneFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  sourceScriptSceneIds: z.array(z.string().uuid()).min(1),
+}).strict();
+
+export const AiStoryAnimationPackageCanonicalSceneAuthoritySchema = z.object({
+  contractVersion: z.literal(
+    AI_STORY_ANIMATION_PACKAGE_CANONICAL_SCENE_BINDING_CONTRACT_VERSION
+  ),
+  scriptVersionId: z.string().uuid(),
+  sceneSetFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  scenes: z.array(AiStoryAnimationPackageCanonicalSceneBindingSchema).min(1),
+}).strict();
+
 export const AnimationPackagePayloadSchema = z.object({
   story: AiStoryStructuredDraftSchema,
   characters: z.array(CreativeContextCharacterSchema),
@@ -413,9 +434,22 @@ export const AnimationPackagePayloadSchema = z.object({
   narrativeIntegration: NarrativeIntegrationReportSchema,
   status: z.enum(ANIMATION_PACKAGE_STATUSES),
   usage: PlanningUsageSchema.optional(),
+  /** Read compatibility: historical Packages predate Canonical Scene binding. */
+  canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema.optional(),
 });
 
 export type AnimationPackagePayload = z.infer<typeof AnimationPackagePayloadSchema>;
+export type AiStoryAnimationPackageCanonicalSceneAuthority = z.infer<
+  typeof AiStoryAnimationPackageCanonicalSceneAuthoritySchema
+>;
+
+/** Strict new-write contract. Historical reads continue through AnimationPackagePayloadSchema. */
+export const AuthoritativeAnimationPackagePayloadSchema = AnimationPackagePayloadSchema.extend({
+  canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema,
+});
+export type AuthoritativeAnimationPackagePayload = z.infer<
+  typeof AuthoritativeAnimationPackagePayloadSchema
+>;
 
 function includesMergeNote(scene: ScenePlanItem, beat: StoryBeat): boolean {
   const note = `${scene.purpose} ${scene.continuityNotes}`.toLowerCase();

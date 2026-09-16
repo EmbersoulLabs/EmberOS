@@ -7,13 +7,21 @@ import {
   AiStoryCharacterAuthorityService,
   AiStoryOutlineAuthorityService,
   AiStoryScriptAuthorityService,
+  AiStorySceneExecutionPersistenceRepository,
+  resolveCurrentFrozenCanonicalSceneSet,
   closeDb,
+  getDb,
+  schema,
 } from "@ceo-agent/db";
 import {
   buildAiStoryOutlineVersion,
   buildAiStoryScriptVersion,
   finalizeAiStoryCanonicalScene,
+  buildAiStoryAnimationPackageCanonicalSceneAuthorityV1,
 } from "@ceo-agent/shared/server";
+import { compileSceneExecutionIntents } from "../packages/agents/src/ai-story/scene-execution-compiler";
+import { discoverCurrentExecutionPlan } from "../apps/web/src/lib/ai-story-execution-plan-discovery";
+import { animationPackageFixture } from "./helpers/ai-story-animation-package";
 import {
   RUN_DB_INTEGRATION,
   cleanupRlsFixture,
@@ -31,12 +39,12 @@ describeIntegration("AI Story canonical Scene service lifecycle against aggregat
   let sql:Sql;let fixture:RlsTestFixture;
   beforeAll(async()=>{
     sql=createIntegrationSql();fixture=await seedRlsFixture(sql);
-    for(const file of ["ai-story-outline-v1.sql","ai-story-character-v1.sql","ai-story-script-v1.sql","ai-story-scene-authority-v1.sql","ai-story-canonical-scene-aggregate-lifecycle-v2.sql"]){await sql.unsafe(readFileSync(resolve(process.cwd(),`packages/db/sql/${file}`),"utf8"));}
+    for(const file of ["ai-story-outline-v1.sql","ai-story-character-v1.sql","ai-story-script-v1.sql","ai-story-scene-authority-v1.sql","ai-story-canonical-scene-aggregate-lifecycle-v2.sql","ai-story-scene-execution-persistence-v1.sql"]){await sql.unsafe(readFileSync(resolve(process.cwd(),`packages/db/sql/${file}`),"utf8"));}
     await sql`insert into ai_stories(id,org_id,workspace_id,campaign_id,title,original_idea,status) values(${I.story}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${fixture.campaignAId}::uuid,'Scene service test','Intent','planning')`;
     await sql`insert into ai_story_versions(id,story_id,version_number,structured_content,frozen_at) values(${I.storyVersion}::uuid,${I.story}::uuid,1,${sql.json({title:"Story",summary:"Summary",objective:"Objective",targetAudience:"Audience",tone:"Tone",estimatedDuration:"4s",story:{opening:"Open",development:"Develop",ending:"End"},keyMessages:[],cta:"CTA",assetReferences:[],warnings:[]})},now())`;
     await sql`update ai_stories set current_version_id=${I.storyVersion}::uuid where id=${I.story}::uuid`;
   },30_000);
-  afterAll(async()=>{await closeDb();if(!sql)return;await sql.begin(async(tx)=>{await tx`delete from ai_story_canonical_scene_versions where story_id=${I.story}::uuid`;await tx`delete from ai_story_canonical_scenes where story_id=${I.story}::uuid`;});await sql`delete from ai_story_script_versions where story_id=${I.story}::uuid`;await sql`delete from ai_story_outline_versions where story_id=${I.story}::uuid`;await sql.begin(async(tx)=>{await tx`delete from ai_story_character_versions where character_id=${I.character}::uuid`;await tx`delete from ai_story_characters where character_id=${I.character}::uuid`;});await sql`delete from ai_story_versions where story_id=${I.story}::uuid`;await sql`delete from ai_stories where id=${I.story}::uuid`;await cleanupRlsFixture(sql,fixture);await sql.end();},30_000);
+  afterAll(async()=>{await closeDb();if(!sql)return;await sql`delete from ai_story_scene_intent_validation_results where org_id=${fixture.orgId}::uuid`;await sql`delete from ai_story_scene_executions where story_id=${I.story}::uuid`;await sql`delete from ai_story_execution_plans where story_id=${I.story}::uuid`;await sql`delete from ai_story_scene_instruction_snapshots where org_id=${fixture.orgId}::uuid`;await sql`delete from ai_story_animation_packages where story_id=${I.story}::uuid`;await sql.begin(async(tx)=>{await tx`delete from ai_story_canonical_scene_versions where story_id=${I.story}::uuid`;await tx`delete from ai_story_canonical_scenes where story_id=${I.story}::uuid`;});await sql`delete from ai_story_script_versions where story_id=${I.story}::uuid`;await sql`delete from ai_story_outline_versions where story_id=${I.story}::uuid`;await sql.begin(async(tx)=>{await tx`delete from ai_story_character_versions where character_id=${I.character}::uuid`;await tx`delete from ai_story_characters where character_id=${I.character}::uuid`;});await sql`delete from ai_story_versions where story_id=${I.story}::uuid`;await sql`delete from ai_stories where id=${I.story}::uuid`;await cleanupRlsFixture(sql,fixture);await sql.end();},30_000);
 
   it("proposes, validates, approves, freezes, revises only after FROZEN, and blocks another incomplete revision",async()=>{
     const scope={orgId:fixture.orgId,workspaceId:fixture.workspaceAId,campaignId:fixture.campaignAId,storyId:I.story,storyVersionId:I.storyVersion,actorUserId:fixture.userAId,requireCurrentFrozenStoryVersion:true};
@@ -51,5 +59,26 @@ describeIntegration("AI Story canonical Scene service lifecycle against aggregat
     const scenes=new AiStoryCanonicalSceneAuthorityService();const first=build(1,"Initial environment",[]);await scenes.proposeRevisionSet(scope,[first]);expect((await scenes.transitionSet(scope,"VALIDATED"))[0]!.status).toBe("VALIDATED");expect((await scenes.transitionSet(scope,"APPROVED"))[0]!.status).toBe("APPROVED");expect((await scenes.transitionSet(scope,"FROZEN"))[0]!.status).toBe("FROZEN");
     const second=build(2,"Revised environment",[first.sceneVersionId]);await expect(scenes.proposeRevisionSet(scope,[second])).resolves.toEqual([second]);
     const third=build(3,"Another environment",[second.sceneVersionId]);await expect(scenes.proposeRevisionSet(scope,[third])).rejects.toMatchObject({code:"SCENE_REVISION_REQUIRES_FROZEN"});
+    await scenes.transitionSet(scope,"VALIDATED");await scenes.transitionSet(scope,"APPROVED");await scenes.transitionSet(scope,"FROZEN");
+  },30_000);
+
+  it("persists and discovers exact canonical execution lineage through PostgreSQL",async()=>{
+    const db=getDb();
+    const scope={orgId:fixture.orgId,workspaceId:fixture.workspaceAId,campaignId:fixture.campaignAId,storyId:I.story,storyVersionId:I.storyVersion};
+    const current=await resolveCurrentFrozenCanonicalSceneSet(db,scope);
+    expect(current).toHaveLength(1);
+    const legacy=animationPackageFixture("ready_for_execution");
+    const payload={...legacy,canonicalSceneAuthority:buildAiStoryAnimationPackageCanonicalSceneAuthorityV1({storyId:I.story,storyVersionId:I.storyVersion,scenePlan:legacy.scenePlan,canonicalScenes:current!})};
+    const packageId=id(10);
+    await sql`insert into ai_story_animation_packages(id,org_id,workspace_id,campaign_id,story_id,story_version_id,status,payload,approved_at,approved_by) values(${packageId}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${fixture.campaignAId}::uuid,${I.story}::uuid,${I.storyVersion}::uuid,'ready_for_execution',${sql.json(payload)},now(),${fixture.userAId}::uuid)`;
+    const compiled=compileSceneExecutionIntents(payload,{orgId:fixture.orgId,workspaceId:fixture.workspaceAId,campaignId:fixture.campaignAId,storyId:I.story,storyVersionId:I.storyVersion,storyVersionNumber:1,storyVersionFrozenAt:"2026-09-15T00:00:00.000Z",animationPackageId:packageId,animationPackageStatus:"ready_for_execution",compiledAt:"2026-09-15T01:00:00.000Z"});
+    const validationResults=compiled.intents.map((intent)=>({status:"passed" as const,intentId:intent.identity.sceneExecutionId,sceneId:intent.identity.sceneId,validatedAt:"2026-09-15T01:01:00.000Z",contractVersion:"1" as const,errors:[]}));
+    const persisted=await new AiStorySceneExecutionPersistenceRepository(db).persistCompilation({...compiled,plan:compiled.storyExecutionPlan,validationResults});
+    expect(persisted.intents[0]!.identity).toMatchObject({sceneId:current![0]!.sceneId,sceneVersionId:current![0]!.sceneVersionId,sceneFingerprint:current![0]!.fingerprint,scriptVersionId:current![0]!.scriptVersionId});
+    const discovered=await discoverCurrentExecutionPlan({userId:fixture.userAId,campaignId:fixture.campaignAId,storyId:I.story});
+    expect(discovered.executionPlan?.executionPlanId).toBe(compiled.storyExecutionPlan.storyExecutionId);
+    const stored=await db.select({sceneId:schema.aiStorySceneExecutions.sceneId,intent:schema.aiStorySceneExecutions.intent}).from(schema.aiStorySceneExecutions);
+    expect(stored[0]!.sceneId).toBe(current![0]!.sceneId);
+    expect(stored[0]!.intent.identity.sceneVersionId).toBe(current![0]!.sceneVersionId);
   },30_000);
 });
