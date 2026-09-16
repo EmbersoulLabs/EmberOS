@@ -120,9 +120,8 @@ describeIntegration("AI Story pre-dispatch bundle supersession", () => {
       join ai_story_animation_packages p on p.story_id = s.id and p.story_version_id = v.id
       where s.id = ${fixture.storyId}::uuid
     `;
-    expect(seededOwnership).toMatchObject({org_id:fixture.orgId,workspace_id:fixture.workspaceId,campaign_id:fixture.campaignId,current_version_id:null,story_version_id:fixture.storyVersionId,animation_package_id:fixture.animationPackageId,animation_package_status:"ready_for_execution"});
+    expect(seededOwnership).toMatchObject({org_id:fixture.orgId,workspace_id:fixture.workspaceId,campaign_id:fixture.campaignId,current_version_id:fixture.storyVersionId,story_version_id:fixture.storyVersionId,animation_package_id:fixture.animationPackageId,animation_package_status:"ready_for_execution"});
     expect(seededOwnership?.frozen_at).not.toBeNull();
-    await sqlClient`update ai_stories set current_version_id = ${fixture.storyVersionId}::uuid where id = ${fixture.storyId}::uuid`;
     const [currentStory] = await sqlClient`select current_version_id from ai_stories where id = ${fixture.storyId}::uuid`;
     expect(currentStory?.current_version_id).toBe(fixture.storyVersionId);
     const prepared = await prepareAuthorizedSchedulingPlan({ purpose, ids: fixture });
