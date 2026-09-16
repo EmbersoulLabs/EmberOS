@@ -520,7 +520,7 @@ export async function runSinglePlanningStage(input: {
         usage = addUsage(usage, generated.usage);
         draft = { ...draft, characterContinuity: generated.characterContinuity, usage };
       }
-      await ensureCurrentFrozenCanonicalSceneSet({
+      const canonicalScenes = await ensureCurrentFrozenCanonicalSceneSet({
         db,
         orgId: ctx.campaign.orgId,
         workspaceId: ctx.campaign.workspaceId,
@@ -545,6 +545,9 @@ export async function runSinglePlanningStage(input: {
         shotPlan: draft.shotPlan!,
         characterContinuity: draft.characterContinuity!,
         worldContinuity: draft.worldContinuity!,
+        canonicalScenes,
+        storyId,
+        storyVersionId: ctx.loaded.currentVersion!.id,
         usage,
       });
       const savedPackage = await saveAnimationPackage(db, {

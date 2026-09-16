@@ -16,7 +16,8 @@ const { requireAuth, authorizeAccess, resolvePlan, getDb } = vi.hoisted(() => ({
   getDb: vi.fn(),
 }));
 
-vi.mock("@ceo-agent/agents", () => ({
+vi.mock("@ceo-agent/agents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@ceo-agent/agents")>()),
   runFullStoryPlanningPipeline: vi.fn(),
   authorizeAndExecuteExecutionPlan: vi.fn(),
   authorizeAiStoryExecution: vi.fn(),

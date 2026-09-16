@@ -111,6 +111,19 @@ describeIntegration("AI Story pre-dispatch bundle supersession", () => {
     const fixture = ids();
     cleanupIds.push(fixture);
     await seedPr32Tenant(sqlClient, fixture, PR32_USER_A, purpose);
+    const [seededOwnership] = await sqlClient`
+      select s.org_id, s.workspace_id, s.campaign_id, s.current_version_id,
+        v.id as story_version_id, v.frozen_at,
+        p.id as animation_package_id, p.status as animation_package_status
+      from ai_stories s
+      join ai_story_versions v on v.story_id = s.id
+      join ai_story_animation_packages p on p.story_id = s.id and p.story_version_id = v.id
+      where s.id = ${fixture.storyId}::uuid
+    `;
+    expect(seededOwnership).toMatchObject({org_id:fixture.orgId,workspace_id:fixture.workspaceId,campaign_id:fixture.campaignId,current_version_id:fixture.storyVersionId,story_version_id:fixture.storyVersionId,animation_package_id:fixture.animationPackageId,animation_package_status:"ready_for_execution"});
+    expect(seededOwnership?.frozen_at).not.toBeNull();
+    const [currentStory] = await sqlClient`select current_version_id from ai_stories where id = ${fixture.storyId}::uuid`;
+    expect(currentStory?.current_version_id).toBe(fixture.storyVersionId);
     const prepared = await prepareAuthorizedSchedulingPlan({ purpose, ids: fixture });
     const sourceInput = await captureScheduleAcceptedBundleInput({
       executionPlanId: prepared.executionPlanId,

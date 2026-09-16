@@ -94,6 +94,10 @@ export async function seedPr32Tenant(
     VALUES (${ids.storyVersionId}, ${ids.storyId}, 1, ${sql.json({})}, NOW())
   `;
   await sql`
+    UPDATE ai_stories SET current_version_id = ${ids.storyVersionId}
+    WHERE id = ${ids.storyId}
+  `;
+  await sql`
     INSERT INTO ai_story_animation_packages (
       id, org_id, workspace_id, campaign_id, story_id, story_version_id, status, payload
     ) VALUES (

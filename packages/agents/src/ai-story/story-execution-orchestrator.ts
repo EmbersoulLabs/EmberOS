@@ -7,11 +7,12 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   getDb,
-  resolveApprovedAnimationPackageForStoryVersion,
+  resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion,
   schema,
 } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
+  AuthoritativeAnimationPackagePayloadSchema,
   AiStoryExecutionProgressSchema,
   AiStoryGenerateReviewResultSchema,
   EXECUTION_CAPABILITY_IDS,
@@ -164,7 +165,7 @@ export async function createGenerateReview(input: {
   if (!story?.currentVersionId) {
     throw new Error("Current Story Version not found");
   }
-  const pkgRow = await resolveApprovedAnimationPackageForStoryVersion(input.db, {
+  const pkgRow = await resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion(input.db, {
     orgId: input.orgId,
     workspaceId: input.workspaceId,
     campaignId: input.campaignId,
@@ -184,7 +185,7 @@ export async function createGenerateReview(input: {
     throw new Error("Story Version for Animation Package not found");
   }
 
-  const payload = AnimationPackagePayloadSchema.parse(pkgRow.payload);
+  const payload = AuthoritativeAnimationPackagePayloadSchema.parse(pkgRow.payload);
   const referencedAssetIds = collectReferencedAssetIds(payload);
 
   const resolvedAssets =

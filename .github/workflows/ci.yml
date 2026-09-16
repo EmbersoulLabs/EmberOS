@@ -77,6 +77,9 @@ jobs:
       - name: Verify test database mutation guard
         run: pnpm exec vitest run --config vitest.config.ts tests/test-db-authority-guard.test.ts
 
+      - name: Bootstrap Supabase auth prerequisites on isolated PostgreSQL
+        run: pnpm exec tsx scripts/bootstrap-test-supabase-auth.ts
+
       - name: Apply canonical Drizzle schema
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
 

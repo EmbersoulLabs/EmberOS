@@ -69,6 +69,17 @@ describeIntegration("AI Story post-terminal Provider retry PostgreSQL authority"
     const ids = fixtureIds();
     cleanup.push(ids);
     await seedPr32Tenant(sqlClient, ids, PR32_USER_A, label);
+    const [ownership] = await sqlClient`
+      select s.org_id, s.workspace_id, s.campaign_id, s.current_version_id,
+        v.id as story_version_id, v.frozen_at,
+        p.id as animation_package_id, p.status as animation_package_status
+      from ai_stories s
+      join ai_story_versions v on v.story_id = s.id
+      join ai_story_animation_packages p on p.story_id = s.id and p.story_version_id = v.id
+      where s.id = ${ids.storyId}::uuid
+    `;
+    expect(ownership).toMatchObject({org_id:ids.orgId,workspace_id:ids.workspaceId,campaign_id:ids.campaignId,current_version_id:ids.storyVersionId,story_version_id:ids.storyVersionId,animation_package_id:ids.animationPackageId,animation_package_status:"ready_for_execution"});
+    expect(ownership?.frozen_at).not.toBeNull();
     const plan = await prepareAuthorizedSchedulingPlan({ purpose: label, ids });
     const schedule = await captureScheduleAcceptedBundleInput({
       executionPlanId: plan.executionPlanId,

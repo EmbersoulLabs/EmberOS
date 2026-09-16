@@ -29,6 +29,14 @@ const CAMP = "33333333-3333-3333-3333-333333333333";
 const STORY = "44444444-4444-4444-4444-444444444444";
 const VER = "55555555-5555-5555-5555-555555555555";
 const PKG = "66666666-6666-6666-6666-666666666666";
+const SCRIPT = "77777777-7777-4777-8777-777777777777";
+const CANONICAL_SCENE_A = "88888888-8888-4888-8888-888888888881";
+const CANONICAL_SCENE_B = "88888888-8888-4888-8888-888888888882";
+const CANONICAL_VERSION_A = "99999999-9999-4999-8999-999999999991";
+const CANONICAL_VERSION_B = "99999999-9999-4999-8999-999999999992";
+const HASH_A = `sha256:${"a".repeat(64)}`;
+const HASH_B = `sha256:${"b".repeat(64)}`;
+const SET_HASH = `sha256:${"c".repeat(64)}`;
 
 function samplePackage(assetIds: string[] = [ASSET_A]): AnimationPackagePayload {
   const story = {
@@ -207,6 +215,15 @@ function samplePackage(assetIds: string[] = [ASSET_A]): AnimationPackagePayload 
     narrative: creativeContext.narrativeContext,
     narrativeIntegration: { consistent: true, issues: [], links: [] },
     status: "ready_for_execution",
+    canonicalSceneAuthority: {
+      contractVersion: "ai-story-animation-package-canonical-scene-binding.v1",
+      scriptVersionId: SCRIPT,
+      sceneSetFingerprint: SET_HASH,
+      scenes: [
+        { order: 0, planningSceneId: "scene-001", sceneId: CANONICAL_SCENE_A, sceneVersionId: CANONICAL_VERSION_A, sceneFingerprint: HASH_A, sourceScriptSceneIds: ["aaaaaaaa-0000-4000-8000-000000000001"] },
+        { order: 1, planningSceneId: "scene-002", sceneId: CANONICAL_SCENE_B, sceneVersionId: CANONICAL_VERSION_B, sceneFingerprint: HASH_B, sourceScriptSceneIds: ["aaaaaaaa-0000-4000-8000-000000000002"] },
+      ],
+    },
   });
 }
 
@@ -234,7 +251,12 @@ describe("Phase 1 Scene Execution Compiler", () => {
     expect(a.estimate.estimatedProviderExecutions).toBe(2);
     expect((a.estimate as { targetOutputCount?: number }).targetOutputCount).toBeUndefined();
 
-    expect(a.intents.map((i) => i.identity.sceneId)).toEqual(["scene-001", "scene-002"]);
+    expect(a.intents.map((i) => i.identity.sceneId)).toEqual([CANONICAL_SCENE_A, CANONICAL_SCENE_B]);
+    expect(a.intents[0]!.identity.sceneId).not.toBe("scene-001");
+    expect(a.intents[0]!.identity.sceneVersionId).toBe(CANONICAL_VERSION_A);
+    expect(a.intents[0]!.identity.sceneFingerprint).toBe(HASH_A);
+    expect(a.intents[0]!.identity.scriptVersionId).toBe(SCRIPT);
+    expect(a.intents[0]!.animationPackage.sceneSetFingerprint).toBe(SET_HASH);
     expect(a.intents[0]!.shotReferences).toHaveLength(2);
     expect(a.intents[1]!.shotReferences).toHaveLength(1);
 
@@ -307,6 +329,14 @@ describe("Phase 1 Scene Execution Compiler", () => {
       emotion: "Delight",
       information: "Gift is shared",
       order: 0,
+    });
+    mutable.canonicalSceneAuthority!.scenes.push({
+      order: 2,
+      planningSceneId: "scene-003",
+      sceneId: "88888888-8888-4888-8888-888888888883",
+      sceneVersionId: "99999999-9999-4999-8999-999999999993",
+      sceneFingerprint: `sha256:${"d".repeat(64)}`,
+      sourceScriptSceneIds: ["aaaaaaaa-0000-4000-8000-000000000003"],
     });
 
     const parsed = AnimationPackagePayloadSchema.parse(pkg);

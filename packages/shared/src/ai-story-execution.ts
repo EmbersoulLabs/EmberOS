@@ -42,6 +42,9 @@ export const AiStoryAnimationPackageExecutionReferenceSchema = z.object({
   storyVersionId: z.string().uuid(),
   sceneCount: z.number().int().positive(),
   integrityHash: IntegrityHashSchema,
+  /** Optional only for historical execution-record read compatibility. */
+  scriptVersionId: z.string().uuid().optional(),
+  sceneSetFingerprint: IntegrityHashSchema.optional(),
 });
 
 export type AiStoryAnimationPackageExecutionReference = z.infer<
@@ -77,6 +80,10 @@ export const AiStorySceneExecutionIdentitySchema = z.object({
   storyVersionId: z.string().uuid(),
   animationPackageId: z.string().uuid(),
   sceneId: NonEmptyTextSchema,
+  /** Optional only for historical execution-record read compatibility. */
+  sceneVersionId: z.string().uuid().optional(),
+  sceneFingerprint: IntegrityHashSchema.optional(),
+  scriptVersionId: z.string().uuid().optional(),
   sceneOrder: z.number().int().nonnegative(),
   idempotencyKey: NonEmptyTextSchema,
   deterministicFingerprint: IntegrityHashSchema,
@@ -151,6 +158,11 @@ export const AiStorySceneCompiledInstructionsSchema = z.object({
   contractVersion: z.literal(AI_STORY_EXECUTION_CONTRACT_VERSION),
   capabilityId: z.literal("animation-video-generation"),
   sceneId: NonEmptyTextSchema,
+  /** Optional only for historical instruction-snapshot read compatibility. */
+  sceneVersionId: z.string().uuid().optional(),
+  sceneFingerprint: IntegrityHashSchema.optional(),
+  scriptVersionId: z.string().uuid().optional(),
+  sceneSetFingerprint: IntegrityHashSchema.optional(),
   sceneOrder: z.number().int().nonnegative(),
   purpose: NonEmptyTextSchema,
   transition: z.string().default(""),
@@ -197,6 +209,36 @@ export const AiStoryExecutionPlanSchema = z.object({
 });
 
 export type AiStoryExecutionPlan = z.infer<typeof AiStoryExecutionPlanSchema>;
+
+const AiStoryCanonicalAnimationPackageExecutionReferenceSchema =
+  AiStoryAnimationPackageExecutionReferenceSchema.extend({
+    scriptVersionId: z.string().uuid(),
+    sceneSetFingerprint: IntegrityHashSchema,
+  });
+const AiStoryCanonicalSceneExecutionIdentitySchema =
+  AiStorySceneExecutionIdentitySchema.extend({
+    sceneVersionId: z.string().uuid(),
+    sceneFingerprint: IntegrityHashSchema,
+    scriptVersionId: z.string().uuid(),
+  });
+
+/** Strict new-write execution contracts; base schemas remain historical-read compatible. */
+export const AiStoryCanonicalSceneExecutionIntentSchema =
+  AiStorySceneExecutionIntentSchema.extend({
+    identity: AiStoryCanonicalSceneExecutionIdentitySchema,
+    animationPackage: AiStoryCanonicalAnimationPackageExecutionReferenceSchema,
+  });
+export const AiStoryCanonicalSceneCompiledInstructionsSchema =
+  AiStorySceneCompiledInstructionsSchema.extend({
+    sceneVersionId: z.string().uuid(),
+    sceneFingerprint: IntegrityHashSchema,
+    scriptVersionId: z.string().uuid(),
+    sceneSetFingerprint: IntegrityHashSchema,
+  });
+export const AiStoryCanonicalExecutionPlanSchema = AiStoryExecutionPlanSchema.extend({
+  animationPackage: AiStoryCanonicalAnimationPackageExecutionReferenceSchema,
+  sceneExecutions: z.array(AiStoryCanonicalSceneExecutionIdentitySchema).min(1),
+});
 
 /** Immutable identity of one provider attempt for one Scene execution. */
 export const AiStorySceneExecutionAttemptSchema = z.object({
