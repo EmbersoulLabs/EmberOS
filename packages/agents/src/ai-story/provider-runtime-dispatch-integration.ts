@@ -297,9 +297,12 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
   readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
 }): AiStoryCompiledProviderRequest {
-  const authority = input.intent.generationAuthority;
-  if (!authority || !input.instructions.generationAuthority ||
-    integrityHash(authority) !== integrityHash(input.instructions.generationAuthority)) {
+  const canonicalScene = Boolean(input.intent.identity.sceneVersionId);
+  const authority = input.intent.generationAuthority ??
+    (!canonicalScene ? input.instructions.generationAuthority : undefined);
+  if ((canonicalScene && (!input.intent.generationAuthority || !input.instructions.generationAuthority)) ||
+    (input.intent.generationAuthority && input.instructions.generationAuthority &&
+      integrityHash(input.intent.generationAuthority) !== integrityHash(input.instructions.generationAuthority))) {
     throw new AiStoryProviderRuntimeError(
       "COMPILED_REQUEST_INVALID",
       "Scene generation authority conflicts with its immutable instruction snapshot"
@@ -308,18 +311,24 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   const explicitT2v =
     authority?.strategy === "TEXT_TO_VIDEO" &&
     authority.referenceSource === "REFERENCE_FREE_T2V";
-  const referenceIds = authority.effectiveReferenceIds;
-  if (input.intent.identity.sceneVersionId && authority.referenceSource === "STORY_INHERITED") {
+  const referenceIds = authority?.effectiveReferenceIds ?? input.intent.referencedAssetIds;
+  if (canonicalScene && authority?.referenceSource === "STORY_INHERITED") {
     throw new AiStoryProviderRuntimeError(
       "COMPILED_REQUEST_INVALID",
       "Current Canonical Scene cannot inherit an implicit Story generation mode"
     );
   }
-  if (JSON.stringify(referenceIds) !== JSON.stringify(input.intent.referencedAssetIds) ||
-      JSON.stringify(referenceIds) !== JSON.stringify(input.instructions.referencedAssetIds)) {
+  if (authority && (JSON.stringify(referenceIds) !== JSON.stringify(input.intent.referencedAssetIds) ||
+      JSON.stringify(referenceIds) !== JSON.stringify(input.instructions.referencedAssetIds))) {
     throw new AiStoryProviderRuntimeError(
       "COMPILED_REQUEST_INVALID",
       "Explicit Scene generation references disagree with immutable execution authority"
+    );
+  }
+  if (!authority && referenceIds.length === 0) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Reference-free compilation requires explicit TEXT_TO_VIDEO authority"
     );
   }
   if (explicitT2v && referenceIds.length !== 0) {
@@ -352,7 +361,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     : null;
   const referenceAssetById = new Map((input.referenceAssets ?? []).map((asset) => [asset.assetId, asset]));
   const productMaterial = input.productMaterialSelection ?? null;
-  if (!explicitT2v && input.intent.identity.sceneVersionId && !productMaterial) {
+  if (!explicitT2v && canonicalScene && !productMaterial) {
     throw new AiStoryProviderRuntimeError(
       "COMPILED_REQUEST_INVALID",
       "Canonical image-conditioned execution requires exact READY Scene Product material authority"
@@ -415,7 +424,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   }
   const firstFrameAssetId = explicitT2v
     ? null
-    : productMaterial?.selectedMaterial?.assetId ?? providerReadySceneInput?.assetId ?? authority.firstFrameAssetId;
+    : productMaterial?.selectedMaterial?.assetId ?? providerReadySceneInput?.assetId ?? authority?.firstFrameAssetId ?? (!canonicalScene ? referenceIds[0] : null);
   if (!explicitT2v && !firstFrameAssetId) {
     throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation is missing its canonical first frame");
   }

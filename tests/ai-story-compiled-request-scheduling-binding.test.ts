@@ -76,6 +76,29 @@ function compile(mode: "T2V" | "I2V") {
 }
 
 describe("compiled Provider request scheduling authority", () => {
+  it("keeps legacy image compilation compatible but never infers a current Canonical Scene mode", () => {
+    const selected = inputs("I2V");
+    const { generationAuthority: _intentMode, ...legacyIntent } = selected.intent;
+    const { generationAuthority: _instructionMode, ...legacyInstructions } = selected.instructions;
+    const input = {
+      intent: legacyIntent,
+      instructions: legacyInstructions,
+      authority: AUTHORITY,
+      adapterVersion: "1.0.0",
+      compiledAt: "2026-09-01T00:00:00.000Z",
+      referenceAssets: legacyIntent.referencedAssetIds.map((assetId) => ({
+        assetId,
+        mediaType: "image/jpeg",
+        storagePath: `${legacyIntent.identity.workspaceId}/library/${assetId}.jpg`,
+      })),
+    };
+    expect(compileImmutableSeedanceRequestFromSceneCompilation(input).referenceMappings).toHaveLength(1);
+    expect(() => compileImmutableSeedanceRequestFromSceneCompilation({
+      ...input,
+      intent: { ...legacyIntent, identity: { ...legacyIntent.identity, sceneVersionId: "50000000-0000-4000-8000-000000000087" } },
+    })).toThrow(/generation authority conflicts/);
+  });
+
   it("binds exact current Product source and certified derivative as the sole private first frame", () => {
     const { intent, instructions } = inputs("I2V");
     const canonicalSceneId = "50000000-0000-4000-8000-000000000086";
