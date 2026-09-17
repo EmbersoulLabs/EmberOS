@@ -4,10 +4,11 @@ import { getDb, resolveCurrentFrozenCanonicalSceneSet, schema } from "@ceo-agent
 import {
   AiStoryAuthoritativeSceneProductBindingSchema,
   freezePhotoSceneExtractionInput,
+  resolveExplicitAiStorySceneGenerationAuthority,
   type AiStoryEffectiveSceneGenerationAuthority,
   type ProductVisualMaterialSelectionAuthority,
 } from "@ceo-agent/shared";
-import { deriveProductVisualMaterialSelectionAuthority } from "@ceo-agent/shared/server";
+import { deriveProductVisualMaterialSelectionAuthority, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { deriveStoryProductBackgroundSuitability } from "@/lib/ai-story-product-background-suitability";
 import { resolveExactStoryProductDerivative } from "@/lib/ai-story-exact-product-derivative";
@@ -53,6 +54,13 @@ export async function resolveCurrentSceneProductMaterialForScheduling(input: {
     throw new AiStoryProductMaterialRuntimeError(
       "PRODUCT_MATERIAL_AUTHORITY_INVALID",
       "Image-conditioned execution requires one exact current FROZEN Scene Product binding",
+    );
+  }
+  if (sha256CanonicalIntegrityHash(resolveExplicitAiStorySceneGenerationAuthority(scene.generationAuthority)) !==
+      sha256CanonicalIntegrityHash(input.generationAuthority)) {
+    throw new AiStoryProductMaterialRuntimeError(
+      "PRODUCT_MATERIAL_AUTHORITY_INVALID",
+      "Scheduling mode does not match the exact current Canonical Scene decision",
     );
   }
   const binding = AiStoryAuthoritativeSceneProductBindingSchema.parse(scene.productBindings[0]);

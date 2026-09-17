@@ -409,6 +409,8 @@ export const AiStoryAnimationPackageCanonicalSceneBindingSchema = z.object({
   sceneVersionId: z.string().uuid(),
   sceneFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   sourceScriptSceneIds: z.array(z.string().uuid()).min(1),
+  /** Historical bindings may omit this; current execution bindings may not. */
+  generationAuthority: AiStorySceneGenerationAuthoritySchema.optional(),
 }).strict();
 
 export const AiStoryAnimationPackageCanonicalSceneAuthoritySchema = z.object({
@@ -445,7 +447,12 @@ export type AiStoryAnimationPackageCanonicalSceneAuthority = z.infer<
 
 /** Strict new-write contract. Historical reads continue through AnimationPackagePayloadSchema. */
 export const AuthoritativeAnimationPackagePayloadSchema = AnimationPackagePayloadSchema.extend({
-  canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema,
+  scenePlan: z.array(ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema })).min(1),
+  canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema.extend({
+    scenes: z.array(AiStoryAnimationPackageCanonicalSceneBindingSchema.extend({
+      generationAuthority: AiStorySceneGenerationAuthoritySchema,
+    })).min(1),
+  }),
 });
 export type AuthoritativeAnimationPackagePayload = z.infer<
   typeof AuthoritativeAnimationPackagePayloadSchema

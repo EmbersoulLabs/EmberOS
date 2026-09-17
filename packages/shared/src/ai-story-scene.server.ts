@@ -56,6 +56,7 @@ function sceneTruth(scene: AiStoryCanonicalScene) {
     locationState: scene.locationState,
     castBindings: scene.castBindings,
     productBindings: scene.productBindings,
+    ...(scene.generationAuthority ? { generationAuthority: scene.generationAuthority } : {}),
     entryState: scene.entryState,
     events: scene.events,
     exitState: scene.exitState,

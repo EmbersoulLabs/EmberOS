@@ -200,6 +200,14 @@ export function validateSceneExecutionPersistenceInput(
         "Scene instruction lineage conflicts with the Intent"
       );
     }
+    if (identity.sceneVersionId && (
+      !intent.generationAuthority || !snapshot.generationAuthority ||
+      canonicalPersistenceHash(intent.generationAuthority) !== canonicalPersistenceHash(snapshot.generationAuthority)
+    )) {
+      throw new ExecutionPlanIdentityConflictError(
+        "Current Canonical Scene Intent and instruction snapshot require the same explicit generation mode"
+      );
+    }
     if (canonicalPersistenceHash(snapshot) !== intent.normalizedPayloadReference.contentHash) {
       throw new ExecutionPlanIdentityConflictError(
         "Scene instruction hash conflicts with the Intent"

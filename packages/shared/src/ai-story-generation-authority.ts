@@ -14,10 +14,7 @@ export const AI_STORY_SCENE_REFERENCE_SOURCES = [
 
 const AssetId = z.string().uuid();
 
-/**
- * Versioned planning authority. Absence is the backward-compatible equivalent
- * of STORY_INHERITED + PRODUCT_GROUNDED_VIDEO.
- */
+/** Historical readers may omit this authority; current execution must not infer it. */
 export const AiStorySceneGenerationAuthoritySchema = z.union([
     z.object({
       strategy: z.literal("TEXT_TO_VIDEO"),
@@ -63,3 +60,71 @@ export type AiStorySceneGenerationAuthority = z.infer<
 export type AiStoryEffectiveSceneGenerationAuthority = z.infer<
   typeof AiStoryEffectiveSceneGenerationAuthoritySchema
 >;
+
+export class AiStorySceneGenerationModeAuthorityError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "AiStorySceneGenerationModeAuthorityError";
+  }
+}
+
+/** Current-write gate. Historical snapshots remain parseable without a mode. */
+export function assertExplicitAiStorySceneGenerationMode(input: {
+  generationAuthority?: AiStorySceneGenerationAuthority;
+  productBindings: readonly { sourceAssetId: string }[];
+}): AiStorySceneGenerationAuthority {
+  const authority = input.generationAuthority;
+  if (!authority) {
+    throw new AiStorySceneGenerationModeAuthorityError(
+      "CANONICAL_SCENE_GENERATION_MODE_AUTHORITY_MISSING",
+      "Current Canonical Scene authority requires an explicit generation mode",
+    );
+  }
+  if (authority.referenceSource === "STORY_INHERITED") {
+    throw new AiStorySceneGenerationModeAuthorityError(
+      "CANONICAL_SCENE_GENERATION_MODE_AUTHORITY_UNRESOLVED",
+      "Inherited Story references do not identify an exact Scene first-frame material",
+    );
+  }
+  if (authority.referenceSource === "SCENE_EXPLICIT" && (
+    input.productBindings.length !== 1 ||
+    authority.firstFrameAssetId !== input.productBindings[0]!.sourceAssetId
+  )) {
+    throw new AiStorySceneGenerationModeAuthorityError(
+      "CANONICAL_SCENE_GENERATION_MODE_MATERIAL_MISMATCH",
+      "Image-conditioned mode must name the exact current Scene Product source Asset",
+    );
+  }
+  return authority;
+}
+
+/** Resolves only an explicit Scene decision; Story/Provider inventory is never a mode selector. */
+export function resolveExplicitAiStorySceneGenerationAuthority(
+  authority: AiStorySceneGenerationAuthority | undefined,
+): AiStoryEffectiveSceneGenerationAuthority {
+  if (!authority || authority.referenceSource === "STORY_INHERITED") {
+    throw new AiStorySceneGenerationModeAuthorityError(
+      "CANONICAL_SCENE_GENERATION_MODE_AUTHORITY_MISSING",
+      "An exact explicit Scene generation decision is required",
+    );
+  }
+  if (authority.referenceSource === "REFERENCE_FREE_T2V") {
+    return {
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      effectiveReferenceIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: authority.productVisualIdentityRequirement,
+    };
+  }
+  return {
+    strategy: authority.strategy,
+    referenceSource: "SCENE_EXPLICIT",
+    effectiveReferenceIds: [
+      authority.firstFrameAssetId,
+      ...[...new Set(authority.referenceAssetIds.filter((id) => id !== authority.firstFrameAssetId))].sort(),
+    ],
+    firstFrameAssetId: authority.firstFrameAssetId,
+    productVisualIdentityRequirement: "REQUIRED",
+  };
+}

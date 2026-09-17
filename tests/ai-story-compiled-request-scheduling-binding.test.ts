@@ -25,7 +25,18 @@ function inputs(mode: "T2V" | "I2V") {
     baseIntent.identity.sceneExecutionId
   ]!;
   if (mode === "I2V") {
-    return { intent: baseIntent, instructions: baseInstructions };
+    const firstFrameAssetId = baseIntent.referencedAssetIds[0]!;
+    const generationAuthority = {
+      strategy: "FIRST_FRAME_IMAGE_TO_VIDEO" as const,
+      referenceSource: "SCENE_EXPLICIT" as const,
+      effectiveReferenceIds: baseIntent.referencedAssetIds,
+      firstFrameAssetId,
+      productVisualIdentityRequirement: "REQUIRED" as const,
+    };
+    return {
+      intent: { ...baseIntent, generationAuthority },
+      instructions: { ...baseInstructions, generationAuthority },
+    };
   }
   const generationAuthority = {
     strategy: "TEXT_TO_VIDEO" as const,
@@ -75,7 +86,7 @@ describe("compiled Provider request scheduling authority", () => {
     const derivativeHash = `sha256:${"e".repeat(64)}`;
     const generationAuthority = {
       strategy: "PRODUCT_GROUNDED_VIDEO" as const,
-      referenceSource: "STORY_INHERITED" as const,
+      referenceSource: "SCENE_EXPLICIT" as const,
       effectiveReferenceIds: [sourceId],
       firstFrameAssetId: sourceId,
       productVisualIdentityRequirement: "REQUIRED" as const,
@@ -93,7 +104,7 @@ describe("compiled Provider request scheduling authority", () => {
         productAuthority: { productAuthorityId: sourceId, sourceAssetId: sourceId, sourceAssetContentHash: sourceHash },
         visualRequirement: {
           sceneRequirement: "REQUIRED" as const, effectiveGenerationRequirement: "REQUIRED" as const,
-          strategy: "PRODUCT_GROUNDED_VIDEO" as const, referenceSource: "STORY_INHERITED" as const,
+          strategy: "PRODUCT_GROUNDED_VIDEO" as const, referenceSource: "SCENE_EXPLICIT" as const,
         },
         suitability: { authorityFingerprint: sourceHash, outcome: derivative ? "OPAQUE_NOT_ISOLATED" as const : "TRANSPARENT_BACKGROUND_CERTIFIED" as const },
         derivativeResolution: derivative
@@ -165,7 +176,7 @@ describe("compiled Provider request scheduling authority", () => {
       authority: AUTHORITY,
       adapterVersion: "1.0.0",
       compiledAt: "2026-09-01T00:00:00.000Z",
-    })).toThrow(/explicit TEXT_TO_VIDEO authority/);
+    })).toThrow(/generation references disagree/);
   });
 
   it("preserves continuity video lineage without projecting it as a Seedance image", () => {

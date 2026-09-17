@@ -87,6 +87,13 @@ export function validateSceneExecutionIntent(
   const errors: AiStoryAiQcFinding[] = [];
   const id = intent.identity;
   const generationAuthority = intent.generationAuthority;
+  if (id.sceneVersionId && !generationAuthority) {
+    errors.push(finding(
+      "GENERATION_AUTHORITY_INVALID",
+      "generationAuthority",
+      "Current Canonical Scene execution requires an explicit generation mode."
+    ));
+  }
   const explicitReferenceFreeT2v =
     generationAuthority?.strategy === "TEXT_TO_VIDEO" &&
     generationAuthority.referenceSource === "REFERENCE_FREE_T2V" &&

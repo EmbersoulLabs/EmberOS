@@ -9,10 +9,12 @@ import {
   AiStoryCanonicalExecutionPlanSchema,
   AiStoryCanonicalSceneExecutionIntentSchema,
   AuthoritativeAnimationPackagePayloadSchema,
+  resolveExplicitAiStorySceneGenerationAuthority,
   isUuid,
   type AiStoryAnimationPackageCanonicalSceneAuthority,
   type AiStoryCanonicalScene,
 } from "@ceo-agent/shared";
+import { sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
 import {
@@ -60,11 +62,20 @@ export function isCurrentCanonicalExecutionPlan(input: {
     AiStoryCanonicalSceneExecutionIntentSchema.safeParse(intent)
   );
   if (intents.length !== input.canonicalScenes.length || intents.some((intent) => !intent.success)) return false;
+  const expectedModes = input.canonicalScenes.map((scene) => {
+    try { return resolveExplicitAiStorySceneGenerationAuthority(scene.generationAuthority); }
+    catch { return null; }
+  });
+  if (expectedModes.some((mode) => !mode)) return false;
   return input.canonicalScenes.every((scene, index) => {
     const identity = plan.sceneExecutions[index];
     const intent = intents[index];
+    const binding = input.binding.scenes[index];
+    const mode = expectedModes[index];
     return Boolean(
-      identity && intent?.success &&
+      identity && intent?.success && binding?.generationAuthority && mode && intent.data.generationAuthority &&
+      sha256CanonicalIntegrityHash(binding.generationAuthority) === sha256CanonicalIntegrityHash(scene.generationAuthority) &&
+      sha256CanonicalIntegrityHash(intent.data.generationAuthority) === sha256CanonicalIntegrityHash(mode) &&
       identity.sceneOrder === index &&
       identity.sceneId === scene.sceneId &&
       identity.sceneVersionId === scene.sceneVersionId &&

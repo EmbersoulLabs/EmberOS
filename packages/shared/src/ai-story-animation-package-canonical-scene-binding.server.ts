@@ -65,6 +65,17 @@ export function buildAiStoryAnimationPackageCanonicalSceneAuthorityV1(input: {
       "Animation Package Canonical Scene mapping is not exact, current, ordered, and FROZEN"
     );
   }
+  if (scenes.some((scene, index) =>
+    !scene.generationAuthority ||
+    !scenePlan[index]?.generationAuthority ||
+    sha256CanonicalIntegrityHash(scene.generationAuthority) !==
+      sha256CanonicalIntegrityHash(scenePlan[index]!.generationAuthority)
+  )) {
+    throw new AiStoryAnimationPackageCanonicalSceneBindingError(
+      "ANIMATION_PACKAGE_CANONICAL_SCENE_MODE_AUTHORITY_INVALID",
+      "Every current Canonical Scene must retain the exact explicit planning generation mode"
+    );
+  }
   return AiStoryAnimationPackageCanonicalSceneAuthoritySchema.parse({
     contractVersion: AI_STORY_ANIMATION_PACKAGE_CANONICAL_SCENE_BINDING_CONTRACT_VERSION,
     scriptVersionId,
@@ -81,6 +92,7 @@ export function buildAiStoryAnimationPackageCanonicalSceneAuthorityV1(input: {
       sceneVersionId: scene.sceneVersionId,
       sceneFingerprint: scene.fingerprint,
       sourceScriptSceneIds: scene.sourceScriptSceneIds,
+      generationAuthority: scene.generationAuthority,
     })),
   });
 }
