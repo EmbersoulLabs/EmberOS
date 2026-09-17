@@ -179,7 +179,7 @@ describe("AI Story cross-Scene product continuity", () => {
         payloadResolver: { resolve: async () => payload },
         assetAccessResolver: { resolveProviderAccessibleUri },
       })
-    ).rejects.toThrow(/blocked|uncertified/i);
+    ).rejects.toThrow(/blocked|uncertified|canonical Scene Product material authority/i);
 
     expect(resolveProviderAccessibleUri).not.toHaveBeenCalled();
   });

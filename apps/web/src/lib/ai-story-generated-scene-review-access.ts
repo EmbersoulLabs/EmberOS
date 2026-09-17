@@ -14,6 +14,7 @@ import {
   GeneratedSceneReviewRepository,
 } from "@ceo-agent/db";
 import { resolveCanonicalWebExecuteProviderAuthority } from "@/lib/ai-story-canonical-execute-router";
+import { createCanonicalProductMaterialSchedulingCoordinator } from "@/lib/ai-story-product-material-scheduling";
 import {
   resolveAuthorizedExecutionPlan,
   type AuthorizedExecutionPlanContext,
@@ -50,6 +51,7 @@ export async function createdGeneratedSceneReviewService() {
   const providerRouting = await resolveCanonicalWebExecuteProviderAuthority();
   return new GeneratedSceneReviewService({
     router: providerRouting.router,
+    schedulingCoordinator: createCanonicalProductMaterialSchedulingCoordinator(providerRouting.router),
   });
 }
 

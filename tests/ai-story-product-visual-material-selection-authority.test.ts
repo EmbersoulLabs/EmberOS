@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { createWorkerProviderAssetAccessResolver } from "../apps/worker/src/ai-story-provider-asset-access";
 import {
   AI_STORY_EXACT_PRODUCT_DERIVATIVE_RESOLUTION_VERSION,
   AI_STORY_PRODUCT_BACKGROUND_SUITABILITY_CONTRACT_VERSION,
@@ -455,5 +457,83 @@ describe("AI Story Product visual material selection authority", () => {
     expect(AI_STORY_PRODUCT_VISUAL_MATERIAL_SELECTION_CONTRACT_VERSION).toBe(
       "ai-story-product-visual-material-selection.v1"
     );
+  });
+});
+
+describe("private Provider Product material transport", () => {
+  const sourceBytes = Buffer.from("exact canonical Product source bytes");
+  const derivativeBytes = Buffer.from("exact certified derivative bytes");
+  const sourceHash = `sha256:${createHash("sha256").update(sourceBytes).digest("hex")}`;
+  const derivativeHash = `sha256:${createHash("sha256").update(derivativeBytes).digest("hex")}`;
+
+  function selection(kind: "SOURCE_ASSET" | "EXTRACTED_DERIVATIVE") {
+    return deriveProductVisualMaterialSelectionAuthority(selectionInput({
+      sourceHash,
+      outcome: kind === "SOURCE_ASSET" ? "TRANSPARENT_BACKGROUND_CERTIFIED" : "OPAQUE_NOT_ISOLATED",
+      derivative: kind === "SOURCE_ASSET" ? derivative("NOT_FOUND", ID.productA, sourceHash) : {
+        contractVersion: AI_STORY_EXACT_PRODUCT_DERIVATIVE_RESOLUTION_VERSION,
+        status: "FOUND",
+        productAuthorityId: ID.productA,
+        sourceAssetId: ID.productA,
+        sourceAssetContentHash: sourceHash,
+        derivative: {
+          assetId: ID.derivative,
+          contentHash: derivativeHash,
+          generationId: ID.generation,
+          generationFingerprint: HASH_G,
+          operation: "product_extraction",
+        },
+      },
+    }));
+  }
+
+  it.each(["SOURCE_ASSET", "EXTRACTED_DERIVATIVE"] as const)(
+    "signs only exact private %s bytes after current-lineage verification",
+    async (kind) => {
+      const authority = selection(kind);
+      const selected = authority.selectedMaterial!;
+      const bytes = kind === "SOURCE_ASSET" ? sourceBytes : derivativeBytes;
+      let signed = 0;
+      const resolver = createWorkerProviderAssetAccessResolver({
+        loadAuthorizedAsset: async (input) => input.assetId === selected.assetId &&
+          input.orgId === ID.org && input.workspaceId === ID.workspace && input.campaignId === ID.campaign
+          ? { storagePath: `${ID.workspace}/library/${selected.assetId}.png`, mimeType: "image/png", contentHash: selected.contentHash }
+          : null,
+        verifyCurrentSelection: async (input) => verifyProductVisualMaterialSelectionAuthority(
+          input.productMaterialSelection!, authority,
+        ),
+        readPrivateBytes: async () => bytes,
+        mintSignedUrl: async () => { signed += 1; return "https://private.invalid/short-lived"; },
+      });
+      const request = {
+        assetId: selected.assetId, orgId: ID.org, workspaceId: ID.workspace,
+        campaignId: ID.campaign, productMaterialSelection: authority,
+      };
+      await expect(resolver.resolveProviderAccessibleUri(request)).resolves.toBe("https://private.invalid/short-lived");
+      expect(signed).toBe(1);
+      for (const changed of [
+        { ...request, workspaceId: ID.story },
+        { ...request, campaignId: ID.story },
+        { ...request, assetId: ID.productB },
+        { ...request, productMaterialSelection: { ...authority, fingerprint: HASH_B } },
+      ]) {
+        await expect(resolver.resolveProviderAccessibleUri(changed)).rejects.toThrow();
+      }
+      expect(signed).toBe(1);
+    },
+  );
+
+  it("rejects changed private object bytes even when Asset metadata still claims the old hash", async () => {
+    const authority = selection("SOURCE_ASSET");
+    const resolver = createWorkerProviderAssetAccessResolver({
+      loadAuthorizedAsset: async () => ({ storagePath: "private/source.png", mimeType: "image/png", contentHash: sourceHash }),
+      verifyCurrentSelection: async () => true,
+      readPrivateBytes: async () => Buffer.from("changed bytes"),
+      mintSignedUrl: async () => { throw new Error("must not sign"); },
+    });
+    await expect(resolver.resolveProviderAccessibleUri({
+      assetId: ID.productA, orgId: ID.org, workspaceId: ID.workspace,
+      campaignId: ID.campaign, productMaterialSelection: authority,
+    })).rejects.toThrow(/content hash changed/i);
   });
 });

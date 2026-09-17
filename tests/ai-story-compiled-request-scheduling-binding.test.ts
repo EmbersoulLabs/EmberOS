@@ -8,6 +8,7 @@ import {
   validateAiStoryCompiledRequestFingerprint,
 } from "../packages/agents/src/ai-story/provider-runtime-dispatch-integration";
 import { makePhase2aCompilation } from "./helpers/ai-story-phase-2a";
+import { sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 
 const AUTHORITY = {
   qcEvaluationId: "30000000-0000-4000-8000-000000000001",
@@ -64,6 +65,72 @@ function compile(mode: "T2V" | "I2V") {
 }
 
 describe("compiled Provider request scheduling authority", () => {
+  it("binds exact current Product source and certified derivative as the sole private first frame", () => {
+    const { intent, instructions } = inputs("I2V");
+    const canonicalSceneId = "50000000-0000-4000-8000-000000000086";
+    const sceneVersionId = "50000000-0000-4000-8000-000000000087";
+    const sourceId = intent.referencedAssetIds[0]!;
+    const sourceHash = `sha256:${"d".repeat(64)}`;
+    const derivativeId = "50000000-0000-4000-8000-000000000088";
+    const derivativeHash = `sha256:${"e".repeat(64)}`;
+    const generationAuthority = {
+      strategy: "PRODUCT_GROUNDED_VIDEO" as const,
+      referenceSource: "STORY_INHERITED" as const,
+      effectiveReferenceIds: [sourceId],
+      firstFrameAssetId: sourceId,
+      productVisualIdentityRequirement: "REQUIRED" as const,
+    };
+    const makeSelection = (derivative: boolean) => {
+      const body = {
+        contractVersion: "ai-story-product-visual-material-selection.v1" as const,
+        orgId: intent.identity.tenantId,
+        workspaceId: intent.identity.workspaceId,
+        campaignId: intent.identity.campaignId,
+        storyId: intent.identity.storyId,
+        storyVersionId: intent.identity.storyVersionId,
+        sceneId: canonicalSceneId,
+        sceneVersionId,
+        productAuthority: { productAuthorityId: sourceId, sourceAssetId: sourceId, sourceAssetContentHash: sourceHash },
+        visualRequirement: {
+          sceneRequirement: "REQUIRED" as const, effectiveGenerationRequirement: "REQUIRED" as const,
+          strategy: "PRODUCT_GROUNDED_VIDEO" as const, referenceSource: "STORY_INHERITED" as const,
+        },
+        suitability: { authorityFingerprint: sourceHash, outcome: derivative ? "OPAQUE_NOT_ISOLATED" as const : "TRANSPARENT_BACKGROUND_CERTIFIED" as const },
+        derivativeResolution: derivative
+          ? { contractVersion: "ai-story-exact-product-derivative-resolution.v1" as const, status: "FOUND" as const }
+          : { contractVersion: "ai-story-exact-product-derivative-resolution.v1" as const, status: "NOT_FOUND" as const, reason: "NO_READY_EXTRACTION" as const },
+        preparationCapability: { status: "NOT_CERTIFIED" as const },
+        selection: derivative ? "EXTRACTED_DERIVATIVE" as const : "SOURCE_ASSET" as const,
+        selectedMaterial: derivative
+          ? { kind: "EXTRACTED_DERIVATIVE" as const, assetId: derivativeId, contentHash: derivativeHash,
+              generationId: "50000000-0000-4000-8000-000000000089", generationFingerprint: `sha256:${"f".repeat(64)}` }
+          : { kind: "SOURCE_ASSET" as const, assetId: sourceId, contentHash: sourceHash },
+        reason: derivative ? "EXACT_DERIVATIVE_CERTIFIED" as const : "SOURCE_TRANSPARENCY_CERTIFIED" as const,
+      };
+      return { ...body, fingerprint: sha256CanonicalIntegrityHash({ kind: body.contractVersion, authority: body }) };
+    };
+    const compileWith = (derivative: boolean, wrongHash = false) => {
+      const selection = makeSelection(derivative);
+      return compileImmutableSeedanceRequestFromSceneCompilation({
+        intent: { ...intent, identity: { ...intent.identity, sceneId: canonicalSceneId, sceneVersionId }, generationAuthority },
+        instructions: { ...instructions, sceneId: canonicalSceneId, sceneVersionId, generationAuthority },
+        authority: AUTHORITY, adapterVersion: "1.0.0", compiledAt: "2026-09-01T00:00:00.000Z",
+        referenceAssets: [
+          { assetId: sourceId, mediaType: "image/png", storagePath: "private/source.png", contentHash: sourceHash },
+          { assetId: derivativeId, mediaType: "image/png", storagePath: "private/derivative.png", contentHash: wrongHash ? sourceHash : derivativeHash },
+        ],
+        productMaterialSelection: selection,
+      });
+    };
+    const source = compileWith(false);
+    const derivative = compileWith(true);
+    expect(source.referenceMappings[0]?.assetId).toBe(sourceId);
+    expect(derivative.referenceMappings[0]?.assetId).toBe(derivativeId);
+    expect(derivative.productMaterialSelection?.selectedMaterial?.contentHash).toBe(derivativeHash);
+    expect(derivative.requestFingerprint).not.toBe(source.requestFingerprint);
+    expect(compileWith(true)).toEqual(derivative);
+    expect(() => compileWith(true, true)).toThrow(/selected Product material/i);
+  });
   it("converges the same protected execution and canonical input", () => {
     const first = compile("T2V");
     const replay = compile("T2V");

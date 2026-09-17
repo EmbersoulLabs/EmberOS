@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AiStorySeedanceSemanticPlanSchema } from "./ai-story-scene-execution-package";
 import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
 
 export const AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION =
   "ai-story-compiled-provider-request.v1" as const;
@@ -156,6 +157,8 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
   referenceMappings: z.array(AiStoryCompiledReferenceMappingSchema).max(4),
   /** Added append-only; absent only on historical v1 compiled requests. */
   storyReferenceMappings: z.array(AiStoryCompiledStoryReferenceSchema).optional(),
+  /** Durable exact Product material authority; absent only on historical requests. */
+  productMaterialSelection: ProductVisualMaterialSelectionAuthoritySchema.optional(),
   /** Added append-only; absent only on pre-preparation compiled requests. */
   providerReadySceneInput: AiStoryCompiledProviderReadySceneInputSchema.optional(),
   /** Added append-only; required by new preparation-governed compilation. */

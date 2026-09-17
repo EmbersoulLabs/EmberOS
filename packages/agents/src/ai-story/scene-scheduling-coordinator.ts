@@ -20,6 +20,8 @@ import {
   type SceneSchedulingBundle,
   type SceneSchedulingErrorCode,
   type PostTerminalProviderRetryAuthorizationFact,
+  type ProductVisualMaterialSelectionAuthority,
+  type AiStoryEffectiveSceneGenerationAuthority,
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
@@ -173,6 +175,18 @@ export type SceneSchedulingCoordinatorDependencies = {
     readonly orgId: string;
     readonly workspaceId: string;
   }) => Promise<SceneInputPreparationResolution | null>;
+  /** Exact current FROZEN Scene Product material; resolved by the application, never by the pure compiler. */
+  readonly productMaterialSelectionResolver?: (input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+    readonly sceneId: string;
+    readonly sceneVersionId: string;
+    readonly actorUserId: string;
+    readonly generationAuthority: AiStoryEffectiveSceneGenerationAuthority;
+  }) => Promise<ProductVisualMaterialSelectionAuthority>;
   readonly now?: () => Date;
 };
 
@@ -839,6 +853,29 @@ export class SceneSchedulingCoordinator {
         }),
       };
       const effectiveReferenceIds = (sceneIntent.generationAuthority ?? instructions.generationAuthority)?.effectiveReferenceIds ?? sceneIntent.referencedAssetIds;
+      const generationAuthority = sceneIntent.generationAuthority ?? instructions.generationAuthority;
+      const referenceFree = generationAuthority?.strategy === "TEXT_TO_VIDEO" &&
+        generationAuthority.referenceSource === "REFERENCE_FREE_T2V";
+      if (!referenceFree && this.dependencies.productMaterialSelectionResolver &&
+        (!generationAuthority || !sceneIntent.identity.sceneVersionId)) {
+        throw new SceneSchedulingError(
+          "SCENE_NOT_AUTHORIZED",
+          "Image-conditioned scheduling requires exact canonical Scene Version and generation authority"
+        );
+      }
+      const productMaterialSelection = !referenceFree && this.dependencies.productMaterialSelectionResolver
+        ? await this.dependencies.productMaterialSelectionResolver({
+            orgId: fact.ownership.orgId,
+            workspaceId: fact.ownership.workspaceId,
+            campaignId: fact.ownership.campaignId,
+            storyId: fact.ownership.storyId,
+            storyVersionId: fact.ownership.storyVersionId,
+            sceneId: sceneIntent.identity.sceneId,
+            sceneVersionId: sceneIntent.identity.sceneVersionId!,
+            actorUserId: input.actorUserId,
+            generationAuthority: generationAuthority!,
+          })
+        : null;
       const sceneInputPreparation =
         await this.dependencies.sceneInputPreparationResolver?.({
           sceneExecutionId: input.sceneExecutionId,
@@ -850,13 +887,17 @@ export class SceneSchedulingCoordinator {
       // authority must be loaded alongside them to be bindable as first frame.
       const preparedFrameAssetId =
         sceneInputPreparation?.preparedFrame?.outputAssetId ?? null;
+      const selectedMaterialAssetId = productMaterialSelection?.selectedMaterial?.assetId ?? null;
+      const assetIds = [...new Set([
+        ...effectiveReferenceIds,
+        ...(preparedFrameAssetId ? [preparedFrameAssetId] : []),
+        ...(selectedMaterialAssetId ? [selectedMaterialAssetId] : []),
+      ])];
       const referenceAssets = await this.providerRuntimeRepo.getReferenceAssetAuthorities({
         orgId: fact.ownership.orgId,
         workspaceId: fact.ownership.workspaceId,
         campaignId: fact.ownership.campaignId,
-        assetIds: preparedFrameAssetId && !effectiveReferenceIds.includes(preparedFrameAssetId)
-          ? [...effectiveReferenceIds, preparedFrameAssetId]
-          : effectiveReferenceIds,
+        assetIds,
       });
       const compiledProviderRequest = compileImmutableSceneProviderRequest({
           providerId: acceptedRoutingDecision.selectedProviderId,
@@ -867,6 +908,7 @@ export class SceneSchedulingCoordinator {
           compiledAt: scheduledAt,
           resolution: "480p",
           referenceAssets,
+          productMaterialSelection,
           ...(sceneInputPreparation
             ? {
                 sceneInputPreparation: sceneInputPreparation.preparation,

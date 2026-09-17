@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
 
 export const AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION = "ai-story-post-generation-qc.v1" as const;
 export const AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION = "ai-story-visual-evidence.v1" as const;
@@ -74,6 +75,8 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   castSnapshotFingerprint: Hash,
   locationSnapshotFingerprint: Hash,
   productSnapshotFingerprint: Hash,
+  /** Exact material supplied to the Provider; absent on historical QC inputs. */
+  productMaterialSelection: ProductVisualMaterialSelectionAuthoritySchema.optional(),
   entryState: z.array(Text),
   scriptActions: z.array(Text),
   requiredExitState: z.array(Text),

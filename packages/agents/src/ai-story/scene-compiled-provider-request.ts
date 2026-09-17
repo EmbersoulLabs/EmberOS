@@ -2,6 +2,7 @@ import type {
   AiStoryCompiledProviderRequest,
   AiStorySceneCompiledInstructions,
   AiStorySceneExecutionIntent,
+  ProductVisualMaterialSelectionAuthority,
 } from "@ceo-agent/shared";
 import {
   AiStoryProviderRuntimeError,
@@ -24,6 +25,7 @@ export function compileImmutableSceneProviderRequest(input: {
   readonly compiledAt: string;
   readonly resolution?: "480p" | "720p" | "1080p";
   readonly referenceAssets?: readonly AiStoryReferenceAssetAuthority[];
+  readonly productMaterialSelection?: ProductVisualMaterialSelectionAuthority | null;
   readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
   readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
@@ -41,6 +43,7 @@ export function compileImmutableSceneProviderRequest(input: {
     adapterVersion: input.adapterVersion,
     compiledAt: input.compiledAt,
     ...(input.referenceAssets ? { referenceAssets: input.referenceAssets } : {}),
+    ...(input.productMaterialSelection ? { productMaterialSelection: input.productMaterialSelection } : {}),
     ...(input.resolution ? { resolution: input.resolution } : {}),
     ...(input.sceneInputPreparation
       ? { sceneInputPreparation: input.sceneInputPreparation }

@@ -110,7 +110,7 @@ export class AiStoryProviderRuntimeRepository {
     readonly workspaceId: string;
     readonly campaignId: string;
     readonly assetIds: readonly string[];
-  }): Promise<readonly { assetId: string; mediaType: string; storagePath?: string }[]> {
+  }): Promise<readonly { assetId: string; mediaType: string; storagePath?: string; contentHash: string | null }[]> {
     if (input.assetIds.length === 0) return [];
     const rows = await this.db.select({
       assetId: schema.assets.id,
@@ -118,6 +118,7 @@ export class AiStoryProviderRuntimeRepository {
       workspaceId: schema.assets.workspaceId,
       mediaType: schema.assets.mimeType,
       storagePath: schema.assets.storagePath,
+      contentHash: schema.assets.contentHash,
       campaignOrgId: schema.campaigns.orgId,
       campaignWorkspaceId: schema.campaigns.workspaceId,
     }).from(schema.campaignAssetRefs)
@@ -136,7 +137,7 @@ export class AiStoryProviderRuntimeRepository {
           "Canonical Campaign reference MIME/storage authority is missing or out of scope"
         );
       }
-      return { assetId, mediaType: row.mediaType, storagePath: row.storagePath };
+      return { assetId, mediaType: row.mediaType, storagePath: row.storagePath, contentHash: row.contentHash };
     });
   }
 
