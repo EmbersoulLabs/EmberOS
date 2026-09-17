@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import { callJsonModel } from "../llm";
+import type { CertificationPlanningStage } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
   AiStorySceneGenerationAuthoritySchema,
@@ -94,10 +95,20 @@ async function callStage<T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   pick: (result: Record<string, unknown>) => unknown
 ): Promise<{ value: T; usage: Usage }> {
+  const certificationStageByLabel: Record<string, CertificationPlanningStage> = {
+    "Creative context": "creative_context",
+    "Director thinking": "director_thinking",
+    "Story beats": "story_beats",
+    "Scene plan": "scene_plan",
+    "Shot plan": "shot_plan",
+    "Character continuity": "character_continuity",
+    "World continuity": "world_continuity",
+  };
   const { result, usage } = await callJsonModel<Record<string, unknown>>(
     system,
     user,
-    schemaHint
+    schemaHint,
+    { certificationStage: certificationStageByLabel[stage] }
   );
   const parsed = schema.safeParse(pick(result));
   if (!parsed.success) {

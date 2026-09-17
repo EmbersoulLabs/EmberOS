@@ -2229,7 +2229,7 @@ export const aiStoryPostTerminalProviderRetryAuthorizations = pgTable(
     unique("ai_story_post_terminal_retry_worker_result_unique").on(t.priorWorkerResultId),
     index("ai_story_post_terminal_retry_scene_idx").on(t.sceneExecutionId, t.createdAt),
     index("ai_story_post_terminal_retry_workspace_idx").on(t.workspaceId, t.createdAt),
-    check("ai_story_post_terminal_retry_environment_check", sql`${t.environment} = 'STAGING'`),
+    check("ai_story_post_terminal_retry_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
     check("ai_story_post_terminal_retry_human_decision_check", sql`${t.humanDecision} = 'AUTHORIZE_ONE_RETRY'`),
     check("ai_story_post_terminal_retry_generation_check", sql`${t.retryGeneration} >= 2`),
     check("ai_story_post_terminal_retry_contract_check", sql`${t.contractVersion} = 'ai-story-post-terminal-provider-retry.v1'`),
@@ -3395,7 +3395,7 @@ export const commercialExecutionAuthorizations = pgTable(
   ]
 );
 
-/** Bounded, non-subscription STAGING certification commercial authority. */
+/** Bounded, non-subscription certification commercial authority, isolated by environment. */
 export const certificationCommercialScopes = pgTable(
   "certification_commercial_scopes",
   {
@@ -3424,7 +3424,7 @@ export const certificationCommercialScopes = pgTable(
     unique("certification_commercial_scope_identity_unique").on(t.environment, t.orgId, t.workspaceId, t.capabilityKey),
     unique("certification_commercial_scope_integrity_unique").on(t.integrityHash),
     index("certification_commercial_scope_workspace_idx").on(t.workspaceId, t.status),
-    check("certification_commercial_scope_environment_check", sql`${t.environment} = 'STAGING'`),
+    check("certification_commercial_scope_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
     check("certification_commercial_scope_capability_check", sql`${t.capabilityKey} = 'ai_story.execute'`),
     check("certification_commercial_scope_status_check", sql`${t.status} in ('ACTIVE','CLOSED','REVOKED')`),
     check("certification_commercial_scope_limits_check", sql`${t.maxProviderCostUsd} > 0 and ${t.maxProviderSubmissions} > 0`),
@@ -3526,6 +3526,76 @@ export const certificationCommercialEvents = pgTable(
   ]
 );
 
+/** An explicitly authorized, finite planning envelope. Counters are guarded by row locks. */
+export const certificationPlanningAuthorities = pgTable(
+  "certification_planning_authorities",
+  {
+    planningAuthorityId: uuid("planning_authority_id").primaryKey(),
+    environment: text("environment").notNull(),
+    certificationRunId: uuid("certification_run_id").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").references(() => aiStories.id, { onDelete: "restrict" }),
+    model: text("model").notNull(),
+    maxPlanningCostUsd: numeric("max_planning_cost_usd", { precision: 12, scale: 2 }).notNull(),
+    spentPlanningCostUsd: numeric("spent_planning_cost_usd", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    reservedPlanningCostUsd: numeric("reserved_planning_cost_usd", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    maxLogicalCalls: integer("max_logical_calls").notNull(),
+    consumedLogicalCalls: integer("consumed_logical_calls").notNull().default(0),
+    reservedLogicalCalls: integer("reserved_logical_calls").notNull().default(0),
+    maxTransportAttempts: integer("max_transport_attempts").notNull(),
+    status: text("status").notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizationReason: text("authorization_reason").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+  },
+  (t) => [
+    unique("certification_planning_run_environment_unique").on(t.environment, t.certificationRunId),
+    check("certification_planning_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
+    check("certification_planning_model_check", sql`${t.model} = 'gpt-4o-mini-2024-07-18'`),
+    check("certification_planning_status_check", sql`${t.status} in ('ACTIVE','CLOSED','REVOKED')`),
+    check("certification_planning_limits_check", sql`${t.maxPlanningCostUsd} > 0 and ${t.maxLogicalCalls} > 0 and ${t.maxTransportAttempts} > 0`),
+    check("certification_planning_counters_check", sql`${t.spentPlanningCostUsd} >= 0 and ${t.reservedPlanningCostUsd} >= 0 and ${t.consumedLogicalCalls} >= 0 and ${t.reservedLogicalCalls} >= 0 and ${t.spentPlanningCostUsd} + ${t.reservedPlanningCostUsd} <= ${t.maxPlanningCostUsd} and ${t.consumedLogicalCalls} + ${t.reservedLogicalCalls} <= ${t.maxLogicalCalls}`),
+  ]
+);
+
+/** One durable claim per logical model call, including ambiguous terminal failures. */
+export const certificationPlanningClaims = pgTable(
+  "certification_planning_claims",
+  {
+    planningClaimId: uuid("planning_claim_id").primaryKey(),
+    planningAuthorityId: uuid("planning_authority_id").notNull().references(() => certificationPlanningAuthorities.planningAuthorityId, { onDelete: "restrict" }),
+    logicalCallIdentity: text("logical_call_identity").notNull(),
+    requestedBy: uuid("requested_by").notNull(),
+    providerAttemptId: text("provider_attempt_id"),
+    stage: text("stage").notNull(),
+    model: text("model").notNull(),
+    maxOutputTokens: integer("max_output_tokens").notNull(),
+    projectedInputTokens: integer("projected_input_tokens").notNull(),
+    reservedMaximumUsd: numeric("reserved_maximum_usd", { precision: 12, scale: 2 }).notNull(),
+    actualInputTokens: integer("actual_input_tokens"),
+    actualOutputTokens: integer("actual_output_tokens"),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 12, scale: 2 }),
+    providerRequestId: text("provider_request_id"),
+    status: text("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+  },
+  (t) => [
+    unique("certification_planning_logical_call_unique").on(t.planningAuthorityId, t.logicalCallIdentity),
+    uniqueIndex("certification_planning_provider_attempt_unique").on(t.providerAttemptId).where(sql`${t.providerAttemptId} is not null`),
+    check("certification_planning_claim_status_check", sql`${t.status} in ('RESERVED','SETTLED','FAILED','RELEASED')`),
+    check("certification_planning_claim_limits_check", sql`${t.maxOutputTokens} > 0 and ${t.projectedInputTokens} > 0 and ${t.reservedMaximumUsd} > 0`),
+  ]
+);
+
 /** Append-only correction for a gross slot consumption proven not to reach a Provider. */
 export const certificationSubmissionSlotReconciliations = pgTable(
   "certification_submission_slot_reconciliations",
@@ -3556,7 +3626,7 @@ export const certificationSubmissionSlotReconciliations = pgTable(
     unique("certification_slot_reconciliation_integrity_unique").on(t.integrityHash),
     index("certification_slot_reconciliation_scope_idx").on(t.certificationScopeId, t.createdAt),
     index("certification_slot_reconciliation_scene_idx").on(t.sceneExecutionId, t.createdAt),
-    check("certification_slot_reconciliation_environment_check", sql`${t.environment} = 'STAGING'`),
+    check("certification_slot_reconciliation_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
     check("certification_slot_reconciliation_outcome_check", sql`${t.outcomeClassification} = 'PROVEN_NOT_SUBMITTED'`),
     check("certification_slot_reconciliation_reason_check", sql`${t.reason} = 'PROVEN_PROVIDER_NON_ACCEPTANCE_RECONCILIATION'`),
     check("certification_slot_reconciliation_version_check", sql`${t.contractVersion} = 'certification-submission-slot-reconciliation.v1'`),

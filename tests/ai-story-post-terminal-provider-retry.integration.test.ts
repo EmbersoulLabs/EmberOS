@@ -189,6 +189,7 @@ describeIntegration("AI Story post-terminal Provider retry PostgreSQL authority"
   it("converges concurrent explicit human authorization and retains immutable history", async () => {
     const source = await prepareTerminalSource("post-terminal-concurrency");
     const command = {
+      environment: "STAGING" as const,
       executionPlanId: source.plan.executionPlanId,
       sceneExecutionId: source.schedule.correlation.sceneExecutionId,
       workspaceId: source.ids.workspaceId,

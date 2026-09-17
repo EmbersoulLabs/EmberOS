@@ -12,6 +12,7 @@ import {
   withIntegrity,
   type CertificationCommercialReservation,
   type CertificationCommercialScope,
+  type CertificationEnvironment,
   type ProviderUsdPricingRule,
 } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
@@ -147,9 +148,9 @@ async function recordEvent(tx: Tx, input: {
 export class CertificationCommercialAuthorityService {
   constructor(private readonly db: Db = getDb()) {}
 
-  async getActiveScope(orgId: string, workspaceId: string): Promise<CertificationCommercialScope | null> {
+  async getActiveScope(environment: CertificationEnvironment, orgId: string, workspaceId: string): Promise<CertificationCommercialScope | null> {
     const rows = await this.db.select().from(schema.certificationCommercialScopes).where(and(
-      eq(schema.certificationCommercialScopes.environment, "STAGING"),
+      eq(schema.certificationCommercialScopes.environment, environment),
       eq(schema.certificationCommercialScopes.orgId, orgId),
       eq(schema.certificationCommercialScopes.workspaceId, workspaceId),
       eq(schema.certificationCommercialScopes.capabilityKey, "ai_story.execute"),
@@ -183,7 +184,7 @@ export class CertificationCommercialAuthorityService {
   }
 
   async provisionScope(input: {
-    orgId: string; workspaceId: string; actorUserId: string; createdAt: string;
+    environment: CertificationEnvironment; orgId: string; workspaceId: string; actorUserId: string; createdAt: string;
     maxProviderCostUsd?: string; maxProviderSubmissions?: number;
   }): Promise<{ scope: CertificationCommercialScope; replayed: boolean }> {
     return this.db.transaction(async (tx) => {
@@ -192,20 +193,34 @@ export class CertificationCommercialAuthorityService {
       )).limit(1);
       if (!ownership[0]) throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISMATCH", "Workspace does not belong to organization");
       const existing = await tx.select().from(schema.certificationCommercialScopes).where(and(
-        eq(schema.certificationCommercialScopes.environment, "STAGING"), eq(schema.certificationCommercialScopes.orgId, input.orgId),
+        eq(schema.certificationCommercialScopes.environment, input.environment), eq(schema.certificationCommercialScopes.orgId, input.orgId),
         eq(schema.certificationCommercialScopes.workspaceId, input.workspaceId), eq(schema.certificationCommercialScopes.capabilityKey, "ai_story.execute"),
       )).limit(1);
-      if (existing[0]) return { scope: scopeFromRow(existing[0]), replayed: true };
+      if (existing[0]) {
+        const historical = scopeFromRow(existing[0]);
+        if (input.environment === "PRODUCTION" && (
+          !input.maxProviderCostUsd || !input.maxProviderSubmissions ||
+          historical.maxProviderCostUsd !== input.maxProviderCostUsd ||
+          historical.maxProviderSubmissions !== input.maxProviderSubmissions ||
+          historical.createdBy !== input.actorUserId
+        )) {
+          throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISMATCH", "Conflicting Production certification scope replay");
+        }
+        return { scope: historical, replayed: true };
+      }
+      if (input.environment === "PRODUCTION" && (!input.maxProviderCostUsd || !input.maxProviderSubmissions)) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISMATCH", "Production certification requires explicit finite ceilings");
+      }
       const value = withIntegrity({
         contractVersion: CERTIFICATION_COMMERCIAL_CONTRACT_VERSION,
-        certificationScopeId: deterministicPersistenceUuid("certification-commercial-scope", { environment: "STAGING", orgId: input.orgId, workspaceId: input.workspaceId, capabilityKey: "ai_story.execute" }),
-        environment: "STAGING" as const, orgId: input.orgId, workspaceId: input.workspaceId,
+        certificationScopeId: deterministicPersistenceUuid("certification-commercial-scope", { environment: input.environment, orgId: input.orgId, workspaceId: input.workspaceId, capabilityKey: "ai_story.execute" }),
+        environment: input.environment, orgId: input.orgId, workspaceId: input.workspaceId,
         capabilityKey: "ai_story.execute" as const, status: "ACTIVE" as const,
         maxProviderCostUsd: input.maxProviderCostUsd ?? "5.00",
         maxProviderSubmissions: input.maxProviderSubmissions ?? 4,
         spentProviderCostUsd: "0.00", reservedProviderCostUsd: "0.00",
         consumedProviderSubmissions: 0, reservedProviderSubmissions: 0,
-        createdBy: input.actorUserId, reason: CERTIFICATION_COMMERCIAL_REASON,
+        createdBy: input.actorUserId, reason: input.environment === "STAGING" ? CERTIFICATION_COMMERCIAL_REASON : "AI Story V1 PRODUCTION real-provider certification",
         createdAt: input.createdAt, closedAt: null, revokedAt: null,
       });
       const scope = CertificationCommercialScopeSchema.parse(value);
@@ -293,12 +308,12 @@ export class CertificationCommercialAuthorityService {
   }
 
   async reserve(input: {
-    orgId: string; workspaceId: string; executionIdentity: string;
+    environment: CertificationEnvironment; orgId: string; workspaceId: string; executionIdentity: string;
     pricingRule: ProviderUsdPricingRule; createdAt: string; claimSubmission?: boolean;
   }): Promise<{ scope: CertificationCommercialScope; reservation: CertificationCommercialReservation; replayed: boolean }> {
     return this.db.transaction(async (tx) => {
       const scopeRows = await tx.select().from(schema.certificationCommercialScopes).where(and(
-        eq(schema.certificationCommercialScopes.environment, "STAGING"),
+        eq(schema.certificationCommercialScopes.environment, input.environment),
         eq(schema.certificationCommercialScopes.orgId, input.orgId),
         eq(schema.certificationCommercialScopes.workspaceId, input.workspaceId),
         eq(schema.certificationCommercialScopes.capabilityKey, "ai_story.execute"),
@@ -414,12 +429,16 @@ export class CertificationCommercialAuthorityService {
   }
 
   async getReservationByExecutionIdentity(input: {
-    executionIdentity: string;
+    environment: CertificationEnvironment; executionIdentity: string;
   }): Promise<CertificationCommercialReservation | null> {
-    const rows = await this.db.select().from(schema.certificationCommercialReservations).where(and(
+    const rows = await this.db.select({ reservation: schema.certificationCommercialReservations })
+      .from(schema.certificationCommercialReservations)
+      .innerJoin(schema.certificationCommercialScopes, eq(schema.certificationCommercialReservations.certificationScopeId, schema.certificationCommercialScopes.certificationScopeId))
+      .where(and(
       eq(schema.certificationCommercialReservations.executionIdentity, input.executionIdentity),
+      eq(schema.certificationCommercialScopes.environment, input.environment),
     )).orderBy(desc(schema.certificationCommercialReservations.createdAt)).limit(1);
-    return rows[0] ? reservationFromRow(rows[0]) : null;
+    return rows[0] ? reservationFromRow(rows[0].reservation) : null;
   }
 
   async getReservationById(
@@ -433,12 +452,13 @@ export class CertificationCommercialAuthorityService {
   }
 
   async reserveForSceneExecution(input: {
-    orgId: string; workspaceId: string; sceneExecutionId: string;
+    environment: CertificationEnvironment; orgId: string; workspaceId: string; sceneExecutionId: string;
     compiledRequestId: string; requestFingerprint?: string;
     executionIdentity: string; reservedAt: string;
   }) {
     const { pricingRule } = await this.previewForSceneExecution(input);
     return this.reserve({
+      environment: input.environment,
       orgId: input.orgId,
       workspaceId: input.workspaceId,
       executionIdentity: input.executionIdentity,

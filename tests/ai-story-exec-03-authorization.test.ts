@@ -308,6 +308,7 @@ describe("EXEC-03 commercial fail-closed", () => {
       capabilityKey: "ai_story.execute",
       executionIdentity: `execution-plan:${PLAN_ID}`,
       authorizedAt: "2026-08-31T00:00:00.000Z",
+      certificationEnvironment: "STAGING",
     });
     expect(result.pricingRule).toBeNull();
     expect(result.authorization.pricingRuleKey).toContain("provider-usd:");

@@ -31,7 +31,7 @@ const now = new Date().toISOString();
 
 if (action === "DRY_RUN") {
   const existingBilling = await billing.getByOrgId(orgId);
-  const existingScope = await authority.getActiveScope(orgId, workspaceId);
+  const existingScope = await authority.getActiveScope("STAGING", orgId, workspaceId);
   console.log(JSON.stringify({
     environment: "STAGING",
     organizationId: orgId,
@@ -45,7 +45,7 @@ if (action === "DRY_RUN") {
     mutationPerformed: false,
   }));
 } else if (action === "REVOKE") {
-  const scope = await authority.getActiveScope(orgId, workspaceId);
+  const scope = await authority.getActiveScope("STAGING", orgId, workspaceId);
   if (!scope) throw new Error("ACTIVE_CERTIFICATION_SCOPE_NOT_FOUND");
   const result = await authority.revokeScope({
     scopeId: scope.certificationScopeId,
@@ -63,6 +63,7 @@ if (action === "DRY_RUN") {
   });
   const acceptedBilling = await billing.createOrConverge(account);
   const acceptedScope = await authority.provisionScope({
+    environment: "STAGING",
     orgId,
     workspaceId,
     actorUserId,

@@ -34,6 +34,7 @@ import {
   type StoryPlanningStage,
 } from "@ceo-agent/shared";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
+import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
 import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
 import { ensureCurrentFrozenCanonicalScript } from "@/lib/ai-story-canonical-script-producer";
@@ -195,6 +196,7 @@ export async function runSinglePlanningStage(input: {
   actorUserId: string;
   stage: StoryPlanningStage;
   storyStatus: string;
+  regenerationIdentity?: string | null;
 }): Promise<{
   status: string;
   stage: StoryPlanningStage;
@@ -209,6 +211,14 @@ export async function runSinglePlanningStage(input: {
   }
 
   const ctx = await loadPlanningContext(db, campaignId, storyId, input.actorUserId);
+  return withConfiguredCertificationPlanningContext({
+    orgId: ctx.campaign.orgId,
+    workspaceId: ctx.campaign.workspaceId,
+    campaignId,
+    storyId,
+    actorUserId: input.actorUserId,
+    regenerationIdentity: input.regenerationIdentity,
+  }, async () => {
   if (["ready_for_animation", "planning_review", "failed"].includes(input.storyStatus)) {
     await setAiStoryStatus(
       db,
@@ -510,6 +520,9 @@ export async function runSinglePlanningStage(input: {
         "Complete all planning stages before assembling Animation Package"
       );
       if (!draft.characterContinuity) {
+        if (process.env.AI_STORY_CERTIFICATION_ENVIRONMENT) {
+          throw new Error("PLANNING_CHARACTER_CONTINUITY_REQUIRED_BEFORE_PACKAGE");
+        }
         const generated = await generateCharacterContinuity({
           creativeContext: draft.creativeContext!,
           directorThinking: draft.directorThinking!,
@@ -591,4 +604,5 @@ export async function runSinglePlanningStage(input: {
     animationPackage: savedDraft,
     planningDraft: draft,
   };
+  });
 }

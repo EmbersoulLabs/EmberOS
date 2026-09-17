@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CertificationEnvironmentSchema } from "./certification-environment";
 
 export const AI_STORY_POST_TERMINAL_PROVIDER_RETRY_CONTRACT_VERSION =
   "ai-story-post-terminal-provider-retry.v1" as const;
@@ -14,7 +15,7 @@ export const PostTerminalRetryFailureClassificationSchema = z.enum(
 export const PostTerminalProviderRetryAuthorizationFactSchema = z
   .object({
     authorizationId: z.string().uuid(),
-    environment: z.literal("STAGING"),
+    environment: CertificationEnvironmentSchema,
     orgId: z.string().uuid(),
     workspaceId: z.string().uuid(),
     campaignId: z.string().uuid(),
@@ -52,6 +53,7 @@ export type PostTerminalProviderRetryAuthorizationFact = z.infer<
 
 export const AuthorizePostTerminalProviderRetryCommandSchema = z
   .object({
+    environment: CertificationEnvironmentSchema,
     executionPlanId: z.string().uuid(),
     sceneExecutionId: z.string().uuid(),
     workspaceId: z.string().uuid(),

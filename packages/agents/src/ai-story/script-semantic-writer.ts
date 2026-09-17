@@ -74,6 +74,7 @@ export async function generateAiStoryScriptSemanticProposalV1(
     ].join(" "),
     JSON.stringify(input, null, 2),
     schemaHint,
+    { certificationStage: "script_semantic_writer" },
   );
   return { semanticProposal: AiStoryScriptSemanticProposalV1Schema.parse(result), usage };
 }
