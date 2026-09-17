@@ -40,12 +40,19 @@ describeIntegration("certification planning and Production scope PostgreSQL auth
     restoreNetwork?.();
   }, 120_000);
 
-  it("upgrades a predecessor schema while retaining STAGING scope, reservation, reconciliation and retry evidence", async () => {
+  type PredecessorVariant = "modeled" | "live" | "missing" | "wrong-definition" | "duplicate" | "conflict" | "wrong-name";
+  async function withPredecessorSchema(variant: PredecessorVariant, check: (testSchema: string) => Promise<void>) {
     const testSchema = `cert_planning_upgrade_${randomUUID().replaceAll("-", "")}`;
-    const oldScope = randomUUID();
-    const oldReservation = randomUUID();
-    const oldReconciliation = randomUUID();
-    const oldRetry = randomUUID();
+    const commercialCheck = variant === "missing" ? ""
+      : variant === "live" ? "constraint certification_commercial_scopes_environment_check check(environment='STAGING'),"
+      : variant === "wrong-name" ? "constraint unexpected_commercial_environment_check check(environment='STAGING'),"
+      : variant === "wrong-definition" ? "constraint certification_commercial_scope_environment_check check(environment in ('STAGING','PRODUCTION')) ,"
+      : variant === "duplicate" ? "constraint certification_commercial_scope_environment_check check(environment='STAGING'), constraint certification_commercial_scopes_environment_check check(environment='STAGING'),"
+      : variant === "conflict" ? "constraint certification_commercial_scope_environment_check check(environment='STAGING'), constraint another_environment_check check(environment is not null),"
+      : "constraint certification_commercial_scope_environment_check check(environment='STAGING'),";
+    const reconciliationCheck = variant === "live"
+      ? "certification_submission_slot_reconciliations_environment_check"
+      : "certification_slot_reconciliation_environment_check";
     await sql.unsafe(`
       create schema ${testSchema};
       set search_path to ${testSchema}, public;
@@ -55,14 +62,15 @@ describeIntegration("certification planning and Production scope PostgreSQL auth
         max_provider_cost_usd numeric(12,2) not null, max_provider_submissions int not null,
         spent_provider_cost_usd numeric(12,2) not null, consumed_provider_submissions int not null,
         constraint certification_commercial_scope_identity_unique unique(environment,org_id,workspace_id,capability_key),
-        constraint certification_commercial_scope_environment_check check(environment='STAGING')
+        ${commercialCheck}
+        constraint certification_commercial_scope_cost_check check(max_provider_cost_usd > 0)
       );
       create table certification_commercial_reservations (
         certification_reservation_id uuid primary key, certification_scope_id uuid not null references certification_commercial_scopes(certification_scope_id), evidence jsonb not null
       );
       create table certification_submission_slot_reconciliations (
         reconciliation_id uuid primary key, certification_scope_id uuid not null references certification_commercial_scopes(certification_scope_id), environment text not null,
-        constraint certification_slot_reconciliation_environment_check check(environment='STAGING')
+        constraint ${reconciliationCheck} check(environment='STAGING')
       );
       create table ai_story_post_terminal_provider_retry_authorizations (
         authorization_id uuid primary key, environment text not null, evidence jsonb not null,
@@ -71,11 +79,28 @@ describeIntegration("certification planning and Production scope PostgreSQL auth
     `);
     try {
       await sql.unsafe(`set search_path to ${testSchema}, public`);
+      await check(testSchema);
+    } finally {
+      // A deliberately rejected BEGIN-wrapped migration leaves this connection
+      // in an aborted transaction until ROLLBACK. A successful COMMIT makes
+      // this a harmless no-op before the isolated schema is dropped.
+      await sql.unsafe("ROLLBACK");
+      await sql.unsafe(`set search_path to public; drop schema ${testSchema} cascade`);
+    }
+  }
+
+  async function certifyUpgrade(variant: "modeled" | "live") {
+    await withPredecessorSchema(variant, async (testSchema) => {
+      const oldScope = randomUUID();
+      const oldReservation = randomUUID();
+      const oldReconciliation = randomUUID();
+      const oldRetry = randomUUID();
       await sql`insert into certification_commercial_scopes values (${oldScope}::uuid,'STAGING',${ids.orgId}::uuid,${ids.workspaceId}::uuid,'ai_story.execute',5.00,4,1.07,4)`;
       await sql`insert into certification_commercial_reservations values (${oldReservation}::uuid,${oldScope}::uuid,${sql.json({ historical: true })})`;
       await sql`insert into certification_submission_slot_reconciliations values (${oldReconciliation}::uuid,${oldScope}::uuid,'STAGING')`;
       await sql`insert into ai_story_post_terminal_provider_retry_authorizations values (${oldRetry}::uuid,'STAGING',${sql.json({ historical: true })})`;
       const before = await sql`select * from certification_commercial_scopes where certification_scope_id=${oldScope}::uuid`;
+      expect(await sql`select count(*)::int as count from certification_commercial_scopes where environment='PRODUCTION'`).toEqual([{ count: 0 }]);
       await sql.unsafe(migration);
       const after = await sql`select * from certification_commercial_scopes where certification_scope_id=${oldScope}::uuid`;
       expect(after).toEqual(before);
@@ -91,10 +116,64 @@ describeIntegration("certification planning and Production scope PostgreSQL auth
       const tables = await sql`select to_regclass(${`${testSchema}.certification_planning_authorities`})::text as authority, to_regclass(${`${testSchema}.certification_planning_claims`})::text as claims`;
       expect(tables[0]?.authority).toBeTruthy();
       expect(tables[0]?.claims).toBeTruthy();
-    } finally {
-      await sql.unsafe(`set search_path to public; drop schema ${testSchema} cascade`);
-    }
+      const checks = await sql`
+        select relation.relname as table_name, constraint_record.conname as constraint_name,
+               pg_get_constraintdef(constraint_record.oid) as definition
+        from pg_constraint as constraint_record
+        join pg_class as relation on relation.oid=constraint_record.conrelid
+        join pg_namespace as namespace on namespace.oid=relation.relnamespace
+        where namespace.nspname=${testSchema} and constraint_record.contype='c'
+          and relation.relname in ('certification_commercial_scopes','certification_submission_slot_reconciliations','ai_story_post_terminal_provider_retry_authorizations')
+          and pg_get_constraintdef(constraint_record.oid) like '%environment%'
+        order by relation.relname`;
+      expect(checks).toHaveLength(3);
+      expect(checks.map((row) => row.constraint_name)).toEqual([
+        "ai_story_post_terminal_retry_environment_check",
+        "certification_commercial_scope_environment_check",
+        "certification_slot_reconciliation_environment_check",
+      ]);
+      expect(checks.every((row) => row.definition.includes("STAGING") && row.definition.includes("PRODUCTION"))).toBe(true);
+      const planningCatalog = await sql`
+        select relation.relname as table_name, relation.relrowsecurity as rls_enabled
+        from pg_class as relation join pg_namespace as namespace on namespace.oid=relation.relnamespace
+        where namespace.nspname=${testSchema} and relation.relname in ('certification_planning_authorities','certification_planning_claims')
+        order by relation.relname`;
+      expect(planningCatalog).toEqual([
+        { table_name: "certification_planning_authorities", rls_enabled: true },
+        { table_name: "certification_planning_claims", rls_enabled: true },
+      ]);
+      const indexes = await sql`select indexname from pg_indexes where schemaname=${testSchema} and tablename='certification_planning_claims'`;
+      expect(indexes.map((row) => row.indexname)).toEqual(expect.arrayContaining([
+        "certification_planning_claims_authority_status_idx",
+        "certification_planning_provider_attempt_unique",
+        "certification_planning_logical_call_unique",
+      ]));
+    });
+  }
+
+  it("upgrades the modeled predecessor and preserves historical commercial evidence", async () => {
+    await certifyUpgrade("modeled");
   }, 120_000);
+
+  it("upgrades the exact live STAGING predecessor names and preserves historical commercial evidence", async () => {
+    await certifyUpgrade("live");
+  }, 120_000);
+
+  it.each(["missing", "wrong-name", "wrong-definition", "duplicate", "conflict"] as const)(
+    "rejects %s environment predecessor divergence without partial schema changes",
+    async (variant) => {
+      await withPredecessorSchema(variant, async (testSchema) => {
+        await expect(sql.unsafe(migration)).rejects.toThrow("CERTIFICATION_ENVIRONMENT_PREDECESSOR_INVALID");
+        await sql.unsafe("ROLLBACK");
+        expect(await sql`select to_regclass(${`${testSchema}.certification_planning_authorities`}) as authority,
+                                to_regclass(${`${testSchema}.certification_planning_claims`}) as claims`).toEqual([
+          { authority: null, claims: null },
+        ]);
+        expect(await sql`select count(*)::int as count from certification_commercial_scopes where environment='PRODUCTION'`).toEqual([{ count: 0 }]);
+      });
+    },
+    120_000,
+  );
 
   it("isolates commercial scopes by explicit environment without changing historical STAGING counters", async () => {
     const service = new CertificationCommercialAuthorityService();
