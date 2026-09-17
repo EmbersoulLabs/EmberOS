@@ -191,7 +191,7 @@ describeIntegration("certification planning and Production scope PostgreSQL auth
         const result = await callJsonModel<{ ok: boolean }>("certification", "story", "{ok:boolean}", { certificationStage: stage });
         expect(result.result).toEqual({ ok: true });
       }
-      await expect(callJsonModel("certification", "story", "{}", { certificationStage: "animation_package" as never })).rejects.toThrow("PLANNING_CALL_CONTRACT_INVALID");
+      await expect(callJsonModel("certification", "story", "{}", { certificationStage: "animation_package" as never })).rejects.toMatchObject({ code: "PLANNING_CALL_CONTRACT_INVALID" });
     });
     expect(fakeAdapterCallCount).toBe(9);
     const [authority] = await sql`select consumed_logical_calls as consumed, reserved_logical_calls as reserved from certification_planning_authorities where environment='STAGING' and certification_run_id=${certificationRunId}::uuid`;
@@ -213,7 +213,7 @@ describeIntegration("certification planning and Production scope PostgreSQL auth
     await service.provision({ ...identity, authorizedBy: PR32_USER_A, authorizationReason: "isolated quota test", authorizedAt: at, maxPlanningCostUsd: "0.02", maxLogicalCalls: 1, maxTransportAttempts: 1, model: "gpt-4o-mini-2024-07-18" });
     await withCertificationPlanningContext({ ...identity, logicalCallSuffix: "initial", modelAdapter: fakeAdapter }, async () => {
       await expect(callJsonModel("system", "user", "{}", { certificationStage: "creative_context" })).rejects.toThrow("Projected planning cost");
-      await expect(callJsonModel("system", "user", "{}", { certificationStage: "animation_package" as never })).rejects.toThrow("PLANNING_CALL_CONTRACT_INVALID");
+      await expect(callJsonModel("system", "user", "{}", { certificationStage: "animation_package" as never })).rejects.toMatchObject({ code: "PLANNING_CALL_CONTRACT_INVALID" });
       await expect(callJsonModel("system", "user", "{}", { certificationStage: "creative_context", model: "gpt-4o" })).rejects.toThrow("PLANNING_MODEL_MISMATCH");
     });
     expect(fakeAdapterCallCount).toBe(0);

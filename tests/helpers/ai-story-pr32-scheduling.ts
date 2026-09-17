@@ -264,15 +264,26 @@ export async function cleanupPr32Tenant(
   // reuse this fixture identity. Suspend only the immutable-history trigger
   // during test teardown so its parent rows can be removed deterministically.
   // No production runtime path receives this test-only authority.
-  await sql.unsafe(
-    "ALTER TABLE ai_story_compiled_provider_requests DISABLE TRIGGER ai_story_compiled_request_immutable_v1"
-  );
+  const [compiledRequestTrigger] = await sql`
+    SELECT EXISTS (
+      SELECT 1 FROM pg_trigger
+      WHERE tgrelid = 'public.ai_story_compiled_provider_requests'::regclass
+        AND tgname = 'ai_story_compiled_request_immutable_v1'
+    ) AS present
+  `;
+  if (compiledRequestTrigger?.present) {
+    await sql.unsafe(
+      "ALTER TABLE ai_story_compiled_provider_requests DISABLE TRIGGER ai_story_compiled_request_immutable_v1"
+    );
+  }
   try {
     await sql`DELETE FROM ai_story_compiled_provider_requests WHERE org_id = ${ids.orgId}`;
   } finally {
-    await sql.unsafe(
-      "ALTER TABLE ai_story_compiled_provider_requests ENABLE TRIGGER ai_story_compiled_request_immutable_v1"
-    );
+    if (compiledRequestTrigger?.present) {
+      await sql.unsafe(
+        "ALTER TABLE ai_story_compiled_provider_requests ENABLE TRIGGER ai_story_compiled_request_immutable_v1"
+      );
+    }
   }
   await sql`DELETE FROM ai_story_scene_executions WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_execution_plans WHERE org_id = ${ids.orgId}`;
