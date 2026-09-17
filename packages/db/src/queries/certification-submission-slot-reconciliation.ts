@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { getDb } from "../client";
+import type { CertificationEnvironment } from "@ceo-agent/shared/server";
 import {
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
@@ -71,7 +72,7 @@ export class CertificationSubmissionSlotReconciliationError extends Error {
 }
 
 export type ReconcileCertificationSubmissionSlotInput = {
-  environment: "STAGING";
+  environment: CertificationEnvironment;
   orgId: string;
   workspaceId: string;
   certificationScopeId: string;

@@ -258,7 +258,7 @@ export class PostTerminalProviderRetryRepository {
               schema.certificationCommercialScopes.certificationScopeId,
               source.reservation.certificationScopeId
             ),
-            eq(schema.certificationCommercialScopes.environment, "STAGING"),
+            eq(schema.certificationCommercialScopes.environment, input.environment),
             eq(schema.certificationCommercialScopes.status, "ACTIVE"),
             eq(schema.certificationCommercialScopes.orgId, source.scene.orgId),
             eq(
@@ -271,7 +271,7 @@ export class PostTerminalProviderRetryRepository {
       if (!scope) {
         throw new PostTerminalProviderRetryError(
           "POST_TERMINAL_RETRY_COMMERCIAL_SCOPE_INVALID",
-          "Active exact STAGING commercial scope is required"
+          "Active exact-environment commercial scope is required"
         );
       }
       const [reconciled] = await tx
@@ -338,7 +338,7 @@ export class PostTerminalProviderRetryRepository {
       });
       const fact = PostTerminalProviderRetryAuthorizationFactSchema.parse({
         authorizationId,
-        environment: "STAGING",
+        environment: input.environment,
         orgId: source.scene.orgId,
         workspaceId: source.scene.workspaceId,
         campaignId: source.scene.campaignId,

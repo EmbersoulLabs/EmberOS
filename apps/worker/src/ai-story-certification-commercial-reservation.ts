@@ -1,4 +1,5 @@
 import { CertificationCommercialAuthorityService } from "@ceo-agent/db";
+import { CertificationEnvironmentSchema, type CertificationEnvironment } from "@ceo-agent/shared/server";
 import type { SceneProviderWorkerRuntimeDependencies } from "@ceo-agent/agents";
 import { compiledProviderRequestIdForSchedule } from "@ceo-agent/agents";
 
@@ -15,7 +16,11 @@ const terminalNoCharge = new Set(["NOT_ACCEPTED", "NOT_SUBMITTED", "REJECTED", "
  */
 export class AiStoryCertificationCommercialReservationGate implements CommercialGate {
   constructor(
-    private readonly authority = new CertificationCommercialAuthorityService()
+    private readonly authority = new CertificationCommercialAuthorityService(),
+    private readonly environment: CertificationEnvironment = CertificationEnvironmentSchema.parse(
+      process.env.AI_STORY_CERTIFICATION_ENVIRONMENT ??
+      (process.env.RAILWAY_ENVIRONMENT_NAME?.toLowerCase() === "staging" ? "STAGING" : undefined)
+    )
   ) {}
 
   private resolveCompiledRequestBinding(
@@ -59,6 +64,7 @@ export class AiStoryCertificationCommercialReservationGate implements Commercial
       reservedAt: input.reservedAt,
     });
     const result = await this.authority.reserve({
+      environment: this.environment,
       orgId: input.bundle.correlation.ownership.orgId,
       workspaceId: input.bundle.envelope.workspaceId,
       executionIdentity: input.providerAttemptId,
@@ -73,6 +79,7 @@ export class AiStoryCertificationCommercialReservationGate implements Commercial
     input: Parameters<NonNullable<CommercialGate["claimSubmissionBeforeAdapter"]>>[0]
   ) {
     const reservation = await this.authority.getReservationByExecutionIdentity({
+      environment: this.environment,
       executionIdentity: input.providerAttemptId,
     });
     if (!reservation || reservation.certificationReservationId !== input.reservationId) {
@@ -99,6 +106,7 @@ export class AiStoryCertificationCommercialReservationGate implements Commercial
   async loadForOutcome(input: Parameters<CommercialGate["loadForOutcome"]>[0]) {
     // Worker Attempt is deterministic and is the protected commercial identity.
     const result = await this.authority.getReservationByExecutionIdentity({
+      environment: this.environment,
       executionIdentity: input.providerAttemptId,
     });
     return result ? { reservationId: result.certificationReservationId } : null;

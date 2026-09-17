@@ -27,6 +27,8 @@ import {
   type CapabilityKey,
   type CommercialExecutionAuthorization,
   type ProductPricingRule,
+  type CertificationEnvironment,
+  CertificationEnvironmentSchema,
 } from "@ceo-agent/shared/server";
 
 export {
@@ -44,6 +46,7 @@ export type AuthorizeBillableExecuteInput = {
   readonly capabilityKey: CapabilityKey;
   readonly executionIdentity: string;
   readonly authorizedAt: string;
+  readonly certificationEnvironment?: CertificationEnvironment;
   /** Optional override for tests / future catalogs. */
   readonly resolvePricingRule?: ResolvePricingRule;
 };
@@ -123,14 +126,20 @@ export class CommercialAuthorizationService {
     const subscriptionEligible = Boolean(
       subscription && subscriptionStatusAllowsPlanCapabilities(subscription.status)
     );
+    const configuredCertificationEnvironment = CertificationEnvironmentSchema.safeParse(
+      process.env.AI_STORY_CERTIFICATION_ENVIRONMENT ??
+      (process.env.RAILWAY_ENVIRONMENT_NAME?.toLowerCase() === "staging" ? "STAGING" : undefined)
+    );
+    const certificationEnvironment = input.certificationEnvironment ??
+      (configuredCertificationEnvironment.success ? configuredCertificationEnvironment.data : undefined);
     const certificationScope =
-      !subscriptionEligible && input.capabilityKey === "ai_story.execute"
-        ? await this.certificationReader().getActiveScope(input.orgId, input.workspaceId)
+      !subscriptionEligible && input.capabilityKey === "ai_story.execute" && certificationEnvironment
+        ? await this.certificationReader().getActiveScope(certificationEnvironment, input.orgId, input.workspaceId)
         : null;
     if (!subscriptionEligible && !certificationScope) {
       throw new CommercialAuthorizationError(
         "COMMERCIAL_AUTH_SUBSCRIPTION_INVALID",
-        "An eligible Subscription Projection or exact active STAGING certification commercial scope is required"
+        "An eligible Subscription Projection or exact active explicit-environment certification commercial scope is required"
       );
     }
 

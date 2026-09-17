@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { sha256CanonicalIntegrityHash } from "./canonical-integrity";
+import { CertificationEnvironmentSchema } from "./certification-environment";
+export { CertificationEnvironmentSchema } from "./certification-environment";
+export type { CertificationEnvironment } from "./certification-environment";
 
 export const CERTIFICATION_COMMERCIAL_CONTRACT_VERSION = "1" as const;
 export const CERTIFICATION_COMMERCIAL_REASON =
@@ -15,7 +18,7 @@ const hash = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const CertificationCommercialScopeSchema = z.object({
   contractVersion: z.literal(CERTIFICATION_COMMERCIAL_CONTRACT_VERSION),
   certificationScopeId: uuid,
-  environment: z.literal("STAGING"),
+  environment: CertificationEnvironmentSchema,
   orgId: uuid,
   workspaceId: uuid,
   capabilityKey: z.literal("ai_story.execute"),
@@ -27,7 +30,7 @@ export const CertificationCommercialScopeSchema = z.object({
   consumedProviderSubmissions: z.number().int().nonnegative(),
   reservedProviderSubmissions: z.number().int().nonnegative(),
   createdBy: uuid,
-  reason: z.literal(CERTIFICATION_COMMERCIAL_REASON),
+  reason: z.string().min(1),
   createdAt: instant,
   closedAt: instant.nullable(),
   revokedAt: instant.nullable(),

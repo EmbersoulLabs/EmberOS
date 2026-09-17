@@ -29,6 +29,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
+      CI: "true"
       EMBEROS_TEST_DB_ENVIRONMENT: test
       RUN_DB_INTEGRATION_TESTS: "1"
       DB_POOL_MAX: "1"
@@ -116,6 +117,11 @@ jobs:
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/certification-commercial-authority.integration.test.ts
+
+      - name: Certify planning hard budget and Production scope upgrade from predecessor schema
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-certification-planning-production-scope.integration.test.ts
 
       - name: Certify ephemeral PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
