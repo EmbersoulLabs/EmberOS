@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   AiStoryCanonicalSceneSchema,
+  assertExplicitAiStorySceneGenerationMode,
   AiStoryAuthoritativeSceneProductBindingSchema,
   AiStoryLocationAuthorityVersionSchema,
   AiStoryLocationFactsSchema,
@@ -221,6 +222,7 @@ export class AiStoryCanonicalSceneAuthorityService {
   async proposeRevisionSet(scope: AiStoryScriptScope, scenes: readonly AiStoryCanonicalScene[]) {
     const parsed = scenes.map((scene) => AiStoryCanonicalSceneSchema.parse(scene));
     assertExplicitProductVisualIdentityRequirements(parsed);
+    parsed.forEach((scene) => assertExplicitAiStorySceneGenerationMode(scene));
     if (parsed.some((scene) => scene.status !== "DRAFT" || scene.createdBy !== scope.actorUserId)) throw new AiStorySceneAuthorityError("SCENE_PROPOSAL_INVALID", "New canonical Scene revisions must be DRAFT proposals by the scoped actor");
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`canonical-scenes:${scope.storyVersionId}`}))`);
@@ -278,6 +280,9 @@ export class AiStoryCanonicalSceneAuthorityService {
       if (new Set(current.map((scene)=>scene.scriptVersionId)).size !== 1) throw new AiStorySceneAuthorityError("SCENE_SET_LIFECYCLE_AMBIGUOUS","Canonical Scene set has mixed Script lineage");
       await assertCurrentFrozenScript(tx, scope, current[0]!.scriptVersionId);
       assertExplicitProductVisualIdentityRequirements(current);
+      if (to === "FROZEN") current.forEach((scene) =>
+        assertExplicitAiStorySceneGenerationMode(scene)
+      );
       current.forEach((scene)=>assertAiStorySceneTransition(scene.status,to));
       if(to==="VALIDATED"){
         const scriptRows=await tx.select().from(schema.aiStoryScriptVersions).where(eq(schema.aiStoryScriptVersions.scriptVersionId,current[0]!.scriptVersionId)).limit(1);

@@ -104,6 +104,7 @@ describe("AI Story planning pipeline assembly", () => {
                 transition: "Cut",
                 continuityNotes: "",
                 order: 0,
+                generationAuthority: { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" },
               },
             ],
           },

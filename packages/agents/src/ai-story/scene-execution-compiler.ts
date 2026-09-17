@@ -13,6 +13,7 @@ import {
   AiStoryCanonicalSceneExecutionIntentSchema,
   EXECUTION_CAPABILITY_IDS,
   PRODUCT_IDENTITY_CONSTRAINTS,
+  resolveExplicitAiStorySceneGenerationAuthority,
   type AiStoryExecutionPlan,
   type AiStoryExecutionReviewEstimate,
   type AiStoryEffectiveSceneGenerationAuthority,
@@ -93,39 +94,9 @@ function sortedUnique(values: readonly string[]): string[] {
 /** Deterministic planning → execution authority resolution. */
 export function resolveEffectiveSceneGenerationAuthority(
   scene: ScenePlanItem,
-  storyReferenceIds: readonly string[]
+  _storyReferenceIds: readonly string[]
 ): AiStoryEffectiveSceneGenerationAuthority {
-  const authority = scene.generationAuthority;
-  if (authority?.referenceSource === "REFERENCE_FREE_T2V") {
-    return {
-      strategy: "TEXT_TO_VIDEO",
-      referenceSource: "REFERENCE_FREE_T2V",
-      effectiveReferenceIds: [],
-      firstFrameAssetId: null,
-      productVisualIdentityRequirement:
-        authority.productVisualIdentityRequirement,
-    };
-  }
-  if (authority?.referenceSource === "SCENE_EXPLICIT") {
-    const tail = sortedUnique(
-      authority.referenceAssetIds.filter((id) => id !== authority.firstFrameAssetId)
-    );
-    return {
-      strategy: authority.strategy,
-      referenceSource: "SCENE_EXPLICIT",
-      effectiveReferenceIds: [authority.firstFrameAssetId, ...tail],
-      firstFrameAssetId: authority.firstFrameAssetId,
-      productVisualIdentityRequirement: "REQUIRED",
-    };
-  }
-  const inherited = sortedUnique(storyReferenceIds);
-  return {
-    strategy: "PRODUCT_GROUNDED_VIDEO",
-    referenceSource: "STORY_INHERITED",
-    effectiveReferenceIds: inherited,
-    firstFrameAssetId: inherited[0] ?? null,
-    productVisualIdentityRequirement: "REQUIRED",
-  };
+  return resolveExplicitAiStorySceneGenerationAuthority(scene.generationAuthority);
 }
 
 /**
@@ -224,13 +195,15 @@ export function compileSceneExecutionIntents(
     if (!canonical) {
       throw new Error("ANIMATION_PACKAGE_CANONICAL_SCENE_MAPPING_INVALID");
     }
+    if (!canonical.generationAuthority ||
+      stableJson(canonical.generationAuthority) !== stableJson(scene.generationAuthority)) {
+      throw new Error("ANIMATION_PACKAGE_CANONICAL_SCENE_MODE_AUTHORITY_INVALID");
+    }
     const generationAuthority = resolveEffectiveSceneGenerationAuthority(
       scene,
       storyReferencedAssetIds
     );
-    const persistedGenerationAuthority = scene.generationAuthority
-      ? generationAuthority
-      : undefined;
+    const persistedGenerationAuthority = generationAuthority;
     const sceneReferencedAssetIds = generationAuthority.effectiveReferenceIds;
     const sceneShots = shotsSorted.filter((s) => s.sceneId === scene.id);
     const shotReferences = sceneShots.map((shot) => ({

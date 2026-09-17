@@ -39,8 +39,8 @@ const BEATS = [
   {id:"proposal-b",order:1,name:"Detail",purpose:"Reveal detail",summary:"Detail appears."},
 ];
 const PLAN = [
-  {id:"scene-plan-a",beatIds:["proposal-a"],purpose:"Exact introduction purpose",durationSec:4,transition:"",continuityNotes:"Keep framing",order:0},
-  {id:"scene-plan-b",beatIds:["proposal-b"],purpose:"Exact detail purpose",durationSec:4,transition:"",continuityNotes:"",order:1},
+  {id:"scene-plan-a",beatIds:["proposal-a"],purpose:"Exact introduction purpose",durationSec:4,transition:"",continuityNotes:"Keep framing",order:0,generationAuthority:{strategy:"TEXT_TO_VIDEO" as const,referenceSource:"REFERENCE_FREE_T2V" as const,referenceAssetIds:[],firstFrameAssetId:null,productVisualIdentityRequirement:"NONE" as const}},
+  {id:"scene-plan-b",beatIds:["proposal-b"],purpose:"Exact detail purpose",durationSec:4,transition:"",continuityNotes:"",order:1,generationAuthority:{strategy:"TEXT_TO_VIDEO" as const,referenceSource:"REFERENCE_FREE_T2V" as const,referenceAssetIds:[],firstFrameAssetId:null,productVisualIdentityRequirement:"NONE" as const}},
 ];
 const CHARACTER = {characterId:I.character,characterVersionId:I.characterVersion,characterFingerprint:hash("a"),name:"Exact Character",canonicalFacts:{identity:"Identity",appearance:"Appearance",personality:"Personality",emotionalArc:"Arc",relationships:[]}};
 const CREATIVE = {storyContext:{title:"Story",summary:"Summary",objective:"Awareness",targetAudience:"People",tone:"Clear",estimatedDuration:"8s",keyMessages:[],cta:"Learn"},characterContext:{characters:[],relationships:[]},productAuthorities:[],worldContext:{locations:[],visualStyle:"",lighting:"",environment:"",objects:[],timeline:"",worldRules:[]},narrativeContext:{arc:"Arc",pacing:"Pace",emotionalJourney:"Journey",themes:[],dialogue:[]},directorContext:{}};
@@ -83,13 +83,34 @@ describe("AI Story Canonical Scene Package 1",()=>{
     expect(a[0]!.sourceScriptEntryIds).toEqual(script().scenes[0]!.entries.map((entry)=>entry.entryId));
   });
 
-  it("creates deterministic ephemeral location, exact Character and Product bindings, and no generation mode",()=>{
+  it("creates deterministic ephemeral location, exact Character and Product bindings, and preserves explicit reference-free mode",()=>{
     const scenes=composeAiStoryCanonicalSceneSetV1(composerInput());
     expect(scenes[0]!.locationBinding).toMatchObject({scope:"EPHEMERAL_ENVIRONMENT",storyId:I.story,sceneId:scenes[0]!.sceneId,displayName:WORLD.location,environmentDescription:`${WORLD.environment}\n\n${PLAN[0]!.purpose}\n\n${PLAN[0]!.continuityNotes}`,visualIdentityRequirement:"NONE"});
     expect(scenes[0]!.locationState).toEqual({temporaryFacts:[]});
     expect(scenes[0]!.castBindings).toEqual([{scope:"CAMPAIGN_CHARACTER",id:I.character,campaignId:I.campaign,authorityVersionId:I.characterVersion,authorityFingerprint:hash("a"),visualIdentityRequirement:"PREFERRED"}]);
     expect(scenes[0]!.productBindings).toEqual([{productAuthorityId:I.product,sourceAssetId:I.product,sourceAssetContentHash:hash("b"),visualIdentityRequirement:"REQUIRED"}]);
-    expect(JSON.stringify(scenes)).not.toMatch(/generationMode|TEXT_TO_VIDEO|IMAGE_TO_VIDEO/);
+    expect(scenes.map((scene)=>scene.generationAuthority?.strategy)).toEqual(["TEXT_TO_VIDEO","TEXT_TO_VIDEO"]);
+  });
+
+  it("rejects missing or mismatched mode without inferring it from Product presence",()=>{
+    const missing=PLAN.map((item)=>({...item,generationAuthority:undefined}));
+    expect(()=>composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:missing})).toThrowError(expect.objectContaining({code:"CANONICAL_SCENE_GENERATION_MODE_AUTHORITY_MISSING"}));
+    const firstFrame={strategy:"FIRST_FRAME_IMAGE_TO_VIDEO" as const,referenceSource:"SCENE_EXPLICIT" as const,referenceAssetIds:[I.product],firstFrameAssetId:I.product,productVisualIdentityRequirement:"REQUIRED" as const};
+    const exact=PLAN.map((item)=>({...item,generationAuthority:firstFrame}));
+    expect(composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:exact}).map((scene)=>scene.generationAuthority?.strategy)).toEqual(["FIRST_FRAME_IMAGE_TO_VIDEO","FIRST_FRAME_IMAGE_TO_VIDEO"]);
+    const wrong=PLAN.map((item)=>({...item,generationAuthority:{...firstFrame,referenceAssetIds:[id(99)],firstFrameAssetId:id(99)}}));
+    expect(()=>composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:wrong})).toThrowError(expect.objectContaining({code:"CANONICAL_SCENE_GENERATION_MODE_MATERIAL_MISMATCH"}));
+    expect(composeAiStoryCanonicalSceneSetV1(composerInput()).every((scene)=>scene.generationAuthority?.strategy==="TEXT_TO_VIDEO")).toBe(true);
+  });
+
+  it("revises Scene mode with a new fingerprint while preserving the old FROZEN snapshot",()=>{
+    const old=frozen(composeAiStoryCanonicalSceneSetV1(composerInput()));
+    const firstFrame={strategy:"FIRST_FRAME_IMAGE_TO_VIDEO" as const,referenceSource:"SCENE_EXPLICIT" as const,referenceAssetIds:[I.product],firstFrameAssetId:I.product,productVisualIdentityRequirement:"REQUIRED" as const};
+    const next=composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:PLAN.map((item)=>({...item,generationAuthority:firstFrame})),currentScenes:old});
+    expect(next.every((scene,index)=>scene.version===2&&scene.parentSceneVersionIds[0]===old[index]!.sceneVersionId)).toBe(true);
+    expect(next[0]!.fingerprint).not.toBe(old[0]!.fingerprint);
+    expect(old[0]!.generationAuthority?.strategy).toBe("TEXT_TO_VIDEO");
+    expect(next[0]!.generationAuthority?.strategy).toBe("FIRST_FRAME_IMAGE_TO_VIDEO");
   });
 
   it("uses REQUIRED for introduction/detail/evidence and PREFERRED otherwise",()=>{

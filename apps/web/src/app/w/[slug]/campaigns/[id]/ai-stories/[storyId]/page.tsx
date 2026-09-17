@@ -309,7 +309,23 @@ function StoryPreview({ draft }: { draft: AiStoryStructuredDraft }) {
 }
 
 function PackageSection({ title, value }: { title: string; value: unknown }) {
-  return <div className="rounded-xl border border-border bg-surface-muted p-4"><h3 className="text-sm font-semibold text-navy">{title}</h3><pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs text-ink-secondary">{JSON.stringify(value,null,2)}</pre></div>;
+  const scenes = title === "Scenes" && Array.isArray(value)
+    ? value as AnimationPackagePayload["scenePlan"]
+    : null;
+  return <div className="rounded-xl border border-border bg-surface-muted p-4">
+    <h3 className="text-sm font-semibold text-navy">{title}</h3>
+    {scenes ? <div className="mt-2 space-y-2" data-testid="canonical-scene-generation-mode-review">
+      {scenes.map((scene) => {
+        const mode = scene.generationAuthority;
+        const referenceFree = mode?.referenceSource === "REFERENCE_FREE_T2V";
+        return <div key={scene.id} className="rounded-lg border border-border bg-white p-3 text-sm">
+          <p className="font-medium text-navy">Scene {scene.order + 1}: {referenceFree ? "Reference-free text-to-video" : mode?.referenceSource === "SCENE_EXPLICIT" ? "First-frame image-to-video" : "BLOCKED — explicit generation mode missing"}</p>
+          <p className="text-xs text-ink-secondary">{referenceFree ? "No visual reference supplied for generation." : mode?.referenceSource === "SCENE_EXPLICIT" ? `Exact first-frame source Asset: ${mode.firstFrameAssetId}. Product material must be READY; approval blocks otherwise.` : "A current Package cannot be approved without an exact Scene mode decision."}</p>
+        </div>;
+      })}
+    </div> : null}
+    <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs text-ink-secondary">{JSON.stringify(value,null,2)}</pre>
+  </div>;
 }
 
 type SafeSceneIntentHint = { sceneExecutionId: string; sceneId?: string; sceneOrder?: number; purpose?: string; plannedDurationMs?: number; shotCount?: number; referencedAssetIds?: string[] };

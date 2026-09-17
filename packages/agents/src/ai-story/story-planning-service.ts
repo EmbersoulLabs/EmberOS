@@ -8,6 +8,7 @@ import { z } from "zod";
 import { callJsonModel } from "../llm";
 import {
   AnimationPackagePayloadSchema,
+  AiStorySceneGenerationAuthoritySchema,
   AiStoryScriptVersionSchema,
   CharacterContinuityEntrySchema,
   CreativeContextSchema,
@@ -328,6 +329,13 @@ export async function generateScenePlan(input: {
         transition: "string",
         continuityNotes: "string",
         order: 0,
+        generationAuthority: {
+          strategy: "TEXT_TO_VIDEO",
+          referenceSource: "REFERENCE_FREE_T2V",
+          referenceAssetIds: [],
+          firstFrameAssetId: null,
+          productVisualIdentityRequirement: "NONE",
+        },
       },
     ],
   });
@@ -337,11 +345,12 @@ export async function generateScenePlan(input: {
       "You are an animation scene planner.",
       "Create scenes that cover every story beat, merging beats only when continuityNotes explicitly say which beat was merged.",
       "Use sequential order values starting at 0 and stable scene ids.",
+      "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
       "Return ONLY JSON.",
     ].join(" "),
     JSON.stringify(input, null, 2),
     schemaHint,
-    z.array(ScenePlanItemSchema).min(1),
+    z.array(ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema })).min(1),
     (result) => result.scenePlan
   );
   return { scenePlan: value, usage };
@@ -390,7 +399,7 @@ export async function generateShotPlan(input: {
       ] : []),
       "Every scene must receive at least one shot.",
       "Use sequential order values starting at 0 and stable shot ids.",
-      "When Campaign Product Assets are present, treat the Scene as PRODUCT_GROUNDED_VIDEO: the Campaign Product Asset is primary product identity authority and approved prior Scene media may guide only framing, environment, and motion continuity.",
+      "Preserve each Scene Plan generationAuthority exactly; Product or Asset presence never selects or changes generation mode. For image-conditioned Product Scenes, the exact approved Product Asset remains visual identity authority.",
       "For PRODUCT_GROUNDED_VIDEO use only identity-safe camera motion: static/locked framing, slow push-in, slow pull-back, minor lateral dolly, a small 10-20 degree arc, close-up detail, rack focus, or gentle parallax.",
       "Never request a 180/360-degree orbit, circle-around-product, unseen-backside reveal, dramatic perspective change, product morphing, or container/wrapping transformation.",
       "Return planning-only camera language; no provider execution fields.",

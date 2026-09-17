@@ -81,7 +81,7 @@ describeIntegration("AI Story compiled request runtime PostgreSQL authority", ()
       const sceneVersionId = crypto.randomUUID();
       const generationAuthority = {
         strategy: "PRODUCT_GROUNDED_VIDEO" as const,
-        referenceSource: "STORY_INHERITED" as const,
+        referenceSource: "SCENE_EXPLICIT" as const,
         effectiveReferenceIds: [ids.assetId], firstFrameAssetId: ids.assetId,
         productVisualIdentityRequirement: "REQUIRED" as const,
       };

@@ -37,6 +37,7 @@ const CANONICAL_VERSION_B = "99999999-9999-4999-8999-999999999992";
 const HASH_A = `sha256:${"a".repeat(64)}`;
 const HASH_B = `sha256:${"b".repeat(64)}`;
 const SET_HASH = `sha256:${"c".repeat(64)}`;
+const I2V_A = { strategy: "FIRST_FRAME_IMAGE_TO_VIDEO" as const, referenceSource: "SCENE_EXPLICIT" as const, referenceAssetIds: [ASSET_A], firstFrameAssetId: ASSET_A, productVisualIdentityRequirement: "REQUIRED" as const };
 
 function samplePackage(assetIds: string[] = [ASSET_A]): AnimationPackagePayload {
   const story = {
@@ -136,6 +137,7 @@ function samplePackage(assetIds: string[] = [ASSET_A]): AnimationPackagePayload 
         transition: "Cut",
         continuityNotes: "Warm light",
         order: 0,
+        generationAuthority: I2V_A,
       },
       {
         id: "scene-002",
@@ -145,6 +147,7 @@ function samplePackage(assetIds: string[] = [ASSET_A]): AnimationPackagePayload 
         transition: "Dissolve",
         continuityNotes: "Same apartment",
         order: 1,
+        generationAuthority: I2V_A,
       },
     ],
     shotPlan: [
@@ -220,8 +223,8 @@ function samplePackage(assetIds: string[] = [ASSET_A]): AnimationPackagePayload 
       scriptVersionId: SCRIPT,
       sceneSetFingerprint: SET_HASH,
       scenes: [
-        { order: 0, planningSceneId: "scene-001", sceneId: CANONICAL_SCENE_A, sceneVersionId: CANONICAL_VERSION_A, sceneFingerprint: HASH_A, sourceScriptSceneIds: ["aaaaaaaa-0000-4000-8000-000000000001"] },
-        { order: 1, planningSceneId: "scene-002", sceneId: CANONICAL_SCENE_B, sceneVersionId: CANONICAL_VERSION_B, sceneFingerprint: HASH_B, sourceScriptSceneIds: ["aaaaaaaa-0000-4000-8000-000000000002"] },
+        { order: 0, planningSceneId: "scene-001", sceneId: CANONICAL_SCENE_A, sceneVersionId: CANONICAL_VERSION_A, sceneFingerprint: HASH_A, sourceScriptSceneIds: ["aaaaaaaa-0000-4000-8000-000000000001"], generationAuthority: I2V_A },
+        { order: 1, planningSceneId: "scene-002", sceneId: CANONICAL_SCENE_B, sceneVersionId: CANONICAL_VERSION_B, sceneFingerprint: HASH_B, sourceScriptSceneIds: ["aaaaaaaa-0000-4000-8000-000000000002"], generationAuthority: I2V_A },
       ],
     },
   });
@@ -283,7 +286,7 @@ describe("Phase 1 Scene Execution Compiler", () => {
     }
   });
 
-  it("compiles mixed explicit T2V, inherited I2V, and explicit-reference I2V per Scene", () => {
+  it("compiles mixed explicit T2V and exact first-frame I2V per Scene", () => {
     const pkg = samplePackage();
     const mutable = pkg as any;
     mutable.scenePlan[0].generationAuthority = {
@@ -293,6 +296,7 @@ describe("Phase 1 Scene Execution Compiler", () => {
       firstFrameAssetId: null,
       productVisualIdentityRequirement: "NONE",
     };
+    mutable.canonicalSceneAuthority.scenes[0].generationAuthority = mutable.scenePlan[0].generationAuthority;
     mutable.storyBeats.push({
       id: "beat-003",
       name: "Closing",
@@ -337,6 +341,7 @@ describe("Phase 1 Scene Execution Compiler", () => {
       sceneVersionId: "99999999-9999-4999-8999-999999999993",
       sceneFingerprint: `sha256:${"d".repeat(64)}`,
       sourceScriptSceneIds: ["aaaaaaaa-0000-4000-8000-000000000003"],
+      generationAuthority: mutable.scenePlan[2].generationAuthority,
     });
 
     const parsed = AnimationPackagePayloadSchema.parse(pkg);
@@ -352,7 +357,11 @@ describe("Phase 1 Scene Execution Compiler", () => {
       referenceSource: "REFERENCE_FREE_T2V",
       effectiveReferenceIds: [],
     });
-    expect(first.intents[1]!.generationAuthority).toBeUndefined();
+    expect(first.intents[1]!.generationAuthority).toMatchObject({
+      strategy: "FIRST_FRAME_IMAGE_TO_VIDEO",
+      referenceSource: "SCENE_EXPLICIT",
+      firstFrameAssetId: ASSET_A,
+    });
     expect(first.intents[2]!.generationAuthority).toMatchObject({
       strategy: "FIRST_FRAME_IMAGE_TO_VIDEO",
       referenceSource: "SCENE_EXPLICIT",
@@ -380,31 +389,16 @@ describe("Phase 1 Scene Execution Compiler", () => {
       [ASSET_A],
       [ASSET_B],
     ]);
-    expect(payloads[1]!.assetReferences[0]!.continuityScope).toBe("STORY");
+    expect(payloads[1]!.assetReferences[0]!.continuityScope).toBe("SCENE");
     expect(payloads[2]!.assetReferences[0]!.continuityScope).toBe("SCENE");
   });
 
-  it("keeps legacy inheritance and requires explicit authority for reference-free T2V", () => {
-    const legacy = compileSceneExecutionIntents(samplePackage(), baseCtx);
-    expect(legacy.intents.every((intent) => intent.generationAuthority === undefined)).toBe(true);
-    expect(legacy.intents.every((intent) => intent.referencedAssetIds[0] === ASSET_A)).toBe(true);
-
-    const invalid = compileSceneExecutionIntents(samplePackage([]), baseCtx);
-    const intent = invalid.intents[0]!;
-    const instructions = invalid.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!;
-    const qc = validateSceneExecutionIntent(intent, {
-      storyVersionFrozenAt: baseCtx.storyVersionFrozenAt,
-      animationPackageStatus: "ready_for_execution",
-      workspaceId: WS,
-      campaignId: CAMP,
-      assetsById: new Map(),
-      instructions,
-      validatedAt: "2026-08-02T01:00:00.000Z",
-    });
-    expect(qc.errors.some((error) => error.code === "PRODUCT_IDENTITY_REFERENCE_MISSING")).toBe(true);
-    expect(() =>
-      mapCompiledInstructionsToCanonicalScenePayload({ intent, instructions })
-    ).toThrow(/explicit TEXT_TO_VIDEO/);
+  it("keeps missing-mode historical Packages readable but not executable", () => {
+    const legacy = samplePackage();
+    for (const scene of legacy.scenePlan) delete scene.generationAuthority;
+    for (const scene of legacy.canonicalSceneAuthority!.scenes) delete scene.generationAuthority;
+    expect(AnimationPackagePayloadSchema.safeParse(legacy).success).toBe(true);
+    expect(() => compileSceneExecutionIntents(legacy, baseCtx)).toThrow();
   });
 });
 
@@ -418,6 +412,7 @@ describe("Phase 1 AI QC Layer", () => {
       firstFrameAssetId: null,
       productVisualIdentityRequirement: "NONE",
     };
+    pkg.canonicalSceneAuthority!.scenes[0]!.generationAuthority = pkg.scenePlan[0]!.generationAuthority;
     const compiled = compileSceneExecutionIntents(pkg, baseCtx);
     const intent = compiled.intents[0]!;
     const result = validateSceneExecutionIntent(intent, {
@@ -443,6 +438,7 @@ describe("Phase 1 AI QC Layer", () => {
       firstFrameAssetId: null,
       productVisualIdentityRequirement: "REQUIRED",
     };
+    pkg.canonicalSceneAuthority!.scenes[0]!.generationAuthority = pkg.scenePlan[0]!.generationAuthority;
     const compiled = compileSceneExecutionIntents(pkg, baseCtx);
     const intent = compiled.intents[0]!;
     const result = validateSceneExecutionIntent(intent, {

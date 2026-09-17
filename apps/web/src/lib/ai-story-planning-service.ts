@@ -6,6 +6,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, schema } from "@ceo-agent/db";
 import {
   AuthoritativeAnimationPackagePayloadSchema,
+  resolveExplicitAiStorySceneGenerationAuthority,
   AnimationPackagePayloadSchema,
   CreativeContextSchema,
   StoryPlanningDraftSchema,
@@ -17,6 +18,7 @@ import {
   type StoryPlanningDraft,
 } from "@ceo-agent/shared";
 import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent } from "@ceo-agent/shared/server";
+import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -229,6 +231,32 @@ export async function approveAnimationPackage(
       "CURRENT_FROZEN_SCENE_SET_REQUIRED",
       "Animation Package approval requires the current FROZEN Canonical Scene set"
     );
+  }
+  if (!isStoryPlanningDraft(preflightCandidate.payload)) {
+    const payload = AuthoritativeAnimationPackagePayloadSchema.parse(preflightCandidate.payload);
+    assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent({
+      storyId: input.storyId,
+      storyVersionId: preflightCandidate.storyVersionId,
+      scenePlan: payload.scenePlan,
+      canonicalScenes,
+      authority: payload.canonicalSceneAuthority,
+    });
+    for (const scene of canonicalScenes) {
+      const authority = resolveExplicitAiStorySceneGenerationAuthority(scene.generationAuthority);
+      if (authority.strategy !== "TEXT_TO_VIDEO") {
+        await resolveCurrentSceneProductMaterialForScheduling({
+          orgId: input.orgId,
+          workspaceId: input.workspaceId,
+          campaignId: input.campaignId,
+          storyId: input.storyId,
+          storyVersionId: preflightCandidate.storyVersionId,
+          sceneId: scene.sceneId,
+          sceneVersionId: scene.sceneVersionId,
+          actorUserId: input.approvedBy,
+          generationAuthority: authority,
+        });
+      }
+    }
   }
   return db.transaction(async (tx) => {
     const [candidate] = await tx

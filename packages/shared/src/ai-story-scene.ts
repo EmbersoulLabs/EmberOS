@@ -4,6 +4,7 @@ import {
   AiStoryCastReferenceSchema,
 } from "./ai-story-cast";
 import { AiStoryScriptEntrySchema, AiStoryScriptStateFactSchema } from "./ai-story-script";
+import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 
 export const AI_STORY_SCENE_CONTRACT_VERSION = "ai-story-scene.v1" as const;
 export const AI_STORY_LOCATION_CONTRACT_VERSION = "ai-story-location.v1" as const;
@@ -48,6 +49,8 @@ export const AiStoryCanonicalSceneSchema=z.object({
   sourceScriptSceneIds:z.array(Id).min(1),sourceScriptEntryIds:z.array(Id).min(1),sceneFunction:Text,
   sceneRole:z.string().regex(/^(?:[A-Z][A-Z0-9_]{1,63}|EXT:[a-z0-9.-]+:[A-Z][A-Z0-9_]{1,63})$/),importance:z.enum(["MAJOR","SUPPORTING","MINOR","TRANSITIONAL"]),
   locationBinding:AiStoryLocationReferenceSchema,locationState:AiStorySceneLocationStateSchema,castBindings:z.array(AiStoryCastReferenceSchema),productBindings:z.array(AiStorySceneProductBindingSchema),
+  /** Optional solely for historical snapshots; new FROZEN authority requires an explicit decision. */
+  generationAuthority:AiStorySceneGenerationAuthoritySchema.optional(),
   entryState:z.array(AiStoryScriptStateFactSchema),events:z.array(AiStoryScriptEntrySchema).min(1),exitState:z.array(AiStoryScriptStateFactSchema),continuityFacts:z.array(Text),
   timeRelation:z.enum(AI_STORY_SCENE_TIME_RELATIONS),discontinuity:AiStorySceneDiscontinuitySchema.nullable(),mustKeep:z.array(Text),mustAvoid:z.array(Text),
   lineageOperation:z.enum(["CREATE","REVISE","SPLIT","MERGE","REORDER","INSERT"]),parentSceneVersionIds:z.array(Id),sourceHash:Hash,fingerprint:Hash,
@@ -56,7 +59,7 @@ export const AiStoryCanonicalSceneSchema=z.object({
 export const AiStorySceneAuthorityBindingSchema=z.object({sceneId:Id,sceneVersionId:Id,sceneFingerprint:Hash,sourceScriptSceneIds:z.array(Id).min(1)}).strict();
 export type AiStoryCanonicalScene=z.infer<typeof AiStoryCanonicalSceneSchema>; export type AiStoryLocationReference=z.infer<typeof AiStoryLocationReferenceSchema>; export type AiStoryLocationFacts=z.infer<typeof AiStoryLocationFactsSchema>; export type AiStoryLocationAuthorityVersion=z.infer<typeof AiStoryLocationAuthorityVersionSchema>;
 export type AiStoryAuthoritativeSceneProductBinding=z.infer<typeof AiStoryAuthoritativeSceneProductBindingSchema>;
-export type AiStoryAuthoritativeCanonicalScene=Omit<AiStoryCanonicalScene,"productBindings">&{productBindings:AiStoryAuthoritativeSceneProductBinding[]};
+export type AiStoryAuthoritativeCanonicalScene=Omit<AiStoryCanonicalScene,"productBindings"|"generationAuthority">&{productBindings:AiStoryAuthoritativeSceneProductBinding[];generationAuthority:z.infer<typeof AiStorySceneGenerationAuthoritySchema>};
 export type AiStorySceneAuthorityBinding=z.infer<typeof AiStorySceneAuthorityBindingSchema>;
 export type AiStoryLocationPromotion=z.infer<typeof AiStoryLocationPromotionSchema>;
 

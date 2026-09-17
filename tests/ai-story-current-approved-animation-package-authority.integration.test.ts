@@ -50,6 +50,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
       character: crypto.randomUUID(),
     };
     const review = animationPackageFixture("review");
+    review.scenePlan[0]!.generationAuthority = { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" };
     let establishAuthority: (storyVersionId: string, index: number) => Promise<typeof review>;
 
     beforeAll(async () => {
@@ -166,6 +167,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
           locationState: { temporaryFacts: [] },
           castBindings: [{ scope: "CAMPAIGN_CHARACTER", id: ids.character, campaignId: ids.campaign, authorityVersionId: character.characterVersionId, authorityFingerprint: character.fingerprint, visualIdentityRequirement: "PREFERRED" }],
           productBindings: [], entryState: [], events: script.scenes[0]!.entries, exitState: [],
+          generationAuthority: { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" },
           continuityFacts: [], timeRelation: "UNSPECIFIED", discontinuity: null,
           mustKeep: [], mustAvoid: [], lineageOperation: "CREATE", parentSceneVersionIds: [],
           createdBy: ids.user, createdAt: `2026-09-15T00:2${index}:00.000Z`,

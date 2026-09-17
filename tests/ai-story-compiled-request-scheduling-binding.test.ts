@@ -25,7 +25,18 @@ function inputs(mode: "T2V" | "I2V") {
     baseIntent.identity.sceneExecutionId
   ]!;
   if (mode === "I2V") {
-    return { intent: baseIntent, instructions: baseInstructions };
+    const firstFrameAssetId = baseIntent.referencedAssetIds[0]!;
+    const generationAuthority = {
+      strategy: "FIRST_FRAME_IMAGE_TO_VIDEO" as const,
+      referenceSource: "SCENE_EXPLICIT" as const,
+      effectiveReferenceIds: baseIntent.referencedAssetIds,
+      firstFrameAssetId,
+      productVisualIdentityRequirement: "REQUIRED" as const,
+    };
+    return {
+      intent: { ...baseIntent, generationAuthority },
+      instructions: { ...baseInstructions, generationAuthority },
+    };
   }
   const generationAuthority = {
     strategy: "TEXT_TO_VIDEO" as const,
@@ -65,6 +76,29 @@ function compile(mode: "T2V" | "I2V") {
 }
 
 describe("compiled Provider request scheduling authority", () => {
+  it("keeps legacy image compilation compatible but never infers a current Canonical Scene mode", () => {
+    const selected = inputs("I2V");
+    const { generationAuthority: _intentMode, ...legacyIntent } = selected.intent;
+    const { generationAuthority: _instructionMode, ...legacyInstructions } = selected.instructions;
+    const input = {
+      intent: legacyIntent,
+      instructions: legacyInstructions,
+      authority: AUTHORITY,
+      adapterVersion: "1.0.0",
+      compiledAt: "2026-09-01T00:00:00.000Z",
+      referenceAssets: legacyIntent.referencedAssetIds.map((assetId) => ({
+        assetId,
+        mediaType: "image/jpeg",
+        storagePath: `${legacyIntent.identity.workspaceId}/library/${assetId}.jpg`,
+      })),
+    };
+    expect(compileImmutableSeedanceRequestFromSceneCompilation(input).referenceMappings).toHaveLength(1);
+    expect(() => compileImmutableSeedanceRequestFromSceneCompilation({
+      ...input,
+      intent: { ...legacyIntent, identity: { ...legacyIntent.identity, sceneVersionId: "50000000-0000-4000-8000-000000000087" } },
+    })).toThrow(/generation authority conflicts/);
+  });
+
   it("binds exact current Product source and certified derivative as the sole private first frame", () => {
     const { intent, instructions } = inputs("I2V");
     const canonicalSceneId = "50000000-0000-4000-8000-000000000086";
@@ -75,7 +109,7 @@ describe("compiled Provider request scheduling authority", () => {
     const derivativeHash = `sha256:${"e".repeat(64)}`;
     const generationAuthority = {
       strategy: "PRODUCT_GROUNDED_VIDEO" as const,
-      referenceSource: "STORY_INHERITED" as const,
+      referenceSource: "SCENE_EXPLICIT" as const,
       effectiveReferenceIds: [sourceId],
       firstFrameAssetId: sourceId,
       productVisualIdentityRequirement: "REQUIRED" as const,
@@ -93,7 +127,7 @@ describe("compiled Provider request scheduling authority", () => {
         productAuthority: { productAuthorityId: sourceId, sourceAssetId: sourceId, sourceAssetContentHash: sourceHash },
         visualRequirement: {
           sceneRequirement: "REQUIRED" as const, effectiveGenerationRequirement: "REQUIRED" as const,
-          strategy: "PRODUCT_GROUNDED_VIDEO" as const, referenceSource: "STORY_INHERITED" as const,
+          strategy: "PRODUCT_GROUNDED_VIDEO" as const, referenceSource: "SCENE_EXPLICIT" as const,
         },
         suitability: { authorityFingerprint: sourceHash, outcome: derivative ? "OPAQUE_NOT_ISOLATED" as const : "TRANSPARENT_BACKGROUND_CERTIFIED" as const },
         derivativeResolution: derivative
@@ -165,7 +199,7 @@ describe("compiled Provider request scheduling authority", () => {
       authority: AUTHORITY,
       adapterVersion: "1.0.0",
       compiledAt: "2026-09-01T00:00:00.000Z",
-    })).toThrow(/explicit TEXT_TO_VIDEO authority/);
+    })).toThrow(/generation references disagree/);
   });
 
   it("preserves continuity video lineage without projecting it as a Seedance image", () => {

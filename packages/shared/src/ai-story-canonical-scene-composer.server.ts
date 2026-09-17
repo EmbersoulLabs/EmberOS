@@ -20,6 +20,7 @@ import {
   type AiStoryCanonicalScene,
 } from "./ai-story-scene";
 import { finalizeAiStoryCanonicalScene } from "./ai-story-scene.server";
+import { assertExplicitAiStorySceneGenerationMode } from "./ai-story-generation-authority";
 
 export const AI_STORY_CANONICAL_SCENE_COMPOSER_V1 = Object.freeze({
   contractVersion: "ai-story-canonical-scene-composer.v1" as const,
@@ -148,6 +149,9 @@ function candidateInput(
   createdBy: string,
   createdAt: string,
 ) {
+  if (!scenePlan.generationAuthority) {
+    fail("CANONICAL_SCENE_GENERATION_MODE_AUTHORITY_MISSING", "Canonical Scene composition requires an explicit planning generation decision");
+  }
   const sceneId = canonicalAiStorySceneIdV1(input.storyId, input.storyVersionId, scriptScene.order);
   const beatMap = new Map(input.frozenOutline.beats.map((beat) => [beat.id, beat] as const));
   for (const claim of scriptScene.outlineBeatClaims) {
@@ -165,6 +169,10 @@ function candidateInput(
       sourceAssetContentHash: source.contentHash,
       visualIdentityRequirement: productRequirement(scriptScene, productAuthorityId),
     };
+  });
+  assertExplicitAiStorySceneGenerationMode({
+    generationAuthority: scenePlan.generationAuthority,
+    productBindings: products,
   });
   return {
     sceneId,
@@ -193,6 +201,7 @@ function candidateInput(
     locationState: { temporaryFacts: [] },
     castBindings: castBindings(scriptScene, input.frozenScript, input.campaignId, input.characterAuthorities),
     productBindings: products,
+    generationAuthority: scenePlan.generationAuthority,
     entryState: structuredClone(scriptScene.sceneStateIn),
     events: structuredClone(scriptScene.entries),
     exitState: structuredClone(scriptScene.sceneStateOut),

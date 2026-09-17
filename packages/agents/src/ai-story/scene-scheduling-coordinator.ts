@@ -717,6 +717,15 @@ export class SceneSchedulingCoordinator {
             latestHumanReviewCorrection: input.retryHumanReviewCorrection,
           })
         : baseInstructions;
+      if (sceneIntent.identity.sceneVersionId && (
+        !sceneIntent.generationAuthority || !instructions.generationAuthority ||
+        canonicalPersistenceHash(sceneIntent.generationAuthority) !== canonicalPersistenceHash(instructions.generationAuthority)
+      )) {
+        throw new SceneSchedulingError(
+          "SCENE_NOT_AUTHORIZED",
+          "Current Canonical Scene scheduling requires one exact immutable generation mode"
+        );
+      }
       const instructionHash =
         input.retryInputRevision?.canonicalFingerprint ??
         input.postTerminalRetryAuthorization?.integrityHash ??
