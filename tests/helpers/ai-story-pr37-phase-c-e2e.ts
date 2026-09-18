@@ -100,6 +100,7 @@ export class WorkspaceMediaTestAdapter extends DeterministicCanonicalTestAdapter
     private readonly media: {
       readonly uri: string;
       readonly contentHash: string;
+      readonly durationMs?: number;
     },
     options?: { readonly providerId?: string; readonly adapterVersion?: string }
   ) {
@@ -118,11 +119,11 @@ export class WorkspaceMediaTestAdapter extends DeterministicCanonicalTestAdapter
         mediaType: "video/mp4",
         uriReference: this.media.uri,
         contentHash: this.media.contentHash,
-        durationMs: 1000,
+        durationMs: this.media.durationMs ?? 1000,
         width: 640,
         height: 360,
       },
-      normalizedUsageFacts: { durationMs: 1000, units: 1, unitKind: "video" },
+      normalizedUsageFacts: { durationMs: this.media.durationMs ?? 1000, units: 1, unitKind: "video" },
       normalizedCostMetadata: { currency: "USD", amount: 0.01, estimated: false },
     };
   }
@@ -130,7 +131,7 @@ export class WorkspaceMediaTestAdapter extends DeterministicCanonicalTestAdapter
 
 export function createPhaseCAdapterRegistry(
   scenario: DeterministicTestAdapterScenario,
-  media: { readonly uri: string; readonly contentHash: string }
+  media: { readonly uri: string; readonly contentHash: string; readonly durationMs?: number }
 ): {
   readonly registry: CanonicalAdapterRegistry;
   readonly adapter: WorkspaceMediaTestAdapter;
