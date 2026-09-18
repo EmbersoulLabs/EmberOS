@@ -29,6 +29,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
+      CI: "true"
       EMBEROS_TEST_DB_ENVIRONMENT: test
       RUN_DB_INTEGRATION_TESTS: "1"
       DB_POOL_MAX: "1"
@@ -76,6 +77,14 @@ jobs:
 
       - name: Verify test database mutation guard
         run: pnpm exec vitest run --config vitest.config.ts tests/test-db-authority-guard.test.ts
+
+      - name: Certify Production predecessor migration manifest
+        run: pnpm exec vitest run --config vitest.config.ts tests/ai-story-production-overlay-manifest.test.ts
+
+      - name: Certify Production predecessor PostgreSQL upgrade
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-production-overlay-migration.integration.test.ts
 
       - name: Apply canonical Drizzle schema
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
