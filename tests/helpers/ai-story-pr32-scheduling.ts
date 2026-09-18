@@ -124,15 +124,26 @@ export async function cleanupPr32Tenant(
   ids: Phase2aIdSet = PHASE_2A_IDS
 ): Promise<void> {
   if (await sql`select to_regclass('public.ai_story_post_terminal_provider_retry_authorizations') as name`.then((rows) => Boolean(rows[0]?.name))) {
-    await sql.unsafe(
-      "ALTER TABLE ai_story_post_terminal_provider_retry_authorizations DISABLE TRIGGER ai_story_post_terminal_retry_immutable_v1"
-    );
+    const [retryTrigger] = await sql`
+      SELECT EXISTS (
+        SELECT 1 FROM pg_trigger
+        WHERE tgrelid = 'public.ai_story_post_terminal_provider_retry_authorizations'::regclass
+          AND tgname = 'ai_story_post_terminal_retry_immutable_v1'
+      ) AS present
+    `;
+    if (retryTrigger?.present) {
+      await sql.unsafe(
+        "ALTER TABLE ai_story_post_terminal_provider_retry_authorizations DISABLE TRIGGER ai_story_post_terminal_retry_immutable_v1"
+      );
+    }
     try {
       await sql`DELETE FROM ai_story_post_terminal_provider_retry_authorizations WHERE org_id = ${ids.orgId}`;
     } finally {
-      await sql.unsafe(
-        "ALTER TABLE ai_story_post_terminal_provider_retry_authorizations ENABLE TRIGGER ai_story_post_terminal_retry_immutable_v1"
-      );
+      if (retryTrigger?.present) {
+        await sql.unsafe(
+          "ALTER TABLE ai_story_post_terminal_provider_retry_authorizations ENABLE TRIGGER ai_story_post_terminal_retry_immutable_v1"
+        );
+      }
     }
   }
   if (await sql`select to_regclass('public.certification_commercial_reservations') as name`.then((rows) => Boolean(rows[0]?.name))) {
