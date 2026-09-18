@@ -60,11 +60,6 @@ const request = {
 };
 
 describe("RC-FIX-001 canonical AI Story access", () => {
-  it("allows Agency-style access projection for list/read/planning", async () => {
-    await expect(authorizeAiStoryAccess(request, dependencies({ capabilities: ["ai_story.access"] })))
-      .resolves.toEqual({ allowedBy: "EFFECTIVE_ENTITLEMENT" });
-  });
-
   it("allows Agency plan capability without commercial entitlements", async () => {
     const deps = dependencies({ organizationPlan: "agency" });
     await expect(authorizeAiStoryAccess(request, deps)).resolves.toEqual({
@@ -73,9 +68,23 @@ describe("RC-FIX-001 canonical AI Story access", () => {
     expect(deps.entitlementRepository.rebuildEffectiveProjection).not.toHaveBeenCalled();
   });
 
-  it.each(["free", "pro"])("denies %s without ai_story.access", async () => {
-    await expect(authorizeAiStoryAccess(request, dependencies()))
+  it.each(["free", "pro", "pro_plus"])("denies %s without ai_story.access", async (plan) => {
+    await expect(authorizeAiStoryAccess(request, dependencies({ organizationPlan: plan })))
       .rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+  });
+
+  it.each(["free", "pro", "pro_plus"])("denies %s even with explicit ai_story.access", async (plan) => {
+    const deps = dependencies({ organizationPlan: plan, capabilities: ["ai_story.access"] });
+    await expect(authorizeAiStoryAccess(request, deps))
+      .rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+    expect(deps.entitlementRepository.rebuildEffectiveProjection).not.toHaveBeenCalled();
+  });
+
+  it("denies Free with both access and execute grants before consulting entitlements", async () => {
+    const deps = dependencies({ organizationPlan: "free", capabilities: ["ai_story.access", "ai_story.execute"] });
+    await expect(authorizeAiStoryAccess(request, deps))
+      .rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+    expect(deps.entitlementRepository.rebuildEffectiveProjection).not.toHaveBeenCalled();
   });
 
   it("denies a workspace outsider even if an unrelated org projection has access", async () => {
@@ -91,6 +100,13 @@ describe("RC-FIX-001 canonical AI Story access", () => {
     await expect(authorizeAiStoryAccess(request, deps))
       .rejects.toBeInstanceOf(AiStoryAccessDeniedError);
     expect(deps.entitlementRepository.rebuildEffectiveProjection).not.toHaveBeenCalled();
+  });
+
+  it("denies a workspace mismatch even when the organization matches", async () => {
+    const deps = dependencies({ organizationPlan: "agency" });
+    deps.requireWorkspaceRole.mockResolvedValue({ orgId: ORG, workspaceId: crypto.randomUUID(), role: "operator" });
+    await expect(authorizeAiStoryAccess(request, deps))
+      .rejects.toBeInstanceOf(AiStoryAccessDeniedError);
   });
 
   it("allows only an ACTIVE persistent Platform Admin override", async () => {
@@ -116,12 +132,12 @@ describe("RC-FIX-001 canonical AI Story access", () => {
 
   it("keeps access and execute capabilities independent", async () => {
     const accessOnly = projection(["ai_story.access"]);
-    await expect(authorizeAiStoryAccess(request, dependencies({ capabilities: ["ai_story.access"] })))
-      .resolves.toBeDefined();
     expect(effectiveProjectionHasCapability(accessOnly, "ai_story.execute")).toBe(false);
 
-    await expect(authorizeAiStoryAccess(request, dependencies({ capabilities: ["ai_story.execute"] })))
+    const deps = dependencies({ capabilities: ["ai_story.execute"] });
+    await expect(authorizeAiStoryAccess(request, deps))
       .rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+    expect(deps.entitlementRepository.rebuildEffectiveProjection).not.toHaveBeenCalled();
   });
 
   it("returns the stable safe HTTP denial contract", async () => {

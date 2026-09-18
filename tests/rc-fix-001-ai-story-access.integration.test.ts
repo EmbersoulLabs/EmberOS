@@ -38,19 +38,19 @@ type Fixture = {
   orgId: string;
   workspaceId: string;
   userId: string;
-  plan: "free" | "pro" | "agency";
+  plan: "free" | "pro" | "pro_plus" | "agency";
 };
 
 describeIntegration("RC-FIX-001 DB-backed AI Story access", () => {
   let sql: Sql;
   const suffix = crypto.randomUUID().slice(0, 8);
-  const fixtures: Fixture[] = ["free", "pro", "agency", "free"].map((plan) => ({
+  const fixtures: Fixture[] = ["free", "pro", "pro_plus", "agency", "free"].map((plan) => ({
     orgId: crypto.randomUUID(),
     workspaceId: crypto.randomUUID(),
     userId: crypto.randomUUID(),
     plan: plan as Fixture["plan"],
   }));
-  const [free, pro, agency, explicit] = fixtures;
+  const [free, pro, proPlus, agency, explicit] = fixtures;
   const outsider = crypto.randomUUID();
   const now = "2026-08-11T12:00:00.000Z";
 
@@ -165,11 +165,12 @@ describeIntegration("RC-FIX-001 DB-backed AI Story access", () => {
     await closeDb();
   });
 
-  it("denies Free and Pro but allows Agency through the real plan projection", async () => {
+  it("denies Free, Pro, and Pro Plus but allows Agency through the real plan projection", async () => {
     await expect(authorize(free)).rejects.toBeInstanceOf(AiStoryAccessDeniedError);
     await expect(authorize(pro)).rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+    await expect(authorize(proPlus)).rejects.toBeInstanceOf(AiStoryAccessDeniedError);
     await expect(authorize(agency)).resolves.toEqual({
-      allowedBy: "EFFECTIVE_ENTITLEMENT",
+      allowedBy: "AGENCY_PLAN_CAPABILITY",
     });
   });
 
@@ -193,19 +194,27 @@ describeIntegration("RC-FIX-001 DB-backed AI Story access", () => {
     ).rejects.toBeInstanceOf(AiStoryAccessDeniedError);
   });
 
-  it("supports explicit access, revocation, and expiry", async () => {
+  it("retains explicit entitlement accounting without promoting a Free workspace", async () => {
     const repo = new EntitlementRepositoryImpl();
     const access = await addGrant({
       fixture: explicit,
       capability: "ai_story.access",
       seed: `rc-fix-001-access-${suffix}`,
     });
-    await expect(authorize(explicit)).resolves.toBeDefined();
+    await expect(authorize(explicit)).rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+
+    await repo.rebuildEffectiveProjection({
+      orgId: explicit.orgId,
+      workspaceId: explicit.workspaceId,
+      projectedAt: now,
+      now,
+    });
 
     const projection = await repo.getEffectiveProjection({
       orgId: explicit.orgId,
       workspaceId: explicit.workspaceId,
     });
+    expect(projection && effectiveProjectionHasCapability(projection, "ai_story.access")).toBe(true);
     expect(projection && effectiveProjectionHasCapability(projection, "ai_story.execute")).toBe(false);
 
     await repo.acceptOrConvergeRevocation(
@@ -217,6 +226,13 @@ describeIntegration("RC-FIX-001 DB-backed AI Story access", () => {
       })
     );
     await expect(authorize(explicit)).rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+    const revokedProjection = await repo.rebuildEffectiveProjection({
+      orgId: explicit.orgId,
+      workspaceId: explicit.workspaceId,
+      projectedAt: now,
+      now,
+    });
+    expect(effectiveProjectionHasCapability(revokedProjection, "ai_story.access")).toBe(false);
 
     await addGrant({
       fixture: explicit,
@@ -225,6 +241,24 @@ describeIntegration("RC-FIX-001 DB-backed AI Story access", () => {
       seed: `rc-fix-001-expired-${suffix}`,
     });
     await expect(authorize(explicit)).rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+    const expiredProjection = await repo.rebuildEffectiveProjection({
+      orgId: explicit.orgId,
+      workspaceId: explicit.workspaceId,
+      projectedAt: now,
+      now,
+    });
+    expect(effectiveProjectionHasCapability(expiredProjection, "ai_story.access")).toBe(false);
+  });
+
+  it("denies Pro and Pro Plus despite exact workspace-scoped access grants", async () => {
+    for (const fixture of [pro, proPlus]) {
+      await addGrant({
+        fixture,
+        capability: "ai_story.access",
+        seed: `rc-fix-001-access-${fixture.plan}-${suffix}`,
+      });
+      await expect(authorize(fixture)).rejects.toBeInstanceOf(AiStoryAccessDeniedError);
+    }
   });
 
   it("denies execute-only entitlement at the access boundary", async () => {

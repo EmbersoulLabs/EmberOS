@@ -1,11 +1,9 @@
 import {
-  EntitlementRepositoryImpl,
   getOrganizationPlan,
   requireWorkspaceRole,
 } from "@ceo-agent/db";
 import {
   asOrganizationsPlanCompatibilityProjection,
-  effectiveProjectionHasCapability,
   type WorkspaceRole,
 } from "@ceo-agent/shared";
 import { planMappingIncludesCapability } from "@ceo-agent/shared/server";
@@ -13,8 +11,7 @@ import { resolvePlatformAdminForUser } from "@/lib/platform-admin-auth";
 
 export type AiStoryAccessAuthorization =
   | { readonly allowedBy: "ACTIVE_PLATFORM_ADMIN" }
-  | { readonly allowedBy: "AGENCY_PLAN_CAPABILITY" }
-  | { readonly allowedBy: "EFFECTIVE_ENTITLEMENT" };
+  | { readonly allowedBy: "AGENCY_PLAN_CAPABILITY" };
 
 export class AiStoryAccessDeniedError extends Error {
   readonly code = "AI_STORY_ACCESS_DENIED";
@@ -28,22 +25,13 @@ export class AiStoryAccessDeniedError extends Error {
 type AiStoryAccessDependencies = {
   readonly requireWorkspaceRole: typeof requireWorkspaceRole;
   readonly resolvePlatformAdmin: typeof resolvePlatformAdminForUser;
-  readonly entitlementRepository: Pick<
-    EntitlementRepositoryImpl,
-    "rebuildEffectiveProjection"
-  >;
   readonly getOrganizationPlan: typeof getOrganizationPlan;
-  readonly now: () => string;
 };
 
 const defaultDependencies: AiStoryAccessDependencies = {
   requireWorkspaceRole,
   resolvePlatformAdmin: resolvePlatformAdminForUser,
-  get entitlementRepository() {
-    return new EntitlementRepositoryImpl();
-  },
   getOrganizationPlan,
-  now: () => new Date().toISOString(),
 };
 
 /**
@@ -52,9 +40,8 @@ const defaultDependencies: AiStoryAccessDependencies = {
  * ACTIVE persistent Platform Admin authority is an explicit operational
  * override. Agency product class uses the versioned plan capability mapping
  * against organizations.plan as a compatibility projection only — not Stripe
- * or subscription authority. Other customer classes require workspace
- * membership plus ai_story.access in the rebuilt entitlement projection.
- * Browser claims are never consulted.
+ * or subscription authority. Other customer classes cannot enter AI Story,
+ * even with an explicit entitlement. Browser claims are never consulted.
  */
 export async function authorizeAiStoryAccess(
   input: {
@@ -78,7 +65,7 @@ export async function authorizeAiStoryAccess(
     input.user.id,
     input.minRole
   );
-  if (membership.orgId !== input.orgId) {
+  if (membership.orgId !== input.orgId || membership.workspaceId !== input.workspaceId) {
     throw new AiStoryAccessDeniedError();
   }
 
@@ -88,17 +75,5 @@ export async function authorizeAiStoryAccess(
     return { allowedBy: "AGENCY_PLAN_CAPABILITY" };
   }
 
-  const projectedAt = dependencies.now();
-  const projection = await dependencies.entitlementRepository.rebuildEffectiveProjection({
-    orgId: input.orgId,
-    workspaceId: input.workspaceId,
-    projectedAt,
-    now: projectedAt,
-  });
-
-  if (!effectiveProjectionHasCapability(projection, "ai_story.access")) {
-    throw new AiStoryAccessDeniedError();
-  }
-
-  return { allowedBy: "EFFECTIVE_ENTITLEMENT" };
+  throw new AiStoryAccessDeniedError();
 }

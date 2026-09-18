@@ -149,27 +149,23 @@ describe("EXEC-03 authorizeAiStoryExecution", () => {
       .rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
   });
 
-  it("authorizes a free workspace with an explicit ai_story.execute entitlement for commercial settlement", async () => {
+  it("denies Free with an explicit ai_story.execute entitlement before consulting entitlements", async () => {
     const dependencies = deps({
       plan: "free",
-      entitlementCapabilities: ["ai_story.access", "ai_story.execute"],
+      entitlementCapabilities: ["ai_story.execute"],
     });
-    const result = await authorizeAiStoryExecution(baseRequest, dependencies);
-    expect(result).toMatchObject({
-      allowed: true,
-      accessMode: "commercial",
-      settlementMode: "credits",
-      authorizedBy: "EFFECTIVE_ENTITLEMENT",
-      providerCostAccounting: "ALLOWED",
-    });
+    await expect(authorizeAiStoryExecution(baseRequest, dependencies))
+      .rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
     expect(
       dependencies.entitlementRepository.rebuildEffectiveProjection
-    ).toHaveBeenCalledWith({
-      orgId: ORG,
-      workspaceId: WORKSPACE,
-      projectedAt: "2026-08-31T00:00:00.000Z",
-      now: "2026-08-31T00:00:00.000Z",
-    });
+    ).not.toHaveBeenCalled();
+  });
+
+  it.each(["free", "pro", "pro_plus"])("denies %s with both access and execute grants", async (plan) => {
+    const dependencies = deps({ plan, entitlementCapabilities: ["ai_story.access", "ai_story.execute"] });
+    await expect(authorizeAiStoryExecution(baseRequest, dependencies))
+      .rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
+    expect(dependencies.entitlementRepository.rebuildEffectiveProjection).not.toHaveBeenCalled();
   });
 
   it("denies access-only entitlement and an entitlement projection for another workspace", async () => {
