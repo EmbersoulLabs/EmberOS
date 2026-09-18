@@ -120,7 +120,10 @@ describeIntegration("AI Story canonical Scene service lifecycle against aggregat
     expect(accessGrantRows).toHaveLength(1);
     expect(accessGrantRows[0]).toMatchObject({org_id:fixture.orgId,workspace_id:fixture.workspaceAId,capability_key:"ai_story.access",granted_by_user_id:fixture.userAId});
     const discovered=await discoverCurrentExecutionPlan({userId:fixture.userAId,campaignId:fixture.campaignAId,storyId:I.story});
-    const accessProjection=await new EntitlementRepositoryImpl().getEffectiveProjection({orgId:fixture.orgId,workspaceId:fixture.workspaceAId});
+    const projectionRepository=new EntitlementRepositoryImpl();
+    const projectedAt=new Date().toISOString();
+    await projectionRepository.rebuildEffectiveProjection({orgId:fixture.orgId,workspaceId:fixture.workspaceAId,projectedAt,now:projectedAt});
+    const accessProjection=await projectionRepository.getEffectiveProjection({orgId:fixture.orgId,workspaceId:fixture.workspaceAId});
     expect(accessProjection).toMatchObject({orgId:fixture.orgId,workspaceId:fixture.workspaceAId});
     expect(effectiveProjectionHasCapability(accessProjection!,"ai_story.access")).toBe(true);
     expect(discovered.executionPlan?.executionPlanId).toBe(compiled.storyExecutionPlan.storyExecutionId);
