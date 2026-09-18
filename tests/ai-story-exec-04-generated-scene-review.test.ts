@@ -23,6 +23,8 @@ import {
 } from "../packages/agents/src/ai-story/generated-scene-review-service";
 import { WorkspaceAccessError } from "@ceo-agent/db";
 import { commercialExecutionIdentityForPlan } from "@ceo-agent/shared/server";
+import { approvalQcEvaluation, approvalQcRepository } from "./helpers/ai-story-post-qc-approval";
+import { assertGeneratedScenePostQcReviewEligibility } from "../apps/web/src/lib/ai-story-generated-scene-review-access";
 
 const STORY = "10000000-0000-4000-8000-000000000005";
 const SCENE_EXEC = "10000000-0000-4000-8000-000000000201";
@@ -298,6 +300,7 @@ describe("EXEC-04 retry authorization service", () => {
       sceneResultId: SCENE_RESULT_1,
     }));
     const service = new GeneratedSceneReviewService({
+      postQcRepository: approvalQcRepository(approvalQcEvaluation("attempt-1")),
       reviewRepository: {
         transactDecision: async (
           _input: unknown,
@@ -351,6 +354,53 @@ describe("EXEC-04 retry authorization service", () => {
     });
     expect(result.review.decision).toBe("APPROVED");
     expect(write).toHaveBeenCalled();
+  });
+
+  it("Web approval rejects non-waivable QC while preserving the reject action", async () => {
+    const hard = approvalQcEvaluation("attempt-1", "REJECT", "NON_WAIVABLE_INTEGRITY");
+    const repositories = {
+      reviews: { listByExecutionPlanId: async () => pendingSnapshot().reviews },
+      postQc: approvalQcRepository(hard),
+    };
+    const request = { executionPlanId: PLAN, sceneExecutionId: SCENE_EXEC,
+      workspaceId: WORKSPACE, providerAttemptId: "attempt-1", decision: "APPROVE" as const };
+    await expect(assertGeneratedScenePostQcReviewEligibility(request, repositories))
+      .rejects.toMatchObject({ code: "GENERATED_SCENE_POST_QC_REQUIRED", status: 409 });
+    await expect(assertGeneratedScenePostQcReviewEligibility(
+      { ...request, decision: "REJECT" }, repositories,
+    )).resolves.toBeUndefined();
+    await expect(assertGeneratedScenePostQcReviewEligibility(
+      request, { ...repositories, postQc: approvalQcRepository() },
+    )).rejects.toMatchObject({ code: "GENERATED_SCENE_POST_QC_REQUIRED", status: 409 });
+    await expect(assertGeneratedScenePostQcReviewEligibility(
+      request, { ...repositories, postQc: approvalQcRepository(approvalQcEvaluation("attempt-1", "WARN")) },
+    )).resolves.toBeUndefined();
+  });
+
+  it("direct service approval cannot bypass missing or non-waivable Post-QC", async () => {
+    const write = vi.fn();
+    const reviewRepository = {
+      transactDecision: async (
+        _input: unknown,
+        work: (tx: unknown, snapshot: unknown) => Promise<unknown>,
+      ) => work({}, pendingSnapshot()),
+      writeDecisionInTransaction: write,
+    };
+    const approve = (postQcRepository: ReturnType<typeof approvalQcRepository>) =>
+      new GeneratedSceneReviewService({
+        reviewRepository: reviewRepository as never,
+        postQcRepository,
+      }).approve({
+        executionPlanId: PLAN, sceneExecutionId: SCENE_EXEC, attemptId: "attempt-1",
+        actorUserId: USER, workspaceId: WORKSPACE, executionAuthorization: auth,
+      });
+    await expect(approve(approvalQcRepository())).rejects.toMatchObject({
+      code: "GENERATED_SCENE_POST_QC_REQUIRED", status: 409,
+    });
+    await expect(approve(approvalQcRepository(approvalQcEvaluation(
+      "attempt-1", "REJECT", "NON_WAIVABLE_INTEGRITY",
+    )))).rejects.toMatchObject({ code: "GENERATED_SCENE_POST_QC_REQUIRED", status: 409 });
+    expect(write).not.toHaveBeenCalled();
   });
 
   it("F/G: retry without a separately durable human authorization is denied", async () => {
@@ -598,6 +648,7 @@ describe("EXEC-04 retry authorization service", () => {
     const snapshot = pendingSnapshot(1);
     snapshot.providerExecutions.set("exec-1", { status: "RUNNING" });
     const service = new GeneratedSceneReviewService({
+      postQcRepository: approvalQcRepository(approvalQcEvaluation("attempt-1")),
       reviewRepository: {
         transactDecision: async (
           _input: unknown,

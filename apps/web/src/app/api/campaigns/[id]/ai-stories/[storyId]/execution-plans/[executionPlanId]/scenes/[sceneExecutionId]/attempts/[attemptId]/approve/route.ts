@@ -83,6 +83,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       sceneExecutionId,
       workspaceId: ctx.workspaceId,
       providerAttemptId: attemptId,
+      decision: "APPROVE",
     });
 
     stage = "approval_transaction";

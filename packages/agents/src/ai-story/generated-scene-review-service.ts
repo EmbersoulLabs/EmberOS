@@ -22,6 +22,7 @@ import {
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStoryPostGenerationQcRepository,
   GeneratedSceneReviewError,
   GeneratedSceneReviewRepository,
   DifferentiatedRetryRepository,
@@ -39,6 +40,7 @@ import {
 } from "./scene-scheduling-coordinator";
 import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
 import { resolveStagedReleaseCommercialAuthorization } from "./resolve-staged-release-commercial-authorization";
+import { postQcAllowsHumanApproval } from "./post-generation-qc-service";
 
 export { GeneratedSceneReviewError };
 
@@ -154,6 +156,7 @@ export class GeneratedSceneReviewService {
   constructor(
     private readonly dependencies: {
       readonly reviewRepository?: GeneratedSceneReviewRepository;
+      readonly postQcRepository?: Pick<AiStoryPostGenerationQcRepository, "getLatestByProviderAttemptIds">;
       readonly persistenceRepository?: AiStorySceneExecutionPersistenceRepository;
       readonly authorizationRepository?: RuntimeAuthorizationPersistenceRepository;
       readonly schedulingCoordinator?: SceneSchedulingCoordinator;
@@ -176,6 +179,10 @@ export class GeneratedSceneReviewService {
 
   private get reviewRepo() {
     return this.dependencies.reviewRepository ?? new GeneratedSceneReviewRepository();
+  }
+
+  private get postQcRepo() {
+    return this.dependencies.postQcRepository ?? new AiStoryPostGenerationQcRepository();
   }
 
   private nowIso(): string {
@@ -205,6 +212,25 @@ export class GeneratedSceneReviewService {
   }): Promise<GeneratedSceneReviewDecisionResponse> {
     void input.executionAuthorization;
     try {
+      const evaluations = await this.postQcRepo.getLatestByProviderAttemptIds({
+        workspaceId: input.workspaceId,
+        providerAttemptIds: [input.attemptId],
+      });
+      const evaluation = evaluations.get(input.attemptId);
+      if (!evaluation?.eligibleForHumanReview) {
+        throw new GeneratedSceneReviewError(
+          "GENERATED_SCENE_POST_QC_REQUIRED",
+          "Post-generation quality evidence is required before Human Review",
+          409
+        );
+      }
+      if (!postQcAllowsHumanApproval(evaluation)) {
+        throw new GeneratedSceneReviewError(
+          "GENERATED_SCENE_POST_QC_REQUIRED",
+          "Post-generation QC contains a non-waivable integrity rejection",
+          409
+        );
+      }
       const decision = await this.reviewRepo.transactDecision(
         {
           executionPlanId: input.executionPlanId,

@@ -194,7 +194,8 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
         subjectId: ids.assetId, action: "The same floral subject progresses naturally.",
         storyEffect: "The bloom advances.", durationRange: { minSeconds: 4, maxSeconds: 4 } }],
       characterIds: [], locationIds: [], propIds: [],
-      assetIds: [ids.assetId], productAuthorityRefs: order === 0 ? [] : [ids.assetId],
+      assetIds: order === 0 ? [] : [ids.assetId],
+      productAuthorityRefs: order === 0 ? [] : [ids.assetId],
       targetDurationRange: { minSeconds: 4, maxSeconds: 4 },
       mustKeep: ["One floral subject"], mustAvoid: ["Unrelated Product substitution"],
       newInformation: [], newEvidence: [], newActionOutcomes: [], productEvidence: [],
@@ -205,7 +206,10 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
       orgId: ids.orgId, workspaceId: ids.workspaceId, version: 1,
       profileId: "CORE", profileVersion: 1, outlineSourceHash: frozenOutline.sourceHash,
       semanticInputFingerprint: `sha256:${"b".repeat(64)}`,
-      scenes: scriptScenes, authorityReferences: [{ authorityType: "PRODUCT", authorityId: ids.assetId }],
+      scenes: scriptScenes, authorityReferences: [
+        { authorityType: "ASSET", authorityId: ids.assetId },
+        { authorityType: "PRODUCT", authorityId: ids.assetId },
+      ],
       supersedesScriptVersionId: null, createdBy: PR32_USER_A,
       createdAt: "2026-09-18T00:01:00.000Z",
     });
@@ -214,6 +218,12 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
     await scripts.validate(scope, script.scriptVersionId);
     await scripts.approve(scope, script.scriptVersionId);
     await scripts.freeze(scope, script.scriptVersionId);
+    expect(script.scenes[0]!.assetIds).toEqual([]);
+    expect(script.scenes[0]!.productAuthorityRefs).toEqual([]);
+    expect(script.scenes[1]!.assetIds).toEqual([ids.assetId]);
+    expect(script.scenes[2]!.assetIds).toEqual([ids.assetId]);
+    expect(script.scenes[1]!.productAuthorityRefs).toEqual([ids.assetId]);
+    expect(script.scenes[2]!.productAuthorityRefs).toEqual([ids.assetId]);
     const scenes = scriptScenes.map((source, order) => {
       const sceneId = canonicalAiStorySceneIdV1(ids.storyId, ids.storyVersionId, order);
       return finalizeAiStoryCanonicalScene({

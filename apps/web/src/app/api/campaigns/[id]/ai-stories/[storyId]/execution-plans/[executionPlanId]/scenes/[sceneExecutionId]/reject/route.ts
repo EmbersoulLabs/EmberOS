@@ -57,6 +57,7 @@ export async function POST(request: Request, { params }: RouteParams) {
       executionPlanId: ctx.executionPlanId,
       sceneExecutionId,
       workspaceId: ctx.workspaceId,
+      decision: "REJECT",
     });
 
     const result = await createDifferentiatedRetryService().rejectCreative({

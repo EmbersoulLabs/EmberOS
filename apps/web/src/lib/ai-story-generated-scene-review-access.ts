@@ -7,6 +7,7 @@ import {
   GeneratedSceneReviewError,
   GeneratedSceneReviewService,
   DifferentiatedRetryService,
+  postQcAllowsHumanApproval,
 } from "@ceo-agent/agents";
 import { isUuid, rejectForgedGeneratedSceneReviewBody } from "@ceo-agent/shared";
 import {
@@ -60,10 +61,22 @@ export async function assertGeneratedScenePostQcReviewEligibility(input: {
   readonly executionPlanId: string;
   readonly sceneExecutionId: string;
   readonly workspaceId: string;
+  readonly decision: "APPROVE" | "REJECT";
   readonly providerAttemptId?: string;
+}, repositories: {
+  readonly reviews: {
+    listByExecutionPlanId(executionPlanId: string): Promise<readonly {
+      sceneExecutionId: string;
+      providerAttemptId: string;
+      decision: string;
+    }[]>;
+  };
+  readonly postQc: Pick<AiStoryPostGenerationQcRepository, "getLatestByProviderAttemptIds">;
+} = {
+  reviews: new GeneratedSceneReviewRepository(),
+  postQc: new AiStoryPostGenerationQcRepository(),
 }): Promise<void> {
-  const reviews = await new GeneratedSceneReviewRepository()
-    .listByExecutionPlanId(input.executionPlanId);
+  const reviews = await repositories.reviews.listByExecutionPlanId(input.executionPlanId);
   const pending = reviews.find((review) =>
     review.sceneExecutionId === input.sceneExecutionId &&
     review.decision === "PENDING_REVIEW" &&
@@ -76,8 +89,7 @@ export async function assertGeneratedScenePostQcReviewEligibility(input: {
       404
     );
   }
-  const evaluations = await new AiStoryPostGenerationQcRepository()
-    .getLatestByProviderAttemptIds({
+  const evaluations = await repositories.postQc.getLatestByProviderAttemptIds({
       workspaceId: input.workspaceId,
       providerAttemptIds: [pending.providerAttemptId],
     });
@@ -86,6 +98,13 @@ export async function assertGeneratedScenePostQcReviewEligibility(input: {
     throw new GeneratedSceneReviewError(
       "GENERATED_SCENE_POST_QC_REQUIRED",
       "Post-generation quality evidence is required before Human Review",
+      409
+    );
+  }
+  if (input.decision === "APPROVE" && !postQcAllowsHumanApproval(evaluation)) {
+    throw new GeneratedSceneReviewError(
+      "GENERATED_SCENE_POST_QC_REQUIRED",
+      "Post-generation QC contains a non-waivable integrity rejection",
       409
     );
   }
