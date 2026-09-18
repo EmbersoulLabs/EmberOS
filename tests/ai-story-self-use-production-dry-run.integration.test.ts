@@ -502,10 +502,15 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
       const dispatch = await persistDispatchFromScheduled(sql, scheduled);
       const outcome = await coordinator.continueFromDispatch(dispatch.dispatchId);
       expect(outcome.workerResult?.workerState).toBe("TERMINAL_SUCCESS");
-      const [attempt] = await sql<{ attempt_id: string; status: string }[]>`
-        select attempt_id, status from provider_attempts
+      const [attempt] = await sql<{
+        attempt_id: string; status: string; provider_request_id: string | null;
+      }[]>`
+        select attempt_id, status, provider_request_id from provider_attempts
         where execution_id = ${scheduled.providerExecutionId}`;
-      expect(attempt?.status).toBe("SUCCEEDED");
+      // The current AI Story pre-adapter Attempt remains PENDING; terminal
+      // authority is the accepted Worker/finalization chain and Scene Result.
+      expect(attempt?.status).toBe("PENDING");
+      expect(attempt?.provider_request_id).toBeTruthy();
       const [result] = await sql<{ scene_result_id: string; provider_attempt_id: string }[]>`
         select scene_result_id, provider_attempt_id from ai_story_scene_results
         where scene_execution_id = ${sceneExecutionId}::uuid`;
