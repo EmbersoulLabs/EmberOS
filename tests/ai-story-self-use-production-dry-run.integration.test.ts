@@ -44,6 +44,7 @@ import {
   AiStoryPostGenerationQcService,
   FakeAiStoryVisualEvidenceProvider,
   buildAiStoryPostGenerationQcInputFromCompiledAuthority,
+  postQcAllowsHumanApproval,
 } from "../packages/agents/src/ai-story/post-generation-qc-service";
 import { animationPackageFixture } from "./helpers/ai-story-animation-package";
 import {
@@ -460,8 +461,8 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
         repository: new BoundAiStoryPostGenerationQcRepository(qcInput),
         evidenceProvider: new FakeAiStoryVisualEvidenceProvider([]),
       }).evaluate(qcInput);
-      expect(["POST_QC_PASS", "POST_QC_WARN", "POST_QC_REJECT", "POST_QC_REQUIRES_HUMAN_CONFIRMATION"])
-        .toContain(qc.evaluation.aggregateStatus);
+      expect(qc.evaluation.aggregateStatus).toBe("POST_QC_REQUIRES_HUMAN_CONFIRMATION");
+      expect(postQcAllowsHumanApproval(qc.evaluation)).toBe(true);
       expect(qc.evaluation.autoApproved).toBe(false);
       expect(qc.evaluation.autoRetryAuthorized).toBe(false);
       const pendingReview = (await new GeneratedSceneReviewRepository()
