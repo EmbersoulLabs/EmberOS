@@ -120,9 +120,7 @@ describeIntegration("RC-FIX-001 DB-backed AI Story access", () => {
   beforeAll(async () => {
     sql = createIntegrationSql();
     await applyApprovedSql("../packages/db/sql/commercial-persistence-v1.sql");
-    await applyApprovedSql("../packages/db/sql/commercial-persistence-rls-v1.sql");
     await applyApprovedSql("../packages/db/sql/platform-admin-v1.sql");
-    await applyApprovedSql("../packages/db/sql/platform-admin-rls-v1.sql");
     for (const fixture of fixtures) {
       await sql`
         INSERT INTO organizations (id, name, slug, plan)
