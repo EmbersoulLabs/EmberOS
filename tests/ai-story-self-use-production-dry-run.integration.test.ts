@@ -504,7 +504,7 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
       expect(outcome.workerResult?.workerState).toBe("TERMINAL_SUCCESS");
       const [attempt] = await sql<{ attempt_id: string; status: string }[]>`
         select attempt_id, status from provider_attempts
-        where execution_id = ${scheduled.providerExecutionId}::uuid`;
+        where execution_id = ${scheduled.providerExecutionId}`;
       expect(attempt?.status).toBe("SUCCEEDED");
       const [result] = await sql<{ scene_result_id: string; provider_attempt_id: string }[]>`
         select scene_result_id, provider_attempt_id from ai_story_scene_results
