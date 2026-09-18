@@ -1080,6 +1080,15 @@ CREATE TABLE "workspaces" (
   "settings" jsonb DEFAULT '{}'::jsonb,
   "created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
+-- Live Production predecessor RLS helper.
+-- Fidelity-only test fixture; do not apply to Production.
+CREATE OR REPLACE FUNCTION public.user_workspace_ids()
+RETURNS SETOF uuid
+LANGUAGE sql
+STABLE SECURITY DEFINER
+AS $function$
+SELECT workspace_id FROM workspace_members WHERE user_id = auth.uid()
+$function$;
 ALTER TABLE "ai_stories" ADD CONSTRAINT "ai_stories_pkey" PRIMARY KEY (id);
 ALTER TABLE "ai_story_animation_packages" ADD CONSTRAINT "ai_story_animation_packages_pkey" PRIMARY KEY (id);
 ALTER TABLE "ai_story_assembly_artifacts" ADD CONSTRAINT "ai_story_assembly_artifacts_hash_unique" UNIQUE (integrity_hash);

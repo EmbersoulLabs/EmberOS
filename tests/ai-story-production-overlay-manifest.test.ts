@@ -34,6 +34,31 @@ describe("bounded Production overlay migration manifest", () => {
   beforeAll(() => { restoreNetwork = installCertificationNetworkIsolation(); });
   afterAll(() => { restoreNetwork(); });
 
+  it("includes the exact live Production RLS policy helper before policy creation", () => {
+    expect(catalog.functions).toHaveLength(1);
+    expect(catalog.functions[0]).toEqual({
+      schema: "public",
+      name: "user_workspace_ids",
+      identityArguments: "",
+      resultType: "SETOF uuid",
+      language: "sql",
+      volatility: "STABLE",
+      securityDefiner: true,
+      leakproof: false,
+      owner: "postgres",
+      config: null,
+      dependency: "workspace_members.user_id/workspace_id + auth.uid()",
+      source: "live Production pg_proc / pg_policy dependency",
+    });
+    const fixtureSql = read("tests/fixtures/ai-story-production-predecessor-schema.sql");
+    const helperAt = fixtureSql.indexOf("CREATE OR REPLACE FUNCTION public.user_workspace_ids()");
+    const firstPolicyAt = fixtureSql.indexOf("CREATE POLICY");
+    expect(helperAt).toBeGreaterThan(fixtureSql.indexOf('CREATE TABLE "workspaces"'));
+    expect(firstPolicyAt).toBeGreaterThan(helperAt);
+    expect(fixtureSql).toContain("SELECT workspace_id FROM workspace_members WHERE user_id = auth.uid()");
+    expect(fixtureSql.slice(helperAt, firstPolicyAt)).toMatch(/RETURNS SETOF uuid\s+LANGUAGE sql\s+STABLE SECURITY DEFINER/);
+  });
+
   it("blocks external HTTP before transmission in the certification harness", () => {
     expect(() => fetch("https://api.openai.com/v1/models")).toThrow("NETWORK_CALL_BLOCKED_BY_TEST_HARNESS");
     expect(blockedExternalNetworkAttempts()).toContain("api.openai.com");
