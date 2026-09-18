@@ -94,7 +94,7 @@ describeIntegration("STAGING execute entitlement administration", () => {
     ).rejects.toBeInstanceOf(StagingExecuteGrantAdministrationError);
   });
 
-  it("grants idempotently, scopes execution, and revokes canonically", async () => {
+  it("grants idempotently without promoting Free into the AI Story product class, and revokes canonically", async () => {
     const service = new StagingExecuteGrantAdministrationService();
     const before = await service.inspect(target, now);
     expect(before.plan).toBe("free");
@@ -128,11 +128,7 @@ describeIntegration("STAGING execute entitlement administration", () => {
         workspaceId,
         minRole: "client_viewer",
       })
-    ).resolves.toMatchObject({
-      accessMode: "commercial",
-      settlementMode: "credits",
-      authorizedBy: "EFFECTIVE_ENTITLEMENT",
-    });
+    ).rejects.toBeInstanceOf(AiStoryExecutionDeniedError);
     await expect(
       authorizeAiStoryExecution({
         user: { id: actorUserId },

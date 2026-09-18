@@ -62,6 +62,7 @@ describeIntegration("AI Story canonical Scene service lifecycle against aggregat
   let sql:Sql;let fixture:RlsTestFixture;
   beforeAll(async()=>{
     sql=createIntegrationSql();fixture=await seedRlsFixture(sql);
+    await sql`update organizations set plan='agency' where id=${fixture.orgId}::uuid`;
     for(const file of ["ai-story-outline-v1.sql","ai-story-character-v1.sql","ai-story-script-v1.sql","ai-story-scene-authority-v1.sql","ai-story-canonical-scene-aggregate-lifecycle-v2.sql","ai-story-scene-execution-persistence-v1.sql"]){await sql.unsafe(readFileSync(resolve(process.cwd(),`packages/db/sql/${file}`),"utf8"));}
     await sql`insert into ai_stories(id,org_id,workspace_id,campaign_id,title,original_idea,status) values(${I.story}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${fixture.campaignAId}::uuid,'Scene service test','Intent','planning')`;
     await sql`insert into ai_story_versions(id,story_id,version_number,structured_content,frozen_at) values(${I.storyVersion}::uuid,${I.story}::uuid,1,${sql.json({title:"Story",summary:"Summary",objective:"Objective",targetAudience:"Audience",tone:"Tone",estimatedDuration:"4s",story:{opening:"Open",development:"Develop",ending:"End"},keyMessages:[],cta:"CTA",assetReferences:[],warnings:[]})},now())`;
