@@ -30,6 +30,7 @@ import { createExecutionDispatch } from "@ceo-agent/shared";
 import type { CanonicalSceneResult } from "@ceo-agent/shared/server";
 import { SceneSchedulingCoordinator } from "../../packages/agents/src/ai-story/scene-scheduling-coordinator";
 import type { ProviderRouter } from "../../packages/agents/src/provider-router";
+import type { SceneProviderWorkerRuntimeDependencies } from "../../packages/agents/src/ai-story/scene-provider-worker-runtime";
 import {
   FixedSeedanceRouter,
   PR32_USER_A,
@@ -300,6 +301,10 @@ export type PhaseCCoordinatorInstrumentation = {
 
 export async function createPhaseCCoordinator(input: {
   readonly adapters: CanonicalAdapterRegistry;
+  readonly workerAuthority?: Pick<
+    SceneProviderWorkerRuntimeDependencies,
+    "commercialReservation" | "requireCommercialReservation" | "requireProviderAttemptAuthority"
+  >;
   readonly artifactRoot: string;
   readonly pathByUri: Map<string, string>;
   readonly expectedOwnership?: { orgId: string; workspaceId: string };
@@ -420,7 +425,7 @@ export async function createPhaseCCoordinator(input: {
   return {
     instrumentation,
     coordinator: new AiStoryRuntimeContinuationCoordinator({
-      worker: { repository: workerRepo, adapters: input.adapters },
+      worker: { repository: workerRepo, adapters: input.adapters, ...input.workerAuthority },
       finalization: {
         chain: projectionRepo,
         bridge: {

@@ -17,6 +17,8 @@ import {
   BoundAiStoryPostGenerationQcRepository,
   DurableSceneMediaAttestationRepositoryImpl,
   AiStoryProviderRuntimeRepository,
+  BillingAccountRepositoryImpl,
+  CertificationCommercialAuthorityService,
   AiStorySceneReleaseRepository,
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
@@ -35,7 +37,11 @@ import {
   canonicalAiStorySceneIdV1,
   finalizeAiStoryCanonicalScene,
   sha256CanonicalIntegrityHash,
+  buildBillingAccount,
+  ProviderUsdPricingRuleSchema,
+  withIntegrity,
 } from "@ceo-agent/shared/server";
+import type { SceneProviderWorkerRuntimeDependencies } from "../packages/agents/src/ai-story/scene-provider-worker-runtime";
 import { compileSceneExecutionIntents } from "../packages/agents/src/ai-story/scene-execution-compiler";
 import { RuntimeAuthorizationService } from "../packages/agents/src/ai-story/runtime-authorization-service";
 import { SceneSchedulingCoordinator } from "../packages/agents/src/ai-story/scene-scheduling-coordinator";
@@ -139,11 +145,15 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
         await sql.unsafe("alter table ai_story_post_generation_qc_evaluations enable trigger ai_story_post_qc_immutable_v1");
       }
       await sql`delete from ai_story_durable_scene_media_attestations where org_id = ${PHASE_2A_IDS.orgId}::uuid`;
-      await sql`delete from ai_story_canonical_scene_versions where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
-      await sql`delete from ai_story_canonical_scenes where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
+      await sql.begin(async (tx) => {
+        await tx`delete from ai_story_canonical_scene_versions where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
+        await tx`delete from ai_story_canonical_scenes where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
+      });
       await sql`delete from ai_story_script_versions where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
       await sql`delete from ai_story_outline_versions where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
       await cleanupPr32Tenant(sql);
+      await sql`delete from provider_usd_pricing_rules
+        where provider_usd_pricing_rule_id in (${id(120)}::uuid, ${id(121)}::uuid)`;
       await sql.end();
     }
     await closeDb();
@@ -341,6 +351,64 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
     const commercial = await acceptCommercialAuthorizationFixture({
       orgId: ids.orgId, workspaceId: ids.workspaceId, executionPlanId: planId,
     });
+    const certifiedCommercial = new CertificationCommercialAuthorityService();
+    const now = new Date().toISOString();
+    await new BillingAccountRepositoryImpl().createOrConverge(buildBillingAccount({
+      orgId: ids.orgId, externalCustomerReference: `cus_dry_run_${ids.orgId.slice(0, 8)}`,
+      createdAt: now, identitySeed: `dry-run-billing:${ids.orgId}`,
+    }));
+    await certifiedCommercial.provisionScope({
+      environment: "PRODUCTION", orgId: ids.orgId, workspaceId: ids.workspaceId,
+      actorUserId: PR32_USER_A, createdAt: now,
+      maxProviderCostUsd: "5.00", maxProviderSubmissions: 3,
+    });
+    // Test-only Worker port backed by the real isolated PostgreSQL commercial
+    // authority. The Worker still requires reservation and pre-adapter claim.
+    const preview = (input: Parameters<NonNullable<SceneProviderWorkerRuntimeDependencies["commercialReservation"]>["reserveBeforeSubmit"]>[0]) => {
+      const trace = input.bundle.envelope.executionContext.trace;
+      if (!trace?.compiledRequestId || !trace.compiledRequestFingerprint) {
+        throw new Error("Dry-run Dispatch lacks immutable compiled request identity");
+      }
+      return certifiedCommercial.previewForSceneExecution({
+        orgId: input.bundle.correlation.ownership.orgId,
+        workspaceId: input.bundle.envelope.workspaceId,
+        sceneExecutionId: input.bundle.correlation.sceneExecutionId,
+        compiledRequestId: trace.compiledRequestId,
+        requestFingerprint: trace.compiledRequestFingerprint,
+        executionIdentity: input.providerAttemptId, reservedAt: input.reservedAt,
+      });
+    };
+    const commercialGate: NonNullable<SceneProviderWorkerRuntimeDependencies["commercialReservation"]> = {
+      async previewBeforeSubmit(input) { await preview(input); },
+      async reserveBeforeSubmit(input) {
+        const { pricingRule } = await preview(input);
+        const acceptedReservation = await certifiedCommercial.reserve({
+          environment: "PRODUCTION", orgId: ids.orgId, workspaceId: ids.workspaceId,
+          executionIdentity: input.providerAttemptId, pricingRule,
+          createdAt: input.reservedAt, claimSubmission: false,
+        });
+        return { reservationId: acceptedReservation.reservation.certificationReservationId };
+      },
+      async claimSubmissionBeforeAdapter(input) {
+        await certifiedCommercial.markSubmitted(input.reservationId, input.claimedAt);
+      },
+      async releaseBeforeAdapterFailure(input) {
+        await certifiedCommercial.release(input.reservationId, input.occurredAt);
+      },
+      async loadForOutcome(input) {
+        const reservation = await certifiedCommercial.getReservationByExecutionIdentity({
+          environment: "PRODUCTION", executionIdentity: input.providerAttemptId,
+        });
+        return reservation ? { reservationId: reservation.certificationReservationId } : null;
+      },
+      async recordProviderOutcome(input) {
+        if (input.phase === "lookup" && input.canonicalProviderState === "SUCCEEDED") {
+          await certifiedCommercial.settleFromProviderUsage({
+            reservationId: input.reservationId, settledAt: input.occurredAt,
+          });
+        }
+      },
+    };
     const router = new FixedSeedanceRouter();
     const scheduler = new SceneSchedulingCoordinator({
       router,
@@ -388,6 +456,23 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
       expect(compiledRequest?.requestFingerprint).toBe(trace.compiledRequestFingerprint);
       expect(compiledRequest?.generationAuthority?.strategy).toBe(MODES[index]!.strategy);
       expect(compiledRequest?.generationMode).toBe(index === 0 ? "TEXT_TO_VIDEO" : "FIRST_FRAME_IMAGE_TO_VIDEO");
+      const wire = compiledRequest!.structuredRequest;
+      await certifiedCommercial.provisionPrice(ProviderUsdPricingRuleSchema.parse(withIntegrity({
+        contractVersion: "1" as const,
+        providerUsdPricingRuleId: id(120 + (index === 0 ? 0 : 1)),
+        providerKey: "BYTEPLUS_MODELARK" as const,
+        modelId: "dreamina-seedance-2-0-260128" as const,
+        generationMode: compiledRequest!.generationMode,
+        durationSeconds: wire.duration, aspectRatio: wire.ratio,
+        resolution: wire.resolution, inputVideoIncluded: false as const,
+        outputWidthPixels: wire.ratio === "9:16" ? 480 : 864,
+        outputHeightPixels: wire.ratio === "9:16" ? 854 : 480,
+        outputFrameRate: 24, currency: "USD" as const,
+        usdPerMillionTokens: "7.0000", costBasis: "OFFICIAL_TOKEN_RATE_ESTIMATE" as const,
+        sourceUrl: "https://docs.byteplus.com/docs/ModelArk/1099320" as const,
+        version: "dry-run-price.v1", effectiveFrom: "2026-01-01T00:00:00.000Z",
+        effectiveTo: null, createdBy: PR32_USER_A, createdAt: now,
+      })));
       if (index === 0) {
         expect(compiledRequest?.referenceMappings).toEqual([]);
         expect(compiledRequest?.productMaterialSelection).toBeUndefined();
@@ -408,6 +493,11 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
       const { coordinator } = await createPhaseCCoordinator({
         adapters: fake.registry, artifactRoot, pathByUri: mediaPaths,
         expectedOwnership: { orgId: ids.orgId, workspaceId: ids.workspaceId },
+        workerAuthority: {
+          commercialReservation: commercialGate,
+          requireCommercialReservation: true,
+          requireProviderAttemptAuthority: true,
+        },
       });
       const dispatch = await persistDispatchFromScheduled(sql, scheduled);
       const outcome = await coordinator.continueFromDispatch(dispatch.dispatchId);
