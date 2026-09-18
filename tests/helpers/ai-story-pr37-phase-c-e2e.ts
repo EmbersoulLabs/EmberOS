@@ -125,7 +125,12 @@ export class WorkspaceMediaTestAdapter extends DeterministicCanonicalTestAdapter
         height: 360,
       },
       normalizedUsageFacts: { durationMs: this.media.durationMs ?? 1000, units: 1, unitKind: "video" },
-      normalizedCostMetadata: { currency: "USD", amount: 0.01, estimated: false },
+      normalizedCostMetadata: {
+        currency: "USD",
+        amount: 0.01,
+        estimated: false,
+        modelKey: "dreamina-seedance-2-0-260128",
+      },
     };
   }
 }
