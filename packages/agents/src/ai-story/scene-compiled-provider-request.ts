@@ -1,0 +1,58 @@
+import type {
+  AiStoryCompiledProviderRequest,
+  AiStorySceneCompiledInstructions,
+  AiStorySceneExecutionIntent,
+  ProductVisualMaterialSelectionAuthority,
+} from "@ceo-agent/shared";
+import {
+  AiStoryProviderRuntimeError,
+  compileImmutableSeedanceRequestFromSceneCompilation,
+  type PersistedSceneProviderCompilationAuthority,
+  type AiStoryReferenceAssetAuthority,
+} from "./provider-runtime-dispatch-integration";
+import type {
+  PreparedSceneFrameAuthority,
+  SceneInputPreparationAuthority,
+} from "./scene-input-preparation";
+import type { ProviderPolicyEligibilityAuthority } from "./provider-policy-eligibility";
+
+export function compileImmutableSceneProviderRequest(input: {
+  readonly providerId: string;
+  readonly adapterVersion: string;
+  readonly intent: AiStorySceneExecutionIntent;
+  readonly instructions: AiStorySceneCompiledInstructions;
+  readonly authority: PersistedSceneProviderCompilationAuthority;
+  readonly compiledAt: string;
+  readonly resolution?: "480p" | "720p" | "1080p";
+  readonly referenceAssets?: readonly AiStoryReferenceAssetAuthority[];
+  readonly productMaterialSelection?: ProductVisualMaterialSelectionAuthority | null;
+  readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
+  readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
+}): AiStoryCompiledProviderRequest {
+  if (input.providerId !== "seedance") {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Canonical immutable Provider compilation is unavailable for the selected Provider"
+    );
+  }
+  return compileImmutableSeedanceRequestFromSceneCompilation({
+    intent: input.intent,
+    instructions: input.instructions,
+    authority: input.authority,
+    adapterVersion: input.adapterVersion,
+    compiledAt: input.compiledAt,
+    ...(input.referenceAssets ? { referenceAssets: input.referenceAssets } : {}),
+    ...(input.productMaterialSelection ? { productMaterialSelection: input.productMaterialSelection } : {}),
+    ...(input.resolution ? { resolution: input.resolution } : {}),
+    ...(input.sceneInputPreparation
+      ? { sceneInputPreparation: input.sceneInputPreparation }
+      : {}),
+    ...(input.preparedSceneFrame
+      ? { preparedSceneFrame: input.preparedSceneFrame }
+      : {}),
+    ...(input.providerPolicyEligibility
+      ? { providerPolicyEligibility: input.providerPolicyEligibility }
+      : {}),
+  });
+}

@@ -8,8 +8,11 @@
  * - Terminal normalized evidence → immutable insert-only WorkerExecutionResult
  * - Never DELETE / UPDATE / replace accepted WorkerExecutionResult rows
  */
-import { and, desc, eq, ne } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import {
+  AI_STORY_PROVIDER_RUNTIME_VERSION,
+  AiStoryCompiledProviderRequestSchema,
+  AiStoryProviderAttemptBindingSchema,
   PersistedSceneRoutingDecisionSchema,
   RuntimeAuthorizedFactSchema,
   SCENE_ROUTER_VERSION,
@@ -23,10 +26,15 @@ import {
   type RuntimeAuthorizedFact,
   type SceneProviderSchedulingCorrelation,
   type WorkerExecutionResult,
+  type CanonicalProviderState,
+  type ProviderAcceptanceClassification,
 } from "@ceo-agent/shared";
 import { getDb } from "../client";
 import * as schema from "../schema/index";
-import { deterministicPersistenceUuid } from "./ai-story-scene-execution-persistence";
+import {
+  canonicalPersistenceHash,
+  deterministicPersistenceUuid,
+} from "./ai-story-scene-execution-persistence";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -276,6 +284,333 @@ export class SceneProviderWorkerRuntimeRepository {
       .orderBy(desc(schema.aiStoryWorkerAttemptObservations.producedAt))
       .limit(1);
     return row ? WorkerExecutionResultSchema.parse(row.observation) : null;
+  }
+
+  async getProviderAttemptAdapterState(providerAttemptId: string): Promise<{
+    status: string;
+    providerTaskId?: string;
+  } | null> {
+    const [row] = await this.db.select({
+      status: schema.aiStoryProviderAttemptCompiledBindings.status,
+      providerTaskId: schema.aiStoryProviderAttemptCompiledBindings.providerTaskId,
+    }).from(schema.aiStoryProviderAttemptCompiledBindings).where(eq(
+      schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+      providerAttemptId
+    )).limit(1);
+    return row
+      ? {
+          status: row.status,
+          ...(row.providerTaskId ? { providerTaskId: row.providerTaskId } : {}),
+        }
+      : null;
+  }
+
+  /**
+   * The transaction that returns adapterEligible=true is the only authority
+   * allowed to cross the paid adapter boundary. A persisted DISPATCHING row is
+   * deliberately treated as an unknown outcome on replay.
+   */
+  async prepareProviderAttemptBeforeAdapter(input: {
+    readonly bundle: WorkerValidatedBundleRow;
+    readonly providerAttemptId: string;
+    readonly commercialReservationId: string;
+    readonly workerId: string;
+    readonly preparedAt: string;
+  }): Promise<{ replayed: boolean }> {
+    return this.db.transaction(async (tx) => {
+      const compiledRequestId =
+        input.bundle.envelope.executionContext.trace?.compiledRequestId?.trim();
+      const compiledFingerprint =
+        input.bundle.envelope.executionContext.trace?.compiledRequestFingerprint?.trim();
+      if (!compiledRequestId || !compiledFingerprint) {
+        throw new WorkerRuntimePersistenceError(
+          "OWNERSHIP_INTEGRITY_VIOLATION",
+          "Compiled Provider request identity is required before Provider Attempt persistence"
+        );
+      }
+      const [compiledRow] = await tx
+        .select({ request: schema.aiStoryCompiledProviderRequests.compiledRequest })
+        .from(schema.aiStoryCompiledProviderRequests)
+        .where(eq(schema.aiStoryCompiledProviderRequests.compiledRequestId, compiledRequestId))
+        .limit(1);
+      const request = compiledRow
+        ? AiStoryCompiledProviderRequestSchema.parse(compiledRow.request)
+        : null;
+      if (
+        !request ||
+        request.requestFingerprint !== compiledFingerprint ||
+        request.sceneExecutionId !== input.bundle.correlation.sceneExecutionId ||
+        request.orgId !== input.bundle.correlation.ownership.orgId ||
+        request.workspaceId !== input.bundle.envelope.workspaceId ||
+        request.providerId !== input.bundle.routingDecision.selectedProviderId ||
+        request.adapterVersion !== input.bundle.routingDecision.selectedAdapterVersion
+      ) {
+        throw new WorkerRuntimePersistenceError(
+          "OWNERSHIP_INTEGRITY_VIOLATION",
+          "Compiled Provider request does not match the claimed Dispatch"
+        );
+      }
+      const [reservation] = await tx
+        .select()
+        .from(schema.certificationCommercialReservations)
+        .where(
+          and(
+            eq(
+              schema.certificationCommercialReservations.certificationReservationId,
+              input.commercialReservationId
+            ),
+            eq(
+              schema.certificationCommercialReservations.executionIdentity,
+              input.providerAttemptId
+            ),
+            eq(schema.certificationCommercialReservations.orgId, request.orgId),
+            eq(
+              schema.certificationCommercialReservations.workspaceId,
+              request.workspaceId
+            )
+          )
+        )
+        .limit(1);
+      if (!reservation || !["RESERVED", "SUBMITTED"].includes(reservation.status)) {
+        throw new WorkerRuntimePersistenceError(
+          "OWNERSHIP_INTEGRITY_VIOLATION",
+          "Submitted commercial reservation must be durably bound before Provider Attempt"
+        );
+      }
+
+      const attemptInputFingerprint = canonicalPersistenceHash({
+        kind: "ai-story-worker-provider-attempt-input.v1",
+        providerAttemptId: input.providerAttemptId,
+        providerExecutionId: input.bundle.providerExecutionId,
+        dispatchId: input.bundle.dispatch.dispatchId,
+        compiledRequestId,
+        requestFingerprint: request.requestFingerprint,
+        commercialReservationId: input.commercialReservationId,
+      });
+      const binding = AiStoryProviderAttemptBindingSchema.parse({
+        providerAttemptId: input.providerAttemptId,
+        providerExecutionId: input.bundle.providerExecutionId,
+        contractVersion: AI_STORY_PROVIDER_RUNTIME_VERSION,
+        compiledRequestId,
+        requestFingerprint: request.requestFingerprint,
+        attemptInputFingerprint,
+        idempotencyKey: `ai-story-worker-provider-attempt:${input.bundle.dispatch.dispatchId}`,
+        attemptNumber: 1,
+        orgId: request.orgId,
+        workspaceId: request.workspaceId,
+        campaignId: request.campaignId,
+        storyId: request.storyId,
+        storyVersionId: request.storyVersionId,
+        sceneExecutionId: request.sceneExecutionId,
+        generationMode: request.generationMode,
+        ...(request.generationAuthority
+          ? { generationAuthority: request.generationAuthority }
+          : {}),
+        providerId: request.providerId,
+        modelId: request.modelId,
+        adapterVersion: request.adapterVersion,
+        mappingVersion: request.mappingVersion,
+        capabilityVersion: request.capabilityVersion,
+        qcEvaluationId: request.qcEvaluationId,
+        qcFingerprint: request.qcFingerprint,
+        sceneFingerprint: request.sceneFingerprint,
+        directorFingerprint: request.directorFingerprint,
+        motionFingerprint: request.motionFingerprint,
+        castSnapshotFingerprint: request.castSnapshotFingerprint,
+        locationSnapshotFingerprint: request.locationSnapshotFingerprint,
+        productSnapshotFingerprint: request.productSnapshotFingerprint,
+        estimatedCost: request.estimatedCost,
+        commercialReservationId: input.commercialReservationId,
+        status: "READY",
+        pollCount: 0,
+        createdAt: input.preparedAt,
+        updatedAt: input.preparedAt,
+        automaticPaidRetry: false,
+        providerFallback: false,
+      });
+
+      await tx.insert(schema.providerAttempts).values({
+        attemptId: binding.providerAttemptId,
+        executionId: binding.providerExecutionId,
+        contractVersion: binding.contractVersion,
+        attemptNumber: binding.attemptNumber,
+        providerId: binding.providerId,
+        providerVersion: binding.adapterVersion,
+        modelVersion: binding.modelId,
+        requestHash: input.bundle.envelope.requestHash,
+        status: "PENDING",
+        startedAt: new Date(input.preparedAt),
+        warnings: [],
+        providerMetadata: {
+          source: "ai-story-worker-pre-adapter-authority",
+          compiledRequestId,
+          attemptInputFingerprint,
+          commercialReservationId: input.commercialReservationId,
+          dispatchId: input.bundle.dispatch.dispatchId,
+        },
+      }).onConflictDoNothing();
+      const [attemptRow] = await tx.select().from(schema.providerAttempts).where(eq(
+        schema.providerAttempts.attemptId,
+        binding.providerAttemptId
+      )).limit(1);
+      if (
+        !attemptRow ||
+        attemptRow.executionId !== binding.providerExecutionId ||
+        attemptRow.attemptNumber !== binding.attemptNumber ||
+        attemptRow.providerId !== binding.providerId ||
+        attemptRow.providerVersion !== binding.adapterVersion ||
+        attemptRow.modelVersion !== binding.modelId ||
+        attemptRow.requestHash !== input.bundle.envelope.requestHash
+      ) {
+        throw new WorkerRuntimePersistenceError(
+          "IDENTITY_CONFLICT",
+          "Provider Attempt ledger identity conflicts with pre-adapter authority"
+        );
+      }
+      await tx.insert(schema.aiStoryProviderAttemptCompiledBindings).values({
+        providerAttemptId: binding.providerAttemptId,
+        compiledRequestId: binding.compiledRequestId,
+        orgId: binding.orgId,
+        workspaceId: binding.workspaceId,
+        sceneExecutionId: binding.sceneExecutionId,
+        idempotencyKey: binding.idempotencyKey,
+        requestFingerprint: binding.requestFingerprint,
+        attemptInputFingerprint: binding.attemptInputFingerprint,
+        status: binding.status,
+        pollCount: 0,
+        binding,
+        createdAt: new Date(binding.createdAt),
+        updatedAt: new Date(binding.updatedAt),
+      }).onConflictDoNothing();
+
+      const rows = (await tx.execute(sql`
+        select binding from ai_story_provider_attempt_compiled_bindings
+        where provider_attempt_id = ${input.providerAttemptId}
+        for update
+      `)) as unknown as Array<{ binding: unknown }>;
+      const current = rows[0]?.binding
+        ? AiStoryProviderAttemptBindingSchema.parse(rows[0].binding)
+        : null;
+      if (
+        !current ||
+        current.attemptInputFingerprint !== attemptInputFingerprint ||
+        current.commercialReservationId !== input.commercialReservationId
+      ) {
+        throw new WorkerRuntimePersistenceError(
+          "IDENTITY_CONFLICT",
+          "Provider Attempt identity conflicts with durable pre-adapter authority"
+        );
+      }
+      return { replayed: current.createdAt !== input.preparedAt };
+    });
+  }
+
+  async claimProviderAttemptForAdapter(input: {
+    readonly providerAttemptId: string;
+    readonly workerId: string;
+    readonly claimedAt: string;
+  }): Promise<{ adapterEligible: boolean }> {
+    return this.db.transaction(async (tx) => {
+      const rows = (await tx.execute(sql`
+        select binding from ai_story_provider_attempt_compiled_bindings
+        where provider_attempt_id = ${input.providerAttemptId}
+        for update
+      `)) as unknown as Array<{ binding: unknown }>;
+      const current = rows[0]?.binding
+        ? AiStoryProviderAttemptBindingSchema.parse(rows[0].binding)
+        : null;
+      if (!current || current.status !== "READY") {
+        return { adapterEligible: false };
+      }
+      const claimed = AiStoryProviderAttemptBindingSchema.parse({
+        ...current,
+        status: "DISPATCHING",
+        submissionClaimOwner: input.workerId,
+        submissionClaimedAt: input.claimedAt,
+        submitStartedAt: input.claimedAt,
+        updatedAt: input.claimedAt,
+      });
+      await tx.update(schema.aiStoryProviderAttemptCompiledBindings).set({
+        status: claimed.status,
+        submissionClaimOwner: claimed.submissionClaimOwner,
+        submissionClaimedAt: new Date(input.claimedAt),
+        binding: claimed,
+        updatedAt: new Date(input.claimedAt),
+      }).where(eq(
+        schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+        input.providerAttemptId
+      ));
+      return { adapterEligible: true };
+    });
+  }
+
+  async recordProviderAdapterOutcome(input: {
+    readonly providerAttemptId: string;
+    readonly acceptanceClassification: ProviderAcceptanceClassification;
+    readonly canonicalProviderState: CanonicalProviderState;
+    readonly providerRequestId?: string;
+    readonly occurredAt: string;
+  }): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const rows = (await tx.execute(sql`
+        select binding from ai_story_provider_attempt_compiled_bindings
+        where provider_attempt_id = ${input.providerAttemptId}
+        for update
+      `)) as unknown as Array<{ binding: unknown }>;
+      const current = rows[0]?.binding
+        ? AiStoryProviderAttemptBindingSchema.parse(rows[0].binding)
+        : null;
+      if (!current) {
+        throw new WorkerRuntimePersistenceError(
+          "WORKER_ATTEMPT_CONFLICT",
+          "Durable Provider Attempt is missing after adapter invocation"
+        );
+      }
+      if (current.status !== "DISPATCHING") {
+        // Identical outcome replay converges without reopening submission.
+        if (
+          (current.status === "SUBMITTED" && input.acceptanceClassification === "ACCEPTED") ||
+          (current.status === "RECONCILIATION_REQUIRED" && input.acceptanceClassification === "ACCEPTANCE_UNKNOWN") ||
+          (current.status === "FAILED" && !["ACCEPTED", "ACCEPTANCE_UNKNOWN"].includes(input.acceptanceClassification))
+        ) return;
+        throw new WorkerRuntimePersistenceError(
+          "WORKER_ATTEMPT_CONFLICT",
+          "Adapter outcome conflicts with durable Provider Attempt state"
+        );
+      }
+      if (input.acceptanceClassification === "ACCEPTED" && !input.providerRequestId) {
+        throw new WorkerRuntimePersistenceError(
+          "WORKER_ATTEMPT_CONFLICT",
+          "Accepted Provider submission requires a durable Provider task identity"
+        );
+      }
+      const status = input.acceptanceClassification === "ACCEPTED"
+        ? "SUBMITTED"
+        : input.acceptanceClassification === "ACCEPTANCE_UNKNOWN"
+          ? "RECONCILIATION_REQUIRED"
+          : "FAILED";
+      const next = AiStoryProviderAttemptBindingSchema.parse({
+        ...current,
+        status,
+        ...(input.providerRequestId ? { providerTaskId: input.providerRequestId } : {}),
+        ...(status === "SUBMITTED" ? { submittedAt: input.occurredAt } : {}),
+        updatedAt: input.occurredAt,
+      });
+      await tx.update(schema.aiStoryProviderAttemptCompiledBindings).set({
+        status: next.status,
+        providerTaskId: next.providerTaskId,
+        binding: next,
+        updatedAt: new Date(input.occurredAt),
+      }).where(eq(
+        schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+        input.providerAttemptId
+      ));
+      if (input.providerRequestId) {
+        await tx.update(schema.providerAttempts).set({
+          providerRequestId: input.providerRequestId,
+        }).where(eq(schema.providerAttempts.attemptId, input.providerAttemptId));
+      }
+    });
   }
 
   /**

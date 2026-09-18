@@ -30,6 +30,7 @@ export class GeneratedSceneReviewError extends Error {
       | "GENERATED_SCENE_RETRY_NOT_ELIGIBLE"
       | "GENERATED_SCENE_RETRY_LIMIT_EXHAUSTED"
       | "GENERATED_SCENE_RETRY_IN_FLIGHT"
+      | "GENERATED_SCENE_POST_QC_REQUIRED"
       | "GENERATED_SCENE_IDENTITY_FORGED",
     message: string,
     status = 409
@@ -52,6 +53,8 @@ export type GeneratedSceneReviewLockSnapshot = {
   readonly reviews: readonly GeneratedSceneReviewFact[];
   readonly results: readonly (typeof schema.aiStorySceneResults.$inferSelect)[];
   readonly correlations: readonly (typeof schema.aiStorySceneSchedulingCorrelations.$inferSelect)[];
+  readonly supersededCorrelationIds: ReadonlySet<string>;
+  readonly terminalWorkerExecutionIds: ReadonlySet<string>;
   readonly providerExecutions: ReadonlyMap<
     string,
     typeof schema.providerExecutions.$inferSelect
@@ -248,6 +251,7 @@ export class GeneratedSceneReviewRepository {
         row.retryAuthorizationStatus === "AUTHORIZED"
           ? row.retryAuthorizationId
           : null,
+      retryPrepared: row.retryAuthorizationStatus === "CONSUMED",
     }));
   }
 
@@ -452,6 +456,35 @@ async function loadLockedSnapshot(
     )
     .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt));
 
+  const supersessions = await tx
+    .select({
+      sourceCorrelationId:
+        schema.aiStoryPreDispatchBundleSupersessions.sourceCorrelationId,
+    })
+    .from(schema.aiStoryPreDispatchBundleSupersessions)
+    .where(
+      eq(
+        schema.aiStoryPreDispatchBundleSupersessions.sceneExecutionId,
+        input.sceneExecutionId
+      )
+    );
+  const attemptRows = await tx
+    .select({ attemptId: schema.providerAttempts.attemptId })
+    .from(schema.aiStoryProviderAttemptCompiledBindings)
+    .innerJoin(
+      schema.providerAttempts,
+      eq(
+        schema.providerAttempts.attemptId,
+        schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId
+      )
+    )
+    .where(
+      eq(
+        schema.aiStoryProviderAttemptCompiledBindings.sceneExecutionId,
+        input.sceneExecutionId
+      )
+    );
+
   const executionIds = correlations.map((row) => row.providerExecutionId);
   const executions =
     executionIds.length === 0
@@ -460,6 +493,29 @@ async function loadLockedSnapshot(
           .select()
           .from(schema.providerExecutions)
           .where(inArray(schema.providerExecutions.executionId, executionIds));
+  const workerResults =
+    executionIds.length === 0
+      ? []
+      : await tx
+          .select({
+            providerExecutionId:
+              schema.aiStoryWorkerExecutionResults.providerExecutionId,
+            workerState: schema.aiStoryWorkerExecutionResults.workerState,
+            acceptanceClassification:
+              schema.aiStoryWorkerExecutionResults.acceptanceClassification,
+            canonicalProviderState:
+              schema.aiStoryWorkerExecutionResults.canonicalProviderState,
+            reconciliationRequired:
+              schema.aiStoryWorkerExecutionResults.reconciliationRequired,
+            result: schema.aiStoryWorkerExecutionResults.result,
+          })
+          .from(schema.aiStoryWorkerExecutionResults)
+          .where(
+            inArray(
+              schema.aiStoryWorkerExecutionResults.providerExecutionId,
+              executionIds
+            )
+          );
 
   return {
     sceneExecutionId: scene.id,
@@ -473,8 +529,26 @@ async function loadLockedSnapshot(
     reviews: reviews.map(toFact),
     results,
     correlations,
+    supersededCorrelationIds: new Set(
+      supersessions.map((row) => row.sourceCorrelationId)
+    ),
+    terminalWorkerExecutionIds: new Set(
+      workerResults
+        .filter(
+          (row) =>
+            !row.reconciliationRequired &&
+            (row.workerState === "TERMINAL_SUCCESS" ||
+              row.workerState === "TERMINAL_FAILURE" ||
+              (row.workerState === "NOT_ACCEPTED" &&
+                row.acceptanceClassification === "NOT_ACCEPTED" &&
+                row.canonicalProviderState === "NOT_ACCEPTED" &&
+                row.result.failureClassification?.terminal === true &&
+                row.result.failureClassification.reconciliationRequired === false))
+        )
+        .map((row) => row.providerExecutionId)
+    ),
     providerExecutions: new Map(executions.map((row) => [row.executionId, row])),
-    attemptCount: correlations.length,
+    attemptCount: new Set(attemptRows.map((row) => row.attemptId)).size,
     maxAttempts: resolveAiStorySceneMaxAttempts(),
   };
 }
@@ -483,6 +557,8 @@ export function snapshotHasInFlightProviderExecution(
   snapshot: GeneratedSceneReviewLockSnapshot
 ): boolean {
   for (const correlation of snapshot.correlations) {
+    if (snapshot.supersededCorrelationIds?.has(correlation.correlationId)) continue;
+    if (snapshot.terminalWorkerExecutionIds?.has(correlation.providerExecutionId)) continue;
     const execution = snapshot.providerExecutions.get(correlation.providerExecutionId);
     if (!execution) return true;
     if (execution.status !== "SUCCEEDED" && execution.status !== "TERMINAL_FAILURE") {

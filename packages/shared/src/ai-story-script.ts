@@ -98,6 +98,8 @@ export const AiStoryScriptVersionSchema = z.object({
   contractVersion: z.literal(AI_STORY_SCRIPT_CONTRACT_VERSION),
   profileId: z.enum(["CORE", "PRODUCT_STORY"]), profileVersion: z.literal(1),
   outlineSourceHash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  /** Present on runtime-produced V1 Scripts; absent on historical snapshots. */
+  semanticInputFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
   scenes: z.array(AiStoryScriptSceneSchema).min(1),
   authorityReferences: z.array(AiStoryScriptAuthorityReferenceSchema),
   sourceHash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
@@ -106,6 +108,7 @@ export const AiStoryScriptVersionSchema = z.object({
 }).strict();
 
 export type AiStoryScriptVersion = z.infer<typeof AiStoryScriptVersionSchema>;
+export type AiStoryScriptScene = z.infer<typeof AiStoryScriptSceneSchema>;
 export type AiStoryScriptStatus = AiStoryScriptVersion["status"];
 export type AiStoryScriptValidationIssue = { gate: (typeof AI_STORY_SCRIPT_VALIDATION_GATES)[number]; severity: "BLOCK" | "WARN"; message: string };
 

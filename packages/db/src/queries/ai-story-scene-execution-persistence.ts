@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   AiStoryAiQcResultSchema,
+  AuthoritativeAnimationPackagePayloadSchema,
   AiStoryExecutionPlanSchema,
   AiStorySceneCompiledInstructionsSchema,
   AiStorySceneExecutionIntentSchema,
@@ -171,7 +172,14 @@ export function validateSceneExecutionPersistenceInput(
     if (
       !intent ||
       intent.identity.sceneExecutionId !== identity.sceneExecutionId ||
-      intent.identity.sceneOrder !== identity.sceneOrder
+      intent.identity.sceneOrder !== identity.sceneOrder ||
+      intent.identity.sceneId !== identity.sceneId ||
+      intent.animationPackage.animationPackageId !== plan.animationPackage.animationPackageId ||
+      intent.identity.sceneVersionId !== identity.sceneVersionId ||
+      intent.identity.sceneFingerprint !== identity.sceneFingerprint ||
+      intent.identity.scriptVersionId !== identity.scriptVersionId ||
+      intent.animationPackage.scriptVersionId !== plan.animationPackage.scriptVersionId ||
+      intent.animationPackage.sceneSetFingerprint !== plan.animationPackage.sceneSetFingerprint
     ) {
       throw new ExecutionPlanIdentityConflictError(
         "Scene Intent ordering conflicts with the plan"
@@ -180,6 +188,25 @@ export function validateSceneExecutionPersistenceInput(
     const snapshot = instructions[identity.sceneExecutionId];
     if (!snapshot) {
       throw new ExecutionPlanIdentityConflictError("A Scene instruction snapshot is missing");
+    }
+    if (identity.sceneVersionId && (
+      snapshot.sceneId !== identity.sceneId ||
+      snapshot.sceneVersionId !== identity.sceneVersionId ||
+      snapshot.sceneFingerprint !== identity.sceneFingerprint ||
+      snapshot.scriptVersionId !== identity.scriptVersionId ||
+      snapshot.sceneSetFingerprint !== plan.animationPackage.sceneSetFingerprint
+    )) {
+      throw new ExecutionPlanIdentityConflictError(
+        "Scene instruction lineage conflicts with the Intent"
+      );
+    }
+    if (identity.sceneVersionId && (
+      !intent.generationAuthority || !snapshot.generationAuthority ||
+      canonicalPersistenceHash(intent.generationAuthority) !== canonicalPersistenceHash(snapshot.generationAuthority)
+    )) {
+      throw new ExecutionPlanIdentityConflictError(
+        "Current Canonical Scene Intent and instruction snapshot require the same explicit generation mode"
+      );
     }
     if (canonicalPersistenceHash(snapshot) !== intent.normalizedPayloadReference.contentHash) {
       throw new ExecutionPlanIdentityConflictError(
@@ -198,19 +225,15 @@ export function validateSceneExecutionPersistenceInput(
   return { plan, intents, instructions, validations };
 }
 
-function extractAnimationPackageSceneIds(payload: unknown): Set<string> {
+function extractLegacyAnimationPackageSceneIds(payload: unknown): Set<string> {
   if (!payload || typeof payload !== "object") return new Set();
   const scenePlan = (payload as { scenePlan?: unknown }).scenePlan;
   if (!Array.isArray(scenePlan)) return new Set();
-  return new Set(
-    scenePlan
-      .map((scene) =>
-        scene && typeof scene === "object" && typeof (scene as { id?: unknown }).id === "string"
-          ? (scene as { id: string }).id
-          : null
-      )
-      .filter((id): id is string => Boolean(id))
-  );
+  return new Set(scenePlan.flatMap((scene) =>
+    scene && typeof scene === "object" && typeof (scene as { id?: unknown }).id === "string"
+      ? [(scene as { id: string }).id]
+      : []
+  ));
 }
 
 export class AiStorySceneExecutionPersistenceRepository
@@ -578,7 +601,7 @@ export class AiStorySceneExecutionPersistenceRepository
       )
       .limit(1);
     const [story] = await db
-      .select({ id: schema.aiStories.id })
+      .select({ id: schema.aiStories.id, currentVersionId: schema.aiStories.currentVersionId })
       .from(schema.aiStories)
       .where(
         and(
@@ -605,6 +628,7 @@ export class AiStorySceneExecutionPersistenceRepository
     const [animationPackage] = await db
       .select({
         id: schema.aiStoryAnimationPackages.id,
+        status: schema.aiStoryAnimationPackages.status,
         payload: schema.aiStoryAnimationPackages.payload,
       })
       .from(schema.aiStoryAnimationPackages)
@@ -620,17 +644,42 @@ export class AiStorySceneExecutionPersistenceRepository
       )
       .limit(1);
 
-    if (!organization || !workspace || !campaign || !story || !version?.frozenAt || !animationPackage) {
+    if (
+      !organization || !workspace || !campaign || !story ||
+      story.currentVersionId !== first.storyVersionId ||
+      !version?.frozenAt || !animationPackage ||
+      animationPackage.status !== "ready_for_execution"
+    ) {
       throw new ExecutionPlanOwnershipError(
         "Organization, Workspace, Campaign, Story, frozen Story Version, or Animation Package ownership is invalid"
       );
     }
 
-    const packageSceneIds = extractAnimationPackageSceneIds(animationPackage.payload);
+    const packagePayload = AuthoritativeAnimationPackagePayloadSchema.safeParse(
+      animationPackage.payload
+    );
+    const packageAuthority = packagePayload.success
+      ? packagePayload.data.canonicalSceneAuthority
+      : null;
+    const packageSceneIds = packageAuthority
+      ? new Set(packageAuthority.scenes.map((scene) => scene.sceneId))
+      : extractLegacyAnimationPackageSceneIds(animationPackage.payload);
     for (const intent of normalized.intents) {
-      if (!packageSceneIds.has(intent.identity.sceneId)) {
+      const binding = packageAuthority?.scenes[intent.identity.sceneOrder];
+      if (
+        !packageSceneIds.has(intent.identity.sceneId) ||
+        (packageAuthority && (
+          !binding ||
+          binding.sceneId !== intent.identity.sceneId ||
+          binding.sceneVersionId !== intent.identity.sceneVersionId ||
+          binding.sceneFingerprint !== intent.identity.sceneFingerprint ||
+          packageAuthority.scriptVersionId !== intent.identity.scriptVersionId ||
+          packageAuthority.scriptVersionId !== intent.animationPackage.scriptVersionId ||
+          packageAuthority.sceneSetFingerprint !== intent.animationPackage.sceneSetFingerprint
+        ))
+      ) {
         throw new ExecutionPlanOwnershipError(
-          "A Scene does not belong to the Animation Package scene plan"
+          "A Scene does not belong to the Animation Package canonical Scene authority"
         );
       }
     }

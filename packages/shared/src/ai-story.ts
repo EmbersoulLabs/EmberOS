@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
+import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
+import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
+import { AiStoryOutlineProfileReferenceSchema } from "./ai-story-outline-profile";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -40,11 +45,13 @@ export const AiStoryStructuredDraftSchema = z.object({
 
 export type AiStoryStructuredDraft = z.infer<typeof AiStoryStructuredDraftSchema>;
 
-export const AiStoryCreateBodySchema = z.object({
-  title: z.string().trim().min(1).max(200),
-  originalIdea: z.string().trim().min(1).max(8000),
-  assetIds: z.array(z.string().uuid()).max(32).optional(),
-});
+export const AiStoryCreateBodySchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    originalIdea: z.string().trim().min(1).max(8000),
+    outlineProfile: AiStoryOutlineProfileReferenceSchema,
+  })
+  .and(AiStoryAssetSelectionSchema);
 
 export const AiStoryUpdateDraftBodySchema = z.object({
   structuredContent: AiStoryStructuredDraftSchema,
@@ -161,6 +168,18 @@ export const STORY_PLANNING_STAGE_ORDER = [
 
 const NonEmptyTextSchema = z.string().trim().min(1);
 
+export const PlanningCharacterAuthorityProjectionSchema = z.object({
+  characterId: z.string().uuid(),
+  characterVersionId: z.string().uuid(),
+  characterFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  name: NonEmptyTextSchema,
+  canonicalFacts: AiStoryCharacterCanonicalFactsSchema,
+}).strict();
+
+export type PlanningCharacterAuthorityProjection = z.infer<
+  typeof PlanningCharacterAuthorityProjectionSchema
+>;
+
 export const CreativeContextCharacterSchema = z.object({
   id: z.string().trim().min(1).optional(),
   name: NonEmptyTextSchema,
@@ -168,6 +187,10 @@ export const CreativeContextCharacterSchema = z.object({
   description: z.string().default(""),
   motivation: z.string().default(""),
   visualNotes: z.string().default(""),
+  /** Exact accepted authority. Legacy fields above are compatibility projections only. */
+  canonicalAuthority: PlanningCharacterAuthorityProjectionSchema.optional(),
+  /** LLM-created persistent Character data remains a proposal until accepted by the Character API. */
+  proposalOnly: z.literal(true).optional(),
 });
 
 export const CreativeContextSchema = z.object({
@@ -185,6 +208,10 @@ export const CreativeContextSchema = z.object({
     characters: z.array(CreativeContextCharacterSchema).default([]),
     relationships: z.array(z.string()).default([]),
   }),
+  /** Server-owned Planning projection; LLM prose is never Product identity authority. */
+  productAuthorities: z
+    .array(PlanningProductAuthorityProjectionSchema)
+    .default([]),
   worldContext: z.object({
     locations: z.array(z.string()).default([]),
     visualStyle: z.string().default(""),
@@ -243,6 +270,7 @@ export const ScenePlanItemSchema = z.object({
   transition: z.string().default(""),
   continuityNotes: z.string().default(""),
   order: z.number().int().nonnegative(),
+  generationAuthority: AiStorySceneGenerationAuthoritySchema.optional(),
 });
 
 export type ScenePlanItem = z.infer<typeof ScenePlanItemSchema>;
@@ -274,6 +302,11 @@ export const CharacterContinuityEntrySchema = z.object({
   age: z.string().default(""),
   pose: z.string().default(""),
   identity: NonEmptyTextSchema,
+  canonicalAuthority: PlanningCharacterAuthorityProjectionSchema.pick({
+    characterId: true,
+    characterVersionId: true,
+    characterFingerprint: true,
+  }).optional(),
 });
 
 export type CharacterContinuityEntry = z.infer<typeof CharacterContinuityEntrySchema>;
@@ -366,6 +399,29 @@ export function prunePlanningDraftAfterStage(
   };
 }
 
+export const AI_STORY_ANIMATION_PACKAGE_CANONICAL_SCENE_BINDING_CONTRACT_VERSION =
+  "ai-story-animation-package-canonical-scene-binding.v1" as const;
+
+export const AiStoryAnimationPackageCanonicalSceneBindingSchema = z.object({
+  order: z.number().int().nonnegative(),
+  planningSceneId: NonEmptyTextSchema,
+  sceneId: z.string().uuid(),
+  sceneVersionId: z.string().uuid(),
+  sceneFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  sourceScriptSceneIds: z.array(z.string().uuid()).min(1),
+  /** Historical bindings may omit this; current execution bindings may not. */
+  generationAuthority: AiStorySceneGenerationAuthoritySchema.optional(),
+}).strict();
+
+export const AiStoryAnimationPackageCanonicalSceneAuthoritySchema = z.object({
+  contractVersion: z.literal(
+    AI_STORY_ANIMATION_PACKAGE_CANONICAL_SCENE_BINDING_CONTRACT_VERSION
+  ),
+  scriptVersionId: z.string().uuid(),
+  sceneSetFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  scenes: z.array(AiStoryAnimationPackageCanonicalSceneBindingSchema).min(1),
+}).strict();
+
 export const AnimationPackagePayloadSchema = z.object({
   story: AiStoryStructuredDraftSchema,
   characters: z.array(CreativeContextCharacterSchema),
@@ -380,9 +436,27 @@ export const AnimationPackagePayloadSchema = z.object({
   narrativeIntegration: NarrativeIntegrationReportSchema,
   status: z.enum(ANIMATION_PACKAGE_STATUSES),
   usage: PlanningUsageSchema.optional(),
+  /** Read compatibility: historical Packages predate Canonical Scene binding. */
+  canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema.optional(),
 });
 
 export type AnimationPackagePayload = z.infer<typeof AnimationPackagePayloadSchema>;
+export type AiStoryAnimationPackageCanonicalSceneAuthority = z.infer<
+  typeof AiStoryAnimationPackageCanonicalSceneAuthoritySchema
+>;
+
+/** Strict new-write contract. Historical reads continue through AnimationPackagePayloadSchema. */
+export const AuthoritativeAnimationPackagePayloadSchema = AnimationPackagePayloadSchema.extend({
+  scenePlan: z.array(ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema })).min(1),
+  canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema.extend({
+    scenes: z.array(AiStoryAnimationPackageCanonicalSceneBindingSchema.extend({
+      generationAuthority: AiStorySceneGenerationAuthoritySchema,
+    })).min(1),
+  }),
+});
+export type AuthoritativeAnimationPackagePayload = z.infer<
+  typeof AuthoritativeAnimationPackagePayloadSchema
+>;
 
 function includesMergeNote(scene: ScenePlanItem, beat: StoryBeat): boolean {
   const note = `${scene.purpose} ${scene.continuityNotes}`.toLowerCase();
@@ -428,12 +502,45 @@ export function validatePlanningConsistency(
       character.name.trim().toLowerCase()
     )
   );
+  const canonicalCharactersById = new Map(
+    animationPackage.creativeContext.characterContext.characters
+      .filter((character) => character.canonicalAuthority)
+      .map((character) => [character.canonicalAuthority!.characterId, character] as const)
+  );
+  const canonicalCharacterNames = new Set(
+    [...canonicalCharactersById.values()].map((character) =>
+      character.name.trim().toLowerCase()
+    )
+  );
   for (const entry of animationPackage.characterContinuity) {
     const idMatches = entry.characterId
       ? characterIds.has(entry.characterId.trim().toLowerCase())
       : false;
-    const nameMatches = characterNames.has(entry.name.trim().toLowerCase());
-    if (!idMatches && !nameMatches) {
+    const normalizedEntryName = entry.name.trim().toLowerCase();
+    const nameMatches = characterNames.has(normalizedEntryName);
+    const canonicalCharacter = entry.characterId
+      ? canonicalCharactersById.get(entry.characterId)
+      : undefined;
+    const canonicalBindingMatches = canonicalCharacter
+      ? Boolean(
+          entry.canonicalAuthority &&
+            entry.canonicalAuthority.characterId ===
+              canonicalCharacter.canonicalAuthority!.characterId &&
+            entry.canonicalAuthority.characterVersionId ===
+              canonicalCharacter.canonicalAuthority!.characterVersionId &&
+            entry.canonicalAuthority.characterFingerprint ===
+              canonicalCharacter.canonicalAuthority!.characterFingerprint
+        )
+      : false;
+    if (canonicalCharacter && !canonicalBindingMatches) {
+      issues.push(
+        `Character continuity entry ${entry.name} does not preserve exact Character authority lineage`
+      );
+    } else if (!canonicalCharacter && canonicalCharacterNames.has(normalizedEntryName)) {
+      issues.push(
+        `Character continuity entry ${entry.name} uses a name without exact Character authority`
+      );
+    } else if (!idMatches && !nameMatches) {
       issues.push(`Character continuity entry ${entry.name} is not in character context`);
     }
   }

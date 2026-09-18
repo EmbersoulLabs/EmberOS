@@ -19,6 +19,8 @@ import {
   type SceneProviderSchedulingCorrelation,
   type SceneSchedulingBundle,
   type SceneSchedulingErrorCode,
+  type ProductVisualMaterialSelectionAuthority,
+  type AiStoryEffectiveSceneGenerationAuthority,
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
@@ -26,6 +28,7 @@ import {
   RuntimeAuthorizationPersistenceRepository,
   SceneSchedulingError,
   SceneSchedulingRepository,
+  AiStoryProviderRuntimeRepository,
   CommercialAuthorizationRepositoryImpl,
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
@@ -50,6 +53,12 @@ import {
   SCENE_PROVIDER_RESULT_SCHEMA_VERSION,
   buildCanonicalSceneProviderRequest,
 } from "./canonical-scene-provider-request";
+import { compileImmutableSceneProviderRequest } from "./scene-compiled-provider-request";
+import type {
+  PreparedSceneFrameAuthority,
+  SceneInputPreparationAuthority,
+} from "./scene-input-preparation";
+import type { ProviderPolicyEligibilityAuthority } from "./provider-policy-eligibility";
 
 export { SceneSchedulingError };
 
@@ -144,7 +153,34 @@ export type SceneSchedulingCoordinatorDependencies = {
     "getByExecutionPlanId"
   >;
   readonly assemblyRepo?: Pick<ExecutionPlanAssemblyRepository, "listMemberships">;
+  readonly providerRuntimeRepo?: Pick<
+    AiStoryProviderRuntimeRepository,
+    "getCompilationAuthorityBySceneExecutionId" | "convergeCompiledRequestForAcceptedBundle"
+  > & Partial<Pick<AiStoryProviderRuntimeRepository, "getReferenceAssetAuthorities">>;
+  readonly sceneInputPreparationResolver?: (input: {
+    readonly sceneExecutionId: string;
+    readonly sceneId: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+  }) => Promise<SceneInputPreparationResolution | null>;
+  readonly productMaterialSelectionResolver?: (input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+    readonly sceneId: string;
+    readonly sceneVersionId: string;
+    readonly actorUserId: string;
+    readonly generationAuthority: AiStoryEffectiveSceneGenerationAuthority;
+  }) => Promise<ProductVisualMaterialSelectionAuthority>;
   readonly now?: () => Date;
+};
+
+export type SceneInputPreparationResolution = {
+  readonly preparation: SceneInputPreparationAuthority;
+  readonly preparedFrame?: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
 };
 
 const DEFAULT_ROUTING_POLICY: ProviderRoutingPolicy = {
@@ -429,6 +465,10 @@ export class SceneSchedulingCoordinator {
     "getByExecutionPlanId"
   >;
   private readonly assemblyRepo: Pick<ExecutionPlanAssemblyRepository, "listMemberships">;
+  private readonly providerRuntimeRepo: Pick<
+    AiStoryProviderRuntimeRepository,
+    "getCompilationAuthorityBySceneExecutionId" | "getReferenceAssetAuthorities" | "convergeCompiledRequestForAcceptedBundle"
+  >;
   private readonly now: () => Date;
 
   constructor(private readonly dependencies: SceneSchedulingCoordinatorDependencies) {
@@ -443,6 +483,17 @@ export class SceneSchedulingCoordinator {
       dependencies.persistenceRepo ?? new AiStorySceneExecutionPersistenceRepository();
     this.assemblyRepo =
       dependencies.assemblyRepo ?? new ExecutionPlanAssemblyRepository();
+    this.providerRuntimeRepo = {
+      getCompilationAuthorityBySceneExecutionId:
+        dependencies.providerRuntimeRepo?.getCompilationAuthorityBySceneExecutionId.bind(dependencies.providerRuntimeRepo) ??
+        ((value) => new AiStoryProviderRuntimeRepository().getCompilationAuthorityBySceneExecutionId(value)),
+      getReferenceAssetAuthorities:
+        dependencies.providerRuntimeRepo?.getReferenceAssetAuthorities?.bind(dependencies.providerRuntimeRepo) ??
+        ((value) => new AiStoryProviderRuntimeRepository().getReferenceAssetAuthorities(value)),
+      convergeCompiledRequestForAcceptedBundle:
+        dependencies.providerRuntimeRepo?.convergeCompiledRequestForAcceptedBundle.bind(dependencies.providerRuntimeRepo) ??
+        ((value) => new AiStoryProviderRuntimeRepository().convergeCompiledRequestForAcceptedBundle(value)),
+    };
     this.now = dependencies.now ?? (() => new Date());
   }
 
@@ -549,13 +600,6 @@ export class SceneSchedulingCoordinator {
           }
         }
         this.assertAcceptedBundleMatchesInput(acceptedBundle, input, fact);
-        return SceneSchedulingBundleSchema.parse({
-          ...acceptedBundle,
-          replayed: true,
-          executionAllowed: false,
-          executionLockCode: PHASE1_EXECUTION_LOCKED,
-          automaticFallbackEnabled: false,
-        });
       }
 
       const compilation = await this.persistenceRepo.getByExecutionPlanId(
@@ -626,6 +670,16 @@ export class SceneSchedulingCoordinator {
       const instructions = input.retryInputRevision
         ? applyRetryInputRevision(baseInstructions, input.retryInputRevision)
         : baseInstructions;
+      if (sceneIntent.identity.sceneVersionId && (
+        !sceneIntent.generationAuthority || !instructions.generationAuthority ||
+        canonicalPersistenceHash(sceneIntent.generationAuthority) !==
+          canonicalPersistenceHash(instructions.generationAuthority)
+      )) {
+        throw new SceneSchedulingError(
+          "SCENE_NOT_AUTHORIZED",
+          "Current Canonical Scene scheduling requires one exact immutable generation mode"
+        );
+      }
       const instructionHash =
         input.retryInputRevision?.canonicalFingerprint ??
         sceneIntent.normalizedPayloadReference.contentHash;
@@ -713,6 +767,120 @@ export class SceneSchedulingCoordinator {
         timeoutDeadline,
         retryGeneration,
       });
+      const persistedCompilationAuthority =
+        await this.providerRuntimeRepo.getCompilationAuthorityBySceneExecutionId({
+          sceneExecutionId: input.sceneExecutionId,
+          orgId: fact.ownership.orgId,
+          workspaceId: fact.ownership.workspaceId,
+          storyId: fact.ownership.storyId,
+          storyVersionId: fact.ownership.storyVersionId,
+        });
+      const compilationAuthority = persistedCompilationAuthority ?? {
+        qcEvaluationId: deterministicPersistenceUuid(
+          "ai-story-scene-intent-validation-authority",
+          { sceneExecutionId: input.sceneExecutionId, validationResults }
+        ),
+        qcFingerprint: canonicalPersistenceHash({
+          kind: "ai-story-scene-intent-validation-authority.v1",
+          sceneExecutionId: input.sceneExecutionId,
+          validationResults,
+        }),
+        qcCapabilityVersion: "ai-story-scene-intent-validation.v1",
+        directorFingerprint: canonicalPersistenceHash({
+          kind: "ai-story-director-instruction-snapshot.v1",
+          sceneExecutionId: input.sceneExecutionId,
+          shots: instructions.shots,
+        }),
+        motionFingerprint: canonicalPersistenceHash({
+          kind: "ai-story-motion-instruction-snapshot.v1",
+          sceneExecutionId: input.sceneExecutionId,
+          durationMs: instructions.durationMs,
+          shots: instructions.shots.map((shot) => ({
+            shotId: shot.shotId,
+            durationMs: shot.durationMs,
+            cameraMovement: shot.cameraMovement,
+          })),
+        }),
+      };
+      const generationAuthority =
+        sceneIntent.generationAuthority ?? instructions.generationAuthority;
+      const referenceFree = generationAuthority?.strategy === "TEXT_TO_VIDEO" &&
+        generationAuthority.referenceSource === "REFERENCE_FREE_T2V";
+      if (!referenceFree && this.dependencies.productMaterialSelectionResolver &&
+        (!generationAuthority || !sceneIntent.identity.sceneVersionId)) {
+        throw new SceneSchedulingError(
+          "SCENE_NOT_AUTHORIZED",
+          "Image-conditioned scheduling requires exact Canonical Scene Version and generation authority"
+        );
+      }
+      const productMaterialSelection =
+        !referenceFree && this.dependencies.productMaterialSelectionResolver
+          ? await this.dependencies.productMaterialSelectionResolver({
+              orgId: fact.ownership.orgId,
+              workspaceId: fact.ownership.workspaceId,
+              campaignId: fact.ownership.campaignId,
+              storyId: fact.ownership.storyId,
+              storyVersionId: fact.ownership.storyVersionId,
+              sceneId: sceneIntent.identity.sceneId,
+              sceneVersionId: sceneIntent.identity.sceneVersionId!,
+              actorUserId: input.actorUserId,
+              generationAuthority: generationAuthority!,
+            })
+          : null;
+      const sceneInputPreparation =
+        await this.dependencies.sceneInputPreparationResolver?.({
+          sceneExecutionId: input.sceneExecutionId,
+          sceneId: sceneIntent.identity.sceneId,
+          orgId: fact.ownership.orgId,
+          workspaceId: fact.ownership.workspaceId,
+        }) ?? null;
+      const effectiveReferenceIds = generationAuthority?.effectiveReferenceIds ??
+        sceneIntent.referencedAssetIds;
+      const preparedFrameAssetId =
+        sceneInputPreparation?.preparedFrame?.outputAssetId ?? null;
+      const selectedMaterialAssetId =
+        productMaterialSelection?.selectedMaterial?.assetId ?? null;
+      const assetIds = [...new Set([
+        ...effectiveReferenceIds,
+        ...(preparedFrameAssetId ? [preparedFrameAssetId] : []),
+        ...(selectedMaterialAssetId ? [selectedMaterialAssetId] : []),
+      ])];
+      const referenceAssets = await this.providerRuntimeRepo.getReferenceAssetAuthorities({
+        orgId: fact.ownership.orgId,
+        workspaceId: fact.ownership.workspaceId,
+        campaignId: fact.ownership.campaignId,
+        assetIds,
+      });
+      const compiledProviderRequest = compileImmutableSceneProviderRequest({
+        providerId: acceptedRoutingDecision.selectedProviderId,
+        intent: sceneIntent,
+        instructions,
+        authority: compilationAuthority,
+        adapterVersion: acceptedRoutingDecision.selectedAdapterVersion,
+        compiledAt: scheduledAt,
+        resolution: "480p",
+        referenceAssets,
+        productMaterialSelection,
+        ...(sceneInputPreparation ? {
+          sceneInputPreparation: sceneInputPreparation.preparation,
+          preparedSceneFrame: sceneInputPreparation.preparedFrame ?? null,
+          providerPolicyEligibility:
+            sceneInputPreparation.providerPolicyEligibility ?? null,
+        } : {}),
+      });
+      if (acceptedBundle) {
+        await this.providerRuntimeRepo.convergeCompiledRequestForAcceptedBundle({
+          bundle: acceptedBundle,
+          compiledProviderRequest,
+        });
+        return SceneSchedulingBundleSchema.parse({
+          ...acceptedBundle,
+          replayed: true,
+          executionAllowed: false,
+          executionLockCode: PHASE1_EXECUTION_LOCKED,
+          automaticFallbackEnabled: false,
+        });
+      }
       const providerExecution = buildProviderExecution({
         canonicalRequest: request.canonicalRequest,
         correlationId,
@@ -740,6 +908,8 @@ export class SceneSchedulingCoordinator {
             executionPlanId: input.executionPlanId,
             sceneExecutionId: input.sceneExecutionId,
             runtimeAuthorizationId: fact.runtimeAuthorizationId,
+            compiledRequestId: compiledProviderRequest.compiledRequestId,
+            compiledRequestFingerprint: compiledProviderRequest.requestFingerprint,
             ...(input.retryInputRevision
               ? { retryInputRevisionId: input.retryInputRevision.retryInputRevisionId }
               : {}),
@@ -781,6 +951,7 @@ export class SceneSchedulingCoordinator {
         runtimeAuthorizedFact: fact,
         routingDecision: acceptedRoutingDecision,
         providerExecution,
+        compiledProviderRequest,
         requestHash: envelope.requestHash,
         envelope,
         outboxJob: {

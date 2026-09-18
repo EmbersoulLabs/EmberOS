@@ -5,9 +5,12 @@ import {
 import {
   AI_STORY_LOCATION_CONTRACT_VERSION,
   AI_STORY_SCENE_CONTRACT_VERSION,
+  AiStoryAuthoritativeSceneProductBindingSchema,
   AiStoryCanonicalSceneSchema,
   AiStoryLocationAuthorityVersionSchema,
   type AiStoryCanonicalScene,
+  type AiStoryAuthoritativeCanonicalScene,
+  type AiStoryAuthoritativeSceneProductBinding,
   type AiStoryLocationAuthorityVersion,
   type AiStorySceneIssue,
 } from "./ai-story-scene";
@@ -53,6 +56,7 @@ function sceneTruth(scene: AiStoryCanonicalScene) {
     locationState: scene.locationState,
     castBindings: scene.castBindings,
     productBindings: scene.productBindings,
+    ...(scene.generationAuthority ? { generationAuthority: scene.generationAuthority } : {}),
     entryState: scene.entryState,
     events: scene.events,
     exitState: scene.exitState,
@@ -92,8 +96,10 @@ export function finalizeAiStoryCanonicalScene(
     | "approvedBy"
     | "approvedAt"
     | "frozenAt"
-  >,
-) {
+    | "productBindings"
+  > & { productBindings: AiStoryAuthoritativeSceneProductBinding[] },
+): AiStoryAuthoritativeCanonicalScene {
+  input.productBindings.forEach((binding) => AiStoryAuthoritativeSceneProductBindingSchema.parse(binding));
   const draft: AiStoryCanonicalScene = {
     ...input,
     sceneVersionId: "00000000-0000-4000-8000-000000000000",
@@ -115,7 +121,7 @@ export function finalizeAiStoryCanonicalScene(
       "ai-story-scene-version",
       `${input.sceneId}:${input.version}:${fingerprint}`,
     ),
-  });
+  }) as AiStoryAuthoritativeCanonicalScene;
 }
 
 function stateKey(fact: { dimension: string; subjectId: string }) {
@@ -123,7 +129,7 @@ function stateKey(fact: { dimension: string; subjectId: string }) {
 }
 
 function structurallyEqual(left: unknown, right: unknown) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return sha256CanonicalIntegrityHash(left) === sha256CanonicalIntegrityHash(right);
 }
 
 export function validateAiStoryCanonicalScenes(
@@ -233,6 +239,9 @@ export function validateAiStoryCanonicalScenes(
     if (new Set(scene.productBindings.map((product) => product.productAuthorityId)).size !== scene.productBindings.length) {
       add("PRODUCT_BINDING_GATE", "Scene contains duplicate Product authority bindings", "PRODUCT_AUTHORITY");
     }
+    if (scene.productBindings.some((product) => !AiStoryAuthoritativeSceneProductBindingSchema.safeParse(product).success)) {
+      add("PRODUCT_BINDING_GATE", "Scene Product visual identity requirement must be explicitly resolved", "PRODUCT_AUTHORITY");
+    }
     const expectedProducts = new Set(sources.flatMap((source) => source?.productAuthorityRefs ?? []));
     const boundProducts = new Set(scene.productBindings.map((product) => product.productAuthorityId));
     if (
@@ -242,11 +251,23 @@ export function validateAiStoryCanonicalScenes(
       add("PRODUCT_BINDING_GATE", "Scene Product bindings differ from Script authority", "PRODUCT_AUTHORITY");
     }
 
-    if (!scene.entryState.length && scene.importance !== "TRANSITIONAL") {
-      add("ENTRY_STATE_GATE", `Consequential Scene ${scene.sceneId} lacks Entry State`);
-    }
-    if (!scene.exitState.length && scene.importance !== "TRANSITIONAL") {
-      add("EXIT_STATE_GATE", `Consequential Scene ${scene.sceneId} lacks Exit State`);
+    const exactSource = sources.length === 1 ? sources[0] : undefined;
+    if (exactSource) {
+      if (!structurallyEqual(scene.entryState, exactSource.sceneStateIn)) {
+        add("ENTRY_STATE_GATE", `Scene ${scene.sceneId} Entry State rewrites Script truth`, "SCRIPT");
+      }
+      if (!structurallyEqual(scene.exitState, exactSource.sceneStateOut)) {
+        add("EXIT_STATE_GATE", `Scene ${scene.sceneId} Exit State rewrites Script truth`, "SCRIPT");
+      }
+    } else {
+      // Multi-source Scene state semantics remain compatibility authority until an
+      // explicit SPLIT/MERGE policy owns their composition.
+      if (!scene.entryState.length && scene.importance !== "TRANSITIONAL") {
+        add("ENTRY_STATE_GATE", `Consequential Scene ${scene.sceneId} lacks Entry State`);
+      }
+      if (!scene.exitState.length && scene.importance !== "TRANSITIONAL") {
+        add("EXIT_STATE_GATE", `Consequential Scene ${scene.sceneId} lacks Exit State`);
+      }
     }
     const hasPurpose =
       scene.events.length > 0 ||

@@ -14,7 +14,10 @@ import { buildCanonicalSceneProviderRequest } from "../packages/agents/src/ai-st
 import { deriveSceneCompleteReadiness } from "../packages/agents/src/ai-story/ai-story-runtime-continuation-coordinator";
 import { authorizeAiStoryExecution } from "../packages/agents/src/ai-story/ai-story-execution-authorization";
 import { GeneratedSceneReviewError } from "../packages/db/src/queries/ai-story-generated-scene-review";
-import { GeneratedSceneReviewService } from "../packages/agents/src/ai-story/generated-scene-review-service";
+import {
+  GeneratedSceneReviewService,
+  deriveGeneratedSceneReviewAuthorityState,
+} from "../packages/agents/src/ai-story/generated-scene-review-service";
 import { WorkspaceAccessError } from "@ceo-agent/db";
 
 const STORY = "10000000-0000-4000-8000-000000000005";
@@ -30,6 +33,26 @@ const HASH =
 const REVIEW_ID = "10000000-0000-4000-8000-000000000801";
 const RETRY_REVISION_ID = "10000000-0000-4000-8000-000000000901";
 const RETRY_AUTHORIZATION_ID = "10000000-0000-4000-8000-000000000902";
+
+describe("generated Scene retry preparation authority", () => {
+  it("keeps missing authority unprepared and projects consumed preparation", () => {
+    const base = {
+      approved: false,
+      running: false,
+      latestDecision: "REJECTED" as const,
+      retryAuthorized: false,
+      reviewAvailable: true,
+    };
+    expect(deriveGeneratedSceneReviewAuthorityState({
+      ...base,
+      retryPrepared: false,
+    })).toBe("REJECTED");
+    expect(deriveGeneratedSceneReviewAuthorityState({
+      ...base,
+      retryPrepared: true,
+    })).toBe("RETRY_AUTHORIZED");
+  });
+});
 
 function sceneResult(id: string, status: "SUCCEEDED" | "FAILED" = "SUCCEEDED") {
   return {
