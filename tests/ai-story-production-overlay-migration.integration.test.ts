@@ -17,7 +17,14 @@ type CatalogTable = {
   table: string;
   rls: boolean;
   forceRls: boolean;
-  columns: unknown[];
+  columns: Array<{
+    name: string;
+    type?: string;
+    default?: string | null;
+    notNull?: boolean;
+    identity?: string;
+    generated?: string;
+  }>;
   constraints: unknown[];
   indexes: unknown[];
   policies: unknown[];
@@ -61,6 +68,9 @@ const preservedTables = [
   "provider_finalization_usage",
   "provider_terminal_ledger_records",
 ] as const;
+const predecessorColumns = new Map(
+  predecessor.tables.map((table) => [table.table, table.columns.map((column) => column.name)]),
+);
 const productionOnly = [
   "provider_execution_finalizations",
   "provider_finalization_costs",
@@ -87,10 +97,16 @@ where n.nspname='public' and c.relkind in ('r','p') and c.relname=any($1::text[]
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
+function quoteIdentifier(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
 async function snapshot(sql: Sql) {
   const result: Record<string, { count: number; hash: string }> = {};
   for (const name of preservedTables) {
-    const rows = await sql.unsafe(`select * from "${name}" order by 1`);
+    const columns = predecessorColumns.get(name);
+    if (!columns?.length) throw new Error(`PRODUCTION_PREDECESSOR_COLUMNS_MISSING:${name}`);
+    const projection = columns.map(quoteIdentifier).join(", ");
+    const rows = await sql.unsafe(`select ${projection} from ${quoteIdentifier(name)} order by 1`);
     result[name] = { count: rows.length, hash: digest(rows) };
   }
   return result;
@@ -207,6 +223,14 @@ describeIntegration("AI Story bounded overlay from actual Production predecessor
     for (const name of manifest.gapTables) expect(actualNames.has(name), name).toBe(true);
     for (const table of predecessor.tables) expect(actualNames.has(table.table), table.table).toBe(true);
     expect(await snapshot(sql)).toEqual(before);
+    await sql.unsafe("BEGIN");
+    try {
+      await sql.unsafe("UPDATE ai_stories SET title = title || '-tamper-test'");
+      expect((await snapshot(sql)).ai_stories.hash).not.toBe(before.ai_stories.hash);
+    } finally {
+      await sql.unsafe("ROLLBACK");
+    }
+    expect((await snapshot(sql)).ai_stories).toEqual(before.ai_stories);
     for (const name of ["certification_commercial_scopes", "certification_planning_authorities", "certification_planning_claims", "certification_commercial_reservations", "certification_submission_slot_reconciliations", "ai_story_post_terminal_provider_retry_authorizations"]) {
       const count = await sql.unsafe(`select count(*)::int as count from "${name}"`);
       expect(count[0]?.count, name).toBe(0);
