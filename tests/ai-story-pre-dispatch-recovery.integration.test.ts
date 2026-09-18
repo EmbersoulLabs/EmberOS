@@ -144,6 +144,98 @@ describeIntegration("atomic AI Story pre-dispatch recovery", () => {
     });
   }, 120_000);
 
+  it("authorizes the exact existing Dispatch when Worker never accepted it", async () => {
+    const prepared = await prepareAuthorizedSchedulingPlan({
+      purpose: "pre-dispatch-recovery-never-claimed",
+    });
+    const scheduled = await new SceneSchedulingCoordinator({
+      router: new FixedSeedanceRouter(),
+    }).scheduleAuthorizedScene({
+      executionPlanId: prepared.executionPlanId,
+      sceneExecutionId: prepared.sceneExecutionIds[0]!,
+      runtimeAuthorizationId: prepared.acceptedAuthorization.runtimeAuthorizationId,
+      commercialAuthorizationId: prepared.commercialAuthorizationId,
+      actorUserId: PR32_USER_A,
+    });
+    const dispatch = await createExecutionDispatch({
+      version: "1",
+      dispatchId: `dispatch:${scheduled.outboxJobId}`,
+      jobId: scheduled.outboxJobId,
+      executionId: scheduled.providerExecutionId,
+      envelopeId: scheduled.envelopeId,
+      payloadReference: scheduled.payloadReference,
+      correlationId: scheduled.correlation.correlationId,
+      tenantId: scheduled.correlation.ownership.orgId,
+      workspaceId: scheduled.correlation.ownership.workspaceId,
+      capabilityId: scheduled.routingDecision.capabilityId,
+      capabilityVersion: scheduled.routingDecision.capabilityVersion,
+      requestHash: scheduled.requestHash,
+      envelopeHash: scheduled.envelopeHash,
+      workerHandoff: {
+        envelopeId: scheduled.envelopeId,
+        payloadReference: scheduled.payloadReference,
+        dispatchContractVersion: "1",
+      },
+      status: "DISPATCHED",
+      createdAt: scheduled.correlation.scheduledAt,
+    });
+    await new ExecutionDispatchRepository().createDispatch(dispatch);
+
+    const repository = new AiStoryPreDispatchRecoveryRepository();
+    const command = {
+      executionPlanId: prepared.executionPlanId,
+      sceneExecutionId: prepared.sceneExecutionIds[0]!,
+      orgId: scheduled.correlation.ownership.orgId,
+      workspaceId: scheduled.correlation.ownership.workspaceId,
+      actorUserId: PR32_USER_A,
+      idempotencyKey: `recovery-never-claimed:${dispatch.dispatchId}`,
+      reason: "never-claimed recovery proof",
+    };
+    const first = await repository.recover(command);
+    const replay = await repository.recover(command);
+    expect(first.replayed).toBe(false);
+    expect(replay.replayed).toBe(true);
+    expect(first.dispatchId).toBe(dispatch.dispatchId);
+    expect(first.compiledRequestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(first.requestFingerprint).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(first.providerId).toBe(scheduled.routingDecision.selectedProviderId);
+
+    const dispatchRepository = new ExecutionDispatchRepository();
+    const preview = await dispatchRepository.previewAuthorizedRecoveryDispatch();
+    expect(preview?.dispatchId).toBe(dispatch.dispatchId);
+
+    const [counts] = await sqlClient<{
+      attempts: number;
+      dispatches: number;
+      outbox_jobs: number;
+      receipts: number;
+      archives: number;
+      terminal_results: number;
+      outbox_status: string;
+      lease_owner: string | null;
+    }[]>`
+      select
+        (select count(*)::int from provider_attempts where execution_id = ${scheduled.providerExecutionId}) attempts,
+        (select count(*)::int from provider_execution_dispatches where job_id = ${scheduled.outboxJobId}) dispatches,
+        (select count(*)::int from provider_outbox_jobs where job_id = ${scheduled.outboxJobId}) outbox_jobs,
+        (select count(*)::int from admin_runtime_recovery_receipts where target_id = ${dispatch.dispatchId}) receipts,
+        (select count(*)::int from ai_story_worker_attempt_observations where dispatch_id = ${dispatch.dispatchId}) archives,
+        (select count(*)::int from ai_story_worker_execution_results where dispatch_id = ${dispatch.dispatchId}) terminal_results,
+        (select status from provider_outbox_jobs where job_id = ${scheduled.outboxJobId}) outbox_status,
+        (select lease_owner from provider_outbox_jobs where job_id = ${scheduled.outboxJobId}) lease_owner
+    `;
+    expect(counts).toEqual({
+      attempts: 0,
+      dispatches: 1,
+      outbox_jobs: 1,
+      receipts: 1,
+      archives: 0,
+      terminal_results: 0,
+      outbox_status: "PENDING",
+      lease_owner: null,
+    });
+  }, 120_000);
+
   it("rolls back every recovery mutation when timestamp normalization fails", async () => {
     const prepared = await prepareAuthorizedSchedulingPlan({
       purpose: "pre-dispatch-recovery-invalid-timestamp",

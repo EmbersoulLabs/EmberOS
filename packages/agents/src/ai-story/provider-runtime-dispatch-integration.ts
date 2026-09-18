@@ -818,6 +818,28 @@ async function serializeTransportRequest(input: {
   };
 }
 
+/**
+ * Non-submitting projection of the exact Provider wire request. Certification
+ * and preflight use this to prove what would reach the Provider without
+ * claiming a submission, creating an Attempt, or consuming commercial scope.
+ */
+export async function previewAiStorySeedanceWireRequest(input: {
+  readonly request: AiStoryCompiledProviderRequest;
+  readonly assetAccess: AiStoryRuntimeAssetAccess;
+}): Promise<SeedanceModelArkCreateRequest> {
+  if (!validateAiStoryCompiledRequestFingerprint(input.request)) {
+    throw new AiStoryProviderRuntimeError(
+      "REQUEST_TAMPERED",
+      "Cannot preview a compiled request whose fingerprint does not match its content"
+    );
+  }
+  assertAiStoryCompiledProviderWireModeCompatibility(input.request);
+  return serializeTransportRequest({
+    request: input.request,
+    assetAccess: input.assetAccess,
+  });
+}
+
 export class AiStoryCompiledRequestWorkerRuntime {
   constructor(private readonly dependencies: {
     repository: AiStoryProviderRuntimeRepository;

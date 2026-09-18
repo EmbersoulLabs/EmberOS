@@ -4,6 +4,7 @@
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb, schema, CampaignAssetRefError } from "@ceo-agent/db";
 import {
+  planAiStoryAssetLinkUsage,
   assertAiStoryTransition,
   nextAiStoryVersionNumber,
   type AiStoryStatus,
@@ -115,15 +116,17 @@ export async function setAiStoryStatus(
 export async function replaceAiStoryAssetLinks(
   db: Db,
   storyId: string,
-  assetIds: string[]
+  assetIds: string[],
+  productAssetIds: string[] = []
 ) {
+  const plan = planAiStoryAssetLinkUsage({ assetIds, productAssetIds });
   await db.delete(schema.aiStoryAssetLinks).where(eq(schema.aiStoryAssetLinks.storyId, storyId));
-  if (assetIds.length === 0) return;
+  if (plan.length === 0) return;
   await db.insert(schema.aiStoryAssetLinks).values(
-    assetIds.map((assetId) => ({
+    plan.map(({ assetId, usageType }) => ({
       storyId,
       assetId,
-      usageType: "reference" as const,
+      usageType,
     }))
   );
 }

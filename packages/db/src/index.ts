@@ -32,6 +32,7 @@ export * from "./queries/platform-admin-resolution";
 export * from "./queries/billing-account";
 export * from "./queries/subscription";
 export * from "./queries/entitlement";
+export * from "./queries/entitlement-administration";
 export * from "./queries/certification-commercial-authority";
 export * from "./queries/certification-planning-authority";
 export * from "./queries/certification-submission-slot-reconciliation";

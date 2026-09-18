@@ -9,6 +9,7 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { executionPlanRouteErrorResponse } from "@/lib/ai-story-execution-plan-access";
 import {
   authorizeGeneratedSceneReviewWrite,
+  assertGeneratedScenePostQcReviewEligibility,
   createDifferentiatedRetryService,
   rejectForgedGeneratedSceneReviewBody,
 } from "@/lib/ai-story-generated-scene-review-access";
@@ -51,6 +52,11 @@ export async function POST(request: Request, { params }: RouteParams) {
       workspaceId: ctx.workspaceId,
       minRole: "operator",
       clientClaims: body,
+    });
+    await assertGeneratedScenePostQcReviewEligibility({
+      executionPlanId: ctx.executionPlanId,
+      sceneExecutionId,
+      workspaceId: ctx.workspaceId,
     });
 
     const result = await createDifferentiatedRetryService().rejectCreative({

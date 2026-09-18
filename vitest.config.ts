@@ -3,6 +3,7 @@ import path from "node:path";
 
 export default defineConfig({
   test: {
+    setupFiles: ["tests/helpers/unit-network-setup.ts"],
     include: ["tests/**/*.test.ts"],
     exclude: ["tests/**/*.integration.test.ts"],
   },

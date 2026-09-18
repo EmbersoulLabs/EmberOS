@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { AI_STORY_PRODUCT_VISUAL_MATERIAL_SELECTION_CONTRACT_VERSION } from "../packages/shared/src/ai-story-product-visual-material-selection";
+import { sha256CanonicalIntegrityHash } from "../packages/shared/src/server";
 import {
   AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
   AI_STORY_POST_QC_DIMENSIONS,
   AI_STORY_POST_QC_POLICY_VERSION,
   AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION,
+  AiStoryPostGenerationQcInputPackageSchema,
   POST_QC_AUTO_RELEASE,
   POST_QC_AUTO_RETRY,
   POST_QC_CREATIVE_AUTHORITY,
@@ -20,6 +23,7 @@ import {
   POST_QC_SUBJECTIVE_TASTE_HARD_REJECT,
   buildAiStoryPostQcHumanReviewEvidence,
   buildAiStoryPostGenerationQcInputPackage,
+  buildAiStoryPostGenerationQcInputFromCompiledAuthority,
   isAiStoryPostQcCurrentForMedia,
   postQcAllowsHumanApproval,
 } from "../packages/agents/src/ai-story/post-generation-qc-service";
@@ -45,7 +49,8 @@ function input(requirements: AiStoryPostQcRequirement[], mode: "TEXT_TO_VIDEO" |
   return {
     postQcInputId: ids[0]!, contractVersion: AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
     policyVersion: AI_STORY_POST_QC_POLICY_VERSION, orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!,
-    storyId: ids[4]!, storyVersionId: ids[5]!, scriptVersionId: ids[6]!, handoffId: ids[7]!, sceneExecutionId: ids[8]!,
+    storyId: ids[4]!, storyVersionId: ids[5]!, planningLineageSource: "FROZEN_SCRIPT_DIRECTOR",
+    scriptVersionId: ids[6]!, handoffId: ids[7]!, sceneExecutionId: ids[8]!,
     sceneId: "scene-1", sceneVersion: 1, sceneFingerprint: hash("a"), sceneExecutionFingerprint: hash("b"),
     providerAttemptId: "attempt-1", generationMode: mode, privateMediaAssetId: ids[9]!, privateMediaContentHash: hash("c"),
     compiledRequestId: ids[10]!, compiledRequestFingerprint: hash("d"), semanticPlanFingerprint: hash("e"),
@@ -93,6 +98,104 @@ describe("AI Story canonical Post-Generation QC", () => {
       attempt: {} as never,
       privateMedia: {} as never,
     })).toThrow("POST_QC_ATTEMPT_LINEAGE_MISMATCH");
+  });
+
+  it("builds the V1 runtime Post-QC input from persisted compilation authority", () => {
+    const materialBody = {
+      contractVersion: AI_STORY_PRODUCT_VISUAL_MATERIAL_SELECTION_CONTRACT_VERSION,
+      orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!, storyId: ids[4]!, storyVersionId: ids[5]!,
+      sceneId: ids[13]!, sceneVersionId: ids[14]!,
+      productAuthority: { productAuthorityId: ids[15]!, sourceAssetId: ids[15]!, sourceAssetContentHash: hash("8") },
+      visualRequirement: { sceneRequirement: "REQUIRED", effectiveGenerationRequirement: "REQUIRED", strategy: "PRODUCT_GROUNDED_VIDEO", referenceSource: "STORY_INHERITED" },
+      suitability: { authorityFingerprint: hash("9"), outcome: "TRANSPARENT_BACKGROUND_CERTIFIED" },
+      derivativeResolution: { contractVersion: "ai-story-exact-product-derivative-resolution.v1", status: "NOT_FOUND", reason: "NO_READY_EXTRACTION" },
+      preparationCapability: { status: "NOT_CERTIFIED" },
+      selection: "SOURCE_ASSET", selectedMaterial: { kind: "SOURCE_ASSET", assetId: ids[15]!, contentHash: hash("8") },
+      reason: "SOURCE_TRANSPARENCY_CERTIFIED",
+    };
+    const materialSelection = {
+      ...materialBody,
+      fingerprint: sha256CanonicalIntegrityHash({ kind: AI_STORY_PRODUCT_VISUAL_MATERIAL_SELECTION_CONTRACT_VERSION, authority: materialBody }),
+    };
+    const compiled = {
+      compiledRequestId: ids[10]!, orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!,
+      storyId: ids[4]!, storyVersionId: ids[5]!, sceneExecutionId: ids[8]!,
+      generationMode: "TEXT_TO_VIDEO", providerId: "seedance", modelId: "dreamina-seedance-2-0-260128",
+      requestFingerprint: hash("d"), sceneFingerprint: hash("a"), packageFingerprint: hash("b"),
+      semanticPlanFingerprint: hash("e"), qcEvaluationId: ids[11]!, qcFingerprint: hash("f"),
+      directorFingerprint: hash("2"), motionFingerprint: hash("3"), castSnapshotFingerprint: hash("5"),
+      locationSnapshotFingerprint: hash("6"), productSnapshotFingerprint: hash("7"),
+      semanticPlan: { sections: [{ section: "MUST_AVOID", facts: ["unwanted text"] }] },
+      productMaterialSelection: materialSelection,
+    } as never;
+    const built = buildAiStoryPostGenerationQcInputFromCompiledAuthority({
+      intent: { identity: { sceneExecutionId: ids[8]!, sceneId: "scene-1" }, compilationHash: hash("a") } as never,
+      instructions: {
+        sceneId: "scene-1", purpose: "Atmospheric spring transition", continuityNotes: "Spring light grows.",
+        shots: [{ shotId: "shot-1", information: "Petals move through warm light." }],
+        productIdentityConstraints: [],
+      } as never,
+      preGenerationAuthority: {
+        planningLineageSource: "FROZEN_SCRIPT_DIRECTOR",
+        qcEvaluationId: ids[11]!, qcFingerprint: hash("f"),
+        scriptVersionId: ids[6]!, handoffId: ids[7]!, productGrounded: false,
+        handoffFingerprint: hash("1"),
+        shotRecipeFingerprint: null,
+      } as never,
+      sceneVersion: 2, compiledRequest: compiled,
+      attempt: {
+        providerAttemptId: "attempt-1", compiledRequestId: ids[10]!, requestFingerprint: hash("d"),
+        sceneExecutionId: ids[8]!, orgId: ids[1]!, workspaceId: ids[2]!, campaignId: ids[3]!,
+        storyId: ids[4]!, storyVersionId: ids[5]!, generationMode: "TEXT_TO_VIDEO",
+        providerId: "seedance", modelId: "dreamina-seedance-2-0-260128", mediaAssetId: ids[9]!,
+      },
+      privateMedia: {
+        mediaAssetId: ids[9]!, contentHash: hash("c"), durableObjectReference: `${ids[2]}/result.mp4`,
+        byteSize: 4096, durationMs: 5000, width: 480, height: 854, readable: true, decodable: true,
+      }, createdAt: "2026-09-01T00:00:00.000Z",
+    });
+    expect(built).toMatchObject({
+      sceneExecutionId: ids[8], providerAttemptId: "attempt-1", generationMode: "TEXT_TO_VIDEO",
+      privateMediaAssetId: ids[9], sceneVersion: 2,
+      productMaterialSelection: materialSelection,
+    });
+    expect(built.requirements.map((item) => item.requirementId)).toEqual(expect.arrayContaining([
+      "scene-purpose", "action:shot-1", "output-integrity", "visual-artifact-integrity",
+    ]));
+  });
+
+  it("represents legacy compiled V1 lineage explicitly without fabricating Script or Handoff authority", () => {
+    const legacy = AiStoryPostGenerationQcInputPackageSchema.parse({
+      ...input([requirement()]),
+      planningLineageSource: "LEGACY_COMPILED_V1",
+      scriptVersionId: null,
+      handoffId: null,
+      handoffFingerprint: null,
+    });
+    expect(legacy).toMatchObject({
+      planningLineageSource: "LEGACY_COMPILED_V1",
+      scriptVersionId: null,
+      handoffId: null,
+      handoffFingerprint: null,
+      preGenerationQcEvaluationId: ids[11],
+      preGenerationQcFingerprint: hash("f"),
+    });
+    expect(() => AiStoryPostGenerationQcInputPackageSchema.parse({
+      ...legacy,
+      scriptVersionId: ids[6],
+    })).toThrow(/must not fabricate/i);
+  });
+
+  it("fails closed when V1 compiled authority and Attempt binding diverge", () => {
+    expect(() => buildAiStoryPostGenerationQcInputFromCompiledAuthority({
+      intent: { identity: { sceneExecutionId: ids[8]!, sceneId: "scene-1" }, compilationHash: hash("a") } as never,
+      instructions: { sceneId: "scene-1" } as never,
+      preGenerationAuthority: { qcEvaluationId: ids[11]!, qcFingerprint: hash("f") } as never,
+      sceneVersion: 1,
+      compiledRequest: { sceneExecutionId: ids[8]!, compiledRequestId: ids[10]!, requestFingerprint: hash("d"), qcEvaluationId: ids[11]!, qcFingerprint: hash("f"), sceneFingerprint: hash("a") } as never,
+      attempt: { compiledRequestId: ids[12]! } as never,
+      privateMedia: {} as never,
+    })).toThrow("POST_QC_COMPILED_AUTHORITY_LINEAGE_MISMATCH");
   });
 
   it("separates observable evidence from interpretation and passes satisfied facts", async () => {

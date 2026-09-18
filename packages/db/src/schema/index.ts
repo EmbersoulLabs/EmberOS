@@ -268,11 +268,12 @@ export const photoSceneGenerations = pgTable(
     index("photo_scene_generations_reuse_idx").on(
       t.workspaceId,
       t.operation,
+      t.sourceAssetId,
       t.inputFingerprint,
       t.status
     ),
     uniqueIndex("photo_scene_generations_inflight_fingerprint_idx")
-      .on(t.workspaceId, t.operation, t.inputFingerprint)
+      .on(t.workspaceId, t.operation, t.sourceAssetId, t.inputFingerprint)
       .where(sql`${t.status} in ('queued', 'processing')`),
   ]
 );

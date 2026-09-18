@@ -3,11 +3,14 @@
  */
 import { and, eq, inArray } from "drizzle-orm";
 import {
+  AiStoryCharacterAuthorityService,
   getBusinessProfileByWorkspace,
   getDb,
   schema,
 } from "@ceo-agent/db";
 import {
+  assertPlanningCharacterAuthorityCurrent,
+  assertPlanningProductAuthorityCurrent,
   buildAnimationPackage,
   generateCharacterContinuity,
   generateCreativeContext,
@@ -16,6 +19,8 @@ import {
   generateShotPlan,
   generateStoryBeats,
   generateWorldContinuity,
+  projectAcceptedCharactersToPlanning,
+  projectStoryProductSourcesToPlanning,
 } from "@ceo-agent/agents";
 import {
   AiStoryStructuredDraftSchema,
@@ -29,6 +34,11 @@ import {
   type StoryPlanningStage,
 } from "@ceo-agent/shared";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
+import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
+import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
+import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
+import { ensureCurrentFrozenCanonicalScript } from "@/lib/ai-story-canonical-script-producer";
+import { ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
 import {
   assetLabelFromProductionRow,
   campaignPlanningFields,
@@ -69,7 +79,12 @@ function requireStage(
   void stage;
 }
 
-async function loadPlanningContext(db: Db, campaignId: string, storyId: string) {
+async function loadPlanningContext(
+  db: Db,
+  campaignId: string,
+  storyId: string,
+  actorUserId: string
+) {
   const [campaign] = await db
     .select()
     .from(schema.campaigns)
@@ -93,6 +108,27 @@ async function loadPlanningContext(db: Db, campaignId: string, storyId: string) 
     ? normalizeBusinessProfileRecord(profileRow as Record<string, unknown>)
     : null;
   const completion = profile ? assessBusinessProfileCompletion(profile) : null;
+
+  const characters = await new AiStoryCharacterAuthorityService(db).list({
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    campaignId,
+    actorUserId,
+  });
+  const characterAuthorities = projectAcceptedCharactersToPlanning({
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    campaignId,
+    characters,
+  });
+  const productAuthorities = projectStoryProductSourcesToPlanning(
+    await resolveStoryProductSources(db, {
+      storyId,
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+    })
+  );
 
   const assetIds = loaded.assetLinks.map((link) => link.assetId);
   const assetLabels =
@@ -139,6 +175,8 @@ async function loadPlanningContext(db: Db, campaignId: string, storyId: string) 
         ? ["Business Profile incomplete; keep brand assumptions explicit."]
         : []),
     ],
+    characterAuthorities,
+    productAuthorities,
   };
 }
 
@@ -155,8 +193,10 @@ export async function runSinglePlanningStage(input: {
   db: Db;
   campaignId: string;
   storyId: string;
+  actorUserId: string;
   stage: StoryPlanningStage;
   storyStatus: string;
+  regenerationIdentity?: string | null;
 }): Promise<{
   status: string;
   stage: StoryPlanningStage;
@@ -170,7 +210,15 @@ export async function runSinglePlanningStage(input: {
     throw new Error(`Unknown planning stage: ${stage}`);
   }
 
-  const ctx = await loadPlanningContext(db, campaignId, storyId);
+  const ctx = await loadPlanningContext(db, campaignId, storyId, input.actorUserId);
+  return withConfiguredCertificationPlanningContext({
+    orgId: ctx.campaign.orgId,
+    workspaceId: ctx.campaign.workspaceId,
+    campaignId,
+    storyId,
+    actorUserId: input.actorUserId,
+    regenerationIdentity: input.regenerationIdentity,
+  }, async () => {
   if (["ready_for_animation", "planning_review", "failed"].includes(input.storyStatus)) {
     await setAiStoryStatus(
       db,
@@ -194,7 +242,9 @@ export async function runSinglePlanningStage(input: {
   });
 
   let draft =
-    readPlanningDraftFromPackage(latestPackage) ??
+    readPlanningDraftFromPackage(
+      latestPackage?.storyVersionId === ctx.loaded.currentVersion!.id ? latestPackage : null
+    ) ??
     baseDraft(ctx.storyDraft);
   draft = {
     ...prunePlanningDraftAfterStage(draft, stage),
@@ -208,6 +258,16 @@ export async function runSinglePlanningStage(input: {
         ? draft.completedStages
         : (["creative_context", ...draft.completedStages] as StoryPlanningStage[]),
     };
+  }
+  if (stage !== "creative_context" && draft.creativeContext) {
+    assertPlanningCharacterAuthorityCurrent({
+      creativeContext: draft.creativeContext,
+      characterAuthorities: ctx.characterAuthorities,
+    });
+    assertPlanningProductAuthorityCurrent({
+      creativeContext: draft.creativeContext,
+      productAuthorities: ctx.productAuthorities,
+    });
   }
 
   let usage = draft.usage ?? emptyUsage();
@@ -228,7 +288,9 @@ export async function runSinglePlanningStage(input: {
           platforms: ctx.campaign.platforms,
         },
         ctx.brand,
-        ctx.assetLabels
+        ctx.assetLabels,
+        ctx.characterAuthorities,
+        ctx.productAuthorities
       );
       usage = addUsage(usage, generated.usage);
       savedContext = await saveCreativeContext(db, {
@@ -308,6 +370,14 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.storyBeats?.length),
         "Generate Story Beats before Scene Plan"
       );
+      await ensureCurrentFrozenCanonicalOutline({
+        db,
+        campaignId,
+        storyId,
+        storyVersionId: ctx.loaded.currentVersion!.id,
+        actorUserId: input.actorUserId,
+        proposedStoryBeats: draft.storyBeats!,
+      });
       const generated = await generateScenePlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
@@ -335,12 +405,29 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.scenePlan?.length),
         "Generate Scene Plan before Shot Plan"
       );
+      const canonical = await ensureCurrentFrozenCanonicalScript({
+        db,
+        orgId: ctx.campaign.orgId,
+        workspaceId: ctx.campaign.workspaceId,
+        campaignId,
+        storyId,
+        storyVersionId: ctx.loaded.currentVersion!.id,
+        actorUserId: input.actorUserId,
+        story: ctx.storyDraft,
+        storyBeats: draft.storyBeats!,
+        scenePlan: draft.scenePlan!,
+        creativeContext: draft.creativeContext!,
+        directorThinking: draft.directorThinking!,
+        characterAuthorities: ctx.characterAuthorities,
+      });
+      usage = addUsage(usage, canonical.usage);
       const generated = await generateShotPlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
         directorThinking: draft.directorThinking!,
         storyBeats: draft.storyBeats!,
         scenePlan: draft.scenePlan!,
+        canonicalScript: canonical.script,
       });
       usage = addUsage(usage, generated.usage);
       draft = {
@@ -433,6 +520,9 @@ export async function runSinglePlanningStage(input: {
         "Complete all planning stages before assembling Animation Package"
       );
       if (!draft.characterContinuity) {
+        if (process.env.AI_STORY_CERTIFICATION_ENVIRONMENT) {
+          throw new Error("PLANNING_CHARACTER_CONTINUITY_REQUIRED_BEFORE_PACKAGE");
+        }
         const generated = await generateCharacterContinuity({
           creativeContext: draft.creativeContext!,
           directorThinking: draft.directorThinking!,
@@ -443,6 +533,22 @@ export async function runSinglePlanningStage(input: {
         usage = addUsage(usage, generated.usage);
         draft = { ...draft, characterContinuity: generated.characterContinuity, usage };
       }
+      const canonicalScenes = await ensureCurrentFrozenCanonicalSceneSet({
+        db,
+        orgId: ctx.campaign.orgId,
+        workspaceId: ctx.campaign.workspaceId,
+        campaignId,
+        storyId,
+        storyVersionId: ctx.loaded.currentVersion!.id,
+        actorUserId: input.actorUserId,
+        story: ctx.storyDraft,
+        storyBeats: draft.storyBeats!,
+        scenePlan: draft.scenePlan!,
+        creativeContext: draft.creativeContext!,
+        directorThinking: draft.directorThinking!,
+        worldContinuity: draft.worldContinuity!,
+        characterAuthorities: ctx.characterAuthorities,
+      });
       const animationPackagePayload = buildAnimationPackage({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
@@ -452,6 +558,9 @@ export async function runSinglePlanningStage(input: {
         shotPlan: draft.shotPlan!,
         characterContinuity: draft.characterContinuity!,
         worldContinuity: draft.worldContinuity!,
+        canonicalScenes,
+        storyId,
+        storyVersionId: ctx.loaded.currentVersion!.id,
         usage,
       });
       const savedPackage = await saveAnimationPackage(db, {
@@ -495,4 +604,5 @@ export async function runSinglePlanningStage(input: {
     animationPackage: savedDraft,
     planningDraft: draft,
   };
+  });
 }

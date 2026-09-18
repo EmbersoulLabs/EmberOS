@@ -66,7 +66,9 @@ describe("R3 server-backed Execution Plan revisit projection", () => {
     expect(service).toContain("schema.aiStoryExecutionPlans.workspaceId");
     expect(service).toContain("schema.aiStoryExecutionPlans.storyVersionId");
     expect(service).toContain("schema.aiStoryExecutionPlans.animationPackageId");
-    expect(service).toContain("if (plans.length > 1) throw new AmbiguousCurrentExecutionPlanError()");
+    expect(service).toContain("if (valid.length > 1) throw new AmbiguousCurrentExecutionPlanError()");
+    expect(service).toContain("isCurrentCanonicalExecutionPlan");
+    expect(service).not.toContain("orderBy");
     expect(service).not.toMatch(/\.insert\(|\.update\(|\.delete\(/);
   });
 

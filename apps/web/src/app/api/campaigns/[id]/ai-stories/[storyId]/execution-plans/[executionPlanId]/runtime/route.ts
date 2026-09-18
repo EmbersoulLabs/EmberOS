@@ -14,8 +14,10 @@ import {
   AiStoryPostGenerationQcRepository,
   EXECUTION_PLAN_REVIEW_PROJECTION_TRACE_VERSION,
   ExecutionPlanReviewProjectionTimingRecorder,
+  getDb,
   getWorkspaceMembership,
   loadAiStorySceneReviewPresentations,
+  withDbDeadline,
 } from "@ceo-agent/db";
 import {
   PRODUCT_RUNTIME_FORBIDDEN_RESPONSE_KEYS,
@@ -220,7 +222,11 @@ export async function GET(request: Request, { params }: RouteParams) {
 
   try {
     const result = await Promise.race([
-      execute(),
+      // This route is the largest protected read projection. Use the same
+      // bounded database dependency contract as the other protected APIs so a
+      // timed-out warm invocation destroys its occupied client instead of
+      // leaving orphaned pool work to block the next request.
+      withDbDeadline(getDb(), async () => execute()),
       new Promise<never>((_resolve, reject) => {
         deadlineTimer = setTimeout(() => {
           const timedOutStage = recorder.markTimedOut();

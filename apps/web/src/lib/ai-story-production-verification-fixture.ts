@@ -418,6 +418,7 @@ export async function createProductionVerificationFixture(input: {
     });
     const approvedPackage = await step("animation_package_approval", () => approveAnimationPackage(db, {
       packageId: pkg.id,
+      orgId: campaign.orgId,
       campaignId: campaign.id,
       storyId: story.id,
       workspaceId: campaign.workspaceId,

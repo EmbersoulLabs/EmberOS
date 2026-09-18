@@ -165,12 +165,15 @@ describe("product visual authority certification propagation", () => {
   });
 
   it("certifies the truthful Runtime UI state matrix", () => {
-    expect(deriveGeneratedSceneRuntimeState({ released: false, approved: false, running: false, reviewAvailable: false, preDispatchBlocked: false })).toBe("AUTHORIZED_NOT_RELEASED");
-    expect(deriveGeneratedSceneRuntimeState({ released: true, approved: false, running: false, reviewAvailable: false, preDispatchBlocked: false })).toBe("QUEUED");
-    expect(deriveGeneratedSceneRuntimeState({ released: true, approved: false, running: false, reviewAvailable: false, preDispatchBlocked: true })).toBe("PRE_DISPATCH_BLOCKED");
-    expect(deriveGeneratedSceneRuntimeState({ released: true, approved: false, running: true, reviewAvailable: false, preDispatchBlocked: false })).toBe("RUNNING");
-    expect(deriveGeneratedSceneRuntimeState({ released: true, approved: false, running: false, reviewAvailable: true, preDispatchBlocked: false })).toBe("PENDING_REVIEW");
-    expect(deriveGeneratedSceneRuntimeState({ released: true, approved: true, running: false, reviewAvailable: true, preDispatchBlocked: false })).toBe("APPROVED");
+    const base = { approved: false, running: false, reviewAvailable: false, preDispatchBlocked: false, reviewRuntimeState: "QUEUED" as const };
+    expect(deriveGeneratedSceneRuntimeState({ ...base, released: false })).toBe("AUTHORIZED_NOT_RELEASED");
+    expect(deriveGeneratedSceneRuntimeState({ ...base, released: true })).toBe("QUEUED");
+    expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, preDispatchBlocked: true })).toBe("PRE_DISPATCH_BLOCKED");
+    expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, running: true })).toBe("RUNNING");
+    expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, reviewAvailable: true, reviewRuntimeState: "PENDING_REVIEW" })).toBe("PENDING_REVIEW");
+    expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, approved: true, reviewAvailable: true, reviewRuntimeState: "APPROVED" })).toBe("APPROVED");
+    expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, reviewAvailable: true, reviewRuntimeState: "REJECTED" })).toBe("REJECTED");
+    expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, reviewAvailable: true, reviewRuntimeState: "RETRY_AUTHORIZED" })).toBe("RETRY_AUTHORIZED");
   });
 
   it("stops automatic polling while pre-dispatch recovery needs an operator", () => {

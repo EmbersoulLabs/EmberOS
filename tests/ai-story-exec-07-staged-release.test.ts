@@ -99,4 +99,36 @@ describe("EXEC-07 durable staged Scene release", () => {
     expect(aiStoryBarrel).toContain('export * from "./authorize-and-execute-execution-plan"');
     expect(route.match(/authorizeAndExecuteExecutionPlan\(/g)).toHaveLength(1);
   });
+
+  it("resolves billable authority before release and always converges scheduling", () => {
+    const source = read("packages/agents/src/ai-story/release-next-eligible-scene.ts");
+    const commercial = source.indexOf("resolveStagedReleaseCommercialAuthorization");
+    const release = source.indexOf("repo.releaseNextEligible", commercial);
+    const schedule = source.indexOf("coordinator.scheduleAuthorizedScene", release);
+
+    expect(commercial).toBeGreaterThan(-1);
+    expect(release).toBeGreaterThan(commercial);
+    expect(schedule).toBeGreaterThan(release);
+    expect(source.slice(release, schedule)).not.toContain("released.newlyReleased) {");
+    expect(source).toContain("commercialAuthorizationId,");
+  });
+
+  it("persists commercial authorization in immutable scheduling lineage", () => {
+    const contract = read("packages/shared/src/ai-story-scene-scheduling.ts");
+    const coordinator = read("packages/agents/src/ai-story/scene-scheduling-coordinator.ts");
+
+    expect(contract).toContain("commercialAuthorizationId: z.string().uuid().nullable().optional()");
+    expect(coordinator).toContain("commercialAuthorizationId: input.commercialAuthorizationId ?? null");
+    expect(coordinator).toContain("commercialAuthorizationId: input.commercialAuthorizationId,");
+  });
+
+  it("keeps the certification convergence operation before paid execution", () => {
+    const script = read("apps/worker/scripts/converge-certification-staged-release-dispatch.ts");
+    expect(script).toContain("CERTIFICATION_NO_DISPATCH_HOLD_REQUIRED");
+    expect(script).toContain("ProviderExecutionDispatcher");
+    expect(script).not.toContain("ProviderExecutionWorker");
+    expect(script).not.toContain("reserveForSceneExecution");
+    expect(script).not.toContain("providerAttempts).values");
+    expect(script).toContain("providerInvoked: false");
+  });
 });

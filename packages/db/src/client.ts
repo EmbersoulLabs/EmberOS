@@ -6,8 +6,34 @@ let client: ReturnType<typeof postgres> | null = null;
 let db: ReturnType<typeof drizzle<typeof schema>> | null = null;
 
 type Db = ReturnType<typeof drizzle<typeof schema>>;
+type PostgresClient = ReturnType<typeof postgres>;
+type ClientState = {
+  client: PostgresClient;
+  activeOperations: number;
+  retired: boolean;
+  closeStarted: boolean;
+};
 
-function createPostgresClient(url: string, max: number, connectTimeout: number) {
+const clientStateByDb = new WeakMap<Db, ClientState>();
+let currentClientState: ClientState | null = null;
+
+export const SERVERLESS_DB_OPERATION_TIMEOUT_MS = 12_000;
+export const SERVERLESS_DB_MAX_CONNECTIONS = 6;
+
+export class DatabaseDependencyTimeoutError extends Error {
+  readonly code = "DATABASE_DEPENDENCY_TIMEOUT";
+
+  constructor(readonly timeoutMs: number) {
+    super(`Database dependency did not complete within ${timeoutMs}ms`);
+    this.name = "DatabaseDependencyTimeoutError";
+  }
+}
+
+function createPostgresClient(
+  url: string,
+  max: number,
+  connectTimeout: number
+) {
   return postgres(url, {
     prepare: false,
     max,
@@ -23,14 +49,97 @@ export function getDb() {
     if (!url) {
       throw new Error("DATABASE_URL is not set");
     }
-    // Vercel serverless: cap at 1 connection per function instance so pgbouncer
-    // transaction-mode pooling isn't overwhelmed. Long-lived Worker processes use
-    // the default (10) to support concurrent FFmpeg jobs hitting the DB.
+    // Three concurrent AI Story pages each start two coalesced protected read
+    // chains (identity plus Story). Keep exactly that measured peak available so
+    // healthy requests do not wait in postgres-js's unbounded acquisition queue.
+    // Supavisor remains the transaction-mode pooling authority. Long-lived Workers
+    // retain their existing limit for concurrent FFmpeg jobs hitting the DB.
     const isServerless = process.env.VERCEL === "1";
-    client = createPostgresClient(url, isServerless ? 1 : 10, 15);
+    client = createPostgresClient(
+      url,
+      isServerless ? SERVERLESS_DB_MAX_CONNECTIONS : 10,
+      15
+    );
     db = drizzle(client, { schema });
+    currentClientState = {
+      client,
+      activeOperations: 0,
+      retired: false,
+      closeStarted: false,
+    };
+    clientStateByDb.set(db, currentClientState);
   }
   return db;
+}
+
+function closeRetiredClientWhenIdle(state: ClientState) {
+  if (!state.retired || state.activeOperations > 0 || state.closeStarted) return;
+  state.closeStarted = true;
+  void state.client.end({ timeout: 0 }).catch(() => undefined);
+}
+
+function retireDbClient(database: Db) {
+  const state = clientStateByDb.get(database);
+  if (!state) return;
+
+  state.retired = true;
+  if (db === database) {
+    client = null;
+    db = null;
+    currentClientState = null;
+  }
+  closeRetiredClientWhenIdle(state);
+}
+
+/**
+ * Bound one complete database dependency chain, including postgres-js pool
+ * acquisition. postgres-js bounds new connections but does not time out a
+ * query waiting in its pool queue. On deadline, retire the shared client so
+ * later requests receive a fresh pool. The retired pool is closed only after
+ * every operation already using it settles; immediately destroying a global
+ * client would abort unrelated protected reads that are still in flight.
+ */
+export async function withDbDeadline<T>(
+  database: Db,
+  operation: (database: Db) => Promise<T>,
+  timeoutMs = SERVERLESS_DB_OPERATION_TIMEOUT_MS
+): Promise<T> {
+  const state = clientStateByDb.get(database);
+  if (state) state.activeOperations += 1;
+
+  const runningOperation = Promise.resolve().then(() => operation(database));
+  if (state) {
+    void runningOperation.then(
+      () => {
+        state.activeOperations -= 1;
+        closeRetiredClientWhenIdle(state);
+      },
+      () => {
+        state.activeOperations -= 1;
+        closeRetiredClientWhenIdle(state);
+      }
+    );
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new DatabaseDependencyTimeoutError(timeoutMs)),
+      timeoutMs
+    );
+    timer.unref?.();
+  });
+
+  try {
+    return await Promise.race([runningOperation, deadline]);
+  } catch (error) {
+    if (error instanceof DatabaseDependencyTimeoutError) {
+      retireDbClient(database);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
@@ -56,11 +165,14 @@ export async function withFreshDbContext<T>(
 }
 
 export async function closeDb() {
-  if (client) {
-    await client.end();
-    client = null;
-    db = null;
-  }
+  const state = currentClientState;
+  client = null;
+  db = null;
+  currentClientState = null;
+  if (!state || state.closeStarted) return;
+  state.retired = true;
+  state.closeStarted = true;
+  await state.client.end();
 }
 
 export { schema };

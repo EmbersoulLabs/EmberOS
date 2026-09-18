@@ -3,12 +3,12 @@ import {
   StagedSceneReleaseError,
   authorizeAiStoryExecution,
   releaseRemainingScenes,
-  resolveCanonicalExecuteRoutingPolicy,
 } from "@ceo-agent/agents";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { executionPlanRouteErrorResponse, resolveAuthorizedExecutionPlan } from "@/lib/ai-story-execution-plan-access";
-import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
+import { resolveCanonicalWebExecuteProviderAuthority } from "@/lib/ai-story-canonical-execute-router";
+import { createCanonicalProductMaterialSchedulingCoordinator } from "@/lib/ai-story-product-material-scheduling";
 
 type RouteParams = { params: Promise<{ id: string; storyId: string; executionPlanId: string }> };
 
@@ -31,11 +31,13 @@ export async function POST(request: Request, { params }: RouteParams) {
     const executionAuthorization = await authorizeAiStoryExecution({
       user, orgId: ctx.orgId, workspaceId: ctx.workspaceId, minRole: "operator", clientClaims: {},
     });
+    const providerRouting = await resolveCanonicalWebExecuteProviderAuthority();
     const result = await releaseRemainingScenes({
       executionPlanId, workspaceId: ctx.workspaceId, actorUserId: user.id,
       executionAuthorization,
-      router: createCanonicalExecuteProviderRouter(),
-      routingPolicy: resolveCanonicalExecuteRoutingPolicy(),
+      router: providerRouting.router,
+      schedulingCoordinator: createCanonicalProductMaterialSchedulingCoordinator(providerRouting.router),
+      routingPolicy: providerRouting.routingPolicy,
     });
     return apiSuccess(result, result.converged ? 200 : 202);
   } catch (error) {

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   AI_STORY_MAX_HUMAN_AUTHORIZED_ATTEMPTS,
   AuthorizeSceneRetryCommandSchema,
@@ -13,6 +14,7 @@ import {
   DifferentiatedRetryService,
   applyRetryInputRevision,
 } from "../packages/agents/src/ai-story/differentiated-retry-service";
+import { assertGeneratedSceneRetryProviderTruth } from "../packages/db/src/queries/ai-story-differentiated-retry";
 
 const ID = (suffix: string) => `10000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
 const HASH = `sha256:${"a".repeat(64)}`;
@@ -57,6 +59,50 @@ function revision(overrides: Partial<SceneAttemptInputRevisionFact> = {}) {
 }
 
 describe("differentiated human retry contract", () => {
+  it("accepts current runtime v1 PENDING only with complete terminal success evidence", () => {
+    expect(() => assertGeneratedSceneRetryProviderTruth({
+      attempt: {
+        attemptId: "attempt-1", executionId: "execution-1",
+        contractVersion: "ai-story-provider-runtime.v1",
+        providerRequestId: "task-1", status: "PENDING",
+      },
+      result: { status: "SUCCEEDED", providerAttemptId: "attempt-1" },
+      workerResults: [{
+        providerAttemptId: "attempt-1", providerExecutionId: "execution-1",
+        providerRequestId: "task-1", workerState: "TERMINAL_SUCCESS",
+        acceptanceClassification: "ACCEPTED", canonicalProviderState: "SUCCEEDED",
+        reconciliationRequired: false,
+      }],
+      observations: [{
+        providerAttemptId: "attempt-1", providerExecutionId: "execution-1",
+        providerRequestId: "task-1", observationKind: "ACCEPTED",
+        reconciliationRequired: false,
+      }],
+    })).not.toThrow();
+  });
+
+  it("fails closed for conflicting current runtime retry evidence", () => {
+    expect(() => assertGeneratedSceneRetryProviderTruth({
+      attempt: {
+        attemptId: "attempt-1", executionId: "execution-1",
+        contractVersion: "ai-story-provider-runtime.v1",
+        providerRequestId: "task-1", status: "PENDING",
+      },
+      result: { status: "SUCCEEDED", providerAttemptId: "attempt-1" },
+      workerResults: [{
+        providerAttemptId: "attempt-1", providerExecutionId: "execution-1",
+        providerRequestId: "task-2", workerState: "TERMINAL_SUCCESS",
+        acceptanceClassification: "ACCEPTED", canonicalProviderState: "SUCCEEDED",
+        reconciliationRequired: false,
+      }],
+      observations: [{
+        providerAttemptId: "attempt-1", providerExecutionId: "execution-1",
+        providerRequestId: "task-1", observationKind: "ACCEPTED",
+        reconciliationRequired: false,
+      }],
+    })).toThrow(/incomplete or conflicting/);
+  });
+
   it("keeps Provider success independent from a creative human rejection", () => {
     const providerAttempt = Object.freeze({ attemptId: "attempt-1", status: "SUCCEEDED" });
     const review = GeneratedSceneReviewFactSchema.parse({
@@ -113,6 +159,35 @@ describe("differentiated human retry contract", () => {
     expect(original.purpose).toBe("HERO_INTRODUCTION");
   });
 
+  it("projects the latest human correction ahead of retry direction and suppresses rejected inherited composition", () => {
+    const original = Object.freeze({
+      purpose: "FLORIST PRESENTATION",
+      transition: "STATIC",
+      shots: [Object.freeze({
+        shotId: "shot-1", order: 0, cameraType: "static", cameraMovement: "STATIC",
+        focus: "bouquet", composition: "shop owner presenting the bouquet",
+        framing: "medium", lensSuggestion: "", information: "workbench presentation",
+        emotion: "calm", durationMs: 4000,
+      })],
+    });
+    const correction = JSON.stringify({
+      reason: "INSUFFICIENT_SCENE_DIFFERENTIATION",
+      note: "The result remains in a florist/workbench presentation setting instead of showing Mara carrying the bouquet through an urban walkway.",
+    });
+    const revised = applyRetryInputRevision(original as never, revision(), {
+      latestHumanReviewCorrection: correction,
+    });
+    const active = JSON.stringify(revised);
+    expect(revised.purpose).toContain("Latest human review correction governs this retry");
+    expect(revised.purpose).toContain(DIFFERENT.visualRole);
+    expect(revised.shots[0]?.information).toContain(DIFFERENT.shotEmphasis);
+    expect(revised.shots[0]?.cameraType).toBe("review-directed retry");
+    expect(active).not.toContain("shop owner presenting the bouquet");
+    expect(active).not.toContain("workbench presentation");
+    expect(active).not.toContain(correction);
+    expect(JSON.stringify(original)).toContain("shop owner presenting the bouquet");
+  });
+
   it("locks product authority and FIRST_FRAME_I2V in the revision schema", () => {
     expect(() => revision({ providerModeRequirement: "REFERENCE_IMAGE_T2V" as never })).toThrow();
     expect(revision().productAssetId).toBe(ID("301"));
@@ -148,5 +223,28 @@ describe("differentiated human retry contract", () => {
     });
     expect(rejectCreative).toHaveBeenCalledOnce();
     expect(providerSubmit).not.toHaveBeenCalled();
+  });
+
+  it("derives review-directed retry compilation identity from the immutable input revision clock", () => {
+    const coordinator = readFileSync(
+      "packages/agents/src/ai-story/scene-scheduling-coordinator.ts",
+      "utf8"
+    );
+    const postTerminalClock = coordinator.indexOf(
+      "input.postTerminalRetryAuthorization?.authorizedAt ??"
+    );
+    const reviewRetryClock = coordinator.indexOf(
+      "input.retryInputRevision?.createdAt ??"
+    );
+    const baseClock = coordinator.indexOf("acceptedRoutingDecision.decidedAt", reviewRetryClock);
+    expect(postTerminalClock).toBeGreaterThan(-1);
+    expect(reviewRetryClock).toBeGreaterThan(postTerminalClock);
+    expect(baseClock).toBeGreaterThan(reviewRetryClock);
+    expect(coordinator).toContain("retryAuthorityHash: instructionHash");
+    const requestBuilder = readFileSync(
+      "packages/agents/src/ai-story/canonical-scene-provider-request.ts",
+      "utf8"
+    );
+    expect(requestBuilder).toContain("retryAuthorityHash: input.retryAuthorityHash");
   });
 });

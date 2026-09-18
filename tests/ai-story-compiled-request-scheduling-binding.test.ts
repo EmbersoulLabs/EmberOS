@@ -84,7 +84,7 @@ describe("compiled Provider request scheduling authority", () => {
     );
     expect(coordinator).toMatch(/const compiledProviderRequest = compileImmutableSceneProviderRequest\(/);
     expect(coordinator).toMatch(/compiledRequestId: compiledProviderRequest\.compiledRequestId/);
-    expect(coordinator).toMatch(/compiledRequestFingerprint: compiledProviderRequest\.requestFingerprint/);
+    expect(coordinator).toMatch(/compiledRequestFingerprint:\s*compiledProviderRequest\.requestFingerprint/);
     expect(coordinator).toMatch(/scheduleAcceptedBundle\(\{[\s\S]*?compiledProviderRequest,/);
     expect(coordinator).not.toMatch(/compiledProviderRequest\s*\?\s*:/);
   });

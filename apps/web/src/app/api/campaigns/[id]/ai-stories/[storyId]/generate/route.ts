@@ -1,8 +1,10 @@
 import { and, eq, inArray } from "drizzle-orm";
 import {
   getDb,
+  CertificationPlanningAuthorityService,
   schema,
   getBusinessProfileByWorkspace,
+  resolveAiStoryOutlineProfileAuthority,
 } from "@ceo-agent/db";
 import {
   assessBusinessProfileCompletion,
@@ -11,6 +13,7 @@ import {
   type AiStoryStatus,
 } from "@ceo-agent/shared";
 import { polishAiStoryDraft } from "@ceo-agent/agents";
+import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import {
@@ -30,7 +33,7 @@ import {
 } from "@/lib/ai-story-service";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; storyId: string }> }
 ) {
   try {
@@ -51,6 +54,13 @@ export async function POST(
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
+
+    await resolveAiStoryOutlineProfileAuthority(db, {
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+      storyId,
+    });
 
     const status = loaded.story.status as AiStoryStatus;
     if (!["draft", "review", "failed"].includes(status)) {
@@ -127,7 +137,15 @@ export async function POST(
       throw new Error("AI_STORY_PLANNING_ACCOUNTING_INITIALIZATION_FAILED");
     }
 
-    const polish = await polishAiStoryDraft({
+    const polish = await withConfiguredCertificationPlanningContext({
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+      storyId,
+      actorUserId: user.id,
+      regenerationIdentity: request.headers.get("x-ai-story-certification-regeneration-id"),
+      providerAttemptId: accountingIdentity.attemptId,
+    }, () => polishAiStoryDraft({
       originalIdea: loaded.story.originalIdea,
       campaign: {
         ...campaignPlanningFields(campaign),
@@ -146,7 +164,7 @@ export async function POST(
         : null,
       assetLabels,
       businessProfileComplete: completion?.complete,
-    });
+    }));
 
     if (!polish.ok) {
       const persistence = await persistAiStoryPlanningOutcome({
@@ -161,6 +179,9 @@ export async function POST(
         timings: polish.timings,
         completedAt: new Date().toISOString(),
       });
+      if (process.env.AI_STORY_CERTIFICATION_ENVIRONMENT && polish.accounting) {
+        await new CertificationPlanningAuthorityService(db).assertStoryPolishLedgerAlignment(accountingIdentity.attemptId);
+      }
       console.info("[ai-story-planning] terminal", {
         storyId,
         executionId: accountingIdentity.executionId,
@@ -185,6 +206,9 @@ export async function POST(
       timings: polish.timings,
       completedAt: new Date().toISOString(),
     });
+    if (process.env.AI_STORY_CERTIFICATION_ENVIRONMENT) {
+      await new CertificationPlanningAuthorityService(db).assertStoryPolishLedgerAlignment(accountingIdentity.attemptId);
+    }
 
     const draft = {
       ...polish.draft,

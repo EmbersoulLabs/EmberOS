@@ -267,6 +267,12 @@ export type AiStoryRuntimeContinuationDependencies = {
   readonly durableMediaRepository?: DurableSceneMediaAttestationRepository;
   /** Sprint 4 Phase A — durable object store for Provider HTTPS ingest. */
   readonly durableObjectStore?: DurableObjectStore;
+  /** Durable Post-QC continuation. Runs only after accepted private media. */
+  readonly postGenerationQc?: {
+    evaluateSceneExecution(sceneExecutionId: string): Promise<unknown>;
+  };
+  /** Production requires Post-QC before Assembly/review continuation. */
+  readonly requirePostGenerationQc?: boolean;
   /**
    * When true (default), Assembly requires durable attestations for all ordered
    * scenes and uses attestation content hashes. Fixture tests may set false.
@@ -611,6 +617,7 @@ export class AiStoryRuntimeContinuationCoordinator {
     }
 
     const terminalUri = input.workerResult.terminalMedia?.uriReference;
+    let durableMediaAccepted = false;
     if (
       terminalUri &&
       /^https:/i.test(terminalUri) &&
@@ -627,6 +634,16 @@ export class AiStoryRuntimeContinuationCoordinator {
         store: this.deps.durableObjectStore,
         repository: this.deps.durableMediaRepository,
       });
+      durableMediaAccepted = true;
+    }
+
+    if (this.deps.requirePostGenerationQc === true) {
+      if (!durableMediaAccepted || !this.deps.postGenerationQc) {
+        throw new Error("POST_QC_RUNTIME_ORCHESTRATION_REQUIRED");
+      }
+      await this.deps.postGenerationQc.evaluateSceneExecution(
+        projection.sceneResult.sceneExecutionId
+      );
     }
 
     const continued = await this.continueAssemblyAndFinalStoryResult({

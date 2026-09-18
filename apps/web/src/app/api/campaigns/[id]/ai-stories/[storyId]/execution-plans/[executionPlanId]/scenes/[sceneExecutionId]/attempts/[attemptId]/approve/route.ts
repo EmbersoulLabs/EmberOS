@@ -9,6 +9,7 @@ import { handleApiError, requireAuth } from "@/lib/auth";
 import { executionPlanRouteErrorResponse } from "@/lib/ai-story-execution-plan-access";
 import {
   authorizeGeneratedSceneReviewWrite,
+  assertGeneratedScenePostQcReviewEligibility,
   createdGeneratedSceneReviewService,
   rejectForgedGeneratedSceneReviewBody,
 } from "@/lib/ai-story-generated-scene-review-access";
@@ -76,9 +77,17 @@ export async function POST(request: Request, { params }: RouteParams) {
       minRole: "operator",
       clientClaims: body,
     });
+    stage = "post_qc_eligibility";
+    await assertGeneratedScenePostQcReviewEligibility({
+      executionPlanId: ctx.executionPlanId,
+      sceneExecutionId,
+      workspaceId: ctx.workspaceId,
+      providerAttemptId: attemptId,
+    });
 
     stage = "approval_transaction";
-    const result = await createdGeneratedSceneReviewService().approve({
+    const service = await createdGeneratedSceneReviewService();
+    const result = await service.approve({
       executionPlanId: ctx.executionPlanId,
       sceneExecutionId,
       attemptId,

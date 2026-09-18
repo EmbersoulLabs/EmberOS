@@ -37,6 +37,12 @@ export function collectReferencedAssetIds(
   for (const id of animationPackage.story.assetReferences ?? []) {
     if (id) ids.add(id);
   }
+  for (const scene of animationPackage.scenePlan) {
+    if (scene.generationAuthority?.referenceSource !== "SCENE_EXPLICIT") continue;
+    for (const id of scene.generationAuthority.referenceAssetIds) {
+      if (id) ids.add(id);
+    }
+  }
   return [...ids];
 }
 

@@ -34,12 +34,16 @@ describe("production DB round-trip infrastructure baseline", () => {
     expect(source).toContain("networkReturnSeparatelyObservable: false");
   });
 
-  it("retains one module-scoped postgres-js pool with serverless max one", () => {
+  it("retains one bounded module-scoped postgres-js pool", () => {
     expect(clientSource).toContain("let client: ReturnType<typeof postgres> | null = null");
     expect(clientSource).toContain("let db: ReturnType<typeof drizzle<typeof schema>> | null = null");
-    expect(clientSource).toContain("isServerless ? 1 : 10");
+    expect(clientSource).toContain("SERVERLESS_DB_MAX_CONNECTIONS = 6");
+    expect(clientSource).toContain("isServerless ? SERVERLESS_DB_MAX_CONNECTIONS : 10");
     expect(clientSource).toContain("idle_timeout: 20");
     expect(clientSource).toContain("connect_timeout: connectTimeout");
+    expect(source).toContain("SERVERLESS_DB_MAX_CONNECTIONS");
+    expect(source).toContain("SERVERLESS_DB_OPERATION_TIMEOUT_MS / 1_000");
+    expect(source).not.toContain('process.env.VERCEL === "1" ? 1 : 10');
   });
 
   it("exposes results only through an unlinked authenticated page wrapper", () => {

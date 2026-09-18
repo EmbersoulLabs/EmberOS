@@ -1,13 +1,65 @@
 import OpenAI from "openai";
+import type { ChatCompletion, ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { zodResponseFormat } from "openai/helpers/zod";
 import type { ZodType } from "zod";
 import { LLM_BUDGET_PER_TASK_USD, CEO_MAX_RETRIES } from "@ceo-agent/shared";
 import type { TaskGraph } from "@ceo-agent/shared";
+import {
+  CertificationPlanningAuthorityService,
+  CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS,
+  CERTIFICATION_PLANNING_MODEL,
+  type CertificationPlanningIdentity,
+  type CertificationPlanningStage,
+} from "@ceo-agent/db";
+
+export type CertificationPlanningModelAdapter = {
+  complete(request: ChatCompletionCreateParamsNonStreaming, options?: { maxRetries: number }): Promise<ChatCompletion>;
+};
+
+/** The only network-capable completion adapter. Certification tests inject a fake here. */
+export const realCertificationPlanningModelAdapter: CertificationPlanningModelAdapter = {
+  complete: (request, options) => getOpenAI().chat.completions.create(request, options),
+};
+
+type CertificationCallContext = CertificationPlanningIdentity & {
+  logicalCallSuffix: string;
+  providerAttemptId?: string;
+  modelAdapter?: CertificationPlanningModelAdapter;
+};
+const certificationCallContext = new AsyncLocalStorage<CertificationCallContext>();
+export function withCertificationPlanningContext<T>(context: CertificationCallContext, run: () => Promise<T>): Promise<T> {
+  return certificationCallContext.run(context, run);
+}
+
+function certificationModelAdapter(): CertificationPlanningModelAdapter {
+  return certificationCallContext.getStore()?.modelAdapter ?? realCertificationPlanningModelAdapter;
+}
+
+async function claimCertificationCall(stage: CertificationPlanningStage | undefined, model: string) {
+  const context = certificationCallContext.getStore();
+  if (!context) return null;
+  if (!stage || model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_CALL_CONTRACT_INVALID");
+  const authority = new CertificationPlanningAuthorityService();
+  const claim = await authority.claim({
+    ...context,
+    logicalCallIdentity: `${stage}:${context.logicalCallSuffix}`,
+    stage,
+    model: CERTIFICATION_PLANNING_MODEL,
+    maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[stage],
+    maxRetries: 0,
+    providerAttemptId: context.providerAttemptId,
+    claimedAt: new Date().toISOString(),
+  });
+  return { authority, claim, maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[stage] };
+}
 
 export function getOpenAI() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
-  return new OpenAI({ apiKey });
+  // Resolve fetch when the client is constructed. The SDK otherwise captures
+  // fetch at module import time, before an isolated test can install its guard.
+  return new OpenAI({ apiKey, fetch: globalThis.fetch });
 }
 
 export type StructuredJsonDecodeIssue =
@@ -25,7 +77,7 @@ export type StructuredJsonModelCompletion = {
 };
 
 function openAiTokenCost(
-  model: "gpt-4o-mini" | "gpt-4o",
+  model: "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" | "gpt-4o",
   input: number,
   output: number
 ): number {
@@ -44,14 +96,18 @@ export async function callStructuredJsonModel<T>(input: {
   user: string;
   schema: ZodType<T>;
   schemaName: string;
-  model?: "gpt-4o-mini" | "gpt-4o";
+  model?: "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" | "gpt-4o";
 }): Promise<StructuredJsonModelCompletion> {
-  const openai = getOpenAI();
-  const model = input.model ?? "gpt-4o-mini";
+  if (certificationCallContext.getStore() && input.model && input.model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_MODEL_MISMATCH");
+  const model = certificationCallContext.getStore() ? CERTIFICATION_PLANNING_MODEL : (input.model ?? "gpt-4o-mini");
+  const certification = await claimCertificationCall("story_polish", model);
   const providerStartedAt = performance.now();
-  const response = await openai.chat.completions.create(
+  let response;
+  try {
+    response = await certificationModelAdapter().complete(
     {
       model,
+      ...(certification ? { max_tokens: certification.maxOutputTokens } : {}),
       response_format: zodResponseFormat(input.schema, input.schemaName),
       messages: [
         { role: "system", content: input.system },
@@ -61,6 +117,17 @@ export async function callStructuredJsonModel<T>(input: {
     },
     { maxRetries: 0 }
   );
+  } catch (error) {
+    if (certification) await certification.authority.failUnknown({ planningClaimId: certification.claim.planningClaimId, completedAt: new Date().toISOString() });
+    throw error;
+  }
+  if (certification) {
+    if (!response.usage || !Number.isInteger(response.usage.prompt_tokens) || !Number.isInteger(response.usage.completion_tokens)) {
+      await certification.authority.failUnknown({ planningClaimId: certification.claim.planningClaimId, completedAt: new Date().toISOString() });
+      throw new Error("PLANNING_PROVIDER_USAGE_MISSING");
+    }
+    await certification.authority.settle({ planningClaimId: certification.claim.planningClaimId, inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens, providerRequestId: response.id, completedAt: new Date().toISOString() });
+  }
   const providerMs = performance.now() - providerStartedAt;
   const message = response.choices[0]?.message;
   const inputTokens = response.usage?.prompt_tokens ?? 0;
@@ -118,19 +185,34 @@ export async function callJsonModel<T>(
   system: string,
   user: string,
   schemaHint: string,
-  options?: { model?: "gpt-4o-mini" | "gpt-4o" }
+  options?: { model?: "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" | "gpt-4o"; certificationStage?: CertificationPlanningStage }
 ): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
-  const openai = getOpenAI();
-  const model = options?.model ?? "gpt-4o-mini";
-  const response = await openai.chat.completions.create({
+  if (certificationCallContext.getStore() && options?.model && options.model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_MODEL_MISMATCH");
+  const model = certificationCallContext.getStore() ? CERTIFICATION_PLANNING_MODEL : (options?.model ?? "gpt-4o-mini");
+  const certification = await claimCertificationCall(options?.certificationStage, model);
+  let response;
+  try {
+    response = await certificationModelAdapter().complete({
     model,
+    ...(certification ? { max_tokens: certification.maxOutputTokens } : {}),
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
       { role: "user", content: user },
     ],
     temperature: 0.7,
-  });
+  }, certification ? { maxRetries: 0 } : undefined);
+  } catch (error) {
+    if (certification) await certification.authority.failUnknown({ planningClaimId: certification.claim.planningClaimId, completedAt: new Date().toISOString() });
+    throw error;
+  }
+  if (certification) {
+    if (!response.usage || !Number.isInteger(response.usage.prompt_tokens) || !Number.isInteger(response.usage.completion_tokens)) {
+      await certification.authority.failUnknown({ planningClaimId: certification.claim.planningClaimId, completedAt: new Date().toISOString() });
+      throw new Error("PLANNING_PROVIDER_USAGE_MISSING");
+    }
+    await certification.authority.settle({ planningClaimId: certification.claim.planningClaimId, inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens, providerRequestId: response.id, completedAt: new Date().toISOString() });
+  }
 
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;

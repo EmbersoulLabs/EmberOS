@@ -34,7 +34,7 @@ export const CANONICAL_PRODUCT_REFERENCE_ROLE = PRIMARY_PRODUCT_REFERENCE_ROLE;
 export type CanonicalProductReference = {
   readonly assetId: string;
   readonly role: typeof CANONICAL_PRODUCT_REFERENCE_ROLE;
-  readonly continuityScope: "STORY";
+  readonly continuityScope: "STORY" | "SCENE";
 };
 
 export type ProductIdentityCapsule = {
@@ -81,8 +81,13 @@ export function assertCrossSceneProductAssetContinuity(
   const ordered = [...intents].sort(
     (left, right) => left.identity.sceneOrder - right.identity.sceneOrder
   );
-  const expected = sortedUnique(ordered[0]?.referencedAssetIds ?? []);
-  for (const intent of ordered.slice(1)) {
+  const inherited = ordered.filter(
+    (intent) =>
+      !intent.generationAuthority ||
+      intent.generationAuthority.referenceSource === "STORY_INHERITED"
+  );
+  const expected = sortedUnique(inherited[0]?.referencedAssetIds ?? []);
+  for (const intent of inherited.slice(1)) {
     const actual = sortedUnique(intent.referencedAssetIds);
     if (!sameValues(expected, actual)) {
       throw new Error(
@@ -107,17 +112,46 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
   readonly resolution?: string;
 }): CanonicalScenePayloadForAdapter {
   const instructions = input.instructions;
+  const authority = input.intent?.generationAuthority ?? instructions.generationAuthority;
+  if (
+    input.intent?.generationAuthority &&
+    instructions.generationAuthority &&
+    JSON.stringify(input.intent.generationAuthority) !==
+      JSON.stringify(instructions.generationAuthority)
+  ) {
+    throw new Error("Compiled Scene generation authority does not match its immutable intent");
+  }
+  const orderedEffectiveIds = authority?.effectiveReferenceIds ?? instructions.referencedAssetIds;
+  const firstFrameAssetId = authority?.firstFrameAssetId ?? orderedEffectiveIds[0] ?? null;
+  const intentAssetIds = firstFrameAssetId
+    ? [firstFrameAssetId, ...sortedUnique(orderedEffectiveIds.filter((id) => id !== firstFrameAssetId))]
+    : sortedUnique(orderedEffectiveIds);
   const instructionAssetIds = sortedUnique(instructions.referencedAssetIds);
-  const intentAssetIds = input.intent
-    ? sortedUnique(input.intent.referencedAssetIds)
-    : instructionAssetIds;
   if (!sameValues(instructionAssetIds, intentAssetIds)) {
-    throw new Error("Compiled Scene intent and instruction product assets do not match");
+    if (!sameValues(instructionAssetIds, sortedUnique(intentAssetIds))) {
+      throw new Error("Compiled Scene intent and instruction product assets do not match");
+    }
+  }
+  const explicitT2v =
+    authority?.strategy === "TEXT_TO_VIDEO" &&
+    authority.referenceSource === "REFERENCE_FREE_T2V";
+  if (!authority && intentAssetIds.length === 0) {
+    throw new Error("Reference-free execution requires explicit TEXT_TO_VIDEO Scene authority");
+  }
+  if (explicitT2v && authority.productVisualIdentityRequirement === "REQUIRED") {
+    throw new Error("Reference-free TEXT_TO_VIDEO conflicts with required product visual identity");
+  }
+  if (explicitT2v && intentAssetIds.length > 0) {
+    throw new Error("Reference-free TEXT_TO_VIDEO cannot carry image references");
+  }
+  if (authority && !explicitT2v && intentAssetIds.length === 0) {
+    throw new Error("Image-conditioned generation authority is missing required references");
   }
   const assetReferences: CanonicalProductReference[] = intentAssetIds.map((assetId) => ({
     assetId,
     role: CANONICAL_PRODUCT_REFERENCE_ROLE,
-    continuityScope: "STORY",
+    continuityScope:
+      authority?.referenceSource === "SCENE_EXPLICIT" ? "SCENE" : "STORY",
   }));
   const productIdentityCapsule: ProductIdentityCapsule = {
     ...(intentAssetIds[0] ? { productAssetId: intentAssetIds[0] } : {}),
@@ -165,8 +199,11 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
 
   return {
     kind: "animation-video-generation",
-    generationMode:
-      intentAssetIds.length > 0 ? PRODUCT_GROUNDED_VIDEO_MODE : CREATIVE_T2V_MODE,
+    generationMode: explicitT2v
+      ? CREATIVE_T2V_MODE
+      : intentAssetIds.length > 0
+        ? PRODUCT_GROUNDED_VIDEO_MODE
+        : CREATIVE_T2V_MODE,
     prompt,
     durationMs: durationMs > 0 ? durationMs : 4000,
     aspectRatio: "9:16",

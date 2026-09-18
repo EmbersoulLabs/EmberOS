@@ -50,12 +50,9 @@ export async function POST(
         404
       );
     }
-    if (animationPackage.status === "ready_for_execution") {
-      return apiError("Animation Package is already approved", "ALREADY_APPROVED", 409);
-    }
-
     const approvedPackage = await approveAnimationPackage(db, {
       packageId: animationPackage.id,
+      orgId: campaign.orgId,
       campaignId,
       storyId,
       workspaceId: campaign.workspaceId,

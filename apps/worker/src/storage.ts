@@ -59,6 +59,15 @@ export async function downloadStorageFile(
     await writeFile(localPath, Buffer.from(await data.arrayBuffer()));
   });
 }
+
+/** Read exact private object bytes immediately before Product material signing. */
+export async function downloadStorageBytes(storagePath: string): Promise<Buffer> {
+  return withNetworkRetry(`verify private object ${storagePath}`, async () => {
+    const { data, error } = await getAdminClient().storage.from(getBucket()).download(storagePath);
+    if (error || !data) throw new Error("Selected private Product material is unavailable");
+    return Buffer.from(await data.arrayBuffer());
+  });
+}
 /** Resolve only the exact server-derived object, with bounded legacy URL support. */
 export function resolveExpectedStoragePath(
   reference: string,

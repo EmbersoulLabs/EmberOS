@@ -37,6 +37,8 @@ import {
   SceneSchedulingCoordinator,
   SceneSchedulingError,
 } from "./scene-scheduling-coordinator";
+import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
+import { resolveStagedReleaseCommercialAuthorization } from "./resolve-staged-release-commercial-authorization";
 
 export { GeneratedSceneReviewError };
 
@@ -165,6 +167,10 @@ export class GeneratedSceneReviewService {
         getRevision(id: string): Promise<SceneAttemptInputRevisionFact | null>;
         markAuthorizationConsumed(id: string): Promise<SceneRetryAuthorizationFact>;
       };
+      readonly commercialAuthorizationService?: Pick<
+        CommercialAuthorizationService,
+        "authorizeExecutionPlanExecute"
+      >;
     } = {}
   ) {}
 
@@ -379,6 +385,33 @@ export class GeneratedSceneReviewService {
         throw new GeneratedSceneReviewError("GENERATED_SCENE_RETRY_NOT_ELIGIBLE", "Retry input revision authority is missing");
       }
       const retryGeneration = authorization.authorizedAttemptNumber;
+      if (authorization.status === "CONSUMED") {
+        const review = (await this.reviewRepo.listByExecutionPlanId(
+          input.executionPlanId
+        )).find(
+          (candidate) =>
+            candidate.generatedSceneReviewId === authorization.sourceReviewId &&
+            candidate.sceneExecutionId === input.sceneExecutionId &&
+            candidate.providerAttemptId === authorization.sourceAttemptId &&
+            candidate.decision === "REJECTED"
+        );
+        if (!review) {
+          throw new GeneratedSceneReviewError(
+            "GENERATED_SCENE_RETRY_NOT_ELIGIBLE",
+            "Consumed retry authorization is missing its exact rejected review"
+          );
+        }
+        const scene = await this.loadSceneReadModel(
+          input.executionPlanId,
+          input.sceneExecutionId
+        );
+        return GeneratedSceneReviewDecisionResponseSchema.parse({
+          review,
+          scene,
+          retryEnqueued: true,
+          newAttemptNumber: retryGeneration,
+        });
+      }
       const review = await this.reviewRepo.transactDecision(
         {
           executionPlanId: input.executionPlanId,
@@ -440,15 +473,31 @@ export class GeneratedSceneReviewService {
         );
       }
 
+      const nonCommercialOps =
+        input.executionAuthorization.accessMode === "ops" &&
+        input.executionAuthorization.settlementMode === "none";
+      const commercialAuthorizationId = nonCommercialOps
+        ? undefined
+        : await resolveStagedReleaseCommercialAuthorization({
+            executionPlanId: input.executionPlanId,
+            orgId: fact.ownership.orgId,
+            workspaceId: fact.ownership.workspaceId,
+            executionAuthorization: input.executionAuthorization,
+            authorizedAt: new Date(this.nowIso()),
+            service: this.dependencies.commercialAuthorizationService,
+          });
+
       try {
         await this.schedulingCoordinator.scheduleAuthorizedScene({
           executionPlanId: input.executionPlanId,
           sceneExecutionId: input.sceneExecutionId,
           runtimeAuthorizationId: fact.runtimeAuthorizationId,
+          commercialAuthorizationId,
           executionAuthorization: input.executionAuthorization,
           actorUserId: input.actorUserId,
           retryGeneration,
           retryInputRevision: revision,
+          retryHumanReviewCorrection: review.rationale,
         });
         await differentiated.markAuthorizationConsumed(authorization.retryAuthorizationId);
       } catch (error) {
@@ -542,9 +591,14 @@ export class GeneratedSceneReviewService {
             ),
       (rows) => rows.length
     );
-    const reviews = [...new Map(
-      reviewAuthorityRows.map((row) => [row.review.generatedSceneReviewId, row.review])
-    ).values()];
+    const reviews = [
+      ...new Map(
+        reviewAuthorityRows.map((row) => [
+          row.review.generatedSceneReviewId,
+          row.review,
+        ])
+      ).values(),
+    ];
     const generatedSceneReviewListMs = performance.now() - reviewStartedAt;
 
     const assemblyStartedAt = performance.now();
@@ -552,12 +606,15 @@ export class GeneratedSceneReviewService {
       "generated_scene_review.read_model_assembly",
       async () => {
         const snapshotByScene = groupReviews(reviews);
-        const retryAuthorityByReview = new Map<string, {
-          readonly retryEligibility: string | null;
-          readonly retryInputRevisionId: string | null;
-          readonly retryAuthorizationId: string | null;
-          readonly retryPrepared: boolean;
-        }>();
+        const retryAuthorityByReview = new Map<
+          string,
+          {
+            readonly retryEligibility: string | null;
+            readonly retryInputRevisionId: string | null;
+            readonly retryAuthorizationId: string | null;
+            readonly retryPrepared: boolean;
+          }
+        >();
         for (const row of reviewAuthorityRows) {
           const reviewId = row.review.generatedSceneReviewId;
           const current = retryAuthorityByReview.get(reviewId);

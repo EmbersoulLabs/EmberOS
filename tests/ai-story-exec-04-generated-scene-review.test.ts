@@ -13,12 +13,16 @@ import {
 import { buildCanonicalSceneProviderRequest } from "../packages/agents/src/ai-story/canonical-scene-provider-request";
 import { deriveSceneCompleteReadiness } from "../packages/agents/src/ai-story/ai-story-runtime-continuation-coordinator";
 import { authorizeAiStoryExecution } from "../packages/agents/src/ai-story/ai-story-execution-authorization";
-import { GeneratedSceneReviewError } from "../packages/db/src/queries/ai-story-generated-scene-review";
+import {
+  GeneratedSceneReviewError,
+  snapshotHasInFlightProviderExecution,
+} from "../packages/db/src/queries/ai-story-generated-scene-review";
 import {
   GeneratedSceneReviewService,
   deriveGeneratedSceneReviewAuthorityState,
 } from "../packages/agents/src/ai-story/generated-scene-review-service";
 import { WorkspaceAccessError } from "@ceo-agent/db";
+import { commercialExecutionIdentityForPlan } from "@ceo-agent/shared/server";
 
 const STORY = "10000000-0000-4000-8000-000000000005";
 const SCENE_EXEC = "10000000-0000-4000-8000-000000000201";
@@ -34,23 +38,28 @@ const REVIEW_ID = "10000000-0000-4000-8000-000000000801";
 const RETRY_REVISION_ID = "10000000-0000-4000-8000-000000000901";
 const RETRY_AUTHORIZATION_ID = "10000000-0000-4000-8000-000000000902";
 
-describe("generated Scene retry preparation authority", () => {
-  it("keeps missing authority unprepared and projects consumed preparation", () => {
-    const base = {
-      approved: false,
-      running: false,
-      latestDecision: "REJECTED" as const,
-      retryAuthorized: false,
-      reviewAvailable: true,
-    };
-    expect(deriveGeneratedSceneReviewAuthorityState({
-      ...base,
-      retryPrepared: false,
-    })).toBe("REJECTED");
-    expect(deriveGeneratedSceneReviewAuthorityState({
-      ...base,
-      retryPrepared: true,
-    })).toBe("RETRY_AUTHORIZED");
+describe("generated Scene product-state precedence", () => {
+  it("keeps Needs changes visible and projects a prepared retry before a new result exists", () => {
+    expect(
+      deriveGeneratedSceneReviewAuthorityState({
+        approved: false,
+        running: false,
+        latestDecision: "REJECTED",
+        retryAuthorized: false,
+        retryPrepared: true,
+        reviewAvailable: true,
+      })
+    ).toBe("RETRY_AUTHORIZED");
+    expect(
+      deriveGeneratedSceneReviewAuthorityState({
+        approved: false,
+        running: false,
+        latestDecision: "PENDING_REVIEW",
+        retryAuthorized: false,
+        retryPrepared: false,
+        reviewAvailable: true,
+      })
+    ).toBe("PENDING_REVIEW");
   });
 });
 
@@ -85,6 +94,46 @@ function sceneResult(id: string, status: "SUCCEEDED" | "FAILED" = "SUCCEEDED") {
 }
 
 describe("EXEC-04 review contract", () => {
+  it("excludes a superseded pre-dispatch correlation from the in-flight gate", () => {
+    const sourceCorrelationId = "10000000-0000-4000-8000-000000000711";
+    expect(snapshotHasInFlightProviderExecution({
+      correlations: [{
+        correlationId: sourceCorrelationId,
+        providerExecutionId: "execution-superseded",
+      }],
+      supersededCorrelationIds: new Set([sourceCorrelationId]),
+      providerExecutions: new Map(),
+    } as never)).toBe(false);
+  });
+
+  it("uses canonical terminal Worker evidence when the execution row is still PENDING", () => {
+    expect(snapshotHasInFlightProviderExecution({
+      correlations: [{
+        correlationId: "10000000-0000-4000-8000-000000000712",
+        providerExecutionId: "execution-terminal-worker",
+      }],
+      supersededCorrelationIds: new Set(),
+      terminalWorkerExecutionIds: new Set(["execution-terminal-worker"]),
+      providerExecutions: new Map([
+        ["execution-terminal-worker", { status: "PENDING" }],
+      ]),
+    } as never)).toBe(false);
+  });
+
+  it("uses exact terminal NOT_ACCEPTED Worker evidence when the execution row is still PENDING", () => {
+    expect(snapshotHasInFlightProviderExecution({
+      correlations: [{
+        correlationId: "10000000-0000-4000-8000-000000000713",
+        providerExecutionId: "execution-not-accepted",
+      }],
+      supersededCorrelationIds: new Set(),
+      terminalWorkerExecutionIds: new Set(["execution-not-accepted"]),
+      providerExecutions: new Map([
+        ["execution-not-accepted", { status: "PENDING" }],
+      ]),
+    } as never)).toBe(false);
+  });
+
   it("A: assembly authority binds the approved attempt only", () => {
     const approved = selectAssemblyAuthoritativeSceneResults({
       sceneResults: [sceneResult(SCENE_RESULT_1), sceneResult(SCENE_RESULT_2)],
@@ -331,6 +380,7 @@ describe("EXEC-04 retry authorization service", () => {
   it("G/H: explicit human retry creates generation 2 and duplicate requests converge", async () => {
     const snapshot = pendingSnapshot(1);
     snapshot.reviews[0]!.decision = "REJECTED";
+    let authorizationConsumed = false;
     const scheduledIdentities = new Set<string>();
     const schedule = vi.fn(async (input: { retryGeneration: number }) => {
       scheduledIdentities.add(`${SCENE_EXEC}:${input.retryGeneration}`);
@@ -338,6 +388,7 @@ describe("EXEC-04 retry authorization service", () => {
     });
     const service = new GeneratedSceneReviewService({
       reviewRepository: {
+        listByExecutionPlanId: async () => snapshot.reviews,
         transactDecision: async (
           _input: unknown,
           work: (tx: unknown, locked: unknown) => Promise<unknown>
@@ -369,6 +420,7 @@ describe("EXEC-04 retry authorization service", () => {
           authorizedAttemptNumber: 2,
           retryInputRevisionId: RETRY_REVISION_ID,
           retryInputFingerprint: HASH,
+          status: authorizationConsumed ? "CONSUMED" : "AUTHORIZED",
         }) as never,
         getRevision: async () => ({
           retryInputRevisionId: RETRY_REVISION_ID,
@@ -379,7 +431,10 @@ describe("EXEC-04 retry authorization service", () => {
           providerModeRequirement: "FIRST_FRAME_I2V",
           canonicalFingerprint: HASH,
         }) as never,
-        markAuthorizationConsumed: async () => ({}) as never,
+        markAuthorizationConsumed: async () => {
+          authorizationConsumed = true;
+          return {} as never;
+        },
       },
     });
     vi.spyOn(service, "loadPlanReadModel").mockResolvedValue([
@@ -417,16 +472,100 @@ describe("EXEC-04 retry authorization service", () => {
 
     expect(first.newAttemptNumber).toBe(2);
     expect(duplicate.newAttemptNumber).toBe(2);
-    expect(schedule).toHaveBeenCalledTimes(2);
+    expect(schedule).toHaveBeenCalledTimes(1);
     expect(schedule).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ retryGeneration: 2 })
     );
-    expect(schedule).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ retryGeneration: 2 })
-    );
     expect(scheduledIdentities.size).toBe(1);
+  });
+
+  it("carries canonical commercial authorization into billable review retry scheduling", async () => {
+    const snapshot = pendingSnapshot(1);
+    snapshot.reviews[0]!.decision = "REJECTED";
+    const schedule = vi.fn(async () => ({}));
+    const commercialAuthorizationId = "10000000-0000-4000-8000-000000000990";
+    const service = new GeneratedSceneReviewService({
+      reviewRepository: {
+        transactDecision: async (_input: unknown, work: (tx: unknown, locked: unknown) => Promise<unknown>) => work({}, snapshot),
+      } as never,
+      authorizationRepository: {
+        getByExecutionPlanId: async () => ({
+          runtimeAuthorizationId: "10000000-0000-5000-8000-000000000099",
+          ownership: { orgId: ORG, workspaceId: WORKSPACE },
+        }),
+      } as never,
+      persistenceRepository: { getByExecutionPlanId: async () => ({ intents: [{}] }) } as never,
+      schedulingCoordinator: { scheduleAuthorizedScene: schedule } as never,
+      commercialAuthorizationService: {
+        authorizeExecutionPlanExecute: async () => ({
+          authorization: {
+            commercialAuthorizationId,
+            orgId: ORG,
+            workspaceId: WORKSPACE,
+            capabilityKey: "ai_story.execute",
+            executionIdentity: commercialExecutionIdentityForPlan(PLAN),
+          },
+        }),
+      } as never,
+      differentiatedRetryRepository: {
+        getAuthorization: async () => ({
+          retryAuthorizationId: RETRY_AUTHORIZATION_ID,
+          sceneExecutionId: SCENE_EXEC,
+          executionPlanId: PLAN,
+          workspaceId: WORKSPACE,
+          sourceReviewId: REVIEW_ID,
+          sourceAttemptId: "attempt-1",
+          authorizedAttemptNumber: 2,
+          retryInputRevisionId: RETRY_REVISION_ID,
+          retryInputFingerprint: HASH,
+        }) as never,
+        getRevision: async () => ({
+          retryInputRevisionId: RETRY_REVISION_ID,
+          sceneExecutionId: SCENE_EXEC,
+          executionPlanId: PLAN,
+          workspaceId: WORKSPACE,
+          revisionNumber: 2,
+          providerModeRequirement: "FIRST_FRAME_I2V",
+          canonicalFingerprint: HASH,
+        }) as never,
+        markAuthorizationConsumed: async () => ({}) as never,
+      },
+    });
+    vi.spyOn(service, "loadPlanReadModel").mockResolvedValue([{
+      sceneExecutionId: SCENE_EXEC,
+      sceneId: "scene-a",
+      sceneOrder: 0,
+      reviewState: "RETRY_REQUESTED",
+      approvedAttemptId: null,
+      approvedSceneResultId: null,
+      latestAttemptId: "attempt-1",
+      latestAttemptNumber: 1,
+      latestAttemptStatus: "failed",
+      attemptCount: 1,
+      retryRemaining: 2,
+      maxAttempts: 3,
+      latestAttemptKnownCost: 0.01,
+      sceneKnownCost: 0.01,
+      currency: "USD",
+      running: false,
+      attempts: [],
+    }]);
+
+    await service.retry({
+      executionPlanId: PLAN,
+      sceneExecutionId: SCENE_EXEC,
+      actorUserId: USER,
+      workspaceId: WORKSPACE,
+      executionAuthorization: {
+        ...auth,
+        accessMode: "commercial",
+        settlementMode: "credits",
+      },
+      retryAuthorizationId: RETRY_AUTHORIZATION_ID,
+    });
+
+    expect(schedule).toHaveBeenCalledWith(expect.objectContaining({ commercialAuthorizationId }));
   });
 
   it("H: an unauthorised retry cannot enqueue even when an attempt is in-flight", async () => {
@@ -502,6 +641,17 @@ describe("EXEC-04 product authorization", () => {
           : { status: "DENIED", reason: "NO_ACTIVE_GRANT" }
       ),
       getOrganizationPlan: vi.fn().mockResolvedValue(input?.plan ?? "free"),
+      entitlementRepository: {
+        rebuildEffectiveProjection: vi.fn().mockResolvedValue({
+          contractVersion: "1",
+          orgId: ORG,
+          workspaceId: WORKSPACE,
+          entries: [],
+          projectedAt: "2026-08-31T00:00:00.000Z",
+          integrityHash: HASH,
+        }),
+      },
+      now: () => "2026-08-31T00:00:00.000Z",
     };
   }
   const request = {

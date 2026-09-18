@@ -646,6 +646,17 @@ describe("EXEC-06 human review authorization", () => {
           : { status: "DENIED", reason: "NO_ACTIVE_GRANT" }
       ),
       getOrganizationPlan: vi.fn().mockResolvedValue(input?.plan ?? "free"),
+      entitlementRepository: {
+        rebuildEffectiveProjection: vi.fn().mockResolvedValue({
+          contractVersion: "1",
+          orgId: ORG,
+          workspaceId: WORKSPACE,
+          entries: [],
+          projectedAt: "2026-08-31T00:00:00.000Z",
+          integrityHash: HASH_A,
+        }),
+      },
+      now: () => "2026-08-31T00:00:00.000Z",
     };
   }
   const request = {

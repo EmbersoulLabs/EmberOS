@@ -9,11 +9,13 @@ import {
   AI_STORY_EXECUTION_AUTHORIZATION_POLICY_VERSION,
   AiStoryExecutionDeniedError,
   asOrganizationsPlanCompatibilityProjection,
+  effectiveProjectionHasCapability,
   type AiStoryExecutionAuthorization,
   type WorkspaceRole,
 } from "@ceo-agent/shared";
 import { planMappingIncludesCapability } from "@ceo-agent/shared/server";
 import {
+  EntitlementRepositoryImpl,
   PlatformAdminRepositoryImpl,
   ROLE_HIERARCHY,
   WorkspaceAccessError,
@@ -55,6 +57,11 @@ type AuthorizeAiStoryExecutionDependencies = {
     readonly email?: string | null;
   }) => Promise<PlatformAdminResolution>;
   readonly getOrganizationPlan: typeof getOrganizationPlan;
+  readonly entitlementRepository: Pick<
+    EntitlementRepositoryImpl,
+    "rebuildEffectiveProjection"
+  >;
+  readonly now: () => string;
 };
 
 const defaultDependencies: AuthorizeAiStoryExecutionDependencies = {
@@ -67,6 +74,10 @@ const defaultDependencies: AuthorizeAiStoryExecutionDependencies = {
     });
   },
   getOrganizationPlan,
+  get entitlementRepository() {
+    return new EntitlementRepositoryImpl();
+  },
+  now: () => new Date().toISOString(),
 };
 
 function deny(): never {
@@ -88,10 +99,24 @@ function opsAuthorization(
   };
 }
 
+function commercialEntitlementAuthorization(): AiStoryExecutionAuthorization {
+  return {
+    allowed: true,
+    accessMode: "commercial",
+    settlementMode: "credits",
+    authorizedBy: "EFFECTIVE_ENTITLEMENT",
+    policyVersion: AI_STORY_EXECUTION_AUTHORIZATION_POLICY_VERSION,
+    reason:
+      "Effective workspace entitlement authorizes commercial execution subject to settlement",
+    providerCostAccounting: "ALLOWED",
+  };
+}
+
 /**
  * Canonical Execute product authorization.
  * Super Admin (ACTIVE grant) and Agency plan capability → ops / no settlement.
- * Free / Pro / Pro Plus and unknown classes → denied.
+ * Other product classes require a workspace-scoped ai_story.execute effective
+ * entitlement and remain subject to CommercialAuthorizationService settlement.
  */
 export async function authorizeAiStoryExecution(
   input: AuthorizeAiStoryExecutionInput,
@@ -164,6 +189,25 @@ export async function authorizeAiStoryExecution(
       "AGENCY_PLAN_CAPABILITY",
       "Agency plan capability mapping authorizes non-commercial self-use execution"
     );
+    commercialModeDecisionMs = performance.now() - decisionStartedAt;
+    report();
+    return authorization;
+  }
+
+  const projectedAt = dependencies.now();
+  const projection =
+    await dependencies.entitlementRepository.rebuildEffectiveProjection({
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      projectedAt,
+      now: projectedAt,
+    });
+  if (
+    projection.orgId === input.orgId &&
+    projection.workspaceId === input.workspaceId &&
+    effectiveProjectionHasCapability(projection, "ai_story.execute")
+  ) {
+    const authorization = commercialEntitlementAuthorization();
     commercialModeDecisionMs = performance.now() - decisionStartedAt;
     report();
     return authorization;

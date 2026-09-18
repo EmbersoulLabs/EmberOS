@@ -13,7 +13,7 @@ import { loadCampaignAiStory } from "@/lib/ai-story-service";
 import { runSinglePlanningStage } from "@/lib/ai-story-planning-runner";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; storyId: string; stage: string }> }
 ) {
   try {
@@ -49,8 +49,10 @@ export async function POST(
         db,
         campaignId,
         storyId,
+        actorUserId: user.id,
         stage,
         storyStatus: status,
+        regenerationIdentity: request.headers.get("x-ai-story-certification-regeneration-id"),
       });
       return apiSuccess({
         storyId,

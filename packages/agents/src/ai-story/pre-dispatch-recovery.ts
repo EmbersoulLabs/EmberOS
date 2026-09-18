@@ -24,14 +24,29 @@ export type PreDispatchRecoveryPreview = z.infer<
   typeof PreDispatchRecoveryPreviewSchema
 >;
 
-export type PreDispatchGroundingCertification = {
-  readonly visualAuthorityCertified: true;
-  readonly productAuthorityResolved: true;
-  readonly providerMode: "FIRST_FRAME_I2V";
-  readonly firstFramePresent: true;
-  readonly directorSafe: true;
-  readonly preDispatchGate: "PASS";
-};
+export type PreDispatchGroundingCertification =
+  | {
+      readonly generationMode: "PRODUCT_GROUNDED_VIDEO";
+      readonly visualAuthorityCertified: true;
+      readonly productAuthorityResolved: true;
+      readonly providerMode: "FIRST_FRAME_I2V";
+      readonly firstFramePresent: true;
+      readonly referenceAuthority: "PRODUCT_GROUNDED";
+      readonly referenceCount: number;
+      readonly directorSafe: true;
+      readonly preDispatchGate: "PASS";
+    }
+  | {
+      readonly generationMode: "CREATIVE_T2V";
+      readonly visualAuthorityCertified: true;
+      readonly productAuthorityResolved: true;
+      readonly providerMode: "TEXT_TO_VIDEO";
+      readonly firstFramePresent: false;
+      readonly referenceAuthority: "REFERENCE_FREE_T2V";
+      readonly referenceCount: 0;
+      readonly directorSafe: true;
+      readonly preDispatchGate: "PASS";
+    };
 
 export type PreDispatchRecoveryCommandPort<TResult> = {
   recover(input: {
@@ -72,11 +87,22 @@ export class PreDispatchRecoveryService<TResult> {
     readonly reason: string;
   }): Promise<TResult> {
     const certification = await this.dependencies.certifyGrounding(input);
+    const productGrounded =
+      certification.generationMode === "PRODUCT_GROUNDED_VIDEO" &&
+      certification.providerMode === "FIRST_FRAME_I2V" &&
+      certification.firstFramePresent &&
+      certification.referenceAuthority === "PRODUCT_GROUNDED" &&
+      certification.referenceCount > 0;
+    const referenceFreeT2v =
+      certification.generationMode === "CREATIVE_T2V" &&
+      certification.providerMode === "TEXT_TO_VIDEO" &&
+      !certification.firstFramePresent &&
+      certification.referenceAuthority === "REFERENCE_FREE_T2V" &&
+      certification.referenceCount === 0;
     if (
       !certification.visualAuthorityCertified ||
       !certification.productAuthorityResolved ||
-      certification.providerMode !== "FIRST_FRAME_I2V" ||
-      !certification.firstFramePresent ||
+      (!productGrounded && !referenceFreeT2v) ||
       !certification.directorSafe ||
       certification.preDispatchGate !== "PASS"
     ) {
@@ -103,7 +129,7 @@ export function buildPreDispatchRecoveryPreview(input: {
   readonly generatedReviewCount: number;
 }): PreDispatchRecoveryPreview {
   if (
-    input.workerState !== "NOT_ACCEPTED" ||
+    !["NOT_ACCEPTED", "MISSING"].includes(input.workerState) ||
     input.providerRequestId !== null ||
     input.providerAttemptCount !== 0 ||
     input.resultCount !== 0 ||

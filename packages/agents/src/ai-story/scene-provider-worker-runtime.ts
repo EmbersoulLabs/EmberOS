@@ -48,6 +48,35 @@ export class WorkerRuntimeError extends Error {
   }
 }
 
+export type ProviderSubmissionOutcomeClassification =
+  | "PROVEN_NOT_SUBMITTED"
+  | "PROVEN_ACCEPTED"
+  | "AMBIGUOUS_SUBMISSION_OUTCOME";
+
+/**
+ * Fail-closed historical reconciliation rule. Absence of a task/Attempt is
+ * never positive proof that a network submission did not occur.
+ */
+export function classifyProviderSubmissionOutcome(input: {
+  readonly durableNotSubmittedObservation: boolean;
+  readonly durableAcceptedObservation: boolean;
+  readonly providerTaskKnown: boolean;
+  readonly commercialSubmissionClaimed: boolean;
+  readonly adapterInvocationMayHaveStarted: boolean;
+}): ProviderSubmissionOutcomeClassification {
+  if (input.durableAcceptedObservation || input.providerTaskKnown) {
+    return "PROVEN_ACCEPTED";
+  }
+  if (
+    input.durableNotSubmittedObservation &&
+    !input.commercialSubmissionClaimed &&
+    !input.adapterInvocationMayHaveStarted
+  ) {
+    return "PROVEN_NOT_SUBMITTED";
+  }
+  return "AMBIGUOUS_SUBMISSION_OUTCOME";
+}
+
 export type WorkerValidatedBundle = {
   readonly dispatch: ExecutionDispatch;
   readonly outboxJobId: string;
@@ -76,6 +105,38 @@ export type WorkerRuntimeRepository = {
   getLatestWorkerAttemptObservationByDispatchId?(
     dispatchId: string
   ): Promise<WorkerExecutionResult | null>;
+  getProviderAttemptAdapterState?(
+    providerAttemptId: string
+  ): Promise<{
+    readonly status: "READY" | "DISPATCHING" | "SUBMITTED" | "RUNNING" | "RECONCILIATION_REQUIRED" | "FAILED" | string;
+    readonly providerTaskId?: string;
+  } | null>;
+  /**
+   * Durably persists and exclusively claims the Provider Attempt authority.
+   * Persistence is idempotent. A separate exclusive claim moves READY to
+   * DISPATCHING; a replayed DISPATCHING Attempt is an unknown outcome and must
+   * never be submitted again automatically.
+   */
+  prepareProviderAttemptBeforeAdapter?(input: {
+    readonly bundle: WorkerValidatedBundle;
+    readonly providerAttemptId: string;
+    readonly commercialReservationId: string;
+    readonly workerId: string;
+    readonly preparedAt: string;
+  }): Promise<{ readonly replayed: boolean }>;
+  claimProviderAttemptForAdapter?(input: {
+    readonly providerAttemptId: string;
+    readonly workerId: string;
+    readonly claimedAt: string;
+  }): Promise<{ readonly adapterEligible: boolean }>;
+  /** Persist the adapter boundary outcome onto the durable Attempt authority. */
+  recordProviderAdapterOutcome?(input: {
+    readonly providerAttemptId: string;
+    readonly acceptanceClassification: ProviderAcceptanceClassification;
+    readonly canonicalProviderState: CanonicalProviderState;
+    readonly providerRequestId?: string;
+    readonly occurredAt: string;
+  }): Promise<void>;
 };
 
 export type ProcessDispatchInput = {
@@ -100,6 +161,50 @@ export type ProcessDispatchOutcome = {
 export type SceneProviderWorkerRuntimeDependencies = {
   readonly repository: WorkerRuntimeRepository;
   readonly adapters: CanonicalAdapterRegistry;
+  readonly commercialReservation?: {
+    previewBeforeSubmit?(input: {
+      readonly bundle: WorkerValidatedBundle;
+      readonly providerAttemptId: string;
+      readonly reservedAt: string;
+    }): Promise<void>;
+    reserveBeforeSubmit(input: {
+      readonly bundle: WorkerValidatedBundle;
+      readonly providerAttemptId: string;
+      readonly reservedAt: string;
+    }): Promise<{ readonly reservationId: string }>;
+    claimSubmissionBeforeAdapter?(input: {
+      readonly reservationId: string;
+      readonly providerAttemptId: string;
+      readonly claimedAt: string;
+    }): Promise<void>;
+    releaseBeforeAdapterFailure?(input: {
+      readonly reservationId: string;
+      readonly occurredAt: string;
+    }): Promise<void>;
+    loadForOutcome(input: {
+      readonly providerAttemptId: string;
+    }): Promise<{ readonly reservationId: string } | null>;
+    recordProviderOutcome(input: {
+      readonly reservationId: string;
+      readonly phase: "submit" | "lookup";
+      readonly acceptanceClassification: ProviderAcceptanceClassification;
+      readonly canonicalProviderState: CanonicalProviderState;
+      readonly normalizedUsageFacts?: WorkerExecutionResult["normalizedUsageFacts"];
+      readonly normalizedCostMetadata?: WorkerExecutionResult["normalizedCostMetadata"];
+      readonly occurredAt: string;
+    }): Promise<void>;
+  };
+  /** Production AI Story workers must fail closed when this dependency is absent. */
+  readonly requireCommercialReservation?: boolean;
+  /** Production workers require durable Attempt authority before any submit. */
+  readonly requireProviderAttemptAuthority?: boolean;
+  readonly workerId?: string;
+  /** Operational fail-closed hold used for non-paid lineage certification. */
+  readonly beforeCommercialReservation?: (input: {
+    readonly bundle: WorkerValidatedBundle;
+    readonly providerAttemptId: string;
+    readonly mode: "submit" | "lookup";
+  }) => Promise<void> | void;
   readonly expectedRegistrySnapshotHash?: string;
   readonly now?: () => Date;
 };
@@ -208,15 +313,33 @@ export class SceneProviderWorkerRuntime {
       adapterVersion: bundle.routingDecision.selectedAdapterVersion,
     });
 
+    const durableAttempt =
+      await this.dependencies.repository.getProviderAttemptAdapterState?.(
+        providerAttemptId
+      );
+    if (
+      !existing &&
+      durableAttempt &&
+      ["DISPATCHING", "RECONCILIATION_REQUIRED"].includes(durableAttempt.status) &&
+      !durableAttempt.providerTaskId
+    ) {
+      throw new WorkerRuntimeError(
+        "RECONCILIATION_REQUIRED",
+        "Durable Provider Attempt has an unknown submission outcome; automatic retry is denied"
+      );
+    }
+
     const adapter = this.resolveBoundAdapter(bundle.routingDecision);
     const resumeProviderRequestId =
-      input.providerRequestId ?? existing?.providerRequestId;
+      input.providerRequestId ?? existing?.providerRequestId ?? durableAttempt?.providerTaskId;
     const canResumeLookup =
-      Boolean(existing) &&
+      Boolean(existing || durableAttempt?.providerTaskId) &&
       !terminal &&
       Boolean(resumeProviderRequestId) &&
-      !isTerminalWorkerResult(existing!) &&
-      (input.mode === "lookup" || existing!.reconciliationRequired === true);
+      (!existing || !isTerminalWorkerResult(existing)) &&
+      (input.mode === "lookup" ||
+        existing?.reconciliationRequired === true ||
+        ["SUBMITTED", "RUNNING"].includes(durableAttempt?.status ?? ""));
 
     if (existing && !canResumeLookup) {
       return {
@@ -233,6 +356,88 @@ export class SceneProviderWorkerRuntime {
     }
 
     const mode = canResumeLookup ? "lookup" : (input.mode ?? "submit");
+
+    if (this.dependencies.requireCommercialReservation && !this.dependencies.commercialReservation) {
+      throw new WorkerRuntimeError(
+        "OWNERSHIP_INTEGRITY_VIOLATION",
+        "Commercial reservation authority is required before Provider submission"
+      );
+    }
+
+    const reservationTimestamp = this.now().toISOString();
+    if (mode === "submit") {
+      await this.dependencies.commercialReservation?.previewBeforeSubmit?.({
+        bundle,
+        providerAttemptId,
+        reservedAt: reservationTimestamp,
+      });
+    }
+
+    await this.dependencies.beforeCommercialReservation?.({
+      bundle,
+      providerAttemptId,
+      mode,
+    });
+
+    const reservation = this.dependencies.commercialReservation
+      ? mode === "submit"
+        ? await this.dependencies.commercialReservation.reserveBeforeSubmit({
+            bundle,
+            providerAttemptId,
+            reservedAt: reservationTimestamp,
+          })
+        : await this.dependencies.commercialReservation.loadForOutcome({
+            providerAttemptId,
+          })
+      : undefined;
+
+    if (mode === "submit") {
+      if (
+        this.dependencies.requireProviderAttemptAuthority &&
+        (!reservation ||
+          !this.dependencies.repository.prepareProviderAttemptBeforeAdapter ||
+          !this.dependencies.repository.claimProviderAttemptForAdapter ||
+          !this.dependencies.commercialReservation?.claimSubmissionBeforeAdapter)
+      ) {
+        throw new WorkerRuntimeError(
+          "OWNERSHIP_INTEGRITY_VIOLATION",
+          "Durable Provider Attempt authority is required before Provider submission"
+        );
+      }
+      if (reservation && this.dependencies.repository.prepareProviderAttemptBeforeAdapter) {
+        try {
+          await this.dependencies.repository.prepareProviderAttemptBeforeAdapter({
+            bundle,
+            providerAttemptId,
+            commercialReservationId: reservation.reservationId,
+            workerId: this.dependencies.workerId ?? "scene-provider-worker",
+            preparedAt: this.now().toISOString(),
+          });
+        } catch (error) {
+          await this.dependencies.commercialReservation?.releaseBeforeAdapterFailure?.({
+            reservationId: reservation.reservationId,
+            occurredAt: this.now().toISOString(),
+          });
+          throw error;
+        }
+        await this.dependencies.commercialReservation?.claimSubmissionBeforeAdapter?.({
+          reservationId: reservation.reservationId,
+          providerAttemptId,
+          claimedAt: this.now().toISOString(),
+        });
+        const claimed = await this.dependencies.repository.claimProviderAttemptForAdapter?.({
+          providerAttemptId,
+          workerId: this.dependencies.workerId ?? "scene-provider-worker",
+          claimedAt: this.now().toISOString(),
+        });
+        if (!claimed?.adapterEligible) {
+          throw new WorkerRuntimeError(
+            "RECONCILIATION_REQUIRED",
+            "Provider Attempt already crossed the pre-adapter claim boundary; automatic resubmission is denied"
+          );
+        }
+      }
+    }
 
     let adapterResult:
       | {
@@ -289,6 +494,43 @@ export class SceneProviderWorkerRuntime {
         failureClassification: classified,
         reconciliationRequired: classified.reconciliationRequired,
       };
+    }
+
+    if (mode === "submit") {
+      if (
+        this.dependencies.requireProviderAttemptAuthority &&
+        !this.dependencies.repository.recordProviderAdapterOutcome
+      ) {
+        throw new WorkerRuntimeError(
+          "OWNERSHIP_INTEGRITY_VIOLATION",
+          "Durable adapter outcome authority is required after Provider submission"
+        );
+      }
+      await this.dependencies.repository.recordProviderAdapterOutcome?.({
+        providerAttemptId,
+        acceptanceClassification: adapterResult.acceptanceClassification,
+        canonicalProviderState: adapterResult.canonicalProviderState,
+        ...(adapterResult.providerRequestId
+          ? { providerRequestId: adapterResult.providerRequestId }
+          : {}),
+        occurredAt: this.now().toISOString(),
+      });
+    }
+
+    if (this.dependencies.commercialReservation && reservation) {
+      await this.dependencies.commercialReservation.recordProviderOutcome({
+        reservationId: reservation.reservationId,
+        phase: mode,
+        acceptanceClassification: adapterResult.acceptanceClassification,
+        canonicalProviderState: adapterResult.canonicalProviderState,
+        ...(adapterResult.normalizedUsageFacts
+          ? { normalizedUsageFacts: adapterResult.normalizedUsageFacts }
+          : {}),
+        ...(adapterResult.normalizedCostMetadata
+          ? { normalizedCostMetadata: adapterResult.normalizedCostMetadata }
+          : {}),
+        occurredAt: this.now().toISOString(),
+      });
     }
 
     const workerState = mapWorkerState(

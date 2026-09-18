@@ -47,6 +47,7 @@ describe("AI Story vertical slice (V1)", () => {
         AiStoryCreateBodySchema.safeParse({
           title: "Spring",
           originalIdea: "Tell our brand story",
+          outlineProfile: { profileId: "CORE", profileVersion: 1 },
         }).success
       ).toBe(true);
       expect(
@@ -243,8 +244,10 @@ describe("AI Story vertical slice (V1)", () => {
       expect(screenwriterRoute).not.toMatch(/openai/i);
     });
 
-    it("planning generate uses provider-neutral planning service", () => {
-      expect(planningGenerateRoute).toContain("runFullStoryPlanningPipeline");
+    it("normal planning generate uses the ordered canonical staged service", () => {
+      expect(planningGenerateRoute).toContain("runSinglePlanningStage");
+      expect(planningGenerateRoute).toContain("STORY_PLANNING_STAGE_ORDER");
+      expect(planningGenerateRoute).not.toContain("runFullStoryPlanningPipeline");
       expect(planningGenerateRoute).toContain('"ready_for_animation"');
       expect(planningGenerateRoute).toContain('"planning_review"');
       expect(planningGenerateRoute).not.toMatch(/openai/i);
