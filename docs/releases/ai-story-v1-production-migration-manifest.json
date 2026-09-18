@@ -1,0 +1,544 @@
+{
+  "sourceStagingSha": "07a9dc5dbeef2246cf6afd8e2890ffd6dadc2e26",
+  "productionBaseSha": "f6a8dc042ee82468b2279ca50fd63969529c24d6",
+  "productionProjectRef": "egkgybrjmzukzmkcrpag",
+  "predecessorCatalog": "tests/fixtures/ai-story-production-predecessor-manifest.json",
+  "predecessorSchema": "tests/fixtures/ai-story-production-predecessor-schema.sql",
+  "gapTables": [
+    "ai_story_canonical_scene_versions",
+    "ai_story_canonical_scenes",
+    "ai_story_cast_promotions",
+    "ai_story_character_versions",
+    "ai_story_characters",
+    "ai_story_compiled_provider_requests",
+    "ai_story_director_plan_versions",
+    "ai_story_keyframe_paid_authorizations",
+    "ai_story_location_promotions",
+    "ai_story_location_versions",
+    "ai_story_locations",
+    "ai_story_motion_plan_versions",
+    "ai_story_outline_versions",
+    "ai_story_post_generation_qc_evaluations",
+    "ai_story_post_terminal_provider_retry_authorizations",
+    "ai_story_pre_dispatch_bundle_supersessions",
+    "ai_story_pre_generation_qc_evaluations",
+    "ai_story_provider_attempt_compiled_bindings",
+    "ai_story_provider_create_response_diagnostics",
+    "ai_story_script_director_handoffs",
+    "ai_story_script_versions",
+    "ai_story_supporting_character_versions",
+    "ai_story_supporting_characters",
+    "certification_commercial_events",
+    "certification_commercial_reservations",
+    "certification_commercial_scopes",
+    "certification_planning_authorities",
+    "certification_planning_claims",
+    "certification_submission_slot_reconciliations",
+    "provider_usd_pricing_rules"
+  ],
+  "entries": [
+    {
+      "order": 1,
+      "file": "packages/db/sql/ai-story-outline-profile-authority-v1.sql",
+      "reason": "Persist canonical Outline profile on the existing Story",
+      "requires": [
+        "table:ai_stories"
+      ],
+      "provides": [
+        "column:ai_stories.outline_profile"
+      ],
+      "productionPredecessorAssumption": "The modified predecessor object has the checked-in live-catalog definition, or was created by an earlier manifest entry.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "column:ai_stories.outline_profile",
+      "sha256": "0ae7793113539dbb41e5f0012166ed118c9f5298752998dfdb0def4b9ec6c629"
+    },
+    {
+      "order": 2,
+      "file": "packages/db/sql/ai-story-outline-v1.sql",
+      "reason": "Provide ai_story_outline_versions",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_versions",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_outline_versions"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_outline_versions",
+      "sha256": "b1746d4b049145a5fde94397d8ece558eea02d14628be3d929c9c6f50ac59379"
+    },
+    {
+      "order": 3,
+      "file": "packages/db/sql/ai-story-script-v1.sql",
+      "reason": "Provide ai_story_script_versions",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_outline_versions",
+        "table:ai_story_versions",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_script_versions"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_script_versions",
+      "sha256": "47fe5b75eb07b58ed90ac1ec2f812bf57ddfdba35379833c76a6b30162501aa1"
+    },
+    {
+      "order": 4,
+      "file": "packages/db/sql/ai-story-script-director-handoff-v1.sql",
+      "reason": "Provide ai_story_script_director_handoffs",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_outline_versions",
+        "table:ai_story_script_versions",
+        "table:ai_story_versions",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_script_director_handoffs"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_script_director_handoffs",
+      "sha256": "8ae2c60134264e4cddd37bd467cfd467b1bf3db6f608c1c7da29cd796c7cfe08"
+    },
+    {
+      "order": 5,
+      "file": "packages/db/sql/ai-story-director-plan-v1.sql",
+      "reason": "Provide ai_story_director_plan_versions",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_outline_versions",
+        "table:ai_story_script_director_handoffs",
+        "table:ai_story_script_versions",
+        "table:ai_story_versions",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_director_plan_versions"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_director_plan_versions",
+      "sha256": "11799a7814b0814815e84ee2479e18cfb276299f9be333f28390d8bef1c55158"
+    },
+    {
+      "order": 6,
+      "file": "packages/db/sql/ai-story-motion-plan-v1.sql",
+      "reason": "Provide ai_story_motion_plan_versions",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_director_plan_versions",
+        "table:ai_story_outline_versions",
+        "table:ai_story_script_director_handoffs",
+        "table:ai_story_script_versions",
+        "table:ai_story_versions",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_motion_plan_versions"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_motion_plan_versions",
+      "sha256": "27393b3f7bebe24d145a55fd76253a2100124dbb8ed07af40013bf4c4a22298c"
+    },
+    {
+      "order": 7,
+      "file": "packages/db/sql/ai-story-character-v1.sql",
+      "reason": "Provide ai_story_character_versions, ai_story_characters",
+      "requires": [
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_character_versions",
+        "table:ai_story_characters"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_character_versions",
+      "sha256": "d501be4861bf6da239692be893ba51240aedab02753914d63da5ccf71be05b93"
+    },
+    {
+      "order": 8,
+      "file": "packages/db/sql/ai-story-cast-v1.sql",
+      "reason": "Provide ai_story_cast_promotions, ai_story_supporting_character_versions, ai_story_supporting_characters",
+      "requires": [
+        "table:ai_stories",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_cast_promotions",
+        "table:ai_story_supporting_character_versions",
+        "table:ai_story_supporting_characters"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_cast_promotions",
+      "sha256": "2492719789fab960c638d7625f0a651162a4958c1c6f734c7c20a0f2f7a0c396"
+    },
+    {
+      "order": 9,
+      "file": "packages/db/sql/ai-story-scene-authority-v1.sql",
+      "reason": "Provide ai_story_canonical_scene_versions, ai_story_canonical_scenes, ai_story_location_promotions, ai_story_location_versions, ai_story_locations",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_script_versions",
+        "table:ai_story_versions",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_canonical_scene_versions",
+        "table:ai_story_canonical_scenes",
+        "table:ai_story_location_promotions",
+        "table:ai_story_location_versions",
+        "table:ai_story_locations"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_canonical_scene_versions",
+      "sha256": "fb6e89461dca67cf389afc39f09b75cf217f8ec7c56d5e1cfb0b1f9c980bab41"
+    },
+    {
+      "order": 10,
+      "file": "packages/db/sql/ai-story-canonical-scene-aggregate-lifecycle-v2.sql",
+      "reason": "Replace Scene aggregate lifecycle trigger without changing rows",
+      "requires": [],
+      "provides": [
+        "trigger:ai_story_canonical_scenes.ai_story_canonical_scene_aggregate_v2"
+      ],
+      "productionPredecessorAssumption": "The modified predecessor object has the checked-in live-catalog definition, or was created by an earlier manifest entry.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "trigger:ai_story_canonical_scenes.ai_story_canonical_scene_aggregate_v2",
+      "sha256": "debc05e4cab60eff6816d277627ff4f987afd46d26c0aa44d31073848e70e5a1"
+    },
+    {
+      "order": 11,
+      "file": "packages/db/sql/ai-story-current-approved-animation-package-authority-v1.sql",
+      "reason": "Reject ambiguous ready Packages and enforce one current ready Package per Story Version",
+      "requires": [],
+      "provides": [
+        "index:ai_story_animation_packages_one_ready_per_story_version_idx"
+      ],
+      "productionPredecessorAssumption": "The modified predecessor object has the checked-in live-catalog definition, or was created by an earlier manifest entry.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "index:ai_story_animation_packages_one_ready_per_story_version_idx",
+      "sha256": "e84ae1a4e37449cb4cabd18de5b2b976af9977d67e8cf5ac4efaa15640b76dc4"
+    },
+    {
+      "order": 12,
+      "file": "packages/db/sql/ai-story-pre-generation-qc-v1.sql",
+      "reason": "Provide ai_story_pre_generation_qc_evaluations",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_director_plan_versions",
+        "table:ai_story_motion_plan_versions",
+        "table:ai_story_outline_versions",
+        "table:ai_story_script_director_handoffs",
+        "table:ai_story_script_versions",
+        "table:ai_story_versions",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_pre_generation_qc_evaluations"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_pre_generation_qc_evaluations",
+      "sha256": "e124f5cc0cd1360b57ba34c4f63ac5bc96552ca8dcea84e5763ecfa74b3653e7"
+    },
+    {
+      "order": 13,
+      "file": "packages/db/sql/ai-story-provider-runtime-v1.sql",
+      "reason": "Provide ai_story_compiled_provider_requests, ai_story_provider_attempt_compiled_bindings",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_scene_executions",
+        "table:ai_story_versions",
+        "table:campaigns",
+        "table:organizations",
+        "table:provider_attempts",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_compiled_provider_requests",
+        "table:ai_story_provider_attempt_compiled_bindings"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_compiled_provider_requests",
+      "sha256": "28a2605ef61f402a3be57d2ab258cfc95251a04c7818683ac06704521272dcb8"
+    },
+    {
+      "order": 14,
+      "file": "packages/db/sql/ai-story-provider-create-response-diagnostic-v1.sql",
+      "reason": "Provide ai_story_provider_create_response_diagnostics",
+      "requires": [
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_provider_create_response_diagnostics"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_provider_create_response_diagnostics",
+      "sha256": "7ec514afd58f65214c7bd6ae75f9d3deb2cb1c6f029dac98620e809b24add5ad"
+    },
+    {
+      "order": 15,
+      "file": "packages/db/sql/ai-story-pre-dispatch-bundle-supersession-v1.sql",
+      "reason": "Provide ai_story_pre_dispatch_bundle_supersessions",
+      "requires": [
+        "table:ai_story_compiled_provider_requests",
+        "table:ai_story_scene_executions",
+        "table:ai_story_scene_scheduling_correlations",
+        "table:organizations",
+        "table:provider_execution_dispatches",
+        "table:provider_outbox_jobs",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_pre_dispatch_bundle_supersessions"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_pre_dispatch_bundle_supersessions",
+      "sha256": "2396a862e8be01a2d56497f2f5b65ee70e5f2177120564c933ca8fdeaedb21e2"
+    },
+    {
+      "order": 16,
+      "file": "packages/db/sql/ai-story-pre-dispatch-bundle-supersession-reason-v2.sql",
+      "reason": "Converge bounded pre-dispatch supersession reason check",
+      "requires": [
+        "table:ai_story_pre_dispatch_bundle_supersessions"
+      ],
+      "provides": [
+        "constraint:ai_story_pre_dispatch_bundle_supersessions.ai_story_bundle_supersession_reason_check"
+      ],
+      "productionPredecessorAssumption": "The modified predecessor object has the checked-in live-catalog definition, or was created by an earlier manifest entry.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "constraint:ai_story_pre_dispatch_bundle_supersessions.ai_story_bundle_supersession_reason_check",
+      "sha256": "0a44dcb411cbf93b7959697bd94d9ff09f4d6b142b9180b34419db757f8ef6e4"
+    },
+    {
+      "order": 17,
+      "file": "packages/db/sql/ai-story-post-generation-qc-v1.sql",
+      "reason": "Provide ai_story_post_generation_qc_evaluations",
+      "requires": [
+        "table:ai_story_durable_scene_media_attestations",
+        "table:ai_story_scene_executions",
+        "table:organizations",
+        "table:provider_attempts",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_post_generation_qc_evaluations"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_post_generation_qc_evaluations",
+      "sha256": "bb2fced7968eb41f2d629d4c486ead88311f78c92cd0c1489e6537fc98cece51"
+    },
+    {
+      "order": 18,
+      "file": "packages/db/sql/ai-story-keyframe-paid-authorization-v1.sql",
+      "reason": "Provide ai_story_keyframe_paid_authorizations",
+      "requires": [
+        "table:ai_stories",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_keyframe_paid_authorizations"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_keyframe_paid_authorizations",
+      "sha256": "58c682b3c2d38c5b92c5d531e4993af7e2c8782730aa4d81125b211371ca7ea0"
+    },
+    {
+      "order": 19,
+      "file": "packages/db/sql/certification-commercial-authority-v1.sql",
+      "reason": "Provide certification_commercial_events, certification_commercial_reservations, certification_commercial_scopes, provider_usd_pricing_rules",
+      "requires": [
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:certification_commercial_events",
+        "table:certification_commercial_reservations",
+        "table:certification_commercial_scopes",
+        "table:provider_usd_pricing_rules"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:certification_commercial_events",
+      "sha256": "856bd0e64e11a4df5cd81e34f6e620d477263c53aebbe1f39199165f33b74544"
+    },
+    {
+      "order": 20,
+      "file": "packages/db/sql/certification-submission-slot-reconciliation-v1.sql",
+      "reason": "Provide certification_submission_slot_reconciliations",
+      "requires": [
+        "table:ai_story_scene_executions",
+        "table:certification_commercial_events",
+        "table:certification_commercial_reservations",
+        "table:certification_commercial_scopes",
+        "table:organizations",
+        "table:provider_execution_dispatches",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:certification_submission_slot_reconciliations"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:certification_submission_slot_reconciliations",
+      "sha256": "02b3a389f4fca03baae5aa5b0acc07c349009bd360375163518bd96be222da2c"
+    },
+    {
+      "order": 21,
+      "file": "packages/db/sql/certification-commercial-effective-quota-v1.sql",
+      "reason": "Enforce effective submission quota with immutable reconciliation evidence",
+      "requires": [
+        "table:certification_commercial_scopes"
+      ],
+      "provides": [
+        "constraint:certification_commercial_scopes.certification_commercial_scope_quota_local_sanity_check"
+      ],
+      "productionPredecessorAssumption": "The modified predecessor object has the checked-in live-catalog definition, or was created by an earlier manifest entry.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "constraint:certification_commercial_scopes.certification_commercial_scope_quota_local_sanity_check",
+      "sha256": "bb91fe42ec0a7175292a4201acb52c500774ff622d7282b6d1310c934a02d1d1"
+    },
+    {
+      "order": 22,
+      "file": "packages/db/sql/ai-story-post-terminal-provider-retry-v1.sql",
+      "reason": "Provide ai_story_post_terminal_provider_retry_authorizations",
+      "requires": [
+        "table:ai_stories",
+        "table:ai_story_compiled_provider_requests",
+        "table:ai_story_execution_plans",
+        "table:ai_story_scene_executions",
+        "table:ai_story_scene_scheduling_correlations",
+        "table:ai_story_worker_execution_results",
+        "table:campaigns",
+        "table:certification_commercial_reservations",
+        "table:commercial_execution_authorizations",
+        "table:organizations",
+        "table:provider_attempts",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:ai_story_post_terminal_provider_retry_authorizations"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_post_terminal_provider_retry_authorizations",
+      "sha256": "5a7f19cb407274b3cc607f7cbe3d85ee26262f669366caa1338bbfa63e60514c"
+    },
+    {
+      "order": 23,
+      "file": "packages/db/sql/ai-story-certification-planning-production-scope-v1.sql",
+      "reason": "Provide certification_planning_authorities, certification_planning_claims",
+      "requires": [
+        "table:ai_stories",
+        "table:campaigns",
+        "table:organizations",
+        "table:workspaces"
+      ],
+      "provides": [
+        "table:certification_planning_authorities",
+        "table:certification_planning_claims"
+      ],
+      "productionPredecessorAssumption": "The provided table(s) are absent and all referenced predecessor tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:certification_planning_authorities",
+      "sha256": "2e2d15fd18c32eabb53f8253ffff1454e865326498c880f82234ce56a62ece72"
+    },
+    {
+      "order": 24,
+      "file": "packages/db/sql/photo-scene-exact-source-extraction-reuse-v1.sql",
+      "reason": "Exact-source Product derivative reuse and inflight uniqueness; index-only Photo Scene dependency",
+      "requires": [],
+      "provides": [
+        "index:photo_scene_generations_inflight_fingerprint_idx"
+      ],
+      "productionPredecessorAssumption": "The modified predecessor object has the checked-in live-catalog definition, or was created by an earlier manifest entry.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "index:photo_scene_generations_inflight_fingerprint_idx",
+      "sha256": "ce2e1c801d892a09d01b2ff625f1728aceefaec558d8575ae272bd34216b0739"
+    }
+  ]
+}
