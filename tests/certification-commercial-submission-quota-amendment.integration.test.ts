@@ -13,6 +13,7 @@ import {
   PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON,
   ProviderUsdPricingRuleSchema,
   buildBillingAccount,
+  estimateProviderCostUsd,
   withIntegrity,
 } from "@ceo-agent/shared/server";
 import {
@@ -167,16 +168,18 @@ describeIntegration("Production commercial submission quota amendment service", 
       createdAt,
     });
     await commercial.provisionPrice(rule);
+    const maxProviderCostUsd = estimateProviderCostUsd(rule);
+    expect(maxProviderCostUsd).toBe("0.35");
     const provisioned = await commercial.provisionScope({
       environment: "PRODUCTION",
       orgId,
       workspaceId,
       actorUserId,
       createdAt,
-      maxProviderCostUsd: "0.29",
+      maxProviderCostUsd,
       maxProviderSubmissions: 1,
     });
-    return { orgId, workspaceId, actorUserId, createdAt, rule, scope: provisioned.scope };
+    return { orgId, workspaceId, actorUserId, createdAt, rule, scope: provisioned.scope, maxProviderCostUsd };
   }
 
   async function cleanup(input: { orgId: string; workspaceId: string; ruleId: string; scopeId: string }) {
@@ -204,6 +207,8 @@ describeIntegration("Production commercial submission quota amendment service", 
       expect(reserved.reservation.status).toBe("SUBMITTED");
       expect(reserved.scope.maxProviderSubmissions).toBe(1);
       expect(reserved.scope.consumedProviderSubmissions).toBe(1);
+      expect(reserved.scope.maxProviderCostUsd).toBe(seeded.maxProviderCostUsd);
+      expect(reserved.reservation.reservedCostUsd).toBe(seeded.maxProviderCostUsd);
 
       await expect(commercial.amendActiveProductionSubmissionQuota({
         environment: "STAGING",
@@ -269,6 +274,28 @@ describeIntegration("Production commercial submission quota amendment service", 
       expect(replay.replayed).toBe(true);
       expect(replay.scope.integrityHash).toBe(first.scope.integrityHash);
       expect(replay.scope.maxProviderCostUsd).toBe(first.scope.maxProviderCostUsd);
+      expect(replay.scope.maxProviderCostUsd).toBe(seeded.maxProviderCostUsd);
+
+      await expect(commercial.reserve({
+        environment: "PRODUCTION",
+        orgId: seeded.orgId,
+        workspaceId: seeded.workspaceId,
+        executionIdentity: "3cd3dbe7-1fbf-5df2-9df3-74837f2381d5",
+        pricingRule: seeded.rule,
+        createdAt: "2026-09-19T16:22:30.000Z",
+        claimSubmission: true,
+      })).rejects.toMatchObject({
+        name: "CertificationCommercialError",
+        code: "CERTIFICATION_BUDGET_EXCEEDED",
+      });
+      const afterDeniedSecond = await commercial.getActiveScope(
+        "PRODUCTION",
+        seeded.orgId,
+        seeded.workspaceId,
+      );
+      expect(afterDeniedSecond?.maxProviderSubmissions).toBe(2);
+      expect(afterDeniedSecond?.maxProviderCostUsd).toBe(seeded.maxProviderCostUsd);
+      expect(afterDeniedSecond?.consumedProviderSubmissions).toBe(1);
 
       await expect(commercial.amendActiveProductionScopeCeiling({
         environment: "PRODUCTION",
