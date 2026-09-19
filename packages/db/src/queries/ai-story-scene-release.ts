@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "../client";
+import { resolveSuccessfulProviderAttemptTerminalAuthority } from "./provider-execution-finalizer";
 
 export type AiStorySceneReleaseState = "AUTHORIZED_NOT_RELEASED" | "RELEASED";
 export type AiStorySceneReleaseRow = typeof schema.aiStorySceneReleaseStates.$inferSelect;
@@ -64,17 +65,18 @@ export class AiStorySceneReleaseRepository {
           eq(schema.aiStorySceneResults.status, "SUCCEEDED")
         )).limit(1);
       if (!result) throw new Error("FIRST_SCENE_DURABLE_RESULT_REQUIRED");
-      const [attempt] = await tx.select().from(schema.providerAttempts)
-        .where(and(
-          eq(schema.providerAttempts.attemptId, approved.providerAttemptId),
-          eq(schema.providerAttempts.status, "SUCCEEDED")
-        )).limit(1);
-      if (!attempt || attempt.executionId !== result.providerExecutionId) {
+      const terminalAuthority = await resolveSuccessfulProviderAttemptTerminalAuthority({
+        reader: tx,
+        providerAttemptId: approved.providerAttemptId,
+        providerExecutionId: result.providerExecutionId,
+        sceneExecutionId: first.sceneExecutionId,
+      });
+      if (!terminalAuthority) {
         throw new Error("FIRST_SCENE_EXACT_ATTEMPT_REQUIRED");
       }
       const correlations = await tx.select().from(schema.aiStorySceneSchedulingCorrelations)
         .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, first.sceneExecutionId));
-      if (!correlations.some((row) => row.providerExecutionId === attempt.executionId)) {
+      if (!correlations.some((row) => row.providerExecutionId === terminalAuthority.providerExecutionId)) {
         throw new Error("FIRST_SCENE_EXACT_ATTEMPT_REQUIRED");
       }
       const executionIds = correlations.map((row) => row.providerExecutionId);
@@ -166,17 +168,18 @@ export class AiStorySceneReleaseRepository {
             eq(schema.aiStorySceneResults.status, "SUCCEEDED")
           )).limit(1);
         if (!result) throw new Error("PRIOR_SCENE_DURABLE_RESULT_REQUIRED");
-        const [attempt] = await tx.select().from(schema.providerAttempts)
-          .where(and(
-            eq(schema.providerAttempts.attemptId, approved.providerAttemptId),
-            eq(schema.providerAttempts.status, "SUCCEEDED")
-          )).limit(1);
-        if (!attempt || attempt.executionId !== result.providerExecutionId) {
+        const terminalAuthority = await resolveSuccessfulProviderAttemptTerminalAuthority({
+          reader: tx,
+          providerAttemptId: approved.providerAttemptId,
+          providerExecutionId: result.providerExecutionId,
+          sceneExecutionId: prior.sceneExecutionId,
+        });
+        if (!terminalAuthority) {
           throw new Error("PRIOR_SCENE_EXACT_ATTEMPT_REQUIRED");
         }
         const correlations = await tx.select().from(schema.aiStorySceneSchedulingCorrelations)
           .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, prior.sceneExecutionId));
-        if (!correlations.some((row) => row.providerExecutionId === attempt.executionId)) {
+        if (!correlations.some((row) => row.providerExecutionId === terminalAuthority.providerExecutionId)) {
           throw new Error("PRIOR_SCENE_EXACT_ATTEMPT_REQUIRED");
         }
         const executionIds = correlations.map((row) => row.providerExecutionId);

@@ -128,7 +128,12 @@ describe("Photo Scene 10B identity", () => {
       expectedSourceContentHash: HASH_A,
     });
     expect(decision).toEqual({ ok: true });
-    expect(evaluateGenerateAgain({ previousFingerprint: gen.inputFingerprint, nextFingerprint: gen.inputFingerprint })).toEqual({
+    expect(evaluateGenerateAgain({
+      previousSourceAssetId: ASSET_A,
+      previousFingerprint: gen.inputFingerprint,
+      nextSourceAssetId: ASSET_A,
+      nextFingerprint: gen.inputFingerprint,
+    })).toEqual({
       newGenerationRequired: false,
     });
   });
@@ -151,11 +156,13 @@ describe("Photo Scene 10B reuse", () => {
         sourceContentHash: HASH_A,
         operation: "product_extraction",
         generationId: GEN_A,
+        generationFingerprint: fp,
       },
     });
     expect(
       evaluateExtractionReuse({
         workspaceId: WS_A,
+        expectedSourceAssetId: ASSET_A,
         fingerprint: fp,
         sourceContentHash: HASH_A,
         candidate: {
@@ -176,6 +183,7 @@ describe("Photo Scene 10B reuse", () => {
     expect(
       evaluateExtractionReuse({
         workspaceId: WS_A,
+        expectedSourceAssetId: ASSET_A,
         fingerprint: fingerprintFor(HASH_B),
         sourceContentHash: HASH_B,
         candidate: { generation: ready, outputAsset: productAsset({ id: ASSET_OUT, contentHash: HASH_B }) },
@@ -184,6 +192,7 @@ describe("Photo Scene 10B reuse", () => {
     expect(
       evaluateExtractionReuse({
         workspaceId: WS_A,
+        expectedSourceAssetId: ASSET_A,
         fingerprint: fp,
         sourceContentHash: HASH_A,
         candidate: { generation: generation({ status: "failed", inputFingerprint: fp }), outputAsset: productAsset({ id: ASSET_OUT }) },
@@ -192,6 +201,7 @@ describe("Photo Scene 10B reuse", () => {
     expect(
       evaluateExtractionReuse({
         workspaceId: WS_A,
+        expectedSourceAssetId: ASSET_A,
         fingerprint: fp,
         sourceContentHash: HASH_A,
         candidate: { generation: generation({ status: "ready", inputFingerprint: fp, outputAssetId: ASSET_OUT }), outputAsset: null },
@@ -200,6 +210,7 @@ describe("Photo Scene 10B reuse", () => {
     expect(
       evaluateExtractionReuse({
         workspaceId: WS_A,
+        expectedSourceAssetId: ASSET_A,
         fingerprint: fp,
         sourceContentHash: HASH_A,
         candidate: { generation: generation({ workspaceId: WS_B, inputFingerprint: fp, status: "ready" }), outputAsset: productAsset() },
@@ -211,7 +222,12 @@ describe("Photo Scene 10B reuse", () => {
     expect(sourceMutationChanged(HASH_A, HASH_B)).toBe(true);
     const previous = fingerprintFor(HASH_A);
     const next = fingerprintFor(HASH_B);
-    expect(evaluateGenerateAgain({ previousFingerprint: previous, nextFingerprint: next }).newGenerationRequired).toBe(true);
+    expect(evaluateGenerateAgain({
+      previousSourceAssetId: ASSET_A,
+      previousFingerprint: previous,
+      nextSourceAssetId: ASSET_A,
+      nextFingerprint: next,
+    }).newGenerationRequired).toBe(true);
   });
 });
 
@@ -401,6 +417,8 @@ describe("Photo Scene 10B isolation", () => {
     expect(
       joinInflightExtraction({
         workspaceId: WS_A,
+        expectedSourceAssetId: ASSET_A,
+        expectedSourceContentHash: HASH_A,
         fingerprint: generation().inputFingerprint,
         candidate: generation({ workspaceId: WS_B, status: "queued" }),
       })

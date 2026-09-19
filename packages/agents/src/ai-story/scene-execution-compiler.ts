@@ -7,18 +7,21 @@
 import { createHash } from "node:crypto";
 import {
   AI_STORY_EXECUTION_CONTRACT_VERSION,
-  AnimationPackagePayloadSchema,
-  AiStoryExecutionPlanSchema,
-  AiStorySceneCompiledInstructionsSchema,
-  AiStorySceneExecutionIntentSchema,
+  AuthoritativeAnimationPackagePayloadSchema,
+  AiStoryCanonicalExecutionPlanSchema,
+  AiStoryCanonicalSceneCompiledInstructionsSchema,
+  AiStoryCanonicalSceneExecutionIntentSchema,
   EXECUTION_CAPABILITY_IDS,
   PRODUCT_IDENTITY_CONSTRAINTS,
+  resolveExplicitAiStorySceneGenerationAuthority,
   type AiStoryExecutionPlan,
   type AiStoryExecutionReviewEstimate,
+  type AiStoryEffectiveSceneGenerationAuthority,
   type AiStoryFrozenVersionReference,
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
   type AnimationPackagePayload,
+  type ScenePlanItem,
 } from "@ceo-agent/shared";
 import { collectReferencedAssetIds } from "./execution-compiler";
 
@@ -84,6 +87,18 @@ function durationSecToMs(sec: number): number {
   return ms > 0 ? ms : 1;
 }
 
+function sortedUnique(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+/** Deterministic planning → execution authority resolution. */
+export function resolveEffectiveSceneGenerationAuthority(
+  scene: ScenePlanItem,
+  _storyReferenceIds: readonly string[]
+): AiStoryEffectiveSceneGenerationAuthority {
+  return resolveExplicitAiStorySceneGenerationAuthority(scene.generationAuthority);
+}
+
 /**
  * Compile one Scene Execution Intent per Animation Package scene.
  * Same inputs → identical ordering, identities, and hashes.
@@ -92,15 +107,23 @@ export function compileSceneExecutionIntents(
   animationPackageInput: AnimationPackagePayload,
   ctx: SceneCompilerContext
 ): SceneExecutionCompileOutput {
-  const pkg = AnimationPackagePayloadSchema.parse(animationPackageInput);
+  const pkg = AuthoritativeAnimationPackagePayloadSchema.parse(animationPackageInput);
   const compiledAt = ctx.compiledAt ?? new Date().toISOString();
   // Canonical collectReferencedAssetIds lives in execution-compiler; sort for Scene Intent determinism.
-  const referencedAssetIds = [...collectReferencedAssetIds(pkg)].sort((a, b) =>
-    a.localeCompare(b)
-  );
+  const referencedAssetIds = sortedUnique(collectReferencedAssetIds(pkg));
+  const storyReferencedAssetIds = sortedUnique(pkg.story.assetReferences ?? []);
 
   const scenesSorted = [...pkg.scenePlan].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const shotsSorted = [...pkg.shotPlan].sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+  if (
+    pkg.canonicalSceneAuthority.scenes.length !== scenesSorted.length ||
+    scenesSorted.some((scene, index) => {
+      const binding = pkg.canonicalSceneAuthority.scenes[index];
+      return !binding || binding.order !== index || scene.order !== index || binding.planningSceneId !== scene.id;
+    })
+  ) {
+    throw new Error("ANIMATION_PACKAGE_CANONICAL_SCENE_MAPPING_INVALID");
+  }
 
   const storyVersionHash = integrityHash({
     storyId: ctx.storyId,
@@ -121,13 +144,19 @@ export function compileSceneExecutionIntents(
     animationPackageId: ctx.animationPackageId,
     storyId: ctx.storyId,
     storyVersionId: ctx.storyVersionId,
-    scenePlan: scenesSorted.map((s) => ({ id: s.id, order: s.order, durationSec: s.durationSec })),
+    scenePlan: scenesSorted.map((s) => ({
+      id: s.id,
+      order: s.order,
+      durationSec: s.durationSec,
+      ...(s.generationAuthority ? { generationAuthority: s.generationAuthority } : {}),
+    })),
     shotPlan: shotsSorted.map((s) => ({
       id: s.id,
       sceneId: s.sceneId,
       order: s.order,
       durationSec: s.durationSec,
     })),
+    canonicalSceneAuthority: pkg.canonicalSceneAuthority,
   });
 
   const animationPackageRef = {
@@ -136,6 +165,8 @@ export function compileSceneExecutionIntents(
     storyVersionId: ctx.storyVersionId,
     sceneCount: scenesSorted.length,
     integrityHash: packageHash,
+    scriptVersionId: pkg.canonicalSceneAuthority.scriptVersionId,
+    sceneSetFingerprint: pkg.canonicalSceneAuthority.sceneSetFingerprint,
   };
 
   const characterReferences = [...pkg.characterContinuity]
@@ -157,15 +188,33 @@ export function compileSceneExecutionIntents(
   const instructionsBySceneExecutionId: Record<string, AiStorySceneCompiledInstructions> = {};
 
   for (const scene of scenesSorted) {
+    const canonical = pkg.canonicalSceneAuthority.scenes.find(
+      (binding) =>
+        binding.planningSceneId === scene.id && binding.order === scene.order
+    );
+    if (!canonical) {
+      throw new Error("ANIMATION_PACKAGE_CANONICAL_SCENE_MAPPING_INVALID");
+    }
+    if (!canonical.generationAuthority ||
+      stableJson(canonical.generationAuthority) !== stableJson(scene.generationAuthority)) {
+      throw new Error("ANIMATION_PACKAGE_CANONICAL_SCENE_MODE_AUTHORITY_INVALID");
+    }
+    const generationAuthority = resolveEffectiveSceneGenerationAuthority(
+      scene,
+      storyReferencedAssetIds
+    );
+    const persistedGenerationAuthority = generationAuthority;
+    const sceneReferencedAssetIds = generationAuthority.effectiveReferenceIds;
     const sceneShots = shotsSorted.filter((s) => s.sceneId === scene.id);
     const shotReferences = sceneShots.map((shot) => ({
       shotId: shot.id,
-      sceneId: shot.sceneId,
+      sceneId: canonical.sceneId,
       order: shot.order,
       durationMs: durationSecToMs(shot.durationSec),
       integrityHash: integrityHash({
         shotId: shot.id,
-        sceneId: shot.sceneId,
+        sceneId: canonical.sceneId,
+        planningSceneId: shot.sceneId,
         order: shot.order,
         durationSec: shot.durationSec,
         cameraType: shot.cameraType,
@@ -183,10 +232,14 @@ export function compileSceneExecutionIntents(
       shotReferences.reduce((sum, s) => sum + s.durationMs, 0) ||
       1;
 
-    const instructions = AiStorySceneCompiledInstructionsSchema.parse({
+    const instructions = AiStoryCanonicalSceneCompiledInstructionsSchema.parse({
       contractVersion: AI_STORY_EXECUTION_CONTRACT_VERSION,
       capabilityId: EXECUTION_CAPABILITY_IDS.ANIMATION_VIDEO,
-      sceneId: scene.id,
+      sceneId: canonical.sceneId,
+      sceneVersionId: canonical.sceneVersionId,
+      sceneFingerprint: canonical.sceneFingerprint,
+      scriptVersionId: pkg.canonicalSceneAuthority.scriptVersionId,
+      sceneSetFingerprint: pkg.canonicalSceneAuthority.sceneSetFingerprint,
       sceneOrder: scene.order,
       purpose: scene.purpose,
       transition: scene.transition ?? "",
@@ -207,7 +260,10 @@ export function compileSceneExecutionIntents(
         information: shot.information,
       })),
       characterReferences,
-      referencedAssetIds,
+      referencedAssetIds: sceneReferencedAssetIds,
+      ...(persistedGenerationAuthority
+        ? { generationAuthority: persistedGenerationAuthority }
+        : {}),
       worldContinuity: pkg.worldContinuity as unknown as Record<string, unknown>,
       productIdentityConstraints: [...PRODUCT_IDENTITY_CONSTRAINTS],
     });
@@ -221,7 +277,11 @@ export function compileSceneExecutionIntents(
       storyId: ctx.storyId,
       storyVersionId: ctx.storyVersionId,
       animationPackageId: ctx.animationPackageId,
-      sceneId: scene.id,
+      sceneId: canonical.sceneId,
+      sceneVersionId: canonical.sceneVersionId,
+      sceneFingerprint: canonical.sceneFingerprint,
+      scriptVersionId: pkg.canonicalSceneAuthority.scriptVersionId,
+      sceneSetFingerprint: pkg.canonicalSceneAuthority.sceneSetFingerprint,
       sceneOrder: scene.order,
       packageHash,
       instructionHash,
@@ -230,10 +290,10 @@ export function compileSceneExecutionIntents(
     const sceneExecutionId = uuidFromIntegrityHash(
       integrityHash({ kind: "sceneExecutionId", fingerprint })
     );
-    const storyScopedKey = `ai-story-scene:${ctx.storyVersionId}:${ctx.animationPackageId}:${scene.id}:${scene.order}`;
+    const storyScopedKey = `ai-story-scene:${ctx.storyVersionId}:${ctx.animationPackageId}:${pkg.canonicalSceneAuthority.scriptVersionId}:${pkg.canonicalSceneAuthority.sceneSetFingerprint}:${canonical.sceneId}:${canonical.sceneVersionId}:${canonical.sceneFingerprint}:${scene.order}`;
     const idempotencyKey = `idem:${sha256Hex(storyScopedKey).slice(0, 32)}`;
 
-    const intent = AiStorySceneExecutionIntentSchema.parse({
+    const intent = AiStoryCanonicalSceneExecutionIntentSchema.parse({
       identity: {
         contractVersion: AI_STORY_EXECUTION_CONTRACT_VERSION,
         sceneExecutionId,
@@ -243,7 +303,10 @@ export function compileSceneExecutionIntents(
         storyId: ctx.storyId,
         storyVersionId: ctx.storyVersionId,
         animationPackageId: ctx.animationPackageId,
-        sceneId: scene.id,
+        sceneId: canonical.sceneId,
+        sceneVersionId: canonical.sceneVersionId,
+        sceneFingerprint: canonical.sceneFingerprint,
+        scriptVersionId: pkg.canonicalSceneAuthority.scriptVersionId,
         sceneOrder: scene.order,
         idempotencyKey,
         deterministicFingerprint: fingerprint,
@@ -251,7 +314,10 @@ export function compileSceneExecutionIntents(
       frozenStoryVersion,
       animationPackage: animationPackageRef,
       shotReferences,
-      referencedAssetIds,
+      referencedAssetIds: sceneReferencedAssetIds,
+      ...(persistedGenerationAuthority
+        ? { generationAuthority: persistedGenerationAuthority }
+        : {}),
       normalizedPayloadReference: {
         uri: `memory://ai-story/scene-instructions/${sceneExecutionId}`,
         contentHash: instructionHash,
@@ -279,7 +345,7 @@ export function compileSceneExecutionIntents(
     })
   );
 
-  const storyExecutionPlan = AiStoryExecutionPlanSchema.parse({
+  const storyExecutionPlan = AiStoryCanonicalExecutionPlanSchema.parse({
     contractVersion: AI_STORY_EXECUTION_CONTRACT_VERSION,
     storyExecutionId,
     frozenStoryVersion,

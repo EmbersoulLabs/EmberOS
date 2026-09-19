@@ -91,7 +91,7 @@ function opsAuthorization(
 /**
  * Canonical Execute product authorization.
  * Super Admin (ACTIVE grant) and Agency plan capability → ops / no settlement.
- * Free / Pro / Pro Plus and unknown classes → denied.
+ * All other product classes are denied, regardless of entitlement grants.
  */
 export async function authorizeAiStoryExecution(
   input: AuthorizeAiStoryExecutionInput,

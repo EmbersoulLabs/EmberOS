@@ -7,13 +7,12 @@ import {
   type AiStoryExecutionAuthorization,
 } from "@ceo-agent/shared";
 import type { ProviderRouter, ProviderRoutingPolicy } from "../provider-router";
+import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
 import { SceneSchedulingCoordinator } from "./scene-scheduling-coordinator";
+import { resolveStagedReleaseCommercialAuthorization } from "./resolve-staged-release-commercial-authorization";
+import { StagedSceneReleaseError } from "./staged-scene-release-error";
 
-export class StagedSceneReleaseError extends Error {
-  constructor(readonly code: string, message: string, readonly status = 409) {
-    super(message); this.name = "StagedSceneReleaseError";
-  }
-}
+export { StagedSceneReleaseError } from "./staged-scene-release-error";
 
 export async function releaseRemainingScenes(input: {
   executionPlanId: string; workspaceId: string; actorUserId: string;
@@ -22,6 +21,7 @@ export async function releaseRemainingScenes(input: {
   releaseRepository?: AiStorySceneReleaseRepository;
   authorizationRepository?: RuntimeAuthorizationPersistenceRepository;
   schedulingCoordinator?: SceneSchedulingCoordinator;
+  commercialAuthorizationService?: Pick<CommercialAuthorizationService, "authorizeExecutionPlanExecute">;
 }) {
   if (!input.executionAuthorization.allowed) {
     throw new StagedSceneReleaseError("AI_STORY_EXECUTION_DENIED", "AI Story execution is denied", 403);
@@ -31,6 +31,16 @@ export async function releaseRemainingScenes(input: {
   if (!fact || fact.ownership.workspaceId !== input.workspaceId) {
     throw new StagedSceneReleaseError("RUNTIME_AUTHORIZATION_REQUIRED", "Execution Plan is not authorized", 409);
   }
+  const transitionAt = (input.now ?? (() => new Date()))();
+  const commercialAuthorizationId =
+    await resolveStagedReleaseCommercialAuthorization({
+      executionPlanId: input.executionPlanId,
+      orgId: fact.ownership.orgId,
+      workspaceId: fact.ownership.workspaceId,
+      executionAuthorization: input.executionAuthorization,
+      authorizedAt: transitionAt,
+      service: input.commercialAuthorizationService,
+    });
   const repo = input.releaseRepository ?? new AiStorySceneReleaseRepository();
   let released;
   try {
@@ -38,7 +48,7 @@ export async function releaseRemainingScenes(input: {
       executionPlanId: input.executionPlanId,
       workspaceId: input.workspaceId,
       actorUserId: input.actorUserId,
-      releasedAt: (input.now ?? (() => new Date()))(),
+      releasedAt: transitionAt,
     });
   } catch (error) {
     const code = error instanceof Error ? error.message : "STAGED_RELEASE_DENIED";
@@ -51,6 +61,7 @@ export async function releaseRemainingScenes(input: {
       executionPlanId: input.executionPlanId,
       sceneExecutionId: row.sceneExecutionId,
       runtimeAuthorizationId: fact.runtimeAuthorizationId,
+      commercialAuthorizationId,
       executionAuthorization: toAiStoryExecutionAuthorizationEvidence(input.executionAuthorization),
       actorUserId: input.actorUserId,
       routingPolicy: input.routingPolicy,

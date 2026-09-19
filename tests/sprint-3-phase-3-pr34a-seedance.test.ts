@@ -322,7 +322,7 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
     expect(lookup.terminalMedia?.uriReference).toContain("out.mp4");
   });
 
-  it("maps a certified product authority to the Seedance first frame", async () => {
+  it("does not promote a legacy product URL into current canonical material authority", async () => {
     const productAssetId = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     const { envelope, resolver } = await envelopeFor(
       basePayload({
@@ -374,27 +374,12 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
       })
     );
 
-    const mapped = await mapCanonicalEnvelopeToSeedanceRequest({
+    await expect(mapCanonicalEnvelopeToSeedanceRequest({
       envelope,
       idempotencyKey: "first-frame-preview-only",
       model: "dreamina-seedance-2-0-260128",
       payloadResolver: resolver,
-    });
-
-    expect(mapped.content).toEqual([
-      expect.objectContaining({
-        type: "text",
-        text: expect.stringContaining(PRODUCT_LOCK_PROMPT),
-      }),
-      {
-        type: "image_url",
-        image_url: { url: "https://cdn.example.com/signed/product.png" },
-        role: "first_frame",
-      },
-    ]);
-    expect(mapped.content.filter((item) => item.type === "image_url")).toEqual([
-      expect.objectContaining({ role: "first_frame" }),
-    ]);
+    })).rejects.toThrow(/canonical Scene Product material authority/);
   });
 
   it("blocks generic reference fallback and missing first-frame authority", async () => {
@@ -456,7 +441,7 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
         model: "dreamina-seedance-2-0-260128",
         payloadResolver: generic.resolver,
       })
-    ).rejects.toThrow(/insufficient|FIRST_FRAME_I2V/i);
+    ).rejects.toThrow(/insufficient|FIRST_FRAME_I2V|canonical Scene Product material authority/i);
 
     const missing = await envelopeFor(
       basePayload({
@@ -477,7 +462,7 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
         model: "dreamina-seedance-2-0-260128",
         payloadResolver: missing.resolver,
       })
-    ).rejects.toThrow(/blocked|reference/i);
+    ).rejects.toThrow(/blocked|reference|canonical Scene Product material authority/i);
   });
 
   it("blocks a conflicting product authority before the Seedance HTTP call", async () => {

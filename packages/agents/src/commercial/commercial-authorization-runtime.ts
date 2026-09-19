@@ -8,6 +8,7 @@ import {
   BillingAccountRepositoryImpl,
   CommercialAuthorizationError,
   CommercialAuthorizationRepositoryImpl,
+  CertificationCommercialAuthorityService,
   CreditsAccountingError,
   CreditsAccountingService,
   EntitlementRepositoryImpl,
@@ -26,6 +27,8 @@ import {
   type CapabilityKey,
   type CommercialExecutionAuthorization,
   type ProductPricingRule,
+  type CertificationEnvironment,
+  CertificationEnvironmentSchema,
 } from "@ceo-agent/shared/server";
 
 export {
@@ -43,6 +46,7 @@ export type AuthorizeBillableExecuteInput = {
   readonly capabilityKey: CapabilityKey;
   readonly executionIdentity: string;
   readonly authorizedAt: string;
+  readonly certificationEnvironment?: CertificationEnvironment;
   /** Optional override for tests / future catalogs. */
   readonly resolvePricingRule?: ResolvePricingRule;
 };
@@ -50,18 +54,33 @@ export type AuthorizeBillableExecuteInput = {
 export type AuthorizeBillableExecuteResult = {
   readonly authorization: CommercialExecutionAuthorization;
   readonly replayed: boolean;
-  readonly pricingRule: ProductPricingRule;
+  readonly pricingRule: ProductPricingRule | null;
 };
 
+type CertificationCommercialReader = Pick<
+  CertificationCommercialAuthorityService,
+  "getActiveScope" | "getActivePricingEvidence"
+>;
+
 export class CommercialAuthorizationService {
+  private certificationCommercial?: CertificationCommercialReader;
+
   constructor(
     private readonly billing: BillingAccountRepository = new BillingAccountRepositoryImpl(),
     private readonly subscriptions: SubscriptionRepository = new SubscriptionRepositoryImpl(),
     private readonly entitlements: EntitlementRepository = new EntitlementRepositoryImpl(),
     private readonly credits: CreditsAccountingService = new CreditsAccountingService(),
     private readonly authorizations: CommercialAuthorizationRepository = new CommercialAuthorizationRepositoryImpl(),
-    private readonly defaultResolvePricing: ResolvePricingRule = resolveProductPricingRuleForCapability
-  ) {}
+    private readonly defaultResolvePricing: ResolvePricingRule = resolveProductPricingRuleForCapability,
+    certificationCommercial?: CertificationCommercialReader
+  ) {
+    this.certificationCommercial = certificationCommercial;
+  }
+
+  private certificationReader(): CertificationCommercialReader {
+    this.certificationCommercial ??= new CertificationCommercialAuthorityService();
+    return this.certificationCommercial;
+  }
 
   /**
    * Evaluate commercial chain and accept-or-converge Commercial Authorization.
@@ -77,11 +96,9 @@ export class CommercialAuthorizationService {
       executionIdentity: input.executionIdentity,
     });
     if (existing) {
-      const pricingRule =
-        (input.resolvePricingRule ?? this.defaultResolvePricing)(
-          input.capabilityKey
-        ) ??
-        ({
+      const pricingRule = existing.pricingRuleKey.startsWith("provider-usd:")
+        ? null
+        : (input.resolvePricingRule ?? this.defaultResolvePricing)(input.capabilityKey) ?? ({
           contractVersion: "1",
           ruleKey: existing.pricingRuleKey,
           ruleVersion: existing.pricingRuleVersion,
@@ -89,7 +106,7 @@ export class CommercialAuthorizationService {
           creditAmount: null,
           currencyUnit: "credit",
           integrityHash: existing.pricingRuleIntegrityHash,
-        } satisfies ProductPricingRule);
+          } satisfies ProductPricingRule);
       return {
         authorization: existing,
         replayed: true,
@@ -105,16 +122,24 @@ export class CommercialAuthorizationService {
       );
     }
 
-    const subscription = await this.subscriptions.getProjectionByOrgId(
-      input.orgId
+    const subscription = await this.subscriptions.getProjectionByOrgId(input.orgId);
+    const subscriptionEligible = Boolean(
+      subscription && subscriptionStatusAllowsPlanCapabilities(subscription.status)
     );
-    if (
-      !subscription ||
-      !subscriptionStatusAllowsPlanCapabilities(subscription.status)
-    ) {
+    const configuredCertificationEnvironment = CertificationEnvironmentSchema.safeParse(
+      process.env.AI_STORY_CERTIFICATION_ENVIRONMENT ??
+      (process.env.RAILWAY_ENVIRONMENT_NAME?.toLowerCase() === "staging" ? "STAGING" : undefined)
+    );
+    const certificationEnvironment = input.certificationEnvironment ??
+      (configuredCertificationEnvironment.success ? configuredCertificationEnvironment.data : undefined);
+    const certificationScope =
+      !subscriptionEligible && input.capabilityKey === "ai_story.execute" && certificationEnvironment
+        ? await this.certificationReader().getActiveScope(certificationEnvironment, input.orgId, input.workspaceId)
+        : null;
+    if (!subscriptionEligible && !certificationScope) {
       throw new CommercialAuthorizationError(
         "COMMERCIAL_AUTH_SUBSCRIPTION_INVALID",
-        "Subscription Projection must be ACTIVE or TRIALING"
+        "An eligible Subscription Projection or exact active explicit-environment certification commercial scope is required"
       );
     }
 
@@ -143,6 +168,30 @@ export class CommercialAuthorizationService {
     );
     const entitlementEvidenceId =
       entry?.entitlementGrantId ?? projection.integrityHash;
+
+    if (certificationScope) {
+      const providerPricing = await this.certificationReader().getActivePricingEvidence(input.authorizedAt);
+      if (!providerPricing) {
+        throw new CommercialAuthorizationError(
+          "COMMERCIAL_AUTH_PRICING_MISSING",
+          "Canonical Provider USD pricing is required for certification execution"
+        );
+      }
+      const authorization = buildCommercialExecutionAuthorization({
+        orgId: input.orgId,
+        workspaceId: input.workspaceId,
+        capabilityKey: input.capabilityKey,
+        executionIdentity: input.executionIdentity,
+        entitlementEvidenceId: `${entitlementEvidenceId}:${certificationScope.certificationScopeId}`,
+        pricingRuleKey: providerPricing.ruleKey,
+        pricingRuleVersion: providerPricing.ruleVersion,
+        pricingRuleIntegrityHash: providerPricing.integrityHash,
+        creditReservationId: null,
+        authorizedAt: input.authorizedAt,
+      });
+      const accepted = await this.authorizations.acceptOrConverge(authorization);
+      return { authorization: accepted.value, replayed: accepted.replayed, pricingRule: null };
+    }
 
     const resolvePricing =
       input.resolvePricingRule ?? this.defaultResolvePricing;

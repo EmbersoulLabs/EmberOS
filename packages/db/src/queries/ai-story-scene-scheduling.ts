@@ -1,4 +1,4 @@
-import { and, eq, inArray, or, asc } from "drizzle-orm";
+import { and, eq, inArray, or, asc, desc, sql } from "drizzle-orm";
 import {
   PHASE1_EXECUTION_LOCKED,
   PersistedSceneRoutingDecisionSchema,
@@ -7,6 +7,7 @@ import {
   SCENE_SCHEDULING_ERROR_CODES,
   SceneProviderSchedulingCorrelationSchema,
   SceneSchedulingBundleSchema,
+  AiStoryCompiledProviderRequestSchema,
   isSceneSchedulingBundleComplete,
   validateExecutionEnvelope,
   type ExecutionEnvelope,
@@ -16,6 +17,8 @@ import {
   type SceneProviderSchedulingCorrelation,
   type SceneSchedulingBundle,
   type SceneSchedulingErrorCode,
+  type AiStoryCompiledProviderRequest,
+  PostTerminalProviderRetryAuthorizationFactSchema,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 import {
@@ -34,6 +37,7 @@ import {
   createProviderExecution,
 } from "./provider-ledger";
 import type { CreateOutboxJobInput } from "./provider-outbox";
+import { acceptAiStoryCompiledRequest } from "./ai-story-provider-runtime";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -61,6 +65,7 @@ export type ScheduleAcceptedBundleInput = {
   readonly runtimeAuthorizedFact: RuntimeAuthorizedFact;
   readonly routingDecision: PersistedSceneRoutingDecision;
   readonly providerExecution: ProviderExecution;
+  readonly compiledProviderRequest: AiStoryCompiledProviderRequest;
   readonly requestHash: string;
   readonly envelope: ExecutionEnvelope;
   readonly outboxJob: CreateOutboxJobInput;
@@ -72,6 +77,7 @@ export type ScheduleAcceptedBundleInput = {
   readonly testFailureAfter?:
     | "runtime_authorization"
     | "routing_decision"
+    | "compiled_request"
     | "provider_execution"
     | "outbox"
     | "envelope"
@@ -85,6 +91,7 @@ export type SceneSchedulingTimingKey =
   | "routing_request_build"
   | "routing_decision_lookup"
   | "routing_decision_write"
+  | "compiled_request_write"
   | "verification_identity_lookup"
   | "verification_identity_write"
   | "scheduling_correlation_lookup"
@@ -319,6 +326,9 @@ export class SceneSchedulingRepository {
           input.correlation
         );
         const envelope = await validateExecutionEnvelope(input.envelope);
+        const compiledProviderRequest = AiStoryCompiledProviderRequestSchema.parse(
+          input.compiledProviderRequest
+        );
 
         serialDbRoundTripCount += 1;
         const plan = await lockExecutionPlan(authFact.executionPlanId, tx);
@@ -387,6 +397,65 @@ export class SceneSchedulingRepository {
           throw new SceneSchedulingError(
             "SCENE_SCHEDULING_NOT_ELIGIBLE",
             "Durable RELEASED Scene authority is required before provider scheduling"
+          );
+        }
+        if (correlation.postTerminalRetryAuthorizationId) {
+          const [retryAuthorityRow] = await tx
+            .select({
+              fact: schema.aiStoryPostTerminalProviderRetryAuthorizations.fact,
+            })
+            .from(schema.aiStoryPostTerminalProviderRetryAuthorizations)
+            .where(
+              eq(
+                schema.aiStoryPostTerminalProviderRetryAuthorizations
+                  .authorizationId,
+                correlation.postTerminalRetryAuthorizationId
+              )
+            )
+            .limit(1);
+          const retryAuthority = retryAuthorityRow
+            ? PostTerminalProviderRetryAuthorizationFactSchema.parse(
+                retryAuthorityRow.fact
+              )
+            : null;
+          if (
+            !retryAuthority ||
+            retryAuthority.sceneExecutionId !== correlation.sceneExecutionId ||
+            retryAuthority.executionPlanId !== correlation.executionPlanId ||
+            retryAuthority.orgId !== correlation.ownership.orgId ||
+            retryAuthority.workspaceId !== correlation.ownership.workspaceId ||
+            retryAuthority.retryGeneration !== correlation.retryGeneration ||
+            retryAuthority.priorProviderAttemptId !==
+              correlation.sourceProviderAttemptId ||
+            retryAuthority.commercialAuthorizationId !==
+              correlation.commercialAuthorizationId ||
+            retryAuthority.sourceCompiledRequestFingerprint ===
+              compiledProviderRequest.requestFingerprint ||
+            compiledProviderRequest.generationMode !== retryAuthority.targetMode
+          ) {
+            throw new SceneSchedulingError(
+              "SCENE_SCHEDULING_NOT_ELIGIBLE",
+              "Post-terminal retry authorization does not match the scheduling correlation"
+            );
+          }
+        }
+        if (
+          compiledProviderRequest.orgId !== expected.orgId ||
+          compiledProviderRequest.workspaceId !== expected.workspaceId ||
+          compiledProviderRequest.campaignId !== expected.campaignId ||
+          compiledProviderRequest.storyId !== expected.storyId ||
+          compiledProviderRequest.storyVersionId !== expected.storyVersionId ||
+          compiledProviderRequest.sceneExecutionId !== releaseAuthority.sceneExecutionId ||
+          compiledProviderRequest.providerId !== routingDecision.selectedProviderId ||
+          compiledProviderRequest.adapterVersion !== routingDecision.selectedAdapterVersion ||
+          envelope.executionContext.trace?.compiledRequestId !==
+            compiledProviderRequest.compiledRequestId ||
+          envelope.executionContext.trace?.compiledRequestFingerprint !==
+            compiledProviderRequest.requestFingerprint
+        ) {
+          throw new SceneSchedulingError(
+            "IDENTITY_CONFLICT",
+            "Compiled Provider request does not match the accepted scheduling authority"
           );
         }
         const persistedAuth = await observeStep(
@@ -492,6 +561,11 @@ export class SceneSchedulingRepository {
           }
         );
         failAfterTestStage(input, "routing_decision");
+        await observeStep(input, "compiled_request_write", async () => {
+          serialDbRoundTripCount += 1;
+          return acceptAiStoryCompiledRequest(tx, compiledProviderRequest);
+        });
+        failAfterTestStage(input, "compiled_request");
         const providerExecution = await observeStep(
           input,
           "provider_execution_lookup_or_create",
@@ -656,8 +730,15 @@ export class SceneSchedulingRepository {
     const [row] = await this.db
       .select()
       .from(schema.aiStorySceneSchedulingCorrelations)
-      .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId))
-      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
+      .where(and(
+        eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId),
+        sql`not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_correlation_id = ${schema.aiStorySceneSchedulingCorrelations.correlationId}
+             or supersession.source_outbox_job_id = ${schema.aiStorySceneSchedulingCorrelations.outboxJobId}
+        )`
+      ))
+      .orderBy(desc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
       .limit(1);
     return row ? toCorrelation(row) : null;
   }
@@ -679,8 +760,15 @@ export class SceneSchedulingRepository {
     const [correlationRow] = await this.db
       .select()
       .from(schema.aiStorySceneSchedulingCorrelations)
-      .where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId))
-      .orderBy(asc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
+      .where(and(
+        eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId, sceneExecutionId),
+        sql`not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_correlation_id = ${schema.aiStorySceneSchedulingCorrelations.correlationId}
+             or supersession.source_outbox_job_id = ${schema.aiStorySceneSchedulingCorrelations.outboxJobId}
+        )`
+      ))
+      .orderBy(desc(schema.aiStorySceneSchedulingCorrelations.acceptedAt))
       .limit(1);
     if (!correlationRow) return null;
 
@@ -1089,6 +1177,9 @@ export class SceneSchedulingRepository {
         authorizationHash: correlation.authorizationHash,
         schedulingIdentityHash: correlation.schedulingIdentityHash,
         retryInputRevisionId: correlation.retryInputRevisionId ?? null,
+        postTerminalRetryAuthorizationId:
+          correlation.postTerminalRetryAuthorizationId ?? null,
+        sourceProviderAttemptId: correlation.sourceProviderAttemptId ?? null,
         contractVersion: correlation.contractVersion,
         scheduledBy: correlation.scheduledBy,
         scheduledAt: new Date(correlation.scheduledAt),

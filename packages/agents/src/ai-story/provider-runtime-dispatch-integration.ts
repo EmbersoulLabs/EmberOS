@@ -3,22 +3,37 @@ import {
   AI_STORY_POST_GENERATION_QC_HOOK_VERSION,
   AI_STORY_PROVIDER_RUNTIME_VERSION,
   AI_STORY_SEEDANCE_MAPPING_VERSION,
+  AI_STORY_SEEDANCE_CAPABILITY_CONTRACT_VERSION,
   AI_STORY_SEEDANCE_REFERENCE_BUDGET,
   AiStoryCompiledProviderRequestSchema,
   AiStoryPostGenerationQcInputSchema,
   AiStoryProviderAttemptBindingSchema,
   AiStoryProviderRuntimeJobSchema,
+  assertAiStoryCompiledProviderWireModeCompatibility,
   type AiStoryCompiledProviderRequest,
   type AiStoryPostGenerationQcInput,
   type AiStoryProviderAttemptBinding,
   type AiStoryProviderRuntimeJob,
   type AiStorySceneExecutionPackage,
+  type AiStorySceneCompiledInstructions,
+  type AiStorySceneExecutionIntent,
+  type ProductVisualMaterialSelectionAuthority,
   isAiStoryProviderAttemptTransitionAllowed,
 } from "@ceo-agent/shared";
+import { verifyProductVisualMaterialSelectionAuthority } from "@ceo-agent/shared/server";
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
 import { integrityHash } from "./scene-execution-compiler";
 import { compileSceneExecutionPackageForSeedance } from "./seedance-director-adapter";
 import type { SeedanceModelArkCreateRequest } from "./seedance-request-mapping";
+import {
+  resolveProviderReadySceneInput,
+  type PreparedSceneFrameAuthority,
+  type SceneInputPreparationAuthority,
+} from "./scene-input-preparation";
+import {
+  promoteProviderExecutableSceneInput,
+  type ProviderPolicyEligibilityAuthority,
+} from "./provider-policy-eligibility";
 
 export const SEEDANCE_RUNTIME_ADAPTER_VERSION = "seedance-canonical-runtime.v1" as const;
 
@@ -36,6 +51,7 @@ export class AiStoryProviderRuntimeError extends Error {
     readonly code:
       | "COMPILED_REQUEST_INVALID"
       | "COMPILED_REQUEST_STALE"
+      | "PROVIDER_READY_SCENE_INPUT_REQUIRED"
       | "REQUEST_TAMPERED"
       | "QC_NOT_ELIGIBLE"
       | "COMMERCIAL_AUTHORIZATION_REQUIRED"
@@ -113,6 +129,9 @@ export function compileImmutableSeedanceRequest(input: {
     sceneExecutionId: input.sceneExecutionId,
     sceneExecutionPackageId: input.package.sceneExecutionPackageId,
     generationMode: compiled.requestFacts.generationMode,
+    ...(input.package.generationAuthority
+      ? { generationAuthority: input.package.generationAuthority }
+      : {}),
     providerId: "seedance" as const,
     modelId: compiled.requestFacts.model,
     adapterVersion: SEEDANCE_RUNTIME_ADAPTER_VERSION,
@@ -151,6 +170,24 @@ export function compileImmutableSeedanceRequest(input: {
       ...(reference.mediaType ? { mediaType: reference.mediaType } : {}),
       ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
     })),
+    storyReferenceMappings: input.package.visualReferences.map((reference) => {
+      const imageCompatible = !reference.mediaType || reference.mediaType.toLowerCase().startsWith("image/");
+      const semanticRole = reference.semanticRole ?? (reference.firstFrame
+        ? "FIRST_FRAME" as const
+        : imageCompatible
+          ? "STORY_VISUAL_REFERENCE" as const
+          : "STORY_CONTINUITY_REFERENCE" as const);
+      const emitted = compiled.selectedReferences.some((candidate) => candidate.referenceId === reference.referenceId);
+      return {
+        referenceId: reference.referenceId,
+        assetId: reference.assetId,
+        semanticRole,
+        mediaType: reference.mediaType ?? "image/unknown",
+        providerEmitted: emitted,
+        ...(emitted ? { providerWireRole: reference.firstFrame ? "first_frame" as const : "reference_image" as const } : {}),
+        ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
+      };
+    }),
     referenceBudget: AI_STORY_SEEDANCE_REFERENCE_BUDGET,
     degradations: compiled.degradations.map((item) => ({ ...item })),
     blockedCapabilities: [
@@ -170,10 +207,410 @@ export function compileImmutableSeedanceRequest(input: {
     dispatchReady: true as const,
     compiledAt,
   };
-  return AiStoryCompiledProviderRequestSchema.parse({
+  const request = AiStoryCompiledProviderRequestSchema.parse({
     ...withoutFingerprint,
     requestFingerprint: computeAiStoryCompiledRequestFingerprint(withoutFingerprint),
   });
+  assertAiStoryCompiledProviderWireModeCompatibility(request);
+  return request;
+}
+
+export type PersistedSceneProviderCompilationAuthority = {
+  readonly qcEvaluationId: string;
+  readonly qcFingerprint: string;
+  readonly qcCapabilityVersion: string;
+  readonly directorFingerprint: string;
+  readonly motionFingerprint: string;
+};
+
+export type AiStoryReferenceAssetAuthority = {
+  readonly assetId: string;
+  readonly mediaType: string;
+  readonly storagePath?: string;
+  readonly contentHash?: string | null;
+};
+
+/**
+ * Converts preparation evidence into the single Provider-ready first-frame
+ * authority. Every rejection is terminal: callers must not substitute the raw
+ * source asset when preparation is required but unsatisfied.
+ */
+function resolveProviderReadySceneInputOrFailClosed(input: {
+  readonly preparation: SceneInputPreparationAuthority;
+  readonly preparedFrame: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility: ProviderPolicyEligibilityAuthority | null;
+}) {
+  try {
+    const providerReadySceneInput = resolveProviderReadySceneInput({
+      preparation: input.preparation,
+      preparedFrame: input.preparedFrame,
+    });
+    if (!input.providerPolicyEligibility) {
+      throw new Error("PROVIDER_POLICY_ELIGIBILITY_REQUIRED");
+    }
+    promoteProviderExecutableSceneInput({
+      providerReadySceneInput,
+      providerPolicyEligibility: input.providerPolicyEligibility,
+    });
+    return providerReadySceneInput;
+  } catch (error) {
+    throw new AiStoryProviderRuntimeError(
+      "PROVIDER_READY_SCENE_INPUT_REQUIRED",
+      `Scene ${input.preparation.sceneId} has no executable Provider-ready Scene input (${
+        error instanceof Error ? error.message : "UNKNOWN"
+      })`
+    );
+  }
+}
+
+export function compiledProviderRequestIdForSchedule(input: {
+  readonly sceneExecutionId: string;
+  readonly scheduledAt: string;
+}): string {
+  return deterministicPersistenceUuid(
+    "ai-story-compiled-provider-request",
+    {
+      sceneExecutionId: input.sceneExecutionId,
+      compiledAt: input.scheduledAt,
+    }
+  );
+}
+
+/**
+ * Freezes the already-persisted Scene execution compilation into the canonical
+ * Provider request authority used by both scheduling and the Worker. This is
+ * the compatibility compiler for V1 Execution Plans that predate the richer
+ * SceneExecutionPackage projection; it never reconstructs creative authority
+ * in the Worker.
+ */
+export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
+  readonly intent: AiStorySceneExecutionIntent;
+  readonly instructions: AiStorySceneCompiledInstructions;
+  readonly authority: PersistedSceneProviderCompilationAuthority;
+  readonly adapterVersion: string;
+  readonly compiledAt: string;
+  readonly resolution?: "480p" | "720p" | "1080p";
+  readonly referenceAssets?: readonly AiStoryReferenceAssetAuthority[];
+  readonly productMaterialSelection?: ProductVisualMaterialSelectionAuthority;
+  /** Active Scene input preparation authority, when Scene input preparation governs this Scene. */
+  readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
+  readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
+  readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
+}): AiStoryCompiledProviderRequest {
+  const canonicalScene = Boolean(input.intent.identity.sceneVersionId);
+  const authority = input.intent.generationAuthority ??
+    (!canonicalScene ? input.instructions.generationAuthority : undefined);
+  if ((canonicalScene && (!input.intent.generationAuthority || !input.instructions.generationAuthority)) ||
+    (input.intent.generationAuthority && input.instructions.generationAuthority &&
+      integrityHash(input.intent.generationAuthority) !== integrityHash(input.instructions.generationAuthority))) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Scene generation authority conflicts with its immutable instruction snapshot"
+    );
+  }
+  const explicitT2v =
+    authority?.strategy === "TEXT_TO_VIDEO" &&
+    authority.referenceSource === "REFERENCE_FREE_T2V";
+  const referenceIds = authority?.effectiveReferenceIds ?? input.intent.referencedAssetIds;
+  if (canonicalScene && authority?.referenceSource === "STORY_INHERITED") {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Current Canonical Scene cannot inherit an implicit Story generation mode"
+    );
+  }
+  if (authority && (JSON.stringify(referenceIds) !== JSON.stringify(input.intent.referencedAssetIds) ||
+      JSON.stringify(referenceIds) !== JSON.stringify(input.instructions.referencedAssetIds))) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Explicit Scene generation references disagree with immutable execution authority"
+    );
+  }
+  if (!authority && referenceIds.length === 0) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Reference-free compilation requires explicit TEXT_TO_VIDEO authority"
+    );
+  }
+  if (explicitT2v && referenceIds.length !== 0) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Reference-free TEXT_TO_VIDEO compilation cannot contain references"
+    );
+  }
+  if (!explicitT2v && referenceIds.length === 0) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Image-conditioned compilation is missing required references"
+    );
+  }
+  const preparation = input.sceneInputPreparation ?? null;
+  if (preparation && explicitT2v) {
+    throw new AiStoryProviderRuntimeError(
+      "PROVIDER_READY_SCENE_INPUT_REQUIRED",
+      "Scene input preparation authority cannot be dropped by a reference-free TEXT_TO_VIDEO compilation"
+    );
+  }
+  // Fail closed. A preparation-governed Scene resolves its wire first frame only
+  // through the Provider-ready authority, and never degrades to the raw source.
+  const providerReadySceneInput = preparation
+    ? resolveProviderReadySceneInputOrFailClosed({
+        preparation,
+        preparedFrame: input.preparedSceneFrame ?? null,
+        providerPolicyEligibility: input.providerPolicyEligibility ?? null,
+      })
+    : null;
+  const referenceAssetById = new Map((input.referenceAssets ?? []).map((asset) => [asset.assetId, asset]));
+  const productMaterial = input.productMaterialSelection ?? null;
+  if (!explicitT2v && canonicalScene && !productMaterial) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Canonical image-conditioned execution requires exact READY Scene Product material authority"
+    );
+  }
+  if (explicitT2v && productMaterial) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Reference-free Scene cannot carry image-conditioned Product material"
+    );
+  }
+  if (productMaterial) {
+    const selected = productMaterial.selectedMaterial;
+    const selectedAsset = selected ? referenceAssetById.get(selected.assetId) : null;
+    if (
+      explicitT2v || !selected || !selectedAsset ||
+      productMaterial.selection !== selected.kind ||
+      !input.intent.identity.sceneVersionId ||
+      !verifyProductVisualMaterialSelectionAuthority(productMaterial, {
+        orgId: input.intent.identity.tenantId,
+        workspaceId: input.intent.identity.workspaceId,
+        campaignId: input.intent.identity.campaignId,
+        storyId: input.intent.identity.storyId,
+        storyVersionId: input.intent.identity.storyVersionId,
+        sceneId: input.intent.identity.sceneId,
+        sceneVersionId: input.intent.identity.sceneVersionId,
+        productAuthority: productMaterial.productAuthority,
+      }) ||
+      productMaterial.visualRequirement.effectiveGenerationRequirement !== "REQUIRED" ||
+      productMaterial.visualRequirement.strategy !== authority?.strategy ||
+      productMaterial.visualRequirement.referenceSource !== authority?.referenceSource ||
+      selectedAsset.contentHash !== selected.contentHash ||
+      !selectedAsset.mediaType.toLowerCase().startsWith("image/") ||
+      !selectedAsset.storagePath ||
+      /^https?:\/\//i.test(selectedAsset.storagePath) ||
+      (providerReadySceneInput && providerReadySceneInput.assetId !== selected.assetId)
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "COMPILED_REQUEST_INVALID",
+        "Selected Product material does not match current Scene compilation authority"
+      );
+    }
+  }
+  const compiledReferenceIds = providerReadySceneInput
+    ? [
+        providerReadySceneInput.assetId,
+        ...referenceIds.filter((assetId) => assetId !== providerReadySceneInput.assetId),
+      ]
+    : productMaterial?.selectedMaterial
+      ? [productMaterial.selectedMaterial.assetId, ...referenceIds.filter((id) => id !== productMaterial.selectedMaterial?.assetId)]
+      : referenceIds;
+  if (!explicitT2v) {
+    const missing = compiledReferenceIds.filter((assetId) => !referenceAssetById.has(assetId));
+    if (missing.length > 0) {
+      throw new AiStoryProviderRuntimeError(
+        "COMPILED_REQUEST_INVALID",
+        "Image-conditioned compilation requires canonical MIME/storage authority for every Story reference"
+      );
+    }
+  }
+  const firstFrameAssetId = explicitT2v
+    ? null
+    : productMaterial?.selectedMaterial?.assetId ?? providerReadySceneInput?.assetId ?? authority?.firstFrameAssetId ?? (!canonicalScene ? referenceIds[0] : null);
+  if (!explicitT2v && !firstFrameAssetId) {
+    throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation is missing its canonical first frame");
+  }
+  const storyReferenceMappings = compiledReferenceIds.map((assetId, index) => {
+    const asset = referenceAssetById.get(assetId)!;
+    const imageCompatible = asset.mediaType.toLowerCase().startsWith("image/");
+    const semanticRole = assetId === firstFrameAssetId
+      ? "FIRST_FRAME" as const
+      : imageCompatible
+        ? "STORY_VISUAL_REFERENCE" as const
+        : "STORY_CONTINUITY_REFERENCE" as const;
+    if (semanticRole === "FIRST_FRAME" && !imageCompatible) {
+      throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "FIRST_FRAME must use image media");
+    }
+    const providerEmitted = semanticRole === "FIRST_FRAME";
+    return {
+      referenceId: deterministicPersistenceUuid("ai-story-compiled-reference", { sceneExecutionId: input.intent.identity.sceneExecutionId, assetId, index }),
+      assetId,
+      semanticRole,
+      mediaType: asset.mediaType,
+      providerEmitted,
+      ...(providerEmitted ? { providerWireRole: semanticRole === "FIRST_FRAME" ? "first_frame" as const : "reference_image" as const } : {}),
+      ...(asset.storagePath ? { storagePath: asset.storagePath } : {}),
+    };
+  });
+  const providerReferenceMappings = storyReferenceMappings.filter((reference) => reference.providerEmitted);
+  if (!explicitT2v && providerReferenceMappings.filter((reference) => reference.providerWireRole === "first_frame").length !== 1) {
+    throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation requires exactly one image first frame");
+  }
+
+  const supportedDurations = [4, 5, 6, 8, 10, 12] as const;
+  const requestedDuration = Math.max(1, Math.round(input.intent.plannedDurationMs / 1000));
+  const duration = supportedDurations.reduce((best, candidate) =>
+    Math.abs(candidate - requestedDuration) < Math.abs(best - requestedDuration)
+      ? candidate
+      : best
+  );
+  const orderedShots = [...input.instructions.shots].sort(
+    (left, right) => left.order - right.order || left.shotId.localeCompare(right.shotId)
+  );
+  const compiledPrompt = [
+    input.instructions.purpose,
+    input.instructions.continuityNotes
+      ? `Continuity: ${input.instructions.continuityNotes}`
+      : "",
+    ...orderedShots.map(
+      (shot, index) =>
+        `${index + 1}. ${shot.information} (${shot.cameraType}; ${shot.cameraMovement}; ${shot.composition})`
+    ),
+    ...input.instructions.productIdentityConstraints,
+  ].filter(Boolean).join("\n");
+  const semanticPlan = {
+    contractVersion: "ai-story-seedance-semantic-plan.v1" as const,
+    sceneExecutionPackageId: deterministicPersistenceUuid(
+      "ai-story-scene-execution-package",
+      {
+        sceneExecutionId: input.intent.identity.sceneExecutionId,
+        compilationHash: input.intent.compilationHash,
+        qcFingerprint: input.authority.qcFingerprint,
+      }
+    ),
+    packageFingerprint: integrityHash({
+      kind: "ai-story-scene-execution-compilation-capsule.v1",
+      intent: input.intent,
+      instructions: input.instructions,
+      authority: input.authority,
+    }),
+    sections: [
+      { section: "SCENE_PURPOSE" as const, facts: [input.instructions.purpose] },
+      ...(input.instructions.continuityNotes
+        ? [{ section: "ENTRY_STATE" as const, facts: [input.instructions.continuityNotes] }]
+        : []),
+      { section: "ACTION_PROGRESSION" as const, facts: orderedShots.map((shot) => shot.information) },
+      { section: "CAMERA" as const, facts: orderedShots.map((shot) => `${shot.cameraType}: ${shot.cameraMovement}`) },
+      { section: "MUST_KEEP" as const, facts: [...input.instructions.productIdentityConstraints] },
+    ],
+    translationClasses: [
+      { concept: "generation mode", translationClass: "DIRECT_STRUCTURED_MAPPING" as const },
+      { concept: "duration", translationClass: "DIRECT_STRUCTURED_MAPPING" as const },
+      { concept: "ratio", translationClass: "DIRECT_STRUCTURED_MAPPING" as const },
+      { concept: "resolution", translationClass: "DIRECT_STRUCTURED_MAPPING" as const },
+      { concept: "Scene purpose", translationClass: "CERTIFIED_PROMPT_SEMANTIC_MAPPING" as const },
+      { concept: "Camera", translationClass: "CERTIFIED_PROMPT_SEMANTIC_MAPPING" as const },
+    ],
+  };
+  const compiledPromptFingerprint = integrityHash({
+    kind: "ai-story-seedance-compiled-prompt.v1",
+    prompt: compiledPrompt,
+  });
+  const semanticPlanFingerprint = integrityHash({
+    kind: semanticPlan.contractVersion,
+    semanticPlan,
+  });
+  const sceneExecutionId = input.intent.identity.sceneExecutionId;
+  const compiledRequestId = compiledProviderRequestIdForSchedule({
+    sceneExecutionId,
+    scheduledAt: input.compiledAt,
+  });
+  const snapshot = (kind: string, value: unknown) => integrityHash({ kind, value });
+  const withoutFingerprint = {
+    compiledRequestId,
+    contractVersion: AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION,
+    runtimeVersion: AI_STORY_PROVIDER_RUNTIME_VERSION,
+    orgId: input.intent.identity.tenantId,
+    workspaceId: input.intent.identity.workspaceId,
+    campaignId: input.intent.identity.campaignId,
+    storyId: input.intent.identity.storyId,
+    storyVersionId: input.intent.identity.storyVersionId,
+    sceneExecutionId,
+    sceneExecutionPackageId: semanticPlan.sceneExecutionPackageId,
+    generationMode: explicitT2v
+      ? "TEXT_TO_VIDEO" as const
+      : "FIRST_FRAME_IMAGE_TO_VIDEO" as const,
+    ...(authority ? { generationAuthority: authority } : {}),
+    ...(productMaterial ? { productMaterialSelection: productMaterial } : {}),
+    providerId: "seedance" as const,
+    modelId: "dreamina-seedance-2-0-260128" as const,
+    adapterVersion: input.adapterVersion,
+    mappingVersion: AI_STORY_SEEDANCE_MAPPING_VERSION,
+    capabilityVersion: AI_STORY_SEEDANCE_CAPABILITY_CONTRACT_VERSION,
+    qcCapabilityVersion: input.authority.qcCapabilityVersion,
+    qcEvaluationId: input.authority.qcEvaluationId,
+    qcFingerprint: input.authority.qcFingerprint,
+    sceneFingerprint: input.intent.compilationHash,
+    directorFingerprint: input.authority.directorFingerprint,
+    motionFingerprint: input.authority.motionFingerprint,
+    castSnapshotFingerprint: snapshot("ai-story-cast-instruction-snapshot.v1", input.instructions.characterReferences),
+    locationSnapshotFingerprint: snapshot("ai-story-location-instruction-snapshot.v1", input.instructions.worldContinuity),
+    productSnapshotFingerprint: snapshot("ai-story-product-instruction-snapshot.v1", {
+      constraints: input.instructions.productIdentityConstraints,
+      referenceIds,
+      ...(productMaterial ? { productMaterialSelection: productMaterial } : {}),
+    }),
+    packageFingerprint: semanticPlan.packageFingerprint,
+    semanticPlan,
+    semanticPlanFingerprint,
+    compiledPrompt,
+    compiledPromptFingerprint,
+    structuredRequest: {
+      model: "dreamina-seedance-2-0-260128" as const,
+      duration,
+      ratio: "9:16" as const,
+      resolution: input.resolution ?? "480p" as const,
+      generateAudio: false as const,
+      watermark: false,
+    },
+    referenceMappings: providerReferenceMappings.map((reference) => ({
+      referenceId: reference.referenceId,
+      assetId: reference.assetId,
+      authorityType: "PRODUCT" as const,
+      authorityId: reference.assetId,
+      authorityClass: "REQUIRED" as const,
+      wireRole: reference.providerWireRole!,
+      semanticBinding: reference.semanticRole === "FIRST_FRAME"
+        ? "Canonical first-frame Product authority"
+        : "Canonical Provider-compatible Product image reference authority",
+      mediaType: reference.mediaType,
+      ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
+    })),
+    storyReferenceMappings,
+    ...(providerReadySceneInput ? { providerReadySceneInput } : {}),
+    ...(providerReadySceneInput && input.providerPolicyEligibility
+      ? {
+          providerPolicyEligibility: {
+            contractVersion: input.providerPolicyEligibility.contractVersion,
+            fingerprint: input.providerPolicyEligibility.fingerprint,
+            eligibility: "ELIGIBLE" as const,
+            selectedStrategy: input.providerPolicyEligibility.selectedStrategy as
+              | "SEEDANCE_FIRST_FRAME_I2V"
+              | "AUTHORIZED_HUMAN_ASSET_ROUTE",
+          },
+        }
+      : {}),
+    referenceBudget: AI_STORY_SEEDANCE_REFERENCE_BUDGET,
+    degradations: [],
+    blockedCapabilities: ["AUDIO", "FIRST_LAST_FRAME", "MULTI_SHOT", "CHAINING", "VIDEO_EXTENSION", "4K", "CANCELLATION"],
+    estimatedCost: { currency: "USD", amount: null, source: "UNKNOWN" as const },
+    dispatchReady: true as const,
+    compiledAt: input.compiledAt,
+  };
+  const request = AiStoryCompiledProviderRequestSchema.parse({
+    ...withoutFingerprint,
+    requestFingerprint: computeAiStoryCompiledRequestFingerprint(withoutFingerprint),
+  });
+  assertAiStoryCompiledProviderWireModeCompatibility(request);
+  return request;
 }
 
 export type AiStoryRuntimeFreshness = {
@@ -275,6 +712,9 @@ export async function createAiStoryProviderAttempt(input: {
     storyVersionId: request.storyVersionId,
     sceneExecutionId: request.sceneExecutionId,
     generationMode: request.generationMode,
+    ...(request.generationAuthority
+      ? { generationAuthority: request.generationAuthority }
+      : {}),
     providerId: request.providerId,
     modelId: request.modelId,
     adapterVersion: request.adapterVersion,
@@ -376,6 +816,28 @@ async function serializeTransportRequest(input: {
     generate_audio: false,
     watermark: input.request.structuredRequest.watermark,
   };
+}
+
+/**
+ * Non-submitting projection of the exact Provider wire request. Certification
+ * and preflight use this to prove what would reach the Provider without
+ * claiming a submission, creating an Attempt, or consuming commercial scope.
+ */
+export async function previewAiStorySeedanceWireRequest(input: {
+  readonly request: AiStoryCompiledProviderRequest;
+  readonly assetAccess: AiStoryRuntimeAssetAccess;
+}): Promise<SeedanceModelArkCreateRequest> {
+  if (!validateAiStoryCompiledRequestFingerprint(input.request)) {
+    throw new AiStoryProviderRuntimeError(
+      "REQUEST_TAMPERED",
+      "Cannot preview a compiled request whose fingerprint does not match its content"
+    );
+  }
+  assertAiStoryCompiledProviderWireModeCompatibility(input.request);
+  return serializeTransportRequest({
+    request: input.request,
+    assetAccess: input.assetAccess,
+  });
 }
 
 export class AiStoryCompiledRequestWorkerRuntime {

@@ -15,12 +15,14 @@ import {
   type GeneratedSceneReviewDecisionResponse,
   type GeneratedSceneReviewFact,
   type GeneratedSceneReviewReadModel,
+  type GeneratedSceneReviewState,
   type GeneratedSceneAttemptReadModel,
   type SceneAttemptInputRevisionFact,
   type SceneRetryAuthorizationFact,
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStoryPostGenerationQcRepository,
   GeneratedSceneReviewError,
   GeneratedSceneReviewRepository,
   DifferentiatedRetryRepository,
@@ -36,6 +38,9 @@ import {
   SceneSchedulingCoordinator,
   SceneSchedulingError,
 } from "./scene-scheduling-coordinator";
+import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
+import { resolveStagedReleaseCommercialAuthorization } from "./resolve-staged-release-commercial-authorization";
+import { postQcAllowsHumanApproval } from "./post-generation-qc-service";
 
 export { GeneratedSceneReviewError };
 
@@ -151,6 +156,7 @@ export class GeneratedSceneReviewService {
   constructor(
     private readonly dependencies: {
       readonly reviewRepository?: GeneratedSceneReviewRepository;
+      readonly postQcRepository?: Pick<AiStoryPostGenerationQcRepository, "getLatestByProviderAttemptIds">;
       readonly persistenceRepository?: AiStorySceneExecutionPersistenceRepository;
       readonly authorizationRepository?: RuntimeAuthorizationPersistenceRepository;
       readonly schedulingCoordinator?: SceneSchedulingCoordinator;
@@ -164,11 +170,19 @@ export class GeneratedSceneReviewService {
         getRevision(id: string): Promise<SceneAttemptInputRevisionFact | null>;
         markAuthorizationConsumed(id: string): Promise<SceneRetryAuthorizationFact>;
       };
+      readonly commercialAuthorizationService?: Pick<
+        CommercialAuthorizationService,
+        "authorizeExecutionPlanExecute"
+      >;
     } = {}
   ) {}
 
   private get reviewRepo() {
     return this.dependencies.reviewRepository ?? new GeneratedSceneReviewRepository();
+  }
+
+  private get postQcRepo() {
+    return this.dependencies.postQcRepository ?? new AiStoryPostGenerationQcRepository();
   }
 
   private nowIso(): string {
@@ -198,6 +212,25 @@ export class GeneratedSceneReviewService {
   }): Promise<GeneratedSceneReviewDecisionResponse> {
     void input.executionAuthorization;
     try {
+      const evaluations = await this.postQcRepo.getLatestByProviderAttemptIds({
+        workspaceId: input.workspaceId,
+        providerAttemptIds: [input.attemptId],
+      });
+      const evaluation = evaluations.get(input.attemptId);
+      if (!evaluation?.eligibleForHumanReview) {
+        throw new GeneratedSceneReviewError(
+          "GENERATED_SCENE_POST_QC_REQUIRED",
+          "Post-generation quality evidence is required before Human Review",
+          409
+        );
+      }
+      if (!postQcAllowsHumanApproval(evaluation)) {
+        throw new GeneratedSceneReviewError(
+          "GENERATED_SCENE_POST_QC_REQUIRED",
+          "Post-generation QC contains a non-waivable integrity rejection",
+          409
+        );
+      }
       const decision = await this.reviewRepo.transactDecision(
         {
           executionPlanId: input.executionPlanId,
@@ -378,6 +411,33 @@ export class GeneratedSceneReviewService {
         throw new GeneratedSceneReviewError("GENERATED_SCENE_RETRY_NOT_ELIGIBLE", "Retry input revision authority is missing");
       }
       const retryGeneration = authorization.authorizedAttemptNumber;
+      if (authorization.status === "CONSUMED") {
+        const review = (await this.reviewRepo.listByExecutionPlanId(
+          input.executionPlanId
+        )).find(
+          (candidate) =>
+            candidate.generatedSceneReviewId === authorization.sourceReviewId &&
+            candidate.sceneExecutionId === input.sceneExecutionId &&
+            candidate.providerAttemptId === authorization.sourceAttemptId &&
+            candidate.decision === "REJECTED"
+        );
+        if (!review) {
+          throw new GeneratedSceneReviewError(
+            "GENERATED_SCENE_RETRY_NOT_ELIGIBLE",
+            "Consumed retry authorization is missing its exact rejected review"
+          );
+        }
+        const scene = await this.loadSceneReadModel(
+          input.executionPlanId,
+          input.sceneExecutionId
+        );
+        return GeneratedSceneReviewDecisionResponseSchema.parse({
+          review,
+          scene,
+          retryEnqueued: true,
+          newAttemptNumber: retryGeneration,
+        });
+      }
       const review = await this.reviewRepo.transactDecision(
         {
           executionPlanId: input.executionPlanId,
@@ -439,15 +499,31 @@ export class GeneratedSceneReviewService {
         );
       }
 
+      const nonCommercialOps =
+        input.executionAuthorization.accessMode === "ops" &&
+        input.executionAuthorization.settlementMode === "none";
+      const commercialAuthorizationId = nonCommercialOps
+        ? undefined
+        : await resolveStagedReleaseCommercialAuthorization({
+            executionPlanId: input.executionPlanId,
+            orgId: fact.ownership.orgId,
+            workspaceId: fact.ownership.workspaceId,
+            executionAuthorization: input.executionAuthorization,
+            authorizedAt: new Date(this.nowIso()),
+            service: this.dependencies.commercialAuthorizationService,
+          });
+
       try {
         await this.schedulingCoordinator.scheduleAuthorizedScene({
           executionPlanId: input.executionPlanId,
           sceneExecutionId: input.sceneExecutionId,
           runtimeAuthorizationId: fact.runtimeAuthorizationId,
+          commercialAuthorizationId,
           executionAuthorization: input.executionAuthorization,
           actorUserId: input.actorUserId,
           retryGeneration,
           retryInputRevision: revision,
+          retryHumanReviewCorrection: review.rationale,
         });
         await differentiated.markAuthorizationConsumed(authorization.retryAuthorizationId);
       } catch (error) {
@@ -536,11 +612,19 @@ export class GeneratedSceneReviewService {
                 retryEligibility: null,
                 retryInputRevisionId: null,
                 retryAuthorizationId: null,
+                retryPrepared: false,
               }))
             ),
       (rows) => rows.length
     );
-    const reviews = reviewAuthorityRows.map((row) => row.review);
+    const reviews = [
+      ...new Map(
+        reviewAuthorityRows.map((row) => [
+          row.review.generatedSceneReviewId,
+          row.review,
+        ])
+      ).values(),
+    ];
     const generatedSceneReviewListMs = performance.now() - reviewStartedAt;
 
     const assemblyStartedAt = performance.now();
@@ -548,9 +632,27 @@ export class GeneratedSceneReviewService {
       "generated_scene_review.read_model_assembly",
       async () => {
         const snapshotByScene = groupReviews(reviews);
-        const retryAuthorityByReview = new Map(
-          reviewAuthorityRows.map((row) => [row.review.generatedSceneReviewId, row])
-        );
+        const retryAuthorityByReview = new Map<
+          string,
+          {
+            readonly retryEligibility: string | null;
+            readonly retryInputRevisionId: string | null;
+            readonly retryAuthorizationId: string | null;
+            readonly retryPrepared: boolean;
+          }
+        >();
+        for (const row of reviewAuthorityRows) {
+          const reviewId = row.review.generatedSceneReviewId;
+          const current = retryAuthorityByReview.get(reviewId);
+          retryAuthorityByReview.set(reviewId, {
+            retryEligibility: row.retryEligibility ?? current?.retryEligibility ?? null,
+            retryInputRevisionId:
+              row.retryInputRevisionId ?? current?.retryInputRevisionId ?? null,
+            retryAuthorizationId:
+              row.retryAuthorizationId ?? current?.retryAuthorizationId ?? null,
+            retryPrepared: row.retryPrepared || current?.retryPrepared === true,
+          });
+        }
         const maxAttempts = resolveAiStorySceneMaxAttempts();
         const orderedIntents = intents
           .slice()
@@ -634,6 +736,7 @@ export class GeneratedSceneReviewService {
         readonly retryEligibility: string | null;
         readonly retryInputRevisionId: string | null;
         readonly retryAuthorizationId: string | null;
+        readonly retryPrepared: boolean;
       }
     >;
     readonly spendAttempts: readonly import("@ceo-agent/shared").AiStoryProviderAttemptCostEvidence[];
@@ -684,17 +787,14 @@ export class GeneratedSceneReviewService {
       sceneId: input.sceneId,
       sceneOrder: input.sceneOrder,
       reviewState: running && reviewState === "RETRY_REQUESTED" ? "RETRY_REQUESTED" : reviewState,
-      runtimeState: approved
-        ? "APPROVED"
-        : running
-          ? "RUNNING"
-          : retryAuthority?.retryAuthorizationId
-            ? "RETRY_AUTHORIZED"
-          : latestReview?.decision === "REJECTED"
-            ? "REJECTED"
-          : reviewAvailable
-            ? "PENDING_REVIEW"
-            : "QUEUED",
+      runtimeState: deriveGeneratedSceneReviewAuthorityState({
+        approved: Boolean(approved),
+        running,
+        latestDecision: latestReview?.decision ?? null,
+        retryAuthorized: Boolean(retryAuthority?.retryAuthorizationId),
+        retryPrepared: retryAuthority?.retryPrepared === true,
+        reviewAvailable,
+      }),
       reviewAvailable,
       recoveryMode: null,
       approvedAttemptId: approved?.providerAttemptId ?? null,
@@ -722,6 +822,22 @@ export class GeneratedSceneReviewService {
       attempts,
     });
   }
+}
+
+export function deriveGeneratedSceneReviewAuthorityState(input: {
+  readonly approved: boolean;
+  readonly running: boolean;
+  readonly latestDecision: GeneratedSceneReviewState | null;
+  readonly retryAuthorized: boolean;
+  readonly retryPrepared: boolean;
+  readonly reviewAvailable: boolean;
+}): GeneratedSceneReviewReadModel["runtimeState"] {
+  if (input.approved) return "APPROVED";
+  if (input.running) return "RUNNING";
+  if (input.retryAuthorized || input.retryPrepared) return "RETRY_AUTHORIZED";
+  if (input.latestDecision === "REJECTED") return "REJECTED";
+  if (input.reviewAvailable) return "PENDING_REVIEW";
+  return "QUEUED";
 }
 
 function buildDecisionSceneReadModel(

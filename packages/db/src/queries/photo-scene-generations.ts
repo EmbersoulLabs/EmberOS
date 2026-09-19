@@ -31,7 +31,7 @@ export async function getPhotoSceneGeneration(
 
 export async function findReusablePhotoSceneExtraction(
   db: Db,
-  input: { workspaceId: string; fingerprint: string }
+  input: { workspaceId: string; sourceAssetId: string; fingerprint: string }
 ) {
   const [row] = await db
     .select()
@@ -40,6 +40,7 @@ export async function findReusablePhotoSceneExtraction(
       and(
         eq(schema.photoSceneGenerations.workspaceId, input.workspaceId),
         eq(schema.photoSceneGenerations.operation, "product_extraction"),
+        eq(schema.photoSceneGenerations.sourceAssetId, input.sourceAssetId),
         eq(schema.photoSceneGenerations.inputFingerprint, input.fingerprint),
         eq(schema.photoSceneGenerations.status, "ready")
       )
@@ -51,7 +52,7 @@ export async function findReusablePhotoSceneExtraction(
 
 export async function findInflightPhotoSceneExtraction(
   db: Db,
-  input: { workspaceId: string; fingerprint: string }
+  input: { workspaceId: string; sourceAssetId: string; fingerprint: string }
 ) {
   const queued = await db
     .select()
@@ -60,6 +61,7 @@ export async function findInflightPhotoSceneExtraction(
       and(
         eq(schema.photoSceneGenerations.workspaceId, input.workspaceId),
         eq(schema.photoSceneGenerations.operation, "product_extraction"),
+        eq(schema.photoSceneGenerations.sourceAssetId, input.sourceAssetId),
         eq(schema.photoSceneGenerations.inputFingerprint, input.fingerprint),
         eq(schema.photoSceneGenerations.status, "processing")
       )
@@ -73,6 +75,7 @@ export async function findInflightPhotoSceneExtraction(
       and(
         eq(schema.photoSceneGenerations.workspaceId, input.workspaceId),
         eq(schema.photoSceneGenerations.operation, "product_extraction"),
+        eq(schema.photoSceneGenerations.sourceAssetId, input.sourceAssetId),
         eq(schema.photoSceneGenerations.inputFingerprint, input.fingerprint),
         eq(schema.photoSceneGenerations.status, "queued")
       )

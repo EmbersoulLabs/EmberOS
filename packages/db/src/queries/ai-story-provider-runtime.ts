@@ -1,15 +1,18 @@
-import { eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   AiStoryCompiledProviderRequestSchema,
   AiStoryProviderAttemptBindingSchema,
   type AiStoryCompiledProviderRequest,
   type AiStoryProviderAttemptBinding,
+  SceneSchedulingBundleSchema,
+  type SceneSchedulingBundle,
   isAiStoryProviderAttemptTransitionAllowed,
 } from "@ceo-agent/shared";
 import { getDb } from "../client";
 import * as schema from "../schema/index";
 
 type Db = ReturnType<typeof getDb>;
+type QueryDb = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 export class AiStoryProviderRuntimePersistenceError extends Error {
   constructor(readonly code: "IMMUTABLE_CONFLICT" | "ATTEMPT_CONFLICT", message: string) {
@@ -22,35 +25,62 @@ function same(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+export async function acceptAiStoryCompiledRequest(
+  db: QueryDb,
+  input: AiStoryCompiledProviderRequest
+): Promise<AiStoryCompiledProviderRequest> {
+  const request = AiStoryCompiledProviderRequestSchema.parse(input);
+  const inserted = await db.insert(schema.aiStoryCompiledProviderRequests).values({
+    compiledRequestId: request.compiledRequestId,
+    orgId: request.orgId,
+    workspaceId: request.workspaceId,
+    campaignId: request.campaignId,
+    storyId: request.storyId,
+    storyVersionId: request.storyVersionId,
+    sceneExecutionId: request.sceneExecutionId,
+    requestFingerprint: request.requestFingerprint,
+    generationMode: request.generationMode,
+    providerId: request.providerId,
+    modelId: request.modelId,
+    adapterVersion: request.adapterVersion,
+    mappingVersion: request.mappingVersion,
+    capabilityVersion: request.capabilityVersion,
+    qcEvaluationId: request.qcEvaluationId,
+    qcFingerprint: request.qcFingerprint,
+    compiledRequest: request,
+    compiledAt: new Date(request.compiledAt),
+  }).onConflictDoNothing().returning({
+    compiledRequest: schema.aiStoryCompiledProviderRequests.compiledRequest,
+  });
+  if (inserted[0]) {
+    return AiStoryCompiledProviderRequestSchema.parse(inserted[0].compiledRequest);
+  }
+  const [row] = await db.select({
+    request: schema.aiStoryCompiledProviderRequests.compiledRequest,
+  })
+    .from(schema.aiStoryCompiledProviderRequests)
+    .where(eq(
+      schema.aiStoryCompiledProviderRequests.compiledRequestId,
+      request.compiledRequestId
+    ))
+    .limit(1);
+  const existing = row
+    ? AiStoryCompiledProviderRequestSchema.parse(row.request)
+    : null;
+  if (!existing || !same(existing, request)) {
+    throw new AiStoryProviderRuntimePersistenceError(
+      "IMMUTABLE_CONFLICT",
+      "Compiled Provider request identity conflicts"
+    );
+  }
+  return existing;
+}
+
 export class AiStoryProviderRuntimeRepository {
   constructor(private readonly db: Db = getDb()) {}
 
   async acceptCompiledRequest(input: AiStoryCompiledProviderRequest): Promise<AiStoryCompiledProviderRequest> {
-    const request = AiStoryCompiledProviderRequestSchema.parse(input);
-    const inserted = await this.db.insert(schema.aiStoryCompiledProviderRequests).values({
-      compiledRequestId: request.compiledRequestId,
-      orgId: request.orgId,
-      workspaceId: request.workspaceId,
-      campaignId: request.campaignId,
-      storyId: request.storyId,
-      storyVersionId: request.storyVersionId,
-      sceneExecutionId: request.sceneExecutionId,
-      requestFingerprint: request.requestFingerprint,
-      generationMode: request.generationMode,
-      providerId: request.providerId,
-      modelId: request.modelId,
-      adapterVersion: request.adapterVersion,
-      mappingVersion: request.mappingVersion,
-      capabilityVersion: request.capabilityVersion,
-      qcEvaluationId: request.qcEvaluationId,
-      qcFingerprint: request.qcFingerprint,
-      compiledRequest: request,
-      compiledAt: new Date(request.compiledAt),
-    }).onConflictDoNothing().returning({ compiledRequest: schema.aiStoryCompiledProviderRequests.compiledRequest });
-    if (inserted[0]) return AiStoryCompiledProviderRequestSchema.parse(inserted[0].compiledRequest);
-    const existing = await this.getCompiledRequest(request.compiledRequestId);
-    if (!existing || !same(existing, request)) throw new AiStoryProviderRuntimePersistenceError("IMMUTABLE_CONFLICT", "Compiled Provider request identity conflicts");
-    return existing;
+    return acceptAiStoryCompiledRequest(this.db, input);
   }
 
   async getCompiledRequest(compiledRequestId: string): Promise<AiStoryCompiledProviderRequest | null> {
@@ -63,9 +93,200 @@ export class AiStoryProviderRuntimeRepository {
   async getCompiledRequestBySceneExecutionId(sceneExecutionId: string): Promise<AiStoryCompiledProviderRequest | null> {
     const [row] = await this.db.select({ request: schema.aiStoryCompiledProviderRequests.compiledRequest })
       .from(schema.aiStoryCompiledProviderRequests)
-      .where(eq(schema.aiStoryCompiledProviderRequests.sceneExecutionId, sceneExecutionId))
+      .where(and(
+        eq(schema.aiStoryCompiledProviderRequests.sceneExecutionId, sceneExecutionId),
+        sql`not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_compiled_request_id = ${schema.aiStoryCompiledProviderRequests.compiledRequestId}
+        )`
+      ))
       .orderBy(sql`${schema.aiStoryCompiledProviderRequests.compiledAt} desc`).limit(1);
     return row ? AiStoryCompiledProviderRequestSchema.parse(row.request) : null;
+  }
+
+  /** Canonical campaign_asset_refs-backed MIME/storage authority for compilation. */
+  async getReferenceAssetAuthorities(input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly assetIds: readonly string[];
+  }): Promise<readonly { assetId: string; mediaType: string; storagePath?: string; contentHash: string | null }[]> {
+    if (input.assetIds.length === 0) return [];
+    const rows = await this.db.select({
+      assetId: schema.assets.id,
+      orgId: schema.assets.orgId,
+      workspaceId: schema.assets.workspaceId,
+      mediaType: schema.assets.mimeType,
+      storagePath: schema.assets.storagePath,
+      contentHash: schema.assets.contentHash,
+      campaignOrgId: schema.campaigns.orgId,
+      campaignWorkspaceId: schema.campaigns.workspaceId,
+    }).from(schema.campaignAssetRefs)
+      .innerJoin(schema.campaigns, eq(schema.campaigns.id, schema.campaignAssetRefs.campaignId))
+      .innerJoin(schema.assets, eq(schema.assets.id, schema.campaignAssetRefs.assetId))
+      .where(and(
+        eq(schema.campaignAssetRefs.campaignId, input.campaignId),
+        inArray(schema.campaignAssetRefs.assetId, [...input.assetIds])
+      ));
+    const byId = new Map(rows.map((row) => [row.assetId, row]));
+    return input.assetIds.map((assetId) => {
+      const row = byId.get(assetId);
+      if (!row || row.orgId !== input.orgId || row.workspaceId !== input.workspaceId || row.campaignOrgId !== input.orgId || row.campaignWorkspaceId !== input.workspaceId || !row.mediaType?.trim() || !row.storagePath?.trim()) {
+        throw new AiStoryProviderRuntimePersistenceError(
+          "IMMUTABLE_CONFLICT",
+          "Canonical Campaign reference MIME/storage authority is missing or out of scope"
+        );
+      }
+      return { assetId, mediaType: row.mediaType, storagePath: row.storagePath, contentHash: row.contentHash };
+    });
+  }
+
+  async convergeCompiledRequestForAcceptedBundle(input: {
+    readonly bundle: SceneSchedulingBundle;
+    readonly compiledProviderRequest: AiStoryCompiledProviderRequest;
+  }): Promise<AiStoryCompiledProviderRequest> {
+    const bundle = SceneSchedulingBundleSchema.parse(input.bundle);
+    const request = AiStoryCompiledProviderRequestSchema.parse(
+      input.compiledProviderRequest
+    );
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx.select({
+        orgId: schema.aiStorySceneSchedulingCorrelations.orgId,
+        workspaceId: schema.aiStorySceneSchedulingCorrelations.workspaceId,
+        storyId: schema.aiStorySceneSchedulingCorrelations.storyId,
+        storyVersionId: schema.aiStorySceneSchedulingCorrelations.storyVersionId,
+        sceneExecutionId: schema.aiStorySceneSchedulingCorrelations.sceneExecutionId,
+        providerExecutionId: schema.aiStorySceneSchedulingCorrelations.providerExecutionId,
+        outboxJobId: schema.aiStorySceneSchedulingCorrelations.outboxJobId,
+      }).from(schema.aiStorySceneSchedulingCorrelations).where(eq(
+        schema.aiStorySceneSchedulingCorrelations.correlationId,
+        bundle.correlation.correlationId
+      )).limit(1).for("update");
+      const [outbox] = await tx.select({
+        executionId: schema.providerOutboxJobs.executionId,
+        completedAt: schema.providerOutboxJobs.completedAt,
+        deadLetterAt: schema.providerOutboxJobs.deadLetterAt,
+      }).from(schema.providerOutboxJobs).where(eq(
+        schema.providerOutboxJobs.jobId,
+        bundle.outboxJobId
+      )).limit(1).for("update");
+      if (
+        !row || !outbox || outbox.completedAt || outbox.deadLetterAt ||
+        row.orgId !== request.orgId ||
+        row.workspaceId !== request.workspaceId ||
+        row.storyId !== request.storyId ||
+        row.storyVersionId !== request.storyVersionId ||
+        row.sceneExecutionId !== request.sceneExecutionId ||
+        row.providerExecutionId !== bundle.providerExecutionId ||
+        row.outboxJobId !== bundle.outboxJobId ||
+        outbox.executionId !== bundle.providerExecutionId
+      ) {
+        throw new AiStoryProviderRuntimePersistenceError(
+          "IMMUTABLE_CONFLICT",
+          "Accepted scheduling bundle cannot safely converge compiled request authority"
+        );
+      }
+      const [activeCompiled] = await tx.select({
+        compiledRequestId: schema.aiStoryCompiledProviderRequests.compiledRequestId,
+        requestFingerprint: schema.aiStoryCompiledProviderRequests.requestFingerprint,
+      }).from(schema.aiStoryCompiledProviderRequests).where(and(
+        eq(schema.aiStoryCompiledProviderRequests.sceneExecutionId, request.sceneExecutionId),
+        sql`not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_compiled_request_id = ${schema.aiStoryCompiledProviderRequests.compiledRequestId}
+        )`
+      )).orderBy(desc(schema.aiStoryCompiledProviderRequests.compiledAt)).limit(1).for("update");
+      if (
+        activeCompiled &&
+        (activeCompiled.compiledRequestId !== request.compiledRequestId ||
+          activeCompiled.requestFingerprint !== request.requestFingerprint)
+      ) {
+        throw new AiStoryProviderRuntimePersistenceError(
+          "IMMUTABLE_CONFLICT",
+          "Accepted scheduling bundle is bound to a different active compiled request; canonical supersession is required"
+        );
+      }
+      return acceptAiStoryCompiledRequest(tx, request);
+    });
+  }
+
+  async getCompilationAuthorityBySceneExecutionId(input: {
+    readonly sceneExecutionId: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+  }): Promise<{
+    readonly qcEvaluationId: string;
+    readonly qcFingerprint: string;
+    readonly qcCapabilityVersion: string;
+    readonly directorFingerprint: string;
+    readonly motionFingerprint: string;
+  } | null> {
+    const [row] = await this.db
+      .select({
+        qcEvaluationId: schema.aiStoryPreGenerationQcEvaluations.qcEvaluationId,
+        qcFingerprint: schema.aiStoryPreGenerationQcEvaluations.qcFingerprint,
+        qcCapabilityVersion:
+          schema.aiStoryPreGenerationQcEvaluations.providerCapabilityVersion,
+        dispatchDecision: schema.aiStoryPreGenerationQcEvaluations.dispatchDecision,
+        directorFingerprint: schema.aiStoryDirectorPlanVersions.directorFingerprint,
+        directorStatus: schema.aiStoryDirectorPlanVersions.status,
+        motionFingerprint: schema.aiStoryMotionPlanVersions.motionFingerprint,
+        motionStatus: schema.aiStoryMotionPlanVersions.status,
+      })
+      .from(schema.aiStoryPreGenerationQcEvaluations)
+      .innerJoin(
+        schema.aiStoryDirectorPlanVersions,
+        eq(
+          schema.aiStoryDirectorPlanVersions.directorPlanId,
+          schema.aiStoryPreGenerationQcEvaluations.directorPlanId
+        )
+      )
+      .innerJoin(
+        schema.aiStoryMotionPlanVersions,
+        eq(
+          schema.aiStoryMotionPlanVersions.motionPlanId,
+          schema.aiStoryPreGenerationQcEvaluations.motionPlanId
+        )
+      )
+      .where(
+        and(
+          eq(
+            schema.aiStoryPreGenerationQcEvaluations.sceneExecutionId,
+            input.sceneExecutionId
+          ),
+          eq(schema.aiStoryPreGenerationQcEvaluations.orgId, input.orgId),
+          eq(
+            schema.aiStoryPreGenerationQcEvaluations.workspaceId,
+            input.workspaceId
+          ),
+          eq(schema.aiStoryPreGenerationQcEvaluations.storyId, input.storyId),
+          eq(
+            schema.aiStoryPreGenerationQcEvaluations.storyVersionId,
+            input.storyVersionId
+          )
+        )
+      )
+      .orderBy(desc(schema.aiStoryPreGenerationQcEvaluations.evaluationVersion))
+      .limit(1);
+    if (
+      !row ||
+      !["DISPATCH_ELIGIBLE", "DISPATCH_ELIGIBLE_WITH_WARNINGS"].includes(
+        row.dispatchDecision
+      ) ||
+      row.directorStatus !== "FROZEN" ||
+      row.motionStatus !== "FROZEN"
+    ) {
+      return null;
+    }
+    return {
+      qcEvaluationId: row.qcEvaluationId,
+      qcFingerprint: row.qcFingerprint,
+      qcCapabilityVersion: row.qcCapabilityVersion,
+      directorFingerprint: row.directorFingerprint,
+      motionFingerprint: row.motionFingerprint,
+    };
   }
 
   async acceptAttempt(input: AiStoryProviderAttemptBinding): Promise<{ attempt: AiStoryProviderAttemptBinding; replayed: boolean }> {

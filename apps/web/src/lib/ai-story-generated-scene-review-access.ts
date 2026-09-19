@@ -7,9 +7,15 @@ import {
   GeneratedSceneReviewError,
   GeneratedSceneReviewService,
   DifferentiatedRetryService,
+  postQcAllowsHumanApproval,
 } from "@ceo-agent/agents";
 import { isUuid, rejectForgedGeneratedSceneReviewBody } from "@ceo-agent/shared";
-import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
+import {
+  AiStoryPostGenerationQcRepository,
+  GeneratedSceneReviewRepository,
+} from "@ceo-agent/db";
+import { resolveCanonicalWebExecuteProviderAuthority } from "@/lib/ai-story-canonical-execute-router";
+import { createCanonicalProductMaterialSchedulingCoordinator } from "@/lib/ai-story-product-material-scheduling";
 import {
   resolveAuthorizedExecutionPlan,
   type AuthorizedExecutionPlanContext,
@@ -42,10 +48,66 @@ export async function authorizeGeneratedSceneReviewWrite(input: {
   return ctx;
 }
 
-export function createdGeneratedSceneReviewService() {
+export async function createdGeneratedSceneReviewService() {
+  const providerRouting = await resolveCanonicalWebExecuteProviderAuthority();
   return new GeneratedSceneReviewService({
-    router: createCanonicalExecuteProviderRouter(),
+    router: providerRouting.router,
+    schedulingCoordinator: createCanonicalProductMaterialSchedulingCoordinator(providerRouting.router),
   });
+}
+
+/** Required Post-QC evidence is immutable, so a successful read is a stable gate. */
+export async function assertGeneratedScenePostQcReviewEligibility(input: {
+  readonly executionPlanId: string;
+  readonly sceneExecutionId: string;
+  readonly workspaceId: string;
+  readonly decision: "APPROVE" | "REJECT";
+  readonly providerAttemptId?: string;
+}, repositories: {
+  readonly reviews: {
+    listByExecutionPlanId(executionPlanId: string): Promise<readonly {
+      sceneExecutionId: string;
+      providerAttemptId: string;
+      decision: string;
+    }[]>;
+  };
+  readonly postQc: Pick<AiStoryPostGenerationQcRepository, "getLatestByProviderAttemptIds">;
+} = {
+  reviews: new GeneratedSceneReviewRepository(),
+  postQc: new AiStoryPostGenerationQcRepository(),
+}): Promise<void> {
+  const reviews = await repositories.reviews.listByExecutionPlanId(input.executionPlanId);
+  const pending = reviews.find((review) =>
+    review.sceneExecutionId === input.sceneExecutionId &&
+    review.decision === "PENDING_REVIEW" &&
+    (!input.providerAttemptId || review.providerAttemptId === input.providerAttemptId)
+  );
+  if (!pending) {
+    throw new GeneratedSceneReviewError(
+      "GENERATED_SCENE_REVIEW_NOT_FOUND",
+      "Pending generated Scene review was not found",
+      404
+    );
+  }
+  const evaluations = await repositories.postQc.getLatestByProviderAttemptIds({
+      workspaceId: input.workspaceId,
+      providerAttemptIds: [pending.providerAttemptId],
+    });
+  const evaluation = evaluations.get(pending.providerAttemptId);
+  if (!evaluation?.eligibleForHumanReview) {
+    throw new GeneratedSceneReviewError(
+      "GENERATED_SCENE_POST_QC_REQUIRED",
+      "Post-generation quality evidence is required before Human Review",
+      409
+    );
+  }
+  if (input.decision === "APPROVE" && !postQcAllowsHumanApproval(evaluation)) {
+    throw new GeneratedSceneReviewError(
+      "GENERATED_SCENE_POST_QC_REQUIRED",
+      "Post-generation QC contains a non-waivable integrity rejection",
+      409
+    );
+  }
 }
 
 export function createDifferentiatedRetryService() {

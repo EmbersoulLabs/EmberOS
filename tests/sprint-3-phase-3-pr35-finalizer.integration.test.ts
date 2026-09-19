@@ -1,6 +1,7 @@
 /**
  * Sprint 3 PR 3.5R1 — real PostgreSQL integration for Production Finalizer + Scene projection.
- * No mocks. Skips unless RUN_DB_INTEGRATION_TESTS=1 and DATABASE_URL is set.
+ * Real PostgreSQL finalization/review persistence; test-only QC evidence is
+ * injected for this pre-Post-QC contract's approval assertions.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Sql } from "postgres";
@@ -46,6 +47,14 @@ import {
 } from "./helpers/ai-story-pr35-finalizer";
 import type { SceneProjectionValidatedBundle } from "@ceo-agent/shared";
 import { PHASE_2A_IDS } from "./helpers/ai-story-phase-2a";
+import { approvalQcEvaluation } from "./helpers/ai-story-post-qc-approval";
+
+const legacyReviewQcFixture = {
+  async getLatestByProviderAttemptIds(input: { workspaceId: string; providerAttemptIds: readonly string[] }) {
+    void input.workspaceId;
+    return new Map(input.providerAttemptIds.map((attemptId) => [attemptId, approvalQcEvaluation(attemptId)]));
+  },
+};
 
 const integrationDbUrl = getIntegrationDbUrl();
 if (RUN_DB_INTEGRATION && !integrationDbUrl) {
@@ -291,6 +300,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     expect(scenes?.count).toBe(1);
 
     const bindingService = new GeneratedSceneReviewService({
+      postQcRepository: legacyReviewQcFixture,
       now: () => new Date("2026-08-05T13:05:00.000Z"),
     });
     const approvalInput = {
@@ -366,6 +376,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     });
 
     const failureService = new GeneratedSceneReviewService({
+      postQcRepository: legacyReviewQcFixture,
       now: () => new Date("2026-08-05T13:05:00.000Z"),
     });
 
@@ -416,6 +427,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
 
     const connectionMetrics = createGeneratedSceneReviewConnectionMetrics();
     const approvalService = new GeneratedSceneReviewService({
+      postQcRepository: legacyReviewQcFixture,
       reviewRepository: new GeneratedSceneReviewRepository(undefined, connectionMetrics),
       now: () => new Date("2026-08-05T13:05:00.000Z"),
     });
@@ -444,6 +456,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
 
     const replayMetrics = createGeneratedSceneReviewConnectionMetrics();
     const replayService = new GeneratedSceneReviewService({
+      postQcRepository: legacyReviewQcFixture,
       reviewRepository: new GeneratedSceneReviewRepository(undefined, replayMetrics),
       now: () => new Date("2026-08-05T13:05:00.000Z"),
     });
@@ -565,6 +578,7 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
     if (outcome.outcome !== "PROJECTED") throw new Error("expected PROJECTED");
 
     await new GeneratedSceneReviewService({
+      postQcRepository: legacyReviewQcFixture,
       now: () => new Date("2026-08-05T14:00:00.000Z"),
     }).approve({
       executionPlanId: prepared.executionPlanId,

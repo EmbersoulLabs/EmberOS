@@ -12,7 +12,6 @@ import {
   authorizeAiStoryExecution,
   CanonicalExecuteError,
   AiStoryExecutionDeniedError,
-  resolveCanonicalExecuteRoutingPolicy,
 } from "@ceo-agent/agents";
 import {
   CANONICAL_EXECUTE_FORBIDDEN_BODY_KEYS,
@@ -25,7 +24,8 @@ import {
   executionPlanRouteErrorResponse,
   resolveAuthorizedExecutionPlan,
 } from "@/lib/ai-story-execution-plan-access";
-import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
+import { resolveCanonicalWebExecuteProviderAuthority } from "@/lib/ai-story-canonical-execute-router";
+import { createCanonicalProductMaterialSchedulingCoordinator } from "@/lib/ai-story-product-material-scheduling";
 
 type RouteParams = {
   params: Promise<{ id: string; storyId: string; executionPlanId: string }>;
@@ -108,12 +108,14 @@ export async function POST(request: Request, { params }: RouteParams) {
       executionPlanId: ctx.executionPlanId,
     };
 
+    const providerRouting = await resolveCanonicalWebExecuteProviderAuthority();
     const result = await authorizeAndExecuteExecutionPlan({
       executionPlanId: ctx.executionPlanId,
       actorUserId: user.id,
       ownership,
-      router: createCanonicalExecuteProviderRouter(),
-      routingPolicy: resolveCanonicalExecuteRoutingPolicy(),
+      router: providerRouting.router,
+      schedulingCoordinator: createCanonicalProductMaterialSchedulingCoordinator(providerRouting.router),
+      routingPolicy: providerRouting.routingPolicy,
       executionAuthorization,
     });
 

@@ -1,5 +1,11 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import {
+  AiStoryCharacterAuthorityService,
+  AiStorySupportingCastAuthorityService,
+  getDb,
+  schema,
+  withDbDeadline,
+} from "@ceo-agent/db";
 import {
   AiStoryStructuredDraftSchema,
   AiStoryUpdateDraftBodySchema,
@@ -26,26 +32,45 @@ export async function GET(
       return apiError("Invalid id", "VALIDATION_ERROR", 400);
     }
 
-    const db = getDb();
-    const [campaign] = await db
-      .select()
-      .from(schema.campaigns)
-      .where(eq(schema.campaigns.id, campaignId))
-      .limit(1);
-    if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
+    return await withDbDeadline(getDb(), async (db) => {
+      const [campaign] = await db
+        .select()
+        .from(schema.campaigns)
+        .where(eq(schema.campaigns.id, campaignId))
+        .limit(1);
+      if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+      await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
 
-    const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
-    if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
+      const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
+      if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
 
-    if (loaded.verificationFixtureState === "LEGACY_PARTIAL_VERIFICATION_FIXTURE") {
-      return apiSuccess({
-        ...loaded,
-        story: { ...loaded.story, status: "failed" },
-        persistedStoryStatus: loaded.story.status,
-      });
-    }
-    return apiSuccess(loaded);
+      // This request has already resolved the canonical Campaign, Story,
+      // workspace membership, tenant, plan, and effective-entitlement authority.
+      // Keep the initial UI Character/Cast projection inside that verified
+      // request instead of starting two more full authorization chains.
+      const verifiedScope = {
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        campaignId,
+        storyId,
+        actorUserId: user.id,
+      };
+      const [characters, supportingCharacters] = await Promise.all([
+        new AiStoryCharacterAuthorityService(db).listForVerifiedScope(verifiedScope),
+        new AiStorySupportingCastAuthorityService(db).listForVerifiedScope(verifiedScope),
+      ]);
+
+      if (loaded.verificationFixtureState === "LEGACY_PARTIAL_VERIFICATION_FIXTURE") {
+        return apiSuccess({
+          ...loaded,
+          characters,
+          supportingCharacters,
+          story: { ...loaded.story, status: "failed" },
+          persistedStoryStatus: loaded.story.status,
+        });
+      }
+      return apiSuccess({ ...loaded, characters, supportingCharacters });
+    });
   } catch (error) {
     return handleApiError(error);
   }

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { AppShell, StatusBadge } from "@/components/AppShell";
+import { AppShell, fetchCurrentUserProjection, StatusBadge } from "@/components/AppShell";
 import { StoryRuntimePanel } from "@/components/ai-story/StoryRuntimePanel";
 import { PlanningApprovalControl } from "@/components/ai-story/PlanningApprovalControl";
 import { CharacterPanel } from "@/components/ai-story/CharacterPanel";
@@ -14,6 +14,8 @@ import { fetchCurrentExecutionPlan } from "@/lib/ai-story-execution-plan-discove
 import {
   STORY_PLANNING_STAGE_ORDER,
   type AnimationPackagePayload,
+  type AiStoryCharacterAuthorityVersion,
+  type AiStorySupportingCharacterVersion,
   type AiStoryStructuredDraft,
   type CreativeContext,
   type StoryPlanningDraft,
@@ -82,6 +84,8 @@ export default function AiStoryReviewPage() {
   const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | string | null>(null);
   const [storyVersionId, setStoryVersionId] = useState<string | null>(null);
   const [animationPackageRecordId, setAnimationPackageRecordId] = useState<string | null>(null);
+  const [initialCharacters, setInitialCharacters] = useState<AiStoryCharacterAuthorityVersion[] | undefined>();
+  const [initialSupportingCharacters, setInitialSupportingCharacters] = useState<AiStorySupportingCharacterVersion[] | undefined>();
   const persistedDraftFingerprint = useRef("");
   const saveGeneration = useRef(0);
   const advancedAuthorized = isAdvancedOperator(workspaceRole);
@@ -90,9 +94,7 @@ export default function AiStoryReviewPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const meRes = await fetch("/api/me");
-        if (!meRes.ok) return;
-        const me = await meRes.json();
+        const me = await fetchCurrentUserProjection();
         const ws = (me.workspaces as Array<{ slug: string; role: string }> | undefined)
           ?.find((workspace) => workspace.slug === slug);
         setWorkspaceRole(ws?.role ?? null);
@@ -108,6 +110,8 @@ export default function AiStoryReviewPage() {
       if (!res.ok) throw new Error(data.error ?? "Failed to load story");
       const nextStatus = String(data.story.status);
       setStatus(nextStatus);
+      setInitialCharacters(Array.isArray(data.characters) ? data.characters : undefined);
+      setInitialSupportingCharacters(Array.isArray(data.supportingCharacters) ? data.supportingCharacters : undefined);
       setStoryVersionId(typeof data.currentVersion?.id === "string" ? data.currentVersion.id : null);
       const content = data.currentVersion?.structuredContent as AiStoryStructuredDraft | undefined;
       if (content) {
@@ -115,29 +119,40 @@ export default function AiStoryReviewPage() {
         persistedDraftFingerprint.current = JSON.stringify(normalized);
         setDraft(normalized); setWarnings(normalized.warnings); setSaveState("CLEAN");
       }
-      if (advancedAuthorized && isPlanningStatus(nextStatus)) {
-        const planningRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`);
-        if (planningRes.ok) {
-          const planningData = await planningRes.json();
-          setCreativeContext((planningData.creativeContext?.payload as CreativeContext | undefined) ?? null);
-          setPlanningDraft((planningData.planningDraft as StoryPlanningDraft | undefined) ?? null);
-          setAnimationPackage((planningData.completePackage as AnimationPackagePayload | undefined) ??
-            (planningData.animationPackage?.payload && !("kind" in (planningData.animationPackage.payload as object))
-              ? (planningData.animationPackage.payload as AnimationPackagePayload) : null));
-          setAnimationPackageRecordId(typeof planningData.animationPackage?.id === "string"
-            ? planningData.animationPackage.id : null);
-        }
-      } else {
-        setCreativeContext(null); setPlanningDraft(null); setAnimationPackage(null);
-        setAnimationPackageRecordId(null);
-      }
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to load story");
     } finally {
       setLoading(false);
     }
-  }, [advancedAuthorized, campaignId, storyId]);
+  }, [campaignId, storyId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!advancedAuthorized || !isPlanningStatus(status)) {
+      setCreativeContext(null); setPlanningDraft(null); setAnimationPackage(null);
+      setAnimationPackageRecordId(null);
+      return;
+    }
+    let active = true;
+    void (async () => {
+      try {
+        const planningRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`);
+        if (!planningRes.ok || !active) return;
+        const planningData = await planningRes.json();
+        if (!active) return;
+        setCreativeContext((planningData.creativeContext?.payload as CreativeContext | undefined) ?? null);
+        setPlanningDraft((planningData.planningDraft as StoryPlanningDraft | undefined) ?? null);
+        setAnimationPackage((planningData.completePackage as AnimationPackagePayload | undefined) ??
+          (planningData.animationPackage?.payload && !("kind" in (planningData.animationPackage.payload as object))
+            ? (planningData.animationPackage.payload as AnimationPackagePayload) : null));
+        setAnimationPackageRecordId(typeof planningData.animationPackage?.id === "string"
+          ? planningData.animationPackage.id : null);
+      } catch {
+        // Optional operator diagnostics must not invalidate the Story read.
+      }
+    })();
+    return () => { active = false; };
+  }, [advancedAuthorized, campaignId, status, storyId]);
 
   const persistDraft = useCallback(async (nextDraft: AiStoryStructuredDraft) => {
     const generation = ++saveGeneration.current;
@@ -275,8 +290,8 @@ export default function AiStoryReviewPage() {
           {!readOnly ? <div className="flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={() => void requestPolishPreview()} className="rounded-lg border border-border px-4 py-2 text-sm font-medium">{busy ? "Polishing…" : "AI Polish"}</button><button type="button" disabled={busy || saveState === "SAVING"} onClick={() => void approveStoryForAnimation()} className="brand-btn-primary">Generate Animation</button></div> : null}
         </section>
 
-         <CharacterPanel campaignId={campaignId} canEdit={advancedAuthorized} />
-         <SupportingCastPanel campaignId={campaignId} storyId={storyId} canEdit={advancedAuthorized} />
+         <CharacterPanel campaignId={campaignId} canEdit={advancedAuthorized} initialCharacters={initialCharacters} />
+         <SupportingCastPanel campaignId={campaignId} storyId={storyId} canEdit={advancedAuthorized} initialSupportingCharacters={initialSupportingCharacters} />
 
         {polishPreview ? <section className="space-y-4 rounded-2xl border border-brand-blue/30 bg-brand-blue/5 p-5" data-testid="ai-polish-preview"><div><h2 className="text-lg font-bold text-navy">AI Polish Preview</h2><p className="mt-1 text-sm text-ink-secondary">Your current Story remains authoritative until you accept this preview.</p></div><StoryPreview draft={polishPreview} /><div className="flex flex-wrap gap-2"><button type="button" className="brand-btn-primary" disabled={busy} onClick={() => void acceptPolishPreview()}>Accept changes</button><button type="button" className="rounded-lg border border-border bg-white px-3 py-2 text-sm" disabled={busy} onClick={() => setPolishPreview(null)}>Cancel</button><button type="button" className="rounded-lg border border-border bg-white px-3 py-2 text-sm" disabled={busy} onClick={() => void requestPolishPreview()}>Regenerate</button></div></section> : null}
 
@@ -294,7 +309,23 @@ function StoryPreview({ draft }: { draft: AiStoryStructuredDraft }) {
 }
 
 function PackageSection({ title, value }: { title: string; value: unknown }) {
-  return <div className="rounded-xl border border-border bg-surface-muted p-4"><h3 className="text-sm font-semibold text-navy">{title}</h3><pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs text-ink-secondary">{JSON.stringify(value,null,2)}</pre></div>;
+  const scenes = title === "Scenes" && Array.isArray(value)
+    ? value as AnimationPackagePayload["scenePlan"]
+    : null;
+  return <div className="rounded-xl border border-border bg-surface-muted p-4">
+    <h3 className="text-sm font-semibold text-navy">{title}</h3>
+    {scenes ? <div className="mt-2 space-y-2" data-testid="canonical-scene-generation-mode-review">
+      {scenes.map((scene) => {
+        const mode = scene.generationAuthority;
+        const referenceFree = mode?.referenceSource === "REFERENCE_FREE_T2V";
+        return <div key={scene.id} className="rounded-lg border border-border bg-white p-3 text-sm">
+          <p className="font-medium text-navy">Scene {scene.order + 1}: {referenceFree ? "Reference-free text-to-video" : mode?.referenceSource === "SCENE_EXPLICIT" ? "First-frame image-to-video" : "BLOCKED — explicit generation mode missing"}</p>
+          <p className="text-xs text-ink-secondary">{referenceFree ? "No visual reference supplied for generation." : mode?.referenceSource === "SCENE_EXPLICIT" ? `Exact first-frame source Asset: ${mode.firstFrameAssetId}. Product material must be READY; approval blocks otherwise.` : "A current Package cannot be approved without an exact Scene mode decision."}</p>
+        </div>;
+      })}
+    </div> : null}
+    <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap text-xs text-ink-secondary">{JSON.stringify(value,null,2)}</pre>
+  </div>;
 }
 
 type SafeSceneIntentHint = { sceneExecutionId: string; sceneId?: string; sceneOrder?: number; purpose?: string; plannedDurationMs?: number; shotCount?: number; referencedAssetIds?: string[] };

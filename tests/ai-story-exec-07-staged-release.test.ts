@@ -47,13 +47,20 @@ describe("EXEC-07 durable staged Scene release", () => {
 
   it("remaining release is server-derived and exact-approval gated", () => {
     const repo = read("packages/db/src/queries/ai-story-scene-release.ts");
+    const terminal = read("packages/db/src/queries/provider-execution-finalizer.ts");
     expect(repo).toContain("pg_advisory_xact_lock");
     expect(repo).toContain('decision, "APPROVED"');
-    expect(repo).toContain('status, "SUCCEEDED"');
+    expect(repo).toContain("resolveSuccessfulProviderAttemptTerminalAuthority");
+    expect(repo.match(/resolveSuccessfulProviderAttemptTerminalAuthority/g)).toHaveLength(3);
+    expect(repo).not.toContain('eq(schema.providerAttempts.status, "SUCCEEDED")');
+    expect(terminal).toContain('attempt.contractVersion === "1"');
+    expect(terminal).toContain('attempt.status !== "SUCCEEDED"');
+    expect(terminal).toContain("AI_STORY_PROVIDER_RUNTIME_VERSION");
+    expect(terminal).toContain('attempt.status !== "PENDING"');
+    expect(terminal).not.toMatch(/providerAttempts\)\.set\(\{[^}]*status:\s*"SUCCEEDED"/s);
     expect(repo).toContain("gateProviderAttemptId");
     expect(repo).toContain("FIRST_SCENE_EXACT_ATTEMPT_REQUIRED");
     expect(repo).toContain("FIRST_SCENE_RETRY_OR_EXECUTION_IN_FLIGHT");
-    expect(repo).toContain("providerAttempts.attemptId");
     expect(repo).toContain("result.providerExecutionId");
     const route = read("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/release-remaining-scenes/route.ts");
     expect(route).toContain("resolveAuthorizedExecutionPlan");
@@ -98,5 +105,37 @@ describe("EXEC-07 durable staged Scene release", () => {
     expect(agentsBarrel).toContain('export * from "./ai-story"');
     expect(aiStoryBarrel).toContain('export * from "./authorize-and-execute-execution-plan"');
     expect(route.match(/authorizeAndExecuteExecutionPlan\(/g)).toHaveLength(1);
+  });
+
+  it("resolves billable authority before release and always converges scheduling", () => {
+    const source = read("packages/agents/src/ai-story/release-next-eligible-scene.ts");
+    const commercial = source.indexOf("resolveStagedReleaseCommercialAuthorization");
+    const release = source.indexOf("repo.releaseNextEligible", commercial);
+    const schedule = source.indexOf("coordinator.scheduleAuthorizedScene", release);
+
+    expect(commercial).toBeGreaterThan(-1);
+    expect(release).toBeGreaterThan(commercial);
+    expect(schedule).toBeGreaterThan(release);
+    expect(source.slice(release, schedule)).not.toContain("released.newlyReleased) {");
+    expect(source).toContain("commercialAuthorizationId,");
+  });
+
+  it("persists commercial authorization in immutable scheduling lineage", () => {
+    const contract = read("packages/shared/src/ai-story-scene-scheduling.ts");
+    const coordinator = read("packages/agents/src/ai-story/scene-scheduling-coordinator.ts");
+
+    expect(contract).toContain("commercialAuthorizationId: z.string().uuid().nullable().optional()");
+    expect(coordinator).toContain("commercialAuthorizationId: input.commercialAuthorizationId ?? null");
+    expect(coordinator).toContain("commercialAuthorizationId: input.commercialAuthorizationId,");
+  });
+
+  it("keeps the certification convergence operation before paid execution", () => {
+    const script = read("apps/worker/scripts/converge-certification-staged-release-dispatch.ts");
+    expect(script).toContain("CERTIFICATION_NO_DISPATCH_HOLD_REQUIRED");
+    expect(script).toContain("ProviderExecutionDispatcher");
+    expect(script).not.toContain("ProviderExecutionWorker");
+    expect(script).not.toContain("reserveForSceneExecution");
+    expect(script).not.toContain("providerAttempts).values");
+    expect(script).toContain("providerInvoked: false");
   });
 });

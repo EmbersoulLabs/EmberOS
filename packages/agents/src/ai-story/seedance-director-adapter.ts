@@ -1,7 +1,6 @@
 import {
   AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION,
   AI_STORY_SEEDANCE_MAPPING_VERSION,
-  AI_STORY_SEEDANCE_REFERENCE_BUDGET,
   AI_STORY_SEEDANCE_TRANSLATION_MATRIX,
   AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION,
   AiStorySceneExecutionPackageSchema,
@@ -17,6 +16,11 @@ import {
   validateAiStoryPreGenerationQcFingerprint,
 } from "@ceo-agent/shared/server";
 import { integrityHash } from "./scene-execution-compiler";
+import {
+  canonicalSceneSnapshot,
+  projectNarrativeWorldState,
+  resolveCanonicalSceneActiveIntent,
+} from "./active-intent-world-state";
 
 export const SEEDANCE_CERTIFIED_CAMERA_PROMPT_SEMANTICS = Object.freeze({
   LOCKED: "locked camera",
@@ -143,6 +147,34 @@ function assertExactBindings(pkg: AiStorySceneExecutionPackage): void {
   if (pkg.directorDirection.shots.length !== 1) {
     throw new SeedanceDirectorAdapterError("MULTI_SHOT_UNCERTIFIED", "Seedance V1 Scene execution accepts one Director shot; multi-shot orchestration is not certified");
   }
+  const generationAuthority = pkg.generationAuthority;
+  if (generationAuthority) {
+    const actualReferenceIds = [...new Set(pkg.visualReferences.map((item) => item.assetId))].sort();
+    const effectiveReferenceIds = [...generationAuthority.effectiveReferenceIds].sort();
+    if (JSON.stringify(actualReferenceIds) !== JSON.stringify(effectiveReferenceIds)) {
+      throw new SeedanceDirectorAdapterError("GENERATION_REFERENCE_AUTHORITY_MISMATCH", "Scene generation authority does not match the execution package visual references", "SCENE");
+    }
+    if (generationAuthority.strategy === "TEXT_TO_VIDEO") {
+      if (
+        pkg.generation.mode !== "TEXT_TO_VIDEO" ||
+        generationAuthority.referenceSource !== "REFERENCE_FREE_T2V" ||
+        generationAuthority.firstFrameAssetId !== null ||
+        generationAuthority.productVisualIdentityRequirement !== "NONE"
+      ) {
+        throw new SeedanceDirectorAdapterError("T2V_GENERATION_AUTHORITY_CONFLICT", "TEXT_TO_VIDEO package authority is not explicitly reference-free", "SCENE");
+      }
+    } else {
+      const firstFrames = pkg.visualReferences.filter((item) => item.firstFrame);
+      if (
+        pkg.generation.mode !== "FIRST_FRAME_IMAGE_TO_VIDEO" ||
+        !generationAuthority.firstFrameAssetId ||
+        firstFrames.length !== 1 ||
+        firstFrames[0]?.assetId !== generationAuthority.firstFrameAssetId
+      ) {
+        throw new SeedanceDirectorAdapterError("I2V_FIRST_FRAME_AUTHORITY_CONFLICT", "Image-conditioned package does not preserve the canonical first-frame authority", "SCENE");
+      }
+    }
+  }
 }
 
 function requirementByAuthority(pkg: AiStorySceneExecutionPackage): Map<string, "NONE" | "PREFERRED" | "REQUIRED"> {
@@ -155,14 +187,26 @@ function requirementByAuthority(pkg: AiStorySceneExecutionPackage): Map<string, 
 
 function selectReferences(pkg: AiStorySceneExecutionPackage): { selected: AiStoryExecutionVisualReference[]; degradations: SeedanceAdapterDegradation[] } {
   const requirements = requirementByAuthority(pkg);
-  const grouped = new Map<string, AiStoryExecutionVisualReference[]>();
   for (const reference of pkg.visualReferences) {
+    const imageCompatible = !reference.mediaType || reference.mediaType.toLowerCase().startsWith("image/");
+    const semanticRole = reference.semanticRole ?? (reference.firstFrame
+      ? "FIRST_FRAME"
+      : imageCompatible
+        ? "STORY_VISUAL_REFERENCE"
+        : "STORY_CONTINUITY_REFERENCE");
+    if ((semanticRole === "FIRST_FRAME" || semanticRole === "PROVIDER_IMAGE_REFERENCE") && !imageCompatible) {
+      throw new SeedanceDirectorAdapterError("REFERENCE_MEDIA_TYPE_UNSUPPORTED", `Reference ${reference.referenceId} assigns a Provider image role to non-image media`);
+    }
+    if (semanticRole === "PROVIDER_IMAGE_REFERENCE" && pkg.generation.mode === "FIRST_FRAME_IMAGE_TO_VIDEO") {
+      throw new SeedanceDirectorAdapterError(
+        "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID",
+        "FIRST_FRAME_IMAGE_TO_VIDEO forbids reference_image inputs"
+      );
+    }
+    if (semanticRole === "STORY_VISUAL_REFERENCE" || semanticRole === "STORY_CONTINUITY_REFERENCE") continue;
     if (!requirements.has(reference.authorityId) && reference.authorityType !== "OTHER") {
       throw new SeedanceDirectorAdapterError("REFERENCE_AUTHORITY_UNKNOWN", `Reference ${reference.referenceId} does not resolve to a Scene authority`);
     }
-    const list = grouped.get(reference.authorityId) ?? [];
-    list.push(reference);
-    grouped.set(reference.authorityId, list);
   }
 
   if (pkg.generation.mode === "TEXT_TO_VIDEO") {
@@ -174,58 +218,68 @@ function selectReferences(pkg: AiStorySceneExecutionPackage): { selected: AiStor
     };
   }
 
-  const chosen: AiStoryExecutionVisualReference[] = [];
+  const firstFrames = pkg.visualReferences.filter((reference) =>
+    (reference.semanticRole ?? (reference.firstFrame ? "FIRST_FRAME" : undefined)) === "FIRST_FRAME"
+  );
+  if (firstFrames.length !== 1) {
+    throw new SeedanceDirectorAdapterError(
+      "FIRST_FRAME_CARDINALITY",
+      "FIRST_FRAME_IMAGE_TO_VIDEO requires exactly one selected first frame"
+    );
+  }
+  const firstFrame = firstFrames[0]!;
+  if (firstFrame.mediaType && !firstFrame.mediaType.toLowerCase().startsWith("image/")) {
+    throw new SeedanceDirectorAdapterError(
+      "REFERENCE_MEDIA_TYPE_UNSUPPORTED",
+      "FIRST_FRAME_IMAGE_TO_VIDEO first frame must use image media"
+    );
+  }
+  if (!requirements.has(firstFrame.authorityId) && firstFrame.authorityType !== "OTHER") {
+    throw new SeedanceDirectorAdapterError(
+      "REFERENCE_AUTHORITY_UNKNOWN",
+      `Reference ${firstFrame.referenceId} does not resolve to a Scene authority`
+    );
+  }
   const degradations: SeedanceAdapterDegradation[] = [];
-  for (const [authorityId, requirement] of [...requirements.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-    if (requirement === "NONE") continue;
-    const candidates = [...(grouped.get(authorityId) ?? [])].sort((left, right) => right.selectionPriority - left.selectionPriority || left.assetId.localeCompare(right.assetId));
-    if (!candidates[0]) {
-      if (requirement === "REQUIRED") throw new SeedanceDirectorAdapterError("REQUIRED_VISUAL_AUTHORITY_MISSING", `Required visual authority ${authorityId} has no authorized reference Asset`);
-      degradations.push({ code: "PREFERRED_REFERENCE_OMITTED", authorityId, safeEvidence: "Preferred visual authority had no authorized reference Asset" });
-      continue;
+  for (const [authorityId, requirement] of requirements) {
+    if (authorityId === firstFrame.authorityId || requirement === "NONE") continue;
+    if (requirement === "REQUIRED") {
+      throw new SeedanceDirectorAdapterError(
+        "REQUIRED_VISUAL_AUTHORITY_MISSING",
+        `Required visual authority ${authorityId} is not represented by the canonical first frame`
+      );
     }
-    if (candidates[0].authorityClass !== requirement) throw new SeedanceDirectorAdapterError("REFERENCE_AUTHORITY_CLASS_MISMATCH", `Reference classification for ${authorityId} does not match canonical visual identity requirement`);
-    chosen.push(candidates[0]);
-    for (const omitted of candidates.slice(1)) degradations.push({ code: omitted.authorityClass === "OPTIONAL" ? "OPTIONAL_REFERENCE_OMITTED" : "PREFERRED_REFERENCE_OMITTED", authorityId, safeEvidence: "Redundant same-authority reference omitted by deterministic priority" });
+    degradations.push({
+      code: "PREFERRED_REFERENCE_OMITTED",
+      authorityId,
+      safeEvidence: "FIRST_FRAME_IMAGE_TO_VIDEO retains supporting Story visuals as lineage-only evidence",
+    });
   }
-  for (const reference of pkg.visualReferences.filter((candidate) => candidate.authorityType === "OTHER")) chosen.push(reference);
-
-  const required = chosen.filter((reference) => reference.authorityClass === "REQUIRED");
-  if (required.length > AI_STORY_SEEDANCE_REFERENCE_BUDGET) throw new SeedanceDirectorAdapterError("REQUIRED_REFERENCE_OVER_BUDGET", `Required references exceed the certified shared budget of ${AI_STORY_SEEDANCE_REFERENCE_BUDGET}`);
-  const ordered = [...chosen].sort((left, right) => {
-    const rank = { REQUIRED: 0, PREFERRED: 1, OPTIONAL: 2 } as const;
-    return rank[left.authorityClass] - rank[right.authorityClass] || right.selectionPriority - left.selectionPriority || left.assetId.localeCompare(right.assetId);
-  });
-  const selected = ordered.slice(0, AI_STORY_SEEDANCE_REFERENCE_BUDGET);
-  for (const omitted of ordered.slice(AI_STORY_SEEDANCE_REFERENCE_BUDGET)) {
-    if (omitted.authorityClass === "REQUIRED") throw new SeedanceDirectorAdapterError("REQUIRED_REFERENCE_OVER_BUDGET", "A required reference would be dropped");
-    degradations.push({ code: omitted.authorityClass === "PREFERRED" ? "PREFERRED_REFERENCE_OMITTED" : "OPTIONAL_REFERENCE_OMITTED", authorityId: omitted.authorityId, safeEvidence: "Reference omitted after deterministic shared-budget allocation" });
-  }
-  const firstFrames = selected.filter((reference) => reference.firstFrame);
-  if (firstFrames.length !== 1) throw new SeedanceDirectorAdapterError("FIRST_FRAME_CARDINALITY", "FIRST_FRAME_IMAGE_TO_VIDEO requires exactly one selected first frame");
-  return { selected, degradations };
+  return { selected: [firstFrame], degradations };
 }
 
 function buildSemanticPlan(pkg: AiStorySceneExecutionPackage, degradations: SeedanceAdapterDegradation[], selectedReferences: readonly AiStoryExecutionVisualReference[]): AiStorySeedanceSemanticPlan {
   const scene = pkg.scene;
+  const activeIntent = resolveCanonicalSceneActiveIntent(scene);
+  const worldState = projectNarrativeWorldState([canonicalSceneSnapshot(scene)], scene.sceneId);
   const shot = pkg.directorDirection.shots[0]!;
   const camera = SEEDANCE_CERTIFIED_CAMERA_PROMPT_SEMANTICS[shot.cameraFamily as keyof typeof SEEDANCE_CERTIFIED_CAMERA_PROMPT_SEMANTICS];
   if (!camera && pkg.generation.cameraMappingRequirement === "REQUIRED") throw new SeedanceDirectorAdapterError("CAMERA_MAPPING_UNSAFE", `No certified Seedance prompt-semantic mapping exists for ${shot.cameraFamily}`, "DIRECTOR");
   if (!camera) degradations.push({ code: "OPTIONAL_CAMERA_OMITTED", safeEvidence: `Optional unmapped camera family ${shot.cameraFamily} was omitted` });
-  const actions = scene.events.filter((event) => event.type === "ACTION");
+  const activeCastIds = new Set(worldState.charactersPresent);
   const dialogue = scene.events.filter((event) => event.type === "DIALOGUE").map((event) => `Dialogue context only; do not synthesize audio: “${event.line}”`);
   const voiceOver = scene.events.filter((event) => event.type === "VO").map((event) => `Voice-over narrative context only; do not synthesize audio: “${event.line}”`);
   const locationCore = pkg.locationAuthority
     ? [pkg.locationAuthority.facts.identity, pkg.locationAuthority.facts.appearance, ...pkg.locationAuthority.facts.fixedElements, ...pkg.locationAuthority.facts.environmentalCharacteristics]
     : [scene.locationBinding.scope === "EPHEMERAL_ENVIRONMENT" ? scene.locationBinding.environmentDescription : ""];
   const sections = new Map<typeof sectionOrder[number], string[]>([
-    ["SCENE_CONTEXT", [`Order ${scene.order + 1}; role ${scene.sceneRole}; importance ${scene.importance}; time relation ${scene.timeRelation}`, ...scene.continuityFacts]],
-    ["CAST_AUTHORITY", pkg.castAuthorities.flatMap((cast) => [`${cast.displayName}: ${cast.identity}`, `Appearance: ${cast.appearance}`, ...cast.coreContinuityFacts, ...cast.sceneStateFacts])],
-    ["LOCATION_AUTHORITY", [...locationCore, ...Object.entries(scene.locationState).flatMap(([key, value]) => Array.isArray(value) ? value.map((item) => `${key}: ${item}`) : value ? [`${key}: ${value}`] : [])]],
-    ["PRODUCT_AUTHORITY", pkg.productAuthorities.flatMap((product) => [`${product.displayName}: ${product.identityFacts.join("; ")}`, ...product.sceneStateFacts])],
+    ["SCENE_CONTEXT", [`Order ${scene.order + 1}; role ${scene.sceneRole}; importance ${scene.importance}; time relation ${scene.timeRelation}`, `Active location: ${activeIntent.location.label}`, ...activeIntent.continuityRequirements]],
+    ["CAST_AUTHORITY", pkg.castAuthorities.filter((cast) => activeCastIds.has(cast.reference.id)).flatMap((cast) => [`${cast.displayName}: ${cast.identity}`, `Appearance: ${cast.appearance}`, ...cast.coreContinuityFacts, ...cast.sceneStateFacts])],
+    ["LOCATION_AUTHORITY", [`Current location authority: ${worldState.currentLocation.label}`, ...locationCore, ...Object.entries(scene.locationState).flatMap(([key, value]) => Array.isArray(value) ? value.map((item) => `${key}: ${item}`) : value ? [`${key}: ${value}`] : [])]],
+    ["PRODUCT_AUTHORITY", [...pkg.productAuthorities.flatMap((product) => [`${product.displayName}: ${product.identityFacts.join("; ")}`, ...product.sceneStateFacts]), ...worldState.possessions.map((possession) => `Current possession: ${possession.objectId} — ${possession.holder}`)]],
     ["ENTRY_STATE", scene.entryState.map((item) => fact(item.subjectId, item.dimension, item.value))],
-    ["SCENE_PURPOSE", [`${scene.sceneFunction}: ${pkg.directorDirection.servedScriptSceneFunction}`, ...pkg.directorDirection.newAudienceInformation]],
-    ["SCRIPT_ACTION", [...actions.map((event) => event.action), ...dialogue, ...voiceOver]],
+    ["SCENE_PURPOSE", [`${activeIntent.narrativePurpose}: ${pkg.directorDirection.servedScriptSceneFunction}`, ...pkg.directorDirection.newAudienceInformation]],
+    ["SCRIPT_ACTION", [...activeIntent.actions, ...dialogue, ...voiceOver]],
     ["ACTION_PROGRESSION", pkg.motionScenePlan.actionExecutions.flatMap((execution) => [`Start: ${execution.startState.map((item) => fact(item.entityId, item.property, item.value)).join("; ")}`, `Action: ${execution.semanticAction}`, `Path: ${[...execution.actionPath].sort((a, b) => a.order - b.order).map((phase) => phase.semanticPhase).join(" → ")}`, `End: ${execution.endState.map((item) => fact(item.entityId, item.property, item.value)).join("; ")}`])],
     ["REQUIRED_EXIT_STATE", scene.exitState.map((item) => fact(item.subjectId, item.dimension, item.value))],
     ["DIRECTOR_VISUAL_TREATMENT", [`Visual role ${pkg.directorDirection.sceneVisualRole}; shot purpose ${shot.shotPurpose}; shot size ${shot.shotSize}`, shot.cameraIntent]],
@@ -237,7 +291,7 @@ function buildSemanticPlan(pkg: AiStorySceneExecutionPackage, degradations: Seed
     ["ENVIRONMENTAL_MOTION", pkg.motionScenePlan.environmentalMotions.map((item) => `${item.semanticMotion}: ${item.timing}`)],
     ["REQUIRED_EVIDENCE", [...pkg.directorDirection.servedProductEvidence, ...pkg.productAuthorities.flatMap((product) => product.visibleEvidenceGoals)]],
     ["MUST_KEEP", [...scene.mustKeep, ...pkg.castAuthorities.flatMap((cast) => cast.mustKeep), ...pkg.productAuthorities.flatMap((product) => product.mustKeep), ...selectedReferences.map((reference) => `Reference conditioning: ${reference.semanticBinding}`)]],
-    ["MUST_AVOID", [...scene.mustAvoid, ...pkg.productAuthorities.flatMap((product) => product.mustAvoid)]],
+    ["MUST_AVOID", [...activeIntent.mustNotInherit, ...pkg.productAuthorities.flatMap((product) => product.mustAvoid)]],
   ]);
   return AiStorySeedanceSemanticPlanSchema.parse({
     contractVersion: AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION,

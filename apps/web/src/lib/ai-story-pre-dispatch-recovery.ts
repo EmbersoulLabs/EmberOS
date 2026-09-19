@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import {
   PreDispatchRecoveryService,
+  CREATIVE_T2V_MODE,
   ProductGroundingGateError,
   assertProductGroundingPreDispatch,
   createCompilationBackedCanonicalPayloadResolver,
@@ -111,6 +112,29 @@ export async function certifyPreDispatchRecoveryGrounding(input: {
     payload = (await resolver.resolve(
       envelope.canonicalRequest.normalizedPayloadReference
     )) as CanonicalScenePayloadForAdapter;
+    if (payload.generationMode === CREATIVE_T2V_MODE) {
+      if (
+        payload.assetReferences.length !== 0 ||
+        payload.productGrounding ||
+        payload.productIdentityCapsule.productReferencePresent
+      ) {
+        throw new PreDispatchRecoveryRepositoryError(
+          "AUTHORITY_CONFLICT",
+          "Reference-free T2V recovery authority conflicts with image conditioning"
+        );
+      }
+      return {
+        generationMode: "CREATIVE_T2V",
+        visualAuthorityCertified: true,
+        productAuthorityResolved: true,
+        providerMode: "TEXT_TO_VIDEO",
+        firstFramePresent: false,
+        referenceAuthority: "REFERENCE_FREE_T2V",
+        referenceCount: 0,
+        directorSafe: true,
+        preDispatchGate: "PASS",
+      } as const;
+    }
     if (!payload.productGrounding) throw new Error("PRODUCT_VISUAL_AUTHORITY_UNCERTIFIED");
     assertProductGroundingPreDispatch({
       grounding: payload.productGrounding,
@@ -137,10 +161,13 @@ export async function certifyPreDispatchRecoveryGrounding(input: {
   );
   if (!productReference) throw new Error("PRODUCT_VISUAL_AUTHORITY_UNCERTIFIED");
   return {
+    generationMode: "PRODUCT_GROUNDED_VIDEO",
     visualAuthorityCertified: true,
     productAuthorityResolved: true,
     providerMode: "FIRST_FRAME_I2V",
     firstFramePresent: true,
+    referenceAuthority: "PRODUCT_GROUNDED",
+    referenceCount: payload.assetReferences.length,
     directorSafe: true,
     preDispatchGate: "PASS",
   } as const;

@@ -2,12 +2,20 @@ import { z } from "zod";
 import { StoryBeatSchema } from "./ai-story";
 import { AiStoryCastReferenceSchema, castReferenceKey } from "./ai-story-cast";
 import {
-  AI_STORY_PRODUCT_STORY_PROFILE_ID,
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
-  AI_STORY_PRODUCT_STORY_PROFILE_VERSION,
   AiStoryProductStoryOutlinePolicySchema,
-  AiStoryProductStoryProfileReferenceSchema,
 } from "./ai-story-product-story-profile";
+import {
+  AI_STORY_OUTLINE_PROFILE_REGISTRY,
+  AiStoryOutlineProfileReferenceSchema,
+} from "./ai-story-outline-profile";
+export {
+  AI_STORY_OUTLINE_PROFILE_REGISTRY,
+  AiStoryOutlineCoreProfileReferenceSchema,
+  AiStoryOutlineProfileReferenceSchema,
+  canonicalAiStoryOutlineProfileReference,
+  type AiStoryOutlineProfileReference,
+} from "./ai-story-outline-profile";
 
 export const AI_STORY_OUTLINE_CONTRACT_VERSION = "ai-story-outline.v1" as const;
 export const AI_STORY_OUTLINE_STATUSES = [
@@ -82,26 +90,6 @@ export const AiStoryRequiredSceneOutcomeSchema = z.object({
   beatIds: z.array(Id).min(1),
   authorityReferences: z.array(AiStoryOutlineAuthorityReferenceSchema).default([]),
 }).strict();
-
-export const AiStoryOutlineCoreProfileReferenceSchema = z.object({
-  profileId: z.literal("CORE"),
-  profileVersion: z.literal(1),
-}).strict();
-
-export const AiStoryOutlineProfileReferenceSchema = z.union([
-  AiStoryOutlineCoreProfileReferenceSchema,
-  AiStoryProductStoryProfileReferenceSchema,
-]);
-
-export const AI_STORY_OUTLINE_PROFILE_REGISTRY = Object.freeze({
-  CORE: Object.freeze({ profileId: "CORE" as const, profileVersion: 1 as const, hookRequired: false }),
-  PRODUCT_STORY: Object.freeze({
-    profileId: AI_STORY_PRODUCT_STORY_PROFILE_ID,
-    profileVersion: AI_STORY_PRODUCT_STORY_PROFILE_VERSION,
-    policyFingerprint: AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
-    hookRequired: false,
-  }),
-});
 
 export const AiStoryOutlineVersionSchema = z.object({
   outlineVersionId: Id,

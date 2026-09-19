@@ -12,6 +12,7 @@ import {
   unique,
   uniqueIndex,
   index,
+  check,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -267,11 +268,12 @@ export const photoSceneGenerations = pgTable(
     index("photo_scene_generations_reuse_idx").on(
       t.workspaceId,
       t.operation,
+      t.sourceAssetId,
       t.inputFingerprint,
       t.status
     ),
     uniqueIndex("photo_scene_generations_inflight_fingerprint_idx")
-      .on(t.workspaceId, t.operation, t.inputFingerprint)
+      .on(t.workspaceId, t.operation, t.sourceAssetId, t.inputFingerprint)
       .where(sql`${t.status} in ('queued', 'processing')`),
   ]
 );
@@ -641,6 +643,8 @@ export const aiStories = pgTable(
       .references(() => campaigns.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     originalIdea: text("original_idea").notNull(),
+    outlineProfile: jsonb("outline_profile")
+      .$type<import("@ceo-agent/shared").AiStoryOutlineProfileReference>(),
     status: text("status").notNull().default("draft"),
     currentVersionId: uuid("current_version_id"),
     createdBy: uuid("created_by"),
@@ -1160,6 +1164,9 @@ export const aiStoryAnimationPackages = pgTable(
     approvedBy: uuid("approved_by"),
   },
   (t) => [
+    uniqueIndex("ai_story_animation_packages_one_ready_per_story_version_idx")
+      .on(t.storyId, t.storyVersionId)
+      .where(sql`${t.status} = 'ready_for_execution'`),
     index("ai_story_animation_packages_story_idx").on(t.storyId, t.createdAt),
     index("ai_story_animation_packages_workspace_idx").on(t.workspaceId, t.createdAt),
     index("ai_story_animation_packages_status_idx").on(t.status),
@@ -1908,6 +1915,37 @@ export const aiStoryRuntimeAuthorizedFacts = pgTable(
   ]
 );
 
+/** Immutable human authority for one paid AI Story keyframe image-generation call. */
+export const aiStoryKeyframePaidAuthorizations = pgTable(
+  "ai_story_keyframe_paid_authorizations",
+  {
+    authorizationId: uuid("authorization_id").primaryKey(),
+    contractVersion: text("contract_version").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    sceneId: uuid("scene_id").notNull(),
+    sceneVersionId: uuid("scene_version_id").notNull(),
+    preparationAuthorityId: text("preparation_authority_id").notNull(),
+    preparationFingerprint: text("preparation_fingerprint").notNull(),
+    keyframeBriefFingerprint: text("keyframe_brief_fingerprint").notNull(),
+    providerId: text("provider_id").notNull(),
+    modelId: text("model_id").notNull(),
+    maximumImageProviderCalls: integer("maximum_image_provider_calls").notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    authorizationReason: text("authorization_reason").notNull(),
+    deterministicIntegrityHash: text("deterministic_integrity_hash").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").AiStoryKeyframePaidAuthorizationFact>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_keyframe_paid_auth_integrity_unique").on(t.deterministicIntegrityHash),
+    index("ai_story_keyframe_paid_auth_scope_idx").on(t.workspaceId, t.storyId, t.sceneId, t.createdAt),
+    check("ai_story_keyframe_paid_auth_calls_check", sql`${t.maximumImageProviderCalls} = 1`),
+  ]
+);
+
 /** EXEC-07 — durable separation between plan authorization and provider release. */
 export const aiStorySceneReleaseStates = pgTable(
   "ai_story_scene_release_states",
@@ -2119,6 +2157,8 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
     authorizationHash: text("authorization_hash").notNull(),
     schedulingIdentityHash: text("scheduling_identity_hash").notNull(),
     retryInputRevisionId: uuid("retry_input_revision_id"),
+    postTerminalRetryAuthorizationId: uuid("post_terminal_retry_authorization_id"),
+    sourceProviderAttemptId: text("source_provider_attempt_id"),
     contractVersion: text("contract_version").notNull(),
     scheduledBy: uuid("scheduled_by").notNull(),
     scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
@@ -2131,10 +2171,121 @@ export const aiStorySceneSchedulingCorrelations = pgTable(
     unique("ai_story_scene_scheduling_provider_unique").on(t.providerExecutionId),
     unique("ai_story_scene_scheduling_outbox_unique").on(t.outboxJobId),
     unique("ai_story_scene_scheduling_identity_unique").on(t.schedulingIdentityHash),
+    unique("ai_story_scene_scheduling_post_terminal_retry_unique").on(
+      t.postTerminalRetryAuthorizationId
+    ),
     index("ai_story_scene_scheduling_plan_idx").on(t.executionPlanId, t.acceptedAt),
     index("ai_story_scene_scheduling_workspace_idx").on(t.workspaceId, t.acceptedAt),
     index("ai_story_scene_scheduling_auth_idx").on(t.runtimeAuthorizationId),
     index("ai_story_scene_scheduling_scene_idx").on(t.sceneExecutionId, t.acceptedAt),
+  ]
+);
+
+/**
+ * Explicit human authority for exactly one append-only retry generation after
+ * a terminal Provider Attempt produced no Scene Result. The row never changes;
+ * consumption is represented by the unique scheduling-correlation reference.
+ */
+export const aiStoryPostTerminalProviderRetryAuthorizations = pgTable(
+  "ai_story_post_terminal_provider_retry_authorizations",
+  {
+    authorizationId: uuid("authorization_id").primaryKey(),
+    environment: text("environment").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sourceCompiledRequestId: uuid("source_compiled_request_id").notNull().references(() => aiStoryCompiledProviderRequests.compiledRequestId, { onDelete: "restrict" }),
+    sourceCompiledRequestFingerprint: text("source_compiled_request_fingerprint").notNull(),
+    priorProviderAttemptId: text("prior_provider_attempt_id").notNull().references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    priorWorkerResultId: uuid("prior_worker_result_id").notNull(),
+    priorReservationId: uuid("prior_reservation_id").notNull(),
+    failureClassification: text("failure_classification").notNull(),
+    failureCode: text("failure_code").notNull(),
+    retryReason: text("retry_reason").notNull(),
+    humanDecision: text("human_decision").notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    retryGeneration: integer("retry_generation").notNull(),
+    targetCompilerContractVersion: text("target_compiler_contract_version").notNull(),
+    targetMode: text("target_mode").notNull(),
+    commercialAuthorizationId: uuid("commercial_authorization_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").PostTerminalProviderRetryAuthorizationFact>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_post_terminal_retry_source_contract_unique").on(
+      t.priorProviderAttemptId,
+      t.failureClassification,
+      t.targetCompilerContractVersion
+    ),
+    unique("ai_story_post_terminal_retry_idempotency_unique").on(t.idempotencyKey),
+    unique("ai_story_post_terminal_retry_integrity_unique").on(t.integrityHash),
+    unique("ai_story_post_terminal_retry_worker_result_unique").on(t.priorWorkerResultId),
+    index("ai_story_post_terminal_retry_scene_idx").on(t.sceneExecutionId, t.createdAt),
+    index("ai_story_post_terminal_retry_workspace_idx").on(t.workspaceId, t.createdAt),
+    check("ai_story_post_terminal_retry_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
+    check("ai_story_post_terminal_retry_human_decision_check", sql`${t.humanDecision} = 'AUTHORIZE_ONE_RETRY'`),
+    check("ai_story_post_terminal_retry_generation_check", sql`${t.retryGeneration} >= 2`),
+    check("ai_story_post_terminal_retry_contract_check", sql`${t.contractVersion} = 'ai-story-post-terminal-provider-retry.v1'`),
+  ]
+);
+
+/**
+ * Append-only authority for replacing a deterministically invalid bundle
+ * before any commercial reservation or Provider side effect exists.
+ *
+ * Source and successor payload rows remain immutable. Worker selectors derive
+ * executability from this authority: a Dispatch named as a source is
+ * historical and must never be claimed again.
+ */
+export const aiStoryPreDispatchBundleSupersessions = pgTable(
+  "ai_story_pre_dispatch_bundle_supersessions",
+  {
+    supersessionId: uuid("supersession_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    sourceCompiledRequestId: uuid("source_compiled_request_id").notNull().references(() => aiStoryCompiledProviderRequests.compiledRequestId, { onDelete: "restrict" }),
+    sourceCorrelationId: uuid("source_correlation_id").notNull().references(() => aiStorySceneSchedulingCorrelations.correlationId, { onDelete: "restrict" }),
+    sourceOutboxJobId: text("source_outbox_job_id").notNull().references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    sourceDispatchId: text("source_dispatch_id").notNull().references(() => providerExecutionDispatches.dispatchId, { onDelete: "restrict" }),
+    successorCompiledRequestId: uuid("successor_compiled_request_id").notNull().references(() => aiStoryCompiledProviderRequests.compiledRequestId, { onDelete: "restrict" }),
+    successorCorrelationId: uuid("successor_correlation_id").notNull().references(() => aiStorySceneSchedulingCorrelations.correlationId, { onDelete: "restrict" }),
+    successorOutboxJobId: text("successor_outbox_job_id").notNull().references(() => providerOutboxJobs.jobId, { onDelete: "restrict" }),
+    successorDispatchId: text("successor_dispatch_id").notNull().references(() => providerExecutionDispatches.dispatchId, { onDelete: "restrict" }),
+    reason: text("reason").notNull(),
+    actorUserId: uuid("actor_user_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    targetContractVersion: text("target_contract_version").notNull(),
+    authorityVersion: text("authority_version").notNull(),
+    paidSideEffectEvidence: jsonb("paid_side_effect_evidence").$type<Record<string, unknown>>().notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_bundle_supersession_source_unique").on(t.sourceCompiledRequestId),
+    unique("ai_story_bundle_supersession_source_correlation_unique").on(t.sourceCorrelationId),
+    unique("ai_story_bundle_supersession_source_outbox_unique").on(t.sourceOutboxJobId),
+    unique("ai_story_bundle_supersession_source_dispatch_unique").on(t.sourceDispatchId),
+    unique("ai_story_bundle_supersession_successor_compiled_unique").on(t.successorCompiledRequestId),
+    unique("ai_story_bundle_supersession_successor_correlation_unique").on(t.successorCorrelationId),
+    unique("ai_story_bundle_supersession_successor_outbox_unique").on(t.successorOutboxJobId),
+    unique("ai_story_bundle_supersession_successor_dispatch_unique").on(t.successorDispatchId),
+    unique("ai_story_bundle_supersession_idempotency_unique").on(t.idempotencyKey),
+    unique("ai_story_bundle_supersession_integrity_unique").on(t.integrityHash),
+    index("ai_story_bundle_supersession_scene_idx").on(t.sceneExecutionId, t.createdAt),
+    check("ai_story_bundle_supersession_reason_check", sql`${t.reason} in ('I2V_PROVIDER_INPUT_PROJECTION_DEFECT','DETERMINISTIC_PRE_DISPATCH_AUTHORITY_DEFECT','REVIEW_RETRY_CREATIVE_INSTRUCTION_PRECEDENCE_DEFECT')`),
+    check("ai_story_bundle_supersession_authority_version_check", sql`${t.authorityVersion} = 'ai-story-pre-dispatch-bundle-supersession.v1'`),
+    check("ai_story_bundle_supersession_distinct_compiled_check", sql`${t.sourceCompiledRequestId} <> ${t.successorCompiledRequestId}`),
+    check("ai_story_bundle_supersession_distinct_correlation_check", sql`${t.sourceCorrelationId} <> ${t.successorCorrelationId}`),
+    check("ai_story_bundle_supersession_distinct_outbox_check", sql`${t.sourceOutboxJobId} <> ${t.successorOutboxJobId}`),
+    check("ai_story_bundle_supersession_distinct_dispatch_check", sql`${t.sourceDispatchId} <> ${t.successorDispatchId}`),
   ]
 );
 
@@ -2238,6 +2389,80 @@ export const aiStoryWorkerAttemptObservations = pgTable(
     index("ai_story_worker_observation_dispatch_idx").on(t.dispatchId, t.producedAt),
     index("ai_story_worker_observation_attempt_idx").on(t.providerAttemptId, t.producedAt),
     index("ai_story_worker_observation_workspace_idx").on(t.workspaceId, t.acceptedAt),
+  ]
+);
+
+/**
+ * ai-story-provider-create-response-diagnostic.v1 — append-only, secret-safe
+ * Provider create-response diagnostic evidence, captured before EmberOS
+ * normalization discards Provider-native detail.
+ *
+ * NULL evidence columns mean NOT PERSISTED / UNKNOWN. Historical attempts
+ * recorded before this table existed have no row and are never backfilled.
+ */
+
+export const aiStoryProviderCreateResponseDiagnostics = pgTable(
+  "ai_story_provider_create_response_diagnostics",
+  {
+    diagnosticId: uuid("diagnostic_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    providerAttemptId: text("provider_attempt_id").notNull(),
+    compiledRequestId: text("compiled_request_id").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    endpointFamily: text("endpoint_family").notNull(),
+    observationKind: text("observation_kind").notNull(),
+    httpStatus: integer("http_status"),
+    nativeErrorCode: text("native_error_code"),
+    nativeErrorType: text("native_error_type"),
+    nativeErrorMessage: text("native_error_message"),
+    providerTraceId: text("provider_trace_id"),
+    taskId: text("task_id"),
+    errorCategory: text("error_category").notNull(),
+    transportErrorMessage: text("transport_error_message"),
+    accepted: boolean("accepted").notNull(),
+    retryable: boolean("retryable").notNull(),
+    reconciliationRequired: boolean("reconciliation_required").notNull(),
+    responseHash: text("response_hash").notNull(),
+    normalizationResult: text("normalization_result").notNull(),
+    diagnosticFingerprint: text("diagnostic_fingerprint").notNull(),
+    diagnostic: jsonb("diagnostic")
+      .$type<
+        import("@ceo-agent/shared").AiStoryProviderCreateResponseDiagnostic
+      >()
+      .notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_provider_create_diagnostic_fingerprint_unique").on(
+      t.diagnosticFingerprint
+    ),
+    index("ai_story_provider_create_diagnostic_attempt_idx").on(
+      t.providerAttemptId,
+      t.observedAt
+    ),
+    index("ai_story_provider_create_diagnostic_compiled_idx").on(
+      t.compiledRequestId,
+      t.observedAt
+    ),
+    index("ai_story_provider_create_diagnostic_workspace_idx").on(
+      t.workspaceId,
+      t.acceptedAt
+    ),
+    index("ai_story_provider_create_diagnostic_category_idx").on(
+      t.errorCategory,
+      t.observedAt
+    ),
   ]
 );
 
@@ -3167,6 +3392,244 @@ export const commercialExecutionAuthorizations = pgTable(
     index("commercial_execution_authorizations_execution_idx").on(
       t.executionIdentity
     ),
+  ]
+);
+
+/** Bounded, non-subscription certification commercial authority, isolated by environment. */
+export const certificationCommercialScopes = pgTable(
+  "certification_commercial_scopes",
+  {
+    certificationScopeId: uuid("certification_scope_id").primaryKey(),
+    environment: text("environment").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    capabilityKey: text("capability_key").notNull(),
+    status: text("status").notNull(),
+    maxProviderCostUsd: numeric("max_provider_cost_usd", { precision: 12, scale: 2 }).notNull(),
+    maxProviderSubmissions: integer("max_provider_submissions").notNull(),
+    spentProviderCostUsd: numeric("spent_provider_cost_usd", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    reservedProviderCostUsd: numeric("reserved_provider_cost_usd", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    consumedProviderSubmissions: integer("consumed_provider_submissions").notNull().default(0),
+    reservedProviderSubmissions: integer("reserved_provider_submissions").notNull().default(0),
+    createdBy: uuid("created_by").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    scopeBody: jsonb("scope_body").$type<import("@ceo-agent/shared/server").CertificationCommercialScope>().notNull(),
+  },
+  (t) => [
+    unique("certification_commercial_scope_identity_unique").on(t.environment, t.orgId, t.workspaceId, t.capabilityKey),
+    unique("certification_commercial_scope_integrity_unique").on(t.integrityHash),
+    index("certification_commercial_scope_workspace_idx").on(t.workspaceId, t.status),
+    check("certification_commercial_scope_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
+    check("certification_commercial_scope_capability_check", sql`${t.capabilityKey} = 'ai_story.execute'`),
+    check("certification_commercial_scope_status_check", sql`${t.status} in ('ACTIVE','CLOSED','REVOKED')`),
+    check("certification_commercial_scope_limits_check", sql`${t.maxProviderCostUsd} > 0 and ${t.maxProviderSubmissions} > 0`),
+    check("certification_commercial_scope_counters_check", sql`${t.spentProviderCostUsd} >= 0 and ${t.reservedProviderCostUsd} >= 0 and ${t.consumedProviderSubmissions} >= 0 and ${t.reservedProviderSubmissions} >= 0`),
+  ]
+);
+
+export const providerUsdPricingRules = pgTable(
+  "provider_usd_pricing_rules",
+  {
+    providerUsdPricingRuleId: uuid("provider_usd_pricing_rule_id").primaryKey(),
+    providerKey: text("provider_key").notNull(),
+    modelId: text("model_id").notNull(),
+    generationMode: text("generation_mode").notNull(),
+    durationSeconds: integer("duration_seconds").notNull(),
+    aspectRatio: text("aspect_ratio").notNull(),
+    resolution: text("resolution").notNull(),
+    currency: text("currency").notNull(),
+    inputVideoIncluded: boolean("input_video_included").notNull(),
+    outputWidthPixels: integer("output_width_pixels").notNull(),
+    outputHeightPixels: integer("output_height_pixels").notNull(),
+    outputFrameRate: integer("output_frame_rate").notNull(),
+    usdPerMillionTokens: numeric("usd_per_million_tokens", { precision: 12, scale: 4 }).notNull(),
+    costBasis: text("cost_basis").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    version: text("version").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    effectiveTo: timestamp("effective_to", { withTimezone: true }),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    pricingBody: jsonb("pricing_body").$type<import("@ceo-agent/shared/server").ProviderUsdPricingRule>().notNull(),
+  },
+  (t) => [
+    unique("provider_usd_pricing_identity_unique").on(t.providerKey, t.modelId, t.generationMode, t.durationSeconds, t.aspectRatio, t.resolution, t.version),
+    unique("provider_usd_pricing_integrity_unique").on(t.integrityHash),
+    index("provider_usd_pricing_lookup_idx").on(t.providerKey, t.modelId, t.generationMode, t.effectiveFrom),
+    check("provider_usd_pricing_currency_check", sql`${t.currency} = 'USD'`),
+    check("provider_usd_pricing_cost_check", sql`${t.usdPerMillionTokens} > 0 and ${t.durationSeconds} > 0`),
+    check("provider_usd_pricing_dimensions_check", sql`${t.outputWidthPixels} > 0 and ${t.outputHeightPixels} > 0 and ${t.outputFrameRate} > 0`),
+  ]
+);
+
+export const certificationCommercialReservations = pgTable(
+  "certification_commercial_reservations",
+  {
+    certificationReservationId: uuid("certification_reservation_id").primaryKey(),
+    certificationScopeId: uuid("certification_scope_id").notNull().references(() => certificationCommercialScopes.certificationScopeId, { onDelete: "restrict" }),
+    providerUsdPricingRuleId: uuid("provider_usd_pricing_rule_id").notNull().references(() => providerUsdPricingRules.providerUsdPricingRuleId, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    executionIdentity: text("execution_identity").notNull(),
+    sourceSlotReconciliationId: uuid("source_slot_reconciliation_id"),
+    reservedCostUsd: numeric("reserved_cost_usd", { precision: 12, scale: 2 }).notNull(),
+    settledCostUsd: numeric("settled_cost_usd", { precision: 12, scale: 2 }),
+    status: text("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    reservationBody: jsonb("reservation_body").$type<import("@ceo-agent/shared/server").CertificationCommercialReservation>().notNull(),
+  },
+  (t) => [
+    uniqueIndex("certification_reservation_initial_execution_unique")
+      .on(t.certificationScopeId, t.executionIdentity)
+      .where(sql`${t.sourceSlotReconciliationId} is null`),
+    uniqueIndex("certification_reservation_reconciliation_unique")
+      .on(t.sourceSlotReconciliationId)
+      .where(sql`${t.sourceSlotReconciliationId} is not null`),
+    unique("certification_reservation_integrity_unique").on(t.integrityHash),
+    index("certification_reservation_scope_status_idx").on(t.certificationScopeId, t.status),
+    check("certification_reservation_status_check", sql`${t.status} in ('RESERVED','SUBMITTED','SETTLED','RELEASED')`),
+    check("certification_reservation_cost_check", sql`${t.reservedCostUsd} > 0 and (${t.settledCostUsd} is null or ${t.settledCostUsd} >= 0)`),
+  ]
+);
+
+export const certificationCommercialEvents = pgTable(
+  "certification_commercial_events",
+  {
+    certificationCommercialEventId: uuid("certification_commercial_event_id").primaryKey(),
+    certificationScopeId: uuid("certification_scope_id").notNull().references(() => certificationCommercialScopes.certificationScopeId, { onDelete: "restrict" }),
+    certificationReservationId: uuid("certification_reservation_id").references(() => certificationCommercialReservations.certificationReservationId, { onDelete: "restrict" }),
+    eventType: text("event_type").notNull(),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 2 }),
+    actorUserId: uuid("actor_user_id"),
+    reason: text("reason").notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    eventBody: jsonb("event_body").$type<Record<string, unknown>>().notNull(),
+  },
+  (t) => [
+    unique("certification_commercial_events_integrity_unique").on(t.integrityHash),
+    uniqueIndex("certification_commercial_events_reservation_type_unique").on(t.certificationReservationId, t.eventType).where(sql`${t.certificationReservationId} is not null`),
+    index("certification_commercial_events_scope_idx").on(t.certificationScopeId, t.occurredAt),
+    check("certification_commercial_events_type_check", sql`${t.eventType} in ('CREATED','RESERVED','SUBMITTED','SETTLED','RELEASED','CLOSED','REVOKED')`),
+  ]
+);
+
+/** An explicitly authorized, finite planning envelope. Counters are guarded by row locks. */
+export const certificationPlanningAuthorities = pgTable(
+  "certification_planning_authorities",
+  {
+    planningAuthorityId: uuid("planning_authority_id").primaryKey(),
+    environment: text("environment").notNull(),
+    certificationRunId: uuid("certification_run_id").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").references(() => aiStories.id, { onDelete: "restrict" }),
+    model: text("model").notNull(),
+    maxPlanningCostUsd: numeric("max_planning_cost_usd", { precision: 12, scale: 2 }).notNull(),
+    spentPlanningCostUsd: numeric("spent_planning_cost_usd", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    reservedPlanningCostUsd: numeric("reserved_planning_cost_usd", { precision: 12, scale: 2 }).notNull().default("0.00"),
+    maxLogicalCalls: integer("max_logical_calls").notNull(),
+    consumedLogicalCalls: integer("consumed_logical_calls").notNull().default(0),
+    reservedLogicalCalls: integer("reserved_logical_calls").notNull().default(0),
+    maxTransportAttempts: integer("max_transport_attempts").notNull(),
+    status: text("status").notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizationReason: text("authorization_reason").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+  },
+  (t) => [
+    unique("certification_planning_run_environment_unique").on(t.environment, t.certificationRunId),
+    check("certification_planning_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
+    check("certification_planning_model_check", sql`${t.model} = 'gpt-4o-mini-2024-07-18'`),
+    check("certification_planning_status_check", sql`${t.status} in ('ACTIVE','CLOSED','REVOKED')`),
+    check("certification_planning_limits_check", sql`${t.maxPlanningCostUsd} > 0 and ${t.maxLogicalCalls} > 0 and ${t.maxTransportAttempts} > 0`),
+    check("certification_planning_counters_check", sql`${t.spentPlanningCostUsd} >= 0 and ${t.reservedPlanningCostUsd} >= 0 and ${t.consumedLogicalCalls} >= 0 and ${t.reservedLogicalCalls} >= 0 and ${t.spentPlanningCostUsd} + ${t.reservedPlanningCostUsd} <= ${t.maxPlanningCostUsd} and ${t.consumedLogicalCalls} + ${t.reservedLogicalCalls} <= ${t.maxLogicalCalls}`),
+  ]
+);
+
+/** One durable claim per logical model call, including ambiguous terminal failures. */
+export const certificationPlanningClaims = pgTable(
+  "certification_planning_claims",
+  {
+    planningClaimId: uuid("planning_claim_id").primaryKey(),
+    planningAuthorityId: uuid("planning_authority_id").notNull().references(() => certificationPlanningAuthorities.planningAuthorityId, { onDelete: "restrict" }),
+    logicalCallIdentity: text("logical_call_identity").notNull(),
+    requestedBy: uuid("requested_by").notNull(),
+    providerAttemptId: text("provider_attempt_id"),
+    stage: text("stage").notNull(),
+    model: text("model").notNull(),
+    maxOutputTokens: integer("max_output_tokens").notNull(),
+    projectedInputTokens: integer("projected_input_tokens").notNull(),
+    reservedMaximumUsd: numeric("reserved_maximum_usd", { precision: 12, scale: 2 }).notNull(),
+    actualInputTokens: integer("actual_input_tokens"),
+    actualOutputTokens: integer("actual_output_tokens"),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 12, scale: 2 }),
+    providerRequestId: text("provider_request_id"),
+    status: text("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+  },
+  (t) => [
+    unique("certification_planning_logical_call_unique").on(t.planningAuthorityId, t.logicalCallIdentity),
+    uniqueIndex("certification_planning_provider_attempt_unique").on(t.providerAttemptId).where(sql`${t.providerAttemptId} is not null`),
+    check("certification_planning_claim_status_check", sql`${t.status} in ('RESERVED','SETTLED','FAILED','RELEASED')`),
+    check("certification_planning_claim_limits_check", sql`${t.maxOutputTokens} > 0 and ${t.projectedInputTokens} > 0 and ${t.reservedMaximumUsd} > 0`),
+  ]
+);
+
+/** Append-only correction for a gross slot consumption proven not to reach a Provider. */
+export const certificationSubmissionSlotReconciliations = pgTable(
+  "certification_submission_slot_reconciliations",
+  {
+    reconciliationId: uuid("reconciliation_id").primaryKey(),
+    environment: text("environment").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    certificationScopeId: uuid("certification_scope_id").notNull().references(() => certificationCommercialScopes.certificationScopeId, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    dispatchId: text("dispatch_id").notNull().references(() => providerExecutionDispatches.dispatchId, { onDelete: "restrict" }),
+    certificationReservationId: uuid("certification_reservation_id").notNull().references(() => certificationCommercialReservations.certificationReservationId, { onDelete: "restrict" }),
+    sourceConsumptionEventId: uuid("source_consumption_event_id").notNull().references(() => certificationCommercialEvents.certificationCommercialEventId, { onDelete: "restrict" }),
+    outcomeClassification: text("outcome_classification").notNull(),
+    reason: text("reason").notNull(),
+    actorUserId: uuid("actor_user_id").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    evidence: jsonb("evidence").$type<Record<string, unknown>>().notNull(),
+    quotaBefore: jsonb("quota_before").$type<Record<string, number>>().notNull(),
+    quotaAfter: jsonb("quota_after").$type<Record<string, number>>().notNull(),
+    integrityHash: text("integrity_hash").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("certification_slot_reconciliation_source_unique").on(t.sourceConsumptionEventId),
+    unique("certification_slot_reconciliation_idempotency_unique").on(t.idempotencyKey),
+    unique("certification_slot_reconciliation_integrity_unique").on(t.integrityHash),
+    index("certification_slot_reconciliation_scope_idx").on(t.certificationScopeId, t.createdAt),
+    index("certification_slot_reconciliation_scene_idx").on(t.sceneExecutionId, t.createdAt),
+    check("certification_slot_reconciliation_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
+    check("certification_slot_reconciliation_outcome_check", sql`${t.outcomeClassification} = 'PROVEN_NOT_SUBMITTED'`),
+    check("certification_slot_reconciliation_reason_check", sql`${t.reason} = 'PROVEN_PROVIDER_NON_ACCEPTANCE_RECONCILIATION'`),
+    check("certification_slot_reconciliation_version_check", sql`${t.contractVersion} = 'certification-submission-slot-reconciliation.v1'`),
   ]
 );
 

@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { AiStorySeedanceSemanticPlanSchema } from "./ai-story-scene-execution-package";
+import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
 
 export const AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION =
   "ai-story-compiled-provider-request.v1" as const;
@@ -50,6 +52,64 @@ export const AiStoryCompiledReferenceMappingSchema = z.object({
   storagePath: Text.optional(),
 }).strict();
 
+export const AI_STORY_COMPILED_REFERENCE_ROLES = [
+  "FIRST_FRAME",
+  "PROVIDER_IMAGE_REFERENCE",
+  "STORY_VISUAL_REFERENCE",
+  "STORY_CONTINUITY_REFERENCE",
+] as const;
+
+/**
+ * Complete immutable Story-reference lineage. This is intentionally separate
+ * from `referenceMappings`, which contains only assets emitted on the Provider
+ * wire. A lineage reference therefore never becomes a Provider input merely
+ * because it belongs to the Scene.
+ */
+export const AiStoryCompiledStoryReferenceSchema = z.object({
+  referenceId: Id,
+  assetId: Id,
+  semanticRole: z.enum(AI_STORY_COMPILED_REFERENCE_ROLES),
+  mediaType: Text,
+  providerEmitted: z.boolean(),
+  providerWireRole: z.enum(["first_frame", "reference_image"]).optional(),
+  storagePath: Text.optional(),
+}).strict().superRefine((value, context) => {
+  const image = value.mediaType.toLowerCase().startsWith("image/");
+  if (value.semanticRole === "FIRST_FRAME" && (!image || value.providerWireRole !== "first_frame" || !value.providerEmitted)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "FIRST_FRAME must be an emitted image input" });
+  }
+  if (value.semanticRole === "PROVIDER_IMAGE_REFERENCE" && (!image || value.providerWireRole !== "reference_image" || !value.providerEmitted)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Provider image references must be emitted image inputs" });
+  }
+  if (["STORY_VISUAL_REFERENCE", "STORY_CONTINUITY_REFERENCE"].includes(value.semanticRole) && (value.providerEmitted || value.providerWireRole)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Story-only references are lineage-only" });
+  }
+});
+
+export const AI_STORY_COMPILED_PROVIDER_READY_SCENE_INPUT_VERSION =
+  "ai-story-provider-ready-scene-input.v1" as const;
+
+/**
+ * Frozen Provider-ready Scene input authority that selected the wire first
+ * frame. Added append-only; absent only on compiled requests produced before
+ * Scene input preparation became an execution authority. When present it is
+ * the sole first-frame authority: the raw source asset is lineage only.
+ */
+export const AiStoryCompiledProviderReadySceneInputSchema = z.object({
+  contractVersion: z.literal(AI_STORY_COMPILED_PROVIDER_READY_SCENE_INPUT_VERSION),
+  preparationAuthorityId: Text,
+  preparationFingerprint: Hash,
+  sourceKind: z.enum(["RAW_DIRECT", "PREPARED_DERIVATIVE"]),
+  assetId: Id,
+  contentHash: Hash,
+  providerMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
+  fingerprint: Hash,
+}).strict();
+
+export type AiStoryCompiledProviderReadySceneInput = z.infer<
+  typeof AiStoryCompiledProviderReadySceneInputSchema
+>;
+
 /**
  * Immutable output of Provider compilation. URLs and credentials are deliberately
  * absent: the Worker resolves short-lived transport access from stable Asset IDs.
@@ -66,6 +126,7 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
   sceneExecutionId: Id,
   sceneExecutionPackageId: Id,
   generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   providerId: z.literal("seedance"),
   modelId: z.literal("dreamina-seedance-2-0-260128"),
   adapterVersion: Text,
@@ -94,6 +155,22 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
     watermark: z.boolean(),
   }).strict(),
   referenceMappings: z.array(AiStoryCompiledReferenceMappingSchema).max(4),
+  /** Added append-only; absent only on historical v1 compiled requests. */
+  storyReferenceMappings: z.array(AiStoryCompiledStoryReferenceSchema).optional(),
+  /** Durable exact Product material authority; absent only on historical requests. */
+  productMaterialSelection: ProductVisualMaterialSelectionAuthoritySchema.optional(),
+  /** Added append-only; absent only on pre-preparation compiled requests. */
+  providerReadySceneInput: AiStoryCompiledProviderReadySceneInputSchema.optional(),
+  /** Added append-only; required by new preparation-governed compilation. */
+  providerPolicyEligibility: z.object({
+    contractVersion: z.literal("ai-story-provider-policy-eligibility.v1"),
+    fingerprint: Hash,
+    eligibility: z.literal("ELIGIBLE"),
+    selectedStrategy: z.enum([
+      "SEEDANCE_FIRST_FRAME_I2V",
+      "AUTHORIZED_HUMAN_ASSET_ROUTE",
+    ]),
+  }).strict().optional(),
   referenceBudget: z.literal(4),
   degradations: z.array(z.object({
     code: Text,
@@ -115,6 +192,70 @@ export type AiStoryCompiledProviderRequest = z.infer<
   typeof AiStoryCompiledProviderRequestSchema
 >;
 
+export const SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_ERROR =
+  "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID" as const;
+
+export class AiStoryProviderWireModeContractError extends Error {
+  readonly code = SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_ERROR;
+
+  constructor(message: string) {
+    super(message);
+    this.name = "AiStoryProviderWireModeContractError";
+  }
+}
+
+/**
+ * Provider-mode compatibility is validated independently from Story lineage.
+ * V1 first-frame I2V is a one-image wire mode; additional Story images remain
+ * immutable lineage but cannot be projected as `reference_image`.
+ */
+export function assertAiStoryCompiledProviderWireModeCompatibility(
+  request: AiStoryCompiledProviderRequest
+): void {
+  const providerReady = request.providerReadySceneInput;
+  if (providerReady && providerReady.providerMode !== request.generationMode) {
+    throw new AiStoryProviderWireModeContractError(
+      "Provider-ready Scene input mode conflicts with the compiled generation mode"
+    );
+  }
+  if (request.generationMode !== "FIRST_FRAME_IMAGE_TO_VIDEO") {
+    if (providerReady) {
+      throw new AiStoryProviderWireModeContractError(
+        "TEXT_TO_VIDEO compilation cannot carry a Provider-ready Scene input"
+      );
+    }
+    return;
+  }
+  const firstFrames = request.referenceMappings.filter(
+    (reference) => reference.wireRole === "first_frame"
+  );
+  const referenceImages = request.referenceMappings.filter(
+    (reference) => reference.wireRole === "reference_image"
+  );
+  if (
+    request.referenceMappings.length !== 1 ||
+    firstFrames.length !== 1 ||
+    referenceImages.length !== 0
+  ) {
+    throw new AiStoryProviderWireModeContractError(
+      "FIRST_FRAME_IMAGE_TO_VIDEO requires exactly one first_frame and forbids reference_image inputs"
+    );
+  }
+  const firstFrame = firstFrames[0]!;
+  if (firstFrame.mediaType && !firstFrame.mediaType.toLowerCase().startsWith("image/")) {
+    throw new AiStoryProviderWireModeContractError(
+      "FIRST_FRAME_IMAGE_TO_VIDEO first_frame must use image media"
+    );
+  }
+  // Latest Authority Wins: once a Provider-ready Scene input is bound, no other
+  // asset (including the historical raw source) may occupy the wire first frame.
+  if (providerReady && firstFrame.assetId !== providerReady.assetId) {
+    throw new AiStoryProviderWireModeContractError(
+      "Compiled first_frame does not match the active Provider-ready Scene input"
+    );
+  }
+}
+
 export const AiStoryProviderAttemptBindingSchema = z.object({
   providerAttemptId: Id,
   providerExecutionId: Text,
@@ -131,6 +272,7 @@ export const AiStoryProviderAttemptBindingSchema = z.object({
   storyVersionId: Id,
   sceneExecutionId: Id,
   generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   providerId: z.literal("seedance"),
   modelId: z.literal("dreamina-seedance-2-0-260128"),
   adapterVersion: Text,
@@ -149,6 +291,8 @@ export const AiStoryProviderAttemptBindingSchema = z.object({
     amount: z.number().nonnegative().nullable(),
     source: z.enum(["CONFIGURED_ESTIMATE", "UNKNOWN"]),
   }).strict(),
+  /** Canonical commercial reservation consumed by this Attempt before submit. */
+  commercialReservationId: Id.optional(),
   status: z.enum(AI_STORY_PROVIDER_ATTEMPT_STATES),
   providerTaskId: Text.optional(),
   submissionClaimOwner: Text.optional(),

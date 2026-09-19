@@ -29,6 +29,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
+      CI: "true"
       EMBEROS_TEST_DB_ENVIRONMENT: test
       RUN_DB_INTEGRATION_TESTS: "1"
       DB_POOL_MAX: "1"
@@ -77,11 +78,61 @@ jobs:
       - name: Verify test database mutation guard
         run: pnpm exec vitest run --config vitest.config.ts tests/test-db-authority-guard.test.ts
 
+      - name: Certify Production predecessor migration manifest
+        run: pnpm exec vitest run --config vitest.config.ts tests/ai-story-production-overlay-manifest.test.ts
+
+      - name: Certify Production predecessor PostgreSQL upgrade
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-production-overlay-migration.integration.test.ts
+
+      - name: Bootstrap Supabase auth prerequisites on isolated PostgreSQL
+        run: pnpm exec tsx scripts/bootstrap-test-supabase-auth.ts
+
       - name: Apply canonical Drizzle schema
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
 
+      - name: Certify AI Story product-class access against PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/rc-fix-001-ai-story-access.integration.test.ts
+
+      - name: Certify Photo Scene exact-source extraction reuse migration
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/photo-scene-exact-source-extraction-reuse.integration.test.ts
+
+      - name: Certify reused Product derivative Campaign authorization convergence
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/photo-scene-reused-derivative-campaign-authorization-convergence.integration.test.ts
+
+      - name: Certify current approved Animation Package authority
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-current-approved-animation-package-authority.integration.test.ts
+
       - name: Apply differentiated human retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
+
+      - name: Apply post-terminal Provider retry contract
+        run: pnpm --filter @ceo-agent/db sql:ai-story-post-terminal-provider-retry
+
+      - name: Apply AI Story keyframe paid authorization contract
+        run: pnpm --filter @ceo-agent/db sql:ai-story-keyframe-paid-authorization
+
+      - name: Detect masked SQL migration defects from predecessor schema
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-post-generation-qc-migration-predecessor.integration.test.ts
+
+      - name: Certify certification commercial migration and atomic budget quota
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/certification-commercial-authority.integration.test.ts
+
+      - name: Certify planning hard budget and Production scope upgrade from predecessor schema
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-certification-planning-production-scope.integration.test.ts
 
       - name: Certify ephemeral PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
@@ -104,11 +155,37 @@ jobs:
       - name: Certify canonical Scene and Location continuity on PostgreSQL
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-scene-authority.integration.test.ts
 
+      - name: Certify canonical Scene aggregate lifecycle v2
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-canonical-scene-aggregate-lifecycle-v2.integration.test.ts
+
+      - name: Certify canonical Scene service lifecycle
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-canonical-scene-service-lifecycle.integration.test.ts
+
       - name: Certify compiled request and Provider Attempt PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-provider-runtime.integration.test.ts
 
+      - name: Certify append-only pre-dispatch bundle supersession authority
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-pre-dispatch-bundle-supersession.integration.test.ts
+
+      - name: Certify post-terminal Provider retry authorization
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-post-terminal-provider-retry.integration.test.ts
+
       - name: Certify Post-Generation QC evidence PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-post-generation-qc.integration.test.ts
+
+      - name: Certify isolated three-Scene AI Story self-use dry run
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-self-use-production-dry-run.integration.test.ts
 
       - name: Certify Wave 1 Asset Library PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/asset-library-wave1.integration.test.ts
@@ -124,6 +201,23 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/sprint-3-phase-3-pr35-finalizer.integration.test.ts
           -t "successful finalization and approval certification|differentiated human retry contract certification"
+
+      - name: Certify staged-release commercial lineage on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/sprint-3-phase-3-pr32-scheduling.integration.test.ts
+          -t "persists auth, routing, provider execution, envelope, outbox, and correlation|equivalent schedule replay converges without rerouting"
+
+      - name: Certify staged-release concurrent convergence on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/sprint-3-phase-3-pr35-finalizer.integration.test.ts
+          -t "concurrent next-scene release transitions Scene 2 once and leaves Scene 3 held"
+
+      - name: Certify STAGING execute entitlement grant and revoke authority
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/staging-execute-entitlement-administration.integration.test.ts
 
   verify:
     name: Test, typecheck, build

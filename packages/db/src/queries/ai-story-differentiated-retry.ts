@@ -1,5 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import {
+  AI_STORY_PROVIDER_RUNTIME_VERSION,
   AI_STORY_DIFFERENTIATED_RETRY_CONTRACT_VERSION,
   AI_STORY_MAX_HUMAN_AUTHORIZED_ATTEMPTS,
   GeneratedSceneReviewFactSchema,
@@ -29,6 +30,71 @@ function fingerprint(kind: string, value: object): string {
   return canonicalPersistenceHash({ kind, ...value });
 }
 
+export function assertGeneratedSceneRetryProviderTruth(input: {
+  attempt: {
+    attemptId: string;
+    executionId: string;
+    contractVersion: string;
+    providerRequestId: string | null;
+    status: string;
+  };
+  result: { status: string; providerAttemptId: string };
+  workerResults: readonly {
+    providerAttemptId: string;
+    providerExecutionId: string;
+    providerRequestId: string | null;
+    workerState: string;
+    acceptanceClassification: string;
+    canonicalProviderState: string;
+    reconciliationRequired: boolean;
+  }[];
+  observations: readonly {
+    providerAttemptId: string;
+    providerExecutionId: string;
+    providerRequestId: string | null;
+    observationKind: string;
+    reconciliationRequired: boolean;
+  }[];
+}): void {
+  const { attempt, result, workerResults, observations } = input;
+  if (result.status !== "SUCCEEDED" || result.providerAttemptId !== attempt.attemptId) {
+    throw new DifferentiatedRetryError("PROVIDER_TRUTH_NOT_SUCCEEDED", "Retry requires a technically succeeded source attempt");
+  }
+  if (attempt.contractVersion === "1") {
+    if (attempt.status !== "SUCCEEDED") {
+      throw new DifferentiatedRetryError("PROVIDER_TRUTH_NOT_SUCCEEDED", "Retry requires a technically succeeded source attempt");
+    }
+    return;
+  }
+  if (attempt.contractVersion !== AI_STORY_PROVIDER_RUNTIME_VERSION || attempt.status !== "PENDING" || !attempt.providerRequestId) {
+    throw new DifferentiatedRetryError("PROVIDER_TRUTH_NOT_SUCCEEDED", "Retry requires supported terminal Provider authority");
+  }
+  const worker = workerResults.length === 1 ? workerResults[0] : null;
+  const accepted = observations.filter((row) => row.observationKind === "ACCEPTED");
+  if (
+    !worker ||
+    worker.providerAttemptId !== attempt.attemptId ||
+    worker.providerExecutionId !== attempt.executionId ||
+    worker.providerRequestId !== attempt.providerRequestId ||
+    worker.workerState !== "TERMINAL_SUCCESS" ||
+    worker.acceptanceClassification !== "ACCEPTED" ||
+    worker.canonicalProviderState !== "SUCCEEDED" ||
+    worker.reconciliationRequired ||
+    accepted.length !== 1 ||
+    accepted[0]!.providerAttemptId !== attempt.attemptId ||
+    accepted[0]!.providerExecutionId !== attempt.executionId ||
+    accepted[0]!.providerRequestId !== attempt.providerRequestId ||
+    accepted[0]!.reconciliationRequired ||
+    observations.some((row) =>
+      row.reconciliationRequired ||
+      (row.providerRequestId && row.providerRequestId !== attempt.providerRequestId) ||
+      ["NOT_ACCEPTED", "ACCEPTANCE_UNKNOWN"].includes(row.observationKind)
+    )
+  ) {
+    throw new DifferentiatedRetryError("PROVIDER_TRUTH_NOT_SUCCEEDED", "Retry terminal Provider evidence is incomplete or conflicting");
+  }
+}
+
 export class DifferentiatedRetryRepository {
   constructor(private readonly db: Db = getDb(), private readonly now: () => Date = () => new Date()) {}
 
@@ -45,7 +111,7 @@ export class DifferentiatedRetryRepository {
         return { reviewId: snapshot.review.generatedSceneReviewId, eligibility: existing };
       }
       if (snapshot.review.decision !== "PENDING_REVIEW") throw new DifferentiatedRetryError("REVIEW_NOT_PENDING", "Only a pending generated result can be creatively rejected");
-      if (snapshot.result.status !== "SUCCEEDED" || snapshot.attempt.status !== "SUCCEEDED") throw new DifferentiatedRetryError("PROVIDER_TRUTH_NOT_SUCCEEDED", "Creative rejection requires a technically succeeded attempt");
+      assertGeneratedSceneRetryProviderTruth(snapshot);
       const decidedAt = this.now().toISOString();
       const rationale = JSON.stringify({ reason: input.reason, ...(input.note ? { note: input.note } : {}) });
       const nextAttemptNumber = snapshot.attemptCount + 1;
@@ -86,7 +152,7 @@ export class DifferentiatedRetryRepository {
     return this.db.transaction(async (tx) => {
       const snapshot = await this.lockAuthority(tx, input);
       if (snapshot.review.generatedSceneReviewId !== input.sourceReviewId || snapshot.review.decision !== "REJECTED") throw new DifferentiatedRetryError("REVIEW_NOT_REJECTED", "Retry revision requires the exact rejected review");
-      if (snapshot.result.status !== "SUCCEEDED" || snapshot.attempt.status !== "SUCCEEDED") throw new DifferentiatedRetryError("PROVIDER_TRUTH_NOT_SUCCEEDED", "Retry revision requires a technically succeeded source attempt");
+      assertGeneratedSceneRetryProviderTruth(snapshot);
       const eligibility = await this.getEligibilityInTx(tx, input.sourceReviewId);
       if (!eligibility || eligibility.eligibility !== "ELIGIBLE" || !eligibility.nextAttemptNumber) throw new DifferentiatedRetryError("RETRY_INELIGIBLE", "Rejected result is not retry eligible");
       const source = creativeDirectionFromInstructions(snapshot.instructions);
@@ -117,7 +183,7 @@ export class DifferentiatedRetryRepository {
     return this.db.transaction(async (tx) => {
       const snapshot = await this.lockAuthority(tx, input);
       if (snapshot.review.generatedSceneReviewId !== input.sourceReviewId || snapshot.review.decision !== "REJECTED") throw new DifferentiatedRetryError("REVIEW_NOT_REJECTED", "Retry authorization requires the exact rejected review");
-      if (snapshot.result.status !== "SUCCEEDED" || snapshot.attempt.status !== "SUCCEEDED") throw new DifferentiatedRetryError("PROVIDER_TRUTH_NOT_SUCCEEDED", "Retry authorization requires a technically succeeded source attempt");
+      assertGeneratedSceneRetryProviderTruth(snapshot);
       const eligibility = await this.getEligibilityInTx(tx, input.sourceReviewId);
       const revision = await this.getRevisionInTx(tx, input.retryInputRevisionId);
       if (!eligibility || eligibility.eligibility !== "ELIGIBLE" || !eligibility.nextAttemptNumber) throw new DifferentiatedRetryError("RETRY_INELIGIBLE", "Retry is not eligible");
@@ -165,9 +231,34 @@ export class DifferentiatedRetryRepository {
     const [result] = await tx.select().from(schema.aiStorySceneResults).where(eq(schema.aiStorySceneResults.providerAttemptId,review.providerAttemptId)).limit(1);
     const [attempt] = await tx.select().from(schema.providerAttempts).where(eq(schema.providerAttempts.attemptId,review.providerAttemptId)).limit(1);
     const [instruction] = await tx.select().from(schema.aiStorySceneInstructionSnapshots).where(eq(schema.aiStorySceneInstructionSnapshots.contentHash,scene.instructionHash)).limit(1);
-    const correlations = await tx.select().from(schema.aiStorySceneSchedulingCorrelations).where(eq(schema.aiStorySceneSchedulingCorrelations.sceneExecutionId,input.sceneExecutionId));
+    const workerResults = await tx.select({
+      providerAttemptId: schema.aiStoryWorkerExecutionResults.providerAttemptId,
+      providerExecutionId: schema.aiStoryWorkerExecutionResults.providerExecutionId,
+      providerRequestId: schema.aiStoryWorkerExecutionResults.providerRequestId,
+      workerState: schema.aiStoryWorkerExecutionResults.workerState,
+      acceptanceClassification: schema.aiStoryWorkerExecutionResults.acceptanceClassification,
+      canonicalProviderState: schema.aiStoryWorkerExecutionResults.canonicalProviderState,
+      reconciliationRequired: schema.aiStoryWorkerExecutionResults.reconciliationRequired,
+    }).from(schema.aiStoryWorkerExecutionResults).where(eq(schema.aiStoryWorkerExecutionResults.providerAttemptId,review.providerAttemptId));
+    const observations = await tx.select({
+      providerAttemptId: schema.aiStoryWorkerAttemptObservations.providerAttemptId,
+      providerExecutionId: schema.aiStoryWorkerAttemptObservations.providerExecutionId,
+      providerRequestId: schema.aiStoryWorkerAttemptObservations.providerRequestId,
+      observationKind: schema.aiStoryWorkerAttemptObservations.observationKind,
+      reconciliationRequired: schema.aiStoryWorkerAttemptObservations.reconciliationRequired,
+    }).from(schema.aiStoryWorkerAttemptObservations).where(eq(schema.aiStoryWorkerAttemptObservations.providerAttemptId,review.providerAttemptId));
+    const attemptRows = await tx.select({ attemptId: schema.providerAttempts.attemptId })
+      .from(schema.aiStoryProviderAttemptCompiledBindings)
+      .innerJoin(schema.providerAttempts, eq(schema.providerAttempts.attemptId, schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId))
+      .where(eq(schema.aiStoryProviderAttemptCompiledBindings.sceneExecutionId, input.sceneExecutionId));
     if (!result || !attempt || !instruction) throw new DifferentiatedRetryError("RETRY_SOURCE_INCOMPLETE","Retry source authority is incomplete");
-    return { scene, review, result, attempt, instructions: instruction.instructions, intent: scene.intent, attemptCount: correlations.length };
+    const boundAttemptCount = new Set(attemptRows.map((row) => row.attemptId)).size;
+    // A generated review is itself durable proof of at least one completed
+    // Provider Attempt. Older, still-readable executions predate the compiled
+    // binding table, so retain that source Attempt as the retry-generation
+    // baseline without treating scheduling correlations as paid attempts.
+    const attemptCount = Math.max(1, boundAttemptCount);
+    return { scene, review, result, attempt, workerResults, observations, instructions: instruction.instructions, intent: scene.intent, attemptCount };
   }
 
   private async getEligibilityInTx(db: Db|Tx, reviewId:string) { const [row]=await db.select().from(schema.aiStorySceneRetryEligibilityFacts).where(eq(schema.aiStorySceneRetryEligibilityFacts.sourceReviewId,reviewId)).limit(1); return row ? SceneRetryEligibilityFactSchema.parse(row.fact) : null; }

@@ -159,13 +159,16 @@ export class ProviderOutboxRepository {
       const candidates = (await tx.execute(sql`
         select ${schema.providerOutboxJobs.jobId} as job_id
         from ${schema.providerOutboxJobs}
-        where (
+        where not exists (
+          select 1 from ai_story_pre_dispatch_bundle_supersessions supersession
+          where supersession.source_outbox_job_id = ${schema.providerOutboxJobs.jobId}
+        ) and ((
           ${schema.providerOutboxJobs.status} in ('PENDING', 'RETRY_WAIT')
           and ${schema.providerOutboxJobs.nextVisibleAt} <= ${now.toISOString()}::timestamptz
         ) or (
           ${schema.providerOutboxJobs.status} = 'CLAIMED'
           and ${schema.providerOutboxJobs.leaseExpiresAt} <= ${now.toISOString()}::timestamptz
-        )
+        ))
         order by
           ${schema.providerOutboxJobs.priority} desc,
           ${schema.providerOutboxJobs.nextVisibleAt} asc,

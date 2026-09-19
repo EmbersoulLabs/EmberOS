@@ -104,6 +104,7 @@ describe("AI Story planning pipeline assembly", () => {
                 transition: "Cut",
                 continuityNotes: "",
                 order: 0,
+                generationAuthority: { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" },
               },
             ],
           },
@@ -189,11 +190,25 @@ describe("AI Story planning pipeline assembly", () => {
       campaign: { name: "Spring" },
       brand: { brandName: "Ember" },
       assetLabels: ["hero.jpg"],
+      productAuthorities: [
+        {
+          productAuthorityId: "94000000-0000-4000-8000-000000000001",
+          sourceAssetId: "94000000-0000-4000-8000-000000000001",
+          sourceAssetContentHash: `sha256:${"a".repeat(64)}`,
+        },
+      ],
     });
 
     expect(callJsonModel).toHaveBeenCalledTimes(7);
     expect(payload.status).toBe("review");
     expect(payload.narrativeIntegration.consistent).toBe(true);
+    expect(payload.creativeContext.productAuthorities).toEqual([
+      {
+        productAuthorityId: "94000000-0000-4000-8000-000000000001",
+        sourceAssetId: "94000000-0000-4000-8000-000000000001",
+        sourceAssetContentHash: `sha256:${"a".repeat(64)}`,
+      },
+    ]);
     expect(payload.usage).toEqual({ input: 70, output: 35, costUsd: 0.07 });
   });
 });

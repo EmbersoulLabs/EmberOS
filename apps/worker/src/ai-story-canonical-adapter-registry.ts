@@ -14,10 +14,12 @@ import {
   type MinimaxAssetAccessResolver,
   type SeedancePayloadResolver,
   type SeedanceAssetAccessResolver,
+  type AiStoryProviderCreateResponseDiagnosticSink,
 } from "@ceo-agent/agents";
 import { getAiProviderConfig, isAiProviderReady } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStoryProviderCreateResponseDiagnosticRepository,
   AiStoryProviderRuntimeRepository,
   ExecutionEnvelopeRepository,
   DifferentiatedRetryRepository,
@@ -36,6 +38,11 @@ export type ProductionAiStoryAdapterRegistryOptions = {
   readonly seedancePayloadResolver?: SeedancePayloadResolver;
   readonly minimaxPayloadResolver?: MinimaxPayloadResolver;
   readonly assetAccessResolver?: SeedanceAssetAccessResolver & MinimaxAssetAccessResolver;
+  /**
+   * Durable ModelArk create-response diagnostic sink. Injected in tests;
+   * defaults to the append-only repository in production.
+   */
+  readonly providerCreateResponseDiagnostics?: AiStoryProviderCreateResponseDiagnosticSink;
 };
 
 /**
@@ -132,6 +139,9 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
         config: seedance,
         payloadResolver: seedanceResolver,
         assetAccessResolver,
+        diagnostics:
+          options.providerCreateResponseDiagnostics ??
+          new AiStoryProviderCreateResponseDiagnosticRepository(),
       });
     } else {
       console.warn("[ai-story-adapters] Seedance not registered: disabled or not executable");

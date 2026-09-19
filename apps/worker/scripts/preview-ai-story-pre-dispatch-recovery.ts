@@ -11,6 +11,7 @@ import {
 } from "@ceo-agent/agents";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStoryProviderRuntimeRepository,
   ExecutionDispatchRepository,
   ExecutionEnvelopeRepository,
   getDb,
@@ -44,6 +45,16 @@ async function main() {
   ) {
     throw new Error("Dispatch trace does not match requested Scene authority");
   }
+  const compiledRequestId = trace.compiledRequestId;
+  if (typeof compiledRequestId !== "string") {
+    throw new Error("Dispatch trace is missing compiled request authority");
+  }
+  const compiledRequest = await new AiStoryProviderRuntimeRepository().getCompiledRequest(compiledRequestId);
+  if (!compiledRequest) throw new Error("Compiled Provider request not found");
+  const successorCandidate = await new ExecutionDispatchRepository()
+    .previewAuthorizedSupersessionSuccessorDispatch();
+  const postTerminalRetryCandidate = await new ExecutionDispatchRepository()
+    .previewAuthorizedPostTerminalRetryDispatch();
 
   const db = getDb();
   const [worker] = await db
@@ -51,7 +62,6 @@ async function main() {
     .from(schema.aiStoryWorkerExecutionResults)
     .where(eq(schema.aiStoryWorkerExecutionResults.dispatchId, dispatchId))
     .limit(1);
-  if (!worker) throw new Error("Worker pre-dispatch result not found");
   const [[attempts], [results], [reviews], [correlation], [outbox], [providerExecution]] =
     await Promise.all([
       db.select({ value: count() }).from(schema.providerAttempts).where(
@@ -92,8 +102,8 @@ async function main() {
     providerExecutionId: providerExecution.executionId,
     outboxJobId: outbox.jobId,
     dispatchId,
-    workerState: worker.workerState,
-    providerRequestId: worker.providerRequestId,
+    workerState: worker?.workerState ?? "MISSING",
+    providerRequestId: worker?.providerRequestId ?? null,
     providerAttemptCount: Number(attempts?.value ?? 0),
     resultCount: Number(results?.value ?? 0),
     generatedReviewCount: Number(reviews?.value ?? 0),
@@ -123,11 +133,30 @@ async function main() {
   });
   const images = request.content.filter((item) => item.type === "image_url");
   const text = request.content.find((item) => item.type === "text");
+  const continuityReferences = compiledRequest.storyReferenceMappings?.filter(
+    (reference) => reference.semanticRole === "STORY_CONTINUITY_REFERENCE"
+  ) ?? [];
+  const emittedAssetIds = new Set(compiledRequest.referenceMappings.map((reference) => reference.assetId));
 
   console.log(JSON.stringify({
     contract: "ai-story-pre-dispatch-recovery-preview.v1",
     executionPlanId,
     sceneExecutionId,
+    successorClaimAuthority: {
+      lifecycleClass: successorCandidate?.lifecycleClass ?? null,
+      candidateCount: successorCandidate ? 1 : 0,
+      selectedOutboxId: successorCandidate?.dispatch.jobId ?? null,
+      selectedDispatchId: successorCandidate?.dispatch.dispatchId ?? null,
+      selectedCompiledRequestId: successorCandidate?.compiledRequestId ?? null,
+      selectedSceneExecutionId: successorCandidate?.sceneExecutionId ?? null,
+      claimed: false,
+    },
+    postTerminalRetryClaimAuthority: {
+      candidateCount: postTerminalRetryCandidate ? 1 : 0,
+      selectedOutboxId: postTerminalRetryCandidate?.jobId ?? null,
+      selectedDispatchId: postTerminalRetryCandidate?.dispatchId ?? null,
+      claimed: false,
+    },
     recovery,
     existingReleaseState: "RELEASED",
     existingOutboxState: outbox.status,
@@ -141,6 +170,13 @@ async function main() {
     firstFramePresent: images.some((item) => item.role === "first_frame"),
     firstFrameAssetId:
       payload.visualAuthorityCertification?.productAssetId ?? null,
+    canonicalStoryReferenceCount: compiledRequest.storyReferenceMappings?.length ?? compiledRequest.referenceMappings.length,
+    providerEmittedInputCount: compiledRequest.referenceMappings.length,
+    providerEmittedMediaTypes: compiledRequest.referenceMappings.map((reference) => reference.mediaType ?? null),
+    wireImageInputCount: images.length,
+    continuityReferenceCount: continuityReferences.length,
+    continuityReferenceRetained: continuityReferences.length > 0,
+    continuityReferenceEmittedAsImage: continuityReferences.some((reference) => emittedAssetIds.has(reference.assetId)),
     explicitImageBinding: /Image 1\s*=\s*the canonical Campaign Product Asset/i.test(
       text && text.type === "text" ? text.text : ""
     ),

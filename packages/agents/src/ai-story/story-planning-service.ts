@@ -6,8 +6,11 @@
  */
 import { z } from "zod";
 import { callJsonModel } from "../llm";
+import type { CertificationPlanningStage } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
+  AiStorySceneGenerationAuthoritySchema,
+  AiStoryScriptVersionSchema,
   CharacterContinuityEntrySchema,
   CreativeContextSchema,
   DirectorThinkingSchema,
@@ -16,17 +19,31 @@ import {
   StoryBeatSchema,
   validatePlanningConsistency,
   type AiStoryStructuredDraft,
+  type AiStoryScriptVersion,
   type AnimationPackagePayload,
+  type AiStoryCanonicalScene,
   type CharacterContinuityEntry,
   type CreativeContext,
   type DirectorThinking,
   type PlanningUsage,
+  type PlanningCharacterAuthorityProjection,
+  type PlanningProductAuthorityProjection,
   type ScenePlanItem,
   type ShotPlanItem,
   type StoryBeat,
   type WorldContinuity,
   WorldContinuitySchema,
 } from "@ceo-agent/shared";
+import { buildAiStoryAnimationPackageCanonicalSceneAuthorityV1 } from "@ceo-agent/shared/server";
+import {
+  bindCharacterContinuityToCharacterAuthority,
+  bindCreativeContextToCharacterAuthority,
+  planningCharacterAuthorityPrompt,
+} from "./character-authority-planning";
+import {
+  bindCreativeContextToProductAuthority,
+  planningProductAuthorityPrompt,
+} from "./product-authority-planning";
 
 type Usage = PlanningUsage;
 
@@ -53,9 +70,13 @@ export type AiStoryPlanningBrandContext = {
 
 export type StoryPlanningPipelineInput = {
   storyDraft: AiStoryStructuredDraft;
+  /** Legacy all-at-once compatibility only; normal runtime gates through runSinglePlanningStage. */
+  canonicalScript?: AiStoryScriptVersion;
   campaign: AiStoryPlanningCampaignContext;
   brand?: AiStoryPlanningBrandContext | null;
   assetLabels?: readonly string[];
+  characterAuthorities?: readonly PlanningCharacterAuthorityProjection[];
+  productAuthorities?: readonly PlanningProductAuthorityProjection[];
 };
 
 function addUsage(a: Usage, b: Usage): Usage {
@@ -74,10 +95,20 @@ async function callStage<T>(
   schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   pick: (result: Record<string, unknown>) => unknown
 ): Promise<{ value: T; usage: Usage }> {
+  const certificationStageByLabel: Record<string, CertificationPlanningStage> = {
+    "Creative context": "creative_context",
+    "Director thinking": "director_thinking",
+    "Story beats": "story_beats",
+    "Scene plan": "scene_plan",
+    "Shot plan": "shot_plan",
+    "Character continuity": "character_continuity",
+    "World continuity": "world_continuity",
+  };
   const { result, usage } = await callJsonModel<Record<string, unknown>>(
     system,
     user,
-    schemaHint
+    schemaHint,
+    { certificationStage: certificationStageByLabel[stage] }
   );
   const parsed = schema.safeParse(pick(result));
   if (!parsed.success) {
@@ -138,7 +169,9 @@ export async function generateCreativeContext(
   storyDraft: AiStoryStructuredDraft,
   campaign: AiStoryPlanningCampaignContext,
   brand?: AiStoryPlanningBrandContext | null,
-  assetLabels: readonly string[] = []
+  assetLabels: readonly string[] = [],
+  characterAuthorities: readonly PlanningCharacterAuthorityProjection[] = [],
+  productAuthorities: readonly PlanningProductAuthorityProjection[] = []
 ): Promise<{ creativeContext: CreativeContext; usage: Usage }> {
   const schemaHint = JSON.stringify({
     creativeContext: {
@@ -155,7 +188,7 @@ export async function generateCreativeContext(
       characterContext: {
         characters: [
           {
-            id: "stable kebab-case id",
+            id: "exact canonical characterId UUID when selecting accepted authority; otherwise stable proposal id",
             name: "string",
             role: "string",
             description: "string",
@@ -196,10 +229,21 @@ export async function generateCreativeContext(
       "You are a screenwriter preparing an AI Story for animation planning.",
       "Extract only durable creative context from the Story Draft, campaign, brand, and assets.",
       "Include story, character, world, and narrative context with concise dialogue lines when the story needs speech.",
+      "Accepted canonical Character stable facts are read-only. Select them only by exact characterId; never rewrite identity or appearance. New Characters are proposals only.",
+      "Accepted Product IDs and source content hashes are server-owned and read-only. Use exact productAuthorityId for Product narrative intent; labels, filenames, prose, and generic props never establish Product authority.",
+      "Product authority availability does not require visual conditioning and must not select or change generation mode.",
       "Keep directorContext as an empty object; the director stage fills Director Thinking later.",
       "Return ONLY JSON.",
     ].join(" "),
-    [campaignSummary(campaign, brand, assetLabels), "", storySummary(storyDraft)].join("\n"),
+    [
+      campaignSummary(campaign, brand, assetLabels),
+      "",
+      planningCharacterAuthorityPrompt(characterAuthorities),
+      "",
+      planningProductAuthorityPrompt(productAuthorities),
+      "",
+      storySummary(storyDraft),
+    ].join("\n"),
     schemaHint,
     CreativeContextSchema,
     (result) => ({
@@ -207,7 +251,16 @@ export async function generateCreativeContext(
       directorContext: {},
     })
   );
-  return { creativeContext: value, usage };
+  return {
+    creativeContext: bindCreativeContextToProductAuthority({
+      creativeContext: bindCreativeContextToCharacterAuthority({
+        creativeContext: value,
+        characterAuthorities,
+      }),
+      productAuthorities,
+    }),
+    usage,
+  };
 }
 
 export async function generateDirectorThinking(
@@ -287,6 +340,13 @@ export async function generateScenePlan(input: {
         transition: "string",
         continuityNotes: "string",
         order: 0,
+        generationAuthority: {
+          strategy: "TEXT_TO_VIDEO",
+          referenceSource: "REFERENCE_FREE_T2V",
+          referenceAssetIds: [],
+          firstFrameAssetId: null,
+          productVisualIdentityRequirement: "NONE",
+        },
       },
     ],
   });
@@ -296,11 +356,12 @@ export async function generateScenePlan(input: {
       "You are an animation scene planner.",
       "Create scenes that cover every story beat, merging beats only when continuityNotes explicitly say which beat was merged.",
       "Use sequential order values starting at 0 and stable scene ids.",
+      "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
       "Return ONLY JSON.",
     ].join(" "),
     JSON.stringify(input, null, 2),
     schemaHint,
-    z.array(ScenePlanItemSchema).min(1),
+    z.array(ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema })).min(1),
     (result) => result.scenePlan
   );
   return { scenePlan: value, usage };
@@ -312,7 +373,14 @@ export async function generateShotPlan(input: {
   directorThinking: DirectorThinking;
   storyBeats: StoryBeat[];
   scenePlan: ScenePlanItem[];
+  /** Required by the normal staged runtime; optional only for legacy all-at-once compatibility. */
+  canonicalScript?: AiStoryScriptVersion;
 }): Promise<{ shotPlan: ShotPlanItem[]; usage: Usage }> {
+  const canonicalScript = input.canonicalScript ? AiStoryScriptVersionSchema.parse(input.canonicalScript) : null;
+  if (canonicalScript && canonicalScript.status !== "FROZEN") throw new Error("CANONICAL_FROZEN_SCRIPT_REQUIRED_FOR_SHOT_PLAN");
+  if (canonicalScript && (canonicalScript.scenes.length !== input.scenePlan.length || canonicalScript.scenes.some((scene, index) => scene.order !== input.scenePlan[index]!.order))) {
+    throw new Error("CANONICAL_SCRIPT_SCENE_PLAN_MAPPING_INVALID");
+  }
   const schemaHint = JSON.stringify({
     shotPlan: [
       {
@@ -335,15 +403,20 @@ export async function generateShotPlan(input: {
     "Shot plan",
     [
       "You are an animation shot planner.",
+      ...(canonicalScript ? [
+        "The supplied Canonical Script is authoritative. Map Scene Plan items to Canonical Script Scenes by their exact shared order and preserve Script semantics.",
+        "Camera and shot choices must not change Script actions, Character IDs, Product authority, Outline Beat claims, dialogue, evidence, or action outcomes.",
+        "Do not add unsupported dialogue, action, Product facts, claims, or evidence.",
+      ] : []),
       "Every scene must receive at least one shot.",
       "Use sequential order values starting at 0 and stable shot ids.",
-      "When Campaign Product Assets are present, treat the Scene as PRODUCT_GROUNDED_VIDEO: the Campaign Product Asset is primary product identity authority and approved prior Scene media may guide only framing, environment, and motion continuity.",
+      "Preserve each Scene Plan generationAuthority exactly; Product or Asset presence never selects or changes generation mode. For image-conditioned Product Scenes, the exact approved Product Asset remains visual identity authority.",
       "For PRODUCT_GROUNDED_VIDEO use only identity-safe camera motion: static/locked framing, slow push-in, slow pull-back, minor lateral dolly, a small 10-20 degree arc, close-up detail, rack focus, or gentle parallax.",
       "Never request a 180/360-degree orbit, circle-around-product, unseen-backside reveal, dramatic perspective change, product morphing, or container/wrapping transformation.",
       "Return planning-only camera language; no provider execution fields.",
       "Return ONLY JSON.",
     ].join(" "),
-    JSON.stringify(input, null, 2),
+    JSON.stringify({ ...input, ...(canonicalScript ? { canonicalScript } : {}) }, null, 2),
     schemaHint,
     z.array(ShotPlanItemSchema).min(1),
     (result) => result.shotPlan
@@ -378,6 +451,7 @@ export async function generateCharacterContinuity(input: {
     [
       "You are a character continuity supervisor.",
       "Only create entries for characters present in creativeContext.characterContext.characters.",
+      "For canonical Characters, copy the exact characterId and treat canonical identity and appearance as immutable; generate only evolving emotion, costume, accessories, and pose state.",
       "Return stable identity, appearance, emotion, costume, accessories, age, and pose guidance.",
       "Return ONLY JSON.",
     ].join(" "),
@@ -386,7 +460,13 @@ export async function generateCharacterContinuity(input: {
     z.array(CharacterContinuityEntrySchema),
     (result) => result.characterContinuity
   );
-  return { characterContinuity: value, usage };
+  return {
+    characterContinuity: bindCharacterContinuityToCharacterAuthority({
+      creativeContext: input.creativeContext,
+      characterContinuity: value,
+    }),
+    usage,
+  };
 }
 
 export async function generateWorldContinuity(input: {
@@ -430,6 +510,9 @@ export function buildAnimationPackage(input: {
   shotPlan: ShotPlanItem[];
   characterContinuity: CharacterContinuityEntry[];
   worldContinuity: WorldContinuity;
+  canonicalScenes: AiStoryCanonicalScene[];
+  storyId: string;
+  storyVersionId: string;
   usage?: Usage;
 }): AnimationPackagePayload {
   const creativeContext: CreativeContext = {
@@ -446,6 +529,12 @@ export function buildAnimationPackage(input: {
     shotPlan: input.shotPlan,
     characterContinuity: input.characterContinuity,
     worldContinuity: input.worldContinuity,
+    canonicalSceneAuthority: buildAiStoryAnimationPackageCanonicalSceneAuthorityV1({
+      storyId: input.storyId,
+      storyVersionId: input.storyVersionId,
+      scenePlan: input.scenePlan,
+      canonicalScenes: input.canonicalScenes,
+    }),
     narrative: creativeContext.narrativeContext,
     narrativeIntegration: { consistent: false, issues: [], links: [] },
     status: "review",
@@ -467,7 +556,9 @@ export async function runFullStoryPlanningPipeline(
     input.storyDraft,
     input.campaign,
     input.brand,
-    input.assetLabels ?? []
+    input.assetLabels ?? [],
+    input.characterAuthorities ?? [],
+    input.productAuthorities ?? []
   );
   usage = addUsage(usage, creative.usage);
 
@@ -495,6 +586,7 @@ export async function runFullStoryPlanningPipeline(
     directorThinking: director.directorThinking,
     storyBeats: beats.storyBeats,
     scenePlan: scenes.scenePlan,
+    canonicalScript: input.canonicalScript,
   });
   usage = addUsage(usage, shots.usage);
 
@@ -516,15 +608,27 @@ export async function runFullStoryPlanningPipeline(
   });
   usage = addUsage(usage, worldContinuity.usage);
 
-  return buildAnimationPackage({
+  const creativeContext = {
+    ...creative.creativeContext,
+    directorContext: director.directorThinking,
+  };
+  const legacyPackage = AnimationPackagePayloadSchema.parse({
     story: input.storyDraft,
-    creativeContext: creative.creativeContext,
+    characters: creativeContext.characterContext.characters,
+    creativeContext,
     directorThinking: director.directorThinking,
     storyBeats: beats.storyBeats,
     scenePlan: scenes.scenePlan,
     shotPlan: shots.shotPlan,
     characterContinuity: characterContinuity.characterContinuity,
     worldContinuity: worldContinuity.worldContinuity,
+    narrative: creativeContext.narrativeContext,
+    narrativeIntegration: { consistent: false, issues: [], links: [] },
+    status: "review",
     usage,
+  });
+  return AnimationPackagePayloadSchema.parse({
+    ...legacyPackage,
+    narrativeIntegration: validatePlanningConsistency(legacyPackage),
   });
 }
