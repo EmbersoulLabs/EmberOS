@@ -3522,7 +3522,7 @@ export const certificationCommercialEvents = pgTable(
     unique("certification_commercial_events_integrity_unique").on(t.integrityHash),
     uniqueIndex("certification_commercial_events_reservation_type_unique").on(t.certificationReservationId, t.eventType).where(sql`${t.certificationReservationId} is not null`),
     index("certification_commercial_events_scope_idx").on(t.certificationScopeId, t.occurredAt),
-    check("certification_commercial_events_type_check", sql`${t.eventType} in ('CREATED','RESERVED','SUBMITTED','SETTLED','RELEASED','CLOSED','REVOKED')`),
+    check("certification_commercial_events_type_check", sql`${t.eventType} in ('CREATED','RESERVED','SUBMITTED','SETTLED','RELEASED','CLOSED','REVOKED','CEILING_AMENDED')`),
   ]
 );
 

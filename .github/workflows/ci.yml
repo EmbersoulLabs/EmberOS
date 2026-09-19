@@ -129,6 +129,11 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/certification-commercial-authority.integration.test.ts
 
+      - name: Certify Production commercial settlement ceiling amendment and recovery
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/certification-commercial-scope-ceiling-amendment.integration.test.ts
+
       - name: Certify planning hard budget and Production scope upgrade from predecessor schema
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts

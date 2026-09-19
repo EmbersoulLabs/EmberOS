@@ -144,6 +144,8 @@ export type ProcessDispatchInput = {
   /** Optional mode for accepted request resume/lookup. */
   readonly mode?: "submit" | "lookup";
   readonly providerRequestId?: string;
+  /** Same-Attempt recovery must fail closed instead of submitting. */
+  readonly forbidSubmit?: boolean;
 };
 
 export type ProcessDispatchOutcome = {
@@ -332,12 +334,14 @@ export class SceneProviderWorkerRuntime {
     const adapter = this.resolveBoundAdapter(bundle.routingDecision);
     const resumeProviderRequestId =
       input.providerRequestId ?? existing?.providerRequestId ?? durableAttempt?.providerTaskId;
+    const alreadySubmitted = Boolean(durableAttempt?.providerTaskId);
     const canResumeLookup =
       Boolean(existing || durableAttempt?.providerTaskId) &&
       !terminal &&
       Boolean(resumeProviderRequestId) &&
       (!existing || !isTerminalWorkerResult(existing)) &&
       (input.mode === "lookup" ||
+        alreadySubmitted ||
         existing?.reconciliationRequired === true ||
         ["SUBMITTED", "RUNNING"].includes(durableAttempt?.status ?? ""));
 
@@ -355,7 +359,13 @@ export class SceneProviderWorkerRuntime {
       };
     }
 
-    const mode = canResumeLookup ? "lookup" : (input.mode ?? "submit");
+    const mode = canResumeLookup || alreadySubmitted ? "lookup" : (input.mode ?? "submit");
+    if (input.forbidSubmit === true && mode === "submit") {
+      throw new WorkerRuntimeError(
+        "RECONCILIATION_REQUIRED",
+        "Same-Attempt recovery forbids Provider submit"
+      );
+    }
 
     if (this.dependencies.requireCommercialReservation && !this.dependencies.commercialReservation) {
       throw new WorkerRuntimeError(

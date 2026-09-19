@@ -4,11 +4,15 @@ import {
   AiStoryProviderWireModeContractError,
   assertAiStoryCompiledProviderWireModeCompatibility,
   CERTIFICATION_COMMERCIAL_CONTRACT_VERSION,
+  CERTIFICATION_COMMERCIAL_EVENT_CEILING_AMENDED,
   CERTIFICATION_COMMERCIAL_REASON,
   CertificationCommercialReservationSchema,
   CertificationCommercialScopeSchema,
+  PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
+  PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS,
   ProviderUsdPricingRuleSchema,
   estimateProviderCostUsd,
+  settleProviderCostUsdFromCompletionTokens,
   withIntegrity,
   type CertificationCommercialReservation,
   type CertificationCommercialScope,
@@ -53,6 +57,7 @@ export type CertificationCommercialErrorCode =
   | "CERTIFICATION_BUDGET_EXCEEDED"
   | "CERTIFICATION_SUBMISSION_QUOTA_EXCEEDED"
   | "CERTIFICATION_SCOPE_MISMATCH"
+  | "CERTIFICATION_SCOPE_AMENDMENT_DENIED"
   | "CERTIFICATION_RESERVATION_INVALID";
 
 export class CertificationCommercialError extends Error {
@@ -236,6 +241,131 @@ export class CertificationCommercialAuthorityService {
       });
       await recordEvent(tx, { scopeId: scope.certificationScopeId, type: "CREATED", actorUserId: input.actorUserId, reason: scope.reason, occurredAt: input.createdAt });
       return { scope, replayed: false };
+    });
+  }
+
+  /**
+   * Bounded human-authorized Production settlement repair.
+   * Raises only maxProviderCostUsd on an existing ACTIVE Production scope.
+   * Does not replace, revoke, or recreate the scope. Does not mutate spent/reserved
+   * counters or reservation identities. Production provisionScope() replay stays strict.
+   */
+  async amendActiveProductionScopeCeiling(input: {
+    environment: CertificationEnvironment;
+    certificationScopeId: string;
+    orgId: string;
+    workspaceId: string;
+    capabilityKey?: "ai_story.execute";
+    actorUserId: string;
+    amendedAt: string;
+    maxProviderCostUsd: string;
+    maxProviderSubmissions?: number;
+  }): Promise<{ scope: CertificationCommercialScope; replayed: boolean }> {
+    if (input.environment !== "PRODUCTION") {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Production settlement ceiling amendment requires environment=PRODUCTION"
+      );
+    }
+    if (input.capabilityKey && input.capabilityKey !== "ai_story.execute") {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_MISMATCH",
+        "Capability identity must remain ai_story.execute"
+      );
+    }
+    return this.db.transaction(async (tx) => {
+      const ownership = await tx.select({ workspaceId: schema.workspaces.id }).from(schema.workspaces).where(and(
+        eq(schema.workspaces.id, input.workspaceId), eq(schema.workspaces.orgId, input.orgId),
+      )).limit(1);
+      if (!ownership[0]) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISMATCH", "Workspace does not belong to organization");
+      }
+      const rows = await tx.select().from(schema.certificationCommercialScopes).where(and(
+        eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId),
+        eq(schema.certificationCommercialScopes.environment, "PRODUCTION"),
+        eq(schema.certificationCommercialScopes.orgId, input.orgId),
+        eq(schema.certificationCommercialScopes.workspaceId, input.workspaceId),
+        eq(schema.certificationCommercialScopes.capabilityKey, "ai_story.execute"),
+      )).limit(1).for("update");
+      const row = rows[0];
+      if (!row) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISSING", "Production certification scope not found");
+      }
+      if (row.status !== "ACTIVE") {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_INACTIVE", "Production certification scope is not active");
+      }
+      if (
+        input.maxProviderSubmissions !== undefined &&
+        input.maxProviderSubmissions !== row.maxProviderSubmissions
+      ) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "This bounded path may not change maxProviderSubmissions"
+        );
+      }
+      if (row.maxProviderSubmissions > PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "This bounded path may not operate on a Production scope with maxProviderSubmissions above 1"
+        );
+      }
+      if (
+        input.maxProviderSubmissions !== undefined &&
+        input.maxProviderSubmissions > PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS
+      ) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "This bounded path may not increase maxProviderSubmissions above 1"
+        );
+      }
+      const effectiveUsed = row.consumedProviderSubmissions + row.reservedProviderSubmissions;
+      if (row.maxProviderSubmissions < effectiveUsed) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "maxProviderSubmissions must not be below current effective usage"
+        );
+      }
+      const currentCeiling = cents(row.maxProviderCostUsd);
+      const targetCeiling = cents(input.maxProviderCostUsd);
+      if (!/^\d+\.\d{2}$/.test(input.maxProviderCostUsd) || targetCeiling <= 0) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "Amended Production ceiling must be a positive USD amount at cent precision"
+        );
+      }
+      if (targetCeiling < currentCeiling) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "Production settlement ceiling amendment allows only an upward cost change"
+        );
+      }
+      if (targetCeiling === currentCeiling) {
+        return { scope: scopeFromRow(row), replayed: true };
+      }
+      if (cents(row.spentProviderCostUsd) + cents(row.reservedProviderCostUsd) > targetCeiling) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_BUDGET_EXCEEDED",
+          "Amended ceiling does not cover current spent and reserved Provider cost"
+        );
+      }
+      const nextScope = advanceScope(row, { maxProviderCostUsd: input.maxProviderCostUsd });
+      await tx.update(schema.certificationCommercialScopes).set({
+        maxProviderCostUsd: nextScope.maxProviderCostUsd,
+        integrityHash: nextScope.integrityHash,
+        scopeBody: nextScope,
+      }).where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId));
+      await recordEvent(tx, {
+        scopeId: input.certificationScopeId,
+        type: CERTIFICATION_COMMERCIAL_EVENT_CEILING_AMENDED,
+        costUsd: nextScope.maxProviderCostUsd,
+        actorUserId: input.actorUserId,
+        reason: PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
+        occurredAt: input.amendedAt,
+      });
+      const updated = await tx.select().from(schema.certificationCommercialScopes)
+        .where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId))
+        .limit(1);
+      return { scope: scopeFromRow(updated[0]!), replayed: false };
     });
   }
 
@@ -543,7 +673,10 @@ export class CertificationCommercialAuthorityService {
     if (!rows[0]) throw new CertificationCommercialError("CERTIFICATION_RESERVATION_INVALID", "Reservation pricing authority is missing");
     const actualCostUsd = input.completionTokens === undefined
       ? rows[0].reservation.reservedCostUsd
-      : (Math.ceil((input.completionTokens * Number(rows[0].pricing.usdPerMillionTokens) / 1_000_000) * 100) / 100).toFixed(2);
+      : settleProviderCostUsdFromCompletionTokens(
+          input.completionTokens,
+          rows[0].pricing.usdPerMillionTokens
+        );
     return this.settle(input.reservationId, actualCostUsd, input.settledAt);
   }
 

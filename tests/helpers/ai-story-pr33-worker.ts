@@ -246,7 +246,16 @@ export async function buildPr33ValidatedBundle(
 export class InMemoryWorkerRuntimeRepository implements WorkerRuntimeRepository {
   readonly results = new Map<string, WorkerExecutionResult>();
   readonly observations = new Map<string, WorkerExecutionResult[]>();
+  readonly adapterStates = new Map<
+    string,
+    {
+      readonly status: "READY" | "DISPATCHING" | "SUBMITTED" | "RUNNING" | "RECONCILIATION_REQUIRED" | "FAILED" | string;
+      readonly providerTaskId?: string;
+    }
+  >();
   loadCalls = 0;
+  prepareAttemptCalls = 0;
+  claimAttemptCalls = 0;
   bundle: WorkerValidatedBundle | null = null;
   loadError: WorkerRuntimeError | null = null;
 
@@ -339,6 +348,20 @@ export class InMemoryWorkerRuntimeRepository implements WorkerRuntimeRepository 
     }
     this.results.set(parsed.dispatchId, parsed);
     return { result: parsed, converged: false };
+  }
+
+  async getProviderAttemptAdapterState(providerAttemptId: string) {
+    return this.adapterStates.get(providerAttemptId) ?? null;
+  }
+
+  async prepareProviderAttemptBeforeAdapter(): Promise<{ readonly replayed: boolean }> {
+    this.prepareAttemptCalls += 1;
+    return { replayed: false };
+  }
+
+  async claimProviderAttemptForAdapter(): Promise<{ readonly adapterEligible: boolean }> {
+    this.claimAttemptCalls += 1;
+    return { adapterEligible: true };
   }
 }
 
