@@ -83,8 +83,8 @@ describe("AI Story pre-dispatch recovery service", () => {
       repository: { recover },
       certifyGrounding: vi.fn().mockResolvedValue({
         generationMode: "CREATIVE_T2V",
-        visualAuthorityCertified: true,
-        productAuthorityResolved: true,
+        visualAuthorityCertified: false,
+        productAuthorityResolved: false,
         providerMode: "TEXT_TO_VIDEO",
         firstFramePresent: false,
         referenceAuthority: "REFERENCE_FREE_T2V",
@@ -106,8 +106,8 @@ describe("AI Story pre-dispatch recovery service", () => {
       repository: { recover },
       certifyGrounding: vi.fn().mockResolvedValue({
         generationMode: "CREATIVE_T2V",
-        visualAuthorityCertified: true,
-        productAuthorityResolved: true,
+        visualAuthorityCertified: false,
+        productAuthorityResolved: false,
         providerMode: "TEXT_TO_VIDEO",
         firstFramePresent: false,
         referenceAuthority: "REFERENCE_FREE_T2V",

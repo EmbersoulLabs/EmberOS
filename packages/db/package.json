@@ -51,6 +51,8 @@
     "sql:ai-story-scene-scheduling-rls": "tsx scripts/apply-ai-story-scene-scheduling-rls-v1.ts",
     "sql:ai-story-generated-scene-review": "tsx scripts/apply-ai-story-generated-scene-review-v1.ts",
     "sql:ai-story-differentiated-retry": "tsx scripts/apply-ai-story-differentiated-retry-v1.ts",
+    "sql:ai-story-t2v-human-retry-contract": "tsx scripts/apply-ai-story-t2v-human-retry-contract-v1.ts",
+    "sql:certification-commercial-submission-quota-amendment": "tsx scripts/apply-certification-commercial-submission-quota-amendment-v1.ts",
     "sql:ai-story-staged-release": "tsx scripts/apply-ai-story-staged-release-v1.ts",
     "sql:ai-story-production-verification": "tsx scripts/apply-ai-story-production-verification-v1.ts",
     "sql:ai-story-worker-runtime": "tsx scripts/apply-ai-story-worker-runtime-v1.ts",

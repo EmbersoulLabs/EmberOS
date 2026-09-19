@@ -5,9 +5,11 @@ import {
   assertAiStoryCompiledProviderWireModeCompatibility,
   CERTIFICATION_COMMERCIAL_CONTRACT_VERSION,
   CERTIFICATION_COMMERCIAL_EVENT_CEILING_AMENDED,
+  CERTIFICATION_COMMERCIAL_EVENT_SUBMISSION_QUOTA_AMENDED,
   CERTIFICATION_COMMERCIAL_REASON,
   CertificationCommercialReservationSchema,
   CertificationCommercialScopeSchema,
+  PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON,
   PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
   PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS,
   ProviderUsdPricingRuleSchema,
@@ -125,6 +127,7 @@ function reservationFromRow(row: typeof schema.certificationCommercialReservatio
 async function recordEvent(tx: Tx, input: {
   scopeId: string; reservationId?: string | null; type: string; costUsd?: string | null;
   actorUserId?: string | null; reason: string; occurredAt: string;
+  details?: Record<string, unknown>;
 }) {
   const body = withIntegrity({
     contractVersion: CERTIFICATION_COMMERCIAL_CONTRACT_VERSION,
@@ -135,6 +138,7 @@ async function recordEvent(tx: Tx, input: {
     actorUserId: input.actorUserId ?? null,
     reason: input.reason,
     occurredAt: input.occurredAt,
+    ...(input.details ?? {}),
   });
   await tx.insert(schema.certificationCommercialEvents).values({
     certificationCommercialEventId: deterministicPersistenceUuid("certification-commercial-event", body),
@@ -303,10 +307,10 @@ export class CertificationCommercialAuthorityService {
           "This bounded path may not change maxProviderSubmissions"
         );
       }
-      if (row.maxProviderSubmissions > PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS) {
+      if (row.maxProviderSubmissions > PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS + 1) {
         throw new CertificationCommercialError(
           "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
-          "This bounded path may not operate on a Production scope with maxProviderSubmissions above 1"
+          "This bounded path may not operate on a Production scope with maxProviderSubmissions above 2"
         );
       }
       if (
@@ -361,6 +365,112 @@ export class CertificationCommercialAuthorityService {
         actorUserId: input.actorUserId,
         reason: PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
         occurredAt: input.amendedAt,
+      });
+      const updated = await tx.select().from(schema.certificationCommercialScopes)
+        .where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId))
+        .limit(1);
+      return { scope: scopeFromRow(updated[0]!), replayed: false };
+    });
+  }
+
+  /**
+   * Bounded Production-only quota path. Permits exactly current+1
+   * maxProviderSubmissions when explicitly human-authorized. Does not mutate
+   * spent/reserved counters, reservations, retry authority, or cost ceiling.
+   */
+  async amendActiveProductionSubmissionQuota(input: {
+    environment: CertificationEnvironment;
+    certificationScopeId: string;
+    orgId: string;
+    workspaceId: string;
+    capabilityKey?: "ai_story.execute";
+    actorUserId: string;
+    humanAuthorizationReason: string;
+    amendedAt: string;
+    maxProviderSubmissions: number;
+  }): Promise<{ scope: CertificationCommercialScope; replayed: boolean }> {
+    if (input.environment !== "PRODUCTION") {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Production submission quota amendment requires environment=PRODUCTION"
+      );
+    }
+    if (input.capabilityKey && input.capabilityKey !== "ai_story.execute") {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_MISMATCH",
+        "Capability identity must remain ai_story.execute"
+      );
+    }
+    if (!input.actorUserId?.trim()) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Production submission quota amendment requires an explicit actorUserId"
+      );
+    }
+    if (input.humanAuthorizationReason !== PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Production submission quota amendment requires explicit human authorization"
+      );
+    }
+    if (!Number.isInteger(input.maxProviderSubmissions) || input.maxProviderSubmissions <= 0) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Target maxProviderSubmissions must be a positive integer"
+      );
+    }
+    return this.db.transaction(async (tx) => {
+      const ownership = await tx.select({ workspaceId: schema.workspaces.id }).from(schema.workspaces).where(and(
+        eq(schema.workspaces.id, input.workspaceId), eq(schema.workspaces.orgId, input.orgId),
+      )).limit(1);
+      if (!ownership[0]) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISMATCH", "Workspace does not belong to organization");
+      }
+      const rows = await tx.select().from(schema.certificationCommercialScopes).where(and(
+        eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId),
+        eq(schema.certificationCommercialScopes.environment, "PRODUCTION"),
+        eq(schema.certificationCommercialScopes.orgId, input.orgId),
+        eq(schema.certificationCommercialScopes.workspaceId, input.workspaceId),
+        eq(schema.certificationCommercialScopes.capabilityKey, "ai_story.execute"),
+      )).limit(1).for("update");
+      const row = rows[0];
+      if (!row) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISSING", "Production certification scope not found");
+      }
+      if (row.status !== "ACTIVE") {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_INACTIVE", "Production certification scope is not active");
+      }
+      if (input.maxProviderSubmissions === row.maxProviderSubmissions) {
+        return { scope: scopeFromRow(row), replayed: true };
+      }
+      if (input.maxProviderSubmissions < row.maxProviderSubmissions) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "Production submission quota amendment allows only an upward increment"
+        );
+      }
+      if (input.maxProviderSubmissions !== row.maxProviderSubmissions + 1) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "This bounded path may authorize exactly one additional Provider submission"
+        );
+      }
+      const nextScope = advanceScope(row, { maxProviderSubmissions: input.maxProviderSubmissions });
+      await tx.update(schema.certificationCommercialScopes).set({
+        maxProviderSubmissions: nextScope.maxProviderSubmissions,
+        integrityHash: nextScope.integrityHash,
+        scopeBody: nextScope,
+      }).where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId));
+      await recordEvent(tx, {
+        scopeId: input.certificationScopeId,
+        type: CERTIFICATION_COMMERCIAL_EVENT_SUBMISSION_QUOTA_AMENDED,
+        actorUserId: input.actorUserId,
+        reason: PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON,
+        occurredAt: input.amendedAt,
+        details: {
+          oldMaxProviderSubmissions: row.maxProviderSubmissions,
+          newMaxProviderSubmissions: input.maxProviderSubmissions,
+        },
       });
       const updated = await tx.select().from(schema.certificationCommercialScopes)
         .where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId))

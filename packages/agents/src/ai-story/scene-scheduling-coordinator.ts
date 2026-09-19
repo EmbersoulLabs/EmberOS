@@ -22,6 +22,7 @@ import {
   type PostTerminalProviderRetryAuthorizationFact,
   type ProductVisualMaterialSelectionAuthority,
   type AiStoryEffectiveSceneGenerationAuthority,
+  assertRetryProviderModeMatchesFrozenScene,
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
@@ -589,8 +590,7 @@ export class SceneSchedulingCoordinator {
             (input.retryInputRevision.revisionNumber !== retryGeneration ||
               input.retryInputRevision.sceneExecutionId !== input.sceneExecutionId ||
               input.retryInputRevision.executionPlanId !== input.executionPlanId ||
-              input.retryInputRevision.workspaceId !== fact.ownership.workspaceId ||
-              input.retryInputRevision.providerModeRequirement !== "FIRST_FRAME_I2V")) ||
+              input.retryInputRevision.workspaceId !== fact.ownership.workspaceId)) ||
           (input.postTerminalRetryAuthorization &&
             (input.postTerminalRetryAuthorization.retryGeneration !== retryGeneration ||
               input.postTerminalRetryAuthorization.sceneExecutionId !==
@@ -667,6 +667,21 @@ export class SceneSchedulingCoordinator {
         );
       }
       assertOwnershipMatchesScene(fact, sceneIntent);
+      if (input.retryInputRevision) {
+        try {
+          assertRetryProviderModeMatchesFrozenScene({
+            retryProviderMode: input.retryInputRevision.providerModeRequirement,
+            generationAuthority:
+              sceneIntent.generationAuthority ??
+              compilation.instructionsBySceneExecutionId[input.sceneExecutionId]?.generationAuthority,
+          });
+        } catch {
+          throw new SceneSchedulingError(
+            "SCENE_SCHEDULING_NOT_ELIGIBLE",
+            "Retry revision mode must remain the frozen Scene generation authority"
+          );
+        }
+      }
       if (compilation.plan.storyExecutionId !== input.executionPlanId) {
         throw new SceneSchedulingError(
           "IDENTITY_CONFLICT",
@@ -926,6 +941,27 @@ export class SceneSchedulingCoordinator {
               }
             : {}),
         });
+      if (input.retryInputRevision?.providerModeRequirement === "REFERENCE_FREE_T2V") {
+        if (
+          compiledProviderRequest.generationMode !== "TEXT_TO_VIDEO" ||
+          compiledProviderRequest.referenceMappings.length !== 0 ||
+          compiledProviderRequest.productMaterialSelection
+        ) {
+          throw new SceneSchedulingError(
+            "SCENE_SCHEDULING_NOT_ELIGIBLE",
+            "Reference-free retry must remain TEXT_TO_VIDEO without Product material"
+          );
+        }
+      }
+      if (
+        input.retryInputRevision?.providerModeRequirement === "FIRST_FRAME_I2V" &&
+        compiledProviderRequest.generationMode !== "FIRST_FRAME_IMAGE_TO_VIDEO"
+      ) {
+        throw new SceneSchedulingError(
+          "SCENE_SCHEDULING_NOT_ELIGIBLE",
+          "FIRST_FRAME_I2V retry must remain image-conditioned"
+        );
+      }
       if (acceptedBundle) {
         await this.providerRuntimeRepo.convergeCompiledRequestForAcceptedBundle({
           bundle: acceptedBundle,

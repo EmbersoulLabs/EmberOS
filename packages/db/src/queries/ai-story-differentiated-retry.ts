@@ -7,6 +7,7 @@ import {
   SceneAttemptInputRevisionFactSchema,
   SceneRetryAuthorizationFactSchema,
   SceneRetryEligibilityFactSchema,
+  deriveAiStoryRetryProviderModeFromFrozenScene,
   isMateriallyDifferentiated,
   type HumanCreativeRejectionReason,
   type SceneAttemptInputRevisionFact,
@@ -146,8 +147,8 @@ export class DifferentiatedRetryRepository {
   async createInputRevision(input: {
     executionPlanId: string; sceneExecutionId: string; workspaceId: string; actorUserId: string;
     sourceReviewId: string; creativeDirection: SceneRetryCreativeDirection;
-    expectedProductAssetId: string;
-    productAuthorityHash: string; visualAuthorityCertificationHash: string;
+    expectedProductAssetId?: string | null;
+    productAuthorityHash?: string | null; visualAuthorityCertificationHash?: string | null;
   }): Promise<SceneAttemptInputRevisionFact> {
     return this.db.transaction(async (tx) => {
       const snapshot = await this.lockAuthority(tx, input);
@@ -157,10 +158,46 @@ export class DifferentiatedRetryRepository {
       if (!eligibility || eligibility.eligibility !== "ELIGIBLE" || !eligibility.nextAttemptNumber) throw new DifferentiatedRetryError("RETRY_INELIGIBLE", "Rejected result is not retry eligible");
       const source = creativeDirectionFromInstructions(snapshot.instructions);
       if (!isMateriallyDifferentiated({ source, candidate: input.creativeDirection, reason: eligibility.reason })) throw new DifferentiatedRetryError("RETRY_INPUT_NOT_DIFFERENTIATED", "Retry input is not materially differentiated");
-      const productAssetId = snapshot.intent.referencedAssetIds?.[0];
+      let retryMode: "REFERENCE_FREE_T2V" | "FIRST_FRAME_I2V";
+      try {
+        retryMode = deriveAiStoryRetryProviderModeFromFrozenScene({
+          generationAuthority: snapshot.intent.generationAuthority ?? snapshot.instructions.generationAuthority,
+        });
+      } catch {
+        throw new DifferentiatedRetryError("RETRY_MODE_UNSUPPORTED", "Human retry requires an exact frozen Scene generation authority");
+      }
+      const referencedAssetIds = snapshot.intent.referencedAssetIds ?? [];
+      if (retryMode === "REFERENCE_FREE_T2V") {
+        if (referencedAssetIds.length > 0 || snapshot.intent.generationAuthority?.effectiveReferenceIds?.length) {
+          throw new DifferentiatedRetryError("RETRY_MODE_ESCALATION_DENIED", "Reference-free retry cannot carry Product or first-frame material");
+        }
+        if (input.expectedProductAssetId || input.productAuthorityHash || input.visualAuthorityCertificationHash) {
+          throw new DifferentiatedRetryError("RETRY_MODE_ESCALATION_DENIED", "Reference-free retry cannot attach Product authority");
+        }
+        const parent = await this.ensureBaseRevision(tx, snapshot, input.actorUserId, eligibility.reason, source, null, null, "REFERENCE_FREE_T2V");
+        const seed = { sceneExecutionId: input.sceneExecutionId, revisionNumber: eligibility.nextAttemptNumber, parentRevisionId: parent.retryInputRevisionId, sourceAttemptId: eligibility.sourceAttemptId, sourceReviewId: input.sourceReviewId, creativeDirection: input.creativeDirection, productAssetId: null, productAuthorityHash: null, visualAuthorityCertificationHash: null, providerModeRequirement: "REFERENCE_FREE_T2V" };
+        const createdAt = this.now().toISOString();
+        const fact = SceneAttemptInputRevisionFactSchema.parse({
+          retryInputRevisionId: deterministicPersistenceUuid("ai-story-scene-attempt-input-revision", seed),
+          orgId: snapshot.scene.orgId, workspaceId: snapshot.scene.workspaceId, campaignId: snapshot.scene.campaignId,
+          storyId: snapshot.scene.storyId, executionPlanId: snapshot.scene.executionPlanId, sceneExecutionId: snapshot.scene.id,
+          revisionNumber: eligibility.nextAttemptNumber, parentRevisionId: parent.retryInputRevisionId,
+          sourceAttemptId: eligibility.sourceAttemptId, sourceReviewId: input.sourceReviewId, retryReason: eligibility.reason,
+          creativeDirection: input.creativeDirection, productAssetId: null, productAuthorityHash: null,
+          visualAuthorityCertificationHash: null, providerModeRequirement: "REFERENCE_FREE_T2V",
+          canonicalFingerprint: fingerprint("ai-story-scene-attempt-input-revision", seed), createdBy: input.actorUserId,
+          createdAt, contractVersion: AI_STORY_DIFFERENTIATED_RETRY_CONTRACT_VERSION,
+        });
+        await this.insertRevision(tx, fact);
+        return (await this.getRevisionInTx(tx, fact.retryInputRevisionId))!;
+      }
+      const productAssetId = referencedAssetIds[0];
       if (!productAssetId) throw new DifferentiatedRetryError("PRODUCT_AUTHORITY_MISSING", "Campaign Product Asset is missing");
+      if (!input.expectedProductAssetId || !input.productAuthorityHash || !input.visualAuthorityCertificationHash) {
+        throw new DifferentiatedRetryError("PRODUCT_AUTHORITY_MISSING", "Certified Product visual authority is required");
+      }
       if (productAssetId !== input.expectedProductAssetId) throw new DifferentiatedRetryError("PRODUCT_AUTHORITY_CONFLICT", "Retry certification does not match the Campaign Product Asset");
-      const parent = await this.ensureBaseRevision(tx, snapshot, input.actorUserId, eligibility.reason, source, input.productAuthorityHash, input.visualAuthorityCertificationHash);
+      const parent = await this.ensureBaseRevision(tx, snapshot, input.actorUserId, eligibility.reason, source, input.productAuthorityHash, input.visualAuthorityCertificationHash, "FIRST_FRAME_I2V");
       const seed = { sceneExecutionId: input.sceneExecutionId, revisionNumber: eligibility.nextAttemptNumber, parentRevisionId: parent.retryInputRevisionId, sourceAttemptId: eligibility.sourceAttemptId, sourceReviewId: input.sourceReviewId, creativeDirection: input.creativeDirection, productAssetId, productAuthorityHash: input.productAuthorityHash, visualAuthorityCertificationHash: input.visualAuthorityCertificationHash, providerModeRequirement: "FIRST_FRAME_I2V" };
       const createdAt = this.now().toISOString();
       const fact = SceneAttemptInputRevisionFactSchema.parse({
@@ -264,10 +301,23 @@ export class DifferentiatedRetryRepository {
   private async getEligibilityInTx(db: Db|Tx, reviewId:string) { const [row]=await db.select().from(schema.aiStorySceneRetryEligibilityFacts).where(eq(schema.aiStorySceneRetryEligibilityFacts.sourceReviewId,reviewId)).limit(1); return row ? SceneRetryEligibilityFactSchema.parse(row.fact) : null; }
   private async getRevisionInTx(db: Db|Tx,id:string) { const [row]=await db.select().from(schema.aiStorySceneAttemptInputRevisions).where(eq(schema.aiStorySceneAttemptInputRevisions.retryInputRevisionId,id)).limit(1); return row ? SceneAttemptInputRevisionFactSchema.parse(row.fact) : null; }
   private async insertRevision(tx:Tx,fact:SceneAttemptInputRevisionFact) { await tx.insert(schema.aiStorySceneAttemptInputRevisions).values({retryInputRevisionId:fact.retryInputRevisionId,orgId:fact.orgId,workspaceId:fact.workspaceId,campaignId:fact.campaignId,storyId:fact.storyId,executionPlanId:fact.executionPlanId,sceneExecutionId:fact.sceneExecutionId,revisionNumber:fact.revisionNumber,parentRevisionId:fact.parentRevisionId,sourceAttemptId:fact.sourceAttemptId,sourceReviewId:fact.sourceReviewId,retryReason:fact.retryReason,creativeDirection:fact.creativeDirection,productAssetId:fact.productAssetId,productAuthorityHash:fact.productAuthorityHash,visualAuthorityCertificationHash:fact.visualAuthorityCertificationHash,providerModeRequirement:fact.providerModeRequirement,canonicalFingerprint:fact.canonicalFingerprint,createdBy:fact.createdBy,createdAt:new Date(fact.createdAt),contractVersion:fact.contractVersion,fact}).onConflictDoNothing(); }
-  private async ensureBaseRevision(tx:Tx,snapshot:Awaited<ReturnType<DifferentiatedRetryRepository["lockAuthority"]>>,actor:string,reason:HumanCreativeRejectionReason,direction:SceneRetryCreativeDirection,productHash:string,certHash:string) {
+  private async ensureBaseRevision(
+    tx:Tx,
+    snapshot:Awaited<ReturnType<DifferentiatedRetryRepository["lockAuthority"]>>,
+    actor:string,
+    reason:HumanCreativeRejectionReason,
+    direction:SceneRetryCreativeDirection,
+    productHash:string | null,
+    certHash:string | null,
+    providerModeRequirement:"REFERENCE_FREE_T2V"|"FIRST_FRAME_I2V"
+  ) {
     const [existing]=await tx.select().from(schema.aiStorySceneAttemptInputRevisions).where(and(eq(schema.aiStorySceneAttemptInputRevisions.sceneExecutionId,snapshot.scene.id),eq(schema.aiStorySceneAttemptInputRevisions.revisionNumber,1))).limit(1); if(existing)return SceneAttemptInputRevisionFactSchema.parse(existing.fact);
-    const productAssetId=snapshot.intent.referencedAssetIds[0]; const seed={sceneExecutionId:snapshot.scene.id,revisionNumber:1,sourceAttemptId:snapshot.review.providerAttemptId,sourceReviewId:snapshot.review.generatedSceneReviewId,creativeDirection:direction,productAssetId,productAuthorityHash:productHash,visualAuthorityCertificationHash:certHash,providerModeRequirement:"FIRST_FRAME_I2V"}; const createdAt=this.now().toISOString();
-    const fact=SceneAttemptInputRevisionFactSchema.parse({retryInputRevisionId:deterministicPersistenceUuid("ai-story-scene-attempt-input-revision",seed),orgId:snapshot.scene.orgId,workspaceId:snapshot.scene.workspaceId,campaignId:snapshot.scene.campaignId,storyId:snapshot.scene.storyId,executionPlanId:snapshot.scene.executionPlanId,sceneExecutionId:snapshot.scene.id,revisionNumber:1,parentRevisionId:null,sourceAttemptId:snapshot.review.providerAttemptId,sourceReviewId:snapshot.review.generatedSceneReviewId,retryReason:reason,creativeDirection:direction,productAssetId,productAuthorityHash:productHash,visualAuthorityCertificationHash:certHash,providerModeRequirement:"FIRST_FRAME_I2V",canonicalFingerprint:fingerprint("ai-story-scene-attempt-input-revision",seed),createdBy:actor,createdAt,contractVersion:AI_STORY_DIFFERENTIATED_RETRY_CONTRACT_VERSION}); await this.insertRevision(tx,fact); return fact;
+    const productAssetId = providerModeRequirement === "FIRST_FRAME_I2V" ? snapshot.intent.referencedAssetIds[0] : null;
+    if (providerModeRequirement === "FIRST_FRAME_I2V" && (!productAssetId || !productHash || !certHash)) {
+      throw new DifferentiatedRetryError("PRODUCT_AUTHORITY_MISSING", "Campaign Product Asset is missing");
+    }
+    const seed={sceneExecutionId:snapshot.scene.id,revisionNumber:1,sourceAttemptId:snapshot.review.providerAttemptId,sourceReviewId:snapshot.review.generatedSceneReviewId,creativeDirection:direction,productAssetId,productAuthorityHash:productHash,visualAuthorityCertificationHash:certHash,providerModeRequirement}; const createdAt=this.now().toISOString();
+    const fact=SceneAttemptInputRevisionFactSchema.parse({retryInputRevisionId:deterministicPersistenceUuid("ai-story-scene-attempt-input-revision",seed),orgId:snapshot.scene.orgId,workspaceId:snapshot.scene.workspaceId,campaignId:snapshot.scene.campaignId,storyId:snapshot.scene.storyId,executionPlanId:snapshot.scene.executionPlanId,sceneExecutionId:snapshot.scene.id,revisionNumber:1,parentRevisionId:null,sourceAttemptId:snapshot.review.providerAttemptId,sourceReviewId:snapshot.review.generatedSceneReviewId,retryReason:reason,creativeDirection:direction,productAssetId,productAuthorityHash:productHash,visualAuthorityCertificationHash:certHash,providerModeRequirement,canonicalFingerprint:fingerprint("ai-story-scene-attempt-input-revision",seed),createdBy:actor,createdAt,contractVersion:AI_STORY_DIFFERENTIATED_RETRY_CONTRACT_VERSION}); await this.insertRevision(tx,fact); return fact;
   }
 }
 
