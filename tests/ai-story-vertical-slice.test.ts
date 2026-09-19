@@ -80,6 +80,8 @@ describe("AI Story vertical slice (V1)", () => {
       expect(() => assertAiStoryTransition("ready_for_animation", "planning")).not.toThrow();
       expect(() => assertAiStoryTransition("planning", "planning_review")).not.toThrow();
       expect(() => assertAiStoryTransition("planning_review", "ready_for_execution")).not.toThrow();
+      expect(() => assertAiStoryTransition("planning_review", "execution_review")).not.toThrow();
+      expect(() => assertAiStoryTransition("planning_review", "executing")).not.toThrow();
       expect(() => assertAiStoryTransition("draft", "ready_for_animation")).toThrow(
         /Invalid AI Story transition/
       );
@@ -95,6 +97,9 @@ describe("AI Story vertical slice (V1)", () => {
       expect(AI_STORY_ALLOWED_TRANSITIONS.planning_review).toEqual([
         "planning",
         "ready_for_execution",
+        "executing",
+        "execution_review",
+        "execution_failed",
         "archived",
       ]);
       expect(AI_STORY_ALLOWED_TRANSITIONS.archived).toEqual([]);

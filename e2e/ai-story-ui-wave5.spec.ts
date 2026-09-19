@@ -213,6 +213,28 @@ test("operator reviews Scene, Cast, Location, Product, video, and QC without Pro
   expect(calls.providerCalls()).toBe(0);
 });
 
+test("execution_review revisit renders Scene review, generated video, and Human Review without auto-approval", async ({ page }) => {
+  const calls = await authenticate(page, "operator");
+  let reviewDecisionPosts = 0;
+  await page.route(
+    new RegExp(`/api/campaigns/${campaignId}/ai-stories/${storyId}/execution-plans/.*/review/scenes/.*/decisions`),
+    async (route) => {
+      reviewDecisionPosts += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
+    }
+  );
+  await mockGeneratedSceneWorkspace(page);
+  await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
+  await expect(page.getByTestId("scene-review-workspace")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Generated result" })).toBeVisible();
+  await expect(page.locator("video")).toHaveCount(1);
+  await expect(page.getByTestId("generated-scene-media-preview-0")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve Scene" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Needs changes" })).toBeVisible();
+  expect(reviewDecisionPosts).toBe(0);
+  expect(calls.providerCalls()).toBe(0);
+});
+
 test("mobile generated Scene review keeps evidence, video, and actions reachable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const calls = await authenticate(page, "operator");
