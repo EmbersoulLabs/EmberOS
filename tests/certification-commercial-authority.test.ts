@@ -3,8 +3,12 @@ import {
   CERTIFICATION_COMMERCIAL_REASON,
   CERTIFICATION_MAX_PROVIDER_COST_USD,
   CERTIFICATION_MAX_PROVIDER_SUBMISSIONS,
+  CERTIFICATION_COMMERCIAL_EVENT_CEILING_AMENDED,
+  PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
+  PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS,
   ProviderUsdPricingRuleSchema,
   estimateProviderCostUsd,
+  settleProviderCostUsdFromCompletionTokens,
   withIntegrity,
 } from "@ceo-agent/shared/server";
 
@@ -41,11 +45,24 @@ describe("certification commercial authority contract", () => {
     expect(CERTIFICATION_MAX_PROVIDER_SUBMISSIONS).toBe(4);
   });
 
+  it("freezes the Production settlement ceiling amendment contract", () => {
+    expect(PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON).toBe(
+      "Human-authorized Production settlement ceiling amendment"
+    );
+    expect(CERTIFICATION_COMMERCIAL_EVENT_CEILING_AMENDED).toBe("CEILING_AMENDED");
+    expect(PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS).toBe(1);
+  });
+
   it("keeps Provider USD cost separate from product credits", () => {
     expect(rule.currency).toBe("USD");
     expect(rule.costBasis).toBe("OFFICIAL_TOKEN_RATE_ESTIMATE");
     expect(rule).not.toHaveProperty("creditAmount");
     expect(estimateProviderCostUsd(rule)).toBe("0.35");
+  });
+
+  it("settles Provider USD from completion tokens at cent precision", () => {
+    expect(settleProviderCostUsdFromCompletionTokens(40_000, "7.0000")).toBe("0.28");
+    expect(settleProviderCostUsdFromCompletionTokens(38_571, "7.0000")).toBe("0.27");
   });
 
   it("fails closed for unsupported or unversioned price shapes", () => {

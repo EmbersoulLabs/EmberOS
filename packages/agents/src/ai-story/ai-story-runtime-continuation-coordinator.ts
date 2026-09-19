@@ -41,6 +41,9 @@ import {
 } from "./scene-finalization-coordinator";
 import {
   SceneProviderWorkerRuntime,
+  WorkerRuntimeError,
+  computeWorkerAttemptId,
+  type ProcessDispatchInput,
   type SceneProviderWorkerRuntimeDependencies,
 } from "./scene-provider-worker-runtime";
 import {
@@ -302,7 +305,10 @@ export class AiStoryRuntimeContinuationCoordinator {
   /**
    * Process one Dispatch through Worker → Finalization → Assembly → FSR as applicable.
    */
-  async continueFromDispatch(dispatchId: string): Promise<AiStoryContinuationOutcome> {
+  async continueFromDispatch(
+    dispatchId: string,
+    workerProcess?: Pick<ProcessDispatchInput, "mode" | "providerRequestId" | "forbidSubmit">
+  ): Promise<AiStoryContinuationOutcome> {
     const bundle = await this.deps.worker.repository.loadValidatedBundleByDispatchId(
       dispatchId
     );
@@ -310,7 +316,10 @@ export class AiStoryRuntimeContinuationCoordinator {
       return { status: "SKIPPED_NON_SCENE", dispatchId, message: "Not an AI Story scene Dispatch" };
     }
 
-    const workerOutcome = await this.workerRuntime.processDispatch({ dispatchId });
+    const workerOutcome = await this.workerRuntime.processDispatch({
+      dispatchId,
+      ...workerProcess,
+    });
     const route = classifyWorkerResultForCoordinator(workerOutcome.result);
 
     if (route === "ACCEPTANCE_UNKNOWN") {
@@ -406,6 +415,92 @@ export class AiStoryRuntimeContinuationCoordinator {
       ownership: bundle.runtimeAuthorization.ownership,
       workerResult: workerOutcome.result,
       adapterInvoked: workerOutcome.adapterInvoked,
+    });
+  }
+
+  /**
+   * Resume the same already-submitted Provider Attempt. Lookup only.
+   * Never creates a Dispatch, Attempt, retry authorization, or Provider submit.
+   */
+  async resumeAcceptedProviderAttemptFromDispatch(input: {
+    readonly dispatchId: string;
+    readonly providerAttemptId: string;
+    readonly providerExecutionId: string;
+    readonly providerRequestId: string;
+    readonly compiledRequestId: string;
+    readonly requestFingerprint: string;
+  }): Promise<AiStoryContinuationOutcome> {
+    const bundle = await this.deps.worker.repository.loadValidatedBundleByDispatchId(
+      input.dispatchId
+    );
+    if (!bundle) {
+      throw new WorkerRuntimeError(
+        "WORKER_DISPATCH_INVALID",
+        "Same-Attempt recovery requires the existing Dispatch"
+      );
+    }
+    if (bundle.providerExecutionId !== input.providerExecutionId) {
+      throw new WorkerRuntimeError(
+        "OWNERSHIP_INTEGRITY_VIOLATION",
+        "Same-Attempt recovery Provider execution identity mismatch"
+      );
+    }
+    const providerAttemptId = computeWorkerAttemptId({
+      providerExecutionId: bundle.providerExecutionId,
+      dispatchId: bundle.dispatch.dispatchId,
+      routingDecisionId: bundle.routingDecision.routingDecisionId,
+      selectedProviderId: bundle.routingDecision.selectedProviderId,
+      adapterVersion: bundle.routingDecision.selectedAdapterVersion,
+    });
+    if (providerAttemptId !== input.providerAttemptId) {
+      throw new WorkerRuntimeError(
+        "OWNERSHIP_INTEGRITY_VIOLATION",
+        "Same-Attempt recovery Provider Attempt identity mismatch"
+      );
+    }
+    const durableAttempt =
+      await this.deps.worker.repository.getProviderAttemptAdapterState?.(
+        providerAttemptId
+      );
+    const terminal =
+      await this.deps.worker.repository.getWorkerExecutionResultByDispatchId(
+        input.dispatchId
+      );
+    const observation =
+      terminal == null &&
+      this.deps.worker.repository.getLatestWorkerAttemptObservationByDispatchId
+        ? await this.deps.worker.repository.getLatestWorkerAttemptObservationByDispatchId(
+            input.dispatchId
+          )
+        : null;
+    const persistedRequestId =
+      terminal?.providerRequestId ??
+      observation?.providerRequestId ??
+      durableAttempt?.providerTaskId;
+    if (!persistedRequestId || persistedRequestId !== input.providerRequestId) {
+      throw new WorkerRuntimeError(
+        "RECONCILIATION_REQUIRED",
+        "Same-Attempt recovery requires the persisted Provider task identity"
+      );
+    }
+    const compiledRequestId =
+      bundle.envelope.executionContext.trace.compiledRequestId?.trim() ?? "";
+    const requestFingerprint =
+      bundle.envelope.executionContext.trace.compiledRequestFingerprint?.trim() ??
+      "";
+    if (
+      compiledRequestId !== input.compiledRequestId ||
+      requestFingerprint !== input.requestFingerprint
+    ) {
+      throw new WorkerRuntimeError(
+        "OWNERSHIP_INTEGRITY_VIOLATION",
+        "Same-Attempt recovery compiled request identity mismatch"
+      );
+    }
+    return this.continueFromDispatch(input.dispatchId, {
+      mode: "lookup",
+      providerRequestId: input.providerRequestId,
+      forbidSubmit: true,
     });
   }
 

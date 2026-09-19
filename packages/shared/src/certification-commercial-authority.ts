@@ -9,6 +9,10 @@ export const CERTIFICATION_COMMERCIAL_REASON =
   "AI Story V1 STAGING real-provider certification" as const;
 export const CERTIFICATION_MAX_PROVIDER_COST_USD = "5.00" as const;
 export const CERTIFICATION_MAX_PROVIDER_SUBMISSIONS = 4 as const;
+export const PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON =
+  "Human-authorized Production settlement ceiling amendment" as const;
+export const CERTIFICATION_COMMERCIAL_EVENT_CEILING_AMENDED = "CEILING_AMENDED" as const;
+export const PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS = 1 as const;
 
 const uuid = z.string().uuid();
 const instant = z.string().datetime();
@@ -72,6 +76,14 @@ export function estimateProviderCostUsd(rule: ProviderUsdPricingRule): string {
   const estimatedUsd =
     (estimatedTokens * Number(rule.usdPerMillionTokens)) / 1_000_000;
   return (Math.ceil(estimatedUsd * 100) / 100).toFixed(2);
+}
+
+export function settleProviderCostUsdFromCompletionTokens(
+  completionTokens: number,
+  usdPerMillionTokens: string
+): string {
+  const rateTimes1e4 = Math.round(Number(usdPerMillionTokens) * 10_000);
+  return (Math.ceil((completionTokens * rateTimes1e4) / 100_000_000) / 100).toFixed(2);
 }
 
 export const CertificationCommercialReservationSchema = z.object({
