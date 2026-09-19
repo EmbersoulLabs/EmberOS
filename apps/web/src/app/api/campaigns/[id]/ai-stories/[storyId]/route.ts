@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import {
   AiStoryCharacterAuthorityService,
   AiStorySupportingCastAuthorityService,
+  convergeAiStoryStatusFromRuntimeAuthority,
   getDb,
   schema,
   withDbDeadline,
@@ -44,6 +45,16 @@ export async function GET(
       const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
       if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
 
+      let story = loaded.story;
+      if (!loaded.verificationFixtureState) {
+        const converged = await convergeAiStoryStatusFromRuntimeAuthority(db, {
+          orgId: campaign.orgId,
+          workspaceId: campaign.workspaceId,
+          storyId,
+        });
+        story = converged.story;
+      }
+
       // This request has already resolved the canonical Campaign, Story,
       // workspace membership, tenant, plan, and effective-entitlement authority.
       // Keep the initial UI Character/Cast projection inside that verified
@@ -69,7 +80,7 @@ export async function GET(
           persistedStoryStatus: loaded.story.status,
         });
       }
-      return apiSuccess({ ...loaded, characters, supportingCharacters });
+      return apiSuccess({ ...loaded, story, characters, supportingCharacters });
     });
   } catch (error) {
     return handleApiError(error);

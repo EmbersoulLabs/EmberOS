@@ -21,6 +21,7 @@ export * from "./queries/ai-story-scene-scheduling";
 export * from "./queries/ai-story-worker-runtime";
 export * from "./queries/ai-story-provider-create-response-diagnostic";
 export * from "./queries/ai-story-scene-projection";
+export * from "./queries/ai-story-status-convergence";
 export * from "./queries/ai-story-assembly-job";
 export * from "./queries/ai-story-assembly-artifact";
 export * from "./queries/ai-story-final-story-result";

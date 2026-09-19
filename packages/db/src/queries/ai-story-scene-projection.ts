@@ -20,6 +20,7 @@ import {
 import { getDb } from "../client";
 import * as schema from "../schema/index";
 import { insertPendingGeneratedSceneReviewInTransaction } from "./ai-story-generated-scene-review";
+import { convergeAiStoryStatusFromRuntimeAuthority } from "./ai-story-status-convergence";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -318,6 +319,11 @@ export class SceneProjectionRepositoryImpl {
               "Projection correlation exists without Scene Result"
             );
           }
+          await convergeAiStoryStatusFromRuntimeAuthority(tx, {
+            orgId: input.correlation.ownershipOrgId,
+            workspaceId: input.correlation.ownershipWorkspaceId,
+            storyId: input.sceneResult.ownership.storyId,
+          });
           return {
             correlation: accepted,
             sceneResult: ProjectedSceneResultSchema.parse(sceneRow.result),
@@ -385,6 +391,11 @@ export class SceneProjectionRepositoryImpl {
               "Projection correlation exists without Scene Result"
             );
           }
+          await convergeAiStoryStatusFromRuntimeAuthority(tx, {
+            orgId: input.correlation.ownershipOrgId,
+            workspaceId: input.correlation.ownershipWorkspaceId,
+            storyId: input.sceneResult.ownership.storyId,
+          });
           return {
             correlation: accepted,
             sceneResult: ProjectedSceneResultSchema.parse(sceneRow.result),
@@ -425,6 +436,12 @@ export class SceneProjectionRepositoryImpl {
           sceneId: input.sceneResult.sceneId,
           providerAttemptId: input.sceneResult.providerAttemptId,
           sceneResultId: input.sceneResult.sceneResultId,
+        });
+
+        await convergeAiStoryStatusFromRuntimeAuthority(tx, {
+          orgId: input.sceneResult.ownership.orgId,
+          workspaceId: input.sceneResult.ownership.workspaceId,
+          storyId: input.sceneResult.ownership.storyId,
         });
 
         return {
