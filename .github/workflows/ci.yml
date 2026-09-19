@@ -181,6 +181,12 @@ jobs:
       - name: Certify Post-Generation QC evidence PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-post-generation-qc.integration.test.ts
 
+      - name: Certify Post-QC runtime recovery compatibility
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+          pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-post-qc-runtime-recovery-compat.integration.test.ts
+
       - name: Certify isolated three-Scene AI Story self-use dry run
         run: |
           sudo apt-get update -qq
