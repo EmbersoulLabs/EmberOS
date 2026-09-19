@@ -6,6 +6,7 @@ import {
   ProviderCostSchema,
   ProviderUsageSchema,
   WorkerExecutionResultSchema,
+  isAiStoryProviderAttemptTransitionAllowed,
   type CanonicalProviderResult,
   type ProviderCost,
   type ProviderUsage,
@@ -488,6 +489,70 @@ async function assertCurrentAiStoryTerminalEvidence(input: {
   }
 }
 
+async function advanceCurrentAiStoryBindingToPostQcPending(input: {
+  readonly tx: Transaction;
+  readonly attemptId: string;
+  readonly updatedAt: Date;
+}): Promise<void> {
+  const [row] = await input.tx
+    .select()
+    .from(schema.aiStoryProviderAttemptCompiledBindings)
+    .where(
+      eq(
+        schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+        input.attemptId
+      )
+    )
+    .limit(1);
+  const current = row
+    ? AiStoryProviderAttemptBindingSchema.parse(row.binding)
+    : null;
+  if (!current) {
+    throw new ProviderExecutionFinalizationError(
+      "AI Story compiled Attempt binding is missing during finalization"
+    );
+  }
+  if (["POST_GENERATION_QC_PENDING", "SUCCEEDED"].includes(current.status)) {
+    return;
+  }
+
+  const resultReady = AiStoryProviderAttemptBindingSchema.parse({
+    ...current,
+    status: "PROVIDER_RESULT_READY",
+    updatedAt: input.updatedAt.toISOString(),
+  });
+  if (!isAiStoryProviderAttemptTransitionAllowed(current.status, resultReady.status)) {
+    throw new ProviderExecutionFinalizationError(
+      `AI Story Attempt cannot enter terminal-media authority from ${current.status}`
+    );
+  }
+  const postQcPending = AiStoryProviderAttemptBindingSchema.parse({
+    ...resultReady,
+    status: "POST_GENERATION_QC_PENDING",
+  });
+  if (!isAiStoryProviderAttemptTransitionAllowed(resultReady.status, postQcPending.status)) {
+    throw new ProviderExecutionFinalizationError(
+      "AI Story Attempt cannot enter Post-Generation QC authority"
+    );
+  }
+  await input.tx
+    .update(schema.aiStoryProviderAttemptCompiledBindings)
+    .set({
+      status: postQcPending.status,
+      binding: postQcPending,
+      updatedAt: input.updatedAt,
+    })
+    .where(
+      and(
+        eq(
+          schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+          input.attemptId
+        ),
+        eq(schema.aiStoryProviderAttemptCompiledBindings.status, current.status)
+      )
+    );
+}
+
 export class ProviderExecutionFinalizationRepository {
   constructor(private readonly db: Db = getDb()) {}
 
@@ -569,6 +634,11 @@ export class ProviderExecutionFinalizationRepository {
           attempt,
           finalization: input,
           result,
+        });
+        await advanceCurrentAiStoryBindingToPostQcPending({
+          tx,
+          attemptId: attempt.attemptId,
+          updatedAt: now,
         });
       }
       if (
