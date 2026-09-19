@@ -102,7 +102,7 @@ describeIntegration("Production commercial submission quota amendment SQL", () =
         reserved_provider_cost_usd,consumed_provider_submissions,reserved_provider_submissions,
         created_by,reason,created_at,integrity_hash,contract_version,scope_body
       ) VALUES (
-        '${scopeId}','PRODUCTION','${orgId}','${workspaceId}','ai_story.execute','ACTIVE',
+        '${scopeId}','STAGING','${orgId}','${workspaceId}','ai_story.execute','ACTIVE',
         0.29,1,0.29,0,1,0,'${randomUUID()}','test',now(),'hash-scope-quota','1','{}'
       )
     `);
