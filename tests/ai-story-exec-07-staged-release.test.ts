@@ -47,13 +47,20 @@ describe("EXEC-07 durable staged Scene release", () => {
 
   it("remaining release is server-derived and exact-approval gated", () => {
     const repo = read("packages/db/src/queries/ai-story-scene-release.ts");
+    const terminal = read("packages/db/src/queries/provider-execution-finalizer.ts");
     expect(repo).toContain("pg_advisory_xact_lock");
     expect(repo).toContain('decision, "APPROVED"');
-    expect(repo).toContain('status, "SUCCEEDED"');
+    expect(repo).toContain("resolveSuccessfulProviderAttemptTerminalAuthority");
+    expect(repo.match(/resolveSuccessfulProviderAttemptTerminalAuthority/g)).toHaveLength(3);
+    expect(repo).not.toContain('eq(schema.providerAttempts.status, "SUCCEEDED")');
+    expect(terminal).toContain('attempt.contractVersion === "1"');
+    expect(terminal).toContain('attempt.status !== "SUCCEEDED"');
+    expect(terminal).toContain("AI_STORY_PROVIDER_RUNTIME_VERSION");
+    expect(terminal).toContain('attempt.status !== "PENDING"');
+    expect(terminal).not.toMatch(/providerAttempts\)\.set\(\{[^}]*status:\s*"SUCCEEDED"/s);
     expect(repo).toContain("gateProviderAttemptId");
     expect(repo).toContain("FIRST_SCENE_EXACT_ATTEMPT_REQUIRED");
     expect(repo).toContain("FIRST_SCENE_RETRY_OR_EXECUTION_IN_FLIGHT");
-    expect(repo).toContain("providerAttempts.attemptId");
     expect(repo).toContain("result.providerExecutionId");
     const route = read("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/release-remaining-scenes/route.ts");
     expect(route).toContain("resolveAuthorizedExecutionPlan");

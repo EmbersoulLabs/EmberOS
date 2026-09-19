@@ -28,6 +28,7 @@ import {
   canonicalPersistenceHash,
   closeDb,
   getDb,
+  resolveSuccessfulProviderAttemptTerminalAuthority,
   resolveCurrentFrozenCanonicalSceneSet,
 } from "@ceo-agent/db";
 import {
@@ -515,6 +516,18 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
         select scene_result_id, provider_attempt_id from ai_story_scene_results
         where scene_execution_id = ${sceneExecutionId}::uuid`;
       expect(result?.provider_attempt_id).toBe(attempt!.attempt_id);
+      expect(await resolveSuccessfulProviderAttemptTerminalAuthority({
+        reader: getDb(),
+        providerAttemptId: attempt!.attempt_id,
+        providerExecutionId: scheduled.providerExecutionId,
+        sceneExecutionId,
+      })).toMatchObject({
+        contractVersion: "ai-story-provider-runtime.v1",
+        providerAttemptId: attempt!.attempt_id,
+        providerExecutionId: scheduled.providerExecutionId,
+        sceneExecutionId,
+        outboxJobId: scheduled.outboxJobId,
+      });
       sceneResultIds.push(result!.scene_result_id);
       const objectKey = `${ids.workspaceId}/self-use/scene-${index + 1}.mp4`;
       await new DurableSceneMediaAttestationRepositoryImpl().acceptOrConverge({
@@ -593,6 +606,98 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
       });
       expect(human.review.decision).toBe("APPROVED");
       expect(human.review.sceneResultId).toBe(result!.scene_result_id);
+
+      if (index === 0) {
+        const releaseInput = {
+          executionPlanId: planId,
+          workspaceId: ids.workspaceId,
+          actorUserId: PR32_USER_A,
+          releasedAt: new Date("2026-09-18T01:29:00.000Z"),
+        };
+        const expectDenied = async (
+          mutate: () => Promise<unknown>,
+          restore: () => Promise<unknown>,
+          code = "PRIOR_SCENE_EXACT_ATTEMPT_REQUIRED"
+        ) => {
+          await mutate();
+          try {
+            await expect(release.releaseNextEligible(releaseInput)).rejects.toThrow(code);
+          } finally {
+            await restore();
+          }
+        };
+
+        // Current-runtime Attempt anchors may never masquerade as legacy
+        // terminal rows. releaseRemaining exercises the FIRST_SCENE path.
+        await sql`update provider_attempts set status = 'SUCCEEDED'
+          where attempt_id = ${attempt!.attempt_id}`;
+        try {
+          await expect(release.releaseRemaining(releaseInput))
+            .rejects.toThrow("FIRST_SCENE_EXACT_ATTEMPT_REQUIRED");
+        } finally {
+          await sql`update provider_attempts set status = 'PENDING'
+            where attempt_id = ${attempt!.attempt_id}`;
+        }
+
+        await expectDenied(
+          () => sql`update ai_story_worker_execution_results
+            set provider_attempt_id = ${`missing-${attempt!.attempt_id}`}
+            where provider_attempt_id = ${attempt!.attempt_id}`,
+          () => sql`update ai_story_worker_execution_results
+            set provider_attempt_id = ${attempt!.attempt_id}
+            where provider_attempt_id = ${`missing-${attempt!.attempt_id}`}`
+        );
+        await expectDenied(
+          () => sql`update ai_story_worker_attempt_observations
+            set observation_kind = 'ACCEPTANCE_UNKNOWN'
+            where provider_attempt_id = ${attempt!.attempt_id}`,
+          () => sql`update ai_story_worker_attempt_observations
+            set observation_kind = 'ACCEPTED'
+            where provider_attempt_id = ${attempt!.attempt_id}`
+        );
+        await expectDenied(
+          () => sql`update ai_story_worker_attempt_observations
+            set reconciliation_required = true
+            where provider_attempt_id = ${attempt!.attempt_id}`,
+          () => sql`update ai_story_worker_attempt_observations
+            set reconciliation_required = false
+            where provider_attempt_id = ${attempt!.attempt_id}`
+        );
+        await expectDenied(
+          () => sql`update provider_executions
+            set accepted_attempt_id = ${`wrong-${attempt!.attempt_id}`}
+            where execution_id = ${scheduled.providerExecutionId}`,
+          () => sql`update provider_executions
+            set accepted_attempt_id = ${attempt!.attempt_id}
+            where execution_id = ${scheduled.providerExecutionId}`
+        );
+        await expectDenied(
+          () => sql`update provider_outbox_jobs set status = 'RETRY_WAIT'
+            where job_id = ${scheduled.outboxJobId}`,
+          () => sql`update provider_outbox_jobs set status = 'COMPLETED'
+            where job_id = ${scheduled.outboxJobId}`
+        );
+        await expectDenied(
+          () => sql`update ai_story_provider_attempt_compiled_bindings
+            set binding = jsonb_set(binding, '{providerTaskId}', to_jsonb(${'wrong-provider-task'}::text))
+            where provider_attempt_id = ${attempt!.attempt_id}`,
+          () => sql`update ai_story_provider_attempt_compiled_bindings
+            set binding = jsonb_set(binding, '{providerTaskId}', to_jsonb(${attempt!.provider_request_id!}::text))
+            where provider_attempt_id = ${attempt!.attempt_id}`
+        );
+        await expectDenied(
+          () => sql`update certification_commercial_reservations set status = 'SUBMITTED'
+            where execution_identity = ${attempt!.attempt_id}`,
+          () => sql`update certification_commercial_reservations set status = 'SETTLED'
+            where execution_identity = ${attempt!.attempt_id}`
+        );
+        await expectDenied(
+          () => sql`update provider_executions set status = 'TERMINAL_FAILURE'
+            where execution_id = ${scheduled.providerExecutionId}`,
+          () => sql`update provider_executions set status = 'SUCCEEDED'
+            where execution_id = ${scheduled.providerExecutionId}`
+        );
+      }
     }
     expect(new Set(compiledIds).size).toBe(3);
     expect(new Set(sceneResultIds).size).toBe(3);

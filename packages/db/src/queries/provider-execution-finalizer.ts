@@ -14,6 +14,15 @@ import { getDb, schema } from "../client";
 
 type Db = ReturnType<typeof getDb>;
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type TerminalAuthorityReader = Pick<Transaction, "select">;
+
+export interface SuccessfulProviderAttemptTerminalAuthority {
+  readonly contractVersion: "1" | typeof AI_STORY_PROVIDER_RUNTIME_VERSION;
+  readonly providerAttemptId: string;
+  readonly providerExecutionId: string;
+  readonly sceneExecutionId: string;
+  readonly outboxJobId: string;
+}
 
 export class ProviderExecutionFinalizationError extends Error {
   readonly code = "PROVIDER_EXECUTION_FINALIZATION_FAILED";
@@ -109,6 +118,222 @@ export function providerAttemptUsesCurrentAiStoryTerminalEvidence(input: {
   throw new ProviderExecutionFinalizationError(
     `Unsupported Provider Attempt contract version: ${input.contractVersion}`
   );
+}
+
+/**
+ * Read-only, version-aware authority for releasing a Scene after a successful
+ * Provider result. Current AI Story attempts deliberately remain PENDING: the
+ * accepted execution, immutable Worker evidence, and completed Outbox are the
+ * terminal authority. Historical v1 attempts retain their SUCCEEDED contract.
+ */
+export async function resolveSuccessfulProviderAttemptTerminalAuthority(input: {
+  readonly reader: TerminalAuthorityReader;
+  readonly providerAttemptId: string;
+  readonly providerExecutionId: string;
+  readonly sceneExecutionId: string;
+}): Promise<SuccessfulProviderAttemptTerminalAuthority | null> {
+  const { reader } = input;
+  const [attempt] = await reader
+    .select()
+    .from(schema.providerAttempts)
+    .where(
+      and(
+        eq(schema.providerAttempts.attemptId, input.providerAttemptId),
+        eq(schema.providerAttempts.executionId, input.providerExecutionId)
+      )
+    )
+    .limit(1);
+  if (!attempt) return null;
+
+  const [execution] = await reader
+    .select()
+    .from(schema.providerExecutions)
+    .where(eq(schema.providerExecutions.executionId, input.providerExecutionId))
+    .limit(1);
+  const acceptedResult = CanonicalProviderResultSchema.safeParse(
+    execution?.acceptedResult
+  );
+  if (
+    !execution ||
+    execution.status !== "SUCCEEDED" ||
+    execution.acceptedAttemptId !== input.providerAttemptId ||
+    !acceptedResult.success ||
+    acceptedResult.data.executionId !== input.providerExecutionId ||
+    acceptedResult.data.providerAttemptId !== input.providerAttemptId ||
+    acceptedResult.data.requestHash !== attempt.requestHash
+  ) {
+    return null;
+  }
+
+  if (attempt.contractVersion === "1") {
+    if (attempt.status !== "SUCCEEDED") return null;
+    const jobs = await reader
+      .select()
+      .from(schema.providerOutboxJobs)
+      .where(eq(schema.providerOutboxJobs.executionId, input.providerExecutionId));
+    const completed = jobs.filter((job) => job.status === "COMPLETED");
+    if (jobs.length !== 1 || completed.length !== 1) return null;
+    return {
+      contractVersion: "1",
+      providerAttemptId: attempt.attemptId,
+      providerExecutionId: attempt.executionId,
+      sceneExecutionId: input.sceneExecutionId,
+      outboxJobId: completed[0]!.jobId,
+    };
+  }
+
+  if (
+    attempt.contractVersion !== AI_STORY_PROVIDER_RUNTIME_VERSION ||
+    attempt.status !== "PENDING"
+  ) {
+    return null;
+  }
+
+  const bindingRows = await reader
+    .select()
+    .from(schema.aiStoryProviderAttemptCompiledBindings)
+    .where(
+      eq(
+        schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+        input.providerAttemptId
+      )
+    );
+  const parsedBinding = bindingRows.length === 1
+    ? AiStoryProviderAttemptBindingSchema.safeParse(bindingRows[0]!.binding)
+    : null;
+  if (!parsedBinding?.success) return null;
+  const binding = parsedBinding.data;
+  if (
+    binding.providerAttemptId !== input.providerAttemptId ||
+    binding.providerExecutionId !== input.providerExecutionId ||
+    binding.sceneExecutionId !== input.sceneExecutionId ||
+    binding.contractVersion !== AI_STORY_PROVIDER_RUNTIME_VERSION ||
+    !binding.providerTaskId ||
+    binding.providerTaskId !== attempt.providerRequestId ||
+    !["POST_GENERATION_QC_PENDING", "SUCCEEDED"].includes(binding.status) ||
+    bindingRows[0]!.requestFingerprint !== binding.requestFingerprint ||
+    bindingRows[0]!.status !== binding.status
+  ) {
+    return null;
+  }
+
+  const [compiled] = await reader
+    .select()
+    .from(schema.aiStoryCompiledProviderRequests)
+    .where(
+      eq(
+        schema.aiStoryCompiledProviderRequests.compiledRequestId,
+        binding.compiledRequestId
+      )
+    )
+    .limit(1);
+  if (
+    !compiled ||
+    compiled.sceneExecutionId !== input.sceneExecutionId ||
+    compiled.requestFingerprint !== binding.requestFingerprint
+  ) {
+    return null;
+  }
+
+  const workerRows = await reader
+    .select()
+    .from(schema.aiStoryWorkerExecutionResults)
+    .where(
+      eq(
+        schema.aiStoryWorkerExecutionResults.providerAttemptId,
+        input.providerAttemptId
+      )
+    );
+  const parsedWorker = workerRows.length === 1
+    ? WorkerExecutionResultSchema.safeParse(workerRows[0]!.result)
+    : null;
+  if (!parsedWorker?.success) return null;
+  const worker = parsedWorker.data;
+  if (
+    worker.providerExecutionId !== input.providerExecutionId ||
+    worker.providerAttemptId !== input.providerAttemptId ||
+    worker.providerRequestId !== binding.providerTaskId ||
+    worker.workerState !== "TERMINAL_SUCCESS" ||
+    worker.acceptanceClassification !== "ACCEPTED" ||
+    worker.canonicalProviderState !== "SUCCEEDED" ||
+    worker.reconciliationRequired
+  ) {
+    return null;
+  }
+
+  const observations = await reader
+    .select()
+    .from(schema.aiStoryWorkerAttemptObservations)
+    .where(
+      eq(
+        schema.aiStoryWorkerAttemptObservations.providerAttemptId,
+        input.providerAttemptId
+      )
+    );
+  const accepted = observations.filter(
+    (observation) => observation.observationKind === "ACCEPTED"
+  );
+  if (
+    accepted.length !== 1 ||
+    accepted[0]!.providerExecutionId !== input.providerExecutionId ||
+    accepted[0]!.providerRequestId !== binding.providerTaskId ||
+    accepted[0]!.outboxJobId !== worker.outboxJobId ||
+    observations.some(
+      (observation) =>
+        observation.reconciliationRequired ||
+        (observation.providerRequestId &&
+          observation.providerRequestId !== binding.providerTaskId) ||
+        ["NOT_ACCEPTED", "ACCEPTANCE_UNKNOWN"].includes(
+          observation.observationKind
+        )
+    )
+  ) {
+    return null;
+  }
+
+  if (binding.commercialReservationId) {
+    const [reservation] = await reader
+      .select()
+      .from(schema.certificationCommercialReservations)
+      .where(
+        eq(
+          schema.certificationCommercialReservations.certificationReservationId,
+          binding.commercialReservationId
+        )
+      )
+      .limit(1);
+    if (
+      !reservation ||
+      reservation.executionIdentity !== input.providerAttemptId ||
+      reservation.orgId !== binding.orgId ||
+      reservation.workspaceId !== binding.workspaceId ||
+      reservation.status !== "SETTLED" ||
+      reservation.settledCostUsd === null
+    ) {
+      return null;
+    }
+  }
+
+  const [job] = await reader
+    .select()
+    .from(schema.providerOutboxJobs)
+    .where(eq(schema.providerOutboxJobs.jobId, worker.outboxJobId))
+    .limit(1);
+  if (
+    !job ||
+    job.executionId !== input.providerExecutionId ||
+    job.status !== "COMPLETED"
+  ) {
+    return null;
+  }
+
+  return {
+    contractVersion: AI_STORY_PROVIDER_RUNTIME_VERSION,
+    providerAttemptId: attempt.attemptId,
+    providerExecutionId: attempt.executionId,
+    sceneExecutionId: input.sceneExecutionId,
+    outboxJobId: job.jobId,
+  };
 }
 
 async function assertCurrentAiStoryTerminalEvidence(input: {
