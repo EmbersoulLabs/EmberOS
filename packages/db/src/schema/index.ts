@@ -3522,7 +3522,7 @@ export const certificationCommercialEvents = pgTable(
     unique("certification_commercial_events_integrity_unique").on(t.integrityHash),
     uniqueIndex("certification_commercial_events_reservation_type_unique").on(t.certificationReservationId, t.eventType).where(sql`${t.certificationReservationId} is not null`),
     index("certification_commercial_events_scope_idx").on(t.certificationScopeId, t.occurredAt),
-    check("certification_commercial_events_type_check", sql`${t.eventType} in ('CREATED','RESERVED','SUBMITTED','SETTLED','RELEASED','CLOSED','REVOKED','CEILING_AMENDED')`),
+    check("certification_commercial_events_type_check", sql`${t.eventType} in ('CREATED','RESERVED','SUBMITTED','SETTLED','RELEASED','CLOSED','REVOKED','CEILING_AMENDED','SUBMISSION_QUOTA_AMENDED')`),
   ]
 );
 
@@ -3929,9 +3929,9 @@ export const aiStorySceneAttemptInputRevisions = pgTable(
     sourceReviewId: uuid("source_review_id").notNull().references(() => aiStoryGeneratedSceneReviews.generatedSceneReviewId, { onDelete: "restrict" }),
     retryReason: text("retry_reason").notNull(),
     creativeDirection: jsonb("creative_direction").$type<import("@ceo-agent/shared").SceneRetryCreativeDirection>().notNull(),
-    productAssetId: uuid("product_asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
-    productAuthorityHash: text("product_authority_hash").notNull(),
-    visualAuthorityCertificationHash: text("visual_authority_certification_hash").notNull(),
+    productAssetId: uuid("product_asset_id").references(() => assets.id, { onDelete: "restrict" }),
+    productAuthorityHash: text("product_authority_hash"),
+    visualAuthorityCertificationHash: text("visual_authority_certification_hash"),
     providerModeRequirement: text("provider_mode_requirement").notNull(),
     canonicalFingerprint: text("canonical_fingerprint").notNull(),
     createdBy: uuid("created_by").notNull(),
@@ -3944,6 +3944,24 @@ export const aiStorySceneAttemptInputRevisions = pgTable(
     unique("ai_story_scene_attempt_input_revision_number_unique").on(t.sceneExecutionId, t.revisionNumber),
     unique("ai_story_scene_attempt_input_revision_hash_unique").on(t.canonicalFingerprint),
     index("ai_story_scene_attempt_input_revision_workspace_idx").on(t.workspaceId, t.acceptedAt),
+    check(
+      "ai_story_scene_retry_revision_mode_v2",
+      sql`${t.providerModeRequirement} in ('REFERENCE_FREE_T2V','FIRST_FRAME_I2V')`
+    ),
+    check(
+      "ai_story_scene_retry_revision_authority_v2",
+      sql`(
+        ${t.providerModeRequirement} = 'REFERENCE_FREE_T2V'
+        and ${t.productAssetId} is null
+        and ${t.productAuthorityHash} is null
+        and ${t.visualAuthorityCertificationHash} is null
+      ) or (
+        ${t.providerModeRequirement} = 'FIRST_FRAME_I2V'
+        and ${t.productAssetId} is not null
+        and ${t.productAuthorityHash} is not null
+        and ${t.visualAuthorityCertificationHash} is not null
+      )`
+    ),
   ]
 );
 

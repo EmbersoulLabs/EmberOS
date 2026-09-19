@@ -7,6 +7,8 @@ import {
   SceneAttemptInputRevisionFactSchema,
   SceneRetryAuthorizationFactSchema,
   SceneRetryEligibilityFactSchema,
+  assertRetryProviderModeMatchesFrozenScene,
+  deriveAiStoryRetryProviderModeFromFrozenScene,
   isMateriallyDifferentiated,
   type SceneAttemptInputRevisionFact,
 } from "@ceo-agent/shared";
@@ -30,6 +32,33 @@ const DIFFERENT = {
   focusProgression: ["PRIMARY_DETAIL", "SECONDARY_DETAIL"],
   shotEmphasis: "DISTINCT_VISUAL_BEAT",
 };
+
+function t2vRevision(overrides: Record<string, unknown> = {}) {
+  return SceneAttemptInputRevisionFactSchema.parse({
+    retryInputRevisionId: ID("911"),
+    orgId: ID("2"),
+    workspaceId: ID("3"),
+    campaignId: ID("4"),
+    storyId: ID("5"),
+    executionPlanId: ID("101"),
+    sceneExecutionId: ID("201"),
+    revisionNumber: 2,
+    parentRevisionId: ID("910"),
+    sourceAttemptId: "attempt-1",
+    sourceReviewId: ID("801"),
+    retryReason: "INSUFFICIENT_SCENE_DIFFERENTIATION",
+    creativeDirection: DIFFERENT,
+    productAssetId: null,
+    productAuthorityHash: null,
+    visualAuthorityCertificationHash: null,
+    providerModeRequirement: "REFERENCE_FREE_T2V",
+    canonicalFingerprint: HASH,
+    createdBy: ID("1"),
+    createdAt: "2026-08-25T00:00:00.000Z",
+    contractVersion: "1",
+    ...overrides,
+  });
+}
 
 function revision(overrides: Partial<SceneAttemptInputRevisionFact> = {}) {
   return SceneAttemptInputRevisionFactSchema.parse({
@@ -147,6 +176,14 @@ describe("differentiated human retry contract", () => {
     const original = Object.freeze({
       purpose: "HERO_INTRODUCTION",
       transition: "SLOW_PUSH_IN",
+      referencedAssetIds: [ID("301")],
+      generationAuthority: {
+        strategy: "FIRST_FRAME_IMAGE_TO_VIDEO",
+        referenceSource: "SCENE_EXPLICIT",
+        effectiveReferenceIds: [ID("301")],
+        firstFrameAssetId: ID("301"),
+        productVisualIdentityRequirement: "REQUIRED",
+      },
       shots: [Object.freeze({
         shotId: "shot-1", cameraType: "close-up", cameraMovement: "SLOW_PUSH_IN",
         focus: "PRIMARY_PRODUCT", composition: "centered", information: "HERO_PRESENTATION",
@@ -157,12 +194,22 @@ describe("differentiated human retry contract", () => {
     expect(revised).not.toBe(original);
     expect(revised.purpose).toBe("SECONDARY_DETAIL_REVEAL");
     expect(original.purpose).toBe("HERO_INTRODUCTION");
+    expect(revised.generationAuthority).toEqual(original.generationAuthority);
+    expect(revised.referencedAssetIds).toEqual([ID("301")]);
   });
 
   it("projects the latest human correction ahead of retry direction and suppresses rejected inherited composition", () => {
     const original = Object.freeze({
       purpose: "FLORIST PRESENTATION",
       transition: "STATIC",
+      referencedAssetIds: [ID("301")],
+      generationAuthority: {
+        strategy: "FIRST_FRAME_IMAGE_TO_VIDEO",
+        referenceSource: "SCENE_EXPLICIT",
+        effectiveReferenceIds: [ID("301")],
+        firstFrameAssetId: ID("301"),
+        productVisualIdentityRequirement: "REQUIRED",
+      },
       shots: [Object.freeze({
         shotId: "shot-1", order: 0, cameraType: "static", cameraMovement: "STATIC",
         focus: "bouquet", composition: "shop owner presenting the bouquet",
@@ -246,5 +293,90 @@ describe("differentiated human retry contract", () => {
       "utf8"
     );
     expect(requestBuilder).toContain("retryAuthorityHash: input.retryAuthorityHash");
+  });
+
+  it("derives REFERENCE_FREE_T2V retry mode from frozen TEXT_TO_VIDEO Scene authority", () => {
+    expect(deriveAiStoryRetryProviderModeFromFrozenScene({
+      generationAuthority: {
+        strategy: "TEXT_TO_VIDEO",
+        referenceSource: "REFERENCE_FREE_T2V",
+      },
+    })).toBe("REFERENCE_FREE_T2V");
+  });
+
+  it("keeps reference-free retry free of Product Asset and visual certification fields", () => {
+    const fact = t2vRevision();
+    expect(fact.providerModeRequirement).toBe("REFERENCE_FREE_T2V");
+    expect(fact.productAssetId).toBeNull();
+    expect(fact.productAuthorityHash).toBeNull();
+    expect(fact.visualAuthorityCertificationHash).toBeNull();
+  });
+
+  it("compiles a reference-free retry as TEXT_TO_VIDEO with zero image references", () => {
+    const original = {
+      purpose: "OPENING ATMOSPHERE",
+      transition: "STATIC",
+      referencedAssetIds: [],
+      generationAuthority: {
+        strategy: "TEXT_TO_VIDEO" as const,
+        referenceSource: "REFERENCE_FREE_T2V" as const,
+        effectiveReferenceIds: [],
+        firstFrameAssetId: null,
+        productVisualIdentityRequirement: "NONE" as const,
+      },
+      shots: [{
+        shotId: "shot-1", cameraType: "static", cameraMovement: "STATIC",
+        focus: "closed lily bud", composition: "centered", information: "closed lily bud",
+        emotion: "poetic", durationMs: 4000,
+      }],
+    };
+    const revised = applyRetryInputRevision(original as never, t2vRevision({
+      creativeDirection: {
+        visualRole: "closed lily bud poetic opening for next Product reveal",
+        cameraInstruction: "fast elegant time-lapse bloom",
+        focusProgression: ["closed lily bud", "elegant time-lapse bloom"],
+        shotEmphasis: "poetic opening for next Product reveal",
+      },
+    }));
+    expect(revised.generationAuthority).toEqual(original.generationAuthority);
+    expect(revised.referencedAssetIds).toEqual([]);
+    expect(revised.purpose).toContain("closed lily bud");
+  });
+
+  it("denies attaching Product first-frame material to a reference-free retry", () => {
+    expect(() => t2vRevision({ productAssetId: ID("301") as never })).toThrow();
+    expect(() => revision({
+      providerModeRequirement: "REFERENCE_FREE_T2V",
+      productAssetId: null,
+      productAuthorityHash: null,
+      visualAuthorityCertificationHash: null,
+    })).not.toThrow();
+  });
+
+  it("denies switching a TEXT_TO_VIDEO retry to FIRST_FRAME_I2V", () => {
+    expect(() => assertRetryProviderModeMatchesFrozenScene({
+      retryProviderMode: "FIRST_FRAME_I2V",
+      generationAuthority: {
+        strategy: "TEXT_TO_VIDEO",
+        referenceSource: "REFERENCE_FREE_T2V",
+      },
+    })).toThrow(/frozen Scene generation authority/);
+  });
+
+  it("keeps FIRST_FRAME_I2V retry Product certification mandatory", () => {
+    expect(() => SceneAttemptInputRevisionFactSchema.parse({
+      ...revision(),
+      productAssetId: null,
+      productAuthorityHash: null,
+      visualAuthorityCertificationHash: null,
+    })).toThrow();
+    expect(revision().providerModeRequirement).toBe("FIRST_FRAME_I2V");
+    expect(revision().productAssetId).toBe(ID("301"));
+  });
+
+  it("reads historical FIRST_FRAME_I2V retry rows without rewriting them", () => {
+    const historical = revision();
+    expect(SceneAttemptInputRevisionFactSchema.parse(historical).providerModeRequirement)
+      .toBe("FIRST_FRAME_I2V");
   });
 });

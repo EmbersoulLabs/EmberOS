@@ -25,6 +25,57 @@ export type RetryEligibility = z.infer<typeof RetryEligibilitySchema>;
 
 const BoundedText = z.string().trim().min(1).max(500);
 const Hash = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const Uuid = z.string().uuid();
+
+export const AI_STORY_RETRY_PROVIDER_MODES = ["REFERENCE_FREE_T2V", "FIRST_FRAME_I2V"] as const;
+export const AiStoryRetryProviderModeSchema = z.enum(AI_STORY_RETRY_PROVIDER_MODES);
+export type AiStoryRetryProviderMode = z.infer<typeof AiStoryRetryProviderModeSchema>;
+
+export class AiStoryRetryModeAuthorityError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "AiStoryRetryModeAuthorityError";
+  }
+}
+
+export function deriveAiStoryRetryProviderModeFromFrozenScene(input: {
+  readonly generationAuthority?: {
+    readonly strategy?: string;
+    readonly referenceSource?: string;
+  } | null;
+}): AiStoryRetryProviderMode {
+  const strategy = input.generationAuthority?.strategy;
+  const referenceSource = input.generationAuthority?.referenceSource;
+  if (strategy === "TEXT_TO_VIDEO" && referenceSource === "REFERENCE_FREE_T2V") {
+    return "REFERENCE_FREE_T2V";
+  }
+  if (
+    (strategy === "FIRST_FRAME_IMAGE_TO_VIDEO" || strategy === "PRODUCT_GROUNDED_VIDEO") &&
+    referenceSource === "SCENE_EXPLICIT"
+  ) {
+    return "FIRST_FRAME_I2V";
+  }
+  throw new AiStoryRetryModeAuthorityError(
+    "RETRY_MODE_UNSUPPORTED",
+    "Human retry requires an exact frozen Scene generation authority"
+  );
+}
+
+export function assertRetryProviderModeMatchesFrozenScene(input: {
+  readonly retryProviderMode: AiStoryRetryProviderMode;
+  readonly generationAuthority?: {
+    readonly strategy?: string;
+    readonly referenceSource?: string;
+  } | null;
+}): void {
+  const frozen = deriveAiStoryRetryProviderModeFromFrozenScene(input);
+  if (frozen !== input.retryProviderMode) {
+    throw new AiStoryRetryModeAuthorityError(
+      "RETRY_MODE_ESCALATION_DENIED",
+      "Retry mode must remain the frozen Scene generation authority"
+    );
+  }
+}
 
 export const SceneRetryCreativeDirectionSchema = z.object({
   visualRole: BoundedText,
@@ -35,36 +86,48 @@ export const SceneRetryCreativeDirectionSchema = z.object({
 }).strict();
 export type SceneRetryCreativeDirection = z.infer<typeof SceneRetryCreativeDirectionSchema>;
 
-export const SceneAttemptInputRevisionFactSchema = z.object({
-  retryInputRevisionId: z.string().uuid(),
-  orgId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  campaignId: z.string().uuid(),
-  storyId: z.string().uuid(),
-  executionPlanId: z.string().uuid(),
-  sceneExecutionId: z.string().uuid(),
+const SceneAttemptInputRevisionBase = {
+  retryInputRevisionId: Uuid,
+  orgId: Uuid,
+  workspaceId: Uuid,
+  campaignId: Uuid,
+  storyId: Uuid,
+  executionPlanId: Uuid,
+  sceneExecutionId: Uuid,
   revisionNumber: z.number().int().positive(),
-  parentRevisionId: z.string().uuid().nullable(),
+  parentRevisionId: Uuid.nullable(),
   sourceAttemptId: z.string().min(1),
-  sourceReviewId: z.string().uuid(),
+  sourceReviewId: Uuid,
   retryReason: HumanCreativeRejectionReasonSchema,
   creativeDirection: SceneRetryCreativeDirectionSchema,
-  productAssetId: z.string().uuid(),
-  productAuthorityHash: Hash,
-  visualAuthorityCertificationHash: Hash,
-  providerModeRequirement: z.literal("FIRST_FRAME_I2V"),
   canonicalFingerprint: Hash,
-  createdBy: z.string().uuid(),
+  createdBy: Uuid,
   createdAt: z.string().datetime(),
   contractVersion: z.literal(AI_STORY_DIFFERENTIATED_RETRY_CONTRACT_VERSION),
-}).strict();
+} as const;
+
+export const SceneAttemptInputRevisionFactSchema = z.discriminatedUnion("providerModeRequirement", [
+  z.object({
+    ...SceneAttemptInputRevisionBase,
+    providerModeRequirement: z.literal("REFERENCE_FREE_T2V"),
+    productAssetId: z.null(),
+    productAuthorityHash: z.null(),
+    visualAuthorityCertificationHash: z.null(),
+  }).strict(),
+  z.object({
+    ...SceneAttemptInputRevisionBase,
+    providerModeRequirement: z.literal("FIRST_FRAME_I2V"),
+    productAssetId: Uuid,
+    productAuthorityHash: Hash,
+    visualAuthorityCertificationHash: Hash,
+  }).strict(),
+]);
 export type SceneAttemptInputRevisionFact = z.infer<typeof SceneAttemptInputRevisionFactSchema>;
 
 export const SceneRetryEligibilityFactSchema = z.object({
-  retryEligibilityId: z.string().uuid(),
-  orgId: z.string().uuid(), workspaceId: z.string().uuid(), campaignId: z.string().uuid(),
-  storyId: z.string().uuid(), executionPlanId: z.string().uuid(), sceneExecutionId: z.string().uuid(),
-  sourceReviewId: z.string().uuid(), sourceAttemptId: z.string().min(1),
+  retryEligibilityId: Uuid, orgId: Uuid, workspaceId: Uuid, campaignId: Uuid,
+  storyId: Uuid, executionPlanId: Uuid, sceneExecutionId: Uuid,
+  sourceReviewId: Uuid, sourceAttemptId: z.string().min(1),
   eligibility: RetryEligibilitySchema,
   nextAttemptNumber: z.number().int().positive().nullable(),
   reason: HumanCreativeRejectionReasonSchema,
@@ -75,14 +138,14 @@ export const SceneRetryEligibilityFactSchema = z.object({
 export type SceneRetryEligibilityFact = z.infer<typeof SceneRetryEligibilityFactSchema>;
 
 export const SceneRetryAuthorizationFactSchema = z.object({
-  retryAuthorizationId: z.string().uuid(),
-  orgId: z.string().uuid(), workspaceId: z.string().uuid(), campaignId: z.string().uuid(),
-  storyId: z.string().uuid(), executionPlanId: z.string().uuid(), sceneExecutionId: z.string().uuid(),
-  sourceReviewId: z.string().uuid(), sourceAttemptId: z.string().min(1),
+  retryAuthorizationId: Uuid,
+  orgId: Uuid, workspaceId: Uuid, campaignId: Uuid,
+  storyId: Uuid, executionPlanId: Uuid, sceneExecutionId: Uuid,
+  sourceReviewId: Uuid, sourceAttemptId: z.string().min(1),
   authorizedAttemptNumber: z.number().int().min(2).max(AI_STORY_MAX_HUMAN_AUTHORIZED_ATTEMPTS),
-  authorizedBy: z.string().uuid(), authorizedAt: z.string().datetime(),
+  authorizedBy: Uuid, authorizedAt: z.string().datetime(),
   reason: HumanCreativeRejectionReasonSchema,
-  retryInputRevisionId: z.string().uuid(), retryInputFingerprint: Hash,
+  retryInputRevisionId: Uuid, retryInputFingerprint: Hash,
   status: z.enum(["AUTHORIZED", "CONSUMED"]),
   canonicalFingerprint: Hash,
   contractVersion: z.literal(AI_STORY_DIFFERENTIATED_RETRY_CONTRACT_VERSION),
@@ -99,13 +162,13 @@ export const RejectGeneratedSceneCreativeCommandSchema = z.object({
 });
 
 export const CreateSceneRetryInputRevisionCommandSchema = z.object({
-  sourceReviewId: z.string().uuid(),
+  sourceReviewId: Uuid,
   creativeDirection: SceneRetryCreativeDirectionSchema,
 }).strict();
 
 export const AuthorizeSceneRetryCommandSchema = z.object({
-  sourceReviewId: z.string().uuid(),
-  retryInputRevisionId: z.string().uuid(),
+  sourceReviewId: Uuid,
+  retryInputRevisionId: Uuid,
 }).strict();
 
 export function normalizedCreativeDirection(value: SceneRetryCreativeDirection) {

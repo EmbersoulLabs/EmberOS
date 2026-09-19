@@ -38,8 +38,8 @@ export type PreDispatchGroundingCertification =
     }
   | {
       readonly generationMode: "CREATIVE_T2V";
-      readonly visualAuthorityCertified: true;
-      readonly productAuthorityResolved: true;
+      readonly visualAuthorityCertified: false;
+      readonly productAuthorityResolved: false;
       readonly providerMode: "TEXT_TO_VIDEO";
       readonly firstFramePresent: false;
       readonly referenceAuthority: "REFERENCE_FREE_T2V";
@@ -98,11 +98,14 @@ export class PreDispatchRecoveryService<TResult> {
       certification.providerMode === "TEXT_TO_VIDEO" &&
       !certification.firstFramePresent &&
       certification.referenceAuthority === "REFERENCE_FREE_T2V" &&
-      certification.referenceCount === 0;
+      certification.referenceCount === 0 &&
+      certification.visualAuthorityCertified === false &&
+      certification.productAuthorityResolved === false;
     if (
-      !certification.visualAuthorityCertified ||
-      !certification.productAuthorityResolved ||
       (!productGrounded && !referenceFreeT2v) ||
+      (productGrounded &&
+        (!certification.visualAuthorityCertified ||
+          !certification.productAuthorityResolved)) ||
       !certification.directorSafe ||
       certification.preDispatchGate !== "PASS"
     ) {

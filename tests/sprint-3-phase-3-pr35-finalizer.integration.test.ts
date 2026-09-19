@@ -165,11 +165,13 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
 
   async function scheduleScene(
     sceneOrder?: readonly number[],
-    purpose = "pr35r1"
+    purpose = "pr35r1",
+    options?: { readonly firstFrameI2vOrders?: readonly number[] }
   ) {
     const prepared = await prepareAuthorizedSchedulingPlan({
       purpose,
       sceneOrder,
+      firstFrameI2vOrders: options?.firstFrameI2vOrders,
     });
     const scheduled = await new SceneSchedulingCoordinator({
       router: new FixedSeedanceRouter(),
@@ -477,7 +479,9 @@ describeIntegration("Sprint 3 PR 3.5R1 Finalizer PostgreSQL integration", () => 
   }, 180_000);
 
   it("differentiated human retry contract certification", async () => {
-    const { dispatch } = await scheduleScene(undefined, "differentiated-retry");
+    const { dispatch } = await scheduleScene(undefined, "differentiated-retry", {
+      firstFrameI2vOrders: [0],
+    });
     await seedTerminalSuccessWorker(dispatch.dispatchId);
     const outcome = await coordinator().finalizeAndProject({
       dispatchId: dispatch.dispatchId,

@@ -317,6 +317,8 @@ export async function prepareAuthorizedSchedulingPlan(input: {
   readonly persistAuthorization?: boolean;
   readonly sceneOrder?: readonly number[];
   readonly skipCommercialAuthorization?: boolean;
+  readonly referenceFreeT2vOrders?: readonly number[];
+  readonly firstFrameI2vOrders?: readonly number[];
 }) {
   const ids = input.ids ?? PHASE_2A_IDS;
   const userId = input.userId ?? PR32_USER_A;
@@ -326,6 +328,8 @@ export async function prepareAuthorizedSchedulingPlan(input: {
         ids,
         instructionPurpose: `${input.purpose}-${crypto.randomUUID()}`,
         sceneOrder: input.sceneOrder,
+        referenceFreeT2vOrders: input.referenceFreeT2vOrders,
+        firstFrameI2vOrders: input.firstFrameI2vOrders,
       })
     );
   const executionPlanId = persisted.plan.storyExecutionId;

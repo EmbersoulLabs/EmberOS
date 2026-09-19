@@ -46,6 +46,8 @@ export function makePhase2aCompilation(
     animationPackageId?: string;
     sceneOrder?: readonly number[];
     instructionPurpose?: string;
+    referenceFreeT2vOrders?: readonly number[];
+    firstFrameI2vOrders?: readonly number[];
   } = {}
 ): PersistSceneExecutionCompilationInput {
   const ids = {
@@ -61,6 +63,26 @@ export function makePhase2aCompilation(
   const instructionsBySceneExecutionId: Record<string, AiStorySceneCompiledInstructions> = {};
   const intents: AiStorySceneExecutionIntent[] = orders.map((order, index) => {
     const sceneId = sceneIds[index]!;
+    const referenceFree = (overrides.referenceFreeT2vOrders ?? []).includes(order);
+    const firstFrameI2v = (overrides.firstFrameI2vOrders ?? []).includes(order);
+    const referencedAssetIds = referenceFree ? [] : [ids.assetId];
+    const generationAuthority = referenceFree
+      ? {
+          strategy: "TEXT_TO_VIDEO" as const,
+          referenceSource: "REFERENCE_FREE_T2V" as const,
+          effectiveReferenceIds: [],
+          firstFrameAssetId: null,
+          productVisualIdentityRequirement: "NONE" as const,
+        }
+      : firstFrameI2v
+        ? {
+            strategy: "FIRST_FRAME_IMAGE_TO_VIDEO" as const,
+            referenceSource: "SCENE_EXPLICIT" as const,
+            effectiveReferenceIds: referencedAssetIds,
+            firstFrameAssetId: ids.assetId,
+            productVisualIdentityRequirement: "REQUIRED" as const,
+          }
+        : undefined;
     const instructions: AiStorySceneCompiledInstructions = {
       contractVersion: "1",
       capabilityId: "animation-video-generation",
@@ -85,7 +107,8 @@ export function makePhase2aCompilation(
         information: "story information",
       }],
       characterReferences: [],
-      referencedAssetIds: [ids.assetId],
+      referencedAssetIds,
+      ...(generationAuthority ? { generationAuthority } : {}),
       worldContinuity: { location: "world" },
       productIdentityConstraints: ["preserve identity"],
     };
@@ -129,7 +152,8 @@ export function makePhase2aCompilation(
         durationMs: 3000,
         integrityHash: canonicalPersistenceHash({ sceneId, shot: index }),
       }],
-      referencedAssetIds: [ids.assetId],
+      referencedAssetIds,
+      ...(generationAuthority ? { generationAuthority } : {}),
       normalizedPayloadReference: {
         uri: `snapshot://${instructionHash}`,
         contentHash: instructionHash,

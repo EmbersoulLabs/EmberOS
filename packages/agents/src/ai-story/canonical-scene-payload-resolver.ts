@@ -6,6 +6,7 @@
  * reconstruct a Canonical Scene Payload from the frozen compiled instructions for
  * the Scene covered by the Envelope trace.
  */
+import { assertRetryProviderModeMatchesFrozenScene } from "@ceo-agent/shared";
 import type {
   AiStoryCompiledProviderRequest,
   AiStorySceneExecutionPackage,
@@ -371,8 +372,18 @@ export function createCompilationBackedCanonicalPayloadResolver(
       const retryInputRevision = retryInputRevisionId
         ? await deps.getRetryInputRevisionById?.(retryInputRevisionId)
         : null;
-      if (retryInputRevisionId && (!retryInputRevision || retryInputRevision.sceneExecutionId !== sceneExecutionId || retryInputRevision.executionPlanId !== executionPlanId || retryInputRevision.workspaceId !== envelope.workspaceId || retryInputRevision.providerModeRequirement !== "FIRST_FRAME_I2V")) {
+      if (retryInputRevisionId && (!retryInputRevision || retryInputRevision.sceneExecutionId !== sceneExecutionId || retryInputRevision.executionPlanId !== executionPlanId || retryInputRevision.workspaceId !== envelope.workspaceId)) {
         throw new Error("Retry input revision authority is missing or conflicts with the Execution Envelope");
+      }
+      const compiledIntent = compilation.intents.find(
+        (candidate) => candidate.identity.sceneExecutionId === sceneExecutionId
+      );
+      if (retryInputRevision) {
+        assertRetryProviderModeMatchesFrozenScene({
+          retryProviderMode: retryInputRevision.providerModeRequirement,
+          generationAuthority:
+            compiledIntent?.generationAuthority ?? baseInstructions.generationAuthority,
+        });
       }
       const instructions = retryInputRevision
         ? applyRetryInputRevision(baseInstructions, retryInputRevision)
@@ -395,7 +406,15 @@ export function createCompilationBackedCanonicalPayloadResolver(
         .sort(
           (left, right) => right.identity.sceneOrder - left.identity.sceneOrder
         )[0];
-      const productAssetId = sortedUnique(intent.referencedAssetIds)[0];
+      const sourceAuthority =
+        intent.generationAuthority ?? instructions.generationAuthority;
+      const referenceFreeRetry =
+        retryInputRevision?.providerModeRequirement === "REFERENCE_FREE_T2V" ||
+        (sourceAuthority?.strategy === "TEXT_TO_VIDEO" &&
+          sourceAuthority.referenceSource === "REFERENCE_FREE_T2V");
+      const productAssetId = referenceFreeRetry
+        ? undefined
+        : sortedUnique(intent.referencedAssetIds)[0];
       const visualAuthorityCertification =
         productAssetId && deps.certifyProductVisualAuthority
           ? await deps.certifyProductVisualAuthority({
@@ -408,7 +427,7 @@ export function createCompilationBackedCanonicalPayloadResolver(
             })
           : undefined;
 
-      return mapCompiledInstructionsToCanonicalScenePayload({
+      const payload = mapCompiledInstructionsToCanonicalScenePayload({
         instructions,
         intent,
         ...(previousIntent
@@ -431,6 +450,18 @@ export function createCompilationBackedCanonicalPayloadResolver(
           : {}),
         resolution: deps.resolution,
       });
+      if (referenceFreeRetry) {
+        if (
+          payload.generationMode !== CREATIVE_T2V_MODE ||
+          payload.assetReferences.length !== 0 ||
+          payload.productGrounding ||
+          payload.visualAuthorityCertification ||
+          payload.productIdentityCapsule.productReferencePresent
+        ) {
+          throw new Error("Reference-free retry cannot carry Product or first-frame material");
+        }
+      }
+      return payload;
     },
   };
 }

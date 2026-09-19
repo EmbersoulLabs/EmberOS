@@ -118,6 +118,12 @@ jobs:
       - name: Apply differentiated human retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-differentiated-retry
 
+      - name: Apply T2V human retry contract
+        run: pnpm --filter @ceo-agent/db sql:ai-story-t2v-human-retry-contract
+
+      - name: Apply Production submission quota amendment
+        run: pnpm --filter @ceo-agent/db sql:certification-commercial-submission-quota-amendment
+
       - name: Apply post-terminal Provider retry contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-post-terminal-provider-retry
 
@@ -138,6 +144,16 @@ jobs:
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/certification-commercial-scope-ceiling-amendment.integration.test.ts
+
+      - name: Certify Production commercial submission quota amendment
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/certification-commercial-submission-quota-amendment.integration.test.ts
+
+      - name: Certify reference-free T2V human retry contract on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-t2v-human-retry-contract.integration.test.ts
 
       - name: Certify planning hard budget and Production scope upgrade from predecessor schema
         run: >-
@@ -292,6 +308,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Worker compile
+        run: pnpm --filter @ceo-agent/worker typecheck
 
       - name: Build web
         run: pnpm --filter @ceo-agent/web build

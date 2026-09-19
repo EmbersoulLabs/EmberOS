@@ -1,4 +1,5 @@
 import {
+  assertRetryProviderModeMatchesFrozenScene,
   CreateSceneRetryInputRevisionCommandSchema,
   RejectGeneratedSceneCreativeCommandSchema,
   AuthorizeSceneRetryCommandSchema,
@@ -70,10 +71,23 @@ export function applyRetryInputRevision(
   const activePurpose = active.narrativePurpose!;
   const activeAction = active.actions![0]!;
   const firstShot = instructions.shots[0]!;
+  assertRetryProviderModeMatchesFrozenScene({
+    retryProviderMode: revision.providerModeRequirement,
+    generationAuthority: instructions.generationAuthority,
+  });
+  const referencedAssetIds =
+    revision.providerModeRequirement === "REFERENCE_FREE_T2V"
+      ? []
+      : instructions.referencedAssetIds;
+  if (revision.providerModeRequirement === "REFERENCE_FREE_T2V" && referencedAssetIds.length > 0) {
+    throw new Error("Reference-free retry cannot carry image references");
+  }
   return {
     ...instructions,
     purpose: activePurpose,
     transition: direction.cameraInstruction,
+    referencedAssetIds,
+    generationAuthority: instructions.generationAuthority,
     // A review retry is a new active creative projection. Preserve the frozen
     // Scene snapshot as history, but do not carry rejected shot wording into
     // the Provider-facing request. The retry direction replaces that wording.
@@ -101,9 +115,16 @@ export class DifferentiatedRetryService {
 
   async createInputRevision(input: {
     executionPlanId: string; sceneExecutionId: string; workspaceId: string; actorUserId: string;
-    command: unknown; visualAuthorityCertification: ProductVisualAuthorityCertification;
+    command: unknown; visualAuthorityCertification?: ProductVisualAuthorityCertification | null;
   }) {
     const command = CreateSceneRetryInputRevisionCommandSchema.parse(input.command);
+    if (!input.visualAuthorityCertification) {
+      return this.repository.createInputRevision({
+        executionPlanId: input.executionPlanId, sceneExecutionId: input.sceneExecutionId,
+        workspaceId: input.workspaceId, actorUserId: input.actorUserId,
+        sourceReviewId: command.sourceReviewId, creativeDirection: command.creativeDirection,
+      });
+    }
     const policy = evaluateProductGroundedCameraPolicy({
       shots: [{ cameraType: "bounded human retry", cameraMovement: command.creativeDirection.cameraInstruction }] as never,
     });

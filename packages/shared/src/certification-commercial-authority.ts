@@ -12,7 +12,10 @@ export const CERTIFICATION_MAX_PROVIDER_SUBMISSIONS = 4 as const;
 export const PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON =
   "Human-authorized Production settlement ceiling amendment" as const;
 export const CERTIFICATION_COMMERCIAL_EVENT_CEILING_AMENDED = "CEILING_AMENDED" as const;
+export const CERTIFICATION_COMMERCIAL_EVENT_SUBMISSION_QUOTA_AMENDED = "SUBMISSION_QUOTA_AMENDED" as const;
 export const PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS = 1 as const;
+export const PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON =
+  "Human-authorized Production additional Provider submission" as const;
 
 const uuid = z.string().uuid();
 const instant = z.string().datetime();
