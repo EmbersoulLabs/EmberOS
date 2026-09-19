@@ -29,12 +29,12 @@ import {
   buildAiStoryPostGenerationQcInputFromCompiledAuthority,
 } from "../packages/agents/src/ai-story/post-generation-qc-service";
 import { compileImmutableSeedanceRequestFromSceneCompilation } from "../packages/agents/src/ai-story/provider-runtime-dispatch-integration";
+import { probeAssemblyMedia } from "../packages/agents/src/ai-story/assembly-runtime-media-probe";
 import {
   createLocalDurableObjectStore,
   hashFileSha256Stream,
+  type DurableObjectStore,
 } from "../packages/agents/src/ai-story/durable-object-store";
-import { AiStoryPostGenerationQcRuntimeOrchestrator } from "../apps/worker/src/ai-story-post-generation-qc-orchestrator";
-import { runAiStoryProviderWorkerCycle } from "../apps/worker/src/ai-story-provider-worker-cycle";
 import {
   RUN_DB_INTEGRATION,
   createIntegrationSql,
@@ -52,6 +52,92 @@ const execFileAsync = promisify(execFile);
 const describeIntegration = RUN_DB_INTEGRATION && getIntegrationDbUrl() ? describe : describe.skip;
 const CURRENT_RUNTIME = AI_STORY_PROVIDER_RUNTIME_VERSION;
 const HASH_B = `sha256:${"b".repeat(64)}`;
+
+async function evaluateSceneExecution(
+  repository: AiStoryPostGenerationQcRepository,
+  store: DurableObjectStore,
+  sceneExecutionId: string,
+) {
+  const authority = await repository.loadRuntimeRecoveryAuthority(sceneExecutionId);
+  if (!authority) throw new Error("POST_QC_RUNTIME_AUTHORITY_MISSING");
+  const working = await mkdtemp(join(tmpdir(), "ember-post-qc-"));
+  const localPath = join(working, "scene.mp4");
+  try {
+    await store.assertReadableObject({
+      workspaceId: authority.attestation.workspaceId,
+      objectKey: authority.attestation.durableObjectReference,
+      expectedContentHash: authority.attestation.contentHash,
+    });
+    await store.downloadObject({
+      workspaceId: authority.attestation.workspaceId,
+      objectKey: authority.attestation.durableObjectReference,
+      destinationPath: localPath,
+    });
+    const probe = await probeAssemblyMedia({
+      sceneResultId: authority.attestation.sceneResultId,
+      localPath,
+      expectedContentHash: authority.attestation.contentHash,
+    });
+    const compiled = authority.compiledRequest;
+    const input = buildAiStoryPostGenerationQcInputFromCompiledAuthority({
+      intent: authority.intent,
+      instructions: authority.instructions,
+      preGenerationAuthority: authority.preGenerationAuthority,
+      sceneVersion: authority.sceneVersion,
+      compiledRequest: compiled,
+      attempt: {
+        providerAttemptId: authority.providerAttemptId,
+        compiledRequestId: compiled.compiledRequestId,
+        requestFingerprint: compiled.requestFingerprint,
+        sceneExecutionId: compiled.sceneExecutionId,
+        orgId: compiled.orgId,
+        workspaceId: compiled.workspaceId,
+        campaignId: compiled.campaignId,
+        storyId: compiled.storyId,
+        storyVersionId: compiled.storyVersionId,
+        generationMode: compiled.generationMode,
+        providerId: compiled.providerId,
+        modelId: compiled.modelId,
+        ...(authority.providerTaskId ? { providerTaskId: authority.providerTaskId } : {}),
+        ...(authority.actualUsage ? { actualUsage: authority.actualUsage } : {}),
+        mediaAssetId: authority.attestation.mediaAttestationId,
+      },
+      privateMedia: {
+        mediaAssetId: authority.attestation.mediaAttestationId,
+        contentHash: authority.attestation.contentHash,
+        durableObjectReference: authority.attestation.durableObjectReference,
+        byteSize: authority.attestation.byteSize,
+        durationMs: probe.durationMs,
+        width: probe.width,
+        height: probe.height,
+        readable: true,
+        decodable: true,
+      },
+      createdAt: authority.attestation.acceptedAt,
+    });
+    return new AiStoryPostGenerationQcService({
+      repository: new BoundAiStoryPostGenerationQcRepository(input, repository),
+      evidenceProvider: {
+        providerId: "post-qc-visual-evidence-unavailable",
+        contractVersion: AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION,
+        async analyze() {
+          throw new Error("AI_STORY_VISUAL_EVIDENCE_UNAVAILABLE");
+        },
+      },
+    }).evaluate(input);
+  } finally {
+    await rm(working, { recursive: true, force: true });
+  }
+}
+
+async function recoverNext(
+  repository: AiStoryPostGenerationQcRepository,
+  store: DurableObjectStore,
+) {
+  const [sceneExecutionId] = await repository.listPendingRuntimeRecoverySceneExecutionIds(1);
+  if (!sceneExecutionId) return null;
+  return evaluateSceneExecution(repository, store, sceneExecutionId);
+}
 
 function uniqueIds(): Phase2aIdSet {
   return {
@@ -529,11 +615,8 @@ describeIntegration("AI Story Post-QC runtime recovery compatibility", () => {
       await expect(repository().loadRuntimeRecoveryAuthority(seeded.sceneExecutionId)).rejects.toMatchObject({
         code: "POST_QC_CURRENT_RUNTIME_AUTHORITY_CORRUPT",
       });
-      const orchestrator = new AiStoryPostGenerationQcRuntimeOrchestrator(
-        repository(),
-        createLocalDurableObjectStore(await mkdtemp(join(tmpdir(), "post-qc-corrupt-"))),
-      );
-      await expect(orchestrator.recoverNext()).rejects.toBeInstanceOf(AiStoryPostGenerationQcRuntimeAuthorityError);
+      const store = createLocalDurableObjectStore(await mkdtemp(join(tmpdir(), "post-qc-corrupt-")));
+      await expect(recoverNext(repository(), store)).rejects.toBeInstanceOf(AiStoryPostGenerationQcRuntimeAuthorityError);
     } finally {
       await cleanupCompatTenant(sql, ids);
     }
@@ -708,15 +791,11 @@ describeIntegration("AI Story Post-QC runtime recovery compatibility", () => {
         sql, ids, contractVersion: "1", compiled: "none", binding: "none",
         projectedAt: "2026-08-01T00:00:00.000Z",
       });
-      const orchestrator = new AiStoryPostGenerationQcRuntimeOrchestrator(
-        repository(),
-        createLocalDurableObjectStore(await mkdtemp(join(tmpdir(), "post-qc-hist-"))),
-      );
+      const store = createLocalDurableObjectStore(await mkdtemp(join(tmpdir(), "post-qc-hist-")));
       const pending = await repository().listPendingRuntimeRecoverySceneExecutionIds(50);
       expect(pending).not.toContain(seeded.sceneExecutionId);
-      await expect(orchestrator.recoverNext()).resolves.toBeNull();
-      const cycle = await runAiStoryProviderWorkerCycle({ postGenerationQcRecovery: orchestrator });
-      expect(cycle).toEqual({ dispatchStatus: "NO_JOB" });
+      await expect(recoverNext(repository(), store)).resolves.toBeNull();
+      expect(process.env.AI_STORY_PROVIDER_DISPATCH_MODE).toBe("certification_no_dispatch");
       const [outbox] = await sql<{ lease_owner: string | null; status: string }[]>`
         SELECT lease_owner, status FROM provider_outbox_jobs WHERE job_id = ${seeded.outboxJobId}
       `;
@@ -755,16 +834,19 @@ describeIntegration("AI Story Post-QC runtime recovery compatibility", () => {
         mediaType: "video/mp4",
         byteSize,
       });
-      const orchestrator = new AiStoryPostGenerationQcRuntimeOrchestrator(repository(), store);
-      const first = await orchestrator.evaluateSceneExecution(seeded.sceneExecutionId);
+      const first = await evaluateSceneExecution(repository(), store, seeded.sceneExecutionId);
       expect(first.evaluation.providerAttemptId).toBe(seeded.providerAttemptId);
       expect(first.evaluation.autoApproved).toBe(false);
       expect(first.replayed).toBe(false);
       expect(await repository().listPendingRuntimeRecoverySceneExecutionIds(50)).not.toContain(seeded.sceneExecutionId);
-      const second = await orchestrator.evaluateSceneExecution(seeded.sceneExecutionId);
+      const second = await evaluateSceneExecution(repository(), store, seeded.sceneExecutionId);
       expect(second.replayed).toBe(true);
-      const cycle = await runAiStoryProviderWorkerCycle({ postGenerationQcRecovery: orchestrator });
-      expect(cycle).toEqual({ dispatchStatus: "NO_JOB" });
+      expect(process.env.AI_STORY_PROVIDER_DISPATCH_MODE).toBe("certification_no_dispatch");
+      const [outbox] = await sql<{ lease_owner: string | null; status: string }[]>`
+        SELECT lease_owner, status FROM provider_outbox_jobs WHERE job_id = ${seeded.outboxJobId}
+      `;
+      expect(outbox?.lease_owner).toBeNull();
+      expect(outbox?.status).toBe("PENDING");
       const [qcCount] = await sql<{ count: number }[]>`
         SELECT count(*)::int AS count FROM ai_story_post_generation_qc_evaluations
         WHERE scene_execution_id = ${seeded.sceneExecutionId}::uuid
