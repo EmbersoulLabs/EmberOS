@@ -30,7 +30,15 @@ describe("AI Story Post-QC runtime orchestration", () => {
     expect(access).toContain("getLatestByProviderAttemptIds");
   });
 
-  it("does not add Provider submission or commercial mutation to recovery", () => {
+  it("does not select latest compiledAt over the exact Attempt-bound compiled request", () => {
+    const source = read("packages/db/src/queries/ai-story-post-generation-qc.ts");
+    expect(source).toContain("POST_QC_CURRENT_RUNTIME_AUTHORITY_CORRUPT");
+    expect(source).toContain("HISTORICAL_NOT_AUTO_RECOVERABLE");
+    expect(source).toContain("binding.compiledRequestId");
+    expect(source).not.toMatch(/orderBy\(desc\(schema\.aiStoryCompiledProviderRequests\.compiledAt\)\)/);
+  });
+
+  it("keeps recovery before the paid dispatch hold and does not submit Provider work", () => {
     const source = read("apps/worker/src/ai-story-post-generation-qc-orchestrator.ts");
     expect(source).not.toMatch(/transport\.submit|reserveBeforeSubmit|ProviderAttempt/);
     expect(source).toContain("loadRuntimeRecoveryAuthority");
