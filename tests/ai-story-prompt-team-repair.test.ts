@@ -18,9 +18,11 @@ import {
   AI_STORY_POST_QC_POLICY_VERSION_V2,
   AI_STORY_PRE_GENERATION_QC_GATE_ORDER,
   AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1,
+  AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V2,
   AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION,
   AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1,
   AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2,
+  AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3,
   AI_STORY_PRODUCT_IDENTITY_NOT_STILLNESS,
   AI_STORY_PROMPT_TEAM_REPAIR,
   AI_STORY_PROMPT_TEAM_REPAIR_CONTRACT_VERSION,
@@ -558,8 +560,30 @@ describe("AI Story prompt-team repair cinematic contract", () => {
     expect(parsed.gateResults).toHaveLength(AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1.length);
     expect(parsed.gateResults.map((item) => item.gateId)).toEqual([...AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1]);
     expect(parsed.gateResults.some((item) => item.gateId === "SUBJECT_MOTION_COMPLETION_GATE")).toBe(false);
-    expect(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION).toBe(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2);
-    expect(AI_STORY_PRE_GENERATION_QC_GATE_ORDER).toEqual(expect.arrayContaining(["SUBJECT_MOTION_COMPLETION_GATE", "CONTINUITY_NOT_DUPLICATION_GATE", "ANTI_PPT_CREATIVE_GATE"]));
+    expect(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION).toBe(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3);
+    expect(AI_STORY_PRE_GENERATION_QC_GATE_ORDER).toEqual(expect.arrayContaining(["SUBJECT_MOTION_COMPLETION_GATE", "CONTINUITY_NOT_DUPLICATION_GATE", "ANTI_PPT_CREATIVE_GATE", "INTRA_SCENE_SHOT_PROGRESSION_GATE", "GENERATION_UNIT_COVERAGE_GATE", "GENERATION_UNIT_BINDING_GATE"]));
+  });
+
+  it("keeps historical Pre-QC Gate Set V2 readable without upgrade", () => {
+    const artifactIds = { storyId: I.sceneA, storyVersionId: I.sceneB, outlineVersionId: I.sceneC, scriptVersionId: I.directorA, handoffId: I.directorB, directorPlanId: I.directorC, motionPlanId: I.shotA, sceneExecutionId: I.shotB };
+    const historical = {
+      qcEvaluationId: I.shotC, orgId: I.sceneA, workspaceId: I.sceneB, storyId: artifactIds.storyId, storyVersionId: artifactIds.storyVersionId,
+      outlineVersionId: artifactIds.outlineVersionId, scriptVersionId: artifactIds.scriptVersionId, handoffId: artifactIds.handoffId,
+      directorPlanId: artifactIds.directorPlanId, motionPlanId: artifactIds.motionPlanId, sceneExecutionId: artifactIds.sceneExecutionId,
+      contractVersion: "ai-story-pre-generation-qc.v1", gateSetVersion: AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2,
+      providerCapabilityId: "animation-video-generation", providerCapabilityVersion: "historical-v2", productAuthorityIds: [I.product],
+      gateResults: AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V2.map((gateId) => ({
+        gateId, gateVersion: 1, classification: "HARD_GATE" as const, status: "PASS" as const, failedLayer: null, reasonCode: "PASS",
+        safeEvidence: ["Historical V2"], repairOwner: "NONE" as const, evaluatedArtifactIds: artifactIds, contractVersion: "ai-story-pre-generation-qc.v1" as const,
+      })),
+      dispatchDecision: "DISPATCH_ELIGIBLE" as const, preDispatchBlocked: false, providerCallAvoided: false, estimatedAttemptCostAvoidedUsd: null,
+      sceneFunction: "PRODUCT_USAGE", visualRole: "USAGE_DEMONSTRATION", cameraFamily: "LOCKED", motionRiskClass: "LOW" as const,
+      productGrounded: true, profileId: "CORE", qcFingerprint: "sha256:" + "a".repeat(64), evaluatedBy: I.character, evaluatedAt: "2026-08-29T10:03:00.000Z",
+    };
+    const parsed = AiStoryPreGenerationQcEvaluationSchema.parse(historical);
+    expect(parsed.gateSetVersion).toBe(2);
+    expect(parsed.gateResults.some((item) => item.gateId === "ANTI_PPT_CREATIVE_GATE")).toBe(true);
+    expect(parsed.gateResults.some((item) => item.gateId === "GENERATION_UNIT_COVERAGE_GATE")).toBe(false);
   });
 
   it("proves provider-free certification has zero provider or commercial side effects", () => {

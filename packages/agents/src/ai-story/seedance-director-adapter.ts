@@ -3,10 +3,13 @@ import {
   AI_STORY_SEEDANCE_MAPPING_VERSION,
   AI_STORY_SEEDANCE_TRANSLATION_MATRIX,
   AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION,
+  AiStoryGenerationUnitSchema,
   AiStorySceneExecutionPackageSchema,
   AiStorySeedanceSemanticPlanSchema,
   compileCinematicPromptFacts,
+  directorShotActionEntryIds,
   type AiStoryExecutionVisualReference,
+  type AiStoryGenerationUnit,
   type AiStorySceneExecutionPackage,
   type AiStorySeedanceSemanticPlan,
 } from "@ceo-agent/shared";
@@ -146,9 +149,6 @@ function assertExactBindings(pkg: AiStorySceneExecutionPackage): void {
     throw new SeedanceDirectorAdapterError("SHOT_RECIPE_BINDING_MISMATCH", "Shot Recipe authority does not match the Director selection", "DIRECTOR");
   }
   if (recipeBinding && pkg.shotRecipe && recipeBinding.recipeFingerprint !== computeAiStoryShotRecipeFingerprint(pkg.shotRecipe)) throw new SeedanceDirectorAdapterError("SHOT_RECIPE_FINGERPRINT_MISMATCH", "Shot Recipe fingerprint is invalid", "DIRECTOR");
-  if (pkg.directorDirection.shots.length !== 1) {
-    throw new SeedanceDirectorAdapterError("MULTI_SHOT_UNCERTIFIED", "Seedance V1 Scene execution accepts one Director shot; multi-shot orchestration is not certified");
-  }
   const generationAuthority = pkg.generationAuthority;
   if (generationAuthority) {
     const actualReferenceIds = [...new Set(pkg.visualReferences.map((item) => item.assetId))].sort();
@@ -318,14 +318,68 @@ function serializeSemanticPlan(plan: AiStorySeedanceSemanticPlan): string {
   return prompt;
 }
 
-export function compileSceneExecutionPackageForSeedance(input: unknown): SeedanceDirectorCompilation {
+export function compileSceneExecutionPackageForSeedance(input: unknown, options: { generationUnit?: unknown } = {}): SeedanceDirectorCompilation {
   const pkg = AiStorySceneExecutionPackageSchema.parse(input);
   if (pkg.contractVersion !== AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION || pkg.providerBinding.adapterMappingVersion !== AI_STORY_SEEDANCE_MAPPING_VERSION) throw new SeedanceDirectorAdapterError("ADAPTER_VERSION_MISMATCH", "Scene execution package is not bound to this Adapter mapping version");
   const { packageFingerprint: _fingerprint, ...fingerprintInput } = pkg;
   if (seedanceSceneExecutionPackageFingerprint(fingerprintInput) !== pkg.packageFingerprint) throw new SeedanceDirectorAdapterError("SCENE_EXECUTION_PACKAGE_FINGERPRINT_MISMATCH", "Scene execution package fingerprint is invalid");
   assertExactBindings(pkg);
-  const { selected, degradations } = selectReferences(pkg);
-  const semanticPlan = buildSemanticPlan(pkg, degradations, selected);
+  const generationUnit = resolveProviderGenerationUnit(pkg, options.generationUnit);
+  return compileBoundGenerationUnitForSeedance(pkg, generationUnit);
+}
+
+export function compileGenerationUnitForSeedance(input: { package: unknown; generationUnit: unknown }): SeedanceDirectorCompilation {
+  return compileSceneExecutionPackageForSeedance(input.package, { generationUnit: input.generationUnit });
+}
+
+function resolveProviderGenerationUnit(pkg: AiStorySceneExecutionPackage, rawUnit: unknown): Pick<AiStoryGenerationUnit, "directorShotId" | "directorShotIds" | "unitType"> {
+  if (rawUnit !== undefined) {
+    const unit = AiStoryGenerationUnitSchema.parse(rawUnit);
+    assertProviderGenerationUnitBoundary(unit);
+    return unit;
+  }
+  if (pkg.directorDirection.shots.length !== 1) {
+    throw new SeedanceDirectorAdapterError(
+      "GENERATION_UNIT_REQUIRED",
+      "Seedance compilation cannot receive a multi-shot Scene as one Provider prompt; compile one Generation Unit bound to exactly one Director Shot",
+      "PROVIDER_ADAPTER",
+    );
+  }
+  const directorShotId = pkg.directorDirection.shots[0]!.directorShotId;
+  return { directorShotId, directorShotIds: [directorShotId], unitType: "PROVIDER_VIDEO" };
+}
+
+function assertProviderGenerationUnitBoundary(unit: Pick<AiStoryGenerationUnit, "directorShotId" | "directorShotIds" | "unitType">): void {
+  if (unit.unitType !== "PROVIDER_VIDEO") {
+    throw new SeedanceDirectorAdapterError("UNIT_TYPE_NOT_PROVIDER_VIDEO", "Seedance compilation accepts only a PROVIDER_VIDEO Generation Unit", "PROVIDER_ADAPTER");
+  }
+  if (unit.directorShotIds.length !== 1 || unit.directorShotId !== unit.directorShotIds[0]) {
+    throw new SeedanceDirectorAdapterError("MULTI_SHOT_UNCERTIFIED", "Seedance Provider compilation accepts exactly one Director Shot per Generation Unit; multi-shot Provider requests are not certified", "PROVIDER_ADAPTER");
+  }
+}
+
+function scopePackageToGenerationUnit(pkg: AiStorySceneExecutionPackage, unit: Pick<AiStoryGenerationUnit, "directorShotId" | "directorShotIds">): AiStorySceneExecutionPackage {
+  const shot = pkg.directorDirection.shots.find((candidate) => candidate.directorShotId === unit.directorShotId);
+  if (!shot) {
+    throw new SeedanceDirectorAdapterError("DIRECTOR_SHOT_BINDING_MISSING", "Generation Unit does not bind a Director Shot in this Scene", "DIRECTOR");
+  }
+  const actionIds = new Set(directorShotActionEntryIds(shot).length ? directorShotActionEntryIds(shot) : pkg.directorDirection.contextualTreatment.supportedActionEntryIds);
+  return {
+    ...pkg,
+    directorDirection: { ...pkg.directorDirection, shots: [shot] },
+    motionScenePlan: {
+      ...pkg.motionScenePlan,
+      actionExecutions: pkg.motionScenePlan.actionExecutions.filter((execution) => actionIds.has(execution.scriptActionEntryId)),
+      cameraExecutions: pkg.motionScenePlan.cameraExecutions.filter((execution) => execution.directorShotId === shot.directorShotId),
+      focusExecutions: pkg.motionScenePlan.focusExecutions.filter((execution) => execution.directorShotId === shot.directorShotId),
+    },
+  };
+}
+
+function compileBoundGenerationUnitForSeedance(pkg: AiStorySceneExecutionPackage, unit: Pick<AiStoryGenerationUnit, "directorShotId" | "directorShotIds" | "unitType">): SeedanceDirectorCompilation {
+  const scoped = scopePackageToGenerationUnit(pkg, unit);
+  const { selected, degradations } = selectReferences(scoped);
+  const semanticPlan = buildSemanticPlan(scoped, degradations, selected);
   return {
     semanticPlan,
     prompt: serializeSemanticPlan(semanticPlan),
