@@ -2,6 +2,10 @@ import { z } from "zod";
 import { StoryBeatSchema } from "./ai-story";
 import { AiStoryCastReferenceSchema, castReferenceKey } from "./ai-story-cast";
 import {
+  AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
+  AiStoryCommercialStoryOutlinePolicySchema,
+} from "./ai-story-commercial-story-profile";
+import {
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
   AiStoryProductStoryOutlinePolicySchema,
 } from "./ai-story-product-story-profile";
@@ -101,6 +105,7 @@ export const AiStoryOutlineVersionSchema = z.object({
   contractVersion: z.literal(AI_STORY_OUTLINE_CONTRACT_VERSION),
   profile: AiStoryOutlineProfileReferenceSchema,
   productStoryProfile: AiStoryProductStoryOutlinePolicySchema.optional(),
+  commercialStoryProfile: AiStoryCommercialStoryOutlinePolicySchema.optional(),
   premise: Text.max(4000),
   coreClaim: Text.max(2000),
   storyUnits: z.array(AiStoryOutlineStoryUnitSchema),
@@ -125,6 +130,15 @@ export const AiStoryOutlineVersionSchema = z.object({
   }
   if (value.profile.profileId === "CORE" && value.productStoryProfile) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["productStoryProfile"], message: "Core Outline cannot claim PRODUCT_STORY authority" });
+  }
+  if (value.profile.profileId === "COMMERCIAL_STORY" && !value.commercialStoryProfile) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["commercialStoryProfile"], message: "COMMERCIAL_STORY requires its versioned Outline policy" });
+  }
+  if (value.profile.profileId !== "COMMERCIAL_STORY" && value.commercialStoryProfile) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["commercialStoryProfile"], message: "Only COMMERCIAL_STORY Outline may claim commercial Story authority" });
+  }
+  if (value.profile.profileId === "COMMERCIAL_STORY" && value.productStoryProfile) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["productStoryProfile"], message: "COMMERCIAL_STORY must not claim PRODUCT_STORY Outline policy; compose Product authority by reference" });
   }
 });
 
@@ -199,6 +213,7 @@ export function validateAiStoryOutline(
   const profile = AI_STORY_OUTLINE_PROFILE_REGISTRY[outline.profile.profileId];
   if (!profile || profile.profileVersion !== outline.profile.profileVersion) issues.push({ gate: "PROFILE_REFERENCE_GATE", message: "Unknown Outline profile" });
   if (outline.profile.profileId === "PRODUCT_STORY" && outline.profile.policyFingerprint !== AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT) issues.push({ gate: "PROFILE_REFERENCE_GATE", message: "PRODUCT_STORY policy fingerprint mismatch" });
+  if (outline.profile.profileId === "COMMERCIAL_STORY" && outline.profile.policyFingerprint !== AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT) issues.push({ gate: "PROFILE_REFERENCE_GATE", message: "COMMERCIAL_STORY policy fingerprint mismatch" });
   if (options.knownAuthorityReferences) {
     for (const ref of [...outline.authorityReferences, ...outline.beats.flatMap((beat) => beat.authorityReferences), ...outline.requiredSceneOutcomes.flatMap((outcome) => outcome.authorityReferences)]) {
       if (!options.knownAuthorityReferences.has(`${ref.authorityType}:${ref.authorityId}`)) issues.push({ gate: "AUTHORITY_REFERENCE_GATE", message: `Unknown authority reference ${ref.authorityType}:${ref.authorityId}` });

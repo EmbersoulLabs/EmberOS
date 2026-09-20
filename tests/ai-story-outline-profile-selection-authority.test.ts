@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   AI_STORY_OUTLINE_PROFILE_REGISTRY,
+  AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
   AiStoryCreateBodySchema,
   canonicalAiStoryOutlineProfileReference,
@@ -20,6 +21,11 @@ const productStory = {
   profileVersion: 1 as const,
   policyFingerprint: AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
 };
+const commercialStory = {
+  profileId: "COMMERCIAL_STORY" as const,
+  profileVersion: 1 as const,
+  policyFingerprint: AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
+};
 
 function create(overrides: Record<string, unknown> = {}) {
   return {
@@ -33,9 +39,10 @@ function create(overrides: Record<string, unknown> = {}) {
 }
 
 describe("AI Story Outline Profile selection authority", () => {
-  it("requires explicit CORE or PRODUCT_STORY selection and denies arbitrary values", () => {
+  it("requires explicit CORE, PRODUCT_STORY, or COMMERCIAL_STORY selection and denies arbitrary values", () => {
     expect(AiStoryCreateBodySchema.safeParse(create()).success).toBe(true);
     expect(AiStoryCreateBodySchema.safeParse(create({ outlineProfile: productStory })).success).toBe(true);
+    expect(AiStoryCreateBodySchema.safeParse(create({ outlineProfile: commercialStory })).success).toBe(true);
     const { outlineProfile: _missing, ...missing } = create();
     expect(AiStoryCreateBodySchema.safeParse(missing).success).toBe(false);
     expect(AiStoryCreateBodySchema.safeParse(create({ outlineProfile: { profileId: "OTHER", profileVersion: 1 } })).success).toBe(false);
@@ -64,7 +71,7 @@ describe("AI Story Outline Profile selection authority", () => {
     expect(AiStoryCreateBodySchema.safeParse({ ...withoutProfile, assetIds: [], productAssetIds: [] }).success).toBe(false);
   });
 
-  it.each([["CORE", core], ["PRODUCT_STORY", productStory]] as const)(
+  it.each([["CORE", core], ["PRODUCT_STORY", productStory], ["COMMERCIAL_STORY", commercialStory]] as const)(
     "resolves exact persisted %s authority",
     async (_name, stored) => {
       await expect(resolveAiStoryOutlineProfileAuthority(db, scope, {
@@ -113,9 +120,9 @@ describe("AI Story Outline Profile selection authority", () => {
 
   it("requires an explicit UI choice independent of selected assets", () => {
     const page = readFileSync("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/new/page.tsx", "utf8");
-    expect(page).toContain('useState<"" | "CORE" | "PRODUCT_STORY">("")');
+    expect(page).toContain('useState<"" | "CORE" | "PRODUCT_STORY" | "COMMERCIAL_STORY">("")');
     expect(page).toContain('name="outlineProfile"');
     expect(page).toContain("!outlineProfileId");
-    expect(page).not.toMatch(/productAssetIds\.length[^\n]*(CORE|PRODUCT_STORY)/);
+    expect(page).not.toMatch(/productAssetIds\.length[^\n]*(CORE|PRODUCT_STORY|COMMERCIAL_STORY)/);
   });
 });

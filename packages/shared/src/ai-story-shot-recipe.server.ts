@@ -81,7 +81,12 @@ export function validateAiStoryShotRecipeBindings(
     const selected = scene.shots.filter((shot) => binding.selectedShotIds.includes(shot.directorShotId));
     if (!recipe.compatibleVisualRoles.includes(scene.sceneVisualRole as never) || selected.some((shot) => !recipe.compatibleShotPurposes.includes(shot.shotPurpose as never))) add("RECIPE_DIRECTOR_COMPATIBILITY_GATE", "BLOCK", "RECIPE_DIRECTOR_INCOMPATIBLE", `Recipe ${binding.recipeId} is incompatible with the selected Director semantics`, "DIRECTOR");
     if (selected.some((shot) => shot.productEmphasis && recipe.productEmphasisCompatibility.length > 0 && !recipe.productEmphasisCompatibility.includes(shot.productEmphasis as never))) add("RECIPE_DIRECTOR_COMPATIBILITY_GATE", "BLOCK", "RECIPE_PRODUCT_EMPHASIS_INCOMPATIBLE", `Recipe ${binding.recipeId} is incompatible with the selected Product emphasis`, "DIRECTOR");
-    if (!recipe.profileCompatibility.includes(sceneMotion?.motionBudget.profileId as never)) add("RECIPE_DIRECTOR_COMPATIBILITY_GATE", "BLOCK", "RECIPE_PROFILE_INCOMPATIBLE", `Recipe ${binding.recipeId} is incompatible with profile ${sceneMotion?.motionBudget.profileId ?? "UNKNOWN"}`, "DIRECTOR");
+    const profileId = sceneMotion?.motionBudget.profileId;
+    const profileCompatible = Boolean(profileId && (
+      recipe.profileCompatibility.includes(profileId as never)
+      || (profileId === "COMMERCIAL_STORY" && recipe.profileCompatibility.includes("CORE"))
+    ));
+    if (!profileCompatible) add("RECIPE_DIRECTOR_COMPATIBILITY_GATE", "BLOCK", "RECIPE_PROFILE_INCOMPATIBLE", `Recipe ${binding.recipeId} is incompatible with profile ${profileId ?? "UNKNOWN"}`, "DIRECTOR");
     if (!evidenceSatisfied(recipe, scene, sceneMotion, handoff)) add("RECIPE_EVIDENCE_GATE", "BLOCK", "RECIPE_EVIDENCE_MISSING", `Recipe ${binding.recipeId} lacks its required canonical evidence`, "SCRIPT");
     if (!sceneMotion?.shotRecipeBinding || JSON.stringify(sceneMotion.shotRecipeBinding) !== JSON.stringify(binding)) add("RECIPE_MOTION_COMPATIBILITY_GATE", "BLOCK", "MOTION_RECIPE_BINDING_MISMATCH", `Motion did not preserve Recipe ${binding.recipeId}`, "MOTION");
     if (sceneMotion && complexity[actualMotionComplexity(sceneMotion)] > complexity[recipe.motionComplexityClass]) add("RECIPE_MOTION_COMPATIBILITY_GATE", "BLOCK", "RECIPE_MOTION_COMPLEXITY_EXCEEDED", `Motion exceeds Recipe ${binding.recipeId} complexity class`, "MOTION");

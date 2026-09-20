@@ -576,15 +576,15 @@ describe("AI Story prompt-team repair cinematic contract", () => {
     });
   });
 
-  it("keeps certified authority flags at foundation, not full Story+Advertising certification", () => {
+  it("keeps certified authority flags at Story authority, not full Story+Advertising certification", () => {
     expect(AI_STORY_PROMPT_TEAM_REPAIR).toBe("CERTIFIED");
     expect(AI_STORY_PRODUCT_IDENTITY_NOT_STILLNESS).toBe("CERTIFIED");
     expect(AI_STORY_CONTINUITY_NOT_DUPLICATION).toBe("CERTIFIED");
     expect(AI_STORY_SUBJECT_MOTION_NOT_CAMERA_SUBSTITUTION).toBe("CERTIFIED");
     expect(AI_STORY_ANTI_PPT_CREATIVE_CONTRACT).toBe("CERTIFIED");
     expect(AI_STORY_CINEMATIC_EXECUTION_FOUNDATION).toBe("CERTIFIED");
-    expect(AI_STORY_STORY_PLUS_ADVERTISING_DIRECTION).toBe("FOUNDATION_CERTIFIED");
+    expect(AI_STORY_STORY_PLUS_ADVERTISING_DIRECTION).toBe("STORY_AUTHORITY_CERTIFIED");
     expect(READY_FOR_PROVIDER_FREE_REVIEW).toBe("PASS");
-    expect(READY_FOR_PRODUCTION_MERGE).toBe("PENDING_HUMAN_AUTHORIZATION");
+    expect(READY_FOR_PRODUCTION_MERGE).toBe("PENDING_PR140_AND_HUMAN_AUTHORIZATION");
   });
 });

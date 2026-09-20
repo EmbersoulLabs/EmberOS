@@ -79,6 +79,7 @@ export * from "./ai-story-cinematic-execution-contract";
 export * from "./ai-story-motion-plan";
 export * from "./ai-story-pre-generation-qc";
 export * from "./ai-story-product-story-profile";
+export * from "./ai-story-commercial-story-profile";
 export * from "./ai-story-shot-recipe";
 export * from "./ai-story-execution";
 export * from "./ai-story-human-review";

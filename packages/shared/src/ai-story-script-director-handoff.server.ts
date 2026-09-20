@@ -12,6 +12,7 @@ export function deriveProductBindingRoles(script: AiStoryScriptVersion, productA
   const scenes = script.scenes.filter((scene) => scene.productAuthorityRefs.includes(productAuthorityId));
   const roles = new Set<AiStoryDirectorHandoffProductBinding["requiredRoles"][number]>(["PRESENT"]);
   if (scenes.some((scene) => ["PRODUCT_USAGE", "PRODUCT_BENEFIT_PROOF", "PRODUCT_PAYOFF"].includes(scene.sceneFunction))) roles.add("PARTICIPATING");
+  if (scenes.some((scene) => scene.commercialContribution)) roles.add("PARTICIPATING");
   if (scenes.some((scene) => scene.productEvidence.length > 0)) roles.add("EVIDENCE_REQUIRED");
   return [...roles];
 }

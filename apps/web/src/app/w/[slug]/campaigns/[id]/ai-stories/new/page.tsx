@@ -18,7 +18,7 @@ export default function CreateAiStoryPage() {
 
   const [title, setTitle] = useState("");
   const [idea, setIdea] = useState("");
-  const [outlineProfileId, setOutlineProfileId] = useState<"" | "CORE" | "PRODUCT_STORY">("");
+  const [outlineProfileId, setOutlineProfileId] = useState<"" | "CORE" | "PRODUCT_STORY" | "COMMERCIAL_STORY">("");
   const [assets, setAssets] = useState<AssetRow[]>([]);
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [productAssetIds, setProductAssetIds] = useState<string[]>([]);
@@ -51,10 +51,16 @@ export default function CreateAiStoryPage() {
             profileId: AI_STORY_OUTLINE_PROFILE_REGISTRY.CORE.profileId,
             profileVersion: AI_STORY_OUTLINE_PROFILE_REGISTRY.CORE.profileVersion,
           }
-        : {
+        : outlineProfileId === "PRODUCT_STORY"
+        ? {
             profileId: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.profileId,
             profileVersion: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.profileVersion,
             policyFingerprint: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.policyFingerprint,
+          }
+        : {
+            profileId: AI_STORY_OUTLINE_PROFILE_REGISTRY.COMMERCIAL_STORY.profileId,
+            profileVersion: AI_STORY_OUTLINE_PROFILE_REGISTRY.COMMERCIAL_STORY.profileVersion,
+            policyFingerprint: AI_STORY_OUTLINE_PROFILE_REGISTRY.COMMERCIAL_STORY.policyFingerprint,
           };
       const createRes = await fetch(`/api/campaigns/${campaignId}/ai-stories`, {
         method: "POST",
@@ -133,6 +139,16 @@ export default function CreateAiStoryPage() {
               onChange={() => setOutlineProfileId("PRODUCT_STORY")}
             />
             <span><span className="block font-medium text-navy">Product-focused story</span><span className="text-sm text-ink-secondary">Marketing narrative centered on a product.</span></span>
+          </label>
+          <label className="flex items-start gap-2 rounded-lg border border-border p-3">
+            <input
+              type="radio"
+              name="outlineProfile"
+              value="COMMERCIAL_STORY"
+              checked={outlineProfileId === "COMMERCIAL_STORY"}
+              onChange={() => setOutlineProfileId("COMMERCIAL_STORY")}
+            />
+            <span><span className="block font-medium text-navy">Commercial story</span><span className="text-sm text-ink-secondary">A watchable narrative where a product, service, or brand participates naturally.</span></span>
           </label>
         </fieldset>
 
