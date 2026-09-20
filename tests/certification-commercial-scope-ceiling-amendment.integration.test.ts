@@ -319,4 +319,142 @@ describeIntegration("Production commercial ceiling amendment service", () => {
       });
     }
   });
-});
+
+  for (const quota of [2, 3, 4] as const) {
+    it(`amends Production ceiling upward when maxProviderSubmissions is ${quota}`, async () => {
+      const suffix = randomUUID().slice(0, 8);
+      const orgId = randomUUID();
+      const workspaceId = randomUUID();
+      const actorUserId = randomUUID();
+      const createdAt = "2026-09-20T12:00:00.000Z";
+      await sql`
+        INSERT INTO organizations (id, name, slug)
+        VALUES (${orgId}, ${"Quota Ceiling Org"}, ${`qceil-${suffix}`})
+      `;
+      await sql`
+        INSERT INTO workspaces (id, org_id, name, slug)
+        VALUES (${workspaceId}, ${orgId}, ${"Quota Ceiling Workspace"}, ${`ws-qceil-${suffix}`})
+      `;
+      await new BillingAccountRepositoryImpl().createOrConverge(buildBillingAccount({
+        orgId,
+        createdAt,
+        identitySeed: `quota-ceiling-billing:${orgId}`,
+      }));
+      const rule = pricingRule({
+        ruleId: randomUUID(),
+        createdBy: actorUserId,
+        version: `quota-ceiling-${suffix}`,
+        createdAt,
+      });
+      const commercial = new CertificationCommercialAuthorityService();
+      await commercial.provisionPrice(rule);
+      const provisioned = await commercial.provisionScope({
+        environment: "PRODUCTION",
+        orgId,
+        workspaceId,
+        actorUserId,
+        createdAt,
+        maxProviderCostUsd: "0.58",
+        maxProviderSubmissions: quota,
+      });
+      try {
+        const reserved = await commercial.reserve({
+          environment: "PRODUCTION",
+          orgId,
+          workspaceId,
+          executionIdentity: `quota-${quota}-reservation`,
+          pricingRule: rule,
+          createdAt,
+          claimSubmission: true,
+        });
+        const before = {
+          spent: reserved.scope.spentProviderCostUsd,
+          reservedCost: reserved.scope.reservedProviderCostUsd,
+          consumed: reserved.scope.consumedProviderSubmissions,
+          reservedSlots: reserved.scope.reservedProviderSubmissions,
+          quota: reserved.scope.maxProviderSubmissions,
+          reservationId: reserved.reservation.certificationReservationId,
+          reservationStatus: reserved.reservation.status,
+        };
+        const amended = await commercial.amendActiveProductionScopeCeiling({
+          environment: "PRODUCTION",
+          certificationScopeId: provisioned.scope.certificationScopeId,
+          orgId,
+          workspaceId,
+          actorUserId,
+          amendedAt: "2026-09-20T12:05:00.000Z",
+          maxProviderCostUsd: "1.16",
+          maxProviderSubmissions: quota,
+        });
+        expect(amended.replayed).toBe(false);
+        expect(amended.scope.maxProviderCostUsd).toBe("1.16");
+        expect(amended.scope.maxProviderSubmissions).toBe(quota);
+        expect(amended.scope.spentProviderCostUsd).toBe(before.spent);
+        expect(amended.scope.reservedProviderCostUsd).toBe(before.reservedCost);
+        expect(amended.scope.consumedProviderSubmissions).toBe(before.consumed);
+        expect(amended.scope.reservedProviderSubmissions).toBe(before.reservedSlots);
+
+        await expect(commercial.amendActiveProductionScopeCeiling({
+          environment: "PRODUCTION",
+          certificationScopeId: provisioned.scope.certificationScopeId,
+          orgId,
+          workspaceId,
+          actorUserId,
+          amendedAt: "2026-09-20T12:06:00.000Z",
+          maxProviderCostUsd: "1.16",
+          maxProviderSubmissions: quota + 1,
+        })).rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_AMENDMENT_DENIED" });
+
+        await expect(commercial.amendActiveProductionScopeCeiling({
+          environment: "PRODUCTION",
+          certificationScopeId: provisioned.scope.certificationScopeId,
+          orgId,
+          workspaceId,
+          actorUserId,
+          amendedAt: "2026-09-20T12:07:00.000Z",
+          maxProviderCostUsd: "0.10",
+        })).rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_AMENDMENT_DENIED" });
+
+        const replay = await commercial.amendActiveProductionScopeCeiling({
+          environment: "PRODUCTION",
+          certificationScopeId: provisioned.scope.certificationScopeId,
+          orgId,
+          workspaceId,
+          actorUserId,
+          amendedAt: "2026-09-20T12:08:00.000Z",
+          maxProviderCostUsd: "1.16",
+        });
+        expect(replay.replayed).toBe(true);
+        expect(replay.scope.integrityHash).toBe(amended.scope.integrityHash);
+
+        const reservations = await sql<{
+          certification_reservation_id: string; status: string;
+        }[]>`
+          SELECT certification_reservation_id::text, status
+            FROM certification_commercial_reservations
+           WHERE certification_scope_id = ${provisioned.scope.certificationScopeId}
+        `;
+        expect(reservations).toEqual([{
+          certification_reservation_id: before.reservationId,
+          status: before.reservationStatus,
+        }]);
+        const events = await sql<{ event_type: string; reason: string }[]>`
+          SELECT event_type, reason
+            FROM certification_commercial_events
+           WHERE certification_scope_id = ${provisioned.scope.certificationScopeId}
+             AND event_type = 'CEILING_AMENDED'
+        `;
+        expect(events).toEqual([{
+          event_type: "CEILING_AMENDED",
+          reason: PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
+        }]);
+      } finally {
+        await cleanup({
+          orgId,
+          workspaceId,
+          ruleId: rule.providerUsdPricingRuleId,
+          scopeId: provisioned.scope.certificationScopeId,
+        });
+      }
+    });
+  }

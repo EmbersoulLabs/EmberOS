@@ -62,6 +62,7 @@
     "sql:credits-settlement": "tsx scripts/apply-credits-settlement-v1.ts",
     "sql:commercial-authorization": "tsx scripts/apply-commercial-authorization-v1.ts",
     "sql:certification-commercial-ceiling-amendment": "tsx scripts/apply-certification-commercial-ceiling-amendment-v1.ts",
+    "sql:provision-production-seedance-i2v-usd-price": "tsx scripts/provision-production-seedance-i2v-usd-price-v1.ts",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
     "lint": "echo ok"

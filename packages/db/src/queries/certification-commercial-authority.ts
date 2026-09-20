@@ -11,8 +11,10 @@ import {
   CertificationCommercialScopeSchema,
   PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON,
   PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
-  PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS,
   ProviderUsdPricingRuleSchema,
+  certifiedSeedanceFirstFrameI2vSiblingFields,
+  certifiedSeedanceFirstFrameI2vSiblingIdentity,
+  CertifiedSeedancePricingAuthorityError,
   estimateProviderCostUsd,
   settleProviderCostUsdFromCompletionTokens,
   withIntegrity,
@@ -277,6 +279,12 @@ export class CertificationCommercialAuthorityService {
         "Capability identity must remain ai_story.execute"
       );
     }
+    if (!input.actorUserId?.trim()) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Production settlement ceiling amendment requires an explicit actorUserId"
+      );
+    }
     return this.db.transaction(async (tx) => {
       const ownership = await tx.select({ workspaceId: schema.workspaces.id }).from(schema.workspaces).where(and(
         eq(schema.workspaces.id, input.workspaceId), eq(schema.workspaces.orgId, input.orgId),
@@ -305,21 +313,6 @@ export class CertificationCommercialAuthorityService {
         throw new CertificationCommercialError(
           "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
           "This bounded path may not change maxProviderSubmissions"
-        );
-      }
-      if (row.maxProviderSubmissions > PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS + 1) {
-        throw new CertificationCommercialError(
-          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
-          "This bounded path may not operate on a Production scope with maxProviderSubmissions above 2"
-        );
-      }
-      if (
-        input.maxProviderSubmissions !== undefined &&
-        input.maxProviderSubmissions > PRODUCTION_SETTLEMENT_RECOVERY_MAX_PROVIDER_SUBMISSIONS
-      ) {
-        throw new CertificationCommercialError(
-          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
-          "This bounded path may not increase maxProviderSubmissions above 1"
         );
       }
       const effectiveUsed = row.consumedProviderSubmissions + row.reservedProviderSubmissions;
@@ -509,6 +502,62 @@ export class CertificationCommercialAuthorityService {
     const acceptedRule = ProviderUsdPricingRuleSchema.parse(accepted[0].pricingBody);
     assertSameProviderPricingAuthority(acceptedRule, parsed);
     return { rule: acceptedRule, replayed: acceptedRule.integrityHash !== parsed.integrityHash };
+  }
+
+  certifiedSeedanceFirstFrameI2vPricingRuleId(source: ProviderUsdPricingRule): string {
+    try {
+      return deterministicPersistenceUuid(
+        "provider-usd-pricing-rule",
+        certifiedSeedanceFirstFrameI2vSiblingIdentity(source)
+      );
+    } catch (error) {
+      if (error instanceof CertifiedSeedancePricingAuthorityError) {
+        throw new CertificationCommercialError(error.code, error.message);
+      }
+      throw error;
+    }
+  }
+
+  buildCertifiedSeedanceFirstFrameI2vSiblingRule(
+    source: ProviderUsdPricingRule
+  ): ProviderUsdPricingRule {
+    try {
+      return ProviderUsdPricingRuleSchema.parse(withIntegrity({
+        ...certifiedSeedanceFirstFrameI2vSiblingFields(source),
+        providerUsdPricingRuleId: this.certifiedSeedanceFirstFrameI2vPricingRuleId(source),
+      }));
+    } catch (error) {
+      if (error instanceof CertifiedSeedancePricingAuthorityError) {
+        throw new CertificationCommercialError(error.code, error.message);
+      }
+      throw error;
+    }
+  }
+
+  async provisionCertifiedSeedanceFirstFrameI2vSiblingFromMatchingT2v(input: {
+    durationSeconds: 4;
+    aspectRatio: "9:16";
+    resolution: "480p";
+    at: string;
+  }): Promise<{ source: ProviderUsdPricingRule; rule: ProviderUsdPricingRule; replayed: boolean }> {
+    const source = await this.resolvePrice({
+      providerKey: "BYTEPLUS_MODELARK",
+      modelId: "dreamina-seedance-2-0-260128",
+      generationMode: "TEXT_TO_VIDEO",
+      durationSeconds: input.durationSeconds,
+      aspectRatio: input.aspectRatio,
+      resolution: input.resolution,
+      at: input.at,
+    });
+    if (!source) {
+      throw new CertificationCommercialError(
+        "PROVIDER_USD_PRICE_MISSING",
+        "Matching official TEXT_TO_VIDEO USD price is required to derive the I2V sibling"
+      );
+    }
+    const sibling = this.buildCertifiedSeedanceFirstFrameI2vSiblingRule(source);
+    const provisioned = await this.provisionPrice(sibling);
+    return { source, rule: provisioned.rule, replayed: provisioned.replayed };
   }
 
   async revokeScope(input: { scopeId: string; actorUserId: string; reason: string; revokedAt: string }) {
