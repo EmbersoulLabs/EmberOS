@@ -10,6 +10,7 @@ import {
   type AiStoryScriptVersion,
 } from "./ai-story-script";
 import { AiStoryProductStorySceneContributionSchema } from "./ai-story-product-story-profile";
+import { AiStoryCommercialSceneContributionSchema, AiStoryNarrativeFunctionSchema } from "./ai-story-commercial-story-profile";
 import { AiStoryCastReferenceSchema, AiStorySceneCastRelationshipSchema } from "./ai-story-cast";
 
 export const AI_STORY_SCRIPT_DIRECTOR_HANDOFF_CONTRACT_VERSION = "ai-story-script-director-handoff.v1" as const;
@@ -51,6 +52,10 @@ export const AiStoryDirectorSceneHandoffSchema = z.object({
   newActionOutcomes: z.array(Text.max(1000)),
   productEvidence: z.array(Text.max(1000)),
   productStoryContributions: z.array(AiStoryProductStorySceneContributionSchema).optional(),
+  narrativeFunction: AiStoryNarrativeFunctionSchema.optional(),
+  causalPreconditions: z.array(Text.max(1000)).optional(),
+  commercialContribution: AiStoryCommercialSceneContributionSchema.optional(),
+  storyConsequence: Text.max(1000).optional(),
   targetDurationRange: DurationRange,
   mustKeep: z.array(Text.max(1000)),
   mustAvoid: z.array(Text.max(1000)),
@@ -91,6 +96,7 @@ export const AI_STORY_DIRECTOR_OWNERSHIP_MATRIX = Object.freeze({
     "exactDialogue", "exactVoiceOver", "outlineBeatClaims", "sceneFunction", "sceneStateDeltas",
     "productIdentity", "scriptActionTruth", "mustKeep", "mustAvoid",
     "castIdentity", "castScope", "persistentCharacterFacts",
+    "narrativeFunction", "causalPreconditions", "commercialContribution", "storyConsequence",
   ]),
 });
 
@@ -131,6 +137,10 @@ export function projectAiStoryScriptSceneHandoffs(script: AiStoryScriptVersion):
     newInformation: [...scene.newInformation], newEvidence: [...scene.newEvidence],
     newActionOutcomes: [...scene.newActionOutcomes], productEvidence: [...scene.productEvidence],
     ...(scene.productStoryContributions ? { productStoryContributions: structuredClone(scene.productStoryContributions) } : {}),
+    ...(scene.narrativeFunction ? { narrativeFunction: scene.narrativeFunction } : {}),
+    ...(scene.causalPreconditions ? { causalPreconditions: [...scene.causalPreconditions] } : {}),
+    ...(scene.commercialContribution ? { commercialContribution: structuredClone(scene.commercialContribution) } : {}),
+    ...(scene.storyConsequence ? { storyConsequence: scene.storyConsequence } : {}),
     targetDurationRange: { ...scene.targetDurationRange }, mustKeep: [...scene.mustKeep], mustAvoid: [...scene.mustAvoid],
   }));
 }
@@ -160,6 +170,9 @@ export function validateAiStoryScriptDirectorHandoff(
     if (!same(actual.sceneStateIn, scene.sceneStateIn) || !same(actual.sceneStateDeltas, scene.sceneStateDeltas) || !same(actual.sceneStateOut, scene.sceneStateOut)) block("STATE_BINDING_GATE", `State truth changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.productAuthorityRefs, scene.productAuthorityRefs) || !same(actual.productEvidence, scene.productEvidence) || !same(actual.assetIds, scene.assetIds)) block("PRODUCT_AUTHORITY_BINDING_GATE", `Product or source-asset authority changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.productStoryContributions, scene.productStoryContributions)) block("PRODUCT_AUTHORITY_BINDING_GATE", `Product Story profile contribution changed for Scene ${scene.scriptSceneId}`);
+    if (!same(actual.narrativeFunction, scene.narrativeFunction) || !same(actual.causalPreconditions, scene.causalPreconditions) || !same(actual.commercialContribution, scene.commercialContribution) || !same(actual.storyConsequence, scene.storyConsequence)) {
+      block("ACTION_TRUTH_BINDING_GATE", `Director cannot invent missing Story causality for Scene ${scene.scriptSceneId}`);
+    }
     if (!same(actual.targetDurationRange, scene.targetDurationRange)) block("DURATION_BINDING_GATE", `Target duration changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.mustKeep, scene.mustKeep) || !same(actual.mustAvoid, scene.mustAvoid)) block("PRESERVATION_CONSTRAINT_GATE", `mustKeep/mustAvoid changed for Scene ${scene.scriptSceneId}`);
     if (!same(actual.newInformation, scene.newInformation) || !same(actual.newEvidence, scene.newEvidence) || !same(actual.newActionOutcomes, scene.newActionOutcomes)) block("ACTION_TRUTH_BINDING_GATE", `Certified information/evidence/action outcome changed for Scene ${scene.scriptSceneId}`);

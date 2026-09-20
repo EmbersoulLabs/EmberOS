@@ -14,9 +14,9 @@ export const AI_STORY_CONTINUITY_NOT_DUPLICATION = "CERTIFIED" as const;
 export const AI_STORY_SUBJECT_MOTION_NOT_CAMERA_SUBSTITUTION = "CERTIFIED" as const;
 export const AI_STORY_ANTI_PPT_CREATIVE_CONTRACT = "CERTIFIED" as const;
 export const AI_STORY_CINEMATIC_EXECUTION_FOUNDATION = "CERTIFIED" as const;
-export const AI_STORY_STORY_PLUS_ADVERTISING_DIRECTION = "FOUNDATION_CERTIFIED" as const;
+export const AI_STORY_STORY_PLUS_ADVERTISING_DIRECTION = "STORY_AUTHORITY_CERTIFIED" as const;
 export const READY_FOR_PROVIDER_FREE_REVIEW = "PASS" as const;
-export const READY_FOR_PRODUCTION_MERGE = "PENDING_HUMAN_AUTHORIZATION" as const;
+export const READY_FOR_PRODUCTION_MERGE = "PENDING_PR140_AND_HUMAN_AUTHORIZATION" as const;
 export const AI_STORY_SEEDANCE_CAPABILITY_EXPANDED = false as const;
 
 export const AI_STORY_CINEMATIC_CAMERA_GRAMMAR_VOCABULARY = [
@@ -74,6 +74,16 @@ export const AiStoryMarketingIntentSnapshotSchema = z.object({
   source: z.literal("UPSTREAM_READ_ONLY").default("UPSTREAM_READ_ONLY"),
   regeneratesMarketingPlan: z.literal(false).default(false),
   sceneIntents: z.array(AiStoryMarketingIntentSceneBridgeSchema).min(1),
+  primaryGoal: z.enum(["awareness", "engagement", "sales", "lead_generation", "other"]).optional(),
+  targetAudience: Text.max(1000).optional(),
+  contentAngle: Text.max(1000).optional(),
+  keyMessage: Text.max(1000).optional(),
+  desiredEmotion: Text.max(500).optional(),
+  ctaStrategy: z.enum(["REQUIRED", "OPTIONAL", "NOT_REQUIRED", "BRAND_RESOLUTION"]).optional(),
+  platform: Text.max(200).optional(),
+  distributionContext: Text.max(1000).optional(),
+  brandTone: Text.max(500).optional(),
+  commercialAuthorityRefs: z.array(z.string().uuid()).optional(),
 }).strict();
 export const AiStoryMarketingIntentBridgeSchema = AiStoryMarketingIntentSnapshotSchema;
 export type AiStoryMarketingIntentSnapshot = z.infer<typeof AiStoryMarketingIntentSnapshotSchema>;

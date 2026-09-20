@@ -1,5 +1,11 @@
 import { z } from "zod";
 import {
+  AI_STORY_COMMERCIAL_STORY_PROFILE_ID,
+  AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
+  AI_STORY_COMMERCIAL_STORY_PROFILE_VERSION,
+  AiStoryCommercialStoryProfileReferenceSchema,
+} from "./ai-story-commercial-story-profile";
+import {
   AI_STORY_PRODUCT_STORY_PROFILE_ID,
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
   AI_STORY_PRODUCT_STORY_PROFILE_VERSION,
@@ -11,10 +17,11 @@ export const AiStoryOutlineCoreProfileReferenceSchema = z.object({
   profileVersion: z.literal(1),
 }).strict();
 
-/** The single existing V1 Outline Profile reference authority. */
+/** Registered V1 Outline Profile reference authority. */
 export const AiStoryOutlineProfileReferenceSchema = z.union([
   AiStoryOutlineCoreProfileReferenceSchema,
   AiStoryProductStoryProfileReferenceSchema,
+  AiStoryCommercialStoryProfileReferenceSchema,
 ]);
 
 export type AiStoryOutlineProfileReference = z.infer<
@@ -28,6 +35,12 @@ export const AI_STORY_OUTLINE_PROFILE_REGISTRY = Object.freeze({
     profileVersion: AI_STORY_PRODUCT_STORY_PROFILE_VERSION,
     policyFingerprint: AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
     hookRequired: false,
+  }),
+  COMMERCIAL_STORY: Object.freeze({
+    profileId: AI_STORY_COMMERCIAL_STORY_PROFILE_ID,
+    profileVersion: AI_STORY_COMMERCIAL_STORY_PROFILE_VERSION,
+    policyFingerprint: AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
+    hookRequired: true,
   }),
 });
 
