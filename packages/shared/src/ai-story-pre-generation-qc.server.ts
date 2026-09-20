@@ -7,6 +7,7 @@ import { validateAiStoryMotionPlan, type AiStoryMotionPlan } from "./ai-story-mo
 import { computeAiStoryScriptDirectorHandoffFingerprint, computeAiStoryScriptDirectorHandoffSourceHash } from "./ai-story-script-director-handoff.server";
 import { computeAiStoryDirectorPlanFingerprint, computeAiStoryDirectorPlanSourceHash } from "./ai-story-director-plan.server";
 import { computeAiStoryMotionPlanFingerprint, computeAiStoryMotionPlanSourceHash } from "./ai-story-motion-plan.server";
+import { compileAiStoryGenerationPlan, validateAiStoryGenerationPlan } from "./ai-story-generation-unit.server";
 import { computeAiStoryOutlineSourceHash } from "./ai-story-outline.server";
 import { computeAiStoryScriptSourceHash } from "./ai-story-script.server";
 import { validateAiStoryProductStoryProfile } from "./ai-story-product-story-profile.server";
@@ -95,6 +96,24 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
   const motionIssues=validateAiStoryMotionPlan(motionPlan,directorPlan,handoff,{expectedSourceHash:computeAiStoryMotionPlanSourceHash(motionPlan),expectedFingerprint:computeAiStoryMotionPlanFingerprint(motionPlan),currentDirectorPlanId:raw.currentAuthority.directorPlanId});
   const profileIssues=[...validateAiStoryProductStoryProfile(outline,script),...validateAiStoryCommercialStoryProfile(outline,script)];
   const recipeIssues=validateAiStoryShotRecipeBindings(directorPlan,motionPlan,handoff);
+  const generationUnitIssues=directorPlan.sceneDirections.flatMap((direction)=>{
+    const motion=motionPlan.sceneMotionPlans.find((item)=>item.directorSceneId===direction.directorSceneId);
+    const scriptScene=script.scenes.find((item)=>item.scriptSceneId===direction.scriptSceneId);
+    const canonical=raw.canonicalScenes?.find((item)=>item.sceneId===direction.canonicalSceneBinding?.sceneId&&item.sceneVersionId===direction.canonicalSceneBinding?.sceneVersionId);
+    if(!motion||!scriptScene)return[{gate:"GENERATION_UNIT_BINDING_GATE" as const,severity:"BLOCK" as const,message:`Generation plan cannot bind Director Scene ${direction.directorSceneId}`}];
+    const scene={
+      sceneId:canonical?.sceneId??direction.canonicalSceneBinding?.sceneId??direction.scriptSceneId,
+      sceneVersionId:canonical?.sceneVersionId??direction.canonicalSceneBinding?.sceneVersionId??direction.directorSceneId,
+      fingerprint:canonical?.fingerprint??direction.canonicalSceneBinding?.sceneFingerprint??directorPlan.directorFingerprint,
+      locationBinding:{id:canonical?.locationBinding.id??scriptScene.locationIds[0]??direction.scriptSceneId},
+      castBindings:(canonical?.castBindings??scriptScene.characterIds.map((id)=>({id}))),
+      productBindings:canonical?.productBindings??handoff.productAuthorityBindings.map((binding)=>({productAuthorityId:binding.productAuthorityId,sourceAssetId:binding.sourceAssetId,sourceAssetContentHash:binding.sourceAssetContentHash})),
+      sourceScriptEntryIds:canonical?.sourceScriptEntryIds??scriptScene.entries.map((entry)=>entry.entryId),
+      discontinuity:canonical?.discontinuity??null,
+    };
+    const compiled=compileAiStoryGenerationPlan({storyId:script.storyId,storyVersionId:script.storyVersionId,scriptVersionId:script.scriptVersionId,directorPlanId:directorPlan.directorPlanId,scene,directorDirection:direction,motionScenePlan:motion});
+    return validateAiStoryGenerationPlan(compiled,{storyId:script.storyId,storyVersionId:script.storyVersionId,scriptVersionId:script.scriptVersionId,directorPlanId:directorPlan.directorPlanId,scene,directorDirection:direction,motionScenePlan:motion});
+  });
   const recipeGateResults:AiStoryPreGenerationQcRecipeGateResult[]=AI_STORY_SHOT_RECIPE_QC_GATES.map((gateId)=>{const found=recipeIssues.filter((issue)=>issue.gate===gateId);const blocks=found.some((issue)=>issue.severity==="BLOCK");return{gateId,gateVersion:1,status:blocks?"BLOCK":found.length?"WARN":"PASS",reasonCodes:found.map((issue)=>issue.reasonCode),safeEvidence:found.map((issue)=>issue.message),repairOwners:[...new Set(found.map((issue)=>issue.repairOwner))]};});
   const recipeReasons=(gates:readonly string[],layer:Reason["layer"],owner:Reason["owner"]):Reason[]=>recipeIssues.filter((issue)=>issue.severity==="BLOCK"&&gates.includes(issue.gate)).map((issue)=>reason(issue.reasonCode,issue.message,layer,issue.repairOwner??owner));
   const upstream:Reason[]=[];
@@ -142,6 +161,9 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
     hard("CINEMATIC_EXECUTION_CONTRACT_GATE",[...blocked(directorIssues,["CINEMATIC_EXECUTION_CONTRACT_GATE","MARKETING_INTENT_BRIDGE_GATE"],"DIRECTOR","DIRECTOR")],ids),
     hard("MUST_KEEP_MUST_CHANGE_SEPARATION_GATE",blocked(directorIssues,["MUST_KEEP_MUST_CHANGE_SEPARATION_GATE"],"DIRECTOR","DIRECTOR"),ids),
     hard("ANTI_PPT_CREATIVE_GATE",blocked(directorIssues,["ANTI_PPT_CREATIVE_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("INTRA_SCENE_SHOT_PROGRESSION_GATE",[...blocked(directorIssues,["INTRA_SCENE_SHOT_PROGRESSION_GATE","SHOT_IDENTITY_GATE"],"DIRECTOR","DIRECTOR"),...blocked(generationUnitIssues,["INTRA_SCENE_SHOT_PROGRESSION_GATE","SHOT_IDENTITY_GATE"],"DIRECTOR","DIRECTOR")],ids),
+    hard("GENERATION_UNIT_COVERAGE_GATE",blocked(generationUnitIssues,["GENERATION_UNIT_COVERAGE_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("GENERATION_UNIT_BINDING_GATE",[...blocked(directorIssues,["SHOT_ACTION_BINDING_GATE"],"DIRECTOR","DIRECTOR"),...blocked(generationUnitIssues,["GENERATION_UNIT_BINDING_GATE","SCRIPT_ACTION_SUPPORT_GATE","PRODUCT_AUTHORITY_BINDING_GATE","LOCATION_CONTINUITY_GATE","CAST_BINDING_GATE"],"DIRECTOR","DIRECTOR")],ids),
   ];
   const repeatedCamera=directorPlan.sceneDirections.flatMap(s=>s.shots.map(x=>x.cameraFamily)).some((v,i,a)=>a.indexOf(v)!==i);
   if(repeatedCamera&&!results.some(r=>r.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE"&&r.status==="BLOCK")){const r=results.find(x=>x.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE")!;r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode="CAMERA_FAMILY_REPEATED_WITH_VALID_DELTA";r.safeEvidence=["Camera-family repetition alone is not duplication"]}
