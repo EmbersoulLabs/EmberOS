@@ -150,6 +150,11 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/certification-commercial-submission-quota-amendment.integration.test.ts
 
+      - name: Certify I2V pricing and generalized Production cost-ceiling capacity
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/certification-commercial-i2v-pricing-capacity.integration.test.ts
+
       - name: Certify reference-free T2V human retry contract on PostgreSQL
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
