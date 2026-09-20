@@ -3,6 +3,7 @@ import type { AiStoryDirectorPlan } from "./ai-story-director-plan";
 import type { AiStoryScriptDirectorHandoff } from "./ai-story-script-director-handoff";
 import { AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
 import { AiStorySceneAuthorityBindingSchema } from "./ai-story-scene";
+import { evaluateSubjectMotionContract } from "./ai-story-cinematic-execution-contract";
 
 export const AI_STORY_MOTION_PLAN_CONTRACT_VERSION="ai-story-motion-plan.v1" as const;
 export const AI_STORY_MOTION_PLAN_STATUSES=["DRAFT","VALIDATED","APPROVED","FROZEN","SUPERSEDED"] as const;
@@ -43,7 +44,7 @@ export const AiStoryMotionPlanSchema=z.object({
   sourceHash:Hash,motionFingerprint:Hash,status:z.enum(AI_STORY_MOTION_PLAN_STATUSES),supersedesMotionPlanId:Id.nullable(),createdBy:Id,createdAt:z.string().datetime(),approvedBy:Id.nullable(),approvedAt:z.string().datetime().nullable(),frozenAt:z.string().datetime().nullable(),
 }).strict();
 export type AiStoryMotionPlan=z.infer<typeof AiStoryMotionPlanSchema>;export type AiStorySceneMotionPlan=z.infer<typeof AiStorySceneMotionPlanSchema>;
-export const AI_STORY_MOTION_GATES=["DIRECTOR_BINDING_GATE","CANONICAL_SCENE_BINDING_GATE","SHOT_RECIPE_BINDING_GATE","SCRIPT_ACTION_TRUTH_GATE","START_STATE_GATE","ACTION_PATH_GATE","END_STATE_GATE","ACTION_COMPLETION_GATE","CONTACT_REQUIREMENT_GATE","FORCE_RESPONSE_GATE","PRODUCT_CAUSALITY_GATE","OBJECT_PERSISTENCE_GATE","BLOCKING_EXECUTION_GATE","CAMERA_EXECUTION_GATE","FOCUS_EXECUTION_GATE","PHYSICAL_PLAUSIBILITY_GATE","MOTION_BUDGET_GATE","PRODUCT_GROUNDED_MOTION_GATE","MOTION_CONTINUITY_GATE","MOTION_FINGERPRINT_GATE","STALE_DIRECTOR_GATE","MOTION_FREEZE_GATE"] as const;
+export const AI_STORY_MOTION_GATES=["DIRECTOR_BINDING_GATE","CANONICAL_SCENE_BINDING_GATE","SHOT_RECIPE_BINDING_GATE","SCRIPT_ACTION_TRUTH_GATE","START_STATE_GATE","ACTION_PATH_GATE","END_STATE_GATE","ACTION_COMPLETION_GATE","CONTACT_REQUIREMENT_GATE","FORCE_RESPONSE_GATE","PRODUCT_CAUSALITY_GATE","OBJECT_PERSISTENCE_GATE","BLOCKING_EXECUTION_GATE","CAMERA_EXECUTION_GATE","FOCUS_EXECUTION_GATE","PHYSICAL_PLAUSIBILITY_GATE","MOTION_BUDGET_GATE","PRODUCT_GROUNDED_MOTION_GATE","MOTION_CONTINUITY_GATE","MOTION_FINGERPRINT_GATE","STALE_DIRECTOR_GATE","MOTION_FREEZE_GATE","SUBJECT_MOTION_FIRST_CLASS_GATE","SUBJECT_MOTION_COMPLETION_GATE"] as const;
 export type AiStoryMotionGate=(typeof AI_STORY_MOTION_GATES)[number];export type AiStoryMotionIssue={gate:AiStoryMotionGate;severity:"BLOCK"|"WARN";message:string};
 const same=(a:unknown,b:unknown)=>JSON.stringify(a)===JSON.stringify(b);const factKey=(f:{entityId:string;property:string})=>`${f.entityId}:${f.property}`;
 function stateMap(facts:z.infer<typeof AiStoryMotionPhysicalFactSchema>[]){return new Map(facts.map(f=>[factKey(f),f]));}
@@ -79,6 +80,9 @@ export function validateAiStoryMotionPlan(plan:AiStoryMotionPlan,director:AiStor
   if(scene.motionBudget.identitySensitiveProduct&&scene.motionBudget.riskFactors.includes("LARGE_PRODUCT_PERSPECTIVE_CHANGE")&&scene.motionBudget.riskFactors.includes("MAJOR_OCCLUSION")&&scene.motionBudget.riskFactors.includes("OBJECT_TRANSFORMATION"))add("PRODUCT_GROUNDED_MOTION_GATE",`Identity-sensitive Product motion combines unsafe perspective, occlusion, and transformation`);
  }
  const ordered=[...plan.sceneMotionPlans].sort((a,b)=>a.sceneOrder-b.sceneOrder);for(let i=1;i<ordered.length;i++){const previous=ordered[i-1]!,current=ordered[i]!;const previousEnd=stateMap(previous.actionExecutions.flatMap(a=>a.endState));const currentStart=stateMap(current.actionExecutions.flatMap(a=>a.startState));for(const [key,fact] of previousEnd){const next=currentStart.get(key);if(next&&next.value!==fact.value)add("MOTION_CONTINUITY_GATE",`Motion state resets without transition between Scenes for ${key}`);}}
+ for(const cinematic of evaluateSubjectMotionContract({sceneDirections:director.sceneDirections,sceneMotionPlans:plan.sceneMotionPlans,scriptScenes:handoff.sceneHandoffs})){
+  if(cinematic.gate==="SUBJECT_MOTION_FIRST_CLASS_GATE"||cinematic.gate==="SUBJECT_MOTION_COMPLETION_GATE") add(cinematic.gate,cinematic.message,cinematic.severity);
+ }
  return issues;
 }
 export function assertAiStoryMotionPlanTransition(from:AiStoryMotionPlan["status"],to:AiStoryMotionPlan["status"]){const allowed:Record<AiStoryMotionPlan["status"],AiStoryMotionPlan["status"][]>={DRAFT:["VALIDATED"],VALIDATED:["APPROVED"],APPROVED:["FROZEN"],FROZEN:["SUPERSEDED"],SUPERSEDED:[]};if(!allowed[from].includes(to))throw new Error(`MOTION_PLAN_TRANSITION_DENIED:${from}->${to}`);}

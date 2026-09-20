@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AiStoryScriptDirectorHandoff } from "./ai-story-script-director-handoff";
 import { AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
 import { AiStorySceneAuthorityBindingSchema, type AiStoryCanonicalScene } from "./ai-story-scene";
+import { evaluateCinematicDirectorContract } from "./ai-story-cinematic-execution-contract";
 
 export const AI_STORY_DIRECTOR_PLAN_CONTRACT_VERSION = "ai-story-director-plan.v1" as const;
 export const AI_STORY_DIRECTOR_REGISTRY_VERSION = 1 as const;
@@ -19,6 +20,7 @@ export const AI_STORY_SHOT_SIZES = Object.freeze(["EXTREME_WIDE", "WIDE", "MEDIU
 export const AI_STORY_CAMERA_FAMILIES = Object.freeze([
   "LOCKED", "SLOW_PUSH_IN", "SLOW_PULL_BACK", "MINOR_LATERAL_DOLLY", "RACK_FOCUS",
   "GENTLE_PARALLAX", "SMALL_ARC", "PAN", "TILT", "TRACKING", "HANDHELD",
+  "ORBIT", "FOLLOW", "HANDHELD_SUBTLE", "REVEAL", "STATIC", "LOCKED_HERO",
 ] as const);
 export const AI_STORY_COMPOSITION_INTENTS = Object.freeze([
   "PRODUCT_DOMINANT", "RELATIONSHIP_BALANCED", "ENVIRONMENT_CONTEXTUAL", "DETAIL_ISOLATION",
@@ -127,6 +129,8 @@ export const AI_STORY_DIRECTOR_PLAN_GATES = [
   "SCRIPT_TRUTH_BINDING_GATE", "SCRIPT_ACTION_SUPPORT_GATE", "FOCUS_REFERENCE_GATE", "PRODUCT_AUTHORITY_BINDING_GATE",
   "PRODUCT_CAMERA_SAFETY_GATE", "NEW_AUDIENCE_INFORMATION_GATE", "DIFFERENTIATION_REQUIREMENT_GATE",
   "DIRECTOR_VISUAL_DUPLICATION_GATE", "DIRECTOR_VALID_REPETITION_WARNING", "DIRECTOR_FREEZE_MUTATION_GATE", "STALE_DIRECTOR_PLAN_GATE",
+  "CINEMATIC_CAMERA_GRAMMAR_GATE", "CONTINUITY_NOT_DUPLICATION_GATE", "ANTI_PPT_CREATIVE_GATE",
+  "CINEMATIC_EXECUTION_CONTRACT_GATE", "MUST_KEEP_MUST_CHANGE_SEPARATION_GATE", "MARKETING_INTENT_BRIDGE_GATE",
 ] as const;
 export type AiStoryDirectorPlanGate = (typeof AI_STORY_DIRECTOR_PLAN_GATES)[number];
 
@@ -192,6 +196,10 @@ export function validateAiStoryDirectorPlan(
       if (visualEquivalent && !hasDelta) issue("DIRECTOR_VISUAL_DUPLICATION_GATE", "BLOCK", `Director Scene ${current.scriptSceneId} materially duplicates ${previous.scriptSceneId}`);
       else if (visualEquivalent && hasDelta) issue("DIRECTOR_VALID_REPETITION_WARNING", "WARN", `Director Scene ${current.scriptSceneId} repeats visual dimensions but carries a certified delta`);
     }
+  }
+  for (const cinematic of evaluateCinematicDirectorContract({ sceneDirections: plan.sceneDirections })) {
+    if (cinematic.gate === "SUBJECT_MOTION_FIRST_CLASS_GATE" || cinematic.gate === "SUBJECT_MOTION_COMPLETION_GATE") continue;
+    issue(cinematic.gate, cinematic.severity, cinematic.message);
   }
   return issues;
 }

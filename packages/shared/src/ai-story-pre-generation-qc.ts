@@ -2,9 +2,13 @@ import { z } from "zod";
 import { AI_STORY_SHOT_RECIPE_QC_GATES, AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
 
 export const AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION = "ai-story-pre-generation-qc.v1" as const;
-export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION = 1 as const;
+export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1 = 1 as const;
+export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2 = 2 as const;
+/** Current evaluations use Gate Set V2. Historical rows remain Gate Set V1. */
+export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION = AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2;
+export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSIONS = [AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1, AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2] as const;
 
-export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER = [
+export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1 = [
   "UPSTREAM_ARTIFACT_INTEGRITY_GATE",
   "SCRIPT_REFERENCE_INTEGRITY_GATE",
   "BEAT_COVERAGE_GATE",
@@ -24,6 +28,24 @@ export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER = [
   "PROVIDER_CAPABILITY_GATE",
   "PROVIDER_COMPILATION_READINESS_GATE",
 ] as const;
+
+export const AI_STORY_PRE_GENERATION_QC_PROMPT_TEAM_REPAIR_GATES = [
+  "CINEMATIC_CAMERA_GRAMMAR_GATE",
+  "SUBJECT_MOTION_FIRST_CLASS_GATE",
+  "SUBJECT_MOTION_COMPLETION_GATE",
+  "CONTINUITY_NOT_DUPLICATION_GATE",
+  "CINEMATIC_EXECUTION_CONTRACT_GATE",
+  "MUST_KEEP_MUST_CHANGE_SEPARATION_GATE",
+  "ANTI_PPT_CREATIVE_GATE",
+] as const;
+
+export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V2 = [
+  ...AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1,
+  ...AI_STORY_PRE_GENERATION_QC_PROMPT_TEAM_REPAIR_GATES,
+] as const;
+
+export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER = AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V2;
+export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1_LENGTH = AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1.length;
 
 export const AI_STORY_PRE_GENERATION_QC_CLASSIFICATIONS = ["HARD_GATE", "SOFT_WARNING", "AI_QC", "HUMAN_PREVIEW"] as const;
 export const AI_STORY_PRE_GENERATION_QC_LAYERS = ["OUTLINE", "SCRIPT", "SCENE", "LOCATION", "CAST", "HANDOFF", "DIRECTOR", "MOTION", "PRODUCT_AUTHORITY", "PRODUCT_GROUNDING", "PROVIDER_ADAPTER"] as const;
@@ -75,11 +97,11 @@ export const AiStoryPreGenerationQcEvaluationSchema = z.object({
   sceneExecutionId: Id,
   sceneVersionIds: z.array(Id).optional(),
   contractVersion: z.literal(AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION),
-  gateSetVersion: z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION),
+  gateSetVersion: z.union([z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1), z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2)]),
   providerCapabilityId: Text.max(160),
   providerCapabilityVersion: Text.max(160),
   productAuthorityIds: z.array(Id),
-  gateResults: z.array(AiStoryPreGenerationQcGateResultSchema).min(AI_STORY_PRE_GENERATION_QC_GATE_ORDER.length),
+  gateResults: z.array(AiStoryPreGenerationQcGateResultSchema).min(AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1_LENGTH),
   recipeGateResults: z.array(AiStoryPreGenerationQcRecipeGateResultSchema).length(AI_STORY_SHOT_RECIPE_QC_GATES.length).optional(),
   shotRecipeBindings: z.array(AiStoryShotRecipeBindingSchema).optional(),
   dispatchDecision: z.enum(["DISPATCH_ELIGIBLE", "DISPATCH_ELIGIBLE_WITH_WARNINGS", "DISPATCH_BLOCKED"]),

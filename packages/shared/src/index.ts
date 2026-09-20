@@ -75,6 +75,7 @@ export * from "./ai-story-script";
 export * from "./ai-story-script-semantic-writer";
 export * from "./ai-story-script-director-handoff";
 export * from "./ai-story-director-plan";
+export * from "./ai-story-cinematic-execution-contract";
 export * from "./ai-story-motion-plan";
 export * from "./ai-story-pre-generation-qc";
 export * from "./ai-story-product-story-profile";

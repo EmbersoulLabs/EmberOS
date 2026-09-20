@@ -5,6 +5,7 @@ import {
   AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION,
   AiStorySceneExecutionPackageSchema,
   AiStorySeedanceSemanticPlanSchema,
+  compileCinematicPromptFacts,
   type AiStoryExecutionVisualReference,
   type AiStorySceneExecutionPackage,
   type AiStorySeedanceSemanticPlan,
@@ -72,7 +73,8 @@ export function seedanceSceneExecutionPackageFingerprint(input: Omit<AiStoryScen
 const sectionOrder = [
   "SCENE_CONTEXT", "CAST_AUTHORITY", "LOCATION_AUTHORITY", "PRODUCT_AUTHORITY", "ENTRY_STATE", "SCENE_PURPOSE",
   "SCRIPT_ACTION", "ACTION_PROGRESSION", "REQUIRED_EXIT_STATE", "DIRECTOR_VISUAL_TREATMENT", "SHOT_RECIPE_SEMANTICS",
-  "CAMERA", "FOCUS", "COMPOSITION", "BLOCKING", "ENVIRONMENTAL_MOTION", "REQUIRED_EVIDENCE", "MUST_KEEP", "MUST_AVOID",
+  "CAMERA", "FOCUS", "COMPOSITION", "BLOCKING", "ENVIRONMENTAL_MOTION", "REQUIRED_EVIDENCE", "MUST_KEEP", "MUST_CHANGE",
+  "CINEMATIC_PROGRESSION", "CONTINUITY", "TRANSITION", "MUST_AVOID",
 ] as const;
 
 function unique(values: readonly string[]): string[] {
@@ -272,14 +274,18 @@ function buildSemanticPlan(pkg: AiStorySceneExecutionPackage, degradations: Seed
   const locationCore = pkg.locationAuthority
     ? [pkg.locationAuthority.facts.identity, pkg.locationAuthority.facts.appearance, ...pkg.locationAuthority.facts.fixedElements, ...pkg.locationAuthority.facts.environmentalCharacteristics]
     : [scene.locationBinding.scope === "EPHEMERAL_ENVIRONMENT" ? scene.locationBinding.environmentDescription : ""];
+  const cinematicFacts = compileCinematicPromptFacts({
+    directorDirection: pkg.directorDirection,
+    motionScenePlan: pkg.motionScenePlan,
+  });
   const sections = new Map<typeof sectionOrder[number], string[]>([
     ["SCENE_CONTEXT", [`Order ${scene.order + 1}; role ${scene.sceneRole}; importance ${scene.importance}; time relation ${scene.timeRelation}`, `Active location: ${activeIntent.location.label}`, ...activeIntent.continuityRequirements]],
     ["CAST_AUTHORITY", pkg.castAuthorities.filter((cast) => activeCastIds.has(cast.reference.id)).flatMap((cast) => [`${cast.displayName}: ${cast.identity}`, `Appearance: ${cast.appearance}`, ...cast.coreContinuityFacts, ...cast.sceneStateFacts])],
     ["LOCATION_AUTHORITY", [`Current location authority: ${worldState.currentLocation.label}`, ...locationCore, ...Object.entries(scene.locationState).flatMap(([key, value]) => Array.isArray(value) ? value.map((item) => `${key}: ${item}`) : value ? [`${key}: ${value}`] : [])]],
     ["PRODUCT_AUTHORITY", [...pkg.productAuthorities.flatMap((product) => [`${product.displayName}: ${product.identityFacts.join("; ")}`, ...product.sceneStateFacts]), ...worldState.possessions.map((possession) => `Current possession: ${possession.objectId} — ${possession.holder}`)]],
     ["ENTRY_STATE", scene.entryState.map((item) => fact(item.subjectId, item.dimension, item.value))],
-    ["SCENE_PURPOSE", [`${activeIntent.narrativePurpose}: ${pkg.directorDirection.servedScriptSceneFunction}`, ...pkg.directorDirection.newAudienceInformation]],
-    ["SCRIPT_ACTION", [...activeIntent.actions, ...dialogue, ...voiceOver]],
+    ["SCENE_PURPOSE", [`${activeIntent.narrativePurpose}: ${pkg.directorDirection.servedScriptSceneFunction}`, ...cinematicFacts.narrativePurpose, ...pkg.directorDirection.newAudienceInformation]],
+    ["SCRIPT_ACTION", [...activeIntent.actions, ...cinematicFacts.subjectAction, ...dialogue, ...voiceOver]],
     ["ACTION_PROGRESSION", pkg.motionScenePlan.actionExecutions.flatMap((execution) => [`Start: ${execution.startState.map((item) => fact(item.entityId, item.property, item.value)).join("; ")}`, `Action: ${execution.semanticAction}`, `Path: ${[...execution.actionPath].sort((a, b) => a.order - b.order).map((phase) => phase.semanticPhase).join(" → ")}`, `End: ${execution.endState.map((item) => fact(item.entityId, item.property, item.value)).join("; ")}`])],
     ["REQUIRED_EXIT_STATE", scene.exitState.map((item) => fact(item.subjectId, item.dimension, item.value))],
     ["DIRECTOR_VISUAL_TREATMENT", [`Visual role ${pkg.directorDirection.sceneVisualRole}; shot purpose ${shot.shotPurpose}; shot size ${shot.shotSize}`, shot.cameraIntent]],
@@ -290,8 +296,12 @@ function buildSemanticPlan(pkg: AiStorySceneExecutionPackage, degradations: Seed
     ["BLOCKING", [...shot.blockingIntents.map((item) => item.semanticIntent), ...pkg.motionScenePlan.blockingExecutions.map((item) => `${item.startPosition} → ${item.movementPath} → ${item.interactionPosition} → ${item.endPosition}`)]],
     ["ENVIRONMENTAL_MOTION", pkg.motionScenePlan.environmentalMotions.map((item) => `${item.semanticMotion}: ${item.timing}`)],
     ["REQUIRED_EVIDENCE", [...pkg.directorDirection.servedProductEvidence, ...pkg.productAuthorities.flatMap((product) => product.visibleEvidenceGoals)]],
-    ["MUST_KEEP", [...scene.mustKeep, ...pkg.castAuthorities.flatMap((cast) => cast.mustKeep), ...pkg.productAuthorities.flatMap((product) => product.mustKeep), ...selectedReferences.map((reference) => `Reference conditioning: ${reference.semanticBinding}`)]],
-    ["MUST_AVOID", [...activeIntent.mustNotInherit, ...pkg.productAuthorities.flatMap((product) => product.mustAvoid)]],
+    ["MUST_KEEP", [...scene.mustKeep, ...pkg.castAuthorities.flatMap((cast) => cast.mustKeep), ...pkg.productAuthorities.flatMap((product) => product.mustKeep), ...selectedReferences.map((reference) => `Reference conditioning: ${reference.semanticBinding}`), ...cinematicFacts.mustKeep]],
+    ["MUST_CHANGE", [...cinematicFacts.mustChange]],
+    ["CINEMATIC_PROGRESSION", [...cinematicFacts.cinematicProgression]],
+    ["CONTINUITY", [...cinematicFacts.continuity]],
+    ["TRANSITION", [...cinematicFacts.transition]],
+    ["MUST_AVOID", [...activeIntent.mustNotInherit, ...pkg.productAuthorities.flatMap((product) => product.mustAvoid), ...cinematicFacts.mustAvoid]],
   ]);
   return AiStorySeedanceSemanticPlanSchema.parse({
     contractVersion: AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION,

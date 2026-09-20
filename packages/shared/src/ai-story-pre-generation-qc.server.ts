@@ -49,6 +49,8 @@ export type AiStoryPreGenerationQcInput = {
 const hard=(gateId:AiStoryPreGenerationQcGateId,reasons:Reason[],ids:AiStoryPreGenerationQcGateResult["evaluatedArtifactIds"]):AiStoryPreGenerationQcGateResult=>({gateId,gateVersion:1,classification:"HARD_GATE",status:reasons.length?"BLOCK":"PASS",failedLayer:reasons[0]?.layer??null,reasonCode:reasons[0]?.code??"PASS",safeEvidence:reasons.map(r=>r.evidence),repairOwner:reasons[0]?.owner??"NONE",evaluatedArtifactIds:ids,contractVersion:AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION});
 const reason=(code:string,evidence:string,layer:Reason["layer"],owner:Reason["owner"]):Reason=>({code,evidence,layer,owner});
 const has=(issues:readonly {gate:string;message:string}[],gates:readonly string[],layer:Reason["layer"],owner:Reason["owner"])=>(issues.filter(i=>gates.includes(i.gate)).map(i=>reason(i.gate,i.message,layer,owner)));
+const blocked=(issues:readonly {gate:string;severity:"BLOCK"|"WARN";message:string}[],gates:readonly string[],layer:Reason["layer"],owner:Reason["owner"])=>issues.filter(i=>i.severity==="BLOCK"&&gates.includes(i.gate)).map(i=>reason(i.gate,i.message,layer,owner));
+const warned=(issues:readonly {gate:string;severity:"BLOCK"|"WARN";message:string}[],gates:readonly string[])=>issues.filter(i=>i.severity==="WARN"&&gates.includes(i.gate));
 
 export function computeAiStoryPreGenerationQcFingerprint(input:Pick<AiStoryPreGenerationQcEvaluation,"orgId"|"workspaceId"|"storyId"|"storyVersionId"|"outlineVersionId"|"scriptVersionId"|"handoffId"|"directorPlanId"|"motionPlanId"|"sceneExecutionId"|"sceneVersionIds"|"gateSetVersion"|"providerCapabilityId"|"providerCapabilityVersion"|"productAuthorityIds"|"gateResults"|"recipeGateResults"|"shotRecipeBindings"|"dispatchDecision">){
   const recipeEvidence=input.recipeGateResults&&input.shotRecipeBindings?{recipeGateResults:input.recipeGateResults,shotRecipeBindings:input.shotRecipeBindings}:{};
@@ -132,12 +134,25 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
     hard("PRODUCT_GROUNDED_MOTION_SAFETY_GATE",[...has(directorIssues,["PRODUCT_CAMERA_SAFETY_GATE"],"DIRECTOR","DIRECTOR"),...has(motionIssues,["PRODUCT_GROUNDED_MOTION_GATE"],"MOTION","MOTION")],ids),
     hard("PROVIDER_CAPABILITY_GATE",capabilityReasons,ids),
     hard("PROVIDER_COMPILATION_READINESS_GATE",compilation.providerNeutralInputsComplete?[]:[reason("PROVIDER_NEUTRAL_INPUT_INCOMPLETE","Required provider-neutral compilation input is missing","PROVIDER_ADAPTER","PROVIDER_ADAPTER")],ids),
+    hard("CINEMATIC_CAMERA_GRAMMAR_GATE",blocked(directorIssues,["CINEMATIC_CAMERA_GRAMMAR_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("SUBJECT_MOTION_FIRST_CLASS_GATE",blocked(motionIssues,["SUBJECT_MOTION_FIRST_CLASS_GATE"],"MOTION","MOTION"),ids),
+    hard("SUBJECT_MOTION_COMPLETION_GATE",blocked(motionIssues,["SUBJECT_MOTION_COMPLETION_GATE"],"MOTION","MOTION"),ids),
+    hard("CONTINUITY_NOT_DUPLICATION_GATE",blocked(directorIssues,["CONTINUITY_NOT_DUPLICATION_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("CINEMATIC_EXECUTION_CONTRACT_GATE",[...blocked(directorIssues,["CINEMATIC_EXECUTION_CONTRACT_GATE","MARKETING_INTENT_BRIDGE_GATE"],"DIRECTOR","DIRECTOR")],ids),
+    hard("MUST_KEEP_MUST_CHANGE_SEPARATION_GATE",blocked(directorIssues,["MUST_KEEP_MUST_CHANGE_SEPARATION_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("ANTI_PPT_CREATIVE_GATE",blocked(directorIssues,["ANTI_PPT_CREATIVE_GATE"],"DIRECTOR","DIRECTOR"),ids),
   ];
   const repeatedCamera=directorPlan.sceneDirections.flatMap(s=>s.shots.map(x=>x.cameraFamily)).some((v,i,a)=>a.indexOf(v)!==i);
   if(repeatedCamera&&!results.some(r=>r.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE"&&r.status==="BLOCK")){const r=results.find(x=>x.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE")!;r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode="CAMERA_FAMILY_REPEATED_WITH_VALID_DELTA";r.safeEvidence=["Camera-family repetition alone is not duplication"]}
   if(raw.assistanceFindings?.length&&!results.some(r=>r.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE"&&r.status==="BLOCK")){const r=results.find(x=>x.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE")!;if(r.status==="PASS"){r.classification=raw.assistanceFindings.some(f=>f.classification==="HUMAN_PREVIEW")?"HUMAN_PREVIEW":"AI_QC";r.status="WARN";r.reasonCode="SUBJECTIVE_QUALITY_ASSISTANCE_ONLY";r.safeEvidence=raw.assistanceFindings.map(f=>f.message)}}
   const profileWarnings=profileIssues.filter(i=>i.severity==="WARN");if(profileWarnings.length){const r=results.find(x=>x.gateId==="PRODUCT_AUTHORITY_CAUSALITY_CONTINUITY_GATE")!;if(r.status==="PASS"){r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode=profileWarnings[0]!.reasonCode;r.safeEvidence=profileWarnings.map(i=>i.message)}}
   const recipeWarnings=recipeIssues.filter(i=>i.severity==="WARN");if(recipeWarnings.length){const r=results.find(x=>x.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE")!;if(r.status==="PASS"){r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode=recipeWarnings[0]!.reasonCode;r.safeEvidence=recipeWarnings.map(i=>i.message)}}
+  const applyCinematicWarn=(gateId:AiStoryPreGenerationQcGateId,source:ReturnType<typeof warned>)=>{const r=results.find(x=>x.gateId===gateId);if(r&&r.status==="PASS"&&source.length){r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode=source[0]!.gate;r.safeEvidence=source.map(i=>i.message);r.repairOwner=gateId.startsWith("SUBJECT_")?"MOTION":"DIRECTOR";r.failedLayer=gateId.startsWith("SUBJECT_")?"MOTION":"DIRECTOR";}};
+  applyCinematicWarn("CINEMATIC_CAMERA_GRAMMAR_GATE",warned(directorIssues,["CINEMATIC_CAMERA_GRAMMAR_GATE"]));
+  applyCinematicWarn("ANTI_PPT_CREATIVE_GATE",warned(directorIssues,["ANTI_PPT_CREATIVE_GATE"]));
+  applyCinematicWarn("CINEMATIC_EXECUTION_CONTRACT_GATE",warned(directorIssues,["CINEMATIC_EXECUTION_CONTRACT_GATE","MARKETING_INTENT_BRIDGE_GATE"]));
+  applyCinematicWarn("SUBJECT_MOTION_FIRST_CLASS_GATE",warned(motionIssues,["SUBJECT_MOTION_FIRST_CLASS_GATE"]));
+  applyCinematicWarn("SUBJECT_MOTION_COMPLETION_GATE",warned(motionIssues,["SUBJECT_MOTION_COMPLETION_GATE"]));
   const blocks=results.some(r=>r.status==="BLOCK");const warnings=results.some(r=>r.status==="WARN")||Boolean(raw.assistanceFindings?.length);
   const dispatchDecision:AiStoryPreGenerationQcEvaluation["dispatchDecision"]=blocks?"DISPATCH_BLOCKED":warnings?"DISPATCH_ELIGIBLE_WITH_WARNINGS":"DISPATCH_ELIGIBLE";
   const shotRecipeBindings=directorPlan.sceneDirections.flatMap((scene)=>scene.shotRecipeBinding?[scene.shotRecipeBinding]:[]);
