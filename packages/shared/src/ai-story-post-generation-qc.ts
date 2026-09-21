@@ -3,18 +3,30 @@ import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-produc
 
 export const AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION = "ai-story-post-generation-qc.v1" as const;
 export const AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION = "ai-story-visual-evidence.v1" as const;
-export const AI_STORY_POST_QC_POLICY_VERSION = "ai-story-post-qc-policy.2026-08-30.v1" as const;
+export const AI_STORY_POST_QC_POLICY_VERSION_V1 = "ai-story-post-qc-policy.2026-08-30.v1" as const;
+export const AI_STORY_POST_QC_POLICY_VERSION_V2 = "ai-story-post-qc-policy.2026-09-20.v2" as const;
+/** New evaluations use V2. Historical rows remain V1. */
+export const AI_STORY_POST_QC_POLICY_VERSION = AI_STORY_POST_QC_POLICY_VERSION_V2;
+export const AI_STORY_POST_QC_POLICY_VERSIONS = [AI_STORY_POST_QC_POLICY_VERSION_V1, AI_STORY_POST_QC_POLICY_VERSION_V2] as const;
 
 const Id = z.string().uuid();
 const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const Text = z.string().trim().min(1).max(3000);
 
-export const AI_STORY_POST_QC_DIMENSIONS = [
+export const AI_STORY_POST_QC_DIMENSIONS_V1 = [
   "SCENE_FIDELITY", "PRODUCT_FIDELITY", "CHARACTER_FIDELITY", "LOCATION_FIDELITY",
   "ACTION_COMPLETION", "END_STATE", "CONTINUITY", "DIRECTOR_EXECUTION", "MOTION_EXECUTION",
   "REQUIRED_EVIDENCE", "MUST_KEEP", "MUST_AVOID", "VISUAL_ARTIFACTS", "TEXT_CONTAMINATION",
   "OUTPUT_INTEGRITY",
 ] as const;
+
+export const AI_STORY_POST_QC_DIMENSIONS_V2 = [
+  ...AI_STORY_POST_QC_DIMENSIONS_V1,
+  "CINEMATIC_PROGRESSION",
+  "ANTI_PPT_CONTINUITY",
+] as const;
+
+export const AI_STORY_POST_QC_DIMENSIONS = AI_STORY_POST_QC_DIMENSIONS_V2;
 
 export const AI_STORY_POST_QC_FAILURE_CLASSES = [
   "STORY_FUNCTION_MISSING", "INSUFFICIENT_SCENE_DIFFERENTIATION", "ACTION_INCOMPLETE",
@@ -23,7 +35,8 @@ export const AI_STORY_POST_QC_FAILURE_CLASSES = [
   "PRODUCT_CONTINUITY_FAILURE", "LOCATION_CONTINUITY_FAILURE", "CAMERA_MOTION_UNACCEPTABLE",
   "FOCUS_EXECUTION_FAILURE", "REQUIRED_EVIDENCE_MISSING", "MUST_KEEP_VIOLATION",
   "MUST_AVOID_VIOLATION", "VISUAL_QUALITY_FAILURE", "TEXT_CONTAMINATION",
-  "OUTPUT_INTEGRITY_FAILURE", "PROVIDER_EXECUTION_MISMATCH",
+  "OUTPUT_INTEGRITY_FAILURE", "PROVIDER_EXECUTION_MISMATCH", "CINEMATIC_PROGRESSION_FAILURE",
+  "ANTI_PPT_CONTINUITY_FAILURE",
 ] as const;
 
 export const AI_STORY_POST_QC_REPAIR_OWNERS = [
@@ -45,7 +58,7 @@ export const AiStoryPostQcRequirementSchema = z.object({
 export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   postQcInputId: Id,
   contractVersion: z.literal(AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION),
-  policyVersion: z.literal(AI_STORY_POST_QC_POLICY_VERSION),
+  policyVersion: z.enum(AI_STORY_POST_QC_POLICY_VERSIONS),
   orgId: Id,
   workspaceId: Id,
   campaignId: Id,
@@ -143,7 +156,7 @@ export const AiStoryPostQcFindingSchema = z.object({
 export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   postQcEvaluationId: Id,
   contractVersion: z.literal(AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION),
-  policyVersion: z.literal(AI_STORY_POST_QC_POLICY_VERSION),
+  policyVersion: z.enum(AI_STORY_POST_QC_POLICY_VERSIONS),
   evaluationVersion: z.number().int().positive(),
   postQcInputId: Id,
   orgId: Id,

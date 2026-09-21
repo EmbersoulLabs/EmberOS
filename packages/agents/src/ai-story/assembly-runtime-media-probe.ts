@@ -74,6 +74,9 @@ export async function probeAssemblyMedia(input: {
         avg_frame_rate?: string;
         r_frame_rate?: string;
         time_base?: string;
+        duration?: string;
+        sample_rate?: string;
+        channels?: number;
       }>;
     };
     const video = data.streams?.find((stream) => stream.codec_type === "video");
@@ -110,6 +113,16 @@ export async function probeAssemblyMedia(input: {
       videoCodec: video.codec_name ?? "unknown",
       hasAudio: Boolean(audio),
       audioCodec: audio?.codec_name ?? null,
+      audioDurationMs: audio
+        ? Math.round(
+            Number.parseFloat(audio.duration ?? data.format?.duration ?? "0") *
+              1000
+          )
+        : null,
+      audioSampleRate: audio
+        ? Number.parseInt(audio.sample_rate ?? "", 10) || null
+        : null,
+      audioChannelCount: audio?.channels ?? null,
       timeBase: video.time_base ?? null,
       byteSize: Number.isFinite(byteSize) ? byteSize : stats.size,
       contentHash: fileHash,

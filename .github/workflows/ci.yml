@@ -110,6 +110,9 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/photo-scene-reused-derivative-campaign-authorization-convergence.integration.test.ts
 
+      - name: Apply AI Story episode revision persistence
+        run: pnpm --filter @ceo-agent/db sql:ai-story-episode-revision-persistence
+
       - name: Certify current approved Animation Package authority
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
@@ -173,6 +176,9 @@ jobs:
 
       - name: Certify AI Story Script Scene PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-script-authority.integration.test.ts
+
+      - name: Certify durable Episode revision persistence
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-durable-episode-revision-persistence.integration.test.ts
 
       - name: Certify immutable Script Director handoff PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-script-director-handoff.integration.test.ts
@@ -286,6 +292,11 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Install FFmpeg for Assembly V2 media certification
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
       - name: Unit tests
         run: pnpm test

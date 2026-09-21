@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type AiStoryOutlineVersion } from "./ai-story-outline";
 import { AiStoryProductStorySceneContributionSchema } from "./ai-story-product-story-profile";
+import { AiStoryCommercialSceneContributionSchema, AiStoryNarrativeFunctionSchema } from "./ai-story-commercial-story-profile";
 import { AiStoryCastReferenceSchema, AiStorySceneCastRelationshipSchema, castReferenceKey } from "./ai-story-cast";
 
 export const AI_STORY_SCRIPT_CONTRACT_VERSION = "ai-story-script.v1" as const;
@@ -90,13 +91,17 @@ export const AiStoryScriptSceneSchema = z.object({
   newInformation: z.array(Text.max(1000)), newEvidence: z.array(Text.max(1000)),
   newActionOutcomes: z.array(Text.max(1000)), productEvidence: z.array(Text.max(1000)),
   productStoryContributions: z.array(AiStoryProductStorySceneContributionSchema).optional(),
+  narrativeFunction: AiStoryNarrativeFunctionSchema.optional(),
+  causalPreconditions: z.array(Text.max(1000)).optional(),
+  commercialContribution: AiStoryCommercialSceneContributionSchema.optional(),
+  storyConsequence: Text.max(1000).optional(),
 }).strict();
 
 export const AiStoryScriptVersionSchema = z.object({
   scriptVersionId: Id, storyId: Id, storyVersionId: Id, outlineVersionId: Id,
   orgId: Id, workspaceId: Id, version: z.number().int().positive(),
   contractVersion: z.literal(AI_STORY_SCRIPT_CONTRACT_VERSION),
-  profileId: z.enum(["CORE", "PRODUCT_STORY"]), profileVersion: z.literal(1),
+  profileId: z.enum(["CORE", "PRODUCT_STORY", "COMMERCIAL_STORY"]), profileVersion: z.literal(1),
   outlineSourceHash: z.string().regex(/^sha256:[0-9a-f]{64}$/),
   /** Present on runtime-produced V1 Scripts; absent on historical snapshots. */
   semanticInputFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),

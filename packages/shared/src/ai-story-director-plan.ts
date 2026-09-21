@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { AiStoryScriptDirectorHandoff } from "./ai-story-script-director-handoff";
 import { AiStoryShotRecipeBindingSchema } from "./ai-story-shot-recipe";
 import { AiStorySceneAuthorityBindingSchema, type AiStoryCanonicalScene } from "./ai-story-scene";
+import { evaluateCinematicDirectorContract } from "./ai-story-cinematic-execution-contract";
+import { evaluateIntraSceneShotProgression } from "./ai-story-generation-unit";
 
 export const AI_STORY_DIRECTOR_PLAN_CONTRACT_VERSION = "ai-story-director-plan.v1" as const;
 export const AI_STORY_DIRECTOR_REGISTRY_VERSION = 1 as const;
@@ -19,6 +21,7 @@ export const AI_STORY_SHOT_SIZES = Object.freeze(["EXTREME_WIDE", "WIDE", "MEDIU
 export const AI_STORY_CAMERA_FAMILIES = Object.freeze([
   "LOCKED", "SLOW_PUSH_IN", "SLOW_PULL_BACK", "MINOR_LATERAL_DOLLY", "RACK_FOCUS",
   "GENTLE_PARALLAX", "SMALL_ARC", "PAN", "TILT", "TRACKING", "HANDHELD",
+  "ORBIT", "FOLLOW", "HANDHELD_SUBTLE", "REVEAL", "STATIC", "LOCKED_HERO",
 ] as const);
 export const AI_STORY_COMPOSITION_INTENTS = Object.freeze([
   "PRODUCT_DOMINANT", "RELATIONSHIP_BALANCED", "ENVIRONMENT_CONTEXTUAL", "DETAIL_ISOLATION",
@@ -66,6 +69,13 @@ export const AiStoryDirectorShotSchema = z.object({
   perspectiveChange: z.enum(["MINIMAL", "MODERATE", "LARGE"]),
   revealsUnseenProductSurface: z.boolean(),
   productIdentityTransformation: z.boolean(),
+  supportedActionEntryIds: z.array(Id).optional(),
+  supportedActionPhaseIds: z.array(Id).optional(),
+  supportedStateDeltaIndexes: z.array(z.number().int().nonnegative()).optional(),
+  servedAudienceInformation: z.array(Text).optional(),
+  subjectActionPhase: Text.max(500).optional(),
+  entryVisualResponsibility: Text.max(500).optional(),
+  exitVisualResponsibility: Text.max(500).optional(),
 }).strict();
 
 export const AiStoryDirectorSceneDirectionSchema = z.object({
@@ -119,6 +129,7 @@ export const AiStoryDirectorPlanSchema = z.object({
 
 export type AiStoryDirectorPlan = z.infer<typeof AiStoryDirectorPlanSchema>;
 export type AiStoryDirectorSceneDirection = z.infer<typeof AiStoryDirectorSceneDirectionSchema>;
+export type AiStoryDirectorShot = z.infer<typeof AiStoryDirectorShotSchema>;
 export type AiStoryDirectorPlanIssue = { gate: AiStoryDirectorPlanGate; severity: "BLOCK" | "WARN"; message: string };
 
 export const AI_STORY_DIRECTOR_PLAN_GATES = [
@@ -127,6 +138,9 @@ export const AI_STORY_DIRECTOR_PLAN_GATES = [
   "SCRIPT_TRUTH_BINDING_GATE", "SCRIPT_ACTION_SUPPORT_GATE", "FOCUS_REFERENCE_GATE", "PRODUCT_AUTHORITY_BINDING_GATE",
   "PRODUCT_CAMERA_SAFETY_GATE", "NEW_AUDIENCE_INFORMATION_GATE", "DIFFERENTIATION_REQUIREMENT_GATE",
   "DIRECTOR_VISUAL_DUPLICATION_GATE", "DIRECTOR_VALID_REPETITION_WARNING", "DIRECTOR_FREEZE_MUTATION_GATE", "STALE_DIRECTOR_PLAN_GATE",
+  "CINEMATIC_CAMERA_GRAMMAR_GATE", "CONTINUITY_NOT_DUPLICATION_GATE", "ANTI_PPT_CREATIVE_GATE",
+  "CINEMATIC_EXECUTION_CONTRACT_GATE", "MUST_KEEP_MUST_CHANGE_SEPARATION_GATE", "MARKETING_INTENT_BRIDGE_GATE",
+  "SHOT_IDENTITY_GATE", "INTRA_SCENE_SHOT_PROGRESSION_GATE", "SHOT_ACTION_BINDING_GATE",
 ] as const;
 export type AiStoryDirectorPlanGate = (typeof AI_STORY_DIRECTOR_PLAN_GATES)[number];
 
@@ -158,8 +172,17 @@ export function validateAiStoryDirectorPlan(
     if (scene.servedScriptSceneFunction !== source.sceneFunction) issue("SCRIPT_TRUTH_BINDING_GATE", "BLOCK", `Director changed Scene Function for ${scene.scriptSceneId}`);
     const actionIds = new Set(source.actionEntries.map((entry) => entry.entryId));
     const stateIndexes = new Set(source.sceneStateDeltas.map((_entry, index) => index));
-    const supportedActionIds = [...scene.contextualTreatment.supportedActionEntryIds, ...scene.shots.flatMap((shot) => shot.blockingIntents.flatMap((blocking) => blocking.supportedActionEntryIds))];
-    if (supportedActionIds.some((id) => !actionIds.has(id)) || scene.contextualTreatment.supportedStateDeltaIndexes.some((index) => !stateIndexes.has(index))) issue("SCRIPT_ACTION_SUPPORT_GATE", "BLOCK", `Director contextual/action intent is not supported by frozen Script truth for ${scene.scriptSceneId}`);
+    const supportedActionIds = [...scene.contextualTreatment.supportedActionEntryIds, ...scene.shots.flatMap((shot) => [...(shot.supportedActionEntryIds ?? []), ...shot.blockingIntents.flatMap((blocking) => blocking.supportedActionEntryIds)])];
+    const shotStateIndexes = scene.shots.flatMap((shot) => shot.supportedStateDeltaIndexes ?? []);
+    if (supportedActionIds.some((id) => !actionIds.has(id)) || scene.contextualTreatment.supportedStateDeltaIndexes.some((index) => !stateIndexes.has(index)) || shotStateIndexes.some((index) => !stateIndexes.has(index))) issue("SCRIPT_ACTION_SUPPORT_GATE", "BLOCK", `Director contextual/action intent is not supported by frozen Script truth for ${scene.scriptSceneId}`);
+    if (scene.shots.some((shot) => (shot.supportedActionEntryIds ?? []).some((id) => !actionIds.has(id)))) issue("SHOT_ACTION_BINDING_GATE", "BLOCK", `Director Shot action binding invents Script action for ${scene.scriptSceneId}`);
+    const shotIds = scene.shots.map((shot) => shot.directorShotId);
+    if (new Set(shotIds).size !== shotIds.length) issue("SHOT_IDENTITY_GATE", "BLOCK", `Director Scene ${scene.scriptSceneId} contains duplicated Director Shot identity`);
+    const shotOrders = scene.shots.map((shot) => shot.order);
+    if (new Set(shotOrders).size !== shotOrders.length) issue("SHOT_IDENTITY_GATE", "BLOCK", `Director Scene ${scene.scriptSceneId} contains duplicated Shot order`);
+    for (const progression of evaluateIntraSceneShotProgression(scene)) {
+      if (progression.gate === "INTRA_SCENE_SHOT_PROGRESSION_GATE" || progression.gate === "SHOT_IDENTITY_GATE") issue(progression.gate, progression.severity, progression.message);
+    }
     const refs = new Set([...source.characterIds, ...source.locationIds, ...source.propIds, ...source.assetIds, ...source.productAuthorityRefs]);
     const focusRefs = scene.shots.flatMap((shot) => [shot.focusTarget, ...shot.focusProgression]).flatMap((target) => target.authorityRefs);
     if (focusRefs.some((ref) => !refs.has(ref))) issue("FOCUS_REFERENCE_GATE", "BLOCK", `Focus references unknown authority for ${scene.scriptSceneId}`);
@@ -192,6 +215,10 @@ export function validateAiStoryDirectorPlan(
       if (visualEquivalent && !hasDelta) issue("DIRECTOR_VISUAL_DUPLICATION_GATE", "BLOCK", `Director Scene ${current.scriptSceneId} materially duplicates ${previous.scriptSceneId}`);
       else if (visualEquivalent && hasDelta) issue("DIRECTOR_VALID_REPETITION_WARNING", "WARN", `Director Scene ${current.scriptSceneId} repeats visual dimensions but carries a certified delta`);
     }
+  }
+  for (const cinematic of evaluateCinematicDirectorContract({ sceneDirections: plan.sceneDirections })) {
+    if (cinematic.gate === "SUBJECT_MOTION_FIRST_CLASS_GATE" || cinematic.gate === "SUBJECT_MOTION_COMPLETION_GATE") continue;
+    issue(cinematic.gate, cinematic.severity, cinematic.message);
   }
   return issues;
 }

@@ -1,11 +1,14 @@
 import {
   AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
   AI_STORY_POST_QC_POLICY_VERSION,
+  AI_STORY_POST_QC_POLICY_VERSION_V1,
+  AI_STORY_POST_QC_POLICY_VERSION_V2,
   AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION,
   AiStoryPostGenerationQcEvaluationSchema,
   AiStoryPostGenerationQcInputPackageSchema,
   AiStoryPostQcHumanReviewEvidenceSchema,
   AiStoryPostQcObservationSchema,
+  compileCinematicPromptFacts,
   type AiStoryPostGenerationQcEvaluation,
   type AiStoryPostGenerationQcInputPackage,
   type AiStoryPostQcFinding,
@@ -122,6 +125,25 @@ export function buildAiStoryPostGenerationQcInputPackage(input: {
   for (const focus of pkg.motionScenePlan.focusExecutions) add({ requirementId: `focus:${focus.directorShotId}`, dimension: "DIRECTOR_EXECUTION", summary: `Focus progression ${focus.progression.map((item) => item.semanticLabel).join(" to ")}`, required: false, waiverPolicy: "WAIVABLE_BY_HUMAN", sourceOwner: "DIRECTOR", visuallyObservable: true });
   for (const keep of pkg.scene.mustKeep) add({ requirementId: `must-keep:${integrityHash(keep).slice(-16)}`, dimension: "MUST_KEEP", summary: keep, required: true, waiverPolicy: "NON_WAIVABLE_INTEGRITY", sourceOwner: "SCENE", visuallyObservable: true });
   for (const avoid of pkg.scene.mustAvoid) add({ requirementId: `must-avoid:${integrityHash(avoid).slice(-16)}`, dimension: "MUST_AVOID", summary: avoid, required: true, waiverPolicy: "NON_WAIVABLE_INTEGRITY", sourceOwner: "SCENE", visuallyObservable: true });
+  const cinematicFacts = compileCinematicPromptFacts({ directorDirection: pkg.directorDirection, motionScenePlan: pkg.motionScenePlan });
+  add({
+    requirementId: "cinematic-progression",
+    dimension: "CINEMATIC_PROGRESSION",
+    summary: cinematicFacts.cinematicProgression.join(" ") || "Frozen cinematic progression must remain observable without inventing a new beat.",
+    required: false,
+    waiverPolicy: "WAIVABLE_BY_HUMAN",
+    sourceOwner: "DIRECTOR",
+    visuallyObservable: true,
+  });
+  add({
+    requirementId: "anti-ppt-continuity",
+    dimension: "ANTI_PPT_CONTINUITY",
+    summary: "Adjacent Scenes must not collapse into repeated static slides; continuity is not duplication.",
+    required: false,
+    waiverPolicy: "WAIVABLE_BY_HUMAN",
+    sourceOwner: "DIRECTOR",
+    visuallyObservable: true,
+  });
   add({ requirementId: "visual-artifact-integrity", dimension: "VISUAL_ARTIFACTS", summary: "No severe generated deformation, fusion, melting, instability, duplication, or frame corruption materially breaks acceptance.", required: true, waiverPolicy: "WAIVABLE_BY_HUMAN", sourceOwner: "PROVIDER_EXECUTION", visuallyObservable: true });
   add({ requirementId: "output-integrity", dimension: "OUTPUT_INTEGRITY", summary: "Durable video is readable, decodable, non-empty, and structurally usable.", required: true, waiverPolicy: "NON_WAIVABLE_INTEGRITY", sourceOwner: "POST_PROCESSING", visuallyObservable: false });
   const createdAt = input.createdAt ?? new Date().toISOString();
@@ -225,6 +247,8 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
 
   const section = (name: string) =>
     compiled.semanticPlan.sections.find((candidate) => candidate.section === name)?.facts ?? [];
+  const hasCinematicV2 = section("CINEMATIC_PROGRESSION").length > 0 || section("CONTINUITY").length > 0;
+  const policyVersion = hasCinematicV2 ? AI_STORY_POST_QC_POLICY_VERSION_V2 : AI_STORY_POST_QC_POLICY_VERSION_V1;
   const requirements: AiStoryPostQcRequirement[] = [];
   requirements.push({
     requirementId: "scene-purpose",
@@ -280,6 +304,37 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
     sourceOwner: "SCENE",
     visuallyObservable: true,
   }));
+  section("CINEMATIC_PROGRESSION").forEach((fact, index) => requirements.push({
+    requirementId: `cinematic-progression:${index + 1}`,
+    dimension: "CINEMATIC_PROGRESSION",
+    summary: fact,
+    required: false,
+    waiverPolicy: "WAIVABLE_BY_HUMAN",
+    sourceOwner: "DIRECTOR",
+    visuallyObservable: true,
+  }));
+  if (policyVersion === AI_STORY_POST_QC_POLICY_VERSION_V2) {
+    section("CONTINUITY").forEach((fact, index) => requirements.push({
+      requirementId: `anti-ppt-continuity:${index + 1}`,
+      dimension: "ANTI_PPT_CONTINUITY",
+      summary: fact,
+      required: false,
+      waiverPolicy: "WAIVABLE_BY_HUMAN",
+      sourceOwner: "DIRECTOR",
+      visuallyObservable: true,
+    }));
+    if (!section("CONTINUITY").length) {
+      requirements.push({
+        requirementId: "anti-ppt-continuity",
+        dimension: "ANTI_PPT_CONTINUITY",
+        summary: "Adjacent Scenes must not collapse into repeated static slides; continuity is not duplication.",
+        required: false,
+        waiverPolicy: "WAIVABLE_BY_HUMAN",
+        sourceOwner: "DIRECTOR",
+        visuallyObservable: true,
+      });
+    }
+  }
   requirements.push({
     requirementId: "visual-artifact-integrity",
     dimension: "VISUAL_ARTIFACTS",
@@ -308,7 +363,7 @@ export function buildAiStoryPostGenerationQcInputFromCompiledAuthority(input: {
       contractVersion: AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
     }),
     contractVersion: AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
-    policyVersion: AI_STORY_POST_QC_POLICY_VERSION,
+    policyVersion,
     orgId: compiled.orgId,
     workspaceId: compiled.workspaceId,
     campaignId: compiled.campaignId,
@@ -402,6 +457,8 @@ function failureClass(requirement: AiStoryPostQcRequirement): AiStoryPostQcFindi
   if (requirement.dimension === "VISUAL_ARTIFACTS") return "VISUAL_QUALITY_FAILURE";
   if (requirement.dimension === "OUTPUT_INTEGRITY") return "OUTPUT_INTEGRITY_FAILURE";
   if (requirement.dimension === "DIRECTOR_EXECUTION") return summary.includes("focus") ? "FOCUS_EXECUTION_FAILURE" : "CAMERA_MOTION_UNACCEPTABLE";
+  if (requirement.dimension === "CINEMATIC_PROGRESSION") return "CINEMATIC_PROGRESSION_FAILURE";
+  if (requirement.dimension === "ANTI_PPT_CONTINUITY") return "ANTI_PPT_CONTINUITY_FAILURE";
   if (requirement.dimension === "MOTION_EXECUTION" || requirement.dimension === "CONTINUITY") return summary.includes("causal") ? "PHYSICAL_CAUSALITY_FAILURE" : "PROVIDER_EXECUTION_MISMATCH";
   return "PROVIDER_EXECUTION_MISMATCH";
 }
@@ -505,7 +562,7 @@ export class AiStoryPostGenerationQcService {
     const base = {
       postQcEvaluationId: deterministicPersistenceUuid("ai-story-post-qc-evaluation", { postQcInputId: input.postQcInputId, evaluationVersion }),
       contractVersion: AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
-      policyVersion: AI_STORY_POST_QC_POLICY_VERSION,
+      policyVersion: input.policyVersion,
       evaluationVersion,
       postQcInputId: input.postQcInputId,
       orgId: input.orgId,

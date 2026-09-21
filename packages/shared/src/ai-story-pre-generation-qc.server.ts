@@ -7,9 +7,11 @@ import { validateAiStoryMotionPlan, type AiStoryMotionPlan } from "./ai-story-mo
 import { computeAiStoryScriptDirectorHandoffFingerprint, computeAiStoryScriptDirectorHandoffSourceHash } from "./ai-story-script-director-handoff.server";
 import { computeAiStoryDirectorPlanFingerprint, computeAiStoryDirectorPlanSourceHash } from "./ai-story-director-plan.server";
 import { computeAiStoryMotionPlanFingerprint, computeAiStoryMotionPlanSourceHash } from "./ai-story-motion-plan.server";
+import { compileAiStoryGenerationPlan, validateAiStoryGenerationPlan } from "./ai-story-generation-unit.server";
 import { computeAiStoryOutlineSourceHash } from "./ai-story-outline.server";
 import { computeAiStoryScriptSourceHash } from "./ai-story-script.server";
 import { validateAiStoryProductStoryProfile } from "./ai-story-product-story-profile.server";
+import { validateAiStoryCommercialStoryProfile } from "./ai-story-commercial-story-profile.server";
 import { validateAiStoryShotRecipeBindings } from "./ai-story-shot-recipe.server";
 import { AI_STORY_SHOT_RECIPE_QC_GATES } from "./ai-story-shot-recipe";
 import {
@@ -49,6 +51,8 @@ export type AiStoryPreGenerationQcInput = {
 const hard=(gateId:AiStoryPreGenerationQcGateId,reasons:Reason[],ids:AiStoryPreGenerationQcGateResult["evaluatedArtifactIds"]):AiStoryPreGenerationQcGateResult=>({gateId,gateVersion:1,classification:"HARD_GATE",status:reasons.length?"BLOCK":"PASS",failedLayer:reasons[0]?.layer??null,reasonCode:reasons[0]?.code??"PASS",safeEvidence:reasons.map(r=>r.evidence),repairOwner:reasons[0]?.owner??"NONE",evaluatedArtifactIds:ids,contractVersion:AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION});
 const reason=(code:string,evidence:string,layer:Reason["layer"],owner:Reason["owner"]):Reason=>({code,evidence,layer,owner});
 const has=(issues:readonly {gate:string;message:string}[],gates:readonly string[],layer:Reason["layer"],owner:Reason["owner"])=>(issues.filter(i=>gates.includes(i.gate)).map(i=>reason(i.gate,i.message,layer,owner)));
+const blocked=(issues:readonly {gate:string;severity:"BLOCK"|"WARN";message:string}[],gates:readonly string[],layer:Reason["layer"],owner:Reason["owner"])=>issues.filter(i=>i.severity==="BLOCK"&&gates.includes(i.gate)).map(i=>reason(i.gate,i.message,layer,owner));
+const warned=(issues:readonly {gate:string;severity:"BLOCK"|"WARN";message:string}[],gates:readonly string[])=>issues.filter(i=>i.severity==="WARN"&&gates.includes(i.gate));
 
 export function computeAiStoryPreGenerationQcFingerprint(input:Pick<AiStoryPreGenerationQcEvaluation,"orgId"|"workspaceId"|"storyId"|"storyVersionId"|"outlineVersionId"|"scriptVersionId"|"handoffId"|"directorPlanId"|"motionPlanId"|"sceneExecutionId"|"sceneVersionIds"|"gateSetVersion"|"providerCapabilityId"|"providerCapabilityVersion"|"productAuthorityIds"|"gateResults"|"recipeGateResults"|"shotRecipeBindings"|"dispatchDecision">){
   const recipeEvidence=input.recipeGateResults&&input.shotRecipeBindings?{recipeGateResults:input.recipeGateResults,shotRecipeBindings:input.shotRecipeBindings}:{};
@@ -90,8 +94,26 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
   const handoffIssues=validateAiStoryScriptDirectorHandoff(handoff,script,{expectedSourceHash:computeAiStoryScriptDirectorHandoffSourceHash(handoff),expectedFingerprint:computeAiStoryScriptDirectorHandoffFingerprint(handoff),currentScriptVersionId:raw.currentAuthority.scriptVersionId});
   const directorIssues=validateAiStoryDirectorPlan(directorPlan,handoff,{expectedSourceHash:computeAiStoryDirectorPlanSourceHash(directorPlan),expectedFingerprint:computeAiStoryDirectorPlanFingerprint(directorPlan),currentHandoffId:raw.currentAuthority.handoffId,...(raw.canonicalScenes?{canonicalScenes:raw.canonicalScenes,requireCanonicalSceneBindings:true}:{})});
   const motionIssues=validateAiStoryMotionPlan(motionPlan,directorPlan,handoff,{expectedSourceHash:computeAiStoryMotionPlanSourceHash(motionPlan),expectedFingerprint:computeAiStoryMotionPlanFingerprint(motionPlan),currentDirectorPlanId:raw.currentAuthority.directorPlanId});
-  const profileIssues=validateAiStoryProductStoryProfile(outline,script);
+  const profileIssues=[...validateAiStoryProductStoryProfile(outline,script),...validateAiStoryCommercialStoryProfile(outline,script)];
   const recipeIssues=validateAiStoryShotRecipeBindings(directorPlan,motionPlan,handoff);
+  const generationUnitIssues=directorPlan.sceneDirections.flatMap((direction)=>{
+    const motion=motionPlan.sceneMotionPlans.find((item)=>item.directorSceneId===direction.directorSceneId);
+    const scriptScene=script.scenes.find((item)=>item.scriptSceneId===direction.scriptSceneId);
+    const canonical=raw.canonicalScenes?.find((item)=>item.sceneId===direction.canonicalSceneBinding?.sceneId&&item.sceneVersionId===direction.canonicalSceneBinding?.sceneVersionId);
+    if(!motion||!scriptScene)return[{gate:"GENERATION_UNIT_BINDING_GATE" as const,severity:"BLOCK" as const,message:`Generation plan cannot bind Director Scene ${direction.directorSceneId}`}];
+    const scene={
+      sceneId:canonical?.sceneId??direction.canonicalSceneBinding?.sceneId??direction.scriptSceneId,
+      sceneVersionId:canonical?.sceneVersionId??direction.canonicalSceneBinding?.sceneVersionId??direction.directorSceneId,
+      fingerprint:canonical?.fingerprint??direction.canonicalSceneBinding?.sceneFingerprint??directorPlan.directorFingerprint,
+      locationBinding:{id:canonical?.locationBinding.id??scriptScene.locationIds[0]??direction.scriptSceneId},
+      castBindings:(canonical?.castBindings??scriptScene.characterIds.map((id)=>({id}))),
+      productBindings:canonical?.productBindings??handoff.productAuthorityBindings.map((binding)=>({productAuthorityId:binding.productAuthorityId,sourceAssetId:binding.sourceAssetId,sourceAssetContentHash:binding.sourceAssetContentHash})),
+      sourceScriptEntryIds:canonical?.sourceScriptEntryIds??scriptScene.entries.map((entry)=>entry.entryId),
+      discontinuity:canonical?.discontinuity??null,
+    };
+    const compiled=compileAiStoryGenerationPlan({storyId:script.storyId,storyVersionId:script.storyVersionId,scriptVersionId:script.scriptVersionId,directorPlanId:directorPlan.directorPlanId,scene,directorDirection:direction,motionScenePlan:motion});
+    return validateAiStoryGenerationPlan(compiled,{storyId:script.storyId,storyVersionId:script.storyVersionId,scriptVersionId:script.scriptVersionId,directorPlanId:directorPlan.directorPlanId,scene,directorDirection:direction,motionScenePlan:motion});
+  });
   const recipeGateResults:AiStoryPreGenerationQcRecipeGateResult[]=AI_STORY_SHOT_RECIPE_QC_GATES.map((gateId)=>{const found=recipeIssues.filter((issue)=>issue.gate===gateId);const blocks=found.some((issue)=>issue.severity==="BLOCK");return{gateId,gateVersion:1,status:blocks?"BLOCK":found.length?"WARN":"PASS",reasonCodes:found.map((issue)=>issue.reasonCode),safeEvidence:found.map((issue)=>issue.message),repairOwners:[...new Set(found.map((issue)=>issue.repairOwner))]};});
   const recipeReasons=(gates:readonly string[],layer:Reason["layer"],owner:Reason["owner"]):Reason[]=>recipeIssues.filter((issue)=>issue.severity==="BLOCK"&&gates.includes(issue.gate)).map((issue)=>reason(issue.reasonCode,issue.message,layer,issue.repairOwner??owner));
   const upstream:Reason[]=[];
@@ -110,16 +132,16 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
   if(!capability.verified)capabilityReasons.push(reason("PROVIDER_CAPABILITY_UNVERIFIED","Provider capability declaration is not certified","PROVIDER_ADAPTER","PROVIDER_ADAPTER"));
   if(compilation.requestedCapabilityId!==capability.capabilityId||!capability.supportedExecutionModes.includes(compilation.executionMode)||!capability.supportedTimingStructures.includes(compilation.timingStructure)||compilation.referenceRoles.some(r=>!capability.supportedReferenceRoles.includes(r)))capabilityReasons.push(reason("PROVIDER_CAPABILITY_UNSUPPORTED","Requested execution requires an unsupported capability","PROVIDER_ADAPTER","PROVIDER_ADAPTER"));
   const results:AiStoryPreGenerationQcGateResult[]=[
-    hard("UPSTREAM_ARTIFACT_INTEGRITY_GATE",[...upstream,...has(sceneIssues,["SCENE_VERSION_GATE","SCENE_FINGERPRINT_GATE","SCENE_ORDER_GATE","SCENE_LINEAGE_GATE"],"SCENE","SCENE"),...outlineIssues.map(i=>reason(i.gate,i.message,"OUTLINE","OUTLINE")),...profileIssues.filter(i=>i.severity==="BLOCK"&&i.gate==="PRODUCT_PROFILE_BINDING_GATE").map(i=>reason(i.reasonCode,i.message,"OUTLINE","OUTLINE")),...has(handoffIssues,["SCRIPT_FROZEN_GATE","SCRIPT_VERSION_BINDING_GATE","HANDOFF_FINGERPRINT_GATE","STALE_HANDOFF_GATE"],"HANDOFF","HANDOFF"),...has(directorIssues,["HANDOFF_FROZEN_GATE","HANDOFF_BINDING_GATE","DIRECTOR_FINGERPRINT_GATE","STALE_DIRECTOR_PLAN_GATE"],"DIRECTOR","DIRECTOR"),...has(motionIssues,["DIRECTOR_BINDING_GATE","MOTION_FINGERPRINT_GATE","STALE_DIRECTOR_GATE"],"MOTION","MOTION"),...recipeReasons(["RECIPE_EXISTS_GATE","RECIPE_VERSION_GATE","RECIPE_FINGERPRINT_GATE"],"DIRECTOR","DIRECTOR")],ids),
+    hard("UPSTREAM_ARTIFACT_INTEGRITY_GATE",[...upstream,...has(sceneIssues,["SCENE_VERSION_GATE","SCENE_FINGERPRINT_GATE","SCENE_ORDER_GATE","SCENE_LINEAGE_GATE"],"SCENE","SCENE"),...outlineIssues.map(i=>reason(i.gate,i.message,"OUTLINE","OUTLINE")),...profileIssues.filter(i=>i.severity==="BLOCK"&&["PRODUCT_PROFILE_BINDING_GATE","COMMERCIAL_PROFILE_BINDING_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"OUTLINE","OUTLINE")),...has(handoffIssues,["SCRIPT_FROZEN_GATE","SCRIPT_VERSION_BINDING_GATE","HANDOFF_FINGERPRINT_GATE","STALE_HANDOFF_GATE"],"HANDOFF","HANDOFF"),...has(directorIssues,["HANDOFF_FROZEN_GATE","HANDOFF_BINDING_GATE","DIRECTOR_FINGERPRINT_GATE","STALE_DIRECTOR_PLAN_GATE"],"DIRECTOR","DIRECTOR"),...has(motionIssues,["DIRECTOR_BINDING_GATE","MOTION_FINGERPRINT_GATE","STALE_DIRECTOR_GATE"],"MOTION","MOTION"),...recipeReasons(["RECIPE_EXISTS_GATE","RECIPE_VERSION_GATE","RECIPE_FINGERPRINT_GATE"],"DIRECTOR","DIRECTOR")],ids),
     hard("SCRIPT_REFERENCE_INTEGRITY_GATE",[
       ...has(scriptIssues,["SCRIPT_REFERENCE_INTEGRITY_GATE","DIALOGUE_SPEAKER_GATE"],"SCRIPT","SCRIPT"),
       ...characterIssues.map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),
       ...castIssues.map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),...has(sceneIssues,["LOCATION_REFERENCE_GATE","LOCATION_SCOPE_GATE","LOCATION_VERSION_GATE","CAST_BINDING_GATE"],"SCENE","SCENE"),
     ],ids),
     hard("BEAT_COVERAGE_GATE",has(scriptIssues,["BEAT_CLAIM_GATE","EXCLUSIVE_BEAT_CARDINALITY_GATE"],"SCRIPT","SCRIPT"),ids),
-    hard("SCENE_FUNCTION_GATE",[...has(scriptIssues,["SCRIPT_SCENE_FUNCTION_GATE","ACTION_BEAT_PRESENCE_GATE"],"SCRIPT","SCRIPT"),...has(sceneIssues,["SCENE_ROLE_GATE","SCENE_PURPOSE_GATE"],"SCENE","SCENE"),...profileIssues.filter(i=>i.severity==="BLOCK"&&["PRODUCT_INFORMATION_PROGRESSION_GATE","OBJECTIVE_AWARE_BEAT_GATE","SCRIPT_PRODUCT_PROFILE_BINDING_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"SCRIPT","SCRIPT"))],ids),
+    hard("SCENE_FUNCTION_GATE",[...has(scriptIssues,["SCRIPT_SCENE_FUNCTION_GATE","ACTION_BEAT_PRESENCE_GATE"],"SCRIPT","SCRIPT"),...has(sceneIssues,["SCENE_ROLE_GATE","SCENE_PURPOSE_GATE"],"SCENE","SCENE"),...profileIssues.filter(i=>i.severity==="BLOCK"&&["PRODUCT_INFORMATION_PROGRESSION_GATE","OBJECTIVE_AWARE_BEAT_GATE","SCRIPT_PRODUCT_PROFILE_BINDING_GATE","SCRIPT_COMMERCIAL_PROFILE_BINDING_GATE","NARRATIVE_HOOK_GATE","SCENE_PURPOSE_PROGRESSION_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"SCRIPT","SCRIPT"))],ids),
     hard("SCRIPT_DUPLICATION_GATE",[...has(scriptIssues,["SCRIPT_SCENE_DUPLICATION_GATE"],"SCRIPT","SCRIPT"),...profileIssues.filter(i=>i.severity==="BLOCK"&&i.gate==="REPEATED_HERO_ONLY_GATE").map(i=>reason(i.reasonCode,i.message,"SCRIPT","SCRIPT"))],ids),
-    hard("SCRIPT_STATE_CONTINUITY_GATE",[...has(scriptIssues,["STATE_CONTINUITY_GATE"],"SCRIPT","SCRIPT"),...has(sceneIssues,["ENTRY_STATE_GATE","EXIT_STATE_GATE","SCENE_CONTINUITY_GATE","TIME_RELATION_GATE","DISCONTINUITY_GATE","LOCATION_CONTINUITY_GATE"],"SCENE","SCENE")],ids),
+    hard("SCRIPT_STATE_CONTINUITY_GATE",[...has(scriptIssues,["STATE_CONTINUITY_GATE"],"SCRIPT","SCRIPT"),...has(sceneIssues,["ENTRY_STATE_GATE","EXIT_STATE_GATE","SCENE_CONTINUITY_GATE","TIME_RELATION_GATE","DISCONTINUITY_GATE","LOCATION_CONTINUITY_GATE"],"SCENE","SCENE"),...profileIssues.filter(i=>i.severity==="BLOCK"&&["CAUSAL_PROGRESSION_GATE","STATE_CHANGE_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"SCRIPT","SCRIPT"))],ids),
     hard("SCRIPT_TIMING_FEASIBILITY_GATE",has(scriptIssues,["TIMING_FEASIBILITY_GATE"],"SCRIPT","SCRIPT"),ids),
     hard("HANDOFF_INTEGRITY_GATE",handoffIssues.map(i=>reason(i.gate,i.message,"HANDOFF","HANDOFF")),ids),
     hard("DIRECTOR_VISUAL_DIFFERENTIATION_GATE",[...has(directorIssues,["NEW_AUDIENCE_INFORMATION_GATE","DIFFERENTIATION_REQUIREMENT_GATE","DIRECTOR_VISUAL_DUPLICATION_GATE"],"DIRECTOR","DIRECTOR"),...recipeReasons(["RECIPE_DIRECTOR_COMPATIBILITY_GATE","RECIPE_EVIDENCE_GATE"],"DIRECTOR","DIRECTOR")],ids),
@@ -127,17 +149,33 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
     hard("MOTION_ACTION_COMPLETION_GATE",has(motionIssues,["START_STATE_GATE","ACTION_PATH_GATE","END_STATE_GATE","ACTION_COMPLETION_GATE","CONTACT_REQUIREMENT_GATE","FORCE_RESPONSE_GATE"],"MOTION","MOTION"),ids),
     hard("MOTION_PHYSICAL_PLAUSIBILITY_GATE",has(motionIssues,["PHYSICAL_PLAUSIBILITY_GATE","OBJECT_PERSISTENCE_GATE","BLOCKING_EXECUTION_GATE","CAMERA_EXECUTION_GATE","FOCUS_EXECUTION_GATE"],"MOTION","MOTION"),ids),
     hard("MOTION_CONTINUITY_GATE",has(motionIssues,["MOTION_CONTINUITY_GATE"],"MOTION","MOTION"),ids),
-    hard("PRODUCT_AUTHORITY_CAUSALITY_CONTINUITY_GATE",[...productReasons,...has(sceneIssues,["PRODUCT_BINDING_GATE"],"PRODUCT_AUTHORITY","PRODUCT_AUTHORITY"),...profileIssues.filter(i=>i.severity==="BLOCK"&&["PRODUCT_AUTHORITY_GATE","CLAIM_EVIDENCE_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"PRODUCT_AUTHORITY","PRODUCT_AUTHORITY"))],ids),
+    hard("PRODUCT_AUTHORITY_CAUSALITY_CONTINUITY_GATE",[...productReasons,...has(sceneIssues,["PRODUCT_BINDING_GATE"],"PRODUCT_AUTHORITY","PRODUCT_AUTHORITY"),...profileIssues.filter(i=>i.severity==="BLOCK"&&["PRODUCT_AUTHORITY_GATE","CLAIM_EVIDENCE_GATE","COMMERCIAL_INTEGRATION_GATE","COMMERCIAL_PAYOFF_GATE","MARKETING_INTENT_CONSUMPTION_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"PRODUCT_AUTHORITY","PRODUCT_AUTHORITY"))],ids),
     hard("MOTION_COMPLEXITY_GATE",[...has(motionIssues,["MOTION_BUDGET_GATE","SHOT_RECIPE_BINDING_GATE"],"MOTION","MOTION"),...recipeReasons(["RECIPE_MOTION_COMPATIBILITY_GATE","RECIPE_CONSTRAINT_GATE"],"MOTION","MOTION")],ids),
     hard("PRODUCT_GROUNDED_MOTION_SAFETY_GATE",[...has(directorIssues,["PRODUCT_CAMERA_SAFETY_GATE"],"DIRECTOR","DIRECTOR"),...has(motionIssues,["PRODUCT_GROUNDED_MOTION_GATE"],"MOTION","MOTION")],ids),
     hard("PROVIDER_CAPABILITY_GATE",capabilityReasons,ids),
     hard("PROVIDER_COMPILATION_READINESS_GATE",compilation.providerNeutralInputsComplete?[]:[reason("PROVIDER_NEUTRAL_INPUT_INCOMPLETE","Required provider-neutral compilation input is missing","PROVIDER_ADAPTER","PROVIDER_ADAPTER")],ids),
+    hard("CINEMATIC_CAMERA_GRAMMAR_GATE",blocked(directorIssues,["CINEMATIC_CAMERA_GRAMMAR_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("SUBJECT_MOTION_FIRST_CLASS_GATE",blocked(motionIssues,["SUBJECT_MOTION_FIRST_CLASS_GATE"],"MOTION","MOTION"),ids),
+    hard("SUBJECT_MOTION_COMPLETION_GATE",blocked(motionIssues,["SUBJECT_MOTION_COMPLETION_GATE"],"MOTION","MOTION"),ids),
+    hard("CONTINUITY_NOT_DUPLICATION_GATE",blocked(directorIssues,["CONTINUITY_NOT_DUPLICATION_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("CINEMATIC_EXECUTION_CONTRACT_GATE",[...blocked(directorIssues,["CINEMATIC_EXECUTION_CONTRACT_GATE","MARKETING_INTENT_BRIDGE_GATE"],"DIRECTOR","DIRECTOR")],ids),
+    hard("MUST_KEEP_MUST_CHANGE_SEPARATION_GATE",blocked(directorIssues,["MUST_KEEP_MUST_CHANGE_SEPARATION_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("ANTI_PPT_CREATIVE_GATE",blocked(directorIssues,["ANTI_PPT_CREATIVE_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("INTRA_SCENE_SHOT_PROGRESSION_GATE",[...blocked(directorIssues,["INTRA_SCENE_SHOT_PROGRESSION_GATE","SHOT_IDENTITY_GATE"],"DIRECTOR","DIRECTOR"),...blocked(generationUnitIssues,["INTRA_SCENE_SHOT_PROGRESSION_GATE","SHOT_IDENTITY_GATE"],"DIRECTOR","DIRECTOR")],ids),
+    hard("GENERATION_UNIT_COVERAGE_GATE",blocked(generationUnitIssues,["GENERATION_UNIT_COVERAGE_GATE"],"DIRECTOR","DIRECTOR"),ids),
+    hard("GENERATION_UNIT_BINDING_GATE",[...blocked(directorIssues,["SHOT_ACTION_BINDING_GATE"],"DIRECTOR","DIRECTOR"),...blocked(generationUnitIssues,["GENERATION_UNIT_BINDING_GATE","SCRIPT_ACTION_SUPPORT_GATE","PRODUCT_AUTHORITY_BINDING_GATE","LOCATION_CONTINUITY_GATE","CAST_BINDING_GATE"],"DIRECTOR","DIRECTOR")],ids),
   ];
   const repeatedCamera=directorPlan.sceneDirections.flatMap(s=>s.shots.map(x=>x.cameraFamily)).some((v,i,a)=>a.indexOf(v)!==i);
   if(repeatedCamera&&!results.some(r=>r.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE"&&r.status==="BLOCK")){const r=results.find(x=>x.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE")!;r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode="CAMERA_FAMILY_REPEATED_WITH_VALID_DELTA";r.safeEvidence=["Camera-family repetition alone is not duplication"]}
   if(raw.assistanceFindings?.length&&!results.some(r=>r.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE"&&r.status==="BLOCK")){const r=results.find(x=>x.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE")!;if(r.status==="PASS"){r.classification=raw.assistanceFindings.some(f=>f.classification==="HUMAN_PREVIEW")?"HUMAN_PREVIEW":"AI_QC";r.status="WARN";r.reasonCode="SUBJECTIVE_QUALITY_ASSISTANCE_ONLY";r.safeEvidence=raw.assistanceFindings.map(f=>f.message)}}
   const profileWarnings=profileIssues.filter(i=>i.severity==="WARN");if(profileWarnings.length){const r=results.find(x=>x.gateId==="PRODUCT_AUTHORITY_CAUSALITY_CONTINUITY_GATE")!;if(r.status==="PASS"){r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode=profileWarnings[0]!.reasonCode;r.safeEvidence=profileWarnings.map(i=>i.message)}}
   const recipeWarnings=recipeIssues.filter(i=>i.severity==="WARN");if(recipeWarnings.length){const r=results.find(x=>x.gateId==="DIRECTOR_VISUAL_DIFFERENTIATION_GATE")!;if(r.status==="PASS"){r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode=recipeWarnings[0]!.reasonCode;r.safeEvidence=recipeWarnings.map(i=>i.message)}}
+  const applyCinematicWarn=(gateId:AiStoryPreGenerationQcGateId,source:ReturnType<typeof warned>)=>{const r=results.find(x=>x.gateId===gateId);if(r&&r.status==="PASS"&&source.length){r.classification="SOFT_WARNING";r.status="WARN";r.reasonCode=source[0]!.gate;r.safeEvidence=source.map(i=>i.message);r.repairOwner=gateId.startsWith("SUBJECT_")?"MOTION":"DIRECTOR";r.failedLayer=gateId.startsWith("SUBJECT_")?"MOTION":"DIRECTOR";}};
+  applyCinematicWarn("CINEMATIC_CAMERA_GRAMMAR_GATE",warned(directorIssues,["CINEMATIC_CAMERA_GRAMMAR_GATE"]));
+  applyCinematicWarn("ANTI_PPT_CREATIVE_GATE",warned(directorIssues,["ANTI_PPT_CREATIVE_GATE"]));
+  applyCinematicWarn("CINEMATIC_EXECUTION_CONTRACT_GATE",warned(directorIssues,["CINEMATIC_EXECUTION_CONTRACT_GATE","MARKETING_INTENT_BRIDGE_GATE"]));
+  applyCinematicWarn("SUBJECT_MOTION_FIRST_CLASS_GATE",warned(motionIssues,["SUBJECT_MOTION_FIRST_CLASS_GATE"]));
+  applyCinematicWarn("SUBJECT_MOTION_COMPLETION_GATE",warned(motionIssues,["SUBJECT_MOTION_COMPLETION_GATE"]));
   const blocks=results.some(r=>r.status==="BLOCK");const warnings=results.some(r=>r.status==="WARN")||Boolean(raw.assistanceFindings?.length);
   const dispatchDecision:AiStoryPreGenerationQcEvaluation["dispatchDecision"]=blocks?"DISPATCH_BLOCKED":warnings?"DISPATCH_ELIGIBLE_WITH_WARNINGS":"DISPATCH_ELIGIBLE";
   const shotRecipeBindings=directorPlan.sceneDirections.flatMap((scene)=>scene.shotRecipeBinding?[scene.shotRecipeBinding]:[]);

@@ -10,7 +10,7 @@ const review = readFileSync("apps/web/src/components/ai-story/GeneratedSceneRevi
 
 describe("Wave 5 AI Story normal-user UI", () => {
   it("implements the Blueprint product flow and explicit AI Polish acceptance", () => {
-    for (const label of ["Your Story", "AI Polish", "Story Review", "Generate Animation"])
+    for (const label of ["Your Episode", "AI Polish", "Review Episode", "Generate Episode"])
       expect(page).toContain(label);
     expect(page).toContain("previewOnly: true");
     expect(page).toContain("Accept changes");
@@ -31,8 +31,8 @@ describe("Wave 5 AI Story normal-user UI", () => {
   });
 
   it("keeps runtime and review product-facing without exposing machinery", () => {
-    expect(runtime).toContain("Scene generation");
-    expect(runtime).toContain("Generate Animation");
+    expect(runtime).toContain("Generating episode moments");
+    expect(runtime).toContain("Generate Episode");
     expect(runtime).not.toContain("story-runtime-timeout-trace");
     expect(runtime).not.toContain("Correlation ID");
     expect(review).toContain("Generation couldn't start");

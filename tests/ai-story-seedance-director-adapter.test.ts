@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   AI_STORY_PRE_GENERATION_QC_GATE_ORDER,
+  AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION,
   AI_STORY_SEEDANCE_CAPABILITY_CONTRACT_VERSION,
   AI_STORY_SEEDANCE_MAPPING_VERSION,
   AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION,
   AI_STORY_SEEDANCE_TRANSLATION_MATRIX,
   createExecutionEnvelope,
 } from "@ceo-agent/shared";
-import { computeAiStoryPreGenerationQcFingerprint, computeAiStorySceneFingerprint, computeAiStorySceneSourceHash, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
+import { computeAiStoryPreGenerationQcFingerprint, computeAiStorySceneFingerprint, computeAiStorySceneSourceHash, compileAiStoryGenerationPlan, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import {
+  compileGenerationUnitForSeedance,
   compileSceneExecutionPackageForSeedance,
   seedanceSceneExecutionPackageFingerprint,
+  SEEDANCE_CERTIFIED_CAMERA_PROMPT_SEMANTICS,
 } from "../packages/agents/src/ai-story/seedance-director-adapter";
 import {
   AiStoryCompiledRequestWorkerRuntime,
@@ -65,7 +69,7 @@ function packageFixture(options: { mode?: "TEXT_TO_VIDEO"|"FIRST_FRAME_IMAGE_TO_
   };
   const qcDecision = options.qcDecision ?? "DISPATCH_ELIGIBLE";
   const qcEvaluation = {
-    qcEvaluationId:I.qc,orgId:I.org,workspaceId:I.workspace,storyId:I.story,storyVersionId:I.storyVersion,outlineVersionId:I.outline,scriptVersionId:I.script,handoffId:I.handoff,directorPlanId:I.director,motionPlanId:I.motion,sceneExecutionId:I.sceneExecution,sceneVersionIds:[I.sceneVersion],contractVersion:"ai-story-pre-generation-qc.v1",gateSetVersion:1,providerCapabilityId:"animation-video-generation",providerCapabilityVersion:"seedance-modelark-2026-08-29.v1",productAuthorityIds:[I.product],
+    qcEvaluationId:I.qc,orgId:I.org,workspaceId:I.workspace,storyId:I.story,storyVersionId:I.storyVersion,outlineVersionId:I.outline,scriptVersionId:I.script,handoffId:I.handoff,directorPlanId:I.director,motionPlanId:I.motion,sceneExecutionId:I.sceneExecution,sceneVersionIds:[I.sceneVersion],contractVersion:"ai-story-pre-generation-qc.v1",gateSetVersion:AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION,providerCapabilityId:"animation-video-generation",providerCapabilityVersion:"seedance-modelark-2026-08-29.v1",productAuthorityIds:[I.product],
     gateResults:AI_STORY_PRE_GENERATION_QC_GATE_ORDER.map((gateId)=>({gateId,gateVersion:1,classification:"HARD_GATE",status:qcDecision==="DISPATCH_BLOCKED"&&gateId==="PROVIDER_COMPILATION_READINESS_GATE"?"BLOCK":"PASS",failedLayer:qcDecision==="DISPATCH_BLOCKED"&&gateId==="PROVIDER_COMPILATION_READINESS_GATE"?"PROVIDER_ADAPTER":null,reasonCode:"CERTIFIED",safeEvidence:["Deterministic fixture"],repairOwner:qcDecision==="DISPATCH_BLOCKED"&&gateId==="PROVIDER_COMPILATION_READINESS_GATE"?"PROVIDER_ADAPTER":"NONE",evaluatedArtifactIds:artifactIds,contractVersion:"ai-story-pre-generation-qc.v1"})),
     dispatchDecision:qcDecision,preDispatchBlocked:qcDecision==="DISPATCH_BLOCKED",providerCallAvoided:qcDecision==="DISPATCH_BLOCKED",estimatedAttemptCostAvoidedUsd:null,sceneFunction:"PRODUCT_USAGE",visualRole:"USAGE_DEMONSTRATION",cameraFamily:options.camera??"LOCKED",motionRiskClass:"LOW",productGrounded:productRequirement==="REQUIRED",profileId:"CORE",qcFingerprint:hash("q"),evaluatedBy:I.evaluator,evaluatedAt:"2026-08-29T10:03:00.000Z",
   };
@@ -89,7 +93,7 @@ async function envelopeFor(payload: unknown) {
 }
 
 describe("Seedance Director Adapter enrichment",()=>{
-  it("compiles a versioned deterministic semantic plan from active intent and current world state",()=>{const value=compileSceneExecutionPackageForSeedance(packageFixture());expect(value.semanticPlan.sections.map((section)=>section.section)).toHaveLength(19);expect(value.prompt).toContain("phase-aligns");expect(value.prompt).toContain("Current location authority: Unclassified environment");expect(value.prompt).toContain(`Current possession: ${I.product} — held by the Character`);expect(value.prompt).toContain("Start:");expect(value.prompt).toContain("Path:");expect(value.prompt).toContain("End:");expect(value.requestFacts.generateAudio).toBe(false);expect(value.selectedReferences).toHaveLength(1);});
+  it("compiles a versioned deterministic semantic plan from active intent and current world state",()=>{const value=compileSceneExecutionPackageForSeedance(packageFixture());expect(value.semanticPlan.sections.map((section)=>section.section)).toHaveLength(23);expect(value.prompt).toContain("phase-aligns");expect(value.prompt).toContain("MUST_CHANGE");expect(value.prompt).toContain("CINEMATIC_PROGRESSION");expect(value.prompt).toContain("CONTINUITY");expect(value.prompt).toContain("TRANSITION");expect(value.prompt).toContain("Product identity remains canonical");expect(value.prompt).toContain("Current location authority: Unclassified environment");expect(value.prompt).toContain(`Current possession: ${I.product} — held by the Character`);expect(value.prompt).toContain("Start:");expect(value.prompt).toContain("Path:");expect(value.prompt).toContain("End:");expect(value.requestFacts.generateAudio).toBe(false);expect(value.selectedReferences).toHaveLength(1);});
   it("keeps T2V first-class for Cast, Product, and recurring concepts when visual identity is not required",()=>{const value=compileSceneExecutionPackageForSeedance(packageFixture({mode:"TEXT_TO_VIDEO",productRequirement:"NONE"}));expect(value.requestFacts.generationMode).toBe("TEXT_TO_VIDEO");expect(value.selectedReferences).toEqual([]);expect(value.prompt).toContain("Recurring Character");expect(value.prompt).toContain("Unknown synthetic Product");});
   it("never silently changes mode or fabricates references",()=>{expect(()=>compileSceneExecutionPackageForSeedance(packageFixture({mode:"TEXT_TO_VIDEO",productRequirement:"REQUIRED"}))).toThrow(/TEXT_TO_VIDEO/);expect(()=>compileSceneExecutionPackageForSeedance(packageFixture({withReference:false}))).toThrow(/exactly one selected first frame/);});
   it("retains continuity video in the package while excluding it from Provider image selection",()=>{const payload=packageFixture();payload.visualReferences.push({referenceId:id(200),assetId:id(201),authorityType:"OTHER",authorityId:id(202),authorityClass:"OPTIONAL",semanticBinding:"Story continuity motion evidence",selectionPriority:1,firstFrame:false,semanticRole:"STORY_CONTINUITY_REFERENCE",mediaType:"video/mp4",storagePath:`${I.workspace}/library/continuity.mp4`});const {packageFingerprint:_,...input}=payload;payload.packageFingerprint=seedanceSceneExecutionPackageFingerprint(input);const compiled=compileImmutableSeedanceRequest({package:payload as any,sceneExecutionId:I.sceneExecution,compiledAt:"2026-09-01T00:00:00.000Z"});expect(compiled.storyReferenceMappings).toHaveLength(2);expect(compiled.referenceMappings).toHaveLength(1);expect(compiled.storyReferenceMappings?.find((item)=>item.assetId===id(201))).toMatchObject({semanticRole:"STORY_CONTINUITY_REFERENCE",providerEmitted:false,mediaType:"video/mp4"});});
@@ -102,6 +106,7 @@ describe("Seedance Director Adapter enrichment",()=>{
   it("fails closed instead of treating a malformed canonical package as a legacy prompt payload",async()=>{const {envelope,resolver}=await envelopeFor({contractVersion:AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION,prompt:"unsafe legacy fallback"});await expect(mapCanonicalEnvelopeToSeedanceRequest({envelope,idempotencyKey:"local-only",model:"dreamina-seedance-2-0-260128",payloadResolver:resolver})).rejects.toThrow(/legacy payload fallback is denied/);});
   it("keeps last-frame conditioning outside the certified request surface",async()=>{const {envelope,resolver}=await envelopeFor({prompt:"legacy compatibility payload",durationSec:5,aspectRatio:"9:16",resolution:"720p",assetReferences:[{assetId:I.productAsset,uri:"https://cdn.example.com/last.png",role:"last_frame",mediaType:"image/png"}]});await expect(mapCanonicalEnvelopeToSeedanceRequest({envelope,idempotencyKey:"local-only",model:"dreamina-seedance-2-0-260128",payloadResolver:resolver})).rejects.toThrow(/not certified/);});
   it("keeps the translation matrix explicit and refuses uncertified features",()=>{expect(AI_STORY_SEEDANCE_TRANSLATION_MATRIX).toEqual(expect.arrayContaining([{concept:"first frame",translationClass:"CONDITIONING_MAPPING"},{concept:"multi-shot orchestration",translationClass:"NO_SAFE_MAPPING"},{concept:"audio",translationClass:"NO_SAFE_MAPPING"}]));});
+  it("keeps Seedance certified camera capability unchanged and degrades unmapped grammar",()=>{expect(Object.keys(SEEDANCE_CERTIFIED_CAMERA_PROMPT_SEMANTICS).sort()).toEqual(["LOCKED","MINOR_LATERAL_DOLLY","PAN","SLOW_PULL_BACK","SLOW_PUSH_IN","TRACKING"].sort());expect(()=>compileSceneExecutionPackageForSeedance(packageFixture({camera:"ORBIT"}))).toThrow(/No certified/);expect(compileSceneExecutionPackageForSeedance(packageFixture({camera:"ORBIT",cameraRequired:"OPTIONAL"})).degradations).toEqual(expect.arrayContaining([expect.objectContaining({code:"OPTIONAL_CAMERA_OMITTED"})]));});
   it("preserves explicit Scene generation authority in compilation and fingerprints it",()=>{
     const t2v=packageFixture({mode:"TEXT_TO_VIDEO",productRequirement:"NONE"});
     t2v.generationAuthority={strategy:"TEXT_TO_VIDEO",referenceSource:"REFERENCE_FREE_T2V",effectiveReferenceIds:[],firstFrameAssetId:null,productVisualIdentityRequirement:"NONE"};
@@ -166,4 +171,35 @@ describe("Compiled request Provider Attempt runtime integration",()=>{
   it("keeps Provider success recoverable when private-media ingestion fails",async()=>{const request=compileImmutableSeedanceRequest({package:packageFixture() as any,sceneExecutionId:I.sceneExecution});const h=runtimeHarness(request,{ingestFails:true});const created=await createAiStoryProviderAttempt({repository:h.repository,request,freshness:freshnessFor(request),idempotencyKey:"ingest-failure"});const outcome=await h.runtime.process(created.job,"worker-a");expect(outcome.attempt).toMatchObject({status:"MEDIA_INGESTION_FAILED",failureClass:"MEDIA_INGESTION_FAILED"});expect(h.submitCount).toBe(1);});
   it("denies stale, QC-blocked, commercially unauthorized, and tampered creation before any Attempt",async()=>{const request=compileImmutableSeedanceRequest({package:packageFixture() as any,sceneExecutionId:I.sceneExecution});for(const overrides of [{sceneSuperseded:true},{qcDispatchEligible:false},{commercialAuthorizationValid:false}]){const repository=new InMemoryAiStoryProviderRuntimeRepository();await expect(createAiStoryProviderAttempt({repository,request,freshness:freshnessFor(request,overrides),idempotencyKey:JSON.stringify(overrides)})).rejects.toBeInstanceOf(AiStoryProviderRuntimeError);}const tampered=structuredClone(request);tampered.structuredRequest.duration=4;await expect(createAiStoryProviderAttempt({repository:new InMemoryAiStoryProviderRuntimeRepository(),request:tampered,freshness:freshnessFor(tampered),idempotencyKey:"tampered"})).rejects.toMatchObject({code:"REQUEST_TAMPERED"});});
   it("keeps minimal Worker payload and immutable estimated cost separate from actual usage",async()=>{const request=compileImmutableSeedanceRequest({package:packageFixture() as any,sceneExecutionId:I.sceneExecution,estimatedCost:{currency:"USD",amount:0.42,source:"CONFIGURED_ESTIMATE"}});const h=runtimeHarness(request);const created=await createAiStoryProviderAttempt({repository:h.repository,request,freshness:freshnessFor(request),idempotencyKey:"cost-snapshot"});expect(Object.keys(created.job).sort()).toEqual(["contractVersion","providerAttemptId","sceneExecutionId","workspaceId"].sort());const outcome=await h.runtime.process(created.job,"worker-a");expect(outcome.attempt.estimatedCost.amount).toBe(0.42);expect(outcome.attempt.actualUsage).toEqual({durationSeconds:6});});
+  it("relocates MULTI_SHOT_UNCERTIFIED from Scene shot count to Provider Generation Unit shot count",()=>{
+    const adapter=readFileSync("packages/agents/src/ai-story/seedance-director-adapter.ts","utf8");
+    expect(adapter).not.toMatch(/Seedance V1 Scene execution accepts one Director shot/);
+    expect(adapter).toMatch(/exactly one Director Shot per Generation Unit/);
+    const payload=packageFixture();
+    const extra=structuredClone(payload.directorDirection.shots[0]);
+    extra.directorShotId=id(230);
+    extra.order=1;
+    extra.shotPurpose="SHOW_REACTION";
+    extra.shotSize="CLOSE";
+    extra.focusTarget={kind:"REACTION",authorityRefs:[I.character],semanticLabel:"Character reaction"};
+    extra.newAudienceInformation=["The Character reaction becomes visible"];
+    extra.subjectActionPhase="Reaction after the authorized action";
+    extra.entryVisualResponsibility="Hold completed usage";
+    extra.exitVisualResponsibility="Leave on the reaction";
+    payload.directorDirection.shots.push(extra);
+    const {packageFingerprint:_,...input}=payload;
+    payload.packageFingerprint=seedanceSceneExecutionPackageFingerprint(input);
+    expect(()=>compileSceneExecutionPackageForSeedance(payload)).toThrowError(expect.objectContaining({code:"GENERATION_UNIT_REQUIRED"}));
+    const plan=compileAiStoryGenerationPlan({
+      storyId:payload.storyId,storyVersionId:payload.storyVersionId,scriptVersionId:payload.scriptVersionId,directorPlanId:payload.directorPlanId,
+      scene:{sceneId:payload.scene.sceneId,sceneVersionId:payload.scene.sceneVersionId,fingerprint:payload.scene.fingerprint,locationBinding:{id:payload.scene.locationBinding.id},castBindings:payload.scene.castBindings.map((item:any)=>({id:item.id})),productBindings:payload.scene.productBindings,sourceScriptEntryIds:payload.scene.sourceScriptEntryIds,discontinuity:payload.scene.discontinuity},
+      directorDirection:payload.directorDirection,motionScenePlan:payload.motionScenePlan,
+    });
+    const compiled=compileGenerationUnitForSeedance({package:payload,generationUnit:plan.units[0]});
+    expect(compiled.prompt).toContain("SHOW_ACTION");
+    expect(compiled.prompt).not.toContain("SHOW_REACTION");
+    expect(compiled.prompt).not.toContain("The Character reaction becomes visible");
+    const multiShotUnit={...plan.units[0],directorShotIds:[plan.units[0]!.directorShotId,plan.units[1]!.directorShotId]};
+    expect(()=>compileGenerationUnitForSeedance({package:payload,generationUnit:multiShotUnit})).toThrowError(expect.objectContaining({code:"MULTI_SHOT_UNCERTIFIED"}));
+  });
 });
