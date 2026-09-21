@@ -42,6 +42,8 @@ export * from "./assembly-runtime-media-probe";
 export * from "./assembly-runtime-normalization";
 export * from "./assembly-runtime-engine";
 export * from "./assembly-v2-engine";
+export * from "./audio-mix-engine";
+export * from "./tts-execution-adapter";
 export * from "./assembly-runtime-facts";
 export * from "./assembly-runtime-projection";
 export * from "./assembly-runtime-job-memory";

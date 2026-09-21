@@ -83,6 +83,7 @@ export * from "./ai-story-commercial-story-profile";
 export * from "./ai-story-generation-unit";
 export * from "./ai-story-narrative-editorial-plan";
 export * from "./ai-story-assembly-v2";
+export * from "./ai-story-audio-plan";
 export * from "./ai-story-shot-recipe";
 export * from "./ai-story-execution";
 export * from "./ai-story-human-review";

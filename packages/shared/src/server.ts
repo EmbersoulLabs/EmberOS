@@ -30,6 +30,8 @@ export * from "./ai-story-generation-unit.server";
 export * from "./ai-story-narrative-editorial-plan.server";
 export * from "./ai-story-assembly-v2";
 export * from "./ai-story-assembly-v2.server";
+export * from "./ai-story-audio-plan";
+export * from "./ai-story-audio-plan.server";
 export * from "./ai-story-product-background-suitability";
 export * from "./ai-story-product-background-suitability.server";
 export * from "./ai-story-product-visual-material-selection";
