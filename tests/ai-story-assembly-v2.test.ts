@@ -73,7 +73,7 @@ describe("AI Story Final Assembly V2 authority", () => {
     expect(ASSEMBLY_V2_GENERATES_AUDIO).toBe(false);
     expect(ASSEMBLY_V2_DISPATCHES_PROVIDER).toBe(false);
     expect(ASSEMBLY_V2_CHANGES_COMMERCIAL_AUTHORITY).toBe(false);
-    expect(AUDIO_PLAN).toBe("NOT_YET_CERTIFIED");
+    expect(AUDIO_PLAN).toBe("CERTIFIED");
     expect(READY_FOR_ASSEMBLY_V2_REVIEW).toBe("PASS");
     expect(READY_FOR_PRODUCTION_MERGE_ASSEMBLY_V2).toBe(
       "PENDING_PR140_PR141_PR142_PR143_AND_HUMAN_AUTHORIZATION"

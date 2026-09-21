@@ -402,8 +402,8 @@ describe("AI Story Narrative Editor authority", () => {
     expect(AI_STORY_NARRATIVE_EDITOR_PERSISTENCE).toBe("CONTRACT_LAYER_ONLY");
     expect(FINAL_STORY_ASSEMBLY_V2).toBe("CERTIFIED");
     expect(FINAL_STORY_ASSEMBLY_V2_EXECUTION).toBe("CERTIFIED");
-    expect(AUDIO_PLAN).toBe("NOT_YET_CERTIFIED");
-    expect(AUDIO_PLAN_EXECUTION).toBe("NOT_IMPLEMENTED");
+    expect(AUDIO_PLAN).toBe("CERTIFIED");
+    expect(AUDIO_PLAN_EXECUTION).toBe("CERTIFIED");
     expect(AI_STORY_ASSEMBLY_V1_UNCHANGED).toBe(true);
     expect(STORY_FIRST_NARRATIVE_AUTHORITY).toBe("CERTIFIED");
     expect(AI_STORY_COMMERCIAL_STORY_PROFILE).toBe("CERTIFIED");
@@ -665,13 +665,13 @@ describe("AI Story Narrative Editor authority", () => {
     expect(compatibility.canonicalEditorialPlan).toBeNull();
   });
 
-  it("does not change Assembly V1 concatenation or invent media/audio execution", () => {
+  it("does not change Assembly V1 concatenation or embed audio execution in the Narrative Editor", () => {
     const assembly = readFileSync("packages/shared/src/ai-story-assembly-runtime-execution.ts", "utf8");
     expect(assembly).toContain("Deterministic scene concatenation failed.");
     expect(assembly).toContain('binaryName: z.literal("ffmpeg")');
     const editorial = readFileSync("packages/shared/src/ai-story-narrative-editorial-plan.ts", "utf8")
       + readFileSync("packages/shared/src/ai-story-narrative-editorial-plan.server.ts", "utf8");
     expect(editorial).not.toMatch(/xfade|J-cut|L-cut|tts|ffmpeg/i);
-    expect(editorial).toContain("NOT_IMPLEMENTED");
+    expect(editorial).toContain('AUDIO_PLAN_EXECUTION = "CERTIFIED"');
   });
 });
