@@ -53,13 +53,14 @@ describe("AI Story SG/MY human listening certification authority", () => {
     expect(OPENAI_API_PRICING_URL).toBe("https://openai.com/api/pricing/");
   });
 
-  it("builds five payable locale samples and blocks unsupported code-switch", () => {
+  it("builds six payable locale samples with model-specific unverified code-switch", () => {
     const preview = buildProposedSgMyVoiceListeningExecutionPreview();
     expect(AiStoryVoiceListeningExecutionPreviewSchema.parse(preview)).toEqual(
       preview
     );
     expect(preview.samples).toHaveLength(6);
-    expect(preview.paidSampleCount).toBe(5);
+    expect(preview.paidSampleCount).toBe(6);
+    expect(preview.totalCharacters).toBe(282);
     expect(preview.samples.map((sample) => sample.capability.locale)).toEqual([
       "en-SG",
       "en-MY",
@@ -69,11 +70,14 @@ describe("AI Story SG/MY human listening certification authority", () => {
       "CODE_SWITCH",
     ]);
     const codeSwitch = preview.samples.at(-1)!;
-    expect(codeSwitch.status).toBe("CAPABILITY_BLOCKED");
-    expect(codeSwitch.expectedPaidCallCount).toBe(0);
-    expect(codeSwitch.blockedReason).toBe(
-      "CODE_SWITCH_PROVIDER_CAPABILITY_UNSUPPORTED"
+    expect(codeSwitch.status).toBe("PLANNED_AWAITING_AUTHORIZATION");
+    expect(codeSwitch.expectedPaidCallCount).toBe(1);
+    expect(codeSwitch.blockedReason).toBeNull();
+    expect(codeSwitch.capability.codeSwitchCapabilityStatus).toBe(
+      "UNVERIFIED_FOR_GPT_4O_MINI_TTS"
     );
+    expect(codeSwitch.exactScriptText).toBe("Tak apa, later I settle.");
+    expect(codeSwitch.exactScriptText).not.toMatch(/\b(lah|leh|lor|ah)\b/i);
     expect(preview.authorizationStatus).toBe(
       "WAITING_FOR_EXPLICIT_PAID_TTS_AUTHORIZATION"
     );
@@ -215,5 +219,19 @@ describe("AI Story SG/MY human listening certification authority", () => {
     );
     expect(server).not.toMatch(/from\s+["'][^"']*(commercial|billing|provider-runtime)/i);
     expect(contract + server).not.toMatch(/Buffer\.from|writeFile|\.mp3|\.wav/i);
+  });
+
+  it("listening executor is six-call bounded, authorization-gated, and has no retry loop", () => {
+    const executor = readFileSync(
+      "scripts/_local-ai-story-voice-listening-execute.ts",
+      "utf8"
+    );
+    expect(executor).toContain("MAXIMUM_AUTHORIZED_CALLS = 6");
+    expect(executor).toContain("EXPLICIT_PAID_TTS_AUTHORIZATION_REQUIRED");
+    expect(executor).toContain("gpt-4o-mini-tts");
+    expect(executor).toContain('voice: "marin"');
+    expect(executor).toContain('response_format: "wav"');
+    expect(executor).not.toMatch(/retryAiStory|while\s*\(|do\s*\{/);
+    expect(executor).not.toMatch(/reservation|settlement|billing|releaseRemaining/i);
   });
 });

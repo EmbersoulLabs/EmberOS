@@ -52,8 +52,33 @@ export const AiStoryVoiceCapabilityTupleSchema = z
     outputFormat: z.enum(["mp3", "wav", "aac", "opus", "flac", "pcm"]),
     generationSettings: z.record(z.union([z.string(), z.number(), z.boolean()])),
     generationSettingsFingerprint: Hash,
+    codeSwitchCapabilityStatus: z.enum([
+      "NOT_APPLICABLE",
+      "UNVERIFIED_FOR_GPT_4O_MINI_TTS",
+      "CERTIFIED",
+    ]),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      value.locale === "CODE_SWITCH" &&
+      value.codeSwitchCapabilityStatus === "NOT_APPLICABLE"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Code-switch tuple requires model-specific capability status",
+      });
+    }
+    if (
+      value.locale !== "CODE_SWITCH" &&
+      value.codeSwitchCapabilityStatus !== "NOT_APPLICABLE"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Single-locale tuple must mark code-switch capability not applicable",
+      });
+    }
+  });
 export type AiStoryVoiceCapabilityTuple = z.infer<
   typeof AiStoryVoiceCapabilityTupleSchema
 >;

@@ -99,10 +99,10 @@ const SAMPLE_DEFINITIONS: ReadonlyArray<{
     locale: "CODE_SWITCH",
     text: "Tak apa, later I settle.",
     purpose:
-      "Realistic Script-authorized English and Malay code-switch quality; blocked because the current certified voice capability declares no code-switch pair.",
+      "Experimental Script-authorized Malay/English switching: transition naturalness, pronunciation stability, language-boundary artifacts, cross-language pronunciation contamination, and SG/MY conversational usability.",
     instructions:
-      "Preserve the exact Script-authorized English and Malay wording.",
-    blocked: true,
+      "Speak the exact Script-authorized Malay and English wording with natural conversational transitions. Do not add particles, slang, dialect spelling, or rewrite any words.",
+    blocked: false,
   },
 ] as const;
 
@@ -122,6 +122,10 @@ function capabilityFor(definition: (typeof SAMPLE_DEFINITIONS)[number]) {
     generationSettings,
     generationSettingsFingerprint:
       sha256CanonicalIntegrityHash(generationSettings),
+    codeSwitchCapabilityStatus:
+      definition.locale === "CODE_SWITCH"
+        ? ("UNVERIFIED_FOR_GPT_4O_MINI_TTS" as const)
+        : ("NOT_APPLICABLE" as const),
   } as const;
 }
 
