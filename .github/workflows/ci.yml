@@ -287,6 +287,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install FFmpeg for Assembly V2 media certification
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
       - name: Unit tests
         run: pnpm test
 
