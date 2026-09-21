@@ -999,6 +999,143 @@ export const aiStoryScriptVersions = pgTable(
   ],
 );
 
+/** Durable Episode revision audit record. Persistence is not Provider execution. */
+export const aiStoryEpisodeRevisions = pgTable(
+  "ai_story_episode_revisions",
+  {
+    revisionId: uuid("revision_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    episodeId: uuid("episode_id").notNull(),
+    revisionType: text("revision_type").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: uuid("target_id"),
+    status: text("status").notNull(),
+    revisionVersion: integer("revision_version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    idempotencyKey: text("idempotency_key"),
+    revisionRequest: jsonb("revision_request").$type<Record<string, unknown>>().notNull(),
+    impact: jsonb("impact").$type<Record<string, unknown>>().notNull(),
+    executionPlan: jsonb("execution_plan").$type<Record<string, unknown>>().notNull(),
+    sourceVersionIds: jsonb("source_version_ids").$type<Record<string, unknown>>().notNull(),
+    resultVersionIds: jsonb("result_version_ids").$type<Record<string, unknown>>().notNull(),
+    sourceFingerprints: jsonb("source_fingerprints").$type<Record<string, unknown>>().notNull(),
+    resultFingerprints: jsonb("result_fingerprints").$type<Record<string, unknown>>().notNull(),
+    impactSummary: text("impact_summary").notNull(),
+    requiresProviderExecution: boolean("requires_provider_execution").notNull(),
+    requiresAssemblyRebuild: boolean("requires_assembly_rebuild").notNull(),
+    commercialAuthorizationStatus: text("commercial_authorization_status").notNull(),
+    spendAuthorizationCreated: boolean("spend_authorization_created").notNull().default(false),
+    obsoleteRetryAuthorizationIds: jsonb("obsolete_retry_authorization_ids").$type<string[]>().notNull().default([]),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    index("ai_story_episode_revision_workspace_idx").on(t.workspaceId, t.storyId, t.revisionVersion),
+    index("ai_story_episode_revision_story_created_idx").on(t.storyId, t.createdAt),
+  ],
+);
+
+/** Explicit canonical current Episode revision pointer. Not latest created_at. */
+export const aiStoryEpisodeRevisionCurrent = pgTable(
+  "ai_story_episode_revision_current",
+  {
+    storyId: uuid("story_id").primaryKey().references(() => aiStories.id, { onDelete: "restrict" }),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    currentRevisionId: uuid("current_revision_id").notNull().references(() => aiStoryEpisodeRevisions.revisionId, { onDelete: "restrict" }),
+    currentRevisionVersion: integer("current_revision_version").notNull(),
+    currentScriptVersionId: uuid("current_script_version_id").references(() => aiStoryScriptVersions.scriptVersionId, { onDelete: "restrict" }),
+    currentStoryVersionId: uuid("current_story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    currentEditorialPlanId: uuid("current_editorial_plan_id"),
+    currentReferenceBindingId: uuid("current_reference_binding_id"),
+    currentReferenceFingerprint: text("current_reference_fingerprint"),
+    currentAssemblyFingerprint: text("current_assembly_fingerprint"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+  },
+);
+
+export const aiStoryEditorialPlanVersions = pgTable(
+  "ai_story_editorial_plan_versions",
+  {
+    editorialPlanId: uuid("editorial_plan_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    scriptVersionId: uuid("script_version_id").references(() => aiStoryScriptVersions.scriptVersionId, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    status: text("status").notNull(),
+    editorialFingerprint: text("editorial_fingerprint").notNull(),
+    supersedesEditorialPlanId: uuid("supersedes_editorial_plan_id"),
+    revisionId: uuid("revision_id").references(() => aiStoryEpisodeRevisions.revisionId, { onDelete: "restrict" }),
+    plan: jsonb("plan").$type<Record<string, unknown>>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_editorial_plan_story_version_unique").on(t.storyId, t.version),
+    unique("ai_story_editorial_plan_fingerprint_unique").on(t.storyId, t.editorialFingerprint),
+    index("ai_story_editorial_plan_workspace_idx").on(t.workspaceId, t.storyId, t.version),
+  ],
+);
+
+export const aiStoryReferenceBindingVersions = pgTable(
+  "ai_story_reference_binding_versions",
+  {
+    referenceBindingId: uuid("reference_binding_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    status: text("status").notNull(),
+    referenceKind: text("reference_kind").notNull(),
+    authorityId: uuid("authority_id").notNull(),
+    sourceAssetId: uuid("source_asset_id"),
+    sourceContentHash: text("source_content_hash"),
+    fingerprint: text("fingerprint").notNull(),
+    supersedesBindingId: uuid("supersedes_binding_id"),
+    revisionId: uuid("revision_id").references(() => aiStoryEpisodeRevisions.revisionId, { onDelete: "restrict" }),
+    binding: jsonb("binding").$type<Record<string, unknown>>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_reference_binding_story_version_unique").on(t.storyId, t.referenceKind, t.version),
+    unique("ai_story_reference_binding_fingerprint_unique").on(t.storyId, t.fingerprint),
+    index("ai_story_reference_binding_workspace_idx").on(t.workspaceId, t.storyId, t.version),
+  ],
+);
+
+export const aiStoryRevisionStaleAuthorities = pgTable(
+  "ai_story_revision_stale_authorities",
+  {
+    staleAuthorityId: uuid("stale_authority_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    revisionId: uuid("revision_id").notNull().references(() => aiStoryEpisodeRevisions.revisionId, { onDelete: "restrict" }),
+    authorityType: text("authority_type").notNull(),
+    authorityId: uuid("authority_id").notNull(),
+    status: text("status").notNull(),
+    sourceVersionId: uuid("source_version_id"),
+    currentVersionId: uuid("current_version_id"),
+    historicalPayload: jsonb("historical_payload").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_revision_stale_unique").on(t.revisionId, t.authorityType, t.authorityId),
+    index("ai_story_revision_stale_workspace_idx").on(t.workspaceId, t.storyId, t.status),
+  ],
+);
+
 /** Immutable frozen projection of Script-owned truth for future Director consumption. */
 export const aiStoryScriptDirectorHandoffs = pgTable(
   "ai_story_script_director_handoffs",

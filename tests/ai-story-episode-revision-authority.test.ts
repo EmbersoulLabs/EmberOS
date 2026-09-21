@@ -4,20 +4,34 @@ import { describe, expect, it } from "vitest";
 import {
   ADJUST_ENDING,
   ADJUST_PACING,
+  AI_STORY_DURABLE_EPISODE_REVISION_PERSISTENCE,
   AI_STORY_EPISODE_ACTION_CERTIFICATION,
   AI_STORY_EPISODE_COPY,
   AI_STORY_EPISODE_REVISION_AUTHORITY,
+  AI_STORY_EPISODE_REVISION_PERSISTENCE,
   AiStoryScriptVersionSchema,
+  CANONICAL_CURRENT_VERSION_ADVANCE,
   COST_ESTIMATE_IS_NOT_AUTHORIZATION,
+  DIALOGUE_DURABLE_SCRIPT_MUTATION,
   DIALOGUE_SMALLEST_SCOPE_INVALIDATION,
   EDIT_DIALOGUE,
+  ENDING_DURABLE_STORY_REVISION,
   ENDING_REVISION_SCOPE_GATE,
   LIVE_COST_ESTIMATE,
+  PACING_DURABLE_EDITORIAL_REVISION,
+  REFERENCE_DURABLE_BINDING_REVISION,
   REFERENCE_REVISION_IMPACT_GATE,
   REGENERATE_APPROVED_MOMENT,
   REGENERATE_APPROVED_MOMENT_DENIED,
   REPLACE_REFERENCE,
   REVISION_COST_ESTIMATE,
+  REVISION_CURRENT_VERSION_ADVANCE,
+  REVISION_HISTORY,
+  REVISION_IDEMPOTENCY,
+  REVISION_OPTIMISTIC_CONCURRENCY,
+  REVISION_SOURCE_VERSION_CONFLICT,
+  REVISION_TENANT_ISOLATION,
+  REVISION_TRANSACTION_ATOMICITY,
   SCENE_INTERNAL_AUTHORITY_PRESERVED,
   SIBLING_GENERATION_UNIT_PRESERVATION,
   aiStoryEpisodeRevisionCapability,
@@ -239,8 +253,8 @@ describe("AI Story Episode revision authority", () => {
     expect(planned.revisionRequest.supersedesRevisionRequestId).toBeNull();
     expect(planned.revisionRequest.sourceVersion).toBe(1);
     expect(planned.revisionRequest.revisionVersion).toBe(2);
-    expect(AI_STORY_EPISODE_REVISION_AUTHORITY).toBe("CERTIFIED");
-    expect(EDIT_DIALOGUE).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_REVISION_AUTHORITY).toBe("CONTRACT_AND_PLANNING_CERTIFIED");
+    expect(EDIT_DIALOGUE).toBe("DURABLE_RUNTIME_CERTIFIED");
   });
 
   it("MANDATORY TEST 1 — DIALOGUE_DEPENDENCY_INVALIDATION and SCRIPT_REVISION_VERSIONING", () => {
@@ -371,7 +385,7 @@ describe("AI Story Episode revision authority", () => {
     expect(planned.assemblyPlan.expectedOutputDurationMs).toBeLessThan(
       before.expectedOutputDurationMs
     );
-    expect(ADJUST_PACING).toBe("CERTIFIED");
+    expect(ADJUST_PACING).toBe("DURABLE_RUNTIME_CERTIFIED");
   });
 
   it("MANDATORY TEST 3 — ENDING_REVISION_SCOPE preserves early Units", () => {
@@ -396,7 +410,7 @@ describe("AI Story Episode revision authority", () => {
     expect(planned.nextEditorialPlan.storyPacingIntent.notes.join(" ")).toContain(
       "stronger CTA"
     );
-    expect(ADJUST_ENDING).toBe("CERTIFIED");
+    expect(ADJUST_ENDING).toBe("DURABLE_RUNTIME_CERTIFIED");
   });
 
   it("ENDING_REVISION_SCOPE_GATE blocks rewriting the entire Episode", () => {
@@ -481,7 +495,7 @@ describe("AI Story Episode revision authority", () => {
     expect(planned.referenceBinding?.previousAuthorityId).toBe(PRODUCT);
     expect(planned.referenceBinding?.nextAuthorityId).toBe(nextProduct);
     expect(planned.referenceBinding?.supersedesId).toBeTruthy();
-    expect(REPLACE_REFERENCE).toBe("CERTIFIED");
+    expect(REPLACE_REFERENCE).toBe("DURABLE_RUNTIME_CERTIFIED");
     expect(REFERENCE_REVISION_IMPACT_GATE).toBe("REFERENCE_REVISION_IMPACT_GATE");
   });
 
@@ -671,10 +685,10 @@ describe("AI Story Episode revision authority", () => {
   it("EPISODE_FIRST_UI_INTEGRATION enables actions only through revision backend", () => {
     expect(revisionActionEnabled("EDIT_DIALOGUE")).toBe(true);
     expect(aiStoryEpisodeRevisionCapability().costEstimateAvailable).toBe(true);
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.editDialogue).toBe("CERTIFIED");
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustEnding).toBe("CERTIFIED");
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustPacing).toBe("CERTIFIED");
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.replaceReference).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.editDialogue).toBe("DURABLE_RUNTIME_CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustEnding).toBe("DURABLE_RUNTIME_CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustPacing).toBe("DURABLE_RUNTIME_CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.replaceReference).toBe("DURABLE_RUNTIME_CERTIFIED");
     expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimate).toBe("CERTIFIED");
     expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimateIsAuthorization).toBe(false);
     const preview = read("apps/web/src/components/ai-story/EpisodePreviewPanel.tsx");
@@ -693,10 +707,56 @@ describe("AI Story Episode revision authority", () => {
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/episode-revisions/route.ts"
     );
     expect(route).toContain("planAiStoryEpisodeRevision");
+    expect(route).toContain("persistAiStoryEpisodeRevision");
+    expect(route).toContain("persistDurableScript: true");
     expect(route).not.toMatch(/fetch\(|seedance|generate_audio/i);
     expect(AI_STORY_EPISODE_COPY.costConfirmationRequired).toContain(
       "not spend authorization"
     );
+    expect(preview).toContain("episode-revision-saved");
+    expect(preview).toContain("episode-current-version");
+    expect(preview).toContain("episode-authorize-regeneration");
+    expect(AI_STORY_EPISODE_COPY.revisionSaved).toBe("Revision saved");
+  });
+
+  it("DURABLE_REVISION_SCHEMA and persistence contracts are additive and provider-free", () => {
+    expect(aiStoryEpisodeRevisionCapability().persistDurableScript).toBe(true);
+    expect(revisionActionEnabled("EDIT_DIALOGUE")).toBe(true);
+    expect(revisionActionEnabled("EDIT_DIALOGUE", {
+      ...aiStoryEpisodeRevisionCapability(),
+      persistDurableScript: true,
+    })).toBe(true);
+    expect(AI_STORY_DURABLE_EPISODE_REVISION_PERSISTENCE).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_REVISION_PERSISTENCE).toBe("CERTIFIED");
+    expect(DIALOGUE_DURABLE_SCRIPT_MUTATION).toBe("CERTIFIED");
+    expect(ENDING_DURABLE_STORY_REVISION).toBe("CERTIFIED");
+    expect(PACING_DURABLE_EDITORIAL_REVISION).toBe("CERTIFIED");
+    expect(REFERENCE_DURABLE_BINDING_REVISION).toBe("CERTIFIED");
+    expect(REVISION_CURRENT_VERSION_ADVANCE).toBe("CERTIFIED");
+    expect(CANONICAL_CURRENT_VERSION_ADVANCE).toBe("CERTIFIED");
+    expect(REVISION_HISTORY).toBe("CERTIFIED");
+    expect(REVISION_OPTIMISTIC_CONCURRENCY).toBe("CERTIFIED");
+    expect(REVISION_IDEMPOTENCY).toBe("CERTIFIED");
+    expect(REVISION_TRANSACTION_ATOMICITY).toBe("CERTIFIED");
+    expect(REVISION_TENANT_ISOLATION).toBe("CERTIFIED");
+    expect(REVISION_SOURCE_VERSION_CONFLICT).toBe("REVISION_SOURCE_VERSION_CONFLICT");
+    const sql = read("packages/db/sql/ai-story-episode-revision-persistence-v1.sql");
+    expect(sql).toContain("CREATE TABLE IF NOT EXISTS ai_story_episode_revisions");
+    expect(sql).toContain("ai_story_episode_revision_current");
+    expect(sql).toContain("ai_story_editorial_plan_versions");
+    expect(sql).toContain("ai_story_reference_binding_versions");
+    expect(sql).toContain("ai_story_revision_stale_authorities");
+    expect(sql).not.toMatch(/DROP TABLE/i);
+    expect(sql).toContain("spend_authorization_created boolean NOT NULL DEFAULT false");
+    const persist = read("packages/db/src/queries/ai-story-episode-revision-persistence.ts");
+    expect(persist).toContain("persistAiStoryEpisodeRevision");
+    expect(persist).not.toMatch(/fetch\(|seedance|generate_audio/i);
+    expect(persist).toContain("spendAuthorizationCreated: false");
+    expect(persist).toContain("providerCalls: 0");
+    expect(persist).toContain("REVISION_SOURCE_VERSION_CONFLICT");
+    expect(persist).toContain("idempotencyKey");
+    const runtime = read("apps/web/src/components/ai-story/StoryRuntimePanel.tsx");
+    expect(runtime).toContain("persist: true");
   });
 
   it("ordinary tests never hardcode the Tapao Jom spend range as live estimate", () => {
