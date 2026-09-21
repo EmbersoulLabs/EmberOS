@@ -23,6 +23,8 @@ import type {
   AiStoryAssemblyV2Plan,
   AiStoryAssemblyV2ResolvedTimelineEntry,
 } from "./ai-story-assembly-v2";
+import type { AiStoryCharacterDialoguePerformanceAuthority } from "./ai-story-native-dialogue";
+import { assertVisibleDialogueAudioAuthorityExclusive } from "./ai-story-native-dialogue.server";
 
 export class AiStoryAudioAuthorityError extends Error {
   constructor(
@@ -287,7 +289,16 @@ export function compileAiStoryTtsExecutionRequest(input: {
   outputFormat: "mp3" | "wav" | "aac";
   speed?: number;
   pitchSemitones?: number;
+  nativeDialogueAuthorities?: readonly AiStoryCharacterDialoguePerformanceAuthority[];
 }): AiStoryTtsExecutionRequest {
+  if (input.nativeDialogueAuthorities?.length) {
+    assertVisibleDialogueAudioAuthorityExclusive({
+      nativeDialogueAuthorities: input.nativeDialogueAuthorities,
+      detachedTtsBindings: [
+        { dialogueEntryId: input.segment.sourceScriptEntryId },
+      ],
+    });
+  }
   assertAiStoryVoiceCapability(input);
   const speed = input.speed ?? 1;
   const pitchSemitones = input.pitchSemitones ?? 0;

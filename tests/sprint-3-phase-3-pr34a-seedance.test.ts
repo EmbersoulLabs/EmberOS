@@ -198,6 +198,10 @@ describe("Sprint 3 PR 3.4A Seedance Adapter", () => {
     const details = seedanceCapabilityDetails();
     expect(details.nativeIdempotency).toBe(false);
     expect(details.audioSupport).toBe(false);
+    expect(details.nativeAudioSupport).toBe(true);
+    expect(details.nativeDialogueSupport).toBe(true);
+    expect(details.dialogueLipSyncSupport).toBe("HUMAN_REVIEW_REQUIRED");
+    expect(details.legacyVideoOnlyGenerateAudio).toBe(false);
     expect(details.referenceImageT2vSupport).toBe(true);
     expect(details.firstFrameI2vSupport).toBe(true);
     expect(details.firstLastFrameSupport).toBe(false);

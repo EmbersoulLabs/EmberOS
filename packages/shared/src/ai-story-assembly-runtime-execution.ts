@@ -257,6 +257,10 @@ export const AssemblyMediaProbeSchema = z
     videoCodec: NonEmptyTextSchema,
     hasAudio: z.boolean(),
     audioCodec: NonEmptyTextSchema.nullable(),
+    /** Added for native audiovisual validation; absent on historical probes. */
+    audioDurationMs: z.number().positive().nullable().optional(),
+    audioSampleRate: z.number().int().positive().nullable().optional(),
+    audioChannelCount: z.number().int().positive().nullable().optional(),
     timeBase: NonEmptyTextSchema.nullable(),
     byteSize: z.number().int().nonnegative().nullable(),
     contentHash: IntegrityHashSchema,

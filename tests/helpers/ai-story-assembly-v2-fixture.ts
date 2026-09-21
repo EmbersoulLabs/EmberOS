@@ -50,6 +50,9 @@ export function buildAssemblyV2Fixture(input: {
   profileId?: "CORE" | "PRODUCT_STORY" | "COMMERCIAL_STORY";
   base?: number;
   frozen?: boolean;
+  nativeAudioSourceIndexes?: readonly number[];
+  outputWidth?: number;
+  outputHeight?: number;
 }) {
   const base = input.base ?? 1_000;
   const storyId = id(base + 1);
@@ -61,6 +64,7 @@ export function buildAssemblyV2Fixture(input: {
   const sceneIndexes = [
     ...new Set(input.entries.map((entry) => entry.sceneIndex ?? 0)),
   ].sort((a, b) => a - b);
+  const nativeAudio = new Set(input.nativeAudioSourceIndexes ?? []);
 
   const units = input.sources.map((_, index) => {
     const sceneIndex =
@@ -95,7 +99,7 @@ export function buildAssemblyV2Fixture(input: {
       },
       executionRequirement: {
         materialSubjectAction: true,
-        characterPerformance: false,
+        characterPerformance: nativeAudio.has(index),
         physicalInteraction: false,
         complexEnvironmentalMotion: false,
         generatedWorldMotion: false,
@@ -120,6 +124,12 @@ export function buildAssemblyV2Fixture(input: {
         characterIds: [id(base + 7)],
         productAuthorityIds: [],
       },
+      ...(nativeAudio.has(index)
+        ? {
+            nativeAvMode: "NATIVE_AUDIO_VIDEO" as const,
+            nativeDialogueEntryIds: [id(base + 800 + index)],
+          }
+        : {}),
       retryOwnership: {
         retryScope: "GENERATION_UNIT" as const,
         siblingUnitsRemainValid: true as const,
@@ -308,6 +318,10 @@ export function buildAssemblyV2Fixture(input: {
       width: source.width ?? 320,
       height: source.height ?? 180,
       frameRate: source.frameRate ?? 30,
+      nativeAvMode: nativeAudio.has(index)
+        ? ("NATIVE_AUDIO_VIDEO" as const)
+        : ("VIDEO_ONLY" as const),
+      hasAudio: nativeAudio.has(index),
       semanticTimingEvidence: [],
     })
   );
@@ -316,13 +330,16 @@ export function buildAssemblyV2Fixture(input: {
     generationPlans,
     acceptedSourceMedia,
     outputProfile: {
-      width: 320,
-      height: 180,
+      width: input.outputWidth ?? 320,
+      height: input.outputHeight ?? 180,
       frameRate: 30,
       videoCodec: "h264",
       pixelFormat: "yuv420p",
       containerFormat: "mp4",
-      audioPolicy: "VIDEO_ONLY",
+      audioPolicy:
+        nativeAudio.size > 0
+          ? "PRESERVE_NATIVE_DIALOGUE"
+          : "VIDEO_ONLY",
       aspectRatioPolicy: "PRESERVE_EXACT",
     },
     optionalResolutionPolicy: "EXCLUDE_ALL",

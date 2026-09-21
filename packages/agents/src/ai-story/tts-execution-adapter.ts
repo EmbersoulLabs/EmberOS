@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import {
   AiStoryTtsExecutionResultSchema,
+  assertVisibleDialogueAudioAuthorityExclusive,
   computeAiStoryTtsRequestFingerprint,
   deterministicUuidFromFingerprint,
+  type AiStoryCharacterDialoguePerformanceAuthority,
   type AiStoryTtsExecutionRequest,
   type AiStoryTtsExecutionResult,
   type AiStoryVoiceCapability,
@@ -89,6 +91,7 @@ type ExecuteAiStoryTtsInput = {
   readonly adapter: AiStoryTtsAdapter;
   readonly cache: AiStoryTtsCache;
   readonly estimatedUsdPerMillionCharacters?: number;
+  readonly nativeDialogueAuthorities?: readonly AiStoryCharacterDialoguePerformanceAuthority[];
 };
 
 function hashAudioBytes(bytes: Buffer): string {
@@ -99,6 +102,14 @@ async function executeAiStoryTtsRequestInternal(
   input: ExecuteAiStoryTtsInput,
   bypassCache: boolean
 ): Promise<AiStoryTtsCacheEntry> {
+  if (input.nativeDialogueAuthorities?.length) {
+    assertVisibleDialogueAudioAuthorityExclusive({
+      nativeDialogueAuthorities: input.nativeDialogueAuthorities,
+      detachedTtsBindings: [
+        { dialogueEntryId: input.request.sourceScriptEntryId },
+      ],
+    });
+  }
   if (
     computeAiStoryTtsRequestFingerprint(input.request) !==
     input.request.fingerprint

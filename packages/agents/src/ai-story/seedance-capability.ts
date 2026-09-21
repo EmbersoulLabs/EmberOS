@@ -9,6 +9,19 @@
  * and Worker Execution Result identities — not through Provider-native dedupe.
  */
 import type { ProviderCapabilityDeclaration } from "../provider-adapters/contracts";
+import {
+  AI_STORY_SEEDANCE_NATIVE_AUDIO_CAPABILITY_VERSION,
+  SEEDANCE_NATIVE_AUDIO_API,
+  SEEDANCE_NATIVE_AUDIO_MAX_DURATION_SEC,
+  SEEDANCE_NATIVE_AUDIO_MIN_DURATION_SEC,
+  SEEDANCE_NATIVE_AUDIO_MODEL,
+  SEEDANCE_NATIVE_AUDIO_OFFICIAL_DOCUMENTATION,
+  SEEDANCE_NATIVE_AUDIO_OUTPUT_CONTAINER,
+  SEEDANCE_NATIVE_AUDIO_PROVIDER,
+  SEEDANCE_NATIVE_AUDIO_REQUEST_PARAMETER,
+  AiStorySeedanceNativeAudioCapabilitySchema,
+  type AiStorySeedanceNativeAudioCapability,
+} from "@ceo-agent/shared";
 
 export const SEEDANCE_PROVIDER_ID = "seedance" as const;
 export const SEEDANCE_ADAPTER_VERSION = "1.0.0" as const;
@@ -28,6 +41,12 @@ export const SEEDANCE_SUPPORTED_RESOLUTIONS = ["480p", "720p", "1080p"] as const
 
 /** Maximum reference images accepted per submission. */
 export const SEEDANCE_MAX_REFERENCE_IMAGES = 4 as const;
+export const SEEDANCE_NATIVE_AUDIO_MODELS = [
+  "dreamina-seedance-2-0-260128",
+] as const;
+export const SEEDANCE_NATIVE_AUDIO_SUPPORTED_DURATIONS_SEC = [
+  4, 5, 6, 8, 10, 12, 15,
+] as const;
 
 /**
  * Exact model authority for the bounded EmberOS first-frame mapping. BytePlus
@@ -67,7 +86,26 @@ export type SeedanceCapabilityDetails = {
   readonly callbacks: false;
   readonly nativeIdempotency: false;
   readonly modelIdentifiers: readonly string[];
+  /** Historical V1 aggregate capability; native AV is versioned separately. */
   readonly audioSupport: false;
+  readonly nativeAudioSupport: boolean;
+  readonly nativeDialogueSupport: boolean;
+  readonly visibleCharacterDialogueSupport: boolean;
+  readonly referenceImageWithAudioSupport: boolean;
+  readonly dialogueLipSyncSupport:
+    | "HUMAN_REVIEW_REQUIRED"
+    | "UNSUPPORTED";
+  readonly supportedAudioLocales: readonly (
+    | "en-SG"
+    | "en-MY"
+    | "ms-MY"
+    | "zh-SG"
+    | "zh-MY"
+  )[];
+  readonly supportedCodeSwitchBehavior: "UNVERIFIED" | "UNSUPPORTED";
+  readonly maxNativeAudioDurationSec: 15 | null;
+  readonly nativeAudioOutputContainer: "video/mp4" | null;
+  readonly legacyVideoOnlyGenerateAudio: false;
   readonly referenceImageT2vSupport: true;
   readonly firstFrameI2vSupport: boolean;
   readonly firstLastFrameSupport: boolean;
@@ -129,6 +167,7 @@ export function seedanceCapabilityDetails(input?: {
   readonly defaultModel?: string | null;
 }): SeedanceCapabilityDetails {
   const model = input?.defaultModel?.trim() || "dreamina-seedance-2-0-260128";
+  const nativeAudio = seedanceSupportsNativeAudio(model);
   return {
     textToVideo: true,
     imageToVideo: true,
@@ -142,6 +181,22 @@ export function seedanceCapabilityDetails(input?: {
     nativeIdempotency: false,
     modelIdentifiers: [model],
     audioSupport: false,
+    nativeAudioSupport: nativeAudio,
+    nativeDialogueSupport: nativeAudio,
+    visibleCharacterDialogueSupport: nativeAudio,
+    referenceImageWithAudioSupport: nativeAudio,
+    dialogueLipSyncSupport: nativeAudio
+      ? "HUMAN_REVIEW_REQUIRED"
+      : "UNSUPPORTED",
+    supportedAudioLocales: nativeAudio
+      ? ["en-SG", "en-MY", "ms-MY", "zh-SG", "zh-MY"]
+      : [],
+    supportedCodeSwitchBehavior: nativeAudio
+      ? "UNVERIFIED"
+      : "UNSUPPORTED",
+    maxNativeAudioDurationSec: nativeAudio ? 15 : null,
+    nativeAudioOutputContainer: nativeAudio ? "video/mp4" : null,
+    legacyVideoOnlyGenerateAudio: false,
     referenceImageT2vSupport: true,
     firstFrameI2vSupport: seedanceSupportsFirstFrameI2v(model),
     firstLastFrameSupport: false,
@@ -150,4 +205,46 @@ export function seedanceCapabilityDetails(input?: {
     productContinuityLevel: SEEDANCE_PRODUCT_CONTINUITY_LEVEL,
     concurrencyClass: "provider-rate-limited",
   };
+}
+
+export function seedanceSupportsNativeAudio(model: string): boolean {
+  return (SEEDANCE_NATIVE_AUDIO_MODELS as readonly string[]).includes(
+    model.trim()
+  );
+}
+
+export function buildSeedanceNativeAudioCapability(input?: {
+  readonly realProviderCertification?:
+    | "NOT_RUN"
+    | "TECHNICAL_PASS_HUMAN_REVIEW_REQUIRED"
+    | "PASS"
+    | "FAIL";
+}): AiStorySeedanceNativeAudioCapability {
+  return AiStorySeedanceNativeAudioCapabilitySchema.parse({
+    capabilityVersion: AI_STORY_SEEDANCE_NATIVE_AUDIO_CAPABILITY_VERSION,
+    providerId: SEEDANCE_NATIVE_AUDIO_PROVIDER,
+    modelId: SEEDANCE_NATIVE_AUDIO_MODEL,
+    endpoint: SEEDANCE_NATIVE_AUDIO_API,
+    region: "ap-southeast",
+    requestParameter: SEEDANCE_NATIVE_AUDIO_REQUEST_PARAMETER,
+    nativeAudioSupport: true,
+    nativeDialogueSupport: true,
+    visibleCharacterDialogueSupport: true,
+    referenceImageWithAudioSupport: true,
+    dialogueLipSyncSupport: "HUMAN_REVIEW_REQUIRED",
+    localeRequestSupport: ["en-SG", "en-MY", "ms-MY", "zh-SG", "zh-MY"],
+    localeNaturalnessCertification: "HUMAN_REVIEW_REQUIRED",
+    codeSwitchBehavior: "UNVERIFIED",
+    minDurationSec: SEEDANCE_NATIVE_AUDIO_MIN_DURATION_SEC,
+    maxDurationSec: SEEDANCE_NATIVE_AUDIO_MAX_DURATION_SEC,
+    outputContainer: SEEDANCE_NATIVE_AUDIO_OUTPUT_CONTAINER,
+    officialDocumentation: [...SEEDANCE_NATIVE_AUDIO_OFFICIAL_DOCUMENTATION],
+    accessRestrictions: [
+      "Model must be activated for the BytePlus account before execution",
+      "BytePlus documentation recommends account balance above USD 30, an eligible savings plan, or an available Seedance 2.0 resource pack",
+      "Provider asset URLs must remain accessible for task execution",
+    ],
+    realProviderCertification: input?.realProviderCertification ??
+      "TECHNICAL_PASS_HUMAN_REVIEW_REQUIRED",
+  });
 }

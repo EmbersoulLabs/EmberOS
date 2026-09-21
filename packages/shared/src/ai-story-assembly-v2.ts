@@ -19,7 +19,16 @@ export const COMMERCIAL_PAYOFF_MEDIA_EXECUTION = "CERTIFIED" as const;
 export const MULTI_SHOT_FINAL_ASSEMBLY = "CERTIFIED" as const;
 export const ASSEMBLY_V1_BACKWARD_COMPATIBILITY = "CERTIFIED" as const;
 export const FINAL_STORY_ASSEMBLY_V2_VIDEO_ONLY = true as const;
+/** Assembly V2 never generates native dialogue audio. Provider is the generator. */
+export const ASSEMBLY_GENERATES_NATIVE_AUDIO = false as const;
 export const ASSEMBLY_V2_GENERATES_AUDIO = false as const;
+export const ASSEMBLY_V2_PRESERVES_NATIVE_AUDIO = true as const;
+export const ASSEMBLY_V2_PRESERVES_NATIVE_SOURCE_AUDIO = true as const;
+export const ASSEMBLY_V2_TRIMS_NATIVE_AUDIO_IN_SYNC_WITH_VIDEO = true as const;
+export const ASSEMBLY_V2_ORDERS_NATIVE_AUDIO_WITH_EDITORIAL_TIMELINE = true as const;
+export const ASSEMBLY_V2_MUXES_NATIVE_AUDIO_IN_FINAL_OUTPUT = true as const;
+export const NATIVE_DIALOGUE_AUDIO_PRESERVATION = "CERTIFIED" as const;
+export const AUDIO_VIDEO_TRIM_SYNC = "CERTIFIED" as const;
 export const ASSEMBLY_V2_DISPATCHES_PROVIDER = false as const;
 export const ASSEMBLY_V2_CHANGES_COMMERCIAL_AUTHORITY = false as const;
 export const READY_FOR_ASSEMBLY_V2_REVIEW = "PASS" as const;
@@ -46,6 +55,9 @@ export const AI_STORY_ASSEMBLY_V2_FAILURE_CODES = [
   "UNSUPPORTED_TRANSITION",
   "OUTPUT_PROFILE_INCOMPATIBLE",
   "FINAL_MEDIA_INVALID",
+  "NATIVE_DIALOGUE_AUDIO_MISSING",
+  "NATIVE_DIALOGUE_AUDIO_STRIPPED",
+  "AUDIO_VIDEO_TRIM_DESYNCHRONIZED",
   "ASSEMBLY_V2_ENGINE_FAILED",
 ] as const;
 
@@ -74,7 +86,7 @@ export const AiStoryAssemblyV2OutputProfileSchema = z
     videoCodec: z.literal("h264"),
     pixelFormat: z.literal("yuv420p"),
     containerFormat: z.literal("mp4"),
-    audioPolicy: z.literal("VIDEO_ONLY"),
+    audioPolicy: z.enum(["VIDEO_ONLY", "PRESERVE_NATIVE_DIALOGUE"]),
     aspectRatioPolicy: z.literal("PRESERVE_EXACT"),
   })
   .strict();
@@ -92,6 +104,9 @@ export const AiStoryAssemblyV2SourceMediaSchema = z
     width: z.number().int().positive(),
     height: z.number().int().positive(),
     frameRate: z.number().positive().nullable(),
+    /** Absent on historical sources and interpreted as VIDEO_ONLY. */
+    nativeAvMode: z.enum(["VIDEO_ONLY", "NATIVE_AUDIO_VIDEO"]).optional(),
+    hasAudio: z.boolean().optional(),
     semanticTimingEvidence: z
       .array(
         z
@@ -163,6 +178,7 @@ export const AiStoryAssemblyV2ResolvedTimelineEntrySchema = z
     sourceWidth: z.number().int().positive(),
     sourceHeight: z.number().int().positive(),
     sourceFrameRate: z.number().positive().nullable(),
+    nativeAvMode: z.enum(["VIDEO_ONLY", "NATIVE_AUDIO_VIDEO"]).optional(),
     editorialRole: Text,
     trimWindow: AiStoryAssemblyV2ResolvedTrimWindowSchema,
     transitionFromPrevious: AiStoryAssemblyV2ResolvedTransitionSchema,
@@ -192,9 +208,37 @@ export const AiStoryAssemblyV2PlanSchema = z
     outputProfile: AiStoryAssemblyV2OutputProfileSchema,
     expectedOutputDurationMs: z.number().int().positive(),
     assemblyFingerprint: Hash,
-    videoOnly: z.literal(true),
+    assemblyMediaMode: z
+      .enum(["VIDEO_ONLY", "NATIVE_DIALOGUE_AUDIO"])
+      .optional(),
+    videoOnly: z.boolean(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    const mode = value.assemblyMediaMode ?? "VIDEO_ONLY";
+    if (
+      (mode === "VIDEO_ONLY") !== value.videoOnly ||
+      (mode === "VIDEO_ONLY") !==
+        (value.outputProfile.audioPolicy === "VIDEO_ONLY")
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Assembly media mode, videoOnly, and audio policy disagree",
+      });
+    }
+    if (
+      mode === "NATIVE_DIALOGUE_AUDIO" &&
+      !value.resolvedTimeline.some(
+        (entry) => entry.nativeAvMode === "NATIVE_AUDIO_VIDEO"
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Native dialogue Assembly requires at least one native audiovisual source",
+      });
+    }
+  });
 
 export type AiStoryAssemblyV2Plan = z.infer<typeof AiStoryAssemblyV2PlanSchema>;
 export type AiStoryAssemblyV2OutputProfile = z.infer<
@@ -217,6 +261,10 @@ export const AiStoryAssemblyV2ExecutionEvidenceSchema = z
     usedUnitCount: z.number().int().positive(),
     omittedUnitCount: z.number().int().nonnegative(),
     finalDurationMs: z.number().int().positive(),
+    hasAudio: z.boolean().optional(),
+    audioPolicy: z
+      .enum(["VIDEO_ONLY", "PRESERVE_NATIVE_DIALOGUE"])
+      .optional(),
     transitionCount: z.number().int().nonnegative(),
     executionStartedAt: z.string().datetime(),
     executionCompletedAt: z.string().datetime(),

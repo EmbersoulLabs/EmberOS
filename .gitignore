@@ -13,3 +13,4 @@ tmp
 scripts/vercel-production.env
 *.tsbuildinfo
 docs/architecture/photo-scene-provider-cert-live.json
+artifacts/seedance-native-dialogue-cert/

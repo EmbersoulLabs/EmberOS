@@ -5,7 +5,14 @@ import {
   ASSEMBLY_V1_BACKWARD_COMPATIBILITY,
   ASSEMBLY_V2_CHANGES_COMMERCIAL_AUTHORITY,
   ASSEMBLY_V2_DISPATCHES_PROVIDER,
+  ASSEMBLY_GENERATES_NATIVE_AUDIO,
   ASSEMBLY_V2_GENERATES_AUDIO,
+  ASSEMBLY_V2_MUXES_NATIVE_AUDIO_IN_FINAL_OUTPUT,
+  ASSEMBLY_V2_ORDERS_NATIVE_AUDIO_WITH_EDITORIAL_TIMELINE,
+  ASSEMBLY_V2_PRESERVES_NATIVE_AUDIO,
+  ASSEMBLY_V2_PRESERVES_NATIVE_SOURCE_AUDIO,
+  ASSEMBLY_V2_TRIMS_NATIVE_AUDIO_IN_SYNC_WITH_VIDEO,
+  NATIVE_DIALOGUE_AUDIO_PRESERVATION,
   AUDIO_PLAN,
   AUTHORIZED_VISUAL_TRANSITION_EXECUTION,
   COMMERCIAL_PAYOFF_MEDIA_EXECUTION,
@@ -55,7 +62,7 @@ function criticalFixture() {
 }
 
 describe("AI Story Final Assembly V2 authority", () => {
-  it("certifies media execution without certifying audio, Providers, or commercial changes", () => {
+  it("certifies native source-audio preservation without generating audio or changing commercial authority", () => {
     expect(AI_STORY_FINAL_ASSEMBLY_V2).toBe("CERTIFIED");
     expect(EDITORIAL_PLAN_MEDIA_EXECUTION).toBe("CERTIFIED");
     expect(EDITORIAL_TRIM_EXECUTION).toBe("CERTIFIED");
@@ -70,7 +77,14 @@ describe("AI Story Final Assembly V2 authority", () => {
     expect(FINAL_STORY_ASSEMBLY_V2).toBe("CERTIFIED");
     expect(FINAL_STORY_ASSEMBLY_V2_EXECUTION).toBe("CERTIFIED");
     expect(FINAL_STORY_ASSEMBLY_V2_VIDEO_ONLY).toBe(true);
+    expect(ASSEMBLY_GENERATES_NATIVE_AUDIO).toBe(false);
     expect(ASSEMBLY_V2_GENERATES_AUDIO).toBe(false);
+    expect(ASSEMBLY_V2_PRESERVES_NATIVE_AUDIO).toBe(true);
+    expect(ASSEMBLY_V2_PRESERVES_NATIVE_SOURCE_AUDIO).toBe(true);
+    expect(ASSEMBLY_V2_TRIMS_NATIVE_AUDIO_IN_SYNC_WITH_VIDEO).toBe(true);
+    expect(ASSEMBLY_V2_ORDERS_NATIVE_AUDIO_WITH_EDITORIAL_TIMELINE).toBe(true);
+    expect(ASSEMBLY_V2_MUXES_NATIVE_AUDIO_IN_FINAL_OUTPUT).toBe(true);
+    expect(NATIVE_DIALOGUE_AUDIO_PRESERVATION).not.toMatch(/GENERATION/);
     expect(ASSEMBLY_V2_DISPATCHES_PROVIDER).toBe(false);
     expect(ASSEMBLY_V2_CHANGES_COMMERCIAL_AUTHORITY).toBe(false);
     expect(AUDIO_PLAN).toBe("CERTIFIED");
@@ -363,7 +377,7 @@ describe("AI Story Final Assembly V2 authority", () => {
       .map((path) => readFileSync(path, "utf8"))
       .join("\n");
     expect(implementation).not.toMatch(
-      /seedance|provider-attempt|provider-dispatch|commercial-pricing|reservation|settlement|quota|ceiling|billing-account|text-to-speech|bgm|voice-over/i
+      /seedance|provider-attempt|provider-dispatch|commercial-pricing|\breservation\b|\bsettlement\b|\bquota\b|\bceiling\b|billing-account|text-to-speech|\bbgm\b|voice-over/i
     );
   });
 });

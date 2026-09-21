@@ -18,11 +18,13 @@ import {
 } from "@ceo-agent/shared";
 import {
   SEEDANCE_MAX_REFERENCE_IMAGES,
+  SEEDANCE_NATIVE_AUDIO_SUPPORTED_DURATIONS_SEC,
   SEEDANCE_SELECTED_PRODUCT_GROUNDED_MODE,
   SEEDANCE_SUPPORTED_ASPECT_RATIOS,
   SEEDANCE_SUPPORTED_DURATIONS_SEC,
   SEEDANCE_SUPPORTED_RESOLUTIONS,
   seedanceSupportsFirstFrameI2v,
+  seedanceSupportsNativeAudio,
 } from "./seedance-capability";
 import {
   assertProductGroundingPreDispatch,
@@ -72,6 +74,8 @@ const CanonicalScenePayloadSchema = z
       .enum(["PRODUCT_GROUNDED_VIDEO", "CREATIVE_T2V", "TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"])
       .optional(),
     watermark: z.boolean().optional(),
+    generateAudio: z.boolean().optional(),
+    audioMode: z.enum(["NONE", "NATIVE_AV"]).optional(),
     productGrounding: ProductGroundingContractSchema.optional(),
     visualAuthorityCertification:
       ProductVisualAuthorityCertificationSchema.optional(),
@@ -102,7 +106,7 @@ export type SeedanceModelArkCreateRequest = {
   readonly duration: number;
   readonly ratio: string;
   readonly resolution: string;
-  readonly generate_audio: false;
+  readonly generate_audio: boolean;
   readonly watermark: boolean;
 };
 
@@ -148,8 +152,10 @@ export type SeedanceAssetAccessResolver = {
   }): Promise<string>;
 };
 
-function nearestSupportedDuration(seconds: number): number {
-  const supported: readonly number[] = SEEDANCE_SUPPORTED_DURATIONS_SEC;
+function nearestSupportedDuration(
+  seconds: number,
+  supported: readonly number[] = SEEDANCE_SUPPORTED_DURATIONS_SEC
+): number {
   let best = supported[0]!;
   let bestDelta = Math.abs(best - seconds);
   for (const candidate of supported) {
@@ -220,13 +226,23 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
     typeof payloadRaw === "object" &&
     payloadRaw !== null &&
     "contractVersion" in payloadRaw &&
-    payloadRaw.contractVersion === "ai-story-compiled-provider-request.v1" &&
+    String(payloadRaw.contractVersion).startsWith(
+      "ai-story-compiled-provider-request."
+    ) &&
     !compiledRequestResult.success
   ) {
     throw new SeedanceMappingError("Immutable compiled Provider request is invalid");
   }
   if (compiledRequestResult.success && !validateAiStoryCompiledRequestFingerprint(compiledRequestResult.data)) {
     throw new SeedanceMappingError("Immutable compiled Provider request fingerprint mismatch");
+  }
+  if (
+    compiledRequestResult.success &&
+    compiledRequestResult.data.modelId !== input.model
+  ) {
+    throw new SeedanceMappingError(
+      "Immutable compiled Provider request model does not match configured Seedance model"
+    );
   }
   if (compiledRequestResult.success) {
     try {
@@ -248,6 +264,14 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   ) {
     throw new SeedanceMappingError("Canonical Scene execution package is invalid; legacy payload fallback is denied");
   }
+  if (
+    packageResult.success &&
+    packageResult.data.generation.audioMode === "NATIVE_AUDIO_VIDEO"
+  ) {
+    throw new SeedanceMappingError(
+      "Native audiovisual execution requires an immutable V2 compiled Provider request"
+    );
+  }
   const directorCompilation = !compiledRequestResult.success && packageResult.success
     ? compileSceneExecutionPackageForSeedance(packageResult.data)
     : null;
@@ -262,6 +286,13 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
           aspectRatio: compiledRequestResult.data.structuredRequest.ratio,
           resolution: compiledRequestResult.data.structuredRequest.resolution,
           watermark: compiledRequestResult.data.structuredRequest.watermark,
+          generateAudio:
+            compiledRequestResult.data.structuredRequest.generateAudio,
+          audioMode:
+            compiledRequestResult.data.contractVersion ===
+            "ai-story-compiled-provider-request.v2-native-av"
+              ? "NATIVE_AV"
+              : "NONE",
           generationMode: compiledRequestResult.data.generationMode,
           assetReferences: compiledRequestResult.data.referenceMappings.map((reference) => ({
             assetId: reference.assetId,
@@ -277,6 +308,8 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
           aspectRatio: directorCompilation.requestFacts.ratio,
           resolution: directorCompilation.requestFacts.resolution,
           watermark: directorCompilation.requestFacts.watermark,
+          generateAudio: false,
+          audioMode: "NONE",
           generationMode: directorCompilation.requestFacts.generationMode,
           assetReferences: directorCompilation.selectedReferences.map((reference) => ({
             assetId: reference.assetId,
@@ -320,7 +353,12 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   const durationSec =
     payload.durationSec ??
     (payload.durationMs ? payload.durationMs / 1000 : 5);
-  const duration = nearestSupportedDuration(durationSec);
+  const duration = nearestSupportedDuration(
+    durationSec,
+    payload.audioMode === "NATIVE_AV"
+      ? SEEDANCE_NATIVE_AUDIO_SUPPORTED_DURATIONS_SEC
+      : SEEDANCE_SUPPORTED_DURATIONS_SEC
+  );
 
   const ratio = payload.aspectRatio ?? "9:16";
   if (!(SEEDANCE_SUPPORTED_ASPECT_RATIOS as readonly string[]).includes(ratio)) {
@@ -330,6 +368,23 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
   const resolution = payload.resolution ?? "1080p";
   if (!(SEEDANCE_SUPPORTED_RESOLUTIONS as readonly string[]).includes(resolution)) {
     throw new SeedanceMappingError(`Unsupported resolution: ${resolution}`);
+  }
+  const nativeAudioRequested =
+    payload.audioMode === "NATIVE_AV" || payload.generateAudio === true;
+  if (nativeAudioRequested && !seedanceSupportsNativeAudio(input.model)) {
+    throw new SeedanceMappingError(
+      `Seedance model ${input.model} is not certified for native audio`
+    );
+  }
+  if (
+    nativeAudioRequested &&
+    (!compiledRequestResult.success ||
+      compiledRequestResult.data.contractVersion !==
+        "ai-story-compiled-provider-request.v2-native-av")
+  ) {
+    throw new SeedanceMappingError(
+      "Native audio requires immutable V2 dialogue authority"
+    );
   }
 
   const assets = payload.assetReferences ?? [];
@@ -496,7 +551,7 @@ export async function mapCanonicalEnvelopeToSeedanceRequest(input: {
     duration,
     ratio,
     resolution,
-    generate_audio: false,
+    generate_audio: nativeAudioRequested,
     watermark: payload.watermark ?? false,
   };
 }

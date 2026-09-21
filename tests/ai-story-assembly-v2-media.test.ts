@@ -440,6 +440,56 @@ describe("AI Story Final Assembly V2 — real media execution", () => {
     });
   });
 
+  it("preserves native dialogue audio and applies identical audio/video trims in a mixed episode", async () => {
+    const fixture = buildAssemblyV2Fixture({
+      sources: [yellow, red],
+      entries: [
+        { sourceIndex: 0, role: "ACTION", durationSeconds: 2 },
+        { sourceIndex: 1, role: "PAYOFF", durationSeconds: 2 },
+      ],
+      nativeAudioSourceIndexes: [0],
+      base: 17_000,
+    });
+    const plan = fixture.compile();
+    expect(plan.outputProfile.audioPolicy).toBe(
+      "PRESERVE_NATIVE_DIALOGUE"
+    );
+    expect(plan.assemblyMediaMode).toBe("NATIVE_DIALOGUE_AUDIO");
+    const result = await runAiStoryAssemblyV2({
+      plan,
+      sourcePathByResultId: fixture.sourcePathByResultId,
+      workDir: join(root, "native-dialogue"),
+    });
+    const probe = await probeAssemblyMedia({
+      sceneResultId: plan.assemblyV2PlanId,
+      localPath: result.outputPath,
+      expectedContentHash: result.contentHash,
+    });
+    expect(result.hasAudio).toBe(true);
+    expect(probe.hasAudio).toBe(true);
+    expect(probe.audioDurationMs).not.toBeNull();
+    expect(Math.abs(probe.audioDurationMs! - probe.durationMs)).toBeLessThanOrEqual(
+      250
+    );
+    expect(result.durationMs).toBeCloseTo(4000, -2);
+  }, 120_000);
+
+  it("blocks native dialogue sources whose real media has no audio stream", async () => {
+    const fixture = buildAssemblyV2Fixture({
+      sources: [red],
+      entries: [{ sourceIndex: 0, role: "ACTION", durationSeconds: 2 }],
+      nativeAudioSourceIndexes: [0],
+      base: 18_000,
+    });
+    await expect(
+      runAiStoryAssemblyV2({
+        plan: fixture.compile(),
+        sourcePathByResultId: fixture.sourcePathByResultId,
+        workDir: join(root, "native-dialogue-missing-audio"),
+      })
+    ).rejects.toMatchObject({ code: "NATIVE_DIALOGUE_AUDIO_MISSING" });
+  });
+
   it("exposes typed execution failure without provider or media contents", () => {
     const error = new AiStoryAssemblyV2ExecutionError(
       "FINAL_MEDIA_INVALID",

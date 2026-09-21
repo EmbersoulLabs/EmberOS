@@ -1,6 +1,7 @@
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "./canonical-integrity";
 import {
   AiStoryAssemblyV2PlanSchema,
+  AiStoryAssemblyV2OutputProfileSchema,
   AiStoryAssemblyV2SourceMediaSchema,
   type AiStoryAssemblyV2FailureCode,
   type AiStoryAssemblyV2OutputProfile,
@@ -14,6 +15,7 @@ import {
   computeAiStoryNarrativeEditorialPlanFingerprint,
 } from "./ai-story-narrative-editorial-plan.server";
 import type { AiStoryGenerationPlan, AiStoryGenerationUnit } from "./ai-story-generation-unit";
+import { aiStoryGenerationUnitAvMode } from "./ai-story-generation-unit";
 import type {
   AiStoryEditorialTimelineEntry,
   AiStoryNarrativeEditorialPlan,
@@ -261,6 +263,7 @@ export function computeAiStoryAssemblyV2Fingerprint(
     | "optionalExcludedGenerationUnitIds"
     | "outputProfile"
     | "expectedOutputDurationMs"
+    | "assemblyMediaMode"
   >
 ): string {
   return sha256CanonicalIntegrityHash({
@@ -276,6 +279,7 @@ export function computeAiStoryAssemblyV2Fingerprint(
     optionalExcludedGenerationUnitIds: input.optionalExcludedGenerationUnitIds,
     outputProfile: input.outputProfile,
     expectedOutputDurationMs: input.expectedOutputDurationMs,
+    assemblyMediaMode: input.assemblyMediaMode ?? "VIDEO_ONLY",
   });
 }
 
@@ -289,9 +293,8 @@ export function compileAiStoryAssemblyV2Plan(
       "Assembly V2 requires an explicit certified OPTIONAL resolution policy"
     );
   }
-  const outputProfile = AiStoryAssemblyV2PlanSchema.shape.outputProfile.parse(
-    input.outputProfile
-  );
+  const outputProfile =
+    AiStoryAssemblyV2OutputProfileSchema.parse(input.outputProfile);
   const sources = input.acceptedSourceMedia.map((source) =>
     AiStoryAssemblyV2SourceMediaSchema.parse(source)
   );
@@ -391,6 +394,23 @@ export function compileAiStoryAssemblyV2Plan(
         "Source, Generation Unit, and Director Shot binding do not match"
       );
     }
+    const unitAvMode = aiStoryGenerationUnitAvMode(unit);
+    const sourceAvMode = source.nativeAvMode ?? "VIDEO_ONLY";
+    if (unitAvMode !== sourceAvMode) {
+      fail(
+        "EDITORIAL_ENTRY_BINDING_MISMATCH",
+        "Generation Unit and accepted source audiovisual modes do not match"
+      );
+    }
+    if (
+      unitAvMode === "NATIVE_AUDIO_VIDEO" &&
+      source.hasAudio !== true
+    ) {
+      fail(
+        "NATIVE_DIALOGUE_AUDIO_MISSING",
+        "Native dialogue source lacks certified source audio"
+      );
+    }
     if (source.mediaType !== "video/mp4") {
       fail(
         "EDITORIAL_ENTRY_SOURCE_UNRESOLVED",
@@ -433,6 +453,7 @@ export function compileAiStoryAssemblyV2Plan(
       sourceWidth: source.width,
       sourceHeight: source.height,
       sourceFrameRate: source.frameRate,
+      nativeAvMode: unitAvMode,
       editorialRole: entry.editorialRole,
       trimWindow,
       transitionFromPrevious,
@@ -467,6 +488,23 @@ export function compileAiStoryAssemblyV2Plan(
   if (expectedOutputDurationMs <= 0) {
     fail("TRIM_WINDOW_INVALID", "Resolved Assembly V2 duration is invalid");
   }
+  const hasNativeDialogue = resolvedTimeline.some(
+    (entry) => entry.nativeAvMode === "NATIVE_AUDIO_VIDEO"
+  );
+  if (
+    hasNativeDialogue !==
+    (outputProfile.audioPolicy === "PRESERVE_NATIVE_DIALOGUE")
+  ) {
+    fail(
+      "OUTPUT_PROFILE_INCOMPATIBLE",
+      hasNativeDialogue
+        ? "Native dialogue sources require PRESERVE_NATIVE_DIALOGUE output"
+        : "PRESERVE_NATIVE_DIALOGUE requires a native audiovisual source"
+    );
+  }
+  const assemblyMediaMode = hasNativeDialogue
+    ? ("NATIVE_DIALOGUE_AUDIO" as const)
+    : ("VIDEO_ONLY" as const);
 
   const withoutIdentity = {
     storyId: input.editorialPlan.storyId,
@@ -483,6 +521,7 @@ export function compileAiStoryAssemblyV2Plan(
       .map((disposition) => disposition.generationUnitId),
     outputProfile,
     expectedOutputDurationMs,
+    assemblyMediaMode,
   };
   const assemblyFingerprint = computeAiStoryAssemblyV2Fingerprint(withoutIdentity);
   return AiStoryAssemblyV2PlanSchema.parse({
@@ -495,6 +534,6 @@ export function compileAiStoryAssemblyV2Plan(
     runtimePolicyVersion: AI_STORY_ASSEMBLY_V2_RUNTIME_POLICY_VERSION,
     assemblyRoute: "ASSEMBLY_V2_EDITORIAL",
     assemblyFingerprint,
-    videoOnly: true,
+    videoOnly: !hasNativeDialogue,
   });
 }
