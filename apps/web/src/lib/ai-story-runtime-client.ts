@@ -394,3 +394,35 @@ export async function createFinalStoryDownload(input: {
     { method: "POST" }
   );
 }
+
+export async function postEpisodeRevision(input: {
+  campaignId: string;
+  storyId: string;
+  body: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  return requestJson(`/api/campaigns/${input.campaignId}/ai-stories/${input.storyId}/episode-revisions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input.body),
+  });
+}
+
+export async function postEpisodeCostEstimate(input: {
+  campaignId: string;
+  unitCount: number;
+  durationSeconds: number;
+  aspectRatio: "9:16" | "16:9" | "1:1";
+  nativeAudio: boolean;
+}): Promise<{ estimate: { currency: string; estimatedExpected: string; estimatedMin: string; estimatedMax: string }; authorizesSpend: false }> {
+  return requestJson(`/api/campaigns/${input.campaignId}/episode-cost-estimates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      unitCount: input.unitCount,
+      durationSeconds: input.durationSeconds,
+      aspectRatio: input.aspectRatio,
+      resolution: "480p",
+      nativeAudio: input.nativeAudio,
+    }),
+  });
+}
