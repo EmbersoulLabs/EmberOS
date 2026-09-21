@@ -1,5 +1,6 @@
 import {
   AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION,
+  AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION,
   AI_STORY_POST_GENERATION_QC_HOOK_VERSION,
   AI_STORY_PROVIDER_RUNTIME_VERSION,
   AI_STORY_SEEDANCE_MAPPING_VERSION,
@@ -17,6 +18,10 @@ import {
   type AiStorySceneExecutionPackage,
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
+  AiStoryCharacterDialoguePerformanceAuthoritySchema,
+  AiStorySeedanceNativeAudioCapabilitySchema,
+  type AiStoryCharacterDialoguePerformanceAuthority,
+  type AiStorySeedanceNativeAudioCapability,
   type ProductVisualMaterialSelectionAuthority,
   isAiStoryProviderAttemptTransitionAllowed,
 } from "@ceo-agent/shared";
@@ -24,6 +29,7 @@ import { verifyProductVisualMaterialSelectionAuthority } from "@ceo-agent/shared
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
 import { integrityHash } from "./scene-execution-compiler";
 import { compileSceneExecutionPackageForSeedance } from "./seedance-director-adapter";
+import { buildSeedanceNativeAudioCapability } from "./seedance-capability";
 import type { SeedanceModelArkCreateRequest } from "./seedance-request-mapping";
 import {
   resolveProviderReadySceneInput,
@@ -66,16 +72,145 @@ export class AiStoryProviderRuntimeError extends Error {
   }
 }
 
-function compiledRequestHashInput(
-  request: Omit<AiStoryCompiledProviderRequest, "requestFingerprint">
-) {
-  return { kind: AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION, ...request };
+type CompiledRequestWithoutFingerprint =
+  AiStoryCompiledProviderRequest extends infer Request
+    ? Request extends { requestFingerprint: string }
+      ? Omit<Request, "requestFingerprint">
+      : never
+    : never;
+
+function compiledRequestHashInput(request: CompiledRequestWithoutFingerprint) {
+  return { kind: request.contractVersion, ...request };
 }
 
 export function computeAiStoryCompiledRequestFingerprint(
-  request: Omit<AiStoryCompiledProviderRequest, "requestFingerprint">
+  request: CompiledRequestWithoutFingerprint
 ): string {
   return integrityHash(compiledRequestHashInput(request));
+}
+
+export function compileImmutableSeedanceNativeAvRequest(input: {
+  readonly baseRequest: AiStoryCompiledProviderRequest;
+  readonly dialogueAuthority: AiStoryCharacterDialoguePerformanceAuthority;
+  readonly capability: AiStorySeedanceNativeAudioCapability;
+  readonly compiledAt?: string;
+}): AiStoryCompiledProviderRequest {
+  const base = AiStoryCompiledProviderRequestSchema.parse(input.baseRequest);
+  if (
+    base.contractVersion !== AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION ||
+    !validateAiStoryCompiledRequestFingerprint(base)
+  ) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Native AV compilation requires an intact historical video request"
+    );
+  }
+  const capability = AiStorySeedanceNativeAudioCapabilitySchema.parse(
+    input.capability
+  );
+  if (
+    capability.modelId !== base.modelId ||
+    !capability.nativeAudioSupport ||
+    !capability.nativeDialogueSupport ||
+    !capability.visibleCharacterDialogueSupport
+  ) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Selected Seedance capability cannot execute native visible-character dialogue"
+    );
+  }
+  const dialogue =
+    AiStoryCharacterDialoguePerformanceAuthoritySchema.parse(
+      input.dialogueAuthority
+    );
+  if (
+    dialogue.storyId !== base.storyId ||
+    dialogue.storyVersionId !== base.storyVersionId ||
+    dialogue.detachedTtsPermitted ||
+    !dialogue.onScreenSpeaker ||
+    !dialogue.nativeAvRequired
+  ) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Native dialogue authority is outside the compiled Story or permits detached TTS"
+    );
+  }
+  const compiledAt = input.compiledAt ?? base.compiledAt;
+  const compiledPrompt = [
+    base.compiledPrompt,
+    "Native audiovisual dialogue performance requirement:",
+    `The visible on-screen character bound to authority ${dialogue.characterId} speaks exactly: “${dialogue.exactText}”`,
+    `Primary locale: ${dialogue.primaryLocale}. Delivery: ${dialogue.deliveryStyle}.`,
+    `Performance intent: ${dialogue.performanceIntent}`,
+    `Emotion: ${dialogue.emotionIntent}; intensity: ${dialogue.speechIntensity}; pace: ${dialogue.paceIntent}.`,
+    "Generate the voice, mouth movement, facial expression, body performance, and scene sound together in the same audiovisual result.",
+    "Do not rewrite, translate, expand, paraphrase, or add discourse particles to the dialogue.",
+    "Do not render this visible dialogue as detached narration or voice-over.",
+  ].join("\n");
+  const compiledPromptFingerprint = integrityHash({
+    kind: "ai-story-seedance-native-av-compiled-prompt.v1",
+    prompt: compiledPrompt,
+  });
+  const semanticPlan = {
+    ...base.semanticPlan,
+    translationClasses: [
+      ...base.semanticPlan.translationClasses.filter(
+        (entry) => entry.concept !== "audio"
+      ),
+      {
+        concept: "audio",
+        translationClass: "NATIVE_PROVIDER_AUDIO" as const,
+      },
+    ],
+  };
+  const semanticPlanFingerprint = integrityHash({
+    kind: semanticPlan.contractVersion,
+    semanticPlan,
+  });
+  const compiledRequestId = deterministicPersistenceUuid(
+    "ai-story-native-av-compiled-provider-request",
+    {
+      baseCompiledRequestId: base.compiledRequestId,
+      dialogueFingerprint: dialogue.dialogueFingerprint,
+      capabilityVersion: capability.capabilityVersion,
+      compiledAt,
+    }
+  );
+  const { requestFingerprint: _baseFingerprint, ...baseWithoutFingerprint } =
+    base;
+  const withoutFingerprint = {
+    ...baseWithoutFingerprint,
+    compiledRequestId,
+    contractVersion:
+      AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION,
+    capabilityVersion: capability.capabilityVersion,
+    compiledPrompt,
+    compiledPromptFingerprint,
+    semanticPlan,
+    semanticPlanFingerprint,
+    structuredRequest: {
+      ...base.structuredRequest,
+      generateAudio: true as const,
+      audioMode: "NATIVE_AV" as const,
+    },
+    nativeAvRequest: {
+      audioMode: "NATIVE_AV" as const,
+      dialogueAuthority: dialogue,
+      characterPerformanceRequired: true as const,
+      exactDialoguePreservationRequired: true as const,
+      visibleSpeechRequired: true as const,
+      sourceAudioPolicy: "PRESERVE_SYNCHRONIZED_SOURCE_AUDIO" as const,
+    },
+    blockedCapabilities: base.blockedCapabilities.filter(
+      (capabilityName) => capabilityName !== "AUDIO"
+    ),
+    compiledAt,
+  } satisfies CompiledRequestWithoutFingerprint;
+  return AiStoryCompiledProviderRequestSchema.parse({
+    ...withoutFingerprint,
+    requestFingerprint:
+      computeAiStoryCompiledRequestFingerprint(withoutFingerprint),
+  });
 }
 
 export function validateAiStoryCompiledRequestFingerprint(
@@ -212,6 +347,21 @@ export function compileImmutableSeedanceRequest(input: {
     requestFingerprint: computeAiStoryCompiledRequestFingerprint(withoutFingerprint),
   });
   assertAiStoryCompiledProviderWireModeCompatibility(request);
+  if (input.package.generation.audioMode === "NATIVE_AUDIO_VIDEO") {
+    const authorities = input.package.nativeDialogueAuthorities ?? [];
+    if (authorities.length !== 1) {
+      throw new AiStoryProviderRuntimeError(
+        "COMPILED_REQUEST_INVALID",
+        "Each native audiovisual Provider unit requires exactly one visible-speaker dialogue authority"
+      );
+    }
+    return compileImmutableSeedanceNativeAvRequest({
+      baseRequest: request,
+      dialogueAuthority: authorities[0]!,
+      capability: buildSeedanceNativeAudioCapability(),
+      compiledAt,
+    });
+  }
   return request;
 }
 
@@ -813,7 +963,7 @@ async function serializeTransportRequest(input: {
     duration: input.request.structuredRequest.duration,
     ratio: input.request.structuredRequest.ratio,
     resolution: input.request.structuredRequest.resolution,
-    generate_audio: false,
+    generate_audio: input.request.structuredRequest.generateAudio,
     watermark: input.request.structuredRequest.watermark,
   };
 }

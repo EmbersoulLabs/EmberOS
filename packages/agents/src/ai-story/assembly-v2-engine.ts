@@ -34,6 +34,8 @@ export type AiStoryAssemblyV2ExecutionResult = {
   readonly width: number;
   readonly height: number;
   readonly frameRate: number;
+  readonly hasAudio: boolean;
+  readonly audioCodec: string | null;
   readonly byteSize: number;
   readonly evidence: AiStoryAssemblyV2ExecutionEvidence;
   readonly workDir: string;
@@ -71,7 +73,48 @@ async function normalizeTrimmedEntry(input: {
   width: number;
   height: number;
   frameRate: number;
+  preserveAudio: boolean;
+  sourceHasAudio: boolean;
 }): Promise<void> {
+  if (input.preserveAudio) {
+    const start = seconds(input.startMs);
+    const duration = seconds(input.durationMs);
+    const audioFilter = input.sourceHasAudio
+      ? `[0:a:0]atrim=start=${start}:duration=${duration},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a]`
+      : `anullsrc=r=48000:cl=stereo,atrim=duration=${duration},asetpts=PTS-STARTPTS[a]`;
+    await runFfmpeg(
+      [
+        "-y",
+        "-i",
+        input.sourcePath,
+        "-filter_complex",
+        `[0:v:0]trim=start=${start}:duration=${duration},setpts=PTS-STARTPTS,scale=${input.width}:${input.height}:flags=lanczos,fps=${input.frameRate},format=yuv420p[v];${audioFilter}`,
+        "-map",
+        "[v]",
+        "-map",
+        "[a]",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        "20",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-ar",
+        "48000",
+        "-ac",
+        "2",
+        "-movflags",
+        "+faststart",
+        input.outputPath,
+      ],
+      "ASSEMBLY_V2_ENGINE_FAILED"
+    );
+    return;
+  }
   await runFfmpeg(
     [
       "-y",
@@ -107,7 +150,11 @@ async function composeHardCut(input: {
   nextPath: string;
   outputPath: string;
   frameRate: number;
+  preserveAudio: boolean;
 }): Promise<void> {
+  const filter = input.preserveAudio
+    ? "[0:v]settb=AVTB,setpts=PTS-STARTPTS[v0];[0:a]asetpts=PTS-STARTPTS[a0];[1:v]settb=AVTB,setpts=PTS-STARTPTS[v1];[1:a]asetpts=PTS-STARTPTS[a1];[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]"
+    : "[0:v]settb=AVTB,setpts=PTS-STARTPTS[v0];[1:v]settb=AVTB,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2:v=1:a=0[v]";
   await runFfmpeg(
     [
       "-y",
@@ -116,10 +163,10 @@ async function composeHardCut(input: {
       "-i",
       input.nextPath,
       "-filter_complex",
-      "[0:v]settb=AVTB,setpts=PTS-STARTPTS[v0];[1:v]settb=AVTB,setpts=PTS-STARTPTS[v1];[v0][v1]concat=n=2:v=1:a=0[v]",
+      filter,
       "-map",
       "[v]",
-      "-an",
+      ...(input.preserveAudio ? ["-map", "[a]"] : ["-an"]),
       "-c:v",
       "libx264",
       "-preset",
@@ -130,6 +177,9 @@ async function composeHardCut(input: {
       String(input.frameRate),
       "-pix_fmt",
       "yuv420p",
+      ...(input.preserveAudio
+        ? ["-c:a", "aac", "-ar", "48000", "-ac", "2"]
+        : []),
       "-movflags",
       "+faststart",
       input.outputPath,
@@ -145,6 +195,7 @@ async function composeDissolve(input: {
   currentDurationMs: number;
   dissolveDurationMs: number;
   frameRate: number;
+  preserveAudio: boolean;
 }): Promise<void> {
   const offsetMs = input.currentDurationMs - input.dissolveDurationMs;
   if (offsetMs < 0 || input.dissolveDurationMs <= 0) {
@@ -153,6 +204,9 @@ async function composeDissolve(input: {
       "Dissolve overlap exceeds available media"
     );
   }
+  const filter = input.preserveAudio
+    ? `[0:v]settb=AVTB,setpts=PTS-STARTPTS[v0];[1:v]settb=AVTB,setpts=PTS-STARTPTS[v1];[v0][v1]xfade=transition=fade:duration=${seconds(input.dissolveDurationMs)}:offset=${seconds(offsetMs)}[v];[0:a]asetpts=PTS-STARTPTS[a0];[1:a]asetpts=PTS-STARTPTS[a1];[a0][a1]acrossfade=d=${seconds(input.dissolveDurationMs)}[a]`
+    : `[0:v]settb=AVTB,setpts=PTS-STARTPTS[v0];[1:v]settb=AVTB,setpts=PTS-STARTPTS[v1];[v0][v1]xfade=transition=fade:duration=${seconds(input.dissolveDurationMs)}:offset=${seconds(offsetMs)}[v]`;
   await runFfmpeg(
     [
       "-y",
@@ -161,10 +215,10 @@ async function composeDissolve(input: {
       "-i",
       input.nextPath,
       "-filter_complex",
-      `[0:v]settb=AVTB,setpts=PTS-STARTPTS[v0];[1:v]settb=AVTB,setpts=PTS-STARTPTS[v1];[v0][v1]xfade=transition=fade:duration=${seconds(input.dissolveDurationMs)}:offset=${seconds(offsetMs)}[v]`,
+      filter,
       "-map",
       "[v]",
-      "-an",
+      ...(input.preserveAudio ? ["-map", "[a]"] : ["-an"]),
       "-c:v",
       "libx264",
       "-preset",
@@ -175,6 +229,9 @@ async function composeDissolve(input: {
       String(input.frameRate),
       "-pix_fmt",
       "yuv420p",
+      ...(input.preserveAudio
+        ? ["-c:a", "aac", "-ar", "48000", "-ac", "2"]
+        : []),
       "-movflags",
       "+faststart",
       input.outputPath,
@@ -208,6 +265,8 @@ export async function runAiStoryAssemblyV2(input: {
     input.workDir ??
     (await mkdtemp(join(tmpdir(), `ember-assembly-v2-${input.plan.assemblyV2PlanId.slice(0, 8)}-`)));
   await mkdir(workDir, { recursive: true });
+  const preserveAudio =
+    input.plan.outputProfile.audioPolicy === "PRESERVE_NATIVE_DIALOGUE";
 
   const normalizedPaths: string[] = [];
   for (const [index, entry] of input.plan.resolvedTimeline.entries()) {
@@ -263,6 +322,24 @@ export async function runAiStoryAssemblyV2(input: {
         "Source media metadata changed after Assembly V2 planning"
       );
     }
+    const nativeDialogueSource =
+      entry.nativeAvMode === "NATIVE_AUDIO_VIDEO";
+    if (nativeDialogueSource && !probe.hasAudio) {
+      throw new AiStoryAssemblyV2ExecutionError(
+        "NATIVE_DIALOGUE_AUDIO_MISSING",
+        "Native dialogue source has no audio stream"
+      );
+    }
+    if (
+      nativeDialogueSource &&
+      probe.audioDurationMs &&
+      Math.abs(probe.audioDurationMs - probe.durationMs) > 250
+    ) {
+      throw new AiStoryAssemblyV2ExecutionError(
+        "AUDIO_VIDEO_TRIM_DESYNCHRONIZED",
+        "Native dialogue source audio/video durations are incompatible"
+      );
+    }
     if (entry.trimWindow.sourceEndMs > probe.durationMs) {
       throw new AiStoryAssemblyV2ExecutionError(
         "TRIM_WINDOW_INVALID",
@@ -278,6 +355,8 @@ export async function runAiStoryAssemblyV2(input: {
       width: input.plan.outputProfile.width,
       height: input.plan.outputProfile.height,
       frameRate: input.plan.outputProfile.frameRate,
+      preserveAudio,
+      sourceHasAudio: nativeDialogueSource && probe.hasAudio,
     });
     normalizedPaths.push(normalizedPath);
   }
@@ -295,6 +374,7 @@ export async function runAiStoryAssemblyV2(input: {
         currentDurationMs,
         dissolveDurationMs: entry.transitionFromPrevious.durationMs,
         frameRate: input.plan.outputProfile.frameRate,
+        preserveAudio,
       });
       currentDurationMs +=
         entry.trimWindow.durationMs - entry.transitionFromPrevious.durationMs;
@@ -304,6 +384,7 @@ export async function runAiStoryAssemblyV2(input: {
         nextPath: normalizedPaths[index]!,
         outputPath: composedPath,
         frameRate: input.plan.outputProfile.frameRate,
+        preserveAudio,
       });
       currentDurationMs += entry.trimWindow.durationMs;
     }
@@ -314,7 +395,18 @@ export async function runAiStoryAssemblyV2(input: {
   await mkdir(dirname(outputPath), { recursive: true });
   if (currentPath !== outputPath) await copyFile(currentPath, outputPath);
   await runFfmpeg(
-    ["-v", "error", "-i", outputPath, "-map", "0:v:0", "-f", "null", "-"],
+    [
+      "-v",
+      "error",
+      "-i",
+      outputPath,
+      "-map",
+      "0:v:0",
+      ...(preserveAudio ? ["-map", "0:a:0"] : []),
+      "-f",
+      "null",
+      "-",
+    ],
     "FINAL_MEDIA_INVALID"
   );
 
@@ -347,6 +439,28 @@ export async function runAiStoryAssemblyV2(input: {
       "Final media does not match the resolved editorial timeline"
     );
   }
+  if (preserveAudio && !finalProbe.hasAudio) {
+    throw new AiStoryAssemblyV2ExecutionError(
+      "NATIVE_DIALOGUE_AUDIO_STRIPPED",
+      "Final Assembly V2 output stripped native dialogue audio"
+    );
+  }
+  if (!preserveAudio && finalProbe.hasAudio) {
+    throw new AiStoryAssemblyV2ExecutionError(
+      "FINAL_MEDIA_INVALID",
+      "VIDEO_ONLY Assembly V2 output unexpectedly contains audio"
+    );
+  }
+  if (
+    preserveAudio &&
+    finalProbe.audioDurationMs &&
+    Math.abs(finalProbe.audioDurationMs - finalProbe.durationMs) > 250
+  ) {
+    throw new AiStoryAssemblyV2ExecutionError(
+      "AUDIO_VIDEO_TRIM_DESYNCHRONIZED",
+      "Final Assembly V2 audio/video durations are incompatible"
+    );
+  }
 
   const executionCompletedAt = now().toISOString();
   const evidence = AiStoryAssemblyV2ExecutionEvidenceSchema.parse({
@@ -358,6 +472,8 @@ export async function runAiStoryAssemblyV2(input: {
     usedUnitCount: input.plan.resolvedTimeline.length,
     omittedUnitCount: input.plan.omittedGenerationUnitIds.length,
     finalDurationMs: finalProbe.durationMs,
+    hasAudio: finalProbe.hasAudio,
+    audioPolicy: input.plan.outputProfile.audioPolicy,
     transitionCount: input.plan.resolvedTimeline.filter(
       (entry) => entry.transitionFromPrevious.durationMs > 0
     ).length,
@@ -371,6 +487,8 @@ export async function runAiStoryAssemblyV2(input: {
     width: finalProbe.width,
     height: finalProbe.height,
     frameRate: finalProbe.frameRate ?? input.plan.outputProfile.frameRate,
+    hasAudio: finalProbe.hasAudio,
+    audioCodec: finalProbe.audioCodec,
     byteSize: finalProbe.byteSize!,
     evidence,
     workDir,

@@ -45,6 +45,12 @@ export const AI_STORY_MULTI_SHOT_PROVIDER_REQUEST_CERTIFIED = false as const;
 export const AI_STORY_GENERATION_UNIT_OWNS_CREATIVE_AUTHORITY = false as const;
 export const AI_STORY_GENERATION_UNIT_OWNS_BILLING = false as const;
 export const AI_STORY_GENERATION_UNIT_DISPATCHES_PROVIDER = false as const;
+export const VISIBLE_CHARACTER_DIALOGUE_GENERATION_REQUIREMENT =
+  "NATIVE_AUDIOVISUAL_GENERATION" as const;
+export const AI_STORY_GENERATION_UNIT_AV_MODES = [
+  "VIDEO_ONLY",
+  "NATIVE_AUDIO_VIDEO",
+] as const;
 export const AI_STORY_GENERATION_UNIT_PERSISTENCE = "CONTRACT_LAYER_ONLY" as const;
 export const AI_STORY_SCENE_EXECUTION_IDENTITY_PRESERVED = true as const;
 export const READY_FOR_PROVIDER_FREE_REVIEW_MULTI_SHOT = "PASS" as const;
@@ -125,6 +131,10 @@ export const AiStoryGenerationUnitSchema = z.object({
     characterIds: z.array(Id),
     productAuthorityIds: z.array(Id),
   }).strict(),
+  /** Absent on historical v1 Units and interpreted as VIDEO_ONLY. */
+  nativeAvMode: z.enum(AI_STORY_GENERATION_UNIT_AV_MODES).optional(),
+  /** Frozen Script dialogue entries requiring native audiovisual performance. */
+  nativeDialogueEntryIds: z.array(Id).optional(),
   retryOwnership: AiStoryGenerationUnitRetryOwnershipSchema,
   fingerprint: Hash,
 }).strict().superRefine((value, ctx) => {
@@ -133,6 +143,27 @@ export const AiStoryGenerationUnitSchema = z.object({
   }
   if (value.sourceAuthority.directorShotId !== value.directorShotId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Generation Unit source authority must bind the exact Director Shot" });
+  }
+  const dialogueIds = value.nativeDialogueEntryIds ?? [];
+  if (
+    value.nativeAvMode === "NATIVE_AUDIO_VIDEO" &&
+    (!value.executionRequirement.characterPerformance || dialogueIds.length === 0)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "NATIVE_AUDIO_VIDEO requires Character performance and native dialogue authority",
+    });
+  }
+  if (
+    value.nativeAvMode !== "NATIVE_AUDIO_VIDEO" &&
+    dialogueIds.length > 0
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "VIDEO_ONLY Generation Units cannot carry native dialogue authority",
+    });
   }
 });
 
@@ -158,6 +189,12 @@ export type AiStoryGenerationUnitIssue = {
   severity: "BLOCK" | "WARN";
   message: string;
 };
+
+export function aiStoryGenerationUnitAvMode(
+  unit: Pick<AiStoryGenerationUnit, "nativeAvMode">
+): (typeof AI_STORY_GENERATION_UNIT_AV_MODES)[number] {
+  return unit.nativeAvMode ?? "VIDEO_ONLY";
+}
 
 export const AI_STORY_GENERATION_UNIT_GATES = [
   "INTRA_SCENE_SHOT_PROGRESSION_GATE",

@@ -2,9 +2,12 @@ import { z } from "zod";
 import { AiStorySeedanceSemanticPlanSchema } from "./ai-story-scene-execution-package";
 import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
+import { AiStoryNativeAvRequestAuthoritySchema } from "./ai-story-native-dialogue";
 
 export const AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION =
   "ai-story-compiled-provider-request.v1" as const;
+export const AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION =
+  "ai-story-compiled-provider-request.v2-native-av" as const;
 export const AI_STORY_PROVIDER_RUNTIME_VERSION =
   "ai-story-provider-runtime.v1" as const;
 export const AI_STORY_POST_GENERATION_QC_HOOK_VERSION =
@@ -114,7 +117,7 @@ export type AiStoryCompiledProviderReadySceneInput = z.infer<
  * Immutable output of Provider compilation. URLs and credentials are deliberately
  * absent: the Worker resolves short-lived transport access from stable Asset IDs.
  */
-export const AiStoryCompiledProviderRequestSchema = z.object({
+export const AiStoryCompiledProviderRequestV1Schema = z.object({
   compiledRequestId: Id,
   contractVersion: z.literal(AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION),
   runtimeVersion: z.literal(AI_STORY_PROVIDER_RUNTIME_VERSION),
@@ -187,6 +190,47 @@ export const AiStoryCompiledProviderRequestSchema = z.object({
   compiledAt: z.string().datetime(),
   requestFingerprint: Hash,
 }).strict();
+
+export const AiStoryCompiledProviderRequestV2Schema =
+  AiStoryCompiledProviderRequestV1Schema.extend({
+    contractVersion: z.literal(
+      AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION
+    ),
+    structuredRequest: z
+      .object({
+        model: z.literal("dreamina-seedance-2-0-260128"),
+        duration: z.union([
+          z.literal(4),
+          z.literal(5),
+          z.literal(6),
+          z.literal(8),
+          z.literal(10),
+          z.literal(12),
+          z.literal(15),
+        ]),
+        ratio: z.enum(["9:16", "16:9", "1:1"]),
+        resolution: z.enum(["480p", "720p", "1080p"]),
+        generateAudio: z.literal(true),
+        audioMode: z.literal("NATIVE_AV"),
+        watermark: z.boolean(),
+      })
+      .strict(),
+    nativeAvRequest: AiStoryNativeAvRequestAuthoritySchema,
+  })
+    .strict()
+    .superRefine((value, ctx) => {
+      if (value.blockedCapabilities.includes("AUDIO")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Native AV requests cannot retain AUDIO as a blocked capability",
+        });
+      }
+    });
+
+export const AiStoryCompiledProviderRequestSchema = z.union([
+  AiStoryCompiledProviderRequestV1Schema,
+  AiStoryCompiledProviderRequestV2Schema,
+]);
 
 export type AiStoryCompiledProviderRequest = z.infer<
   typeof AiStoryCompiledProviderRequestSchema

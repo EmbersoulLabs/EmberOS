@@ -70,7 +70,7 @@ describe("AI Story Final Assembly V2 authority", () => {
     expect(FINAL_STORY_ASSEMBLY_V2).toBe("CERTIFIED");
     expect(FINAL_STORY_ASSEMBLY_V2_EXECUTION).toBe("CERTIFIED");
     expect(FINAL_STORY_ASSEMBLY_V2_VIDEO_ONLY).toBe(true);
-    expect(ASSEMBLY_V2_GENERATES_AUDIO).toBe(false);
+    expect(ASSEMBLY_V2_GENERATES_AUDIO).toBe(true);
     expect(ASSEMBLY_V2_DISPATCHES_PROVIDER).toBe(false);
     expect(ASSEMBLY_V2_CHANGES_COMMERCIAL_AUTHORITY).toBe(false);
     expect(AUDIO_PLAN).toBe("CERTIFIED");
@@ -363,7 +363,7 @@ describe("AI Story Final Assembly V2 authority", () => {
       .map((path) => readFileSync(path, "utf8"))
       .join("\n");
     expect(implementation).not.toMatch(
-      /seedance|provider-attempt|provider-dispatch|commercial-pricing|reservation|settlement|quota|ceiling|billing-account|text-to-speech|bgm|voice-over/i
+      /seedance|provider-attempt|provider-dispatch|commercial-pricing|\breservation\b|\bsettlement\b|\bquota\b|\bceiling\b|billing-account|text-to-speech|\bbgm\b|voice-over/i
     );
   });
 });

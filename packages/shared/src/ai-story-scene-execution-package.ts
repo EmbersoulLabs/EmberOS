@@ -6,6 +6,7 @@ import { AiStoryPreGenerationQcEvaluationSchema } from "./ai-story-pre-generatio
 import { AiStoryCanonicalSceneSchema, AiStoryLocationAuthorityVersionSchema } from "./ai-story-scene";
 import { AiStoryShotRecipeSchema } from "./ai-story-shot-recipe";
 import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { AiStoryCharacterDialoguePerformanceAuthoritySchema } from "./ai-story-native-dialogue";
 
 export const AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION = "ai-story-scene-execution-package.v1" as const;
 export const AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION = "ai-story-seedance-semantic-plan.v1" as const;
@@ -13,7 +14,7 @@ export const AI_STORY_SEEDANCE_MAPPING_VERSION = "seedance-director-adapter.v1" 
 export const AI_STORY_SEEDANCE_CAPABILITY_CONTRACT_VERSION = "seedance-modelark-2026-08-29.v1" as const;
 export const AI_STORY_SCENE_EXECUTION_MODES = ["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"] as const;
 export const AI_STORY_REFERENCE_AUTHORITY_CLASSES = ["REQUIRED", "PREFERRED", "OPTIONAL"] as const;
-export const AI_STORY_TRANSLATION_CLASSES = ["DIRECT_STRUCTURED_MAPPING", "CERTIFIED_PROMPT_SEMANTIC_MAPPING", "CONDITIONING_MAPPING", "NO_SAFE_MAPPING"] as const;
+export const AI_STORY_TRANSLATION_CLASSES = ["DIRECT_STRUCTURED_MAPPING", "CERTIFIED_PROMPT_SEMANTIC_MAPPING", "CONDITIONING_MAPPING", "NATIVE_PROVIDER_AUDIO", "NO_SAFE_MAPPING"] as const;
 
 const Id = z.string().uuid();
 const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -95,7 +96,12 @@ export const AiStorySceneExecutionPackageSchema = z.object({
     resolution: z.enum(["480p", "720p", "1080p"]),
     watermark: z.boolean(),
     cameraMappingRequirement: z.enum(["REQUIRED", "OPTIONAL"]),
+    /** Absent on historical packages and interpreted as VIDEO_ONLY. */
+    audioMode: z.enum(["VIDEO_ONLY", "NATIVE_AUDIO_VIDEO"]).optional(),
   }).strict(),
+  nativeDialogueAuthorities: z
+    .array(AiStoryCharacterDialoguePerformanceAuthoritySchema)
+    .optional(),
   visualReferences: z.array(AiStoryExecutionVisualReferenceSchema),
   generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   providerBinding: z.object({
@@ -106,7 +112,43 @@ export const AiStorySceneExecutionPackageSchema = z.object({
     adapterMappingVersion: z.literal(AI_STORY_SEEDANCE_MAPPING_VERSION),
     qcCapabilityVersion: Text.max(160),
   }).strict(),
-}).strict();
+}).strict().superRefine((value, ctx) => {
+  const authorities = value.nativeDialogueAuthorities ?? [];
+  if (
+    value.generation.audioMode === "NATIVE_AUDIO_VIDEO" &&
+    authorities.length === 0
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "NATIVE_AUDIO_VIDEO execution package requires frozen dialogue authority",
+    });
+  }
+  if (
+    value.generation.audioMode !== "NATIVE_AUDIO_VIDEO" &&
+    authorities.length > 0
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "VIDEO_ONLY execution package cannot carry native dialogue authority",
+    });
+  }
+  for (const authority of authorities) {
+    if (
+      authority.storyId !== value.storyId ||
+      authority.storyVersionId !== value.storyVersionId ||
+      authority.scriptVersionId !== value.scriptVersionId ||
+      authority.scriptFingerprint !== value.scriptFingerprint
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "Native dialogue authority does not bind the execution package lineage",
+      });
+    }
+  }
+});
 
 export const AiStorySeedanceSemanticPlanSchema = z.object({
   contractVersion: z.literal(AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION),
@@ -146,6 +188,16 @@ export const AI_STORY_SEEDANCE_TRANSLATION_MATRIX = Object.freeze([
   { concept: "multi-shot orchestration", translationClass: "NO_SAFE_MAPPING" },
   { concept: "first/last-frame chaining", translationClass: "NO_SAFE_MAPPING" },
   { concept: "audio", translationClass: "NO_SAFE_MAPPING" },
+] as const);
+
+export const AI_STORY_SEEDANCE_NATIVE_AV_TRANSLATION_MATRIX = Object.freeze([
+  ...AI_STORY_SEEDANCE_TRANSLATION_MATRIX.filter(
+    (entry) => entry.concept !== "audio"
+  ),
+  {
+    concept: "audio",
+    translationClass: "NATIVE_PROVIDER_AUDIO",
+  },
 ] as const);
 
 export const AI_STORY_ADAPTER_OWNS_CREATIVE_AUTHORITY = false as const;
