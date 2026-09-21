@@ -17,13 +17,13 @@ export function formatProductRuntimeStatus(
     case "AUTHORIZED":
       return "Starting";
     case "SCENES_RUNNING":
-      return "Scenes running";
+      return "Generating episode moments";
     case "RECONCILIATION_REQUIRED":
       return "Reconciliation required";
     case "SCENES_FAILED":
-      return "Scene generation failed";
+      return "This moment could not be generated.";
     case "SCENES_COMPLETE":
-      return "Scenes complete";
+      return "Episode moments ready";
     case "WAITING_FOR_ASSEMBLY":
       return "Waiting for assembly";
     case "ASSEMBLING":

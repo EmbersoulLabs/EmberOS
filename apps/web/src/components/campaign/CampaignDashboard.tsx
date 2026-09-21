@@ -119,23 +119,23 @@ function AiStoryModule({ slug, campaignId }: { slug: string; campaignId: string 
   return (
     <WorkspaceCard
       title="AI Story"
-      purpose="Plan and review Campaign-owned stories using the current AI Story runtime."
+      purpose="Create and review Campaign-owned Episodes. Scenes stay internal."
       state={state}
-      action={<Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/new`} className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-navy hover:bg-surface-muted">Create AI Story</Link>}
+      action={<Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/episodes/new`} className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-navy hover:bg-surface-muted">Create Episode</Link>}
     >
       {loadState === "loading" ? <p className="text-sm text-ink-secondary">Loading durable story state…</p> : null}
       {stories.length ? (
         <ul className="space-y-2">
           {stories.slice(0, 3).map((story) => (
             <li key={story.id}>
-              <Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/${story.id}`} className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 hover:bg-surface-muted">
+              <Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/episodes/${story.id}`} className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-border px-3 py-2 hover:bg-surface-muted">
                 <span className="truncate text-sm font-semibold text-navy">{story.title}</span>
                 <StatusBadge status={story.status} />
               </Link>
             </li>
           ))}
         </ul>
-      ) : loadState === "ready" ? <p className="text-sm text-ink-secondary">No AI Stories yet.</p> : null}
+      ) : loadState === "ready" ? <p className="text-sm text-ink-secondary">No Episodes yet.</p> : null}
     </WorkspaceCard>
   );
 }

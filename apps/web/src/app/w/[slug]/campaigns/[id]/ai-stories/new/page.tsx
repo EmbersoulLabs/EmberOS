@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { EpisodeCreateForm, type EpisodeCreatePayload } from "@/components/ai-story/EpisodeCreateForm";
+import { TapaoJomEpisodeUxFixture } from "@/components/ai-story/TapaoJomEpisodeUxFixture";
 import { useI18n } from "@/lib/i18n/provider";
-import { AI_STORY_OUTLINE_PROFILE_REGISTRY } from "@ceo-agent/shared";
 
 type AssetRow = { id: string; displayName?: string | null; originalFilename?: string | null };
 
@@ -15,13 +16,7 @@ export default function CreateAiStoryPage() {
   const { t } = useI18n();
   const slug = params.slug as string;
   const campaignId = params.id as string;
-
-  const [title, setTitle] = useState("");
-  const [idea, setIdea] = useState("");
-  const [outlineProfileId, setOutlineProfileId] = useState<"" | "CORE" | "PRODUCT_STORY" | "COMMERCIAL_STORY">("");
   const [assets, setAssets] = useState<AssetRow[]>([]);
-  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
-  const [productAssetIds, setProductAssetIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -33,58 +28,34 @@ export default function CreateAiStoryPage() {
       return;
     }
     setAssets(data.assets ?? []);
-    setSelectedAssetIds((data.assets ?? []).map((a: AssetRow) => a.id));
-    setProductAssetIds([]);
   }, [campaignId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  async function onCreate() {
+  async function onGenerate(payload: EpisodeCreatePayload) {
     setError("");
     setLoading(true);
     try {
-      if (!outlineProfileId) throw new Error("Select a Story type");
-      const outlineProfile = outlineProfileId === "CORE"
-        ? {
-            profileId: AI_STORY_OUTLINE_PROFILE_REGISTRY.CORE.profileId,
-            profileVersion: AI_STORY_OUTLINE_PROFILE_REGISTRY.CORE.profileVersion,
-          }
-        : outlineProfileId === "PRODUCT_STORY"
-        ? {
-            profileId: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.profileId,
-            profileVersion: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.profileVersion,
-            policyFingerprint: AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY.policyFingerprint,
-          }
-        : {
-            profileId: AI_STORY_OUTLINE_PROFILE_REGISTRY.COMMERCIAL_STORY.profileId,
-            profileVersion: AI_STORY_OUTLINE_PROFILE_REGISTRY.COMMERCIAL_STORY.profileVersion,
-            policyFingerprint: AI_STORY_OUTLINE_PROFILE_REGISTRY.COMMERCIAL_STORY.policyFingerprint,
-          };
       const createRes = await fetch(`/api/campaigns/${campaignId}/ai-stories`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: title.trim(),
-          originalIdea: idea.trim(),
-          outlineProfile,
-          assetIds: selectedAssetIds,
-          productAssetIds,
+          title: payload.title,
+          originalIdea: payload.originalIdea,
+          outlineProfile: payload.outlineProfile,
+          assetIds: payload.assetIds,
+          productAssetIds: payload.productAssetIds,
         }),
       });
       const createData = await createRes.json();
       if (!createRes.ok) throw new Error(createData.error ?? "Create failed");
-
       const storyId = createData.story?.id as string;
-      const genRes = await fetch(
-        `/api/campaigns/${campaignId}/ai-stories/${storyId}/generate`,
-        { method: "POST" }
-      );
+      const genRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/generate`, { method: "POST" });
       const genData = await genRes.json();
-      if (!genRes.ok) throw new Error(genData.error ?? "AI polish failed");
-
-      router.push(`/w/${slug}/campaigns/${campaignId}/ai-stories/${storyId}`);
+      if (!genRes.ok) throw new Error(genData.error ?? "Episode planning failed");
+      router.push(`/w/${slug}/campaigns/${campaignId}/ai-stories/episodes/${storyId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("error.generic"));
     } finally {
@@ -96,134 +67,12 @@ export default function CreateAiStoryPage() {
     <AppShell>
       <div className="mx-auto max-w-2xl space-y-6">
         <div>
-          <Link
-            href={`/w/${slug}/campaigns/${campaignId}`}
-            className="text-sm text-brand-blue hover:underline"
-          >
-            ← Back to Campaign
-          </Link>
-          <h1 className="mt-3 text-2xl font-bold text-navy">Create Story</h1>
-          <p className="mt-1 text-sm text-ink-secondary">
-            Describe your story idea in plain language. EmberOS will polish it into a structured Story Draft.
-          </p>
+          <Link href={`/w/${slug}/campaigns/${campaignId}`} className="text-sm text-brand-blue hover:underline">← Back to Campaign</Link>
+          <h1 className="mt-3 text-2xl font-bold text-navy">Create Episode</h1>
+          <p className="mt-1 text-sm text-ink-secondary">Describe one Episode. EmberOS handles Scenes and shots internally.</p>
         </div>
-
-        <label className="block space-y-1">
-          <span className="text-sm font-medium text-navy">Title</span>
-          <input
-            className="w-full rounded-lg border border-border px-3 py-2 text-sm"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Spring launch story"
-          />
-        </label>
-
-        <fieldset className="space-y-2">
-          <legend className="text-sm font-medium text-navy">Story type</legend>
-          <label className="flex items-start gap-2 rounded-lg border border-border p-3">
-            <input
-              type="radio"
-              name="outlineProfile"
-              value="CORE"
-              checked={outlineProfileId === "CORE"}
-              onChange={() => setOutlineProfileId("CORE")}
-            />
-            <span><span className="block font-medium text-navy">General story</span><span className="text-sm text-ink-secondary">General narrative structure.</span></span>
-          </label>
-          <label className="flex items-start gap-2 rounded-lg border border-border p-3">
-            <input
-              type="radio"
-              name="outlineProfile"
-              value="PRODUCT_STORY"
-              checked={outlineProfileId === "PRODUCT_STORY"}
-              onChange={() => setOutlineProfileId("PRODUCT_STORY")}
-            />
-            <span><span className="block font-medium text-navy">Product-focused story</span><span className="text-sm text-ink-secondary">Marketing narrative centered on a product.</span></span>
-          </label>
-          <label className="flex items-start gap-2 rounded-lg border border-border p-3">
-            <input
-              type="radio"
-              name="outlineProfile"
-              value="COMMERCIAL_STORY"
-              checked={outlineProfileId === "COMMERCIAL_STORY"}
-              onChange={() => setOutlineProfileId("COMMERCIAL_STORY")}
-            />
-            <span><span className="block font-medium text-navy">Commercial story</span><span className="text-sm text-ink-secondary">A watchable narrative where a product, service, or brand participates naturally.</span></span>
-          </label>
-        </fieldset>
-
-        <label className="block space-y-1">
-          <span className="text-sm font-medium text-navy">Story idea</span>
-          <textarea
-            className="min-h-[160px] w-full rounded-lg border border-border px-3 py-2 text-sm"
-            value={idea}
-            onChange={(e) => setIdea(e.target.value)}
-            placeholder="A customer discovers our product and shares how it changed their routine..."
-          />
-        </label>
-
-        {assets.length > 0 ? (
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-navy">Campaign assets (optional)</p>
-            <ul className="space-y-2">
-              {assets.map((asset) => {
-                const included = selectedAssetIds.includes(asset.id);
-                const product = productAssetIds.includes(asset.id);
-                return (
-                  <li key={asset.id} className="space-y-1 text-sm">
-                    <label className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={included}
-                        onChange={(e) => {
-                          setSelectedAssetIds((prev) =>
-                            e.target.checked
-                              ? [...prev, asset.id]
-                              : prev.filter((id) => id !== asset.id)
-                          );
-                          if (!e.target.checked) {
-                            setProductAssetIds((prev) => prev.filter((id) => id !== asset.id));
-                          }
-                        }}
-                      />
-                      <span>Include in Story: {asset.displayName ?? asset.originalFilename ?? asset.id.slice(0, 8)}</span>
-                    </label>
-                    <label className="ml-6 flex items-center gap-2 text-ink-secondary">
-                      <input
-                        type="checkbox"
-                        disabled={!included}
-                        checked={included && product}
-                        onChange={(e) => {
-                          setProductAssetIds((prev) =>
-                            e.target.checked
-                              ? [...prev, asset.id]
-                              : prev.filter((id) => id !== asset.id)
-                          );
-                        }}
-                      />
-                      <span>This is a Product</span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ) : (
-          <p className="text-sm text-amber-700">
-            No Campaign assets attached — Story polish will proceed with warnings only.
-          </p>
-        )}
-
-        {error ? <p className="text-sm text-red-600">{error}</p> : null}
-
-        <button
-          type="button"
-          disabled={loading || !title.trim() || !idea.trim() || !outlineProfileId}
-          onClick={() => void onCreate()}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
-        >
-          {loading ? "Polishing…" : "Create & Polish Story"}
-        </button>
+        <EpisodeCreateForm assets={assets} loading={loading} error={error} onGenerate={(payload) => void onGenerate(payload)} />
+        <TapaoJomEpisodeUxFixture />
       </div>
     </AppShell>
   );

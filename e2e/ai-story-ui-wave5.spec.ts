@@ -63,10 +63,10 @@ async function authenticate(page: Page, role: "client_viewer" | "operator") {
 test("normal user follows Story, AI Polish, Review, and explicit acceptance", async ({ page }) => {
   const calls = await authenticate(page, "client_viewer");
   await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
-  await expect(page.getByRole("heading", { name: "Your Story" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Story Review" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your Episode" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Review Episode" })).toBeVisible();
   await expect(page.getByRole("button", { name: "AI Polish" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Generate Animation" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Generate Episode" })).toBeVisible();
   await expect(page.getByText("Director Thinking", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Beats", { exact: true })).toHaveCount(0);
 
@@ -96,8 +96,8 @@ test("mobile normal-user story flow remains reachable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const calls = await authenticate(page, "client_viewer");
   await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
-  await expect(page.getByRole("heading", { name: "Your Story" })).toBeInViewport();
-  const generate = page.getByRole("button", { name: "Generate Animation" });
+  await expect(page.getByRole("heading", { name: "Your Episode" })).toBeInViewport();
+  const generate = page.getByRole("button", { name: "Generate Episode" });
   await generate.scrollIntoViewIfNeeded();
   await expect(generate).toBeInViewport();
   await expect(page.locator("body")).toHaveCSS("overflow-x", /^(visible|hidden|clip|auto)$/);
@@ -207,7 +207,7 @@ test("operator reviews Scene, Cast, Location, Product, video, and QC without Pro
   await expect(page.getByTestId("generated-scene-media-preview-0")).toBeVisible();
   await expect(page.getByText("Check recommended", { exact: true })).toBeVisible();
   await expect(page.getByText("The final hand position is partly obscured.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Approve Scene" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve this moment" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Needs changes" })).toBeVisible();
   await expect(page.getByText(/fingerprint|provider task|reference budget/i)).toHaveCount(0);
   expect(calls.providerCalls()).toBe(0);
@@ -226,10 +226,11 @@ test("execution_review revisit renders Scene review, generated video, and Human 
   await mockGeneratedSceneWorkspace(page);
   await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
   await expect(page.getByTestId("scene-review-workspace")).toBeVisible();
+  await expect(page.getByTestId("episode-preview")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Generated result" })).toBeVisible();
-  await expect(page.locator("video")).toHaveCount(1);
+  await expect(page.locator("video")).toHaveCount(2);
   await expect(page.getByTestId("generated-scene-media-preview-0")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Approve Scene" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve this moment" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Needs changes" })).toBeVisible();
   expect(reviewDecisionPosts).toBe(0);
   expect(calls.providerCalls()).toBe(0);
@@ -245,7 +246,7 @@ test("mobile generated Scene review keeps evidence, video, and actions reachable
   await expect(card).toBeInViewport();
   await expect(page.getByTestId("generated-scene-media-preview-0")).toBeVisible();
   await expect(page.getByTestId("post-qc-evidence-0")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Approve Scene" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve this moment" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Needs changes" })).toBeVisible();
   expect(calls.providerCalls()).toBe(0);
 });

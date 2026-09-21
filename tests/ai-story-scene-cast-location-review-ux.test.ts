@@ -50,11 +50,11 @@ describe("AI Story Scene, Cast, Location, and generated Review product UX", () =
 
   it("implements progressive Scene review, explicit decisions, and accessible mobile-safe controls", () => {
     const component = read("apps/web/src/components/ai-story/SceneReviewWorkspacePanel.tsx");
-    for (const label of ["Who", "Where", "Product or important object", "What happens", "Generated result", "Quality review", "Approve Scene", "Needs changes", "Next Scene"])
+    for (const label of ["Who", "Where", "Product or important object", "What happens", "Generated result", "Quality review", "Approve this moment", "Needs changes", "Next moment"])
       expect(component).toContain(label);
     expect(component).toContain("sm:grid-cols-2");
     expect(component).toContain("lg:grid-cols");
-    expect(component).toContain("aria-label={`Generated video for Scene");
+    expect(component).toContain("aria-label={`Generated video for moment");
     expect(component).toContain("role=\"status\"");
     expect(component).toContain("Nothing retries automatically");
     expect(component).toContain("No approval has been assumed");
@@ -65,7 +65,7 @@ describe("AI Story Scene, Cast, Location, and generated Review product UX", () =
 
   it("translates QC and repair outcomes while hiding normal-user runtime machinery", () => {
     const component = read("apps/web/src/components/ai-story/SceneReviewWorkspacePanel.tsx");
-    for (const label of ["Quality check complete", "Check recommended", "Needs changes", "Please verify", "Try generating this Scene again", "Review the Character and reference photo"])
+    for (const label of ["Quality check complete", "Check recommended", "Needs changes", "Please verify", "Try generating this moment again", "Review the Character and reference photo"])
       expect(component).toContain(label);
     for (const exposed of ["requestFingerprint", "semanticPlanFingerprint", "providerTaskId", "referenceBudget", "Shot Recipe ID"])
       expect(component).not.toContain(exposed);
