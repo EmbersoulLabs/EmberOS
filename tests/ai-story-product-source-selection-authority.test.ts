@@ -149,7 +149,7 @@ describe("AI Story explicit Story Product source authority", () => {
 
   it("keeps Product designation empty by default and removes it when Story selection is removed", () => {
     const ui = readFileSync(
-      "apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/new/page.tsx",
+      "apps/web/src/components/ai-story/EpisodeCreateForm.tsx",
       "utf8"
     );
     expect(ui).toContain("const [productAssetIds, setProductAssetIds] = useState<string[]>([])");

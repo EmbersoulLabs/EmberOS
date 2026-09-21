@@ -119,10 +119,10 @@ describe("AI Story Outline Profile selection authority", () => {
   });
 
   it("requires an explicit UI choice independent of selected assets", () => {
-    const page = readFileSync("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/new/page.tsx", "utf8");
-    expect(page).toContain('useState<"" | "CORE" | "PRODUCT_STORY" | "COMMERCIAL_STORY">("")');
+    const page = readFileSync("apps/web/src/components/ai-story/EpisodeCreateForm.tsx", "utf8");
+    expect(page).toContain("mapEpisodeTypeToOutlineProfile");
     expect(page).toContain('name="outlineProfile"');
-    expect(page).toContain("!outlineProfileId");
+    expect(page).toContain("AI_STORY_EPISODE_USER_TYPES");
     expect(page).not.toMatch(/productAssetIds\.length[^\n]*(CORE|PRODUCT_STORY|COMMERCIAL_STORY)/);
   });
 });

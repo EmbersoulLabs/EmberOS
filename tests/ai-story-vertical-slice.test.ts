@@ -348,23 +348,27 @@ describe("AI Story vertical slice (V1)", () => {
 
     it("keeps the main AI Story entry without restoring the superseded initial Generate action", () => {
       expect(dashboard).not.toContain("RunCeoButton");
-      expect(dashboard).toContain("Create AI Story");
-      expect(dashboard).toContain("/ai-stories/new");
+      expect(dashboard).toContain("Create Episode");
+      expect(dashboard).toContain("/ai-stories/episodes/new");
       expect(dashboard).toContain("/ai-stories/");
     });
 
     it("create form collects plain-language idea and optional assets", () => {
-      expect(createPage).toContain("Story idea");
       expect(createPage).toContain("originalIdea");
       expect(createPage).toContain("assetIds");
       expect(createPage).toContain("/generate");
+      const createForm = readFileSync(
+        "apps/web/src/components/ai-story/EpisodeCreateForm.tsx",
+        "utf8"
+      );
+      expect(createForm).toContain("Story / Idea");
     });
 
     it("review page exposes the product flow and keeps planning behind diagnostics", () => {
-      expect(reviewPage).toContain("Your Story");
+      expect(reviewPage).toContain("Your Episode");
       expect(reviewPage).toContain("AI Polish");
-      expect(reviewPage).toContain("Story Review");
-      expect(reviewPage).toContain("Generate Animation");
+      expect(reviewPage).toContain("Review Episode");
+      expect(reviewPage).toContain("Generate Episode");
       expect(reviewPage).toContain("ready_for_animation");
       expect(reviewPage).toContain("story-save-state");
       expect(reviewPage).not.toContain("Save edits");
