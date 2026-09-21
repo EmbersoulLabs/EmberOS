@@ -5,9 +5,10 @@ import type { AiStoryEpisodeTimelineMoment } from "@ceo-agent/shared";
 type Props = {
   moments: readonly AiStoryEpisodeTimelineMoment[];
   visible: boolean;
+  revisionRequest?: Record<string, unknown> | null;
 };
 
-export function EpisodeDebugPanel({ moments, visible }: Props) {
+export function EpisodeDebugPanel({ moments, visible, revisionRequest }: Props) {
   if (!visible) return null;
   return (
     <details className="rounded-2xl border border-border bg-white p-4" data-testid="episode-super-admin-diagnostics">
@@ -21,6 +22,11 @@ export function EpisodeDebugPanel({ moments, visible }: Props) {
             </li>
           ))}
         </ul>
+        {revisionRequest ? (
+          <div className="mt-3 space-y-1" data-testid="episode-revision-diagnostics">
+            <p>revisionRequest {JSON.stringify(revisionRequest)}</p>
+          </div>
+        ) : null}
       </div>
     </details>
   );

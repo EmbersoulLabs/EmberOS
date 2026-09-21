@@ -70,15 +70,18 @@ export const AI_STORY_EPISODE_ACTION_CERTIFICATION = Object.freeze({
   createEpisode: "CERTIFIED",
   generateEpisodePlanning: "CERTIFIED",
   timeRangeToInternalUnitMapping: "CERTIFIED",
-  regenerateMomentExecution: "EXISTING_RETRY_OR_PRE_DISPATCH_ONLY",
-  editDialogue: BACKEND_GAP,
-  adjustEnding: BACKEND_GAP,
-  adjustPacing: BACKEND_GAP,
-  replaceReference: BACKEND_GAP,
-  costEstimate: BACKEND_GAP,
+  regenerateMomentExecution:
+    "CERTIFIED_WITH_EXISTING_COMMERCIAL_RETRY_AUTHORITY",
+  editDialogue: "CERTIFIED",
+  adjustEnding: "CERTIFIED",
+  adjustPacing: "CERTIFIED",
+  replaceReference: "CERTIFIED",
+  costEstimate: "CERTIFIED",
   actualCost: "CERTIFIED",
   partialFailureCopy: "CERTIFIED",
-  partialFailureRetry: "EXISTING_RETRY_OR_PRE_DISPATCH_ONLY",
+  partialFailureRetry: "CERTIFIED_WITH_EXISTING_RETRY_AUTHORITY",
+  costEstimateIsAuthorization: false,
+  hardcodedCostEstimate: false,
 } as const);
 
 export const AI_STORY_EPISODE_COPY = Object.freeze({
@@ -105,6 +108,9 @@ export const AI_STORY_EPISODE_COPY = Object.freeze({
     "This moment cannot be regenerated until existing retry authorization is complete.",
   costEstimateUnavailable:
     "Live Episode cost estimate is not available. Paid generation still uses existing billing confirmation at Execute.",
+  costConfirmationRequired:
+    "This revision needs commercial authorization before paid regeneration. The estimate is not spend authorization.",
+  revisionHistory: "Episode versions",
 } as const);
 
 export const NORMAL_USER_HIDDEN_LABELS = [
@@ -199,6 +205,8 @@ export type AiStoryEpisodeTimelineMoment = {
   readonly runtimeState?: string;
   readonly retryAuthorizationId?: string | null;
   readonly timeRangeAuthority?: "RECORDED" | typeof BACKEND_GAP;
+  readonly scriptEntryId?: string;
+  readonly dialogueLine?: string;
 };
 
 export type EpisodeMomentRepairAuthority =
@@ -302,6 +310,22 @@ export function formatEpisodeCostEstimateUsd(input: {
 
 export function formatEpisodeActualCostUsd(amountUsd: string): string {
   return `USD ${amountUsd}`;
+}
+
+export function formatEpisodeLiveCostEstimateUsd(input: {
+  readonly currency: string;
+  readonly estimatedExpected: string;
+  readonly estimatedMin?: string;
+  readonly estimatedMax?: string;
+}): string {
+  if (
+    input.estimatedMin &&
+    input.estimatedMax &&
+    input.estimatedMin !== input.estimatedMax
+  ) {
+    return `${input.currency} ${input.estimatedMin}–${input.estimatedMax}`;
+  }
+  return `${input.currency} ${input.estimatedExpected}`;
 }
 
 export function episodeCreateRequiresScene(): false {

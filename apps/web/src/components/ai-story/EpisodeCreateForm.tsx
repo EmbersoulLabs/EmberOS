@@ -7,6 +7,7 @@ import {
   AI_STORY_EPISODE_DURATIONS_SEC,
   AI_STORY_EPISODE_PACING,
   AI_STORY_EPISODE_USER_TYPES,
+  formatEpisodeLiveCostEstimateUsd,
   mapEpisodeTypeToOutlineProfile,
   type AiStoryEpisodeUserType,
 } from "@ceo-agent/shared";
@@ -33,6 +34,7 @@ export type EpisodeCreatePayload = {
 };
 
 type Props = {
+  campaignId: string;
   assets: AssetRow[];
   loading: boolean;
   error: string;
@@ -50,6 +52,7 @@ const TYPE_LABELS: Record<AiStoryEpisodeUserType, string> = {
 };
 
 export function EpisodeCreateForm({
+  campaignId,
   assets,
   loading,
   error,
@@ -72,9 +75,37 @@ export function EpisodeCreateForm({
   );
   const [productAssetIds, setProductAssetIds] = useState<string[]>([]);
   const [locationAssetIds, setLocationAssetIds] = useState<string[]>([]);
+  const [liveCostLabel, setLiveCostLabel] = useState<string | null>(null);
   useEffect(() => {
     setSelectedAssetIds(assets.map((asset) => asset.id));
   }, [assets]);
+  useEffect(() => {
+    const seconds = durationSec === "custom" ? customDurationSec : durationSec;
+    const unitCount = 6;
+    const durationSeconds = Math.max(4, Math.round(seconds / unitCount));
+    let cancelled = false;
+    void (async () => {
+      const res = await fetch(`/api/campaigns/${campaignId}/episode-cost-estimates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          unitCount,
+          durationSeconds,
+          aspectRatio,
+          resolution: "480p",
+          nativeAudio: nativeDialogue,
+        }),
+      });
+      const data = await res.json() as {
+        estimate?: { currency: string; estimatedExpected: string; estimatedMin: string; estimatedMax: string };
+      };
+      if (cancelled || !res.ok || !data.estimate) return;
+      setLiveCostLabel(formatEpisodeLiveCostEstimateUsd(data.estimate));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [aspectRatio, campaignId, customDurationSec, durationSec, nativeDialogue]);
   const ready = title.trim().length > 0 && idea.trim().length > 0;
 
   return (
@@ -227,9 +258,12 @@ export function EpisodeCreateForm({
         </div>
       </details>
 
-      <div className="rounded-xl border border-border bg-surface-muted/50 p-4 text-sm" data-testid="episode-cost-estimate-gap">
+      <div className="rounded-xl border border-border bg-surface-muted/50 p-4 text-sm" data-testid="episode-cost-estimate">
         <p className="font-medium text-navy">{AI_STORY_EPISODE_COPY.estimatedCost}</p>
-        <p className="mt-1 text-ink-secondary">{AI_STORY_EPISODE_COPY.costEstimateUnavailable}</p>
+        <p className="mt-1 text-ink-secondary">
+          {liveCostLabel ?? "Calculating live Episode cost from the certified Provider rate…"}
+        </p>
+        <p className="mt-1 text-xs text-ink-secondary">{AI_STORY_EPISODE_COPY.costConfirmationRequired}</p>
       </div>
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}

@@ -16,8 +16,10 @@ import {
   classifyEpisodeMomentRepair,
   episodeMomentMarker,
   formatEpisodeActualCostUsd,
+  formatEpisodeLiveCostEstimateUsd,
   resolveInternalRetryScopeFromEpisodeMoment,
   shouldExposeSceneDiagnostics,
+  type AiStoryEpisodePacing,
   type AiStoryEpisodeTimelineMoment,
 } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
@@ -25,6 +27,8 @@ import {
   StoryRuntimeClientError,
   getProductRuntimeProjection,
   postCanonicalExecute,
+  postEpisodeCostEstimate,
+  postEpisodeRevision,
   postGeneratedSceneReviewDecision,
   postPreDispatchRecovery,
   postReleaseNextEligibleScene,
@@ -63,6 +67,10 @@ export function StoryRuntimePanel({
   const [executing, setExecuting] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [liveCostLabel, setLiveCostLabel] = useState<string | null>(null);
+  const [revisionStatusLabel, setRevisionStatusLabel] = useState<string | null>(null);
+  const [revisionHistory, setRevisionHistory] = useState<{ version: number; summary: string }[]>([]);
+  const [revisionDiagnostics, setRevisionDiagnostics] = useState<Record<string, unknown> | null>(null);
   const executeInFlight = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestGen = useRef(0);
@@ -150,6 +158,40 @@ export function StoryRuntimePanel({
   useEffect(() => {
     ensurePolling(projection);
   }, [projection, ensurePolling]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await postEpisodeCostEstimate({
+          campaignId,
+          unitCount: Math.max(1, projection?.requiredSceneCount ?? 6),
+          durationSeconds: 8,
+          aspectRatio: "9:16",
+          nativeAudio: true,
+        });
+        if (!cancelled) setLiveCostLabel(formatEpisodeLiveCostEstimateUsd(result.estimate));
+      } catch {
+        if (!cancelled) setLiveCostLabel(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId, projection?.requiredSceneCount]);
+
+  async function submitRevision(body: Record<string, unknown>) {
+    try {
+      const result = await postEpisodeRevision({ campaignId, storyId, body });
+      const history = result.historyEntry as { version: number; summary: string } | undefined;
+      if (history) setRevisionHistory((current) => [...current, history]);
+      if (typeof result.userStatus === "string") setRevisionStatusLabel(result.userStatus);
+      setRevisionDiagnostics(result);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Episode revision could not be planned.");
+    }
+  }
 
   async function onExecute() {
     if (!showExecuteChrome) return;
@@ -378,6 +420,11 @@ export function StoryRuntimePanel({
             ? formatEpisodeActualCostUsd(String(projection.providerSpend.storyKnownAmount))
             : undefined
         }
+        liveCostLabel={liveCostLabel ?? undefined}
+        campaignId={campaignId}
+        storyId={storyId}
+        revisionHistory={revisionHistory}
+        revisionStatusLabel={revisionStatusLabel ?? undefined}
         moments={(projection?.generatedSceneReviews ?? []).map((scene) => ({
           startMs: 0,
           endMs: 0,
@@ -399,9 +446,56 @@ export function StoryRuntimePanel({
         }))}
         readyCount={(projection?.generatedSceneReviews ?? []).filter((scene) => scene.runtimeState !== "FAILED").length}
         onRepairMoment={(moment) => { void onRepairMoment(moment); }}
+        onEditDialogue={(moment, nextText) => {
+          void submitRevision({
+            revisionType: "EDIT_DIALOGUE",
+            target: { kind: "MOMENT", generationUnitId: moment.generationUnitId, sceneId: moment.sceneId },
+            requestedChange: {
+              kind: "DIALOGUE_TEXT",
+              entryId: moment.scriptEntryId ?? moment.generationUnitId,
+              previousText: moment.dialogueLine ?? "",
+              nextText,
+            },
+          });
+        }}
+        onAdjustEnding={(intent) => {
+          void submitRevision({
+            revisionType: "ADJUST_ENDING",
+            target: { kind: "ENDING" },
+            requestedChange: {
+              kind: "ENDING_INTENT",
+              previousIntent: "brand-focused ending",
+              nextIntent: intent,
+            },
+          });
+        }}
+        onAdjustPacing={(value: AiStoryEpisodePacing) => {
+          void submitRevision({
+            revisionType: "ADJUST_PACING",
+            target: { kind: "EPISODE_PACING" },
+            requestedChange: {
+              kind: "EPISODE_PACING",
+              previousPacing: "NATURAL",
+              nextPacing: value,
+            },
+          });
+        }}
+        onReplaceReference={(moment) => {
+          void submitRevision({
+            revisionType: "REPLACE_REFERENCE",
+            target: { kind: "MOMENT", generationUnitId: moment.generationUnitId },
+            requestedChange: {
+              kind: "REFERENCE_BINDING",
+              referenceKind: "PRODUCT",
+              previousAuthorityId: moment.generationUnitId,
+              nextAuthorityId: moment.generationUnitId,
+            },
+          });
+        }}
       />
       <EpisodeDebugPanel
         visible={shouldExposeSceneDiagnostics({ superAdmin: workspaceRole === "admin", debugMode: false })}
+        revisionRequest={revisionDiagnostics}
         moments={(projection?.generatedSceneReviews ?? []).map((scene) => ({
           startMs: scene.sceneOrder * 8000,
           endMs: (scene.sceneOrder + 1) * 8000,

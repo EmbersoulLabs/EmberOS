@@ -94,18 +94,20 @@ describe("AI Story Episode-first UI", () => {
     expect(preview).toContain("adjustEnding");
     expect(preview).toContain("adjustPacing");
     expect(preview).toContain("nativeCharacterDialogue");
-    expect(preview).toContain("episode-edit-dialogue-gap");
-    expect(preview).toContain("episode-adjust-ending-gap");
-    expect(preview).toContain("episode-adjust-pacing-gap");
-    expect(preview).not.toContain("onEditDialogue");
+    expect(preview).toContain("onEditDialogue");
+    expect(preview).toContain("onAdjustEnding");
+    expect(preview).toContain("onAdjustPacing");
+    expect(preview).not.toContain("episode-edit-dialogue-gap");
+    expect(preview).not.toContain("episode-adjust-ending-gap");
+    expect(preview).not.toContain("episode-adjust-pacing-gap");
     expect(formatEpisodeCostEstimateUsd({ lowUsd: "3.20", highUsd: "3.80" })).toBe(
       "USD 3.20–3.80"
     );
     expect(formatEpisodeActualCostUsd("3.42")).toBe("USD 3.42");
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimate).toBe(BACKEND_GAP);
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimate).toBe("CERTIFIED");
     expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.actualCost).toBe("CERTIFIED");
     const create = read("apps/web/src/components/ai-story/EpisodeCreateForm.tsx");
-    expect(create).toContain("episode-cost-estimate-gap");
+    expect(create).toContain("episode-cost-estimate");
     expect(create).not.toContain("episode-cost-confirmation");
     expect(create).not.toContain("3.20");
     expect(create).toContain("References");
@@ -155,12 +157,13 @@ describe("AI Story Episode-first UI", () => {
     expect(runtime).toContain("classifyEpisodeMomentRepair");
   });
 
-  it("EDIT_DIALOGUE, ADJUST_ENDING, and cost estimate are BACKEND_GAP", () => {
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.editDialogue).toBe(BACKEND_GAP);
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustEnding).toBe(BACKEND_GAP);
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustPacing).toBe(BACKEND_GAP);
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.replaceReference).toBe(BACKEND_GAP);
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimate).toBe(BACKEND_GAP);
+  it("EDIT_DIALOGUE, ADJUST_ENDING, and cost estimate are certified through revision authority", () => {
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.editDialogue).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustEnding).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustPacing).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.replaceReference).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimate).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimateIsAuthorization).toBe(false);
     expect(AI_STORY_EPISODE_COPY.backendGap).toContain("existing backend authority");
     expect(composeEpisodeOriginalIdea({
       originalIdea: "A local shop host shows what you can tapao.",
@@ -180,7 +183,7 @@ describe("AI Story Episode-first UI", () => {
     );
     expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.partialFailureCopy).toBe("CERTIFIED");
     expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.partialFailureRetry).toBe(
-      "EXISTING_RETRY_OR_PRE_DISPATCH_ONLY"
+      "CERTIFIED_WITH_EXISTING_RETRY_AUTHORITY"
     );
     const preview = read("apps/web/src/components/ai-story/EpisodePreviewPanel.tsx");
     expect(preview).toContain("retryFailedMoment");
