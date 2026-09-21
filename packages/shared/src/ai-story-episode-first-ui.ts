@@ -72,10 +72,10 @@ export const AI_STORY_EPISODE_ACTION_CERTIFICATION = Object.freeze({
   timeRangeToInternalUnitMapping: "CERTIFIED",
   regenerateMomentExecution:
     "CERTIFIED_WITH_EXISTING_COMMERCIAL_RETRY_AUTHORITY",
-  editDialogue: "CERTIFIED",
-  adjustEnding: "CERTIFIED",
-  adjustPacing: "CERTIFIED",
-  replaceReference: "CERTIFIED",
+  editDialogue: "DURABLE_RUNTIME_CERTIFIED",
+  adjustEnding: "DURABLE_RUNTIME_CERTIFIED",
+  adjustPacing: "DURABLE_RUNTIME_CERTIFIED",
+  replaceReference: "DURABLE_RUNTIME_CERTIFIED",
   costEstimate: "CERTIFIED",
   actualCost: "CERTIFIED",
   partialFailureCopy: "CERTIFIED",
@@ -111,6 +111,9 @@ export const AI_STORY_EPISODE_COPY = Object.freeze({
   costConfirmationRequired:
     "This revision needs commercial authorization before paid regeneration. The estimate is not spend authorization.",
   revisionHistory: "Episode versions",
+  revisionSaved: "Revision saved",
+  estimatedRegenerationCost: "Estimated regeneration cost",
+  authorizeRegeneration: "Authorize regeneration",
 } as const);
 
 export const NORMAL_USER_HIDDEN_LABELS = [

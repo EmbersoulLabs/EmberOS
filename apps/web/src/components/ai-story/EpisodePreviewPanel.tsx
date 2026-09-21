@@ -33,10 +33,15 @@ type Props = {
   revisionCapability?: AiStoryEpisodeRevisionCapability;
   revisionHistory?: readonly HistoryEntry[];
   revisionStatusLabel?: string;
+  revisionSaved?: boolean;
+  regenerationCostLabel?: string;
+  currentVersionLabel?: string;
+  previousVersionLabel?: string;
   onEditDialogue?: (moment: AiStoryEpisodeTimelineMoment, nextText: string) => void;
   onAdjustEnding?: (intent: (typeof AI_STORY_EPISODE_ENDING_INTENTS)[number]) => void;
   onAdjustPacing?: (pacing: AiStoryEpisodePacing) => void;
   onReplaceReference?: (moment: AiStoryEpisodeTimelineMoment) => void;
+  onAuthorizeRegeneration?: () => void;
 };
 
 export function EpisodePreviewPanel({
@@ -54,10 +59,15 @@ export function EpisodePreviewPanel({
   revisionCapability = aiStoryEpisodeRevisionCapability(),
   revisionHistory = [],
   revisionStatusLabel,
+  revisionSaved,
+  regenerationCostLabel,
+  currentVersionLabel,
+  previousVersionLabel,
   onEditDialogue,
   onAdjustEnding,
   onAdjustPacing,
   onReplaceReference,
+  onAuthorizeRegeneration,
 }: Props) {
   const [rangeStart, setRangeStart] = useState("00:17");
   const [rangeEnd, setRangeEnd] = useState("00:24");
@@ -133,6 +143,30 @@ export function EpisodePreviewPanel({
         {actualCostLabel ? <p className="text-sm font-medium text-navy">Actual generation cost: {actualCostLabel}</p> : null}
         {revisionStatusLabel ? (
           <p className="text-sm text-ink-secondary" data-testid="episode-revision-status">{revisionStatusLabel}</p>
+        ) : null}
+        {currentVersionLabel ? (
+          <p className="text-sm text-navy" data-testid="episode-current-version">{currentVersionLabel}</p>
+        ) : null}
+        {previousVersionLabel ? (
+          <p className="text-xs text-ink-secondary" data-testid="episode-previous-version">{previousVersionLabel}</p>
+        ) : null}
+        {revisionSaved ? (
+          <div className="rounded-xl border border-border p-3" data-testid="episode-revision-saved">
+            <p className="text-sm font-medium text-navy">{AI_STORY_EPISODE_COPY.revisionSaved}</p>
+            {regenerationCostLabel ? (
+              <p className="mt-1 text-sm text-navy" data-testid="episode-revision-regeneration-cost">
+                {AI_STORY_EPISODE_COPY.estimatedRegenerationCost}: {regenerationCostLabel}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              className="mt-2 min-h-11 rounded-lg border border-border px-4 text-sm"
+              data-testid="episode-authorize-regeneration"
+              onClick={() => onAuthorizeRegeneration?.()}
+            >
+              {AI_STORY_EPISODE_COPY.authorizeRegeneration}
+            </button>
+          </div>
         ) : null}
       </div>
       <div className="rounded-xl border border-border p-3" data-testid="episode-timeline">

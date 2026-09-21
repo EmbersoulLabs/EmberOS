@@ -158,10 +158,10 @@ describe("AI Story Episode-first UI", () => {
   });
 
   it("EDIT_DIALOGUE, ADJUST_ENDING, and cost estimate are certified through revision authority", () => {
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.editDialogue).toBe("CERTIFIED");
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustEnding).toBe("CERTIFIED");
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustPacing).toBe("CERTIFIED");
-    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.replaceReference).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.editDialogue).toBe("DURABLE_RUNTIME_CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustEnding).toBe("DURABLE_RUNTIME_CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustPacing).toBe("DURABLE_RUNTIME_CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.replaceReference).toBe("DURABLE_RUNTIME_CERTIFIED");
     expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimate).toBe("CERTIFIED");
     expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimateIsAuthorization).toBe(false);
     expect(AI_STORY_EPISODE_COPY.backendGap).toContain("existing backend authority");

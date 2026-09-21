@@ -71,6 +71,10 @@ export function StoryRuntimePanel({
   const [revisionStatusLabel, setRevisionStatusLabel] = useState<string | null>(null);
   const [revisionHistory, setRevisionHistory] = useState<{ version: number; summary: string }[]>([]);
   const [revisionDiagnostics, setRevisionDiagnostics] = useState<Record<string, unknown> | null>(null);
+  const [revisionSaved, setRevisionSaved] = useState(false);
+  const [regenerationCostLabel, setRegenerationCostLabel] = useState<string | null>(null);
+  const [currentVersionLabel, setCurrentVersionLabel] = useState<string | null>(null);
+  const [previousVersionLabel, setPreviousVersionLabel] = useState<string | null>(null);
   const executeInFlight = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestGen = useRef(0);
@@ -182,10 +186,30 @@ export function StoryRuntimePanel({
 
   async function submitRevision(body: Record<string, unknown>) {
     try {
-      const result = await postEpisodeRevision({ campaignId, storyId, body });
+      const result = await postEpisodeRevision({
+        campaignId,
+        storyId,
+        body: { persist: true, ...body },
+      });
       const history = result.historyEntry as { version: number; summary: string } | undefined;
       if (history) setRevisionHistory((current) => [...current, history]);
       if (typeof result.userStatus === "string") setRevisionStatusLabel(result.userStatus);
+      if (result.persisted === true) {
+        const estimate = result.revisionCostEstimate as { currency?: string; estimatedExpected?: string } | undefined;
+        setRevisionSaved(true);
+        setRegenerationCostLabel(
+          estimate?.estimatedExpected
+            ? `${estimate.currency ?? "USD"} ${estimate.estimatedExpected}`
+            : null
+        );
+        const current = result.current as { revisionVersion?: number } | undefined;
+        if (current?.revisionVersion) {
+          setCurrentVersionLabel(`Current version: v${current.revisionVersion}`);
+          if (current.revisionVersion > 1) {
+            setPreviousVersionLabel(`Previous: v${current.revisionVersion - 1}`);
+          }
+        }
+      }
       setRevisionDiagnostics(result);
       setError(null);
     } catch (err) {
@@ -425,6 +449,10 @@ export function StoryRuntimePanel({
         storyId={storyId}
         revisionHistory={revisionHistory}
         revisionStatusLabel={revisionStatusLabel ?? undefined}
+        revisionSaved={revisionSaved}
+        regenerationCostLabel={regenerationCostLabel ?? undefined}
+        currentVersionLabel={currentVersionLabel ?? undefined}
+        previousVersionLabel={previousVersionLabel ?? undefined}
         moments={(projection?.generatedSceneReviews ?? []).map((scene) => ({
           startMs: 0,
           endMs: 0,

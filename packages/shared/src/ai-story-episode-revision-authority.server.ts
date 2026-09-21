@@ -70,7 +70,8 @@ export class AiStoryEpisodeRevisionError extends Error {
       | typeof REGENERATE_APPROVED_MOMENT_DENIED
       | "COMMERCIAL_AUTHORIZATION_REQUIRED"
       | "COST_ESTIMATE_UNSUPPORTED_RESOLUTION"
-      | "PACING_SOURCE_MEDIA_INSUFFICIENT",
+      | "PACING_SOURCE_MEDIA_INSUFFICIENT"
+      | "REVISION_SOURCE_VERSION_CONFLICT",
     message: string
   ) {
     super(message);
