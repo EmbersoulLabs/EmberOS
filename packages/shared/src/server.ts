@@ -27,6 +27,7 @@ export * from "./ai-story-pre-generation-qc.server";
 export * from "./ai-story-product-story-profile.server";
 export * from "./ai-story-commercial-story-profile.server";
 export * from "./ai-story-generation-unit.server";
+export * from "./ai-story-narrative-editorial-plan.server";
 export * from "./ai-story-product-background-suitability";
 export * from "./ai-story-product-background-suitability.server";
 export * from "./ai-story-product-visual-material-selection";
