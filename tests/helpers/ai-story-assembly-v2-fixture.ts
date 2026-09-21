@@ -51,6 +51,8 @@ export function buildAssemblyV2Fixture(input: {
   base?: number;
   frozen?: boolean;
   nativeAudioSourceIndexes?: readonly number[];
+  outputWidth?: number;
+  outputHeight?: number;
 }) {
   const base = input.base ?? 1_000;
   const storyId = id(base + 1);
@@ -328,8 +330,8 @@ export function buildAssemblyV2Fixture(input: {
     generationPlans,
     acceptedSourceMedia,
     outputProfile: {
-      width: 320,
-      height: 180,
+      width: input.outputWidth ?? 320,
+      height: input.outputHeight ?? 180,
       frameRate: 30,
       videoCodec: "h264",
       pixelFormat: "yuv420p",

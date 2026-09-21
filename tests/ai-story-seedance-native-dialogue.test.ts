@@ -4,12 +4,19 @@ import {
   AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION,
   AiStoryGenerationUnitSchema,
   AiStoryScriptVersionSchema,
+  SEEDANCE_NATIVE_DIALOGUE_CERTIFICATION_EXACT_TEXT,
+  SEEDANCE_V1_AUDIO_SILENCE_COMPATIBILITY,
+  VISIBLE_DIALOGUE_DETACHED_TTS_CONFLICT_PROTECTION,
   type AiStoryGenerationUnit,
   type AiStoryScriptVersion,
+  type AiStorySpeechSegment,
 } from "@ceo-agent/shared";
 import {
+  AiStoryNativeDialogueAuthorityError,
   assertAiStoryNativeDialogueMatchesFrozenScript,
+  assertVisibleDialogueAudioAuthorityExclusive,
   compileAiStoryCharacterDialoguePerformanceAuthority,
+  compileAiStoryTtsExecutionRequest,
   sha256CanonicalIntegrityHash,
 } from "@ceo-agent/shared/server";
 import {
@@ -20,8 +27,17 @@ import {
   seedanceCapabilityDetails,
   seedanceSupportsNativeAudio,
   validateAiStoryCompiledRequestFingerprint,
+  AiStoryTtsMemoryCache,
+  createDeterministicFakeTtsAdapter,
+  executeAiStoryTtsRequest,
 } from "../packages/agents/src/ai-story";
 import { makePhase2aCompilation } from "./helpers/ai-story-phase-2a";
+import {
+  compileSeedanceNativeDialogueCertificationRequest,
+  estimateSeedanceNativeDialogueCertCostUsd,
+  SEEDANCE_NATIVE_DIALOGUE_CERT_DURATION_SEC,
+  SEEDANCE_NATIVE_DIALOGUE_CERT_MAX_SPEND_USD,
+} from "./helpers/ai-story-seedance-native-dialogue-cert";
 
 const id = (n: number) =>
   `da000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
@@ -87,7 +103,13 @@ function baseRequest(mode: "T2V" | "I2V" = "T2V") {
   });
 }
 
-function frozenAuthorityFixture(base = baseRequest()): {
+function frozenAuthorityFixture(
+  base = baseRequest(),
+  options: {
+    readonly line?: string;
+    readonly language?: "en-MY" | "zh-MY" | "en-SG" | "zh-SG" | "ms-MY";
+  } = {}
+): {
   script: AiStoryScriptVersion;
   unit: AiStoryGenerationUnit;
   entryId: string;
@@ -202,9 +224,9 @@ function frozenAuthorityFixture(base = baseRequest()): {
             durationRange: { minSeconds: 2, maxSeconds: 5 },
             type: "DIALOGUE" as const,
             speakerId: characterId,
-            line: "Eh, this one looks quite good.",
+            line: options.line ?? "Eh, this one looks quite good.",
             deliveryOrSubtext: "Friendly spontaneous discovery",
-            language: "en-MY",
+            language: options.language ?? "en-MY",
           },
         ],
         characterIds: [characterId],
@@ -263,6 +285,85 @@ function dialogueAuthority() {
   return { base, fixture, authority };
 }
 
+function detachedTtsSegment(
+  authority: ReturnType<typeof compileAiStoryCharacterDialoguePerformanceAuthority>
+): AiStorySpeechSegment {
+  return {
+    speechSegmentId: id(40),
+    sourceScriptEntryId: authority.dialogueEntryId,
+    speakerAuthorityId: authority.characterId,
+    speechRole: "DIALOGUE",
+    text: authority.exactText,
+    primaryLocale: authority.primaryLocale,
+    secondaryLocales: [...authority.secondaryLocales],
+    codeSwitchPolicy: authority.codeSwitchPolicy,
+    deliveryStyle: authority.deliveryStyle,
+    emotionIntent: authority.emotionIntent,
+    paceIntent: authority.paceIntent,
+    voiceSelection: {
+      voiceCapabilityId: id(41),
+      providerVoiceRef: "local-sg-my",
+      genderPresentation: null,
+      ageRangePresentation: null,
+      brandTone: "Local SME warmth",
+    },
+    timelineAnchor: {
+      timelineEntryId: id(42),
+      relation: "SHOT_START",
+      offsetMs: 0,
+    },
+    startIntent: "AT_ANCHOR",
+    endIntent: "NATURAL_END",
+    jCutIntent: {
+      enabled: false,
+      overlapMs: 0,
+      semanticRationale: null,
+      allowCrossScene: true,
+    },
+    lCutIntent: {
+      enabled: false,
+      overlapMs: 0,
+      semanticRationale: null,
+      allowCrossScene: true,
+    },
+    allowSpeechOverlap: false,
+    subtitleBinding: { enabled: true, exactText: authority.exactText },
+    mustPreserve: ["Exact frozen Script text"],
+    mustAvoid: ["Detached TTS"],
+  };
+}
+
+function fakeVoiceCapability() {
+  return {
+    voiceCapabilityId: id(41),
+    providerCapabilityRef: "fake-local/sg-my-v1",
+    providerId: "fake-local",
+    providerModel: "fixture-voice-v1",
+    providerVoiceRef: "local-sg-my",
+    supportedLocales: ["en-SG", "en-MY", "ms-MY", "zh-SG", "zh-MY"] as const,
+    supportedDeliveryStyles: [
+      "STANDARD_NEUTRAL",
+      "MALAYSIAN_CONVERSATIONAL",
+      "MANDARIN_MY_CONVERSATIONAL",
+    ] as const,
+    supportedCodeSwitchPairs: [
+      { primaryLocale: "zh-MY" as const, secondaryLocale: "en-MY" as const },
+    ],
+    supportsSSML: false,
+    supportsProsodyControl: true,
+    supportsEmotionControl: false,
+    supportsSpeedControl: true,
+    supportsPitchControl: false,
+    supportedGenderPresentations: ["NEUTRAL"] as const,
+    supportedAgeRangePresentations: ["ADULT"] as const,
+    supportedBrandTones: ["Local SME warmth"],
+    maxCharacters: 4096,
+    audioFormats: ["wav"] as const,
+    certificationStatus: "CAPABILITY_CERTIFIED" as const,
+    version: 1,
+  };
+}
+
 describe("Seedance native audiovisual character dialogue", () => {
   it("records exact ModelArk API capability without certifying human performance", () => {
     const capability = buildSeedanceNativeAudioCapability();
@@ -274,8 +375,38 @@ describe("Seedance native audiovisual character dialogue", () => {
     expect(capability.dialogueLipSyncSupport).toBe(
       "HUMAN_REVIEW_REQUIRED"
     );
-    expect(capability.realProviderCertification).toBe("NOT_RUN");
+    expect(capability.realProviderCertification).toBe(
+      "TECHNICAL_PASS_HUMAN_REVIEW_REQUIRED"
+    );
     expect(seedanceCapabilityDetails().legacyVideoOnlyGenerateAudio).toBe(false);
+    expect(seedanceCapabilityDetails().audioSupport).toBe(false);
+    expect(SEEDANCE_V1_AUDIO_SILENCE_COMPATIBILITY).toBe("CERTIFIED");
+  });
+
+  it("keeps historical V1 Seedance requests silent and fingerprint-stable", async () => {
+    const base = baseRequest();
+    const historicalFingerprint = base.requestFingerprint;
+    expect(base.contractVersion).toBe(
+      AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION
+    );
+    expect(base.structuredRequest.generateAudio).toBe(false);
+    expect(base.blockedCapabilities).toContain("AUDIO");
+    expect("nativeAvRequest" in base).toBe(false);
+    expect(base.requestFingerprint).toBe(historicalFingerprint);
+    const wire = await previewAiStorySeedanceWireRequest({
+      request: base,
+      assetAccess: {
+        async resolveHttpsAsset() {
+          throw new Error("T2V fixture has no image");
+        },
+      },
+    });
+    expect(wire.generate_audio).toBe(false);
+    expect(wire.model).toBe("dreamina-seedance-2-0-260128");
+    expect(seedanceCapabilityDetails().audioSupport).toBe(false);
+    expect(seedanceCapabilityDetails().legacyVideoOnlyGenerateAudio).toBe(
+      false
+    );
   });
 
   it("binds exact frozen Script, Character, Shot, and Generation Unit authority", () => {
@@ -294,6 +425,57 @@ describe("Seedance native audiovisual character dialogue", () => {
     ).not.toThrow();
   });
 
+  it("preserves the exact certification Script text without dialect invention", () => {
+    const fixture = frozenAuthorityFixture(baseRequest(), {
+      line: SEEDANCE_NATIVE_DIALOGUE_CERTIFICATION_EXACT_TEXT,
+      language: "zh-MY",
+    });
+    const authority = compileAiStoryCharacterDialoguePerformanceAuthority({
+      script: fixture.script,
+      generationUnit: fixture.unit,
+      scriptSceneId: fixture.unit.sceneId,
+      dialogueEntryId: fixture.entryId,
+      primaryLocale: "zh-MY",
+      secondaryLocales: ["en-MY"],
+      codeSwitchPolicy: {
+        mode: "SCRIPT_AUTHORIZED",
+        allowedLocales: ["zh-MY", "en-MY"],
+      },
+      deliveryStyle: "MANDARIN_MY_CONVERSATIONAL",
+      performanceIntent: "MALAYSIAN_CHINESE_CONVERSATIONAL",
+      emotionIntent: "Pleasantly surprised",
+      speechIntensity: "NATURAL",
+      paceIntent: "NATURAL",
+    });
+    expect(authority.exactText).toBe(
+      SEEDANCE_NATIVE_DIALOGUE_CERTIFICATION_EXACT_TEXT
+    );
+    expect(authority.exactText).not.toMatch(/\b(lah|lor|leh|ah|wah)\b/i);
+    expect(authority.primaryLocale).toBe("zh-MY");
+    expect(authority.secondaryLocales).toEqual(["en-MY"]);
+    expect(authority.codeSwitchPolicy.mode).toBe("SCRIPT_AUTHORIZED");
+    expect(authority.deliveryStyle).toBe("MANDARIN_MY_CONVERSATIONAL");
+    expect(() =>
+      compileAiStoryCharacterDialoguePerformanceAuthority({
+        script: fixture.script,
+        generationUnit: fixture.unit,
+        scriptSceneId: fixture.unit.sceneId,
+        dialogueEntryId: fixture.entryId,
+        primaryLocale: "zh-MY",
+        secondaryLocales: ["en-MY"],
+        codeSwitchPolicy: {
+          mode: "SCRIPT_AUTHORIZED",
+          allowedLocales: ["zh-MY", "en-MY"],
+        },
+        deliveryStyle: "MANDARIN_MY_CONVERSATIONAL",
+        performanceIntent: "MALAYSIAN_CHINESE_CONVERSATIONAL",
+        emotionIntent: "Pleasantly surprised",
+        speechIntensity: "NATURAL",
+        paceIntent: "NATURAL",
+      })
+    ).not.toThrow();
+  });
+
   it("compiles additive V2 NATIVE_AV authority and preserves historical V1 fingerprints", async () => {
     const { base, authority } = dialogueAuthority();
     const historicalFingerprint = base.requestFingerprint;
@@ -306,6 +488,7 @@ describe("Seedance native audiovisual character dialogue", () => {
       AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION
     );
     expect(base.structuredRequest.generateAudio).toBe(false);
+    expect(base.blockedCapabilities).toContain("AUDIO");
     expect(base.requestFingerprint).toBe(historicalFingerprint);
     expect(request.contractVersion).toBe(
       AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION
@@ -350,6 +533,77 @@ describe("Seedance native audiovisual character dialogue", () => {
         capability: buildSeedanceNativeAudioCapability(),
       })
     ).toThrow();
+  });
+
+  it("blocks detached TTS for the same visible native-AV dialogue before Provider submission", async () => {
+    const { authority } = dialogueAuthority();
+    const segment = detachedTtsSegment(authority);
+    const capability = fakeVoiceCapability();
+    let providerCalled = false;
+    expect(VISIBLE_DIALOGUE_DETACHED_TTS_CONFLICT_PROTECTION).toBe(
+      "CERTIFIED"
+    );
+    expect(() =>
+      assertVisibleDialogueAudioAuthorityExclusive({
+        nativeDialogueAuthorities: [authority],
+        detachedTtsBindings: [{ dialogueEntryId: authority.dialogueEntryId }],
+      })
+    ).toThrow(AiStoryNativeDialogueAuthorityError);
+    try {
+      assertVisibleDialogueAudioAuthorityExclusive({
+        nativeDialogueAuthorities: [authority],
+        detachedTtsBindings: [{ dialogueEntryId: authority.dialogueEntryId }],
+      });
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "VISIBLE_DIALOGUE_AUDIO_AUTHORITY_CONFLICT",
+      });
+    }
+    expect(() =>
+      compileAiStoryTtsExecutionRequest({
+        segment,
+        capability,
+        outputFormat: "wav",
+        nativeDialogueAuthorities: [authority],
+      })
+    ).toThrow(/VISIBLE_DIALOGUE_AUDIO_AUTHORITY_CONFLICT|cannot also bind detached TTS/i);
+    expect(() =>
+      compileImmutableSeedanceNativeAvRequest({
+        baseRequest: baseRequest(),
+        dialogueAuthority: authority,
+        capability: buildSeedanceNativeAudioCapability(),
+        detachedTtsBindings: [{ dialogueEntryId: authority.dialogueEntryId }],
+      })
+    ).toThrow(/VISIBLE_DIALOGUE_AUDIO_AUTHORITY_CONFLICT|cannot also bind detached TTS/i);
+    await expect(
+      executeAiStoryTtsRequest({
+        request: compileAiStoryTtsExecutionRequest({
+          segment,
+          capability,
+          outputFormat: "wav",
+        }),
+        capability,
+        adapter: createDeterministicFakeTtsAdapter({
+          bytesForRequest: async () => {
+            providerCalled = true;
+            return {
+              bytes: Buffer.from("tts"),
+              durationMs: 1000,
+              sampleRate: 48000,
+              channelCount: 2,
+            };
+          },
+          onExecute: () => {
+            providerCalled = true;
+          },
+        }),
+        cache: new AiStoryTtsMemoryCache(),
+        nativeDialogueAuthorities: [authority],
+      })
+    ).rejects.toMatchObject({
+      code: "VISIBLE_DIALOGUE_AUDIO_AUTHORITY_CONFLICT",
+    });
+    expect(providerCalled).toBe(false);
   });
 
   it("supports one authorized reference image together with native audio", async () => {
@@ -419,5 +673,44 @@ describe("Seedance native audiovisual character dialogue", () => {
         nativeAvMode: "VIDEO_ONLY",
       }).success
     ).toBe(false);
+  });
+
+  it("compiles the bounded paid-certification native AV request without a Provider call", async () => {
+    const compiled = compileSeedanceNativeDialogueCertificationRequest();
+    expect(compiled.exactText).toBe(
+      SEEDANCE_NATIVE_DIALOGUE_CERTIFICATION_EXACT_TEXT
+    );
+    expect(compiled.baseRequest.structuredRequest.generateAudio).toBe(false);
+    expect(compiled.baseRequest.blockedCapabilities).toContain("AUDIO");
+    expect(compiled.request.structuredRequest.generateAudio).toBe(true);
+    expect(compiled.request.structuredRequest.duration).toBe(
+      SEEDANCE_NATIVE_DIALOGUE_CERT_DURATION_SEC
+    );
+    expect(compiled.request.contractVersion).toBe(
+      AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION
+    );
+    if (
+      compiled.request.contractVersion ===
+      AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION
+    ) {
+      expect(compiled.request.structuredRequest.audioMode).toBe("NATIVE_AV");
+    }
+    expect(
+      Number(estimateSeedanceNativeDialogueCertCostUsd(8))
+    ).toBeLessThanOrEqual(Number(SEEDANCE_NATIVE_DIALOGUE_CERT_MAX_SPEND_USD));
+    const wire = await previewAiStorySeedanceWireRequest({
+      request: compiled.request,
+      assetAccess: {
+        async resolveHttpsAsset() {
+          throw new Error("T2V fixture has no image");
+        },
+      },
+    });
+    expect(wire.generate_audio).toBe(true);
+    expect(wire.model).toBe("dreamina-seedance-2-0-260128");
+    expect(wire.duration).toBe(8);
+    expect(JSON.stringify(wire.content)).toContain(
+      SEEDANCE_NATIVE_DIALOGUE_CERTIFICATION_EXACT_TEXT
+    );
   });
 });

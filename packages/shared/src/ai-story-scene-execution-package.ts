@@ -11,6 +11,8 @@ import { AiStoryCharacterDialoguePerformanceAuthoritySchema } from "./ai-story-n
 export const AI_STORY_SCENE_EXECUTION_PACKAGE_CONTRACT_VERSION = "ai-story-scene-execution-package.v1" as const;
 export const AI_STORY_SEMANTIC_PLAN_CONTRACT_VERSION = "ai-story-seedance-semantic-plan.v1" as const;
 export const AI_STORY_SEEDANCE_MAPPING_VERSION = "seedance-director-adapter.v1" as const;
+export const AI_STORY_SEEDANCE_NATIVE_AV_MAPPING_VERSION =
+  "seedance-director-adapter.v2-native-av" as const;
 export const AI_STORY_SEEDANCE_CAPABILITY_CONTRACT_VERSION = "seedance-modelark-2026-08-29.v1" as const;
 export const AI_STORY_SCENE_EXECUTION_MODES = ["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"] as const;
 export const AI_STORY_REFERENCE_AUTHORITY_CLASSES = ["REQUIRED", "PREFERRED", "OPTIONAL"] as const;

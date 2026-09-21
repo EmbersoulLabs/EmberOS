@@ -19,11 +19,16 @@ export const COMMERCIAL_PAYOFF_MEDIA_EXECUTION = "CERTIFIED" as const;
 export const MULTI_SHOT_FINAL_ASSEMBLY = "CERTIFIED" as const;
 export const ASSEMBLY_V1_BACKWARD_COMPATIBILITY = "CERTIFIED" as const;
 export const FINAL_STORY_ASSEMBLY_V2_VIDEO_ONLY = true as const;
-export const ASSEMBLY_V2_GENERATES_AUDIO = true as const;
-export const NATIVE_DIALOGUE_ASSEMBLY_PRESERVATION =
-  "PROVIDER_FREE_CERTIFIED_REAL_PROVIDER_PENDING" as const;
-export const AUDIO_VIDEO_TRIM_SYNC =
-  "PROVIDER_FREE_CERTIFIED_REAL_PROVIDER_PENDING" as const;
+/** Assembly V2 never generates native dialogue audio. Provider is the generator. */
+export const ASSEMBLY_GENERATES_NATIVE_AUDIO = false as const;
+export const ASSEMBLY_V2_GENERATES_AUDIO = false as const;
+export const ASSEMBLY_V2_PRESERVES_NATIVE_AUDIO = true as const;
+export const ASSEMBLY_V2_PRESERVES_NATIVE_SOURCE_AUDIO = true as const;
+export const ASSEMBLY_V2_TRIMS_NATIVE_AUDIO_IN_SYNC_WITH_VIDEO = true as const;
+export const ASSEMBLY_V2_ORDERS_NATIVE_AUDIO_WITH_EDITORIAL_TIMELINE = true as const;
+export const ASSEMBLY_V2_MUXES_NATIVE_AUDIO_IN_FINAL_OUTPUT = true as const;
+export const NATIVE_DIALOGUE_AUDIO_PRESERVATION = "CERTIFIED" as const;
+export const AUDIO_VIDEO_TRIM_SYNC = "CERTIFIED" as const;
 export const ASSEMBLY_V2_DISPATCHES_PROVIDER = false as const;
 export const ASSEMBLY_V2_CHANGES_COMMERCIAL_AUTHORITY = false as const;
 export const READY_FOR_ASSEMBLY_V2_REVIEW = "PASS" as const;

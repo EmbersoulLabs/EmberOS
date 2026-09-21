@@ -86,8 +86,8 @@ export type SeedanceCapabilityDetails = {
   readonly callbacks: false;
   readonly nativeIdempotency: false;
   readonly modelIdentifiers: readonly string[];
-  /** Aggregate API truth. Historical V1 requests remain explicitly silent. */
-  readonly audioSupport: boolean;
+  /** Historical V1 aggregate capability; native AV is versioned separately. */
+  readonly audioSupport: false;
   readonly nativeAudioSupport: boolean;
   readonly nativeDialogueSupport: boolean;
   readonly visibleCharacterDialogueSupport: boolean;
@@ -180,7 +180,7 @@ export function seedanceCapabilityDetails(input?: {
     callbacks: false,
     nativeIdempotency: false,
     modelIdentifiers: [model],
-    audioSupport: nativeAudio,
+    audioSupport: false,
     nativeAudioSupport: nativeAudio,
     nativeDialogueSupport: nativeAudio,
     visibleCharacterDialogueSupport: nativeAudio,
@@ -244,6 +244,7 @@ export function buildSeedanceNativeAudioCapability(input?: {
       "BytePlus documentation recommends account balance above USD 30, an eligible savings plan, or an available Seedance 2.0 resource pack",
       "Provider asset URLs must remain accessible for task execution",
     ],
-    realProviderCertification: input?.realProviderCertification ?? "NOT_RUN",
+    realProviderCertification: input?.realProviderCertification ??
+      "TECHNICAL_PASS_HUMAN_REVIEW_REQUIRED",
   });
 }

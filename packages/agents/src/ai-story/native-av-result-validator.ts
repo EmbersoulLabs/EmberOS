@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import {
   AI_STORY_NATIVE_AV_RESULT_CONTRACT_VERSION,
   AiStoryNativeAvResultEvidenceSchema,
+  SEEDANCE_NATIVE_AUDIO_MAX_DURATION_SEC,
+  SEEDANCE_NATIVE_AUDIO_MIN_DURATION_SEC,
   type AiStoryNativeAvHumanPerformanceReviewSchema,
   type AiStoryNativeAvResultEvidence,
   type AiStoryNativeDialogueFailureCode,
@@ -146,6 +148,17 @@ export async function validateAiStoryNativeAvResult(input: {
     throw new AiStoryNativeAvResultError(
       "NATIVE_AV_DURATION_MISMATCH",
       "Provider audio/video stream durations are incompatible"
+    );
+  }
+  const minDurationMs = SEEDANCE_NATIVE_AUDIO_MIN_DURATION_SEC * 1000;
+  const maxDurationMs = SEEDANCE_NATIVE_AUDIO_MAX_DURATION_SEC * 1000;
+  if (
+    videoDurationMs < minDurationMs ||
+    videoDurationMs > maxDurationMs
+  ) {
+    throw new AiStoryNativeAvResultError(
+      "NATIVE_AV_DURATION_INVALID",
+      "Provider audiovisual duration is outside the certified 4–15 second bound"
     );
   }
   try {

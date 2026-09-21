@@ -4,6 +4,7 @@ import {
   AI_STORY_POST_GENERATION_QC_HOOK_VERSION,
   AI_STORY_PROVIDER_RUNTIME_VERSION,
   AI_STORY_SEEDANCE_MAPPING_VERSION,
+  AI_STORY_SEEDANCE_NATIVE_AV_MAPPING_VERSION,
   AI_STORY_SEEDANCE_CAPABILITY_CONTRACT_VERSION,
   AI_STORY_SEEDANCE_REFERENCE_BUDGET,
   AiStoryCompiledProviderRequestSchema,
@@ -25,7 +26,10 @@ import {
   type ProductVisualMaterialSelectionAuthority,
   isAiStoryProviderAttemptTransitionAllowed,
 } from "@ceo-agent/shared";
-import { verifyProductVisualMaterialSelectionAuthority } from "@ceo-agent/shared/server";
+import {
+  assertVisibleDialogueAudioAuthorityExclusive,
+  verifyProductVisualMaterialSelectionAuthority,
+} from "@ceo-agent/shared/server";
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
 import { integrityHash } from "./scene-execution-compiler";
 import { compileSceneExecutionPackageForSeedance } from "./seedance-director-adapter";
@@ -94,6 +98,7 @@ export function compileImmutableSeedanceNativeAvRequest(input: {
   readonly dialogueAuthority: AiStoryCharacterDialoguePerformanceAuthority;
   readonly capability: AiStorySeedanceNativeAudioCapability;
   readonly compiledAt?: string;
+  readonly detachedTtsBindings?: readonly { readonly dialogueEntryId: string }[];
 }): AiStoryCompiledProviderRequest {
   const base = AiStoryCompiledProviderRequestSchema.parse(input.baseRequest);
   if (
@@ -135,6 +140,10 @@ export function compileImmutableSeedanceNativeAvRequest(input: {
       "Native dialogue authority is outside the compiled Story or permits detached TTS"
     );
   }
+  assertVisibleDialogueAudioAuthorityExclusive({
+    nativeDialogueAuthorities: [dialogue],
+    detachedTtsBindings: input.detachedTtsBindings ?? [],
+  });
   const compiledAt = input.compiledAt ?? base.compiledAt;
   const compiledPrompt = [
     base.compiledPrompt,
@@ -184,6 +193,7 @@ export function compileImmutableSeedanceNativeAvRequest(input: {
     contractVersion:
       AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION,
     capabilityVersion: capability.capabilityVersion,
+    mappingVersion: AI_STORY_SEEDANCE_NATIVE_AV_MAPPING_VERSION,
     compiledPrompt,
     compiledPromptFingerprint,
     semanticPlan,
@@ -229,6 +239,7 @@ export function compileImmutableSeedanceRequest(input: {
     readonly amount: number | null;
     readonly source: "CONFIGURED_ESTIMATE" | "UNKNOWN";
   };
+  readonly detachedTtsBindings?: readonly { readonly dialogueEntryId: string }[];
 }): AiStoryCompiledProviderRequest {
   const compiled = compileSceneExecutionPackageForSeedance(input.package);
   const compiledAt = input.compiledAt ?? new Date().toISOString();
@@ -360,6 +371,7 @@ export function compileImmutableSeedanceRequest(input: {
       dialogueAuthority: authorities[0]!,
       capability: buildSeedanceNativeAudioCapability(),
       compiledAt,
+      detachedTtsBindings: input.detachedTtsBindings,
     });
   }
   return request;
@@ -1031,6 +1043,12 @@ export class AiStoryCompiledRequestWorkerRuntime {
     }
 
     if (attempt.status === "DISPATCHING" && !attempt.providerTaskId) {
+      if (request.contractVersion === AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION) {
+        assertVisibleDialogueAudioAuthorityExclusive({
+          nativeDialogueAuthorities: [request.nativeAvRequest.dialogueAuthority],
+          detachedTtsBindings: [],
+        });
+      }
       const transportRequest = await serializeTransportRequest({ request, assetAccess: this.dependencies.assetAccess });
       const result = await this.dependencies.transport.submit({ request: transportRequest, providerAttemptId: attempt.providerAttemptId });
       providerSubmitted = true;

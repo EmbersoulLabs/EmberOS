@@ -25,11 +25,42 @@ export class AiStoryNativeDialogueAuthorityError extends Error {
     readonly code:
       | "NATIVE_DIALOGUE_AUTHORITY_INVALID"
       | "NATIVE_DIALOGUE_SCRIPT_MISMATCH"
-      | "NATIVE_DIALOGUE_CHARACTER_MISMATCH",
+      | "NATIVE_DIALOGUE_CHARACTER_MISMATCH"
+      | "VISIBLE_DIALOGUE_AUDIO_AUTHORITY_CONFLICT",
     message: string
   ) {
     super(message);
     this.name = "AiStoryNativeDialogueAuthorityError";
+  }
+}
+
+export type VisibleDialogueDetachedTtsBinding = {
+  readonly dialogueEntryId: string;
+};
+
+/**
+ * Fail-closed before Provider submission: a visible native-AV dialogue entry
+ * cannot also bind detached TTS.
+ */
+export function assertVisibleDialogueAudioAuthorityExclusive(input: {
+  readonly nativeDialogueAuthorities: readonly AiStoryCharacterDialoguePerformanceAuthority[];
+  readonly detachedTtsBindings: readonly VisibleDialogueDetachedTtsBinding[];
+}): void {
+  for (const authority of input.nativeDialogueAuthorities) {
+    const parsed =
+      AiStoryCharacterDialoguePerformanceAuthoritySchema.parse(authority);
+    if (!parsed.onScreenSpeaker || !parsed.nativeAvRequired) {
+      continue;
+    }
+    const conflict = input.detachedTtsBindings.find(
+      (binding) => binding.dialogueEntryId === parsed.dialogueEntryId
+    );
+    if (conflict) {
+      fail(
+        "VISIBLE_DIALOGUE_AUDIO_AUTHORITY_CONFLICT",
+        `Visible native-AV dialogue ${parsed.dialogueEntryId} cannot also bind detached TTS`
+      );
+    }
   }
 }
 
