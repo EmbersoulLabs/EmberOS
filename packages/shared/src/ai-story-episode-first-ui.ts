@@ -64,6 +64,23 @@ export const AI_STORY_EPISODE_ENDING_INTENTS = [
   "no CTA",
 ] as const;
 
+export const BACKEND_GAP = "BACKEND_GAP" as const;
+
+export const AI_STORY_EPISODE_ACTION_CERTIFICATION = Object.freeze({
+  createEpisode: "CERTIFIED",
+  generateEpisodePlanning: "CERTIFIED",
+  timeRangeToInternalUnitMapping: "CERTIFIED",
+  regenerateMomentExecution: "EXISTING_RETRY_OR_PRE_DISPATCH_ONLY",
+  editDialogue: BACKEND_GAP,
+  adjustEnding: BACKEND_GAP,
+  adjustPacing: BACKEND_GAP,
+  replaceReference: BACKEND_GAP,
+  costEstimate: BACKEND_GAP,
+  actualCost: "CERTIFIED",
+  partialFailureCopy: "CERTIFIED",
+  partialFailureRetry: "EXISTING_RETRY_OR_PRE_DISPATCH_ONLY",
+} as const);
+
 export const AI_STORY_EPISODE_COPY = Object.freeze({
   createEpisode: "Create Episode",
   generateEpisode: "Generate Episode",
@@ -82,6 +99,12 @@ export const AI_STORY_EPISODE_COPY = Object.freeze({
   estimatedCost: "Estimated generation cost",
   actualCost: "Actual generation cost",
   nativeCharacterDialogue: "Native Character Dialogue",
+  backendGap:
+    "This action is not available until an existing backend authority can complete it.",
+  regenerateRequiresRetryAuth:
+    "This moment cannot be regenerated until existing retry authorization is complete.",
+  costEstimateUnavailable:
+    "Live Episode cost estimate is not available. Paid generation still uses existing billing confirmation at Execute.",
 } as const);
 
 export const NORMAL_USER_HIDDEN_LABELS = [
@@ -173,7 +196,78 @@ export type AiStoryEpisodeTimelineMoment = {
   readonly sceneId: string;
   readonly sceneOrder: number;
   readonly status: "ready" | "generating" | "failed" | "needs_attention";
+  readonly runtimeState?: string;
+  readonly retryAuthorizationId?: string | null;
+  readonly timeRangeAuthority?: "RECORDED" | typeof BACKEND_GAP;
 };
+
+export type EpisodeMomentRepairAuthority =
+  | {
+      readonly kind: "PRE_DISPATCH_RECOVERY";
+      readonly sceneExecutionId: string;
+    }
+  | {
+      readonly kind: "RETRY_AUTHORIZED";
+      readonly sceneExecutionId: string;
+      readonly retryAuthorizationId: string;
+    }
+  | {
+      readonly kind: typeof BACKEND_GAP;
+      readonly reason: string;
+    };
+
+export function classifyEpisodeMomentRepair(input: {
+  readonly runtimeState?: string | null;
+  readonly retryAuthorizationId?: string | null;
+  readonly sceneExecutionId: string;
+}): EpisodeMomentRepairAuthority {
+  if (input.runtimeState === "PRE_DISPATCH_BLOCKED") {
+    return {
+      kind: "PRE_DISPATCH_RECOVERY",
+      sceneExecutionId: input.sceneExecutionId,
+    };
+  }
+  if (input.runtimeState === "RETRY_AUTHORIZED" && input.retryAuthorizationId) {
+    return {
+      kind: "RETRY_AUTHORIZED",
+      sceneExecutionId: input.sceneExecutionId,
+      retryAuthorizationId: input.retryAuthorizationId,
+    };
+  }
+  return {
+    kind: BACKEND_GAP,
+    reason: AI_STORY_EPISODE_COPY.regenerateRequiresRetryAuth,
+  };
+}
+
+export function composeEpisodeOriginalIdea(input: {
+  readonly originalIdea: string;
+  readonly episodeType: AiStoryEpisodeUserType;
+  readonly durationSec: number | "custom";
+  readonly customDurationSec?: number;
+  readonly aspectRatio: string;
+  readonly language: string;
+  readonly dialogueStyle: string;
+  readonly nativeCharacterDialogue: boolean;
+  readonly pacing: string;
+  readonly cta?: string;
+}): string {
+  const duration =
+    input.durationSec === "custom" ? input.customDurationSec ?? "custom" : input.durationSec;
+  const extras = [
+    `Episode type: ${input.episodeType}`,
+    `Duration: ${duration}s`,
+    `Aspect ratio: ${input.aspectRatio}`,
+    `Language: ${input.language}`,
+    `Dialogue style: ${input.dialogueStyle}`,
+    `Pacing: ${input.pacing}`,
+    input.nativeCharacterDialogue ? "Native character dialogue requested" : null,
+    input.cta ? `CTA: ${input.cta}` : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(". ");
+  return `${input.originalIdea.trim()}\n\n${extras}`.slice(0, 8000);
+}
 
 export function resolveEpisodeMomentFromTimeRange(input: {
   readonly startMs: number;
@@ -288,6 +382,7 @@ export const TAPAO_JOM_EPISODE_UX_FIXTURE = Object.freeze({
       sceneId: "ae000000-0000-4000-8000-000000000030",
       sceneOrder: 0,
       status: "ready" as const,
+      timeRangeAuthority: "RECORDED" as const,
     },
     {
       startMs: 8000,
@@ -298,6 +393,7 @@ export const TAPAO_JOM_EPISODE_UX_FIXTURE = Object.freeze({
       sceneId: "ae000000-0000-4000-8000-000000000031",
       sceneOrder: 1,
       status: "ready" as const,
+      timeRangeAuthority: "RECORDED" as const,
     },
     {
       startMs: 16000,
@@ -308,6 +404,7 @@ export const TAPAO_JOM_EPISODE_UX_FIXTURE = Object.freeze({
       sceneId: "ae000000-0000-4000-8000-000000000032",
       sceneOrder: 2,
       status: "ready" as const,
+      timeRangeAuthority: "RECORDED" as const,
     },
     {
       startMs: 26000,
@@ -318,6 +415,7 @@ export const TAPAO_JOM_EPISODE_UX_FIXTURE = Object.freeze({
       sceneId: "ae000000-0000-4000-8000-000000000033",
       sceneOrder: 3,
       status: "ready" as const,
+      timeRangeAuthority: "RECORDED" as const,
     },
     {
       startMs: 34000,
@@ -328,6 +426,7 @@ export const TAPAO_JOM_EPISODE_UX_FIXTURE = Object.freeze({
       sceneId: "ae000000-0000-4000-8000-000000000034",
       sceneOrder: 4,
       status: "ready" as const,
+      timeRangeAuthority: "RECORDED" as const,
     },
     {
       startMs: 42000,
@@ -338,6 +437,7 @@ export const TAPAO_JOM_EPISODE_UX_FIXTURE = Object.freeze({
       sceneId: "ae000000-0000-4000-8000-000000000035",
       sceneOrder: 5,
       status: "ready" as const,
+      timeRangeAuthority: "RECORDED" as const,
     },
   ] satisfies readonly AiStoryEpisodeTimelineMoment[],
   hiddenFromNormalUser: [

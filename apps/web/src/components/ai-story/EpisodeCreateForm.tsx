@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AI_STORY_EPISODE_ASPECT_RATIOS,
   AI_STORY_EPISODE_COPY,
   AI_STORY_EPISODE_DURATIONS_SEC,
   AI_STORY_EPISODE_PACING,
   AI_STORY_EPISODE_USER_TYPES,
-  episodeGenerationRequiresConfirmation,
-  formatEpisodeCostEstimateUsd,
   mapEpisodeTypeToOutlineProfile,
   type AiStoryEpisodeUserType,
 } from "@ceo-agent/shared";
@@ -38,7 +36,6 @@ type Props = {
   assets: AssetRow[];
   loading: boolean;
   error: string;
-  estimatedCostLabel?: string;
   onGenerate: (payload: EpisodeCreatePayload) => void;
 };
 
@@ -56,7 +53,6 @@ export function EpisodeCreateForm({
   assets,
   loading,
   error,
-  estimatedCostLabel,
   onGenerate,
 }: Props) {
   const [title, setTitle] = useState("");
@@ -76,18 +72,10 @@ export function EpisodeCreateForm({
   );
   const [productAssetIds, setProductAssetIds] = useState<string[]>([]);
   const [locationAssetIds, setLocationAssetIds] = useState<string[]>([]);
-  const [confirmingCost, setConfirmingCost] = useState(false);
   useEffect(() => {
     setSelectedAssetIds(assets.map((asset) => asset.id));
   }, [assets]);
-  const estimate = estimatedCostLabel ?? formatEpisodeCostEstimateUsd({ lowUsd: "3.20", highUsd: "3.80" });
   const ready = title.trim().length > 0 && idea.trim().length > 0;
-  const needsCostConfirmation = episodeGenerationRequiresConfirmation("3.80");
-
-  const durationValue = useMemo(
-    () => (durationSec === "custom" ? customDurationSec : durationSec),
-    [customDurationSec, durationSec]
-  );
 
   return (
     <form
@@ -96,10 +84,6 @@ export function EpisodeCreateForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (!ready || loading) return;
-        if (needsCostConfirmation && !confirmingCost) {
-          setConfirmingCost(true);
-          return;
-        }
         onGenerate({
           title: title.trim(),
           originalIdea: idea.trim(),
@@ -243,27 +227,16 @@ export function EpisodeCreateForm({
         </div>
       </details>
 
-      <div className="rounded-xl border border-border bg-surface-muted/50 p-4 text-sm" data-testid="episode-cost-estimate">
-        <p className="font-medium text-navy">Estimated generation cost</p>
-        <p className="mt-1 text-ink-secondary">{estimate} for about {durationValue}s</p>
+      <div className="rounded-xl border border-border bg-surface-muted/50 p-4 text-sm" data-testid="episode-cost-estimate-gap">
+        <p className="font-medium text-navy">{AI_STORY_EPISODE_COPY.estimatedCost}</p>
+        <p className="mt-1 text-ink-secondary">{AI_STORY_EPISODE_COPY.costEstimateUnavailable}</p>
       </div>
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
-      {confirmingCost ? (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm" data-testid="episode-cost-confirmation">
-          <p className="font-medium text-amber-950">Confirm generation</p>
-          <p className="mt-1 text-amber-900">Estimated generation cost {estimate}. This starts one Episode, not per-moment billing.</p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="submit" disabled={loading || !ready} className="brand-btn-primary min-h-11">Confirm and generate</button>
-            <button type="button" className="min-h-11 rounded-lg border border-border bg-white px-4 text-sm" onClick={() => setConfirmingCost(false)}>Cancel</button>
-          </div>
-        </div>
-      ) : (
-        <button type="submit" disabled={loading || !ready} className="min-h-11 w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60 sm:w-auto">
-          {loading ? "Planning your episode…" : AI_STORY_EPISODE_COPY.generateEpisode}
-        </button>
-      )}
+      <button type="submit" disabled={loading || !ready} className="min-h-11 w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60 sm:w-auto">
+        {loading ? "Planning your episode…" : AI_STORY_EPISODE_COPY.generateEpisode}
+      </button>
     </form>
   );
 }

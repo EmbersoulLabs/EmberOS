@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { EpisodeCreateForm, type EpisodeCreatePayload } from "@/components/ai-story/EpisodeCreateForm";
 import { TapaoJomEpisodeUxFixture } from "@/components/ai-story/TapaoJomEpisodeUxFixture";
+import { composeEpisodeOriginalIdea } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 
 type AssetRow = { id: string; displayName?: string | null; originalFilename?: string | null };
@@ -43,7 +44,18 @@ export default function CreateAiStoryPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: payload.title,
-          originalIdea: payload.originalIdea,
+          originalIdea: composeEpisodeOriginalIdea({
+            originalIdea: payload.originalIdea,
+            episodeType: payload.episodeIntent.episodeType,
+            durationSec: payload.episodeIntent.durationSec,
+            customDurationSec: payload.episodeIntent.customDurationSec,
+            aspectRatio: payload.episodeIntent.aspectRatio,
+            language: payload.episodeIntent.language,
+            dialogueStyle: payload.episodeIntent.dialogueStyle,
+            nativeCharacterDialogue: payload.episodeIntent.nativeCharacterDialogue,
+            pacing: payload.episodeIntent.pacing,
+            cta: payload.episodeIntent.cta,
+          }),
           outlineProfile: payload.outlineProfile,
           assetIds: payload.assetIds,
           productAssetIds: payload.productAssetIds,

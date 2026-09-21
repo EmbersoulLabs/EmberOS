@@ -2,15 +2,18 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  AI_STORY_EPISODE_ACTION_CERTIFICATION,
   AI_STORY_EPISODE_COPY,
   AI_STORY_EPISODE_PROGRESS_STEPS,
+  BACKEND_GAP,
   SCENE_INTERNAL_AUTHORITY_PRESERVED,
   SCENE_USER_UI_REQUIRED,
   TAPAO_JOM_EPISODE_UX_FIXTURE,
   USER_FACING_AUTHORITY,
+  classifyEpisodeMomentRepair,
+  composeEpisodeOriginalIdea,
   describeEpisodePartialFailure,
   episodeCreateRequiresScene,
-  episodeGenerationRequiresConfirmation,
   episodeMomentMarker,
   episodeProgressStep,
   formatEpisodeActualCostUsd,
@@ -44,6 +47,7 @@ describe("AI Story Episode-first UI", () => {
     const createForm = read("apps/web/src/components/ai-story/EpisodeCreateForm.tsx");
     expect(createPage).toContain("Create Episode");
     expect(createForm).toContain("AI_STORY_EPISODE_COPY.generateEpisode");
+    expect(createPage).toContain("composeEpisodeOriginalIdea");
     expect(createPage).not.toContain("Create Scene");
   });
 
@@ -82,26 +86,35 @@ describe("AI Story Episode-first UI", () => {
     expect(runtime).not.toContain(">Scene generation<");
   });
 
-  it("EPISODE_PREVIEW, cost, pacing, ending, dialogue, and references are present", () => {
+  it("EPISODE_PREVIEW keeps certified preview copy and does not fake unsupported mutations", () => {
     const preview = read("apps/web/src/components/ai-story/EpisodePreviewPanel.tsx");
     expect(preview).toContain("Episode Preview");
     expect(preview).toContain("regenerateThisMoment");
     expect(preview).toContain("editDialogue");
     expect(preview).toContain("adjustEnding");
     expect(preview).toContain("adjustPacing");
-    expect(preview).toContain("Estimated generation cost");
     expect(preview).toContain("nativeCharacterDialogue");
+    expect(preview).toContain("episode-edit-dialogue-gap");
+    expect(preview).toContain("episode-adjust-ending-gap");
+    expect(preview).toContain("episode-adjust-pacing-gap");
+    expect(preview).not.toContain("onEditDialogue");
     expect(formatEpisodeCostEstimateUsd({ lowUsd: "3.20", highUsd: "3.80" })).toBe(
       "USD 3.20–3.80"
     );
     expect(formatEpisodeActualCostUsd("3.42")).toBe("USD 3.42");
-    expect(episodeGenerationRequiresConfirmation("3.80")).toBe(true);
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimate).toBe(BACKEND_GAP);
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.actualCost).toBe("CERTIFIED");
     const create = read("apps/web/src/components/ai-story/EpisodeCreateForm.tsx");
-    expect(create).toContain("episode-cost-confirmation");
+    expect(create).toContain("episode-cost-estimate-gap");
+    expect(create).not.toContain("episode-cost-confirmation");
+    expect(create).not.toContain("3.20");
     expect(create).toContain("References");
+    const runtime = read("apps/web/src/components/ai-story/StoryRuntimePanel.tsx");
+    expect(runtime).toContain("providerSpend");
+    expect(runtime).not.toContain("lowUsd: \"3.20\"");
   });
 
-  it("REGENERATE_MOMENT and TIME_RANGE_TO_INTERNAL_UNIT_RESOLUTION stay unit-scoped", () => {
+  it("REGENERATE_MOMENT mapping is certified and execution stays on existing retry authority", () => {
     const moment = resolveEpisodeMomentFromTimeRange({
       startMs: 17_000,
       endMs: 24_000,
@@ -116,15 +129,63 @@ describe("AI Story Episode-first UI", () => {
     expect(resolveInternalRetryScopeFromEpisodeMoment(moment!).generationUnitId).toBe(
       moment?.generationUnitId
     );
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.timeRangeToInternalUnitMapping).toBe(
+      "CERTIFIED"
+    );
+    expect(classifyEpisodeMomentRepair({
+      sceneExecutionId: moment!.generationUnitId,
+      runtimeState: "APPROVED",
+      retryAuthorizationId: null,
+    }).kind).toBe(BACKEND_GAP);
+    expect(classifyEpisodeMomentRepair({
+      sceneExecutionId: moment!.generationUnitId,
+      runtimeState: "RETRY_AUTHORIZED",
+      retryAuthorizationId: "ae000000-0000-4000-8000-000000000099",
+    })).toMatchObject({
+      kind: "RETRY_AUTHORIZED",
+      retryAuthorizationId: "ae000000-0000-4000-8000-000000000099",
+    });
+    expect(classifyEpisodeMomentRepair({
+      sceneExecutionId: moment!.generationUnitId,
+      runtimeState: "PRE_DISPATCH_BLOCKED",
+    }).kind).toBe("PRE_DISPATCH_RECOVERY");
+    const runtime = read("apps/web/src/components/ai-story/StoryRuntimePanel.tsx");
+    expect(runtime).toContain("postGeneratedSceneReviewDecision");
+    expect(runtime).toContain("postPreDispatchRecovery");
+    expect(runtime).toContain("classifyEpisodeMomentRepair");
   });
 
-  it("PARTIAL_FAILURE_RECOVERY offers retry moment, not restart Episode", () => {
+  it("EDIT_DIALOGUE, ADJUST_ENDING, and cost estimate are BACKEND_GAP", () => {
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.editDialogue).toBe(BACKEND_GAP);
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustEnding).toBe(BACKEND_GAP);
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.adjustPacing).toBe(BACKEND_GAP);
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.replaceReference).toBe(BACKEND_GAP);
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.costEstimate).toBe(BACKEND_GAP);
+    expect(AI_STORY_EPISODE_COPY.backendGap).toContain("existing backend authority");
+    expect(composeEpisodeOriginalIdea({
+      originalIdea: "A local shop host shows what you can tapao.",
+      episodeType: "FOOD_STORY",
+      durationSec: 45,
+      aspectRatio: "9:16",
+      language: "zh-MY",
+      dialogueStyle: "Malaysian Chinese conversational",
+      nativeCharacterDialogue: true,
+      pacing: "NATURAL",
+    })).toContain("Duration: 45s");
+  });
+
+  it("PARTIAL_FAILURE_RECOVERY uses real ready-count copy and existing retry only", () => {
     expect(describeEpisodePartialFailure({ readyCount: 5, totalCount: 6 })).toBe(
       "Most of your Episode is ready. One moment needs attention."
+    );
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.partialFailureCopy).toBe("CERTIFIED");
+    expect(AI_STORY_EPISODE_ACTION_CERTIFICATION.partialFailureRetry).toBe(
+      "EXISTING_RETRY_OR_PRE_DISPATCH_ONLY"
     );
     const preview = read("apps/web/src/components/ai-story/EpisodePreviewPanel.tsx");
     expect(preview).toContain("retryFailedMoment");
     expect(preview).not.toContain("Restart entire Episode");
+    expect(preview).toContain("canRepair");
   });
 
   it("LEGACY_STORY_COMPATIBILITY keeps old Story routes as Episode wrappers", () => {

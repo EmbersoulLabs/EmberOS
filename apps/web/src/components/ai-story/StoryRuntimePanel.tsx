@@ -12,9 +12,10 @@ import { SceneReviewWorkspacePanel } from "@/components/ai-story/SceneReviewWork
 import { EpisodePreviewPanel } from "@/components/ai-story/EpisodePreviewPanel";
 import { EpisodeDebugPanel } from "@/components/ai-story/EpisodeDebugPanel";
 import {
+  AI_STORY_EPISODE_COPY,
+  classifyEpisodeMomentRepair,
   episodeMomentMarker,
   formatEpisodeActualCostUsd,
-  formatEpisodeCostEstimateUsd,
   resolveInternalRetryScopeFromEpisodeMoment,
   shouldExposeSceneDiagnostics,
   type AiStoryEpisodeTimelineMoment,
@@ -193,30 +194,40 @@ export function StoryRuntimePanel({
     if (typeof document !== "undefined") {
       document.getElementById(`scene-${scope.sceneOrder + 1}`)?.scrollIntoView({ behavior: "smooth" });
     }
+    const authority = classifyEpisodeMomentRepair({
+      runtimeState: scene?.runtimeState ?? moment.runtimeState,
+      retryAuthorizationId: scene?.retryAuthorizationId ?? moment.retryAuthorizationId,
+      sceneExecutionId: scene?.sceneExecutionId ?? scope.generationUnitId,
+    });
+    if (authority.kind === "BACKEND_GAP") {
+      setError(authority.reason);
+      return;
+    }
     if (!scene) {
-      await refresh();
+      setError(AI_STORY_EPISODE_COPY.regenerateRequiresRetryAuth);
       return;
     }
     try {
-      if (scene.runtimeState === "PRE_DISPATCH_BLOCKED") {
+      if (authority.kind === "PRE_DISPATCH_RECOVERY") {
         await postPreDispatchRecovery({
           campaignId,
           storyId,
           executionPlanId,
-          sceneExecutionId: scene.sceneExecutionId,
+          sceneExecutionId: authority.sceneExecutionId,
         });
-      } else if (scene.runtimeState === "RETRY_AUTHORIZED" && scene.retryAuthorizationId) {
+      } else {
         await postGeneratedSceneReviewDecision({
           campaignId,
           storyId,
           executionPlanId,
-          sceneExecutionId: scene.sceneExecutionId,
+          sceneExecutionId: authority.sceneExecutionId,
           action: "retry",
-          retryAuthorizationId: scene.retryAuthorizationId,
+          retryAuthorizationId: authority.retryAuthorizationId,
         });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "This moment could not be generated.");
+      return;
     }
     await refresh();
   }
@@ -362,15 +373,14 @@ export function StoryRuntimePanel({
         durationLabel="00:48"
         statusLabel={statusLabel}
         videoUrl={projection?.generatedSceneReviews?.find((scene) => scene.generatedMedia?.deliveryUrl)?.generatedMedia?.deliveryUrl}
-        estimatedCostLabel={formatEpisodeCostEstimateUsd({ lowUsd: "3.20", highUsd: "3.80" })}
         actualCostLabel={
           projection?.providerSpend?.storyKnownAmount != null
             ? formatEpisodeActualCostUsd(String(projection.providerSpend.storyKnownAmount))
             : undefined
         }
-        moments={(projection?.generatedSceneReviews ?? []).map((scene, index) => ({
-          startMs: index * 8000,
-          endMs: (index + 1) * 8000,
+        moments={(projection?.generatedSceneReviews ?? []).map((scene) => ({
+          startMs: 0,
+          endMs: 0,
           marker: episodeMomentMarker(scene.sceneOrder),
           generationUnitId: scene.sceneExecutionId,
           directorShotId: scene.sceneExecutionId,
@@ -380,13 +390,15 @@ export function StoryRuntimePanel({
             ? "failed"
             : scene.runtimeState === "RUNNING"
               ? "generating"
-              : "ready") as AiStoryEpisodeTimelineMoment["status"],
+              : scene.runtimeState === "PRE_DISPATCH_BLOCKED" || scene.runtimeState === "RETRY_AUTHORIZED"
+                ? "needs_attention"
+                : "ready") as AiStoryEpisodeTimelineMoment["status"],
+          runtimeState: scene.runtimeState,
+          retryAuthorizationId: scene.retryAuthorizationId,
+          timeRangeAuthority: "BACKEND_GAP",
         }))}
         readyCount={(projection?.generatedSceneReviews ?? []).filter((scene) => scene.runtimeState !== "FAILED").length}
         onRepairMoment={(moment) => { void onRepairMoment(moment); }}
-        onEditDialogue={() => { void refresh(); }}
-        onAdjustEnding={() => { void refresh(); }}
-        onAdjustPacing={() => { void refresh(); }}
       />
       <EpisodeDebugPanel
         visible={shouldExposeSceneDiagnostics({ superAdmin: workspaceRole === "admin", debugMode: false })}
