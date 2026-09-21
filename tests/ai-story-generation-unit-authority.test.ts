@@ -233,7 +233,7 @@ describe("AI Story multi-shot Generation Unit authority", () => {
     expect(SINGLE_SHOT_SCENE_BACKWARD_COMPATIBILITY).toBe("CERTIFIED");
     expect(PROVIDER_UNIT_SINGLE_SHOT_BOUNDARY).toBe("CERTIFIED");
     expect(MULTI_SHOT_PROVIDER_REQUEST).toBe("NOT_CERTIFIED");
-    expect(NARRATIVE_EDITOR).toBe("NOT_YET_CERTIFIED");
+    expect(NARRATIVE_EDITOR).toBe("CERTIFIED");
     expect(AUDIO_PLAN).toBe("NOT_YET_CERTIFIED");
     expect(FINAL_STORY_ASSEMBLY_V2).toBe("NOT_YET_CERTIFIED");
     expect(AI_STORY_MULTI_SHOT_SCENE_ALLOWED).toBe(true);
