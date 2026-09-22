@@ -120,7 +120,7 @@ export const AiStoryCharacterVirtualizationJobSchema = z
     reusableCharacterId: Id.nullable(),
     reusableCharacterVersionId: Id.nullable(),
     seedanceVideoCalls: z.literal(0),
-    realImageProviderCalls: z.number().int().nonnegative(),
+    realImageProviderCalls: z.union([z.literal(0), z.literal(1)]),
     userSafeError: z.string().max(500).nullable(),
     createdBy: Id,
     createdAt: z.string().datetime(),
@@ -203,18 +203,19 @@ export type CharacterVirtualizationProviderSuccess = {
   contentHash: string;
   operation?: typeof CHARACTER_VIRTUALIZATION_OPENAI_OPERATION;
   retries?: typeof CHARACTER_VIRTUALIZATION_MAX_RETRIES;
-  realImageProviderCalls: number;
+  realImageProviderCalls: 0 | 1;
   costUsd: string | null;
 };
 
 export type CharacterVirtualizationProviderFailure = {
   ok: false;
-  code: "PROVIDER_REJECTED" | "PROVIDER_UNAVAILABLE" | "PROVIDER_RESULT_INVALID";
+  code: "PROVIDER_REJECTED" | "PROVIDER_UNAVAILABLE" | "PROVIDER_RESULT_INVALID" | "OUTPUT_PERSIST_FAILED";
   userSafeMessage: string;
   provider: string;
   providerModel: string;
   providerAttemptId: string;
-  realImageProviderCalls: number;
+  realImageProviderCalls: 0 | 1;
+  costUsd?: string | null;
 };
 
 export type CharacterVirtualizationProviderResult =

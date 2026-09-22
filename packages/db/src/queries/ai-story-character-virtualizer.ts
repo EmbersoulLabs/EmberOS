@@ -318,7 +318,7 @@ export class AiStoryCharacterVirtualizerService {
         result,
         outputAssetId,
         completedAt,
-        result.costUsd ?? "0.0000"
+        result.costUsd
       );
       await this.db.update(schema.aiStoryCharacterVirtualizationJobs).set(jobRow(succeeded))
         .where(eq(schema.aiStoryCharacterVirtualizationJobs.jobId, job.id));
@@ -328,12 +328,13 @@ export class AiStoryCharacterVirtualizerService {
         { ...job, status: "RUNNING" },
         {
           ok: false,
-          code: "PROVIDER_UNAVAILABLE",
-          userSafeMessage: characterVirtualizationUserSafeFailure("PROVIDER_UNAVAILABLE"),
+          code: "OUTPUT_PERSIST_FAILED",
+          userSafeMessage: characterVirtualizationUserSafeFailure("OUTPUT_PERSIST_FAILED"),
           provider: result.provider,
           providerModel: result.providerModel,
           providerAttemptId: result.providerAttemptId,
-          realImageProviderCalls: 0,
+          realImageProviderCalls: result.realImageProviderCalls,
+          costUsd: result.costUsd,
         },
         completedAt
       );

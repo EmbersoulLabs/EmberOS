@@ -348,6 +348,84 @@ describe("AI Story Character Virtualizer Creative Image wiring", () => {
     expect(adapter.calls).toBe(2);
   });
 
+  it("17. missing authorization and compile failures do not count a Provider call", async () => {
+    const adapter = new RecordingCreativeImageAdapter("succeed");
+    const bridge = new CreativeImageCharacterVirtualizationBridge(adapter);
+    const missing = await bridge.virtualizeCharacter(providerRequest({ authorization: undefined }));
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.realImageProviderCalls).toBe(0);
+    expect(adapter.calls).toBe(0);
+
+    const compile = await bridge.virtualizeCharacter(
+      providerRequest({
+        sourceImage: {
+          ...baseRequest().sourceImage,
+          bytes: Buffer.from([1, 2, 3]),
+        },
+      })
+    );
+    expect(compile.ok).toBe(false);
+    if (!compile.ok) expect(compile.realImageProviderCalls).toBe(0);
+    expect(adapter.calls).toBe(0);
+  });
+
+  it("18. post-claim Provider failure and success use providerCallsUsed", async () => {
+    const rejectAdapter = new RecordingCreativeImageAdapter("reject");
+    const rejected = await new CreativeImageCharacterVirtualizationBridge(rejectAdapter).virtualizeCharacter(providerRequest());
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) expect(rejected.realImageProviderCalls).toBe(1);
+    expect(rejectAdapter.calls).toBe(1);
+
+    const successAdapter = new RecordingCreativeImageAdapter("succeed");
+    const succeeded = await new CreativeImageCharacterVirtualizationBridge(successAdapter).virtualizeCharacter(providerRequest());
+    expect(succeeded.ok).toBe(true);
+    if (succeeded.ok) {
+      expect(succeeded.realImageProviderCalls).toBe(1);
+      expect(succeeded.costUsd).toBeNull();
+    }
+    expect(successAdapter.calls).toBe(1);
+  });
+
+  it("19. persistence-failure helper keeps call count and known cost", () => {
+    const failed = applyProviderFailureToJob(
+      queuedJob(),
+      {
+        ok: false,
+        code: "OUTPUT_PERSIST_FAILED",
+        userSafeMessage: "Character creation could not be completed. No Character was created.",
+        provider: "openai",
+        providerModel: "gpt-image-2",
+        providerAttemptId: IDS.version,
+        realImageProviderCalls: 1,
+        costUsd: "0.0400",
+      },
+      "2026-09-22T16:02:00.000Z"
+    );
+    expect(failed.status).toBe("FAILED");
+    expect(failed.realImageProviderCalls).toBe(1);
+    expect(failed.costUsd).toBe("0.0400");
+    expect(failed.reusableCharacterId).toBeNull();
+    expect(failed.reusableCharacterVersionId).toBeNull();
+    expect(failed.acceptanceStatus).toBe("NOT_READY");
+    expect(failed.automaticRetry).toBe(false);
+    expect(failed.outputAssetId).toBeNull();
+    const unknown = applyProviderFailureToJob(
+      queuedJob(),
+      {
+        ok: false,
+        code: "OUTPUT_PERSIST_FAILED",
+        userSafeMessage: "Character creation could not be completed. No Character was created.",
+        provider: "openai",
+        providerModel: "gpt-image-2",
+        providerAttemptId: IDS.version,
+        realImageProviderCalls: 1,
+        costUsd: null,
+      },
+      "2026-09-22T16:02:00.000Z"
+    );
+    expect(unknown.costUsd).toBeNull();
+  });
+
   it("12. workspace isolation remains intact on the compiled request", () => {
     const compiled = compileCharacterVirtualizationCreativeImageRequest({
       request: providerRequest(),

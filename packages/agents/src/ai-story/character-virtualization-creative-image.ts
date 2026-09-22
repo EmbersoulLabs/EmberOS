@@ -179,18 +179,26 @@ function authorizationFromRequest(
   };
 }
 
-function mapExecutionFailure(
-  code: "PROVIDER_REJECTED" | "PROVIDER_UNAVAILABLE" | "PROVIDER_RESULT_INVALID",
-  adapter: CreativeImageGenerationAdapter
-): CharacterVirtualizationProviderFailure {
+function boundedRealImageProviderCalls(used: number | undefined): 0 | 1 {
+  if (!Number.isInteger(used) || (used ?? 0) <= 0) return 0;
+  return 1;
+}
+
+function mapExecutionFailure(input: {
+  code: CharacterVirtualizationProviderFailure["code"];
+  adapter: CreativeImageGenerationAdapter;
+  providerCallsUsed?: number;
+  costUsd?: string | null;
+}): CharacterVirtualizationProviderFailure {
   return {
     ok: false,
-    code,
-    userSafeMessage: characterVirtualizationUserSafeFailure(code),
-    provider: adapter.providerId,
-    providerModel: adapter.modelId,
+    code: input.code,
+    userSafeMessage: characterVirtualizationUserSafeFailure(input.code),
+    provider: input.adapter.providerId,
+    providerModel: input.adapter.modelId,
     providerAttemptId: randomUUID(),
-    realImageProviderCalls: adapter.externalPaidCall ? 1 : 0,
+    realImageProviderCalls: boundedRealImageProviderCalls(input.providerCallsUsed),
+    ...(input.costUsd !== undefined ? { costUsd: input.costUsd } : {}),
   };
 }
 
@@ -217,11 +225,11 @@ export class CreativeImageCharacterVirtualizationBridge implements CharacterVirt
   ): Promise<CharacterVirtualizationProviderResult> {
     const productAuthorization = request.authorization;
     if (!productAuthorization) {
-      return mapExecutionFailure("PROVIDER_UNAVAILABLE", this.adapter);
+      return mapExecutionFailure({ code: "PROVIDER_UNAVAILABLE", adapter: this.adapter, providerCallsUsed: 0 });
     }
     const authorization = authorizationFromRequest(request, this.adapter);
     if (!authorization) {
-      return mapExecutionFailure("PROVIDER_UNAVAILABLE", this.adapter);
+      return mapExecutionFailure({ code: "PROVIDER_UNAVAILABLE", adapter: this.adapter, providerCallsUsed: 0 });
     }
     let compiled: CreativeImageGenerationInput;
     try {
@@ -231,7 +239,7 @@ export class CreativeImageCharacterVirtualizationBridge implements CharacterVirt
       });
     } catch (error) {
       if (error instanceof AiStoryCharacterVirtualizerError) {
-        return mapExecutionFailure("PROVIDER_RESULT_INVALID", this.adapter);
+        return mapExecutionFailure({ code: "PROVIDER_RESULT_INVALID", adapter: this.adapter, providerCallsUsed: 0 });
       }
       throw error;
     }
@@ -244,7 +252,11 @@ export class CreativeImageCharacterVirtualizationBridge implements CharacterVirt
         result.failure.code === "PROVIDER_RESULT_INVALID"
           ? result.failure.code
           : "PROVIDER_UNAVAILABLE";
-      return mapExecutionFailure(code, this.adapter);
+      return mapExecutionFailure({
+        code,
+        adapter: this.adapter,
+        providerCallsUsed: result.providerCallsUsed,
+      });
     }
 
     const reported = result.output.usage?.providerReportedCost;
@@ -265,7 +277,7 @@ export class CreativeImageCharacterVirtualizationBridge implements CharacterVirt
       contentHash: hashCharacterVirtualizationBytes(bytes),
       operation: CHARACTER_VIRTUALIZATION_OPENAI_OPERATION,
       retries: CHARACTER_VIRTUALIZATION_MAX_RETRIES,
-      realImageProviderCalls: this.adapter.externalPaidCall ? result.providerCallsUsed : 0,
+      realImageProviderCalls: boundedRealImageProviderCalls(result.providerCallsUsed),
       costUsd,
     };
   }

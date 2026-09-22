@@ -1,4 +1,4 @@
-/** Apply additive Character Virtualizer schema. Refuses production mutation. */
+/** Apply additive Character Virtualizer real-Provider call constraint repair. Refuses production mutation. */
 import { config } from "dotenv";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -14,11 +14,10 @@ const url = process.env.DATABASE_URL;
 if (!url) throw new Error("DATABASE_URL is required");
 const db = postgres(url, { max: 1 });
 try {
-  await db.unsafe(readFileSync(resolve(here, "../sql/ai-story-character-virtualizer-v1.sql"), "utf8"));
   await db.unsafe(
     readFileSync(resolve(here, "../sql/ai-story-character-virtualizer-real-provider-calls-01.sql"), "utf8")
   );
-  console.log("AI Story Character Virtualizer schema applied.");
+  console.log("AI Story Character Virtualizer real Provider call constraint repair applied.");
 } finally {
   await db.end();
 }

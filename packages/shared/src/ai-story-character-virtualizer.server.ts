@@ -237,7 +237,7 @@ export function applyProviderSuccessToJob(
   result: Extract<CharacterVirtualizationProviderResult, { ok: true }>,
   outputAssetId: string,
   completedAt: string,
-  costUsd: string
+  costUsd: string | null
 ): AiStoryCharacterVirtualizationJob {
   return {
     ...job,
@@ -251,8 +251,9 @@ export function applyProviderSuccessToJob(
     outputSemantic: VIRTUAL_CHARACTER_CANDIDATE,
     costUsd: result.costUsd ?? costUsd,
     completedAt,
-    realImageProviderCalls: result.realImageProviderCalls ?? 0,
+    realImageProviderCalls: result.realImageProviderCalls,
     seedanceVideoCalls: 0,
+    automaticRetry: false,
   };
 }
 
@@ -275,8 +276,10 @@ export function applyProviderFailureToJob(
     outputSemantic: null,
     reusableCharacterId: null,
     reusableCharacterVersionId: null,
-    realImageProviderCalls: result.realImageProviderCalls ?? 0,
+    realImageProviderCalls: result.realImageProviderCalls,
+    costUsd: result.costUsd === undefined ? job.costUsd : result.costUsd,
     seedanceVideoCalls: 0,
+    automaticRetry: false,
   };
 }
 

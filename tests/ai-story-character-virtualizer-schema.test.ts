@@ -32,6 +32,18 @@ describe("Character Virtualizer Drizzle FK identifiers", () => {
     expect([...schemaBlock.matchAll(/\.onDelete\("restrict"\)/g)]).toHaveLength(requiredFkNames.length);
   });
 
+  it("permits 0 or 1 real image Provider calls and rejects the mock-only =0 CHECK", () => {
+    expect(sql).toContain("CONSTRAINT as_cvj_real_image_calls_chk CHECK (real_image_provider_calls >= 0 AND real_image_provider_calls <= 1)");
+    expect(sql).not.toMatch(/real_image_provider_calls integer NOT NULL CHECK \(real_image_provider_calls = 0\)/);
+    const repair = readFileSync(
+      resolve(process.cwd(), "packages/db/sql/ai-story-character-virtualizer-real-provider-calls-01.sql"),
+      "utf8"
+    );
+    expect(repair).toContain("pg_get_constraintdef");
+    expect(repair).toContain("as_cvj_real_image_calls_chk");
+    expect(repair).toContain("real_image_provider_calls >= 0 AND real_image_provider_calls <= 1");
+  });
+
   it("keeps SQL overlay FK names aligned", () => {
     const sqlNames = [...sql.matchAll(/CONSTRAINT\s+(\S+_fk)\s/g)].map((match) => match[1]);
     expect(sqlNames.sort()).toEqual([...requiredFkNames].sort());
