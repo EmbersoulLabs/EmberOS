@@ -1,5 +1,5 @@
 import { and, eq, isNull } from "drizzle-orm";
-import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
+import { AiStoryCharacterVirtualizerService, getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
 import { isUuid } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
@@ -51,6 +51,14 @@ export async function DELETE(_request: Request, { params }: { params: Promise<{ 
     const member = await requireWorkspaceRole(workspaceId, user.id, "operator");
     const asset = await authorizedAsset(workspaceId, member.orgId, assetId);
     if (!asset) return apiError("Asset not found", "NOT_FOUND", 404);
+    const virtualizer = new AiStoryCharacterVirtualizerService();
+    const deletion = await virtualizer.evaluateAssetDeletion(
+      { orgId: member.orgId, workspaceId, actorUserId: user.id },
+      assetId
+    );
+    if (!deletion.allowed) {
+      return apiError("Accepted Character identity cannot be deleted", deletion.code, 409);
+    }
     const db = getDb();
     const [[campaignRef], [storyRef]] = await Promise.all([
       db.select({ assetId: schema.campaignAssetRefs.assetId }).from(schema.campaignAssetRefs)
