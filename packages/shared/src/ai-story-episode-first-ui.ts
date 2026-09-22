@@ -87,7 +87,20 @@ export const AI_STORY_EPISODE_ACTION_CERTIFICATION = Object.freeze({
 export const AI_STORY_EPISODE_COPY = Object.freeze({
   createEpisode: "Create Episode",
   generateEpisode: "Generate Episode",
+  yourEpisode: "Your Episode",
+  finalEpisode: "Final Episode",
   episodePreview: "Episode Preview",
+  finalEpisodePending:
+    "Your final Episode will appear here after all moments are ready and assembled.",
+  generatingMoments: "EmberOS is creating your Episode moments.",
+  waitingForReview:
+    "Review the generated moments below before the final Episode is assembled.",
+  assembling: "Your moments are ready. EmberOS is assembling the final Episode.",
+  assemblyFailed:
+    "The final Episode could not be assembled. Your approved moments are preserved.",
+  finalEpisodeTemporarilyUnavailable: "The final Episode is temporarily unavailable.",
+  durationPending: "Duration pending",
+  durationUnavailable: "Duration unavailable",
   reviewEpisode: "Review Episode",
   regenerateThisMoment: "Regenerate this moment",
   editDialogue: "Edit dialogue",
