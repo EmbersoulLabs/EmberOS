@@ -524,6 +524,8 @@ export function StoryRuntimePanel({
       <EpisodeDebugPanel
         visible={shouldExposeSceneDiagnostics({ superAdmin: workspaceRole === "admin", debugMode: false })}
         revisionRequest={revisionDiagnostics}
+        campaignId={campaignId}
+        storyId={storyId}
         moments={(projection?.generatedSceneReviews ?? []).map((scene) => ({
           startMs: scene.sceneOrder * 8000,
           endMs: (scene.sceneOrder + 1) * 8000,

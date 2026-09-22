@@ -12,6 +12,7 @@ export * from "./ai-story-outline-beat-promotion.server";
 export * from "./ai-story-product-story-outline-policy.server";
 export * from "./ai-story-canonical-outline-composer.server";
 export * from "./ai-story-character.server";
+export * from "./ai-story-reusable-character.server";
 export * from "./ai-story-cast.server";
 export * from "./ai-story-scene.server";
 export * from "./ai-story-canonical-scene-composer.server";

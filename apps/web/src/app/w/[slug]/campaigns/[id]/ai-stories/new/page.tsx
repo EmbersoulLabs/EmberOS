@@ -64,6 +64,18 @@ export default function CreateAiStoryPage() {
       const createData = await createRes.json();
       if (!createRes.ok) throw new Error(createData.error ?? "Create failed");
       const storyId = createData.story?.id as string;
+      if (payload.episodeIntent.reusableCharacterId) {
+        const bindRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/character-bindings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            reusableCharacterId: payload.episodeIntent.reusableCharacterId,
+            episodeLook: { wardrobe: payload.episodeIntent.episodeLookWardrobe ?? null },
+          }),
+        });
+        const bindData = await bindRes.json();
+        if (!bindRes.ok) throw new Error(bindData.error ?? "Character binding failed");
+      }
       const genRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/generate`, { method: "POST" });
       const genData = await genRes.json();
       if (!genRes.ok) throw new Error(genData.error ?? "Episode planning failed");

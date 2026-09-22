@@ -99,6 +99,13 @@ export const AiStoryGenerationUnitSourceAuthoritySchema = z.object({
   productContentHashes: z.array(Hash),
   locationId: Id,
   characterIds: z.array(Id),
+  reusableCharacterLineage: z.array(z.object({
+    reusableCharacterId: Id,
+    reusableCharacterVersionId: Id,
+    campaignCharacterId: Id,
+    campaignCharacterVersionId: Id,
+    identityFingerprint: Hash,
+  }).strict()).optional(),
 }).strict();
 
 export const AiStoryGenerationUnitRetryOwnershipSchema = z.object({

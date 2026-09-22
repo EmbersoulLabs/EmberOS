@@ -65,6 +65,7 @@ export * from "./ai-story-product-derivative-resolution";
 export * from "./ai-story-product-visual-material-selection";
 export * from "./ai-story-generation-authority";
 export * from "./ai-story-character";
+export * from "./ai-story-reusable-character";
 export * from "./ai-story-cast";
 export * from "./ai-story-scene";
 export * from "./ai-story-scene-execution-package";

@@ -49,6 +49,7 @@ describe("AI Story Episode-first UI", () => {
     expect(createForm).toContain("AI_STORY_EPISODE_COPY.generateEpisode");
     expect(createPage).toContain("composeEpisodeOriginalIdea");
     expect(createPage).not.toContain("Create Scene");
+    expect(createForm).toContain("episode-character-selector");
   });
 
   it("NO_SCENE_REQUIRED_FOR_USER_CREATION and hides Scene labels from normal users", () => {
