@@ -3,7 +3,7 @@ import { AiStoryCharacterVirtualizerError } from "@ceo-agent/db";
 import { isUuid, publicVirtualizationJob } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError } from "@/lib/auth";
-import { characterVirtualizerContext } from "@/lib/character-virtualizer-access";
+import { characterVirtualizerContext, characterVirtualizerExecutionOptions } from "@/lib/character-virtualizer-access";
 
 const Body = z.object({
   permissionConfirmed: z.literal(true),
@@ -22,6 +22,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       parentJobId: jobId,
       permissionConfirmed: true,
       costAuthorized: true,
+      ...characterVirtualizerExecutionOptions(id),
     });
     return apiSuccess({ job: publicVirtualizationJob(job) }, job.status === "SUCCEEDED" ? 201 : 422);
   } catch (error) {

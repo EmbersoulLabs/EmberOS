@@ -19,6 +19,20 @@ export const NO_BIOMETRIC_IDENTITY_SCORES = true as const;
 export const NO_AUTOMATIC_VIRTUALIZATION_RETRY = true as const;
 export const CHARACTER_VIRTUALIZER_REAL_IMAGE_PROVIDER_CALLS = 0 as const;
 export const CHARACTER_VIRTUALIZER_SEEDANCE_VIDEO_CALLS = 0 as const;
+export const CHARACTER_VIRTUALIZATION_PROVIDER_MODES = ["mock", "creative-image"] as const;
+export const CHARACTER_VIRTUALIZATION_OPENAI_PROVIDER = "openai" as const;
+export const CHARACTER_VIRTUALIZATION_OPENAI_MODEL = "gpt-image-2" as const;
+export const CHARACTER_VIRTUALIZATION_OPENAI_OPERATION = "images.edit" as const;
+export const CHARACTER_VIRTUALIZATION_MAX_RETRIES = 0 as const;
+export const CHARACTER_VIRTUALIZATION_SOURCE_REFERENCE_ROLE = "INPUT_IMAGE" as const;
+export const CHARACTER_VIRTUALIZATION_OUTPUT = Object.freeze({
+  mimeType: "image/png" as const,
+  width: 1024,
+  height: 1536,
+  sizeConstraint: "1024x1536" as const,
+  /** Maps to OpenAI images.edit quality=medium through the shared Creative Image adapter. */
+  quality: "STANDARD" as const,
+});
 
 export const AI_STORY_CHARACTER_VIRTUAL_STYLES = [
   "PREMIUM_3D",
@@ -148,6 +162,19 @@ export type AiStoryCharacterVirtualizationPublicJob = z.infer<
   typeof AiStoryCharacterVirtualizationPublicJobSchema
 >;
 
+export type CharacterVirtualizationProviderMode =
+  (typeof CHARACTER_VIRTUALIZATION_PROVIDER_MODES)[number];
+
+export type CharacterVirtualizationProviderAuthorization = {
+  authorizationId: string;
+  executionIdentity: string;
+  idempotencyKey: string;
+  scope: { tenantId: string; workspaceId: string };
+  authorizedBy: string;
+  authorizedAt: string;
+  maximumProviderCalls: 1;
+};
+
 export type CharacterVirtualizationProviderRequest = {
   sourceImage: {
     assetId: string;
@@ -161,6 +188,7 @@ export type CharacterVirtualizationProviderRequest = {
   creativeDirection: string | null;
   compiledPrompt: string;
   outputRequirements: { mimeType: "image/png"; width: number; height: number };
+  authorization?: CharacterVirtualizationProviderAuthorization;
 };
 
 export type CharacterVirtualizationProviderSuccess = {
@@ -173,15 +201,20 @@ export type CharacterVirtualizationProviderSuccess = {
   providerModel: string;
   providerAttemptId: string;
   contentHash: string;
+  operation?: typeof CHARACTER_VIRTUALIZATION_OPENAI_OPERATION;
+  retries?: typeof CHARACTER_VIRTUALIZATION_MAX_RETRIES;
+  realImageProviderCalls: number;
+  costUsd: string | null;
 };
 
 export type CharacterVirtualizationProviderFailure = {
   ok: false;
-  code: "PROVIDER_REJECTED" | "PROVIDER_FAILED";
+  code: "PROVIDER_REJECTED" | "PROVIDER_UNAVAILABLE" | "PROVIDER_RESULT_INVALID";
   userSafeMessage: string;
   provider: string;
   providerModel: string;
   providerAttemptId: string;
+  realImageProviderCalls: number;
 };
 
 export type CharacterVirtualizationProviderResult =
@@ -189,6 +222,9 @@ export type CharacterVirtualizationProviderResult =
   | CharacterVirtualizationProviderFailure;
 
 export interface CharacterVirtualizationProvider {
+  readonly providerId: string;
+  readonly providerModel: string;
+  readonly externalPaidCall: boolean;
   virtualizeCharacter(
     request: CharacterVirtualizationProviderRequest
   ): Promise<CharacterVirtualizationProviderResult>;
@@ -370,6 +406,25 @@ export function virtualCharacterLibraryCard(
 
 export function additionalReferenceRoles() {
   return AI_STORY_REUSABLE_CHARACTER_ASSET_ROLES.filter((role) => role !== "IDENTITY_MASTER");
+}
+
+export function readCharacterVirtualizationProviderMode(
+  env: NodeJS.ProcessEnv = process.env
+): CharacterVirtualizationProviderMode {
+  const raw = (env.CHARACTER_VIRTUALIZATION_PROVIDER ?? "mock").trim().toLowerCase();
+  if (raw === "mock" || raw === "") return "mock";
+  if (raw === "creative-image") return "creative-image";
+  throw new AiStoryCharacterVirtualizerError(
+    "VIRTUALIZATION_PROVIDER_INVALID",
+    "Character virtualization Provider configuration is invalid."
+  );
+}
+
+export function characterVirtualizationUserSafeFailure(code: CharacterVirtualizationProviderFailure["code"]) {
+  if (code === "PROVIDER_REJECTED") {
+    return AI_STORY_CHARACTER_VIRTUALIZER_COPY.providerRejected;
+  }
+  return "Character creation could not be completed. No Character was created.";
 }
 
 export function assertCandidateRequiresAcceptance(job: Pick<AiStoryCharacterVirtualizationJob, "status" | "acceptanceStatus" | "reusableCharacterId">) {

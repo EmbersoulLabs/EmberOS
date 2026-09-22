@@ -2,12 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "./canonical-integrity";
 import {
   AI_STORY_CHARACTER_VIRTUALIZER_CONTRACT_VERSION,
+  AiStoryCharacterVirtualizerError,
   CHARACTER_SOURCE_PORTRAIT,
   CHARACTER_VIRTUALIZATION,
   CHARACTER_VIRTUALIZER_REAL_IMAGE_PROVIDER_CALLS,
   CHARACTER_VIRTUALIZER_SEEDANCE_VIDEO_CALLS,
   DEFAULT_CHARACTER_VIRTUAL_STYLE,
   VIRTUAL_CHARACTER_CANDIDATE,
+  characterVirtualizationUserSafeFailure,
+  readCharacterVirtualizationProviderMode,
   visualClassForVirtualStyle,
   type AiStoryCharacterVirtualStyle,
   type AiStoryCharacterVirtualizationJob,
@@ -34,10 +37,11 @@ export function compileCharacterVirtualizationPrompt(input: {
   const direction = input.creativeDirection?.trim();
   const premium = [
     "Transform the authorized source portrait into a clearly synthetic premium 3D CGI commercial spokesperson.",
-    "Preserve broad recognizable visual inspiration such as face structure, hairstyle direction, general expression, and overall visual character,",
-    "but intentionally render as unmistakably CGI / virtual.",
-    "Use stylized skin material, subtle simplified geometry, premium advertising render, clean cinematic lighting, and natural proportions.",
-    "Avoid photorealistic live-action human appearance, celebrity likeness, hyperreal skin, camera-photo aesthetic, uncanny doll look, and anime exaggeration.",
+    "Preserve broad visual inspiration: face structure, hairstyle direction, general expression, and overall recognizable character impression,",
+    "but ensure the output is unmistakably CGI / virtual.",
+    "Use a premium 3D render, subtly simplified facial geometry, stylized skin material, cinematic commercial lighting, natural professional proportions, and a polished advertising aesthetic.",
+    "Avoid photorealistic live-action human appearance, photographic skin realism, celebrity likeness, uncanny doll appearance, anime exaggeration, and cartoon mascot proportions.",
+    "The purpose is a synthetic reusable brand Character.",
   ].join(" ");
   const stylized = [
     "Transform the authorized source portrait into a stylized CGI virtual Character.",
@@ -172,24 +176,29 @@ export function buildAiStoryCharacterVirtualizationJob(input: {
 }
 
 export class MockCharacterVirtualizationProvider implements CharacterVirtualizationProvider {
-  constructor(private readonly mode: "succeed" | "reject" = "succeed") {}
+  readonly providerId = "mock";
+  readonly providerModel = "character-virtualizer-mock.v1";
+  readonly externalPaidCall = false;
+
+  constructor(private readonly mode: "succeed" | "reject" | "unavailable" = "succeed") {}
 
   async virtualizeCharacter(
     request: CharacterVirtualizationProviderRequest
   ): Promise<CharacterVirtualizationProviderResult> {
     const providerAttemptId = randomUUID();
-    const reject =
-      this.mode === "reject" ||
-      (request.creativeDirection ?? "").toUpperCase().includes("__REJECT__");
-    if (reject) {
+    const direction = (request.creativeDirection ?? "").toUpperCase();
+    const reject = this.mode === "reject" || direction.includes("__REJECT__");
+    const unavailable = this.mode === "unavailable" || direction.includes("__UNAVAILABLE__");
+    if (reject || unavailable) {
+      const code = unavailable ? "PROVIDER_UNAVAILABLE" : "PROVIDER_REJECTED";
       return {
         ok: false,
-        code: "PROVIDER_REJECTED",
-        userSafeMessage:
-          "This photo could not be turned into a virtual Character. No Character was created.",
-        provider: "mock",
-        providerModel: "character-virtualizer-mock.v1",
+        code,
+        userSafeMessage: characterVirtualizationUserSafeFailure(code),
+        provider: this.providerId,
+        providerModel: this.providerModel,
         providerAttemptId,
+        realImageProviderCalls: 0,
       };
     }
     const bytes = new Uint8Array(MOCK_VIRTUAL_CHARACTER_PNG);
@@ -199,15 +208,27 @@ export class MockCharacterVirtualizationProvider implements CharacterVirtualizat
       mimeType: "image/png",
       width: 1,
       height: 1,
-      provider: "mock",
-      providerModel: "character-virtualizer-mock.v1",
+      provider: this.providerId,
+      providerModel: this.providerModel,
       providerAttemptId,
       contentHash: hashCharacterVirtualizationBytes(bytes),
+      retries: 0,
+      realImageProviderCalls: 0,
+      costUsd: "0.0000",
     };
   }
 }
 
-export function resolveCharacterVirtualizationProvider(): CharacterVirtualizationProvider {
+export function resolveCharacterVirtualizationProvider(
+  env: NodeJS.ProcessEnv = process.env
+): CharacterVirtualizationProvider {
+  const mode = readCharacterVirtualizationProviderMode(env);
+  if (mode === "creative-image") {
+    throw new AiStoryCharacterVirtualizerError(
+      "VIRTUALIZATION_PROVIDER_UNAVAILABLE",
+      "Character virtualization Creative Image runtime must be resolved by the application layer."
+    );
+  }
   return new MockCharacterVirtualizationProvider("succeed");
 }
 
@@ -228,9 +249,9 @@ export function applyProviderSuccessToJob(
     outputAssetId,
     outputContentHash: result.contentHash,
     outputSemantic: VIRTUAL_CHARACTER_CANDIDATE,
-    costUsd,
+    costUsd: result.costUsd ?? costUsd,
     completedAt,
-    realImageProviderCalls: 0,
+    realImageProviderCalls: result.realImageProviderCalls ?? 0,
     seedanceVideoCalls: 0,
   };
 }
@@ -254,7 +275,7 @@ export function applyProviderFailureToJob(
     outputSemantic: null,
     reusableCharacterId: null,
     reusableCharacterVersionId: null,
-    realImageProviderCalls: 0,
+    realImageProviderCalls: result.realImageProviderCalls ?? 0,
     seedanceVideoCalls: 0,
   };
 }

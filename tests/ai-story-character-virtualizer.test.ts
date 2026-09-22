@@ -81,6 +81,7 @@ describe("AI Story Character Virtualizer V1", () => {
     expect(prompt).toContain("clearly synthetic premium 3D CGI");
     expect(prompt).toContain("unmistakably CGI");
     expect(prompt).toContain("Avoid photorealistic live-action human appearance");
+    expect(prompt).not.toMatch(/create a photorealistic live-action/i);
     expect(DEFAULT_CHARACTER_VIRTUAL_STYLE).toBe("PREMIUM_3D");
   });
 
@@ -90,7 +91,7 @@ describe("AI Story Character Virtualizer V1", () => {
       style: "PREMIUM_3D",
       creativeDirection: null,
       compiledPrompt: compileCharacterVirtualizationPrompt({ style: "PREMIUM_3D" }),
-      outputRequirements: { mimeType: "image/png", width: 1024, height: 1024 },
+      outputRequirements: { mimeType: "image/png", width: 1024, height: 1536 },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
@@ -108,6 +109,7 @@ describe("AI Story Character Virtualizer V1", () => {
         ok: true, bytes: MOCK_VIRTUAL_CHARACTER_PNG, mimeType: "image/png", width: 1, height: 1,
         provider: "mock", providerModel: "character-virtualizer-mock.v1",
         providerAttemptId: IDS.version, contentHash: OUTPUT_HASH,
+        realImageProviderCalls: 0, costUsd: "0.0000",
       },
       IDS.output,
       "2026-09-22T12:01:00.000Z",
@@ -130,6 +132,7 @@ describe("AI Story Character Virtualizer V1", () => {
         ok: true, bytes: MOCK_VIRTUAL_CHARACTER_PNG, mimeType: "image/png", width: 1, height: 1,
         provider: "mock", providerModel: "character-virtualizer-mock.v1",
         providerAttemptId: IDS.version, contentHash: OUTPUT_HASH,
+        realImageProviderCalls: 0, costUsd: "0.0000",
       }, IDS.output, "2026-09-22T12:01:00.000Z", "0.04"),
       { reusableCharacterId: IDS.character, reusableCharacterVersionId: IDS.version }
     );
@@ -147,6 +150,7 @@ describe("AI Story Character Virtualizer V1", () => {
         ok: true, bytes: MOCK_VIRTUAL_CHARACTER_PNG, mimeType: "image/png", width: 1, height: 1,
         provider: "mock", providerModel: "character-virtualizer-mock.v1",
         providerAttemptId: IDS.version, contentHash: OUTPUT_HASH,
+        realImageProviderCalls: 0, costUsd: "0.0000",
       }, IDS.output, "2026-09-22T12:01:00.000Z", "0.04"),
       { reusableCharacterId: IDS.character, reusableCharacterVersionId: IDS.version }
     );
@@ -200,7 +204,7 @@ describe("AI Story Character Virtualizer V1", () => {
       style: "PREMIUM_3D",
       creativeDirection: "__REJECT__",
       compiledPrompt: compileCharacterVirtualizationPrompt({ style: "PREMIUM_3D" }),
-      outputRequirements: { mimeType: "image/png", width: 1024, height: 1024 },
+      outputRequirements: { mimeType: "image/png", width: 1024, height: 1536 },
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -220,6 +224,7 @@ describe("AI Story Character Virtualizer V1", () => {
       "packages/shared/src/ai-story-character-virtualizer.ts",
       "packages/shared/src/ai-story-character-virtualizer.server.ts",
       "packages/db/src/queries/ai-story-character-virtualizer.ts",
+      "packages/agents/src/ai-story/character-virtualization-creative-image.ts",
     ].map((path) => readFileSync(resolve(process.cwd(), path), "utf8"));
     for (const source of files) {
       expect(source).not.toMatch(/dreamina-seedance|seedance-capability|seedance-canonical/i);

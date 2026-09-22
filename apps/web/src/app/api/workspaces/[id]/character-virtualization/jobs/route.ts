@@ -7,7 +7,7 @@ import {
 } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError } from "@/lib/auth";
-import { characterVirtualizerContext } from "@/lib/character-virtualizer-access";
+import { characterVirtualizerContext, characterVirtualizerExecutionOptions } from "@/lib/character-virtualizer-access";
 
 const Body = z.object({
   sourceAssetId: z.string().uuid(),
@@ -31,6 +31,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       creativeDirection: parsed.data.creativeDirection ?? null,
       permissionConfirmed: true,
       costAuthorized: true,
+      ...characterVirtualizerExecutionOptions(id),
     });
     return apiSuccess({ job: publicVirtualizationJob(job) }, job.status === "SUCCEEDED" ? 201 : 422);
   } catch (error) {

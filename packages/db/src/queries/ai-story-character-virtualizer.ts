@@ -4,8 +4,10 @@ import {
   AiStoryCharacterVirtualizerError,
   AiStoryCharacterVirtualizationJobSchema,
   CHARACTER_SOURCE_PORTRAIT,
+  CHARACTER_VIRTUALIZATION_OUTPUT,
   VIRTUAL_CHARACTER_CANDIDATE,
   characterVirtualizationCostEstimate,
+  characterVirtualizationUserSafeFailure,
   compileVirtualizationLineage,
   evaluateSourcePortraitDeletion,
   sourcePortraitCannotReplaceCanonicalOutput,
@@ -37,6 +39,16 @@ export { AiStoryCharacterVirtualizerError };
 
 type Db = ReturnType<typeof getDb>;
 type Scope = AiStoryReusableCharacterScope;
+type SourceBytesLoader = (input: {
+  storagePath: string;
+  contentHash: string;
+  mimeType: string;
+}) => Promise<Uint8Array>;
+type OutputBytesPersister = (input: {
+  storagePath: string;
+  bytes: Buffer;
+  mimeType: string;
+}) => Promise<void>;
 
 async function assertWorkspaceScope(db: Pick<Db, "execute">, scope: Scope, mutation: boolean) {
   const rows = await db.execute<{ ok: boolean }>(sql`select exists(
@@ -159,67 +171,136 @@ export class AiStoryCharacterVirtualizerService {
     costAuthorized: true;
     parentJobId?: string | null;
     provider?: CharacterVirtualizationProvider;
+    sourceBytes?: Uint8Array;
+    loadSourceBytes?: SourceBytesLoader;
+    persistOutputBytes?: OutputBytesPersister;
     now?: string;
   }) {
-    if (input.parentJobId && input.costAuthorized !== true) {
+    if (input.costAuthorized !== true) {
       throw new AiStoryCharacterVirtualizerError("COST_AUTHORIZATION_REQUIRED", "Generate Again requires a new paid authorization");
     }
     const source = await this.registerSourcePortrait(scope, input.sourceAssetId);
-    return this.db.transaction(async (tx) => {
-      await assertWorkspaceScope(tx, scope, true);
-      const now = input.now ?? new Date().toISOString();
-      const job = buildAiStoryCharacterVirtualizationJob({
-        orgId: scope.orgId,
-        workspaceId: scope.workspaceId,
-        sourceAssetId: source.id,
-        sourceContentHash: source.contentHash!,
-        style: input.style,
-        creativeDirection: input.creativeDirection,
-        permissionConfirmed: true,
-        createdBy: scope.actorUserId,
-        createdAt: now,
-        parentJobId: input.parentJobId ?? null,
+    const now = input.now ?? new Date().toISOString();
+    const provider = input.provider ?? resolveCharacterVirtualizationProvider();
+    const job = buildAiStoryCharacterVirtualizationJob({
+      orgId: scope.orgId,
+      workspaceId: scope.workspaceId,
+      sourceAssetId: source.id,
+      sourceContentHash: source.contentHash!,
+      style: input.style,
+      creativeDirection: input.creativeDirection,
+      permissionConfirmed: true,
+      createdBy: scope.actorUserId,
+      createdAt: now,
+      parentJobId: input.parentJobId ?? null,
+      provider: provider.providerId,
+      providerModel: provider.providerModel,
+    });
+    await this.db.insert(schema.aiStoryCharacterVirtualizationJobs).values(jobRow({ ...job, status: "RUNNING" }));
+
+    let sourceBytes = input.sourceBytes;
+    if (!sourceBytes && input.loadSourceBytes) {
+      sourceBytes = await input.loadSourceBytes({
+        storagePath: source.storagePath,
+        contentHash: source.contentHash!,
+        mimeType: source.mimeType ?? "image/png",
       });
-      compileCharacterVirtualizationPrompt({ style: job.style, creativeDirection: job.creativeDirection });
-      await tx.insert(schema.aiStoryCharacterVirtualizationJobs).values(jobRow({ ...job, status: "RUNNING" }));
-      const provider = input.provider ?? resolveCharacterVirtualizationProvider();
-      const result = await provider.virtualizeCharacter({
+    }
+
+    const compiledPrompt = compileCharacterVirtualizationPrompt({
+      style: job.style,
+      creativeDirection: job.creativeDirection,
+    });
+    let result: Awaited<ReturnType<CharacterVirtualizationProvider["virtualizeCharacter"]>>;
+    try {
+      result = await provider.virtualizeCharacter({
         sourceImage: {
           assetId: source.id,
           contentHash: source.contentHash!,
           mimeType: source.mimeType ?? "image/png",
           width: source.width,
           height: source.height,
+          ...(sourceBytes ? { bytes: sourceBytes } : {}),
         },
         style: job.style,
         creativeDirection: job.creativeDirection,
-        compiledPrompt: compileCharacterVirtualizationPrompt({
-          style: job.style,
-          creativeDirection: job.creativeDirection,
-        }),
-        outputRequirements: { mimeType: "image/png", width: 1024, height: 1024 },
+        compiledPrompt,
+        outputRequirements: {
+          mimeType: CHARACTER_VIRTUALIZATION_OUTPUT.mimeType,
+          width: CHARACTER_VIRTUALIZATION_OUTPUT.width,
+          height: CHARACTER_VIRTUALIZATION_OUTPUT.height,
+        },
+        authorization: {
+          authorizationId: job.id,
+          executionIdentity: job.id,
+          idempotencyKey: job.id,
+          scope: { tenantId: scope.orgId, workspaceId: scope.workspaceId },
+          authorizedBy: scope.actorUserId,
+          authorizedAt: now,
+          maximumProviderCalls: 1,
+        },
       });
-      const completedAt = new Date().toISOString();
-      if (!result.ok) {
-        const failed = applyProviderFailureToJob({ ...job, status: "RUNNING" }, result, completedAt);
-        await tx.update(schema.aiStoryCharacterVirtualizationJobs).set(jobRow(failed))
-          .where(eq(schema.aiStoryCharacterVirtualizationJobs.jobId, job.id));
-        return failed;
+    } catch {
+      const failed = applyProviderFailureToJob(
+        { ...job, status: "RUNNING" },
+        {
+          ok: false,
+          code: "PROVIDER_UNAVAILABLE",
+          userSafeMessage: characterVirtualizationUserSafeFailure("PROVIDER_UNAVAILABLE"),
+          provider: provider.providerId,
+          providerModel: provider.providerModel,
+          providerAttemptId: randomUUID(),
+          realImageProviderCalls: 0,
+        },
+        new Date().toISOString()
+      );
+      await this.db.update(schema.aiStoryCharacterVirtualizationJobs).set(jobRow(failed))
+        .where(eq(schema.aiStoryCharacterVirtualizationJobs.jobId, job.id));
+      return failed;
+    }
+
+    const completedAt = new Date().toISOString();
+    if (!result.ok) {
+      const failed = applyProviderFailureToJob({ ...job, status: "RUNNING" }, result, completedAt);
+      await this.db.update(schema.aiStoryCharacterVirtualizationJobs).set(jobRow(failed))
+        .where(eq(schema.aiStoryCharacterVirtualizationJobs.jobId, job.id));
+      return failed;
+    }
+    if (result.contentHash === source.contentHash) {
+      const failed = applyProviderFailureToJob(
+        { ...job, status: "RUNNING" },
+        {
+          ok: false,
+          code: "PROVIDER_RESULT_INVALID",
+          userSafeMessage: characterVirtualizationUserSafeFailure("PROVIDER_RESULT_INVALID"),
+          provider: result.provider,
+          providerModel: result.providerModel,
+          providerAttemptId: result.providerAttemptId,
+          realImageProviderCalls: result.realImageProviderCalls,
+        },
+        completedAt
+      );
+      await this.db.update(schema.aiStoryCharacterVirtualizationJobs).set(jobRow(failed))
+        .where(eq(schema.aiStoryCharacterVirtualizationJobs.jobId, job.id));
+      return failed;
+    }
+    const outputAssetId = randomUUID();
+    const storagePath = STORAGE_PATHS.library(scope.workspaceId, outputAssetId, "png");
+    try {
+      if (input.persistOutputBytes) {
+        await input.persistOutputBytes({
+          storagePath,
+          bytes: Buffer.from(result.bytes),
+          mimeType: result.mimeType,
+        });
       }
-      if (result.contentHash === source.contentHash) {
-        throw new AiStoryCharacterVirtualizerError(
-          "SOURCE_PORTRAIT_NOT_IDENTITY_MASTER",
-          "Virtual output cannot reuse the source portrait as Character identity"
-        );
-      }
-      const outputAssetId = randomUUID();
-      await tx.insert(schema.assets).values({
+      await this.db.insert(schema.assets).values({
         id: outputAssetId,
         orgId: scope.orgId,
         workspaceId: scope.workspaceId,
         campaignId: null,
         type: "image",
-        storagePath: STORAGE_PATHS.library(scope.workspaceId, outputAssetId, "png"),
+        storagePath,
         displayName: "Virtual Character candidate",
         originalFilename: "virtual-character.png",
         mimeType: result.mimeType,
@@ -237,12 +318,29 @@ export class AiStoryCharacterVirtualizerService {
         result,
         outputAssetId,
         completedAt,
-        characterVirtualizationCostEstimate(job.style).estimatedExpected
+        result.costUsd ?? "0.0000"
       );
-      await tx.update(schema.aiStoryCharacterVirtualizationJobs).set(jobRow(succeeded))
+      await this.db.update(schema.aiStoryCharacterVirtualizationJobs).set(jobRow(succeeded))
         .where(eq(schema.aiStoryCharacterVirtualizationJobs.jobId, job.id));
       return succeeded;
-    });
+    } catch {
+      const failed = applyProviderFailureToJob(
+        { ...job, status: "RUNNING" },
+        {
+          ok: false,
+          code: "PROVIDER_UNAVAILABLE",
+          userSafeMessage: characterVirtualizationUserSafeFailure("PROVIDER_UNAVAILABLE"),
+          provider: result.provider,
+          providerModel: result.providerModel,
+          providerAttemptId: result.providerAttemptId,
+          realImageProviderCalls: 0,
+        },
+        completedAt
+      );
+      await this.db.update(schema.aiStoryCharacterVirtualizationJobs).set(jobRow(failed))
+        .where(eq(schema.aiStoryCharacterVirtualizationJobs.jobId, job.id));
+      return failed;
+    }
   }
 
   async generateAgain(scope: Scope, input: {
@@ -250,6 +348,9 @@ export class AiStoryCharacterVirtualizerService {
     costAuthorized: true;
     permissionConfirmed: true;
     provider?: CharacterVirtualizationProvider;
+    sourceBytes?: Uint8Array;
+    loadSourceBytes?: SourceBytesLoader;
+    persistOutputBytes?: OutputBytesPersister;
   }) {
     const parent = await this.readJob(scope, input.parentJobId);
     return this.generate(scope, {
@@ -260,6 +361,9 @@ export class AiStoryCharacterVirtualizerService {
       costAuthorized: true,
       parentJobId: parent.id,
       provider: input.provider,
+      sourceBytes: input.sourceBytes,
+      loadSourceBytes: input.loadSourceBytes,
+      persistOutputBytes: input.persistOutputBytes,
     });
   }
 
