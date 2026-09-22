@@ -160,6 +160,88 @@ describeIntegration("AI Story reusable Character library persistence and isolati
     expect(await service.list(foreignScope)).toEqual([]);
   });
 
+  it("persists unique short reusable Character FKs with RESTRICT references", async () => {
+    const rows = await sql<{
+      conname: string;
+      table_name: string;
+      foreign_table: string;
+      child_column: string;
+      parent_column: string;
+      on_delete: string;
+    }[]>`
+      SELECT
+        constraint_row.conname,
+        child_table.relname AS table_name,
+        parent_table.relname AS foreign_table,
+        child.attname AS child_column,
+        parent.attname AS parent_column,
+        constraint_row.confdeltype AS on_delete
+      FROM pg_constraint constraint_row
+      JOIN pg_class child_table ON child_table.oid = constraint_row.conrelid
+      JOIN pg_class parent_table ON parent_table.oid = constraint_row.confrelid
+      JOIN pg_attribute child ON child.attrelid = child_table.oid AND child.attnum = constraint_row.conkey[1]
+      JOIN pg_attribute parent ON parent.attrelid = parent_table.oid AND parent.attnum = constraint_row.confkey[1]
+      WHERE constraint_row.contype = 'f'
+        AND child_table.relname IN (
+          'ai_story_reusable_characters',
+          'ai_story_reusable_character_versions',
+          'ai_story_reusable_character_campaign_projections',
+          'ai_story_episode_character_bindings',
+          'ai_story_character_continuity_anchors'
+        )
+      ORDER BY constraint_row.conname
+    `;
+    const names = rows.map((row) => row.conname);
+    expect(new Set(names).size).toBe(names.length);
+    for (const row of rows) {
+      expect(row.conname.length).toBeLessThanOrEqual(63);
+      expect(row.on_delete).toBe("r");
+    }
+    const byName = Object.fromEntries(rows.map((row) => [row.conname, row]));
+    expect(byName.as_rc_proj_root_fk).toMatchObject({
+      table_name: "ai_story_reusable_character_campaign_projections",
+      child_column: "reusable_character_id",
+      foreign_table: "ai_story_reusable_characters",
+      parent_column: "reusable_character_id",
+    });
+    expect(byName.as_rc_proj_ver_fk).toMatchObject({
+      table_name: "ai_story_reusable_character_campaign_projections",
+      child_column: "reusable_character_version_id",
+      foreign_table: "ai_story_reusable_character_versions",
+      parent_column: "reusable_character_version_id",
+    });
+    expect(byName.as_rc_proj_char_fk).toMatchObject({
+      child_column: "campaign_character_id",
+      foreign_table: "ai_story_characters",
+      parent_column: "character_id",
+    });
+    expect(byName.as_rc_proj_char_ver_fk).toMatchObject({
+      child_column: "campaign_character_version_id",
+      foreign_table: "ai_story_character_versions",
+      parent_column: "character_version_id",
+    });
+    expect(byName.as_ep_char_bind_root_fk).toMatchObject({
+      table_name: "ai_story_episode_character_bindings",
+      child_column: "reusable_character_id",
+    });
+    expect(byName.as_ep_char_bind_ver_fk).toMatchObject({
+      child_column: "reusable_character_version_id",
+    });
+    expect(byName.as_char_anchor_root_fk).toMatchObject({
+      table_name: "ai_story_character_continuity_anchors",
+      child_column: "reusable_character_id",
+    });
+    expect(byName.as_char_anchor_ver_fk).toMatchObject({
+      child_column: "reusable_character_version_id",
+    });
+    expect(byName.ai_story_reusable_character_current_version_fk).toMatchObject({
+      table_name: "ai_story_reusable_characters",
+      child_column: "current_reusable_character_version_id",
+      foreign_table: "ai_story_reusable_character_versions",
+      parent_column: "reusable_character_version_id",
+    });
+  });
+
   it("enables RLS and denies cross-workspace reusable Character reads", async () => {
     const enabled = await sql<{ enabled: boolean }[]>`select relrowsecurity enabled from pg_class where oid='ai_story_reusable_characters'::regclass`;
     expect(enabled[0]?.enabled).toBe(true);
