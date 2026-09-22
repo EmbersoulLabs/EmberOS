@@ -91,4 +91,86 @@ describe("hybrid migration guard", () => {
     });
     expect(result.errors).toContain("AI_STORY_SKILL_FREEZE_VIOLATION:sceneVisualRole");
   });
+
+  it("allows only the exact Wave 6 Platform Admin recovery paths for the certified ticket", () => {
+    const changedFiles = [
+      "package.json",
+      "packages/db/src/index.ts",
+      "packages/db/src/queries/platform-admin-break-glass.ts",
+      "packages/db/src/queries/platform-admin-management.ts",
+      "scripts/wave6-staging-platform-admin-recovery-02.ts",
+      "config/hybrid-migration-guards.json",
+      "scripts/hybrid-migration-guards.ts",
+      "tests/hybrid-migration-guards.test.ts",
+      "tests/wave6-platform-admin-management.test.ts",
+      "tests/wave6-platform-admin-recovery.integration.test.ts",
+      ".migration-intents/EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-02.json",
+    ];
+    const result = evaluateMigration({
+      changedFiles,
+      intent: intent({
+        ticketId: "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-02",
+        wave: 6,
+        changeKind: "SECURITY_REPAIR",
+        sourceAuthority: "SECURITY_AUDIT",
+        targetModule: "Platform Admin Recovery / Post-Bootstrap Grant Management",
+        allowedSourcePaths: [],
+        allowedTargetPaths: changedFiles,
+        protectedDomainsExpectedToChange: ["PLATFORM_ADMIN"],
+        protectedDomainsMustNotChange: [],
+        requiredTests: ["tests/sprint-3-phase-3-pr37-phase-e-http-security.integration.test.ts"],
+      }),
+      manifest,
+    });
+    expect(result).toMatchObject({ ok: true, errors: [] });
+    expect(result.protectedDomainsTouched).toEqual(["PLATFORM_ADMIN"]);
+  });
+
+  it.each([
+    "packages/db/src/queries/ai-story-unapproved.ts",
+    "packages/db/src/queries/campaign-unapproved.ts",
+    "packages/db/src/queries/billing-unapproved.ts",
+    "scripts/unrelated-script.ts",
+    "apps/web/src/components/Unrelated.tsx",
+    "apps/worker/src/unrelated.ts",
+  ])("rejects nearby Wave 6 path %s", (changedFile) => {
+    const result = evaluateMigration({
+      changedFiles: [changedFile],
+      intent: intent({
+        ticketId: "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-02",
+        wave: 6,
+        changeKind: "SECURITY_REPAIR",
+        sourceAuthority: "SECURITY_AUDIT",
+        targetModule: "Platform Admin Recovery / Post-Bootstrap Grant Management",
+        allowedSourcePaths: [],
+        allowedTargetPaths: ["**"],
+        protectedDomainsExpectedToChange: [],
+        protectedDomainsMustNotChange: [],
+        requiredTests: [],
+      }),
+      manifest,
+    });
+    expect(result.errors).toContain(`WAVE_6_SCOPE_VIOLATION:${changedFile}`);
+  });
+
+  it("does not grant the exact recovery paths to a different Wave 6 ticket", () => {
+    const changedFile = "packages/db/src/queries/platform-admin-management.ts";
+    const result = evaluateMigration({
+      changedFiles: [changedFile],
+      intent: intent({
+        ticketId: "EMBEROS-WAVE6-UNRELATED-SECURITY-01",
+        wave: 6,
+        changeKind: "SECURITY_REPAIR",
+        sourceAuthority: "SECURITY_AUDIT",
+        targetModule: "Unrelated",
+        allowedSourcePaths: [],
+        allowedTargetPaths: [changedFile],
+        protectedDomainsExpectedToChange: ["PLATFORM_ADMIN"],
+        protectedDomainsMustNotChange: [],
+        requiredTests: ["tests/sprint-3-phase-3-pr37-phase-e-http-security.integration.test.ts"],
+      }),
+      manifest,
+    });
+    expect(result.errors).toContain(`WAVE_6_SCOPE_VIOLATION:${changedFile}`);
+  });
 });

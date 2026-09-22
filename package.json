@@ -32,6 +32,7 @@
     "ai-story:verify-release-revision": "tsx scripts/verify-production-release-revision.ts",
     "verify": "pnpm test && pnpm typecheck && pnpm --filter @ceo-agent/web build",
     "verify:hybrid-migration": "tsx scripts/verify-hybrid-migration-guards.ts",
+    "wave6:staging-platform-admin-recovery": "tsx scripts/wave6-staging-platform-admin-recovery-02.ts",
     "smoke:prod": "tsx scripts/smoke-production.ts",
     "pilot:metrics": "tsx scripts/pilot-metrics.ts",
     "smoke:infra": "pnpm check:infra",
