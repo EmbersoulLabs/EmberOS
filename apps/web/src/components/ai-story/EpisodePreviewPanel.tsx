@@ -9,11 +9,13 @@ import {
   aiStoryEpisodeRevisionCapability,
   classifyEpisodeMomentRepair,
   describeEpisodePartialFailure,
+  fullEpisodePendingCopy,
   resolveEpisodeMomentFromTimeRange,
   revisionActionEnabled,
   type AiStoryEpisodePacing,
   type AiStoryEpisodeRevisionCapability,
   type AiStoryEpisodeTimelineMoment,
+  type FullEpisodePreviewState,
 } from "@ceo-agent/shared";
 
 type HistoryEntry = { version: number; summary: string };
@@ -22,7 +24,7 @@ type Props = {
   title: string;
   durationLabel: string;
   statusLabel: string;
-  videoUrl?: string | null;
+  previewState: FullEpisodePreviewState;
   actualCostLabel?: string;
   liveCostLabel?: string;
   moments: readonly AiStoryEpisodeTimelineMoment[];
@@ -48,7 +50,7 @@ export function EpisodePreviewPanel({
   title,
   durationLabel,
   statusLabel,
-  videoUrl,
+  previewState,
   actualCostLabel,
   liveCostLabel,
   moments,
@@ -116,21 +118,28 @@ export function EpisodePreviewPanel({
     revisionActionEnabled("ADJUST_ENDING", revisionCapability) && Boolean(onAdjustEnding);
   const canAdjustPacing =
     revisionActionEnabled("ADJUST_PACING", revisionCapability) && Boolean(onAdjustPacing);
+  const pendingCopy = fullEpisodePendingCopy(previewState);
 
   return (
     <section className="space-y-4" data-testid="episode-preview">
-      <div className="overflow-hidden rounded-2xl border border-border bg-black">
-        {/* video first */}
-        {videoUrl ? (
-          <video className="aspect-[9/16] w-full bg-black md:aspect-video" controls src={videoUrl} aria-label="Episode Preview" />
-        ) : (
-          <div className="flex aspect-[9/16] items-center justify-center text-sm text-white md:aspect-video">Episode Preview will appear here</div>
-        )}
-      </div>
-      <p className="px-1 text-xs text-ink-secondary md:hidden">Video first. Primary actions are below.</p>
+      {previewState === "FINAL_READY" ? null : (
+        <div className="overflow-hidden rounded-2xl border border-border bg-black" data-testid="full-episode-pending">
+          {/* video first */}
+          <div
+            className="flex aspect-[9/16] flex-col items-center justify-center gap-2 px-6 text-center text-sm text-white md:aspect-video"
+            aria-label={AI_STORY_EPISODE_COPY.episodePreview}
+          >
+            <p className="font-medium">{AI_STORY_EPISODE_COPY.finalEpisodePending}</p>
+            {pendingCopy ? <p className="text-white/80">{pendingCopy}</p> : null}
+          </div>
+        </div>
+      )}
+      {previewState === "FINAL_READY" ? null : (
+        <p className="px-1 text-xs text-ink-secondary md:hidden">Video first. Primary actions are below.</p>
+      )}
       <div className="space-y-2 px-1">
-        <h2 className="text-xl font-bold text-navy">{AI_STORY_EPISODE_COPY.episodePreview}</h2>
-        <p className="text-sm text-navy">{title}</p>
+        <h2 className="text-xl font-bold text-navy">{title || AI_STORY_EPISODE_COPY.yourEpisode}</h2>
+        <p className="text-sm text-navy">{AI_STORY_EPISODE_COPY.episodePreview}</p>
         <p className="text-sm text-ink-secondary">{durationLabel} · {statusLabel}</p>
         <p className="text-xs text-ink-secondary">{AI_STORY_EPISODE_COPY.nativeCharacterDialogue} is preserved for visible spoken lines.</p>
         {liveCostLabel ? (

@@ -17,6 +17,8 @@ import {
   episodeMomentMarker,
   formatEpisodeActualCostUsd,
   formatEpisodeLiveCostEstimateUsd,
+  resolveEpisodeDurationLabel,
+  resolveFullEpisodePreviewState,
   resolveInternalRetryScopeFromEpisodeMoment,
   shouldExposeSceneDiagnostics,
   type AiStoryEpisodePacing,
@@ -75,6 +77,7 @@ export function StoryRuntimePanel({
   const [regenerationCostLabel, setRegenerationCostLabel] = useState<string | null>(null);
   const [currentVersionLabel, setCurrentVersionLabel] = useState<string | null>(null);
   const [previousVersionLabel, setPreviousVersionLabel] = useState<string | null>(null);
+  const [finalDurationMs, setFinalDurationMs] = useState<number | null>(null);
   const executeInFlight = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestGen = useRef(0);
@@ -304,6 +307,17 @@ export function StoryRuntimePanel({
     : t(statusKey(projection?.status));
   const canExecute =
     showExecuteChrome && Boolean(projection?.canExecute) && !executing && !loading;
+  const previewState = resolveFullEpisodePreviewState({
+    hasFinalStoryResult: Boolean(projection?.hasFinalStoryResult),
+    status: projection?.status,
+    assemblyState: projection?.assemblyState,
+    pendingReviewSceneCount: projection?.pendingReviewSceneCount,
+    waitingForHumanReview,
+  });
+  const showFinalEpisode = previewState === "FINAL_READY";
+  const durationLabel = resolveEpisodeDurationLabel(finalDurationMs, {
+    expected: showFinalEpisode,
+  });
 
   return (
     <div className="space-y-4" data-testid="story-runtime-panel">
@@ -434,11 +448,22 @@ export function StoryRuntimePanel({
         ) : null}
       </section>
 
+      {showFinalEpisode ? (
+        <FinalStoryResultViewer
+          campaignId={campaignId}
+          storyId={storyId}
+          executionPlanId={executionPlanId}
+          enabled
+          expectAcceptedResult
+          onDurationMs={setFinalDurationMs}
+        />
+      ) : null}
+
       <EpisodePreviewPanel
-        title="Episode Preview"
-        durationLabel="00:48"
+        title={AI_STORY_EPISODE_COPY.yourEpisode}
+        durationLabel={durationLabel}
         statusLabel={statusLabel}
-        videoUrl={projection?.generatedSceneReviews?.find((scene) => scene.generatedMedia?.deliveryUrl)?.generatedMedia?.deliveryUrl}
+        previewState={previewState}
         actualCostLabel={
           projection?.providerSpend?.storyKnownAmount != null
             ? formatEpisodeActualCostUsd(String(projection.providerSpend.storyKnownAmount))
@@ -545,13 +570,6 @@ export function StoryRuntimePanel({
         workspaceRole={workspaceRole}
         scenes={projection?.generatedSceneReviews ?? []}
         onChanged={refresh}
-      />
-
-      <FinalStoryResultViewer
-        campaignId={campaignId}
-        storyId={storyId}
-        executionPlanId={executionPlanId}
-        enabled={projection?.status === "SUCCEEDED" || Boolean(projection?.hasFinalStoryResult)}
       />
     </div>
   );
