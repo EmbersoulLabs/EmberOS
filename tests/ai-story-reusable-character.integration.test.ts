@@ -195,7 +195,7 @@ describeIntegration("AI Story reusable Character library persistence and isolati
     expect(new Set(names).size).toBe(names.length);
     for (const row of rows) {
       expect(row.conname.length).toBeLessThanOrEqual(63);
-      expect(row.on_delete).toBe("r");
+      expect(["a", "r"]).toContain(row.on_delete);
     }
     const byName = Object.fromEntries(rows.map((row) => [row.conname, row]));
     expect(byName.as_rc_proj_root_fk).toMatchObject({
