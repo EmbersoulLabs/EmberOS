@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { AiStoryReusableCharacterError, AiStoryReusableCharacterService, getDb, schema } from "@ceo-agent/db";
+import { AiStoryReusableCharacterError, AiStoryReusableCharacterService, AiStoryCharacterVirtualizerService, getDb, schema } from "@ceo-agent/db";
 import { isUuid, publicReusableCharacterCard } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
@@ -20,6 +20,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
     const service = new AiStoryReusableCharacterService(db);
+    const virtualizer = new AiStoryCharacterVirtualizerService(db);
     const versions = await service.list({ orgId: campaign.orgId, workspaceId: campaign.workspaceId, actorUserId: user.id });
     const characters = await Promise.all(versions.map(async (version) => {
       const countRows = await db.select({ storyId: schema.aiStoryEpisodeCharacterBindings.storyId })
@@ -29,7 +30,16 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           eq(schema.aiStoryEpisodeCharacterBindings.workspaceId, campaign.workspaceId),
         ));
       const episodeCount = new Set(countRows.map((row) => row.storyId)).size;
-      return publicReusableCharacterCard(version, episodeCount);
+      const virtual = await virtualizer.latestAcceptedForCharacter(
+        { orgId: campaign.orgId, workspaceId: campaign.workspaceId, actorUserId: user.id },
+        version.reusableCharacterId
+      );
+      return {
+        ...publicReusableCharacterCard(version, episodeCount),
+        visualClass: virtual?.visualClass,
+        virtualStyle: virtual?.style,
+        identityLocked: true as const,
+      };
     }));
     return apiSuccess({ characters });
   } catch (error) { return asReusableError(error); }

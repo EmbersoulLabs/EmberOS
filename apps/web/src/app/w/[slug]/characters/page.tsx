@@ -8,6 +8,7 @@ import { ReusableCharacterLibraryPanel } from "@/components/ai-story/ReusableCha
 export default function WorkspaceCharactersPage() {
   const { slug } = useParams<{ slug: string }>();
   const [workspace, setWorkspace] = useState<{ id: string; name: string; role?: string } | null>(null);
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     fetch("/api/me").then(async (response) => ({ ok: response.ok, body: await response.json() })).then(({ ok, body }) => {
@@ -15,12 +16,18 @@ export default function WorkspaceCharactersPage() {
       const match = body.workspaces?.find((item: { slug: string }) => item.slug === slug);
       if (!match) throw new Error("Workspace not found");
       setWorkspace(match);
+      setIsSuperAdmin(Boolean(body.isSuperAdmin));
     }).catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load Workspace"));
   }, [slug]);
   return (
     <AppShell workspaceName={workspace?.name}>
       {error ? <p className="text-sm text-red-700">{error}</p> : workspace ? (
-        <ReusableCharacterLibraryPanel workspaceId={workspace.id} canEdit={workspace.role === "admin" || workspace.role === "operator"} />
+        <ReusableCharacterLibraryPanel
+          workspaceId={workspace.id}
+          slug={slug}
+          canEdit={workspace.role === "admin" || workspace.role === "operator"}
+          isSuperAdmin={isSuperAdmin}
+        />
       ) : <p className="text-sm text-ink-secondary">Loading…</p>}
     </AppShell>
   );

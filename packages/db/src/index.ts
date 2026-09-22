@@ -55,6 +55,7 @@ export * from "./queries/ai-story-outline";
 export * from "./queries/ai-story-outline-profile-authority";
 export * from "./queries/ai-story-character";
 export * from "./queries/ai-story-reusable-character";
+export * from "./queries/ai-story-character-virtualizer";
 export * from "./queries/ai-story-cast";
 export * from "./queries/ai-story-script";
 export * from "./queries/ai-story-episode-revision-persistence";

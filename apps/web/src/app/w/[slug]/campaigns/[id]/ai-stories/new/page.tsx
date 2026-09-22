@@ -18,6 +18,7 @@ export default function CreateAiStoryPage() {
   const slug = params.slug as string;
   const campaignId = params.id as string;
   const [assets, setAssets] = useState<AssetRow[]>([]);
+  const [workspaceId, setWorkspaceId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -29,6 +30,8 @@ export default function CreateAiStoryPage() {
       return;
     }
     setAssets(data.assets ?? []);
+    if (typeof data.campaign?.workspaceId === "string") setWorkspaceId(data.campaign.workspaceId);
+    else if (typeof data.workspaceId === "string") setWorkspaceId(data.workspaceId);
   }, [campaignId]);
 
   useEffect(() => {
@@ -95,7 +98,7 @@ export default function CreateAiStoryPage() {
           <h1 className="mt-3 text-2xl font-bold text-navy">Create Episode</h1>
           <p className="mt-1 text-sm text-ink-secondary">Describe one Episode. EmberOS handles Scenes and shots internally.</p>
         </div>
-        <EpisodeCreateForm campaignId={campaignId} assets={assets} loading={loading} error={error} onGenerate={(payload) => void onGenerate(payload)} />
+        <EpisodeCreateForm campaignId={campaignId} workspaceId={workspaceId} assets={assets} loading={loading} error={error} onGenerate={(payload) => void onGenerate(payload)} />
         <TapaoJomEpisodeUxFixture />
       </div>
     </AppShell>

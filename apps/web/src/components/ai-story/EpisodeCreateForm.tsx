@@ -14,6 +14,8 @@ import {
   type AiStoryReusableCharacterCard,
 } from "@ceo-agent/shared";
 
+import { CharacterPortrait } from "@/components/ai-story/CharacterPortrait";
+
 type AssetRow = { id: string; displayName?: string | null; originalFilename?: string | null };
 
 export type EpisodeCreatePayload = {
@@ -39,6 +41,7 @@ export type EpisodeCreatePayload = {
 
 type Props = {
   campaignId: string;
+  workspaceId?: string;
   assets: AssetRow[];
   loading: boolean;
   error: string;
@@ -57,6 +60,7 @@ const TYPE_LABELS: Record<AiStoryEpisodeUserType, string> = {
 
 export function EpisodeCreateForm({
   campaignId,
+  workspaceId,
   assets,
   loading,
   error,
@@ -229,18 +233,21 @@ export function EpisodeCreateForm({
           {AI_STORY_REUSABLE_CHARACTER_COPY.createNewCharacter}
         </label>
         {characters.map((character) => (
-          <label key={character.reusableCharacterId} className="flex items-center gap-2 rounded-lg border border-border p-3 text-sm">
+          <label key={character.reusableCharacterId} className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm" data-testid="episode-character-option">
             <input type="radio" name="reusableCharacter" checked={reusableCharacterId === character.reusableCharacterId} onChange={() => setReusableCharacterId(character.reusableCharacterId)} />
-            {character.name}
-            <span className="text-xs text-ink-secondary">{AI_STORY_REUSABLE_CHARACTER_COPY.usedInEpisodes(character.episodeCount)}</span>
+            {workspaceId ? <CharacterPortrait workspaceId={workspaceId} assetId={character.portraitAssetId} label={character.name} className="h-14 w-14 rounded-md object-cover" /> : null}
+            <span>
+              <span className="block font-medium">{character.name}</span>
+              <span className="text-xs text-ink-secondary">{AI_STORY_REUSABLE_CHARACTER_COPY.usedInEpisodes(character.episodeCount)}</span>
+            </span>
           </label>
         ))}
         {reusableCharacterId !== "new" ? (
-          <div className="rounded-lg bg-surface-muted p-3 text-sm">
+          <div className="rounded-lg bg-surface-muted p-3 text-sm" data-testid="episode-identity-locked">
             <p className="font-medium text-navy">{AI_STORY_REUSABLE_CHARACTER_COPY.identityLocked} ✓</p>
             <label className="mt-2 block space-y-1">
               <span>Outfit</span>
-              <input className="w-full rounded-lg border border-border px-3 py-2 text-sm" value={episodeLookWardrobe} onChange={(event) => setEpisodeLookWardrobe(event.target.value)} placeholder="White dress or blue jacket" />
+              <input data-testid="episode-look-outfit" className="w-full rounded-lg border border-border px-3 py-2 text-sm" value={episodeLookWardrobe} onChange={(event) => setEpisodeLookWardrobe(event.target.value)} placeholder="White dress or blue jacket" />
             </label>
           </div>
         ) : null}

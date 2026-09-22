@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { AiStoryReusableCharacterError, AiStoryReusableCharacterService, getDb, schema } from "@ceo-agent/db";
+import { AiStoryReusableCharacterError, AiStoryReusableCharacterService, AiStoryCharacterVirtualizerService, getDb, schema } from "@ceo-agent/db";
 import {
   AiStoryCharacterDefaultLookSchema,
   AiStoryCharacterIdentityCoreSchema,
@@ -39,6 +39,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     const ctx = await workspaceContext(id, false);
     if (!ctx) return apiError("Workspace not found", "NOT_FOUND", 404);
     const versions = await new AiStoryReusableCharacterService(ctx.db).list(ctx.scope);
+    const virtualizer = new AiStoryCharacterVirtualizerService(ctx.db);
     const characters = await Promise.all(versions.map(async (version) => {
       const rows = await ctx.db.select({ storyId: schema.aiStoryEpisodeCharacterBindings.storyId })
         .from(schema.aiStoryEpisodeCharacterBindings)
@@ -46,7 +47,13 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
           eq(schema.aiStoryEpisodeCharacterBindings.reusableCharacterId, version.reusableCharacterId),
           eq(schema.aiStoryEpisodeCharacterBindings.workspaceId, id),
         ));
-      return publicReusableCharacterCard(version, new Set(rows.map((row) => row.storyId)).size);
+      const virtual = await virtualizer.latestAcceptedForCharacter(ctx.scope, version.reusableCharacterId);
+      return {
+        ...publicReusableCharacterCard(version, new Set(rows.map((row) => row.storyId)).size),
+        visualClass: virtual?.visualClass,
+        virtualStyle: virtual?.style,
+        identityLocked: true as const,
+      };
     }));
     return apiSuccess({ characters });
   } catch (error) {
