@@ -21,6 +21,8 @@ const describeIntegration = RUN_DB_INTEGRATION && getIntegrationDbUrl() ? descri
 const SECOND_CAMPAIGN = "62000000-0000-4000-8000-000000000001";
 const STORY_A = "62000000-0000-4000-8000-000000000002";
 const STORY_B = "62000000-0000-4000-8000-000000000003";
+const STORY_C = "62000000-0000-4000-8000-000000000006";
+const STORY_D = "62000000-0000-4000-8000-000000000007";
 const ASSET = "62000000-0000-4000-8000-000000000004";
 const HASH = `sha256:${"a".repeat(64)}`;
 
@@ -66,7 +68,7 @@ describeIntegration("AI Story reusable Character library persistence and isolati
       GRANT SELECT,INSERT,UPDATE ON ai_story_character_continuity_anchors TO authenticated;`);
     await sql`insert into campaigns(id,org_id,workspace_id,name,platforms,status) values(${SECOND_CAMPAIGN}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,'Second same-workspace Campaign',array['tiktok'],'draft')`;
     await sql`insert into assets(id,org_id,workspace_id,campaign_id,type,storage_path,status,source,content_hash) values(${ASSET}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,null,'image','alicia-master.png','ready','campaign_upload',${HASH})`;
-    await sql`insert into ai_stories(id,org_id,workspace_id,campaign_id,title,original_idea,status) values(${STORY_A}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${fixture.campaignAId}::uuid,'Episode A','Alicia white outfit','draft'),(${STORY_B}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${SECOND_CAMPAIGN}::uuid,'Episode B','Alicia blue outfit','draft')`;
+    await sql`insert into ai_stories(id,org_id,workspace_id,campaign_id,title,original_idea,status) values(${STORY_A}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${fixture.campaignAId}::uuid,'Episode A','Alicia white outfit','draft'),(${STORY_B}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${SECOND_CAMPAIGN}::uuid,'Episode B','Alicia blue outfit','draft'),(${STORY_C}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,${fixture.campaignAId}::uuid,'Episode C','Alicia after archive','draft'),(${STORY_D}::uuid,${fixture.orgId}::uuid,${fixture.workspaceBId}::uuid,${fixture.campaignBId}::uuid,'Episode D','Cross-workspace probe','draft')`;
   }, 30_000);
 
   afterAll(async () => {
@@ -81,7 +83,7 @@ describeIntegration("AI Story reusable Character library persistence and isolati
       await tx`delete from ai_story_character_versions where org_id=${fixture.orgId}::uuid`;
       await tx`delete from ai_story_characters where org_id=${fixture.orgId}::uuid`;
     });
-    await sql`delete from ai_stories where id in (${STORY_A}::uuid, ${STORY_B}::uuid)`;
+    await sql`delete from ai_stories where id in (${STORY_A}::uuid, ${STORY_B}::uuid, ${STORY_C}::uuid, ${STORY_D}::uuid)`;
     await sql`delete from campaign_asset_refs where asset_id=${ASSET}::uuid`;
     await sql`delete from assets where id=${ASSET}::uuid`;
     await sql`delete from campaigns where id=${SECOND_CAMPAIGN}::uuid`;
@@ -134,14 +136,27 @@ describeIntegration("AI Story reusable Character library persistence and isolati
     })).rejects.toMatchObject({ code: "CHARACTER_LOCKED_TRAIT_GATE" });
     const archived = await service.archive(scope(), current!.reusableCharacterId, current!.version, "2026-09-22T01:04:00.000Z");
     expect(archived.status).toBe("ARCHIVED");
+    expect((await service.list(scope())).map((character) => character.reusableCharacterId)).not.toContain(current!.reusableCharacterId);
+    const archivedVisible = await service.list(scope(), true);
+    expect(archivedVisible.map((character) => character.reusableCharacterId)).toContain(current!.reusableCharacterId);
+    expect(archivedVisible[0]?.status).toBe("ARCHIVED");
+    const archivedCurrent = await service.readCurrent(scope(), current!.reusableCharacterId, true);
+    expect(archivedCurrent.status).toBe("ARCHIVED");
+    await expect(service.readCurrent(scope(), current!.reusableCharacterId)).rejects.toMatchObject({ code: "CHARACTER_NOT_FOUND" });
+    expect(await service.readVersion(scope(), archived.reusableCharacterVersionId)).toMatchObject({ status: "ARCHIVED", version: 3 });
     await expect(service.bindEpisode(scope(), {
-      storyId: STORY_A, campaignId: fixture.campaignAId, reusableCharacterId: current!.reusableCharacterId,
+      storyId: STORY_C, campaignId: fixture.campaignAId, reusableCharacterId: current!.reusableCharacterId,
       episodeLook: look("blue jacket"),
     })).rejects.toMatchObject({ code: "CHARACTER_NOT_ACTIVE" });
     const history = await service.history(scope(), current!.reusableCharacterId);
     expect(history.map((version) => version.version)).toEqual([1, 2, 3]);
     const foreignScope = { orgId: fixture.orgId, workspaceId: fixture.workspaceBId, actorUserId: fixture.userBId };
     await expect(service.readCurrent(foreignScope, current!.reusableCharacterId)).rejects.toMatchObject({ code: "CHARACTER_NOT_FOUND" });
+    await expect(service.readCurrent(foreignScope, current!.reusableCharacterId, true)).rejects.toMatchObject({ code: "CHARACTER_NOT_FOUND" });
+    await expect(service.bindEpisode(foreignScope, {
+      storyId: STORY_D, campaignId: fixture.campaignBId, reusableCharacterId: current!.reusableCharacterId,
+      episodeLook: look("blue jacket"),
+    })).rejects.toMatchObject({ code: "CHARACTER_NOT_FOUND" });
     expect(await service.list(foreignScope)).toEqual([]);
   });
 

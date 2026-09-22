@@ -319,7 +319,7 @@ export class AiStoryReusableCharacterService {
     if (!stories[0]) throw new AiStoryReusableCharacterError("CHARACTER_CAMPAIGN_SCOPE_GATE", "Episode is not in this Campaign");
     const reusable = input.reusableCharacterVersionId
       ? await this.readVersion(scope, input.reusableCharacterVersionId)
-      : await this.readCurrent(scope, input.reusableCharacterId!);
+      : await this.readCurrent(scope, input.reusableCharacterId!, true);
     if (!reusableCharacterSelectable(reusable.status)) {
       throw new AiStoryReusableCharacterError("CHARACTER_NOT_ACTIVE", "Archived reusable Character cannot be selected for new Episodes");
     }

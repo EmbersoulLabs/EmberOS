@@ -24,6 +24,7 @@ import {
   validateReusableCharacterWorkspaceScope,
   characterAuthorityBinding,
   AI_STORY_REUSABLE_CHARACTER_COPY,
+  reusableCharacterSelectable,
 } from "@ceo-agent/shared";
 import {
   buildAiStoryReusableCharacterVersion,
@@ -31,7 +32,7 @@ import {
   buildEpisodeCharacterBinding,
   compileReusableCharacterLineage,
 } from "@ceo-agent/shared/server";
-import { SEEDANCE_MAX_REFERENCE_IMAGES } from "../../packages/agents/src/ai-story/seedance-capability";
+import { SEEDANCE_MAX_REFERENCE_IMAGES } from "../packages/agents/src/ai-story/seedance-capability";
 
 const IDS = {
   org: "61000000-0000-4000-8000-000000000001",
@@ -89,6 +90,9 @@ describe("AI Story reusable Character cross-Episode identity", () => {
     expect(VOICE_CONTINUITY_STATUS).toBe("NOT_CERTIFIED");
     expect(AI_STORY_REUSABLE_CHARACTER_LIBRARY).toBe("CERTIFIED");
     expect(SEEDANCE_CERTIFIED_MAX_REFERENCE_IMAGES).toBe(SEEDANCE_MAX_REFERENCE_IMAGES);
+    expect(reusableCharacterSelectable("ACTIVE")).toBe(true);
+    expect(reusableCharacterSelectable("ARCHIVED")).toBe(false);
+    expect(reusableCharacterSelectable("DELETED")).toBe(false);
   });
 
   it("AN two Episodes same Campaign keep identity and vary Episode Look", () => {
