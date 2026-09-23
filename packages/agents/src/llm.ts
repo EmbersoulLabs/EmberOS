@@ -229,7 +229,7 @@ export async function callVisionJsonModel<T>(
   imageDataUrls: string[],
   schemaHint: string,
   requestOptions?: { maxRetries: number }
-): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
+): Promise<{ result: T; usage: { input: number; output: number; costUsd: number }; providerRequestId: string | null }> {
   const openai = getOpenAI();
   const response = await openai.chat.completions.create(
     {
@@ -258,7 +258,11 @@ export async function callVisionJsonModel<T>(
   const output = response.usage?.completion_tokens ?? 0;
   const costUsd = (input * 2.5 + output * 10) / 1_000_000;
 
-  return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
+  return {
+    result: JSON.parse(content) as T,
+    usage: { input, output, costUsd },
+    providerRequestId: response.id ?? null,
+  };
 }
 
 export function buildDefaultTaskGraph(): TaskGraph {
