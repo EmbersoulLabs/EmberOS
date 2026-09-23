@@ -84,6 +84,7 @@ export * from "./ai-story-pre-generation-qc";
 export * from "./ai-story-product-story-profile";
 export * from "./ai-story-commercial-story-profile";
 export * from "./ai-story-generation-unit";
+export * from "./ai-story-v2v-execution";
 export * from "./ai-story-narrative-editorial-plan";
 export * from "./ai-story-assembly-v2";
 export * from "./ai-story-audio-plan";
