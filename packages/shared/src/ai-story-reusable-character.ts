@@ -163,6 +163,8 @@ export const AiStoryReusableCharacterVersionSchema = z
   .strict()
   .superRefine((value, ctx) => {
     if (value.identityMode === "CHARACTER_DNA") {
+      const consistencyMode =
+        value.characterConsistencyMode ?? CHARACTER_CONSISTENCY_MODE;
       if (!value.characterDna || !value.characterDnaFingerprint) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -170,7 +172,7 @@ export const AiStoryReusableCharacterVersionSchema = z
         });
       }
       if (
-        value.characterConsistencyMode === HYBRID_CHARACTER_CONSISTENCY_MODE &&
+        consistencyMode === HYBRID_CHARACTER_CONSISTENCY_MODE &&
         !value.compiledCharacterIdentityFingerprint
       ) {
         ctx.addIssue({
@@ -196,7 +198,7 @@ export const AiStoryReusableCharacterVersionSchema = z
           message: "CHARACTER_DNA identity cannot use IDENTITY_MASTER",
         });
       }
-      if (value.characterConsistencyMode === HYBRID_CHARACTER_CONSISTENCY_MODE) {
+      if (consistencyMode === HYBRID_CHARACTER_CONSISTENCY_MODE) {
         if (syntheticAnchors.length !== 1) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -210,7 +212,7 @@ export const AiStoryReusableCharacterVersionSchema = z
           });
         }
       } else if (
-        value.characterConsistencyMode !== CHARACTER_CONSISTENCY_MODE ||
+        consistencyMode !== CHARACTER_CONSISTENCY_MODE ||
         syntheticAnchors.length !== 0
       ) {
         ctx.addIssue({

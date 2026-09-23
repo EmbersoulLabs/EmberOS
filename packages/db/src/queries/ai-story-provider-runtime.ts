@@ -1,8 +1,9 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import {
   AiStoryCompiledProviderRequestSchema,
   AiStoryEpisodeCharacterBindingSchema,
   AiStoryProviderAttemptBindingSchema,
+  AiStoryReusableCharacterCampaignProjectionSchema,
   AiStoryReusableCharacterVersionSchema,
   type AiStoryCompiledProviderRequest,
   type AiStoryProviderAttemptBinding,
@@ -209,8 +210,35 @@ export class AiStoryProviderRuntimeRepository {
   async getCharacterDnaCompilationAuthority(input: {
     readonly orgId: string;
     readonly workspaceId: string;
+    readonly campaignId: string;
     readonly storyId: string;
+    readonly storyVersionId: string;
   }) {
+    const [storyVersion] = await this.db
+      .select({
+        createdAt: schema.aiStoryVersions.createdAt,
+        frozenAt: schema.aiStoryVersions.frozenAt,
+      })
+      .from(schema.aiStoryVersions)
+      .innerJoin(
+        schema.aiStories,
+        eq(schema.aiStories.id, schema.aiStoryVersions.storyId)
+      )
+      .where(and(
+        eq(schema.aiStoryVersions.id, input.storyVersionId),
+        eq(schema.aiStoryVersions.storyId, input.storyId),
+        eq(schema.aiStories.orgId, input.orgId),
+        eq(schema.aiStories.workspaceId, input.workspaceId),
+        eq(schema.aiStories.campaignId, input.campaignId)
+      ))
+      .limit(1);
+    if (!storyVersion) {
+      throw new AiStoryProviderRuntimePersistenceError(
+        "IMMUTABLE_CONFLICT",
+        "Executing Story version is missing or outside Character DNA scope"
+      );
+    }
+    const bindingCutoff = storyVersion.frozenAt ?? storyVersion.createdAt;
     const bindingRows = await this.db
       .select({ snapshot: schema.aiStoryEpisodeCharacterBindings.snapshot })
       .from(schema.aiStoryEpisodeCharacterBindings)
@@ -218,6 +246,7 @@ export class AiStoryProviderRuntimeRepository {
         eq(schema.aiStoryEpisodeCharacterBindings.orgId, input.orgId),
         eq(schema.aiStoryEpisodeCharacterBindings.workspaceId, input.workspaceId),
         eq(schema.aiStoryEpisodeCharacterBindings.storyId, input.storyId),
+        lte(schema.aiStoryEpisodeCharacterBindings.createdAt, bindingCutoff),
       ))
       .orderBy(desc(schema.aiStoryEpisodeCharacterBindings.createdAt));
     const dnaBindings = bindingRows
@@ -257,6 +286,44 @@ export class AiStoryProviderRuntimeRepository {
     const reusable = AiStoryReusableCharacterVersionSchema.parse(
       versionRow.snapshot
     );
+    const [projectionRow] = await this.db
+      .select({
+        snapshot:
+          schema.aiStoryReusableCharacterCampaignProjections.snapshot,
+      })
+      .from(schema.aiStoryReusableCharacterCampaignProjections)
+      .where(and(
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.reusableCharacterVersionId,
+          binding.reusableCharacterVersionId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.campaignId,
+          input.campaignId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.campaignCharacterId,
+          binding.campaignCharacterId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.campaignCharacterVersionId,
+          binding.campaignCharacterVersionId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.orgId,
+          input.orgId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.workspaceId,
+          input.workspaceId
+        )
+      ))
+      .limit(1);
+    const projection = projectionRow
+      ? AiStoryReusableCharacterCampaignProjectionSchema.parse(
+          projectionRow.snapshot
+        )
+      : null;
     const sourcePortrait = reusable.canonicalAssets.find(
       (asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT"
     );
@@ -268,6 +335,10 @@ export class AiStoryProviderRuntimeRepository {
       !reusable.characterDna ||
       !reusable.characterDnaFingerprint ||
       !sourcePortrait ||
+      !projection ||
+      (binding.campaignCharacterFingerprint !== undefined &&
+        binding.campaignCharacterFingerprint !==
+          projection.campaignCharacterFingerprint) ||
       binding.characterDnaFingerprint !== reusable.characterDnaFingerprint ||
       (reusable.characterConsistencyMode === "DNA_PLUS_SYNTHETIC_ANCHOR" &&
         binding.compiledCharacterIdentityFingerprint !==
@@ -284,6 +355,9 @@ export class AiStoryProviderRuntimeRepository {
     return {
       reusableCharacterId: reusable.reusableCharacterId,
       reusableCharacterVersionId: reusable.reusableCharacterVersionId,
+      campaignCharacterId: projection.campaignCharacterId,
+      campaignCharacterVersionId: projection.campaignCharacterVersionId,
+      campaignCharacterFingerprint: projection.campaignCharacterFingerprint,
       identityFingerprint: reusable.identityFingerprint,
       characterDnaFingerprint: reusable.characterDnaFingerprint,
       dna: reusable.characterDna,

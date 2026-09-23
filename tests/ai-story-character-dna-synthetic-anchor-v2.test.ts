@@ -174,6 +174,9 @@ function compileHybrid() {
     characterDnaAuthority: {
       reusableCharacterId: IDS.character,
       reusableCharacterVersionId: hybrid.reusableCharacterVersionId,
+      campaignCharacterId: binding.campaignCharacterId,
+      campaignCharacterVersionId: binding.campaignCharacterVersionId,
+      campaignCharacterFingerprint: binding.campaignCharacterFingerprint!,
       identityFingerprint: hybrid.identityFingerprint,
       characterDnaFingerprint: hybrid.characterDnaFingerprint!,
       characterConsistencyMode: "DNA_PLUS_SYNTHETIC_ANCHOR",
@@ -191,6 +194,14 @@ describe("Character DNA + Synthetic Identity Anchor V2", () => {
     expect(CHARACTER_DNA_TEXT_ONLY_VISUAL_IDENTITY).toBe("FAIL");
     expect(AiStoryReusableCharacterVersionSchema.parse(soft).characterConsistencyMode)
       .toBe("SOFT_DESCRIPTION_BASED");
+    const {
+      characterConsistencyMode: _historicalMode,
+      compiledCharacterIdentityFingerprint: _historicalCompiledFingerprint,
+      ...historicalSoftSnapshot
+    } = soft;
+    expect(() =>
+      AiStoryReusableCharacterVersionSchema.parse(historicalSoftSnapshot)
+    ).not.toThrow();
     expect(hybrid.version).toBe(2);
     expect(hybrid.supersedesReusableCharacterVersionId).toBe(soft.reusableCharacterVersionId);
     expect(hybrid.characterConsistencyMode).toBe("DNA_PLUS_SYNTHETIC_ANCHOR");
@@ -318,6 +329,73 @@ describe("Character DNA + Synthetic Identity Anchor V2", () => {
       expect.objectContaining({ role: "reference_image" }),
     ]);
     expect(JSON.stringify(payload)).not.toContain(IDS.source);
+  });
+
+  it("retains an authorized first frame when a DNA prompt is present", async () => {
+    const compilation = makePhase2aCompilation({ sceneOrder: [0] });
+    const baseIntent = compilation.intents[0]!;
+    const baseInstructions =
+      compilation.instructionsBySceneExecutionId[
+        baseIntent.identity.sceneExecutionId
+      ]!;
+    const firstFrameAssetId = baseIntent.referencedAssetIds[0]!;
+    const generationAuthority = {
+      strategy: "FIRST_FRAME_IMAGE_TO_VIDEO" as const,
+      referenceSource: "SCENE_EXPLICIT" as const,
+      effectiveReferenceIds: [firstFrameAssetId],
+      firstFrameAssetId,
+      productVisualIdentityRequirement: "REQUIRED" as const,
+    };
+    const soft = character([sourceAsset()]);
+    const request = compileImmutableSeedanceRequestFromSceneCompilation({
+      intent: { ...baseIntent, generationAuthority },
+      instructions: { ...baseInstructions, generationAuthority },
+      authority: {
+        qcEvaluationId: "82000000-0000-4000-8000-000000000013",
+        qcFingerprint: `sha256:${"6".repeat(64)}`,
+        qcCapabilityVersion: "seedance-modelark-test.v1",
+        directorFingerprint: `sha256:${"7".repeat(64)}`,
+        motionFingerprint: `sha256:${"8".repeat(64)}`,
+      },
+      adapterVersion: "1.0.0",
+      compiledAt: "2026-09-23T05:00:00.000Z",
+      referenceAssets: [{
+        assetId: firstFrameAssetId,
+        mediaType: "image/png",
+        storagePath: `${IDS.workspace}/library/first-frame.png`,
+      }],
+      characterDnaAuthority: {
+        reusableCharacterId: IDS.character,
+        reusableCharacterVersionId: soft.reusableCharacterVersionId,
+        campaignCharacterId: IDS.campaignCharacter,
+        campaignCharacterVersionId:
+          "82000000-0000-4000-8000-000000000014",
+        campaignCharacterFingerprint: `sha256:${"9".repeat(64)}`,
+        identityFingerprint: soft.identityFingerprint,
+        characterDnaFingerprint: soft.characterDnaFingerprint!,
+        dna: DNA,
+        episodeLook: hybridFixture().binding.episodeLook,
+        characterConsistencyMode: "SOFT_DESCRIPTION_BASED",
+        sourcePortraitAssetId: IDS.source,
+      },
+    });
+    expect(request.compiledPrompt).toContain("CHARACTER IDENTITY — LOCKED");
+    expect(request.referenceMappings).toEqual([
+      expect.objectContaining({
+        assetId: firstFrameAssetId,
+        wireRole: "first_frame",
+      }),
+    ]);
+    const wire = await previewAiStorySeedanceWireRequest({
+      request,
+      assetAccess: {
+        resolveHttpsAsset: async ({ assetId }) =>
+          `https://private.invalid/${assetId}`,
+      },
+    });
+    expect(wire.content.filter((entry) => entry.type === "image_url")).toEqual([
+      expect.objectContaining({ role: "first_frame" }),
+    ]);
   });
 
   it("fails closed if the source portrait appears in Provider mappings", () => {

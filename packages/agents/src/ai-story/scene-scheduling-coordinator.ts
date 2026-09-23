@@ -932,7 +932,9 @@ export class SceneSchedulingCoordinator {
         await this.providerRuntimeRepo.getCharacterDnaCompilationAuthority({
           orgId: fact.ownership.orgId,
           workspaceId: fact.ownership.workspaceId,
+          campaignId: fact.ownership.campaignId,
           storyId: fact.ownership.storyId,
+          storyVersionId: fact.ownership.storyVersionId,
         });
       const resolvedReferenceAssets = await this.providerRuntimeRepo.getReferenceAssetAuthorities({
         orgId: fact.ownership.orgId,

@@ -113,6 +113,9 @@ describe("Seedance Director Adapter enrichment",()=>{
       characterDnaAuthority:{
         reusableCharacterId:I.character,
         reusableCharacterVersionId:I.characterVersion,
+        campaignCharacterId:I.character,
+        campaignCharacterVersionId:I.characterVersion,
+        campaignCharacterFingerprint:hash("c"),
         identityFingerprint:hash("x"),
         characterDnaFingerprint:computeCharacterDnaFingerprint(dna),
         dna,
@@ -125,6 +128,30 @@ describe("Seedance Director Adapter enrichment",()=>{
     expect(request.compiledPrompt).toContain("CHARACTER IDENTITY — LOCKED");
     expect(request.referenceMappings).toEqual([expect.objectContaining({assetId:anchorId,wireRole:"reference_image"})]);
     expect(JSON.stringify(request.referenceMappings)).not.toContain(sourceId);
+    const mismatched=structuredClone(payload);
+    mismatched.visualReferences[0].authorityType="OTHER";
+    mismatched.visualReferences[0].authorityId=id(243);
+    const {packageFingerprint:__,...mismatchedInput}=mismatched;
+    mismatched.packageFingerprint=seedanceSceneExecutionPackageFingerprint(mismatchedInput);
+    expect(()=>compileImmutableSeedanceRequest({
+      package:mismatched as any,
+      sceneExecutionId:I.sceneExecution,
+      compiledAt:"2026-09-23T00:00:00.000Z",
+      characterDnaAuthority:{
+        reusableCharacterId:I.character,
+        reusableCharacterVersionId:I.characterVersion,
+        campaignCharacterId:I.character,
+        campaignCharacterVersionId:I.characterVersion,
+        campaignCharacterFingerprint:hash("c"),
+        identityFingerprint:hash("x"),
+        characterDnaFingerprint:computeCharacterDnaFingerprint(dna),
+        dna,
+        episodeLook:{wardrobe:"white blouse",makeup:null,accessories:null,hairstyle:null,hairColor:null,expression:"gentle smile",pose:"natural standing posture",location:"warm modern café",action:"small natural turn toward camera",product:null,dialogue:null},
+        characterConsistencyMode:"DNA_PLUS_SYNTHETIC_ANCHOR",
+        sourcePortraitAssetId:sourceId,
+        syntheticIdentityAnchorAssetId:anchorId,
+      },
+    })).toThrow(/frozen Character DNA lineage/);
   });
   it("never silently changes mode or fabricates references",()=>{expect(()=>compileSceneExecutionPackageForSeedance(packageFixture({mode:"TEXT_TO_VIDEO",productRequirement:"REQUIRED"}))).toThrow(/TEXT_TO_VIDEO/);expect(()=>compileSceneExecutionPackageForSeedance(packageFixture({withReference:false}))).toThrow(/exactly one selected first frame/);});
   it("retains continuity video in the package while excluding it from Provider image selection",()=>{const payload=packageFixture();payload.visualReferences.push({referenceId:id(200),assetId:id(201),authorityType:"OTHER",authorityId:id(202),authorityClass:"OPTIONAL",semanticBinding:"Story continuity motion evidence",selectionPriority:1,firstFrame:false,semanticRole:"STORY_CONTINUITY_REFERENCE",mediaType:"video/mp4",storagePath:`${I.workspace}/library/continuity.mp4`});const {packageFingerprint:_,...input}=payload;payload.packageFingerprint=seedanceSceneExecutionPackageFingerprint(input);const compiled=compileImmutableSeedanceRequest({package:payload as any,sceneExecutionId:I.sceneExecution,compiledAt:"2026-09-01T00:00:00.000Z"});expect(compiled.storyReferenceMappings).toHaveLength(2);expect(compiled.referenceMappings).toHaveLength(1);expect(compiled.storyReferenceMappings?.find((item)=>item.assetId===id(201))).toMatchObject({semanticRole:"STORY_CONTINUITY_REFERENCE",providerEmitted:false,mediaType:"video/mp4"});});

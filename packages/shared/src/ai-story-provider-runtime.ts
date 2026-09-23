@@ -117,6 +117,9 @@ export type AiStoryCompiledProviderReadySceneInput = z.infer<
 export const AiStoryCompiledCharacterDnaAuthoritySchema = z.object({
   reusableCharacterId: Id,
   reusableCharacterVersionId: Id,
+  campaignCharacterId: Id,
+  campaignCharacterVersionId: Id,
+  campaignCharacterFingerprint: Hash,
   identityFingerprint: Hash,
   characterDnaFingerprint: Hash,
   compiledCharacterIdentityFingerprint: Hash,

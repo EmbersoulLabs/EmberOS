@@ -285,7 +285,10 @@ export function compileImmutableSeedanceRequest(input: {
       !dnaAuthority.syntheticIdentityAnchorAssetId ||
       compiled.selectedReferences.length !== 1 ||
       compiled.selectedReferences[0]?.assetId !==
-        dnaAuthority.syntheticIdentityAnchorAssetId
+        dnaAuthority.syntheticIdentityAnchorAssetId ||
+      compiled.selectedReferences[0]?.authorityType !== "CAST" ||
+      compiled.selectedReferences[0]?.authorityId !==
+        dnaAuthority.campaignCharacterId
     )
   ) {
     throw new AiStoryProviderRuntimeError(
@@ -359,6 +362,11 @@ export function compileImmutableSeedanceRequest(input: {
             reusableCharacterId: dnaAuthority.reusableCharacterId,
             reusableCharacterVersionId:
               dnaAuthority.reusableCharacterVersionId,
+            campaignCharacterId: dnaAuthority.campaignCharacterId,
+            campaignCharacterVersionId:
+              dnaAuthority.campaignCharacterVersionId,
+            campaignCharacterFingerprint:
+              dnaAuthority.campaignCharacterFingerprint,
             identityFingerprint: dnaAuthority.identityFingerprint,
             characterDnaFingerprint: dnaAuthority.characterDnaFingerprint,
             compiledCharacterIdentityFingerprint:
@@ -477,6 +485,9 @@ export type AiStoryReferenceAssetAuthority = {
 export type AiStoryCharacterDnaCompilationAuthority = {
   readonly reusableCharacterId: string;
   readonly reusableCharacterVersionId: string;
+  readonly campaignCharacterId: string;
+  readonly campaignCharacterVersionId: string;
+  readonly campaignCharacterFingerprint: string;
   readonly identityFingerprint: string;
   readonly characterDnaFingerprint: string;
   readonly dna: AiStoryCharacterDna;
@@ -875,6 +886,11 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
           characterDnaAuthority: {
             reusableCharacterId: dnaAuthority.reusableCharacterId,
             reusableCharacterVersionId: dnaAuthority.reusableCharacterVersionId,
+            campaignCharacterId: dnaAuthority.campaignCharacterId,
+            campaignCharacterVersionId:
+              dnaAuthority.campaignCharacterVersionId,
+            campaignCharacterFingerprint:
+              dnaAuthority.campaignCharacterFingerprint,
             identityFingerprint: dnaAuthority.identityFingerprint,
             characterDnaFingerprint: dnaAuthority.characterDnaFingerprint,
             compiledCharacterIdentityFingerprint:
@@ -931,7 +947,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
           : "PRODUCT" as const,
       authorityId:
         reference.semanticRole === "PROVIDER_IMAGE_REFERENCE"
-          ? dnaAuthority!.reusableCharacterId
+          ? dnaAuthority!.campaignCharacterId
           : reference.assetId,
       authorityClass: "REQUIRED" as const,
       wireRole: reference.providerWireRole!,
@@ -1155,12 +1171,6 @@ async function serializeTransportRequest(input: {
   request: AiStoryCompiledProviderRequest;
   assetAccess: AiStoryRuntimeAssetAccess;
 }): Promise<SeedanceModelArkCreateRequest> {
-  const hybridDna =
-    input.request.generationAuthority?.referenceSource ===
-    "CHARACTER_SYNTHETIC_ANCHOR";
-  const dnaTextOnly =
-    input.request.compiledPrompt.includes("CHARACTER IDENTITY — LOCKED") &&
-    !hybridDna;
   if (
     input.request.characterDnaAuthority &&
     input.request.referenceMappings.some(
@@ -1174,7 +1184,7 @@ async function serializeTransportRequest(input: {
       "Character DNA source portrait cannot be resolved for Provider transport"
     );
   }
-  const images = dnaTextOnly ? [] : await Promise.all(input.request.referenceMappings.map(async (reference) => ({
+  const images = await Promise.all(input.request.referenceMappings.map(async (reference) => ({
     type: "image_url" as const,
     image_url: { url: await input.assetAccess.resolveHttpsAsset({
       assetId: reference.assetId,
