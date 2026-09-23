@@ -164,7 +164,10 @@ export type SceneSchedulingCoordinatorDependencies = {
     AiStoryProviderRuntimeRepository,
     | "getCompilationAuthorityBySceneExecutionId"
     | "convergeCompiledRequestForAcceptedBundle"
-  > & Partial<Pick<AiStoryProviderRuntimeRepository, "getReferenceAssetAuthorities">>;
+  > & Partial<Pick<
+    AiStoryProviderRuntimeRepository,
+    "getReferenceAssetAuthorities" | "getCharacterDnaCompilationAuthority"
+  >>;
   /**
    * Resolves the active Scene input preparation authority. When it returns an
    * authority, that authority is the sole first-frame authority for the
@@ -502,6 +505,7 @@ export class SceneSchedulingCoordinator {
     AiStoryProviderRuntimeRepository,
     | "getCompilationAuthorityBySceneExecutionId"
     | "getReferenceAssetAuthorities"
+    | "getCharacterDnaCompilationAuthority"
     | "convergeCompiledRequestForAcceptedBundle"
   >;
   private readonly now: () => Date;
@@ -521,6 +525,14 @@ export class SceneSchedulingCoordinator {
     this.providerRuntimeRepo = {
       getCompilationAuthorityBySceneExecutionId: dependencies.providerRuntimeRepo?.getCompilationAuthorityBySceneExecutionId.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().getCompilationAuthorityBySceneExecutionId(input)),
       getReferenceAssetAuthorities: dependencies.providerRuntimeRepo?.getReferenceAssetAuthorities?.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().getReferenceAssetAuthorities(input)),
+      getCharacterDnaCompilationAuthority: dependencies.providerRuntimeRepo
+        ? dependencies.providerRuntimeRepo.getCharacterDnaCompilationAuthority?.bind(
+            dependencies.providerRuntimeRepo
+          ) ?? (async () => null)
+        : ((input) =>
+            new AiStoryProviderRuntimeRepository().getCharacterDnaCompilationAuthority(
+              input
+            )),
       convergeCompiledRequestForAcceptedBundle: dependencies.providerRuntimeRepo?.convergeCompiledRequestForAcceptedBundle.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().convergeCompiledRequestForAcceptedBundle(input)),
     };
     this.now = dependencies.now ?? (() => new Date());
@@ -878,16 +890,15 @@ export class SceneSchedulingCoordinator {
       };
       const effectiveReferenceIds = (sceneIntent.generationAuthority ?? instructions.generationAuthority)?.effectiveReferenceIds ?? sceneIntent.referencedAssetIds;
       const generationAuthority = sceneIntent.generationAuthority ?? instructions.generationAuthority;
-      const referenceFree = generationAuthority?.strategy === "TEXT_TO_VIDEO" &&
-        generationAuthority.referenceSource === "REFERENCE_FREE_T2V";
-      if (!referenceFree && this.dependencies.productMaterialSelectionResolver &&
+      const textToVideo = generationAuthority?.strategy === "TEXT_TO_VIDEO";
+      if (!textToVideo && this.dependencies.productMaterialSelectionResolver &&
         (!generationAuthority || !sceneIntent.identity.sceneVersionId)) {
         throw new SceneSchedulingError(
           "SCENE_NOT_AUTHORIZED",
           "Image-conditioned scheduling requires exact canonical Scene Version and generation authority"
         );
       }
-      const productMaterialSelection = !referenceFree && this.dependencies.productMaterialSelectionResolver
+      const productMaterialSelection = !textToVideo && this.dependencies.productMaterialSelectionResolver
         ? await this.dependencies.productMaterialSelectionResolver({
             orgId: fact.ownership.orgId,
             workspaceId: fact.ownership.workspaceId,
@@ -917,12 +928,42 @@ export class SceneSchedulingCoordinator {
         ...(preparedFrameAssetId ? [preparedFrameAssetId] : []),
         ...(selectedMaterialAssetId ? [selectedMaterialAssetId] : []),
       ])];
-      const referenceAssets = await this.providerRuntimeRepo.getReferenceAssetAuthorities({
+      const characterDnaAuthority =
+        await this.providerRuntimeRepo.getCharacterDnaCompilationAuthority({
+          orgId: fact.ownership.orgId,
+          workspaceId: fact.ownership.workspaceId,
+          storyId: fact.ownership.storyId,
+        });
+      const resolvedReferenceAssets = await this.providerRuntimeRepo.getReferenceAssetAuthorities({
         orgId: fact.ownership.orgId,
         workspaceId: fact.ownership.workspaceId,
         campaignId: fact.ownership.campaignId,
         assetIds,
+        workspaceAssetLibraryIds:
+          characterDnaAuthority?.syntheticIdentityAnchorAssetId &&
+          assetIds.includes(
+            characterDnaAuthority.syntheticIdentityAnchorAssetId
+          )
+            ? [characterDnaAuthority.syntheticIdentityAnchorAssetId]
+            : [],
       });
+      const referenceAssets = resolvedReferenceAssets.map((asset) => ({
+        ...asset,
+        ...(asset.assetId === characterDnaAuthority?.sourcePortraitAssetId
+          ? {
+              characterAssetRole: "CHARACTER_SOURCE_PORTRAIT" as const,
+              characterAuthorityId:
+                characterDnaAuthority.reusableCharacterId,
+            }
+          : asset.assetId ===
+              characterDnaAuthority?.syntheticIdentityAnchorAssetId
+            ? {
+                characterAssetRole: "SYNTHETIC_IDENTITY_ANCHOR" as const,
+                characterAuthorityId:
+                  characterDnaAuthority.reusableCharacterId,
+              }
+            : {}),
+      }));
       const compiledProviderRequest = compileImmutableSceneProviderRequest({
           providerId: acceptedRoutingDecision.selectedProviderId,
           intent: sceneIntent,
@@ -933,6 +974,7 @@ export class SceneSchedulingCoordinator {
           resolution: "480p",
           referenceAssets,
           productMaterialSelection,
+          characterDnaAuthority,
           ...(sceneInputPreparation
             ? {
                 sceneInputPreparation: sceneInputPreparation.preparation,

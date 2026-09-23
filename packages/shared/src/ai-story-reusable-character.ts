@@ -6,7 +6,9 @@ import {
 } from "./ai-story-character";
 import {
   AiStoryCharacterDnaSchema,
+  CHARACTER_CONSISTENCY_MODES,
   CHARACTER_CONSISTENCY_MODE,
+  HYBRID_CHARACTER_CONSISTENCY_MODE,
   isCharacterDnaIdentity,
 } from "./ai-story-character-dna";
 
@@ -56,6 +58,7 @@ export const AI_STORY_REUSABLE_CHARACTER_ASSET_ROLES = [
   "EXPRESSION_REFERENCE",
   "STYLE_REFERENCE",
   "CHARACTER_SOURCE_PORTRAIT",
+  "SYNTHETIC_IDENTITY_ANCHOR",
 ] as const;
 export const AI_STORY_CHARACTER_CONTINUITY_ANCHOR_STATUSES = [
   "PROPOSED",
@@ -146,7 +149,8 @@ export const AiStoryReusableCharacterVersionSchema = z
     identityMode: z.enum(["VISUAL_REFERENCE", "CHARACTER_DNA"]).default("VISUAL_REFERENCE"),
     characterDna: AiStoryCharacterDnaSchema.optional(),
     characterDnaFingerprint: Hash.optional(),
-    characterConsistencyMode: z.literal(CHARACTER_CONSISTENCY_MODE).optional(),
+    compiledCharacterIdentityFingerprint: Hash.optional(),
+    characterConsistencyMode: z.enum(CHARACTER_CONSISTENCY_MODES).optional(),
     status: z.enum(AI_STORY_REUSABLE_CHARACTER_STATUSES),
     version: z.number().int().positive(),
     contractVersion: z.literal(AI_STORY_REUSABLE_CHARACTER_CONTRACT_VERSION),
@@ -165,10 +169,53 @@ export const AiStoryReusableCharacterVersionSchema = z
           message: "CHARACTER_DNA identity requires approved Character DNA",
         });
       }
-      if (value.characterConsistencyMode !== CHARACTER_CONSISTENCY_MODE) {
+      if (
+        value.characterConsistencyMode === HYBRID_CHARACTER_CONSISTENCY_MODE &&
+        !value.compiledCharacterIdentityFingerprint
+      ) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "CHARACTER_DNA identity requires SOFT_DESCRIPTION_BASED consistency",
+          message: "Hybrid Character DNA requires a compiled identity fingerprint",
+        });
+      }
+      const sourcePortraits = value.canonicalAssets.filter(
+        (asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT"
+      );
+      const syntheticAnchors = value.canonicalAssets.filter(
+        (asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR"
+      );
+      if (sourcePortraits.length !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "CHARACTER_DNA identity requires exactly one source portrait provenance asset",
+        });
+      }
+      if (value.canonicalAssets.some((asset) => asset.role === "IDENTITY_MASTER")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "CHARACTER_DNA identity cannot use IDENTITY_MASTER",
+        });
+      }
+      if (value.characterConsistencyMode === HYBRID_CHARACTER_CONSISTENCY_MODE) {
+        if (syntheticAnchors.length !== 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "DNA_PLUS_SYNTHETIC_ANCHOR requires exactly one synthetic identity anchor",
+          });
+        }
+        if (sourcePortraits[0]?.assetId === syntheticAnchors[0]?.assetId) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Source portrait cannot be used as the synthetic identity anchor",
+          });
+        }
+      } else if (
+        value.characterConsistencyMode !== CHARACTER_CONSISTENCY_MODE ||
+        syntheticAnchors.length !== 0
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Text-only CHARACTER_DNA identity requires SOFT_DESCRIPTION_BASED consistency",
         });
       }
       return;
@@ -205,13 +252,16 @@ export const AiStoryEpisodeCharacterBindingSchema = z
     reusableCharacterVersionId: Id,
     campaignCharacterId: Id,
     campaignCharacterVersionId: Id,
+    campaignCharacterFingerprint: Hash.optional(),
     identityFingerprint: Hash,
     episodeLook: AiStoryCharacterEpisodeLookSchema,
     canonicalAssetIds: z.array(Id),
     characterDnaFingerprint: Hash.optional(),
+    compiledCharacterIdentityFingerprint: Hash.optional(),
     characterDnaVersionId: Id.optional(),
     sourcePhotoSentToVideoProvider: z.boolean().optional(),
-    characterConsistencyMode: z.literal(CHARACTER_CONSISTENCY_MODE).optional(),
+    characterConsistencyMode: z.enum(CHARACTER_CONSISTENCY_MODES).optional(),
+    syntheticIdentityAnchorAssetId: Id.optional(),
     continuityAnchorIds: z.array(Id),
     bindingFingerprint: Hash,
     createdBy: Id,
@@ -224,6 +274,26 @@ export const AiStoryEpisodeCharacterBindingSchema = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: "Character DNA Episode bindings must not send the source photo to the video Provider",
+        });
+      }
+      const mode = value.characterConsistencyMode ?? CHARACTER_CONSISTENCY_MODE;
+      if (mode === HYBRID_CHARACTER_CONSISTENCY_MODE) {
+        if (
+          !value.syntheticIdentityAnchorAssetId ||
+          !value.compiledCharacterIdentityFingerprint ||
+          !value.campaignCharacterFingerprint ||
+          value.canonicalAssetIds.length !== 1 ||
+          value.canonicalAssetIds[0] !== value.syntheticIdentityAnchorAssetId
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Hybrid Character DNA binding must pin only the synthetic identity anchor",
+          });
+        }
+      } else if (value.syntheticIdentityAnchorAssetId || value.canonicalAssetIds.length !== 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Text-only Character DNA binding cannot emit Provider identity assets",
         });
       }
       return;
@@ -282,7 +352,7 @@ export const AiStoryReusableCharacterCardSchema = z
     identityMode: z.enum(["VISUAL_REFERENCE", "CHARACTER_DNA"]).optional(),
     characterDnaCertified: z.boolean().optional(),
     portraitLabel: z.enum(["Source photo", "Identity Master"]).optional(),
-    characterConsistencyMode: z.literal(CHARACTER_CONSISTENCY_MODE).optional(),
+    characterConsistencyMode: z.enum(CHARACTER_CONSISTENCY_MODES).optional(),
   })
   .strict();
 
@@ -388,7 +458,12 @@ export function publicReusableCharacterCard(
     identityMode: version.identityMode ?? "VISUAL_REFERENCE",
     characterDnaCertified: dna,
     portraitLabel: dna ? "Source photo" : "Identity Master",
-    ...(dna ? { characterConsistencyMode: CHARACTER_CONSISTENCY_MODE } : {}),
+    ...(dna
+      ? {
+          characterConsistencyMode:
+            version.characterConsistencyMode ?? CHARACTER_CONSISTENCY_MODE,
+        }
+      : {}),
   });
 }
 

@@ -9,7 +9,7 @@ import {
   AI_STORY_SEEDANCE_TRANSLATION_MATRIX,
   createExecutionEnvelope,
 } from "@ceo-agent/shared";
-import { computeAiStoryPreGenerationQcFingerprint, computeAiStorySceneFingerprint, computeAiStorySceneSourceHash, compileAiStoryGenerationPlan, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
+import { computeAiStoryPreGenerationQcFingerprint, computeAiStorySceneFingerprint, computeAiStorySceneSourceHash, compileAiStoryGenerationPlan, computeCharacterDnaFingerprint, mockCharacterDnaFixture, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import {
   compileGenerationUnitForSeedance,
   compileSceneExecutionPackageForSeedance,
@@ -95,6 +95,37 @@ async function envelopeFor(payload: unknown) {
 describe("Seedance Director Adapter enrichment",()=>{
   it("compiles a versioned deterministic semantic plan from active intent and current world state",()=>{const value=compileSceneExecutionPackageForSeedance(packageFixture());expect(value.semanticPlan.sections.map((section)=>section.section)).toHaveLength(23);expect(value.prompt).toContain("phase-aligns");expect(value.prompt).toContain("MUST_CHANGE");expect(value.prompt).toContain("CINEMATIC_PROGRESSION");expect(value.prompt).toContain("CONTINUITY");expect(value.prompt).toContain("TRANSITION");expect(value.prompt).toContain("Product identity remains canonical");expect(value.prompt).toContain("Current location authority: Unclassified environment");expect(value.prompt).toContain(`Current possession: ${I.product} — held by the Character`);expect(value.prompt).toContain("Start:");expect(value.prompt).toContain("Path:");expect(value.prompt).toContain("End:");expect(value.requestFacts.generateAudio).toBe(false);expect(value.selectedReferences).toHaveLength(1);});
   it("keeps T2V first-class for Cast, Product, and recurring concepts when visual identity is not required",()=>{const value=compileSceneExecutionPackageForSeedance(packageFixture({mode:"TEXT_TO_VIDEO",productRequirement:"NONE"}));expect(value.requestFacts.generationMode).toBe("TEXT_TO_VIDEO");expect(value.selectedReferences).toEqual([]);expect(value.prompt).toContain("Recurring Character");expect(value.prompt).toContain("Unknown synthetic Product");});
+  it("selects one synthetic Character anchor for hybrid DNA T2V while retaining the locked DNA prompt",()=>{
+    const anchorId=id(240);
+    const sourceId=id(241);
+    const payload=packageFixture({mode:"TEXT_TO_VIDEO",productRequirement:"NONE"});
+    payload.generationAuthority={strategy:"TEXT_TO_VIDEO",referenceSource:"CHARACTER_SYNTHETIC_ANCHOR",effectiveReferenceIds:[anchorId],firstFrameAssetId:null,productVisualIdentityRequirement:"NONE"};
+    payload.visualReferences=[{referenceId:id(242),assetId:anchorId,authorityType:"CAST",authorityId:I.character,authorityClass:"REQUIRED",semanticBinding:"Human-approved synthetic recurring Character identity anchor.",selectionPriority:100,firstFrame:false,semanticRole:"PROVIDER_IMAGE_REFERENCE",mediaType:"image/png",storagePath:`${I.workspace}/library/${anchorId}.png`}];
+    const {packageFingerprint:_,...packageInput}=payload;
+    payload.packageFingerprint=seedanceSceneExecutionPackageFingerprint(packageInput);
+    const director=compileSceneExecutionPackageForSeedance(payload);
+    expect(director.selectedReferences).toEqual([expect.objectContaining({assetId:anchorId,semanticRole:"PROVIDER_IMAGE_REFERENCE"})]);
+    const dna=mockCharacterDnaFixture({sourceAssetId:sourceId,sourceContentHash:hash("z")});
+    const request=compileImmutableSeedanceRequest({
+      package:payload as any,
+      sceneExecutionId:I.sceneExecution,
+      compiledAt:"2026-09-23T00:00:00.000Z",
+      characterDnaAuthority:{
+        reusableCharacterId:I.character,
+        reusableCharacterVersionId:I.characterVersion,
+        identityFingerprint:hash("x"),
+        characterDnaFingerprint:computeCharacterDnaFingerprint(dna),
+        dna,
+        episodeLook:{wardrobe:"white blouse",makeup:null,accessories:null,hairstyle:null,hairColor:null,expression:"gentle smile",pose:"natural standing posture",location:"warm modern café",action:"small natural turn toward camera",product:null,dialogue:null},
+        characterConsistencyMode:"DNA_PLUS_SYNTHETIC_ANCHOR",
+        sourcePortraitAssetId:sourceId,
+        syntheticIdentityAnchorAssetId:anchorId,
+      },
+    });
+    expect(request.compiledPrompt).toContain("CHARACTER IDENTITY — LOCKED");
+    expect(request.referenceMappings).toEqual([expect.objectContaining({assetId:anchorId,wireRole:"reference_image"})]);
+    expect(JSON.stringify(request.referenceMappings)).not.toContain(sourceId);
+  });
   it("never silently changes mode or fabricates references",()=>{expect(()=>compileSceneExecutionPackageForSeedance(packageFixture({mode:"TEXT_TO_VIDEO",productRequirement:"REQUIRED"}))).toThrow(/TEXT_TO_VIDEO/);expect(()=>compileSceneExecutionPackageForSeedance(packageFixture({withReference:false}))).toThrow(/exactly one selected first frame/);});
   it("retains continuity video in the package while excluding it from Provider image selection",()=>{const payload=packageFixture();payload.visualReferences.push({referenceId:id(200),assetId:id(201),authorityType:"OTHER",authorityId:id(202),authorityClass:"OPTIONAL",semanticBinding:"Story continuity motion evidence",selectionPriority:1,firstFrame:false,semanticRole:"STORY_CONTINUITY_REFERENCE",mediaType:"video/mp4",storagePath:`${I.workspace}/library/continuity.mp4`});const {packageFingerprint:_,...input}=payload;payload.packageFingerprint=seedanceSceneExecutionPackageFingerprint(input);const compiled=compileImmutableSeedanceRequest({package:payload as any,sceneExecutionId:I.sceneExecution,compiledAt:"2026-09-01T00:00:00.000Z"});expect(compiled.storyReferenceMappings).toHaveLength(2);expect(compiled.referenceMappings).toHaveLength(1);expect(compiled.storyReferenceMappings?.find((item)=>item.assetId===id(201))).toMatchObject({semanticRole:"STORY_CONTINUITY_REFERENCE",providerEmitted:false,mediaType:"video/mp4"});});
   it("fails closed when non-image media is explicitly assigned a Provider image role",()=>{const payload=packageFixture();payload.visualReferences.push({referenceId:id(203),assetId:id(204),authorityType:"OTHER",authorityId:id(205),authorityClass:"REQUIRED",semanticBinding:"Invalid image projection",selectionPriority:1,firstFrame:false,semanticRole:"PROVIDER_IMAGE_REFERENCE",mediaType:"video/mp4",storagePath:`${I.workspace}/library/not-an-image.mp4`});const {packageFingerprint:_,...input}=payload;payload.packageFingerprint=seedanceSceneExecutionPackageFingerprint(input);expect(()=>compileSceneExecutionPackageForSeedance(payload)).toThrow(/non-image media/);});

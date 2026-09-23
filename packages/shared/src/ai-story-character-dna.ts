@@ -4,11 +4,17 @@ export const AI_STORY_CHARACTER_DNA_CONTRACT_VERSION = "ai-story-character-dna.v
 export const AI_STORY_CHARACTER_DNA_ANALYSIS_VERSION = "ai-story-character-dna-analysis.v1" as const;
 export const CHARACTER_DNA_ANALYSIS = "CHARACTER_DNA_ANALYSIS" as const;
 export const CHARACTER_CONSISTENCY_MODE = "SOFT_DESCRIPTION_BASED" as const;
+export const HYBRID_CHARACTER_CONSISTENCY_MODE = "DNA_PLUS_SYNTHETIC_ANCHOR" as const;
+export const CHARACTER_CONSISTENCY_MODES = [
+  CHARACTER_CONSISTENCY_MODE,
+  HYBRID_CHARACTER_CONSISTENCY_MODE,
+] as const;
 export const AI_STORY_CHARACTER_IDENTITY_MODES = ["VISUAL_REFERENCE", "CHARACTER_DNA"] as const;
 export const CHARACTER_VIRTUALIZER_PATH = "LEGACY / ADVANCED / INTERNAL" as const;
 export const AI_STORY_CHARACTER_DNA_FROM_PHOTO = "CERTIFIED" as const;
 export const PHOTO_TO_DESCRIPTION_FLOW = "CERTIFIED" as const;
 export const CHARACTER_DNA_TO_EPISODE_PROMPT = "CERTIFIED" as const;
+export const CHARACTER_DNA_TEXT_ONLY_VISUAL_IDENTITY = "FAIL" as const;
 export const SOURCE_PHOTO_EXCLUDED_FROM_VIDEO_PROVIDER = "CERTIFIED" as const;
 export const NO_BIOMETRIC_CHARACTER_DNA = true as const;
 export const NO_FACE_RECOGNITION_CHARACTER_DNA = true as const;
@@ -324,10 +330,17 @@ export function sourcePhotoSentToVideoProviderForDna() {
 export function seedanceIdentityAssetIdsForCharacter(input: {
   identityMode?: string | null;
   characterDnaFingerprint?: string | null;
-  canonicalAssetIds: readonly string[];
+  canonicalAssets: readonly {
+    assetId: string;
+    role: string;
+  }[];
 }) {
-  if (isCharacterDnaIdentity(input)) return [];
-  return [...input.canonicalAssetIds];
+  if (isCharacterDnaIdentity(input)) {
+    return input.canonicalAssets
+      .filter((asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR")
+      .map((asset) => asset.assetId);
+  }
+  return input.canonicalAssets.map((asset) => asset.assetId);
 }
 
 export const AI_STORY_CHARACTER_DNA_COPY = Object.freeze({

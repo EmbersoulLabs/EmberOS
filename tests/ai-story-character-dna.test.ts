@@ -264,7 +264,9 @@ describe("AI Story Character DNA from Photo V1", () => {
     expect(seedanceIdentityAssetIdsForCharacter({
       identityMode: "CHARACTER_DNA",
       characterDnaFingerprint: computeCharacterDnaFingerprint(approved),
-      canonicalAssetIds: [IDS.source],
+      canonicalAssets: [
+        { assetId: IDS.source, role: "CHARACTER_SOURCE_PORTRAIT" },
+      ],
     })).toEqual([]);
   });
 

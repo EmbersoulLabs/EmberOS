@@ -1,8 +1,15 @@
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "./canonical-integrity";
 import { buildAiStoryCharacterVersion } from "./ai-story-character.server";
 import type { AiStoryCharacterAuthorityVersion } from "./ai-story-character";
-import { CHARACTER_CONSISTENCY_MODE } from "./ai-story-character-dna";
-import { computeCharacterDnaFingerprint } from "./ai-story-character-dna.server";
+import {
+  CHARACTER_CONSISTENCY_MODE,
+  HYBRID_CHARACTER_CONSISTENCY_MODE,
+  seedanceIdentityAssetIdsForCharacter,
+} from "./ai-story-character-dna";
+import {
+  computeCharacterDnaFingerprint,
+  computeCompiledCharacterIdentityFingerprint,
+} from "./ai-story-character-dna.server";
 import {
   AI_STORY_REUSABLE_CHARACTER_CONTRACT_VERSION,
   AiStoryEpisodeCharacterBindingSchema,
@@ -87,9 +94,15 @@ export function buildAiStoryReusableCharacterVersion(input: {
   characterConsistencyMode?: AiStoryReusableCharacterVersion["characterConsistencyMode"];
 }): AiStoryReusableCharacterVersion {
   const identityMode = input.identityMode ?? "VISUAL_REFERENCE";
+  const syntheticAnchorCount = input.canonicalAssets.filter(
+    (asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR"
+  ).length;
   const characterDnaFingerprint =
     input.characterDnaFingerprint ??
     (input.characterDna ? computeCharacterDnaFingerprint(input.characterDna) : undefined);
+  const compiledCharacterIdentityFingerprint = input.characterDna
+    ? computeCompiledCharacterIdentityFingerprint(input.characterDna)
+    : undefined;
   const identityFingerprint = computeReusableCharacterIdentityFingerprint({
     ...input,
     identityMode,
@@ -114,8 +127,13 @@ export function buildAiStoryReusableCharacterVersion(input: {
     ...input,
     identityMode,
     characterDnaFingerprint,
+    compiledCharacterIdentityFingerprint,
     characterConsistencyMode:
-      identityMode === "CHARACTER_DNA" ? CHARACTER_CONSISTENCY_MODE : input.characterConsistencyMode,
+      identityMode === "CHARACTER_DNA"
+        ? syntheticAnchorCount === 1
+          ? HYBRID_CHARACTER_CONSISTENCY_MODE
+          : CHARACTER_CONSISTENCY_MODE
+        : input.characterConsistencyMode,
     reusableCharacterVersionId: deterministicUuidFromFingerprint(
       "ai-story-reusable-character-version",
       `${input.reusableCharacterId}:${input.version}:${fingerprint}`
@@ -129,7 +147,15 @@ export function buildAiStoryReusableCharacterVersion(input: {
 export function projectReusableCharacterToCampaignFacts(version: AiStoryReusableCharacterVersion) {
   const master = version.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER");
   const sourcePortrait = version.canonicalAssets.find((asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT");
+  const syntheticAnchor = version.canonicalAssets.find(
+    (asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR"
+  );
   const dnaMode = version.identityMode === "CHARACTER_DNA";
+  const providerAssets = dnaMode
+    ? syntheticAnchor
+      ? [syntheticAnchor]
+      : []
+    : version.canonicalAssets;
   return {
     name: version.name,
     identity: version.identityCore.identityDescription,
@@ -142,14 +168,17 @@ export function projectReusableCharacterToCampaignFacts(version: AiStoryReusable
     personality: "Reusable Workspace Character. Episode Story state is authorized separately.",
     emotionalArc: "May evolve only through authorized Episode Story state.",
     relationships: [] as AiStoryCharacterAuthorityVersion["canonicalFacts"]["relationships"],
-    visualAssetReferences: dnaMode
-      ? []
-      : version.canonicalAssets.map((asset) => ({
+    visualAssetReferences: providerAssets.map((asset) => ({
           assetId: asset.assetId,
           contentHash: asset.contentHash,
-          purpose: asset.role === "IDENTITY_MASTER" ? "CHARACTER_IDENTITY_MASTER" : `CHARACTER_${asset.role}`,
+          purpose:
+            asset.role === "SYNTHETIC_IDENTITY_ANCHOR"
+              ? "CHARACTER_SYNTHETIC_IDENTITY_ANCHOR"
+              : asset.role === "IDENTITY_MASTER"
+                ? "CHARACTER_IDENTITY_MASTER"
+                : `CHARACTER_${asset.role}`,
         })),
-    identityMaster: master ?? sourcePortrait ?? version.canonicalAssets[0],
+    identityMaster: master ?? syntheticAnchor ?? sourcePortrait ?? version.canonicalAssets[0],
   };
 }
 
@@ -226,21 +255,32 @@ export function buildEpisodeCharacterBinding(input: {
 }): AiStoryEpisodeCharacterBinding {
   const episodeLook = input.episodeLook ?? emptyEpisodeLook();
   const dnaMode = input.reusable.identityMode === "CHARACTER_DNA";
-  const canonicalAssetIds = dnaMode
-    ? []
-    : input.reusable.canonicalAssets.map((asset) => asset.assetId);
+  const canonicalAssetIds = seedanceIdentityAssetIdsForCharacter({
+    identityMode: input.reusable.identityMode,
+    characterDnaFingerprint: input.reusable.characterDnaFingerprint,
+    canonicalAssets: input.reusable.canonicalAssets,
+  });
+  const syntheticIdentityAnchorAssetId = dnaMode
+    ? input.reusable.canonicalAssets.find(
+        (asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR"
+      )?.assetId
+    : undefined;
   const bindingFingerprint = sha256CanonicalIntegrityHash({
     storyId: input.storyId,
     reusableCharacterVersionId: input.reusable.reusableCharacterVersionId,
     identityFingerprint: input.reusable.identityFingerprint,
     campaignCharacterVersionId: input.projection.campaignCharacterVersionId,
+    campaignCharacterFingerprint: input.projection.campaignCharacterFingerprint,
     episodeLook,
     canonicalAssetIds,
     continuityAnchorIds: input.continuityAnchorIds ?? [],
     ...(dnaMode
       ? {
           characterDnaFingerprint: input.reusable.characterDnaFingerprint,
+          compiledCharacterIdentityFingerprint:
+            input.reusable.compiledCharacterIdentityFingerprint,
           sourcePhotoSentToVideoProvider: false,
+          syntheticIdentityAnchorAssetId,
         }
       : {}),
   });
@@ -255,15 +295,22 @@ export function buildEpisodeCharacterBinding(input: {
     reusableCharacterVersionId: input.reusable.reusableCharacterVersionId,
     campaignCharacterId: input.projection.campaignCharacterId,
     campaignCharacterVersionId: input.projection.campaignCharacterVersionId,
+    campaignCharacterFingerprint: input.projection.campaignCharacterFingerprint,
     identityFingerprint: input.reusable.identityFingerprint,
     episodeLook,
     canonicalAssetIds,
     ...(dnaMode
       ? {
           characterDnaFingerprint: input.reusable.characterDnaFingerprint,
+          compiledCharacterIdentityFingerprint:
+            input.reusable.compiledCharacterIdentityFingerprint,
           characterDnaVersionId: input.reusable.reusableCharacterVersionId,
           sourcePhotoSentToVideoProvider: false,
-          characterConsistencyMode: CHARACTER_CONSISTENCY_MODE,
+          characterConsistencyMode:
+            input.reusable.characterConsistencyMode ?? CHARACTER_CONSISTENCY_MODE,
+          ...(syntheticIdentityAnchorAssetId
+            ? { syntheticIdentityAnchorAssetId }
+            : {}),
         }
       : {}),
     continuityAnchorIds: input.continuityAnchorIds ?? [],
@@ -283,6 +330,9 @@ export function compileReusableCharacterLineage(input: {
 }): AiStoryReusableCharacterLineage {
   const master =
     input.reusable.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER") ??
+    input.reusable.canonicalAssets.find(
+      (asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR"
+    ) ??
     input.reusable.canonicalAssets.find((asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT") ??
     input.reusable.canonicalAssets[0];
   if (!master) {

@@ -25,6 +25,37 @@ import { AiStoryCharacterAuthorityService } from "./ai-story-character";
 export { AiStoryReusableCharacterError };
 
 type Db = ReturnType<typeof getDb>;
+
+export function isApprovedPrivateSyntheticIdentityAnchorAsset(input: {
+  readonly orgId: string;
+  readonly workspaceId: string;
+  readonly campaignId: string | null;
+  readonly type: string;
+  readonly mimeType: string | null;
+  readonly storagePath: string;
+  readonly status: string;
+  readonly contentHash: string | null;
+  readonly metadata: unknown;
+  readonly deletedAt: Date | null;
+  readonly expectedOrgId: string;
+  readonly expectedWorkspaceId: string;
+}): boolean {
+  const metadata = (input.metadata ?? {}) as Record<string, unknown>;
+  return (
+    !input.deletedAt &&
+    input.orgId === input.expectedOrgId &&
+    input.workspaceId === input.expectedWorkspaceId &&
+    input.campaignId === null &&
+    input.type === "image" &&
+    Boolean(input.contentHash) &&
+    input.mimeType?.toLowerCase().startsWith("image/") === true &&
+    input.status === "ready" &&
+    input.storagePath.startsWith(`${input.expectedWorkspaceId}/`) &&
+    !/^https?:\/\//i.test(input.storagePath) &&
+    metadata.characterAssetSemantic === "SYNTHETIC_IDENTITY_ANCHOR" &&
+    metadata.humanApproved === true
+  );
+}
 export type AiStoryReusableCharacterScope = { orgId: string; workspaceId: string; actorUserId: string };
 export type ReusableCharacterInput = {
   name: string;
@@ -69,6 +100,11 @@ async function resolveCanonicalAssets(
       id: schema.assets.id,
       contentHash: schema.assets.contentHash,
       type: schema.assets.type,
+      mimeType: schema.assets.mimeType,
+      storagePath: schema.assets.storagePath,
+      campaignId: schema.assets.campaignId,
+      status: schema.assets.status,
+      metadata: schema.assets.metadata,
       deletedAt: schema.assets.deletedAt,
       orgId: schema.assets.orgId,
       workspaceId: schema.assets.workspaceId,
@@ -80,6 +116,28 @@ async function resolveCanonicalAssets(
     }
     if (row.type !== "image" || !row.contentHash) {
       throw new AiStoryReusableCharacterError("CHARACTER_ASSET_REFERENCE_INVALID", "Canonical Character asset must be a finalized image");
+    }
+    if (
+      asset.role === "CHARACTER_SOURCE_PORTRAIT" &&
+      ((row.metadata ?? {}) as Record<string, unknown>).characterAssetSemantic !==
+        "CHARACTER_SOURCE_PORTRAIT"
+    ) {
+      throw new AiStoryReusableCharacterError(
+        "SOURCE_PORTRAIT_NOT_FINAL",
+        "Character DNA provenance must use a CHARACTER_SOURCE_PORTRAIT asset"
+      );
+    }
+    if (asset.role === "SYNTHETIC_IDENTITY_ANCHOR") {
+      if (!isApprovedPrivateSyntheticIdentityAnchorAsset({
+        ...row,
+        expectedOrgId: scope.orgId,
+        expectedWorkspaceId: scope.workspaceId,
+      })) {
+        throw new AiStoryReusableCharacterError(
+          "SYNTHETIC_IDENTITY_ANCHOR_INVALID",
+          "Synthetic identity anchor must be an approved private Workspace Asset Library image"
+        );
+      }
     }
     resolved.push({
       assetId: row.id,
