@@ -500,8 +500,8 @@ describe("video observation extraction and durable snapshots", () => {
     const migration = readFileSync("packages/db/sql/ai-story-video-analysis-snapshot-v1.sql", "utf8");
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS ai_story_video_analysis_snapshots");
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS ai_story_video_analysis_claims");
-    expect(migration).not.toContain("CREATE FUNCTION user_workspace_ids");
-    expect(migration).not.toContain("CREATE OR REPLACE FUNCTION user_workspace_ids");
+    expect(migration).toContain("SECURITY DEFINER");
+    expect(migration).not.toContain("ALTER TABLE assets");
     for (const source of files) {
       expect(source.toLowerCase()).not.toContain("seedance");
       expect(source.toLowerCase()).not.toContain("runway");
