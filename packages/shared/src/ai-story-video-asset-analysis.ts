@@ -1,6 +1,8 @@
 /**
- * Provider-neutral analysis of an uploaded video asset.
- * One stored result is reused across later scenes and Episodes.
+ * Provider-neutral classification of structured video observations.
+ * This module does not read uploaded media and does not extract observations
+ * from an MP4. Raw observation extraction is a separate, unimplemented step.
+ * `createVideoAssetAnalysisRecord()` builds a record value. It does not persist it.
  * No Provider call and no Provider wire mapping.
  */
 import { z } from "zod";
@@ -9,6 +11,12 @@ export const AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION =
   "ai-story-video-asset-analysis.v1" as const;
 export const AI_STORY_VIDEO_ANALYSIS_PROVIDER_CALLS = 0 as const;
 export const AI_STORY_VIDEO_ANALYSIS_PROVIDER_COST_USD = 0 as const;
+export const RAW_VIDEO_OBSERVATION_EXTRACTION = "NOT_IMPLEMENTED" as const;
+export const VIDEO_OBSERVATION_CLASSIFICATION = "IMPLEMENTED" as const;
+export const VIDEO_ANALYSIS_RECORD_SCHEMA = "IMPLEMENTED" as const;
+export const VIDEO_ANALYSIS_PERSISTENCE = "NOT_IMPLEMENTED" as const;
+export const UPLOAD_ANALYSIS_INTEGRATION = "NOT_IMPLEMENTED" as const;
+export const DIRECTOR_INTEGRATION = "NOT_IMPLEMENTED" as const;
 
 export const AI_STORY_VIDEO_CAMERA_MOTIONS = [
   "STATIC",
@@ -106,7 +114,6 @@ const AiStoryVideoAssetObservationObject = z.object({
   fps: z.number().positive().nullable(),
   orgId: Id,
   workspaceId: Id,
-  campaignId: Id,
   shotCountEstimate: z.number().int().positive(),
   dominantShotType: z.enum(AI_STORY_VIDEO_SHOT_TYPES),
   cameraMotion: z.enum(AI_STORY_VIDEO_CAMERA_MOTIONS),
@@ -162,6 +169,7 @@ export const AiStoryVideoAssetAnalysisRecordSchema = z.object({
   analysisVersion: z.literal(AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION),
   analysis: AiStoryVideoAssetAnalysisSchema,
   storedAt: z.string().datetime(),
+  durablePersistence: z.literal(VIDEO_ANALYSIS_PERSISTENCE),
 }).strict();
 
 export type AiStoryVideoAssetObservation = z.infer<typeof AiStoryVideoAssetObservationSchema>;
@@ -173,7 +181,13 @@ export type AiStoryVideoAnalysisInvalidationReason =
   | "NOT_STORED"
   | "CONTENT_HASH_CHANGED"
   | "ANALYSIS_VERSION_CHANGED"
-  | "ASSET_IDENTITY_CHANGED";
+  | "ASSET_IDENTITY_CHANGED"
+  | "STORED_ANALYSIS_MISSING";
+
+export type AiStoryStoredVideoAnalysis =
+  | { readonly completeness: "ABSENT" }
+  | { readonly completeness: "COMPLETE"; readonly analysis: AiStoryVideoAssetAnalysis }
+  | { readonly completeness: "IDENTITY_ONLY"; readonly identity: AiStoryStoredVideoAnalysisIdentity };
 
 export type AiStoryStoredVideoAnalysisIdentity = {
   readonly videoAssetId: string;
@@ -220,18 +234,18 @@ function classifyReferenceUse(observation: AiStoryVideoAssetObservation): {
       rationale: CLASSIFICATION_RATIONALE.UNSUITABLE_QUALITY,
     };
   }
-  if (strictV2vCandidate(observation)) {
-    return {
-      recommendedReferenceUse: "STRICT_V2V_CANDIDATE",
-      confidence: 0.9,
-      rationale: CLASSIFICATION_RATIONALE.STRICT_V2V_CANDIDATE,
-    };
-  }
   if (observation.canUseAsExistingVideo && !observation.requiresGenerationToBeUseful) {
     return {
       recommendedReferenceUse: "EXISTING_VIDEO",
       confidence: 0.91,
       rationale: CLASSIFICATION_RATIONALE.EXISTING_VIDEO,
+    };
+  }
+  if (strictV2vCandidate(observation)) {
+    return {
+      recommendedReferenceUse: "STRICT_V2V_CANDIDATE",
+      confidence: 0.9,
+      rationale: CLASSIFICATION_RATIONALE.STRICT_V2V_CANDIDATE,
     };
   }
   if (observation.actionReferenceStrength && observation.environmentReferenceStrength) {
@@ -262,6 +276,11 @@ function classifyReferenceUse(observation: AiStoryVideoAssetObservation): {
   };
 }
 
+/**
+ * Classifies an already structured observation.
+ * This is not raw-video understanding and it does not replace an unimplemented
+ * observation extractor.
+ */
 export function classifyAiStoryVideoAssetAnalysis(
   input: AiStoryVideoAssetObservation,
 ): AiStoryVideoAssetAnalysis {
@@ -309,7 +328,7 @@ export function videoAnalysisInvalidationReason(
 }
 
 export function resolveReusableVideoAssetAnalysis(input: {
-  readonly stored: AiStoryVideoAssetAnalysis | AiStoryStoredVideoAnalysisIdentity | null;
+  readonly stored: AiStoryStoredVideoAnalysis;
   readonly observation: AiStoryVideoAssetObservation;
   readonly analyze?: (observation: AiStoryVideoAssetObservation) => AiStoryVideoAssetAnalysis;
 }): {
@@ -324,19 +343,27 @@ export function resolveReusableVideoAssetAnalysis(input: {
     contentHash: observation.contentHash,
     analysisVersion: AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
   };
-  const reason = videoAnalysisInvalidationReason(input.stored, requested);
-  if (reason === null && input.stored && "recommendedReferenceUse" in input.stored) {
-    return {
-      analysis: AiStoryVideoAssetAnalysisSchema.parse(input.stored),
-      reused: true,
-      invalidationReason: null,
-    };
-  }
   const analyze = input.analyze ?? classifyAiStoryVideoAssetAnalysis;
-  return {
+  const recompute = (invalidationReason: AiStoryVideoAnalysisInvalidationReason) => ({
     analysis: analyze(observation),
-    reused: false,
-    invalidationReason: reason,
+    reused: false as const,
+    invalidationReason,
+  });
+
+  if (input.stored.completeness === "ABSENT") return recompute("NOT_STORED");
+
+  if (input.stored.completeness === "IDENTITY_ONLY") {
+    const reason = videoAnalysisInvalidationReason(input.stored.identity, requested);
+    return recompute(reason ?? "STORED_ANALYSIS_MISSING");
+  }
+
+  const storedAnalysis = AiStoryVideoAssetAnalysisSchema.parse(input.stored.analysis);
+  const reason = videoAnalysisInvalidationReason(storedAnalysis, requested);
+  if (reason !== null) return recompute(reason);
+  return {
+    analysis: storedAnalysis,
+    reused: true,
+    invalidationReason: null,
   };
 }
 
@@ -354,5 +381,6 @@ export function createVideoAssetAnalysisRecord(
     analysisVersion: parsed.analysisVersion,
     analysis: parsed,
     storedAt,
+    durablePersistence: VIDEO_ANALYSIS_PERSISTENCE,
   });
 }

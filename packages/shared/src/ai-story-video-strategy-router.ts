@@ -1,6 +1,8 @@
 /**
- * Provider-neutral planning router for an already stored video analysis.
- * Reads the analysis. Does not analyze again and does not call a Provider.
+ * Provider-neutral planning router for an already classified video observation.
+ * Campaign, Scene, and Episode are planning context. They are not part of the
+ * reusable asset analysis. This module does not extract observations from media,
+ * persist analysis, or call a Provider.
  */
 import {
   AI_STORY_VIDEO_ANALYSIS_PROVIDER_CALLS,
@@ -126,6 +128,7 @@ export function routeAiStoryVideoPlanningStrategy(input: {
   readonly userIntent?: AiStoryVideoUserIntent | string | null;
   readonly executionContext?: {
     readonly strictV2vProviderAvailable?: boolean;
+    readonly campaignId?: string;
     readonly sceneId?: string;
     readonly episodeId?: string;
   };

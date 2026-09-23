@@ -7,7 +7,14 @@ import {
   AI_STORY_VIDEO_ANALYSIS_PROVIDER_CALLS,
   AI_STORY_VIDEO_ANALYSIS_PROVIDER_COST_USD,
   AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
+  DIRECTOR_INTEGRATION,
+  RAW_VIDEO_OBSERVATION_EXTRACTION,
   SOURCE_PHOTO_EXCLUDED_FROM_VIDEO_PROVIDER,
+  UPLOAD_ANALYSIS_INTEGRATION,
+  VIDEO_ANALYSIS_PERSISTENCE,
+  VIDEO_ANALYSIS_RECORD_SCHEMA,
+  VIDEO_OBSERVATION_CLASSIFICATION,
+  AiStoryVideoAssetObservationSchema,
   classifyAiStoryVideoAssetAnalysis,
   createVideoAssetAnalysisRecord,
   parseBoundedVideoUserIntent,
@@ -33,7 +40,6 @@ function observation(overrides?: Partial<AiStoryVideoAssetObservation>): AiStory
     fps: 24,
     orgId: id(2),
     workspaceId: id(3),
-    campaignId: id(4),
     shotCountEstimate: 1,
     dominantShotType: "MEDIUM",
     cameraMotion: "STATIC",
@@ -119,14 +125,30 @@ describe("video asset analysis and strategy router", () => {
     expect(analysis.recommendedReferenceUse).toBe("ACTION_AND_ENVIRONMENT_REFERENCE");
   });
 
-  it("classifies a polished final clip as existing video", () => {
-    const analysis = classifyAiStoryVideoAssetAnalysis(observation({
+  it("classifies a polished final clip as existing video even when strict motion signals are present", () => {
+    const polished = observation({
       primaryActionSummary: "A finished promo already shows the needed scene.",
       canUseAsExistingVideo: true,
       existingVideoSuitabilityReason: "Finished promo already matches the needed scene.",
       requiresGenerationToBeUseful: false,
-    }));
+      strictMotionPreservationMatters: true,
+      strictTimelinePreservationMatters: true,
+      strictShotStructureMatters: true,
+      subjectReplacementLikely: true,
+      interactionTimingImportant: true,
+    });
+    const analysis = classifyAiStoryVideoAssetAnalysis(polished);
     expect(analysis.recommendedReferenceUse).toBe("EXISTING_VIDEO");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const route = routeAiStoryVideoPlanningStrategy({
+      analysis,
+      userIntent: "REPLACE_PERSON_KEEP_MOTION",
+      executionContext: { strictV2vProviderAvailable: false },
+    });
+    expect(route.strategy).toBe("REQUEST_STRICT_V2V_IF_PROVIDER_AVAILABLE");
+    expect(route.providerCalls).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("reserves strict V2V for tight motion preservation and not for generic walking", () => {
@@ -297,7 +319,7 @@ describe("video asset analysis and strategy router", () => {
     let calls = 0;
     const facts = observation();
     const first = resolveReusableVideoAssetAnalysis({
-      stored: null,
+      stored: { completeness: "ABSENT" },
       observation: facts,
       analyze: (value) => {
         calls += 1;
@@ -305,7 +327,7 @@ describe("video asset analysis and strategy router", () => {
       },
     });
     const second = resolveReusableVideoAssetAnalysis({
-      stored: first.analysis,
+      stored: { completeness: "COMPLETE", analysis: first.analysis },
       observation: facts,
       analyze: () => {
         calls += 1;
@@ -314,11 +336,11 @@ describe("video asset analysis and strategy router", () => {
     });
     const episodeA = routeAiStoryVideoPlanningStrategy({
       analysis: second.analysis,
-      executionContext: { episodeId: id(11) },
+      executionContext: { campaignId: id(4), episodeId: id(11) },
     });
     const episodeB = routeAiStoryVideoPlanningStrategy({
       analysis: second.analysis,
-      executionContext: { episodeId: id(12) },
+      executionContext: { campaignId: id(5), episodeId: id(12) },
     });
     expect(first.reused).toBe(false);
     expect(first.invalidationReason).toBe("NOT_STORED");
@@ -326,11 +348,13 @@ describe("video asset analysis and strategy router", () => {
     expect(second.invalidationReason).toBeNull();
     expect(calls).toBe(1);
     expect(episodeA.reuseKey).toBe(episodeB.reuseKey);
+    expect(episodeA.reuseKey).not.toContain(id(4));
+    expect(episodeA.reuseKey).not.toContain(id(5));
     expect(episodeA.reusedAnalysis).toBe(true);
     expect(episodeA.strategy).toBe("GENERATE_WITH_ACTION_REFERENCE");
 
     const hashChanged = resolveReusableVideoAssetAnalysis({
-      stored: first.analysis,
+      stored: { completeness: "COMPLETE", analysis: first.analysis },
       observation: observation({ contentHash: otherHash }),
       analyze: (value) => {
         calls += 1;
@@ -340,12 +364,26 @@ describe("video asset analysis and strategy router", () => {
     expect(hashChanged.reused).toBe(false);
     expect(hashChanged.invalidationReason).toBe("CONTENT_HASH_CHANGED");
 
+    const otherWorkspace = resolveReusableVideoAssetAnalysis({
+      stored: { completeness: "COMPLETE", analysis: first.analysis },
+      observation: observation({ workspaceId: id(99) }),
+      analyze: (value) => {
+        calls += 1;
+        return classifyAiStoryVideoAssetAnalysis(value);
+      },
+    });
+    expect(otherWorkspace.reused).toBe(false);
+    expect(otherWorkspace.invalidationReason).toBe("ASSET_IDENTITY_CHANGED");
+
     const versionChanged = resolveReusableVideoAssetAnalysis({
       stored: {
-        videoAssetId: facts.videoAssetId,
-        workspaceId: facts.workspaceId,
-        contentHash: facts.contentHash,
-        analysisVersion: "ai-story-video-asset-analysis.v0",
+        completeness: "IDENTITY_ONLY",
+        identity: {
+          videoAssetId: facts.videoAssetId,
+          workspaceId: facts.workspaceId,
+          contentHash: facts.contentHash,
+          analysisVersion: "ai-story-video-asset-analysis.v0",
+        },
       },
       observation: facts,
       analyze: (value) => {
@@ -355,12 +393,36 @@ describe("video asset analysis and strategy router", () => {
     });
     expect(versionChanged.reused).toBe(false);
     expect(versionChanged.invalidationReason).toBe("ANALYSIS_VERSION_CHANGED");
-    expect(calls).toBe(3);
+
+    const missingAnalysis = resolveReusableVideoAssetAnalysis({
+      stored: {
+        completeness: "IDENTITY_ONLY",
+        identity: {
+          videoAssetId: facts.videoAssetId,
+          workspaceId: facts.workspaceId,
+          contentHash: facts.contentHash,
+          analysisVersion: AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
+        },
+      },
+      observation: facts,
+      analyze: (value) => {
+        calls += 1;
+        return classifyAiStoryVideoAssetAnalysis(value);
+      },
+    });
+    expect(missingAnalysis.reused).toBe(false);
+    expect(missingAnalysis.invalidationReason).toBe("STORED_ANALYSIS_MISSING");
+    expect(calls).toBe(5);
 
     const record = createVideoAssetAnalysisRecord(first.analysis, "2026-09-24T00:01:00.000Z");
     expect(record.reuseKey).toBe(videoAssetAnalysisReuseKey(first.analysis));
     expect(record.analysisVersion).toBe(AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION);
     expect(record.analysis).toEqual(first.analysis);
+    expect(record.durablePersistence).toBe("NOT_IMPLEMENTED");
+    expect(VIDEO_ANALYSIS_RECORD_SCHEMA).toBe("IMPLEMENTED");
+    expect(VIDEO_ANALYSIS_PERSISTENCE).toBe("NOT_IMPLEMENTED");
+    expect(UPLOAD_ANALYSIS_INTEGRATION).toBe("NOT_IMPLEMENTED");
+    expect(DIRECTOR_INTEGRATION).toBe("NOT_IMPLEMENTED");
   });
 
   it("leaves T2V, I2V, and Character DNA contracts unchanged and makes no Provider call", () => {
@@ -394,5 +456,17 @@ describe("video asset analysis and strategy router", () => {
       expect(source.toLowerCase()).not.toContain("runway");
       expect(source.toLowerCase()).not.toContain("settle");
     }
+    expect(RAW_VIDEO_OBSERVATION_EXTRACTION).toBe("NOT_IMPLEMENTED");
+    expect(VIDEO_OBSERVATION_CLASSIFICATION).toBe("IMPLEMENTED");
+    expect(analysisSource).not.toMatch(/function\s+analyzeRawUploadedVideo/);
+    expect(analysisSource).not.toContain("readFile");
+    expect(AiStoryVideoAssetObservationSchema.safeParse({
+      ...observation(),
+      videoBytes: "raw-media",
+    }).success).toBe(false);
+    expect(AiStoryVideoAssetObservationSchema.safeParse({
+      ...observation(),
+      campaignId: id(4),
+    }).success).toBe(false);
   });
 });
