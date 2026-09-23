@@ -90,3 +90,4 @@ export * from "./minimax-canonical-adapter";
 export * from "./minimax-canonical-registry";
 export * from "./minimax-controlled-validation";
 export * from "./story-execution-orchestrator";
+export * from "./runway-aleph-v2v-adapter";
