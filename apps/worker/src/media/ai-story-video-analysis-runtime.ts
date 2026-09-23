@@ -34,11 +34,18 @@ export function createAiStoryVideoAnalysisRuntime(sql: Sql) {
           storagePath: asset.storagePath,
           mediaType: "video",
           durationSec: asset.durationSec ?? undefined,
+          transcribeAudio: false,
         }),
         extractObservation: (prepared) => extractOpenAiVideoObservation({
           prepared,
           callVision: async (system, userText, imageDataUrls, schemaHint) => {
-            const response = await callVisionJsonModel(system, userText, imageDataUrls, schemaHint);
+            const response = await callVisionJsonModel(
+              system,
+              userText,
+              imageDataUrls,
+              schemaHint,
+              { maxRetries: 0 },
+            );
             return {
               result: response.result,
               usage: response.usage,

@@ -221,7 +221,7 @@ describe("video observation extraction and durable snapshots", () => {
     const result = await run.ensure({ campaignId: id(4), episodeId: id(11) });
     expect(run.providerCalls()).toBe(1);
     expect(result.snapshot.analysisType).toBe("AI_STORY_VIDEO");
-    expect(result.snapshot.analysis.recommendedReferenceUse).toBe("ACTION_REFERENCE");
+    expect(result.snapshot.analysis.recommendedReferenceUse).toBe("ACTION_AND_ENVIRONMENT_REFERENCE");
     expect(result.snapshot.inputFingerprint).toBe(videoObservationInputFingerprint({
       workspaceId: id(3),
       assetId: id(1),
@@ -313,7 +313,18 @@ describe("video observation extraction and durable snapshots", () => {
       fps: 60,
       recommendedReferenceUse: "STRICT_V2V_CANDIDATE",
       provider: "runway",
+      canUseAsExistingVideo: true,
+      requiresGenerationToBeUseful: false,
+      subjectReplacementLikely: true,
+      strictMotionPreservationMatters: true,
+      campaignId: id(4),
+      episodeId: id(11),
     }));
+    expect(merged.canUseAsExistingVideo).toBe(false);
+    expect(merged.requiresGenerationToBeUseful).toBe(true);
+    expect(merged.subjectReplacementLikely).toBe(false);
+    expect(merged.strictMotionPreservationMatters).toBe(false);
+    expect(merged.actionReferenceStrength).toBe(true);
     expect(merged.videoAssetId).toBe(current.assetId);
     expect(merged.contentHash).toBe(current.contentHash);
     expect(merged.workspaceId).toBe(current.workspaceId);
@@ -383,9 +394,23 @@ describe("video observation extraction and durable snapshots", () => {
       costUsd: 0,
     });
     const existing = await run.ensure();
-    expect(existing.snapshot.analysis.recommendedReferenceUse).toBe("EXISTING_VIDEO");
+    expect(existing.snapshot.observation.canUseAsExistingVideo).toBe(false);
+    expect(existing.snapshot.observation.requiresGenerationToBeUseful).toBe(true);
+    expect(existing.snapshot.observation.subjectReplacementLikely).toBe(false);
+    expect(existing.snapshot.analysis.recommendedReferenceUse).toBe("ACTION_AND_ENVIRONMENT_REFERENCE");
     const again = classifyAiStoryVideoAssetAnalysis(existing.snapshot.observation);
     expect(again).toEqual(existing.snapshot.analysis);
+    const usable = classifyAiStoryVideoAssetAnalysis({
+      ...existing.snapshot.observation,
+      canUseAsExistingVideo: true,
+      requiresGenerationToBeUseful: false,
+      existingVideoSuitabilityReason: "The clip is already usable as final media.",
+      strictMotionPreservationMatters: true,
+      strictTimelinePreservationMatters: true,
+      strictShotStructureMatters: true,
+      subjectReplacementLikely: true,
+    });
+    expect(usable.recommendedReferenceUse).toBe("EXISTING_VIDEO");
 
     const action = classifyAiStoryVideoAssetAnalysis(mergeTrustedVideoObservation({
       videoAssetId: id(1),
@@ -467,8 +492,16 @@ describe("video observation extraction and durable snapshots", () => {
     expect(RAW_VIDEO_OBSERVATION_EXTRACTOR).toBe("IMPLEMENTED");
     expect(DIRECTOR_INTEGRATION).toBe("NOT_IMPLEMENTED");
     expect(files[2]).toContain("prepareVisionFromStorage");
+    expect(files[2]).toContain("transcribeAudio: false");
+    expect(files[2]).toContain("maxRetries: 0");
     expect(files[2]).not.toContain("extractFrameAt");
+    expect(files[2]).not.toContain("transcribeAudioDetailed");
     expect(files[3]).not.toContain("ensureAiStoryVideoAssetAnalysis");
+    const migration = readFileSync("packages/db/sql/ai-story-video-analysis-snapshot-v1.sql", "utf8");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS ai_story_video_analysis_snapshots");
+    expect(migration).toContain("CREATE TABLE IF NOT EXISTS ai_story_video_analysis_claims");
+    expect(migration).not.toContain("CREATE FUNCTION user_workspace_ids");
+    expect(migration).not.toContain("CREATE OR REPLACE FUNCTION user_workspace_ids");
     for (const source of files) {
       expect(source.toLowerCase()).not.toContain("seedance");
       expect(source.toLowerCase()).not.toContain("runway");

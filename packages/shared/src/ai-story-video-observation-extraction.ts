@@ -19,11 +19,13 @@ import {
 } from "./ai-story-video-asset-analysis";
 
 export const AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION =
-  "ai-story-video-observation-extractor.v1" as const;
+  "ai-story-video-observation-extractor.v2" as const;
 export const AI_STORY_VIDEO_ANALYSIS_TYPE = "AI_STORY_VIDEO" as const;
 export const RAW_VIDEO_OBSERVATION_EXTRACTOR = "IMPLEMENTED" as const;
 export const AI_STORY_VIDEO_OBSERVATION_PROMPT =
-  "Describe only what is visibly or audibly supported by the supplied sampled video frames and transcript. Do not choose a generation strategy or Provider. Do not infer user intent beyond visible media evidence." as const;
+  "Describe only what is visibly supported by the supplied sampled video frames. Do not choose a generation strategy or Provider. Do not infer whether the clip should be reused, replaced, or regenerated." as const;
+export const AI_STORY_VIDEO_CONTEXT_FREE_EXISTING_VIDEO_REASON =
+  "Final-media use is decided at planning time from explicit intent." as const;
 
 const Summary = z.string().trim().min(1).max(500);
 
@@ -37,29 +39,11 @@ export const AiStoryVideoModelObservationSchema = z.object({
   abruptCuts: z.boolean().default(false),
   primaryActionSummary: Summary.default("No strong action was established from the sampled frames."),
   actionTags: z.array(z.enum(AI_STORY_VIDEO_ACTION_TAGS)).max(12).default([]),
-  actionReferenceStrength: z.boolean().default(false),
-  handMotionImportant: z.boolean().default(false),
-  bodyPostureImportant: z.boolean().default(false),
-  interactionTimingImportant: z.boolean().default(false),
   environmentSummary: Summary.default("No distinctive environment was established from the sampled frames."),
   environmentTags: z.array(z.enum(AI_STORY_VIDEO_ENVIRONMENT_TAGS)).max(12).default([]),
-  environmentReferenceStrength: z.boolean().default(false),
-  layoutImportant: z.boolean().default(false),
-  lightingMoodImportant: z.boolean().default(false),
-  signageIdentityVisible: z.boolean().default(false),
-  backgroundClutterImportant: z.boolean().default(false),
   visiblePeopleEstimate: z.number().int().nonnegative().default(0),
   primaryPersonPresent: z.boolean().default(false),
-  personCentric: z.boolean().default(false),
-  humanIsReplaceableActionReference: z.boolean().default(false),
-  identityFidelityImportant: z.boolean().default(false),
-  strictMotionPreservationMatters: z.boolean().default(false),
-  strictTimelinePreservationMatters: z.boolean().default(false),
-  strictShotStructureMatters: z.boolean().default(false),
-  subjectReplacementLikely: z.boolean().default(false),
-  canUseAsExistingVideo: z.boolean().default(false),
-  existingVideoSuitabilityReason: Summary.default("Final-media usability was not established from the sampled media."),
-  requiresGenerationToBeUseful: z.boolean().default(true),
+  signageIdentityVisible: z.boolean().default(false),
   qualityRiskFlags: z.array(z.enum(AI_STORY_VIDEO_QUALITY_RISK_FLAGS)).max(8).default([]),
 }).strict();
 
@@ -90,6 +74,7 @@ const UNTRUSTED_MODEL_KEYS = [
   "workspaceId",
   "campaignId",
   "episodeId",
+  "sceneId",
   "analyzedAt",
   "analysisVersion",
   "recommendedReferenceUse",
@@ -97,7 +82,87 @@ const UNTRUSTED_MODEL_KEYS = [
   "model",
   "generationMode",
   "executionMode",
+  "actionReferenceStrength",
+  "handMotionImportant",
+  "bodyPostureImportant",
+  "interactionTimingImportant",
+  "environmentReferenceStrength",
+  "layoutImportant",
+  "lightingMoodImportant",
+  "backgroundClutterImportant",
+  "personCentric",
+  "humanIsReplaceableActionReference",
+  "identityFidelityImportant",
+  "strictMotionPreservationMatters",
+  "strictTimelinePreservationMatters",
+  "strictShotStructureMatters",
+  "subjectReplacementLikely",
+  "canUseAsExistingVideo",
+  "existingVideoSuitabilityReason",
+  "requiresGenerationToBeUseful",
 ] as const;
+
+const HAND_ACTION_TAGS = new Set([
+  "WRITING",
+  "PACKING",
+  "HOLDING_FLOWERS",
+  "HANDING_ITEM",
+  "OPERATING_CASHIER",
+]);
+
+/**
+ * Use-judgments are a pure function of visible tags. Campaign, Episode, and
+ * user intent do not change the stored observation.
+ */
+export function contextFreeVideoObservationJudgments(
+  visible: AiStoryVideoModelObservation,
+): Pick<
+  AiStoryVideoAssetObservation,
+  | "actionReferenceStrength"
+  | "handMotionImportant"
+  | "bodyPostureImportant"
+  | "interactionTimingImportant"
+  | "environmentReferenceStrength"
+  | "layoutImportant"
+  | "lightingMoodImportant"
+  | "backgroundClutterImportant"
+  | "personCentric"
+  | "humanIsReplaceableActionReference"
+  | "identityFidelityImportant"
+  | "strictMotionPreservationMatters"
+  | "strictTimelinePreservationMatters"
+  | "strictShotStructureMatters"
+  | "subjectReplacementLikely"
+  | "canUseAsExistingVideo"
+  | "existingVideoSuitabilityReason"
+  | "requiresGenerationToBeUseful"
+> {
+  const blocked = visible.qualityRiskFlags.length > 0;
+  const hasAction = !blocked && visible.actionTags.length > 0;
+  const hasEnvironment = !blocked && visible.environmentTags.length > 0;
+  return {
+    actionReferenceStrength: hasAction,
+    handMotionImportant: hasAction && visible.actionTags.some((tag) => HAND_ACTION_TAGS.has(tag)),
+    bodyPostureImportant: hasAction && (
+      visible.actionTags.includes("WALKING") || visible.actionTags.includes("TALKING_TO_CAMERA")
+    ),
+    interactionTimingImportant: hasAction && visible.actionTags.includes("HANDING_ITEM"),
+    environmentReferenceStrength: hasEnvironment,
+    layoutImportant: false,
+    lightingMoodImportant: false,
+    backgroundClutterImportant: false,
+    personCentric: visible.primaryPersonPresent && visible.visiblePeopleEstimate === 1,
+    humanIsReplaceableActionReference: false,
+    identityFidelityImportant: false,
+    strictMotionPreservationMatters: false,
+    strictTimelinePreservationMatters: false,
+    strictShotStructureMatters: false,
+    subjectReplacementLikely: false,
+    canUseAsExistingVideo: false,
+    existingVideoSuitabilityReason: AI_STORY_VIDEO_CONTEXT_FREE_EXISTING_VIDEO_REASON,
+    requiresGenerationToBeUseful: true,
+  };
+}
 
 export function stripUntrustedVideoObservationFields(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -116,6 +181,7 @@ export function mergeTrustedVideoObservation(
   const model = AiStoryVideoModelObservationSchema.parse(stripUntrustedVideoObservationFields(modelValue));
   return AiStoryVideoAssetObservationSchema.parse({
     ...model,
+    ...contextFreeVideoObservationJudgments(model),
     ...canonical,
   });
 }

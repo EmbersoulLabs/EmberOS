@@ -187,6 +187,8 @@ export async function prepareVisionFromStorage(input: {
   storagePath: string;
   mediaType: "video" | "image";
   durationSec?: number;
+  /** Historical callers transcribe speech. AI Story video observation opts out. */
+  transcribeAudio?: boolean;
 }): Promise<PreparedVisionMedia> {
   const workDir = join(tmpdir(), `vision-prep-${Date.now()}`);
   await mkdir(workDir, { recursive: true });
@@ -235,7 +237,7 @@ export async function prepareVisionFromStorage(input: {
 
     let transcriptSummary: string | undefined;
     let transcriptSegments: PreparedVisionMedia["transcriptSegments"];
-    if (duration >= 4 && (await mediaHasAudio(localPath))) {
+    if (input.transcribeAudio !== false && duration >= 4 && (await mediaHasAudio(localPath))) {
       try {
         const transcribed = await transcribeLongVideo(localPath, duration);
         transcriptSummary = transcribed.summary;

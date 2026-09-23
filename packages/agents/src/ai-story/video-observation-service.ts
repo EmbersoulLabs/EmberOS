@@ -270,7 +270,7 @@ export async function extractOpenAiVideoObservation(input: {
     AI_STORY_VIDEO_OBSERVATION_PROMPT,
     userText,
     input.prepared.frames.map((frame) => frame.dataUrl),
-    "observable camera, action, environment, people, motion, usability, and quality facts",
+    "observable camera, action, environment, people, and quality facts",
   );
   return {
     raw: response.result,
