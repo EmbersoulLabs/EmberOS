@@ -44,6 +44,7 @@
     "sql:ai-story-reusable-character": "tsx scripts/apply-ai-story-reusable-character-v1.ts",
     "sql:ai-story-character-virtualizer": "tsx scripts/apply-ai-story-character-virtualizer-v1.ts",
     "sql:ai-story-character-virtualizer-real-provider-calls": "tsx scripts/apply-ai-story-character-virtualizer-real-provider-calls-01.ts",
+    "sql:ai-story-character-dna": "tsx scripts/apply-ai-story-character-dna-from-photo-v1.ts",
     "sql:ai-story-cast": "tsx scripts/apply-ai-story-cast-v1.ts",
     "sql:ai-story-planning": "tsx scripts/apply-ai-story-planning-v1.ts",
     "sql:ai-story-execution": "tsx scripts/apply-ai-story-execution-v1.ts",

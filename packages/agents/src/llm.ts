@@ -227,27 +227,31 @@ export async function callVisionJsonModel<T>(
   system: string,
   userText: string,
   imageDataUrls: string[],
-  schemaHint: string
+  schemaHint: string,
+  requestOptions?: { maxRetries: number }
 ): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
   const openai = getOpenAI();
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: userText },
-          ...imageDataUrls.slice(0, 8).map((url) => ({
-            type: "image_url" as const,
-            image_url: { url, detail: "high" as const },
-          })),
-        ],
-      },
-    ],
-    temperature: 0.4,
-  });
+  const response = await openai.chat.completions.create(
+    {
+      model: "gpt-4o",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: userText },
+            ...imageDataUrls.slice(0, 8).map((url) => ({
+              type: "image_url" as const,
+              image_url: { url, detail: "high" as const },
+            })),
+          ],
+        },
+      ],
+      temperature: 0.4,
+    },
+    requestOptions
+  );
 
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;

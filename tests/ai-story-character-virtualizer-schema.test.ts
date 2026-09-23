@@ -5,10 +5,12 @@ import { describe, expect, it } from "vitest";
 const PG_IDENTIFIER_LIMIT = 63;
 const schema = readFileSync(resolve(process.cwd(), "packages/db/src/schema/index.ts"), "utf8");
 const sql = readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-character-virtualizer-v1.sql"), "utf8");
-const schemaBlock = schema.slice(
-  schema.indexOf("export const aiStoryCharacterVirtualizationJobs"),
-  schema.indexOf("export const aiStoryLocations"),
+const virtualizerStart = schema.indexOf("export const aiStoryCharacterVirtualizationJobs");
+const virtualizerEnd = schema.indexOf(
+  "export const aiStoryCharacterDnaAnalysisJobs",
+  virtualizerStart,
 );
+const schemaBlock = schema.slice(virtualizerStart, virtualizerEnd);
 
 const requiredFkNames = [
   "as_cvj_org_fk",
@@ -22,6 +24,8 @@ const requiredFkNames = [
 
 describe("Character Virtualizer Drizzle FK identifiers", () => {
   it("uses unique short restrict FKs that cannot truncate-collide", () => {
+    expect(virtualizerStart).toBeGreaterThanOrEqual(0);
+    expect(virtualizerEnd).toBeGreaterThan(virtualizerStart);
     const drizzleNames = [...schemaBlock.matchAll(/foreignKey\(\{\s*name:\s*"([^"]+)"/g)].map((match) => match[1]);
     expect(drizzleNames).toEqual(requiredFkNames);
     expect(new Set(drizzleNames).size).toBe(drizzleNames.length);

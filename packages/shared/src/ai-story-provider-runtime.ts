@@ -3,6 +3,7 @@ import { AiStorySeedanceSemanticPlanSchema } from "./ai-story-scene-execution-pa
 import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
 import { AiStoryNativeAvRequestAuthoritySchema } from "./ai-story-native-dialogue";
+import { CHARACTER_CONSISTENCY_MODES } from "./ai-story-character-dna";
 
 export const AI_STORY_COMPILED_PROVIDER_REQUEST_VERSION =
   "ai-story-compiled-provider-request.v1" as const;
@@ -113,6 +114,21 @@ export type AiStoryCompiledProviderReadySceneInput = z.infer<
   typeof AiStoryCompiledProviderReadySceneInputSchema
 >;
 
+export const AiStoryCompiledCharacterDnaAuthoritySchema = z.object({
+  reusableCharacterId: Id,
+  reusableCharacterVersionId: Id,
+  campaignCharacterId: Id,
+  campaignCharacterVersionId: Id,
+  campaignCharacterFingerprint: Hash,
+  identityFingerprint: Hash,
+  characterDnaFingerprint: Hash,
+  compiledCharacterIdentityFingerprint: Hash,
+  characterConsistencyMode: z.enum(CHARACTER_CONSISTENCY_MODES),
+  sourcePortraitAssetId: Id,
+  syntheticIdentityAnchorAssetId: Id.optional(),
+  sourcePhotoSentToVideoProvider: z.literal(false),
+}).strict();
+
 /**
  * Immutable output of Provider compilation. URLs and credentials are deliberately
  * absent: the Worker resolves short-lived transport access from stable Asset IDs.
@@ -162,6 +178,8 @@ export const AiStoryCompiledProviderRequestV1Schema = z.object({
   storyReferenceMappings: z.array(AiStoryCompiledStoryReferenceSchema).optional(),
   /** Durable exact Product material authority; absent only on historical requests. */
   productMaterialSelection: ProductVisualMaterialSelectionAuthoritySchema.optional(),
+  /** Frozen Character DNA lineage; absent on visual-reference and historical requests. */
+  characterDnaAuthority: AiStoryCompiledCharacterDnaAuthoritySchema.optional(),
   /** Added append-only; absent only on pre-preparation compiled requests. */
   providerReadySceneInput: AiStoryCompiledProviderReadySceneInputSchema.optional(),
   /** Added append-only; required by new preparation-governed compilation. */
@@ -238,11 +256,17 @@ export type AiStoryCompiledProviderRequest = z.infer<
 
 export const SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_ERROR =
   "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID" as const;
+export const CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED =
+  "CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED" as const;
 
 export class AiStoryProviderWireModeContractError extends Error {
-  readonly code = SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_ERROR;
-
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly code:
+      | typeof SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_ERROR
+      | typeof CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED =
+        SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_ERROR
+  ) {
     super(message);
     this.name = "AiStoryProviderWireModeContractError";
   }
@@ -266,6 +290,54 @@ export function assertAiStoryCompiledProviderWireModeCompatibility(
     if (providerReady) {
       throw new AiStoryProviderWireModeContractError(
         "TEXT_TO_VIDEO compilation cannot carry a Provider-ready Scene input"
+      );
+    }
+    const firstFrames = request.referenceMappings.filter(
+      (reference) => reference.wireRole === "first_frame"
+    );
+    if (firstFrames.length > 0) {
+      throw new AiStoryProviderWireModeContractError(
+        "TEXT_TO_VIDEO forbids first_frame inputs"
+      );
+    }
+    if (
+      request.characterDnaAuthority &&
+      request.referenceMappings.some(
+        (reference) =>
+          reference.assetId === request.characterDnaAuthority!.sourcePortraitAssetId
+      )
+    ) {
+      throw new AiStoryProviderWireModeContractError(
+        "Character DNA source portrait cannot be emitted to the video Provider",
+        CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED
+      );
+    }
+    if (
+      request.generationAuthority?.referenceSource ===
+      "CHARACTER_SYNTHETIC_ANCHOR"
+    ) {
+      const anchor = request.characterDnaAuthority?.syntheticIdentityAnchorAssetId;
+      const references = request.referenceMappings.filter(
+        (reference) => reference.wireRole === "reference_image"
+      );
+      if (
+        !anchor ||
+        request.referenceMappings.length !== 1 ||
+        references.length !== 1 ||
+        references[0]?.assetId !== anchor ||
+        request.generationAuthority.effectiveReferenceIds.length !== 1 ||
+        request.generationAuthority.effectiveReferenceIds[0] !== anchor
+      ) {
+        throw new AiStoryProviderWireModeContractError(
+          "Hybrid Character DNA TEXT_TO_VIDEO requires exactly one pinned synthetic reference_image"
+        );
+      }
+    } else if (
+      request.generationAuthority?.referenceSource === "REFERENCE_FREE_T2V" &&
+      request.referenceMappings.length !== 0
+    ) {
+      throw new AiStoryProviderWireModeContractError(
+        "Reference-free TEXT_TO_VIDEO cannot emit image references"
       );
     }
     return;

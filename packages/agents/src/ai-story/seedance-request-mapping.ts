@@ -121,6 +121,7 @@ export class SeedanceMappingError extends Error {
     readonly code:
       | "BUSINESS_VALIDATION_FAILED"
       | "PRODUCT_MATERIAL_AUTHORITY_INVALID"
+      | "CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED"
       | "SEEDANCE_FIRST_FRAME_I2V_WIRE_MODE_INVALID" = "BUSINESS_VALIDATION_FAILED"
   ) {
     super(message);

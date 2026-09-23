@@ -10,6 +10,7 @@ export const AI_STORY_SCENE_REFERENCE_SOURCES = [
   "SCENE_EXPLICIT",
   "STORY_INHERITED",
   "REFERENCE_FREE_T2V",
+  "CHARACTER_SYNTHETIC_ANCHOR",
 ] as const;
 
 const AssetId = z.string().uuid();
@@ -22,6 +23,13 @@ export const AiStorySceneGenerationAuthoritySchema = z.union([
       referenceAssetIds: z.array(AssetId).length(0).default([]),
       firstFrameAssetId: z.null().default(null),
       productVisualIdentityRequirement: z.enum(["NONE", "REQUIRED"]).default("NONE"),
+    }).strict(),
+    z.object({
+      strategy: z.literal("TEXT_TO_VIDEO"),
+      referenceSource: z.literal("CHARACTER_SYNTHETIC_ANCHOR"),
+      referenceAssetIds: z.array(AssetId).length(1),
+      firstFrameAssetId: z.null().default(null),
+      productVisualIdentityRequirement: z.literal("NONE").default("NONE"),
     }).strict(),
     z.object({
       strategy: z.enum(["FIRST_FRAME_IMAGE_TO_VIDEO", "PRODUCT_GROUNDED_VIDEO"]),
@@ -115,6 +123,15 @@ export function resolveExplicitAiStorySceneGenerationAuthority(
       effectiveReferenceIds: [],
       firstFrameAssetId: null,
       productVisualIdentityRequirement: authority.productVisualIdentityRequirement,
+    };
+  }
+  if (authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR") {
+    return {
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "CHARACTER_SYNTHETIC_ANCHOR",
+      effectiveReferenceIds: [...authority.referenceAssetIds],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE",
     };
   }
   return {

@@ -66,6 +66,7 @@ export * from "./scene-input-preparation";
 export * from "./provider-policy-eligibility";
 export * from "./scene-keyframe-preparation";
 export * from "./character-virtualization-creative-image";
+export * from "./character-dna-analysis";
 export * from "./keyframe-paid-authorization";
 export * from "./openai-scene-keyframe-qc-adapter";
 export * from "./provider-runtime-dispatch-integration";

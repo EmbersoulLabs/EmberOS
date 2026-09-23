@@ -245,6 +245,10 @@ export function EpisodeCreateForm({
         {reusableCharacterId !== "new" ? (
           <div className="rounded-lg bg-surface-muted p-3 text-sm" data-testid="episode-identity-locked">
             <p className="font-medium text-navy">{AI_STORY_REUSABLE_CHARACTER_COPY.identityLocked} ✓</p>
+            {characters.find((character) => character.reusableCharacterId === reusableCharacterId)?.characterDnaCertified ? (
+              <p className="mt-1 text-xs text-ink-secondary">{AI_STORY_REUSABLE_CHARACTER_COPY.characterDnaCertified}</p>
+            ) : null}
+            <p className="mt-1 text-xs text-ink-secondary">{AI_STORY_REUSABLE_CHARACTER_COPY.consistencySoft}</p>
             <label className="mt-2 block space-y-1">
               <span>Outfit</span>
               <input data-testid="episode-look-outfit" className="w-full rounded-lg border border-border px-3 py-2 text-sm" value={episodeLookWardrobe} onChange={(event) => setEpisodeLookWardrobe(event.target.value)} placeholder="White dress or blue jacket" />

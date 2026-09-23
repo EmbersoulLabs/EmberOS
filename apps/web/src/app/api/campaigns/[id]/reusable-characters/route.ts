@@ -39,6 +39,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         visualClass: virtual?.visualClass,
         virtualStyle: virtual?.style,
         identityLocked: true as const,
+        identityMode: version.identityMode,
+        characterDnaCertified: version.identityMode === "CHARACTER_DNA",
+        portraitLabel: version.identityMode === "CHARACTER_DNA" ? "Source photo" as const : "Identity Master" as const,
       };
     }));
     return apiSuccess({ characters });

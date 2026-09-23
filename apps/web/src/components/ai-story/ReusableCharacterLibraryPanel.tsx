@@ -3,11 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  AI_STORY_CHARACTER_DNA_COPY,
   AI_STORY_CHARACTER_VIRTUALIZER_COPY,
   AI_STORY_REUSABLE_CHARACTER_COPY,
   type AiStoryReusableCharacterCard,
 } from "@ceo-agent/shared";
 import { CharacterPortrait } from "./CharacterPortrait";
+import { CharacterDnaWizard } from "./CharacterDnaWizard";
 import { CharacterVirtualizerWizard } from "./CharacterVirtualizerWizard";
 
 type Card = AiStoryReusableCharacterCard & {
@@ -100,15 +102,20 @@ export function ReusableCharacterLibraryPanel({
       </div>
       {error ? <p className="text-sm text-red-700" role="alert">{error}</p> : null}
       {creating && canEdit ? (
-        <CharacterVirtualizerWizard workspaceId={workspaceId} onSaved={() => { setCreating(false); void load(); }} />
+        <CharacterDnaWizard workspaceId={workspaceId} onSaved={() => { setCreating(false); void load(); }} />
       ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         {characters.map((character) => (
           <article key={character.reusableCharacterId} className="rounded-xl border border-border bg-white p-4" data-testid="character-card">
-            <CharacterPortrait workspaceId={workspaceId} assetId={character.portraitAssetId} label={character.name} className="mb-3 h-40 w-full rounded-lg object-cover" />
+            <CharacterPortrait workspaceId={workspaceId} assetId={character.portraitAssetId} label={character.portraitLabel ?? character.name} className="mb-3 h-40 w-full rounded-lg object-cover" />
             <h2 className="font-semibold text-navy">{character.name}</h2>
-            <p className="mt-1 text-sm text-ink-secondary">{AI_STORY_CHARACTER_VIRTUALIZER_COPY.virtualCharacter}</p>
-            {character.virtualStyle ? <p className="text-sm text-ink-secondary">{STYLE_LABEL[character.virtualStyle] ?? character.virtualStyle}</p> : null}
+            {character.characterDnaCertified ? (
+              <p className="mt-1 text-sm text-ink-secondary" data-testid="character-dna-badge">{AI_STORY_CHARACTER_DNA_COPY.characterDnaCertified}</p>
+            ) : (
+              <p className="mt-1 text-sm text-ink-secondary">{AI_STORY_CHARACTER_VIRTUALIZER_COPY.virtualCharacter}</p>
+            )}
+            {character.portraitLabel === "Source photo" ? <p className="text-xs text-ink-secondary">{AI_STORY_CHARACTER_DNA_COPY.sourcePhoto}</p> : null}
+            {character.virtualStyle && !character.characterDnaCertified ? <p className="text-sm text-ink-secondary">{STYLE_LABEL[character.virtualStyle] ?? character.virtualStyle}</p> : null}
             <p className="mt-1 text-sm text-ink-secondary">{AI_STORY_REUSABLE_CHARACTER_COPY.usedInEpisodes(character.episodeCount)}</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <span className="rounded-lg border border-border px-3 py-1.5 text-sm">{AI_STORY_REUSABLE_CHARACTER_COPY.useInEpisode}</span>
@@ -123,7 +130,8 @@ export function ReusableCharacterLibraryPanel({
       </div>
       {canEdit && isSuperAdmin ? (
         <details className="rounded-2xl border border-border bg-white p-4" data-testid="advanced-character-setup" open={advanced} onToggle={(event) => setAdvanced((event.target as HTMLDetailsElement).open)}>
-          <summary className="cursor-pointer font-semibold text-navy">{AI_STORY_CHARACTER_VIRTUALIZER_COPY.advancedSetup}</summary>
+          <summary className="cursor-pointer font-semibold text-navy">{AI_STORY_CHARACTER_VIRTUALIZER_COPY.advancedSetup} — LEGACY / ADVANCED / INTERNAL</summary>
+          <CharacterVirtualizerWizard workspaceId={workspaceId} onSaved={() => void load()} />
           <form className="mt-3 space-y-3" onSubmit={(event) => { event.preventDefault(); void createManual(); }}>
             <input className="w-full rounded-lg border border-border px-3 py-2 text-sm" placeholder="Name" value={name} onChange={(event) => setName(event.target.value)} />
             <textarea className="min-h-20 w-full rounded-lg border border-border px-3 py-2 text-sm" placeholder="Identity" value={identity} onChange={(event) => setIdentity(event.target.value)} />

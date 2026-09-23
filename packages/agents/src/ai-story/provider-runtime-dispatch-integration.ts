@@ -19,6 +19,8 @@ import {
   type AiStorySceneExecutionPackage,
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
+  type AiStoryCharacterDna,
+  type AiStoryCharacterEpisodeLook,
   AiStoryCharacterDialoguePerformanceAuthoritySchema,
   AiStorySeedanceNativeAudioCapabilitySchema,
   type AiStoryCharacterDialoguePerformanceAuthority,
@@ -27,6 +29,9 @@ import {
   isAiStoryProviderAttemptTransitionAllowed,
 } from "@ceo-agent/shared";
 import {
+  compileCharacterDnaEpisodePrompt,
+  computeCharacterDnaFingerprint,
+  computeCompiledCharacterIdentityFingerprint,
   assertVisibleDialogueAudioAuthorityExclusive,
   verifyProductVisualMaterialSelectionAuthority,
 } from "@ceo-agent/shared/server";
@@ -68,6 +73,7 @@ export class AiStoryProviderRuntimeError extends Error {
       | "ATTEMPT_SCOPE_MISMATCH"
       | "ATTEMPT_NOT_FOUND"
       | "SUBMISSION_NOT_CLAIMED"
+      | "CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED"
       | "PROVIDER_RECONCILIATION_REQUIRED",
     message: string
   ) {
@@ -240,12 +246,65 @@ export function compileImmutableSeedanceRequest(input: {
     readonly source: "CONFIGURED_ESTIMATE" | "UNKNOWN";
   };
   readonly detachedTtsBindings?: readonly { readonly dialogueEntryId: string }[];
+  readonly characterDnaAuthority?: AiStoryCharacterDnaCompilationAuthority | null;
 }): AiStoryCompiledProviderRequest {
   const compiled = compileSceneExecutionPackageForSeedance(input.package);
   const compiledAt = input.compiledAt ?? new Date().toISOString();
+  const dnaAuthority = input.characterDnaAuthority ?? null;
+  const syntheticAnchorT2v =
+    input.package.generationAuthority?.referenceSource ===
+    "CHARACTER_SYNTHETIC_ANCHOR";
+  if (dnaAuthority) {
+    if (
+      computeCharacterDnaFingerprint(dnaAuthority.dna) !==
+      dnaAuthority.characterDnaFingerprint
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "COMPILED_REQUEST_INVALID",
+        "Character DNA authority fingerprint does not match its immutable description"
+      );
+    }
+    if (
+      compiled.selectedReferences.some(
+        (reference) =>
+          reference.assetId === dnaAuthority.sourcePortraitAssetId
+      )
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED",
+        "Character DNA source portrait cannot be emitted to the video Provider"
+      );
+    }
+  }
+  if (
+    syntheticAnchorT2v &&
+    (
+      !dnaAuthority ||
+      dnaAuthority.characterConsistencyMode !==
+        "DNA_PLUS_SYNTHETIC_ANCHOR" ||
+      !dnaAuthority.syntheticIdentityAnchorAssetId ||
+      compiled.selectedReferences.length !== 1 ||
+      compiled.selectedReferences[0]?.assetId !==
+        dnaAuthority.syntheticIdentityAnchorAssetId ||
+      compiled.selectedReferences[0]?.authorityType !== "CAST" ||
+      compiled.selectedReferences[0]?.authorityId !==
+        dnaAuthority.campaignCharacterId
+    )
+  ) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Synthetic-anchor package does not match frozen Character DNA lineage"
+    );
+  }
+  const compiledPrompt = dnaAuthority
+    ? `${compileCharacterDnaEpisodePrompt({
+        dna: dnaAuthority.dna,
+        episodeLook: dnaAuthority.episodeLook,
+      })}\n\n${compiled.prompt}`
+    : compiled.prompt;
   const compiledPromptFingerprint = integrityHash({
     kind: "ai-story-seedance-compiled-prompt.v1",
-    prompt: compiled.prompt,
+    prompt: compiledPrompt,
   });
   const semanticPlanFingerprint = integrityHash({
     kind: compiled.semanticPlan.contractVersion,
@@ -295,8 +354,35 @@ export function compileImmutableSeedanceRequest(input: {
     packageFingerprint: input.package.packageFingerprint,
     semanticPlan: compiled.semanticPlan,
     semanticPlanFingerprint,
-    compiledPrompt: compiled.prompt,
+    compiledPrompt,
     compiledPromptFingerprint,
+    ...(dnaAuthority
+      ? {
+          characterDnaAuthority: {
+            reusableCharacterId: dnaAuthority.reusableCharacterId,
+            reusableCharacterVersionId:
+              dnaAuthority.reusableCharacterVersionId,
+            campaignCharacterId: dnaAuthority.campaignCharacterId,
+            campaignCharacterVersionId:
+              dnaAuthority.campaignCharacterVersionId,
+            campaignCharacterFingerprint:
+              dnaAuthority.campaignCharacterFingerprint,
+            identityFingerprint: dnaAuthority.identityFingerprint,
+            characterDnaFingerprint: dnaAuthority.characterDnaFingerprint,
+            compiledCharacterIdentityFingerprint:
+              computeCompiledCharacterIdentityFingerprint(dnaAuthority.dna),
+            characterConsistencyMode: dnaAuthority.characterConsistencyMode,
+            sourcePortraitAssetId: dnaAuthority.sourcePortraitAssetId,
+            ...(dnaAuthority.syntheticIdentityAnchorAssetId
+              ? {
+                  syntheticIdentityAnchorAssetId:
+                    dnaAuthority.syntheticIdentityAnchorAssetId,
+                }
+              : {}),
+            sourcePhotoSentToVideoProvider: false as const,
+          },
+        }
+      : {}),
     structuredRequest: {
       model: compiled.requestFacts.model,
       duration: compiled.requestFacts.duration,
@@ -390,6 +476,27 @@ export type AiStoryReferenceAssetAuthority = {
   readonly mediaType: string;
   readonly storagePath?: string;
   readonly contentHash?: string | null;
+  readonly characterAssetRole?:
+    | "CHARACTER_SOURCE_PORTRAIT"
+    | "SYNTHETIC_IDENTITY_ANCHOR";
+  readonly characterAuthorityId?: string;
+};
+
+export type AiStoryCharacterDnaCompilationAuthority = {
+  readonly reusableCharacterId: string;
+  readonly reusableCharacterVersionId: string;
+  readonly campaignCharacterId: string;
+  readonly campaignCharacterVersionId: string;
+  readonly campaignCharacterFingerprint: string;
+  readonly identityFingerprint: string;
+  readonly characterDnaFingerprint: string;
+  readonly dna: AiStoryCharacterDna;
+  readonly episodeLook: AiStoryCharacterEpisodeLook;
+  readonly characterConsistencyMode:
+    | "SOFT_DESCRIPTION_BASED"
+    | "DNA_PLUS_SYNTHETIC_ANCHOR";
+  readonly sourcePortraitAssetId: string;
+  readonly syntheticIdentityAnchorAssetId?: string;
 };
 
 /**
@@ -458,6 +565,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
   readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
+  readonly characterDnaAuthority?: AiStoryCharacterDnaCompilationAuthority | null;
 }): AiStoryCompiledProviderRequest {
   const canonicalScene = Boolean(input.intent.identity.sceneVersionId);
   const authority = input.intent.generationAuthority ??
@@ -470,9 +578,12 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       "Scene generation authority conflicts with its immutable instruction snapshot"
     );
   }
-  const explicitT2v =
-    authority?.strategy === "TEXT_TO_VIDEO" &&
-    authority.referenceSource === "REFERENCE_FREE_T2V";
+  const textToVideo = authority?.strategy === "TEXT_TO_VIDEO";
+  const referenceFreeT2v =
+    textToVideo && authority.referenceSource === "REFERENCE_FREE_T2V";
+  const syntheticAnchorT2v =
+    textToVideo &&
+    authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR";
   const referenceIds = authority?.effectiveReferenceIds ?? input.intent.referencedAssetIds;
   if (canonicalScene && authority?.referenceSource === "STORY_INHERITED") {
     throw new AiStoryProviderRuntimeError(
@@ -493,20 +604,26 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       "Reference-free compilation requires explicit TEXT_TO_VIDEO authority"
     );
   }
-  if (explicitT2v && referenceIds.length !== 0) {
+  if (referenceFreeT2v && referenceIds.length !== 0) {
     throw new AiStoryProviderRuntimeError(
       "COMPILED_REQUEST_INVALID",
       "Reference-free TEXT_TO_VIDEO compilation cannot contain references"
     );
   }
-  if (!explicitT2v && referenceIds.length === 0) {
+  if (syntheticAnchorT2v && referenceIds.length !== 1) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Synthetic-anchor TEXT_TO_VIDEO compilation requires exactly one reference"
+    );
+  }
+  if (!textToVideo && referenceIds.length === 0) {
     throw new AiStoryProviderRuntimeError(
       "COMPILED_REQUEST_INVALID",
       "Image-conditioned compilation is missing required references"
     );
   }
   const preparation = input.sceneInputPreparation ?? null;
-  if (preparation && explicitT2v) {
+  if (preparation && textToVideo) {
     throw new AiStoryProviderRuntimeError(
       "PROVIDER_READY_SCENE_INPUT_REQUIRED",
       "Scene input preparation authority cannot be dropped by a reference-free TEXT_TO_VIDEO compilation"
@@ -523,13 +640,13 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     : null;
   const referenceAssetById = new Map((input.referenceAssets ?? []).map((asset) => [asset.assetId, asset]));
   const productMaterial = input.productMaterialSelection ?? null;
-  if (!explicitT2v && canonicalScene && !productMaterial) {
+  if (!textToVideo && canonicalScene && !productMaterial) {
     throw new AiStoryProviderRuntimeError(
       "COMPILED_REQUEST_INVALID",
       "Canonical image-conditioned execution requires exact READY Scene Product material authority"
     );
   }
-  if (explicitT2v && productMaterial) {
+  if (textToVideo && productMaterial) {
     throw new AiStoryProviderRuntimeError(
       "COMPILED_REQUEST_INVALID",
       "Reference-free Scene cannot carry image-conditioned Product material"
@@ -539,7 +656,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     const selected = productMaterial.selectedMaterial;
     const selectedAsset = selected ? referenceAssetById.get(selected.assetId) : null;
     if (
-      explicitT2v || !selected || !selectedAsset ||
+      textToVideo || !selected || !selectedAsset ||
       productMaterial.selection !== selected.kind ||
       !input.intent.identity.sceneVersionId ||
       !verifyProductVisualMaterialSelectionAuthority(productMaterial, {
@@ -575,7 +692,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     : productMaterial?.selectedMaterial
       ? [productMaterial.selectedMaterial.assetId, ...referenceIds.filter((id) => id !== productMaterial.selectedMaterial?.assetId)]
       : referenceIds;
-  if (!explicitT2v) {
+  if (compiledReferenceIds.length > 0) {
     const missing = compiledReferenceIds.filter((assetId) => !referenceAssetById.has(assetId));
     if (missing.length > 0) {
       throw new AiStoryProviderRuntimeError(
@@ -584,24 +701,68 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       );
     }
   }
-  const firstFrameAssetId = explicitT2v
+  const dnaAuthority = input.characterDnaAuthority ?? null;
+  if (syntheticAnchorT2v) {
+    const anchorId = dnaAuthority?.syntheticIdentityAnchorAssetId;
+    if (
+      !dnaAuthority ||
+      dnaAuthority.characterConsistencyMode !== "DNA_PLUS_SYNTHETIC_ANCHOR" ||
+      !anchorId ||
+      referenceIds[0] !== anchorId ||
+      computeCharacterDnaFingerprint(dnaAuthority.dna) !==
+        dnaAuthority.characterDnaFingerprint
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "COMPILED_REQUEST_INVALID",
+        "Synthetic-anchor generation authority does not match frozen Character DNA lineage"
+      );
+    }
+    const anchorAsset = referenceAssetById.get(anchorId);
+    if (
+      !anchorAsset ||
+      anchorAsset.characterAssetRole !== "SYNTHETIC_IDENTITY_ANCHOR" ||
+      anchorAsset.characterAuthorityId !== dnaAuthority.reusableCharacterId
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "COMPILED_REQUEST_INVALID",
+        "Synthetic-anchor reference is not bound to the recurring Character authority"
+      );
+    }
+  }
+  if (
+    dnaAuthority &&
+    compiledReferenceIds.includes(dnaAuthority.sourcePortraitAssetId)
+  ) {
+    throw new AiStoryProviderRuntimeError(
+      "CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED",
+      "Character DNA source portrait cannot be emitted to the video Provider"
+    );
+  }
+  const firstFrameAssetId = textToVideo
     ? null
     : productMaterial?.selectedMaterial?.assetId ?? providerReadySceneInput?.assetId ?? authority?.firstFrameAssetId ?? (!canonicalScene ? referenceIds[0] : null);
-  if (!explicitT2v && !firstFrameAssetId) {
+  if (!textToVideo && !firstFrameAssetId) {
     throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation is missing its canonical first frame");
   }
   const storyReferenceMappings = compiledReferenceIds.map((assetId, index) => {
     const asset = referenceAssetById.get(assetId)!;
     const imageCompatible = asset.mediaType.toLowerCase().startsWith("image/");
+    const syntheticReference =
+      syntheticAnchorT2v &&
+      assetId === dnaAuthority?.syntheticIdentityAnchorAssetId;
     const semanticRole = assetId === firstFrameAssetId
       ? "FIRST_FRAME" as const
+      : syntheticReference
+        ? "PROVIDER_IMAGE_REFERENCE" as const
       : imageCompatible
         ? "STORY_VISUAL_REFERENCE" as const
         : "STORY_CONTINUITY_REFERENCE" as const;
     if (semanticRole === "FIRST_FRAME" && !imageCompatible) {
       throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "FIRST_FRAME must use image media");
     }
-    const providerEmitted = semanticRole === "FIRST_FRAME";
+    const providerEmitted =
+      semanticRole === "FIRST_FRAME" ||
+      semanticRole === "PROVIDER_IMAGE_REFERENCE";
     return {
       referenceId: deterministicPersistenceUuid("ai-story-compiled-reference", { sceneExecutionId: input.intent.identity.sceneExecutionId, assetId, index }),
       assetId,
@@ -613,8 +774,20 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     };
   });
   const providerReferenceMappings = storyReferenceMappings.filter((reference) => reference.providerEmitted);
-  if (!explicitT2v && providerReferenceMappings.filter((reference) => reference.providerWireRole === "first_frame").length !== 1) {
+  if (!textToVideo && providerReferenceMappings.filter((reference) => reference.providerWireRole === "first_frame").length !== 1) {
     throw new AiStoryProviderRuntimeError("COMPILED_REQUEST_INVALID", "Image-conditioned compilation requires exactly one image first frame");
+  }
+  if (
+    syntheticAnchorT2v &&
+    (
+      providerReferenceMappings.length !== 1 ||
+      providerReferenceMappings[0]?.providerWireRole !== "reference_image"
+    )
+  ) {
+    throw new AiStoryProviderRuntimeError(
+      "COMPILED_REQUEST_INVALID",
+      "Synthetic-anchor TEXT_TO_VIDEO requires exactly one reference_image"
+    );
   }
 
   const supportedDurations = [4, 5, 6, 8, 10, 12] as const;
@@ -627,7 +800,7 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   const orderedShots = [...input.instructions.shots].sort(
     (left, right) => left.order - right.order || left.shotId.localeCompare(right.shotId)
   );
-  const compiledPrompt = [
+  const scenePrompt = [
     input.instructions.purpose,
     input.instructions.continuityNotes
       ? `Continuity: ${input.instructions.continuityNotes}`
@@ -638,6 +811,12 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     ),
     ...input.instructions.productIdentityConstraints,
   ].filter(Boolean).join("\n");
+  const compiledPrompt = dnaAuthority
+    ? `${compileCharacterDnaEpisodePrompt({
+        dna: dnaAuthority.dna,
+        episodeLook: dnaAuthority.episodeLook,
+      })}\n\n${scenePrompt}`
+    : scenePrompt;
   const semanticPlan = {
     contractVersion: "ai-story-seedance-semantic-plan.v1" as const,
     sceneExecutionPackageId: deterministicPersistenceUuid(
@@ -697,11 +876,37 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     storyVersionId: input.intent.identity.storyVersionId,
     sceneExecutionId,
     sceneExecutionPackageId: semanticPlan.sceneExecutionPackageId,
-    generationMode: explicitT2v
+    generationMode: textToVideo
       ? "TEXT_TO_VIDEO" as const
       : "FIRST_FRAME_IMAGE_TO_VIDEO" as const,
     ...(authority ? { generationAuthority: authority } : {}),
     ...(productMaterial ? { productMaterialSelection: productMaterial } : {}),
+    ...(dnaAuthority
+      ? {
+          characterDnaAuthority: {
+            reusableCharacterId: dnaAuthority.reusableCharacterId,
+            reusableCharacterVersionId: dnaAuthority.reusableCharacterVersionId,
+            campaignCharacterId: dnaAuthority.campaignCharacterId,
+            campaignCharacterVersionId:
+              dnaAuthority.campaignCharacterVersionId,
+            campaignCharacterFingerprint:
+              dnaAuthority.campaignCharacterFingerprint,
+            identityFingerprint: dnaAuthority.identityFingerprint,
+            characterDnaFingerprint: dnaAuthority.characterDnaFingerprint,
+            compiledCharacterIdentityFingerprint:
+              computeCompiledCharacterIdentityFingerprint(dnaAuthority.dna),
+            characterConsistencyMode: dnaAuthority.characterConsistencyMode,
+            sourcePortraitAssetId: dnaAuthority.sourcePortraitAssetId,
+            ...(dnaAuthority.syntheticIdentityAnchorAssetId
+              ? {
+                  syntheticIdentityAnchorAssetId:
+                    dnaAuthority.syntheticIdentityAnchorAssetId,
+                }
+              : {}),
+            sourcePhotoSentToVideoProvider: false as const,
+          },
+        }
+      : {}),
     providerId: "seedance" as const,
     modelId: "dreamina-seedance-2-0-260128" as const,
     adapterVersion: input.adapterVersion,
@@ -736,13 +941,19 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     referenceMappings: providerReferenceMappings.map((reference) => ({
       referenceId: reference.referenceId,
       assetId: reference.assetId,
-      authorityType: "PRODUCT" as const,
-      authorityId: reference.assetId,
+      authorityType:
+        reference.semanticRole === "PROVIDER_IMAGE_REFERENCE"
+          ? "CAST" as const
+          : "PRODUCT" as const,
+      authorityId:
+        reference.semanticRole === "PROVIDER_IMAGE_REFERENCE"
+          ? dnaAuthority!.campaignCharacterId
+          : reference.assetId,
       authorityClass: "REQUIRED" as const,
       wireRole: reference.providerWireRole!,
       semanticBinding: reference.semanticRole === "FIRST_FRAME"
         ? "Canonical first-frame Product authority"
-        : "Canonical Provider-compatible Product image reference authority",
+        : "Canonical synthetic Character identity anchor authority",
       mediaType: reference.mediaType,
       ...(reference.storagePath ? { storagePath: reference.storagePath } : {}),
     })),
@@ -960,6 +1171,19 @@ async function serializeTransportRequest(input: {
   request: AiStoryCompiledProviderRequest;
   assetAccess: AiStoryRuntimeAssetAccess;
 }): Promise<SeedanceModelArkCreateRequest> {
+  if (
+    input.request.characterDnaAuthority &&
+    input.request.referenceMappings.some(
+      (reference) =>
+        reference.assetId ===
+        input.request.characterDnaAuthority!.sourcePortraitAssetId
+    )
+  ) {
+    throw new AiStoryProviderRuntimeError(
+      "CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED",
+      "Character DNA source portrait cannot be resolved for Provider transport"
+    );
+  }
   const images = await Promise.all(input.request.referenceMappings.map(async (reference) => ({
     type: "image_url" as const,
     image_url: { url: await input.assetAccess.resolveHttpsAsset({

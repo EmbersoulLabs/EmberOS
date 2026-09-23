@@ -25,6 +25,37 @@ import { AiStoryCharacterAuthorityService } from "./ai-story-character";
 export { AiStoryReusableCharacterError };
 
 type Db = ReturnType<typeof getDb>;
+
+export function isApprovedPrivateSyntheticIdentityAnchorAsset(input: {
+  readonly orgId: string;
+  readonly workspaceId: string;
+  readonly campaignId: string | null;
+  readonly type: string;
+  readonly mimeType: string | null;
+  readonly storagePath: string;
+  readonly status: string;
+  readonly contentHash: string | null;
+  readonly metadata: unknown;
+  readonly deletedAt: Date | null;
+  readonly expectedOrgId: string;
+  readonly expectedWorkspaceId: string;
+}): boolean {
+  const metadata = (input.metadata ?? {}) as Record<string, unknown>;
+  return (
+    !input.deletedAt &&
+    input.orgId === input.expectedOrgId &&
+    input.workspaceId === input.expectedWorkspaceId &&
+    input.campaignId === null &&
+    input.type === "image" &&
+    Boolean(input.contentHash) &&
+    input.mimeType?.toLowerCase().startsWith("image/") === true &&
+    input.status === "ready" &&
+    input.storagePath.startsWith(`${input.expectedWorkspaceId}/`) &&
+    !/^https?:\/\//i.test(input.storagePath) &&
+    metadata.characterAssetSemantic === "SYNTHETIC_IDENTITY_ANCHOR" &&
+    metadata.humanApproved === true
+  );
+}
 export type AiStoryReusableCharacterScope = { orgId: string; workspaceId: string; actorUserId: string };
 export type ReusableCharacterInput = {
   name: string;
@@ -32,6 +63,9 @@ export type ReusableCharacterInput = {
   defaultLook: AiStoryReusableCharacterVersion["defaultLook"];
   mutableLookPolicy: AiStoryReusableCharacterVersion["mutableLookPolicy"];
   canonicalAssets: Array<{ assetId: string; role: AiStoryReusableCharacterVersion["canonicalAssets"][number]["role"]; source?: "USER_APPROVED" | "PROMOTED_CAMPAIGN_CHARACTER" }>;
+  identityMode?: AiStoryReusableCharacterVersion["identityMode"];
+  characterDna?: AiStoryReusableCharacterVersion["characterDna"];
+  characterDnaFingerprint?: string;
 };
 
 async function assertWorkspaceScope(db: Pick<Db, "execute">, scope: AiStoryReusableCharacterScope, mutation: boolean) {
@@ -49,11 +83,16 @@ async function assertWorkspaceScope(db: Pick<Db, "execute">, scope: AiStoryReusa
 async function resolveCanonicalAssets(
   db: Pick<Db, "select">,
   scope: AiStoryReusableCharacterScope,
-  assets: ReusableCharacterInput["canonicalAssets"]
+  assets: ReusableCharacterInput["canonicalAssets"],
+  identityMode: AiStoryReusableCharacterVersion["identityMode"] = "VISUAL_REFERENCE"
 ) {
-  if (!assets.length) throw new AiStoryReusableCharacterError("CANONICAL_IDENTITY_ROOT_GATE", "Reusable Character requires canonical identity assets");
-  if (!assets.some((asset) => asset.role === "IDENTITY_MASTER")) {
-    throw new AiStoryReusableCharacterError("CANONICAL_IDENTITY_ROOT_GATE", "Reusable Character requires one IDENTITY_MASTER");
+  if (identityMode !== "CHARACTER_DNA") {
+    if (!assets.length) throw new AiStoryReusableCharacterError("CANONICAL_IDENTITY_ROOT_GATE", "Reusable Character requires canonical identity assets");
+    if (!assets.some((asset) => asset.role === "IDENTITY_MASTER")) {
+      throw new AiStoryReusableCharacterError("CANONICAL_IDENTITY_ROOT_GATE", "Reusable Character requires one IDENTITY_MASTER");
+    }
+  } else if (assets.some((asset) => asset.role === "IDENTITY_MASTER")) {
+    throw new AiStoryReusableCharacterError("SOURCE_PORTRAIT_NOT_IDENTITY_MASTER", "Character DNA source portrait cannot become IDENTITY_MASTER");
   }
   const resolved = [];
   for (const asset of assets) {
@@ -61,6 +100,11 @@ async function resolveCanonicalAssets(
       id: schema.assets.id,
       contentHash: schema.assets.contentHash,
       type: schema.assets.type,
+      mimeType: schema.assets.mimeType,
+      storagePath: schema.assets.storagePath,
+      campaignId: schema.assets.campaignId,
+      status: schema.assets.status,
+      metadata: schema.assets.metadata,
       deletedAt: schema.assets.deletedAt,
       orgId: schema.assets.orgId,
       workspaceId: schema.assets.workspaceId,
@@ -72,6 +116,28 @@ async function resolveCanonicalAssets(
     }
     if (row.type !== "image" || !row.contentHash) {
       throw new AiStoryReusableCharacterError("CHARACTER_ASSET_REFERENCE_INVALID", "Canonical Character asset must be a finalized image");
+    }
+    if (
+      asset.role === "CHARACTER_SOURCE_PORTRAIT" &&
+      ((row.metadata ?? {}) as Record<string, unknown>).characterAssetSemantic !==
+        "CHARACTER_SOURCE_PORTRAIT"
+    ) {
+      throw new AiStoryReusableCharacterError(
+        "SOURCE_PORTRAIT_NOT_FINAL",
+        "Character DNA provenance must use a CHARACTER_SOURCE_PORTRAIT asset"
+      );
+    }
+    if (asset.role === "SYNTHETIC_IDENTITY_ANCHOR") {
+      if (!isApprovedPrivateSyntheticIdentityAnchorAsset({
+        ...row,
+        expectedOrgId: scope.orgId,
+        expectedWorkspaceId: scope.workspaceId,
+      })) {
+        throw new AiStoryReusableCharacterError(
+          "SYNTHETIC_IDENTITY_ANCHOR_INVALID",
+          "Synthetic identity anchor must be an approved private Workspace Asset Library image"
+        );
+      }
     }
     resolved.push({
       assetId: row.id,
@@ -97,12 +163,15 @@ export class AiStoryReusableCharacterService {
   async create(scope: AiStoryReusableCharacterScope, input: ReusableCharacterInput, reusableCharacterId = randomUUID(), now = new Date().toISOString()) {
     return this.db.transaction(async (tx) => {
       await assertWorkspaceScope(tx, scope, true);
-      const canonicalAssets = await resolveCanonicalAssets(tx, scope, input.canonicalAssets);
+      const canonicalAssets = await resolveCanonicalAssets(tx, scope, input.canonicalAssets, input.identityMode);
       const version = buildAiStoryReusableCharacterVersion({
         reusableCharacterId, orgId: scope.orgId, workspaceId: scope.workspaceId, name: input.name,
         identityCore: input.identityCore, defaultLook: input.defaultLook, mutableLookPolicy: input.mutableLookPolicy,
         canonicalAssets, status: "ACTIVE", version: 1, supersedesReusableCharacterVersionId: null,
         createdBy: scope.actorUserId, createdAt: now,
+        identityMode: input.identityMode,
+        characterDna: input.characterDna,
+        characterDnaFingerprint: input.characterDnaFingerprint,
       });
       await tx.insert(schema.aiStoryReusableCharacters).values({
         reusableCharacterId, orgId: scope.orgId, workspaceId: scope.workspaceId, currentVersion: 1,
@@ -129,6 +198,9 @@ export class AiStoryReusableCharacterService {
       name: current.name, identityCore: current.identityCore, defaultLook: current.defaultLook,
       mutableLookPolicy: current.mutableLookPolicy,
       canonicalAssets: current.canonicalAssets.map((asset) => ({ assetId: asset.assetId, role: asset.role, source: asset.source })),
+      identityMode: current.identityMode,
+      characterDna: current.characterDna,
+      characterDnaFingerprint: current.characterDnaFingerprint,
     }, now);
   }
 
@@ -150,13 +222,16 @@ export class AiStoryReusableCharacterService {
       const aggregate = aggregates[0];
       if (!aggregate || aggregate.status === "DELETED") throw new AiStoryReusableCharacterError("CHARACTER_NOT_ACTIVE", "Reusable Character is not active");
       if (aggregate.currentVersion !== expectedVersion) throw new AiStoryReusableCharacterError("CHARACTER_VERSION_CONFLICT", "Reusable Character was changed by another operation");
-      const canonicalAssets = await resolveCanonicalAssets(tx, scope, input.canonicalAssets);
+      const canonicalAssets = await resolveCanonicalAssets(tx, scope, input.canonicalAssets, input.identityMode);
       const version = buildAiStoryReusableCharacterVersion({
         reusableCharacterId, orgId: scope.orgId, workspaceId: scope.workspaceId, name: input.name,
         identityCore: input.identityCore, defaultLook: input.defaultLook, mutableLookPolicy: input.mutableLookPolicy,
         canonicalAssets, status, version: aggregate.currentVersion + 1,
         supersedesReusableCharacterVersionId: aggregate.currentReusableCharacterVersionId,
         createdBy: scope.actorUserId, createdAt: now,
+        identityMode: input.identityMode,
+        characterDna: input.characterDna,
+        characterDnaFingerprint: input.characterDnaFingerprint,
       });
       await tx.insert(schema.aiStoryReusableCharacterVersions).values({
         reusableCharacterVersionId: version.reusableCharacterVersionId, reusableCharacterId, orgId: scope.orgId,
