@@ -12,6 +12,17 @@ import { callVisionJsonModel } from "../llm";
 
 export const CHARACTER_DNA_VISION_MODEL = "gpt-4o" as const;
 export const CHARACTER_DNA_VISION_PROVIDER = "openai-vision" as const;
+export const CHARACTER_DNA_VISION_REQUEST_OPTIONS = Object.freeze({
+  maxRetries: 0,
+});
+
+export type CharacterDnaVisionCaller = <T>(
+  system: string,
+  userText: string,
+  imageDataUrls: string[],
+  schemaHint: string,
+  requestOptions?: { maxRetries: number }
+) => Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }>;
 
 export type CharacterDnaAnalysisProviderRequest = {
   sourceAssetId: string;
@@ -79,12 +90,17 @@ export class MockCharacterDnaAnalysisProvider implements CharacterDnaAnalysisPro
 }
 
 export class VisionCharacterDnaAnalysisProvider implements CharacterDnaAnalysisProvider {
+  constructor(
+    private readonly callVision: CharacterDnaVisionCaller = callVisionJsonModel
+  ) {}
+
   async analyzeCharacter(request: CharacterDnaAnalysisProviderRequest): Promise<CharacterDnaAnalysisProviderResult> {
-    const { result, usage } = await callVisionJsonModel<unknown>(
+    const { result, usage } = await this.callVision<unknown>(
       SYSTEM,
       "Analyze only visible appearance in this authorized Character source portrait.",
       [request.imageDataUrl],
-      SCHEMA_HINT
+      SCHEMA_HINT,
+      CHARACTER_DNA_VISION_REQUEST_OPTIONS
     );
     const dna = sanitizeCharacterDnaAnalysisOutput({
       payload: result,

@@ -38,8 +38,11 @@ import {
   sanitizeCharacterDnaAnalysisOutput,
 } from "@ceo-agent/shared/server";
 import {
+  CHARACTER_DNA_VISION_REQUEST_OPTIONS,
   MockCharacterDnaAnalysisProvider,
+  VisionCharacterDnaAnalysisProvider,
   assertNoImageGenerationForCharacterDna,
+  type CharacterDnaVisionCaller,
 } from "../packages/agents/src/ai-story/character-dna-analysis";
 
 const IDS = {
@@ -153,6 +156,35 @@ describe("AI Story Character DNA from Photo V1", () => {
     expect(result.provider).not.toContain("gpt-image");
     expect(() => assertNoImageGenerationForCharacterDna(result)).not.toThrow();
     expect(CHARACTER_DNA_ANALYSIS).toBe("CHARACTER_DNA_ANALYSIS");
+  });
+
+  it("configures the real Character DNA Vision SDK request with zero retries", async () => {
+    let receivedOptions: { maxRetries: number } | undefined;
+    const fakeVision: CharacterDnaVisionCaller = async <T>(
+      _system: string,
+      _userText: string,
+      _imageDataUrls: string[],
+      _schemaHint: string,
+      requestOptions?: { maxRetries: number }
+    ) => {
+      receivedOptions = requestOptions;
+      return {
+        result: dna() as T,
+        usage: { input: 10, output: 20, costUsd: 0.001 },
+      };
+    };
+    const result = await new VisionCharacterDnaAnalysisProvider(fakeVision).analyzeCharacter({
+      sourceAssetId: IDS.source,
+      sourceContentHash: HASH,
+      imageDataUrl: "data:image/jpeg;base64,AA==",
+      createdAt: "2026-09-23T00:00:00.000Z",
+    });
+
+    expect(CHARACTER_DNA_VISION_REQUEST_OPTIONS).toEqual({ maxRetries: 0 });
+    expect(receivedOptions).toEqual({ maxRetries: 0 });
+    expect(result.providerModel).toBe("gpt-4o");
+    expect(result.imageGenerationCalls).toBe(0);
+    expect(result.gptImageCalls).toBe(0);
   });
 
   it("6-7. human can edit AI-derived DNA and save requires approval", () => {
