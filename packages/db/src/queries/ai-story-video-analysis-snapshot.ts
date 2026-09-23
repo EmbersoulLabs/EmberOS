@@ -6,6 +6,7 @@ import {
   type AiStoryVideoAnalysisReuseKey,
   type AiStoryVideoAnalysisSnapshotRecord,
   type AiStoryVideoAnalysisSnapshotRepository,
+  type AiStoryVideoProviderAttemptEvidence,
 } from "@ceo-agent/shared";
 
 type SnapshotRow = {
@@ -21,7 +22,11 @@ type SnapshotRow = {
   analysis_json: unknown;
   provider_id: string;
   model_id: string;
+  requested_model_id: string | null;
+  provider_model_id: string | null;
   provider_request_id: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
   input_fingerprint: string;
   cost_usd: string | number;
   created_at: Date | string;
@@ -45,7 +50,11 @@ function mapSnapshot(row: SnapshotRow): AiStoryVideoAnalysisSnapshotRecord {
     analysis: row.analysis_json,
     providerId: row.provider_id,
     modelId: row.model_id,
+    requestedModelId: row.requested_model_id ?? row.model_id,
+    providerModelId: row.provider_model_id,
     providerRequestId: row.provider_request_id,
+    inputTokens: Number(row.input_tokens ?? 0),
+    outputTokens: Number(row.output_tokens ?? 0),
     inputFingerprint: row.input_fingerprint,
     costUsd: Number(row.cost_usd),
     createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : new Date(row.created_at).toISOString(),
@@ -56,7 +65,8 @@ async function selectSnapshot(sql: Sql, key: AiStoryVideoAnalysisReuseKey): Prom
   const rows = await sql<SnapshotRow[]>`
     SELECT id, org_id, workspace_id, asset_id, asset_content_hash, analysis_type, analysis_version,
            extractor_version, observation_json, analysis_json, provider_id, model_id,
-           provider_request_id, input_fingerprint, cost_usd, created_at
+           requested_model_id, provider_model_id, provider_request_id, input_tokens, output_tokens,
+           input_fingerprint, cost_usd, created_at
     FROM ai_story_video_analysis_snapshots
     WHERE workspace_id = ${key.workspaceId}
       AND asset_id = ${key.assetId}
@@ -122,17 +132,37 @@ export function createSqlVideoAnalysisSnapshotRepository(
       await sql`
         INSERT INTO ai_story_video_analysis_snapshots (
           id, org_id, workspace_id, asset_id, asset_content_hash, analysis_type, analysis_version,
-          extractor_version, observation_json, analysis_json, provider_id, model_id, provider_request_id,
-          input_fingerprint, cost_usd, created_at
+          extractor_version, observation_json, analysis_json, provider_id, model_id, requested_model_id,
+          provider_model_id, provider_request_id, input_tokens, output_tokens, input_fingerprint,
+          cost_usd, created_at
         ) VALUES (
           ${row.id}, ${row.orgId}, ${row.workspaceId}, ${row.assetId}, ${row.assetContentHash},
           ${row.analysisType}, ${row.analysisVersion}, ${row.extractorVersion},
           ${sql.json(row.observation as never)}, ${sql.json(row.analysis as never)},
-          ${row.providerId}, ${row.modelId}, ${row.providerRequestId}, ${row.inputFingerprint},
+          ${row.providerId}, ${row.modelId}, ${row.requestedModelId}, ${row.providerModelId},
+          ${row.providerRequestId}, ${row.inputTokens}, ${row.outputTokens}, ${row.inputFingerprint},
           ${row.costUsd}, ${row.createdAt}
         )
       `;
       return row;
+    },
+    async recordProviderAttempt(claimId, evidence: AiStoryVideoProviderAttemptEvidence) {
+      const updated = await sql`
+        UPDATE ai_story_video_analysis_claims
+        SET provider_id = ${evidence.providerId},
+            requested_model_id = ${evidence.requestedModelId},
+            provider_model_id = ${evidence.providerModelId},
+            provider_request_id = ${evidence.providerRequestId},
+            input_tokens = ${evidence.inputTokens},
+            output_tokens = ${evidence.outputTokens},
+            cost_usd = ${evidence.costUsd},
+            attempted_at = ${evidence.attemptedAt},
+            updated_at = now()
+        WHERE id = ${claimId} AND status = 'CLAIMED'
+      `;
+      if (updated.count !== 1) {
+        throw new Error("VIDEO_ANALYSIS_PROVIDER_ATTEMPT_NOT_RECORDED");
+      }
     },
     async completeClaim(claimId, snapshotId) {
       await sql`

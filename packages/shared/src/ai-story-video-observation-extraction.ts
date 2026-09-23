@@ -19,11 +19,30 @@ import {
 } from "./ai-story-video-asset-analysis";
 
 export const AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION =
-  "ai-story-video-observation-extractor.v2" as const;
+  "ai-story-video-observation-extractor.v3" as const;
 export const AI_STORY_VIDEO_ANALYSIS_TYPE = "AI_STORY_VIDEO" as const;
 export const RAW_VIDEO_OBSERVATION_EXTRACTOR = "IMPLEMENTED" as const;
+export const AI_STORY_VIDEO_OBSERVATION_ROOT_FIELDS = [
+  "shotCountEstimate",
+  "dominantShotType",
+  "cameraMotion",
+  "compositionStability",
+  "framingSummary",
+  "oneContinuousShot",
+  "abruptCuts",
+  "primaryActionSummary",
+  "actionTags",
+  "environmentSummary",
+  "environmentTags",
+  "visiblePeopleEstimate",
+  "primaryPersonPresent",
+  "signageIdentityVisible",
+  "qualityRiskFlags",
+] as const;
 export const AI_STORY_VIDEO_OBSERVATION_PROMPT =
-  "Describe only what is visibly supported by the supplied sampled video frames. Do not choose a generation strategy or Provider. Do not infer whether the clip should be reused, replaced, or regenerated." as const;
+  "Describe only what is visibly supported by the supplied sampled video frames. Return one JSON object. Put these fields directly at the root. Do not wrap the object in observable, result, data, or analysis. Do not choose a generation strategy. Do not infer whether the clip should be reused, replaced, or regenerated." as const;
+export const AI_STORY_VIDEO_OBSERVATION_SCHEMA_HINT =
+  `Return one JSON object. Put these fields directly at the root: ${AI_STORY_VIDEO_OBSERVATION_ROOT_FIELDS.join(", ")}. Do not wrap the object in observable, result, data, or analysis.` as const;
 export const AI_STORY_VIDEO_CONTEXT_FREE_EXISTING_VIDEO_REASON =
   "Final-media use is decided at planning time from explicit intent." as const;
 
@@ -164,6 +183,30 @@ export function contextFreeVideoObservationJudgments(
   };
 }
 
+const OBSERVED_MODEL_ENVELOPE_KEY = "observable";
+
+/**
+ * Accepts a direct observation object, or exactly one observed `{ observable }`
+ * wrapper. Any other envelope is rejected before strict observation validation.
+ */
+export function normalizeAiStoryVideoModelObservationEnvelope(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(source, OBSERVED_MODEL_ENVELOPE_KEY)) return value;
+  const keys = Object.keys(source);
+  if (keys.length !== 1) {
+    throw new Error("AI_STORY_VIDEO_OBSERVATION_ENVELOPE_REJECTED");
+  }
+  const inner = source[OBSERVED_MODEL_ENVELOPE_KEY];
+  if (!inner || typeof inner !== "object" || Array.isArray(inner)) {
+    throw new Error("AI_STORY_VIDEO_OBSERVATION_ENVELOPE_REJECTED");
+  }
+  if (Object.prototype.hasOwnProperty.call(inner, OBSERVED_MODEL_ENVELOPE_KEY)) {
+    throw new Error("AI_STORY_VIDEO_OBSERVATION_ENVELOPE_REJECTED");
+  }
+  return inner;
+}
+
 export function stripUntrustedVideoObservationFields(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const source = value as Record<string, unknown>;
@@ -178,7 +221,9 @@ export function mergeTrustedVideoObservation(
   canonical: AiStoryVideoCanonicalMetadata,
   modelValue: unknown,
 ): AiStoryVideoAssetObservation {
-  const model = AiStoryVideoModelObservationSchema.parse(stripUntrustedVideoObservationFields(modelValue));
+  const model = AiStoryVideoModelObservationSchema.parse(
+    stripUntrustedVideoObservationFields(normalizeAiStoryVideoModelObservationEnvelope(modelValue)),
+  );
   return AiStoryVideoAssetObservationSchema.parse({
     ...model,
     ...contextFreeVideoObservationJudgments(model),
@@ -207,10 +252,25 @@ export type AiStoryVideoAnalysisSnapshotRecord = {
   readonly analysis: AiStoryVideoAssetAnalysis;
   readonly providerId: string;
   readonly modelId: string;
+  readonly requestedModelId: string;
+  readonly providerModelId: string | null;
   readonly providerRequestId: string | null;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
   readonly inputFingerprint: string;
   readonly costUsd: number;
   readonly createdAt: string;
+};
+
+export type AiStoryVideoProviderAttemptEvidence = {
+  readonly providerId: string;
+  readonly requestedModelId: string;
+  readonly providerModelId: string | null;
+  readonly providerRequestId: string | null;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly costUsd: number;
+  readonly attemptedAt: string;
 };
 
 export function videoObservationInputFingerprint(key: AiStoryVideoAnalysisReuseKey): string {
@@ -234,6 +294,7 @@ export interface AiStoryVideoAnalysisSnapshotRepository {
     readonly failed: boolean;
   }>;
   insertSnapshot(row: AiStoryVideoAnalysisSnapshotRecord): Promise<AiStoryVideoAnalysisSnapshotRecord>;
+  recordProviderAttempt(claimId: string, evidence: AiStoryVideoProviderAttemptEvidence): Promise<void>;
   completeClaim(claimId: string, snapshotId: string): Promise<void>;
   failClaim(claimId: string, errorCode: string): Promise<void>;
 }
@@ -251,7 +312,11 @@ export function parseStoredVideoAnalysisSnapshot(row: {
   analysis: unknown;
   providerId: string;
   modelId: string;
+  requestedModelId: string;
+  providerModelId: string | null;
   providerRequestId: string | null;
+  inputTokens: number;
+  outputTokens: number;
   inputFingerprint: string;
   costUsd: number;
   createdAt: string;

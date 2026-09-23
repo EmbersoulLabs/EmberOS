@@ -50,6 +50,8 @@ export function createAiStoryVideoAnalysisRuntime(sql: Sql) {
               result: response.result,
               usage: response.usage,
               providerRequestId: response.providerRequestId,
+              requestedModelId: response.requestedModelId,
+              providerModelId: response.providerModelId,
             };
           },
         }),

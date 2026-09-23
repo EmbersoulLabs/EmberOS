@@ -9,6 +9,7 @@ import {
   AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
   AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION,
   AI_STORY_VIDEO_OBSERVATION_PROMPT,
+  AI_STORY_VIDEO_OBSERVATION_SCHEMA_HINT,
   mergeTrustedVideoObservation,
   videoObservationInputFingerprint,
   type AiStoryVideoAnalysisReuseKey,
@@ -58,8 +59,11 @@ export type PreparedVideoObservationMedia = {
 export type VideoObservationExtractorResult = {
   readonly raw: unknown;
   readonly providerId: string;
-  readonly modelId: string;
+  readonly requestedModelId: string;
+  readonly providerModelId: string | null;
   readonly providerRequestId: string | null;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
   readonly costUsd: number;
 };
 
@@ -185,6 +189,17 @@ export async function ensureAiStoryVideoAssetAnalysis(input: {
       );
     }
     const extracted = await input.extractObservation(prepared);
+    const analyzedAt = (input.now ?? (() => new Date().toISOString()))();
+    await input.repository.recordProviderAttempt(claim.claimId, {
+      providerId: extracted.providerId,
+      requestedModelId: extracted.requestedModelId,
+      providerModelId: extracted.providerModelId,
+      providerRequestId: extracted.providerRequestId,
+      inputTokens: extracted.inputTokens,
+      outputTokens: extracted.outputTokens,
+      costUsd: extracted.costUsd,
+      attemptedAt: analyzedAt,
+    });
     let observation;
     try {
       observation = mergeTrustedVideoObservation({
@@ -197,7 +212,7 @@ export async function ensureAiStoryVideoAssetAnalysis(input: {
         fps: asset.fps,
         orgId: asset.orgId,
         workspaceId: asset.workspaceId,
-        analyzedAt: (input.now ?? (() => new Date().toISOString()))(),
+        analyzedAt,
       }, extracted.raw);
     } catch (error) {
       throw new AiStoryVideoAnalysisServiceError(
@@ -226,8 +241,12 @@ export async function ensureAiStoryVideoAssetAnalysis(input: {
       observation,
       analysis,
       providerId: extracted.providerId,
-      modelId: extracted.modelId,
+      modelId: extracted.providerModelId ?? extracted.requestedModelId,
+      requestedModelId: extracted.requestedModelId,
+      providerModelId: extracted.providerModelId,
       providerRequestId: extracted.providerRequestId,
+      inputTokens: extracted.inputTokens,
+      outputTokens: extracted.outputTokens,
       inputFingerprint: videoObservationInputFingerprint(key),
       costUsd: extracted.costUsd,
       createdAt: observation.analyzedAt,
@@ -255,7 +274,13 @@ export async function extractOpenAiVideoObservation(input: {
     userText: string,
     imageDataUrls: string[],
     schemaHint: string,
-  ) => Promise<{ result: unknown; usage: { costUsd: number }; providerRequestId?: string | null }>;
+  ) => Promise<{
+    result: unknown;
+    usage: { input: number; output: number; costUsd: number };
+    providerRequestId?: string | null;
+    requestedModelId: string;
+    providerModelId: string | null;
+  }>;
   readonly prepared: PreparedVideoObservationMedia;
 }): Promise<VideoObservationExtractorResult> {
   const userText = [
@@ -270,13 +295,16 @@ export async function extractOpenAiVideoObservation(input: {
     AI_STORY_VIDEO_OBSERVATION_PROMPT,
     userText,
     input.prepared.frames.map((frame) => frame.dataUrl),
-    "observable camera, action, environment, people, and quality facts",
+    AI_STORY_VIDEO_OBSERVATION_SCHEMA_HINT,
   );
   return {
     raw: response.result,
     providerId: "openai",
-    modelId: AI_STORY_VIDEO_OBSERVATION_MODEL,
+    requestedModelId: response.requestedModelId,
+    providerModelId: response.providerModelId,
     providerRequestId: response.providerRequestId ?? null,
+    inputTokens: response.usage.input,
+    outputTokens: response.usage.output,
     costUsd: response.usage.costUsd,
   };
 }

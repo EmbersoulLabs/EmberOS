@@ -25,15 +25,17 @@ describeIntegration.sequential("AI Story video analysis snapshot PostgreSQL auth
   let sql: Sql;
   let fixture: RlsTestFixture;
   let assetId = "";
+  let failedAssetId = "";
 
   afterAll(async () => {
     if (!sql) return;
-    if (assetId) {
+    const assetIds = [assetId, failedAssetId].filter((value) => value.length > 0);
+    if (assetIds.length > 0) {
       await sql`ALTER TABLE ai_story_video_analysis_snapshots DISABLE TRIGGER ai_story_video_analysis_snapshots_no_mutation`;
-      await sql`DELETE FROM ai_story_video_analysis_claims WHERE asset_id = ${assetId}`;
-      await sql`DELETE FROM ai_story_video_analysis_snapshots WHERE asset_id = ${assetId}`;
+      await sql`DELETE FROM ai_story_video_analysis_claims WHERE asset_id IN ${sql(assetIds)}`;
+      await sql`DELETE FROM ai_story_video_analysis_snapshots WHERE asset_id IN ${sql(assetIds)}`;
       await sql`ALTER TABLE ai_story_video_analysis_snapshots ENABLE TRIGGER ai_story_video_analysis_snapshots_no_mutation`;
-      await sql`DELETE FROM assets WHERE id = ${assetId}`;
+      await sql`DELETE FROM assets WHERE id IN ${sql(assetIds)}`;
     }
     if (fixture) {
       await sql`DELETE FROM campaigns WHERE id IN (${fixture.campaignAId}, ${fixture.campaignBId})`;
@@ -58,6 +60,7 @@ describeIntegration.sequential("AI Story video analysis snapshot PostgreSQL auth
     `;
     const before = await sql<{ assets: number }[]>`SELECT count(*)::int AS assets FROM assets`;
     const migration = readFileSync(resolve("packages/db/sql/ai-story-video-analysis-snapshot-v1.sql"), "utf8");
+    await sql.unsafe(migration);
     await sql.unsafe(migration);
     const after = await sql<{ assets: number; content_hash: string }[]>`
       SELECT (SELECT count(*)::int FROM assets) AS assets, content_hash
@@ -154,9 +157,12 @@ describeIntegration.sequential("AI Story video analysis snapshot PostgreSQL auth
             primaryPersonPresent: true,
           },
           providerId: "fake-observation",
-          modelId: "fake-model",
-          providerRequestId: null,
-          costUsd: 0,
+          requestedModelId: "gpt-4o",
+          providerModelId: "gpt-4o-2024-08-06",
+          providerRequestId: "chatcmpl-integration",
+          inputTokens: 40,
+          outputTokens: 12,
+          costUsd: 0.00022,
         };
       },
       now: () => "2026-09-24T00:00:00.000Z",
@@ -177,6 +183,33 @@ describeIntegration.sequential("AI Story video analysis snapshot PostgreSQL auth
       WHERE asset_id = ${assetId}
     `;
     expect(stored[0]?.count).toBe(1);
+    const provenance = await sql<{
+      requested_model_id: string;
+      provider_model_id: string;
+      provider_request_id: string;
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: string;
+      claim_status: string;
+      claim_cost: string;
+    }[]>`
+      SELECT snapshot.requested_model_id, snapshot.provider_model_id, snapshot.provider_request_id,
+             snapshot.input_tokens, snapshot.output_tokens, snapshot.cost_usd::text,
+             claim.status AS claim_status, claim.cost_usd::text AS claim_cost
+      FROM ai_story_video_analysis_snapshots snapshot
+      JOIN ai_story_video_analysis_claims claim ON claim.snapshot_id = snapshot.id
+      WHERE snapshot.asset_id = ${assetId}
+    `;
+    expect(provenance[0]).toMatchObject({
+      requested_model_id: "gpt-4o",
+      provider_model_id: "gpt-4o-2024-08-06",
+      provider_request_id: "chatcmpl-integration",
+      input_tokens: 40,
+      output_tokens: 12,
+      claim_status: "SUCCEEDED",
+    });
+    expect(Number(provenance[0]?.cost_usd)).toBeCloseTo(0.00022);
+    expect(Number(provenance[0]?.claim_cost)).toBeCloseTo(0.00022);
 
     const visibleToOwner = await withAuthenticatedUser(sql, fixture.userAId, (tx) => tx<{ count: number }[]>`
       SELECT count(*)::int AS count FROM ai_story_video_analysis_snapshots WHERE asset_id = ${assetId}
@@ -194,5 +227,77 @@ describeIntegration.sequential("AI Story video analysis snapshot PostgreSQL auth
     await expect(sql`
       DELETE FROM ai_story_video_analysis_snapshots WHERE asset_id = ${assetId}
     `).rejects.toThrow(/AI_STORY_VIDEO_ANALYSIS_SNAPSHOT_IMMUTABLE/);
+  });
+
+  it("keeps provider attempt evidence when observation validation fails", async () => {
+    failedAssetId = crypto.randomUUID();
+    const failedHash = `sha256:${"ab".repeat(32)}`;
+    await sql`
+      INSERT INTO assets (
+        id, org_id, workspace_id, type, storage_path, mime_type, duration_sec, width, height, content_hash
+      ) VALUES (
+        ${failedAssetId}, ${fixture.orgId}, ${fixture.workspaceAId}, ${"video"}, ${`${fixture.workspaceAId}/failed.mp4`},
+        ${"video/mp4"}, ${4}, ${720}, ${1280}, ${failedHash}
+      )
+    `;
+    const repository = createSqlVideoAnalysisSnapshotRepository(sql);
+    await expect(ensureAiStoryVideoAssetAnalysis({
+      orgId: fixture.orgId,
+      workspaceId: fixture.workspaceAId,
+      assetId: failedAssetId,
+      contentHash: failedHash,
+      findAsset: async () => ({
+        assetId: failedAssetId,
+        orgId: fixture.orgId,
+        workspaceId: fixture.workspaceAId,
+        storagePath: `${fixture.workspaceAId}/failed.mp4`,
+        contentHash: failedHash,
+        mimeType: "video/mp4",
+        mediaType: "video",
+        durationSec: 4,
+        width: 720,
+        height: 1280,
+        fps: null,
+        deletedAt: null,
+      }),
+      repository,
+      prepareVision: async () => ({ frames: [{ atSec: 0.5, dataUrl: "data:image/jpeg;base64,frame" }] }),
+      extractObservation: async () => ({
+        raw: { observable: { shotCountEstimate: 1 }, strategy: "V2V" },
+        providerId: "openai",
+        requestedModelId: "gpt-4o",
+        providerModelId: "gpt-4o-2024-08-06",
+        providerRequestId: "chatcmpl-failed-integration",
+        inputTokens: 9030,
+        outputTokens: 98,
+        costUsd: 0.023555,
+      }),
+      now: () => "2026-09-24T00:00:00.000Z",
+    })).rejects.toThrow(/ENVELOPE_REJECTED|VIDEO_OBSERVATION_INVALID/);
+    const claims = await sql<{
+      status: string;
+      error_code: string;
+      provider_request_id: string;
+      input_tokens: number;
+      output_tokens: number;
+      provider_model_id: string;
+    }[]>`
+      SELECT status, error_code, provider_request_id, input_tokens, output_tokens, provider_model_id
+      FROM ai_story_video_analysis_claims
+      WHERE asset_id = ${failedAssetId}
+    `;
+    const snapshots = await sql<{ count: number }[]>`
+      SELECT count(*)::int AS count FROM ai_story_video_analysis_snapshots WHERE asset_id = ${failedAssetId}
+    `;
+    expect(snapshots[0]?.count).toBe(0);
+    expect(claims).toHaveLength(1);
+    expect(claims[0]).toMatchObject({
+      status: "FAILED",
+      error_code: "VIDEO_OBSERVATION_INVALID",
+      provider_request_id: "chatcmpl-failed-integration",
+      input_tokens: 9030,
+      output_tokens: 98,
+      provider_model_id: "gpt-4o-2024-08-06",
+    });
   });
 });

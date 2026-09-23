@@ -8,6 +8,7 @@ import {
   AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
   AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION,
   AI_STORY_VIDEO_OBSERVATION_PROMPT,
+  AI_STORY_VIDEO_OBSERVATION_SCHEMA_HINT,
   DIRECTOR_INTEGRATION,
   RAW_VIDEO_OBSERVATION_EXTRACTION,
   RAW_VIDEO_OBSERVATION_EXTRACTOR,
@@ -15,12 +16,15 @@ import {
   AiStoryVideoAssetObservationSchema,
   classifyAiStoryVideoAssetAnalysis,
   mergeTrustedVideoObservation,
+  normalizeAiStoryVideoModelObservationEnvelope,
+  parseStoredVideoAnalysisSnapshot,
   routeAiStoryVideoPlanningStrategy,
   sourcePhotoSentToVideoProviderForDna,
   videoObservationInputFingerprint,
   type AiStoryVideoAnalysisReuseKey,
   type AiStoryVideoAnalysisSnapshotRecord,
   type AiStoryVideoAnalysisSnapshotRepository,
+  type AiStoryVideoProviderAttemptEvidence,
 } from "@ceo-agent/shared";
 import {
   AiStoryVideoAnalysisServiceError,
@@ -50,6 +54,57 @@ function asset(overrides?: Partial<AuthorizedVideoAsset>): AuthorizedVideoAsset 
     fps: null,
     deletedAt: null,
     ...overrides,
+  };
+}
+
+function paidResult(raw: unknown, overrides?: Partial<VideoObservationExtractorResult>): VideoObservationExtractorResult {
+  return {
+    raw,
+    providerId: "openai",
+    requestedModelId: "gpt-4o",
+    providerModelId: "gpt-4o-2024-08-06",
+    providerRequestId: "chatcmpl-test",
+    inputTokens: 9030,
+    outputTokens: 98,
+    costUsd: 0.023555,
+    ...overrides,
+  };
+}
+
+function canonicalMetadata() {
+  return {
+    videoAssetId: id(1),
+    contentHash: hash,
+    durationMs: 4000,
+    durationSec: 4,
+    width: 720,
+    height: 1280,
+    fps: null,
+    orgId: id(2),
+    workspaceId: id(3),
+    analyzedAt: "2026-09-24T00:00:00.000Z",
+  };
+}
+
+function observedEnvelope() {
+  return {
+    observable: {
+      shotCountEstimate: 1,
+      dominantShotType: "MEDIUM",
+      cameraMotion: "STATIC",
+      compositionStability: "STABLE",
+      framingSummary: "Hands are visible over a writing surface.",
+      oneContinuousShot: true,
+      abruptCuts: false,
+      primaryActionSummary: "A person writes by hand.",
+      actionTags: ["WRITING"],
+      environmentSummary: "An indoor work surface.",
+      environmentTags: ["OFFICE_DESK"],
+      visiblePeopleEstimate: 1,
+      primaryPersonPresent: true,
+      signageIdentityVisible: false,
+      qualityRiskFlags: [],
+    },
   };
 }
 
@@ -92,14 +147,19 @@ function modelFacts(overrides?: Record<string, unknown>): Record<string, unknown
   };
 }
 
+type MemoryClaim = {
+  claimId: string;
+  status: "CLAIMED" | "SUCCEEDED" | "FAILED";
+  errorCode: string | null;
+  evidence: AiStoryVideoProviderAttemptEvidence | null;
+  snapshot: AiStoryVideoAnalysisSnapshotRecord | null;
+  waiters: Array<(value: { snapshot: AiStoryVideoAnalysisSnapshotRecord | null; failed: boolean }) => void>;
+};
+
 class MemoryVideoAnalysisRepository implements AiStoryVideoAnalysisSnapshotRepository {
   readonly snapshots = new Map<string, AiStoryVideoAnalysisSnapshotRecord>();
-  private readonly claims = new Map<string, {
-    claimId: string;
-    status: "CLAIMED" | "SUCCEEDED" | "FAILED";
-    snapshot: AiStoryVideoAnalysisSnapshotRecord | null;
-    waiters: Array<(value: { snapshot: AiStoryVideoAnalysisSnapshotRecord | null; failed: boolean }) => void>;
-  }>();
+  readonly claims = new Map<string, MemoryClaim>();
+  private readonly claimsById = new Map<string, MemoryClaim>();
 
   async findSucceededSnapshot(key: AiStoryVideoAnalysisReuseKey) {
     return this.snapshots.get(videoObservationInputFingerprint(key)) ?? null;
@@ -112,7 +172,9 @@ class MemoryVideoAnalysisRepository implements AiStoryVideoAnalysisSnapshotRepos
       return { acquired: false as const };
     }
     const claimId = randomUUID();
-    this.claims.set(key, { claimId, status: "CLAIMED", snapshot: null, waiters: [] });
+    const claim = { claimId, status: "CLAIMED" as const, errorCode: null, evidence: null, snapshot: null, waiters: [] };
+    this.claims.set(key, claim);
+    this.claimsById.set(claimId, claim);
     return { acquired: true as const, claimId };
   }
 
@@ -136,6 +198,12 @@ class MemoryVideoAnalysisRepository implements AiStoryVideoAnalysisSnapshotRepos
     return row;
   }
 
+  async recordProviderAttempt(claimId: string, evidence: AiStoryVideoProviderAttemptEvidence) {
+    const claim = this.claimsById.get(claimId);
+    if (!claim || claim.status !== "CLAIMED") throw new Error("VIDEO_ANALYSIS_PROVIDER_ATTEMPT_NOT_RECORDED");
+    claim.evidence = evidence;
+  }
+
   async completeClaim(claimId: string, snapshotId: string) {
     for (const claim of this.claims.values()) {
       if (claim.claimId !== claimId) continue;
@@ -146,10 +214,11 @@ class MemoryVideoAnalysisRepository implements AiStoryVideoAnalysisSnapshotRepos
     }
   }
 
-  async failClaim(claimId: string) {
+  async failClaim(claimId: string, errorCode: string) {
     for (const claim of this.claims.values()) {
       if (claim.claimId !== claimId) continue;
       claim.status = "FAILED";
+      claim.errorCode = errorCode;
       const waiters = claim.waiters.splice(0);
       for (const waiter of waiters) waiter({ snapshot: null, failed: true });
     }
@@ -169,9 +238,12 @@ function harness(current = asset()) {
     return {
       raw: modelFacts(),
       providerId: "openai",
-      modelId: "gpt-4o",
-      providerRequestId: null,
-      costUsd: 0,
+      requestedModelId: "gpt-4o",
+      providerModelId: "gpt-4o-2024-08-06",
+      providerRequestId: "chatcmpl-test",
+      inputTokens: 9030,
+      outputTokens: 120,
+      costUsd: 0.023775,
     };
   });
   const ensure = (input?: {
@@ -339,24 +411,12 @@ describe("video observation extraction and durable snapshots", () => {
 
   it("does not persist a successful snapshot for invalid model output or preprocessing failure", async () => {
     const invalidJson = harness();
-    invalidJson.extract.mockResolvedValue({
-      raw: "not-json",
-      providerId: "openai",
-      modelId: "gpt-4o",
-      providerRequestId: null,
-      costUsd: 0,
-    });
+    invalidJson.extract.mockResolvedValue(paidResult("not-json"));
     await expect(invalidJson.ensure()).rejects.toBeInstanceOf(AiStoryVideoAnalysisServiceError);
     expect(invalidJson.repository.snapshots.size).toBe(0);
 
     const invalidObservation = harness();
-    invalidObservation.extract.mockResolvedValue({
-      raw: { shotCountEstimate: 0, inventedStrategy: "V2V" },
-      providerId: "openai",
-      modelId: "gpt-4o",
-      providerRequestId: null,
-      costUsd: 0,
-    });
+    invalidObservation.extract.mockResolvedValue(paidResult({ shotCountEstimate: 0, inventedStrategy: "V2V" }));
     await expect(invalidObservation.ensure()).rejects.toMatchObject({ code: "VIDEO_OBSERVATION_INVALID" });
     expect(invalidObservation.repository.snapshots.size).toBe(0);
 
@@ -378,21 +438,15 @@ describe("video observation extraction and durable snapshots", () => {
 
   it("keeps classification deterministic, including existing-video precedence and strict override", async () => {
     const run = harness();
-    run.extract.mockResolvedValue({
-      raw: modelFacts({
-        canUseAsExistingVideo: true,
-        requiresGenerationToBeUseful: false,
-        existingVideoSuitabilityReason: "The sampled clip is already usable.",
-        strictMotionPreservationMatters: true,
-        strictTimelinePreservationMatters: true,
-        strictShotStructureMatters: true,
-        subjectReplacementLikely: true,
-      }),
-      providerId: "openai",
-      modelId: "gpt-4o",
-      providerRequestId: null,
-      costUsd: 0,
-    });
+    run.extract.mockResolvedValue(paidResult(modelFacts({
+      canUseAsExistingVideo: true,
+      requiresGenerationToBeUseful: false,
+      existingVideoSuitabilityReason: "The sampled clip is already usable.",
+      strictMotionPreservationMatters: true,
+      strictTimelinePreservationMatters: true,
+      strictShotStructureMatters: true,
+      subjectReplacementLikely: true,
+    })));
     const existing = await run.ensure();
     expect(existing.snapshot.observation.canUseAsExistingVideo).toBe(false);
     expect(existing.snapshot.observation.requiresGenerationToBeUseful).toBe(true);
@@ -456,17 +510,201 @@ describe("video observation extraction and durable snapshots", () => {
       },
       callVision: async (system, userText, _images, hint) => {
         seen.push({ system, userText, hint });
-        return { result: modelFacts(), usage: { costUsd: 0 }, providerRequestId: null };
+        return {
+          result: modelFacts(),
+          usage: { input: 20, output: 8, costUsd: 0.00013 },
+          providerRequestId: "chatcmpl-prompt",
+          requestedModelId: "gpt-4o",
+          providerModelId: "gpt-4o-2024-08-06",
+        };
       },
     });
     expect(extracted.providerId).toBe("openai");
-    expect(extracted.modelId).toBe("gpt-4o");
-    expect(extracted.costUsd).toBe(0);
+    expect(extracted.requestedModelId).toBe("gpt-4o");
+    expect(extracted.providerModelId).toBe("gpt-4o-2024-08-06");
+    expect(extracted.providerRequestId).toBe("chatcmpl-prompt");
+    expect(extracted.inputTokens).toBe(20);
+    expect(extracted.outputTokens).toBe(8);
+    expect(extracted.costUsd).toBe(0.00013);
     expect(seen[0]?.system).toBe(AI_STORY_VIDEO_OBSERVATION_PROMPT);
+    expect(seen[0]?.system).toContain("Put these fields directly at the root");
+    expect(seen[0]?.system).toContain("Do not wrap the object in observable, result, data, or analysis");
+    expect(seen[0]?.hint).toBe(AI_STORY_VIDEO_OBSERVATION_SCHEMA_HINT);
+    expect(seen[0]?.hint).toContain("shotCountEstimate");
+    expect(seen[0]?.hint).toContain("qualityRiskFlags");
     expect(seen[0]?.userText).toContain("1.25s");
     expect(seen[0]?.userText.toLowerCase()).not.toContain("seedance");
     expect(seen[0]?.userText.toLowerCase()).not.toContain("runway");
     expect(seen[0]?.hint).not.toContain("recommendedReferenceUse");
+    expect(seen[0]?.hint).not.toContain("campaignId");
+    expect(seen[0]?.userText).not.toContain("campaignId");
+  });
+
+  it("accepts a direct root observation and exactly one observable envelope", () => {
+    const direct = mergeTrustedVideoObservation(canonicalMetadata(), observedEnvelope().observable);
+    const wrapped = mergeTrustedVideoObservation(canonicalMetadata(), observedEnvelope());
+    expect(direct.dominantShotType).toBe("MEDIUM");
+    expect(wrapped).toMatchObject({
+      shotCountEstimate: 1,
+      dominantShotType: "MEDIUM",
+      cameraMotion: "STATIC",
+      primaryActionSummary: "A person writes by hand.",
+      actionTags: ["WRITING"],
+      visiblePeopleEstimate: 1,
+      primaryPersonPresent: true,
+    });
+    expect(normalizeAiStoryVideoModelObservationEnvelope(observedEnvelope())).toEqual(observedEnvelope().observable);
+    expect(wrapped.videoAssetId).toBe(id(1));
+    expect(wrapped.orgId).toBe(id(2));
+    expect(wrapped.workspaceId).toBe(id(3));
+  });
+
+  it("rejects extra siblings, arbitrary wrappers, nested envelopes, and invalid inner fields", () => {
+    const inner = observedEnvelope().observable;
+    expect(() => normalizeAiStoryVideoModelObservationEnvelope({
+      observable: inner,
+      strategy: "V2V",
+    })).toThrow(/ENVELOPE_REJECTED/);
+    expect(() => mergeTrustedVideoObservation(canonicalMetadata(), { result: inner })).toThrow();
+    expect(() => normalizeAiStoryVideoModelObservationEnvelope({
+      observable: { observable: inner },
+    })).toThrow(/ENVELOPE_REJECTED/);
+    expect(() => mergeTrustedVideoObservation(canonicalMetadata(), {
+      observable: { ...inner, shotCountEstimate: 0 },
+    })).toThrow();
+  });
+
+  it("keeps planning and identity fields canonical inside an observable envelope", () => {
+    const campaignId = "campaign-must-not-be-stored";
+    const episodeId = "episode-must-not-be-stored";
+    const sceneId = "scene-must-not-be-stored";
+    const merged = mergeTrustedVideoObservation(canonicalMetadata(), {
+      observable: {
+        ...observedEnvelope().observable,
+        videoAssetId: id(99),
+        contentHash: otherHash,
+        orgId: id(77),
+        workspaceId: id(88),
+        durationMs: 9000,
+        durationSec: 9,
+        width: 2,
+        height: 2,
+        campaignId,
+        episodeId,
+        sceneId,
+        recommendedReferenceUse: "STRICT_V2V_CANDIDATE",
+        canUseAsExistingVideo: true,
+        requiresGenerationToBeUseful: false,
+        subjectReplacementLikely: true,
+      },
+    });
+    expect(merged.videoAssetId).toBe(id(1));
+    expect(merged.contentHash).toBe(hash);
+    expect(merged.orgId).toBe(id(2));
+    expect(merged.workspaceId).toBe(id(3));
+    expect(merged.durationMs).toBe(4000);
+    expect(merged.width).toBe(720);
+    expect(merged.height).toBe(1280);
+    expect(merged.canUseAsExistingVideo).toBe(false);
+    expect(merged.requiresGenerationToBeUseful).toBe(true);
+    expect(merged.subjectReplacementLikely).toBe(false);
+    const serialized = JSON.stringify(merged);
+    expect(serialized).not.toContain(campaignId);
+    expect(serialized).not.toContain(episodeId);
+    expect(serialized).not.toContain(sceneId);
+    expect(serialized).not.toContain("STRICT_V2V_CANDIDATE");
+  });
+
+  it("does not reuse an extractor v2 snapshot as v3", async () => {
+    expect(AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION).toBe("ai-story-video-observation-extractor.v3");
+    const run = harness();
+    const staleKey = videoObservationInputFingerprint({
+      workspaceId: id(3),
+      assetId: id(1),
+      assetContentHash: hash,
+      analysisVersion: AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
+      extractorVersion: "ai-story-video-observation-extractor.v2",
+    });
+    run.repository.snapshots.set(staleKey, { id: "v2-snapshot" } as AiStoryVideoAnalysisSnapshotRecord);
+    const result = await run.ensure();
+    expect(result.reused).toBe(false);
+    expect(result.snapshot.extractorVersion).toBe("ai-story-video-observation-extractor.v3");
+    expect(result.snapshot.id).not.toBe("v2-snapshot");
+    expect(run.providerCalls()).toBe(1);
+    expect(() => parseStoredVideoAnalysisSnapshot({
+      id: "v2-snapshot",
+      orgId: id(2),
+      workspaceId: id(3),
+      assetId: id(1),
+      assetContentHash: hash,
+      analysisType: "AI_STORY_VIDEO",
+      analysisVersion: AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
+      extractorVersion: "ai-story-video-observation-extractor.v2",
+      observation: {},
+      analysis: {},
+      providerId: "openai",
+      modelId: "gpt-4o-2024-08-06",
+      requestedModelId: "gpt-4o",
+      providerModelId: "gpt-4o-2024-08-06",
+      providerRequestId: "chatcmpl-old",
+      inputTokens: 1,
+      outputTokens: 1,
+      inputFingerprint: staleKey,
+      costUsd: 0.01,
+      createdAt: "2026-09-24T00:00:00.000Z",
+    })).toThrow(/VERSION_MISMATCH/);
+  });
+
+  it("keeps provider evidence when validation fails and matches it on success", async () => {
+    const failed = harness();
+    failed.extract.mockResolvedValue(paidResult({
+      observable: { ...observedEnvelope().observable, inventedStrategy: "V2V" },
+    }, {
+      providerRequestId: "chatcmpl-failed",
+      inputTokens: 9030,
+      outputTokens: 98,
+      costUsd: 0.023555,
+      providerModelId: "gpt-4o-2024-08-06",
+    }));
+    await expect(failed.ensure()).rejects.toMatchObject({ code: "VIDEO_OBSERVATION_INVALID" });
+    expect(failed.repository.snapshots.size).toBe(0);
+    const failedClaim = [...failed.repository.claims.values()][0];
+    expect(failedClaim?.status).toBe("FAILED");
+    expect(failedClaim?.errorCode).toBe("VIDEO_OBSERVATION_INVALID");
+    expect(failedClaim?.evidence).toMatchObject({
+      providerId: "openai",
+      requestedModelId: "gpt-4o",
+      providerModelId: "gpt-4o-2024-08-06",
+      providerRequestId: "chatcmpl-failed",
+      inputTokens: 9030,
+      outputTokens: 98,
+      costUsd: 0.023555,
+      attemptedAt: "2026-09-24T00:00:00.000Z",
+    });
+
+    const succeeded = harness();
+    succeeded.extract.mockResolvedValue(paidResult(observedEnvelope(), {
+      providerRequestId: "chatcmpl-ok",
+    }));
+    const result = await succeeded.ensure();
+    const claim = [...succeeded.repository.claims.values()][0];
+    expect(claim?.status).toBe("SUCCEEDED");
+    expect(result.snapshot.requestedModelId).toBe(claim?.evidence?.requestedModelId);
+    expect(result.snapshot.providerModelId).toBe("gpt-4o-2024-08-06");
+    expect(result.snapshot.modelId).toBe("gpt-4o-2024-08-06");
+    expect(result.snapshot.providerRequestId).toBe("chatcmpl-ok");
+    expect(result.snapshot.inputTokens).toBe(9030);
+    expect(result.snapshot.outputTokens).toBe(98);
+    expect(result.snapshot.costUsd).toBe(0.023555);
+    expect(result.snapshot.providerRequestId).toBe(claim?.evidence?.providerRequestId);
+    expect(result.snapshot.costUsd).toBe(claim?.evidence?.costUsd);
+    expect(succeeded.repository.snapshots.size).toBe(1);
+    const again = await succeeded.ensure();
+    expect(result.providerCalls).toBe(1);
+    expect(again.reused).toBe(true);
+    expect(again.providerCalls).toBe(0);
+    expect(again.providerCostUsd).toBe(0);
+    expect(succeeded.extract).toHaveBeenCalledTimes(1);
   });
 
   it("leaves T2V, I2V, and Character DNA unchanged and makes no provider call", () => {
@@ -494,10 +732,16 @@ describe("video observation extraction and durable snapshots", () => {
     expect(files[2]).toContain("prepareVisionFromStorage");
     expect(files[2]).toContain("transcribeAudio: false");
     expect(files[2]).toContain("maxRetries: 0");
+    expect(files[2]).toContain("providerModelId");
+    expect(files[1]).toContain("recordProviderAttempt");
+    expect(AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION).toBe("ai-story-video-observation-extractor.v3");
     expect(files[2]).not.toContain("extractFrameAt");
     expect(files[2]).not.toContain("transcribeAudioDetailed");
     expect(files[3]).not.toContain("ensureAiStoryVideoAssetAnalysis");
     const migration = readFileSync("packages/db/sql/ai-story-video-analysis-snapshot-v1.sql", "utf8");
+    expect(migration).toContain("ADD COLUMN IF NOT EXISTS provider_request_id text");
+    expect(migration).toContain("ADD COLUMN IF NOT EXISTS input_tokens integer");
+    expect(migration).toContain("ADD COLUMN IF NOT EXISTS attempted_at timestamptz");
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS ai_story_video_analysis_snapshots");
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS ai_story_video_analysis_claims");
     expect(migration).toContain("SECURITY DEFINER");

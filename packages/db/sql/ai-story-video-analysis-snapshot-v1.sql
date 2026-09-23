@@ -1,6 +1,6 @@
 -- Standalone additive migration for AI Story video analysis snapshots.
 -- Applies on a certified predecessor that already has assets and workspace_members.
--- Does not alter existing tables or create shared RLS helper functions.
+-- Does not alter predecessor business tables. New snapshot columns are additive.
 -- Rollback: DROP TRIGGER, DROP FUNCTION ai_story_video_analysis_snapshots_immutable,
 -- DROP TABLE ai_story_video_analysis_claims, DROP TABLE ai_story_video_analysis_snapshots.
 -- Snapshots are immutable. A failed claim does not block a later claim.
@@ -18,7 +18,11 @@ CREATE TABLE IF NOT EXISTS ai_story_video_analysis_snapshots (
   analysis_json jsonb NOT NULL,
   provider_id text NOT NULL,
   model_id text NOT NULL,
+  requested_model_id text,
+  provider_model_id text,
   provider_request_id text,
+  input_tokens integer,
+  output_tokens integer,
   input_fingerprint text NOT NULL,
   cost_usd numeric NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -42,6 +46,14 @@ CREATE TABLE IF NOT EXISTS ai_story_video_analysis_claims (
   status text NOT NULL,
   snapshot_id uuid REFERENCES ai_story_video_analysis_snapshots(id) ON DELETE RESTRICT,
   error_code text,
+  provider_id text,
+  requested_model_id text,
+  provider_model_id text,
+  provider_request_id text,
+  input_tokens integer,
+  output_tokens integer,
+  cost_usd numeric,
+  attempted_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ai_story_video_analysis_claims_status_chk CHECK (status IN ('CLAIMED', 'SUCCEEDED', 'FAILED'))
@@ -49,6 +61,22 @@ CREATE TABLE IF NOT EXISTS ai_story_video_analysis_claims (
 
 CREATE INDEX IF NOT EXISTS ai_story_video_analysis_claims_workspace_idx
   ON ai_story_video_analysis_claims (workspace_id, asset_id, status);
+
+ALTER TABLE ai_story_video_analysis_snapshots
+  ADD COLUMN IF NOT EXISTS requested_model_id text,
+  ADD COLUMN IF NOT EXISTS provider_model_id text,
+  ADD COLUMN IF NOT EXISTS input_tokens integer,
+  ADD COLUMN IF NOT EXISTS output_tokens integer;
+
+ALTER TABLE ai_story_video_analysis_claims
+  ADD COLUMN IF NOT EXISTS provider_id text,
+  ADD COLUMN IF NOT EXISTS requested_model_id text,
+  ADD COLUMN IF NOT EXISTS provider_model_id text,
+  ADD COLUMN IF NOT EXISTS provider_request_id text,
+  ADD COLUMN IF NOT EXISTS input_tokens integer,
+  ADD COLUMN IF NOT EXISTS output_tokens integer,
+  ADD COLUMN IF NOT EXISTS cost_usd numeric,
+  ADD COLUMN IF NOT EXISTS attempted_at timestamptz;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ai_story_video_analysis_claims_active_uidx
   ON ai_story_video_analysis_claims (workspace_id, asset_id, asset_content_hash, analysis_version, extractor_version)
