@@ -19,8 +19,8 @@ const CreateSchema = z.object({
   mutableLookPolicy: AiStoryCharacterMutableLookPolicySchema,
   canonicalAssets: z.array(z.object({
     assetId: z.string().uuid(),
-    role: z.enum(["IDENTITY_MASTER", "FRONT_PORTRAIT", "THREE_QUARTER", "PROFILE", "FULL_BODY", "EXPRESSION_REFERENCE", "STYLE_REFERENCE"]),
-  }).strict()).min(1),
+    role: z.enum(["IDENTITY_MASTER", "FRONT_PORTRAIT", "THREE_QUARTER", "PROFILE", "FULL_BODY", "EXPRESSION_REFERENCE", "STYLE_REFERENCE", "CHARACTER_SOURCE_PORTRAIT"]),
+  }).strict()),
 }).strict();
 
 async function workspaceContext(workspaceId: string, mutation: boolean) {
@@ -53,6 +53,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         visualClass: virtual?.visualClass,
         virtualStyle: virtual?.style,
         identityLocked: true as const,
+        identityMode: version.identityMode,
+        characterDnaCertified: version.identityMode === "CHARACTER_DNA",
+        portraitLabel: version.identityMode === "CHARACTER_DNA" ? "Source photo" as const : "Identity Master" as const,
       };
     }));
     return apiSuccess({ characters });

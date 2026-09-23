@@ -960,7 +960,8 @@ async function serializeTransportRequest(input: {
   request: AiStoryCompiledProviderRequest;
   assetAccess: AiStoryRuntimeAssetAccess;
 }): Promise<SeedanceModelArkCreateRequest> {
-  const images = await Promise.all(input.request.referenceMappings.map(async (reference) => ({
+  const dnaTextOnly = input.request.compiledPrompt.includes("CHARACTER IDENTITY — LOCKED");
+  const images = dnaTextOnly ? [] : await Promise.all(input.request.referenceMappings.map(async (reference) => ({
     type: "image_url" as const,
     image_url: { url: await input.assetAccess.resolveHttpsAsset({
       assetId: reference.assetId,

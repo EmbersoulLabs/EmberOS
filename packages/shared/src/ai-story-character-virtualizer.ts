@@ -406,7 +406,9 @@ export function virtualCharacterLibraryCard(
 }
 
 export function additionalReferenceRoles() {
-  return AI_STORY_REUSABLE_CHARACTER_ASSET_ROLES.filter((role) => role !== "IDENTITY_MASTER");
+  return AI_STORY_REUSABLE_CHARACTER_ASSET_ROLES.filter(
+    (role) => role !== "IDENTITY_MASTER" && role !== "CHARACTER_SOURCE_PORTRAIT"
+  );
 }
 
 export function readCharacterVirtualizationProviderMode(

@@ -1004,6 +1004,47 @@ export const aiStoryCharacterVirtualizationJobs = pgTable(
   ],
 );
 
+export const aiStoryCharacterDnaAnalysisJobs = pgTable(
+  "ai_story_character_dna_analysis_jobs",
+  {
+    jobId: uuid("job_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    sourceAssetId: uuid("source_asset_id").notNull(),
+    sourceContentHash: text("source_content_hash").notNull(),
+    sourceSemantic: text("source_semantic").notNull(),
+    permissionConfirmed: boolean("permission_confirmed").notNull(),
+    status: text("status").notNull(),
+    approvalStatus: text("approval_status").notNull(),
+    provider: text("provider").notNull(),
+    providerModel: text("provider_model").notNull(),
+    providerAttemptId: uuid("provider_attempt_id"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costCategory: text("cost_category").notNull(),
+    costUsd: numeric("cost_usd"),
+    imageGenerationCalls: integer("image_generation_calls").notNull(),
+    gptImageCalls: integer("gpt_image_calls").notNull(),
+    seedanceVideoCalls: integer("seedance_video_calls").notNull(),
+    reusableCharacterId: uuid("reusable_character_id"),
+    reusableCharacterVersionId: uuid("reusable_character_version_id"),
+    userSafeError: text("user_safe_error"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryCharacterDnaAnalysisJob>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    foreignKey({ name: "as_cdj_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cdj_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cdj_source_asset_fk", columns: [t.sourceAssetId], foreignColumns: [assets.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cdj_rc_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_cdj_rc_ver_fk", columns: [t.reusableCharacterVersionId], foreignColumns: [aiStoryReusableCharacterVersions.reusableCharacterVersionId] }).onDelete("restrict"),
+    index("as_cdj_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("as_cdj_source_idx").on(t.sourceAssetId, t.status),
+  ],
+);
+
 /** Campaign/Story scoped Location aggregate. Scene-local environments remain embedded Scene facts. */
 export const aiStoryLocations = pgTable(
   "ai_story_locations",

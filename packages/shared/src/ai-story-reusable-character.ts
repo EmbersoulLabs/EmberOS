@@ -4,6 +4,11 @@ import {
   validateCharacterAuthorityBindings,
   type AiStoryCharacterAuthorityVersion,
 } from "./ai-story-character";
+import {
+  AiStoryCharacterDnaSchema,
+  CHARACTER_CONSISTENCY_MODE,
+  isCharacterDnaIdentity,
+} from "./ai-story-character-dna";
 
 export const AI_STORY_REUSABLE_CHARACTER_CONTRACT_VERSION =
   "ai-story-reusable-character.v1" as const;
@@ -50,6 +55,7 @@ export const AI_STORY_REUSABLE_CHARACTER_ASSET_ROLES = [
   "FULL_BODY",
   "EXPRESSION_REFERENCE",
   "STYLE_REFERENCE",
+  "CHARACTER_SOURCE_PORTRAIT",
 ] as const;
 export const AI_STORY_CHARACTER_CONTINUITY_ANCHOR_STATUSES = [
   "PROPOSED",
@@ -136,7 +142,11 @@ export const AiStoryReusableCharacterVersionSchema = z
     identityCore: AiStoryCharacterIdentityCoreSchema,
     defaultLook: AiStoryCharacterDefaultLookSchema,
     mutableLookPolicy: AiStoryCharacterMutableLookPolicySchema,
-    canonicalAssets: z.array(AiStoryReusableCharacterCanonicalAssetSchema).min(1),
+    canonicalAssets: z.array(AiStoryReusableCharacterCanonicalAssetSchema),
+    identityMode: z.enum(["VISUAL_REFERENCE", "CHARACTER_DNA"]).default("VISUAL_REFERENCE"),
+    characterDna: AiStoryCharacterDnaSchema.optional(),
+    characterDnaFingerprint: Hash.optional(),
+    characterConsistencyMode: z.literal(CHARACTER_CONSISTENCY_MODE).optional(),
     status: z.enum(AI_STORY_REUSABLE_CHARACTER_STATUSES),
     version: z.number().int().positive(),
     contractVersion: z.literal(AI_STORY_REUSABLE_CHARACTER_CONTRACT_VERSION),
@@ -148,6 +158,21 @@ export const AiStoryReusableCharacterVersionSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
+    if (value.identityMode === "CHARACTER_DNA") {
+      if (!value.characterDna || !value.characterDnaFingerprint) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "CHARACTER_DNA identity requires approved Character DNA",
+        });
+      }
+      if (value.characterConsistencyMode !== CHARACTER_CONSISTENCY_MODE) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "CHARACTER_DNA identity requires SOFT_DESCRIPTION_BASED consistency",
+        });
+      }
+      return;
+    }
     if (!value.canonicalAssets.some((asset) => asset.role === "IDENTITY_MASTER")) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -182,13 +207,34 @@ export const AiStoryEpisodeCharacterBindingSchema = z
     campaignCharacterVersionId: Id,
     identityFingerprint: Hash,
     episodeLook: AiStoryCharacterEpisodeLookSchema,
-    canonicalAssetIds: z.array(Id).min(1),
+    canonicalAssetIds: z.array(Id),
+    characterDnaFingerprint: Hash.optional(),
+    characterDnaVersionId: Id.optional(),
+    sourcePhotoSentToVideoProvider: z.boolean().optional(),
+    characterConsistencyMode: z.literal(CHARACTER_CONSISTENCY_MODE).optional(),
     continuityAnchorIds: z.array(Id),
     bindingFingerprint: Hash,
     createdBy: Id,
     createdAt: z.string().datetime(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.characterDnaFingerprint) {
+      if (value.sourcePhotoSentToVideoProvider !== false) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Character DNA Episode bindings must not send the source photo to the video Provider",
+        });
+      }
+      return;
+    }
+    if (value.canonicalAssetIds.length < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Visual-reference Episode binding requires canonical identity assets",
+      });
+    }
+  });
 
 export const AiStoryCharacterContinuityAnchorSchema = z
   .object({
@@ -233,6 +279,10 @@ export const AiStoryReusableCharacterCardSchema = z
     portraitAssetId: Id.nullable(),
     episodeCount: z.number().int().nonnegative(),
     status: z.enum(AI_STORY_REUSABLE_CHARACTER_STATUSES),
+    identityMode: z.enum(["VISUAL_REFERENCE", "CHARACTER_DNA"]).optional(),
+    characterDnaCertified: z.boolean().optional(),
+    portraitLabel: z.enum(["Source photo", "Identity Master"]).optional(),
+    characterConsistencyMode: z.literal(CHARACTER_CONSISTENCY_MODE).optional(),
   })
   .strict();
 
@@ -316,18 +366,29 @@ export function emptyEpisodeLook(): AiStoryCharacterEpisodeLook {
 }
 
 export function publicReusableCharacterCard(
-  version: Pick<AiStoryReusableCharacterVersion, "reusableCharacterId" | "name" | "canonicalAssets" | "status">,
+  version: Pick<AiStoryReusableCharacterVersion, "reusableCharacterId" | "name" | "canonicalAssets" | "status"> & {
+    identityMode?: AiStoryReusableCharacterVersion["identityMode"];
+    characterDnaFingerprint?: string;
+    characterConsistencyMode?: AiStoryReusableCharacterVersion["characterConsistencyMode"];
+  },
   episodeCount: number
 ): AiStoryReusableCharacterCard {
-  const portrait =
-    version.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER") ??
-    version.canonicalAssets[0];
+  const dna = isCharacterDnaIdentity(version);
+  const portrait = dna
+    ? version.canonicalAssets.find((asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT") ??
+      version.canonicalAssets[0]
+    : version.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER") ??
+      version.canonicalAssets[0];
   return AiStoryReusableCharacterCardSchema.parse({
     reusableCharacterId: version.reusableCharacterId,
     name: version.name,
     portraitAssetId: portrait?.assetId ?? null,
     episodeCount,
     status: version.status,
+    identityMode: version.identityMode ?? "VISUAL_REFERENCE",
+    characterDnaCertified: dna,
+    portraitLabel: dna ? "Source photo" : "Identity Master",
+    ...(dna ? { characterConsistencyMode: CHARACTER_CONSISTENCY_MODE } : {}),
   });
 }
 
@@ -395,7 +456,9 @@ export function validateCharacterVersionPinning(input: {
 export function validateCanonicalIdentityRoot(input: {
   canonicalAssets: readonly AiStoryReusableCharacterCanonicalAsset[];
   plannedAssetIds: readonly string[];
+  identityMode?: AiStoryReusableCharacterVersion["identityMode"];
 }): AiStoryReusableCharacterIssue[] {
+  if (input.identityMode === "CHARACTER_DNA") return [];
   const master = input.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER");
   if (!master) {
     return [
@@ -422,7 +485,9 @@ export function validateCharacterAnchorDrift(input: {
   canonicalAssets: readonly AiStoryReusableCharacterCanonicalAsset[];
   continuityAnchors: readonly Pick<AiStoryCharacterContinuityAnchor, "assetId" | "status">[];
   plannedAssetIds: readonly string[];
+  identityMode?: AiStoryReusableCharacterVersion["identityMode"];
 }): AiStoryReusableCharacterIssue[] {
+  if (input.identityMode === "CHARACTER_DNA") return [];
   const master = input.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER");
   const approvedAnchors = new Set(
     input.continuityAnchors.filter((anchor) => anchor.status === "APPROVED").map((anchor) => anchor.assetId)
@@ -451,8 +516,10 @@ export function validateReusableCharacterReference(input: {
   generationMode: "REFERENCE_FREE_T2V" | "FIRST_FRAME_IMAGE_TO_VIDEO" | "REFERENCE_TO_VIDEO";
   hasIdentityGroundedKeyframe: boolean;
   hasExactIdentityReferenceImage: boolean;
+  identityMode?: AiStoryReusableCharacterVersion["identityMode"];
 }): AiStoryReusableCharacterIssue[] {
   if (!input.visibleRecurringCharacter || !input.identityLockRequired) return [];
+  if (input.identityMode === "CHARACTER_DNA" && input.generationMode === "REFERENCE_FREE_T2V") return [];
   const grounded =
     (input.generationMode === "FIRST_FRAME_IMAGE_TO_VIDEO" && input.hasIdentityGroundedKeyframe) ||
     (input.generationMode === "REFERENCE_TO_VIDEO" && input.hasExactIdentityReferenceImage);
@@ -513,7 +580,10 @@ export function planReusableCharacterReferenceBudget(input: {
       };
     }
   }
-  if (!selected.some((need) => need.kind === "CHARACTER_IDENTITY_MASTER" && need.mandatory)) {
+  if (
+    input.needs.some((need) => need.kind === "CHARACTER_IDENTITY_MASTER" && need.mandatory) &&
+    !selected.some((need) => need.kind === "CHARACTER_IDENTITY_MASTER" && need.mandatory)
+  ) {
     return {
       ok: false,
       selected,
@@ -632,7 +702,7 @@ export function evaluateReusableCharacterGenerationAuthority(input: {
   generationMode: "REFERENCE_FREE_T2V" | "FIRST_FRAME_IMAGE_TO_VIDEO" | "REFERENCE_TO_VIDEO";
   hasIdentityGroundedKeyframe: boolean;
   hasExactIdentityReferenceImage: boolean;
-  reusable: Pick<AiStoryReusableCharacterVersion, "reusableCharacterId" | "workspaceId" | "canonicalAssets">;
+  reusable: Pick<AiStoryReusableCharacterVersion, "reusableCharacterId" | "workspaceId" | "canonicalAssets" | "identityMode">;
   binding: Pick<
     AiStoryEpisodeCharacterBinding,
     "reusableCharacterId" | "reusableCharacterVersionId" | "identityFingerprint" | "canonicalAssetIds"
@@ -661,13 +731,18 @@ export function evaluateReusableCharacterGenerationAuthority(input: {
     ...validateCanonicalIdentityRoot({
       canonicalAssets: input.reusable.canonicalAssets,
       plannedAssetIds: input.plannedAssetIds,
+      identityMode: input.reusable.identityMode,
     }),
     ...validateCharacterAnchorDrift({
       canonicalAssets: input.reusable.canonicalAssets,
       continuityAnchors: input.continuityAnchors,
       plannedAssetIds: input.plannedAssetIds,
+      identityMode: input.reusable.identityMode,
     }),
-    ...validateReusableCharacterReference(input),
+    ...validateReusableCharacterReference({
+      ...input,
+      identityMode: input.reusable.identityMode,
+    }),
     ...(budget.ok ? [] : budget.issues),
   ];
   return { issues, grounding: issues.length ? "FAIL" : "PASS" };
@@ -683,6 +758,9 @@ export const AI_STORY_REUSABLE_CHARACTER_COPY = Object.freeze({
   editCharacter: "Edit Character",
   createNewCharacter: "Create new Character",
   identityLocked: "Identity locked",
+  characterDnaCertified: "Character DNA ✓",
+  sourcePhoto: "Source photo",
+  consistencySoft: "EmberOS will keep the Character's key visual traits consistent across Episodes. Small visual differences may occur.",
   saveAsReusable: "Save as reusable Character",
   sameCharacter: "Same Character",
   identityDrift: "Identity drift",

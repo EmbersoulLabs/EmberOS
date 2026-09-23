@@ -4,12 +4,14 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  AI_STORY_CHARACTER_DNA_COPY,
   AI_STORY_CHARACTER_VIRTUALIZER_COPY,
   additionalReferenceRoles,
   type AiStoryReusableCharacterVersion,
 } from "@ceo-agent/shared";
 import { AppShell } from "@/components/AppShell";
 import { CharacterPortrait } from "@/components/ai-story/CharacterPortrait";
+import { CharacterDnaWizard } from "@/components/ai-story/CharacterDnaWizard";
 import { CharacterVirtualizerWizard } from "@/components/ai-story/CharacterVirtualizerWizard";
 import { uploadLibraryFile } from "@/lib/library-upload";
 
@@ -48,6 +50,8 @@ export default function CharacterEditPage() {
   }, [slug, characterId]);
 
   const master = character?.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER");
+  const sourcePortrait = character?.canonicalAssets.find((asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT");
+  const dnaMode = character?.identityMode === "CHARACTER_DNA";
   const canEdit = workspace?.role === "admin" || workspace?.role === "operator";
 
   async function addReference(role: ReturnType<typeof additionalReferenceRoles>[number], file: File) {
@@ -86,23 +90,52 @@ export default function CharacterEditPage() {
       {workspace && character ? (
         <section className="mt-4 space-y-4" data-testid="character-edit">
           <h1 className="text-2xl font-bold text-navy">{character.name}</h1>
-          <div>
-            <h2 className="text-sm font-semibold text-navy">{AI_STORY_CHARACTER_VIRTUALIZER_COPY.identityMaster}</h2>
-            <CharacterPortrait workspaceId={workspace.id} assetId={master?.assetId} label={AI_STORY_CHARACTER_VIRTUALIZER_COPY.identityMaster} />
-            {canEdit ? (
-              <button type="button" className="mt-2 rounded-lg border border-border px-3 py-1.5 text-sm" onClick={() => setVirtualize(true)}>
-                Replace / Create new Character version
-              </button>
-            ) : null}
-          </div>
-          {virtualize ? (
+          {dnaMode ? (
+            <div data-testid="character-dna-edit">
+              <p className="text-sm text-ink-secondary">{AI_STORY_CHARACTER_DNA_COPY.characterDnaCertified}</p>
+              <h2 className="mt-3 text-sm font-semibold text-navy">{AI_STORY_CHARACTER_DNA_COPY.sourcePhoto}</h2>
+              <CharacterPortrait workspaceId={workspace.id} assetId={sourcePortrait?.assetId} label={AI_STORY_CHARACTER_DNA_COPY.sourcePhoto} />
+              {canEdit ? (
+                <button type="button" className="mt-2 rounded-lg border border-border px-3 py-1.5 text-sm" data-testid="character-edit-dna" onClick={() => setVirtualize(true)}>
+                  Edit Character DNA
+                </button>
+              ) : null}
+              {character.characterDna ? (
+                <dl className="mt-4 grid gap-2 text-sm">
+                  <div><dt className="font-medium text-navy">Face</dt><dd>{character.characterDna.face.shape}, {character.characterDna.face.jawline}</dd></div>
+                  <div><dt className="font-medium text-navy">Eyes</dt><dd>{character.characterDna.eyes.shape}, {character.characterDna.eyes.colorDescription}</dd></div>
+                  <div><dt className="font-medium text-navy">Hair</dt><dd>{character.characterDna.hair.length}, {character.characterDna.hair.style}</dd></div>
+                  <div><dt className="font-medium text-navy">Body</dt><dd>{character.characterDna.body.proportionDescription}</dd></div>
+                  <div><dt className="font-medium text-navy">Locked traits</dt><dd>{character.characterDna.mustPreserve.join(", ")}</dd></div>
+                </dl>
+              ) : null}
+            </div>
+          ) : (
+            <div>
+              <h2 className="text-sm font-semibold text-navy">{AI_STORY_CHARACTER_VIRTUALIZER_COPY.identityMaster}</h2>
+              <CharacterPortrait workspaceId={workspace.id} assetId={master?.assetId} label={AI_STORY_CHARACTER_VIRTUALIZER_COPY.identityMaster} />
+              {canEdit ? (
+                <button type="button" className="mt-2 rounded-lg border border-border px-3 py-1.5 text-sm" onClick={() => setVirtualize(true)}>
+                  Replace / Create new Character version
+                </button>
+              ) : null}
+            </div>
+          )}
+          {virtualize && dnaMode ? (
+            <CharacterDnaWizard
+              workspaceId={workspace.id}
+              targetReusableCharacterId={character.reusableCharacterId}
+              onSaved={() => { setVirtualize(false); void loadCharacter(workspace.id); }}
+            />
+          ) : null}
+          {virtualize && !dnaMode ? (
             <CharacterVirtualizerWizard
               workspaceId={workspace.id}
               targetReusableCharacterId={character.reusableCharacterId}
               onSaved={() => { setVirtualize(false); void loadCharacter(workspace.id); }}
             />
           ) : null}
-          <div>
+          {dnaMode ? null : <div>
             <h2 className="text-sm font-semibold text-navy">{AI_STORY_CHARACTER_VIRTUALIZER_COPY.additionalReferences}</h2>
             <div className="mt-2 flex flex-wrap gap-2">
               {additionalReferenceRoles().map((role) => (
@@ -121,7 +154,7 @@ export default function CharacterEditPage() {
                 </label>
               ))}
             </div>
-          </div>
+          </div>}
         </section>
       ) : <p className="mt-4 text-sm text-ink-secondary">Loading…</p>}
     </AppShell>

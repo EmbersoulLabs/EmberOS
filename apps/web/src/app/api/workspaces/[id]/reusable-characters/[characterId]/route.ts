@@ -26,8 +26,8 @@ const EditSchema = z.object({
   mutableLookPolicy: AiStoryCharacterMutableLookPolicySchema,
   canonicalAssets: z.array(z.object({
     assetId: z.string().uuid(),
-    role: z.enum(["IDENTITY_MASTER", "FRONT_PORTRAIT", "THREE_QUARTER", "PROFILE", "FULL_BODY", "EXPRESSION_REFERENCE", "STYLE_REFERENCE"]),
-  }).strict()).min(1),
+    role: z.enum(["IDENTITY_MASTER", "FRONT_PORTRAIT", "THREE_QUARTER", "PROFILE", "FULL_BODY", "EXPRESSION_REFERENCE", "STYLE_REFERENCE", "CHARACTER_SOURCE_PORTRAIT"]),
+  }).strict()),
 }).strict();
 
 async function context(workspaceId: string, mutation: boolean) {

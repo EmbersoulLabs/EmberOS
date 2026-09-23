@@ -1,6 +1,8 @@
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "./canonical-integrity";
 import { buildAiStoryCharacterVersion } from "./ai-story-character.server";
 import type { AiStoryCharacterAuthorityVersion } from "./ai-story-character";
+import { CHARACTER_CONSISTENCY_MODE } from "./ai-story-character-dna";
+import { computeCharacterDnaFingerprint } from "./ai-story-character-dna.server";
 import {
   AI_STORY_REUSABLE_CHARACTER_CONTRACT_VERSION,
   AiStoryEpisodeCharacterBindingSchema,
@@ -21,11 +23,19 @@ export function computeReusableCharacterIdentityFingerprint(input: {
   reusableCharacterId: string;
   identityCore: AiStoryReusableCharacterVersion["identityCore"];
   canonicalAssets: readonly AiStoryReusableCharacterCanonicalAsset[];
+  identityMode?: AiStoryReusableCharacterVersion["identityMode"];
+  characterDnaFingerprint?: string;
 }) {
   return sha256CanonicalIntegrityHash({
     reusableCharacterId: input.reusableCharacterId,
     identityCore: input.identityCore,
     canonicalAssets: input.canonicalAssets,
+    ...(input.identityMode === "CHARACTER_DNA"
+      ? {
+          identityMode: "CHARACTER_DNA",
+          characterDnaFingerprint: input.characterDnaFingerprint,
+        }
+      : {}),
   });
 }
 
@@ -43,11 +53,17 @@ export function computeReusableCharacterFingerprint(
     | "status"
     | "version"
     | "supersedesReusableCharacterVersionId"
+    | "identityMode"
+    | "characterDnaFingerprint"
   >
 ) {
+  const { identityMode, characterDnaFingerprint, ...rest } = input;
   return sha256CanonicalIntegrityHash({
     contractVersion: AI_STORY_REUSABLE_CHARACTER_CONTRACT_VERSION,
-    ...input,
+    ...rest,
+    ...(identityMode === "CHARACTER_DNA"
+      ? { identityMode, characterDnaFingerprint }
+      : {}),
   });
 }
 
@@ -65,8 +81,20 @@ export function buildAiStoryReusableCharacterVersion(input: {
   supersedesReusableCharacterVersionId: string | null;
   createdBy: string;
   createdAt: string;
+  identityMode?: AiStoryReusableCharacterVersion["identityMode"];
+  characterDna?: AiStoryReusableCharacterVersion["characterDna"];
+  characterDnaFingerprint?: string;
+  characterConsistencyMode?: AiStoryReusableCharacterVersion["characterConsistencyMode"];
 }): AiStoryReusableCharacterVersion {
-  const identityFingerprint = computeReusableCharacterIdentityFingerprint(input);
+  const identityMode = input.identityMode ?? "VISUAL_REFERENCE";
+  const characterDnaFingerprint =
+    input.characterDnaFingerprint ??
+    (input.characterDna ? computeCharacterDnaFingerprint(input.characterDna) : undefined);
+  const identityFingerprint = computeReusableCharacterIdentityFingerprint({
+    ...input,
+    identityMode,
+    characterDnaFingerprint,
+  });
   const fingerprint = computeReusableCharacterFingerprint({
     reusableCharacterId: input.reusableCharacterId,
     orgId: input.orgId,
@@ -79,9 +107,15 @@ export function buildAiStoryReusableCharacterVersion(input: {
     status: input.status,
     version: input.version,
     supersedesReusableCharacterVersionId: input.supersedesReusableCharacterVersionId,
+    identityMode,
+    characterDnaFingerprint,
   });
   return AiStoryReusableCharacterVersionSchema.parse({
     ...input,
+    identityMode,
+    characterDnaFingerprint,
+    characterConsistencyMode:
+      identityMode === "CHARACTER_DNA" ? CHARACTER_CONSISTENCY_MODE : input.characterConsistencyMode,
     reusableCharacterVersionId: deterministicUuidFromFingerprint(
       "ai-story-reusable-character-version",
       `${input.reusableCharacterId}:${input.version}:${fingerprint}`
@@ -93,7 +127,9 @@ export function buildAiStoryReusableCharacterVersion(input: {
 }
 
 export function projectReusableCharacterToCampaignFacts(version: AiStoryReusableCharacterVersion) {
-  const master = version.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER")!;
+  const master = version.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER");
+  const sourcePortrait = version.canonicalAssets.find((asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT");
+  const dnaMode = version.identityMode === "CHARACTER_DNA";
   return {
     name: version.name,
     identity: version.identityCore.identityDescription,
@@ -106,12 +142,14 @@ export function projectReusableCharacterToCampaignFacts(version: AiStoryReusable
     personality: "Reusable Workspace Character. Episode Story state is authorized separately.",
     emotionalArc: "May evolve only through authorized Episode Story state.",
     relationships: [] as AiStoryCharacterAuthorityVersion["canonicalFacts"]["relationships"],
-    visualAssetReferences: version.canonicalAssets.map((asset) => ({
-      assetId: asset.assetId,
-      contentHash: asset.contentHash,
-      purpose: asset.role === "IDENTITY_MASTER" ? "CHARACTER_IDENTITY_MASTER" : `CHARACTER_${asset.role}`,
-    })),
-    identityMaster: master,
+    visualAssetReferences: dnaMode
+      ? []
+      : version.canonicalAssets.map((asset) => ({
+          assetId: asset.assetId,
+          contentHash: asset.contentHash,
+          purpose: asset.role === "IDENTITY_MASTER" ? "CHARACTER_IDENTITY_MASTER" : `CHARACTER_${asset.role}`,
+        })),
+    identityMaster: master ?? sourcePortrait ?? version.canonicalAssets[0],
   };
 }
 
@@ -187,7 +225,10 @@ export function buildEpisodeCharacterBinding(input: {
   createdAt: string;
 }): AiStoryEpisodeCharacterBinding {
   const episodeLook = input.episodeLook ?? emptyEpisodeLook();
-  const canonicalAssetIds = input.reusable.canonicalAssets.map((asset) => asset.assetId);
+  const dnaMode = input.reusable.identityMode === "CHARACTER_DNA";
+  const canonicalAssetIds = dnaMode
+    ? []
+    : input.reusable.canonicalAssets.map((asset) => asset.assetId);
   const bindingFingerprint = sha256CanonicalIntegrityHash({
     storyId: input.storyId,
     reusableCharacterVersionId: input.reusable.reusableCharacterVersionId,
@@ -196,6 +237,12 @@ export function buildEpisodeCharacterBinding(input: {
     episodeLook,
     canonicalAssetIds,
     continuityAnchorIds: input.continuityAnchorIds ?? [],
+    ...(dnaMode
+      ? {
+          characterDnaFingerprint: input.reusable.characterDnaFingerprint,
+          sourcePhotoSentToVideoProvider: false,
+        }
+      : {}),
   });
   return AiStoryEpisodeCharacterBindingSchema.parse({
     episodeCharacterBindingId: deterministicUuidFromFingerprint(
@@ -211,6 +258,14 @@ export function buildEpisodeCharacterBinding(input: {
     identityFingerprint: input.reusable.identityFingerprint,
     episodeLook,
     canonicalAssetIds,
+    ...(dnaMode
+      ? {
+          characterDnaFingerprint: input.reusable.characterDnaFingerprint,
+          characterDnaVersionId: input.reusable.reusableCharacterVersionId,
+          sourcePhotoSentToVideoProvider: false,
+          characterConsistencyMode: CHARACTER_CONSISTENCY_MODE,
+        }
+      : {}),
     continuityAnchorIds: input.continuityAnchorIds ?? [],
     bindingFingerprint,
     createdBy: input.createdBy,
@@ -226,7 +281,13 @@ export function compileReusableCharacterLineage(input: {
   groundingPath: AiStoryReusableCharacterLineage["groundingPath"];
   grounding: "PASS" | "FAIL";
 }): AiStoryReusableCharacterLineage {
-  const master = input.reusable.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER")!;
+  const master =
+    input.reusable.canonicalAssets.find((asset) => asset.role === "IDENTITY_MASTER") ??
+    input.reusable.canonicalAssets.find((asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT") ??
+    input.reusable.canonicalAssets[0];
+  if (!master) {
+    throw new Error("Reusable Character lineage requires a provenance asset");
+  }
   return AiStoryReusableCharacterLineageSchema.parse({
     reusableCharacterId: input.reusable.reusableCharacterId,
     reusableCharacterVersionId: input.reusable.reusableCharacterVersionId,
