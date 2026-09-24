@@ -7,6 +7,7 @@ import { isLocale } from "@ceo-agent/shared/i18n";
 import { executeCampaignGenerate } from "@/lib/campaign-generate";
 import { pendingAiExecutionProjection } from "@/lib/ai-execution-truth";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { requireWorkspaceResourceAuthority } from "@/lib/workspace-resource-authority";
 
 export async function POST(
   request: Request,
@@ -29,6 +30,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await requireWorkspaceResourceAuthority({ request, userId: user.id, resourceWorkspaceId: campaign.workspaceId });
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
     let contentLocale: string | undefined;
