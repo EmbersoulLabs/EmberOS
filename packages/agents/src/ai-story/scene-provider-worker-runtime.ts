@@ -307,13 +307,15 @@ export class SceneProviderWorkerRuntime {
 
     this.assertValidatedBundle(bundle);
 
-    const providerAttemptId = computeWorkerAttemptId({
-      providerExecutionId: bundle.providerExecutionId,
-      dispatchId: bundle.dispatch.dispatchId,
-      routingDecisionId: bundle.routingDecision.routingDecisionId,
-      selectedProviderId: bundle.routingDecision.selectedProviderId,
-      adapterVersion: bundle.routingDecision.selectedAdapterVersion,
-    });
+    const providerAttemptId =
+      bundle.envelope.executionContext.trace?.assetAwareProviderAttemptId ??
+      computeWorkerAttemptId({
+        providerExecutionId: bundle.providerExecutionId,
+        dispatchId: bundle.dispatch.dispatchId,
+        routingDecisionId: bundle.routingDecision.routingDecisionId,
+        selectedProviderId: bundle.routingDecision.selectedProviderId,
+        adapterVersion: bundle.routingDecision.selectedAdapterVersion,
+      });
 
     const durableAttempt =
       await this.dependencies.repository.getProviderAttemptAdapterState?.(

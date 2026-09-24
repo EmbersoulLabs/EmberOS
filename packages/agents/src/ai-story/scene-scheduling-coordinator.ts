@@ -1,5 +1,6 @@
 import {
   AiStorySceneCompiledInstructionsSchema,
+  AiStoryCompiledProviderRequestSchema,
   PHASE1_EXECUTION_LOCKED,
   PersistedSceneRoutingDecisionSchema,
   ProviderExecutionSchema,
@@ -22,6 +23,8 @@ import {
   type PostTerminalProviderRetryAuthorizationFact,
   type ProductVisualMaterialSelectionAuthority,
   type AiStoryEffectiveSceneGenerationAuthority,
+  type AiStoryCompiledProviderRequest,
+  type AiStoryModeResolutionSnapshot,
   assertRetryProviderModeMatchesFrozenScene,
 } from "@ceo-agent/shared";
 import {
@@ -56,6 +59,20 @@ import {
   buildCanonicalSceneProviderRequest,
 } from "./canonical-scene-provider-request";
 import { compileImmutableSceneProviderRequest } from "./scene-compiled-provider-request";
+import {
+  prepareAssetAwareCanonicalProviderExecution,
+  scheduleAssetAwareCanonicalProviderExecution,
+} from "./asset-aware-canonical-scheduler";
+import {
+  DurableAiStoryCanonicalExecutionAuthorityRepository,
+  AiStoryAnalysisAuthorityPinSchema,
+} from "./asset-aware-execution-authority";
+import type {
+  AiStoryProviderCapabilityDeclaration,
+  AiStoryProviderCompileIntent,
+  AiStoryProviderResolution,
+} from "./provider-capability-resolution";
+import type { z } from "zod";
 import type {
   PreparedSceneFrameAuthority,
   SceneInputPreparationAuthority,
@@ -143,6 +160,22 @@ export type ScheduleAuthorizedSceneInput = {
   readonly observePersistenceBoundary?: (
     boundary: SceneSchedulingPersistenceBoundary
   ) => void;
+  /**
+   * Already-resolved Phase 6 authority. Its presence selects the immutable
+   * Asset-Aware bridge; absence retains the explicit legacy scheduling path.
+   */
+  readonly assetAwareExecution?: {
+    readonly plannerSnapshot: AiStoryModeResolutionSnapshot;
+    readonly analysisAuthorities: readonly z.input<
+      typeof AiStoryAnalysisAuthorityPinSchema
+    >[];
+    readonly providerResolution: AiStoryProviderResolution;
+    readonly providerCapability: AiStoryProviderCapabilityDeclaration;
+    readonly providerCompileIntent: AiStoryProviderCompileIntent;
+    readonly compiledRequest: AiStoryCompiledProviderRequest;
+    readonly freshness: import("./provider-runtime-dispatch-integration").AiStoryRuntimeFreshness;
+    readonly idempotencyKey: string;
+  };
 };
 
 export type SceneSchedulingCoordinatorDependencies = {
@@ -164,6 +197,14 @@ export type SceneSchedulingCoordinatorDependencies = {
     AiStoryProviderRuntimeRepository,
     | "getCompilationAuthorityBySceneExecutionId"
     | "convergeCompiledRequestForAcceptedBundle"
+    | "acceptCompiledRequest"
+    | "getCompiledRequest"
+    | "acceptAttempt"
+    | "getAttempt"
+    | "claimSubmission"
+    | "updateAttempt"
+    | "acceptExecutionAuthorityRecord"
+    | "getExecutionAuthorityRecord"
   > & Partial<Pick<
     AiStoryProviderRuntimeRepository,
     "getReferenceAssetAuthorities" | "getCharacterDnaCompilationAuthority"
@@ -393,6 +434,73 @@ function buildRoutingDecision(input: {
   });
 }
 
+function buildAssetAwareRoutingDecision(input: {
+  readonly fact: RuntimeAuthorizedFact;
+  readonly sceneExecutionId: string;
+  readonly resolution: AiStoryProviderResolution;
+  readonly capability: AiStoryProviderCapabilityDeclaration;
+  readonly policy: ProviderRoutingPolicy;
+  readonly decidedAt: string;
+}): PersistedSceneRoutingDecision {
+  const providerId = input.resolution.selectedProviderId;
+  const implementationId = input.resolution.selectedImplementationId;
+  if (
+    input.resolution.status !== "SELECTED" ||
+    !providerId ||
+    !implementationId ||
+    providerId !== input.capability.providerId ||
+    implementationId !== input.capability.implementationId
+  ) {
+    throw new SceneSchedulingError(
+      "NO_EXECUTABLE_PROVIDER",
+      "Asset-Aware execution requires one exact pinned Provider capability"
+    );
+  }
+  const registrySnapshotHash = canonicalPersistenceHash({
+    kind: "ai-story-asset-aware-provider-capability",
+    declaration: input.capability,
+  });
+  const deterministicIntegrityHash = canonicalPersistenceHash({
+    kind: "ai-story-asset-aware-routing-decision",
+    executionPlanId: input.fact.executionPlanId,
+    sceneExecutionId: input.sceneExecutionId,
+    runtimeAuthorizationId: input.fact.runtimeAuthorizationId,
+    providerResolutionId: input.resolution.providerResolutionId,
+    selectedProviderId: providerId,
+    selectedAdapterVersion: input.capability.adapterVersion,
+    registrySnapshotHash,
+    automaticFallbackEnabled: false,
+  });
+  return PersistedSceneRoutingDecisionSchema.parse({
+    routingDecisionId: deterministicPersistenceUuid(
+      "ai-story-asset-aware-routing-decision",
+      deterministicIntegrityHash
+    ),
+    executionPlanId: input.fact.executionPlanId,
+    sceneExecutionId: input.sceneExecutionId,
+    runtimeAuthorizationId: input.fact.runtimeAuthorizationId,
+    capabilityId: SCENE_PROVIDER_CAPABILITY_ID,
+    capabilityVersion: SCENE_PROVIDER_CAPABILITY_VERSION,
+    selectedProviderId: providerId,
+    selectedAdapterVersion: input.capability.adapterVersion,
+    routerVersion: SCENE_ROUTER_VERSION,
+    registrySnapshotHash,
+    capabilitySnapshot: input.capability,
+    policySnapshot: input.policy,
+    candidateSummary: [{
+      providerId,
+      adapterVersion: input.capability.adapterVersion,
+      selected: true,
+      exclusionCodes: [],
+    }],
+    decidedAt: input.decidedAt,
+    deterministicIntegrityHash,
+    automaticFallbackEnabled: false,
+    contractVersion: SCENE_ROUTING_DECISION_CONTRACT_VERSION,
+    ownership: input.fact.ownership,
+  });
+}
+
 function buildProviderExecution(input: {
   readonly canonicalRequest: CanonicalProviderRequest;
   readonly correlationId: string;
@@ -507,6 +615,14 @@ export class SceneSchedulingCoordinator {
     | "getReferenceAssetAuthorities"
     | "getCharacterDnaCompilationAuthority"
     | "convergeCompiledRequestForAcceptedBundle"
+    | "acceptCompiledRequest"
+    | "getCompiledRequest"
+    | "acceptAttempt"
+    | "getAttempt"
+    | "claimSubmission"
+    | "updateAttempt"
+    | "acceptExecutionAuthorityRecord"
+    | "getExecutionAuthorityRecord"
   >;
   private readonly now: () => Date;
 
@@ -534,6 +650,14 @@ export class SceneSchedulingCoordinator {
               input
             )),
       convergeCompiledRequestForAcceptedBundle: dependencies.providerRuntimeRepo?.convergeCompiledRequestForAcceptedBundle.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().convergeCompiledRequestForAcceptedBundle(input)),
+      acceptCompiledRequest: dependencies.providerRuntimeRepo?.acceptCompiledRequest.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().acceptCompiledRequest(input)),
+      getCompiledRequest: dependencies.providerRuntimeRepo?.getCompiledRequest.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().getCompiledRequest(input)),
+      acceptAttempt: dependencies.providerRuntimeRepo?.acceptAttempt.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().acceptAttempt(input)),
+      getAttempt: dependencies.providerRuntimeRepo?.getAttempt.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().getAttempt(input)),
+      claimSubmission: dependencies.providerRuntimeRepo?.claimSubmission.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().claimSubmission(input)),
+      updateAttempt: dependencies.providerRuntimeRepo?.updateAttempt.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().updateAttempt(input)),
+      acceptExecutionAuthorityRecord: dependencies.providerRuntimeRepo?.acceptExecutionAuthorityRecord.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().acceptExecutionAuthorityRecord(input)),
+      getExecutionAuthorityRecord: dependencies.providerRuntimeRepo?.getExecutionAuthorityRecord.bind(dependencies.providerRuntimeRepo) ?? ((input) => new AiStoryProviderRuntimeRepository().getExecutionAuthorityRecord(input)),
     };
     this.now = dependencies.now ?? (() => new Date());
   }
@@ -791,6 +915,18 @@ export class SceneSchedulingCoordinator {
       }
       const acceptedRoutingDecision = existingRoutingDecision
         ? existingRoutingDecision
+        : input.assetAwareExecution
+          ? await measurePreTransaction(
+              "routing_request_build",
+              () => buildAssetAwareRoutingDecision({
+                fact,
+                sceneExecutionId: input.sceneExecutionId,
+                resolution: input.assetAwareExecution!.providerResolution,
+                capability: input.assetAwareExecution!.providerCapability,
+                policy,
+                decidedAt: input.assetAwareExecution!.providerResolution.resolvedAt,
+              })
+            )
         : await measurePreTransaction(
             "routing_request_build",
             async () => buildRoutingDecision({
@@ -811,6 +947,18 @@ export class SceneSchedulingCoordinator {
               decidedAt: this.now().toISOString(),
             })
           );
+      if (
+        input.assetAwareExecution &&
+        (acceptedRoutingDecision.selectedProviderId !==
+          input.assetAwareExecution.providerCapability.providerId ||
+          acceptedRoutingDecision.selectedAdapterVersion !==
+            input.assetAwareExecution.providerCapability.adapterVersion)
+      ) {
+        throw new SceneSchedulingError(
+          "IDENTITY_CONFLICT",
+          "Persisted routing decision differs from immutable Asset-Aware Provider authority"
+        );
+      }
       // Derive schedule clocks from the authoritative routing decision time so
       // concurrent equivalent schedules converge on identical identity payloads.
       // A post-terminal retry is a new append-only execution generation. Its
@@ -853,6 +1001,11 @@ export class SceneSchedulingCoordinator {
         retryGeneration,
         ...(retryGeneration > 1 ? { retryAuthorityHash: instructionHash } : {}),
       });
+      const compiledProviderRequest = input.assetAwareExecution
+        ? AiStoryCompiledProviderRequestSchema.parse(
+            input.assetAwareExecution.compiledRequest
+          )
+        : await (async () => {
       const persistedCompilationAuthority =
         await this.providerRuntimeRepo.getCompilationAuthorityBySceneExecutionId({
           sceneExecutionId: input.sceneExecutionId,
@@ -966,7 +1119,7 @@ export class SceneSchedulingCoordinator {
               }
             : {}),
       }));
-      const compiledProviderRequest = compileImmutableSceneProviderRequest({
+      return compileImmutableSceneProviderRequest({
           providerId: acceptedRoutingDecision.selectedProviderId,
           intent: sceneIntent,
           instructions,
@@ -985,6 +1138,22 @@ export class SceneSchedulingCoordinator {
               }
             : {}),
         });
+      })();
+      if (
+        compiledProviderRequest.orgId !== fact.ownership.orgId ||
+        compiledProviderRequest.workspaceId !== fact.ownership.workspaceId ||
+        compiledProviderRequest.campaignId !== fact.ownership.campaignId ||
+        compiledProviderRequest.storyId !== fact.ownership.storyId ||
+        compiledProviderRequest.storyVersionId !== fact.ownership.storyVersionId ||
+        compiledProviderRequest.sceneExecutionId !== input.sceneExecutionId ||
+        compiledProviderRequest.providerId !== acceptedRoutingDecision.selectedProviderId ||
+        compiledProviderRequest.adapterVersion !== acceptedRoutingDecision.selectedAdapterVersion
+      ) {
+        throw new SceneSchedulingError(
+          "IDENTITY_CONFLICT",
+          "Compiled Provider request differs from the authorized Scene and Provider authority"
+        );
+      }
       if (input.retryInputRevision?.providerModeRequirement === "REFERENCE_FREE_T2V") {
         if (
           compiledProviderRequest.generationMode !== "TEXT_TO_VIDEO" ||
@@ -1006,11 +1175,59 @@ export class SceneSchedulingCoordinator {
           "FIRST_FRAME_I2V retry must remain image-conditioned"
         );
       }
+      const providerExecution = buildProviderExecution({
+        canonicalRequest: request.canonicalRequest,
+        correlationId,
+        outboxJobId,
+        createdAt: scheduledAt,
+      });
+      const assetAwarePrepared = input.assetAwareExecution
+        ? await prepareAssetAwareCanonicalProviderExecution({
+            ...input.assetAwareExecution,
+            providerExecutionId: providerExecution.identity.executionId,
+            attemptNumber: retryGeneration,
+            scheduledAt,
+          })
+        : null;
+      const persistAssetAwareExecution = async (): Promise<void> => {
+        if (!input.assetAwareExecution || !assetAwarePrepared) {
+          return;
+        }
+        const durable = await scheduleAssetAwareCanonicalProviderExecution({
+          ...input.assetAwareExecution,
+          providerExecutionId: providerExecution.identity.executionId,
+          attemptNumber: retryGeneration,
+          scheduledAt,
+          runtimeRepository: this.providerRuntimeRepo,
+          authorityRepository:
+            new DurableAiStoryCanonicalExecutionAuthorityRepository(
+              this.providerRuntimeRepo
+            ),
+        });
+        if (
+          durable.authority.executionAuthorityId !==
+            assetAwarePrepared.authority.executionAuthorityId ||
+          durable.authority.authorityFingerprint !==
+            assetAwarePrepared.authority.authorityFingerprint ||
+          durable.attempt.providerAttemptId !==
+            assetAwarePrepared.attempt.providerAttemptId ||
+          durable.job.executionAuthorityId !==
+            assetAwarePrepared.job.executionAuthorityId ||
+          durable.job.requestFingerprint !==
+            assetAwarePrepared.job.requestFingerprint
+        ) {
+          throw new SceneSchedulingError(
+            "IDENTITY_CONFLICT",
+            "Durable Asset-Aware execution authority differs from the prepared queue authority"
+          );
+        }
+      };
       if (acceptedBundle) {
         await this.providerRuntimeRepo.convergeCompiledRequestForAcceptedBundle({
           bundle: acceptedBundle,
           compiledProviderRequest,
         });
+        await persistAssetAwareExecution();
         return SceneSchedulingBundleSchema.parse({
           ...acceptedBundle,
           replayed: true,
@@ -1019,12 +1236,6 @@ export class SceneSchedulingCoordinator {
           automaticFallbackEnabled: false,
         });
       }
-      const providerExecution = buildProviderExecution({
-        canonicalRequest: request.canonicalRequest,
-        correlationId,
-        outboxJobId,
-        createdAt: scheduledAt,
-      });
       const envelope = await createExecutionEnvelope({
         version: "1",
         envelopeId,
@@ -1049,6 +1260,25 @@ export class SceneSchedulingCoordinator {
             compiledRequestId: compiledProviderRequest.compiledRequestId,
             compiledRequestFingerprint:
               compiledProviderRequest.requestFingerprint,
+            ...(assetAwarePrepared
+              ? {
+                  executionAuthorityId:
+                    assetAwarePrepared.authority.executionAuthorityId,
+                  executionAuthorityFingerprint:
+                    assetAwarePrepared.authority.authorityFingerprint,
+                  assetAwareProviderAttemptId:
+                    assetAwarePrepared.attempt.providerAttemptId,
+                  plannerSnapshotId:
+                    assetAwarePrepared.authority.plannerSnapshot
+                      .plannerSnapshotId,
+                  providerResolutionId:
+                    assetAwarePrepared.authority.providerResolution
+                      .providerResolutionId,
+                  compileIntentId:
+                    assetAwarePrepared.authority.providerCompileIntent
+                      .compileIntentId,
+                }
+              : {}),
             ...(input.retryInputRevision
               ? { retryInputRevisionId: input.retryInputRevision.retryInputRevisionId }
               : {}),
@@ -1120,6 +1350,12 @@ export class SceneSchedulingCoordinator {
           input.observePersistenceBoundary?.(boundary);
         },
       });
+      // The Provider Execution/Envelope/Outbox transaction must commit before
+      // the immutable Asset-Aware Attempt anchor is inserted because the
+      // Attempt owns a foreign key to that exact Provider Execution. The
+      // prepared identity above is deterministic and already pinned into the
+      // envelope; this durable write must converge on precisely those IDs.
+      await persistAssetAwareExecution();
 
       console.info(JSON.stringify({
         event: "AI_STORY_POST_RELEASE_SCHEDULING_BOUNDARY_COMPLETED",
