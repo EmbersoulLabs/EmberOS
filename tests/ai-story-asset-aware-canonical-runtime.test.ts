@@ -25,6 +25,7 @@ import {
 } from "@ceo-agent/agents";
 import {
   AiStoryAssetAwareExecutionPlannerRepository,
+  SceneSchedulingError,
   closeDb,
 } from "@ceo-agent/db";
 import {
@@ -42,6 +43,19 @@ import {
   runAiStoryProviderWorkerCycle,
 } from "../apps/worker/src/ai-story-provider-worker-cycle";
 import { authorizeAndExecuteExecutionPlan } from "../packages/agents/src/ai-story/authorize-and-execute-execution-plan";
+import { validateAiStoryAuthorizedSchedulingAuthority } from "../packages/agents/src/ai-story/asset-aware-execution-authority";
+import { SceneSchedulingCoordinator } from "../packages/agents/src/ai-story/scene-scheduling-coordinator";
+import * as sceneCompiledProviderRequest from "../packages/agents/src/ai-story/scene-compiled-provider-request";
+import * as providerCapabilityResolution from "../packages/agents/src/ai-story/provider-capability-resolution";
+import * as assetAnalysisService from "../packages/agents/src/ai-story/asset-analysis-service";
+import * as characterDnaAnalysis from "../packages/agents/src/ai-story/character-dna-analysis";
+import * as assetMatching from "../packages/shared/src/ai-story-asset-matching";
+import * as modeResolution from "../packages/shared/src/ai-story-capability-mode-resolution";
+import {
+  AI_STORY_DIFFERENTIATED_RETRY_CONTRACT_VERSION,
+  type SceneAttemptInputRevisionFact,
+} from "../packages/shared/src/ai-story-differentiated-retry";
+import { toAiStoryExecutionAuthorizationEvidence } from "../packages/shared/src/ai-story-execution-authorization";
 import {
   RUN_DB_INTEGRATION,
   createIntegrationSql,
@@ -1352,5 +1366,303 @@ describeIntegration("Ticket A Repair 01 true production Episode B path", () => {
     expect(request.referenceMappings).toHaveLength(0);
     expect(request.structuredRequest.generateAudio).toBe(true);
     expect(request.blockedCapabilities).not.toContain("AUDIO");
+
+    const [initialDurable] = await sql<
+      {
+        executions: number;
+        attempts: number;
+        envelopes: number;
+        outbox: number;
+      }[]
+    >`
+      select
+        (select count(*)::int from provider_executions where workspace_id = ${PHASE_2A_IDS.workspaceId}) as executions,
+        (select count(*)::int from provider_attempts a
+          join provider_executions e on e.execution_id = a.execution_id
+          where e.workspace_id = ${PHASE_2A_IDS.workspaceId}) as attempts,
+        (select count(*)::int from provider_execution_envelopes where workspace_id = ${PHASE_2A_IDS.workspaceId}) as envelopes,
+        (select count(*)::int from provider_outbox_jobs j
+          join provider_executions e on e.execution_id = j.execution_id
+          where e.workspace_id = ${PHASE_2A_IDS.workspaceId}) as outbox
+    `;
+    expect(initialDurable?.executions).toBeGreaterThan(0);
+    expect(initialDurable?.attempts).toBeGreaterThan(0);
+    expect(initialDurable?.envelopes).toBeGreaterThan(0);
+    expect(initialDurable?.outbox).toBeGreaterThan(0);
+
+    const [runtimeFact] = await sql<{ runtime_authorization_id: string }[]>`
+      select runtime_authorization_id
+      from ai_story_runtime_authorized_facts
+      where execution_plan_id = ${ready.executionPlanId}
+    `;
+    const persisted = await authorityRepository.getAuthorizedSchedulingAuthority({
+      orgId: authority.orgId,
+      workspaceId: authority.workspaceId,
+      executionPlanId: authority.executionPlanId,
+      sceneExecutionId: authority.sceneExecutionId,
+    });
+    expect(persisted).not.toBeNull();
+    const persistedAuthority = validateAiStoryAuthorizedSchedulingAuthority(
+      persisted!.authority
+    );
+    const assetAwareExecution = {
+      plannerSnapshot: persistedAuthority.plannerSnapshot,
+      analysisAuthorities: persistedAuthority.analysisAuthorities,
+      providerResolution: persistedAuthority.providerResolution,
+      providerCapability: persistedAuthority.providerCapability,
+      providerCompileIntent: persistedAuthority.providerCompileIntent,
+      compiledRequest: persistedAuthority.compiledRequest,
+      freshness: persistedAuthority.freshness,
+      idempotencyKey: persistedAuthority.idempotencyKey,
+    };
+    const executionAuthorization = toAiStoryExecutionAuthorizationEvidence({
+      allowed: true,
+      accessMode: "ops",
+      settlementMode: "none",
+      authorizedBy: "ACTIVE_PLATFORM_ADMIN",
+      policyVersion: "ai-story-exec-03.v1",
+      reason: "phase6-production-path-dry-run",
+      providerCostAccounting: "ALLOWED",
+    });
+    const scheduling = new SceneSchedulingCoordinator({
+      router: providerRouter as never,
+    });
+    const retryBase = {
+      executionPlanId: ready.executionPlanId,
+      sceneExecutionId: authority.sceneExecutionId,
+      runtimeAuthorizationId: runtimeFact!.runtime_authorization_id,
+      executionAuthorization,
+      actorUserId: PR32_USER_A,
+      assetAwareExecution,
+    };
+
+    await expect(
+      scheduling.scheduleAuthorizedScene({
+        ...retryBase,
+        retryGeneration: 2,
+      })
+    ).rejects.toBeInstanceOf(SceneSchedulingError);
+    expect(providerRouter.route).not.toHaveBeenCalled();
+
+    const compileSpy = vi.spyOn(
+      sceneCompiledProviderRequest,
+      "compileImmutableSceneProviderRequest"
+    );
+    const providerResolutionSpy = vi.spyOn(
+      providerCapabilityResolution,
+      "resolveAiStoryProvider"
+    );
+    const modeSpy = vi.spyOn(modeResolution, "resolveAiStoryGenerationMode");
+    const matchingSpy = vi.spyOn(assetMatching, "matchAnalyzedAssetsToStory");
+    const analysisSpy = vi.spyOn(
+      assetAnalysisService.AssetAnalysisService.prototype,
+      "analyzeFinalizedAsset"
+    );
+    const dnaSpy = vi.spyOn(
+      characterDnaAnalysis,
+      "resolveCharacterDnaAnalysisProvider"
+    );
+
+    const revision: SceneAttemptInputRevisionFact = {
+      retryInputRevisionId: id(910),
+      orgId: authority.orgId,
+      workspaceId: authority.workspaceId,
+      campaignId: authority.campaignId,
+      storyId: authority.storyId,
+      executionPlanId: authority.executionPlanId,
+      sceneExecutionId: authority.sceneExecutionId,
+      revisionNumber: 2,
+      parentRevisionId: null,
+      sourceAttemptId: authority.sceneExecutionId,
+      sourceReviewId: id(911),
+      retryReason: "COMPOSITION_UNACCEPTABLE",
+      creativeDirection: {
+        visualRole: "Hold the original scene purpose",
+        cameraInstruction: "Keep the original camera",
+        focusProgression: ["opening frame", "closing frame"],
+        shotEmphasis: "Preserve the authorized subject",
+      },
+      canonicalFingerprint: hash("retry"),
+      createdBy: PR32_USER_A,
+      createdAt: "2026-09-24T08:00:00.000Z",
+      contractVersion: AI_STORY_DIFFERENTIATED_RETRY_CONTRACT_VERSION,
+      providerModeRequirement: "REFERENCE_FREE_T2V",
+      productAssetId: null,
+      productAuthorityHash: null,
+      visualAuthorityCertificationHash: null,
+    };
+    const retryBundle = await scheduling.scheduleAuthorizedScene({
+      ...retryBase,
+      retryGeneration: 2,
+      retryInputRevision: revision,
+    });
+    expect(retryBundle.replayed).toBe(false);
+    expect(retryBundle.outboxJobId).not.toBe("");
+    expect(compileSpy).not.toHaveBeenCalled();
+    expect(providerResolutionSpy).not.toHaveBeenCalled();
+    expect(modeSpy).not.toHaveBeenCalled();
+    expect(matchingSpy).not.toHaveBeenCalled();
+    expect(analysisSpy).not.toHaveBeenCalled();
+    expect(dnaSpy).not.toHaveBeenCalled();
+    expect(providerRouter.route).not.toHaveBeenCalled();
+
+    const [retryDurable] = await sql<
+      { executions: number; attempts: number; envelopes: number; outbox: number }[]
+    >`
+      select
+        (select count(*)::int from provider_executions where workspace_id = ${PHASE_2A_IDS.workspaceId}) as executions,
+        (select count(*)::int from provider_attempts a
+          join provider_executions e on e.execution_id = a.execution_id
+          where e.workspace_id = ${PHASE_2A_IDS.workspaceId}) as attempts,
+        (select count(*)::int from provider_execution_envelopes where workspace_id = ${PHASE_2A_IDS.workspaceId}) as envelopes,
+        (select count(*)::int from provider_outbox_jobs j
+          join provider_executions e on e.execution_id = j.execution_id
+          where e.workspace_id = ${PHASE_2A_IDS.workspaceId}) as outbox
+    `;
+    expect(retryDurable?.executions).toBe((initialDurable?.executions ?? 0) + 1);
+    expect(retryDurable?.attempts).toBe((initialDurable?.attempts ?? 0) + 1);
+    expect(retryDurable?.envelopes).toBe((initialDurable?.envelopes ?? 0) + 1);
+    expect(retryDurable?.outbox).toBe((initialDurable?.outbox ?? 0) + 1);
+
+    const [retryAuthorityRow] = await sql<{ provider_metadata: Record<string, unknown> }[]>`
+      select provider_metadata
+      from provider_attempts
+      where execution_id = ${retryBundle.providerExecutionId}
+    `;
+    const retryAuthority = (
+      retryAuthorityRow?.provider_metadata?.assetAwareExecutionAuthority as {
+        authority?: {
+          plannerSnapshot?: {
+            plannerSnapshotId?: string;
+            storyVersionId?: string;
+            matchingResultId?: string;
+            audioIntent?: string;
+            characterDnaAuthority?: { characterDnaFingerprint?: string };
+          };
+          analysisAuthorities?: unknown;
+          providerResolution?: { providerResolutionId?: string };
+          providerCapability?: unknown;
+          providerCompileIntent?: { compileIntentId?: string };
+          compiledRequestId?: string;
+          requestFingerprint?: string;
+        };
+      }
+    )?.authority;
+    expect(retryAuthority?.plannerSnapshot?.plannerSnapshotId).toBe(
+      persistedAuthority.plannerSnapshot.plannerSnapshotId
+    );
+    expect(retryAuthority?.plannerSnapshot?.storyVersionId).toBe(
+      persistedAuthority.plannerSnapshot.storyVersionId
+    );
+    expect(retryAuthority?.plannerSnapshot?.matchingResultId).toBe(
+      persistedAuthority.plannerSnapshot.matchingResultId
+    );
+    expect(retryAuthority?.plannerSnapshot?.audioIntent).toBe(
+      persistedAuthority.plannerSnapshot.audioIntent
+    );
+    expect(
+      retryAuthority?.plannerSnapshot?.characterDnaAuthority?.characterDnaFingerprint
+    ).toBe(
+      persistedAuthority.plannerSnapshot.characterDnaAuthority
+        ?.characterDnaFingerprint
+    );
+    expect(retryAuthority?.analysisAuthorities).toEqual(
+      persistedAuthority.analysisAuthorities
+    );
+    expect(retryAuthority?.providerResolution?.providerResolutionId).toBe(
+      persistedAuthority.providerResolution.providerResolutionId
+    );
+    expect(retryAuthority?.providerCapability).toEqual(
+      persistedAuthority.providerCapability
+    );
+    expect(retryAuthority?.providerCompileIntent?.compileIntentId).toBe(
+      persistedAuthority.providerCompileIntent.compileIntentId
+    );
+    expect(retryAuthority?.compiledRequestId).toBe(
+      persistedAuthority.compiledRequest.compiledRequestId
+    );
+    expect(retryAuthority?.requestFingerprint).toBe(
+      persistedAuthority.compiledRequest.requestFingerprint
+    );
+
+    await sql`
+      update provider_outbox_jobs
+      set status = 'COMPLETED', updated_at = now()
+      where job_id <> ${retryBundle.outboxJobId}
+        and execution_id in (
+          select execution_id from provider_executions
+          where workspace_id = ${PHASE_2A_IDS.workspaceId}
+        )
+    `;
+    let retryBoundary:
+      | "LEGACY"
+      | "AUTHORIZED_PROVIDER_DISPATCH"
+      | undefined;
+    let retryDispatchId: string | undefined;
+    const retryWorker = await runAiStoryProviderWorkerCycle({
+      leaseOwner: "phase6-repair-retry-worker",
+      postGenerationQcRecovery: { async recoverNext() {} },
+      coordinator: {
+        async continueFromDispatch() {
+          return { status: "WAITING" };
+        },
+      } as never,
+      assetAwareDispatchAuthorizer: async (dispatchId) => {
+        retryDispatchId = dispatchId;
+        retryBoundary = await authorizeAssetAwareProductionDispatch(
+          dispatchId,
+          {
+            async loadCurrentExecutionAuthorityState({ authority: current }) {
+              return currentState(current);
+            },
+          }
+        );
+        return retryBoundary;
+      },
+    });
+    expect(retryWorker.dispatchStatus).toBe("DISPATCHED");
+    const [retryDispatch] = await sql<{ job_id: string }[]>`
+      select job_id
+      from provider_execution_dispatches
+      where dispatch_id = ${retryDispatchId ?? ""}
+    `;
+    expect(retryDispatch?.job_id).toBe(retryBundle.outboxJobId);
+    expect(retryWorker.ownership).toBe("AI_STORY_SCENE");
+    expect(retryBoundary).toBe("AUTHORIZED_PROVIDER_DISPATCH");
+    expect(compileSpy).not.toHaveBeenCalled();
+    expect(providerRouter.route).not.toHaveBeenCalled();
+
+    const mutatedPlanner = {
+      ...persistedAuthority.plannerSnapshot,
+      characterDnaAuthority: {
+        ...persistedAuthority.plannerSnapshot.characterDnaAuthority!,
+        characterDnaFingerprint: hash("d"),
+      },
+    };
+    await expect(
+      scheduling.scheduleAuthorizedScene({
+        ...retryBase,
+        retryGeneration: 3,
+        retryInputRevision: { ...revision, revisionNumber: 3 },
+        assetAwareExecution: {
+          ...assetAwareExecution,
+          plannerSnapshot: mutatedPlanner,
+        },
+      })
+    ).rejects.toBeInstanceOf(AiStoryExecutionAuthorityError);
+    expect(providerRouter.route).not.toHaveBeenCalled();
+    expect(compileSpy).not.toHaveBeenCalled();
+    expect(providerResolutionSpy).not.toHaveBeenCalled();
+    expect(modeSpy).not.toHaveBeenCalled();
+    expect(matchingSpy).not.toHaveBeenCalled();
+    expect(analysisSpy).not.toHaveBeenCalled();
+    expect(dnaSpy).not.toHaveBeenCalled();
+    const [afterMutation] = await sql<{ outbox: number }[]>`
+      select count(*)::int as outbox
+      from provider_outbox_jobs j
+      join provider_executions e on e.execution_id = j.execution_id
+      where e.workspace_id = ${PHASE_2A_IDS.workspaceId}
+    `;
+    expect(afterMutation?.outbox).toBe(retryDurable?.outbox);
   }, 180_000);
 });

@@ -1181,9 +1181,18 @@ export class SceneSchedulingCoordinator {
         outboxJobId,
         createdAt: scheduledAt,
       });
+      // The immutable scheduling key identifies the plan. A human retry is a
+      // new attempt, and the attempt table's idempotency unique key cannot
+      // store that second attempt under the original key.
+      const assetAwareAttemptIdempotencyKey = input.assetAwareExecution
+        ? retryGeneration > 1
+          ? `${input.assetAwareExecution.idempotencyKey}:retry-generation:${retryGeneration}`
+          : input.assetAwareExecution.idempotencyKey
+        : undefined;
       const assetAwarePrepared = input.assetAwareExecution
         ? await prepareAssetAwareCanonicalProviderExecution({
             ...input.assetAwareExecution,
+            idempotencyKey: assetAwareAttemptIdempotencyKey!,
             providerExecutionId: providerExecution.identity.executionId,
             attemptNumber: retryGeneration,
             scheduledAt,
@@ -1195,6 +1204,7 @@ export class SceneSchedulingCoordinator {
         }
         const durable = await scheduleAssetAwareCanonicalProviderExecution({
           ...input.assetAwareExecution,
+          idempotencyKey: assetAwareAttemptIdempotencyKey!,
           providerExecutionId: providerExecution.identity.executionId,
           attemptNumber: retryGeneration,
           scheduledAt,
