@@ -83,6 +83,93 @@ export async function acceptAiStoryCompiledRequest(
 export class AiStoryProviderRuntimeRepository {
   constructor(private readonly db: Db = getDb()) {}
 
+  /**
+   * Phase 6 durable bridge. The authority is stored beside its immutable
+   * Provider Attempt anchor so the existing outbox/Worker lineage can carry
+   * references instead of copying mutable planning state into the queue.
+   */
+  async acceptExecutionAuthorityRecord(input: {
+    readonly providerAttemptId: string;
+    readonly executionAuthorityId: string;
+    readonly authorityFingerprint: string;
+    readonly authority: unknown;
+    readonly job: unknown;
+  }): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ providerMetadata: schema.providerAttempts.providerMetadata })
+        .from(schema.providerAttempts)
+        .where(eq(schema.providerAttempts.attemptId, input.providerAttemptId))
+        .limit(1)
+        .for("update");
+      if (!row) {
+        throw new AiStoryProviderRuntimePersistenceError(
+          "ATTEMPT_CONFLICT",
+          "Execution authority requires its exact Provider Attempt anchor"
+        );
+      }
+      const existing = row.providerMetadata?.assetAwareExecutionAuthority as
+        | {
+            executionAuthorityId?: string;
+            authorityFingerprint?: string;
+            authority?: unknown;
+            job?: unknown;
+          }
+        | undefined;
+      if (existing) {
+        if (
+          existing.executionAuthorityId !== input.executionAuthorityId ||
+          existing.authorityFingerprint !== input.authorityFingerprint ||
+          !same(existing.authority, input.authority) ||
+          !same(existing.job, input.job)
+        ) {
+          throw new AiStoryProviderRuntimePersistenceError(
+            "IMMUTABLE_CONFLICT",
+            "Provider Attempt execution authority conflicts with persisted authority"
+          );
+        }
+        return;
+      }
+      await tx
+        .update(schema.providerAttempts)
+        .set({
+          providerMetadata: {
+            ...row.providerMetadata,
+            assetAwareExecutionAuthority: {
+              executionAuthorityId: input.executionAuthorityId,
+              authorityFingerprint: input.authorityFingerprint,
+              authority: input.authority,
+              job: input.job,
+            },
+          },
+        })
+        .where(eq(schema.providerAttempts.attemptId, input.providerAttemptId));
+    });
+  }
+
+  async getExecutionAuthorityRecord(input: {
+    readonly providerAttemptId: string;
+    readonly executionAuthorityId: string;
+  }): Promise<{ readonly authority: unknown; readonly job: unknown } | null> {
+    const [row] = await this.db
+      .select({ providerMetadata: schema.providerAttempts.providerMetadata })
+      .from(schema.providerAttempts)
+      .where(eq(schema.providerAttempts.attemptId, input.providerAttemptId))
+      .limit(1);
+    const record = row?.providerMetadata?.assetAwareExecutionAuthority as
+      | {
+          executionAuthorityId?: string;
+          authority?: unknown;
+          job?: unknown;
+        }
+      | undefined;
+    return record?.executionAuthorityId === input.executionAuthorityId &&
+      record.authority &&
+      record.job
+      ? { authority: record.authority, job: record.job }
+      : null;
+  }
+
   async acceptCompiledRequest(input: AiStoryCompiledProviderRequest): Promise<AiStoryCompiledProviderRequest> {
     return acceptAiStoryCompiledRequest(this.db, input);
   }

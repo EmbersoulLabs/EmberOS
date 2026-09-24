@@ -690,6 +690,248 @@ export const aiStoryVersions = pgTable(
   ]
 );
 
+/** Immutable, content-addressed Asset intelligence. Reused across Stories and duplicate Asset rows. */
+export const assetAnalysisSnapshots = pgTable(
+  "asset_analysis_snapshots",
+  {
+    snapshotId: uuid("snapshot_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    sourceAssetId: uuid("source_asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    analyzedContentHash: text("analyzed_content_hash").notNull(),
+    analyzerVersion: text("analyzer_version").notNull(),
+    schemaVersion: text("schema_version").notNull(),
+    analysis: jsonb("analysis")
+      .$type<import("@ceo-agent/shared").AiStoryAssetAnalysisSnapshot["analysis"]>()
+      .notNull(),
+    analysisFingerprint: text("analysis_fingerprint").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("asset_analysis_snapshot_cache_unique").on(
+      t.workspaceId,
+      t.analyzedContentHash,
+      t.analyzerVersion,
+      t.schemaVersion
+    ),
+    unique("asset_analysis_snapshot_fingerprint_unique").on(
+      t.workspaceId,
+      t.analysisFingerprint
+    ),
+    index("asset_analysis_snapshot_asset_idx").on(
+      t.workspaceId,
+      t.sourceAssetId,
+      t.createdAt
+    ),
+  ]
+);
+
+/** Append-only analyzer invocation outcome. Upload remains durable when analysis fails. */
+export const assetAnalysisAttempts = pgTable(
+  "asset_analysis_attempts",
+  {
+    attemptId: uuid("attempt_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    contentHash: text("content_hash").notNull(),
+    analyzerVersion: text("analyzer_version").notNull(),
+    schemaVersion: text("schema_version").notNull(),
+    status: text("status").notNull(),
+    snapshotId: uuid("snapshot_id").references(
+      () => assetAnalysisSnapshots.snapshotId,
+      { onDelete: "restrict" }
+    ),
+    errorCode: text("error_code"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index("asset_analysis_attempt_cache_idx").on(
+      t.workspaceId,
+      t.contentHash,
+      t.analyzerVersion,
+      t.schemaVersion,
+      t.completedAt
+    ),
+    index("asset_analysis_attempt_asset_idx").on(
+      t.workspaceId,
+      t.assetId,
+      t.completedAt
+    ),
+    check(
+      "asset_analysis_attempt_outcome_check",
+      sql`(${t.status} = 'SUCCEEDED' AND ${t.snapshotId} IS NOT NULL AND ${t.errorCode} IS NULL)
+        OR (${t.status} = 'FAILED' AND ${t.snapshotId} IS NULL AND ${t.errorCode} IS NOT NULL)`
+    ),
+  ]
+);
+
+/** Story-to-Asset matching pins immutable analysis; it never owns or re-analyzes bytes. */
+export const aiStoryAssetBindings = pgTable(
+  "ai_story_asset_bindings",
+  {
+    bindingId: uuid("binding_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    assetContentHash: text("asset_content_hash").notNull(),
+    analysisSnapshotId: uuid("analysis_snapshot_id")
+      .notNull()
+      .references(() => assetAnalysisSnapshots.snapshotId, {
+        onDelete: "restrict",
+      }),
+    analysisContentHash: text("analysis_content_hash").notNull(),
+    role: text("role").notNull(),
+    required: boolean("required").notNull().default(false),
+    reason: text("reason").notNull(),
+    trace: jsonb("trace").$type<string[]>().notNull(),
+    status: text("status").notNull().default("ACTIVE"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_asset_binding_identity_unique").on(
+      t.storyId,
+      t.storyVersionId,
+      t.assetId,
+      t.analysisSnapshotId,
+      t.role
+    ),
+    index("ai_story_asset_binding_story_idx").on(
+      t.workspaceId,
+      t.storyId,
+      t.storyVersionId,
+      t.status
+    ),
+    check(
+      "ai_story_asset_binding_hash_match",
+      sql`${t.assetContentHash} = ${t.analysisContentHash}`
+    ),
+  ]
+);
+
+/** Immutable Story-relative interpretation of persisted Asset Intelligence. */
+export const aiStoryAssetMatchingResults = pgTable(
+  "ai_story_asset_matching_results",
+  {
+    matchingResultId: uuid("matching_result_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    contractVersion: text("contract_version").notNull(),
+    result: jsonb("result")
+      .$type<import("@ceo-agent/shared").AiStoryAssetMatchingResult>()
+      .notNull(),
+    resultFingerprint: text("result_fingerprint").notNull(),
+    matcherVersion: text("matcher_version").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_asset_matching_result_fingerprint_unique").on(
+      t.workspaceId,
+      t.resultFingerprint
+    ),
+    index("ai_story_asset_matching_result_story_idx").on(
+      t.workspaceId,
+      t.storyId,
+      t.storyVersionId,
+      t.createdAt
+    ),
+  ]
+);
+
+/** Planner result before Provider routing; generation mode and audio capabilities are derived facts. */
+export const aiStoryExecutionPlannerSnapshots = pgTable(
+  "ai_story_execution_planner_snapshots",
+  {
+    plannerSnapshotId: uuid("planner_snapshot_id").primaryKey(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id")
+      .notNull()
+      .references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id")
+      .notNull()
+      .references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    assetDecisionStatus: text("asset_decision_status").notNull(),
+    requirements: jsonb("requirements")
+      .$type<
+        import("@ceo-agent/shared").AiStoryAssetAwareExecutionPlan["requirements"]
+      >()
+      .notNull(),
+    audioIntent: text("audio_intent").notNull(),
+    providerCapabilityRequirements: jsonb("provider_capability_requirements")
+      .$type<
+        import("@ceo-agent/shared").AiStoryAssetAwareExecutionPlan["providerCapabilityRequirements"]
+      >()
+      .notNull(),
+    resolvedGenerationMode: text("resolved_generation_mode"),
+    plan: jsonb("plan")
+      .$type<import("@ceo-agent/shared").AiStoryAssetAwareExecutionPlan>()
+      .notNull(),
+    planningFingerprint: text("planning_fingerprint").notNull(),
+    plannerVersion: text("planner_version").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_execution_planner_fingerprint_unique").on(
+      t.workspaceId,
+      t.planningFingerprint
+    ),
+    index("ai_story_execution_planner_story_idx").on(
+      t.workspaceId,
+      t.storyId,
+      t.storyVersionId,
+      t.createdAt
+    ),
+  ]
+);
+
 /** Campaign-owned mutable Character aggregate. Historical truth lives in immutable versions. */
 export const aiStoryCharacters = pgTable(
   "ai_story_characters",
@@ -1638,6 +1880,30 @@ export const aiStorySceneExecutions = pgTable(
     unique("ai_story_scene_executions_plan_order_unique").on(t.executionPlanId, t.sceneOrder),
     unique("ai_story_scene_executions_idempotency_unique").on(t.idempotencyKey),
     index("ai_story_scene_executions_plan_idx").on(t.executionPlanId, t.sceneOrder),
+  ]
+);
+
+/** Immutable Phase 6 authority loaded by canonical Execute before scheduling. */
+export const aiStoryAuthorizedSchedulingAuthorities = pgTable(
+  "ai_story_authorized_scheduling_authorities",
+  {
+    schedulingAuthorityId: uuid("scheduling_authority_id").primaryKey(),
+    authorityFingerprint: text("authority_fingerprint").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    authority: jsonb("authority").$type<Record<string, unknown>>().notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_authorized_scheduling_scene_unique").on(t.executionPlanId, t.sceneExecutionId),
+    unique("ai_story_authorized_scheduling_fingerprint_unique").on(t.workspaceId, t.authorityFingerprint),
+    index("ai_story_authorized_scheduling_workspace_idx").on(t.workspaceId, t.executionPlanId, t.sceneExecutionId),
   ]
 );
 

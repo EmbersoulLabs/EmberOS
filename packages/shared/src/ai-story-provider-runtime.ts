@@ -452,6 +452,14 @@ export const AiStoryProviderRuntimeJobSchema = z.object({
   workspaceId: Id,
   sceneExecutionId: Id,
   contractVersion: z.literal(AI_STORY_PROVIDER_RUNTIME_VERSION),
+  /** Phase 6 immutable Asset-Aware execution authority references. */
+  executionAuthorityId: Id.optional(),
+  executionAuthorityFingerprint: Hash.optional(),
+  plannerSnapshotId: Id.optional(),
+  providerResolutionId: Id.optional(),
+  compileIntentId: Id.optional(),
+  compiledRequestId: Id.optional(),
+  requestFingerprint: Hash.optional(),
 }).strict();
 
 export type AiStoryProviderRuntimeJob = z.infer<

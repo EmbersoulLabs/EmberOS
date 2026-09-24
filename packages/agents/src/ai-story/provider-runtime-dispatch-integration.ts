@@ -49,6 +49,13 @@ import {
   promoteProviderExecutableSceneInput,
   type ProviderPolicyEligibilityAuthority,
 } from "./provider-policy-eligibility";
+import {
+  AiStoryExecutionAuthorityError,
+  assertAiStoryCurrentExecutionAuthority,
+  type AiStoryCanonicalExecutionAuthority,
+  type AiStoryCanonicalExecutionAuthorityRepository,
+  type AiStoryCurrentExecutionAuthorityState,
+} from "./asset-aware-execution-authority";
 
 export const SEEDANCE_RUNTIME_ADAPTER_VERSION = "seedance-canonical-runtime.v1" as const;
 
@@ -1232,26 +1239,216 @@ export class AiStoryCompiledRequestWorkerRuntime {
     transport: AiStoryProviderRuntimeTransport;
     assetAccess: AiStoryRuntimeAssetAccess;
     mediaIngest: AiStoryRuntimeMediaIngest;
+    executionAuthorityRepository?: Pick<
+      AiStoryCanonicalExecutionAuthorityRepository,
+      "getAuthority"
+    >;
+    loadCurrentExecutionAuthorityState?: (input: {
+      readonly authority: AiStoryCanonicalExecutionAuthority;
+      readonly request: AiStoryCompiledProviderRequest;
+    }) => Promise<AiStoryCurrentExecutionAuthorityState>;
+    requireAssetAwareExecutionAuthority?: boolean;
+    authorizedProviderDispatchBoundary?: (input: {
+      readonly boundary: "AUTHORIZED_PROVIDER_DISPATCH";
+      readonly authority: AiStoryCanonicalExecutionAuthority;
+      readonly request: AiStoryCompiledProviderRequest;
+      readonly transportRequest: SeedanceModelArkCreateRequest;
+      readonly attempt: AiStoryProviderAttemptBinding;
+    }) => Promise<"CONTINUE" | "HOLD"> | "CONTINUE" | "HOLD";
     now?: () => Date;
   }) {}
+
+  private async loadAuthorityContext(jobInput: AiStoryProviderRuntimeJob) {
+    const job = AiStoryProviderRuntimeJobSchema.parse(jobInput);
+    const attempt = await this.dependencies.repository.getAttempt(
+      job.providerAttemptId
+    );
+    if (!attempt)
+      throw new AiStoryProviderRuntimeError(
+        "ATTEMPT_NOT_FOUND",
+        "Provider Attempt does not exist"
+      );
+    if (
+      attempt.workspaceId !== job.workspaceId ||
+      attempt.sceneExecutionId !== job.sceneExecutionId
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "ATTEMPT_SCOPE_MISMATCH",
+        "Worker job ownership does not match Provider Attempt"
+      );
+    }
+    const request = await this.dependencies.repository.getCompiledRequest(
+      attempt.compiledRequestId
+    );
+    if (
+      !request ||
+      request.requestFingerprint !== attempt.requestFingerprint ||
+      !validateAiStoryCompiledRequestFingerprint(request)
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "REQUEST_TAMPERED",
+        "Attempt compiled request is missing or has been modified"
+      );
+    }
+    let executionAuthority: AiStoryCanonicalExecutionAuthority | null = null;
+    if (
+      this.dependencies.requireAssetAwareExecutionAuthority ||
+      job.executionAuthorityId
+    ) {
+      if (
+        !job.executionAuthorityId ||
+        !this.dependencies.executionAuthorityRepository ||
+        !this.dependencies.loadCurrentExecutionAuthorityState
+      ) {
+        throw new AiStoryExecutionAuthorityError(
+          "STALE_EXECUTION_AUTHORITY",
+          "Canonical Worker requires immutable Asset-Aware execution authority"
+        );
+      }
+      executionAuthority =
+        await this.dependencies.executionAuthorityRepository.getAuthority(
+          job.executionAuthorityId
+        );
+      if (!executionAuthority) {
+        throw new AiStoryExecutionAuthorityError(
+          "STALE_EXECUTION_AUTHORITY",
+          "Scheduled execution authority was not found"
+        );
+      }
+      const current =
+        await this.dependencies.loadCurrentExecutionAuthorityState({
+          authority: executionAuthority,
+          request,
+        });
+      assertAiStoryCurrentExecutionAuthority({
+        authority: executionAuthority,
+        job,
+        attempt,
+        request,
+        current,
+      });
+    }
+    return { job, attempt, request, executionAuthority };
+  }
+
+  /** Validate and materialize the exact authorized request without submitting. */
+  async authorizeProviderDispatch(jobInput: AiStoryProviderRuntimeJob) {
+    const context = await this.loadAuthorityContext(jobInput);
+    if (
+      !context.executionAuthority ||
+      !this.dependencies.authorizedProviderDispatchBoundary
+    ) {
+      throw new AiStoryExecutionAuthorityError(
+        "STALE_EXECUTION_AUTHORITY",
+        "Authorized Provider dispatch boundary is required"
+      );
+    }
+    if (
+      context.request.contractVersion ===
+      AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION
+    ) {
+      assertVisibleDialogueAudioAuthorityExclusive({
+        nativeDialogueAuthorities: [
+          context.request.nativeAvRequest.dialogueAuthority,
+        ],
+        detachedTtsBindings: [],
+      });
+    }
+    const transportRequest = await serializeTransportRequest({
+      request: context.request,
+      assetAccess: this.dependencies.assetAccess,
+    });
+    const decision =
+      await this.dependencies.authorizedProviderDispatchBoundary({
+        boundary: "AUTHORIZED_PROVIDER_DISPATCH",
+        authority: context.executionAuthority,
+        request: context.request,
+        transportRequest,
+        attempt: context.attempt,
+      });
+    return {
+      ...context,
+      transportRequest,
+      decision,
+      providerSubmitted: false as const,
+      providerDispatchCount: 0 as const,
+      authorizedProviderDispatchBoundaryReached: true as const,
+    };
+  }
 
   async process(jobInput: AiStoryProviderRuntimeJob, workerId: string): Promise<{
     attempt: AiStoryProviderAttemptBinding;
     postGenerationQcInput?: AiStoryPostGenerationQcInput;
     providerSubmitted: boolean;
+    authorizedProviderDispatchBoundaryReached?: boolean;
+    providerDispatchCount?: number;
+    executionTrace?: readonly {
+      readonly stage: string;
+      readonly authorityId: string;
+      readonly authorityFingerprint: string;
+    }[];
   }> {
-    const job = AiStoryProviderRuntimeJobSchema.parse(jobInput);
-    let attempt = await this.dependencies.repository.getAttempt(job.providerAttemptId);
-    if (!attempt) throw new AiStoryProviderRuntimeError("ATTEMPT_NOT_FOUND", "Provider Attempt does not exist");
-    if (attempt.workspaceId !== job.workspaceId || attempt.sceneExecutionId !== job.sceneExecutionId) {
-      throw new AiStoryProviderRuntimeError("ATTEMPT_SCOPE_MISMATCH", "Worker job ownership does not match Provider Attempt");
-    }
-    const request = await this.dependencies.repository.getCompiledRequest(attempt.compiledRequestId);
-    if (!request || request.requestFingerprint !== attempt.requestFingerprint || !validateAiStoryCompiledRequestFingerprint(request)) {
-      throw new AiStoryProviderRuntimeError("REQUEST_TAMPERED", "Attempt compiled request is missing or has been modified");
-    }
+    const context = await this.loadAuthorityContext(jobInput);
+    const { job, request, executionAuthority } = context;
+    let { attempt } = context;
     const now = () => (this.dependencies.now ?? (() => new Date()))().toISOString();
     let providerSubmitted = false;
+    let providerDispatchCount = 0;
+    let prevalidatedTransportRequest:
+      | SeedanceModelArkCreateRequest
+      | null = null;
+
+    if (
+      attempt.status === "READY" &&
+      executionAuthority &&
+      this.dependencies.authorizedProviderDispatchBoundary
+    ) {
+      if (
+        request.contractVersion ===
+        AI_STORY_NATIVE_AV_COMPILED_PROVIDER_REQUEST_VERSION
+      ) {
+        assertVisibleDialogueAudioAuthorityExclusive({
+          nativeDialogueAuthorities: [
+            request.nativeAvRequest.dialogueAuthority,
+          ],
+          detachedTtsBindings: [],
+        });
+      }
+      prevalidatedTransportRequest = await serializeTransportRequest({
+        request,
+        assetAccess: this.dependencies.assetAccess,
+      });
+      const decision =
+        await this.dependencies.authorizedProviderDispatchBoundary({
+          boundary: "AUTHORIZED_PROVIDER_DISPATCH",
+          authority: executionAuthority,
+          request,
+          transportRequest: prevalidatedTransportRequest,
+          attempt,
+        });
+      if (decision === "HOLD") {
+        return {
+          attempt,
+          providerSubmitted: false,
+          authorizedProviderDispatchBoundaryReached: true,
+          providerDispatchCount: 0,
+          executionTrace: [
+            ...executionAuthority.executionTrace,
+            {
+              stage: "WORKER_AUTHORITY_VALIDATION",
+              authorityId: executionAuthority.executionAuthorityId,
+              authorityFingerprint:
+                executionAuthority.authorityFingerprint,
+            },
+            {
+              stage: "AUTHORIZED_PROVIDER_DISPATCH",
+              authorityId: request.compiledRequestId,
+              authorityFingerprint: request.requestFingerprint,
+            },
+          ],
+        };
+      }
+    }
 
     if (attempt.status === "READY") {
       const claimed = await this.dependencies.repository.claimSubmission({
@@ -1273,16 +1470,22 @@ export class AiStoryCompiledRequestWorkerRuntime {
           detachedTtsBindings: [],
         });
       }
-      const transportRequest = await serializeTransportRequest({ request, assetAccess: this.dependencies.assetAccess });
+      const transportRequest =
+        prevalidatedTransportRequest ??
+        (await serializeTransportRequest({
+          request,
+          assetAccess: this.dependencies.assetAccess,
+        }));
       const result = await this.dependencies.transport.submit({ request: transportRequest, providerAttemptId: attempt.providerAttemptId });
       providerSubmitted = true;
+      providerDispatchCount += 1;
       if (result.kind === "AMBIGUOUS") {
         attempt = await this.dependencies.repository.updateAttempt({ ...attempt, status: "RECONCILIATION_REQUIRED", updatedAt: now() });
-        return { attempt, providerSubmitted };
+        return { attempt, providerSubmitted, providerDispatchCount };
       }
       if (result.kind === "REJECTED") {
         attempt = await this.dependencies.repository.updateAttempt({ ...attempt, status: "FAILED", failureClass: result.failureClass, updatedAt: now() });
-        return { attempt, providerSubmitted };
+        return { attempt, providerSubmitted, providerDispatchCount };
       }
       attempt = await this.dependencies.repository.updateAttempt({
         ...attempt,
@@ -1294,17 +1497,17 @@ export class AiStoryCompiledRequestWorkerRuntime {
     }
 
     if (attempt.status === "RECONCILIATION_REQUIRED" && !attempt.providerTaskId) {
-      return { attempt, providerSubmitted: false };
+      return { attempt, providerSubmitted: false, providerDispatchCount };
     }
     if (!attempt.providerTaskId || !["SUBMITTED", "RUNNING"].includes(attempt.status)) {
-      return { attempt, providerSubmitted };
+      return { attempt, providerSubmitted, providerDispatchCount };
     }
 
     const poll = await this.dependencies.transport.poll({ providerTaskId: attempt.providerTaskId, providerAttemptId: attempt.providerAttemptId });
     const pollCount = attempt.pollCount + 1;
     if (poll.status === "queued" || poll.status === "running") {
       attempt = await this.dependencies.repository.updateAttempt({ ...attempt, status: poll.status === "running" ? "RUNNING" : "SUBMITTED", pollCount, updatedAt: now() });
-      return { attempt, providerSubmitted };
+      return { attempt, providerSubmitted, providerDispatchCount };
     }
     if (poll.status !== "succeeded") {
       const failureClass = "moderationRejected" in poll && poll.moderationRejected
@@ -1315,7 +1518,7 @@ export class AiStoryCompiledRequestWorkerRuntime {
             ? "PROVIDER_EXPIRED" as const
             : "PROVIDER_GENERATION_FAILED" as const;
       attempt = await this.dependencies.repository.updateAttempt({ ...attempt, status: poll.status === "cancelled" ? "CANCELLED" : poll.status === "expired" ? "EXPIRED" : "FAILED", failureClass, pollCount, updatedAt: now() });
-      return { attempt, providerSubmitted };
+      return { attempt, providerSubmitted, providerDispatchCount };
     }
 
     attempt = await this.dependencies.repository.updateAttempt({ ...attempt, status: "PROVIDER_RESULT_READY", pollCount, actualUsage: poll.usage ?? {}, updatedAt: now() });
@@ -1326,6 +1529,7 @@ export class AiStoryCompiledRequestWorkerRuntime {
       return {
         attempt,
         providerSubmitted,
+        providerDispatchCount,
         postGenerationQcInput: AiStoryPostGenerationQcInputSchema.parse({
           contractVersion: AI_STORY_POST_GENERATION_QC_HOOK_VERSION,
           providerAttemptId: attempt.providerAttemptId,
@@ -1348,7 +1552,7 @@ export class AiStoryCompiledRequestWorkerRuntime {
       };
     } catch {
       attempt = await this.dependencies.repository.updateAttempt({ ...attempt, status: "MEDIA_INGESTION_FAILED", failureClass: "MEDIA_INGESTION_FAILED", updatedAt: now() });
-      return { attempt, providerSubmitted };
+      return { attempt, providerSubmitted, providerDispatchCount };
     }
   }
 }

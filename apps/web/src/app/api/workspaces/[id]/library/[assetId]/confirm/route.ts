@@ -4,6 +4,7 @@ import { isCanonicalPhotoSceneLibraryPath, isUuid } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { finalizeStoredSourceAssetIdentity } from "@/lib/source-asset-content-hash";
+import { finalizeAssetIntelligence } from "@/lib/asset-analysis-finalization";
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string; assetId: string }> }) {
   try {
@@ -46,7 +47,12 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       }).where(eq(schema.assets.id, finalized.id)).returning();
       finalized = marked;
     }
-    return apiSuccess({ asset: finalized, duplicateOfAssetId: duplicate?.id ?? null });
+    const assetAnalysis = await finalizeAssetIntelligence(finalized);
+    return apiSuccess({
+      asset: finalized,
+      duplicateOfAssetId: duplicate?.id ?? null,
+      assetAnalysis,
+    });
   } catch (error) {
     return handleApiError(error);
   }

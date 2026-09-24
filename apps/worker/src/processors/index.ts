@@ -1,8 +1,16 @@
 import { Worker, type WorkerOptions } from "bullmq";
 import { eq, and, notInArray } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import {
+  AiStoryAssetAwareExecutionPlannerRepository,
+  getDb,
+  schema,
+} from "@ceo-agent/db";
 import { QUEUE_NAMES, getRedisConnection, getBullmqPrefix, logQueueConfig, DEFAULT_JOB_ATTEMPTS } from "@ceo-agent/queue";
-import { runPublishAgent } from "@ceo-agent/agents";
+import {
+  AssetAnalysisService,
+  FinalizedAssetMetadataAnalyzer,
+  runPublishAgent,
+} from "@ceo-agent/agents";
 import { runPipeline, type PipelineHooks, failPipelineExecution, automaticPipelineFailureAuthority } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
@@ -285,7 +293,7 @@ export function startWorkers() {
           finalContentHash = await hashSourceAssetFile(localPath);
         }
 
-        await db
+        const [finalizedAsset] = await db
           .update(schema.assets)
           .set({
             durationSec: String(probe.durationSec),
@@ -295,7 +303,47 @@ export function startWorkers() {
             contentHash: finalContentHash,
             metadata: { ...meta, codec: probe.codec, finishedAdRisk, ...compressedMeta },
           })
-          .where(eq(schema.assets.id, assetId));
+          .where(eq(schema.assets.id, assetId))
+          .returning();
+        if (!finalizedAsset) {
+          throw new Error("Finalized video Asset could not be persisted");
+        }
+        try {
+          const analysis = await new AssetAnalysisService(
+            new AiStoryAssetAwareExecutionPlannerRepository(db),
+            new FinalizedAssetMetadataAnalyzer()
+          ).analyzeFinalizedAsset({ asset: finalizedAsset });
+          console.info(
+            JSON.stringify({
+              event: "ASSET_INTELLIGENCE_FINALIZED",
+              assetId,
+              workspaceId: finalizedAsset.workspaceId,
+              snapshotId: analysis.snapshot.snapshotId,
+              cacheStatus: analysis.cacheStatus,
+              analyzerInvoked: analysis.analyzerInvoked,
+            })
+          );
+        } catch (analysisError) {
+          // Upload/probe remains durable. The repository records the failed
+          // analyzer attempt explicitly and a later retry uses the same key.
+          console.error(
+            JSON.stringify({
+              event: "ASSET_INTELLIGENCE_FAILED",
+              assetId,
+              workspaceId: finalizedAsset.workspaceId,
+              errorCode:
+                analysisError instanceof Error && "code" in analysisError
+                  ? String(
+                      (
+                        analysisError as Error & {
+                          code: unknown;
+                        }
+                      ).code
+                    )
+                  : "ASSET_ANALYSIS_FAILED",
+            })
+          );
+        }
 
         if (assetRow?.campaignId && assetRow.workspaceId) {
           const campaignAssets = await db
