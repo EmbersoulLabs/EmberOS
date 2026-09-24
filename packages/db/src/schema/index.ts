@@ -13,6 +13,7 @@ import {
   uniqueIndex,
   index,
   check,
+  foreignKey,
 } from "drizzle-orm/pg-core";
 import { relations, sql } from "drizzle-orm";
 
@@ -737,6 +738,151 @@ export const aiStoryCharacterVersions = pgTable(
   ],
 );
 
+/** Workspace-owned reusable Character identity root. Campaign Characters remain execution projections. */
+export const aiStoryReusableCharacters = pgTable(
+  "ai_story_reusable_characters",
+  {
+    reusableCharacterId: uuid("reusable_character_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    currentVersion: integer("current_version").notNull(),
+    currentReusableCharacterVersionId: uuid("current_reusable_character_version_id").notNull(),
+    status: text("status").notNull(),
+    name: text("name").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  },
+  (t) => [
+    foreignKey({ name: "as_rc_root_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_root_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    index("ai_story_reusable_characters_workspace_idx").on(t.workspaceId, t.status, t.name),
+  ],
+);
+
+export const aiStoryReusableCharacterVersions = pgTable(
+  "ai_story_reusable_character_versions",
+  {
+    reusableCharacterVersionId: uuid("reusable_character_version_id").primaryKey(),
+    reusableCharacterId: uuid("reusable_character_id").notNull(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    identityFingerprint: text("identity_fingerprint").notNull(),
+    status: text("status").notNull(),
+    supersedesReusableCharacterVersionId: uuid("supersedes_reusable_character_version_id"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryReusableCharacterVersion>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    foreignKey({ name: "as_rc_ver_root_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_ver_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_ver_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_ver_supersede_fk", columns: [t.supersedesReusableCharacterVersionId], foreignColumns: [t.reusableCharacterVersionId] }).onDelete("restrict"),
+    unique("ai_story_reusable_character_version_unique").on(t.reusableCharacterId, t.version),
+    unique("ai_story_reusable_character_fingerprint_unique").on(t.reusableCharacterId, t.fingerprint),
+    index("ai_story_reusable_character_versions_workspace_idx").on(t.workspaceId, t.reusableCharacterId, t.version),
+  ],
+);
+
+export const aiStoryReusableCharacterCampaignProjections = pgTable(
+  "ai_story_reusable_character_campaign_projections",
+  {
+    projectionId: uuid("projection_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    reusableCharacterId: uuid("reusable_character_id").notNull(),
+    reusableCharacterVersionId: uuid("reusable_character_version_id").notNull(),
+    reusableCharacterFingerprint: text("reusable_character_fingerprint").notNull(),
+    campaignId: uuid("campaign_id").notNull(),
+    campaignCharacterId: uuid("campaign_character_id").notNull(),
+    campaignCharacterVersionId: uuid("campaign_character_version_id").notNull(),
+    campaignCharacterFingerprint: text("campaign_character_fingerprint").notNull(),
+    projectionFingerprint: text("projection_fingerprint").notNull(),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryReusableCharacterCampaignProjection>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    foreignKey({ name: "as_rc_proj_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_proj_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_proj_root_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_proj_ver_fk", columns: [t.reusableCharacterVersionId], foreignColumns: [aiStoryReusableCharacterVersions.reusableCharacterVersionId] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_proj_campaign_fk", columns: [t.campaignId], foreignColumns: [campaigns.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_proj_char_fk", columns: [t.campaignCharacterId], foreignColumns: [aiStoryCharacters.characterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_rc_proj_char_ver_fk", columns: [t.campaignCharacterVersionId], foreignColumns: [aiStoryCharacterVersions.characterVersionId] }).onDelete("restrict"),
+    unique("ai_story_reusable_character_campaign_projection_unique").on(t.reusableCharacterVersionId, t.campaignId),
+    index("ai_story_reusable_character_projection_campaign_idx").on(t.campaignId, t.reusableCharacterId),
+  ],
+);
+
+export const aiStoryEpisodeCharacterBindings = pgTable(
+  "ai_story_episode_character_bindings",
+  {
+    episodeCharacterBindingId: uuid("episode_character_binding_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    storyId: uuid("story_id").notNull(),
+    episodeId: uuid("episode_id").notNull(),
+    reusableCharacterId: uuid("reusable_character_id").notNull(),
+    reusableCharacterVersionId: uuid("reusable_character_version_id").notNull(),
+    campaignCharacterId: uuid("campaign_character_id").notNull(),
+    campaignCharacterVersionId: uuid("campaign_character_version_id").notNull(),
+    identityFingerprint: text("identity_fingerprint").notNull(),
+    bindingFingerprint: text("binding_fingerprint").notNull(),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryEpisodeCharacterBinding>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    foreignKey({ name: "as_ep_char_bind_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_ep_char_bind_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_ep_char_bind_story_fk", columns: [t.storyId], foreignColumns: [aiStories.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_ep_char_bind_root_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_ep_char_bind_ver_fk", columns: [t.reusableCharacterVersionId], foreignColumns: [aiStoryReusableCharacterVersions.reusableCharacterVersionId] }).onDelete("restrict"),
+    foreignKey({ name: "as_ep_char_bind_char_fk", columns: [t.campaignCharacterId], foreignColumns: [aiStoryCharacters.characterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_ep_char_bind_char_ver_fk", columns: [t.campaignCharacterVersionId], foreignColumns: [aiStoryCharacterVersions.characterVersionId] }).onDelete("restrict"),
+    unique("ai_story_episode_character_binding_unique").on(t.storyId, t.reusableCharacterId, t.bindingFingerprint),
+    index("ai_story_episode_character_binding_story_idx").on(t.storyId, t.reusableCharacterId),
+  ],
+);
+
+export const aiStoryCharacterContinuityAnchors = pgTable(
+  "ai_story_character_continuity_anchors",
+  {
+    anchorId: uuid("anchor_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    reusableCharacterId: uuid("reusable_character_id").notNull(),
+    reusableCharacterVersionId: uuid("reusable_character_version_id").notNull(),
+    sourceEpisodeId: uuid("source_episode_id").notNull(),
+    sourceGenerationUnitId: uuid("source_generation_unit_id").notNull(),
+    sourceResultId: uuid("source_result_id").notNull(),
+    assetId: uuid("asset_id").notNull(),
+    contentHash: text("content_hash").notNull(),
+    frameTimestampMs: integer("frame_timestamp_ms"),
+    status: text("status").notNull(),
+    source: text("source").notNull(),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryCharacterContinuityAnchor>().notNull(),
+    approvedBy: uuid("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    foreignKey({ name: "as_char_anchor_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_char_anchor_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_char_anchor_root_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_char_anchor_ver_fk", columns: [t.reusableCharacterVersionId], foreignColumns: [aiStoryReusableCharacterVersions.reusableCharacterVersionId] }).onDelete("restrict"),
+    foreignKey({ name: "as_char_anchor_story_fk", columns: [t.sourceEpisodeId], foreignColumns: [aiStories.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_char_anchor_asset_fk", columns: [t.assetId], foreignColumns: [assets.id] }).onDelete("restrict"),
+    index("ai_story_character_continuity_anchor_character_idx").on(t.reusableCharacterId, t.reusableCharacterVersionId, t.status),
+  ],
+);
+
 /** Story-owned recurring supporting identity. Ephemeral actors remain embedded Scene facts. */
 export const aiStorySupportingCharacters = pgTable(
   "ai_story_supporting_characters",
@@ -805,6 +951,97 @@ export const aiStoryCastPromotions = pgTable(
   (t) => [
     unique("ai_story_cast_promotion_source_unique").on(t.sourceScope, t.sourceId),
     index("ai_story_cast_promotions_story_idx").on(t.storyId, t.promotedAt),
+  ],
+);
+
+export const aiStoryCharacterVirtualizationJobs = pgTable(
+  "ai_story_character_virtualization_jobs",
+  {
+    jobId: uuid("job_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    sourceAssetId: uuid("source_asset_id").notNull(),
+    sourceContentHash: text("source_content_hash").notNull(),
+    sourceSemantic: text("source_semantic").notNull(),
+    style: text("style").notNull(),
+    visualClass: text("visual_class").notNull(),
+    creativeDirection: text("creative_direction"),
+    permissionConfirmed: boolean("permission_confirmed").notNull(),
+    status: text("status").notNull(),
+    acceptanceStatus: text("acceptance_status").notNull(),
+    provider: text("provider").notNull(),
+    providerModel: text("provider_model").notNull(),
+    providerAttemptId: uuid("provider_attempt_id"),
+    promptFingerprint: text("prompt_fingerprint"),
+    outputAssetId: uuid("output_asset_id"),
+    outputContentHash: text("output_content_hash"),
+    outputSemantic: text("output_semantic"),
+    costCategory: text("cost_category").notNull(),
+    costUsd: numeric("cost_usd"),
+    parentJobId: uuid("parent_job_id"),
+    automaticRetry: boolean("automatic_retry").notNull(),
+    reusableCharacterId: uuid("reusable_character_id"),
+    reusableCharacterVersionId: uuid("reusable_character_version_id"),
+    seedanceVideoCalls: integer("seedance_video_calls").notNull(),
+    realImageProviderCalls: integer("real_image_provider_calls").notNull(),
+    userSafeError: text("user_safe_error"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryCharacterVirtualizationJob>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    foreignKey({ name: "as_cvj_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cvj_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cvj_source_asset_fk", columns: [t.sourceAssetId], foreignColumns: [assets.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cvj_output_asset_fk", columns: [t.outputAssetId], foreignColumns: [assets.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cvj_parent_fk", columns: [t.parentJobId], foreignColumns: [t.jobId] }).onDelete("restrict"),
+    foreignKey({ name: "as_cvj_rc_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_cvj_rc_ver_fk", columns: [t.reusableCharacterVersionId], foreignColumns: [aiStoryReusableCharacterVersions.reusableCharacterVersionId] }).onDelete("restrict"),
+    index("as_cvj_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("as_cvj_source_idx").on(t.sourceAssetId, t.status),
+    index("as_cvj_character_idx").on(t.reusableCharacterId, t.reusableCharacterVersionId),
+  ],
+);
+
+export const aiStoryCharacterDnaAnalysisJobs = pgTable(
+  "ai_story_character_dna_analysis_jobs",
+  {
+    jobId: uuid("job_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    sourceAssetId: uuid("source_asset_id").notNull(),
+    sourceContentHash: text("source_content_hash").notNull(),
+    sourceSemantic: text("source_semantic").notNull(),
+    permissionConfirmed: boolean("permission_confirmed").notNull(),
+    status: text("status").notNull(),
+    approvalStatus: text("approval_status").notNull(),
+    provider: text("provider").notNull(),
+    providerModel: text("provider_model").notNull(),
+    providerAttemptId: uuid("provider_attempt_id"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costCategory: text("cost_category").notNull(),
+    costUsd: numeric("cost_usd"),
+    imageGenerationCalls: integer("image_generation_calls").notNull(),
+    gptImageCalls: integer("gpt_image_calls").notNull(),
+    seedanceVideoCalls: integer("seedance_video_calls").notNull(),
+    reusableCharacterId: uuid("reusable_character_id"),
+    reusableCharacterVersionId: uuid("reusable_character_version_id"),
+    userSafeError: text("user_safe_error"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryCharacterDnaAnalysisJob>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    foreignKey({ name: "as_cdj_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cdj_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cdj_source_asset_fk", columns: [t.sourceAssetId], foreignColumns: [assets.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_cdj_rc_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_cdj_rc_ver_fk", columns: [t.reusableCharacterVersionId], foreignColumns: [aiStoryReusableCharacterVersions.reusableCharacterVersionId] }).onDelete("restrict"),
+    index("as_cdj_workspace_idx").on(t.workspaceId, t.createdAt),
+    index("as_cdj_source_idx").on(t.sourceAssetId, t.status),
   ],
 );
 
@@ -4246,6 +4483,81 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   photoSceneGenerations: many(photoSceneGenerations),
   photoSceneSceneSelections: many(photoSceneSceneSelections),
 }));
+
+/** Immutable AI Story video observation snapshots. Claims coordinate one paid analysis per reuse key. */
+export const aiStoryVideoAnalysisSnapshots = pgTable(
+  "ai_story_video_analysis_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    assetContentHash: text("asset_content_hash").notNull(),
+    analysisType: text("analysis_type").notNull().default("AI_STORY_VIDEO"),
+    analysisVersion: text("analysis_version").notNull(),
+    extractorVersion: text("extractor_version").notNull(),
+    observationJson: jsonb("observation_json").notNull(),
+    analysisJson: jsonb("analysis_json").notNull(),
+    providerId: text("provider_id").notNull(),
+    modelId: text("model_id").notNull(),
+    requestedModelId: text("requested_model_id"),
+    providerModelId: text("provider_model_id"),
+    providerRequestId: text("provider_request_id"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    inputFingerprint: text("input_fingerprint").notNull(),
+    costUsd: numeric("cost_usd").notNull().default("0"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_video_analysis_snapshots_reuse_uidx").on(
+      t.workspaceId,
+      t.assetId,
+      t.assetContentHash,
+      t.analysisVersion,
+      t.extractorVersion,
+    ),
+    index("ai_story_video_analysis_snapshots_workspace_idx").on(t.workspaceId, t.assetId),
+  ],
+);
+
+export const aiStoryVideoAnalysisClaims = pgTable(
+  "ai_story_video_analysis_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    assetContentHash: text("asset_content_hash").notNull(),
+    analysisType: text("analysis_type").notNull().default("AI_STORY_VIDEO"),
+    analysisVersion: text("analysis_version").notNull(),
+    extractorVersion: text("extractor_version").notNull(),
+    status: text("status").notNull(),
+    snapshotId: uuid("snapshot_id").references(() => aiStoryVideoAnalysisSnapshots.id, { onDelete: "restrict" }),
+    errorCode: text("error_code"),
+    providerId: text("provider_id"),
+    requestedModelId: text("requested_model_id"),
+    providerModelId: text("provider_model_id"),
+    providerRequestId: text("provider_request_id"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costUsd: numeric("cost_usd"),
+    attemptedAt: timestamp("attempted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_video_analysis_claims_workspace_idx").on(t.workspaceId, t.assetId, t.status),
+    check(
+      "ai_story_video_analysis_claims_status_chk",
+      sql`${t.status} in ('CLAIMED', 'SUCCEEDED', 'FAILED')`,
+    ),
+  ],
+);
 
 export const assetsRelations = relations(assets, ({ one, many }) => ({
   campaign: one(campaigns, { fields: [assets.campaignId], references: [campaigns.id] }),

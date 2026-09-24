@@ -123,7 +123,9 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
     throw new Error("Compiled Scene generation authority does not match its immutable intent");
   }
   const orderedEffectiveIds = authority?.effectiveReferenceIds ?? instructions.referencedAssetIds;
-  const firstFrameAssetId = authority?.firstFrameAssetId ?? orderedEffectiveIds[0] ?? null;
+  const firstFrameAssetId = authority
+    ? authority.firstFrameAssetId
+    : orderedEffectiveIds[0] ?? null;
   const intentAssetIds = firstFrameAssetId
     ? [firstFrameAssetId, ...sortedUnique(orderedEffectiveIds.filter((id) => id !== firstFrameAssetId))]
     : sortedUnique(orderedEffectiveIds);
@@ -133,19 +135,25 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
       throw new Error("Compiled Scene intent and instruction product assets do not match");
     }
   }
-  const explicitT2v =
-    authority?.strategy === "TEXT_TO_VIDEO" &&
-    authority.referenceSource === "REFERENCE_FREE_T2V";
+  const textToVideo = authority?.strategy === "TEXT_TO_VIDEO";
+  const referenceFreeT2v =
+    textToVideo && authority.referenceSource === "REFERENCE_FREE_T2V";
+  const syntheticAnchorT2v =
+    textToVideo &&
+    authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR";
   if (!authority && intentAssetIds.length === 0) {
     throw new Error("Reference-free execution requires explicit TEXT_TO_VIDEO Scene authority");
   }
-  if (explicitT2v && authority.productVisualIdentityRequirement === "REQUIRED") {
+  if (textToVideo && authority.productVisualIdentityRequirement === "REQUIRED") {
     throw new Error("Reference-free TEXT_TO_VIDEO conflicts with required product visual identity");
   }
-  if (explicitT2v && intentAssetIds.length > 0) {
+  if (referenceFreeT2v && intentAssetIds.length > 0) {
     throw new Error("Reference-free TEXT_TO_VIDEO cannot carry image references");
   }
-  if (authority && !explicitT2v && intentAssetIds.length === 0) {
+  if (syntheticAnchorT2v && intentAssetIds.length !== 1) {
+    throw new Error("Synthetic-anchor TEXT_TO_VIDEO requires exactly one Character reference");
+  }
+  if (authority && !textToVideo && intentAssetIds.length === 0) {
     throw new Error("Image-conditioned generation authority is missing required references");
   }
   const assetReferences: CanonicalProductReference[] = intentAssetIds.map((assetId) => ({
@@ -177,15 +185,17 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
         `${index + 1}. ${shot.shotId}: ${shot.information} (${shot.cameraType}, ${shot.emotion})`
     );
   const promptParts = [
-    intentAssetIds.length > 0
-      ? "Image 1 = the canonical Campaign Product Asset and PRIMARY_PRODUCT authority."
+    syntheticAnchorT2v
+      ? "Image 1 = the human-approved synthetic recurring Character identity anchor."
+      : intentAssetIds.length > 0
+        ? "Image 1 = the canonical Campaign Product Asset and PRIMARY_PRODUCT authority."
       : "",
     instructions.purpose.trim(),
     instructions.continuityNotes?.trim()
       ? `Continuity: ${instructions.continuityNotes.trim()}`
       : "",
     shotLines.length > 0 ? `Shots:\n${shotLines.join("\n")}` : "",
-    intentAssetIds.length > 0 ? PRODUCT_LOCK_PROMPT : "",
+    intentAssetIds.length > 0 && !textToVideo ? PRODUCT_LOCK_PROMPT : "",
   ].filter(Boolean);
   const prompt = promptParts.join("\n\n");
   if (!prompt.trim()) {
@@ -200,7 +210,7 @@ export function mapCompiledInstructionsToCanonicalScenePayload(input: {
 
   return {
     kind: "animation-video-generation",
-    generationMode: explicitT2v
+    generationMode: textToVideo
       ? CREATIVE_T2V_MODE
       : intentAssetIds.length > 0
         ? PRODUCT_GROUNDED_VIDEO_MODE
@@ -412,7 +422,7 @@ export function createCompilationBackedCanonicalPayloadResolver(
         retryInputRevision?.providerModeRequirement === "REFERENCE_FREE_T2V" ||
         (sourceAuthority?.strategy === "TEXT_TO_VIDEO" &&
           sourceAuthority.referenceSource === "REFERENCE_FREE_T2V");
-      const productAssetId = referenceFreeRetry
+      const productAssetId = sourceAuthority?.strategy === "TEXT_TO_VIDEO"
         ? undefined
         : sortedUnique(intent.referencedAssetIds)[0];
       const visualAuthorityCertification =

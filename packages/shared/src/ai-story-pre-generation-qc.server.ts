@@ -46,6 +46,7 @@ export type AiStoryPreGenerationQcInput = {
   locationVersions?:readonly AiStoryLocationAuthorityVersion[];
   currentSceneVersionIds?:readonly string[];
   assistanceFindings?:Array<{classification:"AI_QC"|"HUMAN_PREVIEW";message:string}>;
+  reusableCharacterIssues?:Array<{gate:string;message:string}>;
 };
 
 const hard=(gateId:AiStoryPreGenerationQcGateId,reasons:Reason[],ids:AiStoryPreGenerationQcGateResult["evaluatedArtifactIds"]):AiStoryPreGenerationQcGateResult=>({gateId,gateVersion:1,classification:"HARD_GATE",status:reasons.length?"BLOCK":"PASS",failedLayer:reasons[0]?.layer??null,reasonCode:reasons[0]?.code??"PASS",safeEvidence:reasons.map(r=>r.evidence),repairOwner:reasons[0]?.owner??"NONE",evaluatedArtifactIds:ids,contractVersion:AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION});
@@ -136,7 +137,9 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
     hard("SCRIPT_REFERENCE_INTEGRITY_GATE",[
       ...has(scriptIssues,["SCRIPT_REFERENCE_INTEGRITY_GATE","DIALOGUE_SPEAKER_GATE"],"SCRIPT","SCRIPT"),
       ...characterIssues.map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),
-      ...castIssues.map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),...has(sceneIssues,["LOCATION_REFERENCE_GATE","LOCATION_SCOPE_GATE","LOCATION_VERSION_GATE","CAST_BINDING_GATE"],"SCENE","SCENE"),
+      ...castIssues.map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),
+      ...(raw.reusableCharacterIssues??[]).map((issue)=>reason(issue.gate,issue.message,"SCRIPT","SCRIPT")),
+      ...has(sceneIssues,["LOCATION_REFERENCE_GATE","LOCATION_SCOPE_GATE","LOCATION_VERSION_GATE","CAST_BINDING_GATE"],"SCENE","SCENE"),
     ],ids),
     hard("BEAT_COVERAGE_GATE",has(scriptIssues,["BEAT_CLAIM_GATE","EXCLUSIVE_BEAT_CARDINALITY_GATE"],"SCRIPT","SCRIPT"),ids),
     hard("SCENE_FUNCTION_GATE",[...has(scriptIssues,["SCRIPT_SCENE_FUNCTION_GATE","ACTION_BEAT_PRESENCE_GATE"],"SCRIPT","SCRIPT"),...has(sceneIssues,["SCENE_ROLE_GATE","SCENE_PURPOSE_GATE"],"SCENE","SCENE"),...profileIssues.filter(i=>i.severity==="BLOCK"&&["PRODUCT_INFORMATION_PROGRESSION_GATE","OBJECTIVE_AWARE_BEAT_GATE","SCRIPT_PRODUCT_PROFILE_BINDING_GATE","SCRIPT_COMMERCIAL_PROFILE_BINDING_GATE","NARRATIVE_HOOK_GATE","SCENE_PURPOSE_PROGRESSION_GATE"].includes(i.gate)).map(i=>reason(i.reasonCode,i.message,"SCRIPT","SCRIPT"))],ids),

@@ -99,6 +99,13 @@ export const AiStoryGenerationUnitSourceAuthoritySchema = z.object({
   productContentHashes: z.array(Hash),
   locationId: Id,
   characterIds: z.array(Id),
+  reusableCharacterLineage: z.array(z.object({
+    reusableCharacterId: Id,
+    reusableCharacterVersionId: Id,
+    campaignCharacterId: Id,
+    campaignCharacterVersionId: Id,
+    identityFingerprint: Hash,
+  }).strict()).optional(),
 }).strict();
 
 export const AiStoryGenerationUnitRetryOwnershipSchema = z.object({
@@ -135,6 +142,11 @@ export const AiStoryGenerationUnitSchema = z.object({
   nativeAvMode: z.enum(AI_STORY_GENERATION_UNIT_AV_MODES).optional(),
   /** Frozen Script dialogue entries requiring native audiovisual performance. */
   nativeDialogueEntryIds: z.array(Id).optional(),
+  /**
+   * Absent on historical Units. Present only when this Unit is an explicit
+   * VIDEO_TO_VIDEO execution. EXISTING_VIDEO cannot carry it.
+   */
+  v2vExecutionFingerprint: Hash.optional(),
   retryOwnership: AiStoryGenerationUnitRetryOwnershipSchema,
   fingerprint: Hash,
 }).strict().superRefine((value, ctx) => {
@@ -163,6 +175,13 @@ export const AiStoryGenerationUnitSchema = z.object({
       code: z.ZodIssueCode.custom,
       message:
         "VIDEO_ONLY Generation Units cannot carry native dialogue authority",
+    });
+  }
+  if (value.v2vExecutionFingerprint && value.unitType !== "PROVIDER_VIDEO") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "VIDEO_TO_VIDEO source binding is valid only on a PROVIDER_VIDEO Generation Unit",
     });
   }
 });

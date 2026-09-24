@@ -121,7 +121,10 @@ function AiStoryModule({ slug, campaignId }: { slug: string; campaignId: string 
       title="AI Story"
       purpose="Create and review Campaign-owned Episodes. Scenes stay internal."
       state={state}
-      action={<Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/episodes/new`} className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-navy hover:bg-surface-muted">Create Episode</Link>}
+      action={<div className="flex flex-wrap gap-2">
+        <Link href={`/w/${slug}/characters`} className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-navy hover:bg-surface-muted">Characters</Link>
+        <Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/episodes/new`} className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-navy hover:bg-surface-muted">Create Episode</Link>
+      </div>}
     >
       {loadState === "loading" ? <p className="text-sm text-ink-secondary">Loading durable story state…</p> : null}
       {stories.length ? (

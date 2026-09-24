@@ -157,13 +157,24 @@ function assertExactBindings(pkg: AiStorySceneExecutionPackage): void {
       throw new SeedanceDirectorAdapterError("GENERATION_REFERENCE_AUTHORITY_MISMATCH", "Scene generation authority does not match the execution package visual references", "SCENE");
     }
     if (generationAuthority.strategy === "TEXT_TO_VIDEO") {
+      const referenceFree =
+        generationAuthority.referenceSource === "REFERENCE_FREE_T2V";
+      const syntheticAnchor =
+        generationAuthority.referenceSource ===
+        "CHARACTER_SYNTHETIC_ANCHOR";
       if (
         pkg.generation.mode !== "TEXT_TO_VIDEO" ||
-        generationAuthority.referenceSource !== "REFERENCE_FREE_T2V" ||
+        (!referenceFree && !syntheticAnchor) ||
         generationAuthority.firstFrameAssetId !== null ||
-        generationAuthority.productVisualIdentityRequirement !== "NONE"
+        generationAuthority.productVisualIdentityRequirement !== "NONE" ||
+        (referenceFree && generationAuthority.effectiveReferenceIds.length !== 0) ||
+        (syntheticAnchor && generationAuthority.effectiveReferenceIds.length !== 1)
       ) {
-        throw new SeedanceDirectorAdapterError("T2V_GENERATION_AUTHORITY_CONFLICT", "TEXT_TO_VIDEO package authority is not explicitly reference-free", "SCENE");
+        throw new SeedanceDirectorAdapterError(
+          "T2V_GENERATION_AUTHORITY_CONFLICT",
+          "TEXT_TO_VIDEO package authority is neither reference-free nor exactly synthetic-anchor grounded",
+          "SCENE"
+        );
       }
     } else {
       const firstFrames = pkg.visualReferences.filter((item) => item.firstFrame);
@@ -212,6 +223,58 @@ function selectReferences(pkg: AiStorySceneExecutionPackage): { selected: AiStor
   }
 
   if (pkg.generation.mode === "TEXT_TO_VIDEO") {
+    if (
+      pkg.generationAuthority?.referenceSource ===
+      "CHARACTER_SYNTHETIC_ANCHOR"
+    ) {
+      const expectedId = pkg.generationAuthority.effectiveReferenceIds[0];
+      const selected = pkg.visualReferences.filter(
+        (reference) =>
+          reference.assetId === expectedId &&
+          reference.semanticRole === "PROVIDER_IMAGE_REFERENCE"
+      );
+      if (selected.length !== 1) {
+        throw new SeedanceDirectorAdapterError(
+          "SYNTHETIC_IDENTITY_ANCHOR_CARDINALITY",
+          "Hybrid Character DNA TEXT_TO_VIDEO requires exactly one Provider image reference",
+          "CAST"
+        );
+      }
+      const anchor = selected[0]!;
+      if (
+        anchor.mediaType &&
+        !anchor.mediaType.toLowerCase().startsWith("image/")
+      ) {
+        throw new SeedanceDirectorAdapterError(
+          "REFERENCE_MEDIA_TYPE_UNSUPPORTED",
+          "Synthetic identity anchor must use image media"
+        );
+      }
+      const required = [...requirements.entries()].filter(
+        ([authorityId, value]) =>
+          value === "REQUIRED" && authorityId !== anchor.authorityId
+      );
+      if (required.length) {
+        throw new SeedanceDirectorAdapterError(
+          "REQUIRED_VISUAL_AUTHORITY_MISSING",
+          "Synthetic identity anchor cannot replace another required visual authority"
+        );
+      }
+      return {
+        selected: [anchor],
+        degradations: [...requirements.entries()]
+          .filter(
+            ([authorityId, value]) =>
+              value === "PREFERRED" && authorityId !== anchor.authorityId
+          )
+          .map(([authorityId]) => ({
+            code: "PREFERRED_REFERENCE_OMITTED" as const,
+            authorityId,
+            safeEvidence:
+              "Hybrid Character identity retained only its approved synthetic anchor",
+          })),
+      };
+    }
     const required = [...requirements.entries()].filter(([, value]) => value === "REQUIRED");
     if (required.length) throw new SeedanceDirectorAdapterError("REQUIRED_VISUAL_AUTHORITY_MISSING", "TEXT_TO_VIDEO cannot represent REQUIRED image-conditioned visual authority");
     return {

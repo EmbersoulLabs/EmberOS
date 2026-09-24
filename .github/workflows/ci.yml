@@ -92,6 +92,14 @@ jobs:
       - name: Apply canonical Drizzle schema
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
 
+      - name: Apply AI Story video analysis snapshots
+        run: pnpm --filter @ceo-agent/db sql:ai-story-video-analysis-snapshot
+
+      - name: Certify AI Story video analysis snapshot persistence
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-video-observation-snapshot.integration.test.ts
+
       - name: Certify AI Story runtime status convergence
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
@@ -185,6 +193,9 @@ jobs:
 
       - name: Certify Campaign Character authority and continuity on PostgreSQL
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-character-authority.integration.test.ts
+
+      - name: Certify reusable Character cross-Episode identity on PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-reusable-character.integration.test.ts
 
       - name: Certify Story Supporting Cast scope and promotion on PostgreSQL
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-cast-scope.integration.test.ts

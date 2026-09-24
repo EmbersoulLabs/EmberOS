@@ -7,10 +7,14 @@ import {
   AI_STORY_EPISODE_DURATIONS_SEC,
   AI_STORY_EPISODE_PACING,
   AI_STORY_EPISODE_USER_TYPES,
+  AI_STORY_REUSABLE_CHARACTER_COPY,
   formatEpisodeLiveCostEstimateUsd,
   mapEpisodeTypeToOutlineProfile,
   type AiStoryEpisodeUserType,
+  type AiStoryReusableCharacterCard,
 } from "@ceo-agent/shared";
+
+import { CharacterPortrait } from "@/components/ai-story/CharacterPortrait";
 
 type AssetRow = { id: string; displayName?: string | null; originalFilename?: string | null };
 
@@ -30,11 +34,14 @@ export type EpisodeCreatePayload = {
     nativeCharacterDialogue: boolean;
     pacing: (typeof AI_STORY_EPISODE_PACING)[number];
     cta?: string;
+    reusableCharacterId?: string | null;
+    episodeLookWardrobe?: string;
   };
 };
 
 type Props = {
   campaignId: string;
+  workspaceId?: string;
   assets: AssetRow[];
   loading: boolean;
   error: string;
@@ -53,6 +60,7 @@ const TYPE_LABELS: Record<AiStoryEpisodeUserType, string> = {
 
 export function EpisodeCreateForm({
   campaignId,
+  workspaceId,
   assets,
   loading,
   error,
@@ -70,6 +78,9 @@ export function EpisodeCreateForm({
   const [nativeDialogue, setNativeDialogue] = useState(true);
   const [pacing, setPacing] = useState<(typeof AI_STORY_EPISODE_PACING)[number]>("NATURAL");
   const [cta, setCta] = useState("");
+  const [characters, setCharacters] = useState<AiStoryReusableCharacterCard[]>([]);
+  const [reusableCharacterId, setReusableCharacterId] = useState<string | "new">("new");
+  const [episodeLookWardrobe, setEpisodeLookWardrobe] = useState("");
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>(() =>
     assets.map((asset) => asset.id)
   );
@@ -79,6 +90,17 @@ export function EpisodeCreateForm({
   useEffect(() => {
     setSelectedAssetIds(assets.map((asset) => asset.id));
   }, [assets]);
+  useEffect(() => {
+    let cancelled = false;
+    void fetch(`/api/campaigns/${campaignId}/reusable-characters`)
+      .then(async (response) => ({ ok: response.ok, body: await response.json() }))
+      .then(({ ok, body }) => {
+        if (cancelled || !ok) return;
+        setCharacters(body.characters ?? []);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [campaignId]);
   useEffect(() => {
     const seconds = durationSec === "custom" ? customDurationSec : durationSec;
     const unitCount = 6;
@@ -131,6 +153,8 @@ export function EpisodeCreateForm({
             nativeCharacterDialogue: nativeDialogue,
             pacing,
             cta: cta.trim() || undefined,
+            reusableCharacterId: reusableCharacterId === "new" ? null : reusableCharacterId,
+            episodeLookWardrobe: reusableCharacterId === "new" ? undefined : episodeLookWardrobe.trim() || undefined,
           },
         });
       }}
@@ -201,6 +225,37 @@ export function EpisodeCreateForm({
         <input type="checkbox" checked={nativeDialogue} onChange={(event) => setNativeDialogue(event.target.checked)} />
         Native Character Dialogue
       </label>
+
+      <fieldset className="space-y-2" data-testid="episode-character-selector">
+        <legend className="text-sm font-medium text-navy">{AI_STORY_REUSABLE_CHARACTER_COPY.characters}</legend>
+        <label className="flex items-center gap-2 rounded-lg border border-border p-3 text-sm">
+          <input type="radio" name="reusableCharacter" checked={reusableCharacterId === "new"} onChange={() => setReusableCharacterId("new")} />
+          {AI_STORY_REUSABLE_CHARACTER_COPY.createNewCharacter}
+        </label>
+        {characters.map((character) => (
+          <label key={character.reusableCharacterId} className="flex items-start gap-3 rounded-lg border border-border p-3 text-sm" data-testid="episode-character-option">
+            <input type="radio" name="reusableCharacter" checked={reusableCharacterId === character.reusableCharacterId} onChange={() => setReusableCharacterId(character.reusableCharacterId)} />
+            {workspaceId ? <CharacterPortrait workspaceId={workspaceId} assetId={character.portraitAssetId} label={character.name} className="h-14 w-14 rounded-md object-cover" /> : null}
+            <span>
+              <span className="block font-medium">{character.name}</span>
+              <span className="text-xs text-ink-secondary">{AI_STORY_REUSABLE_CHARACTER_COPY.usedInEpisodes(character.episodeCount)}</span>
+            </span>
+          </label>
+        ))}
+        {reusableCharacterId !== "new" ? (
+          <div className="rounded-lg bg-surface-muted p-3 text-sm" data-testid="episode-identity-locked">
+            <p className="font-medium text-navy">{AI_STORY_REUSABLE_CHARACTER_COPY.identityLocked} ✓</p>
+            {characters.find((character) => character.reusableCharacterId === reusableCharacterId)?.characterDnaCertified ? (
+              <p className="mt-1 text-xs text-ink-secondary">{AI_STORY_REUSABLE_CHARACTER_COPY.characterDnaCertified}</p>
+            ) : null}
+            <p className="mt-1 text-xs text-ink-secondary">{AI_STORY_REUSABLE_CHARACTER_COPY.consistencySoft}</p>
+            <label className="mt-2 block space-y-1">
+              <span>Outfit</span>
+              <input data-testid="episode-look-outfit" className="w-full rounded-lg border border-border px-3 py-2 text-sm" value={episodeLookWardrobe} onChange={(event) => setEpisodeLookWardrobe(event.target.value)} placeholder="White dress or blue jacket" />
+            </label>
+          </div>
+        ) : null}
+      </fieldset>
 
       <section className="space-y-3 rounded-xl border border-border p-4" data-testid="episode-references">
         <h2 className="text-sm font-semibold text-navy">References</h2>
