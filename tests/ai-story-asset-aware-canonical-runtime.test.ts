@@ -174,7 +174,7 @@ function nativeT2vRequest(characterDna = false) {
       motionFingerprint:
         sha256CanonicalIntegrityHash("phase6-dna-motion"),
     },
-    adapterVersion: "seedance-canonical-runtime.v1",
+    adapterVersion: "1.0.0",
     compiledAt: createdAt,
     resolution: "480p",
     referenceAssets: [],
@@ -241,7 +241,7 @@ function imageToVideoRequest() {
       directorFingerprint: sha256CanonicalIntegrityHash("phase6-director"),
       motionFingerprint: sha256CanonicalIntegrityHash("phase6-motion"),
     },
-    adapterVersion: "seedance-canonical-runtime.v1",
+    adapterVersion: "1.0.0",
     compiledAt: createdAt,
     resolution: "480p",
     referenceAssets: [
@@ -1217,11 +1217,13 @@ describeIntegration("Ticket A Repair 01 true production Episode B path", () => {
 
   beforeAll(async () => {
     sql = createIntegrationSql();
+    await sql`DELETE FROM ai_story_authorized_scheduling_authorities WHERE org_id = ${PHASE_2A_IDS.orgId}`;
     await cleanupPr32Tenant(sql);
     await seedPr32Tenant(sql, undefined, PR32_USER_A, "phase6-repair-01");
   }, 120_000);
 
   afterAll(async () => {
+    await sql`DELETE FROM ai_story_authorized_scheduling_authorities WHERE org_id = ${PHASE_2A_IDS.orgId}`;
     await cleanupPr32Tenant(sql);
     await sql.end();
     await closeDb();
