@@ -4484,6 +4484,81 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   photoSceneSceneSelections: many(photoSceneSceneSelections),
 }));
 
+/** Immutable AI Story video observation snapshots. Claims coordinate one paid analysis per reuse key. */
+export const aiStoryVideoAnalysisSnapshots = pgTable(
+  "ai_story_video_analysis_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    assetContentHash: text("asset_content_hash").notNull(),
+    analysisType: text("analysis_type").notNull().default("AI_STORY_VIDEO"),
+    analysisVersion: text("analysis_version").notNull(),
+    extractorVersion: text("extractor_version").notNull(),
+    observationJson: jsonb("observation_json").notNull(),
+    analysisJson: jsonb("analysis_json").notNull(),
+    providerId: text("provider_id").notNull(),
+    modelId: text("model_id").notNull(),
+    requestedModelId: text("requested_model_id"),
+    providerModelId: text("provider_model_id"),
+    providerRequestId: text("provider_request_id"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    inputFingerprint: text("input_fingerprint").notNull(),
+    costUsd: numeric("cost_usd").notNull().default("0"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_video_analysis_snapshots_reuse_uidx").on(
+      t.workspaceId,
+      t.assetId,
+      t.assetContentHash,
+      t.analysisVersion,
+      t.extractorVersion,
+    ),
+    index("ai_story_video_analysis_snapshots_workspace_idx").on(t.workspaceId, t.assetId),
+  ],
+);
+
+export const aiStoryVideoAnalysisClaims = pgTable(
+  "ai_story_video_analysis_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    assetId: uuid("asset_id")
+      .notNull()
+      .references(() => assets.id, { onDelete: "restrict" }),
+    assetContentHash: text("asset_content_hash").notNull(),
+    analysisType: text("analysis_type").notNull().default("AI_STORY_VIDEO"),
+    analysisVersion: text("analysis_version").notNull(),
+    extractorVersion: text("extractor_version").notNull(),
+    status: text("status").notNull(),
+    snapshotId: uuid("snapshot_id").references(() => aiStoryVideoAnalysisSnapshots.id, { onDelete: "restrict" }),
+    errorCode: text("error_code"),
+    providerId: text("provider_id"),
+    requestedModelId: text("requested_model_id"),
+    providerModelId: text("provider_model_id"),
+    providerRequestId: text("provider_request_id"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costUsd: numeric("cost_usd"),
+    attemptedAt: timestamp("attempted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("ai_story_video_analysis_claims_workspace_idx").on(t.workspaceId, t.assetId, t.status),
+    check(
+      "ai_story_video_analysis_claims_status_chk",
+      sql`${t.status} in ('CLAIMED', 'SUCCEEDED', 'FAILED')`,
+    ),
+  ],
+);
+
 export const assetsRelations = relations(assets, ({ one, many }) => ({
   campaign: one(campaigns, { fields: [assets.campaignId], references: [campaigns.id] }),
   campaignRefs: many(campaignAssetRefs),

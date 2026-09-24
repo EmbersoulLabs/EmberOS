@@ -87,6 +87,7 @@ export * from "./ai-story-generation-unit";
 export * from "./ai-story-v2v-execution";
 export * from "./ai-story-video-asset-analysis";
 export * from "./ai-story-video-strategy-router";
+export * from "./ai-story-video-observation-extraction";
 export * from "./ai-story-narrative-editorial-plan";
 export * from "./ai-story-assembly-v2";
 export * from "./ai-story-audio-plan";
