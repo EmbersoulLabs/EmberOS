@@ -94,7 +94,7 @@ jobs:
 
       - name: Certify Asset-Aware canonical Execute and production Worker bridge
         run: >-
-          pnpm exec vitest run --config vitest.integration.config.ts
+          pnpm exec vitest run --config vitest.config.ts
           tests/ai-story-asset-aware-canonical-runtime.test.ts
 
       - name: Certify AI Story runtime status convergence
