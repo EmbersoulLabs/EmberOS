@@ -4,8 +4,9 @@
  * Sprint 3 PR 3.7 Phase E — Final Story Result video viewer.
  * Consumes only the FSR read API playback URL (accepted FSR required).
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { FinalStoryResultReadModel } from "@ceo-agent/shared";
+import { resolveEpisodeDurationLabel } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 import {
   StoryRuntimeClientError,
@@ -18,6 +19,8 @@ type Props = {
   storyId: string;
   executionPlanId: string;
   enabled: boolean;
+  expectAcceptedResult?: boolean;
+  onDurationMs?: (durationMs: number | null) => void;
 };
 
 export function FinalStoryResultViewer({
@@ -25,6 +28,8 @@ export function FinalStoryResultViewer({
   storyId,
   executionPlanId,
   enabled,
+  expectAcceptedResult = false,
+  onDurationMs,
 }: Props) {
   const { t } = useI18n();
   const [model, setModel] = useState<FinalStoryResultReadModel | null>(null);
@@ -32,6 +37,7 @@ export function FinalStoryResultViewer({
   const [loading, setLoading] = useState(false);
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
   async function downloadFinalVideo() {
     setDownloadLoading(true);
@@ -52,10 +58,18 @@ export function FinalStoryResultViewer({
     }
   }
 
+  const reportDuration = useCallback(
+    (durationMs: number | null) => {
+      onDurationMs?.(durationMs);
+    },
+    [onDurationMs]
+  );
+
   useEffect(() => {
     if (!enabled) {
       setModel(null);
       setError(null);
+      reportDuration(null);
       return;
     }
 
@@ -70,15 +84,21 @@ export function FinalStoryResultViewer({
           storyId,
           executionPlanId,
         });
-        if (!cancelled) setModel(next);
+        if (!cancelled) {
+          setModel(next);
+          reportDuration(next.durationMs ?? null);
+        }
       } catch (err) {
         if (cancelled) return;
-        if (err instanceof StoryRuntimeClientError && err.status === 404) {
+        if (err instanceof StoryRuntimeClientError && err.status === 404 && !expectAcceptedResult) {
           setModel(null);
           setError(null);
+          reportDuration(null);
           return;
         }
-        setError(err instanceof Error ? err.message : "Failed to load final video");
+        setModel(null);
+        setError(t("aiStory.runtime.finalVideoTemporarilyUnavailable"));
+        reportDuration(null);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -87,7 +107,7 @@ export function FinalStoryResultViewer({
     return () => {
       cancelled = true;
     };
-  }, [enabled, campaignId, storyId, executionPlanId]);
+  }, [enabled, expectAcceptedResult, campaignId, storyId, executionPlanId, reloadToken, reportDuration, t]);
 
   if (!enabled) return null;
 
@@ -103,6 +123,11 @@ export function FinalStoryResultViewer({
         <p className="mt-1 text-sm text-ink-secondary">
           {t("aiStory.runtime.finalVideoSubtitle")}
         </p>
+        {model ? (
+          <p className="mt-1 text-sm text-navy" data-testid="final-story-duration">
+            {resolveEpisodeDurationLabel(model.durationMs ?? null, { expected: true })}
+          </p>
+        ) : null}
         {model?.qcProvenance ? (
           <p
             className="mt-1 text-xs text-ink-secondary"
@@ -118,9 +143,17 @@ export function FinalStoryResultViewer({
         </p>
       ) : null}
       {error ? (
-        <p className="text-sm text-red-700" data-testid="final-story-error">
-          {error}
-        </p>
+        <div className="space-y-2" data-testid="final-story-error">
+          <p className="text-sm text-red-700">{error}</p>
+          <button
+            type="button"
+            className="text-sm font-semibold text-navy underline"
+            onClick={() => setReloadToken((current) => current + 1)}
+            data-testid="final-story-read-retry"
+          >
+            {t("aiStory.runtime.downloadRetry")}
+          </button>
+        </div>
       ) : null}
       {model?.playbackUrl ? (
         <>
@@ -141,7 +174,9 @@ export function FinalStoryResultViewer({
         </>
       ) : !loading && !error ? (
         <p className="text-sm text-ink-secondary" data-testid="final-story-absent">
-          {t("aiStory.runtime.finalVideoAbsent")}
+          {expectAcceptedResult
+            ? t("aiStory.runtime.finalVideoTemporarilyUnavailable")
+            : t("aiStory.runtime.finalVideoAbsent")}
         </p>
       ) : null}
     </section>
