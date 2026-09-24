@@ -16,6 +16,7 @@ import {
   AiStoryVideoAssetObservationSchema,
   classifyAiStoryVideoAssetAnalysis,
   mergeTrustedVideoObservation,
+  canonicalizeAiStoryVideoObservation,
   normalizeAiStoryVideoModelObservationEnvelope,
   parseStoredVideoAnalysisSnapshot,
   routeAiStoryVideoPlanningStrategy,
@@ -616,7 +617,7 @@ describe("video observation extraction and durable snapshots", () => {
   });
 
   it("does not reuse an extractor v2 snapshot as v3", async () => {
-    expect(AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION).toBe("ai-story-video-observation-extractor.v3");
+    expect(AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION).toBe("ai-story-video-observation-extractor.v4");
     const run = harness();
     const staleKey = videoObservationInputFingerprint({
       workspaceId: id(3),
@@ -628,7 +629,7 @@ describe("video observation extraction and durable snapshots", () => {
     run.repository.snapshots.set(staleKey, { id: "v2-snapshot" } as AiStoryVideoAnalysisSnapshotRecord);
     const result = await run.ensure();
     expect(result.reused).toBe(false);
-    expect(result.snapshot.extractorVersion).toBe("ai-story-video-observation-extractor.v3");
+    expect(result.snapshot.extractorVersion).toBe("ai-story-video-observation-extractor.v4");
     expect(result.snapshot.id).not.toBe("v2-snapshot");
     expect(run.providerCalls()).toBe(1);
     expect(() => parseStoredVideoAnalysisSnapshot({
@@ -641,6 +642,7 @@ describe("video observation extraction and durable snapshots", () => {
       analysisVersion: AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
       extractorVersion: "ai-story-video-observation-extractor.v2",
       observation: {},
+      rawProviderObservation: { dominantShotType: "MEDIUM" },
       analysis: {},
       providerId: "openai",
       modelId: "gpt-4o-2024-08-06",
@@ -734,7 +736,7 @@ describe("video observation extraction and durable snapshots", () => {
     expect(files[2]).toContain("maxRetries: 0");
     expect(files[2]).toContain("providerModelId");
     expect(files[1]).toContain("recordProviderAttempt");
-    expect(AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION).toBe("ai-story-video-observation-extractor.v3");
+    expect(AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION).toBe("ai-story-video-observation-extractor.v4");
     expect(files[2]).not.toContain("extractFrameAt");
     expect(files[2]).not.toContain("transcribeAudioDetailed");
     expect(files[3]).not.toContain("ensureAiStoryVideoAssetAnalysis");
@@ -746,9 +748,87 @@ describe("video observation extraction and durable snapshots", () => {
     expect(migration).toContain("CREATE TABLE IF NOT EXISTS ai_story_video_analysis_claims");
     expect(migration).toContain("SECURITY DEFINER");
     expect(migration).not.toContain("ALTER TABLE assets");
+    expect(migration).toContain("raw_provider_observation");
     for (const source of files) {
       expect(source.toLowerCase()).not.toContain("seedance");
       expect(source.toLowerCase()).not.toContain("runway");
     }
+  });
+
+  it("canonicalizes the persisted real certification rejection without a Provider call", () => {
+    const persistedRejectedFields = {
+      dominantShotType: "medium shot",
+      cameraMotion: "static",
+      compositionStability: "stable",
+      actionTags: ["flipping", "notebook"],
+      environmentTags: ["kitchen", "table", "plant", "notebook", "water bottle", "glasses"],
+    };
+    const canonical = mergeTrustedVideoObservation(canonicalMetadata(), persistedRejectedFields);
+    expect(canonical.dominantShotType).toBe("MEDIUM");
+    expect(canonical.cameraMotion).toBe("STATIC");
+    expect(canonical.compositionStability).toBe("STABLE");
+    expect(mergeTrustedVideoObservation(canonicalMetadata(), {
+      ...observedEnvelope().observable,
+      dominantShotType: "medium-shot",
+      cameraMotion: "locked off",
+      compositionStability: "steady",
+    })).toMatchObject({
+      dominantShotType: "MEDIUM",
+      cameraMotion: "STATIC",
+      compositionStability: "STABLE",
+    });
+    expect(canonical.actionTags).toEqual([]);
+    expect(canonical.observedActions).toEqual(["flipping"]);
+    expect(mergeTrustedVideoObservation(canonicalMetadata(), {
+      ...observedEnvelope().observable,
+      actionTags: ["flipping pages"],
+    }).observedActions).toEqual(["flipping pages"]);
+    expect(canonical.observedEnvironments).toEqual(["kitchen"]);
+    expect(canonical.observedObjects).toEqual(["notebook", "table", "plant", "water bottle", "glasses"]);
+    expect(JSON.stringify(canonical)).not.toContain("medium shot");
+    expect(canonicalizeAiStoryVideoObservation(persistedRejectedFields)).not.toEqual(persistedRejectedFields);
+  });
+
+  it("rejects unknown bounded enums, extra keys, and oversized open values", () => {
+    expect(() => mergeTrustedVideoObservation(canonicalMetadata(), {
+      ...observedEnvelope().observable,
+      cameraMotion: "orbit",
+    })).toThrow(/UNKNOWN_ENUM/);
+    expect(() => mergeTrustedVideoObservation(canonicalMetadata(), {
+      ...observedEnvelope().observable,
+      surprise: true,
+    })).toThrow();
+    expect(() => mergeTrustedVideoObservation(canonicalMetadata(), {
+      ...observedEnvelope().observable,
+      observedActions: ["x".repeat(81)],
+    })).toThrow(/OPEN_VALUE_REJECTED/);
+    expect(() => mergeTrustedVideoObservation(canonicalMetadata(), {
+      ...observedEnvelope().observable,
+      observedObjects: Array.from({ length: 13 }, (_, index) => `object-${index}`),
+    })).toThrow(/OPEN_VALUE_REJECTED/);
+  });
+
+  it("keeps the raw Provider observation when validation fails and stores it beside a valid snapshot", async () => {
+    const rawInvalid = { ...observedEnvelope().observable, dominantShotType: "not a shot" };
+    const invalid = harness();
+    invalid.extract.mockResolvedValue(paidResult(rawInvalid));
+    await expect(invalid.ensure()).rejects.toThrow(/UNKNOWN_ENUM/);
+    expect(invalid.repository.snapshots.size).toBe(0);
+    const failed = [...invalid.repository.claims.values()][0];
+    expect(failed?.status).toBe("FAILED");
+    expect(failed?.evidence?.rawProviderObservation).toEqual(rawInvalid);
+
+    const raw = observedEnvelope().observable;
+    const valid = harness();
+    valid.extract.mockResolvedValue(paidResult(raw));
+    const stored = await valid.ensure();
+    expect(stored.snapshot.rawProviderObservation).toEqual(raw);
+    expect(stored.snapshot.observation.dominantShotType).toBe("MEDIUM");
+    expect(stored.snapshot.rawProviderObservation).not.toEqual(stored.snapshot.observation);
+    const again = await valid.ensure();
+    expect(stored.providerCalls).toBe(1);
+    expect(again.reused).toBe(true);
+    expect(again.providerCalls).toBe(0);
+    expect(valid.extract).toHaveBeenCalledTimes(1);
   });
 });

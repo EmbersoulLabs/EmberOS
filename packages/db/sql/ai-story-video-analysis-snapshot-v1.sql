@@ -68,7 +68,11 @@ ALTER TABLE ai_story_video_analysis_snapshots
   ADD COLUMN IF NOT EXISTS input_tokens integer,
   ADD COLUMN IF NOT EXISTS output_tokens integer;
 
+ALTER TABLE ai_story_video_analysis_snapshots
+  ADD COLUMN IF NOT EXISTS raw_provider_observation jsonb;
+
 ALTER TABLE ai_story_video_analysis_claims
+  ADD COLUMN IF NOT EXISTS raw_provider_observation jsonb,
   ADD COLUMN IF NOT EXISTS provider_id text,
   ADD COLUMN IF NOT EXISTS requested_model_id text,
   ADD COLUMN IF NOT EXISTS provider_model_id text,

@@ -199,6 +199,7 @@ export async function ensureAiStoryVideoAssetAnalysis(input: {
       outputTokens: extracted.outputTokens,
       costUsd: extracted.costUsd,
       attemptedAt: analyzedAt,
+      rawProviderObservation: extracted.raw,
     });
     let observation;
     try {
@@ -239,6 +240,7 @@ export async function ensureAiStoryVideoAssetAnalysis(input: {
       analysisVersion: AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
       extractorVersion: AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION,
       observation,
+      rawProviderObservation: extracted.raw,
       analysis,
       providerId: extracted.providerId,
       modelId: extracted.providerModelId ?? extracted.requestedModelId,

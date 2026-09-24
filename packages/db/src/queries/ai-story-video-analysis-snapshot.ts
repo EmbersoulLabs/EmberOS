@@ -19,6 +19,7 @@ type SnapshotRow = {
   analysis_version: string;
   extractor_version: string;
   observation_json: unknown;
+  raw_provider_observation: unknown;
   analysis_json: unknown;
   provider_id: string;
   model_id: string;
@@ -47,6 +48,7 @@ function mapSnapshot(row: SnapshotRow): AiStoryVideoAnalysisSnapshotRecord {
     analysisVersion: row.analysis_version,
     extractorVersion: row.extractor_version,
     observation: row.observation_json,
+    rawProviderObservation: row.raw_provider_observation,
     analysis: row.analysis_json,
     providerId: row.provider_id,
     modelId: row.model_id,
@@ -64,7 +66,7 @@ function mapSnapshot(row: SnapshotRow): AiStoryVideoAnalysisSnapshotRecord {
 async function selectSnapshot(sql: Sql, key: AiStoryVideoAnalysisReuseKey): Promise<AiStoryVideoAnalysisSnapshotRecord | null> {
   const rows = await sql<SnapshotRow[]>`
     SELECT id, org_id, workspace_id, asset_id, asset_content_hash, analysis_type, analysis_version,
-           extractor_version, observation_json, analysis_json, provider_id, model_id,
+           extractor_version, observation_json, raw_provider_observation, analysis_json, provider_id, model_id,
            requested_model_id, provider_model_id, provider_request_id, input_tokens, output_tokens,
            input_fingerprint, cost_usd, created_at
     FROM ai_story_video_analysis_snapshots
@@ -132,13 +134,13 @@ export function createSqlVideoAnalysisSnapshotRepository(
       await sql`
         INSERT INTO ai_story_video_analysis_snapshots (
           id, org_id, workspace_id, asset_id, asset_content_hash, analysis_type, analysis_version,
-          extractor_version, observation_json, analysis_json, provider_id, model_id, requested_model_id,
+          extractor_version, observation_json, raw_provider_observation, analysis_json, provider_id, model_id, requested_model_id,
           provider_model_id, provider_request_id, input_tokens, output_tokens, input_fingerprint,
           cost_usd, created_at
         ) VALUES (
           ${row.id}, ${row.orgId}, ${row.workspaceId}, ${row.assetId}, ${row.assetContentHash},
-          ${row.analysisType}, ${row.analysisVersion}, ${row.extractorVersion},
-          ${sql.json(row.observation as never)}, ${sql.json(row.analysis as never)},
+          ${row.analysisType}, ${row.analysisVersion},           ${row.extractorVersion},
+          ${sql.json(row.observation as never)}, ${sql.json(row.rawProviderObservation as never)}, ${sql.json(row.analysis as never)},
           ${row.providerId}, ${row.modelId}, ${row.requestedModelId}, ${row.providerModelId},
           ${row.providerRequestId}, ${row.inputTokens}, ${row.outputTokens}, ${row.inputFingerprint},
           ${row.costUsd}, ${row.createdAt}
@@ -157,6 +159,7 @@ export function createSqlVideoAnalysisSnapshotRepository(
             output_tokens = ${evidence.outputTokens},
             cost_usd = ${evidence.costUsd},
             attempted_at = ${evidence.attemptedAt},
+            raw_provider_observation = ${sql.json(evidence.rawProviderObservation as never)},
             updated_at = now()
         WHERE id = ${claimId} AND status = 'CLAIMED'
       `;
