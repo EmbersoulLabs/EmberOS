@@ -1187,6 +1187,38 @@ describe("Ticket A Repair 01 canonical Execute bridge", () => {
     ).toBeUndefined();
   });
 
+  it("reuses the exact persisted authority on a canonical Execute retry", async () => {
+    const seed = authorizedSchedulingAuthority({
+      request: nativeT2vRequest(true),
+      plan: plannerFor(nativeT2vRequest(true), {
+        dna: true,
+        audio: "NEED_NATIVE_DIALOGUE",
+      }),
+    });
+    const test = canonicalExecuteHarness(seed);
+
+    await authorizeAndExecuteExecutionPlan(test.input);
+    await authorizeAndExecuteExecutionPlan(test.input);
+
+    const [first, retry] = test.scheduling.scheduleAuthorizedScene.mock.calls.map(
+      ([input]) => input.assetAwareExecution
+    );
+    expect(retry).toEqual(first);
+    expect(retry.providerResolution.providerResolutionId).toBe(
+      seed.providerResolution.providerResolutionId
+    );
+    expect(retry.compiledRequest.compiledRequestId).toBe(
+      seed.compiledRequest.compiledRequestId
+    );
+    expect(retry.compiledRequest.requestFingerprint).toBe(
+      seed.compiledRequest.requestFingerprint
+    );
+    expect(retry.compiledRequest.characterDnaAuthority?.characterDnaFingerprint).toBe(
+      seed.compiledRequest.characterDnaAuthority?.characterDnaFingerprint
+    );
+    expect(test.route).not.toHaveBeenCalled();
+  });
+
   it("fails closed instead of treating partial authority as legacy", async () => {
     const seed = authorizedSchedulingAuthority({
       request: nativeT2vRequest(true),
