@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   AiStoryModeResolutionSnapshotSchema,
   type AiStoryCompiledProviderRequest,
@@ -13,6 +13,7 @@ import {
   InMemoryAiStoryCanonicalExecutionAuthorityRepository,
   InMemoryAiStoryProviderRuntimeRepository,
   buildCertifiedSeedanceProviderEntry,
+  buildAiStoryAuthorizedSchedulingAuthority,
   buildSeedanceNativeAudioCapability,
   compileImmutableSeedanceNativeAvRequest,
   compileImmutableSeedanceRequestFromSceneCompilation,
@@ -23,6 +24,10 @@ import {
   type AiStoryCurrentExecutionAuthorityState,
 } from "@ceo-agent/agents";
 import {
+  AiStoryAssetAwareExecutionPlannerRepository,
+  closeDb,
+} from "@ceo-agent/db";
+import {
   buildAiStoryReusableCharacterVersion,
   buildCampaignProjectionFromReusableCharacter,
   buildEpisodeCharacterBinding,
@@ -32,7 +37,24 @@ import {
 } from "@ceo-agent/shared/server";
 import { makePhase2aCompilation } from "./helpers/ai-story-phase-2a";
 import { compileSeedanceNativeDialogueCertificationRequest } from "./helpers/ai-story-seedance-native-dialogue-cert";
-import { authorizeAssetAwareProductionDispatch } from "../apps/worker/src/ai-story-provider-worker-cycle";
+import {
+  authorizeAssetAwareProductionDispatch,
+  runAiStoryProviderWorkerCycle,
+} from "../apps/worker/src/ai-story-provider-worker-cycle";
+import { authorizeAndExecuteExecutionPlan } from "../packages/agents/src/ai-story/authorize-and-execute-execution-plan";
+import {
+  RUN_DB_INTEGRATION,
+  createIntegrationSql,
+  getIntegrationDbUrl,
+} from "./helpers/db-integration";
+import {
+  cleanupPr32Tenant,
+  PR32_USER_A,
+  seedPr32Tenant,
+} from "./helpers/ai-story-pr32-scheduling";
+import { prepareReadyForCanonicalExecute } from "./helpers/ai-story-pr37-phase-d-execute";
+import { PHASE_2A_IDS } from "./helpers/ai-story-phase-2a";
+import type { Sql } from "postgres";
 
 const id = (value: number) =>
   `f6000000-0000-4000-8000-${value.toString().padStart(12, "0")}`;
@@ -437,6 +459,37 @@ function freshness(request: AiStoryCompiledProviderRequest) {
     motionSuperseded: false,
     authoritySnapshotsMatch: true,
   };
+}
+
+function authorizedSchedulingAuthority(input: {
+  readonly request: AiStoryCompiledProviderRequest;
+  readonly plan: AiStoryModeResolutionSnapshot;
+  readonly executionPlanId?: string;
+}) {
+  const chain = phase5Chain(input.request, input.plan);
+  return buildAiStoryAuthorizedSchedulingAuthority({
+    orgId: input.request.orgId,
+    workspaceId: input.request.workspaceId,
+    campaignId: input.request.campaignId,
+    storyId: input.request.storyId,
+    storyVersionId: input.request.storyVersionId,
+    executionPlanId:
+      input.executionPlanId ??
+      makePhase2aCompilation({
+        sceneOrder: [0],
+        referenceFreeT2vOrders: [0],
+      }).plan.storyExecutionId,
+    sceneExecutionId: input.request.sceneExecutionId,
+    plannerSnapshot: input.plan,
+    analysisAuthorities: analysisPins(input.plan),
+    providerResolution: chain.resolution,
+    providerCapability: chain.entry.declaration,
+    providerCompileIntent: chain.compileIntent,
+    compiledRequest: input.request,
+    freshness: freshness(input.request),
+    idempotencyKey: `canonical-execute:${input.request.sceneExecutionId}`,
+    authorizedAt: createdAt,
+  });
 }
 
 async function scheduleFixture(input: {
@@ -996,4 +1049,274 @@ describe("Asset-Aware canonical queue and Worker lineage", () => {
       })
     ).resolves.toBe("LEGACY");
   });
+});
+
+function canonicalExecuteHarness(authorityRecord: ReturnType<
+  typeof authorizedSchedulingAuthority
+> | null) {
+  const request = nativeT2vRequest(true);
+  const plan = plannerFor(request, {
+    dna: true,
+    audio: "NEED_NATIVE_DIALOGUE",
+  });
+  const authority = authorityRecord ?? authorizedSchedulingAuthority({ request, plan });
+  const executionPlanId = authority.executionPlanId;
+  const ownership = {
+    orgId: request.orgId,
+    workspaceId: request.workspaceId,
+    campaignId: request.campaignId,
+    storyId: request.storyId,
+    storyVersionId: request.storyVersionId,
+    animationPackageId: PHASE_2A_IDS.animationPackageId,
+    executionPlanId,
+  } as const;
+  const scheduling = {
+    scheduleAuthorizedScene: vi.fn().mockResolvedValue({ replayed: false }),
+  };
+  const route = vi.fn();
+  const input = {
+    executionPlanId,
+    actorUserId: id(990),
+    ownership,
+    router: { route } as never,
+    runtimeAuthorizationTransaction: async <T>(operation: (tx: object) => Promise<T>) =>
+      operation({}),
+    runtimeAuthorizationSnapshotRepository: {
+      async loadCanonicalSnapshotInTransaction() {
+        return {
+          executionPlanId,
+          ownership,
+          reviewStatus: "APPROVED",
+          storyDecision: { factId: id(991), deterministicFingerprint: hash("a") },
+          assemblyDefinition: {
+            assemblyDefinitionId: id(992),
+            deterministicFingerprint: hash("b"),
+            orderedSceneExecutionIds: [request.sceneExecutionId],
+          },
+          assemblyMemberships: [],
+          orderedSceneExecutionIds: [request.sceneExecutionId],
+          membershipComplete: true,
+          orderingDeterministic: true,
+          qcResults: [{
+            qcResultId: id(993),
+            sceneExecutionId: request.sceneExecutionId,
+            status: "passed",
+            resultHash: hash("c"),
+          }],
+          existingFact: null,
+          transactionAuthority: {},
+          authority: Symbol.for("phase6-repair"),
+        };
+      },
+      async acceptOrReturnCanonicalSnapshotInTransaction(fact: unknown) {
+        return { fact, converged: false };
+      },
+    } as never,
+    persistenceRepository: {} as never,
+    reviewRepository: {} as never,
+    assemblyRepository: {} as never,
+    authorizationRepository: {} as never,
+    sceneReleaseRepository: {
+      async initialize({ runtimeAuthorizationId }: { runtimeAuthorizationId: string }) {
+        return [{
+          sceneExecutionId: request.sceneExecutionId,
+          executionPlanId,
+          runtimeAuthorizationId,
+          workspaceId: request.workspaceId,
+          sceneOrder: 1,
+          releaseState: "RELEASED",
+        }];
+      },
+    } as never,
+    schedulingCoordinator: scheduling as never,
+    commercialAuthorizationService: {} as never,
+    executionAuthorization: {
+      allowed: true,
+      accessMode: "ops",
+      settlementMode: "none",
+      authorizedBy: "ACTIVE_PLATFORM_ADMIN",
+      policyVersion: "ai-story-exec-03.v1",
+      reason: "phase6-canonical-execute-repair",
+      providerCostAccounting: "ALLOWED",
+    } as const,
+    assetAwareAuthorityRepository: {
+      async getAuthorizedSchedulingAuthority() {
+        return authorityRecord === null
+          ? null
+          : {
+              schedulingAuthorityId: authority.schedulingAuthorityId,
+              authorityFingerprint: authority.authorityFingerprint,
+              authority,
+            };
+      },
+    },
+    now: () => new Date(createdAt),
+  };
+  return { input, request, plan, authority, scheduling, route };
+}
+
+describe("Ticket A Repair 01 canonical Execute bridge", () => {
+  it("passes the exact persisted Asset-Aware authority into canonical scheduling", async () => {
+    const seed = authorizedSchedulingAuthority({
+      request: nativeT2vRequest(true),
+      plan: plannerFor(nativeT2vRequest(true), {
+        dna: true,
+        audio: "NEED_NATIVE_DIALOGUE",
+      }),
+    });
+    const test = canonicalExecuteHarness(seed);
+    await authorizeAndExecuteExecutionPlan(test.input);
+    const scheduled = test.scheduling.scheduleAuthorizedScene.mock.calls[0]?.[0];
+    expect(scheduled.assetAwareExecution.compiledRequest.compiledRequestId).toBe(
+      seed.compiledRequest.compiledRequestId
+    );
+    expect(scheduled.assetAwareExecution.providerResolution.providerResolutionId).toBe(
+      seed.providerResolution.providerResolutionId
+    );
+    expect(scheduled.assetAwareExecution.compiledRequest.characterDnaAuthority?.characterDnaFingerprint).toBe(
+      seed.compiledRequest.characterDnaAuthority?.characterDnaFingerprint
+    );
+    expect(test.route).not.toHaveBeenCalled();
+  });
+
+  it("keeps a true no-authority execution on the explicit legacy branch", async () => {
+    const test = canonicalExecuteHarness(null);
+    await authorizeAndExecuteExecutionPlan(test.input);
+    expect(
+      test.scheduling.scheduleAuthorizedScene.mock.calls[0]?.[0].assetAwareExecution
+    ).toBeUndefined();
+  });
+
+  it("fails closed instead of treating partial authority as legacy", async () => {
+    const seed = authorizedSchedulingAuthority({
+      request: nativeT2vRequest(true),
+      plan: plannerFor(nativeT2vRequest(true), {
+        dna: true,
+        audio: "NEED_NATIVE_DIALOGUE",
+      }),
+    });
+    const test = canonicalExecuteHarness(seed);
+    test.input.assetAwareAuthorityRepository.getAuthorizedSchedulingAuthority =
+      async () => ({
+        schedulingAuthorityId: seed.schedulingAuthorityId,
+        authorityFingerprint: seed.authorityFingerprint,
+        authority: { executionPlanId: seed.executionPlanId },
+      });
+    await expect(authorizeAndExecuteExecutionPlan(test.input)).rejects.toMatchObject({
+      code: "STALE_EXECUTION_AUTHORITY",
+    });
+    expect(test.scheduling.scheduleAuthorizedScene).not.toHaveBeenCalled();
+  });
+});
+
+const describeIntegration =
+  RUN_DB_INTEGRATION && getIntegrationDbUrl() ? describe : describe.skip;
+
+describeIntegration("Ticket A Repair 01 true production Episode B path", () => {
+  let sql: Sql;
+
+  beforeAll(async () => {
+    sql = createIntegrationSql();
+    await cleanupPr32Tenant(sql);
+    await seedPr32Tenant(sql, undefined, PR32_USER_A, "phase6-repair-01");
+  }, 120_000);
+
+  afterAll(async () => {
+    await cleanupPr32Tenant(sql);
+    await sql.end();
+    await closeDb();
+  }, 60_000);
+
+  it("traverses canonical Execute, durable Outbox, and the production Worker cycle", async () => {
+    const ready = await prepareReadyForCanonicalExecute({
+      purpose: "phase6-repair-01",
+      ids: PHASE_2A_IDS,
+      userId: PR32_USER_A,
+      sceneOrder: [0],
+      instructionPurpose: "Purpose scene-a",
+      referenceFreeT2vOrders: [0],
+    });
+    const request = nativeT2vRequest(true);
+    const plan = plannerFor(request, {
+      dna: true,
+      audio: "NEED_NATIVE_DIALOGUE",
+    });
+    const authority = authorizedSchedulingAuthority({
+      request,
+      plan,
+      executionPlanId: ready.executionPlanId,
+    });
+    const authorityRepository =
+      new AiStoryAssetAwareExecutionPlannerRepository();
+    await authorityRepository.acceptAuthorizedSchedulingAuthority({
+      schedulingAuthorityId: authority.schedulingAuthorityId,
+      authorityFingerprint: authority.authorityFingerprint,
+      orgId: authority.orgId,
+      workspaceId: authority.workspaceId,
+      campaignId: authority.campaignId,
+      storyId: authority.storyId,
+      storyVersionId: authority.storyVersionId,
+      executionPlanId: authority.executionPlanId,
+      sceneExecutionId: authority.sceneExecutionId,
+      authority,
+      authorizedAt: authority.authorizedAt,
+    });
+
+    const providerRouter = { route: vi.fn() };
+    await authorizeAndExecuteExecutionPlan({
+      executionPlanId: ready.executionPlanId,
+      actorUserId: PR32_USER_A,
+      ownership: ready.ownership,
+      router: providerRouter as never,
+      executionAuthorization: {
+        allowed: true,
+        accessMode: "ops",
+        settlementMode: "none",
+        authorizedBy: "ACTIVE_PLATFORM_ADMIN",
+        policyVersion: "ai-story-exec-03.v1",
+        reason: "phase6-production-path-dry-run",
+        providerCostAccounting: "ALLOWED",
+      },
+    });
+    expect(providerRouter.route).not.toHaveBeenCalled();
+
+    let dispatchBoundary:
+      | "LEGACY"
+      | "AUTHORIZED_PROVIDER_DISPATCH"
+      | undefined;
+    const worker = await runAiStoryProviderWorkerCycle({
+      leaseOwner: "phase6-repair-worker",
+      postGenerationQcRecovery: { async recoverNext() {} },
+      coordinator: {
+        async continueFromDispatch() {
+          return { status: "WAITING" };
+        },
+      } as never,
+      assetAwareDispatchAuthorizer: async (dispatchId) => {
+        dispatchBoundary = await authorizeAssetAwareProductionDispatch(
+          dispatchId,
+          {
+            async loadCurrentExecutionAuthorityState({ authority: current }) {
+              return currentState(current);
+            },
+          }
+        );
+        return dispatchBoundary;
+      },
+    });
+
+    expect(worker.dispatchStatus).toBe("DISPATCHED");
+    expect(worker.ownership).toBe("AI_STORY_SCENE");
+    expect(dispatchBoundary).toBe("AUTHORIZED_PROVIDER_DISPATCH");
+    expect(request.generationMode).toBe("TEXT_TO_VIDEO");
+    expect(request.characterDnaAuthority?.characterDnaFingerprint).toBe(
+      authority.compiledRequest.characterDnaAuthority?.characterDnaFingerprint
+    );
+    expect(request.characterDnaAuthority?.sourcePhotoSentToVideoProvider).toBe(
+      false
+    );
+    expect(request.referenceMappings).toHaveLength(0);
+    expect(request.structuredRequest.generateAudio).toBe(true);
+    expect(request.blockedCapabilities).not.toContain("AUDIO");
+  }, 180_000);
 });

@@ -25,7 +25,8 @@ export class AiStoryAssetPlannerPersistenceError extends Error {
       | "ASSET_ANALYSIS_IMMUTABLE_CONFLICT"
       | "ASSET_ANALYSIS_FAILED"
       | "STORY_ASSET_BINDING_SCOPE_MISMATCH"
-      | "EXECUTION_PLANNER_IMMUTABLE_CONFLICT",
+      | "EXECUTION_PLANNER_IMMUTABLE_CONFLICT"
+      | "AUTHORIZED_SCHEDULING_AUTHORITY_CONFLICT",
     message: string
   ) {
     super(message);
@@ -509,5 +510,99 @@ export class AiStoryAssetAwareExecutionPlannerRepository {
       );
     }
     return replay;
+  }
+
+  async acceptAuthorizedSchedulingAuthority(input: {
+    readonly schedulingAuthorityId: string;
+    readonly authorityFingerprint: string;
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+    readonly executionPlanId: string;
+    readonly sceneExecutionId: string;
+    readonly authority: Record<string, unknown>;
+    readonly authorizedAt: string;
+  }): Promise<Record<string, unknown>> {
+    const inserted = await this.db
+      .insert(schema.aiStoryAuthorizedSchedulingAuthorities)
+      .values({
+        schedulingAuthorityId: input.schedulingAuthorityId,
+        authorityFingerprint: input.authorityFingerprint,
+        orgId: input.orgId,
+        workspaceId: input.workspaceId,
+        campaignId: input.campaignId,
+        storyId: input.storyId,
+        storyVersionId: input.storyVersionId,
+        executionPlanId: input.executionPlanId,
+        sceneExecutionId: input.sceneExecutionId,
+        authority: input.authority,
+        authorizedAt: new Date(input.authorizedAt),
+      })
+      .onConflictDoNothing()
+      .returning({
+        authority: schema.aiStoryAuthorizedSchedulingAuthorities.authority,
+      });
+    if (inserted[0]) return inserted[0].authority;
+
+    const existing = await this.getAuthorizedSchedulingAuthority({
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      executionPlanId: input.executionPlanId,
+      sceneExecutionId: input.sceneExecutionId,
+    });
+    if (
+      !existing ||
+      existing.schedulingAuthorityId !== input.schedulingAuthorityId ||
+      existing.authorityFingerprint !== input.authorityFingerprint ||
+      JSON.stringify(existing.authority) !== JSON.stringify(input.authority)
+    ) {
+      throw new AiStoryAssetPlannerPersistenceError(
+        "AUTHORIZED_SCHEDULING_AUTHORITY_CONFLICT",
+        "Scene already has a different immutable authorized scheduling authority"
+      );
+    }
+    return existing.authority;
+  }
+
+  async getAuthorizedSchedulingAuthority(input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly executionPlanId: string;
+    readonly sceneExecutionId: string;
+  }): Promise<{
+    readonly schedulingAuthorityId: string;
+    readonly authorityFingerprint: string;
+    readonly authority: Record<string, unknown>;
+  } | null> {
+    const [row] = await this.db
+      .select({
+        schedulingAuthorityId:
+          schema.aiStoryAuthorizedSchedulingAuthorities.schedulingAuthorityId,
+        authorityFingerprint:
+          schema.aiStoryAuthorizedSchedulingAuthorities.authorityFingerprint,
+        authority: schema.aiStoryAuthorizedSchedulingAuthorities.authority,
+      })
+      .from(schema.aiStoryAuthorizedSchedulingAuthorities)
+      .where(
+        and(
+          eq(schema.aiStoryAuthorizedSchedulingAuthorities.orgId, input.orgId),
+          eq(
+            schema.aiStoryAuthorizedSchedulingAuthorities.workspaceId,
+            input.workspaceId
+          ),
+          eq(
+            schema.aiStoryAuthorizedSchedulingAuthorities.executionPlanId,
+            input.executionPlanId
+          ),
+          eq(
+            schema.aiStoryAuthorizedSchedulingAuthorities.sceneExecutionId,
+            input.sceneExecutionId
+          )
+        )
+      )
+      .limit(1);
+    return row ?? null;
   }
 }

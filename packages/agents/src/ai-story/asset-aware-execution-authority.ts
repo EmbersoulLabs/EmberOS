@@ -36,6 +36,62 @@ export const AiStoryAnalysisAuthorityPinSchema = z
   })
   .strict();
 
+export const AI_STORY_AUTHORIZED_SCHEDULING_AUTHORITY_VERSION =
+  "ai-story-authorized-scheduling-authority.v1" as const;
+
+const AiStoryRuntimeFreshnessSchema = z
+  .object({
+    qcDispatchEligible: z.boolean(),
+    commercialAuthorizationValid: z.boolean(),
+    sceneFingerprint: Hash,
+    directorFingerprint: Hash,
+    motionFingerprint: Hash,
+    qcFingerprint: Hash,
+    packageFingerprint: Hash,
+    castSnapshotFingerprint: Hash,
+    locationSnapshotFingerprint: Hash,
+    productSnapshotFingerprint: Hash,
+    sceneSuperseded: z.boolean(),
+    directorSuperseded: z.boolean(),
+    motionSuperseded: z.boolean(),
+    authoritySnapshotsMatch: z.boolean(),
+  })
+  .strict();
+
+/**
+ * Immutable pre-scheduling authority accepted by planning. Canonical Execute
+ * may load this record, but must never recreate any of its planning decisions.
+ */
+export const AiStoryAuthorizedSchedulingAuthoritySchema = z
+  .object({
+    contractVersion: z.literal(
+      AI_STORY_AUTHORIZED_SCHEDULING_AUTHORITY_VERSION
+    ),
+    schedulingAuthorityId: Id,
+    authorityFingerprint: Hash,
+    orgId: Id,
+    workspaceId: Id,
+    campaignId: Id,
+    storyId: Id,
+    storyVersionId: Id,
+    executionPlanId: Id,
+    sceneExecutionId: Id,
+    plannerSnapshot: AiStoryModeResolutionSnapshotSchema,
+    analysisAuthorities: z.array(AiStoryAnalysisAuthorityPinSchema),
+    providerResolution: AiStoryProviderResolutionSchema,
+    providerCapability: AiStoryProviderCapabilityDeclarationSchema,
+    providerCompileIntent: AiStoryProviderCompileIntentSchema,
+    compiledRequest: AiStoryCompiledProviderRequestSchema,
+    freshness: AiStoryRuntimeFreshnessSchema,
+    idempotencyKey: Text,
+    authorizedAt: z.string().datetime(),
+  })
+  .strict();
+
+export type AiStoryAuthorizedSchedulingAuthority = z.infer<
+  typeof AiStoryAuthorizedSchedulingAuthoritySchema
+>;
+
 export const AiStoryCanonicalCharacterAuthoritySchema = z
   .object({
     characterId: Id,
@@ -545,6 +601,101 @@ export class DurableAiStoryCanonicalExecutionAuthorityRepository
     }
     return authority;
   }
+}
+
+function authorizedSchedulingHashInput(
+  authority: Omit<
+    AiStoryAuthorizedSchedulingAuthority,
+    "authorityFingerprint"
+  >
+) {
+  return {
+    kind: AI_STORY_AUTHORIZED_SCHEDULING_AUTHORITY_VERSION,
+    ...authority,
+  };
+}
+
+export function computeAiStoryAuthorizedSchedulingAuthorityFingerprint(
+  authority: Omit<
+    AiStoryAuthorizedSchedulingAuthority,
+    "authorityFingerprint"
+  >
+): string {
+  return integrityHash(authorizedSchedulingHashInput(authority));
+}
+
+export function validateAiStoryAuthorizedSchedulingAuthority(
+  value: unknown
+): AiStoryAuthorizedSchedulingAuthority {
+  const authority = AiStoryAuthorizedSchedulingAuthoritySchema.parse(value);
+  const { authorityFingerprint: _fingerprint, ...withoutFingerprint } =
+    authority;
+  if (
+    computeAiStoryAuthorizedSchedulingAuthorityFingerprint(
+      withoutFingerprint
+    ) !== authority.authorityFingerprint
+  ) {
+    throw new AiStoryExecutionAuthorityError(
+      "STALE_EXECUTION_AUTHORITY",
+      "Authorized scheduling authority fingerprint is stale or invalid"
+    );
+  }
+  if (
+    authority.plannerSnapshot.orgId !== authority.orgId ||
+    authority.plannerSnapshot.workspaceId !== authority.workspaceId ||
+    authority.plannerSnapshot.storyId !== authority.storyId ||
+    authority.plannerSnapshot.storyVersionId !== authority.storyVersionId ||
+    authority.compiledRequest.orgId !== authority.orgId ||
+    authority.compiledRequest.workspaceId !== authority.workspaceId ||
+    authority.compiledRequest.storyId !== authority.storyId ||
+    authority.compiledRequest.storyVersionId !== authority.storyVersionId ||
+    authority.compiledRequest.sceneExecutionId !== authority.sceneExecutionId
+  ) {
+    throw new AiStoryExecutionAuthorityError(
+      "EXECUTION_PLAN_MISMATCH",
+      "Authorized scheduling authority is outside the exact Scene ownership"
+    );
+  }
+  assertCompileChain({
+    planner: authority.plannerSnapshot,
+    resolution: authority.providerResolution,
+    capability: authority.providerCapability,
+    compileIntent: authority.providerCompileIntent,
+    request: authority.compiledRequest,
+    analysisAuthorities: authority.analysisAuthorities,
+  });
+  return authority;
+}
+
+export function buildAiStoryAuthorizedSchedulingAuthority(input: Omit<
+  AiStoryAuthorizedSchedulingAuthority,
+  | "contractVersion"
+  | "schedulingAuthorityId"
+  | "authorityFingerprint"
+>): AiStoryAuthorizedSchedulingAuthority {
+  const schedulingAuthorityId = deterministicPersistenceUuid(
+    "ai-story-authorized-scheduling-authority",
+    {
+      executionPlanId: input.executionPlanId,
+      sceneExecutionId: input.sceneExecutionId,
+      plannerSnapshotId: input.plannerSnapshot.plannerSnapshotId,
+      providerResolutionId: input.providerResolution.providerResolutionId,
+      compileIntentId: input.providerCompileIntent.compileIntentId,
+      compiledRequestId: input.compiledRequest.compiledRequestId,
+    }
+  );
+  const withoutFingerprint = {
+    contractVersion: AI_STORY_AUTHORIZED_SCHEDULING_AUTHORITY_VERSION,
+    schedulingAuthorityId,
+    ...input,
+  };
+  return validateAiStoryAuthorizedSchedulingAuthority({
+    ...withoutFingerprint,
+    authorityFingerprint:
+      computeAiStoryAuthorizedSchedulingAuthorityFingerprint(
+        withoutFingerprint
+      ),
+  });
 }
 
 export class InMemoryAiStoryCanonicalExecutionAuthorityRepository

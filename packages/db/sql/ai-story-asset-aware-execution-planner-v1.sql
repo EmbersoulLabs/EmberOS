@@ -202,6 +202,40 @@ CREATE INDEX IF NOT EXISTS ai_story_execution_planner_story_idx
     created_at
   );
 
+CREATE TABLE IF NOT EXISTS ai_story_authorized_scheduling_authorities (
+  scheduling_authority_id uuid PRIMARY KEY,
+  authority_fingerprint text NOT NULL
+    CHECK (authority_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+  org_id uuid NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE RESTRICT,
+  campaign_id uuid NOT NULL REFERENCES campaigns(id) ON DELETE RESTRICT,
+  story_id uuid NOT NULL REFERENCES ai_stories(id) ON DELETE RESTRICT,
+  story_version_id uuid NOT NULL REFERENCES ai_story_versions(id)
+    ON DELETE RESTRICT,
+  execution_plan_id uuid NOT NULL REFERENCES ai_story_execution_plans(id)
+    ON DELETE RESTRICT,
+  scene_execution_id uuid NOT NULL REFERENCES ai_story_scene_executions(id)
+    ON DELETE RESTRICT,
+  authority jsonb NOT NULL,
+  authorized_at timestamptz NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT ai_story_authorized_scheduling_scene_unique UNIQUE (
+    execution_plan_id,
+    scene_execution_id
+  ),
+  CONSTRAINT ai_story_authorized_scheduling_fingerprint_unique UNIQUE (
+    workspace_id,
+    authority_fingerprint
+  )
+);
+
+CREATE INDEX IF NOT EXISTS ai_story_authorized_scheduling_workspace_idx
+  ON ai_story_authorized_scheduling_authorities (
+    workspace_id,
+    execution_plan_id,
+    scene_execution_id
+  );
+
 CREATE OR REPLACE FUNCTION enforce_asset_analysis_snapshot_immutable_v1()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -221,12 +255,26 @@ BEGIN
     USING ERRCODE = '23514';
 END $$;
 
+CREATE OR REPLACE FUNCTION enforce_ai_story_authorized_scheduling_authority_immutable_v1()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'AI Story authorized scheduling authority is immutable'
+    USING ERRCODE = '23514';
+END $$;
+
 DROP TRIGGER IF EXISTS ai_story_execution_planner_snapshot_immutable_v1
   ON ai_story_execution_planner_snapshots;
 CREATE TRIGGER ai_story_execution_planner_snapshot_immutable_v1
   BEFORE UPDATE OR DELETE ON ai_story_execution_planner_snapshots
   FOR EACH ROW
   EXECUTE FUNCTION enforce_ai_story_execution_planner_snapshot_immutable_v1();
+
+DROP TRIGGER IF EXISTS ai_story_authorized_scheduling_authority_immutable_v1
+  ON ai_story_authorized_scheduling_authorities;
+CREATE TRIGGER ai_story_authorized_scheduling_authority_immutable_v1
+  BEFORE UPDATE OR DELETE ON ai_story_authorized_scheduling_authorities
+  FOR EACH ROW
+  EXECUTE FUNCTION enforce_ai_story_authorized_scheduling_authority_immutable_v1();
 
 CREATE OR REPLACE FUNCTION enforce_ai_story_asset_matching_immutable_v1()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -254,6 +302,7 @@ ALTER TABLE asset_analysis_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_story_asset_bindings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_story_asset_matching_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_story_execution_planner_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_story_authorized_scheduling_authorities ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS asset_analysis_snapshots_select
   ON asset_analysis_snapshots;
@@ -280,4 +329,10 @@ DROP POLICY IF EXISTS ai_story_execution_planner_snapshots_select
   ON ai_story_execution_planner_snapshots;
 CREATE POLICY ai_story_execution_planner_snapshots_select
   ON ai_story_execution_planner_snapshots
+  FOR SELECT USING (workspace_id IN (SELECT user_workspace_ids()));
+
+DROP POLICY IF EXISTS ai_story_authorized_scheduling_authorities_select
+  ON ai_story_authorized_scheduling_authorities;
+CREATE POLICY ai_story_authorized_scheduling_authorities_select
+  ON ai_story_authorized_scheduling_authorities
   FOR SELECT USING (workspace_id IN (SELECT user_workspace_ids()));

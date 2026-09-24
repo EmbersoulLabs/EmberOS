@@ -1883,6 +1883,30 @@ export const aiStorySceneExecutions = pgTable(
   ]
 );
 
+/** Immutable Phase 6 authority loaded by canonical Execute before scheduling. */
+export const aiStoryAuthorizedSchedulingAuthorities = pgTable(
+  "ai_story_authorized_scheduling_authorities",
+  {
+    schedulingAuthorityId: uuid("scheduling_authority_id").primaryKey(),
+    authorityFingerprint: text("authority_fingerprint").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    authority: jsonb("authority").$type<Record<string, unknown>>().notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_authorized_scheduling_scene_unique").on(t.executionPlanId, t.sceneExecutionId),
+    unique("ai_story_authorized_scheduling_fingerprint_unique").on(t.workspaceId, t.authorityFingerprint),
+    index("ai_story_authorized_scheduling_workspace_idx").on(t.workspaceId, t.executionPlanId, t.sceneExecutionId),
+  ]
+);
+
 /** Sprint 3 Phase 2A — append-only deterministic AI QC facts (not human review). */
 
 export const aiStorySceneIntentValidationResults = pgTable(
