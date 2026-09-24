@@ -4,6 +4,10 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { enqueueProbe } from "@ceo-agent/queue";
 import { finalizeStoredSourceAssetIdentity } from "@/lib/source-asset-content-hash";
+import {
+  finalizeAssetIntelligence,
+  type AssetIntelligenceFinalizationResult,
+} from "@/lib/asset-analysis-finalization";
 
 export async function POST(
   request: Request,
@@ -74,21 +78,30 @@ export async function POST(
       orgId: campaign.orgId,
     });
 
+    let assetAnalysis:
+      | AssetIntelligenceFinalizationResult
+      | { status: "PENDING_VIDEO_FINALIZATION" };
     if (asset.type === "video") {
       await enqueueProbe({
         assetId: asset.id,
         workspaceId: asset.workspaceId,
         storagePath: asset.storagePath,
       });
+      assetAnalysis = { status: "PENDING_VIDEO_FINALIZATION" };
     } else {
       try {
         asset = await finalizeStoredSourceAssetIdentity(db, asset);
+        assetAnalysis = await finalizeAssetIntelligence(asset);
       } catch {
-        // Images without storage bytes remain NULL until a later safe finalize.
+        // The Asset remains visible; missing canonical bytes cannot fabricate intelligence.
+        assetAnalysis = {
+          status: "FAILED",
+          errorCode: "ASSET_CONTENT_FINALIZATION_FAILED",
+        };
       }
     }
 
-    return apiSuccess({ asset });
+    return apiSuccess({ asset, assetAnalysis });
   } catch (error) {
     return handleApiError(error);
   }

@@ -82,7 +82,10 @@ describe("compiled Provider request scheduling authority", () => {
       new URL("../packages/agents/src/ai-story/scene-scheduling-coordinator.ts", import.meta.url),
       "utf8"
     );
-    expect(coordinator).toMatch(/const compiledProviderRequest = compileImmutableSceneProviderRequest\(/);
+    expect(coordinator).toMatch(/const compiledProviderRequest = input\.assetAwareExecution/);
+    expect(coordinator).toMatch(/input\.assetAwareExecution\.compiledRequest/);
+    expect(coordinator).toMatch(/return compileImmutableSceneProviderRequest\(\{/);
+    expect(coordinator).toMatch(/scheduleAssetAwareCanonicalProviderExecution\(\{/);
     expect(coordinator).toMatch(/compiledRequestId: compiledProviderRequest\.compiledRequestId/);
     expect(coordinator).toMatch(/compiledRequestFingerprint:\s*compiledProviderRequest\.requestFingerprint/);
     expect(coordinator).toMatch(/scheduleAcceptedBundle\(\{[\s\S]*?compiledProviderRequest,/);
