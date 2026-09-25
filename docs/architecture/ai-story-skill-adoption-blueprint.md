@@ -1,6 +1,6 @@
 # EmberOS AI Story Skill Adoption Blueprint
 
-Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, canonical Scene/Location continuity authority, Seedance Director Adapter enrichment, compiled Provider Runtime, Post-Generation QC, Visual Evidence, Repair Classification, and Scene/Cast/Location Review UX implemented. Human Review is preserved. Full AI Story E2E is not certified and the AI Story V1 release freeze is not ready.
+Status: Writer/Outline, Script, immutable Script-to-Director handoff, Director visual authority, Motion authority, unified Pre-Generation QC, Product Story Writer profile, semantic Shot Recipe Registry, Campaign Character authority, Story/Scene Cast scope authority, canonical Scene/Location continuity authority, immutable Episode-to-Episode continuity handoff, Seedance Director Adapter enrichment, compiled Provider Runtime, Post-Generation QC, Visual Evidence, Repair Classification, and Scene/Cast/Location Review UX implemented. Human Review is preserved. Full AI Story E2E is not certified and the AI Story V1 release freeze is not ready.
 
 Authority: `EMBEROS-AI-STORY-SKILL-ADOPTION-BLUEPRINT-01`
 
@@ -25,6 +25,8 @@ Character authority implementation: `EMBEROS-AI-STORY-CHARACTER-AUTHORITY-AND-CO
 Cast scope implementation: `EMBEROS-AI-STORY-SUPPORTING-CAST-AND-EPHEMERAL-ACTOR-SCOPE-01`
 
 Scene and Location authority implementation: `EMBEROS-AI-STORY-SCENE-AUTHORITY-AND-CONTINUITY-CONTRACT-01`
+
+Episode continuity handoff: `EPISODE_CONTINUITY_AUTHORITY_V1`
 
 Seedance Director Adapter enrichment: `EMBEROS-AI-STORY-SEEDANCE-DIRECTOR-ADAPTER-ENRICHMENT-01`
 
@@ -69,6 +71,56 @@ CAMPAIGN / USER BRIEF
   -> HUMAN REVIEW
   -> STAGED RELEASE OR HUMAN-AUTHORIZED REPAIR
 ```
+
+## Episode continuity handoff authority
+
+`EPISODE_CONTINUITY_AUTHORITY_V1` is the immutable, deterministic handoff from
+the canonical finalized state of Episode N to the planning context of adjacent
+Episode N+1. It references the frozen Final Story Result, Story Version, ordered
+Scene Results, Character/Character-DNA versions and fingerprints, final
+location/object/narrative facts, optional ending visual references, and
+provider-neutral voice references. It does not copy Character DNA, create a
+second Character identity model, write the next Episode, choose a generation
+mode, or contain Provider voice parameters.
+
+Target Episode planning flow:
+
+```text
+CAMPAIGN AUTHORITY
+  -> STORY AUTHORITY
+  -> PREVIOUS EPISODE CONTINUITY AUTHORITY
+  -> CURRENT EPISODE CREATIVE AUTHORITY
+  -> CHARACTER / LOCATION / OBJECT AUTHORITY
+  -> DERIVED PRODUCTION ASSET MANIFEST
+  -> STORY ASSET MATCHING
+  -> SHOT COVERAGE
+  -> DIRECTOR
+  -> MOTION
+  -> EXECUTION PLANNER
+```
+
+Continuity is Episode handoff authority, **not global memory**. Lookup requires
+the exact organization, Workspace, Campaign, Story, previous Episode identity
+and version, destination Episode identity, and adjacent canonical Episode
+order. Character or Asset reuse never transfers Episode state. Automatic
+cross-Campaign and cross-Story continuity is forbidden, and no latest/similar
+Episode search exists.
+
+Precedence is deterministic:
+
+```text
+CANONICAL IDENTITY AUTHORITY
+  > FROZEN PREVIOUS EPISODE FACTS
+  > APPROVED CURRENT EPISODE CREATIVE CHANGES
+  > PLANNER SUGGESTIONS
+```
+
+Approved current-Episode changes may transition outfit, location, action, and
+emotional direction while preserving the prior facts as history. Character DNA
+and voice identity remain pinned unless a separate canonical identity authority
+creates a new authorized version. Ending frame/video references are input
+candidates only; the Asset-Aware planner remains solely responsible for T2V,
+I2V, or V2V resolution.
 
 Writer owns premise, core claim, optional Story Units, ordered major/minor Beats,
 Beat ownership policy, declared Hooks, setup/payoff relationships, semantic

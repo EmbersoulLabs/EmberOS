@@ -7,6 +7,7 @@ import type {
 import {
   AiStoryProviderRuntimeError,
   compileImmutableSeedanceRequestFromSceneCompilation,
+  type AiStoryCharacterDnaCompilationAuthority,
   type PersistedSceneProviderCompilationAuthority,
   type AiStoryReferenceAssetAuthority,
 } from "./provider-runtime-dispatch-integration";
@@ -29,6 +30,7 @@ export function compileImmutableSceneProviderRequest(input: {
   readonly sceneInputPreparation?: SceneInputPreparationAuthority | null;
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
   readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
+  readonly characterDnaAuthority?: AiStoryCharacterDnaCompilationAuthority | null;
 }): AiStoryCompiledProviderRequest {
   if (input.providerId !== "seedance") {
     throw new AiStoryProviderRuntimeError(
@@ -53,6 +55,9 @@ export function compileImmutableSceneProviderRequest(input: {
       : {}),
     ...(input.providerPolicyEligibility
       ? { providerPolicyEligibility: input.providerPolicyEligibility }
+      : {}),
+    ...(input.characterDnaAuthority
+      ? { characterDnaAuthority: input.characterDnaAuthority }
       : {}),
   });
 }

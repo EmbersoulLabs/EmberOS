@@ -378,6 +378,34 @@ export class SceneProviderWorkerRuntimeRepository {
         );
       }
 
+      const assetAwareProviderAttemptId =
+        input.bundle.envelope.executionContext.trace
+          ?.assetAwareProviderAttemptId;
+      const existingRows = (await tx.execute(sql`
+        select binding from ai_story_provider_attempt_compiled_bindings
+        where provider_attempt_id = ${input.providerAttemptId}
+        for update
+      `)) as unknown as Array<{ binding: unknown }>;
+      const existingAssetAware = existingRows[0]?.binding
+        ? AiStoryProviderAttemptBindingSchema.parse(
+            existingRows[0].binding
+          )
+        : null;
+      if (
+        existingAssetAware &&
+        (assetAwareProviderAttemptId !== input.providerAttemptId ||
+          existingAssetAware.providerExecutionId !==
+            input.bundle.providerExecutionId ||
+          existingAssetAware.compiledRequestId !== compiledRequestId ||
+          existingAssetAware.requestFingerprint !== compiledFingerprint ||
+          existingAssetAware.status !== "READY")
+      ) {
+        throw new WorkerRuntimePersistenceError(
+          "IDENTITY_CONFLICT",
+          "Existing Provider Attempt is not the queued immutable Asset-Aware authority"
+        );
+      }
+
       const attemptInputFingerprint = canonicalPersistenceHash({
         kind: "ai-story-worker-provider-attempt-input.v1",
         providerAttemptId: input.providerAttemptId,
@@ -387,7 +415,13 @@ export class SceneProviderWorkerRuntimeRepository {
         requestFingerprint: request.requestFingerprint,
         commercialReservationId: input.commercialReservationId,
       });
-      const binding = AiStoryProviderAttemptBindingSchema.parse({
+      const binding = AiStoryProviderAttemptBindingSchema.parse(existingAssetAware
+        ? {
+            ...existingAssetAware,
+            commercialReservationId: input.commercialReservationId,
+            updatedAt: input.preparedAt,
+          }
+        : {
         providerAttemptId: input.providerAttemptId,
         providerExecutionId: input.bundle.providerExecutionId,
         contractVersion: AI_STORY_PROVIDER_RUNTIME_VERSION,
@@ -427,7 +461,7 @@ export class SceneProviderWorkerRuntimeRepository {
         updatedAt: input.preparedAt,
         automaticPaidRetry: false,
         providerFallback: false,
-      });
+        });
 
       await tx.insert(schema.providerAttempts).values({
         attemptId: binding.providerAttemptId,
@@ -458,9 +492,14 @@ export class SceneProviderWorkerRuntimeRepository {
         attemptRow.executionId !== binding.providerExecutionId ||
         attemptRow.attemptNumber !== binding.attemptNumber ||
         attemptRow.providerId !== binding.providerId ||
-        attemptRow.providerVersion !== binding.adapterVersion ||
+        ![binding.adapterVersion, binding.capabilityVersion].includes(
+          attemptRow.providerVersion
+        ) ||
         attemptRow.modelVersion !== binding.modelId ||
-        attemptRow.requestHash !== input.bundle.envelope.requestHash
+        ![
+          input.bundle.envelope.requestHash,
+          binding.requestFingerprint,
+        ].includes(attemptRow.requestHash)
       ) {
         throw new WorkerRuntimePersistenceError(
           "IDENTITY_CONFLICT",
@@ -481,7 +520,24 @@ export class SceneProviderWorkerRuntimeRepository {
         binding,
         createdAt: new Date(binding.createdAt),
         updatedAt: new Date(binding.updatedAt),
-      }).onConflictDoNothing();
+      }).onConflictDoUpdate({
+        target: schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId,
+        set: {
+          binding,
+          updatedAt: new Date(input.preparedAt),
+        },
+      });
+
+      await tx
+        .update(schema.providerAttempts)
+        .set({
+          providerMetadata: {
+            ...attemptRow.providerMetadata,
+            commercialReservationId: input.commercialReservationId,
+            dispatchId: input.bundle.dispatch.dispatchId,
+          },
+        })
+        .where(eq(schema.providerAttempts.attemptId, input.providerAttemptId));
 
       const rows = (await tx.execute(sql`
         select binding from ai_story_provider_attempt_compiled_bindings
@@ -493,7 +549,7 @@ export class SceneProviderWorkerRuntimeRepository {
         : null;
       if (
         !current ||
-        current.attemptInputFingerprint !== attemptInputFingerprint ||
+        current.attemptInputFingerprint !== binding.attemptInputFingerprint ||
         current.commercialReservationId !== input.commercialReservationId
       ) {
         throw new WorkerRuntimePersistenceError(

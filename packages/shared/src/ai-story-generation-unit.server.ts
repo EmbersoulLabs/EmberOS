@@ -28,6 +28,14 @@ export type AiStoryGenerationPlanSceneInput = {
   discontinuity: { kind: string } | null;
 };
 
+export type AiStoryReusableCharacterUnitLineage = {
+  reusableCharacterId: string;
+  reusableCharacterVersionId: string;
+  campaignCharacterId: string;
+  campaignCharacterVersionId: string;
+  identityFingerprint: string;
+};
+
 export type AiStoryGenerationPlanInput = {
   storyId: string;
   storyVersionId: string;
@@ -37,6 +45,7 @@ export type AiStoryGenerationPlanInput = {
   directorDirection: AiStoryDirectorSceneDirection;
   motionScenePlan: AiStorySceneMotionPlan;
   cinematicProjection?: Pick<AiStoryCinematicPromptFacts, "narrativePurpose" | "mustKeep" | "mustChange"> | null;
+  reusableCharacterLineage?: readonly AiStoryReusableCharacterUnitLineage[];
 };
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -134,6 +143,9 @@ function compileUnit(input: AiStoryGenerationPlanInput, shot: AiStoryDirectorSho
       ...products,
       locationId,
       characterIds: characters,
+      ...(input.reusableCharacterLineage?.length
+        ? { reusableCharacterLineage: [...input.reusableCharacterLineage] }
+        : {}),
     },
     executionRequirement: requirement,
     necessity: necessity.necessity,

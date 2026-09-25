@@ -227,9 +227,12 @@ test("execution_review revisit renders Scene review, generated video, and Human 
   await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
   await expect(page.getByTestId("scene-review-workspace")).toBeVisible();
   await expect(page.getByTestId("episode-preview")).toBeVisible();
+  await expect(page.getByTestId("full-episode-pending")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Generated result" })).toBeVisible();
-  await expect(page.locator("video")).toHaveCount(2);
+  await expect(page.locator("video")).toHaveCount(1);
+  await expect(page.getByTestId("final-story-result-viewer")).toHaveCount(0);
   await expect(page.getByTestId("generated-scene-media-preview-0")).toBeVisible();
+  await expect(page.getByTestId("episode-preview").locator("video")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Approve this moment" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Needs changes" })).toBeVisible();
   expect(reviewDecisionPosts).toBe(0);
@@ -250,3 +253,73 @@ test("mobile generated Scene review keeps evidence, video, and actions reachable
   await expect(page.getByRole("button", { name: "Needs changes" })).toBeVisible();
   expect(calls.providerCalls()).toBe(0);
 });
+
+test("accepted Final Story Result is the only Full Episode player", async ({ page }) => {
+  const calls = await authenticate(page, "operator");
+  const planId = "00000000-0000-4000-8000-000000000701";
+  await mockGeneratedSceneWorkspace(page);
+  await page.route(new RegExp(`/api/campaigns/${campaignId}/ai-stories/${storyId}/execution-plans/${planId}/runtime(?:\\?.*)?$`), (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify({
+      contractVersion: "1", executionPlanId: planId, runtimeAuthorizationId: "00000000-0000-4000-8000-000000000705", status: "SUCCEEDED", runtimeProjectionVersion: 1,
+      requiredSceneCount: 1, succeededSceneCount: 1, failedSceneCount: 0, reconciliationCount: 0, assemblyState: "SUCCEEDED", hasFinalStoryResult: true, canExecute: false, safeFailureSummary: null,
+      generatedSceneReviews: [{
+        sceneExecutionId: "00000000-0000-4000-8000-000000000702", sceneId: "00000000-0000-4000-8000-000000000706", sceneOrder: 0, reviewState: "APPROVED", runtimeState: "APPROVED", reviewAvailable: true, recoveryMode: null,
+        approvedAttemptId: "synthetic-attempt-one", approvedSceneResultId: "00000000-0000-4000-8000-000000000708", latestAttemptId: "synthetic-attempt-one", latestReviewId: "00000000-0000-4000-8000-000000000707", retryEligibility: null, retryInputRevisionId: null, retryAuthorizationId: null,
+        latestAttemptNumber: 1, latestAttemptStatus: "SUCCEEDED", attemptCount: 1, retryRemaining: 2, maxAttempts: 3, latestAttemptKnownCost: 0.25, sceneKnownCost: 0.25, currency: "USD", running: false,
+        attempts: [{ attemptId: "synthetic-attempt-one", attemptNumber: 1, providerExecutionId: null, status: "SUCCEEDED", outcome: "success", sceneResultId: "00000000-0000-4000-8000-000000000708", reviewState: "APPROVED", failureClass: null, knownCostAmount: 0.25, costSource: "estimate", createdAt: "2026-08-30T00:00:00.000Z", completedAt: "2026-08-30T00:00:10.000Z" }],
+        generatedMedia: { mediaId: "00000000-0000-4000-8000-000000000709", sceneResultId: "00000000-0000-4000-8000-000000000708", sceneExecutionId: "00000000-0000-4000-8000-000000000702", providerAttemptId: "synthetic-attempt-one", mediaType: "video", contentType: "video/mp4", deliveryUrl: "https://media.example.test/scene.mp4", expiresAt: "2026-08-30T01:00:00.000Z", deliveryStatus: "READY", safeError: null },
+        presentation: { title: "Scene 1", summary: "Ari hands the sample to River", purpose: "Reveal", importance: "Major", transitional: false, cast: [], location: null, products: [], actionSummary: ["Ari hands the sample to River"], startsWith: [], endsWith: [], continuityNotes: [], legacyCompatibility: false },
+      }], pendingReviewSceneCount: 0, approvedSceneCount: 1, derivedAt: "2026-08-30T00:01:00.000Z",
+    }),
+  }));
+  await page.route(new RegExp(`/api/campaigns/${campaignId}/ai-stories/${storyId}/execution-plans/${planId}/final-story-result(?:\\?.*)?$`), (route) => {
+    if (route.request().url().includes("/download")) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ downloadUrl: "https://media.example.test/final-download.mp4", filename: "episode-final.mp4", expiresInSeconds: 900 }) });
+    }
+    return route.fulfill({
+      status: 200, contentType: "application/json", body: JSON.stringify({
+        contractVersion: "1", persistenceContractVersion: "1", projectionVersion: "1",
+        finalStoryResultId: "00000000-0000-4000-8000-000000000801", executionPlanId: planId,
+        assemblyJobId: "00000000-0000-4000-8000-000000000802", assemblyArtifactId: "00000000-0000-4000-8000-000000000803",
+        mediaType: "video/mp4", durationMs: 48020, width: 1080, height: 1920, contentHash: "sha256:final",
+        acceptedAt: "2026-08-30T00:01:00.000Z", playbackUrl: "https://media.example.test/final.mp4", playbackUrlExpiresInSeconds: 900,
+      }),
+    });
+  });
+  await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
+  await expect(page.getByTestId("final-story-result-viewer")).toBeVisible();
+  await expect(page.getByTestId("final-story-video")).toBeVisible();
+  await expect(page.getByTestId("final-story-download")).toBeVisible();
+  await expect(page.getByTestId("final-story-duration")).toHaveText("00:48");
+  await expect(page.getByTestId("full-episode-pending")).toHaveCount(0);
+  await expect(page.getByTestId("generated-scene-media-preview-0")).toBeVisible();
+  await expect(page.locator("video")).toHaveCount(2);
+  await expect(page.getByTestId("episode-preview").locator("video")).toHaveCount(0);
+  expect(calls.providerCalls()).toBe(0);
+});
+
+test("assembly failure never falls back to Scene media as the Episode", async ({ page }) => {
+  const calls = await authenticate(page, "operator");
+  const planId = "00000000-0000-4000-8000-000000000701";
+  await mockGeneratedSceneWorkspace(page);
+  await page.route(new RegExp(`/api/campaigns/${campaignId}/ai-stories/${storyId}/execution-plans/${planId}/runtime(?:\\?.*)?$`), (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: JSON.stringify({
+      contractVersion: "1", executionPlanId: planId, runtimeAuthorizationId: "00000000-0000-4000-8000-000000000705", status: "ASSEMBLY_FAILED", runtimeProjectionVersion: 1,
+      requiredSceneCount: 1, succeededSceneCount: 1, failedSceneCount: 0, reconciliationCount: 0, assemblyState: "FAILED", hasFinalStoryResult: false, canExecute: false, safeFailureSummary: "Assembly failed",
+      generatedSceneReviews: [{
+        sceneExecutionId: "00000000-0000-4000-8000-000000000702", sceneId: "00000000-0000-4000-8000-000000000706", sceneOrder: 0, reviewState: "APPROVED", runtimeState: "APPROVED", reviewAvailable: true, recoveryMode: null,
+        approvedAttemptId: "synthetic-attempt-one", approvedSceneResultId: "00000000-0000-4000-8000-000000000708", latestAttemptId: "synthetic-attempt-one", latestReviewId: "00000000-0000-4000-8000-000000000707", retryEligibility: null, retryInputRevisionId: null, retryAuthorizationId: null,
+        latestAttemptNumber: 1, latestAttemptStatus: "SUCCEEDED", attemptCount: 1, retryRemaining: 2, maxAttempts: 3, latestAttemptKnownCost: 0.25, sceneKnownCost: 0.25, currency: "USD", running: false,
+        attempts: [], generatedMedia: { mediaId: "00000000-0000-4000-8000-000000000709", sceneResultId: "00000000-0000-4000-8000-000000000708", sceneExecutionId: "00000000-0000-4000-8000-000000000702", providerAttemptId: "synthetic-attempt-one", mediaType: "video", contentType: "video/mp4", deliveryUrl: "https://media.example.test/scene.mp4", expiresAt: "2026-08-30T01:00:00.000Z", deliveryStatus: "READY", safeError: null },
+      }], pendingReviewSceneCount: 0, approvedSceneCount: 1, derivedAt: "2026-08-30T00:01:00.000Z",
+    }),
+  }));
+  await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
+  await expect(page.getByTestId("full-episode-pending")).toBeVisible();
+  await expect(page.getByText("The final Episode could not be assembled. Your approved moments are preserved.")).toBeVisible();
+  await expect(page.getByTestId("final-story-result-viewer")).toHaveCount(0);
+  await expect(page.getByTestId("episode-preview").locator("video")).toHaveCount(0);
+  await expect(page.getByTestId("generated-scene-media-preview-0")).toBeVisible();
+  expect(calls.providerCalls()).toBe(0);
+});
+

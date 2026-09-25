@@ -29,6 +29,8 @@ export async function prepareReadyForCanonicalExecute(input: {
   readonly ids?: Phase2aIdSet;
   readonly userId?: string;
   readonly sceneOrder?: readonly number[];
+  readonly instructionPurpose?: string;
+  readonly referenceFreeT2vOrders?: readonly number[];
   readonly seedCommercial?: boolean;
 }) {
   const ids = input.ids ?? PHASE_2A_IDS;
@@ -42,8 +44,10 @@ export async function prepareReadyForCanonicalExecute(input: {
   const persisted = await new AiStorySceneExecutionPersistenceRepository().persistCompilation(
     makePhase2aCompilation({
       ids,
-      instructionPurpose: `${input.purpose}-${crypto.randomUUID()}`,
+      instructionPurpose:
+        input.instructionPurpose ?? `${input.purpose}-${crypto.randomUUID()}`,
       sceneOrder: input.sceneOrder,
+      referenceFreeT2vOrders: input.referenceFreeT2vOrders,
     })
   );
   const executionPlanId = persisted.plan.storyExecutionId;

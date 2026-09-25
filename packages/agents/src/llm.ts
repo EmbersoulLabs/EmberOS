@@ -227,34 +227,50 @@ export async function callVisionJsonModel<T>(
   system: string,
   userText: string,
   imageDataUrls: string[],
-  schemaHint: string
-): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
+  schemaHint: string,
+  requestOptions?: { maxRetries: number }
+): Promise<{
+  result: T;
+  usage: { input: number; output: number; costUsd: number };
+  providerRequestId: string | null;
+  requestedModelId: "gpt-4o";
+  providerModelId: string | null;
+}> {
   const openai = getOpenAI();
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
-      {
-        role: "user",
-        content: [
-          { type: "text", text: userText },
-          ...imageDataUrls.slice(0, 8).map((url) => ({
-            type: "image_url" as const,
-            image_url: { url, detail: "high" as const },
-          })),
-        ],
-      },
-    ],
-    temperature: 0.4,
-  });
+  const response = await openai.chat.completions.create(
+    {
+      model: "gpt-4o",
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: userText },
+            ...imageDataUrls.slice(0, 8).map((url) => ({
+              type: "image_url" as const,
+              image_url: { url, detail: "high" as const },
+            })),
+          ],
+        },
+      ],
+      temperature: 0.4,
+    },
+    requestOptions
+  );
 
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;
   const output = response.usage?.completion_tokens ?? 0;
   const costUsd = (input * 2.5 + output * 10) / 1_000_000;
 
-  return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
+  return {
+    result: JSON.parse(content) as T,
+    usage: { input, output, costUsd },
+    providerRequestId: response.id ?? null,
+    requestedModelId: "gpt-4o",
+    providerModelId: response.model ?? null,
+  };
 }
 
 export function buildDefaultTaskGraph(): TaskGraph {

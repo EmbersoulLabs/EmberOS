@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
+import { requireWorkspaceResourceAuthority } from "@/lib/workspace-resource-authority";
 import { apiSuccess, apiError } from "@/lib/api";
 import { isSubtitleLanguagePair, isSubtitleStylePreset } from "@ceo-agent/shared";
 import { isLocale } from "@ceo-agent/shared/i18n";
@@ -26,6 +27,7 @@ export async function POST(
       .limit(1);
 
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await requireWorkspaceResourceAuthority({ request, userId: user.id, resourceWorkspaceId: campaign.workspaceId });
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
     let contentLocale: string | undefined;

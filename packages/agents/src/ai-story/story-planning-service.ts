@@ -165,13 +165,22 @@ function campaignSummary(
     .join("\n");
 }
 
+export function buildEpisodeContinuityPlanningPromptSection(
+  episodeContinuity?: import("@ceo-agent/shared").EpisodeContinuityPlanningContext | null
+): string {
+  return episodeContinuity
+    ? `Previous Episode continuity authority (read-only):\n${JSON.stringify(episodeContinuity)}`
+    : "Previous Episode continuity authority: none (first Episode).";
+}
+
 export async function generateCreativeContext(
   storyDraft: AiStoryStructuredDraft,
   campaign: AiStoryPlanningCampaignContext,
   brand?: AiStoryPlanningBrandContext | null,
   assetLabels: readonly string[] = [],
   characterAuthorities: readonly PlanningCharacterAuthorityProjection[] = [],
-  productAuthorities: readonly PlanningProductAuthorityProjection[] = []
+  productAuthorities: readonly PlanningProductAuthorityProjection[] = [],
+  episodeContinuity?: import("@ceo-agent/shared").EpisodeContinuityPlanningContext | null
 ): Promise<{ creativeContext: CreativeContext; usage: Usage }> {
   const schemaHint = JSON.stringify({
     creativeContext: {
@@ -232,6 +241,7 @@ export async function generateCreativeContext(
       "Accepted canonical Character stable facts are read-only. Select them only by exact characterId; never rewrite identity or appearance. New Characters are proposals only.",
       "Accepted Product IDs and source content hashes are server-owned and read-only. Use exact productAuthorityId for Product narrative intent; labels, filenames, prose, and generic props never establish Product authority.",
       "Product authority availability does not require visual conditioning and must not select or change generation mode.",
+      "Previous Episode continuity is immutable historical fact. Preserve canonical identity and frozen facts; apply only the explicitly approved current-Episode changes before proposing anything new. Continuity never selects generation mode or Provider.",
       "Keep directorContext as an empty object; the director stage fills Director Thinking later.",
       "Return ONLY JSON.",
     ].join(" "),
@@ -241,6 +251,8 @@ export async function generateCreativeContext(
       planningCharacterAuthorityPrompt(characterAuthorities),
       "",
       planningProductAuthorityPrompt(productAuthorities),
+      "",
+      buildEpisodeContinuityPlanningPromptSection(episodeContinuity),
       "",
       storySummary(storyDraft),
     ].join("\n"),
@@ -514,6 +526,7 @@ export function buildAnimationPackage(input: {
   storyId: string;
   storyVersionId: string;
   usage?: Usage;
+  episodeContinuity?: import("@ceo-agent/shared").EpisodeContinuityPlanningContext;
 }): AnimationPackagePayload {
   const creativeContext: CreativeContext = {
     ...input.creativeContext,
@@ -529,6 +542,7 @@ export function buildAnimationPackage(input: {
     shotPlan: input.shotPlan,
     characterContinuity: input.characterContinuity,
     worldContinuity: input.worldContinuity,
+    episodeContinuity: input.episodeContinuity,
     canonicalSceneAuthority: buildAiStoryAnimationPackageCanonicalSceneAuthorityV1({
       storyId: input.storyId,
       storyVersionId: input.storyVersionId,

@@ -1,7 +1,10 @@
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import {
   AiStoryCompiledProviderRequestSchema,
+  AiStoryEpisodeCharacterBindingSchema,
   AiStoryProviderAttemptBindingSchema,
+  AiStoryReusableCharacterCampaignProjectionSchema,
+  AiStoryReusableCharacterVersionSchema,
   type AiStoryCompiledProviderRequest,
   type AiStoryProviderAttemptBinding,
   SceneSchedulingBundleSchema,
@@ -10,6 +13,7 @@ import {
 } from "@ceo-agent/shared";
 import { getDb } from "../client";
 import * as schema from "../schema/index";
+import { isApprovedPrivateSyntheticIdentityAnchorAsset } from "./ai-story-reusable-character";
 
 type Db = ReturnType<typeof getDb>;
 type QueryDb = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -79,6 +83,93 @@ export async function acceptAiStoryCompiledRequest(
 export class AiStoryProviderRuntimeRepository {
   constructor(private readonly db: Db = getDb()) {}
 
+  /**
+   * Phase 6 durable bridge. The authority is stored beside its immutable
+   * Provider Attempt anchor so the existing outbox/Worker lineage can carry
+   * references instead of copying mutable planning state into the queue.
+   */
+  async acceptExecutionAuthorityRecord(input: {
+    readonly providerAttemptId: string;
+    readonly executionAuthorityId: string;
+    readonly authorityFingerprint: string;
+    readonly authority: unknown;
+    readonly job: unknown;
+  }): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select({ providerMetadata: schema.providerAttempts.providerMetadata })
+        .from(schema.providerAttempts)
+        .where(eq(schema.providerAttempts.attemptId, input.providerAttemptId))
+        .limit(1)
+        .for("update");
+      if (!row) {
+        throw new AiStoryProviderRuntimePersistenceError(
+          "ATTEMPT_CONFLICT",
+          "Execution authority requires its exact Provider Attempt anchor"
+        );
+      }
+      const existing = row.providerMetadata?.assetAwareExecutionAuthority as
+        | {
+            executionAuthorityId?: string;
+            authorityFingerprint?: string;
+            authority?: unknown;
+            job?: unknown;
+          }
+        | undefined;
+      if (existing) {
+        if (
+          existing.executionAuthorityId !== input.executionAuthorityId ||
+          existing.authorityFingerprint !== input.authorityFingerprint ||
+          !same(existing.authority, input.authority) ||
+          !same(existing.job, input.job)
+        ) {
+          throw new AiStoryProviderRuntimePersistenceError(
+            "IMMUTABLE_CONFLICT",
+            "Provider Attempt execution authority conflicts with persisted authority"
+          );
+        }
+        return;
+      }
+      await tx
+        .update(schema.providerAttempts)
+        .set({
+          providerMetadata: {
+            ...row.providerMetadata,
+            assetAwareExecutionAuthority: {
+              executionAuthorityId: input.executionAuthorityId,
+              authorityFingerprint: input.authorityFingerprint,
+              authority: input.authority,
+              job: input.job,
+            },
+          },
+        })
+        .where(eq(schema.providerAttempts.attemptId, input.providerAttemptId));
+    });
+  }
+
+  async getExecutionAuthorityRecord(input: {
+    readonly providerAttemptId: string;
+    readonly executionAuthorityId: string;
+  }): Promise<{ readonly authority: unknown; readonly job: unknown } | null> {
+    const [row] = await this.db
+      .select({ providerMetadata: schema.providerAttempts.providerMetadata })
+      .from(schema.providerAttempts)
+      .where(eq(schema.providerAttempts.attemptId, input.providerAttemptId))
+      .limit(1);
+    const record = row?.providerMetadata?.assetAwareExecutionAuthority as
+      | {
+          executionAuthorityId?: string;
+          authority?: unknown;
+          job?: unknown;
+        }
+      | undefined;
+    return record?.executionAuthorityId === input.executionAuthorityId &&
+      record.authority &&
+      record.job
+      ? { authority: record.authority, job: record.job }
+      : null;
+  }
+
   async acceptCompiledRequest(input: AiStoryCompiledProviderRequest): Promise<AiStoryCompiledProviderRequest> {
     return acceptAiStoryCompiledRequest(this.db, input);
   }
@@ -110,9 +201,26 @@ export class AiStoryProviderRuntimeRepository {
     readonly workspaceId: string;
     readonly campaignId: string;
     readonly assetIds: readonly string[];
+    readonly workspaceAssetLibraryIds?: readonly string[];
   }): Promise<readonly { assetId: string; mediaType: string; storagePath?: string; contentHash: string | null }[]> {
     if (input.assetIds.length === 0) return [];
-    const rows = await this.db.select({
+    const workspaceAssetLibraryIds = new Set(
+      input.workspaceAssetLibraryIds ?? []
+    );
+    if (
+      [...workspaceAssetLibraryIds].some(
+        (assetId) => !input.assetIds.includes(assetId)
+      )
+    ) {
+      throw new AiStoryProviderRuntimePersistenceError(
+        "IMMUTABLE_CONFLICT",
+        "Workspace Asset Library authority exceeds the effective reference set"
+      );
+    }
+    const campaignAssetIds = input.assetIds.filter(
+      (assetId) => !workspaceAssetLibraryIds.has(assetId)
+    );
+    const rows = campaignAssetIds.length > 0 ? await this.db.select({
       assetId: schema.assets.id,
       orgId: schema.assets.orgId,
       workspaceId: schema.assets.workspaceId,
@@ -126,10 +234,55 @@ export class AiStoryProviderRuntimeRepository {
       .innerJoin(schema.assets, eq(schema.assets.id, schema.campaignAssetRefs.assetId))
       .where(and(
         eq(schema.campaignAssetRefs.campaignId, input.campaignId),
-        inArray(schema.campaignAssetRefs.assetId, [...input.assetIds])
-      ));
+        inArray(schema.campaignAssetRefs.assetId, campaignAssetIds)
+      )) : [];
+    const libraryRows = workspaceAssetLibraryIds.size > 0
+      ? await this.db.select({
+          assetId: schema.assets.id,
+          orgId: schema.assets.orgId,
+          workspaceId: schema.assets.workspaceId,
+          campaignId: schema.assets.campaignId,
+          type: schema.assets.type,
+          mediaType: schema.assets.mimeType,
+          storagePath: schema.assets.storagePath,
+          contentHash: schema.assets.contentHash,
+          status: schema.assets.status,
+          metadata: schema.assets.metadata,
+          deletedAt: schema.assets.deletedAt,
+        }).from(schema.assets).where(and(
+          eq(schema.assets.orgId, input.orgId),
+          eq(schema.assets.workspaceId, input.workspaceId),
+          inArray(schema.assets.id, [...workspaceAssetLibraryIds])
+        ))
+      : [];
     const byId = new Map(rows.map((row) => [row.assetId, row]));
+    const libraryById = new Map(
+      libraryRows.map((row) => [row.assetId, row])
+    );
     return input.assetIds.map((assetId) => {
+      if (workspaceAssetLibraryIds.has(assetId)) {
+        const row = libraryById.get(assetId);
+        if (
+          !row ||
+          !isApprovedPrivateSyntheticIdentityAnchorAsset({
+            ...row,
+            mimeType: row.mediaType,
+            expectedOrgId: input.orgId,
+            expectedWorkspaceId: input.workspaceId,
+          })
+        ) {
+          throw new AiStoryProviderRuntimePersistenceError(
+            "IMMUTABLE_CONFLICT",
+            "Approved private synthetic Character anchor authority is missing or out of scope"
+          );
+        }
+        return {
+          assetId,
+          mediaType: row.mediaType!,
+          storagePath: row.storagePath,
+          contentHash: row.contentHash,
+        };
+      }
       const row = byId.get(assetId);
       if (!row || row.orgId !== input.orgId || row.workspaceId !== input.workspaceId || row.campaignOrgId !== input.orgId || row.campaignWorkspaceId !== input.workspaceId || !row.mediaType?.trim() || !row.storagePath?.trim()) {
         throw new AiStoryProviderRuntimePersistenceError(
@@ -139,6 +292,170 @@ export class AiStoryProviderRuntimeRepository {
       }
       return { assetId, mediaType: row.mediaType, storagePath: row.storagePath, contentHash: row.contentHash };
     });
+  }
+
+  async getCharacterDnaCompilationAuthority(input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+  }) {
+    const [storyVersion] = await this.db
+      .select({
+        createdAt: schema.aiStoryVersions.createdAt,
+        frozenAt: schema.aiStoryVersions.frozenAt,
+      })
+      .from(schema.aiStoryVersions)
+      .innerJoin(
+        schema.aiStories,
+        eq(schema.aiStories.id, schema.aiStoryVersions.storyId)
+      )
+      .where(and(
+        eq(schema.aiStoryVersions.id, input.storyVersionId),
+        eq(schema.aiStoryVersions.storyId, input.storyId),
+        eq(schema.aiStories.orgId, input.orgId),
+        eq(schema.aiStories.workspaceId, input.workspaceId),
+        eq(schema.aiStories.campaignId, input.campaignId)
+      ))
+      .limit(1);
+    if (!storyVersion) {
+      throw new AiStoryProviderRuntimePersistenceError(
+        "IMMUTABLE_CONFLICT",
+        "Executing Story version is missing or outside Character DNA scope"
+      );
+    }
+    const bindingCutoff = storyVersion.frozenAt ?? storyVersion.createdAt;
+    const bindingRows = await this.db
+      .select({ snapshot: schema.aiStoryEpisodeCharacterBindings.snapshot })
+      .from(schema.aiStoryEpisodeCharacterBindings)
+      .where(and(
+        eq(schema.aiStoryEpisodeCharacterBindings.orgId, input.orgId),
+        eq(schema.aiStoryEpisodeCharacterBindings.workspaceId, input.workspaceId),
+        eq(schema.aiStoryEpisodeCharacterBindings.storyId, input.storyId),
+        lte(schema.aiStoryEpisodeCharacterBindings.createdAt, bindingCutoff),
+      ))
+      .orderBy(desc(schema.aiStoryEpisodeCharacterBindings.createdAt));
+    const dnaBindings = bindingRows
+      .map((row) => AiStoryEpisodeCharacterBindingSchema.parse(row.snapshot))
+      .filter((binding) => Boolean(binding.characterDnaFingerprint));
+    if (dnaBindings.length === 0) return null;
+    const binding = dnaBindings[0]!;
+    if (
+      dnaBindings.some(
+        (candidate) =>
+          candidate.reusableCharacterId !== binding.reusableCharacterId
+      )
+    ) {
+      throw new AiStoryProviderRuntimePersistenceError(
+        "IMMUTABLE_CONFLICT",
+        "V1 Character DNA compilation supports exactly one recurring Character authority"
+      );
+    }
+    const [versionRow] = await this.db
+      .select({ snapshot: schema.aiStoryReusableCharacterVersions.snapshot })
+      .from(schema.aiStoryReusableCharacterVersions)
+      .where(and(
+        eq(
+          schema.aiStoryReusableCharacterVersions.reusableCharacterVersionId,
+          binding.reusableCharacterVersionId
+        ),
+        eq(schema.aiStoryReusableCharacterVersions.orgId, input.orgId),
+        eq(schema.aiStoryReusableCharacterVersions.workspaceId, input.workspaceId),
+      ))
+      .limit(1);
+    if (!versionRow) {
+      throw new AiStoryProviderRuntimePersistenceError(
+        "IMMUTABLE_CONFLICT",
+        "Pinned Character DNA version is missing"
+      );
+    }
+    const reusable = AiStoryReusableCharacterVersionSchema.parse(
+      versionRow.snapshot
+    );
+    const [projectionRow] = await this.db
+      .select({
+        snapshot:
+          schema.aiStoryReusableCharacterCampaignProjections.snapshot,
+      })
+      .from(schema.aiStoryReusableCharacterCampaignProjections)
+      .where(and(
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.reusableCharacterVersionId,
+          binding.reusableCharacterVersionId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.campaignId,
+          input.campaignId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.campaignCharacterId,
+          binding.campaignCharacterId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.campaignCharacterVersionId,
+          binding.campaignCharacterVersionId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.orgId,
+          input.orgId
+        ),
+        eq(
+          schema.aiStoryReusableCharacterCampaignProjections.workspaceId,
+          input.workspaceId
+        )
+      ))
+      .limit(1);
+    const projection = projectionRow
+      ? AiStoryReusableCharacterCampaignProjectionSchema.parse(
+          projectionRow.snapshot
+        )
+      : null;
+    const sourcePortrait = reusable.canonicalAssets.find(
+      (asset) => asset.role === "CHARACTER_SOURCE_PORTRAIT"
+    );
+    const syntheticAnchor = reusable.canonicalAssets.find(
+      (asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR"
+    );
+    if (
+      reusable.identityMode !== "CHARACTER_DNA" ||
+      !reusable.characterDna ||
+      !reusable.characterDnaFingerprint ||
+      !sourcePortrait ||
+      !projection ||
+      (binding.campaignCharacterFingerprint !== undefined &&
+        binding.campaignCharacterFingerprint !==
+          projection.campaignCharacterFingerprint) ||
+      binding.characterDnaFingerprint !== reusable.characterDnaFingerprint ||
+      (reusable.characterConsistencyMode === "DNA_PLUS_SYNTHETIC_ANCHOR" &&
+        binding.compiledCharacterIdentityFingerprint !==
+          reusable.compiledCharacterIdentityFingerprint) ||
+      binding.identityFingerprint !== reusable.identityFingerprint ||
+      binding.sourcePhotoSentToVideoProvider !== false ||
+      binding.syntheticIdentityAnchorAssetId !== syntheticAnchor?.assetId
+    ) {
+      throw new AiStoryProviderRuntimePersistenceError(
+        "IMMUTABLE_CONFLICT",
+        "Episode Character DNA lineage is incomplete or inconsistent"
+      );
+    }
+    return {
+      reusableCharacterId: reusable.reusableCharacterId,
+      reusableCharacterVersionId: reusable.reusableCharacterVersionId,
+      campaignCharacterId: projection.campaignCharacterId,
+      campaignCharacterVersionId: projection.campaignCharacterVersionId,
+      campaignCharacterFingerprint: projection.campaignCharacterFingerprint,
+      identityFingerprint: reusable.identityFingerprint,
+      characterDnaFingerprint: reusable.characterDnaFingerprint,
+      dna: reusable.characterDna,
+      episodeLook: binding.episodeLook,
+      characterConsistencyMode:
+        reusable.characterConsistencyMode ?? "SOFT_DESCRIPTION_BASED",
+      sourcePortraitAssetId: sourcePortrait.assetId,
+      ...(syntheticAnchor
+        ? { syntheticIdentityAnchorAssetId: syntheticAnchor.assetId }
+        : {}),
+    };
   }
 
   async convergeCompiledRequestForAcceptedBundle(input: {

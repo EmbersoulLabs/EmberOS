@@ -243,6 +243,11 @@ export function businessProfileToBrandProfile(
     | "industryDisplayName"
     | "industryCustomValue"
     | "targetAudience"
+    | "companyName"
+    | "services"
+    | "businessDescription"
+    | "stateProvince"
+    | "brandKeywords"
     | "logo"
     | "brandPersonality"
     | "country"
@@ -252,8 +257,14 @@ export function businessProfileToBrandProfile(
 ): BrandProfile {
   const personality = profile.brandPersonality?.[0]?.trim();
   return {
+    businessName: profile.companyName?.trim() || undefined,
     industry: resolveIndustryLabel(profile) || legacy?.industry,
+    country: profile.country?.trim() || undefined,
+    region: profile.stateProvince?.trim() || undefined,
+    description: profile.businessDescription?.trim() || undefined,
+    services: profile.services?.map((service) => service.trim()).filter(Boolean) ?? [],
     targetAudience: profile.targetAudience?.trim() || legacy?.targetAudience,
+    brandKeywords: profile.brandKeywords?.map((keyword) => keyword.trim()).filter(Boolean) ?? [],
     logoUrl: profile.logo?.trim() || legacy?.logoUrl,
     tone: personality || legacy?.tone,
     locale: profile.timezone?.trim()

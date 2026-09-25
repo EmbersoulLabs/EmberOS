@@ -21,6 +21,7 @@ import {
 } from "@ceo-agent/shared";
 import {
   AiStorySceneExecutionPersistenceRepository,
+  AiStoryAssetAwareExecutionPlannerRepository,
   AiStorySceneReleaseRepository,
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
@@ -45,7 +46,13 @@ import {
 import {
   SceneSchedulingCoordinator,
   SceneSchedulingError,
+  type ScheduleAuthorizedSceneInput,
 } from "./scene-scheduling-coordinator";
+import {
+  AiStoryExecutionAuthorityError,
+  validateAiStoryAuthorizedSchedulingAuthority,
+  type AiStoryAuthorizedSchedulingAuthority,
+} from "./asset-aware-execution-authority";
 
 export class CanonicalExecuteError extends Error {
   readonly status: number;
@@ -82,6 +89,14 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
   readonly assemblyRepository?: ExecutionPlanAssemblyRepository;
   readonly persistenceRepository?: AiStorySceneExecutionPersistenceRepository;
   readonly schedulingCoordinator?: SceneSchedulingCoordinator;
+  /**
+   * Immutable planning authority lookup. Production uses the durable repository;
+   * tests with isolated repositories may inject the same narrow read boundary.
+   */
+  readonly assetAwareAuthorityRepository?: Pick<
+    AiStoryAssetAwareExecutionPlannerRepository,
+    "getAuthorizedSchedulingAuthority"
+  >;
   readonly sceneReleaseRepository?: AiStorySceneReleaseRepository;
   readonly commercialAuthorizationService?: CommercialAuthorizationService;
   /**
@@ -288,6 +303,11 @@ export async function authorizeAndExecuteExecutionPlan(
     !input.assemblyRepository &&
     !input.authorizationRepository &&
     !input.loadLatestQc;
+  const assetAwareAuthorityRepository =
+    input.assetAwareAuthorityRepository ??
+    (defaultDbRepositories
+      ? new AiStoryAssetAwareExecutionPlannerRepository()
+      : null);
   const snapshotRepository =
     input.runtimeAuthorizationSnapshotRepository ?? authRepo;
   const useCanonicalSnapshot =
@@ -622,6 +642,60 @@ export async function authorizeAndExecuteExecutionPlan(
   let anyNewSchedule = false;
   for (const sceneExecutionId of [initialScene.sceneExecutionId]) {
     try {
+      let assetAwareExecution:
+        | ScheduleAuthorizedSceneInput["assetAwareExecution"]
+        | undefined;
+      if (assetAwareAuthorityRepository) {
+        const record = await assetAwareAuthorityRepository.getAuthorizedSchedulingAuthority({
+          orgId: input.ownership.orgId,
+          workspaceId: input.ownership.workspaceId,
+          executionPlanId: input.executionPlanId,
+          sceneExecutionId,
+        });
+        if (record) {
+          let authority: AiStoryAuthorizedSchedulingAuthority;
+          try {
+            authority = validateAiStoryAuthorizedSchedulingAuthority(
+              record.authority
+            );
+          } catch (error) {
+            throw new CanonicalExecuteError(
+              "STALE_EXECUTION_AUTHORITY",
+              error instanceof Error
+                ? error.message
+                : "Asset-Aware execution authority is invalid",
+              409
+            );
+          }
+          if (
+            authority.schedulingAuthorityId !== record.schedulingAuthorityId ||
+            authority.authorityFingerprint !== record.authorityFingerprint ||
+            authority.orgId !== input.ownership.orgId ||
+            authority.workspaceId !== input.ownership.workspaceId ||
+            authority.campaignId !== input.ownership.campaignId ||
+            authority.storyId !== input.ownership.storyId ||
+            authority.storyVersionId !== input.ownership.storyVersionId ||
+            authority.executionPlanId !== input.executionPlanId ||
+            authority.sceneExecutionId !== sceneExecutionId
+          ) {
+            throw new CanonicalExecuteError(
+              "STALE_EXECUTION_AUTHORITY",
+              "Asset-Aware execution authority does not match canonical Execute ownership",
+              409
+            );
+          }
+          assetAwareExecution = {
+            plannerSnapshot: authority.plannerSnapshot,
+            analysisAuthorities: authority.analysisAuthorities,
+            providerResolution: authority.providerResolution,
+            providerCapability: authority.providerCapability,
+            providerCompileIntent: authority.providerCompileIntent,
+            compiledRequest: authority.compiledRequest,
+            freshness: authority.freshness,
+            idempotencyKey: authority.idempotencyKey,
+          };
+        }
+      }
       const bundle = await scheduling.scheduleAuthorizedScene({
         executionPlanId: input.executionPlanId,
         sceneExecutionId,
@@ -636,6 +710,7 @@ export async function authorizeAndExecuteExecutionPlan(
         routingPolicy: input.routingPolicy,
         preferredProviders: input.preferredProviders,
         productionVerification: input.productionVerification,
+        assetAwareExecution,
       });
       scheduledSceneIds.push(sceneExecutionId);
       // Replayed accepted bundles still count toward scheduledSceneCount.
@@ -643,7 +718,10 @@ export async function authorizeAndExecuteExecutionPlan(
         anyNewSchedule = true;
       }
     } catch (error) {
-      if (error instanceof SceneSchedulingError) {
+      if (
+        error instanceof SceneSchedulingError ||
+        error instanceof AiStoryExecutionAuthorityError
+      ) {
         // Idempotent converge: accepted equivalent replay may surface as get-or-return.
         if (error.code === "ROUTING_DECISION_CONFLICT" || error.code === "OUTBOX_SCHEDULING_CONFLICT") {
           throw new CanonicalExecuteError(error.code, error.message, 409);

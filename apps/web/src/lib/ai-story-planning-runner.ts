@@ -4,6 +4,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import {
   AiStoryCharacterAuthorityService,
+  PgEpisodeContinuityRuntimeIntegration,
   getBusinessProfileByWorkspace,
   getDb,
   schema,
@@ -79,7 +80,7 @@ function requireStage(
   void stage;
 }
 
-async function loadPlanningContext(
+export async function loadAiStoryPlanningContext(
   db: Db,
   campaignId: string,
   storyId: string,
@@ -129,6 +130,15 @@ async function loadPlanningContext(
       campaignId,
     })
   );
+  const episodeContinuity = await new PgEpisodeContinuityRuntimeIntegration(
+    db
+  ).loadForPlanning({
+    organizationId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    campaignId,
+    storyId,
+    storyVersionId: loaded.currentVersion.id,
+  });
 
   const assetIds = loaded.assetLinks.map((link) => link.assetId);
   const assetLabels =
@@ -177,14 +187,19 @@ async function loadPlanningContext(
     ],
     characterAuthorities,
     productAuthorities,
+    episodeContinuity,
   };
 }
 
-function baseDraft(storyDraft: AiStoryStructuredDraft): StoryPlanningDraft {
+function baseDraft(
+  storyDraft: AiStoryStructuredDraft,
+  episodeContinuity: Awaited<ReturnType<PgEpisodeContinuityRuntimeIntegration["loadForPlanning"]>>
+): StoryPlanningDraft {
   return {
     kind: "planning_draft",
     completedStages: [],
     story: storyDraft,
+    ...(episodeContinuity ? { episodeContinuity } : {}),
     usage: emptyUsage(),
   };
 }
@@ -210,7 +225,7 @@ export async function runSinglePlanningStage(input: {
     throw new Error(`Unknown planning stage: ${stage}`);
   }
 
-  const ctx = await loadPlanningContext(db, campaignId, storyId, input.actorUserId);
+  const ctx = await loadAiStoryPlanningContext(db, campaignId, storyId, input.actorUserId);
   return withConfiguredCertificationPlanningContext({
     orgId: ctx.campaign.orgId,
     workspaceId: ctx.campaign.workspaceId,
@@ -245,10 +260,11 @@ export async function runSinglePlanningStage(input: {
     readPlanningDraftFromPackage(
       latestPackage?.storyVersionId === ctx.loaded.currentVersion!.id ? latestPackage : null
     ) ??
-    baseDraft(ctx.storyDraft);
+    baseDraft(ctx.storyDraft, ctx.episodeContinuity);
   draft = {
     ...prunePlanningDraftAfterStage(draft, stage),
     story: ctx.storyDraft,
+    ...(ctx.episodeContinuity ? { episodeContinuity: ctx.episodeContinuity } : {}),
   };
   if (stage !== "creative_context" && !draft.creativeContext && latestContext?.payload) {
     draft = {
@@ -290,7 +306,8 @@ export async function runSinglePlanningStage(input: {
         ctx.brand,
         ctx.assetLabels,
         ctx.characterAuthorities,
-        ctx.productAuthorities
+        ctx.productAuthorities,
+        ctx.episodeContinuity
       );
       usage = addUsage(usage, generated.usage);
       savedContext = await saveCreativeContext(db, {
@@ -562,6 +579,7 @@ export async function runSinglePlanningStage(input: {
         storyId,
         storyVersionId: ctx.loaded.currentVersion!.id,
         usage,
+        episodeContinuity: ctx.episodeContinuity ?? undefined,
       });
       const savedPackage = await saveAnimationPackage(db, {
         orgId: ctx.campaign.orgId,

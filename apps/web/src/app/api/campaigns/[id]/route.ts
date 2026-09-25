@@ -5,9 +5,10 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { isCampaignDeletable } from "@/lib/campaigns";
 import { withSignedCreativeArtifacts, withSignedTaskExportProgress } from "@/lib/video-artifact-delivery";
 import { deleteCampaignCascade } from "@/lib/campaign-delete";
+import { requireWorkspaceResourceAuthority } from "@/lib/workspace-resource-authority";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -22,6 +23,7 @@ export async function GET(
       .limit(1);
 
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await requireWorkspaceResourceAuthority({ request, userId: user.id, resourceWorkspaceId: campaign.workspaceId });
     await requireWorkspaceRole(campaign.workspaceId, user.id, "client_viewer");
 
     const legacyAssets = await db
@@ -140,6 +142,7 @@ export async function PATCH(
       .limit(1);
 
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await requireWorkspaceResourceAuthority({ request, userId: user.id, resourceWorkspaceId: campaign.workspaceId });
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
     const [updated] = await db
@@ -160,7 +163,7 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -175,6 +178,7 @@ export async function DELETE(
       .limit(1);
 
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await requireWorkspaceResourceAuthority({ request, userId: user.id, resourceWorkspaceId: campaign.workspaceId });
     await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
 
     const [task] = await db

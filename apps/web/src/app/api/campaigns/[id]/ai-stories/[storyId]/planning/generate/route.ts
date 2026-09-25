@@ -25,7 +25,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);

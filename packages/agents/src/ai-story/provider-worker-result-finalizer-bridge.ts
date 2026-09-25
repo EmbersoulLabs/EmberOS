@@ -394,6 +394,10 @@ export function buildBridgeProviderAttempt(input: {
   readonly workerResult: WorkerExecutionResult;
   readonly canonicalResult: CanonicalProviderResult;
   readonly attemptNumber?: number;
+  readonly persistedAttemptAuthority?: Pick<
+    ProviderAttempt,
+    "providerVersion" | "modelVersion" | "requestHash"
+  >;
 }): ProviderAttempt {
   const providerRequestId = safeProviderRequestId(
     input.workerResult.providerRequestId
@@ -404,12 +408,17 @@ export function buildBridgeProviderAttempt(input: {
     executionId: input.workerResult.providerExecutionId,
     attemptNumber: input.attemptNumber ?? 1,
     providerId: input.workerResult.providerId,
-    providerVersion: input.workerResult.adapterVersion,
+    providerVersion:
+      input.persistedAttemptAuthority?.providerVersion ??
+      input.workerResult.adapterVersion,
     modelVersion:
+      input.persistedAttemptAuthority?.modelVersion ??
       input.workerResult.normalizedCostMetadata?.modelKey ??
       input.canonicalResult.modelVersion,
     ...(providerRequestId ? { providerRequestId } : {}),
-    requestHash: input.canonicalResult.requestHash,
+    requestHash:
+      input.persistedAttemptAuthority?.requestHash ??
+      input.canonicalResult.requestHash,
     responseHash: input.canonicalResult.responseHash,
     status: "SUCCEEDED",
     startedAt: input.workerResult.producedAt,
@@ -422,6 +431,10 @@ export function buildBridgeTerminalFailureAttempt(input: {
   readonly bundle: SceneProjectionValidatedBundle;
   readonly failure: ProviderError;
   readonly attemptNumber?: number;
+  readonly persistedAttemptAuthority?: Pick<
+    ProviderAttempt,
+    "providerVersion" | "modelVersion" | "requestHash"
+  >;
 }): {
   readonly attempt: ProviderAttempt;
   readonly requestHash: string;
@@ -456,10 +469,12 @@ export function buildBridgeTerminalFailureAttempt(input: {
       executionId: input.workerResult.providerExecutionId,
       attemptNumber: input.attemptNumber ?? 1,
       providerId: input.workerResult.providerId,
-      providerVersion: input.workerResult.adapterVersion,
-      modelVersion,
+      providerVersion:
+        input.persistedAttemptAuthority?.providerVersion ??
+        input.workerResult.adapterVersion,
+      modelVersion: input.persistedAttemptAuthority?.modelVersion ?? modelVersion,
       ...(providerRequestId ? { providerRequestId } : {}),
-      requestHash,
+      requestHash: input.persistedAttemptAuthority?.requestHash ?? requestHash,
       responseHash,
       status: "TERMINAL_FAILURE",
       startedAt: input.workerResult.producedAt,
@@ -499,23 +514,37 @@ export class ProviderWorkerResultFinalizerBridge {
     this.leaseDurationMs = dependencies.leaseDurationMs ?? 60_000;
   }
 
-  private async resolveAttemptNumber(
+  private async resolveAttemptAuthority(
     bundle: SceneProjectionValidatedBundle,
     attemptId: string
-  ): Promise<number> {
+  ): Promise<{
+    readonly attemptNumber: number;
+    readonly persistedAttempt: ProviderAttempt | null;
+  }> {
     const humanAuthorizedGeneration = bundle.correlation.retryGeneration ?? 1;
-    if (!this.dependencies.ledger.listAttempts) return humanAuthorizedGeneration;
+    if (!this.dependencies.ledger.listAttempts) {
+      return {
+        attemptNumber: humanAuthorizedGeneration,
+        persistedAttempt: null,
+      };
+    }
     const existing = await this.dependencies.ledger.listAttempts(
       bundle.providerExecutionId
     );
     const persistedAttempt = existing.find(
       (attempt) => attempt.attemptId === attemptId
     );
-    if (persistedAttempt) return persistedAttempt.attemptNumber;
-    return Math.max(
-      humanAuthorizedGeneration,
-      nextProviderAttemptNumber(existing, attemptId)
-    );
+    const historyPosition = nextProviderAttemptNumber(existing, attemptId);
+    if (historyPosition !== humanAuthorizedGeneration) {
+      throw new ProviderWorkerResultFinalizerBridgeError(
+        "BRIDGE_ATTEMPT_CONFLICT",
+        `Provider Attempt history position ${historyPosition} conflicts with authorized retry generation ${humanAuthorizedGeneration}`
+      );
+    }
+    return {
+      attemptNumber: historyPosition,
+      persistedAttempt: persistedAttempt ?? null,
+    };
   }
 
   /**
@@ -536,14 +565,17 @@ export class ProviderWorkerResultFinalizerBridge {
       workerResult,
       bundle,
     });
-    const attemptNumber = await this.resolveAttemptNumber(
+    const attemptAuthority = await this.resolveAttemptAuthority(
       bundle,
       workerResult.providerAttemptId
     );
     const attemptCandidate = buildBridgeProviderAttempt({
       workerResult,
       canonicalResult,
-      attemptNumber,
+      attemptNumber: attemptAuthority.attemptNumber,
+      ...(attemptAuthority.persistedAttempt
+        ? { persistedAttemptAuthority: attemptAuthority.persistedAttempt }
+        : {}),
     });
 
     let attemptCreated = false;
@@ -558,7 +590,9 @@ export class ProviderWorkerResultFinalizerBridge {
       });
       // appendAttempt returns existing or inserted; detect creation via status match only.
       attempt = before;
-      attemptCreated = before.attemptId === attemptCandidate.attemptId;
+      attemptCreated =
+        attemptAuthority.persistedAttempt === null &&
+        before.attemptId === attemptCandidate.attemptId;
     } catch (error) {
       throw new ProviderWorkerResultFinalizerBridgeError(
         "BRIDGE_ATTEMPT_CONFLICT",
@@ -618,7 +652,7 @@ export class ProviderWorkerResultFinalizerBridge {
     void PHASE1_EXECUTION_LOCKED;
 
     const failure = mapFailureCodeToProviderError(workerResult);
-    const attemptNumber = await this.resolveAttemptNumber(
+    const attemptAuthority = await this.resolveAttemptAuthority(
       bundle,
       workerResult.providerAttemptId
     );
@@ -626,7 +660,10 @@ export class ProviderWorkerResultFinalizerBridge {
       workerResult,
       bundle,
       failure,
-      attemptNumber,
+      attemptNumber: attemptAuthority.attemptNumber,
+      ...(attemptAuthority.persistedAttempt
+        ? { persistedAttemptAuthority: attemptAuthority.persistedAttempt }
+        : {}),
     });
 
     let attemptCreated = false;
@@ -645,7 +682,9 @@ export class ProviderWorkerResultFinalizerBridge {
           humanRetryRequired: failure.retryable,
         },
       });
-      attemptCreated = attempt.attemptId === built.attempt.attemptId;
+      attemptCreated =
+        attemptAuthority.persistedAttempt === null &&
+        attempt.attemptId === built.attempt.attemptId;
     } catch (error) {
       throw new ProviderWorkerResultFinalizerBridgeError(
         "BRIDGE_ATTEMPT_CONFLICT",

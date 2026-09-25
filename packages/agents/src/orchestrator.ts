@@ -1,11 +1,10 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, loadCanonicalBusinessContext, schema } from "@ceo-agent/db";
 import { enqueueRender } from "@ceo-agent/queue";
 import {
   CEO_MAX_RETRIES,
   normalizeStrategyPlan,
   strategyObjectives,
-  type BrandProfile,
   type StepProgress,
   parseCampaignCreativeBrief,
   buildVideoAnalysisPrompt,
@@ -117,13 +116,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     .limit(1);
   if (!campaign) throw new Error("Campaign not found");
 
-  const [workspace] = await db
-    .select()
-    .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, task.workspaceId))
-    .limit(1);
-
-  const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
+  const { brandProfile } = await loadCanonicalBusinessContext(task.workspaceId);
   const assets = tracked.assets;
   const priorProgress = (task.stepProgress as StepProgress) ?? {};
   for (const [stepId, step] of Object.entries(priorProgress)) {
@@ -478,12 +471,7 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
     .limit(1);
   if (!task || !creative) return;
 
-  const [workspace] = await db
-    .select()
-    .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, task.workspaceId))
-    .limit(1);
-  const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
+  const { brandProfile } = await loadCanonicalBusinessContext(task.workspaceId);
   const variants = (creative.copyVariants ?? []) as import("@ceo-agent/shared").CopyVariant[];
   const editPlan = creative.editPlan as import("@ceo-agent/shared").EditPlan | null;
   const subtitles = editPlan?.subtitles?.map((s) => s.text) ?? [];
@@ -644,11 +632,6 @@ export async function retryPipelineStep(
       .from(schema.campaigns)
       .where(eq(schema.campaigns.id, task.campaignId))
       .limit(1);
-    const [workspace] = await db
-      .select()
-      .from(schema.workspaces)
-      .where(eq(schema.workspaces.id, task.workspaceId))
-      .limit(1);
     const progress = task.stepProgress as StepProgress;
     const vision = progress?.vision_analyze?.output as import("@ceo-agent/shared").VisionAnalysis;
     const rawStrategy = task.strategyJson ?? progress?.strategy_plan?.output;
@@ -656,7 +639,7 @@ export async function retryPipelineStep(
     const hookSet =
       (task.hooksJson as HookSet | null) ??
       (progress?.hook_generate?.output as HookSet);
-    const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
+    const { brandProfile } = await loadCanonicalBusinessContext(task.workspaceId);
     const platforms = (campaign?.platforms ?? ["tiktok"]) as Platform[];
 
     const copyMix = resolveCopyMix(platforms);

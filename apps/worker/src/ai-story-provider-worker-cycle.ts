@@ -14,7 +14,10 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  AiStoryCompiledRequestWorkerRuntime,
+  AiStoryExecutionAuthorityError,
   AiStoryRuntimeContinuationCoordinator,
+  DurableAiStoryCanonicalExecutionAuthorityRepository,
   createDurableAssemblyArtifactBlobStore,
   createDurableAssemblyMediaAccessPort,
   createLocalDurableObjectStore,
@@ -23,30 +26,42 @@ import {
   type CanonicalAdapterRegistry,
   type AssemblyRuntimeSources,
   type DurableObjectStore,
+  type AiStoryCanonicalExecutionAuthority,
 } from "@ceo-agent/agents";
 import {
+  AiStoryProviderRuntimeRepository,
   AssemblyArtifactRepositoryImpl,
   AssemblyJobRepositoryImpl,
   AssemblyValidationRepositoryImpl,
   DurableSceneMediaAttestationRepositoryImpl,
   FinalStoryResultRepositoryImpl,
+  PgEpisodeContinuityRuntimeIntegration,
   ProviderExecutionFinalizationRepository,
   ExecutionDispatchRepository,
   ProviderLedgerRepository,
   ProviderOutboxRepository,
   SceneProjectionRepositoryImpl,
   SceneProviderWorkerRuntimeRepository,
+  getDb,
+  schema,
 } from "@ceo-agent/db";
 import {
   CanonicalSceneResultSchema,
   type AssemblyJob,
   type DurableSceneMediaAttestation,
 } from "@ceo-agent/shared/server";
+import { and, eq, inArray, isNull } from "drizzle-orm";
+import {
+  AiStoryProviderRuntimeJobSchema,
+  getAiProviderConfig,
+  isAiProviderReady,
+} from "@ceo-agent/shared";
 import { createProductionAiStoryCanonicalAdapterRegistry } from "./ai-story-canonical-adapter-registry";
 import {
   createSupabaseDurableObjectStore,
   isSupabaseStorageConfigured,
 } from "./ai-story-durable-object-store";
+import { createWorkerProviderAssetAccessResolver } from "./ai-story-provider-asset-access";
 import { dispatchNextProviderExecution } from "./provider-execution-dispatch-entrypoint";
 import { AiStoryCertificationCommercialReservationGate } from "./ai-story-certification-commercial-reservation";
 import { AiStoryPostGenerationQcRuntimeOrchestrator } from "./ai-story-post-generation-qc-orchestrator";
@@ -58,12 +73,253 @@ export type AiStoryProviderWorkerCycleOptions = {
   readonly coordinator?: AiStoryRuntimeContinuationCoordinator;
   readonly postGenerationQcOrchestrator?: AiStoryPostGenerationQcRuntimeOrchestrator;
   readonly postGenerationQcRecovery?: { recoverNext(): Promise<unknown> };
+  readonly assetAwareDispatchAuthorizer?: (
+    dispatchId: string
+  ) => Promise<"LEGACY" | "AUTHORIZED_PROVIDER_DISPATCH">;
   /**
    * Canonical owner for the complete claim -> provider -> finalization cycle.
    * Recovery claims and terminal finalization must use this same identity.
    */
   readonly leaseOwner?: string;
 };
+
+async function loadCurrentAssetAwareAuthorityState(input: {
+  readonly authority: AiStoryCanonicalExecutionAuthority;
+  readonly request: import("@ceo-agent/shared").AiStoryCompiledProviderRequest;
+}) {
+  const authority = input.authority;
+  const db = getDb();
+  const [story] = await db
+    .select({ currentVersionId: schema.aiStories.currentVersionId })
+    .from(schema.aiStories)
+    .where(
+      and(
+        eq(schema.aiStories.id, authority.storyId),
+        eq(schema.aiStories.orgId, authority.orgId),
+        eq(schema.aiStories.workspaceId, authority.workspaceId)
+      )
+    )
+    .limit(1);
+  const bindingIds = authority.analysisAuthorities.map(
+    (item) => item.bindingId
+  );
+  const bindings = bindingIds.length
+    ? await db
+        .select({
+          bindingId: schema.aiStoryAssetBindings.bindingId,
+          assetId: schema.aiStoryAssetBindings.assetId,
+          contentHash: schema.assets.contentHash,
+          analysisSnapshotId:
+            schema.aiStoryAssetBindings.analysisSnapshotId,
+          analysisFingerprint:
+            schema.assetAnalysisSnapshots.analysisFingerprint,
+        })
+        .from(schema.aiStoryAssetBindings)
+        .innerJoin(
+          schema.assets,
+          eq(schema.assets.id, schema.aiStoryAssetBindings.assetId)
+        )
+        .innerJoin(
+          schema.assetAnalysisSnapshots,
+          eq(
+            schema.assetAnalysisSnapshots.snapshotId,
+            schema.aiStoryAssetBindings.analysisSnapshotId
+          )
+        )
+        .where(
+          and(
+            eq(schema.aiStoryAssetBindings.orgId, authority.orgId),
+            eq(
+              schema.aiStoryAssetBindings.workspaceId,
+              authority.workspaceId
+            ),
+            eq(schema.aiStoryAssetBindings.storyId, authority.storyId),
+            eq(
+              schema.aiStoryAssetBindings.storyVersionId,
+              authority.storyVersionId
+            ),
+            isNull(schema.assets.deletedAt),
+            inArray(schema.aiStoryAssetBindings.bindingId, bindingIds)
+          )
+        )
+    : [];
+  const dna = authority.characterAuthority
+    ? await new AiStoryProviderRuntimeRepository()
+        .getCharacterDnaCompilationAuthority({
+          orgId: authority.orgId,
+          workspaceId: authority.workspaceId,
+          campaignId: input.request.campaignId,
+          storyId: authority.storyId,
+          storyVersionId: authority.storyVersionId,
+        })
+    : null;
+  const providerConfig = getAiProviderConfig(process.env);
+  return {
+    storyVersionId: story?.currentVersionId ?? "",
+    assets: bindings.map((binding) => ({
+      ...binding,
+      contentHash: binding.contentHash ?? "",
+    })),
+    castSnapshotFingerprint: authority.castSnapshotFingerprint,
+    characterAuthority: authority.characterAuthority
+      ? {
+          characterId: dna?.reusableCharacterId ?? "",
+          characterVersionId: dna?.reusableCharacterVersionId ?? "",
+          characterDnaVersionId: dna?.reusableCharacterVersionId ?? "",
+          characterDnaFingerprint: dna?.characterDnaFingerprint ?? "",
+        }
+      : null,
+    providerImplementationId:
+      authority.providerCapability.implementationId,
+    providerCapabilityVersion:
+      authority.providerCapability.capabilityVersion,
+    providerAvailable:
+      authority.providerCapability.providerId === "seedance"
+        ? isAiProviderReady(providerConfig, "seedance")
+        : false,
+  };
+}
+
+/**
+ * Production Phase 6 bridge. It reads the authority references carried by the
+ * existing outbox envelope and stops at the explicit pre-Provider boundary;
+ * SceneProviderWorkerRuntime remains the commercial/transport owner.
+ */
+export async function authorizeAssetAwareProductionDispatch(
+  dispatchId: string,
+  dependencies: {
+    readonly workerRepository?: Pick<
+      SceneProviderWorkerRuntimeRepository,
+      "loadValidatedBundleByDispatchId"
+    >;
+    readonly runtimeRepository?: Pick<
+      AiStoryProviderRuntimeRepository,
+      | "getExecutionAuthorityRecord"
+      | "acceptExecutionAuthorityRecord"
+      | "getCompiledRequest"
+      | "getAttempt"
+      | "claimSubmission"
+      | "updateAttempt"
+      | "acceptCompiledRequest"
+      | "acceptAttempt"
+    >;
+    readonly loadCurrentExecutionAuthorityState?: typeof loadCurrentAssetAwareAuthorityState;
+    readonly resolveHttpsAsset?: (input: {
+      readonly assetId: string;
+      readonly workspaceId: string;
+      readonly storagePath?: string;
+    }) => Promise<string>;
+  } = {}
+): Promise<"LEGACY" | "AUTHORIZED_PROVIDER_DISPATCH"> {
+  const workerRepository =
+    dependencies.workerRepository ?? new SceneProviderWorkerRuntimeRepository();
+  const bundle = await workerRepository.loadValidatedBundleByDispatchId(
+    dispatchId
+  );
+  if (!bundle) throw new Error("AI Story Dispatch authority is missing");
+  const trace = bundle.envelope.executionContext.trace ?? {};
+  const authorityKeys = [
+    "executionAuthorityId",
+    "executionAuthorityFingerprint",
+    "assetAwareProviderAttemptId",
+    "plannerSnapshotId",
+    "providerResolutionId",
+    "compileIntentId",
+  ] as const;
+  const present = authorityKeys.filter((key) => Boolean(trace[key]));
+  if (present.length === 0) return "LEGACY";
+  if (present.length !== authorityKeys.length) {
+    throw new AiStoryExecutionAuthorityError(
+      "STALE_EXECUTION_AUTHORITY",
+      "Queue authority references are incomplete"
+    );
+  }
+  const runtimeRepository =
+    dependencies.runtimeRepository ?? new AiStoryProviderRuntimeRepository();
+  const record = await runtimeRepository.getExecutionAuthorityRecord({
+    providerAttemptId: trace.assetAwareProviderAttemptId!,
+    executionAuthorityId: trace.executionAuthorityId!,
+  });
+  if (!record) {
+    throw new AiStoryExecutionAuthorityError(
+      "STALE_EXECUTION_AUTHORITY",
+      "Durable execution authority was not found"
+    );
+  }
+  const job = AiStoryProviderRuntimeJobSchema.parse(record.job);
+  if (
+    job.executionAuthorityFingerprint !== trace.executionAuthorityFingerprint ||
+    job.plannerSnapshotId !== trace.plannerSnapshotId ||
+    job.providerResolutionId !== trace.providerResolutionId ||
+    job.compileIntentId !== trace.compileIntentId ||
+    job.compiledRequestId !== trace.compiledRequestId ||
+    job.requestFingerprint !== trace.compiledRequestFingerprint
+  ) {
+    throw new AiStoryExecutionAuthorityError(
+      "STALE_EXECUTION_AUTHORITY",
+      "Queue and durable execution authority differ"
+    );
+  }
+  const request = await runtimeRepository.getCompiledRequest(
+    job.compiledRequestId!
+  );
+  if (!request) {
+    throw new AiStoryExecutionAuthorityError(
+      "STALE_EXECUTION_AUTHORITY",
+      "Compiled request is missing"
+    );
+  }
+  const resolver = createWorkerProviderAssetAccessResolver();
+  const runtime = new AiStoryCompiledRequestWorkerRuntime({
+    repository: runtimeRepository,
+    transport: {
+      async submit() {
+        throw new Error("Asset-Aware authority bridge cannot submit Provider work");
+      },
+      async poll() {
+        throw new Error("Asset-Aware authority bridge cannot poll Provider work");
+      },
+    },
+    assetAccess: {
+      resolveHttpsAsset: dependencies.resolveHttpsAsset ??
+        ((asset) => resolver.resolveProviderAccessibleUri({
+          ...asset,
+          orgId: request.orgId,
+          campaignId: request.campaignId,
+          ...(request.productMaterialSelection
+            ? { productMaterialSelection: request.productMaterialSelection }
+            : {}),
+        })),
+    },
+    mediaIngest: {
+      async ingest() {
+        throw new Error("Asset-Aware authority bridge cannot ingest Provider media");
+      },
+    },
+    executionAuthorityRepository:
+      new DurableAiStoryCanonicalExecutionAuthorityRepository(
+        runtimeRepository,
+        job.providerAttemptId
+      ),
+    requireAssetAwareExecutionAuthority: true,
+    loadCurrentExecutionAuthorityState:
+      dependencies.loadCurrentExecutionAuthorityState ??
+      loadCurrentAssetAwareAuthorityState,
+    authorizedProviderDispatchBoundary: () => "HOLD",
+  });
+  const result = await runtime.authorizeProviderDispatch(job);
+  if (
+    result.authorizedProviderDispatchBoundaryReached !== true ||
+    result.providerSubmitted !== false ||
+    result.providerDispatchCount !== 0
+  ) {
+    throw new AiStoryExecutionAuthorityError(
+      "STALE_EXECUTION_AUTHORITY",
+      "Authorized Provider dispatch boundary was bypassed"
+    );
+  }
+  return "AUTHORIZED_PROVIDER_DISPATCH";
+}
 
 const AI_STORY_RUNTIME_LEASE_OWNER = `ai-story-runtime:${process.pid}`;
 
@@ -136,6 +392,7 @@ export async function createProductionAiStoryContinuationCoordinator(
   const jobRepo = new AssemblyJobRepositoryImpl();
   const artifactRepo = new AssemblyArtifactRepositoryImpl();
   const fsrRepo = new FinalStoryResultRepositoryImpl();
+  const episodeContinuity = new PgEpisodeContinuityRuntimeIntegration();
   const adapters =
     options.adapters ?? createProductionAiStoryCanonicalAdapterRegistry();
   const assemblyEngineSnapshotHash =
@@ -182,6 +439,8 @@ export async function createProductionAiStoryContinuationCoordinator(
     blobStore,
     finalStoryResult: {
       finalStoryResultRepository: fsrRepo,
+      materializeEpisodeContinuity: async (result) =>
+        episodeContinuity.materializeAfterFinalStoryResult({ result }),
     },
     assemblyEngineSnapshotHash,
     durableMediaRepository,
@@ -334,6 +593,11 @@ export async function runAiStoryProviderWorkerCycle(
       `AI Story poll selected non-scene Dispatch ownership=${ownership} dispatch=${dispatchOutcome.dispatch.dispatchId}`
     );
   }
+
+  await (
+    options.assetAwareDispatchAuthorizer ??
+    authorizeAssetAwareProductionDispatch
+  )(dispatchOutcome.dispatch.dispatchId);
 
   const coordinator = await getProductionAiStoryContinuationCoordinator({
     ...options,

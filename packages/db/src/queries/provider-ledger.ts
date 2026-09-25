@@ -30,6 +30,37 @@ export class ProviderLedgerConflictError extends Error {
   }
 }
 
+/**
+ * Current AI Story attempts may be materialized by either the legacy Worker
+ * pre-adapter path or the Asset-Aware execution-authority path. Both are
+ * immutable authorities; the latter intentionally stores capabilityVersion
+ * and the compiled-request fingerprint on the shared Provider Attempt row.
+ */
+export function providerAttemptHasCurrentAiStoryAuthority(input: {
+  readonly attemptId: string;
+  readonly requestHash: string;
+  readonly providerMetadata: Record<string, unknown> | null;
+}): boolean {
+  const metadata = input.providerMetadata;
+  if (!metadata) return false;
+  if (metadata.source === "ai-story-worker-pre-adapter-authority") return true;
+  const record = metadata.assetAwareExecutionAuthority;
+  if (!record || typeof record !== "object") return false;
+  const job = (record as { job?: unknown }).job;
+  const authority = (record as { authority?: unknown }).authority;
+  if (!job || typeof job !== "object" || !authority || typeof authority !== "object") {
+    return false;
+  }
+  const jobRecord = job as Record<string, unknown>;
+  const authorityRecord = authority as Record<string, unknown>;
+  return (
+    jobRecord.providerAttemptId === input.attemptId &&
+    authorityRecord.providerAttemptId === input.attemptId &&
+    jobRecord.compiledRequestId === metadata.compiledRequestId &&
+    jobRecord.requestFingerprint === input.requestHash
+  );
+}
+
 export type AppendProviderAttemptInput = {
   attempt: ProviderAttempt;
   failure?: ProviderError;
@@ -201,7 +232,11 @@ export class ProviderLedgerRepository {
     if (
       persisted.contractVersion !== AI_STORY_PROVIDER_RUNTIME_VERSION ||
       persisted.status !== "PENDING" ||
-      persisted.providerMetadata?.source !== "ai-story-worker-pre-adapter-authority"
+      !providerAttemptHasCurrentAiStoryAuthority({
+        attemptId: persisted.attemptId,
+        requestHash: persisted.requestHash,
+        providerMetadata: persisted.providerMetadata,
+      })
     ) {
       throw new ProviderLedgerConflictError(
         "Provider Attempt is not current AI Story pre-adapter authority"
@@ -233,6 +268,22 @@ export class ProviderLedgerRepository {
     ) {
       throw new ProviderLedgerConflictError(
         "AI Story compiled/Attempt/task binding conflicts with terminal finalization"
+      );
+    }
+    if (
+      ![binding.adapterVersion, binding.capabilityVersion].includes(
+        persisted.providerVersion
+      ) ||
+      ![binding.requestFingerprint, terminalAttempt.requestHash].includes(
+        persisted.requestHash
+      ) ||
+      persisted.modelVersion !== binding.modelId ||
+      terminalAttempt.providerVersion !== persisted.providerVersion ||
+      terminalAttempt.modelVersion !== persisted.modelVersion ||
+      terminalAttempt.requestHash !== persisted.requestHash
+    ) {
+      throw new ProviderLedgerConflictError(
+        "AI Story Provider Attempt authority conflicts with terminal projection"
       );
     }
     const [compiled] = await this.db

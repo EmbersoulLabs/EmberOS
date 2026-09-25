@@ -16,7 +16,7 @@ import {
 import { assertAuthorizedStoryProductSourceSelection } from "@/lib/ai-story-product-sources";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -31,7 +31,7 @@ export async function GET(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer", request });
 
     const stories = await listCampaignAiStories(db, campaignId, campaign.workspaceId);
     return apiSuccess({ stories });
@@ -61,7 +61,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
 
     const assetIds = parsed.data.assetIds;
     const productAssetIds = parsed.data.productAssetIds;
