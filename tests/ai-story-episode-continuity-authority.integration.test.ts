@@ -185,7 +185,7 @@ describeIntegration("Episode continuity PostgreSQL authority", () => {
         ${overrides.toEpisodeOrder ?? value.toEpisode.episodeOrder},
         ${value.createdFromResultAuthority.finalStoryResultId}::uuid,
         ${value.version}, ${value.contractVersion}, ${value.fingerprint},
-        ${sql.json(value)}, ${value.createdBy}::uuid,
+        ${JSON.stringify(value)}::jsonb, ${value.createdBy}::uuid,
         ${value.createdAt}::timestamptz, ${value.frozenAt}::timestamptz
       )
     `;
