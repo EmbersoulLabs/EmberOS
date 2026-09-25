@@ -12,6 +12,7 @@ import {
   type ProviderUsage,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
+import { providerAttemptHasCurrentAiStoryAuthority } from "./provider-ledger";
 
 type Db = ReturnType<typeof getDb>;
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -346,7 +347,11 @@ async function assertCurrentAiStoryTerminalEvidence(input: {
   const { tx, attempt, finalization, result } = input;
   const providerRequestId = result.providerMetadata.providerRequestId;
   if (
-    attempt.providerMetadata?.source !== "ai-story-worker-pre-adapter-authority" ||
+    !providerAttemptHasCurrentAiStoryAuthority({
+      attemptId: attempt.attemptId,
+      requestHash: attempt.requestHash,
+      providerMetadata: attempt.providerMetadata,
+    }) ||
     !providerRequestId ||
     attempt.providerRequestId !== providerRequestId
   ) {
@@ -377,6 +382,21 @@ async function assertCurrentAiStoryTerminalEvidence(input: {
   ) {
     throw new ProviderExecutionFinalizationError(
       "AI Story compiled/Attempt/task binding conflicts with finalization"
+    );
+  }
+  if (
+    ![binding.adapterVersion, binding.capabilityVersion].includes(
+      attempt.providerVersion
+    ) ||
+    ![binding.requestFingerprint, result.requestHash].includes(
+      attempt.requestHash
+    ) ||
+    attempt.modelVersion !== binding.modelId ||
+    result.providerMetadata.providerVersion !== binding.adapterVersion ||
+    result.modelVersion !== binding.modelId
+  ) {
+    throw new ProviderExecutionFinalizationError(
+      "AI Story Provider Attempt authority conflicts with finalization"
     );
   }
 
@@ -645,11 +665,12 @@ export class ProviderExecutionFinalizationRepository {
         result.executionId !== input.executionId ||
         result.providerAttemptId !== input.attemptId ||
         execution.requestHash !== result.requestHash ||
-        attempt.requestHash !== result.requestHash ||
+        (!usesCurrentAiStoryEvidence && attempt.requestHash !== result.requestHash) ||
         (!usesCurrentAiStoryEvidence && attempt.responseHash !== result.responseHash) ||
         attempt.providerId !== input.providerId ||
         attempt.providerId !== result.providerMetadata.providerId ||
-        attempt.providerVersion !== result.providerMetadata.providerVersion ||
+        (!usesCurrentAiStoryEvidence &&
+          attempt.providerVersion !== result.providerMetadata.providerVersion) ||
         attempt.modelVersion !== result.modelVersion
       ) {
         throw new ProviderExecutionFinalizationError(

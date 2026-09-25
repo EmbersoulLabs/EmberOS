@@ -89,7 +89,7 @@ describe("AI Story Episode-first UI", () => {
 
   it("EPISODE_PREVIEW keeps certified preview copy and does not fake unsupported mutations", () => {
     const preview = read("apps/web/src/components/ai-story/EpisodePreviewPanel.tsx");
-    expect(preview).toContain("Episode Preview");
+    expect(preview).toContain("AI_STORY_EPISODE_COPY.episodePreview");
     expect(preview).toContain("regenerateThisMoment");
     expect(preview).toContain("editDialogue");
     expect(preview).toContain("adjustEnding");

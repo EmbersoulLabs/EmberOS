@@ -29,6 +29,7 @@ export async function runCeoAgent(input: CeoInput) {
 You plan task graphs but do NOT generate copy or edit instructions directly.
 Cost budget: $${input.costBudgetUsd}. Platforms: ${input.platforms.join(", ")}.
 Brand tone: ${input.brandProfile.tone ?? "professional"}. Banned words: ${(input.brandProfile.bannedWords ?? []).join(", ") || "none"}.
+Canonical business context: ${JSON.stringify(input.brandProfile)}.
 ${input.strategyPlan ? `Strategy: goal=${input.strategyPlan.marketingGoal}, audience=${strategyAudienceSummary(input.strategyPlan)}, angle=${input.strategyPlan.marketingAngle}, tone=${input.strategyPlan.tone}, CTA=${input.strategyPlan.ctaStrategy}` : ""}
 ${knowledgeBlock ? `Industry knowledge:\n${knowledgeBlock}` : ""}`;
 

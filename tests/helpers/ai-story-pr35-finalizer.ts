@@ -110,6 +110,12 @@ export class InMemoryBridgeLedger {
   usageWrites: string[] = [];
   costWrites: string[] = [];
 
+  async listAttempts(executionId: string): Promise<ProviderAttempt[]> {
+    return [...this.attempts.values()]
+      .filter((attempt) => attempt.executionId === executionId)
+      .sort((left, right) => left.attemptNumber - right.attemptNumber);
+  }
+
   async appendAttempt(input: {
     attempt: ProviderAttempt;
     failure?: unknown;
@@ -117,6 +123,18 @@ export class InMemoryBridgeLedger {
   }): Promise<ProviderAttempt> {
     const existing = this.attempts.get(input.attempt.attemptId);
     if (existing) {
+      if (
+        existing.status === "CREATED" &&
+        existing.executionId === input.attempt.executionId &&
+        existing.attemptNumber === input.attempt.attemptNumber &&
+        existing.providerId === input.attempt.providerId &&
+        existing.providerVersion === input.attempt.providerVersion &&
+        existing.modelVersion === input.attempt.modelVersion &&
+        existing.requestHash === input.attempt.requestHash
+      ) {
+        this.attempts.set(input.attempt.attemptId, input.attempt);
+        return input.attempt;
+      }
       if (JSON.stringify(existing) !== JSON.stringify(input.attempt)) {
         throw new Error("Attempt identity or history position conflicts");
       }

@@ -17,6 +17,10 @@ import {
   buildPr33ValidatedBundle,
   InMemoryWorkerRuntimeRepository,
 } from "./helpers/ai-story-pr33-worker";
+import {
+  buildTerminalSuccessWorkerResult,
+  InMemoryProjectionRepository,
+} from "./helpers/ai-story-pr35-finalizer";
 
 const COMPILED_REQUEST_ID = "830a199d-5d04-5639-8929-8b16350a7b27";
 const REQUEST_FINGERPRINT =
@@ -246,5 +250,74 @@ describe("same-Attempt Production settlement recovery", () => {
         requestFingerprint: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
       })
     ).rejects.toBeInstanceOf(WorkerRuntimeError);
+  });
+
+  it("recovers a persisted terminal Worker Result without invoking any Provider adapter", async () => {
+    const base = await recoveryBundle();
+    const bundle = { ...base, sceneId: "scene-1", sceneOrder: 1 };
+    const repository = new InMemoryWorkerRuntimeRepository(bundle);
+    const workerResult = buildTerminalSuccessWorkerResult(bundle as never);
+    repository.results.set(bundle.dispatch.dispatchId, workerResult);
+    const { adapter, adapters } = seedanceAdapter("terminal_success");
+    const projection = new InMemoryProjectionRepository();
+    const accepted = {
+      executionId: workerResult.providerExecutionId,
+      attemptId: workerResult.providerAttemptId,
+      jobId: workerResult.outboxJobId,
+      workerId: "persisted-terminal-recovery-test",
+      completedAt: workerResult.producedAt,
+      resultReference: workerResult.normalizedResultReference!,
+      responseHash: workerResult.deterministicIntegrityHash,
+      providerId: workerResult.providerId,
+      adapterVersion: workerResult.adapterVersion,
+      completionMetadata: {},
+      terminalKind: "SUCCEEDED" as const,
+    };
+    const coordinator = new AiStoryRuntimeContinuationCoordinator({
+      worker: { repository, adapters },
+      finalization: {
+        chain: {
+          loadValidatedBundleByDispatchId: (id: string) =>
+            repository.loadValidatedBundleByDispatchId(id) as never,
+          loadWorkerExecutionResultByDispatchId: (id: string) =>
+            repository.getWorkerExecutionResultByDispatchId(id),
+          async loadAcceptedProviderFinalization() {
+            return accepted;
+          },
+        },
+        bridge: { ledger: {} as never, outbox: {} as never },
+        productionFinalizer: {} as never,
+        projection,
+      },
+      assemblyValidation: {
+        repository: {
+          async getExecutionPlan() {
+            return null;
+          },
+        } as never,
+      },
+      jobRepository: {} as never,
+      artifactRepository: {} as never,
+      mediaAccess: {} as never,
+      blobStore: {} as never,
+      finalStoryResult: { finalStoryResultRepository: {} as never },
+      loadAssemblyRuntimeSources: async () => {
+        throw new Error("Assembly must remain not-ready in this recovery test");
+      },
+      requireDurableSceneMedia: false,
+      requirePostGenerationQc: false,
+    });
+
+    const outcome = await coordinator.recoverFromPersistedTerminalResult(
+      bundle.dispatch.dispatchId
+    );
+
+    expect(outcome.status).toBe("ASSEMBLY_NOT_READY");
+    expect(outcome.adapterInvoked).toBe(false);
+    expect(outcome.projection?.outcome).toBe("PROJECTED");
+    expect(adapter.submitCount).toBe(0);
+    expect(adapter.lookupCount).toBe(0);
+    expect(repository.prepareAttemptCalls).toBe(0);
+    expect(repository.claimAttemptCalls).toBe(0);
   });
 });

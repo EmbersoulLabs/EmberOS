@@ -9,7 +9,7 @@ import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
  * Regenerate ONE execution video output without re-running planning or the full job pipeline.
  */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; storyId: string; jobId: string }> }
 ) {
   try {
@@ -25,7 +25,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
     assertPhase1ExecutionLocked();
   } catch (error) {
     return handleApiError(error);

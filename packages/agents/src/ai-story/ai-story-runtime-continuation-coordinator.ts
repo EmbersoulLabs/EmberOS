@@ -504,6 +504,54 @@ export class AiStoryRuntimeContinuationCoordinator {
     });
   }
 
+  /**
+   * Resume only the durable post-Provider chain from an already-persisted
+   * terminal Worker Result. This path never invokes a Provider adapter and is
+   * the canonical recovery entrypoint when generation succeeded but
+   * finalization or projection stopped afterward.
+   */
+  async recoverFromPersistedTerminalResult(
+    dispatchId: string
+  ): Promise<AiStoryContinuationOutcome> {
+    const bundle = await this.deps.worker.repository.loadValidatedBundleByDispatchId(
+      dispatchId
+    );
+    if (!bundle) {
+      throw new WorkerRuntimeError(
+        "WORKER_DISPATCH_INVALID",
+        "Persisted terminal-result recovery requires the existing Dispatch"
+      );
+    }
+    const workerResult =
+      await this.deps.worker.repository.getWorkerExecutionResultByDispatchId(
+        dispatchId
+      );
+    if (!workerResult) {
+      throw new WorkerRuntimeError(
+        "WORKER_DISPATCH_INVALID",
+        "Persisted terminal-result recovery requires a durable Worker Result"
+      );
+    }
+    const route = classifyWorkerResultForCoordinator(workerResult);
+    if (
+      route === "NON_TERMINAL" ||
+      route === "ACCEPTANCE_UNKNOWN"
+    ) {
+      throw new WorkerRuntimeError(
+        "RECONCILIATION_REQUIRED",
+        "Persisted Worker Result is not terminal and cannot enter finalization recovery"
+      );
+    }
+    return this.finalizeAndContinue({
+      dispatchId,
+      executionPlanId: bundle.runtimeAuthorization.ownership.executionPlanId,
+      runtimeAuthorizationId: bundle.runtimeAuthorization.runtimeAuthorizationId,
+      ownership: bundle.runtimeAuthorization.ownership,
+      workerResult,
+      adapterInvoked: false,
+    });
+  }
+
   async continueAssemblyAndFinalStoryResult(input: {
     readonly executionPlanId: string;
     readonly runtimeAuthorizationId: string;

@@ -52,9 +52,15 @@ export const ReviewDecisionSchema = z.enum(["pending", "approved", "rejected"]);
 export type ReviewDecision = z.infer<typeof ReviewDecisionSchema>;
 
 export const BrandProfileSchema = z.object({
+  businessName: z.string().optional(),
   tone: z.string().optional(),
   industry: z.string().optional(),
+  country: z.string().optional(),
+  region: z.string().optional(),
+  description: z.string().optional(),
+  services: z.array(z.string()).default([]),
   targetAudience: z.string().optional(),
+  brandKeywords: z.array(z.string()).default([]),
   bannedWords: z.array(z.string()).default([]),
   cta: z.string().optional(),
   locale: z.string().default("en-SG"),

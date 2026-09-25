@@ -1,9 +1,8 @@
 import { eq, and } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, loadCanonicalBusinessContext, schema } from "@ceo-agent/db";
 import { enqueueRender, getRenderQueueCounts } from "@ceo-agent/queue";
 import {
   AUTO_CLIP,
-  type BrandProfile,
   type Platform,
   type StepProgress,
   parseCampaignCreativeBrief,
@@ -111,13 +110,7 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     .limit(1);
   if (!campaign) throw new Error("Campaign not found");
 
-  const [workspace] = await db
-    .select()
-    .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, task.workspaceId))
-    .limit(1);
-
-  const brandProfile = (workspace?.brandProfile ?? {}) as BrandProfile;
+  const { brandProfile } = await loadCanonicalBusinessContext(task.workspaceId);
   const assets = tracked.assets;
 
   const source = resolveAutoClipSourceAsset(assets);

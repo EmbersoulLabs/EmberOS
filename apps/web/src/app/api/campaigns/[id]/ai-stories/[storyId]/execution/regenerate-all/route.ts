@@ -7,7 +7,7 @@ import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 
 /** Regenerate ALL outputs by starting a new execution job (does not re-run planning). */
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; storyId: string }> }
 ) {
   try {
@@ -24,7 +24,7 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
     assertPhase1ExecutionLocked();
   } catch (error) {
     return handleApiError(error);

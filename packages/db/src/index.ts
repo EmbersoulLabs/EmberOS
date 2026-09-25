@@ -72,3 +72,4 @@ export * from "./queries/ai-story-post-generation-qc";
 export * from "./queries/ai-story-scene-authority";
 export * from "./queries/ai-story-review-presentation";
 export * from "./queries/ai-story-approved-animation-package";
+export * from "./queries/ai-story-video-analysis-snapshot";

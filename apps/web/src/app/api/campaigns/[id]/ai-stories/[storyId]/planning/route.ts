@@ -14,7 +14,7 @@ import {
 } from "@/lib/ai-story-planning-service";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; storyId: string }> }
 ) {
   try {
@@ -33,7 +33,7 @@ export async function GET(
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
     // Raw planning artifacts are an advanced operator surface. Normal users
     // consume the product-facing Story and Runtime projections instead.
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
