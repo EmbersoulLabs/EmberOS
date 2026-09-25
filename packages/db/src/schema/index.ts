@@ -3326,6 +3326,57 @@ export const aiStoryFinalStoryResults = pgTable(
   ]
 );
 
+/** Immutable adjacent-Episode handoff, derived only from canonical Final Story Result authority. */
+export const aiStoryEpisodeContinuityAuthorities = pgTable(
+  "ai_story_episode_continuity_authorities",
+  {
+    continuityAuthorityId: uuid("continuity_authority_id").primaryKey(),
+    organizationId: uuid("organization_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    fromEpisodeId: uuid("from_episode_id").notNull(),
+    fromEpisodeVersion: integer("from_episode_version").notNull(),
+    fromEpisodeOrder: integer("from_episode_order").notNull(),
+    fromStoryVersionId: uuid("from_story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    toEpisodeId: uuid("to_episode_id").notNull(),
+    toEpisodeVersion: integer("to_episode_version"),
+    toEpisodeOrder: integer("to_episode_order").notNull(),
+    sourceFinalStoryResultId: uuid("source_final_story_result_id").notNull().references(() => aiStoryFinalStoryResults.finalStoryResultId, { onDelete: "restrict" }),
+    version: integer("version").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    authority: jsonb("authority").$type<import("@ceo-agent/shared/server").EpisodeContinuityAuthority>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    frozenAt: timestamp("frozen_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_episode_continuity_identity_unique").on(
+      t.organizationId,
+      t.workspaceId,
+      t.campaignId,
+      t.storyId,
+      t.fromEpisodeId,
+      t.fromEpisodeVersion,
+      t.toEpisodeId,
+      t.version
+    ),
+    unique("ai_story_episode_continuity_fingerprint_unique").on(t.workspaceId, t.fingerprint),
+    index("ai_story_episode_continuity_destination_idx").on(
+      t.organizationId,
+      t.workspaceId,
+      t.campaignId,
+      t.storyId,
+      t.toEpisodeId,
+      t.toEpisodeOrder
+    ),
+    check("ai_story_episode_continuity_adjacent_check", sql`${t.toEpisodeOrder} = ${t.fromEpisodeOrder} + 1`),
+    check("ai_story_episode_continuity_version_check", sql`${t.version} > 0 AND ${t.fromEpisodeVersion} > 0`),
+    check("ai_story_episode_continuity_contract_check", sql`${t.contractVersion} = 'ai-story-episode-continuity-authority.v1'`),
+  ]
+);
+
 /**
  * Sprint 4 Phase A — Durable Scene Media Attestation (immutable).
  * Subordinate to Canonical Scene Result. No UPDATE/DELETE product paths.

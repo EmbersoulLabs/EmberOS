@@ -94,6 +94,7 @@ export * from "./ai-story-voice-human-listening-review";
 export * from "./ai-story-native-dialogue";
 export * from "./ai-story-episode-first-ui";
 export * from "./ai-story-episode-revision-authority";
+export * from "./ai-story-episode-continuity";
 export * from "./ai-story-shot-recipe";
 export * from "./ai-story-execution";
 export * from "./ai-story-human-review";

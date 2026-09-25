@@ -194,6 +194,9 @@ jobs:
       - name: Certify reusable Character cross-Episode identity on PostgreSQL
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-reusable-character.integration.test.ts
 
+      - name: Certify immutable adjacent-Episode continuity authority on PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-episode-continuity-authority.integration.test.ts
+
       - name: Certify Story Supporting Cast scope and promotion on PostgreSQL
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-cast-scope.integration.test.ts
 

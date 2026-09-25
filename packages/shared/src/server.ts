@@ -41,6 +41,8 @@ export * from "./ai-story-native-dialogue";
 export * from "./ai-story-native-dialogue.server";
 export * from "./ai-story-episode-revision-authority";
 export * from "./ai-story-episode-revision-authority.server";
+export * from "./ai-story-episode-continuity";
+export * from "./ai-story-episode-continuity.server";
 export * from "./ai-story-product-background-suitability";
 export * from "./ai-story-product-background-suitability.server";
 export * from "./ai-story-product-visual-material-selection";

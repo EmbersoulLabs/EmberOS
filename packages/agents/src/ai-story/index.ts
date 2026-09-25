@@ -62,6 +62,7 @@ export * from "./seedance-capability";
 export * from "./provider-create-response-diagnostic";
 export * from "./seedance-director-adapter";
 export * from "./active-intent-world-state";
+export * from "./episode-continuity-planning";
 export * from "./scene-input-preparation";
 export * from "./provider-policy-eligibility";
 export * from "./scene-keyframe-preparation";
