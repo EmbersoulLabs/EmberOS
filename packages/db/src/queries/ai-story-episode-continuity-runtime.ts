@@ -240,7 +240,7 @@ export class PgEpisodeContinuityRuntimeIntegration {
     if (
       dna &&
       historicalCharacterAuthority &&
-      (historicalCharacterAuthority.characterId !== dna.campaignCharacterId ||
+      (historicalCharacterAuthority.characterId !== dna.reusableCharacterId ||
         historicalCharacterAuthority.characterVersionId !== dna.reusableCharacterVersionId ||
         historicalCharacterAuthority.characterFingerprint !== dna.characterDnaFingerprint)
     ) {

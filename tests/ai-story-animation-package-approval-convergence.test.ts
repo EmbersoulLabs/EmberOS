@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   AnimationPackageApprovalConvergenceError,
@@ -125,6 +126,22 @@ describe("Animation Package approval authority convergence", () => {
     expect(facts.timeOfDay).toBeNull();
     expect(facts.composition).toBeNull();
     expect(facts.cameraMovement).toBeNull();
+  });
+
+  it("documents historical Character identity as reusable/DNA authority, not Campaign projection identity", () => {
+    const runtime = readFileSync(
+      "packages/db/src/queries/ai-story-episode-continuity-runtime.ts",
+      "utf8"
+    );
+    expect(runtime).toContain(
+      "historicalCharacterAuthority.characterId !== dna.reusableCharacterId"
+    );
+    expect(runtime).toContain(
+      "historicalCharacterAuthority.characterVersionId !== dna.reusableCharacterVersionId"
+    );
+    expect(runtime).toContain(
+      "historicalCharacterAuthority.characterFingerprint !== dna.characterDnaFingerprint"
+    );
   });
 
   it("rejects an unknown historical payload instead of inventing authority", () => {
