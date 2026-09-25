@@ -5,6 +5,10 @@ import { describe, expect, it } from "vitest";
 const PG_IDENTIFIER_LIMIT = 63;
 const schema = readFileSync(resolve(process.cwd(), "packages/db/src/schema/index.ts"), "utf8");
 const sql = readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-character-dna-from-photo-v1.sql"), "utf8");
+const securitySql = readFileSync(
+  resolve(process.cwd(), "packages/db/sql/ai-story-character-dna-analysis-jobs-server-only-rls-v1.sql"),
+  "utf8"
+);
 const schemaBlock = schema.slice(
   schema.indexOf("export const aiStoryCharacterDnaAnalysisJobs"),
   schema.indexOf("export const aiStoryLocations"),
@@ -32,5 +36,13 @@ describe("Character DNA Drizzle FK identifiers", () => {
     expect(sql).toContain("gpt_image_calls integer NOT NULL CHECK (gpt_image_calls = 0)");
     expect(sql).toContain("seedance_video_calls integer NOT NULL CHECK (seedance_video_calls = 0)");
     expect(sql).toContain("CHARACTER_DNA_ANALYSIS");
+  });
+
+  it("keeps analysis jobs server-only behind RLS and zero client grants", () => {
+    expect(securitySql).toMatch(/ALTER TABLE public\.ai_story_character_dna_analysis_jobs\s+ENABLE ROW LEVEL SECURITY/i);
+    expect(securitySql).toMatch(/REVOKE ALL PRIVILEGES ON TABLE public\.ai_story_character_dna_analysis_jobs\s+FROM anon, authenticated/i);
+    expect(securitySql).not.toMatch(/CREATE POLICY/i);
+    expect(securitySql).not.toMatch(/USING\s*\(\s*true\s*\)/i);
+    expect(securitySql).not.toMatch(/WITH CHECK\s*\(\s*true\s*\)/i);
   });
 });
