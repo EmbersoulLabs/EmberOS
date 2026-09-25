@@ -154,6 +154,29 @@ export type AiStorySceneCharacterReference = z.infer<
  * Derived from the Animation Package; never rewritten by QC or providers.
  * Not a Canonical Provider Request.
  */
+const AiStoryHistoricalCompiledShotSchema = z.object({
+  shotId: NonEmptyTextSchema,
+  order: z.number().int().nonnegative(),
+  durationMs: z.number().int().positive(),
+  cameraType: z.string().default(""),
+  cameraMovement: z.string().default(""),
+  composition: z.string().default(""),
+  framing: z.string().default(""),
+  lensSuggestion: z.string().default(""),
+  focus: NonEmptyTextSchema,
+  emotion: z.string().default(""),
+  information: NonEmptyTextSchema,
+});
+
+const AiStoryCanonicalCompiledShotSchema =
+  AiStoryHistoricalCompiledShotSchema.extend({
+    cameraType: NonEmptyTextSchema,
+    cameraMovement: NonEmptyTextSchema,
+    composition: NonEmptyTextSchema,
+    framing: NonEmptyTextSchema,
+    emotion: NonEmptyTextSchema,
+  });
+
 export const AiStorySceneCompiledInstructionsSchema = z.object({
   contractVersion: z.literal(AI_STORY_EXECUTION_CONTRACT_VERSION),
   capabilityId: z.literal("animation-video-generation"),
@@ -169,23 +192,7 @@ export const AiStorySceneCompiledInstructionsSchema = z.object({
   continuityNotes: z.string().default(""),
   beatIds: z.array(NonEmptyTextSchema).default([]),
   durationMs: z.number().int().positive(),
-  shots: z
-    .array(
-      z.object({
-        shotId: NonEmptyTextSchema,
-        order: z.number().int().nonnegative(),
-        durationMs: z.number().int().positive(),
-        cameraType: NonEmptyTextSchema,
-        cameraMovement: NonEmptyTextSchema,
-        composition: NonEmptyTextSchema,
-        framing: NonEmptyTextSchema,
-        lensSuggestion: z.string().default(""),
-        focus: NonEmptyTextSchema,
-        emotion: NonEmptyTextSchema,
-        information: NonEmptyTextSchema,
-      })
-    )
-    .min(1),
+  shots: z.array(AiStoryHistoricalCompiledShotSchema).min(1),
   characterReferences: z.array(AiStorySceneCharacterReferenceSchema).default([]),
   referencedAssetIds: z.array(z.string().uuid()).default([]),
   generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
@@ -234,6 +241,7 @@ export const AiStoryCanonicalSceneCompiledInstructionsSchema =
     sceneFingerprint: IntegrityHashSchema,
     scriptVersionId: z.string().uuid(),
     sceneSetFingerprint: IntegrityHashSchema,
+    shots: z.array(AiStoryCanonicalCompiledShotSchema).min(1),
   });
 export const AiStoryCanonicalExecutionPlanSchema = AiStoryExecutionPlanSchema.extend({
   animationPackage: AiStoryCanonicalAnimationPackageExecutionReferenceSchema,
