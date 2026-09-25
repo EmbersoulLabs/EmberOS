@@ -130,6 +130,12 @@ describe("Episode Continuity production runtime integration", () => {
     expect(loadAt).toBeGreaterThan(-1);
     expect(semanticAt).toBeGreaterThan(loadAt);
     expect(runner).toContain("storyVersionId: loaded.currentVersion.id");
+    expect(runner).toContain("export async function loadAiStoryPlanningContext");
+    const planner = readFileSync(
+      "packages/agents/src/ai-story/story-planning-service.ts",
+      "utf8"
+    );
+    expect(planner).toContain("buildEpisodeContinuityPlanningPromptSection(episodeContinuity)");
   });
 
   it("wires the same runtime repository into Worker finalization and Web planning", () => {

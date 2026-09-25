@@ -165,6 +165,14 @@ function campaignSummary(
     .join("\n");
 }
 
+export function buildEpisodeContinuityPlanningPromptSection(
+  episodeContinuity?: import("@ceo-agent/shared").EpisodeContinuityPlanningContext | null
+): string {
+  return episodeContinuity
+    ? `Previous Episode continuity authority (read-only):\n${JSON.stringify(episodeContinuity)}`
+    : "Previous Episode continuity authority: none (first Episode).";
+}
+
 export async function generateCreativeContext(
   storyDraft: AiStoryStructuredDraft,
   campaign: AiStoryPlanningCampaignContext,
@@ -244,9 +252,7 @@ export async function generateCreativeContext(
       "",
       planningProductAuthorityPrompt(productAuthorities),
       "",
-      episodeContinuity
-        ? `Previous Episode continuity authority (read-only):\n${JSON.stringify(episodeContinuity)}`
-        : "Previous Episode continuity authority: none (first Episode).",
+      buildEpisodeContinuityPlanningPromptSection(episodeContinuity),
       "",
       storySummary(storyDraft),
     ].join("\n"),

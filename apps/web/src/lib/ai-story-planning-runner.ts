@@ -80,7 +80,7 @@ function requireStage(
   void stage;
 }
 
-async function loadPlanningContext(
+export async function loadAiStoryPlanningContext(
   db: Db,
   campaignId: string,
   storyId: string,
@@ -225,7 +225,7 @@ export async function runSinglePlanningStage(input: {
     throw new Error(`Unknown planning stage: ${stage}`);
   }
 
-  const ctx = await loadPlanningContext(db, campaignId, storyId, input.actorUserId);
+  const ctx = await loadAiStoryPlanningContext(db, campaignId, storyId, input.actorUserId);
   return withConfiguredCertificationPlanningContext({
     orgId: ctx.campaign.orgId,
     workspaceId: ctx.campaign.workspaceId,
