@@ -23,7 +23,7 @@ import {
 } from "@/lib/ai-story-service";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; storyId: string }> }
 ) {
   try {
@@ -40,7 +40,7 @@ export async function GET(
         .where(eq(schema.campaigns.id, campaignId))
         .limit(1);
       if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-      await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer" });
+      await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "client_viewer", request });
 
       const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
       if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
@@ -110,7 +110,7 @@ export async function PATCH(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator" });
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);

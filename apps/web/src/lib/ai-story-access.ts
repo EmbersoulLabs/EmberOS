@@ -8,6 +8,7 @@ import {
 } from "@ceo-agent/shared";
 import { planMappingIncludesCapability } from "@ceo-agent/shared/server";
 import { resolvePlatformAdminForUser } from "@/lib/platform-admin-auth";
+import { requireWorkspaceResourceAuthority } from "@/lib/workspace-resource-authority";
 
 export type AiStoryAccessAuthorization =
   | { readonly allowedBy: "ACTIVE_PLATFORM_ADMIN" }
@@ -49,9 +50,17 @@ export async function authorizeAiStoryAccess(
     readonly orgId: string;
     readonly workspaceId: string;
     readonly minRole: WorkspaceRole;
+    readonly request?: Request;
   },
   dependencies: AiStoryAccessDependencies = defaultDependencies
 ): Promise<AiStoryAccessAuthorization> {
+  if (input.request) {
+    await requireWorkspaceResourceAuthority({
+      request: input.request,
+      userId: input.user.id,
+      resourceWorkspaceId: input.workspaceId,
+    });
+  }
   const platformAdmin = await dependencies.resolvePlatformAdmin({
     id: input.user.id,
     email: input.user.email ?? undefined,

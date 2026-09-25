@@ -5,6 +5,8 @@ import {
   legacyBrandProfileToBusinessProfileUpdate,
   type BrandProfile,
   type BusinessProfileUpdate,
+  normalizeBusinessProfileRecord,
+  type BusinessProfileRecord,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 
@@ -21,6 +23,33 @@ export async function getBusinessProfileByWorkspace(workspaceId: string) {
     )
     .limit(1);
   return profile ?? null;
+}
+
+export class BusinessProfileRequiredError extends Error {
+  readonly code = "BUSINESS_PROFILE_REQUIRED";
+
+  constructor(readonly workspaceId: string) {
+    super(`Canonical Business Profile is required for workspace ${workspaceId}`);
+    this.name = "BusinessProfileRequiredError";
+  }
+}
+
+export type BusinessProfileLookup = (
+  workspaceId: string
+) => Promise<Record<string, unknown> | null>;
+
+/**
+ * Read-only runtime authority for AI/Marketing business context.
+ * Never falls back to the legacy workspaces.brand_profile JSON column.
+ */
+export async function loadCanonicalBusinessContext(
+  workspaceId: string,
+  lookup: BusinessProfileLookup = getBusinessProfileByWorkspace as BusinessProfileLookup
+): Promise<{ profile: BusinessProfileRecord; brandProfile: BrandProfile }> {
+  const raw = await lookup(workspaceId);
+  if (!raw) throw new BusinessProfileRequiredError(workspaceId);
+  const profile = normalizeBusinessProfileRecord(raw as Record<string, unknown>);
+  return { profile, brandProfile: businessProfileToBrandProfile(profile) };
 }
 
 export async function ensureBusinessProfileForWorkspace(

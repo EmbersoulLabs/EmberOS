@@ -2,7 +2,7 @@
  * Campaign Run helpers — one active run + frozen generation identity.
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, loadCanonicalBusinessContext, schema } from "@ceo-agent/db";
 import { enqueuePipeline } from "@ceo-agent/queue";
 import {
   ACTIVE_CAMPAIGN_TASK_STATUSES,
@@ -14,7 +14,6 @@ import {
   effectiveCampaignGoal,
   resolvePipelineContentLocale,
   resolveRenderPreferences,
-  BrandProfileSchema,
   normalizeCampaignVideoGenerationIdentityV1,
   CAMPAIGN_VIDEO_EXECUTION_CONTRACT,
   freezeLogoObjectReference,
@@ -63,6 +62,9 @@ export async function startOrReuseCampaignRun(
     enqueue?: typeof enqueuePipeline;
   }
 ): Promise<StartCampaignRunResult> {
+  // Resolve the canonical authority before task creation/queue dispatch. This is
+  // intentionally not allowed to fall back to workspaces.brand_profile.
+  const { brandProfile: brand } = await loadCanonicalBusinessContext(campaign.workspaceId);
   const transactionResult = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${campaign.id}))`);
     const [lockedCampaign] = await tx
@@ -141,7 +143,6 @@ export async function startOrReuseCampaignRun(
       )
       .limit(1);
     if (!workspace) throw new Error("Workspace not found while creating task identity");
-    const brand = BrandProfileSchema.parse(workspace.brandProfile ?? {});
     const brief = parseCampaignCreativeBrief({ ...lockedCampaign, metadata: effectiveMetadata });
     const contentLocale = resolvePipelineContentLocale(effectiveMetadata, lockedCampaign.goal);
     const renderPreferences = resolveRenderPreferences({ campaignMetadata: effectiveMetadata });

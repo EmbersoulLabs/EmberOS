@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { mkdir, rm, access } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, loadCanonicalBusinessContext, schema } from "@ceo-agent/db";
 import { runComplianceAfterRender, maybeFinalizeAutoClipTask, maybeTriggerPendingTaskExport, loadTrackedCampaignTaskInputs } from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
@@ -12,7 +12,6 @@ import {
   resolveAutoClipSourceAsset,
   mergeStoredRendition,
   profileKeyForDownloadResolution,
-  BrandProfileSchema,
   hexToAssColor,
   resolveLogoStorageReference,
   resolveRenderPreferences,
@@ -180,12 +179,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
   const editPlan = stampRenderPreferences(rawPlan, renderPrefs);
   const fingerprint = baseClipFingerprint(editPlan);
 
-  const [workspace] = await db
-    .select()
-    .from(schema.workspaces)
-    .where(eq(schema.workspaces.id, data.workspaceId))
-    .limit(1);
-  const brandProfile = BrandProfileSchema.safeParse(workspace?.brandProfile ?? {}).data;
+  const { brandProfile } = await loadCanonicalBusinessContext(data.workspaceId);
   const cacheStoragePath = STORAGE_PATHS.renderCache(
     data.workspaceId,
     data.campaignId,
