@@ -254,6 +254,9 @@ export type AiStoryRuntimeContinuationDependencies = {
   readonly finalStoryResult: {
     readonly finalStoryResultRepository: FinalStoryResultRepository;
     readonly hooks?: FinalStoryResultProjectorDeps["hooks"];
+    readonly materializeEpisodeContinuity?: (
+      result: import("@ceo-agent/shared/server").FinalStoryResultPersistenceRecord
+    ) => Promise<unknown>;
   };
   /** Optional override for tests; defaults to runDeterministicAssemblyRuntime. */
   readonly runAssembly?: typeof runDeterministicAssemblyRuntime;
@@ -706,6 +709,7 @@ export class AiStoryRuntimeContinuationCoordinator {
         executionPlanId: input.executionPlanId,
         assemblyJobId: accepted.job.assemblyJobId,
       });
+      await this.deps.finalStoryResult.materializeEpisodeContinuity?.(fsr.result);
       return {
         status: fsr.replayed ? "FSR_REPLAYED" : "FSR_PROJECTED",
         executionPlanId: input.executionPlanId,

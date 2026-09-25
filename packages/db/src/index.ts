@@ -63,6 +63,7 @@ export * from "./queries/ai-story-cast";
 export * from "./queries/ai-story-script";
 export * from "./queries/ai-story-episode-revision-persistence";
 export * from "./queries/ai-story-episode-continuity";
+export * from "./queries/ai-story-episode-continuity-runtime";
 export * from "./queries/ai-story-script-director-handoff";
 export * from "./queries/ai-story-director-plan";
 export * from "./queries/ai-story-motion-plan";

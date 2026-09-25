@@ -35,6 +35,7 @@ import {
   AssemblyValidationRepositoryImpl,
   DurableSceneMediaAttestationRepositoryImpl,
   FinalStoryResultRepositoryImpl,
+  PgEpisodeContinuityRuntimeIntegration,
   ProviderExecutionFinalizationRepository,
   ExecutionDispatchRepository,
   ProviderLedgerRepository,
@@ -391,6 +392,7 @@ export async function createProductionAiStoryContinuationCoordinator(
   const jobRepo = new AssemblyJobRepositoryImpl();
   const artifactRepo = new AssemblyArtifactRepositoryImpl();
   const fsrRepo = new FinalStoryResultRepositoryImpl();
+  const episodeContinuity = new PgEpisodeContinuityRuntimeIntegration();
   const adapters =
     options.adapters ?? createProductionAiStoryCanonicalAdapterRegistry();
   const assemblyEngineSnapshotHash =
@@ -437,6 +439,8 @@ export async function createProductionAiStoryContinuationCoordinator(
     blobStore,
     finalStoryResult: {
       finalStoryResultRepository: fsrRepo,
+      materializeEpisodeContinuity: async (result) =>
+        episodeContinuity.materializeAfterFinalStoryResult({ result }),
     },
     assemblyEngineSnapshotHash,
     durableMediaRepository,

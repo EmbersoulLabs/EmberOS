@@ -2,6 +2,7 @@ import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "
 import {
   EPISODE_CONTINUITY_AUTHORITY_V1,
   EpisodeContinuityAuthoritySchema,
+  EpisodeContinuityPlanningContextSchema,
   type EpisodeCharacterContinuityState,
   type EpisodeContinuityAuthority,
   type EpisodeContinuityEndpoint,
@@ -180,16 +181,11 @@ export function assertEpisodeContinuityConsumption(input: {
 export function buildEpisodeContinuityPlanningContext(input: {
   readonly authority: EpisodeContinuityAuthority;
   readonly approvedCurrentEpisodeChanges: Readonly<Record<string, unknown>>;
-}): {
-  readonly precedence: readonly ["CANONICAL_IDENTITY_AUTHORITY", "FROZEN_PREVIOUS_EPISODE_FACTS", "APPROVED_CURRENT_EPISODE_CHANGES", "PLANNER_SUGGESTIONS"];
-  readonly previousEpisodeFacts: EpisodeContinuityAuthority;
-  readonly approvedCurrentEpisodeChanges: Readonly<Record<string, unknown>>;
-  readonly generationMode: null;
-} {
-  return {
+}) {
+  return EpisodeContinuityPlanningContextSchema.parse({
     precedence: ["CANONICAL_IDENTITY_AUTHORITY", "FROZEN_PREVIOUS_EPISODE_FACTS", "APPROVED_CURRENT_EPISODE_CHANGES", "PLANNER_SUGGESTIONS"],
     previousEpisodeFacts: EpisodeContinuityAuthoritySchema.parse(input.authority),
     approvedCurrentEpisodeChanges: input.approvedCurrentEpisodeChanges,
     generationMode: null,
-  };
+  });
 }

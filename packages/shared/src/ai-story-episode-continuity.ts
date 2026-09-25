@@ -194,6 +194,20 @@ export const EpisodeContinuityAuthoritySchema = z
     }
   });
 
+export const EpisodeContinuityPlanningContextSchema = z
+  .object({
+    precedence: z.tuple([
+      z.literal("CANONICAL_IDENTITY_AUTHORITY"),
+      z.literal("FROZEN_PREVIOUS_EPISODE_FACTS"),
+      z.literal("APPROVED_CURRENT_EPISODE_CHANGES"),
+      z.literal("PLANNER_SUGGESTIONS"),
+    ]),
+    previousEpisodeFacts: EpisodeContinuityAuthoritySchema,
+    approvedCurrentEpisodeChanges: z.record(z.unknown()),
+    generationMode: z.null(),
+  })
+  .strict();
+
 export type CharacterVoiceAuthorityRef = z.infer<typeof CharacterVoiceAuthorityRefSchema>;
 export type EpisodeCharacterContinuityState = z.infer<typeof EpisodeCharacterContinuityStateSchema>;
 export type NarrativeContinuityState = z.infer<typeof NarrativeContinuityStateSchema>;
@@ -204,6 +218,9 @@ export type AudioContinuityState = z.infer<typeof AudioContinuityStateSchema>;
 export type EpisodeContinuityEndpoint = z.infer<typeof EpisodeContinuityEndpointSchema>;
 export type EpisodeContinuityResultAuthority = z.infer<typeof EpisodeContinuityResultAuthoritySchema>;
 export type EpisodeContinuityAuthority = z.infer<typeof EpisodeContinuityAuthoritySchema>;
+export type EpisodeContinuityPlanningContext = z.infer<
+  typeof EpisodeContinuityPlanningContextSchema
+>;
 
 /** Continuity is historical input only. It never selects a generation mode. */
 export const EPISODE_CONTINUITY_SELECTS_GENERATION_MODE = false as const;

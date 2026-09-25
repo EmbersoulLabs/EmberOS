@@ -4,6 +4,7 @@ import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
 import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
 import { AiStoryOutlineProfileReferenceSchema } from "./ai-story-outline-profile";
+import { EpisodeContinuityPlanningContextSchema } from "./ai-story-episode-continuity";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -379,6 +380,7 @@ export const StoryPlanningDraftSchema = z.object({
   shotPlan: z.array(ShotPlanItemSchema).optional(),
   characterContinuity: z.array(CharacterContinuityEntrySchema).optional(),
   worldContinuity: WorldContinuitySchema.optional(),
+  episodeContinuity: EpisodeContinuityPlanningContextSchema.optional(),
   usage: PlanningUsageSchema.optional(),
 });
 
@@ -451,6 +453,7 @@ export const AnimationPackagePayloadSchema = z.object({
   shotPlan: z.array(ShotPlanItemSchema).min(1),
   characterContinuity: z.array(CharacterContinuityEntrySchema),
   worldContinuity: WorldContinuitySchema,
+  episodeContinuity: EpisodeContinuityPlanningContextSchema.optional(),
   narrative: CreativeContextSchema.shape.narrativeContext,
   narrativeIntegration: NarrativeIntegrationReportSchema,
   status: z.enum(ANIMATION_PACKAGE_STATUSES),
