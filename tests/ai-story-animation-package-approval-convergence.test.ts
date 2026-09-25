@@ -4,7 +4,10 @@ import {
   AnimationPackageApprovalConvergenceError,
   certifyAnimationPackageApprovalProjection,
 } from "@ceo-agent/db";
-import { readAnimationPackageContinuityFacts } from "@ceo-agent/db";
+import {
+  readAnimationPackageContinuityFacts,
+  resolveEpisodeContinuityMutableFacts,
+} from "@ceo-agent/db";
 import { buildEpisodeContinuityPlanningPromptSection } from "@ceo-agent/agents";
 import type { StoryReviewDecision } from "@ceo-agent/shared";
 
@@ -126,6 +129,52 @@ describe("Animation Package approval authority convergence", () => {
     expect(facts.timeOfDay).toBeNull();
     expect(facts.composition).toBeNull();
     expect(facts.cameraMovement).toBeNull();
+  });
+
+  it("uses Final Story Result package facts ahead of a stale Story-wide Episode look", () => {
+    expect(
+      resolveEpisodeContinuityMutableFacts({
+        episodeLook: {
+          wardrobe: "white blouse",
+          location: "warm café",
+          action: "drinking coffee",
+          dialogue: "A quiet coffee.",
+        },
+        historicalCharacterAuthority: {
+          characterId: id(10),
+          characterVersionId: id(11),
+          characterFingerprint: hash("b"),
+          outfit: "blue jacket",
+          location: "flower shop",
+          action: "arranging flowers naturally",
+          dialogue: "These flowers are ready for today.",
+        },
+      })
+    ).toEqual({
+      outfit: "blue jacket",
+      location: "flower shop",
+      action: "arranging flowers naturally",
+      dialogue: "These flowers are ready for today.",
+    });
+  });
+
+  it("uses the pinned Episode look when a full package has no historical authority capsule", () => {
+    expect(
+      resolveEpisodeContinuityMutableFacts({
+        episodeLook: {
+          wardrobe: "blue jacket",
+          location: "flower shop",
+          action: "checking an order",
+          dialogue: "A new order.",
+        },
+        historicalCharacterAuthority: null,
+      })
+    ).toEqual({
+      outfit: "blue jacket",
+      location: "flower shop",
+      action: "checking an order",
+      dialogue: "A new order.",
+    });
   });
 
   it("documents historical Character identity as reusable/DNA authority, not Campaign projection identity", () => {

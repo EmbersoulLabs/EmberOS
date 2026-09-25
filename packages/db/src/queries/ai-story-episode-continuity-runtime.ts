@@ -74,6 +74,27 @@ type ContinuityAnimationFacts = {
   } | null;
 };
 
+export function resolveEpisodeContinuityMutableFacts(input: {
+  readonly episodeLook?: {
+    readonly wardrobe?: string | null;
+    readonly location?: string | null;
+    readonly action?: string | null;
+    readonly dialogue?: string | null;
+  } | null;
+  readonly historicalCharacterAuthority?: ContinuityAnimationFacts["historicalCharacterAuthority"];
+}) {
+  const historical = input.historicalCharacterAuthority;
+  return {
+    // The package bound to the Final Story Result is the execution-specific
+    // authority for mutable Episode facts. A Story-wide DNA binding remains
+    // the identity authority and is only a fallback for newer full packages.
+    outfit: historical?.outfit ?? input.episodeLook?.wardrobe ?? null,
+    location: historical?.location ?? input.episodeLook?.location ?? null,
+    action: historical?.action ?? input.episodeLook?.action ?? null,
+    dialogue: historical?.dialogue ?? input.episodeLook?.dialogue ?? null,
+  };
+}
+
 function optionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
@@ -249,6 +270,10 @@ export class PgEpisodeContinuityRuntimeIntegration {
         "Historical Animation Package Character authority conflicts with canonical DNA"
       );
     }
+    const mutableFacts = resolveEpisodeContinuityMutableFacts({
+      episodeLook: dna?.episodeLook,
+      historicalCharacterAuthority,
+    });
     const explicit = record(from.sourceContextSnapshot.episodeContinuity);
     const voiceAuthority = CharacterVoiceAuthorityRefSchema.safeParse(
       explicit.voiceAuthorityRef
@@ -291,12 +316,12 @@ export class PgEpisodeContinuityRuntimeIntegration {
               dnaVersionId: dna.reusableCharacterVersionId,
               dnaFingerprint: dna.characterDnaFingerprint,
               castAuthorityRef: null,
-              outfitState: dna.episodeLook.wardrobe ?? characterContinuity?.costume ?? historicalCharacterAuthority?.outfit ?? null,
+              outfitState: mutableFacts.outfit ?? characterContinuity?.costume ?? null,
               appearanceDelta: characterContinuity?.appearance ?? null,
               physicalState: characterContinuity?.pose ?? dna.episodeLook.pose,
               emotionalState: characterContinuity?.emotion ?? dna.episodeLook.expression,
-              lastAction: dna.episodeLook.action ?? historicalCharacterAuthority?.action ?? null,
-              lastDialogue: dna.episodeLook.dialogue ?? historicalCharacterAuthority?.dialogue ?? null,
+              lastAction: mutableFacts.action,
+              lastDialogue: mutableFacts.dialogue,
               voiceAuthorityRef,
             },
           ]
@@ -306,7 +331,7 @@ export class PgEpisodeContinuityRuntimeIntegration {
         locationId: null,
         locationVersionId: null,
         locationFingerprint: null,
-        state: dna?.episodeLook.location ?? animation.location,
+        state: mutableFacts.location ?? animation.location,
         timeOfDay: animation.timeOfDay,
         temporaryFacts: [],
       },
@@ -316,11 +341,11 @@ export class PgEpisodeContinuityRuntimeIntegration {
         completedBeatIds,
         unresolvedBeatIds,
         unresolvedPromises,
-        lastDialogue: dna?.episodeLook.dialogue ?? historicalCharacterAuthority?.dialogue ?? null,
-        lastSpeakerId: (dna?.episodeLook.dialogue ?? historicalCharacterAuthority?.dialogue)
+        lastDialogue: mutableFacts.dialogue,
+        lastSpeakerId: mutableFacts.dialogue
           ? dna?.campaignCharacterId ?? historicalCharacterAuthority?.characterId ?? null
           : null,
-        lastAction: dna?.episodeLook.action ?? historicalCharacterAuthority?.action ?? null,
+        lastAction: mutableFacts.action,
         nextEpisodeRequiredFacts,
       },
       visualState: {
@@ -332,7 +357,7 @@ export class PgEpisodeContinuityRuntimeIntegration {
         cameraState: animation.cameraMovement,
       },
       audioState: {
-        lastSpeakerId: (dna?.episodeLook.dialogue ?? historicalCharacterAuthority?.dialogue)
+        lastSpeakerId: mutableFacts.dialogue
           ? dna?.campaignCharacterId ?? historicalCharacterAuthority?.characterId ?? null
           : null,
         voiceAuthorityRefs: voiceAuthorityRef ? [voiceAuthorityRef] : [],
