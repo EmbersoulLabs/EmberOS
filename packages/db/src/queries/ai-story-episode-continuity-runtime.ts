@@ -80,6 +80,8 @@ export function resolveEpisodeContinuityMutableFacts(input: {
     readonly location?: string | null;
     readonly action?: string | null;
     readonly dialogue?: string | null;
+    readonly pose?: string | null;
+    readonly expression?: string | null;
   } | null;
   readonly historicalCharacterAuthority?: ContinuityAnimationFacts["historicalCharacterAuthority"];
 }) {
@@ -92,6 +94,8 @@ export function resolveEpisodeContinuityMutableFacts(input: {
     location: historical?.location ?? input.episodeLook?.location ?? null,
     action: historical?.action ?? input.episodeLook?.action ?? null,
     dialogue: historical?.dialogue ?? input.episodeLook?.dialogue ?? null,
+    physicalState: historical ? null : input.episodeLook?.pose ?? null,
+    emotionalState: historical ? null : input.episodeLook?.expression ?? null,
   };
 }
 
@@ -318,8 +322,8 @@ export class PgEpisodeContinuityRuntimeIntegration {
               castAuthorityRef: null,
               outfitState: mutableFacts.outfit ?? characterContinuity?.costume ?? null,
               appearanceDelta: characterContinuity?.appearance ?? null,
-              physicalState: characterContinuity?.pose ?? dna.episodeLook.pose,
-              emotionalState: characterContinuity?.emotion ?? dna.episodeLook.expression,
+              physicalState: characterContinuity?.pose ?? mutableFacts.physicalState,
+              emotionalState: characterContinuity?.emotion ?? mutableFacts.emotionalState,
               lastAction: mutableFacts.action,
               lastDialogue: mutableFacts.dialogue,
               voiceAuthorityRef,

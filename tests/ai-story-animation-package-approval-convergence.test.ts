@@ -139,6 +139,8 @@ describe("Animation Package approval authority convergence", () => {
           location: "warm café",
           action: "drinking coffee",
           dialogue: "A quiet coffee.",
+          pose: "relaxed café interaction",
+          expression: "gentle smile",
         },
         historicalCharacterAuthority: {
           characterId: id(10),
@@ -155,6 +157,8 @@ describe("Animation Package approval authority convergence", () => {
       location: "flower shop",
       action: "arranging flowers naturally",
       dialogue: "These flowers are ready for today.",
+      physicalState: null,
+      emotionalState: null,
     });
   });
 
@@ -166,6 +170,8 @@ describe("Animation Package approval authority convergence", () => {
           location: "flower shop",
           action: "checking an order",
           dialogue: "A new order.",
+          pose: "holding phone",
+          expression: "attentive",
         },
         historicalCharacterAuthority: null,
       })
@@ -174,6 +180,8 @@ describe("Animation Package approval authority convergence", () => {
       location: "flower shop",
       action: "checking an order",
       dialogue: "A new order.",
+      physicalState: "holding phone",
+      emotionalState: "attentive",
     });
   });
 
