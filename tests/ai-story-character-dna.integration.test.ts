@@ -37,10 +37,10 @@ describeIntegration("AI Story Character DNA persistence", () => {
     await sql.unsafe(readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-character-v1.sql"), "utf8"));
     await sql.unsafe(readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-reusable-character-v1.sql"), "utf8"));
     await sql.unsafe(readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-character-dna-from-photo-v1.sql"), "utf8"));
+    await sql.unsafe(readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-character-dna-analysis-jobs-server-only-rls-v1.sql"), "utf8"));
     await sql.unsafe(`GRANT USAGE ON SCHEMA public TO authenticated;
       GRANT SELECT,INSERT,UPDATE ON ai_story_reusable_characters TO authenticated;
       GRANT SELECT,INSERT ON ai_story_reusable_character_versions TO authenticated;
-      GRANT SELECT,INSERT,UPDATE ON ai_story_character_dna_analysis_jobs TO authenticated;
       GRANT SELECT,INSERT,UPDATE ON assets TO authenticated;`);
     await sql`insert into assets(id,org_id,workspace_id,campaign_id,type,storage_path,status,source,content_hash,mime_type,file_size_bytes)
       values(${SOURCE}::uuid,${fixture.orgId}::uuid,${fixture.workspaceAId}::uuid,null,'image',${`${fixture.workspaceAId}/library/${SOURCE}.jpg`},'ready','library_upload',${HASH},'image/jpeg',120000)`;
