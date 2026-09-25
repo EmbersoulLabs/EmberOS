@@ -360,6 +360,21 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
     };
     const worker = buildTransientInfraWorkerResult(bundle);
     const ledger = new InMemoryBridgeLedger();
+    ledger.attempts.set("10000000-0000-5000-8000-000000000811", {
+      contractVersion: "1",
+      attemptId: "10000000-0000-5000-8000-000000000811",
+      executionId: bundle.providerExecutionId,
+      attemptNumber: 1,
+      providerId: bundle.routingDecision.selectedProviderId,
+      providerVersion: bundle.routingDecision.selectedAdapterVersion,
+      modelVersion: "seedance-test",
+      requestHash: bundle.envelope.requestHash,
+      responseHash:
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      status: "TERMINAL_FAILURE",
+      startedAt: bundle.dispatch.createdAt,
+      completedAt: bundle.dispatch.createdAt,
+    });
     const bridge = new ProviderWorkerResultFinalizerBridge({
       ledger,
       outbox: new InMemoryBridgeOutbox(),
@@ -373,5 +388,122 @@ describe("Sprint 3 PR 3.5 remediated Finalizer bridge + projection", () => {
     expect(prepared.attempt.attemptNumber).toBe(2);
     expect(prepared.attempt.attemptId).toBe(worker.providerAttemptId);
     expect(prepared.attempt.status).toBe("TERMINAL_FAILURE");
+  });
+
+  it("reuses the exact persisted Asset-Aware Attempt authority for first-attempt finalization", async () => {
+    const bundle = await buildPr35ProjectionBundle();
+    const worker = buildTerminalSuccessWorkerResult(bundle);
+    const ledger = new InMemoryBridgeLedger();
+    ledger.attempts.set(worker.providerAttemptId, {
+      contractVersion: "1",
+      attemptId: worker.providerAttemptId,
+      executionId: bundle.providerExecutionId,
+      attemptNumber: 1,
+      providerId: worker.providerId,
+      providerVersion: "seedance-capability.v1",
+      modelVersion: "seedance-test",
+      requestHash:
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      status: "CREATED",
+    });
+    const bridge = new ProviderWorkerResultFinalizerBridge({
+      ledger,
+      outbox: new InMemoryBridgeOutbox(),
+    });
+
+    const prepared = await bridge.prepareFinalizerInput({ bundle, workerResult: worker });
+
+    expect(prepared.attemptCreated).toBe(false);
+    expect(prepared.attempt).toMatchObject({
+      attemptId: worker.providerAttemptId,
+      attemptNumber: 1,
+      providerVersion: "seedance-capability.v1",
+      requestHash:
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      status: "SUCCEEDED",
+    });
+  });
+
+  it("fails closed when an existing Attempt occupies a different authorized history position", async () => {
+    const base = await buildPr35ProjectionBundle();
+    const bundle = {
+      ...base,
+      correlation: { ...base.correlation, retryGeneration: 2 },
+    };
+    const worker = buildTerminalSuccessWorkerResult(bundle);
+    const ledger = new InMemoryBridgeLedger();
+    ledger.attempts.set(worker.providerAttemptId, {
+      contractVersion: "1",
+      attemptId: worker.providerAttemptId,
+      executionId: bundle.providerExecutionId,
+      attemptNumber: 1,
+      providerId: worker.providerId,
+      providerVersion: worker.adapterVersion,
+      modelVersion: "seedance-test",
+      requestHash: bundle.envelope.requestHash,
+      status: "CREATED",
+    });
+    const bridge = new ProviderWorkerResultFinalizerBridge({
+      ledger,
+      outbox: new InMemoryBridgeOutbox(),
+    });
+
+    await expect(
+      bridge.prepareFinalizerInput({ bundle, workerResult: worker })
+    ).rejects.toMatchObject({ code: "BRIDGE_ATTEMPT_CONFLICT" });
+  });
+
+  it("fails closed when another Attempt already owns the authorized first history position", async () => {
+    const bundle = await buildPr35ProjectionBundle();
+    const worker = buildTerminalSuccessWorkerResult(bundle);
+    const ledger = new InMemoryBridgeLedger();
+    ledger.attempts.set("10000000-0000-5000-8000-000000000899", {
+      contractVersion: "1",
+      attemptId: "10000000-0000-5000-8000-000000000899",
+      executionId: bundle.providerExecutionId,
+      attemptNumber: 1,
+      providerId: worker.providerId,
+      providerVersion: worker.adapterVersion,
+      modelVersion: "seedance-test",
+      requestHash: bundle.envelope.requestHash,
+      status: "CREATED",
+    });
+    const bridge = new ProviderWorkerResultFinalizerBridge({
+      ledger,
+      outbox: new InMemoryBridgeOutbox(),
+    });
+
+    await expect(
+      bridge.prepareFinalizerInput({ bundle, workerResult: worker })
+    ).rejects.toMatchObject({ code: "BRIDGE_ATTEMPT_CONFLICT" });
+  });
+
+  it("prevents a previous Attempt from finalizing a newer retry slot", async () => {
+    const base = await buildPr35ProjectionBundle();
+    const bundle = {
+      ...base,
+      correlation: { ...base.correlation, retryGeneration: 2 },
+    };
+    const worker = buildTerminalSuccessWorkerResult(bundle);
+    const ledger = new InMemoryBridgeLedger();
+    ledger.attempts.set(worker.providerAttemptId, {
+      contractVersion: "1",
+      attemptId: worker.providerAttemptId,
+      executionId: bundle.providerExecutionId,
+      attemptNumber: 1,
+      providerId: worker.providerId,
+      providerVersion: worker.adapterVersion,
+      modelVersion: "seedance-test",
+      requestHash: bundle.envelope.requestHash,
+      status: "SUCCEEDED",
+    });
+    const bridge = new ProviderWorkerResultFinalizerBridge({
+      ledger,
+      outbox: new InMemoryBridgeOutbox(),
+    });
+
+    await expect(
+      bridge.prepareFinalizerInput({ bundle, workerResult: worker })
+    ).rejects.toMatchObject({ code: "BRIDGE_ATTEMPT_CONFLICT" });
   });
 });
