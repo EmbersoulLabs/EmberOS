@@ -6,6 +6,10 @@ async function main(): Promise<void> {
   try {
     await sql.unsafe(`
       DO $$ BEGIN
+        CREATE ROLE anon NOLOGIN;
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+      DO $$ BEGIN
         CREATE ROLE authenticated NOLOGIN;
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$;
