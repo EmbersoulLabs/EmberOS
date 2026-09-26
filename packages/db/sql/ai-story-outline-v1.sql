@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS ai_story_outline_versions (
   story_version_id uuid NOT NULL REFERENCES ai_story_versions(id) ON DELETE RESTRICT,
   version integer NOT NULL CONSTRAINT ai_story_outline_version_positive CHECK (version > 0),
   contract_version text NOT NULL CONSTRAINT ai_story_outline_contract_version_check CHECK (contract_version = 'ai-story-outline.v1'),
-  profile_id text NOT NULL CONSTRAINT ai_story_outline_profile_id_check CHECK (profile_id = 'CORE'),
+  profile_id text NOT NULL CONSTRAINT ai_story_outline_profile_id_check CHECK (profile_id IN ('CORE', 'PRODUCT_STORY', 'COMMERCIAL_STORY')),
   profile_version integer NOT NULL CONSTRAINT ai_story_outline_profile_version_check CHECK (profile_version = 1),
   source_hash text NOT NULL CONSTRAINT ai_story_outline_source_hash_check CHECK (source_hash ~ '^sha256:[0-9a-f]{64}$'),
   status text NOT NULL CONSTRAINT ai_story_outline_status_check CHECK (status IN ('DRAFT','VALIDATED','APPROVED','FROZEN','SUPERSEDED')),
@@ -31,7 +31,7 @@ BEGIN
     ALTER TABLE ai_story_outline_versions ADD CONSTRAINT ai_story_outline_contract_version_check CHECK (contract_version = 'ai-story-outline.v1');
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_story_outline_profile_id_check') THEN
-    ALTER TABLE ai_story_outline_versions ADD CONSTRAINT ai_story_outline_profile_id_check CHECK (profile_id = 'CORE');
+    ALTER TABLE ai_story_outline_versions ADD CONSTRAINT ai_story_outline_profile_id_check CHECK (profile_id IN ('CORE', 'PRODUCT_STORY', 'COMMERCIAL_STORY'));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ai_story_outline_profile_version_check') THEN
     ALTER TABLE ai_story_outline_versions ADD CONSTRAINT ai_story_outline_profile_version_check CHECK (profile_version = 1);
