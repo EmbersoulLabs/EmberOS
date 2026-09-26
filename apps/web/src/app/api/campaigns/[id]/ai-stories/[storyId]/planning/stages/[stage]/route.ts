@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { ControlledSelfUseAuthorityService, getDb, schema } from "@ceo-agent/db";
 import {
   STORY_PLANNING_STAGE_ORDER,
   isUuid,
@@ -68,6 +68,9 @@ export async function POST(
         try {
           const { setAiStoryStatus } = await import("@/lib/ai-story-service");
           await setAiStoryStatus(db, storyId, "planning", "failed");
+          await new ControlledSelfUseAuthorityService(db).reconcileUnusedTerminalPreProviderReservations({
+            occurredAt: new Date().toISOString(),
+          });
         } catch {
           /* best-effort */
         }

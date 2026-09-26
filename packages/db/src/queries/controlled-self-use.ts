@@ -77,6 +77,41 @@ const row = <T>(value: unknown): T | null =>
   ((value as T[])[0] ?? null);
 const money = (value: string | number) => Math.round(Number(value) * 100);
 const usd = (value: number) => (value / 100).toFixed(2);
+const asBool = (value: unknown) => value === true || value === "t" || value === "true" || value === 1;
+const rowsOf = <T>(value: unknown): T[] => {
+  if (Array.isArray(value)) return value as T[];
+  if (value && typeof value === "object" && Array.isArray((value as { rows?: unknown }).rows)) {
+    return (value as { rows: T[] }).rows;
+  }
+  return [];
+};
+
+export type UnusedTerminalPreProviderProof = {
+  status: ControlledSelfUseReservation["status"];
+  capabilityKey: string;
+  providerKey: string;
+  providerRequestId: string | null;
+  settledCostUsd: string | null;
+  retryOrdinal: number;
+  executionIdentity: string;
+  storyStatus: string | null;
+  hasProviderAttempt: boolean;
+  hasOutboxDispatch: boolean;
+  hasBillableLedger: boolean;
+  executionTerminal: boolean;
+};
+
+/** Unused planning hold: terminal before billable Provider usage or video dispatch. */
+export function isUnusedTerminalPreProviderReservation(
+  proof: UnusedTerminalPreProviderProof
+): boolean {
+  if (proof.status !== "RESERVED" && proof.status !== "SUBMITTED") return false;
+  if (proof.capabilityKey !== "ai_story.plan" || proof.providerKey !== "openai") return false;
+  if (proof.providerRequestId || proof.settledCostUsd !== null || proof.retryOrdinal !== 0) return false;
+  if (!proof.executionIdentity.startsWith("ai-story-plan-stage:")) return false;
+  if (proof.hasProviderAttempt || proof.hasOutboxDispatch || proof.hasBillableLedger) return false;
+  return proof.executionTerminal || proof.storyStatus === "failed";
+}
 
 function authorityFromRow(value: Record<string, unknown>): ControlledSelfUseAuthority {
   return {
@@ -637,14 +672,144 @@ export class ControlledSelfUseAuthorityService {
     );
   }
 
+  /**
+   * Releases planning reservations whose execution ended before any billable
+   * Provider usage or video dispatch. Idempotent and locked per reservation.
+   */
+  async reconcileUnusedTerminalPreProviderReservations(input: {
+    occurredAt: string;
+    reservationId?: string;
+    executionTerminal?: boolean;
+  }): Promise<{ releasedReservationIds: string[]; releasedUsd: string }> {
+    if (input.executionTerminal && !input.reservationId) {
+      throw new ControlledSelfUseError(
+        "CONTROLLED_SELF_USE_RESERVATION_INVALID",
+        "Terminal execution reconciliation requires the reservation that just failed"
+      );
+    }
+    const ids = input.reservationId
+      ? [input.reservationId]
+      : await this.findFailedPlanningReservationIds();
+    const releasedReservationIds: string[] = [];
+    let releasedCents = 0;
+    for (const reservationId of ids) {
+      const released = await this.releaseUnusedTerminalPreProviderReservation({
+        reservationId,
+        occurredAt: input.occurredAt,
+        executionTerminal: Boolean(input.reservationId && input.executionTerminal),
+      });
+      if (!released) continue;
+      releasedReservationIds.push(released.reservationId);
+      releasedCents += money(released.reservedCostUsd);
+    }
+    return { releasedReservationIds, releasedUsd: usd(releasedCents) };
+  }
+
+  private async findFailedPlanningReservationIds(): Promise<string[]> {
+    const rows = await this.db.execute(sql`
+      select reservation.reservation_id
+      from controlled_self_use_reservations reservation
+      join ai_story_versions version
+        on version.id::text = split_part(reservation.execution_identity, ':', 2)
+      join ai_stories story
+        on story.id = version.story_id
+       and story.org_id = reservation.organization_id
+       and story.workspace_id = reservation.workspace_id
+       and story.status = 'failed'
+      where reservation.status in ('RESERVED', 'SUBMITTED')
+        and reservation.capability_key = 'ai_story.plan'
+        and reservation.provider_key = 'openai'
+        and reservation.provider_request_id is null
+        and reservation.settled_cost_usd is null
+        and reservation.retry_ordinal = 0
+        and split_part(reservation.execution_identity, ':', 1) = 'ai-story-plan-stage'
+    `);
+    return rowsOf<{ reservation_id: string }>(rows).map((item) => String(item.reservation_id));
+  }
+
+  private async releaseUnusedTerminalPreProviderReservation(input: {
+    reservationId: string;
+    occurredAt: string;
+    executionTerminal: boolean;
+  }): Promise<ControlledSelfUseReservation | null> {
+    return this.db.transaction(async (tx) => {
+      const proofRows = await tx.execute(sql`
+        select reservation.*,
+               story.status as story_status,
+               exists (
+                 select 1 from provider_attempts attempt
+                 where reservation.provider_request_id is not null
+                   and attempt.provider_request_id = reservation.provider_request_id
+               ) as has_provider_attempt,
+               exists (
+                 select 1 from provider_outbox_jobs job
+                 where job.correlation_id = reservation.execution_identity
+                    or job.payload_reference = reservation.execution_identity
+               ) as has_outbox_dispatch,
+               exists (
+                 select 1 from credit_ledger_entries entry
+                 where entry.reference_id = reservation.reservation_id::text
+                   and entry.amount > 0
+               ) as has_billable_ledger
+        from controlled_self_use_reservations reservation
+        left join ai_story_versions version
+          on version.id::text = split_part(reservation.execution_identity, ':', 2)
+        left join ai_stories story
+          on story.id = version.story_id
+         and story.org_id = reservation.organization_id
+         and story.workspace_id = reservation.workspace_id
+        where reservation.reservation_id = ${input.reservationId}::uuid
+        for update of reservation
+      `);
+      const proof = row<Record<string, unknown>>(proofRows);
+      if (!proof) {
+        throw new ControlledSelfUseError(
+          "CONTROLLED_SELF_USE_RESERVATION_MISSING",
+          "Reservation not found"
+        );
+      }
+      const current = reservationFromRow(proof);
+      if (current.status === "RELEASED") return null;
+      const eligible = isUnusedTerminalPreProviderReservation({
+        status: current.status,
+        capabilityKey: current.capabilityKey,
+        providerKey: current.providerKey,
+        providerRequestId: current.providerRequestId,
+        settledCostUsd: current.settledCostUsd,
+        retryOrdinal: current.retryOrdinal,
+        executionIdentity: current.executionIdentity,
+        storyStatus: proof.story_status === null || proof.story_status === undefined
+          ? null
+          : String(proof.story_status),
+        hasProviderAttempt: asBool(proof.has_provider_attempt),
+        hasOutboxDispatch: asBool(proof.has_outbox_dispatch),
+        hasBillableLedger: asBool(proof.has_billable_ledger),
+        executionTerminal: input.executionTerminal,
+      });
+      if (!eligible) return null;
+      return this.transition(
+        current.reservationId,
+        "RELEASED",
+        input.occurredAt,
+        undefined,
+        undefined,
+        {
+          tx,
+          evidence: { reason: "terminal_pre_provider_failure", unused: true },
+        }
+      );
+    });
+  }
+
   private async transition(
     reservationId: string,
     target: "SUBMITTED" | "SETTLED" | "RELEASED",
     occurredAt: string,
     providerRequestId?: string,
-    settledCostUsd?: string
+    settledCostUsd?: string,
+    options?: { tx?: Tx; evidence?: Record<string, unknown> }
   ): Promise<ControlledSelfUseReservation> {
-    return this.db.transaction(async (tx) => {
+    const run = async (tx: Tx) => {
       const rows = await tx.execute(sql`
         select * from controlled_self_use_reservations
         where reservation_id = ${reservationId}::uuid
@@ -679,10 +844,14 @@ export class ControlledSelfUseAuthorityService {
         eventType: target,
         costUsd: target === "SETTLED" ? settledCostUsd : current.reservedCostUsd,
         occurredAt,
-        evidence: providerRequestId ? { providerRequestId } : {},
+        evidence: {
+          ...(providerRequestId ? { providerRequestId } : {}),
+          ...(options?.evidence ?? {}),
+        },
       });
       return reservationFromRow(row<Record<string, unknown>>(updated)!);
-    });
+    };
+    return options?.tx ? run(options.tx) : this.db.transaction(run);
   }
 }
 

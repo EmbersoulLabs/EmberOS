@@ -688,9 +688,14 @@ export async function runSinglePlanningStage(input: {
     }
     return result;
   } catch (error) {
-    const current = await authority.getReservationById(reservation.reservationId);
-    if (current?.status === "RESERVED") {
-      await authority.release(reservation.reservationId, new Date().toISOString());
+    try {
+      await authority.reconcileUnusedTerminalPreProviderReservations({
+        occurredAt: new Date().toISOString(),
+        reservationId: reservation.reservationId,
+        executionTerminal: true,
+      });
+    } catch {
+      /* The terminal-story scan retries this unused hold. */
     }
     throw error;
   }
