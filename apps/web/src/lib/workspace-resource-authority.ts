@@ -1,5 +1,10 @@
 import { and, eq } from "drizzle-orm";
-import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
+import {
+  getDb,
+  PlatformAdminRepositoryImpl,
+  requireWorkspaceRole,
+  schema,
+} from "@ceo-agent/db";
 
 export const WORKSPACE_SLUG_HEADER = "x-emberos-workspace-slug";
 
@@ -21,7 +26,14 @@ export function assertWorkspaceResourceMatch(
   }
 }
 
-/** Resolve the URL workspace through the authenticated user's memberships, then bind it to the resource. */
+/**
+ * Resolve the URL workspace and bind it to the resource before granting read access.
+ *
+ * Ordinary users still require canonical Workspace membership. An ACTIVE
+ * persistent Platform Admin grant may read the explicitly selected Workspace
+ * in Admin Context without creating a synthetic membership. The legacy email
+ * allowlist is deliberately not consulted.
+ */
 export async function requireWorkspaceResourceAuthority(input: {
   request: Request;
   userId: string;
@@ -41,7 +53,6 @@ export async function requireWorkspaceResourceAuthority(input: {
   const slug = explicitSlug || referrerSlug;
   if (!slug) throw new WorkspaceResourceMismatchError();
 
-  await requireWorkspaceRole(input.resourceWorkspaceId, input.userId, "client_viewer");
   const db = getDb();
   const matches = await db
     .select({ id: schema.workspaces.id, slug: schema.workspaces.slug })
@@ -57,6 +68,13 @@ export async function requireWorkspaceResourceAuthority(input: {
   // The selected slug must resolve to the exact server-owned resource Workspace.
   if (matches.length !== 1) throw new WorkspaceResourceMismatchError();
   assertWorkspaceResourceMatch(matches[0]!.id, input.resourceWorkspaceId);
+
+  try {
+    await requireWorkspaceRole(input.resourceWorkspaceId, input.userId, "client_viewer");
+  } catch {
+    const grant = await new PlatformAdminRepositoryImpl().getActiveGrantForUser(input.userId);
+    if (!grant) throw new WorkspaceResourceMismatchError();
+  }
   return matches[0]!;
 }
 
