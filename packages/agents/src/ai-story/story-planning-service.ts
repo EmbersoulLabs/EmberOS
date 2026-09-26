@@ -5,7 +5,7 @@
  * not dispatch to video, provider execution, render, or billing systems.
  */
 import { z } from "zod";
-import { callJsonModel } from "../llm";
+import { callJsonModel, callStructuredJsonModel } from "../llm";
 import type { CertificationPlanningStage } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
@@ -46,6 +46,25 @@ import {
 } from "./product-authority-planning";
 
 type Usage = PlanningUsage;
+
+const ScenePlanProviderOutputSchema = z.object({
+  scenePlan: z.array(z.object({
+    id: z.string().trim().min(1),
+    beatIds: z.array(z.string().trim().min(1)).min(1),
+    purpose: z.string().trim().min(1),
+    durationSec: z.number().positive(),
+    transition: z.string(),
+    continuityNotes: z.string(),
+    order: z.number().int().nonnegative(),
+    generationAuthority: z.object({
+      strategy: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO", "PRODUCT_GROUNDED_VIDEO"]),
+      referenceSource: z.enum(["SCENE_EXPLICIT", "STORY_INHERITED", "REFERENCE_FREE_T2V", "CHARACTER_SYNTHETIC_ANCHOR"]),
+      referenceAssetIds: z.array(z.string().uuid()),
+      firstFrameAssetId: z.string().uuid().nullable(),
+      productVisualIdentityRequirement: z.enum(["NONE", "REQUIRED"]),
+    }).strict(),
+  }).strict()).min(1),
+}).strict();
 
 export type AiStoryPlanningCampaignContext = {
   id?: string;
@@ -342,41 +361,27 @@ export async function generateScenePlan(input: {
   directorThinking: DirectorThinking;
   storyBeats: StoryBeat[];
 }): Promise<{ scenePlan: ScenePlanItem[]; usage: Usage }> {
-  const schemaHint = JSON.stringify({
-    scenePlan: [
-      {
-        id: "scene-001",
-        beatIds: ["beat-001"],
-        purpose: "string",
-        durationSec: 4,
-        transition: "string",
-        continuityNotes: "string",
-        order: 0,
-        generationAuthority: {
-          strategy: "TEXT_TO_VIDEO",
-          referenceSource: "REFERENCE_FREE_T2V",
-          referenceAssetIds: [],
-          firstFrameAssetId: null,
-          productVisualIdentityRequirement: "NONE",
-        },
-      },
-    ],
-  });
-  const { value, usage } = await callStage<ScenePlanItem[]>(
-    "Scene plan",
-    [
+  const completion = await callStructuredJsonModel({
+    system: [
       "You are an animation scene planner.",
       "Create scenes that cover every story beat, merging beats only when continuityNotes explicitly say which beat was merged.",
       "Use sequential order values starting at 0 and stable scene ids.",
       "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
-      "Return ONLY JSON.",
+      "Return JSON only and no extra fields.",
     ].join(" "),
-    JSON.stringify(input, null, 2),
-    schemaHint,
-    z.array(ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema })).min(1),
-    (result) => result.scenePlan
-  );
-  return { scenePlan: value, usage };
+    user: JSON.stringify(input, null, 2),
+    schema: ScenePlanProviderOutputSchema,
+    schemaName: "ai_story_scene_plan_v1",
+    certificationStage: "scene_plan",
+  });
+  if (completion.decodeIssue) {
+    throw new Error(`SCENE_PLAN_${completion.decodeIssue}`);
+  }
+  const providerOutput = ScenePlanProviderOutputSchema.parse(completion.result);
+  const scenePlan = z.array(
+    ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema }),
+  ).min(1).parse(providerOutput.scenePlan);
+  return { scenePlan, usage: completion.usage };
 }
 
 export async function generateShotPlan(input: {

@@ -3,8 +3,25 @@ import { describe, expect, it, vi } from "vitest";
 describe("AI Story planning pipeline assembly", () => {
   it("runs planning stages in order and returns a review Animation Package", async () => {
     vi.resetModules();
+    const usage = { input: 10, output: 5, costUsd: 0.01 };
+    const callStructuredJsonModel = vi.fn(async () => ({
+      result: {
+        scenePlan: [
+          {
+            id: "scene-001",
+            beatIds: ["beat-001"],
+            purpose: "Need and discovery",
+            durationSec: 6,
+            transition: "Cut",
+            continuityNotes: "",
+            order: 0,
+            generationAuthority: { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" },
+          },
+        ],
+      },
+      usage,
+    }));
     const callJsonModel = vi.fn(async () => {
-      const usage = { input: 10, output: 5, costUsd: 0.01 };
       const calls = callJsonModel.mock.calls.length;
       if (calls === 1) {
         return {
@@ -95,25 +112,6 @@ describe("AI Story planning pipeline assembly", () => {
       if (calls === 4) {
         return {
           result: {
-            scenePlan: [
-              {
-                id: "scene-001",
-                beatIds: ["beat-001"],
-                purpose: "Need and discovery",
-                durationSec: 6,
-                transition: "Cut",
-                continuityNotes: "",
-                order: 0,
-                generationAuthority: { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" },
-              },
-            ],
-          },
-          usage,
-        };
-      }
-      if (calls === 5) {
-        return {
-          result: {
             shotPlan: [
               {
                 id: "shot-001",
@@ -134,7 +132,7 @@ describe("AI Story planning pipeline assembly", () => {
           usage,
         };
       }
-      if (calls === 6) {
+      if (calls === 5) {
         return {
           result: {
             characterContinuity: [
@@ -168,7 +166,7 @@ describe("AI Story planning pipeline assembly", () => {
         usage,
       };
     });
-    vi.doMock("../packages/agents/src/llm", () => ({ callJsonModel }));
+    vi.doMock("../packages/agents/src/llm", () => ({ callJsonModel, callStructuredJsonModel }));
 
     const { runFullStoryPlanningPipeline } = await import(
       "../packages/agents/src/ai-story/story-planning-service"
@@ -199,7 +197,8 @@ describe("AI Story planning pipeline assembly", () => {
       ],
     });
 
-    expect(callJsonModel).toHaveBeenCalledTimes(7);
+    expect(callJsonModel).toHaveBeenCalledTimes(6);
+    expect(callStructuredJsonModel).toHaveBeenCalledTimes(1);
     expect(payload.status).toBe("review");
     expect(payload.narrativeIntegration.consistent).toBe(true);
     expect(payload.creativeContext.productAuthorities).toEqual([
