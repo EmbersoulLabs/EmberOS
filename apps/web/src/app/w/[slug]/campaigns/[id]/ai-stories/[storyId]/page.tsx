@@ -99,7 +99,11 @@ export default function AiStoryReviewPage() {
         const me = await fetchCurrentUserProjection();
         const ws = (me.workspaces as Array<{ slug: string; role: string }> | undefined)
           ?.find((workspace) => workspace.slug === slug);
-        setWorkspaceRole(ws?.role ?? null);
+        // Platform Admin workspace access is an explicit server projection, not a
+        // synthetic membership. Preserve that control-plane authority in the UI
+        // so review actions are visible while the write routes remain the final
+        // server-side authorization boundary.
+        setWorkspaceRole(me.isSuperAdmin && ws ? "admin" : ws?.role ?? null);
       } catch { setWorkspaceRole(null); }
     })();
   }, [slug]);
