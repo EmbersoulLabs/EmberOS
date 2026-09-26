@@ -7,6 +7,10 @@ const page = readFileSync(
 );
 const runtime = readFileSync("apps/web/src/components/ai-story/StoryRuntimePanel.tsx", "utf8");
 const review = readFileSync("apps/web/src/components/ai-story/GeneratedSceneReviewPanel.tsx", "utf8");
+const planningStageRoute = readFileSync(
+  "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/stages/[stage]/route.ts",
+  "utf8"
+);
 
 describe("Wave 5 AI Story normal-user UI", () => {
   it("implements the Blueprint product flow and explicit AI Polish acceptance", () => {
@@ -28,6 +32,12 @@ describe("Wave 5 AI Story normal-user UI", () => {
     expect(page.indexOf("advanced-planning-diagnostics")).toBeLessThan(
       page.indexOf('<PackageSection title="Director Thinking"')
     );
+  });
+
+  it("gives every explicit planning click a fresh manual attempt identity", () => {
+    expect(page.match(/"x-ai-story-certification-regeneration-id": crypto\.randomUUID\(\)/g)).toHaveLength(2);
+    expect(page).not.toContain("setTimeout(() => runStage");
+    expect(planningStageRoute).toContain('"planning_review", "failed"');
   });
 
   it("keeps runtime and review product-facing without exposing machinery", () => {

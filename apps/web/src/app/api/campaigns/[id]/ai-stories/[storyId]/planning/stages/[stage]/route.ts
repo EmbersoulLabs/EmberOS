@@ -64,7 +64,7 @@ export async function POST(
         planningDraft: result.planningDraft,
       });
     } catch (error) {
-      if (status === "planning" || status === "ready_for_animation" || status === "planning_review") {
+      if (["planning", "ready_for_animation", "planning_review", "failed"].includes(status)) {
         try {
           const { setAiStoryStatus } = await import("@/lib/ai-story-service");
           await setAiStoryStatus(db, storyId, "planning", "failed");
