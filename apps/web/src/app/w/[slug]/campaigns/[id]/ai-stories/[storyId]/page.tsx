@@ -230,7 +230,10 @@ export default function AiStoryReviewPage() {
   async function generatePlanning() {
     setBusy(true); setError("");
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning/generate`, { method: "POST" });
+      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning/generate`, {
+        method: "POST",
+        headers: { "x-ai-story-certification-regeneration-id": crypto.randomUUID() },
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Animation preparation failed");
       setStatus(data.status ?? "planning_review"); await load();
@@ -241,7 +244,10 @@ export default function AiStoryReviewPage() {
   async function runStage(stage: StoryPlanningStage) {
     setBusy(true); setBusyStage(stage); setError("");
     try {
-      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning/stages/${stage}`, { method: "POST" });
+      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning/stages/${stage}`, {
+        method: "POST",
+        headers: { "x-ai-story-certification-regeneration-id": crypto.randomUUID() },
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `Stage ${stage} failed`);
       setStatus(data.status ?? status); await load();
