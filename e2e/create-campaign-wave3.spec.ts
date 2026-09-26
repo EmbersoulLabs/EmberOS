@@ -24,6 +24,7 @@ beforeAll(async () => {
 afterAll(async () => { if (authServer) await new Promise<void>((resolve) => authServer.close(() => resolve())); });
 
 async function authenticate(page: Page) {
+  await page.route("**/auth/continue", (route) => route.fulfill({ status: 307, headers: { location: "/workspaces" } }));
   await page.addInitScript(() => localStorage.setItem("emberos-locale", "en"));
   await page.route("**/auth/v1/token**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ access_token: token(), token_type: "bearer", expires_in: 3600, refresh_token: "e2e-refresh", user: { id: userId, aud: "authenticated", role: "authenticated", email: "operator@example.com", app_metadata: {}, user_metadata: {}, identities: [] } }) }));
   await page.goto("/login");
