@@ -68,6 +68,7 @@ export function getQueue(name: string): Queue {
 }
 
 export const agentQueue = () => getQueue(QUEUE_NAMES.AGENT);
+export const controlledSelfUseAgentQueue = () => getQueue(QUEUE_NAMES.SELF_USE_AGENT);
 export const renderQueue = () => getQueue(QUEUE_NAMES.RENDER);
 export const exportQueue = () => getQueue(QUEUE_NAMES.EXPORT);
 export const probeQueue = () => getQueue(QUEUE_NAMES.PROBE);
@@ -92,6 +93,26 @@ export async function enqueuePipeline(taskId: string, campaignId: string, worksp
     recoveryKind: "new_generation",
   });
   return job;
+}
+
+export async function enqueueControlledSelfUsePipeline(
+  taskId: string,
+  campaignId: string,
+  workspaceId: string,
+  orgId: string,
+  controlledSelfUseReservationId: string
+) {
+  const queue = controlledSelfUseAgentQueue();
+  return queue.add(
+    "agent.pipeline",
+    { taskId, campaignId, workspaceId, orgId, controlledSelfUseReservationId },
+    {
+      jobId: `controlled-self-use-pipeline-${taskId}`,
+      attempts: 1,
+      removeOnComplete: 100,
+      removeOnFail: 50,
+    }
+  );
 }
 
 /**

@@ -1,11 +1,11 @@
 import { eq, and, desc, asc, getTableColumns, isNull } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { getDb, schema } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { isCampaignDeletable } from "@/lib/campaigns";
 import { withSignedCreativeArtifacts, withSignedTaskExportProgress } from "@/lib/video-artifact-delivery";
 import { deleteCampaignCascade } from "@/lib/campaign-delete";
-import { requireWorkspaceResourceAuthority } from "@/lib/workspace-resource-authority";
+import { requireControlledSelfUseWorkspaceOperator } from "@/lib/controlled-self-use-workspace-access";
 
 export async function GET(
   request: Request,
@@ -23,8 +23,7 @@ export async function GET(
       .limit(1);
 
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceResourceAuthority({ request, userId: user.id, resourceWorkspaceId: campaign.workspaceId });
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "client_viewer");
+    await requireControlledSelfUseWorkspaceOperator({ request, userId: user.id, workspaceId: campaign.workspaceId, capabilityKey: "campaign.generate", providerKey: "openai" });
 
     const legacyAssets = await db
       .select()
@@ -142,8 +141,7 @@ export async function PATCH(
       .limit(1);
 
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceResourceAuthority({ request, userId: user.id, resourceWorkspaceId: campaign.workspaceId });
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+    await requireControlledSelfUseWorkspaceOperator({ request, userId: user.id, workspaceId: campaign.workspaceId, capabilityKey: "campaign.generate", providerKey: "openai" });
 
     const [updated] = await db
       .update(schema.campaigns)
@@ -178,8 +176,7 @@ export async function DELETE(
       .limit(1);
 
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireWorkspaceResourceAuthority({ request, userId: user.id, resourceWorkspaceId: campaign.workspaceId });
-    await requireWorkspaceRole(campaign.workspaceId, user.id, "operator");
+    await requireControlledSelfUseWorkspaceOperator({ request, userId: user.id, workspaceId: campaign.workspaceId, capabilityKey: "campaign.generate", providerKey: "openai" });
 
     const [task] = await db
       .select()

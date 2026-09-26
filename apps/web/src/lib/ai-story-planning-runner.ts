@@ -4,6 +4,9 @@
 import { and, eq, inArray } from "drizzle-orm";
 import {
   AiStoryCharacterAuthorityService,
+  BillingAccountRepositoryImpl,
+  ControlledSelfUseAuthorityService,
+  PlatformAdminRepositoryImpl,
   PgEpisodeContinuityRuntimeIntegration,
   getBusinessProfileByWorkspace,
   getDb,
@@ -20,6 +23,7 @@ import {
   generateShotPlan,
   generateStoryBeats,
   generateWorldContinuity,
+  withControlledSelfUseProviderContext,
   projectAcceptedCharactersToPlanning,
   projectStoryProductSourcesToPlanning,
 } from "@ceo-agent/agents";
@@ -226,7 +230,8 @@ export async function runSinglePlanningStage(input: {
   }
 
   const ctx = await loadAiStoryPlanningContext(db, campaignId, storyId, input.actorUserId);
-  return withConfiguredCertificationPlanningContext({
+  let stageCostUsd = 0;
+  const runStage = () => withConfiguredCertificationPlanningContext({
     orgId: ctx.campaign.orgId,
     workspaceId: ctx.campaign.workspaceId,
     campaignId,
@@ -310,6 +315,7 @@ export async function runSinglePlanningStage(input: {
         ctx.episodeContinuity
       );
       usage = addUsage(usage, generated.usage);
+      stageCostUsd += generated.usage.costUsd;
       savedContext = await saveCreativeContext(db, {
         orgId: ctx.campaign.orgId,
         workspaceId: ctx.campaign.workspaceId,
@@ -338,6 +344,7 @@ export async function runSinglePlanningStage(input: {
         draft.creativeContext!
       );
       usage = addUsage(usage, generated.usage);
+      stageCostUsd += generated.usage.costUsd;
       const mergedContext = {
         ...draft.creativeContext!,
         directorContext: generated.directorThinking,
@@ -372,6 +379,7 @@ export async function runSinglePlanningStage(input: {
         directorThinking: draft.directorThinking!,
       });
       usage = addUsage(usage, generated.usage);
+      stageCostUsd += generated.usage.costUsd;
       draft = {
         ...draft,
         storyBeats: generated.storyBeats,
@@ -402,6 +410,7 @@ export async function runSinglePlanningStage(input: {
         storyBeats: draft.storyBeats!,
       });
       usage = addUsage(usage, generated.usage);
+      stageCostUsd += generated.usage.costUsd;
       draft = {
         ...draft,
         scenePlan: generated.scenePlan,
@@ -438,6 +447,7 @@ export async function runSinglePlanningStage(input: {
         characterAuthorities: ctx.characterAuthorities,
       });
       usage = addUsage(usage, canonical.usage);
+      stageCostUsd += canonical.usage.costUsd;
       const generated = await generateShotPlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
@@ -447,6 +457,7 @@ export async function runSinglePlanningStage(input: {
         canonicalScript: canonical.script,
       });
       usage = addUsage(usage, generated.usage);
+      stageCostUsd += generated.usage.costUsd;
       draft = {
         ...draft,
         shotPlan: generated.shotPlan,
@@ -476,6 +487,7 @@ export async function runSinglePlanningStage(input: {
         shotPlan: draft.shotPlan!,
       });
       usage = addUsage(usage, generated.usage);
+      stageCostUsd += generated.usage.costUsd;
       draft = {
         ...draft,
         characterContinuity: generated.characterContinuity,
@@ -506,6 +518,7 @@ export async function runSinglePlanningStage(input: {
         shotPlan: draft.shotPlan!,
       });
       usage = addUsage(usage, generated.usage);
+      stageCostUsd += generated.usage.costUsd;
       draft = {
         ...draft,
         worldContinuity: generated.worldContinuity,
@@ -548,6 +561,7 @@ export async function runSinglePlanningStage(input: {
           shotPlan: draft.shotPlan!,
         });
         usage = addUsage(usage, generated.usage);
+        stageCostUsd += generated.usage.costUsd;
         draft = { ...draft, characterContinuity: generated.characterContinuity, usage };
       }
       const canonicalScenes = await ensureCurrentFrozenCanonicalSceneSet({
@@ -623,4 +637,61 @@ export async function runSinglePlanningStage(input: {
     planningDraft: draft,
   };
   });
+
+  if (process.env.AI_STORY_PROVIDER_DISPATCH_MODE !== "allowlisted_self_use") {
+    return runStage();
+  }
+  const grant = await new PlatformAdminRepositoryImpl(db).getActiveGrantForUser(
+    input.actorUserId
+  );
+  const billing = await new BillingAccountRepositoryImpl(db).getByOrgId(
+    ctx.campaign.orgId
+  );
+  if (!grant || !billing) {
+    throw new Error("CONTROLLED_SELF_USE_PLANNING_BILLING_AUTHORITY_DENIED");
+  }
+  const authority = new ControlledSelfUseAuthorityService(db);
+  const executionIdentity = [
+    "ai-story-plan-stage",
+    ctx.loaded.currentVersion!.id,
+    stage,
+    input.regenerationIdentity ?? "initial",
+  ].join(":");
+  const reservation = (await authority.reserve({
+    environment: "PRODUCTION",
+    organizationId: ctx.campaign.orgId,
+    workspaceId: ctx.campaign.workspaceId,
+    capabilityKey: "ai_story.plan",
+    executionIdentity,
+    providerKey: "openai",
+    maximumCostUsd: "0.50",
+    retryOrdinal: 0,
+    actorUserId: input.actorUserId,
+    reservedAt: new Date().toISOString(),
+  })).reservation;
+  try {
+    const result = await withControlledSelfUseProviderContext({
+      reservationId: reservation.reservationId,
+      organizationId: ctx.campaign.orgId,
+      workspaceId: ctx.campaign.workspaceId,
+      executionIdentity,
+      providerKey: "openai",
+    }, runStage);
+    if (stageCostUsd > 0) {
+      await authority.settle(
+        reservation.reservationId,
+        stageCostUsd.toFixed(2),
+        new Date().toISOString()
+      );
+    } else {
+      await authority.release(reservation.reservationId, new Date().toISOString());
+    }
+    return result;
+  } catch (error) {
+    const current = await authority.getReservationById(reservation.reservationId);
+    if (current?.status === "RESERVED") {
+      await authority.release(reservation.reservationId, new Date().toISOString());
+    }
+    throw error;
+  }
 }

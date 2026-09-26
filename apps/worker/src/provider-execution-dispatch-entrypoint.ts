@@ -26,7 +26,10 @@ function getProductionDispatcher(): ProviderExecutionDispatcher {
  * PR-3A.5C.6.3 will make Workers consume its immutable Dispatch output.
  */
 export async function dispatchNextProviderExecution(
-  options: { readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER" } = {}
+  options: {
+    readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER";
+    readonly controlledSelfUseOnly?: boolean;
+  } = {}
 ): Promise<DispatcherOutcome> {
   return getProductionDispatcher().dispatchNext(options);
 }

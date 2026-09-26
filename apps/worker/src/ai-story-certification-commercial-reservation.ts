@@ -1,4 +1,8 @@
-import { CertificationCommercialAuthorityService } from "@ceo-agent/db";
+import {
+  CertificationCommercialAuthorityService,
+  ControlledSelfUseAuthorityService,
+} from "@ceo-agent/db";
+import { estimateProviderCostUsd } from "@ceo-agent/shared/server";
 import { CertificationEnvironmentSchema, type CertificationEnvironment } from "@ceo-agent/shared/server";
 import type { SceneProviderWorkerRuntimeDependencies } from "@ceo-agent/agents";
 import { compiledProviderRequestIdForSchedule } from "@ceo-agent/agents";
@@ -136,4 +140,125 @@ export class AiStoryCertificationCommercialReservationGate implements Commercial
       await this.authority.release(input.reservationId, input.occurredAt);
     }
   }
+}
+
+/** Production gate for organization-scoped, budgeted owner self-use. */
+export class AiStoryControlledSelfUseCommercialReservationGate implements CommercialGate {
+  constructor(
+    private readonly authority = new ControlledSelfUseAuthorityService(),
+    private readonly pricing = new CertificationCommercialAuthorityService()
+  ) {}
+
+  private binding(input: Parameters<CommercialGate["reserveBeforeSubmit"]>[0]) {
+    const compiledRequestId =
+      input.bundle.envelope.executionContext.trace?.compiledRequestId?.trim() ??
+      compiledProviderRequestIdForSchedule({
+        sceneExecutionId: input.bundle.correlation.sceneExecutionId,
+        scheduledAt: input.bundle.correlation.scheduledAt,
+      });
+    const requestFingerprint =
+      input.bundle.envelope.executionContext.trace?.compiledRequestFingerprint?.trim();
+    return { compiledRequestId, requestFingerprint };
+  }
+
+  private async preview(input: Parameters<CommercialGate["reserveBeforeSubmit"]>[0]) {
+    const { compiledRequestId, requestFingerprint } = this.binding(input);
+    const priced = await this.pricing.previewForSceneExecution({
+      orgId: input.bundle.correlation.ownership.orgId,
+      workspaceId: input.bundle.envelope.workspaceId,
+      sceneExecutionId: input.bundle.correlation.sceneExecutionId,
+      compiledRequestId,
+      ...(requestFingerprint ? { requestFingerprint } : {}),
+      executionIdentity: input.providerAttemptId,
+      reservedAt: input.reservedAt,
+    });
+    if (priced.compiledRequest.providerId !== "seedance") {
+      throw new Error("CONTROLLED_SELF_USE_PROVIDER_NOT_CERTIFIED");
+    }
+    return priced;
+  }
+
+  async previewBeforeSubmit(input: Parameters<CommercialGate["reserveBeforeSubmit"]>[0]) {
+    const priced = await this.preview(input);
+    await this.authority.assertWorkspaceEligible({
+      environment: "PRODUCTION",
+      organizationId: input.bundle.correlation.ownership.orgId,
+      workspaceId: input.bundle.envelope.workspaceId,
+      capabilityKey: "ai_story.execute",
+      providerKey: "seedance",
+    });
+    const estimated = estimateProviderCostUsd(priced.pricingRule);
+    if (Number(estimated) > 5) throw new Error("CONTROLLED_SELF_USE_EXECUTION_CAP_EXCEEDED");
+  }
+
+  async reserveBeforeSubmit(input: Parameters<CommercialGate["reserveBeforeSubmit"]>[0]) {
+    const priced = await this.preview(input);
+    const result = await this.authority.reserve({
+      environment: "PRODUCTION",
+      organizationId: input.bundle.correlation.ownership.orgId,
+      workspaceId: input.bundle.envelope.workspaceId,
+      capabilityKey: "ai_story.execute",
+      executionIdentity: input.providerAttemptId,
+      providerKey: "seedance",
+      maximumCostUsd: estimateProviderCostUsd(priced.pricingRule),
+      retryOrdinal: 0,
+      reservedAt: input.reservedAt,
+    });
+    return { reservationId: result.reservation.reservationId };
+  }
+
+  async claimSubmissionBeforeAdapter(
+    input: Parameters<NonNullable<CommercialGate["claimSubmissionBeforeAdapter"]>>[0]
+  ) {
+    const reservation = await this.authority.getReservationByExecutionIdentity(input.providerAttemptId);
+    if (!reservation || reservation.reservationId !== input.reservationId || reservation.retryOrdinal !== 0) {
+      throw new Error("CONTROLLED_SELF_USE_RESERVATION_ATTEMPT_BINDING_INVALID");
+    }
+    await this.authority.markSubmitted(input.reservationId, input.claimedAt);
+  }
+
+  async releaseBeforeAdapterFailure(
+    input: Parameters<NonNullable<CommercialGate["releaseBeforeAdapterFailure"]>>[0]
+  ) {
+    const reservation = await this.authority.getReservationById(input.reservationId);
+    if (reservation?.status === "RESERVED") {
+      await this.authority.release(input.reservationId, input.occurredAt);
+    }
+  }
+
+  async loadForOutcome(input: Parameters<CommercialGate["loadForOutcome"]>[0]) {
+    const reservation = await this.authority.getReservationByExecutionIdentity(input.providerAttemptId);
+    return reservation ? { reservationId: reservation.reservationId } : null;
+  }
+
+  async recordProviderOutcome(input: Parameters<CommercialGate["recordProviderOutcome"]>[0]) {
+    const providerRequestId = input.providerRequestId;
+    if (input.phase === "submit") {
+      if (
+        input.acceptanceClassification !== "ACCEPTED" &&
+        input.acceptanceClassification !== "ACCEPTANCE_UNKNOWN"
+      ) {
+        await this.authority.release(input.reservationId, input.occurredAt);
+      }
+      return;
+    }
+    if (terminalSuccess.has(input.canonicalProviderState)) {
+      const reservation = await this.authority.getReservationById(input.reservationId);
+      if (!reservation) throw new Error("CONTROLLED_SELF_USE_RESERVATION_MISSING");
+      await this.authority.settle(
+        input.reservationId,
+        reservation.reservedCostUsd,
+        input.occurredAt,
+        providerRequestId
+      );
+    } else if (terminalNoCharge.has(input.canonicalProviderState)) {
+      await this.authority.release(input.reservationId, input.occurredAt);
+    }
+  }
+}
+
+export function createAiStoryCommercialReservationGate(): CommercialGate {
+  return process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use"
+    ? new AiStoryControlledSelfUseCommercialReservationGate()
+    : new AiStoryCertificationCommercialReservationGate();
 }

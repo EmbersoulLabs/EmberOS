@@ -17,6 +17,7 @@ import {
   type ProviderUsage,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
+import { getUnifiedProviderCommercialReservation } from "./controlled-self-use";
 
 type Db = ReturnType<typeof getDb>;
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -308,18 +309,12 @@ export class ProviderLedgerRepository {
         "AI Story compiled request authority conflicts with Attempt binding"
       );
     }
-    const [reservation] = binding.commercialReservationId
-      ? await this.db
-          .select()
-          .from(schema.certificationCommercialReservations)
-          .where(
-            eq(
-              schema.certificationCommercialReservations.certificationReservationId,
-              binding.commercialReservationId
-            )
-          )
-          .limit(1)
-      : [];
+    const reservation = binding.commercialReservationId
+      ? await getUnifiedProviderCommercialReservation(
+          this.db,
+          binding.commercialReservationId
+        )
+      : null;
     if (
       !reservation ||
       reservation.executionIdentity !== persisted.attemptId ||

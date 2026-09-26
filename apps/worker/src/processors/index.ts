@@ -2,6 +2,7 @@ import { Worker, type WorkerOptions } from "bullmq";
 import { eq, and, notInArray } from "drizzle-orm";
 import {
   AiStoryAssetAwareExecutionPlannerRepository,
+  ControlledSelfUseAuthorityService,
   getDb,
   schema,
 } from "@ceo-agent/db";
@@ -11,7 +12,13 @@ import {
   FinalizedAssetMetadataAnalyzer,
   runPublishAgent,
 } from "@ceo-agent/agents";
-import { runPipeline, type PipelineHooks, failPipelineExecution, automaticPipelineFailureAuthority } from "@ceo-agent/agents";
+import {
+  runPipeline,
+  withControlledSelfUseProviderContext,
+  type PipelineHooks,
+  failPipelineExecution,
+  automaticPipelineFailureAuthority,
+} from "@ceo-agent/agents";
 import {
   STORAGE_PATHS,
   MAX_UPLOAD_DURATION_SEC,
@@ -218,6 +225,82 @@ export function startWorkers() {
     { connection, prefix, concurrency, lockDuration: agentLockMs, ...workerOpts }
   );
 
+  const controlledSelfUseAgentWorker = new Worker(
+    QUEUE_NAMES.SELF_USE_AGENT,
+    async (job) => {
+      if (job.name !== "agent.pipeline") return;
+      const {
+        taskId,
+        campaignId,
+        workspaceId,
+        orgId,
+        controlledSelfUseReservationId,
+      } = job.data as {
+        taskId: string;
+        campaignId: string;
+        workspaceId: string;
+        orgId: string;
+        controlledSelfUseReservationId?: string;
+      };
+      if (
+        process.env.AI_STORY_PROVIDER_DISPATCH_MODE !== "allowlisted_self_use" ||
+        !controlledSelfUseReservationId ||
+        job.opts.attempts !== 1
+      ) {
+        throw new Error("CONTROLLED_SELF_USE_PRECLAIM_DENIED");
+      }
+      const authority = new ControlledSelfUseAuthorityService();
+      await authority.assertWorkspaceEligible({
+        environment: "PRODUCTION",
+        organizationId: orgId,
+        workspaceId,
+        capabilityKey: "campaign.generate",
+        providerKey: "openai",
+      });
+      const reservation = await authority.getReservationById(
+        controlledSelfUseReservationId
+      );
+      if (
+        !reservation ||
+        reservation.executionIdentity !== `campaign-task:${taskId}` ||
+        reservation.organizationId !== orgId ||
+        reservation.workspaceId !== workspaceId ||
+        reservation.capabilityKey !== "campaign.generate" ||
+        reservation.providerKey !== "openai" ||
+        reservation.retryOrdinal !== 0 ||
+        !["RESERVED", "SUBMITTED"].includes(reservation.status)
+      ) {
+        throw new Error("CONTROLLED_SELF_USE_PRECLAIM_DENIED");
+      }
+      emitVideoStudioOpsEvent({
+        event: "pipeline.started",
+        stage: "agent.pipeline",
+        outcome: "started",
+        orgId,
+        workspaceId,
+        campaignId,
+        taskId,
+        jobId: job.id,
+        attempt: job.attemptsMade + 1,
+        recoveryKind: "new_generation",
+      });
+      await withControlledSelfUseProviderContext(
+        {
+          reservationId: reservation.reservationId,
+          organizationId: orgId,
+          workspaceId,
+          executionIdentity: reservation.executionIdentity,
+          providerKey: "openai",
+        },
+        async () => {
+          await ensureMergedSourceVideo(taskId);
+          await runPipeline(taskId, pipelineHooks);
+        }
+      );
+    },
+    { connection, prefix, concurrency: 1, lockDuration: agentLockMs, ...workerOpts }
+  );
+
   const probeWorker = new Worker(
     QUEUE_NAMES.PROBE,
     async (job) => {
@@ -384,11 +467,51 @@ export function startWorkers() {
     QUEUE_NAMES.RENDER,
     async (job) => {
       if (job.name !== "ffmpeg.render") return;
-      const data = job.data as { taskId: string; creativeId: string };
+      const data = job.data as Parameters<typeof processRenderJob>[0];
       console.log(
         `[ffmpeg.render] start job=${job.id} task=${data.taskId} creative=${data.creativeId} attempt=${job.attemptsMade + 1}`
       );
-      await processRenderJob(job.data as Parameters<typeof processRenderJob>[0]);
+      if (process.env.AI_STORY_PROVIDER_DISPATCH_MODE !== "allowlisted_self_use") {
+        await processRenderJob(data);
+        return;
+      }
+
+      const authority = new ControlledSelfUseAuthorityService(getDb());
+      const executionIdentity = `campaign-task:${data.taskId}`;
+      const reservation = await authority.getReservationByExecutionIdentity(executionIdentity);
+      if (!reservation) {
+        // Rendering itself is local/non-provider work. If this legacy job later
+        // reaches an OpenAI boundary, the provider fetch gate still denies it.
+        await processRenderJob(data);
+        return;
+      }
+      if (
+        reservation.organizationId !== data.orgId ||
+        reservation.workspaceId !== data.workspaceId ||
+        reservation.capabilityKey !== "campaign.generate" ||
+        reservation.providerKey !== "openai" ||
+        reservation.retryOrdinal !== 0 ||
+        !["RESERVED", "SUBMITTED"].includes(reservation.status)
+      ) {
+        throw new Error("CONTROLLED_SELF_USE_RENDER_RESERVATION_DENIED");
+      }
+      await authority.assertWorkspaceEligible({
+        environment: "PRODUCTION",
+        organizationId: data.orgId,
+        workspaceId: data.workspaceId,
+        capabilityKey: "campaign.generate",
+        providerKey: "openai",
+      });
+      await withControlledSelfUseProviderContext(
+        {
+          reservationId: reservation.reservationId,
+          organizationId: data.orgId,
+          workspaceId: data.workspaceId,
+          executionIdentity,
+          providerKey: "openai",
+        },
+        () => processRenderJob(data)
+      );
     },
     { connection, prefix, concurrency: renderConcurrency, lockDuration: renderLockMs, ...workerOpts }
   );
@@ -772,5 +895,12 @@ export function startWorkers() {
   }, Math.max(2000, providerLoopMs));
   providerLoop.unref?.();
 
-  return { agentWorker, probeWorker, renderWorker, exportWorker, photoSceneWorker };
+  return {
+    agentWorker,
+    controlledSelfUseAgentWorker,
+    probeWorker,
+    renderWorker,
+    exportWorker,
+    photoSceneWorker,
+  };
 }

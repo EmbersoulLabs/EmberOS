@@ -5,6 +5,7 @@ import { zodResponseFormat } from "openai/helpers/zod";
 import type { ZodType } from "zod";
 import { LLM_BUDGET_PER_TASK_USD, CEO_MAX_RETRIES } from "@ceo-agent/shared";
 import type { TaskGraph } from "@ceo-agent/shared";
+import { controlledSelfUseProviderFetch } from "./controlled-self-use-provider-context";
 import {
   CertificationPlanningAuthorityService,
   CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS,
@@ -59,7 +60,7 @@ export function getOpenAI() {
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
   // Resolve fetch when the client is constructed. The SDK otherwise captures
   // fetch at module import time, before an isolated test can install its guard.
-  return new OpenAI({ apiKey, fetch: globalThis.fetch });
+  return new OpenAI({ apiKey, fetch: controlledSelfUseProviderFetch, maxRetries: 0 });
 }
 
 export type StructuredJsonDecodeIssue =

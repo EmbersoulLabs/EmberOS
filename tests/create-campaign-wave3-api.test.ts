@@ -4,9 +4,17 @@ import { describe, expect, it } from "vitest";
 describe("Wave 3 Create Campaign API authority", () => {
   it("validates auth, operator role, typed input, and main workflow", () => {
     const route = readFileSync("apps/web/src/app/api/campaigns/create/route.ts", "utf8");
+    const workspaceAccess = readFileSync(
+      "apps/web/src/lib/controlled-self-use-workspace-access.ts",
+      "utf8"
+    );
     const command = readFileSync("apps/web/src/lib/create-campaign-command.ts", "utf8");
     expect(route).toContain("requireAuth()");
-    expect(route).toContain('"operator"');
+    expect(route).toContain("requireControlledSelfUseWorkspaceOperator");
+    expect(route).toContain('capabilityKey: "campaign.generate"');
+    expect(workspaceAccess).toContain(
+      'requireWorkspaceRole(input.workspaceId, input.userId, "operator")'
+    );
     expect(route).toContain("CreateCampaignContextSchema.safeParse");
     expect(command).toContain("createCampaignFromContext");
     expect(command).toContain("executeCampaignGenerate");

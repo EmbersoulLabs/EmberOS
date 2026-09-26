@@ -3,10 +3,17 @@ import { describe, expect, it } from "vitest";
 
 describe("Wave 4 Campaign Workspace API projection", () => {
   const source = readFileSync("apps/web/src/app/api/campaigns/[id]/route.ts", "utf8");
+  const workspaceAccess = readFileSync(
+    "apps/web/src/lib/controlled-self-use-workspace-access.ts",
+    "utf8"
+  );
 
   it("retains main auth and workspace-role authority", () => {
     expect(source).toContain("requireAuth()");
-    expect(source).toContain("requireWorkspaceRole(campaign.workspaceId, user.id");
+    expect(source).toContain("requireControlledSelfUseWorkspaceOperator");
+    expect(workspaceAccess).toContain(
+      'requireWorkspaceRole(input.workspaceId, input.userId, "operator")'
+    );
   });
 
   it("projects Wave 1 references without rewriting asset identity", () => {

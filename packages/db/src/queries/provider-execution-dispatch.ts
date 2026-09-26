@@ -454,7 +454,10 @@ export class ExecutionDispatchRepository {
 
   async selectEligibleJob(
     now: Date = new Date(),
-    options: { readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER" } = {}
+    options: {
+      readonly ownership?: "ANY" | "AI_STORY_SCENE" | "GENERIC_PROVIDER";
+      readonly controlledSelfUseOnly?: boolean;
+    } = {}
   ): Promise<DispatchableProviderJob | null> {
     const ownership = options.ownership ?? "ANY";
     const ownershipPredicate =
@@ -471,6 +474,23 @@ export class ExecutionDispatchRepository {
               where correlation.outbox_job_id = job.job_id
             )`
           : sql``;
+    const controlledSelfUsePredicate = options.controlledSelfUseOnly
+      ? sql`and exists (
+          select 1
+          from ai_story_scene_scheduling_correlations self_use_correlation
+          join controlled_self_use_authorities self_use_authority
+            on self_use_authority.organization_id = self_use_correlation.org_id
+           and self_use_authority.environment = 'PRODUCTION'
+           and self_use_authority.purpose = 'CONTROLLED_SELF_USE'
+           and self_use_authority.status = 'ACTIVE'
+           and self_use_authority.allowed_capabilities ? 'ai_story.execute'
+           and self_use_authority.allowed_providers ? 'seedance'
+          join workspaces self_use_workspace
+            on self_use_workspace.id = self_use_correlation.workspace_id
+           and self_use_workspace.org_id = self_use_authority.organization_id
+          where self_use_correlation.outbox_job_id = job.job_id
+        )`
+      : sql``;
 
     const rows = (await this.db.execute(sql`
       select
@@ -493,6 +513,7 @@ export class ExecutionDispatchRepository {
           where supersession.source_outbox_job_id = job.job_id
         )
         ${ownershipPredicate}
+        ${controlledSelfUsePredicate}
       order by
         job.priority desc,
         job.next_visible_at asc,

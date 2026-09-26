@@ -9,9 +9,11 @@ import {
   CommercialAuthorizationError,
   CommercialAuthorizationRepositoryImpl,
   CertificationCommercialAuthorityService,
+  ControlledSelfUseAuthorityService,
   CreditsAccountingError,
   CreditsAccountingService,
   EntitlementRepositoryImpl,
+  isControlledSelfUseDispatchMode,
   SubscriptionRepositoryImpl,
   type BillingAccountRepository,
   type CommercialAuthorizationRepository,
@@ -120,6 +122,60 @@ export class CommercialAuthorizationService {
         "COMMERCIAL_AUTH_BILLING_MISSING",
         "Billing Account is required before Commercial Authorization"
       );
+    }
+
+    if (
+      input.capabilityKey === "ai_story.execute" &&
+      isControlledSelfUseDispatchMode()
+    ) {
+      const resolvePricing = input.resolvePricingRule ?? this.defaultResolvePricing;
+      const pricingRule = resolvePricing(input.capabilityKey);
+      if (!pricingRule || pricingRule.creditAmount === null || pricingRule.creditAmount <= 0) {
+        throw new CommercialAuthorizationError(
+          "COMMERCIAL_AUTH_PRICING_MISSING",
+          `No positive Product Pricing Rule for capability ${input.capabilityKey}`
+        );
+      }
+      let oneShot: Awaited<
+        ReturnType<ControlledSelfUseAuthorityService["authorizeOneAiStoryExecution"]>
+      >;
+      try {
+        oneShot = await new ControlledSelfUseAuthorityService()
+          .authorizeOneAiStoryExecution({
+            organizationId: input.orgId,
+            workspaceId: input.workspaceId,
+            executionIdentity: input.executionIdentity,
+            pricingRuleKey: pricingRule.ruleKey,
+            pricingRuleVersion: pricingRule.ruleVersion,
+            creditAmount: pricingRule.creditAmount,
+            authorizedAt: input.authorizedAt,
+          });
+      } catch (error) {
+        throw new CommercialAuthorizationError(
+          "COMMERCIAL_AUTH_DENIED",
+          error instanceof Error
+            ? error.message
+            : "Controlled Self-Use commercial authority denied"
+        );
+      }
+      const authorization = buildCommercialExecutionAuthorization({
+        orgId: input.orgId,
+        workspaceId: input.workspaceId,
+        capabilityKey: input.capabilityKey,
+        executionIdentity: input.executionIdentity,
+        entitlementEvidenceId: `${oneShot.entitlementGrantId}:${oneShot.authorityId}`,
+        pricingRuleKey: pricingRule.ruleKey,
+        pricingRuleVersion: pricingRule.ruleVersion,
+        pricingRuleIntegrityHash: pricingRule.integrityHash,
+        creditReservationId: oneShot.creditReservationId,
+        authorizedAt: input.authorizedAt,
+      });
+      const accepted = await this.authorizations.acceptOrConverge(authorization);
+      return {
+        authorization: accepted.value,
+        replayed: accepted.replayed,
+        pricingRule,
+      };
     }
 
     const subscription = await this.subscriptions.getProjectionByOrgId(input.orgId);

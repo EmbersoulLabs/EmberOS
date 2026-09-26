@@ -97,6 +97,14 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/platform-admin-control-plane-security.integration.test.ts
 
+      - name: Apply Controlled Self-Use authority
+        run: pnpm --filter @ceo-agent/db sql:controlled-self-use-authority
+
+      - name: Certify Controlled Self-Use budget and security authority
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/controlled-self-use-authority.integration.test.ts
+
       - name: Apply AI Story video analysis snapshots
         run: pnpm --filter @ceo-agent/db sql:ai-story-video-analysis-snapshot
 

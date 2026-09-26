@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const QUEUE_NAMES = {
   AGENT: "agent",
+  SELF_USE_AGENT: "controlled-self-use-agent",
   RENDER: "render",
   EXPORT: "export",
   PROBE: "probe",
@@ -70,6 +71,7 @@ export const AgentJobSchema = z.discriminatedUnion("name", [
       campaignId: z.string().uuid(),
       workspaceId: z.string().uuid(),
       orgId: z.string().uuid(),
+      controlledSelfUseReservationId: z.string().uuid().optional(),
     }),
   }),
   z.object({

@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { controlledSelfUseProviderFetch } from "../controlled-self-use-provider-context";
 import {
   CreativeImageExecutionService,
   createOpenAiCreativeImageGenerationAdapter,
@@ -85,7 +86,11 @@ export function createOpenAiSceneKeyframeRuntime(env: NodeJS.ProcessEnv = proces
 }> {
   const apiKey = env.AI_PROVIDER_OPENAI_API_KEY?.trim() || env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
-  const client = new OpenAI({ apiKey, maxRetries: 0 });
+  const client = new OpenAI({
+    apiKey,
+    fetch: controlledSelfUseProviderFetch,
+    maxRetries: 0,
+  });
   const adapter = createOpenAiCreativeImageGenerationAdapter(env);
   return {
     generationCapability: {
