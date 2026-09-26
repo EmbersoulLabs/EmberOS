@@ -2,6 +2,7 @@ import { eq, and, desc } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { requireWorkspaceResourceAuthority } from "@/lib/workspace-resource-authority";
 import {
   isVoicePreset,
   isContentStyle,
@@ -25,7 +26,11 @@ export async function GET(request: Request) {
     const status = searchParams.get("status");
 
     if (!workspaceId) return apiError("workspaceId is required", "VALIDATION_ERROR");
-    await requireWorkspaceRole(workspaceId, user.id, "client_viewer");
+    await requireWorkspaceResourceAuthority({
+      request,
+      userId: user.id,
+      resourceWorkspaceId: workspaceId,
+    });
 
     const db = getDb();
     let conditions = [eq(schema.campaigns.workspaceId, workspaceId)];
