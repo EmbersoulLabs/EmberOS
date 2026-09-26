@@ -15,7 +15,7 @@ describe("VS-RC-FIX-03 web pending projection", () => {
     const run = readFileSync("apps/web/src/app/api/campaigns/[id]/run/route.ts", "utf8");
     expect(generate).toContain("pendingAiExecutionProjection()");
     expect(run).toContain("pendingAiExecutionProjection()");
-    expect(generate).toContain('requireWorkspaceRole(campaign.workspaceId, user.id, "operator")');
+    expect(generate).toContain("requireControlledSelfUseWorkspaceOperator");
     expect(generate).not.toContain("authorizeVideoStudioGeneration");
     expect(generate).not.toContain("editing-director-v1");
     expect(run).not.toContain("editing-director-v1");

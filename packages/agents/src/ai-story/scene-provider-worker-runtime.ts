@@ -191,6 +191,7 @@ export type SceneProviderWorkerRuntimeDependencies = {
       readonly phase: "submit" | "lookup";
       readonly acceptanceClassification: ProviderAcceptanceClassification;
       readonly canonicalProviderState: CanonicalProviderState;
+      readonly providerRequestId?: string;
       readonly normalizedUsageFacts?: WorkerExecutionResult["normalizedUsageFacts"];
       readonly normalizedCostMetadata?: WorkerExecutionResult["normalizedCostMetadata"];
       readonly occurredAt: string;
@@ -522,6 +523,9 @@ export class SceneProviderWorkerRuntime {
         providerAttemptId,
         acceptanceClassification: adapterResult.acceptanceClassification,
         canonicalProviderState: adapterResult.canonicalProviderState,
+        ...(adapterResult.providerRequestId
+          ? { providerRequestId: adapterResult.providerRequestId }
+          : {}),
         ...(adapterResult.providerRequestId
           ? { providerRequestId: adapterResult.providerRequestId }
           : {}),

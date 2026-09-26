@@ -26,6 +26,7 @@ export * from "./skills";
 export * from "./orchestrator";
 export type { PipelineHooks, VisionMediaPreparer } from "./orchestrator";
 export * from "./llm";
+export * from "./controlled-self-use-provider-context";
 export * from "./photo-scene/background-removal";
 export * from "./photo-scene/png";
 export * from "./photo-scene/execute-product-extraction";

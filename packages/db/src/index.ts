@@ -35,6 +35,7 @@ export * from "./queries/subscription";
 export * from "./queries/entitlement";
 export * from "./queries/entitlement-administration";
 export * from "./queries/certification-commercial-authority";
+export * from "./queries/controlled-self-use";
 export * from "./queries/certification-planning-authority";
 export * from "./queries/certification-submission-slot-reconciliation";
 export * from "./queries/credits";

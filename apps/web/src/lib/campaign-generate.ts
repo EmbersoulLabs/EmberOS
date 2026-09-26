@@ -2,8 +2,14 @@
  * Production-auth Campaign generate path. Does not include AUTH-01 entitlement cutover.
  */
 import { and, eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
-import { enqueuePipeline } from "@ceo-agent/queue";
+import {
+  BillingAccountRepositoryImpl,
+  ControlledSelfUseAuthorityService,
+  PlatformAdminRepositoryImpl,
+  getDb,
+  schema,
+} from "@ceo-agent/db";
+import { enqueueControlledSelfUsePipeline, enqueuePipeline } from "@ceo-agent/queue";
 import { isMergedSourceAsset } from "@ceo-agent/shared";
 import { validateCampaignAssetsForRun, getCampaignAssets } from "@/lib/campaign-assets";
 import { startOrReuseCampaignRun } from "@/lib/campaign-run";
@@ -35,7 +41,7 @@ export type ExecuteCampaignGenerateResult =
 export async function executeCampaignGenerate(
   db: Db,
   campaign: CampaignRow,
-  _userId: string,
+  userId: string,
   options?: ExecuteCampaignGenerateOptions
 ): Promise<ExecuteCampaignGenerateResult> {
   const processing = await db
@@ -76,9 +82,51 @@ export async function executeCampaignGenerate(
     throw error;
   }
 
+  let controlledEnqueue: typeof enqueuePipeline | undefined;
+  if (process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use") {
+    const grant = await new PlatformAdminRepositoryImpl(db).getActiveGrantForUser(userId);
+    if (!grant) {
+      return { ok: false, error: "Controlled Self-Use requires an active Platform Super Admin", code: "SELF_USE_DENIED", status: 403 };
+    }
+    const billing = await new BillingAccountRepositoryImpl(db).getByOrgId(campaign.orgId);
+    if (!billing) {
+      return { ok: false, error: "Billing Account is required for Controlled Self-Use", code: "BILLING_REQUIRED", status: 403 };
+    }
+    const selfUse = new ControlledSelfUseAuthorityService(db);
+    await selfUse.assertWorkspaceEligible({
+      environment: "PRODUCTION",
+      organizationId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      capabilityKey: "campaign.generate",
+      providerKey: "openai",
+    });
+    controlledEnqueue = async (taskId, campaignId, workspaceId, orgId) => {
+      const reservedAt = new Date().toISOString();
+      const reserved = await selfUse.reserve({
+        environment: "PRODUCTION",
+        organizationId: orgId,
+        workspaceId,
+        capabilityKey: "campaign.generate",
+        executionIdentity: `campaign-task:${taskId}`,
+        providerKey: "openai",
+        maximumCostUsd: "0.50",
+        retryOrdinal: 0,
+        actorUserId: userId,
+        reservedAt,
+      });
+      return enqueueControlledSelfUsePipeline(
+        taskId,
+        campaignId,
+        workspaceId,
+        orgId,
+        reserved.reservation.reservationId
+      );
+    };
+  }
+
   return startOrReuseCampaignRun(db, campaign, {
     contentLocale: options?.contentLocale,
     renderPreferences: options?.renderPreferences,
-    enqueue: options?.enqueue,
+    enqueue: options?.enqueue ?? controlledEnqueue,
   });
 }

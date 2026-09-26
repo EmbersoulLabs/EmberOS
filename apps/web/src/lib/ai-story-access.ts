@@ -9,6 +9,7 @@ import {
 import { planMappingIncludesCapability } from "@ceo-agent/shared/server";
 import { resolvePlatformAdminForUser } from "@/lib/platform-admin-auth";
 import { requireWorkspaceResourceAuthority } from "@/lib/workspace-resource-authority";
+import { requireControlledSelfUseWorkspaceOperator } from "@/lib/controlled-self-use-workspace-access";
 
 export type AiStoryAccessAuthorization =
   | { readonly allowedBy: "ACTIVE_PLATFORM_ADMIN" }
@@ -54,19 +55,37 @@ export async function authorizeAiStoryAccess(
   },
   dependencies: AiStoryAccessDependencies = defaultDependencies
 ): Promise<AiStoryAccessAuthorization> {
+  const platformAdmin = await dependencies.resolvePlatformAdmin({
+    id: input.user.id,
+    email: input.user.email ?? undefined,
+  });
+  if (platformAdmin.status === "ACTIVE_GRANT") {
+    if (input.request) {
+      if (process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use") {
+        await requireControlledSelfUseWorkspaceOperator({
+          request: input.request,
+          userId: input.user.id,
+          workspaceId: input.workspaceId,
+          capabilityKey: "ai_story.plan",
+          providerKey: "openai",
+        });
+      } else {
+        await requireWorkspaceResourceAuthority({
+          request: input.request,
+          userId: input.user.id,
+          resourceWorkspaceId: input.workspaceId,
+        });
+      }
+    }
+    return { allowedBy: "ACTIVE_PLATFORM_ADMIN" };
+  }
+
   if (input.request) {
     await requireWorkspaceResourceAuthority({
       request: input.request,
       userId: input.user.id,
       resourceWorkspaceId: input.workspaceId,
     });
-  }
-  const platformAdmin = await dependencies.resolvePlatformAdmin({
-    id: input.user.id,
-    email: input.user.email ?? undefined,
-  });
-  if (platformAdmin.status === "ACTIVE_GRANT") {
-    return { allowedBy: "ACTIVE_PLATFORM_ADMIN" };
   }
 
   const membership = await dependencies.requireWorkspaceRole(

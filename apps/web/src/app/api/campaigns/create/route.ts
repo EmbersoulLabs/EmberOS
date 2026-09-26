@@ -1,9 +1,9 @@
 import { CreateCampaignContextSchema } from "@ceo-agent/shared";
-import { requireWorkspaceRole } from "@ceo-agent/db";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { createCampaignAndStartWorkflow } from "@/lib/create-campaign-command";
 import { enforceRateLimit } from "@/lib/rate-limit";
+import { requireControlledSelfUseWorkspaceOperator } from "@/lib/controlled-self-use-workspace-access";
 
 export async function POST(request: Request) {
   try {
@@ -26,14 +26,16 @@ export async function POST(request: Request) {
       );
     }
 
-    const member = await requireWorkspaceRole(
-      parsed.data.workspaceId,
-      user.id,
-      "operator"
-    );
+    const workspaceAuthority = await requireControlledSelfUseWorkspaceOperator({
+      request,
+      userId: user.id,
+      workspaceId: parsed.data.workspaceId,
+      capabilityKey: "campaign.generate",
+      providerKey: "openai",
+    });
     try {
       const result = await createCampaignAndStartWorkflow({
-        orgId: member.orgId,
+        orgId: workspaceAuthority.orgId,
         userId: user.id,
         context: parsed.data,
       });

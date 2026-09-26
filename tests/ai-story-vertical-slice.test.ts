@@ -233,7 +233,8 @@ describe("AI Story vertical slice (V1)", () => {
 
     it("generate uses provider-neutral polish service", () => {
       expect(generateRoute).toContain("polishAiStoryDraft");
-      expect(generateRoute).not.toMatch(/openai/i);
+      expect(generateRoute).toContain("withControlledSelfUseProviderContext");
+      expect(generateRoute).not.toContain("new OpenAI");
     });
 
     it("rewrite uses provider-neutral screenwriter rewrite", () => {

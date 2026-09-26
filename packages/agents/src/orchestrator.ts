@@ -1,5 +1,10 @@
 import { eq } from "drizzle-orm";
-import { getDb, loadCanonicalBusinessContext, schema } from "@ceo-agent/db";
+import {
+  ControlledSelfUseAuthorityService,
+  getDb,
+  loadCanonicalBusinessContext,
+  schema,
+} from "@ceo-agent/db";
 import { enqueueRender } from "@ceo-agent/queue";
 import {
   CEO_MAX_RETRIES,
@@ -585,6 +590,14 @@ export async function runComplianceAfterRender(taskId: string, creativeId: strin
     .set({ status: "pending_internal_review" })
     .where(eq(schema.campaigns.id, task.campaignId));
   await updateStep(taskId, "human_review", { status: "pending" });
+  if (process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use") {
+    await new ControlledSelfUseAuthorityService(db).settleCampaignTask({
+      taskId,
+      organizationId: task.orgId,
+      workspaceId: task.workspaceId,
+      settledAt: new Date().toISOString(),
+    });
+  }
 }
 
 export async function retryPipelineStep(
@@ -594,6 +607,11 @@ export async function retryPipelineStep(
   const db = getDb();
   const tracked = await loadTrackedCampaignTaskInputs(taskId);
   const task = tracked.task;
+  const selfUseReservation = await new ControlledSelfUseAuthorityService(db)
+    .getReservationByExecutionIdentity(`campaign-task:${taskId}`);
+  if (selfUseReservation) {
+    throw new Error("CONTROLLED_SELF_USE_AUTOMATIC_PAID_RETRY_DENIED");
+  }
   if (task.retryCount >= CEO_MAX_RETRIES) throw new Error("Max retries exceeded");
 
   // Retry = Resume — same task identity is preserved.

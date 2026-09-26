@@ -13,10 +13,11 @@ import {
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 import { providerAttemptHasCurrentAiStoryAuthority } from "./provider-ledger";
+import { getUnifiedProviderCommercialReservation } from "./controlled-self-use";
 
 type Db = ReturnType<typeof getDb>;
 type Transaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
-type TerminalAuthorityReader = Pick<Transaction, "select">;
+type TerminalAuthorityReader = Pick<Transaction, "select" | "execute">;
 
 export interface SuccessfulProviderAttemptTerminalAuthority {
   readonly contractVersion: "1" | typeof AI_STORY_PROVIDER_RUNTIME_VERSION;
@@ -294,16 +295,10 @@ export async function resolveSuccessfulProviderAttemptTerminalAuthority(input: {
   }
 
   if (binding.commercialReservationId) {
-    const [reservation] = await reader
-      .select()
-      .from(schema.certificationCommercialReservations)
-      .where(
-        eq(
-          schema.certificationCommercialReservations.certificationReservationId,
-          binding.commercialReservationId
-        )
-      )
-      .limit(1);
+    const reservation = await getUnifiedProviderCommercialReservation(
+      reader as Transaction,
+      binding.commercialReservationId
+    );
     if (
       !reservation ||
       reservation.executionIdentity !== input.providerAttemptId ||
@@ -424,18 +419,12 @@ async function assertCurrentAiStoryTerminalEvidence(input: {
     );
   }
 
-  const [reservation] = binding.commercialReservationId
-    ? await tx
-        .select()
-        .from(schema.certificationCommercialReservations)
-        .where(
-          eq(
-            schema.certificationCommercialReservations.certificationReservationId,
-            binding.commercialReservationId
-          )
-        )
-        .limit(1)
-    : [];
+  const reservation = binding.commercialReservationId
+    ? await getUnifiedProviderCommercialReservation(
+        tx,
+        binding.commercialReservationId
+      )
+    : null;
   if (
     !reservation ||
     reservation.executionIdentity !== attempt.attemptId ||

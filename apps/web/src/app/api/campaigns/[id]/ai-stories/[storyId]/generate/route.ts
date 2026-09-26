@@ -4,6 +4,9 @@ import {
   CertificationPlanningAuthorityService,
   schema,
   getBusinessProfileByWorkspace,
+  BillingAccountRepositoryImpl,
+  ControlledSelfUseAuthorityService,
+  PlatformAdminRepositoryImpl,
   resolveAiStoryOutlineProfileAuthority,
 } from "@ceo-agent/db";
 import {
@@ -12,7 +15,10 @@ import {
   normalizeBusinessProfileRecord,
   type AiStoryStatus,
 } from "@ceo-agent/shared";
-import { polishAiStoryDraft } from "@ceo-agent/agents";
+import {
+  polishAiStoryDraft,
+  withControlledSelfUseProviderContext,
+} from "@ceo-agent/agents";
 import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
@@ -137,7 +143,30 @@ export async function POST(
       throw new Error("AI_STORY_PLANNING_ACCOUNTING_INITIALIZATION_FAILED");
     }
 
-    const polish = await withConfiguredCertificationPlanningContext({
+    const selfUse = process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use"
+      ? new ControlledSelfUseAuthorityService(db)
+      : null;
+    let selfUseReservation: Awaited<ReturnType<ControlledSelfUseAuthorityService["reserve"]>>["reservation"] | null = null;
+    if (selfUse) {
+      const grant = await new PlatformAdminRepositoryImpl(db).getActiveGrantForUser(user.id);
+      const billing = await new BillingAccountRepositoryImpl(db).getByOrgId(campaign.orgId);
+      if (!grant || !billing) {
+        throw new Error("CONTROLLED_SELF_USE_PLANNING_BILLING_AUTHORITY_DENIED");
+      }
+      selfUseReservation = (await selfUse.reserve({
+        environment: "PRODUCTION",
+        organizationId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        capabilityKey: "ai_story.plan",
+        executionIdentity: accountingIdentity.attemptId,
+        providerKey: "openai",
+        maximumCostUsd: "0.50",
+        retryOrdinal: 0,
+        actorUserId: user.id,
+        reservedAt: new Date().toISOString(),
+      })).reservation;
+    }
+    const runPolish = () => withConfiguredCertificationPlanningContext({
       orgId: campaign.orgId,
       workspaceId: campaign.workspaceId,
       campaignId,
@@ -165,6 +194,15 @@ export async function POST(
       assetLabels,
       businessProfileComplete: completion?.complete,
     }));
+    const polish = selfUseReservation
+      ? await withControlledSelfUseProviderContext({
+          reservationId: selfUseReservation.reservationId,
+          organizationId: campaign.orgId,
+          workspaceId: campaign.workspaceId,
+          executionIdentity: accountingIdentity.attemptId,
+          providerKey: "openai",
+        }, runPolish)
+      : await runPolish();
 
     if (!polish.ok) {
       const persistence = await persistAiStoryPlanningOutcome({
@@ -179,6 +217,18 @@ export async function POST(
         timings: polish.timings,
         completedAt: new Date().toISOString(),
       });
+      if (selfUse && selfUseReservation) {
+        if (polish.accounting) {
+          await selfUse.settle(
+            selfUseReservation.reservationId,
+            Number(polish.accounting.cost.amount).toFixed(2),
+            new Date().toISOString(),
+            polish.accounting.providerRequestId
+          );
+        } else {
+          await selfUse.release(selfUseReservation.reservationId, new Date().toISOString());
+        }
+      }
       if (process.env.AI_STORY_CERTIFICATION_ENVIRONMENT && polish.accounting) {
         await new CertificationPlanningAuthorityService(db).assertStoryPolishLedgerAlignment(accountingIdentity.attemptId);
       }
@@ -206,6 +256,14 @@ export async function POST(
       timings: polish.timings,
       completedAt: new Date().toISOString(),
     });
+    if (selfUse && selfUseReservation) {
+      await selfUse.settle(
+        selfUseReservation.reservationId,
+        Number(polish.accounting.cost.amount).toFixed(2),
+        new Date().toISOString(),
+        polish.accounting.providerRequestId
+      );
+    }
     if (process.env.AI_STORY_CERTIFICATION_ENVIRONMENT) {
       await new CertificationPlanningAuthorityService(db).assertStoryPolishLedgerAlignment(accountingIdentity.attemptId);
     }

@@ -63,7 +63,7 @@ import {
 } from "./ai-story-durable-object-store";
 import { createWorkerProviderAssetAccessResolver } from "./ai-story-provider-asset-access";
 import { dispatchNextProviderExecution } from "./provider-execution-dispatch-entrypoint";
-import { AiStoryCertificationCommercialReservationGate } from "./ai-story-certification-commercial-reservation";
+import { createAiStoryCommercialReservationGate } from "./ai-story-certification-commercial-reservation";
 import { AiStoryPostGenerationQcRuntimeOrchestrator } from "./ai-story-post-generation-qc-orchestrator";
 
 export type AiStoryProviderWorkerCycleOptions = {
@@ -410,7 +410,7 @@ export async function createProductionAiStoryContinuationCoordinator(
             },
           }
         : {}),
-      commercialReservation: new AiStoryCertificationCommercialReservationGate(),
+      commercialReservation: createAiStoryCommercialReservationGate(),
       requireCommercialReservation: true,
       requireProviderAttemptAuthority: true,
     },
@@ -560,16 +560,21 @@ export async function runAiStoryProviderWorkerCycle(
   }
   const leaseOwner = options.leaseOwner ?? AI_STORY_RUNTIME_LEASE_OWNER;
   const dispatchRepository = new ExecutionDispatchRepository();
-  const postTerminalRetryDispatch = await dispatchRepository
-    .claimAuthorizedPostTerminalRetryDispatch({
-      workerId: leaseOwner,
-    });
-  const supersessionSuccessorDispatch = postTerminalRetryDispatch
+  const controlledSelfUse = process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use";
+  // Controlled Self-Use has zero automatic paid retries. Existing recovery and
+  // successor claims remain unavailable in this mode; a fresh explicit human
+  // authorization is required for any later paid attempt.
+  const postTerminalRetryDispatch = controlledSelfUse
+    ? null
+    : await dispatchRepository.claimAuthorizedPostTerminalRetryDispatch({
+        workerId: leaseOwner,
+      });
+  const supersessionSuccessorDispatch = controlledSelfUse || postTerminalRetryDispatch
     ? null
     : await dispatchRepository.claimAuthorizedSupersessionSuccessorDispatch({
         workerId: leaseOwner,
       });
-  const recoveryDispatch = postTerminalRetryDispatch || supersessionSuccessorDispatch
+  const recoveryDispatch = controlledSelfUse || postTerminalRetryDispatch || supersessionSuccessorDispatch
     ? null
     : await dispatchRepository.claimAuthorizedRecoveryDispatch({
         workerId: leaseOwner,
@@ -578,7 +583,10 @@ export async function runAiStoryProviderWorkerCycle(
     postTerminalRetryDispatch ?? supersessionSuccessorDispatch ?? recoveryDispatch;
   const dispatchOutcome = existingDispatch
     ? { status: "DISPATCHED" as const, dispatch: existingDispatch }
-    : await dispatchNextProviderExecution({ ownership: "AI_STORY_SCENE" });
+    : await dispatchNextProviderExecution({
+        ownership: "AI_STORY_SCENE",
+        controlledSelfUseOnly: controlledSelfUse,
+      });
   if (dispatchOutcome.status !== "DISPATCHED") {
     return { dispatchStatus: "NO_JOB" };
   }

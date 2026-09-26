@@ -35,6 +35,7 @@ import {
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
 } from "./ai-story-scene-execution-persistence";
+import { getUnifiedProviderCommercialReservation } from "./controlled-self-use";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -350,31 +351,24 @@ export class SceneProviderWorkerRuntimeRepository {
           "Compiled Provider request does not match the claimed Dispatch"
         );
       }
-      const [reservation] = await tx
-        .select()
-        .from(schema.certificationCommercialReservations)
-        .where(
-          and(
-            eq(
-              schema.certificationCommercialReservations.certificationReservationId,
-              input.commercialReservationId
-            ),
-            eq(
-              schema.certificationCommercialReservations.executionIdentity,
-              input.providerAttemptId
-            ),
-            eq(schema.certificationCommercialReservations.orgId, request.orgId),
-            eq(
-              schema.certificationCommercialReservations.workspaceId,
-              request.workspaceId
-            )
-          )
-        )
-        .limit(1);
+      const reservation = await getUnifiedProviderCommercialReservation(
+        tx,
+        input.commercialReservationId
+      );
       if (!reservation || !["RESERVED", "SUBMITTED"].includes(reservation.status)) {
         throw new WorkerRuntimePersistenceError(
           "OWNERSHIP_INTEGRITY_VIOLATION",
           "Submitted commercial reservation must be durably bound before Provider Attempt"
+        );
+      }
+      if (
+        reservation.executionIdentity !== input.providerAttemptId ||
+        reservation.orgId !== request.orgId ||
+        reservation.workspaceId !== request.workspaceId
+      ) {
+        throw new WorkerRuntimePersistenceError(
+          "OWNERSHIP_INTEGRITY_VIOLATION",
+          "Commercial reservation ownership conflicts with Provider Attempt"
         );
       }
 

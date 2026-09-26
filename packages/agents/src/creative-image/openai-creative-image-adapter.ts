@@ -1,4 +1,5 @@
 import OpenAI, { toFile } from "openai";
+import { controlledSelfUseProviderFetch } from "../controlled-self-use-provider-context";
 import {
   CreativeImageAdapterError,
   type CreativeImageBoundedProviderEvidence,
@@ -168,5 +169,7 @@ export function createOpenAiCreativeImageGenerationAdapter(
 ): OpenAiCreativeImageGenerationAdapter {
   const apiKey = env.AI_PROVIDER_OPENAI_API_KEY?.trim() || env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
-  return new OpenAiCreativeImageGenerationAdapter(new OpenAI({ apiKey, maxRetries: 0 }));
+  return new OpenAiCreativeImageGenerationAdapter(
+    new OpenAI({ apiKey, fetch: controlledSelfUseProviderFetch, maxRetries: 0 })
+  );
 }

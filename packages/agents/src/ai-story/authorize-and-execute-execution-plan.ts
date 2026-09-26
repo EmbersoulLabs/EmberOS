@@ -23,6 +23,8 @@ import {
   AiStorySceneExecutionPersistenceRepository,
   AiStoryAssetAwareExecutionPlannerRepository,
   AiStorySceneReleaseRepository,
+  ControlledSelfUseAuthorityService,
+  isControlledSelfUseDispatchMode,
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
   RuntimeAuthorizationPersistenceRepository,
@@ -587,7 +589,27 @@ export async function authorizeAndExecuteExecutionPlan(
     ...boundaryTimings,
   }));
 
+  const controlledSelfUseMode = isControlledSelfUseDispatchMode();
+  if (controlledSelfUseMode) {
+    try {
+      await new ControlledSelfUseAuthorityService().assertWorkspaceEligible({
+        environment: "PRODUCTION",
+        organizationId: input.ownership.orgId,
+        workspaceId: input.ownership.workspaceId,
+        capabilityKey: "ai_story.execute",
+        providerKey: "seedance",
+      });
+    } catch (error) {
+      throw new CanonicalExecuteError(
+        "AI_STORY_EXECUTION_DENIED",
+        error instanceof Error ? error.message : "Controlled Self-Use is not authorized",
+        403
+      );
+    }
+  }
+
   const skipCommercialSettlement =
+    !controlledSelfUseMode &&
     executionAuthorization?.accessMode === "ops" &&
     executionAuthorization.settlementMode === "none";
 
