@@ -1,4 +1,8 @@
-import { AI_STORY_OUTLINE_PROFILE_REGISTRY } from "./ai-story-outline-profile";
+import {
+  AI_STORY_OUTLINE_PROFILE_REGISTRY,
+  canonicalAiStoryOutlineProfileReference,
+  type AiStoryOutlineProfileReference,
+} from "./ai-story-outline-profile";
 
 export const AI_STORY_EPISODE_FIRST_UI_CONTRACT_VERSION =
   "ai-story-episode-first-ui.v1" as const;
@@ -141,17 +145,19 @@ export const NORMAL_USER_HIDDEN_LABELS = [
 
 export function mapEpisodeTypeToOutlineProfile(
   episodeType: AiStoryEpisodeUserType
-): (typeof AI_STORY_OUTLINE_PROFILE_REGISTRY)[keyof typeof AI_STORY_OUTLINE_PROFILE_REGISTRY] {
+): AiStoryOutlineProfileReference {
+  let registered: (typeof AI_STORY_OUTLINE_PROFILE_REGISTRY)[keyof typeof AI_STORY_OUTLINE_PROFILE_REGISTRY];
   if (episodeType === "PRODUCT_STORY") {
-    return AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY;
-  }
-  if (
+    registered = AI_STORY_OUTLINE_PROFILE_REGISTRY.PRODUCT_STORY;
+  } else if (
     episodeType === "EMOTIONAL_STORY" ||
     episodeType === "ENTERTAINMENT_STORY"
   ) {
-    return AI_STORY_OUTLINE_PROFILE_REGISTRY.CORE;
+    registered = AI_STORY_OUTLINE_PROFILE_REGISTRY.CORE;
+  } else {
+    registered = AI_STORY_OUTLINE_PROFILE_REGISTRY.COMMERCIAL_STORY;
   }
-  return AI_STORY_OUTLINE_PROFILE_REGISTRY.COMMERCIAL_STORY;
+  return canonicalAiStoryOutlineProfileReference(registered);
 }
 
 export function mapInternalStoryStatusToEpisodeStatus(

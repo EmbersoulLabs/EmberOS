@@ -6,6 +6,7 @@ import {
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
   AiStoryCreateBodySchema,
   canonicalAiStoryOutlineProfileReference,
+  mapEpisodeTypeToOutlineProfile,
 } from "@ceo-agent/shared";
 import {
   AiStoryOutlineProfileAuthorityError,
@@ -46,6 +47,20 @@ describe("AI Story Outline Profile selection authority", () => {
     const { outlineProfile: _missing, ...missing } = create();
     expect(AiStoryCreateBodySchema.safeParse(missing).success).toBe(false);
     expect(AiStoryCreateBodySchema.safeParse(create({ outlineProfile: { profileId: "OTHER", profileVersion: 1 } })).success).toBe(false);
+  });
+
+  it.each([
+    "COMMERCIAL_STORY",
+    "PRODUCT_STORY",
+    "BRAND_STORY",
+    "SERVICE_STORY",
+    "FOOD_STORY",
+    "EMOTIONAL_STORY",
+    "ENTERTAINMENT_STORY",
+  ] as const)("maps the real Episode form %s selection to an accepted canonical create payload", (episodeType) => {
+    const outlineProfile = mapEpisodeTypeToOutlineProfile(episodeType);
+    expect(outlineProfile).not.toHaveProperty("hookRequired");
+    expect(AiStoryCreateBodySchema.safeParse(create({ outlineProfile })).success).toBe(true);
   });
 
   it("keeps PRODUCT_STORY policy identity server-registered", () => {
