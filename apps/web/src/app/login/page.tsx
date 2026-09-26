@@ -72,7 +72,7 @@ export default function LoginPage() {
         } else {
           clearRememberedCredentials();
         }
-        window.location.href = "/workspaces";
+        window.location.href = "/auth/continue";
       }
     }
     setLoading(false);

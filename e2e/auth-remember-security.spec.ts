@@ -26,6 +26,7 @@ function fakeJwt() {
 }
 
 async function mockSuccessfulLogin(page: Page) {
+  await page.route("**/auth/continue", (route) => route.fulfill({ status: 307, headers: { location: "/workspaces" } }));
   await page.route("**/auth/v1/token**", async (route) => {
     const now = new Date().toISOString();
     await route.fulfill({

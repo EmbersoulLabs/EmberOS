@@ -25,6 +25,7 @@ function token() {
 }
 
 async function authenticate(page: Page) {
+  await page.route("**/auth/continue", (route) => route.fulfill({ status: 307, headers: { location: "/workspaces" } }));
   await page.route("**/auth/v1/token**", async (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ access_token: token(), token_type: "bearer", expires_in: 3600, refresh_token: "e2e-refresh", user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", role: "authenticated", email: "operator@example.com", app_metadata: {}, user_metadata: {}, identities: [], created_at: new Date().toISOString(), updated_at: new Date().toISOString() } }) }));
   await page.goto("/login");
   await page.locator('input[type="email"]').fill("operator@example.com");

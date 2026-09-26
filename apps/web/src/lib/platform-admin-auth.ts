@@ -16,27 +16,6 @@ import {
 import type { PlatformAdminAssignment } from "@ceo-agent/shared";
 import type { User } from "@supabase/supabase-js";
 
-/** @deprecated Use resolvePlatformAdminForUser — email allowlist is bootstrap-only. */
-export function getSuperAdminEmails(): Set<string> {
-  return new Set(
-    (process.env.SUPERADMIN_EMAILS ?? "")
-      .split(",")
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean)
-  );
-}
-
-/** @deprecated Email allowlist alone must not authorize Admin APIs after bootstrap. */
-export function isSuperAdminEmail(email: string | null | undefined): boolean {
-  if (!email) return false;
-  return getSuperAdminEmails().has(email.toLowerCase());
-}
-
-/** @deprecated Prefer resolvePlatformAdminForUser / requirePlatformAdmin. */
-export function isSuperAdminUser(user: Pick<User, "email"> | null | undefined): boolean {
-  return isSuperAdminEmail(user?.email);
-}
-
 export async function resolvePlatformAdminForUser(
   user: Pick<User, "id" | "email">
 ): Promise<PlatformAdminResolution> {
@@ -46,6 +25,12 @@ export async function resolvePlatformAdminForUser(
     email: user.email,
     repository,
   });
+}
+
+export function platformAdminPostAuthDestination(
+  resolution: PlatformAdminResolution
+): "/admin" | "/workspaces" {
+  return resolution.status === "ACTIVE_GRANT" ? "/admin" : "/workspaces";
 }
 
 /**

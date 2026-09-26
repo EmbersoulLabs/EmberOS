@@ -70,7 +70,7 @@ export default function ResetPasswordPage() {
 
     setMessage(t("auth.passwordUpdated"));
     setTimeout(() => {
-      window.location.href = "/workspaces";
+      window.location.href = "/auth/continue";
     }, 1200);
   }
 

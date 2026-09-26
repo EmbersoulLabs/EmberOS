@@ -45,6 +45,7 @@ function characterCard() {
 }
 
 async function authenticate(page: Page) {
+  await page.route("**/auth/continue", (route) => route.fulfill({ status: 307, headers: { location: "/workspaces" } }));
   await page.addInitScript(() => localStorage.setItem("emberos-locale", "en"));
   await page.route("**/auth/v1/token**", (route) => route.fulfill({
     status: 200, contentType: "application/json",

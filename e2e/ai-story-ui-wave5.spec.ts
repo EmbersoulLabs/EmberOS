@@ -34,6 +34,7 @@ beforeAll(async () => {
 afterAll(async () => { if (authServer) await new Promise<void>((resolve) => authServer.close(() => resolve())); });
 
 async function authenticate(page: Page, role: "client_viewer" | "operator") {
+  await page.route("**/auth/continue", (route) => route.fulfill({ status: 307, headers: { location: "/workspaces" } }));
   let patchCount = 0;
   let providerCalls = 0;
   await page.addInitScript(() => localStorage.setItem("emberos-locale", "en"));

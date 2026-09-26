@@ -1,12 +1,11 @@
-import { requireAuth } from "@/lib/auth";
-import { isSuperAdminUser } from "@/lib/superadmin";
+import { requirePlatformAdmin } from "@/lib/platform-admin-auth";
 
 export async function requireSuperAdmin() {
-  const user = await requireAuth();
-  if (!isSuperAdminUser(user)) {
+  try {
+    return await requirePlatformAdmin();
+  } catch {
     throw new SuperAdminError();
   }
-  return user;
 }
 
 export class SuperAdminError extends Error {
