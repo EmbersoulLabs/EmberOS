@@ -203,6 +203,82 @@ describeIntegration("Production Controlled Self-Use authority", () => {
     expect(attempts.filter((item) => item.status === "rejected")).toHaveLength(1);
   });
 
+  it("releases unused terminal pre-provider planning reservations once", async () => {
+    const service = new ControlledSelfUseAuthorityService();
+    const campaignId = crypto.randomUUID();
+    const failedStoryId = crypto.randomUUID();
+    const liveStoryId = crypto.randomUUID();
+    const failedVersionId = crypto.randomUUID();
+    const liveVersionId = crypto.randomUUID();
+    const occurredAt = "2026-10-20T00:00:00.000Z";
+    await sql`
+      insert into campaigns (id, org_id, workspace_id, name)
+      values (${campaignId}::uuid, ${EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID}::uuid, ${workspaceId}::uuid, 'Reconciliation')
+    `;
+    await sql`
+      insert into ai_stories (id, org_id, workspace_id, campaign_id, title, original_idea, status)
+      values
+        (${failedStoryId}::uuid, ${EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID}::uuid, ${workspaceId}::uuid, ${campaignId}::uuid, 'Failed plan', 'Idea', 'failed'),
+        (${liveStoryId}::uuid, ${EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID}::uuid, ${workspaceId}::uuid, ${campaignId}::uuid, 'Live plan', 'Idea', 'planning')
+    `;
+    await sql`
+      insert into ai_story_versions (id, story_id, version_number, structured_content, frozen_at)
+      values
+        (${failedVersionId}::uuid, ${failedStoryId}::uuid, 1, '{}'::jsonb, now()),
+        (${liveVersionId}::uuid, ${liveStoryId}::uuid, 1, '{}'::jsonb, now())
+    `;
+    const reserve = (executionIdentity: string, capabilityKey: "ai_story.plan" | "ai_story.execute", providerKey: "openai" | "seedance") =>
+      service.reserve({
+        environment: "PRODUCTION",
+        organizationId: EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID,
+        workspaceId,
+        capabilityKey,
+        executionIdentity,
+        providerKey,
+        maximumCostUsd: "0.50",
+        retryOrdinal: 0,
+        actorUserId: adminUserId,
+        reservedAt: occurredAt,
+      });
+    const failed = await reserve(`ai-story-plan-stage:${failedVersionId}:scene_plan:${crypto.randomUUID()}`, "ai_story.plan", "openai");
+    const live = await reserve(`ai-story-plan-stage:${liveVersionId}:shot_plan:${crypto.randomUUID()}`, "ai_story.plan", "openai");
+    const billed = await reserve(`ai-story-plan-stage:${failedVersionId}:shot_plan:${crypto.randomUUID()}`, "ai_story.plan", "openai");
+    const video = await reserve(`video-${crypto.randomUUID()}`, "ai_story.execute", "seedance");
+    await service.markSubmitted(failed.reservation.reservationId, occurredAt);
+    await service.markSubmitted(live.reservation.reservationId, occurredAt);
+    await service.markSubmitted(billed.reservation.reservationId, occurredAt, "chatcmpl-billed");
+    await service.markSubmitted(video.reservation.reservationId, occurredAt);
+
+    const first = await service.reconcileUnusedTerminalPreProviderReservations({ occurredAt });
+    expect(first.releasedReservationIds).toEqual([failed.reservation.reservationId]);
+    expect(first.releasedUsd).toBe("0.50");
+    const replay = await service.reconcileUnusedTerminalPreProviderReservations({ occurredAt });
+    expect(replay.releasedReservationIds).toEqual([]);
+    expect(replay.releasedUsd).toBe("0.00");
+    expect((await service.getReservationById(live.reservation.reservationId))?.status).toBe("SUBMITTED");
+    expect((await service.getReservationById(billed.reservation.reservationId))?.status).toBe("SUBMITTED");
+    expect((await service.getReservationById(video.reservation.reservationId))?.status).toBe("SUBMITTED");
+    const events = await sql<{ event_type: string }[]>`
+      select event_type from controlled_self_use_events
+      where reservation_id = ${failed.reservation.reservationId}::uuid
+      order by occurred_at, event_type
+    `;
+    expect(events.map((event) => event.event_type).sort()).toEqual(["RELEASED", "RESERVED", "SUBMITTED"]);
+
+    const terminal = await service.reconcileUnusedTerminalPreProviderReservations({
+      occurredAt,
+      reservationId: live.reservation.reservationId,
+      executionTerminal: true,
+    });
+    expect(terminal.releasedReservationIds).toEqual([live.reservation.reservationId]);
+    const terminalReplay = await service.reconcileUnusedTerminalPreProviderReservations({
+      occurredAt,
+      reservationId: live.reservation.reservationId,
+      executionTerminal: true,
+    });
+    expect(terminalReplay.releasedReservationIds).toEqual([]);
+  });
+
   it("provides an audited kill switch and rejects immutable event mutation", async () => {
     const service = new ControlledSelfUseAuthorityService();
     await service.setEmberSoulLabsAuthorityStatus({

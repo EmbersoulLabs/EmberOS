@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { ControlledSelfUseAuthorityService, getDb, schema } from "@ceo-agent/db";
 import { STORY_PLANNING_STAGE_ORDER, isUuid, type AiStoryStatus } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
@@ -62,7 +62,16 @@ export async function POST(
         animationPackage: result!.animationPackage,
       });
     } catch (error) {
-      if (status === "planning") await setAiStoryStatus(db, storyId, "planning", "failed");
+      if (status === "planning") {
+        try {
+          await setAiStoryStatus(db, storyId, "planning", "failed");
+          await new ControlledSelfUseAuthorityService(db).reconcileUnusedTerminalPreProviderReservations({
+            occurredAt: new Date().toISOString(),
+          });
+        } catch {
+          /* best-effort terminal accounting */
+        }
+      }
       throw error;
     }
   } catch (error) {
