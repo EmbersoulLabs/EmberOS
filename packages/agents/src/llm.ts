@@ -98,10 +98,11 @@ export async function callStructuredJsonModel<T>(input: {
   schema: ZodType<T>;
   schemaName: string;
   model?: "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" | "gpt-4o";
+  certificationStage?: CertificationPlanningStage;
 }): Promise<StructuredJsonModelCompletion> {
   if (certificationCallContext.getStore() && input.model && input.model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_MODEL_MISMATCH");
   const model = certificationCallContext.getStore() ? CERTIFICATION_PLANNING_MODEL : (input.model ?? "gpt-4o-mini");
-  const certification = await claimCertificationCall("story_polish", model);
+  const certification = await claimCertificationCall(input.certificationStage ?? "story_polish", model);
   const providerStartedAt = performance.now();
   let response;
   try {

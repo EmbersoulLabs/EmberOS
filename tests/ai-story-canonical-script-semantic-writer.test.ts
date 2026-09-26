@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-const callJsonModel = vi.hoisted(() => vi.fn());
-vi.mock("../packages/agents/src/llm", () => ({ callJsonModel }));
+const callStructuredJsonModel = vi.hoisted(() => vi.fn());
+vi.mock("../packages/agents/src/llm", () => ({ callStructuredJsonModel }));
 
 import {
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
@@ -65,6 +65,21 @@ function proposal(): AiStoryScriptSemanticProposalV1 {
         { type: "ACTION", subjectId: I.product, action: "The Product remains visible as the story reveals more context.", storyEffect: "The narrative advances." },
       ], newInformation: ["Further narrative context becomes available."], newActionOutcomes: ["The story advances."] },
     ],
+  };
+}
+
+function structuredProviderProposal() {
+  const value = proposal();
+  return {
+    ...value,
+    scenes: value.scenes.map((scene) => ({
+      ...scene,
+      entries: scene.entries.map((entry) => entry.type === "ACTION"
+        ? { ...entry, objectId: entry.objectId ?? null, stateDelta: entry.stateDelta ?? null }
+        : entry.type === "DIALOGUE"
+          ? { ...entry, deliveryOrSubtext: entry.deliveryOrSubtext ?? null }
+          : entry),
+    })),
   };
 }
 
@@ -205,7 +220,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
   });
 
   it("uses one existing model call and returns only a validated proposal", async () => {
-    callJsonModel.mockResolvedValueOnce({ result: proposal(), usage: { input: 10, output: 5, costUsd: 0.01 } });
+    callStructuredJsonModel.mockResolvedValueOnce({ result: structuredProviderProposal(), usage: { input: 10, output: 5, costUsd: 0.01 } });
     const source = outline();
     const result = await generateAiStoryScriptSemanticProposalV1({
       frozenOutline: source, story: STORY, storyBeats: BEATS, scenePlan: SCENES,
@@ -213,7 +228,25 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       directorThinking: { coreMessage: "Message", hero: "Hero", conflict: "Conflict", turningPoint: "Turn", climax: "Climax", takeaway: "Takeaway" },
       characterAuthorities: [CHARACTER], productAuthorityIds: [I.product],
     });
-    expect(callJsonModel).toHaveBeenCalledTimes(1);
+    expect(callStructuredJsonModel).toHaveBeenCalledTimes(1);
+    expect(callStructuredJsonModel).toHaveBeenCalledWith(expect.objectContaining({
+      schemaName: "ai_story_script_semantic_proposal_v1",
+      certificationStage: "script_semantic_writer",
+    }));
     expect(result.semanticProposal).toEqual(proposal());
+  });
+
+  it("fails closed when the structured provider refuses instead of repairing semantic authority", async () => {
+    callStructuredJsonModel.mockResolvedValueOnce({
+      result: null,
+      decodeIssue: "PROVIDER_REFUSAL",
+      usage: { input: 10, output: 0, costUsd: 0.001 },
+    });
+    await expect(generateAiStoryScriptSemanticProposalV1({
+      frozenOutline: outline(), story: STORY, storyBeats: BEATS, scenePlan: SCENES,
+      creativeContext: { storyContext: STORY, characterContext: { characters: [], relationships: [] }, productContext: { source: "NONE", products: [] }, worldContext: { locations: [], timePeriod: "", worldRules: [] }, narrativeContext: { arc: "Arc", pacing: "Pace", emotionalJourney: "Journey", themes: [] } },
+      directorThinking: { coreMessage: "Message", hero: "Hero", conflict: "Conflict", turningPoint: "Turn", climax: "Climax", takeaway: "Takeaway" },
+      characterAuthorities: [CHARACTER], productAuthorityIds: [I.product],
+    })).rejects.toThrow("SCRIPT_SEMANTIC_WRITER_PROVIDER_REFUSAL");
   });
 });
