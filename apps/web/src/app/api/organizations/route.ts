@@ -1,6 +1,7 @@
-import { getDb, schema } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
-import { apiSuccess, apiError, slugify } from "@/lib/api";
+import { apiSuccess, apiError } from "@/lib/api";
+import { resolvePlatformAdminForUser } from "@/lib/platform-admin-auth";
+import { provisionFirstOrganizationForUser } from "@/lib/organization-provisioning";
 
 export async function POST(request: Request) {
   try {
@@ -10,21 +11,21 @@ export async function POST(request: Request) {
 
     if (!name) return apiError("Name is required", "VALIDATION_ERROR");
 
-    const slug = rawSlug ?? slugify(name);
-    const db = getDb();
+    const platformAdmin = await resolvePlatformAdminForUser(user);
+    if (platformAdmin.status === "ACTIVE_GRANT") {
+      return apiError(
+        "Platform Admins create or administer Organizations through the Control Plane",
+        "PLATFORM_ADMIN_ORG_PROVISIONING_DENIED",
+        403
+      );
+    }
 
-    const [org] = await db
-      .insert(schema.organizations)
-      .values({ name, slug })
-      .returning();
-
-    await db.insert(schema.organizationMembers).values({
-      orgId: org!.id,
+    const result = await provisionFirstOrganizationForUser({
       userId: user.id,
-      role: "owner",
+      name,
+      requestedSlug: rawSlug,
     });
-
-    return apiSuccess({ organization: org }, 201);
+    return apiSuccess({ organization: result.organization }, result.created ? 201 : 200);
   } catch (error) {
     return handleApiError(error);
   }

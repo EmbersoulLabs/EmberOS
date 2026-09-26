@@ -12,7 +12,7 @@ import { GlobalNavMenu, useLogoutAction, type GlobalNavItem } from "@/components
 
 type CurrentUserProjection = {
   isSuperAdmin?: boolean;
-  workspaces?: Array<{ slug: string; role: string }>;
+  workspaces?: Array<{ slug: string; role: string; name?: string; orgName?: string }>;
 };
 
 let currentUserRequest: Promise<CurrentUserProjection> | null = null;
@@ -113,6 +113,7 @@ export function AppShell({
   const { t } = useI18n();
   const handleLogout = useLogoutAction();
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [adminWorkspace, setAdminWorkspace] = useState<{ name?: string; orgName?: string } | null>(null);
   const resolvedBack = backHref ?? resolveBackHref(pathname);
   const resolvedHome = resolveHomeHref(pathname);
   const canGoBack = showBack ?? resolvedBack !== null;
@@ -132,9 +133,16 @@ export function AppShell({
 
   useEffect(() => {
     fetchCurrentUserProjection()
-      .then((d) => setIsSuperAdmin(Boolean(d.isSuperAdmin)))
+      .then((d) => {
+        setIsSuperAdmin(Boolean(d.isSuperAdmin));
+        setAdminWorkspace(
+          d.isSuperAdmin && workspaceSlug
+            ? d.workspaces?.find((workspace) => workspace.slug === workspaceSlug) ?? null
+            : null
+        );
+      })
       .catch(() => setIsSuperAdmin(false));
-  }, []);
+  }, [workspaceSlug]);
 
   const navItems = useMemo(() => {
     const items: GlobalNavItem[] = [];
@@ -212,6 +220,17 @@ export function AppShell({
           </div>
         </div>
       </header>
+
+      {isSuperAdmin && workspaceSlug ? (
+        <div className="border-b border-amber-300 bg-amber-50 text-amber-950" data-testid="platform-admin-context">
+          <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs sm:px-4">
+            <span className="font-semibold uppercase tracking-wide">
+              Admin context · {adminWorkspace?.orgName ?? "Platform"} · {adminWorkspace?.name ?? workspaceSlug}
+            </span>
+            <Link href="/admin" className="font-semibold underline">Back to Admin</Link>
+          </div>
+        </div>
+      ) : null}
 
       {/* Workspace Header — display only, not a selector */}
       {workspaceName ? (

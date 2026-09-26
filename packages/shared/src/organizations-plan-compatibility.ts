@@ -21,6 +21,7 @@ export const ORGANIZATIONS_PLAN_COMPATIBILITY_CONTRACT_VERSION = "1" as const;
 export const OrganizationsPlanCompatibilityValueSchema = z.enum([
   "free",
   "pro",
+  "pro_plus",
   "agency",
   "enterprise",
   "paid",

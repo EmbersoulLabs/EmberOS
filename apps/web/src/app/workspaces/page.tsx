@@ -61,6 +61,11 @@ export default function WorkspacesPage() {
           throw new Error(me.error ?? t("error.loadAccount"));
         }
 
+        if (me.isSuperAdmin === true) {
+          router.replace("/admin");
+          return;
+        }
+
         let resolvedOrgId = me.orgs?.[0]?.id as string | undefined;
 
         if (!resolvedOrgId) {

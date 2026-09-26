@@ -2,14 +2,21 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess } from "@/lib/api";
-import { isSuperAdminUser } from "@/lib/superadmin";
+import { resolvePlatformAdminForUser } from "@/lib/platform-admin-auth";
 
 export async function GET() {
   try {
     const user = await requireAuth();
     const db = getDb();
+    const platformAdmin = await resolvePlatformAdminForUser(user);
+    const isSuperAdmin = platformAdmin.status === "ACTIVE_GRANT";
 
-    const orgMemberships = await db
+    const orgMemberships = isSuperAdmin
+      ? (await db.select({ org: schema.organizations }).from(schema.organizations)).map((row) => ({
+          ...row,
+          role: "platform_admin",
+        }))
+      : await db
       .select({
         org: schema.organizations,
         role: schema.organizationMembers.role,
@@ -18,18 +25,30 @@ export async function GET() {
       .innerJoin(schema.organizations, eq(schema.organizationMembers.orgId, schema.organizations.id))
       .where(eq(schema.organizationMembers.userId, user.id));
 
-    const workspaceMemberships = await db
+    const workspaceMemberships = isSuperAdmin
+      ? (await db
+          .select({ workspace: schema.workspaces, orgName: schema.organizations.name })
+          .from(schema.workspaces)
+          .innerJoin(schema.organizations, eq(schema.organizations.id, schema.workspaces.orgId)))
+          .map((row) => ({ ...row, role: "platform_admin" }))
+      : (await db
       .select({
         workspace: schema.workspaces,
         role: schema.workspaceMembers.role,
+        orgName: schema.organizations.name,
       })
       .from(schema.workspaceMembers)
       .innerJoin(schema.workspaces, eq(schema.workspaceMembers.workspaceId, schema.workspaces.id))
-      .where(eq(schema.workspaceMembers.userId, user.id));
+      .innerJoin(schema.organizations, eq(schema.organizations.id, schema.workspaces.orgId))
+      .where(eq(schema.workspaceMembers.userId, user.id)));
 
     return apiSuccess({
       user: { id: user.id, email: user.email },
-      isSuperAdmin: isSuperAdminUser(user),
+      isSuperAdmin,
+      platformAdminAssignmentId:
+        platformAdmin.status === "ACTIVE_GRANT"
+          ? platformAdmin.assignment.platformAdminAssignmentId
+          : null,
       orgs: orgMemberships.map((m) => ({
         id: m.org.id,
         name: m.org.name,
@@ -43,6 +62,7 @@ export async function GET() {
         name: m.workspace.name,
         slug: m.workspace.slug,
         role: m.role,
+        orgName: m.orgName,
       })),
     });
   } catch (error) {

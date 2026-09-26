@@ -92,6 +92,11 @@ jobs:
       - name: Apply canonical Drizzle schema
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
 
+      - name: Certify Platform Admin Control Plane server-only authority
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/platform-admin-control-plane-security.integration.test.ts
+
       - name: Apply AI Story video analysis snapshots
         run: pnpm --filter @ceo-agent/db sql:ai-story-video-analysis-snapshot
 

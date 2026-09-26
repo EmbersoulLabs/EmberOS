@@ -14,8 +14,22 @@ interface Overview {
     pendingReviews: number;
     failedTasks: number;
   };
+  organizations: Array<{
+    id: string;
+    name: string;
+    slug: string;
+    plan: string;
+    organizationMembers: number;
+    workspaceMembers: number;
+    workspaces: number;
+    billingAccountId: string | null;
+    subscriptionStatus: string | null;
+    providerAttempts: number;
+    providerCostUsd: string;
+  }>;
   workspaces: Array<{
     id: string;
+    orgId: string;
     name: string;
     slug: string;
     orgName: string;
@@ -48,6 +62,7 @@ export default function AdminDashboardPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [membersWorkspaceId, setMembersWorkspaceId] = useState<string | null>(null);
+  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/admin/overview")
@@ -72,10 +87,10 @@ export default function AdminDashboardPage() {
             <p className="mt-1 text-sm text-ink-secondary">{t("admin.subtitle")}</p>
           </div>
           <Link
-            href="/workspaces"
+            href="#workspace-control-plane"
             className="inline-flex h-10 items-center rounded-lg border border-border px-4 text-sm font-medium text-navy hover:bg-surface-muted"
           >
-            {t("admin.openWorkspaces")}
+            Workspaces
           </Link>
         </header>
 
@@ -101,6 +116,36 @@ export default function AdminDashboardPage() {
               <StatCard label={t("admin.stat.failedTasks")} value={data.summary.failedTasks} />
             </section>
 
+            <section className="rounded-xl border border-border/80 bg-surface shadow-card">
+              <div className="border-b border-border/60 px-4 py-3 sm:px-5">
+                <h2 className="text-sm font-semibold text-navy">Organizations</h2>
+                <p className="mt-1 text-xs text-ink-secondary">Canonical platform Organizations, memberships, billing and Provider usage.</p>
+              </div>
+              <div className="grid gap-3 p-4 md:grid-cols-2 sm:p-5">
+                {data.organizations.map((org) => (
+                  <article key={org.id} id={`organization-${org.id}`} className={`rounded-lg border p-4 ${selectedOrgId === org.id ? "border-brand-blue bg-brand-blue/5" : "border-border/70"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div><h3 className="font-semibold text-navy">{org.name}</h3><p className="text-xs text-ink-secondary">/{org.slug} · {org.id}</p></div>
+                      <StatusBadge status={org.subscriptionStatus ?? org.plan} />
+                    </div>
+                    <dl className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div><dt className="text-ink-secondary">Workspaces</dt><dd className="font-semibold">{org.workspaces}</dd></div>
+                      <div><dt className="text-ink-secondary">Members</dt><dd className="font-semibold">{org.organizationMembers} org / {org.workspaceMembers} workspace</dd></div>
+                      <div><dt className="text-ink-secondary">Billing</dt><dd className="font-semibold">{org.billingAccountId ? "Configured" : "Not configured"}</dd></div>
+                      <div><dt className="text-ink-secondary">Provider usage</dt><dd className="font-semibold">{org.providerAttempts} attempts · USD {org.providerCostUsd}</dd></div>
+                    </dl>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedOrgId((current) => current === org.id ? null : org.id)}
+                      className="mt-3 text-xs font-semibold text-brand-blue hover:underline"
+                    >
+                      {selectedOrgId === org.id ? "Show all Workspaces" : "Select Organization"}
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </section>
+
             {data.campaignStatuses.length > 0 && (
               <section className="rounded-xl border border-border/80 bg-surface p-4 shadow-card sm:p-5">
                 <h2 className="text-sm font-semibold text-navy">{t("admin.campaignFunnel")}</h2>
@@ -115,7 +160,7 @@ export default function AdminDashboardPage() {
               </section>
             )}
 
-            <section className="rounded-xl border border-border/80 bg-surface shadow-card">
+            <section id="workspace-control-plane" className="rounded-xl border border-border/80 bg-surface shadow-card">
               <div className="border-b border-border/60 px-4 py-3 sm:px-5">
                 <h2 className="text-sm font-semibold text-navy">{t("admin.workspacesTitle")}</h2>
               </div>
@@ -139,7 +184,9 @@ export default function AdminDashboardPage() {
                         </td>
                       </tr>
                     ) : (
-                      data.workspaces.map((ws) => (
+                      data.workspaces
+                        .filter((ws) => !selectedOrgId || ws.orgId === selectedOrgId)
+                        .map((ws) => (
                         <Fragment key={ws.id}>
                           <tr className="border-b border-border/40">
                             <td className="px-4 py-3 font-medium text-navy sm:px-5">
@@ -165,9 +212,10 @@ export default function AdminDashboardPage() {
                                 </button>
                                 <Link
                                   href={`/w/${ws.slug}/campaigns`}
+                                  data-admin-workspace-entry={ws.id}
                                   className="text-xs font-medium text-brand-blue hover:underline"
                                 >
-                                  {t("admin.open")}
+                                  Enter Workspace
                                 </Link>
                               </div>
                             </td>

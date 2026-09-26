@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
-import { isSuperAdminEmail } from "@/lib/superadmin";
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request: { headers: request.headers } });
@@ -32,7 +31,6 @@ export async function middleware(request: NextRequest) {
   const isAuthPage = request.nextUrl.pathname.startsWith("/login");
   const isPortal = request.nextUrl.pathname.startsWith("/portal");
   const isApi = request.nextUrl.pathname.startsWith("/api");
-  const isAdmin = request.nextUrl.pathname.startsWith("/admin");
 
   if (!user && !isAuthPage && !isPortal && !isApi) {
     const url = request.nextUrl.clone();
@@ -40,15 +38,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && isAdmin && !isSuperAdminEmail(user.email)) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/workspaces";
-    return NextResponse.redirect(url);
-  }
-
   if (user && isAuthPage && !request.nextUrl.pathname.startsWith("/login/reset-password")) {
     const url = request.nextUrl.clone();
-    url.pathname = isSuperAdminEmail(user.email) ? "/admin" : "/workspaces";
+    // Middleware cannot safely resolve the durable Platform Admin grant. Route
+    // through a Node/server boundary that uses the canonical repository.
+    url.pathname = "/auth/continue";
     return NextResponse.redirect(url);
   }
 

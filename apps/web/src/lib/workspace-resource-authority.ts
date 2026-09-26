@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
 
 export const WORKSPACE_SLUG_HEADER = "x-emberos-workspace-slug";
 
@@ -41,20 +41,20 @@ export async function requireWorkspaceResourceAuthority(input: {
   const slug = explicitSlug || referrerSlug;
   if (!slug) throw new WorkspaceResourceMismatchError();
 
+  await requireWorkspaceRole(input.resourceWorkspaceId, input.userId, "client_viewer");
   const db = getDb();
   const matches = await db
     .select({ id: schema.workspaces.id, slug: schema.workspaces.slug })
-    .from(schema.workspaceMembers)
-    .innerJoin(schema.workspaces, eq(schema.workspaces.id, schema.workspaceMembers.workspaceId))
+    .from(schema.workspaces)
     .where(
       and(
-        eq(schema.workspaceMembers.userId, input.userId),
+        eq(schema.workspaces.id, input.resourceWorkspaceId),
         eq(schema.workspaces.slug, slug)
       )
     )
-    .limit(2);
+    .limit(1);
 
-  // Duplicate slugs across organizations are ambiguous and therefore fail closed.
+  // The selected slug must resolve to the exact server-owned resource Workspace.
   if (matches.length !== 1) throw new WorkspaceResourceMismatchError();
   assertWorkspaceResourceMatch(matches[0]!.id, input.resourceWorkspaceId);
   return matches[0]!;

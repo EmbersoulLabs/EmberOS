@@ -1,6 +1,8 @@
 import { eq, and } from "drizzle-orm";
 import { getDb, schema } from "../client";
 import { isUuid, type OrgRole, type WorkspaceRole } from "@ceo-agent/shared";
+import { PlatformAdminRepositoryImpl } from "./platform-admin";
+import { resolvePlatformAdminAccess } from "./platform-admin-resolution";
 
 const ROLE_HIERARCHY: Record<WorkspaceRole, number> = {
   admin: 100,
@@ -46,13 +48,39 @@ export async function requireWorkspaceRole(
   minRole: WorkspaceRole
 ) {
   const member = await getWorkspaceMembership(workspaceId, userId);
-  if (!member) {
-    throw new WorkspaceAccessError("Not a member of this workspace", "FORBIDDEN");
+  if (member && ROLE_HIERARCHY[member.role as WorkspaceRole] >= ROLE_HIERARCHY[minRole]) {
+    return member;
   }
-  if (ROLE_HIERARCHY[member.role as WorkspaceRole] < ROLE_HIERARCHY[minRole]) {
-    throw new WorkspaceAccessError("Insufficient permissions", "FORBIDDEN");
+
+  // Platform authority is independent of tenant membership. Resolve it only
+  // from the durable internal grant and bind the synthetic admin projection to
+  // an existing target Workspace; never persist it as membership.
+  const db = getDb();
+  const platformAdmin = await resolvePlatformAdminAccess({
+    userId,
+    email: null,
+    repository: new PlatformAdminRepositoryImpl(db),
+  });
+  if (platformAdmin.status === "ACTIVE_GRANT") {
+    const [workspace] = await db
+      .select({ id: schema.workspaces.id, orgId: schema.workspaces.orgId })
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, workspaceId))
+      .limit(1);
+    if (workspace) {
+      return {
+        id: platformAdmin.assignment.platformAdminAssignmentId,
+        orgId: workspace.orgId,
+        workspaceId: workspace.id,
+        userId,
+        role: "admin",
+        createdAt: new Date(platformAdmin.assignment.grantedAt),
+      };
+    }
   }
-  return member;
+
+  if (!member) throw new WorkspaceAccessError("Not a member of this workspace", "FORBIDDEN");
+  throw new WorkspaceAccessError("Insufficient permissions", "FORBIDDEN");
 }
 
 /**
@@ -87,7 +115,8 @@ export async function getOrganizationPlan(orgId: string): Promise<string | null>
 
 /**
  * Verify the user belongs to the given organization (server-side).
- * Super Admin is not granted org access here — that must be an explicit admin path.
+ * Active Platform Super Admin authority may supply an in-memory admin projection.
+ * It never creates a tenant membership row.
  *
  * Malformed orgId is rejected before any database lookup.
  * Optional `lookup` is for tests; production callers omit it.
@@ -103,18 +132,36 @@ export async function requireOrganizationMembership(
   }
 
   const member = await lookup(orgId, userId);
-  if (!member) {
-    throw new OrganizationAccessError(
-      "Not a member of this organization",
-      "FORBIDDEN"
-    );
+  if (member) {
+    const role = member.role as OrgRole;
+    const level = ORG_ROLE_HIERARCHY[role];
+    if (level != null && level >= ORG_ROLE_HIERARCHY[minRole]) return member;
   }
-  const role = member.role as OrgRole;
-  const level = ORG_ROLE_HIERARCHY[role];
-  if (level == null || level < ORG_ROLE_HIERARCHY[minRole]) {
-    throw new OrganizationAccessError("Insufficient organization permissions", "FORBIDDEN");
+
+  if (lookup === getOrganizationMembership) {
+    const db = getDb();
+    const platformAdmin = await resolvePlatformAdminAccess({
+      userId,
+      email: null,
+      repository: new PlatformAdminRepositoryImpl(db),
+    });
+    const [organization] = platformAdmin.status === "ACTIVE_GRANT"
+      ? await db.select({ id: schema.organizations.id }).from(schema.organizations)
+          .where(eq(schema.organizations.id, orgId)).limit(1)
+      : [];
+    if (platformAdmin.status === "ACTIVE_GRANT" && organization) {
+      return {
+        id: platformAdmin.assignment.platformAdminAssignmentId,
+        orgId,
+        userId,
+        role: "owner",
+        createdAt: new Date(platformAdmin.assignment.grantedAt),
+      };
+    }
   }
-  return member;
+
+  if (!member) throw new OrganizationAccessError("Not a member of this organization", "FORBIDDEN");
+  throw new OrganizationAccessError("Insufficient organization permissions", "FORBIDDEN");
 }
 
 export { ROLE_HIERARCHY, ORG_ROLE_HIERARCHY };
