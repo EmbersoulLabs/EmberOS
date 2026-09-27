@@ -8,6 +8,7 @@ vi.mock("../packages/agents/src/llm", () => ({
 
 import {
   bindSceneGroundingProposalIdsByPlanOrder,
+  buildScenePlanProviderOutputSchema,
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
 } from "../packages/agents/src/ai-story/story-planning-service";
@@ -146,6 +147,21 @@ describe("AI Story Scene Plan strict structured output", () => {
       sceneIds: ["scene-001", "scene-002"],
       proposals: [validProviderResult.groundingSelections[0]!],
     })).toHaveLength(1);
+  });
+
+  it("constrains model grounding evidence to exact accepted binding ids", () => {
+    const accepted = "80000000-0000-4000-8000-000000000010";
+    const invented = "80000000-0000-4000-8000-000000000099";
+    const schema = buildScenePlanProviderOutputSchema([accepted]);
+    const withBinding = (bindingId: string) => ({
+      ...validProviderResult,
+      groundingSelections: [{
+        ...validProviderResult.groundingSelections[0],
+        evidence: [{ bindingId, groundedFacts: ["Nasi Lemak"] }],
+      }],
+    });
+    expect(schema.safeParse(withBinding(accepted)).success).toBe(true);
+    expect(schema.safeParse(withBinding(invented)).success).toBe(false);
   });
 
   it("fails closed when structured fields conflict with canonical generation authority", async () => {

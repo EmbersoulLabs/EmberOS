@@ -86,6 +86,20 @@ const ScenePlanProviderOutputSchema = z.object({
   groundingSelections: z.array(AiStorySceneGroundingProposalSchema).default([]),
 }).strict();
 
+export function buildScenePlanProviderOutputSchema(
+  acceptedBindingIds: readonly string[],
+) {
+  if (acceptedBindingIds.length === 0) return ScenePlanProviderOutputSchema;
+  const bindingIdSchema = z.enum(acceptedBindingIds as [string, ...string[]]);
+  return ScenePlanProviderOutputSchema.extend({
+    groundingSelections: z.array(AiStorySceneGroundingProposalSchema.extend({
+      evidence: z.array(AiStorySceneGroundingProposalSchema.shape.evidence.element.extend({
+        bindingId: bindingIdSchema,
+      }).strict()),
+    }).strict()).default([]),
+  }).strict();
+}
+
 export type AiStoryPlanningCampaignContext = {
   id?: string;
   name: string;
@@ -383,6 +397,9 @@ export async function generateScenePlan(input: {
   /** Required by the normal staged runtime; optional for legacy all-at-once compatibility. */
   assetGrounding?: AiStoryScenePlanningGroundingContext;
 }): Promise<{ scenePlan: ScenePlanItem[]; usage: Usage }> {
+  const providerOutputSchema = buildScenePlanProviderOutputSchema(
+    input.assetGrounding?.bindings.map((binding) => binding.bindingId) ?? [],
+  );
   const completion = await callStructuredJsonModel({
     system: [
       "You are an animation scene planner.",
@@ -390,21 +407,21 @@ export async function generateScenePlan(input: {
       "Use sequential order values starting at 0 and stable scene ids.",
       "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
       "FIRST_FRAME_IMAGE_TO_VIDEO and PRODUCT_GROUNDED_VIDEO always require productVisualIdentityRequirement REQUIRED. They may never use NONE. TEXT_TO_VIDEO may use REQUIRED only when the Scene still visually depicts a grounded Product.",
-      "The supplied accepted Asset grounding authority is immutable. For every Scene return one groundingSelections entry using only exact accepted binding IDs and exact facts from those bindings.",
+      "The supplied accepted Asset grounding authority is immutable. For every Scene return one groundingSelections entry using only exact accepted binding IDs and exact facts from those bindings. Copy bindingId verbatim; never invent or transform a UUID.",
       "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
       "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",
       "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims.",
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),
-    schema: ScenePlanProviderOutputSchema,
+    schema: providerOutputSchema,
     schemaName: "ai_story_scene_plan_v1",
     certificationStage: "scene_plan",
   });
   if (completion.decodeIssue) {
     throw new Error(`SCENE_PLAN_${completion.decodeIssue}`);
   }
-  const providerOutput = ScenePlanProviderOutputSchema.parse(completion.result);
+  const providerOutput = providerOutputSchema.parse(completion.result);
   const rawScenePlan = z.array(
     ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema }),
   ).min(1).parse(providerOutput.scenePlan);
