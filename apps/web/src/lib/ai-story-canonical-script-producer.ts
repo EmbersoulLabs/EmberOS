@@ -11,6 +11,8 @@ import {
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
   AiStoryScriptSemanticProposalV1Schema,
   resolveOutlineBoundProductAuthorityIds,
+  validateAiStoryScript,
+  type AiStoryOutlineVersion,
   type AiStoryScriptSemanticProposalV1,
   type AiStoryScriptVersion,
   type AiStoryStructuredDraft,
@@ -26,6 +28,7 @@ import {
   computeAiStoryScriptSemanticInputFingerprint,
   computeAiStoryScriptSourceHash,
   promoteAiStoryScriptSemanticProposalV1,
+  validateAiStoryCommercialStoryProfile,
 } from "@ceo-agent/shared/server";
 
 type Db = ReturnType<typeof getDb>;
@@ -182,8 +185,75 @@ function requireCommercialSemanticAuthority(
 }
 
 /**
+ * In-memory candidate gate. AUTHORIZED persistence happens only after this returns.
+ * Promotion and Script validation failures leave the Story Version's proposal slot free.
+ */
+function assertCommercialScriptCandidatePreAuthorization(
+  input: EnsureCurrentFrozenCanonicalScriptInput,
+  outline: AiStoryOutlineVersion,
+  proposal: AiStoryScriptSemanticProposalV1,
+  semanticInputFingerprint: string,
+  productAuthorityIds: readonly string[],
+  deps: CanonicalScriptProducerDependencies,
+) {
+  if (
+    outline.orgId !== input.orgId
+    || outline.workspaceId !== input.workspaceId
+    || outline.storyId !== input.storyId
+    || outline.storyVersionId !== input.storyVersionId
+    || outline.status !== "FROZEN"
+  ) {
+    throw new AiStoryCanonicalScriptProducerError(
+      "CANONICAL_SCRIPT_OUTLINE_AUTHORITY_INVALID",
+      "Script candidate authorization requires the exact frozen Outline for this Story Version",
+    );
+  }
+  const material = deps.promoteSemanticProposal({
+    storyId: input.storyId,
+    storyVersionId: input.storyVersionId,
+    frozenOutline: outline,
+    storyBeatProposals: input.storyBeats,
+    scenePlan: input.scenePlan,
+    characterAuthorities: input.characterAuthorities,
+    semanticProposal: proposal,
+  });
+  const script = buildAiStoryScriptVersion({
+    storyId: input.storyId,
+    storyVersionId: input.storyVersionId,
+    outlineVersionId: outline.outlineVersionId,
+    orgId: outline.orgId,
+    workspaceId: outline.workspaceId,
+    version: 1,
+    profileId: outline.profile.profileId,
+    profileVersion: outline.profile.profileVersion,
+    outlineSourceHash: outline.sourceHash,
+    semanticInputFingerprint,
+    scenes: material.scenes,
+    authorityReferences: material.authorityReferences,
+    supersedesScriptVersionId: null,
+    createdBy: input.actorUserId,
+    createdAt: deps.now(),
+  });
+  const knownAuthorityReferences = new Set<string>([
+    ...input.characterAuthorities.map((authority) => `CHARACTER:${authority.characterId}`),
+    ...productAuthorityIds.map((productId) => `PRODUCT:${productId}`),
+  ]);
+  const blocking = [
+    ...validateAiStoryScript(script, outline, { knownAuthorityReferences }).filter((issue) => issue.severity === "BLOCK"),
+    ...validateAiStoryCommercialStoryProfile(outline, script).filter((issue) => issue.severity === "BLOCK"),
+  ];
+  if (blocking.length > 0) {
+    throw new AiStoryCanonicalScriptProducerError(
+      "CANONICAL_SCRIPT_PRE_AUTHORIZATION_FAILED",
+      blocking.map((issue) => `${issue.gate}: ${issue.message}`).join("; "),
+    );
+  }
+}
+
+/**
  * Upstream COMMERCIAL_STORY authoring. Canonical Script production does not call this.
- * One writer call per exact semantic input; a later call resolves the same authorized row.
+ * A candidate is authorized only after deterministic promotion and Script validation pass.
+ * One writer call per invocation; a failed candidate does not occupy the immutable slot.
  */
 export async function produceAuthorizedCommercialStoryScriptProposal(
   input: EnsureCurrentFrozenCanonicalScriptInput,
@@ -246,6 +316,14 @@ export async function produceAuthorizedCommercialStoryScriptProposal(
     productAuthorityIds,
   });
   const proposal = AiStoryScriptSemanticProposalV1Schema.parse(generated.semanticProposal);
+  assertCommercialScriptCandidatePreAuthorization(
+    input,
+    outline,
+    proposal,
+    semanticInputFingerprint,
+    productAuthorityIds,
+    deps,
+  );
   await (deps.persistAuthorizedProposal ?? (async () => undefined))(
     input.db,
     scope,
