@@ -97,6 +97,17 @@
     "5": ["apps/web/src/app/w/**/ai-stories/**", "apps/web/src/app/api/campaigns/**/ai-stories/**", "apps/web/src/components/ai-story/**", "tests/**ai-story*", "tests/sprint-3-phase-2a-pr2-boundary.test.ts", "e2e/**ai-story*", "config/hybrid-migration-guards.json", ".github/workflows/ci.yml", "docs/**", ".migration-intents/**"],
     "6": ["tests/**", "e2e/**", "docs/**", "scripts/**parity*", ".migration-intents/**", ".github/workflows/**"]
   },
+  "intentScopedWavePathAllowances": {
+    "EMBEROS-WAVE6-STAGING-PLATFORM-ADMIN-BREAK-GLASS-RECOVERY-02": [
+      "package.json",
+      "packages/db/src/index.ts",
+      "packages/db/src/queries/platform-admin-break-glass.ts",
+      "packages/db/src/queries/platform-admin-management.ts",
+      "scripts/wave6-staging-platform-admin-recovery-02.ts",
+      "config/hybrid-migration-guards.json",
+      "scripts/hybrid-migration-guards.ts"
+    ]
+  },
   "preWave6SkillTokens": [
     "sceneVisualRole",
     "shotPurpose",
