@@ -7,6 +7,7 @@ vi.mock("../packages/agents/src/llm", () => ({
 }));
 
 import {
+  bindSceneGroundingProposalIdsByPlanOrder,
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
 } from "../packages/agents/src/ai-story/story-planning-service";
@@ -128,6 +129,23 @@ describe("AI Story Scene Plan strict structured output", () => {
       detail: "Tapao Jom!",
       evidenceLevel: "EXISTENCE_ONLY",
     });
+  });
+
+  it("binds equal-length grounding selections to canonical Scene ids by plan order", () => {
+    expect(bindSceneGroundingProposalIdsByPlanOrder({
+      sceneIds: ["scene-001", "scene-002"],
+      proposals: [
+        { ...validProviderResult.groundingSelections[0]!, sceneId: "scene-1" },
+        { ...validProviderResult.groundingSelections[0]!, sceneId: "scene-2" },
+      ],
+    }).map((proposal) => proposal.sceneId)).toEqual(["scene-001", "scene-002"]);
+  });
+
+  it("does not fabricate missing Scene grounding selections", () => {
+    expect(bindSceneGroundingProposalIdsByPlanOrder({
+      sceneIds: ["scene-001", "scene-002"],
+      proposals: [validProviderResult.groundingSelections[0]!],
+    })).toHaveLength(1);
   });
 
   it("fails closed when structured fields conflict with canonical generation authority", async () => {

@@ -61,6 +61,17 @@ export function normalizeExistenceOnlySceneGrounding(
   }));
 }
 
+export function bindSceneGroundingProposalIdsByPlanOrder(input: {
+  sceneIds: readonly string[];
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
+}): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  if (input.sceneIds.length !== input.proposals.length) return [...input.proposals];
+  return input.proposals.map((proposal, index) => ({
+    ...proposal,
+    sceneId: input.sceneIds[index]!,
+  }));
+}
+
 const ScenePlanProviderOutputSchema = z.object({
   scenePlan: z.array(z.object({
     id: z.string().trim().min(1),
@@ -398,10 +409,14 @@ export async function generateScenePlan(input: {
     ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema }),
   ).min(1).parse(providerOutput.scenePlan);
   if (!input.assetGrounding) return { scenePlan: rawScenePlan, usage: completion.usage };
+  const sceneIds = rawScenePlan.map((scene) => scene.id);
   const lineageByScene = bindSceneGroundingLineage({
     context: input.assetGrounding,
-    sceneIds: rawScenePlan.map((scene) => scene.id),
-    proposals: normalizeExistenceOnlySceneGrounding(providerOutput.groundingSelections),
+    sceneIds,
+    proposals: normalizeExistenceOnlySceneGrounding(bindSceneGroundingProposalIdsByPlanOrder({
+      sceneIds,
+      proposals: providerOutput.groundingSelections,
+    })),
   });
   const acceptedAssetIds = new Set(input.assetGrounding.bindings.map((binding) => binding.assetId));
   const productBindingIds = new Set(
