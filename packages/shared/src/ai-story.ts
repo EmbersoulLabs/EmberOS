@@ -297,6 +297,29 @@ export const ScenePlanItemSchema = z.object({
 
 export type ScenePlanItem = z.infer<typeof ScenePlanItemSchema>;
 
+export const AI_STORY_SHOT_AUTHORITY_LINEAGE_VERSION =
+  "ai-story-shot-authority-lineage.v1" as const;
+
+/**
+ * Immutable planning authority copied from the exact parent Scene after the
+ * model has proposed camera language. The model never authors this object.
+ */
+export const AiStoryShotAuthorityLineageSchema = z.object({
+  contractVersion: z.literal(AI_STORY_SHOT_AUTHORITY_LINEAGE_VERSION),
+  planningPackageId: z.string().uuid(),
+  storyId: z.string().uuid(),
+  storyVersionId: z.string().uuid(),
+  matchingResultId: z.string().uuid(),
+  sceneId: NonEmptyTextSchema,
+  sceneOrder: z.number().int().nonnegative(),
+  generationAuthority: AiStorySceneGenerationAuthoritySchema,
+  groundingLineage: AiStorySceneGroundingLineageSchema,
+}).strict();
+
+export type AiStoryShotAuthorityLineage = z.infer<
+  typeof AiStoryShotAuthorityLineageSchema
+>;
+
 export const ShotPlanItemSchema = z.object({
   id: NonEmptyTextSchema,
   sceneId: NonEmptyTextSchema,
@@ -310,6 +333,8 @@ export const ShotPlanItemSchema = z.object({
   emotion: NonEmptyTextSchema,
   information: NonEmptyTextSchema,
   order: z.number().int().nonnegative(),
+  /** Optional only for historical planning-package read compatibility. */
+  authorityLineage: AiStoryShotAuthorityLineageSchema.optional(),
 });
 
 export type ShotPlanItem = z.infer<typeof ShotPlanItemSchema>;
@@ -446,6 +471,8 @@ export const AiStoryAnimationPackageCanonicalSceneAuthoritySchema = z.object({
 }).strict();
 
 export const AnimationPackagePayloadSchema = z.object({
+  /** Exact draft Package whose persisted Scene authority fed Shot Planning. */
+  sourcePlanningPackageId: z.string().uuid().optional(),
   story: AiStoryStructuredDraftSchema,
   characters: z.array(CreativeContextCharacterSchema),
   creativeContext: CreativeContextSchema,
@@ -471,12 +498,21 @@ export type AiStoryAnimationPackageCanonicalSceneAuthority = z.infer<
 
 /** Strict new-write contract. Historical reads continue through AnimationPackagePayloadSchema. */
 export const AuthoritativeAnimationPackagePayloadSchema = AnimationPackagePayloadSchema.extend({
+  sourcePlanningPackageId: z.string().uuid().optional(),
   scenePlan: z.array(ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema })).min(1),
   canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema.extend({
     scenes: z.array(AiStoryAnimationPackageCanonicalSceneBindingSchema.extend({
       generationAuthority: AiStorySceneGenerationAuthoritySchema,
     })).min(1),
   }),
+}).superRefine((value, context) => {
+  if (value.scenePlan.some((scene) => scene.groundingLineage) && !value.sourcePlanningPackageId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourcePlanningPackageId"],
+      message: "Grounded Animation Packages require the exact source Planning Package",
+    });
+  }
 });
 export type AuthoritativeAnimationPackagePayload = z.infer<
   typeof AuthoritativeAnimationPackagePayloadSchema

@@ -206,6 +206,26 @@ export function compileSceneExecutionIntents(
     const persistedGenerationAuthority = generationAuthority;
     const sceneReferencedAssetIds = generationAuthority.effectiveReferenceIds;
     const sceneShots = shotsSorted.filter((s) => s.sceneId === scene.id);
+    if (sceneShots.length === 0) {
+      throw new Error("ANIMATION_PACKAGE_SCENE_SHOT_COVERAGE_INVALID");
+    }
+    if (scene.groundingLineage) {
+      for (const shot of sceneShots) {
+        const lineage = shot.authorityLineage;
+        if (
+          !lineage ||
+          lineage.planningPackageId !== pkg.sourcePlanningPackageId ||
+          lineage.storyId !== ctx.storyId ||
+          lineage.storyVersionId !== ctx.storyVersionId ||
+          lineage.sceneId !== scene.id ||
+          lineage.sceneOrder !== scene.order ||
+          stableJson(lineage.generationAuthority) !== stableJson(scene.generationAuthority) ||
+          stableJson(lineage.groundingLineage) !== stableJson(scene.groundingLineage)
+        ) {
+          throw new Error("ANIMATION_PACKAGE_SHOT_AUTHORITY_LINEAGE_INVALID");
+        }
+      }
+    }
     const shotReferences = sceneShots.map((shot) => ({
       shotId: shot.id,
       sceneId: canonical.sceneId,
@@ -258,11 +278,17 @@ export function compileSceneExecutionIntents(
         focus: shot.focus,
         emotion: shot.emotion,
         information: shot.information,
+        ...(shot.authorityLineage
+          ? { authorityLineageFingerprint: integrityHash(shot.authorityLineage) }
+          : {}),
       })),
       characterReferences,
       referencedAssetIds: sceneReferencedAssetIds,
       ...(persistedGenerationAuthority
         ? { generationAuthority: persistedGenerationAuthority }
+        : {}),
+      ...(scene.groundingLineage
+        ? { groundingLineage: scene.groundingLineage }
         : {}),
       worldContinuity: pkg.worldContinuity as unknown as Record<string, unknown>,
       productIdentityConstraints: [...PRODUCT_IDENTITY_CONSTRAINTS],

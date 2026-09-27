@@ -807,8 +807,22 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   const orderedShots = [...input.instructions.shots].sort(
     (left, right) => left.order - right.order || left.shotId.localeCompare(right.shotId)
   );
+  const groundedFacts = input.instructions.groundingLineage
+    ? [...new Set(input.instructions.groundingLineage.evidence.flatMap((item) => item.groundedFacts))]
+    : [];
+  const narrativeIntent = input.instructions.groundingLineage?.narrativeIntent ?? "";
+  const observedVisualClaims = input.instructions.groundingLineage?.visualClaims
+    .filter((claim) => claim.evidenceLevel === "OBSERVED_APPEARANCE")
+    .map((claim) => `${claim.subject}: ${claim.detail}`) ?? [];
   const scenePrompt = [
     input.instructions.purpose,
+    narrativeIntent ? `Narrative intent: ${narrativeIntent}` : "",
+    groundedFacts.length > 0
+      ? `Grounded facts (factual authority; not implicit Provider image references): ${groundedFacts.join("; ")}`
+      : "",
+    observedVisualClaims.length > 0
+      ? `Observed visual authority: ${observedVisualClaims.join("; ")}`
+      : "",
     input.instructions.continuityNotes
       ? `Continuity: ${input.instructions.continuityNotes}`
       : "",
@@ -842,6 +856,15 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     }),
     sections: [
       { section: "SCENE_PURPOSE" as const, facts: [input.instructions.purpose] },
+      ...(narrativeIntent
+        ? [{ section: "SCENE_CONTEXT" as const, facts: [narrativeIntent] }]
+        : []),
+      ...(groundedFacts.length > 0
+        ? [{ section: "REQUIRED_EVIDENCE" as const, facts: groundedFacts }]
+        : []),
+      ...(observedVisualClaims.length > 0
+        ? [{ section: "PRODUCT_AUTHORITY" as const, facts: observedVisualClaims }]
+        : []),
       ...(input.instructions.continuityNotes
         ? [{ section: "ENTRY_STATE" as const, facts: [input.instructions.continuityNotes] }]
         : []),

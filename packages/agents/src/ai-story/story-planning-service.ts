@@ -9,6 +9,7 @@ import { callJsonModel, callStructuredJsonModel } from "../llm";
 import type { CertificationPlanningStage } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
+  AI_STORY_SHOT_AUTHORITY_LINEAGE_VERSION,
   AiStorySceneGenerationAuthoritySchema,
   AiStorySceneGroundingProposalSchema,
   AiStoryScriptVersionSchema,
@@ -599,12 +600,56 @@ export async function generateScenePlan(input: {
   return { scenePlan, usage: completion.usage };
 }
 
+export function bindShotPlanAuthorityLineage(input: {
+  planningPackageId?: string;
+  scenePlan: ScenePlanItem[];
+  shotPlan: ShotPlanItem[];
+}): ShotPlanItem[] {
+  const sceneById = new Map(input.scenePlan.map((scene) => [scene.id, scene]));
+  const seenShotIds = new Set<string>();
+  const shotPlan = input.shotPlan.map((shot) => {
+    if (seenShotIds.has(shot.id)) throw new Error(`SHOT_PLAN_DUPLICATE_ID:${shot.id}`);
+    seenShotIds.add(shot.id);
+    const scene = sceneById.get(shot.sceneId);
+    if (!scene) throw new Error(`SHOT_PLAN_SCENE_AUTHORITY_INVALID:${shot.sceneId}`);
+    if (!scene.generationAuthority && !scene.groundingLineage) return shot;
+    if (!scene.generationAuthority || !scene.groundingLineage) {
+      throw new Error(`SHOT_PLAN_SCENE_AUTHORITY_REQUIRED:${scene.id}`);
+    }
+    if (!input.planningPackageId) {
+      throw new Error("SHOT_PLAN_SOURCE_PACKAGE_AUTHORITY_REQUIRED");
+    }
+    return ShotPlanItemSchema.parse({
+      ...shot,
+      authorityLineage: {
+        contractVersion: AI_STORY_SHOT_AUTHORITY_LINEAGE_VERSION,
+        planningPackageId: input.planningPackageId,
+        storyId: scene.groundingLineage.storyId,
+        storyVersionId: scene.groundingLineage.storyVersionId,
+        matchingResultId: scene.groundingLineage.matchingResultId,
+        sceneId: scene.id,
+        sceneOrder: scene.order,
+        generationAuthority: scene.generationAuthority,
+        groundingLineage: scene.groundingLineage,
+      },
+    });
+  });
+  for (const scene of input.scenePlan) {
+    if (!shotPlan.some((shot) => shot.sceneId === scene.id)) {
+      throw new Error(`SHOT_PLAN_SCENE_COVERAGE_REQUIRED:${scene.id}`);
+    }
+  }
+  return shotPlan;
+}
+
 export async function generateShotPlan(input: {
   story: AiStoryStructuredDraft;
   creativeContext: CreativeContext;
   directorThinking: DirectorThinking;
   storyBeats: StoryBeat[];
   scenePlan: ScenePlanItem[];
+  /** Exact persisted planning package whose Scene Plan is being consumed. */
+  planningPackageId?: string;
   /** Required by the normal staged runtime; optional only for legacy all-at-once compatibility. */
   canonicalScript?: AiStoryScriptVersion;
 }): Promise<{ shotPlan: ShotPlanItem[]; usage: Usage }> {
@@ -653,7 +698,14 @@ export async function generateShotPlan(input: {
     z.array(ShotPlanItemSchema).min(1),
     (result) => result.shotPlan
   );
-  return { shotPlan: value, usage };
+  return {
+    shotPlan: bindShotPlanAuthorityLineage({
+      planningPackageId: input.planningPackageId,
+      scenePlan: input.scenePlan,
+      shotPlan: value,
+    }),
+    usage,
+  };
 }
 
 export async function generateCharacterContinuity(input: {
@@ -748,11 +800,23 @@ export function buildAnimationPackage(input: {
   usage?: Usage;
   episodeContinuity?: import("@ceo-agent/shared").EpisodeContinuityPlanningContext;
 }): AnimationPackagePayload {
+  const sourcePlanningPackageIds = [...new Set(
+    input.shotPlan
+      .map((shot) => shot.authorityLineage?.planningPackageId)
+      .filter((value): value is string => Boolean(value)),
+  )];
+  const groundedSceneCount = input.scenePlan.filter((scene) => scene.groundingLineage).length;
+  if (groundedSceneCount > 0 && sourcePlanningPackageIds.length !== 1) {
+    throw new Error("ANIMATION_PACKAGE_SOURCE_PLANNING_AUTHORITY_INVALID");
+  }
   const creativeContext: CreativeContext = {
     ...input.creativeContext,
     directorContext: input.directorThinking,
   };
   const draftPackage = AnimationPackagePayloadSchema.parse({
+    ...(sourcePlanningPackageIds[0]
+      ? { sourcePlanningPackageId: sourcePlanningPackageIds[0] }
+      : {}),
     story: input.story,
     characters: creativeContext.characterContext.characters,
     creativeContext,

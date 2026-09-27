@@ -11,6 +11,7 @@
  */
 import { z } from "zod";
 import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { AiStorySceneGroundingLineageSchema } from "./ai-story-scene-grounding";
 
 export const AI_STORY_EXECUTION_CONTRACT_VERSION = "1" as const;
 
@@ -166,6 +167,7 @@ const AiStoryHistoricalCompiledShotSchema = z.object({
   focus: NonEmptyTextSchema,
   emotion: z.string().default(""),
   information: NonEmptyTextSchema,
+  authorityLineageFingerprint: IntegrityHashSchema.optional(),
 });
 
 const AiStoryCanonicalCompiledShotSchema =
@@ -196,6 +198,8 @@ export const AiStorySceneCompiledInstructionsSchema = z.object({
   characterReferences: z.array(AiStorySceneCharacterReferenceSchema).default([]),
   referencedAssetIds: z.array(z.string().uuid()).default([]),
   generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
+  /** Optional only for historical instruction-snapshot read compatibility. */
+  groundingLineage: AiStorySceneGroundingLineageSchema.optional(),
   worldContinuity: z.record(z.unknown()).default({}),
   productIdentityConstraints: z.array(NonEmptyTextSchema).min(1),
 });

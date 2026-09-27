@@ -464,30 +464,46 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.scenePlan?.length),
         "Generate Scene Plan before Shot Plan"
       );
-      const canonical = await ensureCurrentFrozenCanonicalScript({
-        db,
-        orgId: ctx.campaign.orgId,
-        workspaceId: ctx.campaign.workspaceId,
-        campaignId,
-        storyId,
-        storyVersionId: ctx.loaded.currentVersion!.id,
-        actorUserId: input.actorUserId,
-        story: ctx.storyDraft,
-        storyBeats: draft.storyBeats!,
-        scenePlan: draft.scenePlan!,
-        creativeContext: draft.creativeContext!,
-        directorThinking: draft.directorThinking!,
-        characterAuthorities: ctx.characterAuthorities,
-      });
-      usage = addUsage(usage, canonical.usage);
-      stageCostUsd += canonical.usage.costUsd;
+      let canonicalScript;
+      if (requiresProductStoryCanonicalOutline(ctx.loaded.story.outlineProfile)) {
+        // A durable Scene Plan may predate Outline materialization. Converge
+        // the exact current PRODUCT_STORY authority before producing Script;
+        // this is deterministic and does not re-run Scene Planning.
+        await ensureCurrentFrozenCanonicalOutline({
+          db,
+          campaignId,
+          storyId,
+          storyVersionId: ctx.loaded.currentVersion!.id,
+          actorUserId: input.actorUserId,
+          proposedStoryBeats: draft.storyBeats!,
+        });
+        const canonical = await ensureCurrentFrozenCanonicalScript({
+          db,
+          orgId: ctx.campaign.orgId,
+          workspaceId: ctx.campaign.workspaceId,
+          campaignId,
+          storyId,
+          storyVersionId: ctx.loaded.currentVersion!.id,
+          actorUserId: input.actorUserId,
+          story: ctx.storyDraft,
+          storyBeats: draft.storyBeats!,
+          scenePlan: draft.scenePlan!,
+          creativeContext: draft.creativeContext!,
+          directorThinking: draft.directorThinking!,
+          characterAuthorities: ctx.characterAuthorities,
+        });
+        canonicalScript = canonical.script;
+        usage = addUsage(usage, canonical.usage);
+        stageCostUsd += canonical.usage.costUsd;
+      }
       const generated = await generateShotPlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
         directorThinking: draft.directorThinking!,
         storyBeats: draft.storyBeats!,
         scenePlan: draft.scenePlan!,
-        canonicalScript: canonical.script,
+        planningPackageId: latestPackage?.id,
+        ...(canonicalScript ? { canonicalScript } : {}),
       });
       usage = addUsage(usage, generated.usage);
       stageCostUsd += generated.usage.costUsd;

@@ -190,8 +190,10 @@ describe("AI Story Canonical Script producer lifecycle V1", () => {
   it("gates normal Shot Plan generation on the Script and passes exact FROZEN authority with usage once", () => {
     const runner = readFileSync("apps/web/src/lib/ai-story-planning-runner.ts", "utf8");
     const shot = runner.slice(runner.indexOf('case "shot_plan"'), runner.indexOf('case "character_continuity"'));
+    expect(shot.indexOf("ensureCurrentFrozenCanonicalOutline")).toBeLessThan(shot.indexOf("ensureCurrentFrozenCanonicalScript"));
     expect(shot.indexOf("ensureCurrentFrozenCanonicalScript")).toBeLessThan(shot.indexOf("generateShotPlan"));
-    expect(shot).toContain("canonicalScript: canonical.script");
+    expect(shot).toContain("canonicalScript = canonical.script");
+    expect(shot).toContain("planningPackageId: latestPackage?.id");
     expect(shot).toContain("usage = addUsage(usage, canonical.usage)");
     const planner = readFileSync("packages/agents/src/ai-story/story-planning-service.ts", "utf8");
     expect(planner).toContain("The supplied Canonical Script is authoritative");
