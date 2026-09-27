@@ -11,6 +11,7 @@ import {
   buildScenePlanProviderOutputSchema,
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
+  removeUnsupportedObservedAppearance,
 } from "../packages/agents/src/ai-story/story-planning-service";
 
 const input = {
@@ -162,6 +163,40 @@ describe("AI Story Scene Plan strict structured output", () => {
     });
     expect(schema.safeParse(withBinding(accepted)).success).toBe(true);
     expect(schema.safeParse(withBinding(invented)).success).toBe(false);
+  });
+
+  it("downgrades unsupported model appearance instead of accepting invented detail", () => {
+    const bindingId = "80000000-0000-4000-8000-000000000010";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "PRODUCT_AUTHORITY" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: ["rice"],
+        namedItems: ["Nasi Lemak"],
+        productCandidates: [{
+          name: "Nasi Lemak",
+          relationship: "PRIMARY_PRODUCT" as const,
+          evidence: ["rice and sambal composition"],
+        }],
+      }],
+    };
+    const proposals = [{
+      ...validProviderResult.groundingSelections[0]!,
+      evidence: [{ bindingId, groundedFacts: ["Nasi Lemak"] }],
+      visualClaims: [{
+        subject: "Nasi Lemak",
+        detail: "a golden restaurant-quality dish",
+        evidenceLevel: "OBSERVED_APPEARANCE" as const,
+      }],
+    }];
+    expect(removeUnsupportedObservedAppearance({ context, proposals })[0]?.visualClaims[0]).toEqual({
+      subject: "Nasi Lemak",
+      detail: "Nasi Lemak",
+      evidenceLevel: "EXISTENCE_ONLY",
+    });
   });
 
   it("fails closed when structured fields conflict with canonical generation authority", async () => {

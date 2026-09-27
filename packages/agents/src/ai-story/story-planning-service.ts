@@ -72,6 +72,36 @@ export function bindSceneGroundingProposalIdsByPlanOrder(input: {
   }));
 }
 
+export function removeUnsupportedObservedAppearance(input: {
+  context: AiStoryScenePlanningGroundingContext;
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
+}): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  const bindingById = new Map(input.context.bindings.map((binding) => [binding.bindingId, binding]));
+  const normalized = (value: string) => value.trim().toLocaleLowerCase();
+  return input.proposals.map((proposal) => {
+    const selected = proposal.evidence
+      .map((selection) => bindingById.get(selection.bindingId))
+      .filter((binding): binding is NonNullable<typeof binding> => Boolean(binding));
+    return {
+      ...proposal,
+      visualClaims: proposal.visualClaims.map((claim) => {
+        if (claim.evidenceLevel !== "OBSERVED_APPEARANCE") return claim;
+        const supported = selected.some((binding) =>
+          binding.role === "PRODUCT_AUTHORITY" &&
+          binding.productCandidates.some((candidate) =>
+            normalized(candidate.name) === normalized(claim.subject) &&
+            candidate.relationship !== "CATALOG_CHOICE") &&
+          binding.observedFacts.some((fact) => normalized(fact) === normalized(claim.detail)));
+        return supported ? claim : {
+          subject: claim.subject,
+          detail: claim.subject,
+          evidenceLevel: "EXISTENCE_ONLY" as const,
+        };
+      }),
+    };
+  });
+}
+
 const ScenePlanProviderOutputSchema = z.object({
   scenePlan: z.array(z.object({
     id: z.string().trim().min(1),
@@ -427,12 +457,16 @@ export async function generateScenePlan(input: {
   ).min(1).parse(providerOutput.scenePlan);
   if (!input.assetGrounding) return { scenePlan: rawScenePlan, usage: completion.usage };
   const sceneIds = rawScenePlan.map((scene) => scene.id);
+  const orderedGrounding = bindSceneGroundingProposalIdsByPlanOrder({
+    sceneIds,
+    proposals: providerOutput.groundingSelections,
+  });
   const lineageByScene = bindSceneGroundingLineage({
     context: input.assetGrounding,
     sceneIds,
-    proposals: normalizeExistenceOnlySceneGrounding(bindSceneGroundingProposalIdsByPlanOrder({
-      sceneIds,
-      proposals: providerOutput.groundingSelections,
+    proposals: normalizeExistenceOnlySceneGrounding(removeUnsupportedObservedAppearance({
+      context: input.assetGrounding,
+      proposals: orderedGrounding,
     })),
   });
   const acceptedAssetIds = new Set(input.assetGrounding.bindings.map((binding) => binding.assetId));
