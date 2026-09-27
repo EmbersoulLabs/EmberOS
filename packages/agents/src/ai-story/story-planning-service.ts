@@ -10,6 +10,7 @@ import type { CertificationPlanningStage } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
   AiStorySceneGenerationAuthoritySchema,
+  AiStorySceneGroundingProposalSchema,
   AiStoryScriptVersionSchema,
   CharacterContinuityEntrySchema,
   CreativeContextSchema,
@@ -33,6 +34,8 @@ import {
   type StoryBeat,
   type WorldContinuity,
   WorldContinuitySchema,
+  bindSceneGroundingLineage,
+  type AiStoryScenePlanningGroundingContext,
 } from "@ceo-agent/shared";
 import { buildAiStoryAnimationPackageCanonicalSceneAuthorityV1 } from "@ceo-agent/shared/server";
 import {
@@ -64,6 +67,7 @@ const ScenePlanProviderOutputSchema = z.object({
       productVisualIdentityRequirement: z.enum(["NONE", "REQUIRED"]),
     }).strict(),
   }).strict()).min(1),
+  groundingSelections: z.array(AiStorySceneGroundingProposalSchema).default([]),
 }).strict();
 
 export type AiStoryPlanningCampaignContext = {
@@ -360,6 +364,8 @@ export async function generateScenePlan(input: {
   creativeContext: CreativeContext;
   directorThinking: DirectorThinking;
   storyBeats: StoryBeat[];
+  /** Required by the normal staged runtime; optional for legacy all-at-once compatibility. */
+  assetGrounding?: AiStoryScenePlanningGroundingContext;
 }): Promise<{ scenePlan: ScenePlanItem[]; usage: Usage }> {
   const completion = await callStructuredJsonModel({
     system: [
@@ -367,6 +373,10 @@ export async function generateScenePlan(input: {
       "Create scenes that cover every story beat, merging beats only when continuityNotes explicitly say which beat was merged.",
       "Use sequential order values starting at 0 and stable scene ids.",
       "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
+      "The supplied accepted Asset grounding authority is immutable. For every Scene return one groundingSelections entry using only exact accepted binding IDs and exact facts from those bindings.",
+      "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
+      "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",
+      "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims.",
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),
@@ -378,9 +388,43 @@ export async function generateScenePlan(input: {
     throw new Error(`SCENE_PLAN_${completion.decodeIssue}`);
   }
   const providerOutput = ScenePlanProviderOutputSchema.parse(completion.result);
-  const scenePlan = z.array(
+  const rawScenePlan = z.array(
     ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema }),
   ).min(1).parse(providerOutput.scenePlan);
+  if (!input.assetGrounding) return { scenePlan: rawScenePlan, usage: completion.usage };
+  const lineageByScene = bindSceneGroundingLineage({
+    context: input.assetGrounding,
+    sceneIds: rawScenePlan.map((scene) => scene.id),
+    proposals: providerOutput.groundingSelections,
+  });
+  const acceptedAssetIds = new Set(input.assetGrounding.bindings.map((binding) => binding.assetId));
+  const productBindingIds = new Set(
+    input.assetGrounding.bindings
+      .filter((binding) => binding.role === "PRODUCT_AUTHORITY")
+      .map((binding) => binding.bindingId),
+  );
+  const scenePlan = rawScenePlan.map((scene) => {
+    const lineage = lineageByScene.get(scene.id);
+    if (!lineage) throw new Error(`SCENE_GROUNDING_AUTHORITY_REQUIRED:${scene.id}`);
+    const referenceIds = [
+      ...(scene.generationAuthority && "referenceAssetIds" in scene.generationAuthority
+        ? scene.generationAuthority.referenceAssetIds
+        : []),
+      ...(scene.generationAuthority && "firstFrameAssetId" in scene.generationAuthority && scene.generationAuthority.firstFrameAssetId
+        ? [scene.generationAuthority.firstFrameAssetId]
+        : []),
+    ];
+    if (referenceIds.some((assetId) => !acceptedAssetIds.has(assetId))) {
+      throw new Error(`SCENE_GENERATION_REFERENCE_OUTSIDE_ACCEPTED_BINDINGS:${scene.id}`);
+    }
+    if (
+      scene.generationAuthority.productVisualIdentityRequirement === "REQUIRED" &&
+      !lineage.evidence.some((evidence) => productBindingIds.has(evidence.bindingId))
+    ) {
+      throw new Error(`SCENE_PRODUCT_AUTHORITY_REQUIRED:${scene.id}`);
+    }
+    return ScenePlanItemSchema.parse({ ...scene, groundingLineage: lineage });
+  });
   return { scenePlan, usage: completion.usage };
 }
 

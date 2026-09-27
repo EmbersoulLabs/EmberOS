@@ -5,6 +5,7 @@ import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
 import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
 import { AiStoryOutlineProfileReferenceSchema } from "./ai-story-outline-profile";
 import { EpisodeContinuityPlanningContextSchema } from "./ai-story-episode-continuity";
+import { AiStorySceneGroundingLineageSchema } from "./ai-story-scene-grounding";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -291,6 +292,7 @@ export const ScenePlanItemSchema = z.object({
   continuityNotes: z.string().default(""),
   order: z.number().int().nonnegative(),
   generationAuthority: AiStorySceneGenerationAuthoritySchema.optional(),
+  groundingLineage: AiStorySceneGroundingLineageSchema.optional(),
 });
 
 export type ScenePlanItem = z.infer<typeof ScenePlanItemSchema>;

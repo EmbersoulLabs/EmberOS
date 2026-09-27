@@ -32,6 +32,15 @@ const input = {
   },
   directorThinking: { coreMessage: "Fresh craft", hero: "Florist", conflict: "Time", turningPoint: "Bouquet completes", climax: "Presentation", takeaway: "Order today" },
   storyBeats: [{ id: "beat-001", name: "Opening", purpose: "Introduce", order: 0, summary: "The florist begins." }],
+  assetGrounding: {
+    contractVersion: "ai-story-scene-grounding-context.v1" as const,
+    orgId: "10000000-0000-4000-8000-000000000001",
+    workspaceId: "20000000-0000-4000-8000-000000000002",
+    storyId: "30000000-0000-4000-8000-000000000003",
+    storyVersionId: "40000000-0000-4000-8000-000000000004",
+    matchingResultId: "50000000-0000-4000-8000-000000000005",
+    bindings: [],
+  },
 };
 
 const validProviderResult = {
@@ -51,6 +60,13 @@ const validProviderResult = {
       productVisualIdentityRequirement: "NONE",
     },
   }],
+  groundingSelections: [{
+    sceneId: "scene-001",
+    narrativeIntent: "Introduce the florist.",
+    visualIntent: "Show the florist in the flower shop.",
+    evidence: [],
+    visualClaims: [],
+  }],
 };
 
 describe("AI Story Scene Plan strict structured output", () => {
@@ -61,7 +77,12 @@ describe("AI Story Scene Plan strict structured output", () => {
 
     const result = await generateScenePlan(input);
 
-    expect(result.scenePlan).toEqual(validProviderResult.scenePlan);
+    expect(result.scenePlan).toMatchObject(validProviderResult.scenePlan);
+    expect(result.scenePlan[0]?.groundingLineage).toMatchObject({
+      storyVersionId: input.assetGrounding.storyVersionId,
+      matchingResultId: input.assetGrounding.matchingResultId,
+      evidence: [],
+    });
     expect(callStructuredJsonModel).toHaveBeenCalledWith(expect.objectContaining({
       schemaName: "ai_story_scene_plan_v1",
       certificationStage: "scene_plan",
@@ -84,6 +105,7 @@ describe("AI Story Scene Plan strict structured output", () => {
             referenceSource: "SCENE_EXPLICIT",
           },
         }],
+        groundingSelections: validProviderResult.groundingSelections,
       },
       usage: { input: 20, output: 10, costUsd: 0.01 },
     });

@@ -1,8 +1,10 @@
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
   AiStoryAssetAnalysisSnapshotSchema,
   AiStoryAssetMatchingResultSchema,
   AiStoryAssetRegistryEntrySchema,
+  AiStorySceneGroundingError,
+  buildScenePlanningGroundingContext,
   type AiStoryAssetMatchingResult,
 } from "@ceo-agent/shared";
 import { getDb } from "../client";
@@ -29,6 +31,76 @@ function fileKind(type: string) {
 
 export class AiStoryAssetMatchingRepository {
   constructor(private readonly db: Db = getDb()) {}
+
+  /**
+   * Loads the one accepted matching authority for the exact frozen Story
+   * Version and resolves its immutable semantic Snapshot lineage. No analyzer
+   * or storage read is performed here.
+   */
+  async loadScenePlanningGroundingContext(input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+  }) {
+    const rows = await this.db
+      .select({ result: schema.aiStoryAssetMatchingResults.result })
+      .from(schema.aiStoryAssetMatchingResults)
+      .where(and(
+        eq(schema.aiStoryAssetMatchingResults.orgId, input.orgId),
+        eq(schema.aiStoryAssetMatchingResults.workspaceId, input.workspaceId),
+        eq(schema.aiStoryAssetMatchingResults.storyId, input.storyId),
+        eq(schema.aiStoryAssetMatchingResults.storyVersionId, input.storyVersionId),
+      ))
+      .orderBy(desc(schema.aiStoryAssetMatchingResults.createdAt))
+      .limit(2);
+    if (rows.length !== 1) {
+      throw new AiStorySceneGroundingError(
+        "SCENE_GROUNDING_AUTHORITY_REQUIRED",
+        rows.length === 0
+          ? "Scene Planning requires an accepted Asset matching result for the frozen Story Version"
+          : "Scene Planning found ambiguous accepted Asset matching authority for the frozen Story Version",
+      );
+    }
+    const result = AiStoryAssetMatchingResultSchema.parse(rows[0]!.result);
+    if (
+      result.orgId !== input.orgId ||
+      result.workspaceId !== input.workspaceId ||
+      result.storyId !== input.storyId ||
+      result.storyVersionId !== input.storyVersionId
+    ) {
+      throw new AiStorySceneGroundingError(
+        "SCENE_GROUNDING_STALE_STORY_VERSION",
+        "Accepted Asset matching authority does not belong to the current frozen Story Version",
+      );
+    }
+    const snapshotIds = result.bindings
+      .filter((binding) => binding.status === "ACTIVE" && binding.role !== "UNUSED")
+      .map((binding) => binding.analysisSnapshotId);
+    const snapshotRows = snapshotIds.length === 0 ? [] : await this.db
+      .select()
+      .from(schema.assetAnalysisSnapshots)
+      .where(and(
+        eq(schema.assetAnalysisSnapshots.orgId, input.orgId),
+        eq(schema.assetAnalysisSnapshots.workspaceId, input.workspaceId),
+        inArray(schema.assetAnalysisSnapshots.snapshotId, snapshotIds),
+      ));
+    return buildScenePlanningGroundingContext({
+      result,
+      snapshots: snapshotRows.map((row) => AiStoryAssetAnalysisSnapshotSchema.parse({
+        snapshotId: row.snapshotId,
+        orgId: row.orgId,
+        workspaceId: row.workspaceId,
+        sourceAssetId: row.sourceAssetId,
+        analyzedContentHash: row.analyzedContentHash,
+        analyzerVersion: row.analyzerVersion,
+        schemaVersion: row.schemaVersion,
+        analysis: row.analysis,
+        analysisFingerprint: row.analysisFingerprint,
+        createdAt: row.createdAt.toISOString(),
+      })),
+    });
+  }
 
   /** Reads persisted intelligence only. It has no storage or analyzer dependency. */
   async loadEligibleAnalyzedAssets(input: {

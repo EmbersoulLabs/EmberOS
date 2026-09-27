@@ -4,6 +4,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import {
   AiStoryCharacterAuthorityService,
+  AiStoryAssetMatchingRepository,
   BillingAccountRepositoryImpl,
   ControlledSelfUseAuthorityService,
   PlatformAdminRepositoryImpl,
@@ -29,6 +30,7 @@ import {
 } from "@ceo-agent/agents";
 import {
   AiStoryStructuredDraftSchema,
+  assertScenePlanningGroundingScope,
   STORY_PLANNING_STAGE_ORDER,
   assessBusinessProfileCompletion,
   normalizeBusinessProfileRecord,
@@ -134,6 +136,20 @@ export async function loadAiStoryPlanningContext(
       campaignId,
     })
   );
+  const assetGrounding = await new AiStoryAssetMatchingRepository(
+    db
+  ).loadScenePlanningGroundingContext({
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    storyId,
+    storyVersionId: loaded.currentVersion.id,
+  });
+  assertScenePlanningGroundingScope(assetGrounding, {
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    storyId,
+    storyVersionId: loaded.currentVersion.id,
+  });
   const episodeContinuity = await new PgEpisodeContinuityRuntimeIntegration(
     db
   ).loadForPlanning({
@@ -191,6 +207,7 @@ export async function loadAiStoryPlanningContext(
     ],
     characterAuthorities,
     productAuthorities,
+    assetGrounding,
     episodeContinuity,
   };
 }
@@ -408,6 +425,7 @@ export async function runSinglePlanningStage(input: {
         creativeContext: draft.creativeContext!,
         directorThinking: draft.directorThinking!,
         storyBeats: draft.storyBeats!,
+        assetGrounding: ctx.assetGrounding,
       });
       usage = addUsage(usage, generated.usage);
       stageCostUsd += generated.usage.costUsd;
