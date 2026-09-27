@@ -12,6 +12,7 @@ import {
   buildScenePlanProviderOutputSchema,
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
+  reconcileSupportingOnlyTextToVideoAuthority,
   removeUnsupportedObservedAppearance,
 } from "../packages/agents/src/ai-story/story-planning-service";
 
@@ -228,6 +229,39 @@ describe("AI Story Scene Plan strict structured output", () => {
       bindingId: menuBindingId,
       groundedFacts: ["Ayam Rendang"],
     }]);
+  });
+
+  it("keeps supporting-only T2V evidence outside Product identity authority", () => {
+    const scene = {
+      ...validProviderResult.scenePlan[0]!,
+      generationAuthority: {
+        ...validProviderResult.scenePlan[0]!.generationAuthority,
+        productVisualIdentityRequirement: "REQUIRED" as const,
+      },
+    };
+    const lineage = {
+      contractVersion: "ai-story-scene-grounding-lineage.v1" as const,
+      storyId: input.assetGrounding.storyId,
+      storyVersionId: input.assetGrounding.storyVersionId,
+      matchingResultId: input.assetGrounding.matchingResultId,
+      narrativeIntent: "The customer asks for more sambal.",
+      visualIntent: "Show sambal as a supporting condiment.",
+      evidence: [{
+        bindingId: "80000000-0000-4000-8000-000000000010",
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        semanticSnapshotId: "70000000-0000-4000-8000-000000000008",
+        groundedFacts: ["sambal"],
+      }],
+      visualClaims: [{ subject: "sambal", detail: "sambal", evidenceLevel: "EXISTENCE_ONLY" as const }],
+    };
+
+    expect(reconcileSupportingOnlyTextToVideoAuthority({ scene, lineage }))
+      .toEqual(expect.objectContaining({
+        strategy: "TEXT_TO_VIDEO",
+        referenceSource: "REFERENCE_FREE_T2V",
+        productVisualIdentityRequirement: "NONE",
+      }));
   });
 
   it("fails closed when structured fields conflict with canonical generation authority", async () => {

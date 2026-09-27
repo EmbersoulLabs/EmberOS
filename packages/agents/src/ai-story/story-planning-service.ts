@@ -148,6 +148,25 @@ export function bindMentionedCatalogChoiceEvidence(input: {
   });
 }
 
+export function reconcileSupportingOnlyTextToVideoAuthority(input: {
+  scene: z.infer<typeof ScenePlanItemSchema> & {
+    generationAuthority: z.infer<typeof AiStorySceneGenerationAuthoritySchema>;
+  };
+  lineage: ReturnType<typeof bindSceneGroundingLineage> extends ReadonlyMap<string, infer T> ? T : never;
+}): z.infer<typeof AiStorySceneGenerationAuthoritySchema> {
+  const authority = input.scene.generationAuthority;
+  if (
+    authority.strategy === "TEXT_TO_VIDEO" &&
+    authority.referenceSource === "REFERENCE_FREE_T2V" &&
+    authority.productVisualIdentityRequirement === "REQUIRED" &&
+    !input.lineage.evidence.some((evidence) => evidence.role === "PRODUCT_AUTHORITY") &&
+    input.lineage.visualClaims.every((claim) => claim.evidenceLevel === "EXISTENCE_ONLY")
+  ) {
+    return { ...authority, productVisualIdentityRequirement: "NONE" };
+  }
+  return authority;
+}
+
 const ScenePlanProviderOutputSchema = z.object({
   scenePlan: z.array(z.object({
     id: z.string().trim().min(1),
@@ -485,6 +504,7 @@ export async function generateScenePlan(input: {
       "FIRST_FRAME_IMAGE_TO_VIDEO and PRODUCT_GROUNDED_VIDEO always require productVisualIdentityRequirement REQUIRED. They may never use NONE. TEXT_TO_VIDEO may use REQUIRED only when the Scene still visually depicts a grounded Product.",
       "The supplied accepted Asset grounding authority is immutable. For every Scene return one groundingSelections entry using only exact accepted binding IDs and exact facts from those bindings. Copy bindingId verbatim; never invent or transform a UUID.",
       "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
+      "If a Scene has only SUPPORTING_REFERENCE evidence, use TEXT_TO_VIDEO with REFERENCE_FREE_T2V and productVisualIdentityRequirement NONE. Never select image-conditioned mode or REQUIRED product identity from a supporting-only binding.",
       "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",
       "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims.",
       "Return JSON only and no extra fields.",
@@ -527,24 +547,25 @@ export async function generateScenePlan(input: {
   const scenePlan = rawScenePlan.map((scene) => {
     const lineage = lineageByScene.get(scene.id);
     if (!lineage) throw new Error(`SCENE_GROUNDING_AUTHORITY_REQUIRED:${scene.id}`);
+    const generationAuthority = reconcileSupportingOnlyTextToVideoAuthority({ scene, lineage });
     const referenceIds = [
-      ...(scene.generationAuthority && "referenceAssetIds" in scene.generationAuthority
-        ? scene.generationAuthority.referenceAssetIds
+      ...(generationAuthority && "referenceAssetIds" in generationAuthority
+        ? generationAuthority.referenceAssetIds
         : []),
-      ...(scene.generationAuthority && "firstFrameAssetId" in scene.generationAuthority && scene.generationAuthority.firstFrameAssetId
-        ? [scene.generationAuthority.firstFrameAssetId]
+      ...(generationAuthority && "firstFrameAssetId" in generationAuthority && generationAuthority.firstFrameAssetId
+        ? [generationAuthority.firstFrameAssetId]
         : []),
     ];
     if (referenceIds.some((assetId) => !acceptedAssetIds.has(assetId))) {
       throw new Error(`SCENE_GENERATION_REFERENCE_OUTSIDE_ACCEPTED_BINDINGS:${scene.id}`);
     }
     if (
-      scene.generationAuthority.productVisualIdentityRequirement === "REQUIRED" &&
+      generationAuthority.productVisualIdentityRequirement === "REQUIRED" &&
       !lineage.evidence.some((evidence) => productBindingIds.has(evidence.bindingId))
     ) {
       throw new Error(`SCENE_PRODUCT_AUTHORITY_REQUIRED:${scene.id}`);
     }
-    return ScenePlanItemSchema.parse({ ...scene, groundingLineage: lineage });
+    return ScenePlanItemSchema.parse({ ...scene, generationAuthority, groundingLineage: lineage });
   });
   return { scenePlan, usage: completion.usage };
 }
