@@ -46,3 +46,15 @@ CREATE POLICY ai_story_script_semantic_proposal_insert ON ai_story_script_semant
     SELECT workspace_id FROM workspace_members
     WHERE user_id = auth.uid() AND role IN ('admin', 'operator', 'editor', 'reviewer')
   ));
+
+DROP POLICY IF EXISTS ai_story_script_semantic_proposal_update ON ai_story_script_semantic_proposals;
+CREATE POLICY ai_story_script_semantic_proposal_update ON ai_story_script_semantic_proposals
+  FOR UPDATE TO authenticated
+  USING (workspace_id IN (
+    SELECT workspace_id FROM workspace_members
+    WHERE user_id = auth.uid() AND role IN ('admin', 'operator', 'editor', 'reviewer')
+  ))
+  WITH CHECK (workspace_id IN (
+    SELECT workspace_id FROM workspace_members
+    WHERE user_id = auth.uid() AND role IN ('admin', 'operator', 'editor', 'reviewer')
+  ));

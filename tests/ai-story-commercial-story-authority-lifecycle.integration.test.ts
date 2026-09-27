@@ -44,7 +44,7 @@ describeIntegration("COMMERCIAL_STORY semantic proposal PostgreSQL authority", (
     fixture = await seedRlsFixture(sql);
     await sql.unsafe(`DO $$ BEGIN CREATE ROLE authenticated NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$; CREATE SCHEMA IF NOT EXISTS auth; CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;`);
     await sql.unsafe(readFileSync(resolve(process.cwd(), "packages/db/sql/ai-story-script-semantic-proposal-v1.sql"), "utf8"));
-    await sql.unsafe("GRANT USAGE ON SCHEMA public TO authenticated; GRANT SELECT, INSERT ON ai_story_script_semantic_proposals TO authenticated");
+    await sql.unsafe("GRANT USAGE ON SCHEMA public TO authenticated; GRANT SELECT, INSERT, UPDATE ON ai_story_script_semantic_proposals TO authenticated");
     await sql`insert into ai_stories(id, org_id, workspace_id, campaign_id, title, original_idea, status) values(${I.story}::uuid, ${fixture.orgId}::uuid, ${fixture.workspaceAId}::uuid, ${fixture.campaignAId}::uuid, 'Harbor Watch', 'One lantern', 'draft')`;
     await sql`insert into ai_story_versions(id, story_id, version_number, structured_content, frozen_at) values(${I.versionA}::uuid, ${I.story}::uuid, 1, ${sql.json(draft)}, now())`;
     await sql`insert into ai_story_versions(id, story_id, version_number, structured_content, frozen_at) values(${I.versionB}::uuid, ${I.story}::uuid, 2, ${sql.json(draft)}, now())`;
