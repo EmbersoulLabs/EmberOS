@@ -50,7 +50,12 @@ function asset(id = ids.product) {
   };
 }
 
-function semantics(input?: { addon?: boolean; menu?: boolean; product?: boolean }) {
+function semantics(input?: {
+  addon?: boolean;
+  menu?: boolean;
+  product?: boolean;
+  modelProductFlag?: boolean;
+}) {
   const name = input?.addon ? "Red condiment" : "Main meal";
   return {
     observed: {
@@ -80,13 +85,20 @@ function semantics(input?: { addon?: boolean; menu?: boolean; product?: boolean 
               evidence: ["visible object"],
             },
           ],
-      productGroundingSupported: input?.product !== false,
+      productGroundingSupported:
+        input?.modelProductFlag ?? input?.product !== false,
       characterGroundingSupported: false,
     },
   };
 }
 
-async function analyzed(input?: { id?: string; addon?: boolean; menu?: boolean; product?: boolean }) {
+async function analyzed(input?: {
+  id?: string;
+  addon?: boolean;
+  menu?: boolean;
+  product?: boolean;
+  modelProductFlag?: boolean;
+}) {
   const analyzer = new VisualSemanticAssetAnalyzer(async () => semantics(input));
   return analyzer.analyze({
     asset: { ...asset(input?.id), contentHash: hash },
@@ -133,6 +145,9 @@ describe("P0 visual semantic intelligence and Story grounding", () => {
   });
 
   it("uses a distinct analyzer and schema identity", () => {
+    expect(VISUAL_SEMANTIC_ANALYZER_VERSION).toBe(
+      "emberos-asset-visual-semantic-analyzer.v2"
+    );
     expect(VISUAL_SEMANTIC_ANALYZER_VERSION).not.toBe(ASSET_INTELLIGENCE_ANALYZER_VERSION);
     expect(AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION).not.toBe(ASSET_INTELLIGENCE_SCHEMA_VERSION);
   });
@@ -147,6 +162,15 @@ describe("P0 visual semantic intelligence and Story grounding", () => {
   it("establishes product grounding only from supported evidence", async () => {
     expect((await analyzed()).affordances.productGrounding).toBe(true);
     expect((await analyzed({ product: false })).affordances.productGrounding).toBe(false);
+  });
+
+  it("derives product grounding from cited evidence when the model boolean is conservative", async () => {
+    const result = await analyzed({ modelProductFlag: false });
+    expect(result.affordances.productGrounding).toBe(true);
+    expect(
+      (result.facts.visualSemantics as ReturnType<typeof semantics>).inferred
+        .productGroundingSupported
+    ).toBe(false);
   });
 
   it("keeps add-on semantics distinct from a primary product", async () => {

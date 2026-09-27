@@ -12,7 +12,7 @@ import type {
 } from "./asset-analysis-service";
 
 export const VISUAL_SEMANTIC_ANALYZER_VERSION =
-  "emberos-asset-visual-semantic-analyzer.v1" as const;
+  "emberos-asset-visual-semantic-analyzer.v2" as const;
 
 const ModelSemanticOutputSchema = AiStoryVisualSemanticFactsSchema.omit({
   contractVersion: true,
@@ -108,11 +108,14 @@ export class VisualSemanticAssetAnalyzer implements AssetIntelligenceAnalyzer {
       contractVersion: AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION,
       ...result,
     });
-    const productGrounding =
-      semantics.inferred.productGroundingSupported &&
-      semantics.inferred.productCandidates.some(
-        (candidate) => candidate.confidence >= 0.6 && candidate.evidence.length > 0
-      );
+    // Product grounding is a deterministic affordance derived from the
+    // model's evidence-bearing candidates. Do not make it depend on the
+    // model also remembering to repeat that conclusion in a separate boolean:
+    // production vision responses can contain a high-confidence candidate
+    // with cited evidence while conservatively leaving the boolean false.
+    const productGrounding = semantics.inferred.productCandidates.some(
+      (candidate) => candidate.confidence >= 0.6 && candidate.evidence.length > 0
+    );
     const characterGrounding =
       semantics.inferred.characterGroundingSupported &&
       semantics.observed.people.length > 0;
