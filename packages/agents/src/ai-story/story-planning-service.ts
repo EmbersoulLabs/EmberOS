@@ -59,13 +59,7 @@ const ScenePlanProviderOutputSchema = z.object({
     transition: z.string(),
     continuityNotes: z.string(),
     order: z.number().int().nonnegative(),
-    generationAuthority: z.object({
-      strategy: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO", "PRODUCT_GROUNDED_VIDEO"]),
-      referenceSource: z.enum(["SCENE_EXPLICIT", "STORY_INHERITED", "REFERENCE_FREE_T2V", "CHARACTER_SYNTHETIC_ANCHOR"]),
-      referenceAssetIds: z.array(z.string().uuid()),
-      firstFrameAssetId: z.string().uuid().nullable(),
-      productVisualIdentityRequirement: z.enum(["NONE", "REQUIRED"]),
-    }).strict(),
+    generationAuthority: AiStorySceneGenerationAuthoritySchema,
   }).strict()).min(1),
   groundingSelections: z.array(AiStorySceneGroundingProposalSchema).default([]),
 }).strict();
@@ -373,6 +367,7 @@ export async function generateScenePlan(input: {
       "Create scenes that cover every story beat, merging beats only when continuityNotes explicitly say which beat was merged.",
       "Use sequential order values starting at 0 and stable scene ids.",
       "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
+      "FIRST_FRAME_IMAGE_TO_VIDEO and PRODUCT_GROUNDED_VIDEO always require productVisualIdentityRequirement REQUIRED. They may never use NONE. TEXT_TO_VIDEO may use REQUIRED only when the Scene still visually depicts a grounded Product.",
       "The supplied accepted Asset grounding authority is immutable. For every Scene return one groundingSelections entry using only exact accepted binding IDs and exact facts from those bindings.",
       "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
       "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",

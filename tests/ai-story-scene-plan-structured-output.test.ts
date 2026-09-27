@@ -87,6 +87,20 @@ describe("AI Story Scene Plan strict structured output", () => {
       schemaName: "ai_story_scene_plan_v1",
       certificationStage: "scene_plan",
     }));
+    const structuredSchema = callStructuredJsonModel.mock.calls[0]?.[0]?.schema;
+    expect(structuredSchema.safeParse({
+      ...validProviderResult,
+      scenePlan: [{
+        ...validProviderResult.scenePlan[0],
+        generationAuthority: {
+          strategy: "FIRST_FRAME_IMAGE_TO_VIDEO",
+          referenceSource: "SCENE_EXPLICIT",
+          referenceAssetIds: [input.assetGrounding.bindings[0]?.assetId ?? "60000000-0000-4000-8000-000000000006"],
+          firstFrameAssetId: input.assetGrounding.bindings[0]?.assetId ?? "60000000-0000-4000-8000-000000000006",
+          productVisualIdentityRequirement: "NONE",
+        },
+      }],
+    }).success).toBe(false);
   });
 
   it("fails closed on a provider decode issue", async () => {
