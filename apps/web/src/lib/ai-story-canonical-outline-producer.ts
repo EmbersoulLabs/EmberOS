@@ -15,7 +15,7 @@ import {
   type CampaignObjectiveId,
   type StoryBeat,
 } from "@ceo-agent/shared";
-import { composeAiStoryCanonicalOutlineV1 } from "@ceo-agent/shared/server";
+import { composeAiStoryCanonicalCommercialOutlineV1, composeAiStoryCanonicalOutlineV1 } from "@ceo-agent/shared/server";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
 
 type Db = ReturnType<typeof getDb>;
@@ -168,8 +168,8 @@ export async function ensureCurrentFrozenCanonicalOutline(
     deps.resolveProductAuthorityIds(input.db, upstream),
     deps.resolveCharacterAuthorities(input.db, upstream, input.actorUserId),
   ]);
-  if (profile.profileId !== "PRODUCT_STORY") {
-    throw new AiStoryCanonicalOutlineProducerError("CANONICAL_OUTLINE_PROFILE_UNSUPPORTED", "V1 producer requires PRODUCT_STORY authority");
+  if (profile.profileId !== "PRODUCT_STORY" && profile.profileId !== "COMMERCIAL_STORY") {
+    throw new AiStoryCanonicalOutlineProducerError("CANONICAL_OUTLINE_PROFILE_UNSUPPORTED", "V1 producer requires PRODUCT_STORY or COMMERCIAL_STORY authority");
   }
   const storyDraft = AiStoryStructuredDraftSchema.parse(upstream.structuredContent);
   const scope: AiStoryOutlineScope = {
@@ -183,14 +183,13 @@ export async function ensureCurrentFrozenCanonicalOutline(
   };
   const history = await deps.history(input.db, scope);
   const latest = history.at(-1);
-  const desired = composeAiStoryCanonicalOutlineV1({
+  const shared = {
     storyId: upstream.storyId,
     storyVersionId: upstream.storyVersionId,
     orgId: upstream.orgId,
     workspaceId: upstream.workspaceId,
     campaignId: upstream.campaignId,
     version: latest?.status === "FROZEN" ? latest.version + 1 : latest?.version ?? 1,
-    profile,
     storyDraft,
     proposedStoryBeats: input.proposedStoryBeats,
     campaignObjective: upstream.campaignObjective,
@@ -201,7 +200,10 @@ export async function ensureCurrentFrozenCanonicalOutline(
     supersedesOutlineVersionId: latest?.status === "FROZEN" ? latest.outlineVersionId : null,
     createdBy: input.actorUserId,
     createdAt: deps.now(),
-  });
+  };
+  const desired = profile.profileId === "COMMERCIAL_STORY"
+    ? composeAiStoryCanonicalCommercialOutlineV1({ ...shared, profile })
+    : composeAiStoryCanonicalOutlineV1({ ...shared, profile });
   const existing = history.find((item) => item.sourceHash === desired.sourceHash);
   if (existing) return advanceToFrozen(input, scope, desired.sourceHash, existing, deps);
   if (latest && incomplete(latest.status)) {

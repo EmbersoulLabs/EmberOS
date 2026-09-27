@@ -1,12 +1,16 @@
 import {
   AiStoryScriptAuthorityService,
+  AiStoryScriptSemanticProposalAuthorityService,
   resolveCurrentFrozenOutlineForStoryVersion,
   type AiStoryScriptScope,
   getDb,
 } from "@ceo-agent/db";
 import { generateAiStoryScriptSemanticProposalV1 } from "@ceo-agent/agents";
 import {
+  AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
+  resolveOutlineBoundProductAuthorityIds,
+  type AiStoryScriptSemanticProposalV1,
   type AiStoryScriptVersion,
   type AiStoryStructuredDraft,
   type CreativeContext,
@@ -60,6 +64,18 @@ export type CanonicalScriptProducerDependencies = {
   validate: (db: Db, scope: AiStoryScriptScope, scriptVersionId: string) => Promise<AiStoryScriptVersion>;
   approve: (db: Db, scope: AiStoryScriptScope, scriptVersionId: string) => Promise<AiStoryScriptVersion>;
   freeze: (db: Db, scope: AiStoryScriptScope, scriptVersionId: string) => Promise<AiStoryScriptVersion>;
+  resolveAuthorizedProposal?: (
+    db: Db,
+    scope: AiStoryScriptScope,
+  ) => Promise<{ proposal: AiStoryScriptSemanticProposalV1; semanticInputFingerprint: string } | null>;
+  persistAuthorizedProposal?: (
+    db: Db,
+    scope: AiStoryScriptScope,
+    proposal: AiStoryScriptSemanticProposalV1,
+    semanticInputFingerprint: string,
+    authorizedAt: string,
+    profileId: "PRODUCT_STORY" | "COMMERCIAL_STORY",
+  ) => Promise<void>;
   now: () => string;
 };
 
@@ -72,6 +88,25 @@ const defaultDependencies: CanonicalScriptProducerDependencies = {
   validate: (db, scope, id) => new AiStoryScriptAuthorityService(db).validate(scope, id),
   approve: (db, scope, id) => new AiStoryScriptAuthorityService(db).approve(scope, id),
   freeze: (db, scope, id) => new AiStoryScriptAuthorityService(db).freeze(scope, id),
+  resolveAuthorizedProposal: async (db, scope) => {
+    const row = await new AiStoryScriptSemanticProposalAuthorityService(db).resolveExact(scope);
+    return row ? { proposal: row.proposal, semanticInputFingerprint: row.semanticInputFingerprint } : null;
+  },
+  persistAuthorizedProposal: async (db, scope, proposal, semanticInputFingerprint, authorizedAt, profileId) => {
+    await new AiStoryScriptSemanticProposalAuthorityService(db).authorize({
+      ...scope,
+      profileId,
+      proposal,
+      semanticInputFingerprint,
+      originatingRunId: semanticInputFingerprint,
+      groundingLineage: {
+        semanticInputFingerprint,
+        storyId: scope.storyId,
+        storyVersionId: scope.storyVersionId,
+      },
+      authorizedAt,
+    });
+  },
   now: () => new Date().toISOString(),
 };
 
@@ -116,13 +151,16 @@ export async function ensureCurrentFrozenCanonicalScript(
     storyVersionId: input.storyVersionId,
   });
   if (!outline) throw new AiStoryCanonicalScriptProducerError("CURRENT_FROZEN_OUTLINE_REQUIRED", "Canonical Script requires the exact current frozen Outline");
-  if (
-    outline.profile.profileId !== "PRODUCT_STORY" || outline.profile.profileVersion !== 1 ||
-    outline.profile.policyFingerprint !== AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT
-  ) {
-    throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_PROFILE_UNSUPPORTED", "V1 Script producer requires exact PRODUCT_STORY v1 authority");
+  const commercial = outline.profile.profileId === "COMMERCIAL_STORY"
+    && outline.profile.profileVersion === 1
+    && outline.profile.policyFingerprint === AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT;
+  const productStory = outline.profile.profileId === "PRODUCT_STORY"
+    && outline.profile.profileVersion === 1
+    && outline.profile.policyFingerprint === AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT;
+  if (!commercial && !productStory) {
+    throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_PROFILE_UNSUPPORTED", "V1 Script producer requires exact PRODUCT_STORY or COMMERCIAL_STORY v1 authority");
   }
-  const productAuthorityIds = [...(outline.productStoryProfile?.productAuthorityIds ?? [])].sort();
+  const productAuthorityIds = resolveOutlineBoundProductAuthorityIds(outline);
   const outlineCharacters = outline.authorityReferences
     .filter((reference) => reference.authorityType === "CHARACTER")
     .map((reference) => ({
@@ -193,16 +231,22 @@ export async function ensureCurrentFrozenCanonicalScript(
     throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_INCOMPLETE_LINEAGE_CONFLICT", "A different-input Script has an incomplete durable lifecycle");
   }
 
-  const generated = await deps.generateSemanticProposal({
-    frozenOutline: outline,
-    story: input.story,
-    storyBeats: input.storyBeats,
-    scenePlan: input.scenePlan,
-    creativeContext: input.creativeContext,
-    directorThinking: input.directorThinking,
-    characterAuthorities: input.characterAuthorities,
-    productAuthorityIds,
-  });
+  const persisted = await (deps.resolveAuthorizedProposal ?? (async () => null))(input.db, scope);
+  if (persisted && persisted.semanticInputFingerprint !== semanticInputFingerprint) {
+    throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE", "Authorized semantic Script proposal does not match this Story Version input");
+  }
+  const generated = persisted
+    ? { semanticProposal: persisted.proposal, usage: zeroUsage() }
+    : await deps.generateSemanticProposal({
+      frozenOutline: outline,
+      story: input.story,
+      storyBeats: input.storyBeats,
+      scenePlan: input.scenePlan,
+      creativeContext: input.creativeContext,
+      directorThinking: input.directorThinking,
+      characterAuthorities: input.characterAuthorities,
+      productAuthorityIds,
+    });
   const material = deps.promoteSemanticProposal({
     storyId: input.storyId,
     storyVersionId: input.storyVersionId,
@@ -230,9 +274,20 @@ export async function ensureCurrentFrozenCanonicalScript(
     createdAt: deps.now(),
   });
   const proposed = await deps.propose(input.db, scope, script);
+  const frozen = await advanceToFrozen(input, scope, proposed, deps);
+  if (!persisted) {
+    await (deps.persistAuthorizedProposal ?? (async () => undefined))(
+      input.db,
+      scope,
+      generated.semanticProposal,
+      semanticInputFingerprint,
+      frozen.frozenAt ?? deps.now(),
+      outline.profile.profileId === "COMMERCIAL_STORY" ? "COMMERCIAL_STORY" : "PRODUCT_STORY",
+    );
+  }
   return {
-    script: await advanceToFrozen(input, scope, proposed, deps),
+    script: frozen,
     usage: generated.usage,
-    semanticWriterCalled: true,
+    semanticWriterCalled: !persisted,
   };
 }

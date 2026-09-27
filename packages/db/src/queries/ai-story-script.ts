@@ -3,7 +3,7 @@ import {
   AiStoryOutlineVersionSchema, AiStoryScriptVersionSchema, assertAiStoryScriptLifecycleTransition,
   validateAiStoryScript, type AiStoryScriptVersion,
 } from "@ceo-agent/shared";
-import { computeAiStoryOutlineSourceHash, computeAiStoryScriptSourceHash, validateAiStoryProductStoryProfile } from "@ceo-agent/shared/server";
+import { computeAiStoryOutlineSourceHash, computeAiStoryScriptSourceHash, validateAiStoryCommercialStoryProfile, validateAiStoryProductStoryProfile } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 import { resolveKnownCastReferences } from "./ai-story-cast";
 import { resolveCurrentFrozenOutlineForStoryVersion } from "./ai-story-outline";
@@ -217,7 +217,7 @@ export class AiStoryScriptAuthorityService {
       if (computeAiStoryOutlineSourceHash(outline) !== outline.sourceHash) throw new AiStoryScriptAuthorityError("SCRIPT_OUTLINE_LINEAGE_INVALID", "Frozen Outline source fingerprint is invalid");
       if (to === "VALIDATED") {
         const issues = validateAiStoryScript(current, outline, { knownAuthorityReferences: await resolveKnownReferences(tx, scope, current) });
-        const profileIssues = validateAiStoryProductStoryProfile(outline, current);
+        const profileIssues = [...validateAiStoryProductStoryProfile(outline, current), ...validateAiStoryCommercialStoryProfile(outline, current)];
         if (issues.some((issue) => issue.severity === "BLOCK") || profileIssues.some((issue) => issue.severity === "BLOCK")) throw new AiStoryScriptAuthorityError("SCRIPT_VALIDATION_FAILED", JSON.stringify([...issues, ...profileIssues]));
       }
       const now = new Date();

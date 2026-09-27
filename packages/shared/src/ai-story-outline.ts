@@ -233,6 +233,18 @@ export function assertAiStoryOutlineLifecycleTransition(from: AiStoryOutlineStat
   if (!allowed[from].includes(to)) throw new Error(`Invalid Outline lifecycle transition: ${from} -> ${to}`);
 }
 
+/** Product ids bound by the exact Outline profile. Commercial refs are not Product Story policy. */
+export function resolveOutlineBoundProductAuthorityIds(outline: {
+  profile: { profileId: string };
+  commercialStoryProfile?: { productOrServiceAuthorityRefs: readonly string[] } | null;
+  productStoryProfile?: { productAuthorityIds: readonly string[] } | null;
+}): string[] {
+  const ids = outline.profile.profileId === "COMMERCIAL_STORY"
+    ? outline.commercialStoryProfile?.productOrServiceAuthorityRefs ?? []
+    : outline.productStoryProfile?.productAuthorityIds ?? [];
+  return [...new Set(ids)].sort((left, right) => left.localeCompare(right));
+}
+
 export function projectLegacyStoryToOutlineCompatibility(story: { storyId: string; storyVersionId: string; structuredContent: unknown }) {
   return { kind: "LEGACY_STORY_COMPATIBILITY" as const, storyId: story.storyId, storyVersionId: story.storyVersionId, structuredContent: story.structuredContent, outlineVersion: null };
 }

@@ -1478,6 +1478,34 @@ export const aiStoryScriptVersions = pgTable(
   ],
 );
 
+/** Exact authorized Script semantic proposal. One immutable row per Story Version. */
+export const aiStoryScriptSemanticProposals = pgTable(
+  "ai_story_script_semantic_proposals",
+  {
+    proposalId: uuid("proposal_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    contractVersion: text("contract_version").notNull(),
+    profileId: text("profile_id").notNull(),
+    lifecycleState: text("lifecycle_state").notNull(),
+    proposal: jsonb("proposal").$type<import("@ceo-agent/shared").AiStoryScriptSemanticProposalV1>().notNull(),
+    contentHash: text("content_hash").notNull(),
+    semanticInputFingerprint: text("semantic_input_fingerprint").notNull(),
+    originatingRunId: text("originating_run_id").notNull(),
+    groundingLineage: jsonb("grounding_lineage").$type<Record<string, unknown>>().notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_script_semantic_proposal_story_version_unique").on(t.storyId, t.storyVersionId),
+    index("ai_story_script_semantic_proposal_workspace_idx").on(t.workspaceId, t.storyId, t.storyVersionId),
+  ],
+);
+
 /** Durable Episode revision audit record. Persistence is not Provider execution. */
 export const aiStoryEpisodeRevisions = pgTable(
   "ai_story_episode_revisions",

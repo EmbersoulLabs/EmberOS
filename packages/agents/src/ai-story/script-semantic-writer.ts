@@ -5,8 +5,11 @@ import {
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   AiStoryScriptStateDeltaSchema,
   AiStoryScriptStateFactSchema,
+  AiStoryCommercialSceneContributionSchema,
+  AiStoryNarrativeFunctionSchema,
   AiStoryOutlineVersionSchema,
   AiStoryScriptSemanticProposalV1Schema,
+  resolveOutlineBoundProductAuthorityIds,
   AiStoryStructuredDraftSchema,
   CreativeContextSchema,
   DirectorThinkingSchema,
@@ -65,6 +68,10 @@ const AiStoryScriptSemanticProviderOutputV1Schema = z.object({
     ])).min(1),
     newInformation: z.array(ProviderText.max(1000)),
     newActionOutcomes: z.array(ProviderText.max(1000)),
+    narrativeFunction: AiStoryNarrativeFunctionSchema.nullable().optional(),
+    causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
+    storyConsequence: ProviderText.max(1000).nullable().optional(),
+    commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
   }).strict()).min(1),
 }).strict();
 
@@ -74,7 +81,18 @@ function canonicalizeProviderProposal(
   return AiStoryScriptSemanticProposalV1Schema.parse({
     ...value,
     scenes: value.scenes.map((scene) => ({
-      ...scene,
+      scenePlanItemId: scene.scenePlanItemId,
+      sceneFunction: scene.sceneFunction,
+      sceneFunctionRegistryVersion: scene.sceneFunctionRegistryVersion,
+      sceneStateIn: scene.sceneStateIn,
+      sceneStateDeltas: scene.sceneStateDeltas,
+      sceneStateOut: scene.sceneStateOut,
+      newInformation: scene.newInformation,
+      newActionOutcomes: scene.newActionOutcomes,
+      ...(scene.narrativeFunction ? { narrativeFunction: scene.narrativeFunction } : {}),
+      ...(scene.causalPreconditions?.length ? { causalPreconditions: scene.causalPreconditions } : {}),
+      ...(scene.storyConsequence ? { storyConsequence: scene.storyConsequence } : {}),
+      ...(scene.commercialContribution ? { commercialContribution: scene.commercialContribution } : {}),
       entries: scene.entries.map((entry) => {
         if (entry.type === "ACTION") {
           const { objectId, stateDelta, ...required } = entry;
@@ -117,13 +135,14 @@ export async function generateAiStoryScriptSemanticProposalV1(
     creativeContext: CreativeContextSchema.parse(rawInput.creativeContext),
     directorThinking: DirectorThinkingSchema.parse(rawInput.directorThinking),
     characterAuthorities: PlanningCharacterAuthorityProjectionSchema.array().parse(rawInput.characterAuthorities),
-    productAuthorityIds: z.array(z.string().uuid()).min(1).parse([...new Set(rawInput.productAuthorityIds)].sort()),
+    productAuthorityIds: z.array(z.string().uuid()).parse([...new Set(rawInput.productAuthorityIds)].sort()),
   };
   if (input.frozenOutline.status !== "FROZEN") throw new Error("CANONICAL_SCRIPT_FROZEN_OUTLINE_REQUIRED");
-  const outlineProductIds = [...(input.frozenOutline.productStoryProfile?.productAuthorityIds ?? [])].sort();
+  const outlineProductIds = resolveOutlineBoundProductAuthorityIds(input.frozenOutline);
   if (JSON.stringify(input.productAuthorityIds) !== JSON.stringify(outlineProductIds)) {
     throw new Error("CANONICAL_SCRIPT_PRODUCT_AUTHORITY_MISMATCH");
   }
+  const commercial = input.frozenOutline.profile.profileId === "COMMERCIAL_STORY";
   const completion = await callStructuredJsonModel({
     system: [
       "You are the AI Story V1 Script Semantic Writer. Produce semantic proposal data only.",
@@ -131,6 +150,11 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Use only exact supplied entity IDs. Never invent Character identity, Product identity, claims, or evidence.",
       "Choose sceneFunction only from the supplied Script Scene Function registry represented by the schema.",
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
+      ...(commercial ? [
+        "This is COMMERCIAL_STORY. Include narrativeFunction and storyConsequence on every Scene.",
+        "When a Scene changes Story state through the commercial subject, include commercialContribution and a real sceneStateDelta.",
+        "Do not replace causal progression with a product showcase.",
+      ] : []),
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),

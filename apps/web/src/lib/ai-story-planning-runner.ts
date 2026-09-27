@@ -63,15 +63,23 @@ import {
 type Db = ReturnType<typeof getDb>;
 
 /**
- * The V1 canonical Outline producer is intentionally PRODUCT_STORY-specific.
- * CORE and COMMERCIAL_STORY retain their already-certified planning paths and
- * must not be rejected by a producer that does not own those profiles.
+ * Legacy predicate. Scene and Shot planning use requiresCanonicalStoryAuthority,
+ * which includes COMMERCIAL_STORY. This function stays PRODUCT_STORY-only so
+ * existing routing tests keep their original contract.
  */
 export function requiresProductStoryCanonicalOutline(
   profile: AiStoryOutlineProfileReference | null | undefined
 ): boolean {
   if (!profile) throw new Error("AI Story Outline profile authority is required");
   return profile.profileId === "PRODUCT_STORY";
+}
+
+/** PRODUCT_STORY and COMMERCIAL_STORY share one canonical Outline/Script lifecycle. CORE does not. */
+export function requiresCanonicalStoryAuthority(
+  profile: AiStoryOutlineProfileReference | null | undefined
+): boolean {
+  if (!profile) throw new Error("AI Story Outline profile authority is required");
+  return profile.profileId === "PRODUCT_STORY" || profile.profileId === "COMMERCIAL_STORY";
 }
 
 function emptyUsage(): PlanningUsage {
@@ -425,7 +433,7 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.storyBeats?.length),
         "Generate Story Beats before Scene Plan"
       );
-      if (requiresProductStoryCanonicalOutline(ctx.loaded.story.outlineProfile)) {
+      if (requiresCanonicalStoryAuthority(ctx.loaded.story.outlineProfile)) {
         await ensureCurrentFrozenCanonicalOutline({
           db,
           campaignId,
@@ -465,9 +473,9 @@ export async function runSinglePlanningStage(input: {
         "Generate Scene Plan before Shot Plan"
       );
       let canonicalScript;
-      if (requiresProductStoryCanonicalOutline(ctx.loaded.story.outlineProfile)) {
+      if (requiresCanonicalStoryAuthority(ctx.loaded.story.outlineProfile)) {
         // A durable Scene Plan may predate Outline materialization. Converge
-        // the exact current PRODUCT_STORY authority before producing Script;
+        // the exact current Story authority before producing Script;
         // this is deterministic and does not re-run Scene Planning.
         await ensureCurrentFrozenCanonicalOutline({
           db,
