@@ -9,6 +9,7 @@ import { generateAiStoryScriptSemanticProposalV1 } from "@ceo-agent/agents";
 import {
   AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
+  AiStoryScriptSemanticProposalV1Schema,
   resolveOutlineBoundProductAuthorityIds,
   type AiStoryScriptSemanticProposalV1,
   type AiStoryScriptVersion,
@@ -67,7 +68,11 @@ export type CanonicalScriptProducerDependencies = {
   resolveAuthorizedProposal?: (
     db: Db,
     scope: AiStoryScriptScope,
-  ) => Promise<{ proposal: AiStoryScriptSemanticProposalV1; semanticInputFingerprint: string } | null>;
+  ) => Promise<{
+    proposal: AiStoryScriptSemanticProposalV1;
+    semanticInputFingerprint: string;
+    profileId?: "PRODUCT_STORY" | "COMMERCIAL_STORY";
+  } | null>;
   persistAuthorizedProposal?: (
     db: Db,
     scope: AiStoryScriptScope,
@@ -90,7 +95,7 @@ const defaultDependencies: CanonicalScriptProducerDependencies = {
   freeze: (db, scope, id) => new AiStoryScriptAuthorityService(db).freeze(scope, id),
   resolveAuthorizedProposal: async (db, scope) => {
     const row = await new AiStoryScriptSemanticProposalAuthorityService(db).resolveExact(scope);
-    return row ? { proposal: row.proposal, semanticInputFingerprint: row.semanticInputFingerprint } : null;
+    return row ? { proposal: row.proposal, semanticInputFingerprint: row.semanticInputFingerprint, profileId: row.profileId } : null;
   },
   persistAuthorizedProposal: async (db, scope, proposal, semanticInputFingerprint, authorizedAt, profileId) => {
     await new AiStoryScriptSemanticProposalAuthorityService(db).authorize({
@@ -138,7 +143,121 @@ async function advanceToFrozen(
   throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_LIFECYCLE_DID_NOT_CONVERGE", "Script lifecycle did not converge to FROZEN");
 }
 
-/** Ensures one exact current FROZEN PRODUCT_STORY V1 Script authority. */
+type AuthorizedSemanticProposal = {
+  proposal: AiStoryScriptSemanticProposalV1;
+  semanticInputFingerprint: string;
+  profileId?: "PRODUCT_STORY" | "COMMERCIAL_STORY";
+};
+
+function requireCommercialSemanticAuthority(
+  persisted: AuthorizedSemanticProposal | null,
+  semanticInputFingerprint: string,
+): AiStoryScriptSemanticProposalV1 {
+  if (!persisted) {
+    throw new AiStoryCanonicalScriptProducerError(
+      "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_REQUIRED",
+      "The canonical Script cannot be created because upstream authorized Script semantic authority is missing.",
+    );
+  }
+  if (persisted.profileId !== "COMMERCIAL_STORY") {
+    throw new AiStoryCanonicalScriptProducerError(
+      "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_PROFILE_INVALID",
+      "Canonical COMMERCIAL_STORY Script requires an authorized COMMERCIAL_STORY semantic proposal.",
+    );
+  }
+  const parsed = AiStoryScriptSemanticProposalV1Schema.safeParse(persisted.proposal);
+  if (!parsed.success) {
+    throw new AiStoryCanonicalScriptProducerError(
+      "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_INTEGRITY_INVALID",
+      "Persisted COMMERCIAL_STORY semantic proposal failed integrity validation.",
+    );
+  }
+  if (persisted.semanticInputFingerprint !== semanticInputFingerprint) {
+    throw new AiStoryCanonicalScriptProducerError(
+      "CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE",
+      "Authorized semantic Script proposal does not match this Story Version input",
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * Upstream COMMERCIAL_STORY authoring. Canonical Script production does not call this.
+ * One writer call per exact semantic input; a later call resolves the same authorized row.
+ */
+export async function produceAuthorizedCommercialStoryScriptProposal(
+  input: EnsureCurrentFrozenCanonicalScriptInput,
+  deps: CanonicalScriptProducerDependencies = defaultDependencies,
+): Promise<{ proposal: AiStoryScriptSemanticProposalV1; semanticInputFingerprint: string; usage: PlanningUsage; semanticWriterCalled: boolean }> {
+  const outline = await deps.resolveCurrentOutline(input.db, {
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    storyVersionId: input.storyVersionId,
+  });
+  if (!outline) throw new AiStoryCanonicalScriptProducerError("CURRENT_FROZEN_OUTLINE_REQUIRED", "Script semantic authority requires the exact current frozen Outline");
+  const commercial = outline.profile.profileId === "COMMERCIAL_STORY"
+    && outline.profile.profileVersion === 1
+    && outline.profile.policyFingerprint === AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT;
+  if (!commercial) {
+    throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_PROFILE_UNSUPPORTED", "Commercial Script proposal authoring requires exact COMMERCIAL_STORY v1 authority");
+  }
+  const productAuthorityIds = resolveOutlineBoundProductAuthorityIds(outline);
+  const semanticInputFingerprint = computeAiStoryScriptSemanticInputFingerprint({
+    storyId: input.storyId,
+    storyVersionId: input.storyVersionId,
+    outlineVersionId: outline.outlineVersionId,
+    outlineSourceHash: outline.sourceHash,
+    story: input.story,
+    storyBeats: input.storyBeats,
+    scenePlan: input.scenePlan,
+    creativeContext: input.creativeContext,
+    directorThinking: input.directorThinking,
+    characterAuthorities: input.characterAuthorities,
+    productAuthorityIds,
+  });
+  const scope: AiStoryScriptScope = {
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    storyVersionId: input.storyVersionId,
+    actorUserId: input.actorUserId,
+    requireCurrentFrozenStoryVersion: true,
+  };
+  const persisted = await (deps.resolveAuthorizedProposal ?? (async () => null))(input.db, scope);
+  if (persisted) {
+    return {
+      proposal: requireCommercialSemanticAuthority(persisted, semanticInputFingerprint),
+      semanticInputFingerprint,
+      usage: zeroUsage(),
+      semanticWriterCalled: false,
+    };
+  }
+  const generated = await deps.generateSemanticProposal({
+    frozenOutline: outline,
+    story: input.story,
+    storyBeats: input.storyBeats,
+    scenePlan: input.scenePlan,
+    creativeContext: input.creativeContext,
+    directorThinking: input.directorThinking,
+    characterAuthorities: input.characterAuthorities,
+    productAuthorityIds,
+  });
+  const proposal = AiStoryScriptSemanticProposalV1Schema.parse(generated.semanticProposal);
+  await (deps.persistAuthorizedProposal ?? (async () => undefined))(
+    input.db,
+    scope,
+    proposal,
+    semanticInputFingerprint,
+    deps.now(),
+    "COMMERCIAL_STORY",
+  );
+  return { proposal, semanticInputFingerprint, usage: generated.usage, semanticWriterCalled: true };
+}
+
+/** Ensures one exact current FROZEN Script. COMMERCIAL_STORY only consumes an already authorized proposal. */
 export async function ensureCurrentFrozenCanonicalScript(
   input: EnsureCurrentFrozenCanonicalScriptInput,
   deps: CanonicalScriptProducerDependencies = defaultDependencies,
@@ -203,6 +322,10 @@ export async function ensureCurrentFrozenCanonicalScript(
   };
   const history = await deps.history(input.db, scope);
   const latest = history.at(-1);
+  const persistedEarly = commercial
+    ? await (deps.resolveAuthorizedProposal ?? (async () => null))(input.db, scope)
+    : null;
+  const commercialProposal = commercial ? requireCommercialSemanticAuthority(persistedEarly, semanticInputFingerprint) : null;
   if (latest?.status === "SUPERSEDED") {
     throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_LINEAGE_INVALID", "Latest durable Script cannot be SUPERSEDED without a successor");
   }
@@ -231,11 +354,15 @@ export async function ensureCurrentFrozenCanonicalScript(
     throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_INCOMPLETE_LINEAGE_CONFLICT", "A different-input Script has an incomplete durable lifecycle");
   }
 
-  const persisted = await (deps.resolveAuthorizedProposal ?? (async () => null))(input.db, scope);
-  if (persisted && persisted.semanticInputFingerprint !== semanticInputFingerprint) {
+  const persisted = commercial
+    ? persistedEarly
+    : await (deps.resolveAuthorizedProposal ?? (async () => null))(input.db, scope);
+  if (!commercial && persisted && persisted.semanticInputFingerprint !== semanticInputFingerprint) {
     throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE", "Authorized semantic Script proposal does not match this Story Version input");
   }
-  const generated = persisted
+  const generated = commercialProposal
+    ? { semanticProposal: commercialProposal, usage: zeroUsage() }
+    : persisted
     ? { semanticProposal: persisted.proposal, usage: zeroUsage() }
     : await deps.generateSemanticProposal({
       frozenOutline: outline,
@@ -275,19 +402,19 @@ export async function ensureCurrentFrozenCanonicalScript(
   });
   const proposed = await deps.propose(input.db, scope, script);
   const frozen = await advanceToFrozen(input, scope, proposed, deps);
-  if (!persisted) {
+  if (!persisted && !commercial) {
     await (deps.persistAuthorizedProposal ?? (async () => undefined))(
       input.db,
       scope,
       generated.semanticProposal,
       semanticInputFingerprint,
       frozen.frozenAt ?? deps.now(),
-      outline.profile.profileId === "COMMERCIAL_STORY" ? "COMMERCIAL_STORY" : "PRODUCT_STORY",
+      "PRODUCT_STORY",
     );
   }
   return {
     script: frozen,
     usage: generated.usage,
-    semanticWriterCalled: !persisted,
+    semanticWriterCalled: !commercial && !persisted,
   };
 }

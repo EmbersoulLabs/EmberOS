@@ -45,7 +45,7 @@ import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
 import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
-import { ensureCurrentFrozenCanonicalScript } from "@/lib/ai-story-canonical-script-producer";
+import { ensureCurrentFrozenCanonicalScript, produceAuthorizedCommercialStoryScriptProposal } from "@/lib/ai-story-canonical-script-producer";
 import { ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
 import {
   assetLabelFromProductionRow,
@@ -485,6 +485,25 @@ export async function runSinglePlanningStage(input: {
           actorUserId: input.actorUserId,
           proposedStoryBeats: draft.storyBeats!,
         });
+        if (ctx.loaded.story.outlineProfile?.profileId === "COMMERCIAL_STORY") {
+          const authored = await produceAuthorizedCommercialStoryScriptProposal({
+            db,
+            orgId: ctx.campaign.orgId,
+            workspaceId: ctx.campaign.workspaceId,
+            campaignId,
+            storyId,
+            storyVersionId: ctx.loaded.currentVersion!.id,
+            actorUserId: input.actorUserId,
+            story: ctx.storyDraft,
+            storyBeats: draft.storyBeats!,
+            scenePlan: draft.scenePlan!,
+            creativeContext: draft.creativeContext!,
+            directorThinking: draft.directorThinking!,
+            characterAuthorities: ctx.characterAuthorities,
+          });
+          usage = addUsage(usage, authored.usage);
+          stageCostUsd += authored.usage.costUsd;
+        }
         const canonical = await ensureCurrentFrozenCanonicalScript({
           db,
           orgId: ctx.campaign.orgId,

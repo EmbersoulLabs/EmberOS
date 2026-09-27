@@ -39,6 +39,7 @@ import {
 import {
   AiStoryCanonicalScriptProducerError,
   ensureCurrentFrozenCanonicalScript,
+  produceAuthorizedCommercialStoryScriptProposal,
   type CanonicalScriptProducerDependencies,
 } from "../apps/web/src/lib/ai-story-canonical-script-producer";
 import {
@@ -106,6 +107,8 @@ const CREATIVE = {
 const DIRECTOR = { coreMessage: "Keep the watch", hero: "Keeper", conflict: "Darkness", turningPoint: "Lantern", climax: "Light", takeaway: "The watch continues" };
 const WORLD = { location: "Harbor", lighting: "Low", environment: "A working harbor at night", objects: ["Lantern"], timeline: "One night", worldRules: ["Weather stays calm"] };
 const PRODUCT = { storyId: I.story, assetId: I.product, usageType: "product_source" as const, orgId: I.org, workspaceId: I.workspace, campaignId: I.campaign, contentHash: hash("b"), status: "ready" as const };
+const LEGACY_STORY_ID = "96ac1530-5cff-4579-8fdd-a6b86035c0b1";
+const LEGACY_STORY_VERSION_ID = "27f5dfce-0f4d-4452-a5be-c576aab29f93";
 
 function frozenOutline(story = STORY) {
   const draft = composeAiStoryCanonicalCommercialOutlineV1({
@@ -206,7 +209,7 @@ describe("COMMERCIAL_STORY authority lifecycle", () => {
       resolveAuthorizedProposal: async (_db, requested) => {
         if (requested.workspaceId !== I.workspace || requested.storyVersionId !== I.storyVersion) return null;
         const row = store.get(keyOf(requested.storyVersionId, requested.workspaceId));
-        return row ? { proposal: row.proposal, semanticInputFingerprint: row.fingerprint } : null;
+        return row ? { proposal: row.proposal, semanticInputFingerprint: row.fingerprint, profileId: "COMMERCIAL_STORY" as const } : null;
       },
       persistAuthorizedProposal: async (_db, requested, value, semanticInputFingerprint) => {
         const key = keyOf(requested.storyVersionId, requested.workspaceId);
@@ -220,12 +223,19 @@ describe("COMMERCIAL_STORY authority lifecycle", () => {
       db: {} as never, orgId: I.org, workspaceId: I.workspace, campaignId: I.campaign, storyId: I.story, storyVersionId: I.storyVersion, actorUserId: I.actor,
       story: STORY, storyBeats: BEATS, scenePlan: PLAN, creativeContext: CREATIVE, directorThinking: DIRECTOR, characterAuthorities: [CHARACTER],
     };
-    const first = await ensureCurrentFrozenCanonicalScript(input, deps());
-    expect(first.semanticWriterCalled).toBe(true);
+    await expect(ensureCurrentFrozenCanonicalScript(input, deps())).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_REQUIRED" });
+    expect(writerCalls).toBe(0);
+    expect(history).toHaveLength(0);
+    const authored = await produceAuthorizedCommercialStoryScriptProposal(input, deps());
+    expect(authored.semanticWriterCalled).toBe(true);
     expect(writerCalls).toBe(1);
     expect(store.get(keyOf(I.storyVersion, I.workspace))?.proposal).toEqual(semantic);
-    const second = await ensureCurrentFrozenCanonicalScript(input, deps());
-    expect(second.semanticWriterCalled).toBe(false);
+    const authoredAgain = await produceAuthorizedCommercialStoryScriptProposal(input, deps());
+    expect(authoredAgain.semanticWriterCalled).toBe(false);
+    expect(writerCalls).toBe(1);
+    const consumed = await ensureCurrentFrozenCanonicalScript(input, deps());
+    expect(consumed.semanticWriterCalled).toBe(false);
+    expect(consumed.script.status).toBe("FROZEN");
     expect(writerCalls).toBe(1);
     history = [];
     const fromStore = await ensureCurrentFrozenCanonicalScript(input, deps());
@@ -234,7 +244,11 @@ describe("COMMERCIAL_STORY authority lifecycle", () => {
     history = [];
     await expect(ensureCurrentFrozenCanonicalScript(input, {
       ...deps(),
-      resolveAuthorizedProposal: async () => ({ proposal: semantic, semanticInputFingerprint: hash("e") }),
+      resolveAuthorizedProposal: async () => ({ proposal: semantic, semanticInputFingerprint: hash("e"), profileId: "COMMERCIAL_STORY" }),
+    })).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE" });
+    await expect(produceAuthorizedCommercialStoryScriptProposal(input, {
+      ...deps(),
+      resolveAuthorizedProposal: async () => ({ proposal: semantic, semanticInputFingerprint: hash("e"), profileId: "COMMERCIAL_STORY" }),
     })).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE" });
     expect(writerCalls).toBe(1);
     const other = await deps().resolveAuthorizedProposal!({} as never, { ...scope, workspaceId: I.otherWorkspace, storyVersionId: I.otherVersion, actorUserId: I.actor, requireCurrentFrozenStoryVersion: true });
@@ -243,6 +257,45 @@ describe("COMMERCIAL_STORY authority lifecycle", () => {
     await expect(deps().persistAuthorizedProposal!({} as never, { ...scope, actorUserId: I.actor, requireCurrentFrozenStoryVersion: true }, { ...semantic, scenes: semantic.scenes.slice(0, 2) } as never, fingerprint(outline), "2026-09-27T00:12:00.000Z", "COMMERCIAL_STORY")).rejects.toThrow("SCRIPT_SEMANTIC_PROPOSAL_IMMUTABLE");
     history = [{ ...scriptFor(outline), status: "SUPERSEDED" }];
     await expect(ensureCurrentFrozenCanonicalScript(input, deps())).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "CANONICAL_SCRIPT_LINEAGE_INVALID" });
+    expect(writerCalls).toBe(1);
+    await expect(ensureCurrentFrozenCanonicalScript({ ...input, workspaceId: I.otherWorkspace }, deps())).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_REQUIRED" });
+    await expect(ensureCurrentFrozenCanonicalScript({ ...input, storyVersionId: I.otherVersion }, deps())).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_REQUIRED" });
+    await expect(ensureCurrentFrozenCanonicalScript(input, {
+      ...deps(),
+      resolveAuthorizedProposal: async () => ({ proposal: semantic, semanticInputFingerprint: fingerprint(outline), profileId: "PRODUCT_STORY" }),
+    })).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_PROFILE_INVALID" });
+    await expect(ensureCurrentFrozenCanonicalScript(input, {
+      ...deps(),
+      resolveAuthorizedProposal: async () => ({ proposal: { contractVersion: "not-a-proposal" } as never, semanticInputFingerprint: fingerprint(outline), profileId: "COMMERCIAL_STORY" }),
+    })).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_INTEGRITY_INVALID" });
+    const changedPlan = PLAN.map((scene, index) => index === 0 ? { ...scene, purpose: "A different opening purpose" } : scene);
+    await expect(produceAuthorizedCommercialStoryScriptProposal({ ...input, scenePlan: changedPlan }, deps())).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE" });
+    expect(writerCalls).toBe(1);
+    expect(readFileSync("apps/web/src/lib/ai-story-canonical-script-producer.ts", "utf8")).not.toContain("shotPlan");
+  });
+
+  it("fails closed for the unrecovered legacy story without calling the semantic writer", async () => {
+    let writerCalls = 0;
+    let proposed = 0;
+    const outline = frozenOutline();
+    await expect(ensureCurrentFrozenCanonicalScript({
+      db: {} as never, orgId: I.org, workspaceId: I.workspace, campaignId: I.campaign,
+      storyId: LEGACY_STORY_ID, storyVersionId: LEGACY_STORY_VERSION_ID, actorUserId: I.actor,
+      story: STORY, storyBeats: BEATS, scenePlan: PLAN, creativeContext: CREATIVE, directorThinking: DIRECTOR, characterAuthorities: [CHARACTER],
+    }, {
+      resolveCurrentOutline: async () => ({ ...outline, storyId: LEGACY_STORY_ID, storyVersionId: LEGACY_STORY_VERSION_ID }),
+      history: async () => [],
+      generateSemanticProposal: async () => { writerCalls += 1; return { semanticProposal: proposal(), usage: { input: 1, output: 1, costUsd: 0 } }; },
+      promoteSemanticProposal: promoteAiStoryScriptSemanticProposalV1,
+      propose: async (_db, _scope, script) => { proposed += 1; return script; },
+      validate: async (_db, _scope, id) => ({ ...scriptFor(), scriptVersionId: id }),
+      approve: async (_db, _scope, id) => ({ ...scriptFor(), scriptVersionId: id }),
+      freeze: async (_db, _scope, id) => ({ ...scriptFor(), scriptVersionId: id }),
+      resolveAuthorizedProposal: async () => null,
+      now: () => "2026-09-27T00:10:00.000Z",
+    })).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_REQUIRED" });
+    expect(writerCalls).toBe(0);
+    expect(proposed).toBe(0);
   });
 
   it("keeps a frozen outline historical when the story revision creates the next version", async () => {

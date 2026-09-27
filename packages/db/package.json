@@ -33,6 +33,7 @@
     "sql:ai-story": "tsx scripts/apply-ai-story-v1.ts",
     "sql:ai-story-outline": "tsx scripts/apply-ai-story-outline-v1.ts",
     "sql:ai-story-script": "tsx scripts/apply-ai-story-script-v1.ts",
+    "sql:ai-story-script-semantic-proposal": "tsx scripts/apply-ai-story-script-semantic-proposal-v1.ts",
     "sql:ai-story-episode-revision-persistence": "tsx scripts/apply-ai-story-episode-revision-persistence-v1.ts",
     "sql:ai-story-episode-continuity": "tsx scripts/apply-ai-story-episode-continuity-authority-v1.ts",
     "sql:ai-story-video-analysis-snapshot": "tsx scripts/apply-ai-story-video-analysis-snapshot-v1.ts",
