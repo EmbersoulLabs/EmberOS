@@ -148,6 +148,28 @@ export function bindMentionedCatalogChoiceEvidence(input: {
   });
 }
 
+export function retainSupportedSceneGroundingEvidence(input: {
+  context: AiStoryScenePlanningGroundingContext;
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
+}): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  const normalized = (value: string) => value.trim().toLocaleLowerCase();
+  const bindingById = new Map(input.context.bindings.map((binding) => [binding.bindingId, binding]));
+  return input.proposals.map((proposal) => ({
+    ...proposal,
+    evidence: proposal.evidence.flatMap((selection) => {
+      const binding = bindingById.get(selection.bindingId);
+      if (!binding) return [];
+      const supported = new Set([
+        ...binding.observedFacts,
+        ...binding.namedItems,
+        ...binding.productCandidates.flatMap((candidate) => candidate.evidence),
+      ].map(normalized));
+      const groundedFacts = selection.groundedFacts.filter((fact) => supported.has(normalized(fact)));
+      return groundedFacts.length > 0 ? [{ ...selection, groundedFacts }] : [];
+    }),
+  }));
+}
+
 export function reconcileSupportingOnlyTextToVideoAuthority(input: {
   scene: z.infer<typeof ScenePlanItemSchema> & {
     generationAuthority: z.infer<typeof AiStorySceneGenerationAuthoritySchema>;
@@ -532,9 +554,12 @@ export async function generateScenePlan(input: {
     sceneIds,
     proposals: normalizeExistenceOnlySceneGrounding(removeUnsupportedObservedAppearance({
       context: input.assetGrounding,
-      proposals: bindMentionedCatalogChoiceEvidence({
+      proposals: retainSupportedSceneGroundingEvidence({
         context: input.assetGrounding,
-        proposals: orderedGrounding,
+        proposals: bindMentionedCatalogChoiceEvidence({
+          context: input.assetGrounding,
+          proposals: orderedGrounding,
+        }),
       }),
     })),
   });

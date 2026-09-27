@@ -13,6 +13,7 @@ import {
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
   reconcileSupportingOnlyTextToVideoAuthority,
+  retainSupportedSceneGroundingEvidence,
   removeUnsupportedObservedAppearance,
 } from "../packages/agents/src/ai-story/story-planning-service";
 
@@ -262,6 +263,31 @@ describe("AI Story Scene Plan strict structured output", () => {
         referenceSource: "REFERENCE_FREE_T2V",
         productVisualIdentityRequirement: "NONE",
       }));
+  });
+
+  it("retains only facts supported by the exact selected binding", () => {
+    const menuBindingId = "80000000-0000-4000-8000-000000000010";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId: menuBindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: ["Ayam Rendang"],
+        namedItems: ["Menu", "Ayam Rendang"],
+        productCandidates: [],
+      }],
+    };
+    const proposals = [{
+      ...validProviderResult.groundingSelections[0]!,
+      evidence: [{ bindingId: menuBindingId, groundedFacts: ["Ayam Rendang", "lobster"] }],
+    }];
+
+    expect(retainSupportedSceneGroundingEvidence({ context, proposals })[0]?.evidence).toEqual([{
+      bindingId: menuBindingId,
+      groundedFacts: ["Ayam Rendang"],
+    }]);
   });
 
   it("fails closed when structured fields conflict with canonical generation authority", async () => {
