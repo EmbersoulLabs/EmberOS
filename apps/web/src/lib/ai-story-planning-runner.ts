@@ -36,6 +36,7 @@ import {
   normalizeBusinessProfileRecord,
   prunePlanningDraftAfterStage,
   type AiStoryStructuredDraft,
+  type AiStoryOutlineProfileReference,
   type PlanningUsage,
   type StoryPlanningDraft,
   type StoryPlanningStage,
@@ -60,6 +61,18 @@ import {
 } from "@/lib/ai-story-planning-service";
 
 type Db = ReturnType<typeof getDb>;
+
+/**
+ * The V1 canonical Outline producer is intentionally PRODUCT_STORY-specific.
+ * CORE and COMMERCIAL_STORY retain their already-certified planning paths and
+ * must not be rejected by a producer that does not own those profiles.
+ */
+export function requiresProductStoryCanonicalOutline(
+  profile: AiStoryOutlineProfileReference | null | undefined
+): boolean {
+  if (!profile) throw new Error("AI Story Outline profile authority is required");
+  return profile.profileId === "PRODUCT_STORY";
+}
 
 function emptyUsage(): PlanningUsage {
   return { input: 0, output: 0, costUsd: 0 };
@@ -412,14 +425,16 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.storyBeats?.length),
         "Generate Story Beats before Scene Plan"
       );
-      await ensureCurrentFrozenCanonicalOutline({
-        db,
-        campaignId,
-        storyId,
-        storyVersionId: ctx.loaded.currentVersion!.id,
-        actorUserId: input.actorUserId,
-        proposedStoryBeats: draft.storyBeats!,
-      });
+      if (requiresProductStoryCanonicalOutline(ctx.loaded.story.outlineProfile)) {
+        await ensureCurrentFrozenCanonicalOutline({
+          db,
+          campaignId,
+          storyId,
+          storyVersionId: ctx.loaded.currentVersion!.id,
+          actorUserId: input.actorUserId,
+          proposedStoryBeats: draft.storyBeats!,
+        });
+      }
       const generated = await generateScenePlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
