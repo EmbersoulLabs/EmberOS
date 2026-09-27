@@ -64,6 +64,20 @@ const shot = {
 };
 
 describe("PR #178 Shot authority lineage", () => {
+  it("keeps historical all-at-once ungrounded planning compatible without minting lineage", () => {
+    const legacyScene = { ...scene, groundingLineage: undefined };
+    const [legacyShot] = bindShotPlanAuthorityLineage({
+      scenePlan: [legacyScene],
+      shotPlan: [shot],
+    });
+    expect(legacyShot?.authorityLineage).toBeUndefined();
+    expect(() => bindShotPlanAuthorityLineage({
+      planningPackageId: id(7),
+      scenePlan: [legacyScene],
+      shotPlan: [shot],
+    })).toThrow("SHOT_PLAN_SCENE_AUTHORITY_REQUIRED");
+  });
+
   it("deterministically binds exact Package, Story Version, matching Snapshot, Scene mode, and first frame", () => {
     const [bound] = bindShotPlanAuthorityLineage({
       planningPackageId: id(7),

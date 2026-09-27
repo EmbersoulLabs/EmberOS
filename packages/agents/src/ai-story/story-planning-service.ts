@@ -612,7 +612,10 @@ export function bindShotPlanAuthorityLineage(input: {
     seenShotIds.add(shot.id);
     const scene = sceneById.get(shot.sceneId);
     if (!scene) throw new Error(`SHOT_PLAN_SCENE_AUTHORITY_INVALID:${shot.sceneId}`);
-    if (!scene.generationAuthority && !scene.groundingLineage) return shot;
+    // Historical all-at-once planning predates persisted Planning Packages and
+    // Scene grounding lineage. Keep that path readable, while every persisted
+    // staged run (which supplies planningPackageId) remains fail-closed.
+    if (!scene.groundingLineage && !input.planningPackageId) return shot;
     if (!scene.generationAuthority || !scene.groundingLineage) {
       throw new Error(`SHOT_PLAN_SCENE_AUTHORITY_REQUIRED:${scene.id}`);
     }
