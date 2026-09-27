@@ -96,6 +96,7 @@ jobs:
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/platform-admin-control-plane-security.integration.test.ts
+          tests/platform-admin-grant-management.integration.test.ts
 
       - name: Apply Controlled Self-Use authority
         run: pnpm --filter @ceo-agent/db sql:controlled-self-use-authority
