@@ -139,6 +139,14 @@ function normalized(value: string): string {
   return value.trim().toLocaleLowerCase();
 }
 
+function namesObservedSubject(value: string, subject: string): boolean {
+  const normalizedValue = normalized(value);
+  const normalizedSubject = normalized(subject);
+  return normalizedValue === normalizedSubject ||
+    normalizedValue.startsWith(`${normalizedSubject} `) ||
+    normalizedValue.endsWith(` ${normalizedSubject}`);
+}
+
 /**
  * Deterministic projection of accepted matching authority for Scene Planning.
  * It performs no inference and never reads raw Asset bytes.
@@ -261,7 +269,8 @@ export function bindSceneGroundingLineage(input: {
     const selectedBindings = evidence.map((item) => bindingById.get(item.bindingId)!);
     for (const claim of proposal.visualClaims) {
       const sources = selectedBindings.filter((binding) =>
-        binding.namedItems.some((item) => normalized(item) === normalized(claim.subject)),
+        binding.namedItems.some((item) => normalized(item) === normalized(claim.subject)) ||
+        binding.observedFacts.some((fact) => namesObservedSubject(fact, claim.subject)),
       );
       if (sources.length === 0) {
         throw new AiStorySceneGroundingError(

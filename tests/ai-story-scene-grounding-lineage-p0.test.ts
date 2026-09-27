@@ -217,6 +217,27 @@ describe("P0 Scene grounding lineage", () => {
     expect(lineage.evidence[0]?.role).toBe("SUPPORTING_REFERENCE");
   });
 
+  it("recognizes an existence-only subject at an observed fact word boundary", () => {
+    const wordBoundaryContext = {
+      ...context,
+      bindings: context.bindings.map((binding) => binding.bindingId === ids.productBinding
+        ? { ...binding, observedFacts: binding.observedFacts.map((fact) => fact === "sambal" ? "sambal sauce" : fact) }
+        : binding),
+    };
+    const lineage = bindSceneGroundingLineage({
+      context: wordBoundaryContext,
+      sceneIds: ["scene-1"],
+      proposals: [{
+        sceneId: "scene-1",
+        narrativeIntent: "The customer appreciates the sambal.",
+        visualIntent: "Reference only the observed condiment.",
+        evidence: [{ bindingId: ids.productBinding, groundedFacts: ["sambal sauce"] }],
+        visualClaims: [{ subject: "sambal", detail: "sambal", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    }).get("scene-1")!;
+    expect(lineage.visualClaims[0]?.subject).toBe("sambal");
+  });
+
   it("rejects detailed appearance for a menu-only future item", () => {
     expect(() => bindSceneGroundingLineage({
       context,
