@@ -12,7 +12,7 @@ import {
   buildScenePlanProviderOutputSchema,
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
-  reconcileSupportingOnlyTextToVideoAuthority,
+  reconcileSupportingOnlySceneAuthority,
   retainSupportedSceneGroundingEvidence,
   removeUnsupportedObservedAppearance,
 } from "../packages/agents/src/ai-story/story-planning-service";
@@ -257,12 +257,49 @@ describe("AI Story Scene Plan strict structured output", () => {
       visualClaims: [{ subject: "sambal", detail: "sambal", evidenceLevel: "EXISTENCE_ONLY" as const }],
     };
 
-    expect(reconcileSupportingOnlyTextToVideoAuthority({ scene, lineage }))
+    expect(reconcileSupportingOnlySceneAuthority({ scene, lineage }))
       .toEqual(expect.objectContaining({
         strategy: "TEXT_TO_VIDEO",
         referenceSource: "REFERENCE_FREE_T2V",
         productVisualIdentityRequirement: "NONE",
       }));
+  });
+
+  it("does not use a supporting-only Asset as an image-conditioned Product frame", () => {
+    const scene = {
+      ...validProviderResult.scenePlan[0]!,
+      generationAuthority: {
+        strategy: "FIRST_FRAME_IMAGE_TO_VIDEO" as const,
+        referenceSource: "SCENE_EXPLICIT" as const,
+        referenceAssetIds: ["60000000-0000-4000-8000-000000000006"],
+        firstFrameAssetId: "60000000-0000-4000-8000-000000000006",
+        productVisualIdentityRequirement: "REQUIRED" as const,
+      },
+    };
+    const lineage = {
+      contractVersion: "ai-story-scene-grounding-lineage.v1" as const,
+      storyId: input.assetGrounding.storyId,
+      storyVersionId: input.assetGrounding.storyVersionId,
+      matchingResultId: input.assetGrounding.matchingResultId,
+      narrativeIntent: "The customer reads the menu.",
+      visualIntent: "Show the menu.",
+      evidence: [{
+        bindingId: "80000000-0000-4000-8000-000000000010",
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        semanticSnapshotId: "70000000-0000-4000-8000-000000000008",
+        groundedFacts: ["Menu"],
+      }],
+      visualClaims: [{ subject: "Menu", detail: "Menu", evidenceLevel: "EXISTENCE_ONLY" as const }],
+    };
+
+    expect(reconcileSupportingOnlySceneAuthority({ scene, lineage })).toEqual({
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      referenceAssetIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE",
+    });
   });
 
   it("retains only facts supported by the exact selected binding", () => {

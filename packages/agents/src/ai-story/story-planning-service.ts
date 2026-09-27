@@ -170,7 +170,7 @@ export function retainSupportedSceneGroundingEvidence(input: {
   }));
 }
 
-export function reconcileSupportingOnlyTextToVideoAuthority(input: {
+export function reconcileSupportingOnlySceneAuthority(input: {
   scene: z.infer<typeof ScenePlanItemSchema> & {
     generationAuthority: z.infer<typeof AiStorySceneGenerationAuthoritySchema>;
   };
@@ -178,13 +178,17 @@ export function reconcileSupportingOnlyTextToVideoAuthority(input: {
 }): z.infer<typeof AiStorySceneGenerationAuthoritySchema> {
   const authority = input.scene.generationAuthority;
   if (
-    authority.strategy === "TEXT_TO_VIDEO" &&
-    authority.referenceSource === "REFERENCE_FREE_T2V" &&
     authority.productVisualIdentityRequirement === "REQUIRED" &&
     !input.lineage.evidence.some((evidence) => evidence.role === "PRODUCT_AUTHORITY") &&
     input.lineage.visualClaims.every((claim) => claim.evidenceLevel === "EXISTENCE_ONLY")
   ) {
-    return { ...authority, productVisualIdentityRequirement: "NONE" };
+    return {
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      referenceAssetIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE",
+    };
   }
   return authority;
 }
@@ -572,7 +576,7 @@ export async function generateScenePlan(input: {
   const scenePlan = rawScenePlan.map((scene) => {
     const lineage = lineageByScene.get(scene.id);
     if (!lineage) throw new Error(`SCENE_GROUNDING_AUTHORITY_REQUIRED:${scene.id}`);
-    const generationAuthority = reconcileSupportingOnlyTextToVideoAuthority({ scene, lineage });
+    const generationAuthority = reconcileSupportingOnlySceneAuthority({ scene, lineage });
     const referenceIds = [
       ...(generationAuthority && "referenceAssetIds" in generationAuthority
         ? generationAuthority.referenceAssetIds
