@@ -199,6 +199,24 @@ describe("P0 Scene grounding lineage", () => {
     expect(lineage.visualClaims[0]?.evidenceLevel).toBe("EXISTENCE_ONLY");
   });
 
+  it("allows the accepted menu Asset itself as an existence-only visual subject", () => {
+    const lineage = bindSceneGroundingLineage({
+      context,
+      sceneIds: ["scene-1"],
+      proposals: [{
+        sceneId: "scene-1",
+        narrativeIntent: "The customer considers the menu.",
+        visualIntent: "Show the accepted menu reference without inventing appearance.",
+        evidence: [{ bindingId: ids.menuBinding, groundedFacts: ["Nasi Lemak"] }],
+        visualClaims: [{ subject: "Menu", detail: "Menu", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    }).get("scene-1")!;
+    expect(lineage.visualClaims).toEqual([
+      { subject: "Menu", detail: "Menu", evidenceLevel: "EXISTENCE_ONLY" },
+    ]);
+    expect(lineage.evidence[0]?.role).toBe("SUPPORTING_REFERENCE");
+  });
+
   it("rejects detailed appearance for a menu-only future item", () => {
     expect(() => bindSceneGroundingLineage({
       context,

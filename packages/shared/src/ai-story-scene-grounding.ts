@@ -186,6 +186,7 @@ export function buildScenePlanningGroundingContext(input: {
           ...facts.observed.visibleText,
           ...facts.observed.namedItems,
           ...facts.inferred.productCandidates.map((candidate) => candidate.name),
+          ...(facts.inferred.categories.includes("MENU_OR_CATALOG") ? ["Menu"] : []),
         ]),
         productCandidates: facts.inferred.productCandidates.map((candidate) => ({
           name: candidate.name,
