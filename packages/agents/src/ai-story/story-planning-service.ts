@@ -102,6 +102,52 @@ export function removeUnsupportedObservedAppearance(input: {
   });
 }
 
+function mentionsGroundedName(value: string, name: string): boolean {
+  const escaped = name.trim().toLocaleLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return escaped.length > 0 && new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`, "u")
+    .test(value.toLocaleLowerCase());
+}
+
+/**
+ * Makes catalog/menu facts used in a Scene narrative explicit in its immutable
+ * evidence lineage. This is a deterministic projection of accepted matching
+ * authority: it neither infers a new item nor promotes a supporting reference
+ * to Product authority.
+ */
+export function bindMentionedCatalogChoiceEvidence(input: {
+  context: AiStoryScenePlanningGroundingContext;
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
+}): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  return input.proposals.map((proposal) => {
+    const text = `${proposal.narrativeIntent}\n${proposal.visualIntent}`;
+    const mentions = input.context.bindings.flatMap((binding) =>
+      binding.productCandidates
+        .filter((candidate) =>
+          candidate.relationship === "CATALOG_CHOICE" &&
+          mentionsGroundedName(text, candidate.name))
+        .map((candidate) => ({ bindingId: binding.bindingId, fact: candidate.name })),
+    );
+    if (mentions.length === 0) return proposal;
+
+    const evidence = proposal.evidence.map((selection) => ({
+      ...selection,
+      groundedFacts: [...selection.groundedFacts],
+    }));
+    for (const mention of mentions) {
+      const existing = evidence.find((selection) => selection.bindingId === mention.bindingId);
+      if (!existing) {
+        evidence.push({ bindingId: mention.bindingId, groundedFacts: [mention.fact] });
+        continue;
+      }
+      if (!existing.groundedFacts.some((fact) =>
+        fact.trim().toLocaleLowerCase() === mention.fact.trim().toLocaleLowerCase())) {
+        existing.groundedFacts.push(mention.fact);
+      }
+    }
+    return { ...proposal, evidence };
+  });
+}
+
 const ScenePlanProviderOutputSchema = z.object({
   scenePlan: z.array(z.object({
     id: z.string().trim().min(1),
@@ -466,7 +512,10 @@ export async function generateScenePlan(input: {
     sceneIds,
     proposals: normalizeExistenceOnlySceneGrounding(removeUnsupportedObservedAppearance({
       context: input.assetGrounding,
-      proposals: orderedGrounding,
+      proposals: bindMentionedCatalogChoiceEvidence({
+        context: input.assetGrounding,
+        proposals: orderedGrounding,
+      }),
     })),
   });
   const acceptedAssetIds = new Set(input.assetGrounding.bindings.map((binding) => binding.assetId));

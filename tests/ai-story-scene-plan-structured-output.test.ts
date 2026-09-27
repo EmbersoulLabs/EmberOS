@@ -7,6 +7,7 @@ vi.mock("../packages/agents/src/llm", () => ({
 }));
 
 import {
+  bindMentionedCatalogChoiceEvidence,
   bindSceneGroundingProposalIdsByPlanOrder,
   buildScenePlanProviderOutputSchema,
   generateScenePlan,
@@ -197,6 +198,36 @@ describe("AI Story Scene Plan strict structured output", () => {
       detail: "Nasi Lemak",
       evidenceLevel: "EXISTENCE_ONLY",
     });
+  });
+
+  it("binds a mentioned future menu choice to its accepted catalog evidence", () => {
+    const menuBindingId = "80000000-0000-4000-8000-000000000010";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId: menuBindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: ["Ayam Rendang"],
+        namedItems: ["Menu", "Ayam Rendang"],
+        productCandidates: [{
+          name: "Ayam Rendang",
+          relationship: "CATALOG_CHOICE" as const,
+          evidence: ["visible menu text"],
+        }],
+      }],
+    };
+    const proposals = [{
+      ...validProviderResult.groundingSelections[0]!,
+      narrativeIntent: "The customer plans to try Ayam Rendang tomorrow.",
+      evidence: [],
+    }];
+
+    expect(bindMentionedCatalogChoiceEvidence({ context, proposals })[0]?.evidence).toEqual([{
+      bindingId: menuBindingId,
+      groundedFacts: ["Ayam Rendang"],
+    }]);
   });
 
   it("fails closed when structured fields conflict with canonical generation authority", async () => {
