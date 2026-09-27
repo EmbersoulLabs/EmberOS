@@ -7,6 +7,7 @@ import {
   buildAiStoryContextWarnings,
   type AiStoryContextWarning,
   type AiStoryStructuredDraft,
+  type AiStoryStoryAssetGroundingContext,
 } from "@ceo-agent/shared";
 import type { ZodIssue } from "zod";
 
@@ -28,6 +29,7 @@ export type AiStoryPolishInput = {
     description?: string | null;
   } | null;
   assetLabels: readonly string[];
+  assetGroundingContext?: AiStoryStoryAssetGroundingContext | null;
   businessProfileComplete?: boolean;
 };
 
@@ -74,6 +76,54 @@ export type AiStoryPlanningTimings = {
   planningDecodeMs: number;
   planningValidationMs: number;
 };
+
+export function buildAiStoryPolishPrompt(input: AiStoryPolishInput): {
+  system: string;
+  user: string;
+} {
+  const audience =
+    input.campaign.targetAudienceOverride?.trim() ||
+    input.businessProfile?.targetAudience?.trim() ||
+    "";
+  const objective =
+    input.campaign.objectiveCustom?.trim() ||
+    input.campaign.objective?.trim() ||
+    input.campaign.goal?.trim() ||
+    "";
+  const tone = input.businessProfile?.brandTone?.trim() || "";
+  const system = [
+    "You are an AI marketing director for EmberOS.",
+    "Convert the user's plain-language story idea into a structured Story Draft JSON object.",
+    "Do not include provider-specific fields, shot lists, scene plans, or animation instructions.",
+    "Use the campaign and business context when available.",
+    "When Grounded Asset Authority is supplied, treat observed facts and supported product candidates as authoritative.",
+    "Named menu/catalog choices and product identity claims must come only from Grounded Asset Authority or explicit Story idea text; never invent unsupported names or details.",
+    "Keep distinct products/components tied to their source Asset evidence.",
+    "Return ONLY valid JSON matching the schema hint.",
+  ].join(" ");
+  const user = [
+    `Campaign: ${input.campaign.name}`,
+    objective ? `Objective: ${objective}` : "",
+    audience ? `Target audience: ${audience}` : "",
+    tone ? `Brand tone: ${tone}` : "",
+    input.businessProfile?.brandName ? `Brand: ${input.businessProfile.brandName}` : "",
+    input.businessProfile?.description
+      ? `Business: ${input.businessProfile.description}`
+      : "",
+    input.campaign.campaignBrief ? `Brief: ${input.campaign.campaignBrief}` : "",
+    input.assetLabels.length
+      ? `Referenced assets: ${input.assetLabels.join("; ")}`
+      : "",
+    input.assetGroundingContext
+      ? `Grounded Asset Authority (provider-neutral immutable evidence):\n${JSON.stringify(input.assetGroundingContext)}`
+      : "",
+    "",
+    `Story idea:\n${input.originalIdea}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return { system, user };
+}
 
 export function sanitizeAiStoryPlanningIssues(
   issues: readonly ZodIssue[]
@@ -126,32 +176,7 @@ export async function polishAiStoryDraft(
     assetCount: input.assetLabels.length,
   });
 
-  const system = [
-    "You are an AI marketing director for EmberOS.",
-    "Convert the user's plain-language story idea into a structured Story Draft JSON object.",
-    "Do not include provider-specific fields, shot lists, scene plans, or animation instructions.",
-    "Use the campaign and business context when available.",
-    "Return ONLY valid JSON matching the schema hint.",
-  ].join(" ");
-
-  const user = [
-    `Campaign: ${input.campaign.name}`,
-    objective ? `Objective: ${objective}` : "",
-    audience ? `Target audience: ${audience}` : "",
-    tone ? `Brand tone: ${tone}` : "",
-    input.businessProfile?.brandName ? `Brand: ${input.businessProfile.brandName}` : "",
-    input.businessProfile?.description
-      ? `Business: ${input.businessProfile.description}`
-      : "",
-    input.campaign.campaignBrief ? `Brief: ${input.campaign.campaignBrief}` : "",
-    input.assetLabels.length
-      ? `Referenced assets: ${input.assetLabels.join("; ")}`
-      : "",
-    "",
-    `Story idea:\n${input.originalIdea}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const { system, user } = buildAiStoryPolishPrompt(input);
 
   try {
     const completion = await callStructuredJsonModel({

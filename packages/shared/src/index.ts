@@ -65,6 +65,7 @@ export * from "./ai-story-product-derivative-resolution";
 export * from "./ai-story-product-visual-material-selection";
 export * from "./ai-story-asset-aware-execution-planner";
 export * from "./ai-story-asset-matching";
+export * from "./ai-story-asset-semantic-intelligence";
 export * from "./ai-story-capability-mode-resolution";
 export * from "./ai-story-generation-authority";
 export * from "./ai-story-character";

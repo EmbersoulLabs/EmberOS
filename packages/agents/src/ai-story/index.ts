@@ -69,6 +69,7 @@ export * from "./scene-keyframe-preparation";
 export * from "./character-virtualization-creative-image";
 export * from "./character-dna-analysis";
 export * from "./asset-analysis-service";
+export * from "./visual-semantic-asset-analyzer";
 export * from "./provider-capability-resolution";
 export * from "./asset-aware-execution-authority";
 export * from "./asset-aware-canonical-scheduler";
