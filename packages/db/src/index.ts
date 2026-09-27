@@ -30,6 +30,7 @@ export * from "./queries/ai-story-assembly-validation-loader";
 export * from "./queries/platform-admin";
 export * from "./queries/admin-audit";
 export * from "./queries/platform-admin-resolution";
+export * from "./queries/platform-admin-grant-management";
 export * from "./queries/billing-account";
 export * from "./queries/subscription";
 export * from "./queries/entitlement";

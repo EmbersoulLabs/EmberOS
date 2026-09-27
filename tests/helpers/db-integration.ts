@@ -16,7 +16,9 @@ export function assertIsolatedTestDatabase(urlValue: string): {
     throw new Error("TEST_DB_IDENTITY_REQUIRED: EMBEROS_TEST_DB_ENVIRONMENT=test");
   }
   const url = new URL(urlValue);
-  const identity = `${url.hostname}/${url.pathname}`.toLowerCase();
+  // Supabase pooler URLs carry the project ref in the username
+  // (`postgres.<project-ref>`), not necessarily in host/path.
+  const identity = `${url.username}@${url.hostname}/${url.pathname}`.toLowerCase();
   for (const project of FORBIDDEN_PROJECTS) {
     if (identity.includes(project)) {
       throw new Error("TEST_DB_FORBIDDEN_AUTHORITY: production/staging database denied");
