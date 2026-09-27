@@ -13,6 +13,8 @@ import {
   AiStorySceneGenerationAuthoritySchema,
   AiStorySceneGroundingProposalSchema,
   AiStoryScriptVersionSchema,
+  type AiStorySceneGenerationAuthority,
+  type AiStorySceneGroundingLineage,
   CharacterContinuityEntrySchema,
   CreativeContextSchema,
   DirectorThinkingSchema,
@@ -192,6 +194,111 @@ export function reconcileSupportingOnlySceneAuthority(input: {
     };
   }
   return authority;
+}
+
+/**
+ * Scene Planning boundary. PRODUCT_GROUNDED_VIDEO + STORY_INHERITED does not
+ * name execution material. When the already-bound Scene lineage contains
+ * exactly one accepted PRODUCT_AUTHORITY asset, that asset becomes the
+ * Scene-explicit first frame. Canonical Scene remains a strict consumer.
+ * Supporting references, menu existence, and ambiguous product sets never
+ * become a first frame, and this step does not call a model or matcher.
+ */
+export function resolveInheritedProductSceneFirstFrame(input: {
+  sceneId: string;
+  generationAuthority: AiStorySceneGenerationAuthority;
+  lineage: AiStorySceneGroundingLineage;
+  acceptedContext: AiStoryScenePlanningGroundingContext;
+  expectedScope: {
+    orgId: string;
+    workspaceId: string;
+    storyId: string;
+    storyVersionId: string;
+  };
+}): AiStorySceneGenerationAuthority {
+  const authority = input.generationAuthority;
+  if (
+    authority.strategy !== "PRODUCT_GROUNDED_VIDEO" ||
+    authority.referenceSource !== "STORY_INHERITED"
+  ) {
+    return authority;
+  }
+  const context = input.acceptedContext;
+  const scope = input.expectedScope;
+  if (
+    context.orgId !== scope.orgId ||
+    context.workspaceId !== scope.workspaceId ||
+    context.storyId !== scope.storyId ||
+    context.storyVersionId !== scope.storyVersionId ||
+    input.lineage.storyId !== scope.storyId ||
+    input.lineage.storyVersionId !== scope.storyVersionId ||
+    input.lineage.matchingResultId !== context.matchingResultId
+  ) {
+    throw new Error(`SCENE_PRODUCT_FIRST_FRAME_AUTHORITY_SCOPE_MISMATCH:${input.sceneId}`);
+  }
+  const bindingById = new Map(context.bindings.map((binding) => [binding.bindingId, binding]));
+  const acceptedAssetIds = new Set<string>();
+  for (const evidence of input.lineage.evidence) {
+    if (evidence.role !== "PRODUCT_AUTHORITY") continue;
+    const binding = bindingById.get(evidence.bindingId);
+    if (
+      !binding ||
+      binding.role !== "PRODUCT_AUTHORITY" ||
+      binding.assetId !== evidence.assetId ||
+      binding.analysisSnapshotId !== evidence.semanticSnapshotId
+    ) {
+      throw new Error(`SCENE_PRODUCT_FIRST_FRAME_AUTHORITY_UNACCEPTED:${input.sceneId}`);
+    }
+    acceptedAssetIds.add(binding.assetId);
+  }
+  if (acceptedAssetIds.size === 0) {
+    throw new Error(`SCENE_PRODUCT_FIRST_FRAME_AUTHORITY_REQUIRED:${input.sceneId}`);
+  }
+  if (acceptedAssetIds.size > 1) {
+    throw new Error(`SCENE_PRODUCT_FIRST_FRAME_AUTHORITY_AMBIGUOUS:${input.sceneId}`);
+  }
+  const assetId = acceptedAssetIds.values().next().value;
+  if (!assetId) {
+    throw new Error(`SCENE_PRODUCT_FIRST_FRAME_AUTHORITY_REQUIRED:${input.sceneId}`);
+  }
+  return {
+    strategy: "PRODUCT_GROUNDED_VIDEO",
+    referenceSource: "SCENE_EXPLICIT",
+    referenceAssetIds: [assetId],
+    firstFrameAssetId: assetId,
+    productVisualIdentityRequirement: "REQUIRED",
+  };
+}
+
+export function resolveScenePlanGenerationAuthority(input: {
+  sceneId: string;
+  scene: Parameters<typeof reconcileSupportingOnlySceneAuthority>[0]["scene"];
+  lineage: Parameters<typeof reconcileSupportingOnlySceneAuthority>[0]["lineage"];
+  acceptedContext: AiStoryScenePlanningGroundingContext;
+  expectedScope: {
+    orgId: string;
+    workspaceId: string;
+    storyId: string;
+    storyVersionId: string;
+  };
+}): AiStorySceneGenerationAuthority {
+  const resolved = resolveInheritedProductSceneFirstFrame({
+    sceneId: input.sceneId,
+    generationAuthority: input.scene.generationAuthority,
+    lineage: input.lineage,
+    acceptedContext: input.acceptedContext,
+    expectedScope: input.expectedScope,
+  });
+  if (
+    input.scene.generationAuthority.strategy === "PRODUCT_GROUNDED_VIDEO" &&
+    input.scene.generationAuthority.referenceSource === "STORY_INHERITED"
+  ) {
+    return resolved;
+  }
+  return reconcileSupportingOnlySceneAuthority({
+    scene: { ...input.scene, generationAuthority: resolved },
+    lineage: input.lineage,
+  });
 }
 
 const ScenePlanProviderOutputSchema = z.object({
@@ -548,36 +655,48 @@ export async function generateScenePlan(input: {
   const rawScenePlan = z.array(
     ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema }),
   ).min(1).parse(providerOutput.scenePlan);
-  if (!input.assetGrounding) return { scenePlan: rawScenePlan, usage: completion.usage };
+  const assetGrounding = input.assetGrounding;
+  if (!assetGrounding) return { scenePlan: rawScenePlan, usage: completion.usage };
   const sceneIds = rawScenePlan.map((scene) => scene.id);
   const orderedGrounding = bindSceneGroundingProposalIdsByPlanOrder({
     sceneIds,
     proposals: providerOutput.groundingSelections,
   });
   const lineageByScene = bindSceneGroundingLineage({
-    context: input.assetGrounding,
+    context: assetGrounding,
     sceneIds,
     proposals: normalizeExistenceOnlySceneGrounding(removeUnsupportedObservedAppearance({
-      context: input.assetGrounding,
+      context: assetGrounding,
       proposals: retainSupportedSceneGroundingEvidence({
-        context: input.assetGrounding,
+        context: assetGrounding,
         proposals: bindMentionedCatalogChoiceEvidence({
-          context: input.assetGrounding,
+          context: assetGrounding,
           proposals: orderedGrounding,
         }),
       }),
     })),
   });
-  const acceptedAssetIds = new Set(input.assetGrounding.bindings.map((binding) => binding.assetId));
+  const acceptedAssetIds = new Set(assetGrounding.bindings.map((binding) => binding.assetId));
   const productBindingIds = new Set(
-    input.assetGrounding.bindings
+    assetGrounding.bindings
       .filter((binding) => binding.role === "PRODUCT_AUTHORITY")
       .map((binding) => binding.bindingId),
   );
   const scenePlan = rawScenePlan.map((scene) => {
     const lineage = lineageByScene.get(scene.id);
     if (!lineage) throw new Error(`SCENE_GROUNDING_AUTHORITY_REQUIRED:${scene.id}`);
-    const generationAuthority = reconcileSupportingOnlySceneAuthority({ scene, lineage });
+    const generationAuthority = resolveScenePlanGenerationAuthority({
+      sceneId: scene.id,
+      scene,
+      lineage,
+      acceptedContext: assetGrounding,
+      expectedScope: {
+        orgId: assetGrounding.orgId,
+        workspaceId: assetGrounding.workspaceId,
+        storyId: assetGrounding.storyId,
+        storyVersionId: assetGrounding.storyVersionId,
+      },
+    });
     const referenceIds = [
       ...(generationAuthority && "referenceAssetIds" in generationAuthority
         ? generationAuthority.referenceAssetIds
