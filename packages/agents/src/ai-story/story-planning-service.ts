@@ -50,6 +50,17 @@ import {
 
 type Usage = PlanningUsage;
 
+export function normalizeExistenceOnlySceneGrounding(
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[],
+): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  return proposals.map((proposal) => ({
+    ...proposal,
+    visualClaims: proposal.visualClaims.map((claim) => claim.evidenceLevel === "EXISTENCE_ONLY"
+      ? { ...claim, detail: claim.subject }
+      : claim),
+  }));
+}
+
 const ScenePlanProviderOutputSchema = z.object({
   scenePlan: z.array(z.object({
     id: z.string().trim().min(1),
@@ -390,7 +401,7 @@ export async function generateScenePlan(input: {
   const lineageByScene = bindSceneGroundingLineage({
     context: input.assetGrounding,
     sceneIds: rawScenePlan.map((scene) => scene.id),
-    proposals: providerOutput.groundingSelections,
+    proposals: normalizeExistenceOnlySceneGrounding(providerOutput.groundingSelections),
   });
   const acceptedAssetIds = new Set(input.assetGrounding.bindings.map((binding) => binding.assetId));
   const productBindingIds = new Set(

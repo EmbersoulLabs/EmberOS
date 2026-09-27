@@ -6,7 +6,10 @@ vi.mock("../packages/agents/src/llm", () => ({
   callStructuredJsonModel,
 }));
 
-import { generateScenePlan } from "../packages/agents/src/ai-story/story-planning-service";
+import {
+  generateScenePlan,
+  normalizeExistenceOnlySceneGrounding,
+} from "../packages/agents/src/ai-story/story-planning-service";
 
 const input = {
   story: {
@@ -107,6 +110,24 @@ describe("AI Story Scene Plan strict structured output", () => {
     callStructuredJsonModel.mockResolvedValueOnce({ result: null, decodeIssue: "INVALID_JSON", usage: { input: 20, output: 10, costUsd: 0.01 } });
 
     await expect(generateScenePlan(input)).rejects.toThrow("SCENE_PLAN_INVALID_JSON");
+  });
+
+  it("removes unsupported appearance detail from existence-only model claims", () => {
+    expect(normalizeExistenceOnlySceneGrounding([{
+      sceneId: "scene-001",
+      narrativeIntent: "Show the accepted restaurant name.",
+      visualIntent: "Reference the visible restaurant name only.",
+      evidence: [],
+      visualClaims: [{
+        subject: "Tapao Jom!",
+        detail: "a neon storefront sign",
+        evidenceLevel: "EXISTENCE_ONLY",
+      }],
+    }])[0]?.visualClaims[0]).toEqual({
+      subject: "Tapao Jom!",
+      detail: "Tapao Jom!",
+      evidenceLevel: "EXISTENCE_ONLY",
+    });
   });
 
   it("fails closed when structured fields conflict with canonical generation authority", async () => {
