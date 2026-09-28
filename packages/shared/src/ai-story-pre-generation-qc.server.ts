@@ -30,6 +30,16 @@ import {
   type AiStoryPreGenerationQcRecipeGateResult,
 } from "./ai-story-pre-generation-qc";
 
+const CAMPAIGN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** The QC scope's own Campaign is known. Other Campaign ids stay unknown. */
+export function includeValidatedCampaignAuthority(known: ReadonlySet<string>, campaignId: string) {
+  if (!CAMPAIGN_ID.test(campaignId)) throw new Error("VALIDATED_CAMPAIGN_AUTHORITY_REQUIRED");
+  const next = new Set(known);
+  next.add(`CAMPAIGN:${campaignId}`);
+  return next;
+}
+
 type Reason = { code:string; evidence:string; layer:AiStoryPreGenerationQcGateResult["failedLayer"]; owner:AiStoryPreGenerationQcGateResult["repairOwner"] };
 export type AiStoryPreGenerationQcInput = {
   outline:AiStoryOutlineVersion; script:AiStoryScriptVersion; handoff:AiStoryScriptDirectorHandoff;

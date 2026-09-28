@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { AI_STORY_CAMERA_FAMILIES } from "./ai-story-director-plan";
+import { cinematicCameraMovementIntensity } from "./ai-story-cinematic-execution-contract";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 
 export const AI_STORY_DIRECTOR_PLAN_EPISODE_PROJECTED_CONTRACT_VERSION = "ai-story-director-plan.episode-projected.v1" as const;
@@ -387,7 +389,6 @@ export function projectEpisodeMotionScenes(
       const action = script.actions.find((entry) => entry.entryId === event.entryId);
       assertAligned(Boolean(action) && action!.action === event.action, `Canonical event action contradicts Script action ${event.entryId}`);
     }
-    const physicalChanges = script.sceneStateDeltas.filter((delta) => PHYSICAL_SCRIPT_DIMENSIONS.has(delta.dimension) && delta.fromValue != null && delta.fromValue !== delta.value);
     const cameraBehaviors = new Set(direction.shots.map((shot) => `${shot.cameraType}|${shot.cameraMovement}`));
     const durationSec = direction.shots.reduce((total, shot) => total + shot.durationSec, 0);
     const authority = direction.generationAuthority.state === "KNOWN" ? direction.generationAuthority.value : null;
@@ -435,12 +436,107 @@ export function projectEpisodeMotionScenes(
         imageConditioned: authority ? authority.strategy !== "TEXT_TO_VIDEO" : false,
         productIdentitySensitive: authority?.productVisualIdentityRequirement === "REQUIRED" || direction.productBindingIds.length > 0,
       },
-      physicalCompletion: physicalChanges[0]?.fromValue
-        ? notAsserted
-        : notApplicable("No persisted physical state change requires a completion path"),
+      physicalCompletion: proveEpisodeProjectedPhysicalCompletion({
+        actions: script.actions.map((action) => ({
+          entryId: action.entryId,
+          semanticAction: action.action,
+          stateDelta: action.stateDelta ? stateFact(action.stateDelta) : null,
+        })),
+        sceneStateDeltas: script.sceneStateDeltas.map(stateFact),
+        entryState: scene.entryState.map(stateFact),
+        exitState: scene.exitState.map(stateFact),
+        events: scene.events.map((event) => ({
+          entryId: event.entryId,
+          action: event.action,
+          stateDelta: event.stateDelta ? stateFact(event.stateDelta) : null,
+        })),
+      }),
       cameraStateBoundary: notAsserted,
     };
   });
+}
+
+type PhysicalFact = { dimension: string; subjectId: string; value: string; fromValue?: string | null };
+type PhysicalLineage = {
+  actions: readonly { entryId: string; semanticAction: string; stateDelta: PhysicalFact | null }[];
+  sceneStateDeltas: readonly PhysicalFact[];
+  entryState: readonly PhysicalFact[];
+  exitState: readonly PhysicalFact[];
+  events: readonly { entryId: string; action: string; stateDelta: PhysicalFact | null }[];
+};
+
+function isPhysicalChange(fact: PhysicalFact) {
+  return PHYSICAL_SCRIPT_DIMENSIONS.has(fact.dimension) && fact.fromValue != null && fact.fromValue !== fact.value;
+}
+
+function samePhysicalChange(left: PhysicalFact, right: PhysicalFact) {
+  return left.dimension === right.dimension && left.subjectId === right.subjectId && left.fromValue === right.fromValue && left.value === right.value;
+}
+
+/**
+ * Physical completion is known only when one Script physical delta, the
+ * Canonical entry, the Canonical exit, and one matching ACTION event agree.
+ * KNOWLEDGE is never a physical dimension.
+ */
+export function proveEpisodeProjectedPhysicalCompletion(input: PhysicalLineage) {
+  const physicalFacts = input.sceneStateDeltas.filter((fact) => PHYSICAL_SCRIPT_DIMENSIONS.has(fact.dimension));
+  const changes = physicalFacts.filter(isPhysicalChange);
+  if (physicalFacts.length === 0) return notApplicable("No persisted physical state change requires a completion path");
+  if (changes.length !== 1 || physicalFacts.length !== 1) return notAsserted;
+  const change = changes[0]!;
+  const entry = input.entryState.filter((fact) => fact.dimension === change.dimension && fact.subjectId === change.subjectId);
+  const exit = input.exitState.filter((fact) => fact.dimension === change.dimension && fact.subjectId === change.subjectId);
+  if (entry.length !== 1 || entry[0]!.value !== change.fromValue || exit.length !== 1 || exit[0]!.value !== change.value) return notAsserted;
+  const actions = input.actions.filter((action) => action.stateDelta && isPhysicalChange(action.stateDelta) && samePhysicalChange(action.stateDelta, change));
+  if (actions.length !== 1) return notAsserted;
+  const action = actions[0]!;
+  const events = input.events.filter((event) => event.entryId === action.entryId && event.action === action.semanticAction && event.stateDelta && samePhysicalChange(event.stateDelta, change));
+  if (events.length !== 1) return notAsserted;
+  const conflicting = [...input.actions.flatMap((item) => item.stateDelta ? [item.stateDelta] : []), ...input.events.flatMap((item) => item.stateDelta ? [item.stateDelta] : [])]
+    .some((fact) => isPhysicalChange(fact) && !samePhysicalChange(fact, change));
+  if (conflicting) return notAsserted;
+  return known({ dimension: change.dimension, fromValue: change.fromValue!, toValue: change.value });
+}
+
+function normalizeCameraToken(value: string) {
+  return value.trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+}
+
+function canonicalCameraFamily(value: string) {
+  const normalized = normalizeCameraToken(value);
+  return AI_STORY_CAMERA_FAMILIES.find((family) => normalizeCameraToken(family) === normalized) ?? null;
+}
+
+function boundedCameraFamily(family: (typeof AI_STORY_CAMERA_FAMILIES)[number]) {
+  const intensity = cinematicCameraMovementIntensity(family);
+  return intensity === "NONE" || intensity === "SUBTLE" || family === "SMALL_ARC";
+}
+
+/**
+ * Episode-projected camera execution uses the frozen Shot's camera type and
+ * movement. It never synthesizes start or end camera state.
+ */
+export function evaluateEpisodeProjectedCameraExecution(shots: readonly { cameraType: string; cameraMovement: string }[]) {
+  const families: string[] = [];
+  for (const shot of shots) {
+    const movement = canonicalCameraFamily(shot.cameraMovement);
+    const type = canonicalCameraFamily(shot.cameraType);
+    const family = movement ?? (normalizeCameraToken(shot.cameraMovement) === "none" ? type : null);
+    if (!family || !boundedCameraFamily(family)) return { outcome: "CAMERA_EXECUTION_NOT_PROVEN" as const };
+    families.push(family);
+  }
+  if (families.length === 0) return { outcome: "CAMERA_EXECUTION_NOT_PROVEN" as const };
+  return { outcome: "BOUNDED_CAMERA_EXECUTION_PROVEN" as const, families };
+}
+
+export function projectedProductCameraSafetyProven(shot: {
+  perspectiveChange: { state: string };
+  revealsUnseenProductSurface: { state: string };
+  productIdentityTransformation: { state: string };
+}) {
+  return shot.perspectiveChange.state === "KNOWN"
+    && shot.revealsUnseenProductSurface.state === "KNOWN"
+    && shot.productIdentityTransformation.state === "KNOWN";
 }
 
 export function collectProjectedEvidenceStates(value: unknown, path = ""): { notAsserted: string[]; notApplicable: string[] } {

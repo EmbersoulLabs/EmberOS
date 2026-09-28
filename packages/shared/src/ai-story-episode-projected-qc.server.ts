@@ -24,6 +24,8 @@ import {
 } from "./ai-story-pre-generation-qc";
 import {
   AI_STORY_EPISODE_PROJECTED_MOTION_COMPLEXITY_POLICY,
+  evaluateEpisodeProjectedCameraExecution,
+  proveEpisodeProjectedPhysicalCompletion,
   type AiStoryEpisodeProjectedDirectorPlan,
   type AiStoryEpisodeProjectedMotionPlan,
 } from "./ai-story-episode-projected-authority";
@@ -100,17 +102,21 @@ function projectedMotionIssues(plan: AiStoryEpisodeProjectedMotionPlan, director
     if (!same(scene.sceneStateDeltas.map((fact) => [fact.dimension, fact.subjectId, fact.value, fact.fromValue ?? null]), scriptScene.sceneStateDeltas.map((fact) => [fact.dimension, fact.subjectId, fact.value, fact.fromValue ?? null]))) add("SCRIPT_ACTION_TRUTH_GATE", `Projected Motion changed Script state dimensions for ${scene.scriptSceneId}`);
     if (scene.actions.some((action) => "actionPath" in action || "phaseId" in action)) add("ACTION_PATH_GATE", "Projected Motion contains a synthetic action phase");
     if ("motionBudget" in scene) add("MOTION_BUDGET_GATE", "Projected Motion contains a fabricated motion budget");
-    if (scene.physicalCompletion.state === "NOT_ASSERTED") {
+    const physicalProof = proveEpisodeProjectedPhysicalCompletion(scene);
+    if (scene.physicalCompletion.state === "KNOWN" && (physicalProof.state !== "KNOWN" || physicalProof.value.dimension !== scene.physicalCompletion.value.dimension || physicalProof.value.fromValue !== scene.physicalCompletion.value.fromValue || physicalProof.value.toValue !== scene.physicalCompletion.value.toValue)) {
+      add("ACTION_COMPLETION_GATE", `Projected physical completion contradicts frozen lineage for ${scene.scriptSceneId}`);
+    }
+    if (physicalProof.state === "NOT_ASSERTED") {
       add("ACTION_COMPLETION_GATE", `PROJECTED_PHYSICAL_COMPLETION_EVIDENCE_REQUIRED for ${scene.scriptSceneId}`);
       add("SUBJECT_MOTION_FIRST_CLASS_GATE", `Physical subject completion is not asserted for ${scene.scriptSceneId}`);
       add("SUBJECT_MOTION_COMPLETION_GATE", `PROJECTED_PHYSICAL_COMPLETION_EVIDENCE_REQUIRED for ${scene.scriptSceneId}`);
     }
-    if (scene.cameraStateBoundary.state === "NOT_ASSERTED") add("CAMERA_EXECUTION_GATE", `PROJECTED_CAMERA_START_END_EVIDENCE_REQUIRED for ${scene.scriptSceneId}`);
-    if (scene.shots.some((shot) => "startCameraState" in shot || "endCameraState" in shot)) add("CAMERA_EXECUTION_GATE", "Projected Motion fabricated camera start or end state");
+    if (scene.cameraStateBoundary.state === "KNOWN" || scene.shots.some((shot) => "startCameraState" in shot || "endCameraState" in shot)) add("CAMERA_EXECUTION_GATE", "Projected Motion fabricated camera start or end state");
+    if (evaluateEpisodeProjectedCameraExecution(scene.shots).outcome !== "BOUNDED_CAMERA_EXECUTION_PROVEN") add("CAMERA_EXECUTION_GATE", `CAMERA_EXECUTION_NOT_PROVEN for ${scene.scriptSceneId}`);
     const policy = AI_STORY_EPISODE_PROJECTED_MOTION_COMPLEXITY_POLICY;
     if (scene.measuredFacts.actionCount > policy.maxActions || scene.measuredFacts.shotCount > policy.maxShots || scene.measuredFacts.cameraBehaviorCount > policy.maxCameraBehaviors || scene.measuredFacts.durationSec > policy.maxDurationSec) add("MOTION_BUDGET_GATE", `Measured Episode complexity exceeds ${policy.policyId}`);
-    if (scene.productBindingIds.length > 0 && scene.physicalCompletion.state !== "KNOWN") add("OBJECT_PERSISTENCE_GATE", `Projected object persistence is not proven for ${scene.scriptSceneId}`);
-    if (scene.measuredFacts.productIdentitySensitive && scene.physicalCompletion.state === "NOT_ASSERTED") add("PRODUCT_GROUNDED_MOTION_GATE", `Identity-sensitive Product motion has no proven physical completion for ${scene.scriptSceneId}`);
+    if (scene.productBindingIds.length > 0 && physicalProof.state !== "KNOWN") add("OBJECT_PERSISTENCE_GATE", `Projected object persistence is not proven for ${scene.scriptSceneId}`);
+    if (scene.measuredFacts.productIdentitySensitive && physicalProof.state === "NOT_ASSERTED") add("PRODUCT_GROUNDED_MOTION_GATE", `Identity-sensitive Product motion has no proven physical completion for ${scene.scriptSceneId}`);
   }
   for (let index = 1; index < plan.sceneMotionPlans.length; index += 1) {
     const current = plan.sceneMotionPlans[index]!;
@@ -236,7 +242,7 @@ export function evaluateEpisodeProjectedPreGenerationQc(raw: EpisodeProjectedPre
     sceneFunction: handoff.sceneHandoffs[0]?.sceneFunction ?? "UNKNOWN",
     visualRole: directorPlan.sceneDirections[0]?.sceneFunction ?? "UNKNOWN",
     cameraFamily: directorPlan.sceneDirections[0]?.shots[0]?.cameraMovement ?? "UNKNOWN",
-    motionRiskClass: motionPlan.sceneMotionPlans.some((scene) => scene.measuredFacts.productIdentitySensitive && scene.physicalCompletion.state === "NOT_ASSERTED") ? "HIGH" as const : motionPlan.sceneMotionPlans.some((scene) => scene.shots.some((shot) => shot.cameraMovement !== "none")) ? "MODERATE" as const : "LOW" as const,
+    motionRiskClass: motionPlan.sceneMotionPlans.some((scene) => scene.measuredFacts.productIdentitySensitive && proveEpisodeProjectedPhysicalCompletion(scene).state === "NOT_ASSERTED") ? "HIGH" as const : motionPlan.sceneMotionPlans.some((scene) => scene.shots.some((shot) => shot.cameraMovement !== "none")) ? "MODERATE" as const : "LOW" as const,
     productGrounded: handoff.productAuthorityBindings.length > 0,
     profileId: script.profileId,
     evaluatedBy: raw.evaluatedBy,
