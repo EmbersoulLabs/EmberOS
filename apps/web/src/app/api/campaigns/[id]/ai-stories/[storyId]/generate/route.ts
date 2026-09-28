@@ -328,6 +328,8 @@ export async function POST(
         storyVersionNumber: version.versionNumber,
         structuredStory: version.structuredContent,
         grounding: assetGrounding,
+        nativeDialogueDesired:
+          loaded.story.episodeIntent?.nativeCharacterDialogue === true,
       });
 
       await setAiStoryStatus(db, storyId, "generating", "review");

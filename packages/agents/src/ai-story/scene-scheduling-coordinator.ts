@@ -242,6 +242,23 @@ export type SceneSchedulingCoordinatorDependencies = {
     readonly orgId: string;
     readonly workspaceId: string;
   }) => Promise<SceneInputPreparationResolution | null>;
+  /**
+   * Episode intent repair for the scene being scheduled. Absent intent leaves
+   * historical compilation unchanged. A required missing authority fails closed
+   * before the compiled request is accepted.
+   */
+  readonly episodeRepairResolver?: (input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly campaignId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+    readonly sceneId: string;
+  }) => Promise<{
+    readonly characterContinuityRequired: boolean;
+    readonly visualTextConstraint: string | null;
+    readonly visibleDialogue: import("@ceo-agent/shared").AiStoryCharacterDialoguePerformanceAuthority | null;
+  } | null>;
   /** Exact current FROZEN Scene Product material; resolved by the application, never by the pure compiler. */
   readonly productMaterialSelectionResolver?: (input: {
     readonly orgId: string;
@@ -1145,6 +1162,14 @@ export class SceneSchedulingCoordinator {
               }
             : {}),
       }));
+      const episodeRepair = await this.dependencies.episodeRepairResolver?.({
+        orgId: fact.ownership.orgId,
+        workspaceId: fact.ownership.workspaceId,
+        campaignId: fact.ownership.campaignId,
+        storyId: fact.ownership.storyId,
+        storyVersionId: fact.ownership.storyVersionId,
+        sceneId: sceneIntent.identity.sceneId,
+      }) ?? null;
       return compileImmutableSceneProviderRequest({
           providerId: acceptedRoutingDecision.selectedProviderId,
           intent: sceneIntent,
@@ -1156,6 +1181,15 @@ export class SceneSchedulingCoordinator {
           referenceAssets,
           productMaterialSelection,
           characterDnaAuthority,
+          ...(episodeRepair?.characterContinuityRequired
+            ? { characterContinuityRequired: true as const }
+            : {}),
+          ...(episodeRepair?.visualTextConstraint
+            ? { visualTextConstraint: episodeRepair.visualTextConstraint }
+            : {}),
+          ...(episodeRepair?.visibleDialogue
+            ? { visibleDialogue: episodeRepair.visibleDialogue }
+            : {}),
           ...(sceneInputPreparation
             ? {
                 sceneInputPreparation: sceneInputPreparation.preparation,

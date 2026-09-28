@@ -10,6 +10,7 @@ import { validateAiStoryCommercialStoryProfile } from "./ai-story-commercial-sto
 import { validateCharacterAuthorityBindings } from "./ai-story-character";
 import { validateCastReferences } from "./ai-story-cast";
 import { validateAiStoryCanonicalScenes } from "./ai-story-scene.server";
+import { commercialEpisodeRepairGateEvidence } from "./ai-story-episode-intent";
 import {
   AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION,
   AI_STORY_PRE_GENERATION_QC_GATE_ORDER,
@@ -370,6 +371,14 @@ export function evaluateEpisodeProjectedPreGenerationQc(raw: EpisodeProjectedPre
     hard("INTRA_SCENE_SHOT_PROGRESSION_GATE", blocked(directorIssues, ["INTRA_SCENE_SHOT_PROGRESSION_GATE"], "DIRECTOR", "DIRECTOR"), ids),
     hard("GENERATION_UNIT_COVERAGE_GATE", target.director.shots.length < 1 ? [reason("PROJECTED_SHOT_COVERAGE_REQUIRED", "Projected Scene has no Shot Plan coverage", "DIRECTOR", "DIRECTOR")] : [], ids),
     hard("GENERATION_UNIT_BINDING_GATE", blocked(directorIssues, ["GENERATION_UNIT_BINDING_GATE"], "DIRECTOR", "DIRECTOR"), ids),
+    ...(() => {
+      const gates = commercialEpisodeRepairGateEvidence(raw.commercialEpisodeRepair);
+      return [
+        hard("CHARACTER_CONTINUITY_GATE", gates.character.map((item) => reason(item.code, item.evidence, "CAST", "CAST")), ids),
+        hard("NATIVE_DIALOGUE_INTENT_GATE", gates.nativeDialogue.map((item) => reason(item.code, item.evidence, "SCRIPT", "SCRIPT")), ids),
+        hard("VISUAL_TEXT_POLICY_GATE", gates.visualText.map((item) => reason(item.code, item.evidence, "SCENE", "SCENE")), ids),
+      ];
+    })(),
   ];
   if (results.map((result) => result.gateId).join("|") !== AI_STORY_PRE_GENERATION_QC_GATE_ORDER.join("|")) {
     throw new Error("PROJECTED_QC_GATE_ORDER_MISMATCH");

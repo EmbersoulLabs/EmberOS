@@ -160,6 +160,9 @@ jobs:
       - name: Apply AI Story keyframe paid authorization contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-keyframe-paid-authorization
 
+      - name: Apply AI Story Episode intent column
+        run: pnpm --filter @ceo-agent/db sql:ai-story-episode-intent
+
       - name: Detect masked SQL migration defects from predecessor schema
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts

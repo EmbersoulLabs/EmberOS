@@ -176,6 +176,7 @@ export async function persistStoryAssetMatching(input: {
   readonly storyVersionNumber: number;
   readonly structuredStory: unknown;
   readonly grounding: PreparedStoryAssetGrounding;
+  readonly nativeDialogueDesired?: boolean;
 }) {
   if (input.grounding.analyzedAssets.length === 0) return null;
   const createdAt = new Date().toISOString();
@@ -203,6 +204,7 @@ export async function persistStoryAssetMatching(input: {
     workspaceId: input.workspaceId,
     storyId: input.storyId,
     storyVersionId: input.storyVersionId,
+    nativeDialogueDesired: input.nativeDialogueDesired === true,
     snapshots: input.grounding.analyzedAssets.map((entry) => ({
       assetId: entry.registry.assetId,
       snapshotId: entry.snapshot.snapshotId,
@@ -235,7 +237,7 @@ export async function persistStoryAssetMatching(input: {
       productIdentityRequired: semanticDecisions.some(
         (decision) => decision.intent === "PRODUCT_IDENTITY"
       ),
-      nativeDialogueDesired: true,
+      nativeDialogueDesired: input.nativeDialogueDesired === true,
     },
     assets: input.grounding.analyzedAssets,
     semanticDecisions,

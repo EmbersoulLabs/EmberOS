@@ -14,6 +14,8 @@ import {
   CreativeContextSchema,
   DirectorThinkingSchema,
   PlanningCharacterAuthorityProjectionSchema,
+  AiStoryEpisodeIntentAuthoritySchema,
+  evaluateNativeDialogueIntent,
   ScenePlanItemSchema,
   StoryBeatSchema,
   type AiStoryOutlineVersion,
@@ -21,6 +23,7 @@ import {
   type AiStoryStructuredDraft,
   type CreativeContext,
   type DirectorThinking,
+  type AiStoryEpisodeIntentAuthority,
   type PlanningCharacterAuthorityProjection,
   type PlanningUsage,
   type ScenePlanItem,
@@ -121,6 +124,7 @@ export type GenerateAiStoryScriptSemanticProposalV1Input = {
   directorThinking: DirectorThinking;
   characterAuthorities: PlanningCharacterAuthorityProjection[];
   productAuthorityIds: string[];
+  episodeIntent?: AiStoryEpisodeIntentAuthority;
 };
 
 /** One proposal-only structured planning call. Canonical identity is added downstream. */
@@ -136,6 +140,9 @@ export async function generateAiStoryScriptSemanticProposalV1(
     directorThinking: DirectorThinkingSchema.parse(rawInput.directorThinking),
     characterAuthorities: PlanningCharacterAuthorityProjectionSchema.array().parse(rawInput.characterAuthorities),
     productAuthorityIds: z.array(z.string().uuid()).parse([...new Set(rawInput.productAuthorityIds)].sort()),
+    ...(rawInput.episodeIntent
+      ? { episodeIntent: AiStoryEpisodeIntentAuthoritySchema.parse(rawInput.episodeIntent) }
+      : {}),
   };
   if (input.frozenOutline.status !== "FROZEN") throw new Error("CANONICAL_SCRIPT_FROZEN_OUTLINE_REQUIRED");
   const outlineProductIds = resolveOutlineBoundProductAuthorityIds(input.frozenOutline);
@@ -155,6 +162,15 @@ export async function generateAiStoryScriptSemanticProposalV1(
         "When a Scene changes Story state through the commercial subject, include commercialContribution and a real sceneStateDelta.",
         "Do not replace causal progression with a product showcase.",
       ] : []),
+      ...(input.episodeIntent ? [
+        "Episode intent is structured authority. Do not recover native dialogue, spoken language, visual text languages, or character continuity from originalIdea prose.",
+        `spokenLanguage=${input.episodeIntent.spokenLanguage}; dialogueStyle=${input.episodeIntent.dialogueStyle}; nativeCharacterDialogue=${input.episodeIntent.nativeCharacterDialogue}; cta=${input.episodeIntent.cta ?? "none"}.`,
+        ...(input.episodeIntent.nativeCharacterDialogue ? [
+          "nativeCharacterDialogue is true. Include at least one visible DIALOGUE entry. The speakerId must be an exact supplied character ID. The line is the exact spoken text. The language must be the spokenLanguage locale. Do not satisfy this with voice-over.",
+        ] : [
+          "nativeCharacterDialogue is false. Do not require Native AV dialogue.",
+        ]),
+      ] : []),
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),
@@ -165,10 +181,15 @@ export async function generateAiStoryScriptSemanticProposalV1(
   if (completion.decodeIssue) {
     throw new Error(`SCRIPT_SEMANTIC_WRITER_${completion.decodeIssue}`);
   }
-  return {
-    semanticProposal: canonicalizeProviderProposal(
-      AiStoryScriptSemanticProviderOutputV1Schema.parse(completion.result),
-    ),
-    usage: completion.usage,
-  };
+  const semanticProposal = canonicalizeProviderProposal(
+    AiStoryScriptSemanticProviderOutputV1Schema.parse(completion.result),
+  );
+  if (input.episodeIntent?.nativeCharacterDialogue) {
+    const dialogue = evaluateNativeDialogueIntent({
+      requested: true,
+      entries: semanticProposal.scenes.flatMap((scene) => scene.entries),
+    });
+    if (dialogue.status === "BLOCK") throw new Error("NATIVE_DIALOGUE_REQUEST_UNSATISFIED");
+  }
+  return { semanticProposal, usage: completion.usage };
 }

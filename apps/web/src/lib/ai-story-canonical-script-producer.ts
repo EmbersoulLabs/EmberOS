@@ -19,6 +19,7 @@ import {
   type AiStoryStructuredDraft,
   type CreativeContext,
   type DirectorThinking,
+  type AiStoryEpisodeIntentAuthority,
   type PlanningCharacterAuthorityProjection,
   type PlanningUsage,
   type ScenePlanItem,
@@ -55,6 +56,7 @@ export type EnsureCurrentFrozenCanonicalScriptInput = {
   creativeContext: CreativeContext;
   directorThinking: DirectorThinking;
   characterAuthorities: PlanningCharacterAuthorityProjection[];
+  episodeIntent?: AiStoryEpisodeIntentAuthority;
 };
 
 type SemanticWriter = typeof generateAiStoryScriptSemanticProposalV1;
@@ -288,6 +290,7 @@ export async function produceAuthorizedCommercialStoryScriptProposal(
     directorThinking: input.directorThinking,
     characterAuthorities: input.characterAuthorities,
     productAuthorityIds,
+    ...(input.episodeIntent ? { episodeIntent: input.episodeIntent } : {}),
   });
   const scope: AiStoryScriptScope = {
     orgId: input.orgId,
@@ -316,6 +319,7 @@ export async function produceAuthorizedCommercialStoryScriptProposal(
     directorThinking: input.directorThinking,
     characterAuthorities: input.characterAuthorities,
     productAuthorityIds,
+    ...(input.episodeIntent ? { episodeIntent: input.episodeIntent } : {}),
   });
   const proposal = AiStoryScriptSemanticProposalV1Schema.parse(generated.semanticProposal);
   assertCommercialScriptCandidatePreAuthorization(
