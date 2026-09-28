@@ -1478,6 +1478,34 @@ export const aiStoryScriptVersions = pgTable(
   ],
 );
 
+/** Exact authorized Script semantic proposal. One immutable row per Story Version. */
+export const aiStoryScriptSemanticProposals = pgTable(
+  "ai_story_script_semantic_proposals",
+  {
+    proposalId: uuid("proposal_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    contractVersion: text("contract_version").notNull(),
+    profileId: text("profile_id").notNull(),
+    lifecycleState: text("lifecycle_state").notNull(),
+    proposal: jsonb("proposal").$type<import("@ceo-agent/shared").AiStoryScriptSemanticProposalV1>().notNull(),
+    contentHash: text("content_hash").notNull(),
+    semanticInputFingerprint: text("semantic_input_fingerprint").notNull(),
+    originatingRunId: text("originating_run_id").notNull(),
+    groundingLineage: jsonb("grounding_lineage").$type<Record<string, unknown>>().notNull(),
+    authorizedBy: uuid("authorized_by").notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_script_semantic_proposal_story_version_unique").on(t.storyId, t.storyVersionId),
+    index("ai_story_script_semantic_proposal_workspace_idx").on(t.workspaceId, t.storyId, t.storyVersionId),
+  ],
+);
+
 /** Durable Episode revision audit record. Persistence is not Provider execution. */
 export const aiStoryEpisodeRevisions = pgTable(
   "ai_story_episode_revisions",
@@ -1667,7 +1695,7 @@ export const aiStoryDirectorPlanVersions = pgTable(
     directorFingerprint: text("director_fingerprint").notNull(),
     status: text("status").notNull(),
     supersedesDirectorPlanId: uuid("supersedes_director_plan_id"),
-    directorPlan: jsonb("director_plan").$type<import("@ceo-agent/shared").AiStoryDirectorPlan>().notNull(),
+    directorPlan: jsonb("director_plan").$type<import("@ceo-agent/shared").AiStoryDirectorPlan | import("@ceo-agent/shared").AiStoryEpisodeProjectedDirectorPlan>().notNull(),
     createdBy: uuid("created_by").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
     approvedBy: uuid("approved_by"), approvedAt: timestamp("approved_at", { withTimezone: true }), frozenAt: timestamp("frozen_at", { withTimezone: true }),
   },
@@ -1676,6 +1704,7 @@ export const aiStoryDirectorPlanVersions = pgTable(
     unique("ai_story_director_plan_source_unique").on(t.storyId, t.sourceHash),
     unique("ai_story_director_plan_fingerprint_unique").on(t.storyId, t.directorFingerprint),
     index("ai_story_director_plan_workspace_idx").on(t.workspaceId, t.storyId, t.version),
+    check("ai_story_director_plan_contract_version_check", sql`${t.contractVersion} in ('ai-story-director-plan.v1', 'ai-story-director-plan.episode-projected.v1')`),
   ],
 );
 
@@ -1683,9 +1712,9 @@ export const aiStoryDirectorPlanVersions = pgTable(
 export const aiStoryMotionPlanVersions = pgTable(
   "ai_story_motion_plan_versions",
   {
-    motionPlanId:uuid("motion_plan_id").primaryKey(),orgId:uuid("org_id").notNull().references(()=>organizations.id,{onDelete:"restrict"}),workspaceId:uuid("workspace_id").notNull().references(()=>workspaces.id,{onDelete:"restrict"}),campaignId:uuid("campaign_id").notNull().references(()=>campaigns.id,{onDelete:"restrict"}),storyId:uuid("story_id").notNull().references(()=>aiStories.id,{onDelete:"restrict"}),storyVersionId:uuid("story_version_id").notNull().references(()=>aiStoryVersions.id,{onDelete:"restrict"}),outlineVersionId:uuid("outline_version_id").notNull().references(()=>aiStoryOutlineVersions.outlineVersionId,{onDelete:"restrict"}),scriptVersionId:uuid("script_version_id").notNull().references(()=>aiStoryScriptVersions.scriptVersionId,{onDelete:"restrict"}),handoffId:uuid("handoff_id").notNull().references(()=>aiStoryScriptDirectorHandoffs.handoffId,{onDelete:"restrict"}),directorPlanId:uuid("director_plan_id").notNull().references(()=>aiStoryDirectorPlanVersions.directorPlanId,{onDelete:"restrict"}),version:integer("version").notNull(),contractVersion:text("contract_version").notNull(),sourceDirectorFingerprint:text("source_director_fingerprint").notNull(),sourceHash:text("source_hash").notNull(),motionFingerprint:text("motion_fingerprint").notNull(),status:text("status").notNull(),supersedesMotionPlanId:uuid("supersedes_motion_plan_id"),motionPlan:jsonb("motion_plan").$type<import("@ceo-agent/shared").AiStoryMotionPlan>().notNull(),createdBy:uuid("created_by").notNull(),createdAt:timestamp("created_at",{withTimezone:true}).notNull(),approvedBy:uuid("approved_by"),approvedAt:timestamp("approved_at",{withTimezone:true}),frozenAt:timestamp("frozen_at",{withTimezone:true}),
+    motionPlanId:uuid("motion_plan_id").primaryKey(),orgId:uuid("org_id").notNull().references(()=>organizations.id,{onDelete:"restrict"}),workspaceId:uuid("workspace_id").notNull().references(()=>workspaces.id,{onDelete:"restrict"}),campaignId:uuid("campaign_id").notNull().references(()=>campaigns.id,{onDelete:"restrict"}),storyId:uuid("story_id").notNull().references(()=>aiStories.id,{onDelete:"restrict"}),storyVersionId:uuid("story_version_id").notNull().references(()=>aiStoryVersions.id,{onDelete:"restrict"}),outlineVersionId:uuid("outline_version_id").notNull().references(()=>aiStoryOutlineVersions.outlineVersionId,{onDelete:"restrict"}),scriptVersionId:uuid("script_version_id").notNull().references(()=>aiStoryScriptVersions.scriptVersionId,{onDelete:"restrict"}),handoffId:uuid("handoff_id").notNull().references(()=>aiStoryScriptDirectorHandoffs.handoffId,{onDelete:"restrict"}),directorPlanId:uuid("director_plan_id").notNull().references(()=>aiStoryDirectorPlanVersions.directorPlanId,{onDelete:"restrict"}),version:integer("version").notNull(),contractVersion:text("contract_version").notNull(),sourceDirectorFingerprint:text("source_director_fingerprint").notNull(),sourceHash:text("source_hash").notNull(),motionFingerprint:text("motion_fingerprint").notNull(),status:text("status").notNull(),supersedesMotionPlanId:uuid("supersedes_motion_plan_id"),motionPlan:jsonb("motion_plan").$type<import("@ceo-agent/shared").AiStoryMotionPlan | import("@ceo-agent/shared").AiStoryEpisodeProjectedMotionPlan>().notNull(),createdBy:uuid("created_by").notNull(),createdAt:timestamp("created_at",{withTimezone:true}).notNull(),approvedBy:uuid("approved_by"),approvedAt:timestamp("approved_at",{withTimezone:true}),frozenAt:timestamp("frozen_at",{withTimezone:true}),
   },
-  (t)=>[unique("ai_story_motion_plan_story_version_unique").on(t.storyId,t.version),unique("ai_story_motion_plan_source_unique").on(t.storyId,t.sourceHash),unique("ai_story_motion_plan_fingerprint_unique").on(t.storyId,t.motionFingerprint),index("ai_story_motion_plan_workspace_idx").on(t.workspaceId,t.storyId,t.version)],
+  (t)=>[unique("ai_story_motion_plan_story_version_unique").on(t.storyId,t.version),unique("ai_story_motion_plan_source_unique").on(t.storyId,t.sourceHash),unique("ai_story_motion_plan_fingerprint_unique").on(t.storyId,t.motionFingerprint),index("ai_story_motion_plan_workspace_idx").on(t.workspaceId,t.storyId,t.version),check("ai_story_motion_plan_contract_version_check", sql`${t.contractVersion} in ('ai-story-motion-plan.v1', 'ai-story-motion-plan.episode-projected.v1')`)],
 );
 
 /** Immutable unified pre-dispatch QC evidence over the frozen Writer-to-Motion lineage. */

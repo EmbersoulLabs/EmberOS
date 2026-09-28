@@ -33,6 +33,11 @@ export const CERTIFIED_BYTEPLUS_SEEDANCE_20_NO_VIDEO_INPUT_APPLICABLE_MODES = [
 ] as const;
 export const PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON =
   "Human-authorized Production additional Provider submission" as const;
+export const STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON =
+  "bounded PR #178 successor 5-scene Seedance certification" as const;
+export const STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_PREVIOUS_MAX_SUBMISSIONS = 4 as const;
+export const STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_ADDITIONAL_SUBMISSIONS = 5 as const;
+export const STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_TARGET = 9 as const;
 
 const uuid = z.string().uuid();
 const instant = z.string().datetime();

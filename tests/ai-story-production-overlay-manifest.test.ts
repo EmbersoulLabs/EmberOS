@@ -91,8 +91,8 @@ describe("bounded Production overlay migration manifest", () => {
     expect(new Set(catalog.tables.map((table: { table: string }) => table.table)).size).toBe(58);
   });
 
-  it("has an exact-source, topologically ordered, non-row-mutating 24-step closure", () => {
-    expect(manifest.entries).toHaveLength(24);
+  it("has an exact-source, topologically ordered, non-row-mutating 25-step closure", () => {
+    expect(manifest.entries).toHaveLength(25);
     const known = new Set(catalog.tables.map((table: { table: string }) => `table:${table.table}`));
     const created = new Set<string>();
     for (const [index, entry] of manifest.entries.entries()) {

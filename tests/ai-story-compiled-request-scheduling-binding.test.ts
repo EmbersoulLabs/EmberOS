@@ -190,6 +190,43 @@ describe("compiled Provider request scheduling authority", () => {
     expect(validateAiStoryCompiledRequestFingerprint(first)).toBe(true);
   });
 
+  it("carries immutable Scene grounding into the prompt without promoting semantic evidence to Provider references", () => {
+    const selected = inputs("T2V");
+    const groundingLineage = {
+      contractVersion: "ai-story-scene-grounding-lineage.v1" as const,
+      storyId: selected.intent.identity.storyId,
+      storyVersionId: selected.intent.identity.storyVersionId,
+      matchingResultId: "50000000-0000-4000-8000-000000000080",
+      narrativeIntent: "Customer says they want Ayam Rendang tomorrow",
+      visualIntent: "Customer considers the grounded Menu choice",
+      evidence: [{
+        bindingId: "50000000-0000-4000-8000-000000000081",
+        assetId: "50000000-0000-4000-8000-000000000082",
+        role: "SUPPORTING_REFERENCE" as const,
+        semanticSnapshotId: "50000000-0000-4000-8000-000000000083",
+        groundedFacts: ["Ayam Rendang"],
+      }],
+      visualClaims: [{ subject: "Ayam Rendang", detail: "Ayam Rendang", evidenceLevel: "EXISTENCE_ONLY" as const }],
+    };
+    const compiled = compileImmutableSeedanceRequestFromSceneCompilation({
+      ...selected,
+      instructions: { ...selected.instructions, groundingLineage },
+      authority: AUTHORITY,
+      adapterVersion: "1.0.0",
+      compiledAt: "2026-09-01T00:00:00.000Z",
+      resolution: "480p",
+    });
+    expect(compiled.compiledPrompt).toContain("Narrative intent: Customer says they want Ayam Rendang tomorrow");
+    expect(compiled.compiledPrompt).toContain("Grounded facts (factual authority; not implicit Provider image references): Ayam Rendang");
+    expect(compiled.compiledPrompt).not.toMatch(/Burger|Laksa|Pizza|Sushi|plating|garnish|texture/i);
+    expect(compiled.referenceMappings).toEqual([]);
+    expect(compiled.storyReferenceMappings).toEqual([]);
+    expect(compiled.semanticPlan.sections).toEqual(expect.arrayContaining([
+      { section: "SCENE_CONTEXT", facts: ["Customer says they want Ayam Rendang tomorrow"] },
+      { section: "REQUIRED_EVIDENCE", facts: ["Ayam Rendang"] },
+    ]));
+  });
+
   it("persists pricing-significant T2V/I2V dimensions and distinct fingerprints", () => {
     const t2v = compile("T2V");
     const i2v = compile("I2V");

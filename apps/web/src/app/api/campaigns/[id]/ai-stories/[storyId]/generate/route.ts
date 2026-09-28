@@ -37,6 +37,10 @@ import {
   loadCampaignAiStory,
   setAiStoryStatus,
 } from "@/lib/ai-story-service";
+import {
+  persistStoryAssetMatching,
+  prepareStoryAssetGrounding,
+} from "@/lib/ai-story-asset-semantic-grounding";
 
 export async function POST(
   request: Request,
@@ -73,20 +77,6 @@ export async function POST(
       return apiError("Story cannot be polished in its current state", "VALIDATION_ERROR", 409);
     }
 
-    const [claimedStory] = await db
-      .update(schema.aiStories)
-      .set({ status: "generating", updatedAt: new Date() })
-      .where(
-        and(
-          eq(schema.aiStories.id, storyId),
-          eq(schema.aiStories.status, status)
-        )
-      )
-      .returning({ id: schema.aiStories.id });
-    if (!claimedStory) {
-      return apiError("Story planning is already in progress", "CONFLICT", 409);
-    }
-
     const profileRow = await getBusinessProfileByWorkspace(campaign.workspaceId);
     const profile = profileRow
       ? normalizeBusinessProfileRecord(profileRow as Record<string, unknown>)
@@ -112,6 +102,30 @@ export async function POST(
                 )
               )
           ).map((a) => assetLabelFromProductionRow(a));
+
+    // Required before Writer execution: exact selected bytes must have usable,
+    // immutable visual semantic authority. Cache hits perform no raw-byte read
+    // and no additional vision call.
+    const assetGrounding = await prepareStoryAssetGrounding({
+      db,
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      assetLinks: loaded.assetLinks,
+    });
+
+    const [claimedStory] = await db
+      .update(schema.aiStories)
+      .set({ status: "generating", updatedAt: new Date() })
+      .where(
+        and(
+          eq(schema.aiStories.id, storyId),
+          eq(schema.aiStories.status, status)
+        )
+      )
+      .returning({ id: schema.aiStories.id });
+    if (!claimedStory) {
+      return apiError("Story planning is already in progress", "CONFLICT", 409);
+    }
 
     const accountingIdentity = buildAiStoryPlanningLedgerIdentity({
       orgId: campaign.orgId,
@@ -192,6 +206,7 @@ export async function POST(
           }
         : null,
       assetLabels,
+      assetGroundingContext: assetGrounding.context,
       businessProfileComplete: completion?.complete,
     }));
     const polish = selfUseReservation
@@ -286,6 +301,8 @@ export async function POST(
           campaignId,
           workspaceId: campaign.workspaceId,
           assetIds,
+          assetGroundingContext: assetGrounding.context,
+          semanticAnalyzerCalls: assetGrounding.semanticAnalyzerCalls,
           warnings: polish.warnings,
         },
         aiMetadata: {
@@ -300,6 +317,17 @@ export async function POST(
           outputTokens: polish.usage.output,
         },
         createdBy: user.id,
+      });
+
+      await persistStoryAssetMatching({
+        db,
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        storyId,
+        storyVersionId: version.id,
+        storyVersionNumber: version.versionNumber,
+        structuredStory: version.structuredContent,
+        grounding: assetGrounding,
       });
 
       await setAiStoryStatus(db, storyId, "generating", "review");

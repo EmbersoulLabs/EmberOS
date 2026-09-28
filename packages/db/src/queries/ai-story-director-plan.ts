@@ -1,7 +1,9 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { AiStoryDirectorPlanSchema, assertAiStoryDirectorPlanTransition, validateAiStoryDirectorPlan, type AiStoryDirectorPlan, type AiStoryDirectorSceneDirection } from "@ceo-agent/shared";
 import { buildAiStoryDirectorPlan, computeAiStoryDirectorPlanFingerprint, computeAiStoryDirectorPlanSourceHash } from "@ceo-agent/shared/server";
+import type { EpisodeProjectedAuthoritySource } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
+import { persistEpisodeProjectedDirector } from "./ai-story-episode-projected-persistence";
 import type { AiStoryScriptScope } from "./ai-story-script";
 type Db=ReturnType<typeof getDb>;
 export class AiStoryDirectorPlanAuthorityError extends Error { constructor(readonly code:string,message:string){super(message);this.name="AiStoryDirectorPlanAuthorityError";} }
@@ -29,5 +31,8 @@ export class AiStoryDirectorPlanAuthorityService {
   async transition(scope:AiStoryScriptScope,directorPlanId:string,to:"VALIDATED"|"APPROVED"|"FROZEN",at=new Date().toISOString()){
     return this.db.transaction(async tx=>{await assertScope(tx,scope,true);const rows=await tx.select().from(schema.aiStoryDirectorPlanVersions).where(and(eq(schema.aiStoryDirectorPlanVersions.directorPlanId,directorPlanId),eq(schema.aiStoryDirectorPlanVersions.orgId,scope.orgId),eq(schema.aiStoryDirectorPlanVersions.workspaceId,scope.workspaceId))).limit(1).for("update");if(!rows[0])throw new AiStoryDirectorPlanAuthorityError("DIRECTOR_PLAN_NOT_FOUND","Director plan not found");const plan=parse(rows[0]);assertAiStoryDirectorPlanTransition(plan.status,to);if(to==="VALIDATED"){const handoffs=await tx.select().from(schema.aiStoryScriptDirectorHandoffs).where(eq(schema.aiStoryScriptDirectorHandoffs.handoffId,plan.handoffId)).limit(1);if(!handoffs[0]||validateAiStoryDirectorPlan(plan,handoffs[0].handoff,{expectedSourceHash:computeAiStoryDirectorPlanSourceHash(plan),expectedFingerprint:computeAiStoryDirectorPlanFingerprint(plan),currentHandoffId:handoffs[0].authorityStatus==="CURRENT"?handoffs[0].handoffId:undefined}).some(i=>i.severity==="BLOCK"))throw new AiStoryDirectorPlanAuthorityError("DIRECTOR_PLAN_VALIDATION_FAILED","Director plan failed deterministic gates");}
       const next:AiStoryDirectorPlan={...plan,status:to,approvedBy:to==="APPROVED"?scope.actorUserId:plan.approvedBy,approvedAt:to==="APPROVED"?at:plan.approvedAt,frozenAt:to==="FROZEN"?at:plan.frozenAt};await tx.update(schema.aiStoryDirectorPlanVersions).set({status:to,directorPlan:next,approvedBy:next.approvedBy,approvedAt:next.approvedAt?new Date(next.approvedAt):null,frozenAt:next.frozenAt?new Date(next.frozenAt):null}).where(eq(schema.aiStoryDirectorPlanVersions.directorPlanId,directorPlanId));return next;});
+  }
+  async projectFromEpisodeAuthority(scope: AiStoryScriptScope, source: EpisodeProjectedAuthoritySource, createdAt?: string) {
+    return persistEpisodeProjectedDirector(this.db, scope, source, createdAt);
   }
 }

@@ -5,7 +5,7 @@ import {
   StoryBeatSchema,
 } from "./ai-story";
 import { buildCanonicalOutlineBeatBasis } from "./ai-story-outline-beat-promotion.server";
-import { AiStoryOutlineVersionSchema } from "./ai-story-outline";
+import { AiStoryOutlineVersionSchema, resolveOutlineBoundProductAuthorityIds } from "./ai-story-outline";
 import {
   AiStoryScriptAuthorityReferenceSchema,
   AiStoryScriptSceneSchema,
@@ -172,7 +172,7 @@ export function promoteAiStoryScriptSemanticProposalV1(
   const characterMap = new Map(input.characterAuthorities.map((item) => [item.characterId, item]));
   if (characterMap.size !== input.characterAuthorities.length) fail("CANONICAL_SCRIPT_CHARACTER_AUTHORITY_AMBIGUOUS", "Character authority IDs must be unique");
   const productPolicy = outline.productStoryProfile;
-  const productIds = new Set(productPolicy?.productAuthorityIds ?? []);
+  const productIds = new Set(resolveOutlineBoundProductAuthorityIds(outline));
   const outlineCharacters = new Map(outline.authorityReferences.filter((ref) => ref.authorityType === "CHARACTER").map((ref) => [ref.authorityId, ref]));
   for (const authority of characterMap.values()) {
     const source = outlineCharacters.get(authority.characterId);
@@ -282,6 +282,10 @@ export function promoteAiStoryScriptSemanticProposalV1(
       newActionOutcomes: proposal.newActionOutcomes,
       productEvidence: [],
       ...(contributions.length ? { productStoryContributions: contributions } : {}),
+      ...(proposal.narrativeFunction ? { narrativeFunction: proposal.narrativeFunction } : {}),
+      ...(proposal.causalPreconditions?.length ? { causalPreconditions: proposal.causalPreconditions } : {}),
+      ...(proposal.storyConsequence ? { storyConsequence: proposal.storyConsequence } : {}),
+      ...(proposal.commercialContribution ? { commercialContribution: proposal.commercialContribution } : {}),
     });
   });
   assertStateContinuity(scenes);

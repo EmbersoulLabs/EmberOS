@@ -4,6 +4,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import {
   AiStoryCharacterAuthorityService,
+  AiStoryAssetMatchingRepository,
   BillingAccountRepositoryImpl,
   ControlledSelfUseAuthorityService,
   PlatformAdminRepositoryImpl,
@@ -29,11 +30,13 @@ import {
 } from "@ceo-agent/agents";
 import {
   AiStoryStructuredDraftSchema,
+  assertScenePlanningGroundingScope,
   STORY_PLANNING_STAGE_ORDER,
   assessBusinessProfileCompletion,
   normalizeBusinessProfileRecord,
   prunePlanningDraftAfterStage,
   type AiStoryStructuredDraft,
+  type AiStoryOutlineProfileReference,
   type PlanningUsage,
   type StoryPlanningDraft,
   type StoryPlanningStage,
@@ -42,7 +45,7 @@ import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
 import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
-import { ensureCurrentFrozenCanonicalScript } from "@/lib/ai-story-canonical-script-producer";
+import { ensureCurrentFrozenCanonicalScript, produceAuthorizedCommercialStoryScriptProposal } from "@/lib/ai-story-canonical-script-producer";
 import { ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
 import {
   assetLabelFromProductionRow,
@@ -58,6 +61,26 @@ import {
 } from "@/lib/ai-story-planning-service";
 
 type Db = ReturnType<typeof getDb>;
+
+/**
+ * Legacy predicate. Scene and Shot planning use requiresCanonicalStoryAuthority,
+ * which includes COMMERCIAL_STORY. This function stays PRODUCT_STORY-only so
+ * existing routing tests keep their original contract.
+ */
+export function requiresProductStoryCanonicalOutline(
+  profile: AiStoryOutlineProfileReference | null | undefined
+): boolean {
+  if (!profile) throw new Error("AI Story Outline profile authority is required");
+  return profile.profileId === "PRODUCT_STORY";
+}
+
+/** PRODUCT_STORY and COMMERCIAL_STORY share one canonical Outline/Script lifecycle. CORE does not. */
+export function requiresCanonicalStoryAuthority(
+  profile: AiStoryOutlineProfileReference | null | undefined
+): boolean {
+  if (!profile) throw new Error("AI Story Outline profile authority is required");
+  return profile.profileId === "PRODUCT_STORY" || profile.profileId === "COMMERCIAL_STORY";
+}
 
 function emptyUsage(): PlanningUsage {
   return { input: 0, output: 0, costUsd: 0 };
@@ -134,6 +157,20 @@ export async function loadAiStoryPlanningContext(
       campaignId,
     })
   );
+  const assetGrounding = await new AiStoryAssetMatchingRepository(
+    db
+  ).loadScenePlanningGroundingContext({
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    storyId,
+    storyVersionId: loaded.currentVersion.id,
+  });
+  assertScenePlanningGroundingScope(assetGrounding, {
+    orgId: campaign.orgId,
+    workspaceId: campaign.workspaceId,
+    storyId,
+    storyVersionId: loaded.currentVersion.id,
+  });
   const episodeContinuity = await new PgEpisodeContinuityRuntimeIntegration(
     db
   ).loadForPlanning({
@@ -191,6 +228,7 @@ export async function loadAiStoryPlanningContext(
     ],
     characterAuthorities,
     productAuthorities,
+    assetGrounding,
     episodeContinuity,
   };
 }
@@ -395,19 +433,22 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.storyBeats?.length),
         "Generate Story Beats before Scene Plan"
       );
-      await ensureCurrentFrozenCanonicalOutline({
-        db,
-        campaignId,
-        storyId,
-        storyVersionId: ctx.loaded.currentVersion!.id,
-        actorUserId: input.actorUserId,
-        proposedStoryBeats: draft.storyBeats!,
-      });
+      if (requiresCanonicalStoryAuthority(ctx.loaded.story.outlineProfile)) {
+        await ensureCurrentFrozenCanonicalOutline({
+          db,
+          campaignId,
+          storyId,
+          storyVersionId: ctx.loaded.currentVersion!.id,
+          actorUserId: input.actorUserId,
+          proposedStoryBeats: draft.storyBeats!,
+        });
+      }
       const generated = await generateScenePlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
         directorThinking: draft.directorThinking!,
         storyBeats: draft.storyBeats!,
+        assetGrounding: ctx.assetGrounding,
       });
       usage = addUsage(usage, generated.usage);
       stageCostUsd += generated.usage.costUsd;
@@ -431,30 +472,65 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.scenePlan?.length),
         "Generate Scene Plan before Shot Plan"
       );
-      const canonical = await ensureCurrentFrozenCanonicalScript({
-        db,
-        orgId: ctx.campaign.orgId,
-        workspaceId: ctx.campaign.workspaceId,
-        campaignId,
-        storyId,
-        storyVersionId: ctx.loaded.currentVersion!.id,
-        actorUserId: input.actorUserId,
-        story: ctx.storyDraft,
-        storyBeats: draft.storyBeats!,
-        scenePlan: draft.scenePlan!,
-        creativeContext: draft.creativeContext!,
-        directorThinking: draft.directorThinking!,
-        characterAuthorities: ctx.characterAuthorities,
-      });
-      usage = addUsage(usage, canonical.usage);
-      stageCostUsd += canonical.usage.costUsd;
+      let canonicalScript;
+      if (requiresCanonicalStoryAuthority(ctx.loaded.story.outlineProfile)) {
+        // A durable Scene Plan may predate Outline materialization. Converge
+        // the exact current Story authority before producing Script;
+        // this is deterministic and does not re-run Scene Planning.
+        await ensureCurrentFrozenCanonicalOutline({
+          db,
+          campaignId,
+          storyId,
+          storyVersionId: ctx.loaded.currentVersion!.id,
+          actorUserId: input.actorUserId,
+          proposedStoryBeats: draft.storyBeats!,
+        });
+        if (ctx.loaded.story.outlineProfile?.profileId === "COMMERCIAL_STORY") {
+          const authored = await produceAuthorizedCommercialStoryScriptProposal({
+            db,
+            orgId: ctx.campaign.orgId,
+            workspaceId: ctx.campaign.workspaceId,
+            campaignId,
+            storyId,
+            storyVersionId: ctx.loaded.currentVersion!.id,
+            actorUserId: input.actorUserId,
+            story: ctx.storyDraft,
+            storyBeats: draft.storyBeats!,
+            scenePlan: draft.scenePlan!,
+            creativeContext: draft.creativeContext!,
+            directorThinking: draft.directorThinking!,
+            characterAuthorities: ctx.characterAuthorities,
+          });
+          usage = addUsage(usage, authored.usage);
+          stageCostUsd += authored.usage.costUsd;
+        }
+        const canonical = await ensureCurrentFrozenCanonicalScript({
+          db,
+          orgId: ctx.campaign.orgId,
+          workspaceId: ctx.campaign.workspaceId,
+          campaignId,
+          storyId,
+          storyVersionId: ctx.loaded.currentVersion!.id,
+          actorUserId: input.actorUserId,
+          story: ctx.storyDraft,
+          storyBeats: draft.storyBeats!,
+          scenePlan: draft.scenePlan!,
+          creativeContext: draft.creativeContext!,
+          directorThinking: draft.directorThinking!,
+          characterAuthorities: ctx.characterAuthorities,
+        });
+        canonicalScript = canonical.script;
+        usage = addUsage(usage, canonical.usage);
+        stageCostUsd += canonical.usage.costUsd;
+      }
       const generated = await generateShotPlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
         directorThinking: draft.directorThinking!,
         storyBeats: draft.storyBeats!,
         scenePlan: draft.scenePlan!,
-        canonicalScript: canonical.script,
+        planningPackageId: latestPackage?.id,
+        ...(canonicalScript ? { canonicalScript } : {}),
       });
       usage = addUsage(usage, generated.usage);
       stageCostUsd += generated.usage.costUsd;

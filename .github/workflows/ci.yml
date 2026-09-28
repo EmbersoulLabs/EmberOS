@@ -204,6 +204,9 @@ jobs:
       - name: Certify AI Story Script Scene PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-script-authority.integration.test.ts
 
+      - name: Certify COMMERCIAL_STORY semantic proposal PostgreSQL authority
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-commercial-story-authority-lifecycle.integration.test.ts
+
       - name: Certify durable Episode revision persistence
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-durable-episode-revision-persistence.integration.test.ts
 

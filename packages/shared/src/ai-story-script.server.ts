@@ -47,7 +47,7 @@ const AiStoryScriptSemanticInputFingerprintSchema = z.object({
   creativeContext: CreativeContextSchema,
   directorThinking: DirectorThinkingSchema,
   characterAuthorities: PlanningCharacterAuthorityProjectionSchema.array(),
-  productAuthorityIds: z.array(z.string().uuid()).min(1),
+  productAuthorityIds: z.array(z.string().uuid()),
 }).strict();
 
 /** Canonical pre-model provenance for one Script semantic generation input. */

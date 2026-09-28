@@ -105,7 +105,7 @@ function previousUnicodeBoundary(value: string, index: number) {
   return index;
 }
 
-function chunkNormalizedCreativeIntent(value: string): string[] {
+export function chunkNormalizedCreativeIntent(value: string): string[] {
   const chunks: string[] = [];
   let start = 0;
   while (start < value.length) {

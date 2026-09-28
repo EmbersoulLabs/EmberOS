@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { AiStoryShotCameraSafetySchema } from "./ai-story-product-camera-safety";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
 import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
 import { AiStoryOutlineProfileReferenceSchema } from "./ai-story-outline-profile";
 import { EpisodeContinuityPlanningContextSchema } from "./ai-story-episode-continuity";
+import { AiStorySceneGroundingLineageSchema } from "./ai-story-scene-grounding";
 
 /** Campaign-owned AI Story (V1) — distinct from workspace Asset Story (`stories`). */
 export const AI_STORY_STATUSES = [
@@ -291,9 +293,35 @@ export const ScenePlanItemSchema = z.object({
   continuityNotes: z.string().default(""),
   order: z.number().int().nonnegative(),
   generationAuthority: AiStorySceneGenerationAuthoritySchema.optional(),
+  groundingLineage: AiStorySceneGroundingLineageSchema.optional(),
 });
 
 export type ScenePlanItem = z.infer<typeof ScenePlanItemSchema>;
+
+export const AI_STORY_SHOT_AUTHORITY_LINEAGE_VERSION =
+  "ai-story-shot-authority-lineage.v1" as const;
+
+/**
+ * Immutable planning authority copied from the exact parent Scene after the
+ * model has proposed camera language. The model never authors this object.
+ */
+export const AiStoryShotAuthorityLineageSchema = z.object({
+  contractVersion: z.literal(AI_STORY_SHOT_AUTHORITY_LINEAGE_VERSION),
+  planningPackageId: z.string().uuid(),
+  storyId: z.string().uuid(),
+  storyVersionId: z.string().uuid(),
+  matchingResultId: z.string().uuid(),
+  sceneId: NonEmptyTextSchema,
+  sceneOrder: z.number().int().nonnegative(),
+  generationAuthority: AiStorySceneGenerationAuthoritySchema,
+  groundingLineage: AiStorySceneGroundingLineageSchema,
+  /** Present only when product camera safety was bound before lineage freeze. */
+  cameraSafety: AiStoryShotCameraSafetySchema.optional(),
+}).strict();
+
+export type AiStoryShotAuthorityLineage = z.infer<
+  typeof AiStoryShotAuthorityLineageSchema
+>;
 
 export const ShotPlanItemSchema = z.object({
   id: NonEmptyTextSchema,
@@ -308,6 +336,10 @@ export const ShotPlanItemSchema = z.object({
   emotion: NonEmptyTextSchema,
   information: NonEmptyTextSchema,
   order: z.number().int().nonnegative(),
+  /** Optional for historical Shot reads. New product-sensitive writes must bind it. */
+  cameraSafety: AiStoryShotCameraSafetySchema.optional(),
+  /** Optional only for historical planning-package read compatibility. */
+  authorityLineage: AiStoryShotAuthorityLineageSchema.optional(),
 });
 
 export type ShotPlanItem = z.infer<typeof ShotPlanItemSchema>;
@@ -444,6 +476,8 @@ export const AiStoryAnimationPackageCanonicalSceneAuthoritySchema = z.object({
 }).strict();
 
 export const AnimationPackagePayloadSchema = z.object({
+  /** Exact draft Package whose persisted Scene authority fed Shot Planning. */
+  sourcePlanningPackageId: z.string().uuid().optional(),
   story: AiStoryStructuredDraftSchema,
   characters: z.array(CreativeContextCharacterSchema),
   creativeContext: CreativeContextSchema,
@@ -469,12 +503,21 @@ export type AiStoryAnimationPackageCanonicalSceneAuthority = z.infer<
 
 /** Strict new-write contract. Historical reads continue through AnimationPackagePayloadSchema. */
 export const AuthoritativeAnimationPackagePayloadSchema = AnimationPackagePayloadSchema.extend({
+  sourcePlanningPackageId: z.string().uuid().optional(),
   scenePlan: z.array(ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema })).min(1),
   canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema.extend({
     scenes: z.array(AiStoryAnimationPackageCanonicalSceneBindingSchema.extend({
       generationAuthority: AiStorySceneGenerationAuthoritySchema,
     })).min(1),
   }),
+}).superRefine((value, context) => {
+  if (value.scenePlan.some((scene) => scene.groundingLineage) && !value.sourcePlanningPackageId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["sourcePlanningPackageId"],
+      message: "Grounded Animation Packages require the exact source Planning Package",
+    });
+  }
 });
 export type AuthoritativeAnimationPackagePayload = z.infer<
   typeof AuthoritativeAnimationPackagePayloadSchema

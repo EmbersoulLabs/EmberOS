@@ -11,6 +11,10 @@ import {
   CertificationCommercialScopeSchema,
   PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON,
   PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_ADDITIONAL_SUBMISSIONS,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_PREVIOUS_MAX_SUBMISSIONS,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_TARGET,
   ProviderUsdPricingRuleSchema,
   certifiedSeedanceFirstFrameI2vSiblingFields,
   certifiedSeedanceFirstFrameI2vSiblingIdentity,
@@ -104,6 +108,21 @@ function advanceScope(
 ): CertificationCommercialScope {
   const { integrityHash: _oldHash, ...current } = scopeFromRow(row);
   return CertificationCommercialScopeSchema.parse(withIntegrity({ ...current, ...changes }));
+}
+
+/**
+ * A reservation released before any SUBMITTED event never consumed a quota slot.
+ * Reopening it is the same initial attempt, not a second Provider submission.
+ * A released reservation that was submitted stays replayed until slot reconciliation.
+ */
+export function canReopenUnsubmittedCertificationReservation(input: {
+  readonly status: string;
+  readonly hasSubmittedEvent: boolean;
+  readonly hasSlotReconciliation: boolean;
+}): boolean {
+  return input.status === "RELEASED"
+    && !input.hasSubmittedEvent
+    && !input.hasSlotReconciliation;
 }
 
 function reservationFromRow(row: typeof schema.certificationCommercialReservations.$inferSelect): CertificationCommercialReservation {
@@ -472,6 +491,139 @@ export class CertificationCommercialAuthorityService {
     });
   }
 
+  /**
+   * Bounded STAGING-only quota path for the PR #178 successor certification.
+   * Authorizes exactly max 4 → max 9 when effective usage is 4. Does not
+   * mutate consumed, reserved, spent, reconciliation rows, or the cost ceiling.
+   * Production +1 amendment remains amendActiveProductionSubmissionQuota().
+   */
+  async amendActiveStagingSubmissionQuota(input: {
+    environment: CertificationEnvironment;
+    certificationScopeId: string;
+    orgId: string;
+    workspaceId: string;
+    capabilityKey: "ai_story.execute";
+    actorUserId: string;
+    humanAuthorizationReason: string;
+    amendedAt: string;
+    maxProviderSubmissions: number;
+  }): Promise<{ scope: CertificationCommercialScope; replayed: boolean }> {
+    if (input.environment !== "STAGING") {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Staging submission quota amendment requires environment=STAGING"
+      );
+    }
+    if (input.capabilityKey !== "ai_story.execute") {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_MISMATCH",
+        "Capability identity must remain ai_story.execute"
+      );
+    }
+    if (!input.actorUserId?.trim()) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Staging submission quota amendment requires an explicit actorUserId"
+      );
+    }
+    if (input.humanAuthorizationReason !== STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Staging submission quota amendment requires explicit human authorization"
+      );
+    }
+    if (!Number.isInteger(input.maxProviderSubmissions) || input.maxProviderSubmissions <= 0) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Target maxProviderSubmissions must be a positive integer"
+      );
+    }
+    return this.db.transaction(async (tx) => {
+      const ownership = await tx.select({ workspaceId: schema.workspaces.id }).from(schema.workspaces).where(and(
+        eq(schema.workspaces.id, input.workspaceId), eq(schema.workspaces.orgId, input.orgId),
+      )).limit(1);
+      if (!ownership[0]) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISMATCH", "Workspace does not belong to organization");
+      }
+      const rows = await tx.select().from(schema.certificationCommercialScopes).where(and(
+        eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId),
+        eq(schema.certificationCommercialScopes.environment, "STAGING"),
+        eq(schema.certificationCommercialScopes.orgId, input.orgId),
+        eq(schema.certificationCommercialScopes.workspaceId, input.workspaceId),
+        eq(schema.certificationCommercialScopes.capabilityKey, "ai_story.execute"),
+      )).limit(1).for("update");
+      const row = rows[0];
+      if (!row) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISSING", "Staging certification scope not found");
+      }
+      if (row.status !== "ACTIVE") {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_INACTIVE", "Staging certification scope is not active");
+      }
+      if (input.maxProviderSubmissions === row.maxProviderSubmissions) {
+        return { scope: scopeFromRow(row), replayed: true };
+      }
+      if (input.maxProviderSubmissions < row.maxProviderSubmissions) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "Staging submission quota amendment allows only an upward change"
+        );
+      }
+      if (
+        row.maxProviderSubmissions !== STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_PREVIOUS_MAX_SUBMISSIONS ||
+        input.maxProviderSubmissions !== STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_TARGET
+      ) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "This bounded path authorizes exactly maxProviderSubmissions 4 to 9"
+        );
+      }
+      const reconciliationCountRows = await tx.select({
+        count: sql<number>`count(*)::int`,
+      }).from(schema.certificationSubmissionSlotReconciliations).where(eq(
+        schema.certificationSubmissionSlotReconciliations.certificationScopeId,
+        row.certificationScopeId
+      ));
+      const reconciledNonSubmissions = Number(reconciliationCountRows[0]?.count ?? 0);
+      const effectiveConsumed = row.consumedProviderSubmissions - reconciledNonSubmissions;
+      if (effectiveConsumed < 0) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_RESERVATION_INVALID",
+          "Certification quota reconciliation exceeds gross consumption"
+        );
+      }
+      if (effectiveConsumed + STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_ADDITIONAL_SUBMISSIONS !== input.maxProviderSubmissions) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "Staging quota target must equal effective usage plus the five authorized submissions"
+        );
+      }
+      const nextScope = advanceScope(row, { maxProviderSubmissions: input.maxProviderSubmissions });
+      await tx.update(schema.certificationCommercialScopes).set({
+        maxProviderSubmissions: nextScope.maxProviderSubmissions,
+        integrityHash: nextScope.integrityHash,
+        scopeBody: nextScope,
+      }).where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId));
+      await recordEvent(tx, {
+        scopeId: input.certificationScopeId,
+        type: CERTIFICATION_COMMERCIAL_EVENT_SUBMISSION_QUOTA_AMENDED,
+        actorUserId: input.actorUserId,
+        reason: STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON,
+        occurredAt: input.amendedAt,
+        details: {
+          environment: "STAGING",
+          oldMaxProviderSubmissions: row.maxProviderSubmissions,
+          newMaxProviderSubmissions: input.maxProviderSubmissions,
+          effectiveConsumedAtAmendment: effectiveConsumed,
+          authorizedAdditionalSubmissions: STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_ADDITIONAL_SUBMISSIONS,
+        },
+      });
+      const updated = await tx.select().from(schema.certificationCommercialScopes)
+        .where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId))
+        .limit(1);
+      return { scope: scopeFromRow(updated[0]!), replayed: false };
+    });
+  }
+
   async provisionPrice(rule: ProviderUsdPricingRule): Promise<{ rule: ProviderUsdPricingRule; replayed: boolean }> {
     const parsed = ProviderUsdPricingRuleSchema.parse(rule);
     const existing = await this.db.select().from(schema.providerUsdPricingRules)
@@ -640,7 +792,74 @@ export class CertificationCommercialAuthorityService {
         : [];
       const sourceSlotReconciliationId = reconciliationRows[0]?.reconciliationId ?? null;
       if (releasedExisting && !sourceSlotReconciliationId) {
-        return { scope: scopeFromRow(row), reservation: reservationFromRow(releasedExisting), replayed: true };
+        const submittedEvent = await tx.select({
+          id: schema.certificationCommercialEvents.certificationCommercialEventId,
+        }).from(schema.certificationCommercialEvents).where(and(
+          eq(schema.certificationCommercialEvents.certificationReservationId, releasedExisting.certificationReservationId),
+          eq(schema.certificationCommercialEvents.eventType, "SUBMITTED"),
+        )).limit(1);
+        if (!canReopenUnsubmittedCertificationReservation({
+          status: releasedExisting.status,
+          hasSubmittedEvent: Boolean(submittedEvent[0]),
+          hasSlotReconciliation: false,
+        })) {
+          return { scope: scopeFromRow(row), reservation: reservationFromRow(releasedExisting), replayed: true };
+        }
+        const proposed = cents(releasedExisting.reservedCostUsd);
+        if (cents(row.spentProviderCostUsd) + cents(row.reservedProviderCostUsd) + proposed > cents(row.maxProviderCostUsd)) {
+          throw new CertificationCommercialError("CERTIFICATION_BUDGET_EXCEEDED", "Certification USD budget exceeded");
+        }
+        const reopenReconciliations = await tx.select({
+          count: sql<number>`count(*)::int`,
+        }).from(schema.certificationSubmissionSlotReconciliations).where(eq(
+          schema.certificationSubmissionSlotReconciliations.certificationScopeId,
+          row.certificationScopeId
+        ));
+        const reopenReconciled = Number(reopenReconciliations[0]?.count ?? 0);
+        const reopenEffective = row.consumedProviderSubmissions - reopenReconciled;
+        if (reopenEffective < 0 || reopenEffective + row.reservedProviderSubmissions + 1 > row.maxProviderSubmissions) {
+          throw new CertificationCommercialError("CERTIFICATION_SUBMISSION_QUOTA_EXCEEDED", "Certification Provider submission quota exceeded");
+        }
+        const reopenedRaw = withIntegrity({
+          contractVersion: releasedExisting.contractVersion,
+          certificationReservationId: releasedExisting.certificationReservationId,
+          certificationScopeId: releasedExisting.certificationScopeId,
+          providerUsdPricingRuleId: releasedExisting.providerUsdPricingRuleId,
+          orgId: releasedExisting.orgId,
+          workspaceId: releasedExisting.workspaceId,
+          executionIdentity: releasedExisting.executionIdentity,
+          reservedCostUsd: releasedExisting.reservedCostUsd,
+          settledCostUsd: null,
+          status: "RESERVED" as const,
+          createdAt: releasedExisting.createdAt.toISOString(),
+          submittedAt: null,
+          settledAt: null,
+          releasedAt: null,
+        });
+        const reopened = CertificationCommercialReservationSchema.parse(reopenedRaw);
+        await tx.update(schema.certificationCommercialReservations).set({
+          status: reopened.status,
+          settledCostUsd: null,
+          submittedAt: null,
+          settledAt: null,
+          releasedAt: null,
+          integrityHash: reopened.integrityHash,
+          reservationBody: reopened,
+        }).where(eq(
+          schema.certificationCommercialReservations.certificationReservationId,
+          releasedExisting.certificationReservationId
+        ));
+        const reopenedScope = advanceScope(row, {
+          reservedProviderCostUsd: usd(cents(row.reservedProviderCostUsd) + proposed),
+          reservedProviderSubmissions: row.reservedProviderSubmissions + 1,
+        });
+        await tx.update(schema.certificationCommercialScopes).set({
+          reservedProviderCostUsd: reopenedScope.reservedProviderCostUsd,
+          reservedProviderSubmissions: reopenedScope.reservedProviderSubmissions,
+          integrityHash: reopenedScope.integrityHash,
+          scopeBody: reopenedScope,
+        }).where(eq(schema.certificationCommercialScopes.certificationScopeId, row.certificationScopeId));
+        return { scope: reopenedScope, reservation: reopened, replayed: false };
       }
 
       const proposedCostUsd = estimateProviderCostUsd(input.pricingRule);

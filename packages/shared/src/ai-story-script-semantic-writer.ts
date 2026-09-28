@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  AiStoryCommercialSceneContributionSchema,
+  AiStoryNarrativeFunctionSchema,
+} from "./ai-story-commercial-story-profile";
+import {
   AI_STORY_SCENE_FUNCTION_REGISTRY,
   AI_STORY_SCENE_FUNCTION_REGISTRY_VERSION,
   AiStoryScriptStateDeltaSchema,
@@ -59,6 +63,10 @@ export const AiStoryScriptSemanticProposalSceneV1Schema = z.object({
   entries: z.array(AiStoryScriptSemanticProposalEntryV1Schema).min(1),
   newInformation: z.array(Text.max(1000)),
   newActionOutcomes: z.array(Text.max(1000)),
+  narrativeFunction: AiStoryNarrativeFunctionSchema.optional(),
+  causalPreconditions: z.array(Text.max(1000)).optional(),
+  storyConsequence: Text.max(1000).optional(),
+  commercialContribution: AiStoryCommercialSceneContributionSchema.optional(),
 }).strict();
 
 /** Proposal only: canonical Script/Scene/Entry identity is deliberately absent. */

@@ -16,6 +16,7 @@ import {
   type PlanningCharacterAuthorityProjection,
   type ScenePlanItem,
   type StoryBeat,
+  resolveOutlineBoundProductAuthorityIds,
   type WorldContinuity,
 } from "@ceo-agent/shared";
 import {
@@ -117,7 +118,7 @@ export async function ensureCurrentFrozenCanonicalSceneSet(
   if (!outline) throw new AiStoryCanonicalSceneProducerError("CURRENT_FROZEN_OUTLINE_REQUIRED", "Canonical Scene production requires the exact current FROZEN Outline");
   const script = await deps.resolveCurrentScript(input.db, authorityScope);
   if (!script) throw new AiStoryCanonicalSceneProducerError("CURRENT_FROZEN_SCRIPT_REQUIRED", "Canonical Scene production requires the exact current FROZEN Script");
-  const productAuthorityIds = [...(outline.productStoryProfile?.productAuthorityIds ?? [])].sort();
+  const productAuthorityIds = resolveOutlineBoundProductAuthorityIds(outline);
   const semanticInputFingerprint = computeAiStoryScriptSemanticInputFingerprint({
     storyId: input.storyId,
     storyVersionId: input.storyVersionId,

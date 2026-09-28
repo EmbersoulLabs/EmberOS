@@ -4,6 +4,7 @@ import {
   TenantValidationError,
   WorkspaceAccessError,
 } from "@ceo-agent/db";
+import { AiStoryProductMaterialRuntimeError } from "../apps/web/src/lib/ai-story-product-material-runtime";
 import { AuthError, handleApiError } from "../apps/web/src/lib/auth";
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -67,6 +68,28 @@ describe("handleApiError", () => {
     expect(status).toBe(409);
     expect(body.code).toBe("VERSION_CONFLICT");
     expect(body.error).toBe("Business profile version conflict");
+  });
+
+  it("maps product material preparation to 409 without weakening the fail-closed code", async () => {
+    const { status, body } = await readError(handleApiError(new AiStoryProductMaterialRuntimeError(
+      "PRODUCT_MATERIAL_PREPARATION_REQUIRED",
+      "The exact Product derivative must be prepared before image-conditioned execution",
+    )));
+    expect(status).toBe(409);
+    expect(body).toEqual({
+      error: "The exact Product derivative must be prepared before image-conditioned execution",
+      code: "PRODUCT_MATERIAL_PREPARATION_REQUIRED",
+    });
+  });
+
+  it("maps unusable product material to 409", async () => {
+    const { status, body } = await readError(handleApiError(new AiStoryProductMaterialRuntimeError(
+      "PRODUCT_MATERIAL_UNUSABLE",
+      "The current Scene Product has no usable image-conditioned material",
+    )));
+    expect(status).toBe(409);
+    expect(body.code).toBe("PRODUCT_MATERIAL_UNUSABLE");
+    expect(body.error).not.toMatch(/storage|photoroom|api key/i);
   });
 
   it("returns generic 500 for a normal unexpected Error", async () => {
