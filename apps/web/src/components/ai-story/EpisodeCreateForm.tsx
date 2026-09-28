@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import {
+  AI_STORY_AUDIO_LOCALES,
   AI_STORY_EPISODE_ASPECT_RATIOS,
   AI_STORY_EPISODE_COPY,
   AI_STORY_EPISODE_DURATIONS_SEC,
@@ -29,7 +30,7 @@ export type EpisodeCreatePayload = {
     durationSec: number | "custom";
     customDurationSec?: number;
     aspectRatio: (typeof AI_STORY_EPISODE_ASPECT_RATIOS)[number];
-    language: string;
+    language: (typeof AI_STORY_AUDIO_LOCALES)[number];
     dialogueStyle: string;
     nativeCharacterDialogue: boolean;
     pacing: (typeof AI_STORY_EPISODE_PACING)[number];
@@ -73,7 +74,7 @@ export function EpisodeCreateForm({
   const [customDurationSec, setCustomDurationSec] = useState(45);
   const [aspectRatio, setAspectRatio] =
     useState<(typeof AI_STORY_EPISODE_ASPECT_RATIOS)[number]>("9:16");
-  const [language, setLanguage] = useState("zh-MY");
+  const [language, setLanguage] = useState<(typeof AI_STORY_AUDIO_LOCALES)[number]>("zh-MY");
   const [dialogueStyle, setDialogueStyle] = useState("Malaysian Chinese conversational");
   const [nativeDialogue, setNativeDialogue] = useState(true);
   const [pacing, setPacing] = useState<(typeof AI_STORY_EPISODE_PACING)[number]>("NATURAL");
@@ -214,7 +215,9 @@ export function EpisodeCreateForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block space-y-1">
           <span className="text-sm font-medium text-navy">Language / Locale</span>
-          <input className="w-full rounded-lg border border-border px-3 py-2 text-sm" value={language} onChange={(event) => setLanguage(event.target.value)} />
+          <select className="w-full rounded-lg border border-border px-3 py-2 text-sm" value={language} onChange={(event) => setLanguage(event.target.value as (typeof AI_STORY_AUDIO_LOCALES)[number])}>
+            {AI_STORY_AUDIO_LOCALES.map((locale) => <option key={locale} value={locale}>{locale}</option>)}
+          </select>
         </label>
         <label className="block space-y-1">
           <span className="text-sm font-medium text-navy">Dialogue Style</span>

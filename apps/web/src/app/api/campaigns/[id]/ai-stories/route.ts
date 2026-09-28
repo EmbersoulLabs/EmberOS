@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import {
   AiStoryCreateBodySchema,
+  acceptAiStoryEpisodeIntent,
   canonicalAiStoryOutlineProfileReference,
   isUuid,
 } from "@ceo-agent/shared";
@@ -84,6 +85,9 @@ export async function POST(
         campaignId,
         title: parsed.data.title,
         originalIdea: parsed.data.originalIdea,
+        episodeIntent: parsed.data.episodeIntent
+          ? acceptAiStoryEpisodeIntent(parsed.data.episodeIntent, new Date().toISOString())
+          : null,
         outlineProfile: canonicalAiStoryOutlineProfileReference(parsed.data.outlineProfile),
         status: "draft",
         createdBy: user.id,

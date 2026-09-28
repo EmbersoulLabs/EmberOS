@@ -65,6 +65,15 @@ function seconds(milliseconds: number): string {
   return (milliseconds / 1000).toFixed(6);
 }
 
+/** Silent segments receive silence. Segments that already have audio keep that audio. */
+export function assemblyV2SegmentAudioTreatment(input: {
+  readonly preserveAudio: boolean;
+  readonly sourceHasAudio: boolean;
+}): "PRESERVE_SOURCE_AUDIO" | "INSERT_SILENCE" | "OMIT_AUDIO" {
+  if (!input.preserveAudio) return "OMIT_AUDIO";
+  return input.sourceHasAudio ? "PRESERVE_SOURCE_AUDIO" : "INSERT_SILENCE";
+}
+
 async function normalizeTrimmedEntry(input: {
   sourcePath: string;
   outputPath: string;
@@ -79,7 +88,11 @@ async function normalizeTrimmedEntry(input: {
   if (input.preserveAudio) {
     const start = seconds(input.startMs);
     const duration = seconds(input.durationMs);
-    const audioFilter = input.sourceHasAudio
+    const audioTreatment = assemblyV2SegmentAudioTreatment({
+      preserveAudio: true,
+      sourceHasAudio: input.sourceHasAudio,
+    });
+    const audioFilter = audioTreatment === "PRESERVE_SOURCE_AUDIO"
       ? `[0:a:0]atrim=start=${start}:duration=${duration},asetpts=PTS-STARTPTS,aresample=48000,aformat=channel_layouts=stereo[a]`
       : `anullsrc=r=48000:cl=stereo,atrim=duration=${duration},asetpts=PTS-STARTPTS[a]`;
     await runFfmpeg(

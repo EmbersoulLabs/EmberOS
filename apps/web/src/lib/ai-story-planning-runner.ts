@@ -29,6 +29,7 @@ import {
   projectStoryProductSourcesToPlanning,
 } from "@ceo-agent/agents";
 import {
+  AiStoryEpisodeIntentAuthoritySchema,
   AiStoryStructuredDraftSchema,
   assertScenePlanningGroundingScope,
   STORY_PLANNING_STAGE_ORDER,
@@ -486,6 +487,7 @@ export async function runSinglePlanningStage(input: {
           proposedStoryBeats: draft.storyBeats!,
         });
         if (ctx.loaded.story.outlineProfile?.profileId === "COMMERCIAL_STORY") {
+          const episodeIntent = AiStoryEpisodeIntentAuthoritySchema.safeParse(ctx.loaded.story.episodeIntent);
           const authored = await produceAuthorizedCommercialStoryScriptProposal({
             db,
             orgId: ctx.campaign.orgId,
@@ -500,6 +502,7 @@ export async function runSinglePlanningStage(input: {
             creativeContext: draft.creativeContext!,
             directorThinking: draft.directorThinking!,
             characterAuthorities: ctx.characterAuthorities,
+            ...(episodeIntent.success ? { episodeIntent: episodeIntent.data } : {}),
           });
           usage = addUsage(usage, authored.usage);
           stageCostUsd += authored.usage.costUsd;

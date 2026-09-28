@@ -62,6 +62,20 @@ export default function CreateAiStoryPage() {
           outlineProfile: payload.outlineProfile,
           assetIds: payload.assetIds,
           productAssetIds: payload.productAssetIds,
+          episodeIntent: {
+            episodeType: payload.episodeIntent.episodeType,
+            requestedDurationSec: payload.episodeIntent.durationSec === "custom"
+              ? payload.episodeIntent.customDurationSec ?? 45
+              : payload.episodeIntent.durationSec,
+            aspectRatio: payload.episodeIntent.aspectRatio,
+            spokenLanguage: payload.episodeIntent.language,
+            dialogueStyle: payload.episodeIntent.dialogueStyle,
+            nativeCharacterDialogue: payload.episodeIntent.nativeCharacterDialogue,
+            pacing: payload.episodeIntent.pacing,
+            cta: payload.episodeIntent.cta?.trim() ? payload.episodeIntent.cta.trim() : null,
+            visualTextLanguages: ["en", "ms", "zh-Hans"],
+            visualTextPolicy: { criticalSurfacePolicy: "PROVIDER_NON_LEGIBLE" },
+          },
         }),
       });
       const createData = await createRes.json();

@@ -31,6 +31,9 @@ export function compileImmutableSceneProviderRequest(input: {
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
   readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
   readonly characterDnaAuthority?: AiStoryCharacterDnaCompilationAuthority | null;
+  readonly characterContinuityRequired?: boolean;
+  readonly visualTextConstraint?: string | null;
+  readonly visibleDialogue?: import("@ceo-agent/shared").AiStoryCharacterDialoguePerformanceAuthority | null;
 }): AiStoryCompiledProviderRequest {
   if (input.providerId !== "seedance") {
     throw new AiStoryProviderRuntimeError(
@@ -58,6 +61,15 @@ export function compileImmutableSceneProviderRequest(input: {
       : {}),
     ...(input.characterDnaAuthority
       ? { characterDnaAuthority: input.characterDnaAuthority }
+      : {}),
+    ...(input.characterContinuityRequired
+      ? { characterContinuityRequired: true as const }
+      : {}),
+    ...(input.visualTextConstraint
+      ? { visualTextConstraint: input.visualTextConstraint }
+      : {}),
+    ...(input.visibleDialogue
+      ? { visibleDialogue: input.visibleDialogue }
       : {}),
   });
 }
