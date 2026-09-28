@@ -119,6 +119,40 @@ export async function enqueueControlledSelfUsePipeline(
  * Phase-1 lock producer. Canonical Execute uses the provider outbox, not this
  * queue path. The enqueue remains so tests and leftover callers fail closed.
  */
+export async function enqueueStoryPlanningStage(input: {
+  campaignId: string;
+  storyId: string;
+  workspaceId: string;
+  orgId: string;
+  actorUserId: string;
+  storyVersionId: string;
+  stage:
+    | "creative_context"
+    | "director_thinking"
+    | "story_beats"
+    | "scene_plan"
+    | "shot_plan"
+    | "character_continuity"
+    | "world_continuity"
+    | "animation_package";
+  regenerationIdentity?: string | null;
+}) {
+  const queue = agentQueue();
+  const jobId = `story-plan-${input.storyVersionId}-${input.stage}`;
+  const existing = await queue.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === "waiting" || state === "active" || state === "delayed") return existing;
+    await existing.remove();
+  }
+  return queue.add("agent.story_planning_stage", input, {
+    jobId,
+    attempts: 1,
+    removeOnComplete: 100,
+    removeOnFail: 50,
+  });
+}
+
 export async function enqueueStoryExecution(input: {
   executionJobId: string;
   storyId: string;

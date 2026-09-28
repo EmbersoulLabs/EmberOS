@@ -34,6 +34,7 @@ import {
   emitPhotoSceneOpsEvent,
 } from "@ceo-agent/shared";
 import { createExportZip, probeVideo } from "../ffmpeg/pipeline";
+import { processStoryPlanningStage } from "./story-planning-stage";
 import { processRenderJob } from "./render-handler";
 import { processTaskExportJob, musicCreditFor } from "./export-handler";
 import { processPhotoSceneExtractJob, markPhotoSceneExtractJobFailed } from "./photo-scene-extract-handler";
@@ -220,6 +221,20 @@ export function startWorkers() {
         const { runExecutionJob } = await import("@ceo-agent/agents");
         await runExecutionJob(executionJobId);
         console.log(`[agent.story_execution] finished job=${executionJobId}`);
+      }
+      if (job.name === "agent.story_planning_stage") {
+        const data = job.data as {
+          storyId: string;
+          stage: string;
+          storyVersionId: string;
+        };
+        console.log(
+          `[agent.story_planning_stage] start job=${job.id} story=${data.storyId} version=${data.storyVersionId} stage=${data.stage}`
+        );
+        const result = await processStoryPlanningStage(job.data);
+        console.log(
+          `[agent.story_planning_stage] finished job=${job.id} story=${data.storyId} stage=${data.stage} reused=${Boolean(result.reusedDurableResult)}`
+        );
       }
     },
     { connection, prefix, concurrency, lockDuration: agentLockMs, ...workerOpts }

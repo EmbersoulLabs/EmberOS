@@ -1,11 +1,20 @@
 import { eq } from "drizzle-orm";
-import { ControlledSelfUseAuthorityService, getDb, schema } from "@ceo-agent/db";
-import { STORY_PLANNING_STAGE_ORDER, isUuid, type AiStoryStatus } from "@ceo-agent/shared";
+import { getDb, schema } from "@ceo-agent/db";
+import { enqueueStoryPlanningStage } from "@ceo-agent/queue";
+import {
+  STORY_PLANNING_STAGE_ORDER,
+  isUuid,
+  nextRequiredPlanningStage,
+  type AiStoryStatus,
+} from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
-import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
-import { runSinglePlanningStage } from "@/lib/ai-story-planning-runner";
+import { loadCampaignAiStory } from "@/lib/ai-story-service";
+import {
+  getLatestAnimationPackageForStory,
+  readPlanningDraftFromPackage,
+} from "@/lib/ai-story-planning-service";
 
 export async function POST(
   request: Request,
@@ -33,7 +42,7 @@ export async function POST(
       return apiError("No frozen Story Draft found for planning", "VALIDATION_ERROR", 409);
     }
 
-    let status = loaded.story.status as AiStoryStatus;
+    const status = loaded.story.status as AiStoryStatus;
     if (!["ready_for_animation", "planning", "planning_review", "failed"].includes(status)) {
       return apiError("Story cannot enter planning in its current state", "VALIDATION_ERROR", 409);
     }
@@ -41,39 +50,46 @@ export async function POST(
       return apiError("Story Version must be frozen before planning", "VALIDATION_ERROR", 409);
     }
 
-    try {
-      let result: Awaited<ReturnType<typeof runSinglePlanningStage>> | null = null;
-      for (const stage of STORY_PLANNING_STAGE_ORDER) {
-        result = await runSinglePlanningStage({
-          db,
-          campaignId,
-          storyId,
-          actorUserId: user.id,
-          stage,
-          storyStatus: status,
-          regenerationIdentity: request.headers.get("x-ai-story-certification-regeneration-id"),
-        });
-        status = result.status as AiStoryStatus;
-      }
+    const latestPackage = await getLatestAnimationPackageForStory(db, {
+      campaignId,
+      storyId,
+      workspaceId: campaign.workspaceId,
+    });
+    const draft =
+      latestPackage?.storyVersionId === loaded.currentVersion.id
+        ? readPlanningDraftFromPackage(latestPackage)
+        : null;
+    const stage = nextRequiredPlanningStage(draft?.completedStages ?? []);
+    if (!stage) {
       return apiSuccess({
         storyId,
-        status: result!.status,
-        creativeContext: result!.creativeContext,
-        animationPackage: result!.animationPackage,
+        storyVersionId: loaded.currentVersion.id,
+        status,
+        execution: "complete",
+        completedStages: draft?.completedStages ?? [...STORY_PLANNING_STAGE_ORDER],
       });
-    } catch (error) {
-      if (status === "planning") {
-        try {
-          await setAiStoryStatus(db, storyId, "planning", "failed");
-          await new ControlledSelfUseAuthorityService(db).reconcileUnusedTerminalPreProviderReservations({
-            occurredAt: new Date().toISOString(),
-          });
-        } catch {
-          /* best-effort terminal accounting */
-        }
-      }
-      throw error;
     }
+
+    const regenerationIdentity = request.headers.get("x-ai-story-certification-regeneration-id");
+    const job = await enqueueStoryPlanningStage({
+      campaignId,
+      storyId,
+      workspaceId: campaign.workspaceId,
+      orgId: campaign.orgId,
+      actorUserId: user.id,
+      storyVersionId: loaded.currentVersion.id,
+      stage,
+      regenerationIdentity: regenerationIdentity && isUuid(regenerationIdentity) ? regenerationIdentity : null,
+    });
+
+    return apiSuccess({
+      storyId,
+      storyVersionId: loaded.currentVersion.id,
+      status: "planning",
+      stage,
+      execution: "queued",
+      jobId: job.id,
+    }, 202);
   } catch (error) {
     return handleApiError(error);
   }

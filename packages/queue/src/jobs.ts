@@ -84,6 +84,28 @@ export const AgentJobSchema = z.discriminatedUnion("name", [
       orgId: z.string().uuid(),
     }),
   }),
+  z.object({
+    name: z.literal("agent.story_planning_stage"),
+    data: z.object({
+      campaignId: z.string().uuid(),
+      storyId: z.string().uuid(),
+      workspaceId: z.string().uuid(),
+      orgId: z.string().uuid(),
+      actorUserId: z.string().uuid(),
+      storyVersionId: z.string().uuid(),
+      stage: z.enum([
+        "creative_context",
+        "director_thinking",
+        "story_beats",
+        "scene_plan",
+        "shot_plan",
+        "character_continuity",
+        "world_continuity",
+        "animation_package",
+      ]),
+      regenerationIdentity: z.string().uuid().nullable().optional(),
+    }),
+  }),
 ]);
 
 export type AgentJob = z.infer<typeof AgentJobSchema>;
