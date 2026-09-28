@@ -26,6 +26,7 @@ import {
   GeneratedSceneReviewRepository,
   FinalStoryResultRepositoryImpl,
   canonicalPersistenceHash,
+  deterministicPersistenceUuid,
   closeDb,
   getDb,
   resolveSuccessfulProviderAttemptTerminalAuthority,
@@ -145,6 +146,15 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
       } finally {
         await sql.unsafe("alter table ai_story_post_generation_qc_evaluations enable trigger ai_story_post_qc_immutable_v1");
       }
+      await sql.unsafe("alter table ai_story_pre_generation_qc_evaluations disable trigger ai_story_pregen_qc_immutable_v1");
+      try {
+        await sql`delete from ai_story_pre_generation_qc_evaluations where org_id = ${PHASE_2A_IDS.orgId}::uuid`;
+      } finally {
+        await sql.unsafe("alter table ai_story_pre_generation_qc_evaluations enable trigger ai_story_pregen_qc_immutable_v1");
+      }
+      await sql`delete from ai_story_motion_plan_versions where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
+      await sql`delete from ai_story_director_plan_versions where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
+      await sql`delete from ai_story_script_director_handoffs where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
       await sql`delete from ai_story_durable_scene_media_attestations where org_id = ${PHASE_2A_IDS.orgId}::uuid`;
       await sql.begin(async (tx) => {
         await tx`delete from ai_story_canonical_scene_versions where story_id = ${PHASE_2A_IDS.storyId}::uuid`;
@@ -410,6 +420,71 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
         }
       },
     };
+    const handoffFingerprint = `sha256:${"c".repeat(64)}`;
+    const directorFingerprint = `sha256:${"d".repeat(64)}`;
+    const motionFingerprint = `sha256:${"e".repeat(64)}`;
+    const persistedAt = new Date("2026-09-18T01:04:00.000Z");
+    await sql`insert into ai_story_script_director_handoffs (
+      handoff_id, org_id, workspace_id, campaign_id, story_id, story_version_id,
+      outline_version_id, script_version_id, version, contract_version,
+      script_source_hash, source_hash, handoff_fingerprint, authority_status,
+      handoff, created_by, created_at, frozen_at
+    ) values (
+      ${id(100)}::uuid, ${ids.orgId}::uuid, ${ids.workspaceId}::uuid, ${ids.campaignId}::uuid,
+      ${ids.storyId}::uuid, ${ids.storyVersionId}::uuid, ${outline.outlineVersionId}::uuid,
+      ${script.scriptVersionId}::uuid, 1, 'ai-story-script-director-handoff.v1',
+      ${script.sourceHash}, ${handoffFingerprint}, ${handoffFingerprint}, 'CURRENT',
+      ${sql.json({ contractVersion: "ai-story-script-director-handoff.v1" })},
+      ${PR32_USER_A}::uuid, ${persistedAt}, ${persistedAt}
+    )`;
+    await sql`insert into ai_story_director_plan_versions (
+      director_plan_id, org_id, workspace_id, campaign_id, story_id, story_version_id,
+      outline_version_id, script_version_id, handoff_id, version, contract_version,
+      source_handoff_fingerprint, source_hash, director_fingerprint, status,
+      director_plan, created_by, created_at, approved_by, approved_at, frozen_at
+    ) values (
+      ${id(101)}::uuid, ${ids.orgId}::uuid, ${ids.workspaceId}::uuid, ${ids.campaignId}::uuid,
+      ${ids.storyId}::uuid, ${ids.storyVersionId}::uuid, ${outline.outlineVersionId}::uuid,
+      ${script.scriptVersionId}::uuid, ${id(100)}::uuid, 1, 'ai-story-director-plan.v1',
+      ${handoffFingerprint}, ${directorFingerprint}, ${directorFingerprint}, 'FROZEN',
+      ${sql.json({ contractVersion: "ai-story-director-plan.v1" })},
+      ${PR32_USER_A}::uuid, ${persistedAt}, ${PR32_USER_A}::uuid, ${persistedAt}, ${persistedAt}
+    )`;
+    await sql`insert into ai_story_motion_plan_versions (
+      motion_plan_id, org_id, workspace_id, campaign_id, story_id, story_version_id,
+      outline_version_id, script_version_id, handoff_id, director_plan_id, version,
+      contract_version, source_director_fingerprint, source_hash, motion_fingerprint,
+      status, motion_plan, created_by, created_at, approved_by, approved_at, frozen_at
+    ) values (
+      ${id(102)}::uuid, ${ids.orgId}::uuid, ${ids.workspaceId}::uuid, ${ids.campaignId}::uuid,
+      ${ids.storyId}::uuid, ${ids.storyVersionId}::uuid, ${outline.outlineVersionId}::uuid,
+      ${script.scriptVersionId}::uuid, ${id(100)}::uuid, ${id(101)}::uuid, 1,
+      'ai-story-motion-plan.v1', ${directorFingerprint}, ${motionFingerprint}, ${motionFingerprint},
+      'FROZEN', ${sql.json({ contractVersion: "ai-story-motion-plan.v1" })},
+      ${PR32_USER_A}::uuid, ${persistedAt}, ${PR32_USER_A}::uuid, ${persistedAt}, ${persistedAt}
+    )`;
+    for (const sceneExecutionId of sceneExecutionIds) {
+      const qcFingerprint = canonicalPersistenceHash({
+        kind: "dry-run-persisted-pre-generation-qc",
+        sceneExecutionId,
+      });
+      await sql`insert into ai_story_pre_generation_qc_evaluations (
+        qc_evaluation_id, org_id, workspace_id, campaign_id, story_id, story_version_id,
+        outline_version_id, script_version_id, handoff_id, director_plan_id, motion_plan_id,
+        scene_execution_id, evaluation_version, contract_version, gate_set_version,
+        provider_capability_id, provider_capability_version, dispatch_decision,
+        qc_fingerprint, evaluation, evaluated_by, evaluated_at
+      ) values (
+        ${deterministicPersistenceUuid("dry-run-persisted-pre-generation-qc", { sceneExecutionId })}::uuid,
+        ${ids.orgId}::uuid, ${ids.workspaceId}::uuid, ${ids.campaignId}::uuid,
+        ${ids.storyId}::uuid, ${ids.storyVersionId}::uuid, ${outline.outlineVersionId}::uuid,
+        ${script.scriptVersionId}::uuid, ${id(100)}::uuid, ${id(101)}::uuid, ${id(102)}::uuid,
+        ${sceneExecutionId}::uuid, 1, 'ai-story-pre-generation-qc.v1', 1,
+        'animation-video-generation', 'seedance-adapter.1.0.0', 'DISPATCH_ELIGIBLE',
+        ${qcFingerprint}, ${sql.json({ contractVersion: "ai-story-pre-generation-qc.v1", sceneExecutionId })},
+        ${PR32_USER_A}::uuid, ${persistedAt}
+      )`;
+    }
     const router = new FixedSeedanceRouter();
     const scheduler = new SceneSchedulingCoordinator({
       router,
