@@ -409,6 +409,51 @@ describe("Seedance native audiovisual character dialogue", () => {
     );
   });
 
+  it("accepts a commercial Generation Unit bound through its canonical Scene", () => {
+    const { fixture } = dialogueAuthority();
+    const canonicalSceneId = id(90);
+    const unit = AiStoryGenerationUnitSchema.parse({
+      ...fixture.unit,
+      sceneId: canonicalSceneId,
+    });
+    const authority = compileAiStoryCharacterDialoguePerformanceAuthority({
+      script: fixture.script,
+      generationUnit: unit,
+      scriptSceneId: id(3),
+      dialogueEntryId: fixture.entryId,
+      boundCanonicalSceneId: canonicalSceneId,
+      primaryLocale: "en-MY",
+      secondaryLocales: [],
+      codeSwitchPolicy: { mode: "DISABLED", allowedLocales: [] },
+      deliveryStyle: "MALAYSIAN_CONVERSATIONAL",
+      performanceIntent: "Friendly spontaneous discovery",
+      emotionIntent: "Pleasantly surprised",
+      speechIntensity: "NATURAL",
+      paceIntent: "NATURAL",
+    });
+    expect(authority.generationUnitId).toBe(fixture.unit.generationUnitId);
+    expect(authority.scriptSceneId).toBe(id(3));
+    expect(authority.onScreenSpeaker).toBe(true);
+    expect(authority.nativeAvRequired).toBe(true);
+    expect(authority.detachedTtsPermitted).toBe(false);
+    expect(() =>
+      compileAiStoryCharacterDialoguePerformanceAuthority({
+        script: fixture.script,
+        generationUnit: unit,
+        scriptSceneId: id(3),
+        dialogueEntryId: fixture.entryId,
+        primaryLocale: "en-MY",
+        secondaryLocales: [],
+        codeSwitchPolicy: { mode: "DISABLED", allowedLocales: [] },
+        deliveryStyle: "MALAYSIAN_CONVERSATIONAL",
+        performanceIntent: "Friendly spontaneous discovery",
+        emotionIntent: "Pleasantly surprised",
+        speechIntensity: "NATURAL",
+        paceIntent: "NATURAL",
+      }),
+    ).toThrow(/not bound to the Generation Unit/);
+  });
+
   it("binds exact frozen Script, Character, Shot, and Generation Unit authority", () => {
     const { fixture, authority } = dialogueAuthority();
     expect(authority.exactText).toBe("Eh, this one looks quite good.");
