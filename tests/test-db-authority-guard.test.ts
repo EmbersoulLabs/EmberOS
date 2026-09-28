@@ -30,6 +30,16 @@ describe("isolated integration database authority", () => {
     }
   );
 
+  it("fails closed when a forbidden project ref is in the pooler username", () => {
+    process.env.EMBEROS_TEST_DB_ENVIRONMENT = "test";
+    process.env.EMBEROS_TEST_DB_ISOLATED = "1";
+    expect(() =>
+      assertIsolatedTestDatabase(
+        "postgresql://postgres.egkgybrjmzukzmkcrpag:redacted@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres"
+      )
+    ).toThrow("TEST_DB_FORBIDDEN_AUTHORITY");
+  });
+
   it("denies a remote database whose isolation is not explicit", () => {
     process.env.EMBEROS_TEST_DB_ENVIRONMENT = "test";
     expect(() =>
