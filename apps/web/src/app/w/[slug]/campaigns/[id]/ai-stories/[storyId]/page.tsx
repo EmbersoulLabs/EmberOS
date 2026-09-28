@@ -234,6 +234,35 @@ export default function AiStoryReviewPage() {
     finally { setBusy(false); }
   }
 
+  async function waitForDurableStage(stage: StoryPlanningStage) {
+    const started = Date.now();
+    while (Date.now() - started < 8 * 60 * 1000) {
+      const planningRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`);
+      if (planningRes.ok) {
+        const planningData = await planningRes.json();
+        const stages = (planningData.planningDraft?.completedStages ?? []) as StoryPlanningStage[];
+        const packageReady = stage === "animation_package" && Boolean(planningData.completePackage);
+        if (stages.includes(stage) || packageReady) {
+          setCreativeContext((planningData.creativeContext?.payload as CreativeContext | undefined) ?? null);
+          setPlanningDraft((planningData.planningDraft as StoryPlanningDraft | undefined) ?? null);
+          if (packageReady) {
+            setAnimationPackage(planningData.completePackage as AnimationPackagePayload);
+          }
+          return;
+        }
+      }
+      const storyRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}`);
+      if (storyRes.ok) {
+        const storyData = await storyRes.json();
+        if (String(storyData.story?.status) === "failed") {
+          throw new Error("Planning stage failed before a durable result was saved");
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error("Planning is still running. Refresh to read the durable result.");
+  }
+
   async function generatePlanning() {
     setBusy(true); setError("");
     try {
@@ -243,7 +272,11 @@ export default function AiStoryReviewPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Animation preparation failed");
-      setStatus(data.status ?? "planning_review"); await load();
+      setStatus(data.status ?? "planning");
+      if (data.execution === "queued" && data.stage) {
+        await waitForDurableStage(data.stage as StoryPlanningStage);
+      }
+      await load();
     } catch (err) { setError(err instanceof Error ? err.message : "Animation preparation failed"); }
     finally { setBusy(false); }
   }
@@ -257,7 +290,9 @@ export default function AiStoryReviewPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `Stage ${stage} failed`);
-      setStatus(data.status ?? status); await load();
+      setStatus(data.status ?? status);
+      if (data.execution === "queued") await waitForDurableStage(stage);
+      await load();
     } catch (err) { setError(err instanceof Error ? err.message : `Stage ${stage} failed`); }
     finally { setBusy(false); setBusyStage(null); }
   }

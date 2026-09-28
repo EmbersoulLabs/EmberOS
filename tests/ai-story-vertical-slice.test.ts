@@ -214,7 +214,8 @@ describe("AI Story vertical slice (V1)", () => {
       expect(approveRoute).toContain("loadCampaignAiStory");
       expect(planningGenerateRoute).toContain("loadCampaignAiStory");
       expect(planningApproveRoute).toContain("loadCampaignAiStory");
-      expect(planningStageRoute).toContain("runSinglePlanningStage");
+      expect(planningStageRoute).toContain("loadCampaignAiStory");
+      expect(planningStageRoute).toContain("campaign.workspaceId");
       expect(rewriteRoute).toContain("loadCampaignAiStory");
       expect(screenwriterRoute).toContain("saveCreativeContext");
     });
@@ -250,18 +251,22 @@ describe("AI Story vertical slice (V1)", () => {
       expect(screenwriterRoute).not.toMatch(/openai/i);
     });
 
-    it("normal planning generate uses the ordered canonical staged service", () => {
-      expect(planningGenerateRoute).toContain("runSinglePlanningStage");
+    it("normal planning generate enqueues one durable stage and does not run the chain in the request", () => {
+      expect(planningGenerateRoute).toContain("enqueueStoryPlanningStage");
+      expect(planningGenerateRoute).toContain("nextRequiredPlanningStage");
       expect(planningGenerateRoute).toContain("STORY_PLANNING_STAGE_ORDER");
+      expect(planningGenerateRoute).not.toContain("runSinglePlanningStage");
+      expect(planningGenerateRoute).not.toContain("for (const stage of STORY_PLANNING_STAGE_ORDER)");
       expect(planningGenerateRoute).not.toContain("runFullStoryPlanningPipeline");
       expect(planningGenerateRoute).toContain('"ready_for_animation"');
       expect(planningGenerateRoute).toContain('"planning_review"');
       expect(planningGenerateRoute).not.toMatch(/openai/i);
     });
 
-    it("planning stages route runs ordered stage runner", () => {
+    it("planning stages route enqueues the existing stage executor instead of awaiting it", () => {
       expect(planningStageRoute).toContain("STORY_PLANNING_STAGE_ORDER");
-      expect(planningStageRoute).toContain("runSinglePlanningStage");
+      expect(planningStageRoute).toContain("enqueueStoryPlanningStage");
+      expect(planningStageRoute).not.toContain("runSinglePlanningStage");
       expect(planningStageRoute).not.toMatch(/openai/i);
     });
   });

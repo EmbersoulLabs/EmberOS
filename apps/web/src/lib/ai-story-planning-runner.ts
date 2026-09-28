@@ -234,6 +234,38 @@ export async function loadAiStoryPlanningContext(
   };
 }
 
+function isStalePlanningAuthority(error: unknown): boolean {
+  const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+  return (
+    code === "CHARACTER_AUTHORITY_STALE" ||
+    code === "CHARACTER_AUTHORITY_IDENTITY_REQUIRED" ||
+    code === "PRODUCT_AUTHORITY_STALE"
+  );
+}
+
+/**
+ * A stage is durable only when the current Story version's latest draft
+ * already contains that stage and every stage before it. Animation Package
+ * stays non-durable here so the package builder remains the completion gate.
+ */
+export function planningStageIsDurable(
+  draft: StoryPlanningDraft,
+  stage: StoryPlanningStage
+): boolean {
+  const index = STORY_PLANNING_STAGE_ORDER.indexOf(stage);
+  if (index < 0) return false;
+  const required = STORY_PLANNING_STAGE_ORDER.slice(0, index + 1);
+  if (!required.every((item) => draft.completedStages.includes(item))) return false;
+  if (stage === "creative_context") return Boolean(draft.creativeContext);
+  if (stage === "director_thinking") return Boolean(draft.directorThinking && draft.creativeContext);
+  if (stage === "story_beats") return Boolean(draft.storyBeats?.length);
+  if (stage === "scene_plan") return Boolean(draft.scenePlan?.length);
+  if (stage === "shot_plan") return Boolean(draft.shotPlan?.length);
+  if (stage === "character_continuity") return Boolean(draft.characterContinuity?.length);
+  if (stage === "world_continuity") return Boolean(draft.worldContinuity);
+  return false;
+}
+
 function baseDraft(
   storyDraft: AiStoryStructuredDraft,
   episodeContinuity: Awaited<ReturnType<PgEpisodeContinuityRuntimeIntegration["loadForPlanning"]>>
@@ -244,6 +276,57 @@ function baseDraft(
     story: storyDraft,
     ...(episodeContinuity ? { episodeContinuity } : {}),
     usage: emptyUsage(),
+  };
+}
+
+async function reuseDurablePlanningStage(input: {
+  db: Db;
+  ctx: Awaited<ReturnType<typeof loadAiStoryPlanningContext>>;
+  campaignId: string;
+  storyId: string;
+  stage: StoryPlanningStage;
+}): Promise<{
+  status: string;
+  stage: StoryPlanningStage;
+  completedStages: StoryPlanningStage[];
+  creativeContext: null;
+  animationPackage: Awaited<ReturnType<typeof saveAnimationPackage>>;
+  planningDraft: StoryPlanningDraft;
+  reusedDurableResult: true;
+} | null> {
+  const latestPackage = await getLatestAnimationPackageForStory(input.db, {
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    workspaceId: input.ctx.campaign.workspaceId,
+  });
+  if (!latestPackage || latestPackage.storyVersionId !== input.ctx.loaded.currentVersion!.id) {
+    return null;
+  }
+  const draft = readPlanningDraftFromPackage(latestPackage);
+  if (!draft || !planningStageIsDurable(draft, input.stage)) return null;
+  if (draft.creativeContext) {
+    try {
+      assertPlanningCharacterAuthorityCurrent({
+        creativeContext: draft.creativeContext,
+        characterAuthorities: input.ctx.characterAuthorities,
+      });
+      assertPlanningProductAuthorityCurrent({
+        creativeContext: draft.creativeContext,
+        productAuthorities: input.ctx.productAuthorities,
+      });
+    } catch (error) {
+      if (!isStalePlanningAuthority(error)) throw error;
+      return null;
+    }
+  }
+  return {
+    status: "planning",
+    stage: input.stage,
+    completedStages: draft.completedStages,
+    creativeContext: null,
+    animationPackage: latestPackage as Awaited<ReturnType<typeof saveAnimationPackage>>,
+    planningDraft: draft,
+    reusedDurableResult: true,
   };
 }
 
@@ -262,6 +345,7 @@ export async function runSinglePlanningStage(input: {
   creativeContext: Awaited<ReturnType<typeof saveCreativeContext>> | null;
   animationPackage: Awaited<ReturnType<typeof saveAnimationPackage>>;
   planningDraft: StoryPlanningDraft | null;
+  reusedDurableResult?: boolean;
 }> {
   const { db, campaignId, storyId, stage } = input;
   if (!(STORY_PLANNING_STAGE_ORDER as readonly string[]).includes(stage)) {
@@ -269,6 +353,8 @@ export async function runSinglePlanningStage(input: {
   }
 
   const ctx = await loadAiStoryPlanningContext(db, campaignId, storyId, input.actorUserId);
+  const reused = await reuseDurablePlanningStage({ db, ctx, campaignId, storyId, stage });
+  if (reused) return reused;
   let stageCostUsd = 0;
   const runStage = () => withConfiguredCertificationPlanningContext({
     orgId: ctx.campaign.orgId,
@@ -775,6 +861,61 @@ export async function runSinglePlanningStage(input: {
       });
     } catch {
       /* The terminal-story scan retries this unused hold. */
+    }
+    throw error;
+  }
+}
+
+/**
+ * Worker entry for one planning stage. The HTTP request only enqueues this
+ * work; model execution and the durable write happen here, after the request
+ * may already have returned.
+ */
+export async function executeQueuedPlanningStage(input: {
+  campaignId: string;
+  storyId: string;
+  workspaceId: string;
+  orgId: string;
+  actorUserId: string;
+  storyVersionId: string;
+  stage: StoryPlanningStage;
+  regenerationIdentity?: string | null;
+}) {
+  const db = getDb();
+  const [campaign] = await db
+    .select()
+    .from(schema.campaigns)
+    .where(eq(schema.campaigns.id, input.campaignId))
+    .limit(1);
+  if (!campaign || campaign.workspaceId !== input.workspaceId || campaign.orgId !== input.orgId) {
+    throw new Error("PLANNING_STAGE_AUTHORITY_MISMATCH");
+  }
+  const loaded = await loadCampaignAiStory(db, input.campaignId, input.storyId, input.workspaceId);
+  if (!loaded?.currentVersion) throw new Error("AI Story not found");
+  if (loaded.currentVersion.id !== input.storyVersionId) {
+    throw new Error("PLANNING_STORY_VERSION_MISMATCH");
+  }
+  const status = loaded.story.status;
+  try {
+    return await runSinglePlanningStage({
+      db,
+      campaignId: input.campaignId,
+      storyId: input.storyId,
+      actorUserId: input.actorUserId,
+      stage: input.stage,
+      storyStatus: status,
+      regenerationIdentity: input.regenerationIdentity,
+    });
+  } catch (error) {
+    if (status === "planning" || status === "ready_for_animation" || status === "planning_review") {
+      try {
+        await setAiStoryStatus(db, input.storyId, "planning", "failed");
+        await new ControlledSelfUseAuthorityService(db).reconcileUnusedTerminalPreProviderReservations({
+          occurredAt: new Date().toISOString(),
+        });
+      } catch {
+        /* best-effort terminal accounting */
+      }
     }
     throw error;
   }

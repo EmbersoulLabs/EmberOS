@@ -4,7 +4,11 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "lib": ["ES2022", "DOM"],
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../web/src/*"]
+    }
   },
   "include": ["src/**/*"]
 }
