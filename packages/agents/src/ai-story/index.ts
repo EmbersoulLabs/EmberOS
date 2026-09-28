@@ -76,6 +76,7 @@ export * from "./asset-aware-canonical-scheduler";
 export * from "./keyframe-paid-authorization";
 export * from "./openai-scene-keyframe-qc-adapter";
 export * from "./provider-runtime-dispatch-integration";
+export * from "./certification-compiled-request-semantics";
 export * from "./scene-compiled-provider-request";
 export * from "./post-generation-qc-service";
 export * from "./pre-generation-qc-capability";

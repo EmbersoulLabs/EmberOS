@@ -110,6 +110,21 @@ function advanceScope(
   return CertificationCommercialScopeSchema.parse(withIntegrity({ ...current, ...changes }));
 }
 
+/**
+ * A reservation released before any SUBMITTED event never consumed a quota slot.
+ * Reopening it is the same initial attempt, not a second Provider submission.
+ * A released reservation that was submitted stays replayed until slot reconciliation.
+ */
+export function canReopenUnsubmittedCertificationReservation(input: {
+  readonly status: string;
+  readonly hasSubmittedEvent: boolean;
+  readonly hasSlotReconciliation: boolean;
+}): boolean {
+  return input.status === "RELEASED"
+    && !input.hasSubmittedEvent
+    && !input.hasSlotReconciliation;
+}
+
 function reservationFromRow(row: typeof schema.certificationCommercialReservations.$inferSelect): CertificationCommercialReservation {
   return CertificationCommercialReservationSchema.parse({
     contractVersion: row.contractVersion,
@@ -777,7 +792,74 @@ export class CertificationCommercialAuthorityService {
         : [];
       const sourceSlotReconciliationId = reconciliationRows[0]?.reconciliationId ?? null;
       if (releasedExisting && !sourceSlotReconciliationId) {
-        return { scope: scopeFromRow(row), reservation: reservationFromRow(releasedExisting), replayed: true };
+        const submittedEvent = await tx.select({
+          id: schema.certificationCommercialEvents.certificationCommercialEventId,
+        }).from(schema.certificationCommercialEvents).where(and(
+          eq(schema.certificationCommercialEvents.certificationReservationId, releasedExisting.certificationReservationId),
+          eq(schema.certificationCommercialEvents.eventType, "SUBMITTED"),
+        )).limit(1);
+        if (!canReopenUnsubmittedCertificationReservation({
+          status: releasedExisting.status,
+          hasSubmittedEvent: Boolean(submittedEvent[0]),
+          hasSlotReconciliation: false,
+        })) {
+          return { scope: scopeFromRow(row), reservation: reservationFromRow(releasedExisting), replayed: true };
+        }
+        const proposed = cents(releasedExisting.reservedCostUsd);
+        if (cents(row.spentProviderCostUsd) + cents(row.reservedProviderCostUsd) + proposed > cents(row.maxProviderCostUsd)) {
+          throw new CertificationCommercialError("CERTIFICATION_BUDGET_EXCEEDED", "Certification USD budget exceeded");
+        }
+        const reopenReconciliations = await tx.select({
+          count: sql<number>`count(*)::int`,
+        }).from(schema.certificationSubmissionSlotReconciliations).where(eq(
+          schema.certificationSubmissionSlotReconciliations.certificationScopeId,
+          row.certificationScopeId
+        ));
+        const reopenReconciled = Number(reopenReconciliations[0]?.count ?? 0);
+        const reopenEffective = row.consumedProviderSubmissions - reopenReconciled;
+        if (reopenEffective < 0 || reopenEffective + row.reservedProviderSubmissions + 1 > row.maxProviderSubmissions) {
+          throw new CertificationCommercialError("CERTIFICATION_SUBMISSION_QUOTA_EXCEEDED", "Certification Provider submission quota exceeded");
+        }
+        const reopenedRaw = withIntegrity({
+          contractVersion: releasedExisting.contractVersion,
+          certificationReservationId: releasedExisting.certificationReservationId,
+          certificationScopeId: releasedExisting.certificationScopeId,
+          providerUsdPricingRuleId: releasedExisting.providerUsdPricingRuleId,
+          orgId: releasedExisting.orgId,
+          workspaceId: releasedExisting.workspaceId,
+          executionIdentity: releasedExisting.executionIdentity,
+          reservedCostUsd: releasedExisting.reservedCostUsd,
+          settledCostUsd: null,
+          status: "RESERVED" as const,
+          createdAt: releasedExisting.createdAt.toISOString(),
+          submittedAt: null,
+          settledAt: null,
+          releasedAt: null,
+        });
+        const reopened = CertificationCommercialReservationSchema.parse(reopenedRaw);
+        await tx.update(schema.certificationCommercialReservations).set({
+          status: reopened.status,
+          settledCostUsd: null,
+          submittedAt: null,
+          settledAt: null,
+          releasedAt: null,
+          integrityHash: reopened.integrityHash,
+          reservationBody: reopened,
+        }).where(eq(
+          schema.certificationCommercialReservations.certificationReservationId,
+          releasedExisting.certificationReservationId
+        ));
+        const reopenedScope = advanceScope(row, {
+          reservedProviderCostUsd: usd(cents(row.reservedProviderCostUsd) + proposed),
+          reservedProviderSubmissions: row.reservedProviderSubmissions + 1,
+        });
+        await tx.update(schema.certificationCommercialScopes).set({
+          reservedProviderCostUsd: reopenedScope.reservedProviderCostUsd,
+          reservedProviderSubmissions: reopenedScope.reservedProviderSubmissions,
+          integrityHash: reopenedScope.integrityHash,
+          scopeBody: reopenedScope,
+        }).where(eq(schema.certificationCommercialScopes.certificationScopeId, row.certificationScopeId));
+        return { scope: reopenedScope, reservation: reopened, replayed: false };
       }
 
       const proposedCostUsd = estimateProviderCostUsd(input.pricingRule);
