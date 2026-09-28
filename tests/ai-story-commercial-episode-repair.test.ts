@@ -18,7 +18,9 @@ import {
   type AiStoryEpisodeIntentInput,
 } from "@ceo-agent/shared";
 import { AiStoryProviderRuntimeError, assemblyV2SegmentAudioTreatment } from "@ceo-agent/agents";
+import { mockCharacterDnaFixture } from "@ceo-agent/shared/server";
 import { compileImmutableSeedanceRequestFromSceneCompilation } from "../packages/agents/src/ai-story/provider-runtime-dispatch-integration";
+import { compileSeedanceNativeDialogueCertificationRequest } from "./helpers/ai-story-seedance-native-dialogue-cert";
 import { makePhase2aCompilation } from "./helpers/ai-story-phase-2a";
 import { readFileSync } from "node:fs";
 
@@ -417,5 +419,84 @@ describe("commercial episode repair", () => {
     expect(constrained.structuredRequest.generateAudio).toBe(false);
     expect(constrained.compiledPrompt).toContain("Visual text restriction");
     expect(silent.compiledPrompt).not.toContain("Visual text restriction");
+  });
+
+  it("36 compiles visible dialogue through native audiovisual authority and leaves silent scenes silent", () => {
+    const certification = compileSeedanceNativeDialogueCertificationRequest();
+    const dialogue = certification.request.nativeAvRequest.dialogueAuthority;
+    const compilation = makePhase2aCompilation({
+      sceneOrder: [0],
+      referenceFreeT2vOrders: [0],
+    });
+    const baseIntent = compilation.intents[0]!;
+    const baseInstructions = compilation.instructionsBySceneExecutionId[baseIntent.identity.sceneExecutionId]!;
+    const generationAuthority = {
+      strategy: "TEXT_TO_VIDEO" as const,
+      referenceSource: "REFERENCE_FREE_T2V" as const,
+      effectiveReferenceIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE" as const,
+    };
+    const portraitId = "81000000-0000-4000-8000-000000000005";
+    const compiled = compileImmutableSeedanceRequestFromSceneCompilation({
+      intent: {
+        ...baseIntent,
+        plannedDurationMs: 8000,
+        referencedAssetIds: [],
+        generationAuthority,
+      },
+      instructions: {
+        ...baseInstructions,
+        referencedAssetIds: [],
+        durationMs: 8000,
+        generationAuthority,
+      },
+      authority: {
+        qcEvaluationId: "30000000-0000-4000-8000-000000000001",
+        qcFingerprint: `sha256:${"a".repeat(64)}`,
+        qcCapabilityVersion: "seedance-modelark-test.v1",
+        directorFingerprint: `sha256:${"b".repeat(64)}`,
+        motionFingerprint: `sha256:${"c".repeat(64)}`,
+      },
+      adapterVersion: "1.0.0",
+      compiledAt: acceptedAt,
+      characterContinuityRequired: true,
+      visibleDialogue: dialogue,
+      characterDnaAuthority: {
+        reusableCharacterId: dialogue.characterId,
+        reusableCharacterVersionId: dialogue.characterId,
+        campaignCharacterId: dialogue.characterId,
+        campaignCharacterVersionId: dialogue.characterId,
+        campaignCharacterFingerprint: `sha256:${"d".repeat(64)}`,
+        identityFingerprint: `sha256:${"e".repeat(64)}`,
+        characterDnaFingerprint: `sha256:${"f".repeat(64)}`,
+        characterConsistencyMode: "SOFT_DESCRIPTION_BASED",
+        dna: mockCharacterDnaFixture({
+          sourceAssetId: portraitId,
+          sourceContentHash: `sha256:${"c".repeat(64)}`,
+        }),
+        episodeLook: {
+          wardrobe: null,
+          makeup: null,
+          accessories: null,
+          hairstyle: null,
+          hairColor: null,
+          expression: null,
+          pose: null,
+          location: null,
+          action: null,
+          product: null,
+          dialogue: null,
+        },
+        sourcePortraitAssetId: portraitId,
+      },
+    });
+    expect(compiled.structuredRequest.generateAudio).toBe(true);
+    if (!("nativeAvRequest" in compiled)) {
+      throw new Error("Visible dialogue did not compile a native audiovisual request");
+    }
+    expect(compiled.structuredRequest.audioMode).toBe("NATIVE_AV");
+    expect(compiled.nativeAvRequest.dialogueAuthority.exactText).toBe(dialogue.exactText);
+    expect(compiled.nativeAvRequest.dialogueAuthority.characterId).toBe(dialogue.characterId);
   });
 });
