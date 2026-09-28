@@ -396,6 +396,126 @@ export type CommercialEpisodeRepairEvidence = {
   readonly criticalReadableTextWithoutAuthority: boolean;
 };
 
+export type EpisodeRepairDialogueProjection = {
+  readonly ok: boolean;
+  readonly fingerprint: string | null;
+  readonly characterId: string | null;
+};
+
+export type EpisodeRepairQcAuthority = {
+  readonly episodeIntentContractVersion: typeof AI_STORY_EPISODE_INTENT_CONTRACT_VERSION;
+  readonly spokenLanguage: string;
+  readonly nativeCharacterDialogue: boolean;
+  readonly visualTextLanguages: string[];
+  readonly visualTextPolicy: string;
+  readonly visualTextConstraint: string;
+  readonly characterDnaFingerprint: string | null;
+  readonly dialogueAuthorityFingerprint: string | null;
+  readonly sceneId: string;
+  readonly generateAudio: boolean;
+  readonly audioMode: "NATIVE_AV" | "VIDEO_ONLY";
+};
+
+export type CommercialEpisodeRepairQcResolution = {
+  readonly evidence: CommercialEpisodeRepairEvidence;
+  readonly authority: EpisodeRepairQcAuthority;
+};
+
+/**
+ * One Episode-repair reading for Pre-Generation QC and scheduling.
+ * Creative compilation stays with the existing dialogue and provider compilers.
+ * A null Episode intent returns null so historical Stories stay compatible.
+ */
+export function resolveCommercialEpisodeRepairQc(input: {
+  readonly episodeIntent: AiStoryEpisodeIntentAuthority | null;
+  readonly targetSceneId: string;
+  readonly scenes: readonly CharacterContinuityScene[];
+  readonly entriesBySceneId: Readonly<Record<string, readonly FrozenDialogueEntry[]>>;
+  readonly dialogueProjection: EpisodeRepairDialogueProjection | null;
+  readonly nativeAvCapabilityValid: boolean;
+}): CommercialEpisodeRepairQcResolution | null {
+  if (!input.episodeIntent) return null;
+  const intent = input.episodeIntent;
+  const continuity = evaluateCharacterContinuity({
+    scenes: input.scenes,
+    nativeDialogueRequiresVisibleSpeaker: intent.nativeCharacterDialogue,
+    speakingCharacterIds: Object.values(input.entriesBySceneId).flatMap((entries) =>
+      entries.flatMap((entry) => entry.type === "DIALOGUE" && entry.speakerId ? [entry.speakerId] : []),
+    ),
+  });
+  const targetEntries = input.entriesBySceneId[input.targetSceneId] ?? [];
+  const targetDialogue = targetEntries.filter((entry) => entry.type === "DIALOGUE");
+  const episodeDialogueCount = Object.values(input.entriesBySceneId)
+    .reduce((count, entries) => count + entries.filter((entry) => entry.type === "DIALOGUE").length, 0);
+  const speaking = targetDialogue.length > 0;
+  const projectionOk = input.dialogueProjection?.ok === true;
+  const speakerMatchesProjection = !speaking || (
+    projectionOk &&
+    targetDialogue.every((entry) => entry.speakerId === input.dialogueProjection?.characterId)
+  );
+  const sceneAudioValid = speaking
+    ? projectionOk && input.nativeAvCapabilityValid && speakerMatchesProjection
+    : !projectionOk || input.dialogueProjection === null;
+  const visualTextConstraint = buildVisualTextProviderConstraint(intent);
+  const dnaPresent = continuity.status === "PASS" && (
+    continuity.requiredCharacterIds.length === 0 ||
+    continuity.requiredCharacterIds.every((characterId) =>
+      input.scenes.some((scene) =>
+        scene.characterIds.includes(characterId) && scene.characterDnaFingerprint !== null,
+      ),
+    )
+  );
+  return {
+    evidence: {
+      characterContinuityRequired: continuity.requiredCharacterIds.length > 0,
+      characterDnaAuthorityPresent: dnaPresent,
+      characterIdentityMismatch: continuity.status === "BLOCK" && dnaPresent === false &&
+        input.scenes.some((scene) => scene.characterDnaFingerprint !== null) &&
+        new Set(input.scenes.flatMap((scene) => scene.characterDnaFingerprint ? [scene.characterDnaFingerprint] : [])).size > 1,
+      nativeCharacterDialogue: intent.nativeCharacterDialogue,
+      frozenDialogueCount: speaking ? targetDialogue.length : episodeDialogueCount,
+      nativeDialogueSpeakerValid: !intent.nativeCharacterDialogue || !speaking || speakerMatchesProjection,
+      nativeAvUnitValid: !intent.nativeCharacterDialogue || !speaking || (projectionOk && input.nativeAvCapabilityValid),
+      dialogueAuthorityValid: !intent.nativeCharacterDialogue || !speaking || projectionOk,
+      sceneAudioModeValid: !intent.nativeCharacterDialogue || sceneAudioValid,
+      visualTextSurfaceRequired: true,
+      visualTextAuthorityPresent: visualTextConstraint.includes("Visual text restriction:"),
+      criticalReadableTextWithoutAuthority: visualTextConstraint.length === 0 ||
+        intent.visualTextPolicy.criticalSurfacePolicy === "DETERMINISTIC_OVERLAY",
+    },
+    authority: {
+      episodeIntentContractVersion: intent.contractVersion,
+      spokenLanguage: intent.spokenLanguage,
+      nativeCharacterDialogue: intent.nativeCharacterDialogue,
+      visualTextLanguages: [...intent.visualTextLanguages],
+      visualTextPolicy: intent.visualTextPolicy.criticalSurfacePolicy,
+      visualTextConstraint,
+      characterDnaFingerprint: input.scenes.find((scene) => scene.characterDnaFingerprint)?.characterDnaFingerprint ?? null,
+      dialogueAuthorityFingerprint: speaking && projectionOk ? input.dialogueProjection?.fingerprint ?? null : null,
+      sceneId: input.targetSceneId,
+      generateAudio: speaking && projectionOk && input.nativeAvCapabilityValid,
+      audioMode: speaking && projectionOk && input.nativeAvCapabilityValid ? "NATIVE_AV" : "VIDEO_ONLY",
+    },
+  };
+}
+
+export function projectVisualTextObservationFromCache(input: {
+  readonly observedTextReadable: boolean | null;
+  readonly observedReadableText: string | null;
+  readonly signageIdentityVisible: boolean;
+  readonly renderPolicy: AiStoryVisualTextRenderPolicy;
+}): VisualTextObservation {
+  const text = input.observedReadableText?.trim() ?? "";
+  const readable = input.observedTextReadable === true && text.length > 0;
+  return {
+    readable,
+    text: readable ? text : "",
+    criticalSurface: input.signageIdentityVisible || readable,
+    renderPolicy: input.renderPolicy,
+    origin: "PROVIDER_GENERATED",
+  };
+}
+
 export function commercialEpisodeRepairGateEvidence(
   evidence: CommercialEpisodeRepairEvidence | null | undefined,
 ): {

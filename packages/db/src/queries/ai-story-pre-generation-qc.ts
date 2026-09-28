@@ -3,6 +3,7 @@ import { AiStoryCanonicalSceneSchema, AiStoryCharacterAuthorityVersionSchema, Ai
 import { AiStoryEpisodeProjectedDirectorPlanSchema, AiStoryEpisodeProjectedMotionPlanSchema } from "@ceo-agent/shared";
 import { assertAiStoryPreGenerationQcCurrent, evaluateAiStoryPreGenerationQc, evaluateEpisodeProjectedPreGenerationQc, includeValidatedCampaignAuthority, ProjectedQcTargetSceneError, resolveProjectedQcTargetScene, validateAiStoryPreGenerationQcFingerprint, type AiStoryPreGenerationQcInput } from "@ceo-agent/shared/server";
 import { getDb } from "../client";
+import { loadCommercialEpisodeRepairForQc } from "./ai-story-episode-repair-qc";
 import * as schema from "../schema";
 import type { AiStoryScriptScope } from "./ai-story-script";
 
@@ -44,7 +45,8 @@ export class AiStoryPreGenerationQcAuthorityService {
     const locationRows=locationVersionIds.length?await tx.select().from(schema.aiStoryLocationVersions).where(inArray(schema.aiStoryLocationVersions.locationVersionId,locationVersionIds)):[];
     const locationVersions=locationRows.map((row)=>AiStoryLocationAuthorityVersionSchema.parse(row.snapshot));
     const canonicalInput=canonicalScenes.length?{canonicalScenes,locationVersions,currentSceneVersionIds:canonicalRows.map((row)=>row.ai_story_canonical_scenes.currentSceneVersionId)}:{};
-    const qcBase={outline,script,handoff,productAuthority,providerCapability:input.providerCapability,compilationRequest:input.compilationRequest,knownAuthorityReferences:known,campaignId:scope.campaignId,characterVersions,supportingCharacterVersions,availableCharacterAssetIds:new Set(characterAssets.map((asset)=>asset.id)),...canonicalInput,evaluatedBy:scope.actorUserId,evaluatedAt:input.evaluatedAt??new Date().toISOString()};
+    const episodeRepair=await loadCommercialEpisodeRepairForQc(tx,{scope,script,canonicalScenes,directorPlan:projectedDirector.success?null:AiStoryDirectorPlanSchema.safeParse(directorPayload).data??null,motionPlan:projectedMotion.success?null:AiStoryMotionPlanSchema.safeParse(motionPayload).data??null,sceneExecutionId:input.compilationRequest.sceneExecutionId});
+    const qcBase={outline,script,handoff,productAuthority,providerCapability:input.providerCapability,compilationRequest:input.compilationRequest,knownAuthorityReferences:known,campaignId:scope.campaignId,characterVersions,supportingCharacterVersions,availableCharacterAssetIds:new Set(characterAssets.map((asset)=>asset.id)),...canonicalInput,evaluatedBy:scope.actorUserId,evaluatedAt:input.evaluatedAt??new Date().toISOString(),...(episodeRepair?{commercialEpisodeRepair:episodeRepair.evidence,episodeRepairAuthority:episodeRepair.authority}:{})};
     const targetScene=projectedDirector.success?await (async()=>{
       const executions=await tx.select().from(schema.aiStorySceneExecutions).where(eq(schema.aiStorySceneExecutions.id,input.compilationRequest.sceneExecutionId)).limit(1);
       const sceneExecution=executions[0];

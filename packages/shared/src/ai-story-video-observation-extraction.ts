@@ -42,10 +42,12 @@ export const AI_STORY_VIDEO_OBSERVATION_ROOT_FIELDS = [
   "visiblePeopleEstimate",
   "primaryPersonPresent",
   "signageIdentityVisible",
+  "observedTextReadable",
+  "observedReadableText",
   "qualityRiskFlags",
 ] as const;
 export const AI_STORY_VIDEO_OBSERVATION_PROMPT =
-  `Describe only what is visibly supported by the supplied sampled video frames. Return one JSON object. Put these fields directly at the root. Do not wrap the object in observable, result, data, or analysis. Do not choose a generation strategy. Do not infer whether the clip should be reused, replaced, or regenerated. dominantShotType must be one of: ${AI_STORY_VIDEO_SHOT_TYPES.join(", ")}. cameraMotion must be one of: ${AI_STORY_VIDEO_CAMERA_MOTIONS.join(", ")}. compositionStability must be one of: ${AI_STORY_VIDEO_COMPOSITION_STABILITIES.join(", ")}. actionTags must use only: ${AI_STORY_VIDEO_ACTION_TAGS.join(", ")}. environmentTags must use only: ${AI_STORY_VIDEO_ENVIRONMENT_TAGS.join(", ")}. Put any other visible action phrase in observedActions, any visible object name in observedObjects, and any other place noun in observedEnvironments. Those three fields are free observations, not enums.` as const;
+  `Describe only what is visibly supported by the supplied sampled video frames. Return one JSON object. Put these fields directly at the root. Do not wrap the object in observable, result, data, or analysis. Do not choose a generation strategy. Do not infer whether the clip should be reused, replaced, or regenerated. dominantShotType must be one of: ${AI_STORY_VIDEO_SHOT_TYPES.join(", ")}. cameraMotion must be one of: ${AI_STORY_VIDEO_CAMERA_MOTIONS.join(", ")}. compositionStability must be one of: ${AI_STORY_VIDEO_COMPOSITION_STABILITIES.join(", ")}. actionTags must use only: ${AI_STORY_VIDEO_ACTION_TAGS.join(", ")}. environmentTags must use only: ${AI_STORY_VIDEO_ENVIRONMENT_TAGS.join(", ")}. Put any other visible action phrase in observedActions, any visible object name in observedObjects, and any other place noun in observedEnvironments. Those three fields are free observations, not enums. If readable writing is visible, set observedTextReadable true and copy only the visible text into observedReadableText. If no readable writing is visible, set observedTextReadable false and observedReadableText null. If readability cannot be determined, set observedTextReadable null. Do not invent text.` as const;
 export const AI_STORY_VIDEO_OBSERVATION_SCHEMA_HINT =
   `Return one JSON object at the root with shotCountEstimate, framingSummary, oneContinuousShot, abruptCuts, primaryActionSummary, environmentSummary, visiblePeopleEstimate, primaryPersonPresent, signageIdentityVisible, and qualityRiskFlags. Enums: dominantShotType=${AI_STORY_VIDEO_SHOT_TYPES.join("|")}; cameraMotion=${AI_STORY_VIDEO_CAMERA_MOTIONS.join("|")}; compositionStability=${AI_STORY_VIDEO_COMPOSITION_STABILITIES.join("|")}; actionTags=${AI_STORY_VIDEO_ACTION_TAGS.join("|")}; environmentTags=${AI_STORY_VIDEO_ENVIRONMENT_TAGS.join("|")}. Free observations: observedActions, observedObjects, observedEnvironments. Do not wrap the object.` as const;
 export const AI_STORY_VIDEO_CONTEXT_FREE_EXISTING_VIDEO_REASON =
@@ -73,6 +75,9 @@ export const AiStoryVideoModelObservationSchema = z.object({
   visiblePeopleEstimate: z.number().int().nonnegative().default(0),
   primaryPersonPresent: z.boolean().default(false),
   signageIdentityVisible: z.boolean().default(false),
+  /** Null means the cached observation did not determine whether text is readable. */
+  observedTextReadable: z.boolean().nullable().default(null),
+  observedReadableText: z.string().trim().max(500).nullable().default(null),
   qualityRiskFlags: z.array(z.enum(AI_STORY_VIDEO_QUALITY_RISK_FLAGS)).max(8).default([]),
 }).strict();
 

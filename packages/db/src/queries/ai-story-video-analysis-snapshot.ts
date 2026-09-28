@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { and, desc, eq } from "drizzle-orm";
+import { getDb } from "../client";
+import * as schema from "../schema";
 import type { Sql } from "postgres";
 import {
   AI_STORY_VIDEO_ANALYSIS_TYPE,
@@ -78,6 +81,40 @@ async function selectSnapshot(sql: Sql, key: AiStoryVideoAnalysisReuseKey): Prom
     LIMIT 1
   `;
   return rows[0] ? mapSnapshot(rows[0]) : null;
+}
+
+export async function findCachedVideoObservationByContentHash(input: {
+  readonly workspaceId: string;
+  readonly assetContentHash: string;
+  readonly analysisVersion: string;
+  readonly extractorVersion: string;
+}): Promise<{
+  readonly observedTextReadable: boolean | null;
+  readonly observedReadableText: string | null;
+  readonly signageIdentityVisible: boolean;
+} | null> {
+  const [row] = await getDb()
+    .select({ observationJson: schema.aiStoryVideoAnalysisSnapshots.observationJson })
+    .from(schema.aiStoryVideoAnalysisSnapshots)
+    .where(and(
+      eq(schema.aiStoryVideoAnalysisSnapshots.workspaceId, input.workspaceId),
+      eq(schema.aiStoryVideoAnalysisSnapshots.assetContentHash, input.assetContentHash),
+      eq(schema.aiStoryVideoAnalysisSnapshots.analysisVersion, input.analysisVersion),
+      eq(schema.aiStoryVideoAnalysisSnapshots.extractorVersion, input.extractorVersion),
+    ))
+    .orderBy(desc(schema.aiStoryVideoAnalysisSnapshots.createdAt))
+    .limit(1);
+  if (!row) return null;
+  const observation = row.observationJson as {
+    observedTextReadable?: boolean | null;
+    observedReadableText?: string | null;
+    signageIdentityVisible?: boolean;
+  };
+  return {
+    observedTextReadable: observation.observedTextReadable ?? null,
+    observedReadableText: observation.observedReadableText ?? null,
+    signageIdentityVisible: observation.signageIdentityVisible === true,
+  };
 }
 
 export function createSqlVideoAnalysisSnapshotRepository(

@@ -14,6 +14,9 @@ import {
   AiStoryPreGenerationQcEvaluationSchema,
   preGenerationQcAllowsDispatch,
   projectLegacyStoryToPreGenerationQcCompatibility,
+  acceptAiStoryEpisodeIntent,
+  resolveCommercialEpisodeRepairQc,
+  type CharacterContinuityScene,
   type AiStoryDirectorPlan,
   type AiStoryMotionPlan,
   type AiStoryOutlineVersion,
@@ -73,4 +76,199 @@ describe("AI Story unified Pre-Generation QC",()=>{
   it("keeps historical Gate Set V2 evaluations readable without silent upgrade",()=>{const current=evaluate();const historical={...current,gateSetVersion:AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2,gateResults:current.gateResults.filter((gate)=>AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V2.includes(gate.gateId as typeof AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V2[number]))};historical.qcFingerprint=computeAiStoryPreGenerationQcFingerprint(historical);const parsed=AiStoryPreGenerationQcEvaluationSchema.parse(historical);expect(parsed.gateSetVersion).toBe(2);expect(parsed.gateResults).toHaveLength(AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V2.length);expect(parsed.gateResults.map((gate)=>gate.gateId)).toEqual([...AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V2]);expect(parsed.gateResults.some((gate)=>gate.gateId==="GENERATION_UNIT_COVERAGE_GATE")).toBe(false);expect(validateAiStoryPreGenerationQcFingerprint(parsed)).toBe(true);expect(current.gateResults.map((gate)=>gate.gateId)).toEqual([...AI_STORY_PRE_GENERATION_QC_GATE_ORDER]);});
   it("keeps historical Gate Set V3 evaluations readable without silent upgrade",()=>{const current=evaluate();const historical={...current,gateSetVersion:AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3,gateResults:current.gateResults.filter((gate)=>AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V3.includes(gate.gateId as typeof AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V3[number]))};historical.qcFingerprint=computeAiStoryPreGenerationQcFingerprint(historical);const parsed=AiStoryPreGenerationQcEvaluationSchema.parse(historical);expect(parsed.gateSetVersion).toBe(3);expect(parsed.gateResults).toHaveLength(AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V3.length);expect(parsed.gateResults.some((gate)=>gate.gateId==="CHARACTER_CONTINUITY_GATE")).toBe(false);expect(validateAiStoryPreGenerationQcFingerprint(parsed)).toBe(true);expect(current.gateSetVersion).toBe(4);expect(current.gateResults.some((gate)=>gate.gateId==="VISUAL_TEXT_POLICY_GATE")).toBe(true);});
   it("contains no category/action allowlist, Provider prompt, automatic retry, or creative auto-repair policy",()=>{const source=readFileSync("packages/shared/src/ai-story-pre-generation-qc.server.ts","utf8").toLowerCase();for(const forbidden of ["allowedproductactions","allowedproductscenes","allowedproductcontexts","allowedactions","bouquet","flowers","shoes","cake","furniture","providerprompt","automatic paid retry"])expect(source).not.toContain(forbidden);});
+});
+
+describe("Episode repair Gate Set V4 evidence", () => {
+  const dna = `sha256:${"d".repeat(64)}`;
+  const otherDna = `sha256:${"e".repeat(64)}`;
+  const dialogueFingerprint = `sha256:${"f".repeat(64)}`;
+  const characterId = "84000000-0000-4000-8000-0000000000aa";
+
+  function episodeIntent(nativeCharacterDialogue: boolean) {
+    return acceptAiStoryEpisodeIntent({
+      episodeType: "COMMERCIAL_STORY",
+      requestedDurationSec: 25,
+      aspectRatio: "9:16",
+      spokenLanguage: "zh-MY",
+      dialogueStyle: "warm shop conversation",
+      nativeCharacterDialogue,
+      pacing: "NATURAL",
+      cta: null,
+      visualTextLanguages: ["en", "ms", "zh-Hans"],
+      visualTextPolicy: { criticalSurfacePolicy: "PROVIDER_NON_LEGIBLE" },
+    }, "2026-09-28T00:00:00.000Z");
+  }
+
+  function continuityScene(sceneId: string, fingerprint: string | null): CharacterContinuityScene {
+    return {
+      sceneId,
+      characterIds: [characterId],
+      characterDnaFingerprint: fingerprint,
+      reusableCharacterId: characterId,
+      reusableCharacterVersionId: null,
+      campaignCharacterId: characterId,
+      campaignCharacterVersionId: null,
+      identityFingerprint: null,
+    };
+  }
+
+  function repair(input: {
+    nativeCharacterDialogue?: boolean;
+    scenes: CharacterContinuityScene[];
+    targetSceneId: string;
+    entriesBySceneId?: Record<string, { type: "DIALOGUE"; speakerId: string; line: string; language: string }[]>;
+    projection?: { ok: boolean; fingerprint: string | null; characterId: string | null } | null;
+  }) {
+    return resolveCommercialEpisodeRepairQc({
+      episodeIntent: episodeIntent(input.nativeCharacterDialogue ?? true),
+      targetSceneId: input.targetSceneId,
+      scenes: input.scenes,
+      entriesBySceneId: input.entriesBySceneId ?? {},
+      dialogueProjection: input.projection === undefined ? null : input.projection,
+      nativeAvCapabilityValid: input.projection?.ok === true,
+    });
+  }
+
+  function hydrate(resolution: NonNullable<ReturnType<typeof repair>>) {
+    return evaluateAiStoryPreGenerationQc({
+      ...fixture(),
+      commercialEpisodeRepair: resolution.evidence,
+      episodeRepairAuthority: resolution.authority,
+    });
+  }
+
+  it("hydrates Gate Set V4 from the current Episode intent", () => {
+    const resolution = repair({
+      scenes: [continuityScene("scene-a", dna), continuityScene("scene-b", dna)],
+      targetSceneId: "scene-a",
+      entriesBySceneId: {
+        "scene-a": [{ type: "DIALOGUE", speakerId: characterId, line: "欢迎光临", language: "zh-MY" }],
+      },
+      projection: { ok: true, fingerprint: dialogueFingerprint, characterId },
+    });
+    const value = hydrate(resolution!);
+    expect(value.gateSetVersion).toBe(4);
+    expect(value.episodeRepairAuthority).toMatchObject({
+      episodeIntentContractVersion: "ai-story-episode-intent.v1",
+      spokenLanguage: "zh-MY",
+      nativeCharacterDialogue: true,
+      visualTextPolicy: "PROVIDER_NON_LEGIBLE",
+      sceneId: "scene-a",
+    });
+    expect(value.episodeRepairAuthority?.visualTextConstraint).toContain("Visual text restriction:");
+    expect(value.gateResults.find((gate) => gate.gateId === "VISUAL_TEXT_POLICY_GATE")?.status).toBe("PASS");
+    expect(validateAiStoryPreGenerationQcFingerprint(value)).toBe(true);
+  });
+
+  it("passes a recurring character that shares one Story-level DNA", () => {
+    const value = hydrate(repair({
+      scenes: [continuityScene("scene-a", dna), continuityScene("scene-b", dna)],
+      targetSceneId: "scene-a",
+    })!);
+    expect(value.gateResults.find((gate) => gate.gateId === "CHARACTER_CONTINUITY_GATE")?.status).toBe("PASS");
+  });
+
+  it("blocks a recurring character with no DNA authority", () => {
+    const value = hydrate(repair({
+      nativeCharacterDialogue: false,
+      scenes: [continuityScene("scene-a", null), continuityScene("scene-b", null)],
+      targetSceneId: "scene-a",
+    })!);
+    expect(value.gateResults.find((gate) => gate.gateId === "CHARACTER_CONTINUITY_GATE")).toMatchObject({
+      status: "BLOCK",
+      reasonCode: "CHARACTER_CONTINUITY_AUTHORITY_REQUIRED",
+    });
+    expect(value.dispatchDecision).toBe("DISPATCH_BLOCKED");
+    expect(value.providerCallAvoided).toBe(true);
+    expect(() => assertAiStoryPreGenerationDispatchEligible(value)).toThrow(/PREGEN_QC_DISPATCH_BLOCKED/);
+  });
+
+  it("blocks a visible dialogue speaker that has no DNA authority", () => {
+    const value = hydrate(repair({
+      scenes: [continuityScene("scene-a", null)],
+      targetSceneId: "scene-a",
+      entriesBySceneId: {
+        "scene-a": [{ type: "DIALOGUE", speakerId: characterId, line: "欢迎光临", language: "zh-MY" }],
+      },
+      projection: { ok: false, fingerprint: null, characterId: null },
+    })!);
+    expect(value.gateResults.find((gate) => gate.gateId === "CHARACTER_CONTINUITY_GATE")?.status).toBe("BLOCK");
+  });
+
+  it("blocks native dialogue when the episode has zero frozen DIALOGUE", () => {
+    const value = hydrate(repair({
+      scenes: [continuityScene("scene-a", dna)],
+      targetSceneId: "scene-a",
+    })!);
+    expect(value.gateResults.find((gate) => gate.gateId === "NATIVE_DIALOGUE_INTENT_GATE")).toMatchObject({
+      status: "BLOCK",
+      reasonCode: "NATIVE_DIALOGUE_REQUEST_UNSATISFIED",
+    });
+    expect(value.providerCallAvoided).toBe(true);
+  });
+
+  it("passes native dialogue when the visible line, speaker, and native AV authority are valid", () => {
+    const value = hydrate(repair({
+      scenes: [continuityScene("scene-a", dna)],
+      targetSceneId: "scene-a",
+      entriesBySceneId: {
+        "scene-a": [{ type: "DIALOGUE", speakerId: characterId, line: "欢迎光临", language: "zh-MY" }],
+      },
+      projection: { ok: true, fingerprint: dialogueFingerprint, characterId },
+    })!);
+    expect(value.gateResults.find((gate) => gate.gateId === "NATIVE_DIALOGUE_INTENT_GATE")?.status).toBe("PASS");
+    expect(value.episodeRepairAuthority).toMatchObject({ generateAudio: true, audioMode: "NATIVE_AV" });
+  });
+
+  it("keeps generateAudio true only on the visible dialogue scene", () => {
+    const speaking = repair({
+      scenes: [continuityScene("scene-a", dna), continuityScene("scene-b", dna)],
+      targetSceneId: "scene-a",
+      entriesBySceneId: {
+        "scene-a": [{ type: "DIALOGUE", speakerId: characterId, line: "欢迎光临", language: "zh-MY" }],
+      },
+      projection: { ok: true, fingerprint: dialogueFingerprint, characterId },
+    })!;
+    const silent = repair({
+      scenes: [continuityScene("scene-a", dna), continuityScene("scene-b", dna)],
+      targetSceneId: "scene-b",
+      entriesBySceneId: {
+        "scene-a": [{ type: "DIALOGUE", speakerId: characterId, line: "欢迎光临", language: "zh-MY" }],
+      },
+    })!;
+    expect(speaking.authority).toMatchObject({ generateAudio: true, audioMode: "NATIVE_AV" });
+    expect(silent.authority).toMatchObject({ generateAudio: false, audioMode: "VIDEO_ONLY" });
+    expect(hydrate(silent).gateResults.find((gate) => gate.gateId === "NATIVE_DIALOGUE_INTENT_GATE")?.status).toBe("PASS");
+  });
+
+  it("keeps a null Episode intent on the historical compatibility path", () => {
+    expect(resolveCommercialEpisodeRepairQc({
+      episodeIntent: null,
+      targetSceneId: "scene-a",
+      scenes: [],
+      entriesBySceneId: {},
+      dialogueProjection: null,
+      nativeAvCapabilityValid: false,
+    })).toBeNull();
+    const historical = evaluate();
+    expect(historical.episodeRepairAuthority).toBeUndefined();
+    expect(historical.gateSetVersion).toBe(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION);
+    expect(historical.gateResults.find((gate) => gate.gateId === "NATIVE_DIALOGUE_INTENT_GATE")?.status).toBe("PASS");
+    expect(validateAiStoryPreGenerationQcFingerprint(historical)).toBe(true);
+  });
+
+  it("changes the QC fingerprint when material Episode repair authority changes", () => {
+    const first = hydrate(repair({
+      scenes: [continuityScene("scene-a", dna), continuityScene("scene-b", dna)],
+      targetSceneId: "scene-a",
+    })!);
+    const second = hydrate(repair({
+      scenes: [continuityScene("scene-a", otherDna), continuityScene("scene-b", otherDna)],
+      targetSceneId: "scene-a",
+    })!);
+    expect(first.qcFingerprint).not.toBe(second.qcFingerprint);
+    expect(validateAiStoryPreGenerationQcFingerprint(first)).toBe(true);
+    expect(validateAiStoryPreGenerationQcFingerprint(second)).toBe(true);
+    expect(first.providerCallAvoided).toBe(first.dispatchDecision === "DISPATCH_BLOCKED");
+  });
 });
