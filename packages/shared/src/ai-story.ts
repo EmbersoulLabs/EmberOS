@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AiStoryShotCameraSafetySchema } from "./ai-story-product-camera-safety";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
@@ -314,6 +315,8 @@ export const AiStoryShotAuthorityLineageSchema = z.object({
   sceneOrder: z.number().int().nonnegative(),
   generationAuthority: AiStorySceneGenerationAuthoritySchema,
   groundingLineage: AiStorySceneGroundingLineageSchema,
+  /** Present only when product camera safety was bound before lineage freeze. */
+  cameraSafety: AiStoryShotCameraSafetySchema.optional(),
 }).strict();
 
 export type AiStoryShotAuthorityLineage = z.infer<
@@ -333,6 +336,8 @@ export const ShotPlanItemSchema = z.object({
   emotion: NonEmptyTextSchema,
   information: NonEmptyTextSchema,
   order: z.number().int().nonnegative(),
+  /** Optional for historical Shot reads. New product-sensitive writes must bind it. */
+  cameraSafety: AiStoryShotCameraSafetySchema.optional(),
   /** Optional only for historical planning-package read compatibility. */
   authorityLineage: AiStoryShotAuthorityLineageSchema.optional(),
 });

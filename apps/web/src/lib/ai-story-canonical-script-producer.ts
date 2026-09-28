@@ -11,6 +11,7 @@ import {
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
   AiStoryScriptSemanticProposalV1Schema,
   resolveOutlineBoundProductAuthorityIds,
+  evaluateCommercialProductActionCausality,
   validateAiStoryScript,
   type AiStoryOutlineVersion,
   type AiStoryScriptSemanticProposalV1,
@@ -241,6 +242,7 @@ function assertCommercialScriptCandidatePreAuthorization(
   const blocking = [
     ...validateAiStoryScript(script, outline, { knownAuthorityReferences }).filter((issue) => issue.severity === "BLOCK"),
     ...validateAiStoryCommercialStoryProfile(outline, script).filter((issue) => issue.severity === "BLOCK"),
+    ...evaluateCommercialProductActionCausality(script),
   ];
   if (blocking.length > 0) {
     throw new AiStoryCanonicalScriptProducerError(

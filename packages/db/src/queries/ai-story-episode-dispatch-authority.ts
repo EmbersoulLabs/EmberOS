@@ -104,6 +104,7 @@ export async function loadEpisodeDispatchProjectionSource(
         focus: shot.focus,
         information: shot.information,
         durationSec: shot.durationSec,
+        ...(shot.cameraSafety ? { cameraSafety: shot.cameraSafety } : {}),
       })),
     },
   };

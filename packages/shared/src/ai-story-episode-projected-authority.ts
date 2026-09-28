@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AI_STORY_CAMERA_FAMILIES } from "./ai-story-director-plan";
 import { cinematicCameraMovementIntensity } from "./ai-story-cinematic-execution-contract";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { provePersistedProductCameraSafety, type AiStoryShotCameraSafety } from "./ai-story-product-camera-safety";
 
 export const AI_STORY_DIRECTOR_PLAN_EPISODE_PROJECTED_CONTRACT_VERSION = "ai-story-director-plan.episode-projected.v1" as const;
 export const AI_STORY_MOTION_PLAN_EPISODE_PROJECTED_CONTRACT_VERSION = "ai-story-motion-plan.episode-projected.v1" as const;
@@ -258,6 +259,7 @@ export type EpisodeProjectedShot = {
   focus: string;
   information: string;
   durationSec: number;
+  cameraSafety?: AiStoryShotCameraSafety;
 };
 export type EpisodeProjectedAuthoritySource = {
   animationPackageId: string;
@@ -329,20 +331,23 @@ export function projectEpisodeDirectorScenes(source: EpisodeProjectedAuthoritySo
     assertAligned(scene.sceneFunction === scriptScene.sceneFunction, `Canonical Scene function contradicts Script function for ${scriptScene.scriptSceneId}`);
     const shots = source.shotPlan.filter((shot) => shot.sceneId === scenePlan.id).sort((left, right) => left.order - right.order);
     assertAligned(shots.length > 0, `Scene Plan ${scenePlan.id} has no Shot Plan rows`);
-    const projectedShots = shots.map((shot) => ({
-      shotId: shot.id,
-      order: shot.order,
-      cameraType: shot.cameraType,
-      cameraMovement: shot.cameraMovement,
-      composition: shot.composition,
-      framing: shot.framing,
-      focus: shot.focus,
-      information: shot.information,
-      durationSec: shot.durationSec,
-      perspectiveChange: notAsserted,
-      revealsUnseenProductSurface: notAsserted,
-      productIdentityTransformation: notAsserted,
-    }));
+    const projectedShots = shots.map((shot) => {
+      const safety = provePersistedProductCameraSafety(shot);
+      return {
+        shotId: shot.id,
+        order: shot.order,
+        cameraType: shot.cameraType,
+        cameraMovement: shot.cameraMovement,
+        composition: shot.composition,
+        framing: shot.framing,
+        focus: shot.focus,
+        information: shot.information,
+        durationSec: shot.durationSec,
+        perspectiveChange: safety ? known(safety.perspectiveChange) : notAsserted,
+        revealsUnseenProductSurface: safety ? known(safety.revealsUnseenProductSurface) : notAsserted,
+        productIdentityTransformation: safety ? known(safety.productIdentityTransformation) : notAsserted,
+      };
+    });
     const projected: AiStoryEpisodeProjectedDirectorScene = {
       scriptSceneId: scriptScene.scriptSceneId,
       sceneOrder: scriptScene.order,

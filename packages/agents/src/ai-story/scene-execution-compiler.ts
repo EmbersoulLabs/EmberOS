@@ -244,6 +244,7 @@ export function compileSceneExecutionIntents(
         focus: shot.focus,
         emotion: shot.emotion,
         information: shot.information,
+        ...(shot.cameraSafety ? { cameraSafety: shot.cameraSafety } : {}),
       }),
     }));
 

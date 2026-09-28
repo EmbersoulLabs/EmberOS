@@ -90,6 +90,8 @@ export * from "./ai-story-motion-plan";
 export * from "./ai-story-pre-generation-qc";
 export * from "./ai-story-product-story-profile";
 export * from "./ai-story-commercial-story-profile";
+export * from "./ai-story-product-camera-safety";
+export * from "./ai-story-commercial-product-action-causality";
 export * from "./ai-story-generation-unit";
 export * from "./ai-story-v2v-execution";
 export * from "./ai-story-video-asset-analysis";

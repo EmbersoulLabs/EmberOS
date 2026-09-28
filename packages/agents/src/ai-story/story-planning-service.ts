@@ -20,6 +20,7 @@ import {
   DirectorThinkingSchema,
   ScenePlanItemSchema,
   ShotPlanItemSchema,
+  bindProductShotCameraSafety,
   StoryBeatSchema,
   validatePlanningConsistency,
   type AiStoryStructuredDraft,
@@ -753,6 +754,7 @@ export function bindShotPlanAuthorityLineage(input: {
         sceneOrder: scene.order,
         generationAuthority: scene.generationAuthority,
         groundingLineage: scene.groundingLineage,
+        ...(shot.cameraSafety ? { cameraSafety: shot.cameraSafety } : {}),
       },
     });
   });
@@ -820,11 +822,15 @@ export async function generateShotPlan(input: {
     z.array(ShotPlanItemSchema).min(1),
     (result) => result.shotPlan
   );
+  const shotPlan = bindProductShotCameraSafety({
+    scenePlan: input.scenePlan,
+    shotPlan: value,
+  });
   return {
     shotPlan: bindShotPlanAuthorityLineage({
       planningPackageId: input.planningPackageId,
       scenePlan: input.scenePlan,
-      shotPlan: value,
+      shotPlan,
     }),
     usage,
   };
