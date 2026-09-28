@@ -234,7 +234,7 @@ export function bindSceneGroundingLineage(input: {
   ) {
     throw new AiStorySceneGroundingError(
       "SCENE_GROUNDING_AUTHORITY_REQUIRED",
-      "Scene grounding must cover every planned Scene exactly once",
+      `Scene grounding must cover every planned Scene exactly once (scenes=${input.sceneIds.length} selections=${proposals.length})`,
     );
   }
   const bindingById = new Map(context.bindings.map((binding) => [binding.bindingId, binding]));

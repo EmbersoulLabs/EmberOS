@@ -52,30 +52,31 @@ const input = {
   },
 };
 
+const plannedScene = {
+  id: "scene-001",
+  beatIds: ["beat-001"],
+  purpose: "Introduce the florist and lilies.",
+  durationSec: 8,
+  transition: "cut",
+  continuityNotes: "The same florist remains in the flower shop.",
+  order: 0,
+  generationAuthority: {
+    strategy: "TEXT_TO_VIDEO" as const,
+    referenceSource: "REFERENCE_FREE_T2V" as const,
+    referenceAssetIds: [] as string[],
+    firstFrameAssetId: null,
+    productVisualIdentityRequirement: "NONE" as const,
+  },
+};
+const groundingFields = {
+  narrativeIntent: "Introduce the florist.",
+  visualIntent: "Show the florist in the flower shop.",
+  evidence: [] as { bindingId: string; groundedFacts: string[] }[],
+  visualClaims: [] as { subject: string; detail: string; evidenceLevel: "EXISTENCE_ONLY" | "OBSERVED_APPEARANCE" }[],
+};
+const groundingSelection = { sceneId: "scene-001", ...groundingFields };
 const validProviderResult = {
-  scenePlan: [{
-    id: "scene-001",
-    beatIds: ["beat-001"],
-    purpose: "Introduce the florist and lilies.",
-    durationSec: 8,
-    transition: "cut",
-    continuityNotes: "The same florist remains in the flower shop.",
-    order: 0,
-    generationAuthority: {
-      strategy: "TEXT_TO_VIDEO",
-      referenceSource: "REFERENCE_FREE_T2V",
-      referenceAssetIds: [],
-      firstFrameAssetId: null,
-      productVisualIdentityRequirement: "NONE",
-    },
-  }],
-  groundingSelections: [{
-    sceneId: "scene-001",
-    narrativeIntent: "Introduce the florist.",
-    visualIntent: "Show the florist in the flower shop.",
-    evidence: [],
-    visualClaims: [],
-  }],
+  scenePlan: [{ ...plannedScene, grounding: groundingFields }],
 };
 
 describe("AI Story Scene Plan strict structured output", () => {
@@ -86,7 +87,7 @@ describe("AI Story Scene Plan strict structured output", () => {
 
     const result = await generateScenePlan(input);
 
-    expect(result.scenePlan).toMatchObject(validProviderResult.scenePlan);
+    expect(result.scenePlan).toMatchObject([plannedScene]);
     expect(result.scenePlan[0]?.groundingLineage).toMatchObject({
       storyVersionId: input.assetGrounding.storyVersionId,
       matchingResultId: input.assetGrounding.matchingResultId,
@@ -110,6 +111,28 @@ describe("AI Story Scene Plan strict structured output", () => {
         },
       }],
     }).success).toBe(false);
+  });
+
+  it("requires grounding on every scene instead of a separate optional selection list", async () => {
+    const second = {
+      ...plannedScene,
+      id: "scene-002",
+      order: 1,
+      grounding: {
+        ...groundingFields,
+        narrativeIntent: "Continue the florist scene.",
+        visualIntent: "Keep the same flower shop.",
+      },
+    };
+    callStructuredJsonModel.mockResolvedValueOnce({
+      result: { scenePlan: [validProviderResult.scenePlan[0], second] },
+      usage: { input: 20, output: 10, costUsd: 0.01 },
+    });
+
+    const result = await generateScenePlan(input);
+
+    expect(result.scenePlan.map((scene) => scene.id)).toEqual(["scene-001", "scene-002"]);
+    expect(result.scenePlan.every((scene) => scene.groundingLineage)).toBe(true);
   });
 
   it("fails closed on a provider decode issue", async () => {
@@ -140,8 +163,8 @@ describe("AI Story Scene Plan strict structured output", () => {
     expect(bindSceneGroundingProposalIdsByPlanOrder({
       sceneIds: ["scene-001", "scene-002"],
       proposals: [
-        { ...validProviderResult.groundingSelections[0]!, sceneId: "scene-1" },
-        { ...validProviderResult.groundingSelections[0]!, sceneId: "scene-2" },
+        { ...groundingSelection, sceneId: "scene-1" },
+        { ...groundingSelection, sceneId: "scene-2" },
       ],
     }).map((proposal) => proposal.sceneId)).toEqual(["scene-001", "scene-002"]);
   });
@@ -149,7 +172,7 @@ describe("AI Story Scene Plan strict structured output", () => {
   it("does not fabricate missing Scene grounding selections", () => {
     expect(bindSceneGroundingProposalIdsByPlanOrder({
       sceneIds: ["scene-001", "scene-002"],
-      proposals: [validProviderResult.groundingSelections[0]!],
+      proposals: [groundingSelection],
     })).toHaveLength(1);
   });
 
@@ -158,14 +181,19 @@ describe("AI Story Scene Plan strict structured output", () => {
     const invented = "80000000-0000-4000-8000-000000000099";
     const schema = buildScenePlanProviderOutputSchema([accepted]);
     const withBinding = (bindingId: string) => ({
-      ...validProviderResult,
-      groundingSelections: [{
-        ...validProviderResult.groundingSelections[0],
-        evidence: [{ bindingId, groundedFacts: ["Nasi Lemak"] }],
+      scenePlan: [{
+        ...plannedScene,
+        grounding: {
+          ...groundingFields,
+          evidence: [{ bindingId, groundedFacts: ["Nasi Lemak"] }],
+        },
       }],
     });
     expect(schema.safeParse(withBinding(accepted)).success).toBe(true);
     expect(schema.safeParse(withBinding(invented)).success).toBe(false);
+    expect(schema.safeParse({
+      scenePlan: [{ ...plannedScene }],
+    }).success).toBe(false);
   });
 
   it("downgrades unsupported model appearance instead of accepting invented detail", () => {
@@ -187,7 +215,7 @@ describe("AI Story Scene Plan strict structured output", () => {
       }],
     };
     const proposals = [{
-      ...validProviderResult.groundingSelections[0]!,
+      ...groundingSelection,
       evidence: [{ bindingId, groundedFacts: ["Nasi Lemak"] }],
       visualClaims: [{
         subject: "Nasi Lemak",
@@ -221,7 +249,7 @@ describe("AI Story Scene Plan strict structured output", () => {
       }],
     };
     const proposals = [{
-      ...validProviderResult.groundingSelections[0]!,
+      ...groundingSelection,
       narrativeIntent: "The customer plans to try Ayam Rendang tomorrow.",
       evidence: [],
     }];
@@ -317,7 +345,7 @@ describe("AI Story Scene Plan strict structured output", () => {
       }],
     };
     const proposals = [{
-      ...validProviderResult.groundingSelections[0]!,
+      ...groundingSelection,
       evidence: [{ bindingId: menuBindingId, groundedFacts: ["Ayam Rendang", "lobster"] }],
     }];
 
@@ -331,13 +359,13 @@ describe("AI Story Scene Plan strict structured output", () => {
     callStructuredJsonModel.mockResolvedValueOnce({
       result: {
         scenePlan: [{
-          ...validProviderResult.scenePlan[0],
+          ...plannedScene,
           generationAuthority: {
-            ...validProviderResult.scenePlan[0]!.generationAuthority,
-            referenceSource: "SCENE_EXPLICIT",
+            ...plannedScene.generationAuthority,
+            referenceSource: "SCENE_EXPLICIT" as const,
           },
+          grounding: groundingFields,
         }],
-        groundingSelections: validProviderResult.groundingSelections,
       },
       usage: { input: 20, output: 10, costUsd: 0.01 },
     });
