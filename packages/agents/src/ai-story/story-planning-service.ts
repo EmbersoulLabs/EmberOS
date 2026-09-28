@@ -302,18 +302,22 @@ export function resolveScenePlanGenerationAuthority(input: {
   });
 }
 
+const SceneGroundingFieldsSchema = AiStorySceneGroundingProposalSchema.omit({ sceneId: true }).strict();
+
+const ScenePlanProviderSceneSchema = z.object({
+  id: z.string().trim().min(1),
+  beatIds: z.array(z.string().trim().min(1)).min(1),
+  purpose: z.string().trim().min(1),
+  durationSec: z.number().positive(),
+  transition: z.string(),
+  continuityNotes: z.string(),
+  order: z.number().int().nonnegative(),
+  generationAuthority: AiStorySceneGenerationAuthoritySchema,
+  grounding: SceneGroundingFieldsSchema,
+}).strict();
+
 const ScenePlanProviderOutputSchema = z.object({
-  scenePlan: z.array(z.object({
-    id: z.string().trim().min(1),
-    beatIds: z.array(z.string().trim().min(1)).min(1),
-    purpose: z.string().trim().min(1),
-    durationSec: z.number().positive(),
-    transition: z.string(),
-    continuityNotes: z.string(),
-    order: z.number().int().nonnegative(),
-    generationAuthority: AiStorySceneGenerationAuthoritySchema,
-  }).strict()).min(1),
-  groundingSelections: z.array(AiStorySceneGroundingProposalSchema).default([]),
+  scenePlan: z.array(ScenePlanProviderSceneSchema).min(1),
 }).strict();
 
 export function buildScenePlanProviderOutputSchema(
@@ -321,12 +325,14 @@ export function buildScenePlanProviderOutputSchema(
 ) {
   if (acceptedBindingIds.length === 0) return ScenePlanProviderOutputSchema;
   const bindingIdSchema = z.enum(acceptedBindingIds as [string, ...string[]]);
-  return ScenePlanProviderOutputSchema.extend({
-    groundingSelections: z.array(AiStorySceneGroundingProposalSchema.extend({
-      evidence: z.array(AiStorySceneGroundingProposalSchema.shape.evidence.element.extend({
-        bindingId: bindingIdSchema,
-      }).strict()),
-    }).strict()).default([]),
+  return z.object({
+    scenePlan: z.array(ScenePlanProviderSceneSchema.extend({
+      grounding: SceneGroundingFieldsSchema.extend({
+        evidence: z.array(SceneGroundingFieldsSchema.shape.evidence.element.extend({
+          bindingId: bindingIdSchema,
+        }).strict()),
+      }).strict(),
+    }).strict()).min(1),
   }).strict();
 }
 
@@ -637,7 +643,7 @@ export async function generateScenePlan(input: {
       "Use sequential order values starting at 0 and stable scene ids.",
       "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
       "FIRST_FRAME_IMAGE_TO_VIDEO and PRODUCT_GROUNDED_VIDEO always require productVisualIdentityRequirement REQUIRED. They may never use NONE. TEXT_TO_VIDEO may use REQUIRED only when the Scene still visually depicts a grounded Product.",
-      "The supplied accepted Asset grounding authority is immutable. For every Scene return one groundingSelections entry using only exact accepted binding IDs and exact facts from those bindings. Copy bindingId verbatim; never invent or transform a UUID.",
+      "The supplied accepted Asset grounding authority is immutable. Every Scene must include its own grounding object using only exact accepted binding IDs and exact facts from those bindings. Copy bindingId verbatim; never invent or transform a UUID.",
       "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
       "If a Scene has only SUPPORTING_REFERENCE evidence, use TEXT_TO_VIDEO with REFERENCE_FREE_T2V and productVisualIdentityRequirement NONE. Never select image-conditioned mode or REQUIRED product identity from a supporting-only binding.",
       "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",
@@ -655,13 +661,16 @@ export async function generateScenePlan(input: {
   const providerOutput = providerOutputSchema.parse(completion.result);
   const rawScenePlan = z.array(
     ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema }),
-  ).min(1).parse(providerOutput.scenePlan);
+  ).min(1).parse(providerOutput.scenePlan.map(({ grounding: _grounding, ...scene }) => scene));
   const assetGrounding = input.assetGrounding;
   if (!assetGrounding) return { scenePlan: rawScenePlan, usage: completion.usage };
   const sceneIds = rawScenePlan.map((scene) => scene.id);
   const orderedGrounding = bindSceneGroundingProposalIdsByPlanOrder({
     sceneIds,
-    proposals: providerOutput.groundingSelections,
+    proposals: providerOutput.scenePlan.map((scene) => ({
+      sceneId: scene.id,
+      ...scene.grounding,
+    })),
   });
   const lineageByScene = bindSceneGroundingLineage({
     context: assetGrounding,
