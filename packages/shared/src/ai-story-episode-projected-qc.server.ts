@@ -418,6 +418,7 @@ export function evaluateEpisodeProjectedPreGenerationQc(raw: EpisodeProjectedPre
     profileId: script.profileId,
     evaluatedBy: raw.evaluatedBy,
     evaluatedAt: raw.evaluatedAt,
+    ...(raw.episodeRepairAuthority ? { episodeRepairAuthority: raw.episodeRepairAuthority } : {}),
   };
   const qcFingerprint = computeAiStoryPreGenerationQcFingerprint(base);
   return AiStoryPreGenerationQcEvaluationSchema.parse({ ...base, qcEvaluationId: deterministicUuidFromFingerprint("ai-story-pre-generation-qc", `${compilation.sceneExecutionId}:${qcFingerprint}`), qcFingerprint });

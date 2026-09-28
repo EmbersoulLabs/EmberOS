@@ -7,9 +7,10 @@ import {
   AiStoryEpisodeIntentAuthoritySchema,
   AiStoryMotionPlanSchema,
   AiStoryScriptVersionSchema,
-  buildVisualTextProviderConstraint,
+  resolveCommercialEpisodeRepairQc,
   type AiStoryCharacterDialoguePerformanceAuthority,
   type AiStoryEpisodeIntentAuthority,
+  type CharacterContinuityScene,
 } from "@ceo-agent/shared";
 import {
   CommercialVisibleDialogueProjectionError,
@@ -48,7 +49,7 @@ function identityCastId(cast: { readonly scope: string; readonly id: string }): 
   return cast.id;
 }
 
-async function recurringCastRequiresContinuity(input: RepairScope): Promise<boolean> {
+async function continuityScenes(input: RepairScope): Promise<CharacterContinuityScene[]> {
   const rows = await getDb()
     .select({ snapshot: schema.aiStoryCanonicalSceneVersions.snapshot })
     .from(schema.aiStoryCanonicalSceneVersions)
@@ -66,21 +67,25 @@ async function recurringCastRequiresContinuity(input: RepairScope): Promise<bool
       eq(schema.aiStoryCanonicalSceneVersions.campaignId, input.campaignId),
       eq(schema.aiStoryCanonicalSceneVersions.storyId, input.storyId),
     ));
-  const counts = new Map<string, number>();
-  const currentIds = new Set<string>();
-  for (const row of rows) {
+  return rows.flatMap((row) => {
     const parsed = AiStoryCanonicalSceneSchema.safeParse(row.snapshot);
-    if (!parsed.success) continue;
-    const ids = parsed.data.castBindings.flatMap((cast) => {
+    if (!parsed.success) return [];
+    const characterIds = parsed.data.castBindings.flatMap((cast) => {
       const id = identityCastId(cast);
       return id ? [id] : [];
     });
-    for (const id of new Set(ids)) counts.set(id, (counts.get(id) ?? 0) + 1);
-    if (parsed.data.sceneId === input.sceneId) {
-      for (const id of ids) currentIds.add(id);
-    }
-  }
-  return [...currentIds].some((id) => (counts.get(id) ?? 0) > 1);
+    return [{
+      sceneId: parsed.data.sceneId,
+      characterIds,
+      backgroundOnly: characterIds.length === 0,
+      characterDnaFingerprint: null,
+      reusableCharacterId: null,
+      reusableCharacterVersionId: null,
+      campaignCharacterId: null,
+      campaignCharacterVersionId: null,
+      identityFingerprint: null,
+    }];
+  });
 }
 
 async function resolveVisibleDialogue(
@@ -240,19 +245,38 @@ export function createCanonicalProductMaterialSchedulingCoordinator(
         .limit(1);
       const parsed = AiStoryEpisodeIntentAuthoritySchema.safeParse(story?.episodeIntent);
       if (!parsed.success) return null;
-      const characterContinuityRequired = await recurringCastRequiresContinuity(input);
-      if (!parsed.data.nativeCharacterDialogue) {
-        return {
-          characterContinuityRequired,
-          visualTextConstraint: buildVisualTextProviderConstraint(parsed.data),
-          visibleDialogue: null,
-        };
-      }
-      const visibleDialogue = await resolveVisibleDialogue(input, parsed.data);
+      const scenes = await continuityScenes(input);
+      const visibleDialogue = parsed.data.nativeCharacterDialogue
+        ? await resolveVisibleDialogue(input, parsed.data)
+        : null;
+      const repair = resolveCommercialEpisodeRepairQc({
+        episodeIntent: parsed.data,
+        targetSceneId: input.sceneId,
+        scenes,
+        entriesBySceneId: visibleDialogue
+          ? {
+            [input.sceneId]: [{
+              type: "DIALOGUE",
+              speakerId: visibleDialogue.characterId,
+              line: visibleDialogue.exactText,
+              language: visibleDialogue.primaryLocale,
+            }],
+          }
+          : {},
+        dialogueProjection: visibleDialogue
+          ? {
+            ok: true,
+            fingerprint: visibleDialogue.dialogueFingerprint,
+            characterId: visibleDialogue.characterId,
+          }
+          : null,
+        nativeAvCapabilityValid: visibleDialogue !== null,
+      });
+      if (!repair) return null;
       return {
-        characterContinuityRequired: characterContinuityRequired || visibleDialogue !== null,
-        visualTextConstraint: buildVisualTextProviderConstraint(parsed.data),
-        visibleDialogue,
+        characterContinuityRequired: repair.evidence.characterContinuityRequired,
+        visualTextConstraint: repair.authority.visualTextConstraint,
+        visibleDialogue: repair.authority.generateAudio ? visibleDialogue : null,
       };
     },
   });

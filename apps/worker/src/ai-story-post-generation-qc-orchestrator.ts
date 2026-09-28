@@ -8,10 +8,15 @@ import {
   type AiStoryVisualEvidenceProvider,
   type DurableObjectStore,
 } from "@ceo-agent/agents";
-import { AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION } from "@ceo-agent/shared";
+import {
+  AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
+  AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION,
+  AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION,
+} from "@ceo-agent/shared";
 import {
   AiStoryPostGenerationQcRepository,
   BoundAiStoryPostGenerationQcRepository,
+  findCachedVideoObservationByContentHash,
 } from "@ceo-agent/db";
 
 const unavailableVisualEvidence: AiStoryVisualEvidenceProvider = {
@@ -88,10 +93,32 @@ export class AiStoryPostGenerationQcRuntimeOrchestrator {
         },
         createdAt: authority.attestation.acceptedAt,
       });
+      const visualTextRequested = compiled.compiledPrompt.includes("Visual text restriction:");
+      const cachedObservation = visualTextRequested
+        ? await findCachedVideoObservationByContentHash({
+          workspaceId: compiled.workspaceId,
+          assetContentHash: authority.attestation.contentHash,
+          analysisVersion: AI_STORY_VIDEO_ASSET_ANALYSIS_VERSION,
+          extractorVersion: AI_STORY_VIDEO_OBSERVATION_EXTRACTOR_VERSION,
+        }).catch(() => null)
+        : null;
       return new AiStoryPostGenerationQcService({
         repository: new BoundAiStoryPostGenerationQcRepository(input, this.repository),
         evidenceProvider: unavailableVisualEvidence,
-      }).evaluate(input);
+      }).evaluate(
+        input,
+        undefined,
+        visualTextRequested
+          ? {
+            observedTextReadable: cachedObservation?.observedTextReadable ?? null,
+            observedReadableText: cachedObservation?.observedReadableText ?? null,
+            signageIdentityVisible: cachedObservation?.signageIdentityVisible ?? false,
+            renderPolicy: compiled.compiledPrompt.includes("non-legible")
+              ? "PROVIDER_NON_LEGIBLE"
+              : "PROVIDER_CONSTRAINED",
+          }
+          : undefined,
+      );
     } finally {
       await rm(working, { recursive: true, force: true });
     }
