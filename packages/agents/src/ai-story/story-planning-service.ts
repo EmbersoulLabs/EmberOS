@@ -76,6 +76,21 @@ export function bindSceneGroundingProposalIdsByPlanOrder(input: {
   }));
 }
 
+/** Character identity is not an Asset visual claim. Drop those subjects before lineage validation. */
+export function omitCharacterNamedVisualClaims(input: {
+  characterNames: readonly string[];
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
+}): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  const names = new Set(
+    input.characterNames.map((name) => name.trim().toLocaleLowerCase()).filter((name) => name.length > 0),
+  );
+  if (names.size === 0) return [...input.proposals];
+  return input.proposals.map((proposal) => ({
+    ...proposal,
+    visualClaims: proposal.visualClaims.filter((claim) => !names.has(claim.subject.trim().toLocaleLowerCase())),
+  }));
+}
+
 export function removeUnsupportedObservedAppearance(input: {
   context: AiStoryScenePlanningGroundingContext;
   proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
@@ -647,7 +662,7 @@ export async function generateScenePlan(input: {
       "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
       "If a Scene has only SUPPORTING_REFERENCE evidence, use TEXT_TO_VIDEO with REFERENCE_FREE_T2V and productVisualIdentityRequirement NONE. Never select image-conditioned mode or REQUIRED product identity from a supporting-only binding.",
       "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",
-      "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims.",
+      "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims. Do not put story character names in visualClaims.",
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),
@@ -675,16 +690,19 @@ export async function generateScenePlan(input: {
   const lineageByScene = bindSceneGroundingLineage({
     context: assetGrounding,
     sceneIds,
-    proposals: normalizeExistenceOnlySceneGrounding(removeUnsupportedObservedAppearance({
-      context: assetGrounding,
-      proposals: retainSupportedSceneGroundingEvidence({
+    proposals: omitCharacterNamedVisualClaims({
+      characterNames: input.creativeContext.characterContext.characters.map((character) => character.name),
+      proposals: normalizeExistenceOnlySceneGrounding(removeUnsupportedObservedAppearance({
         context: assetGrounding,
-        proposals: bindMentionedCatalogChoiceEvidence({
+        proposals: retainSupportedSceneGroundingEvidence({
           context: assetGrounding,
-          proposals: orderedGrounding,
+          proposals: bindMentionedCatalogChoiceEvidence({
+            context: assetGrounding,
+            proposals: orderedGrounding,
+          }),
         }),
-      }),
-    })),
+      })),
+    }),
   });
   const acceptedAssetIds = new Set(assetGrounding.bindings.map((binding) => binding.assetId));
   const productBindingIds = new Set(

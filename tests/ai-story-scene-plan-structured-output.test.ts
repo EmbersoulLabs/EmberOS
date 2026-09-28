@@ -13,6 +13,7 @@ import {
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
   reconcileSupportingOnlySceneAuthority,
+  omitCharacterNamedVisualClaims,
   retainSupportedSceneGroundingEvidence,
   removeUnsupportedObservedAppearance,
 } from "../packages/agents/src/ai-story/story-planning-service";
@@ -194,6 +195,20 @@ describe("AI Story Scene Plan strict structured output", () => {
     expect(schema.safeParse({
       scenePlan: [{ ...plannedScene }],
     }).success).toBe(false);
+  });
+
+  it("drops story character names from asset visual claims", () => {
+    const [proposal] = omitCharacterNamedVisualClaims({
+      characterNames: ["Yuki"],
+      proposals: [{
+        ...groundingSelection,
+        visualClaims: [
+          { subject: "Yuki", detail: "Yuki", evidenceLevel: "EXISTENCE_ONLY" },
+          { subject: "Mini Fan", detail: "Mini Fan", evidenceLevel: "EXISTENCE_ONLY" },
+        ],
+      }],
+    });
+    expect(proposal?.visualClaims.map((claim) => claim.subject)).toEqual(["Mini Fan"]);
   });
 
   it("downgrades unsupported model appearance instead of accepting invented detail", () => {
