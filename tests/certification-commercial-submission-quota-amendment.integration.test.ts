@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import {
 } from "@ceo-agent/db";
 import {
   PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON,
   ProviderUsdPricingRuleSchema,
   buildBillingAccount,
   estimateProviderCostUsd,
@@ -346,6 +347,178 @@ describeIntegration("Production commercial submission quota amendment service", 
         ruleId: seeded.rule.providerUsdPricingRuleId,
         scopeId: seeded.scope.certificationScopeId,
       });
+    }
+  });
+});
+
+describeIntegration("Staging successor certification submission quota amendment", () => {
+  const commercial = new CertificationCommercialAuthorityService();
+  let sql: Sql;
+
+  beforeAll(() => {
+    sql = createIntegrationSql();
+  });
+
+  afterAll(async () => {
+    await closeDb();
+    if (sql) await sql.end();
+  });
+
+  async function seedHistoricalScope() {
+    const suffix = randomUUID().slice(0, 8);
+    const orgId = randomUUID();
+    const workspaceId = randomUUID();
+    const actorUserId = randomUUID();
+    const createdAt = "2026-09-19T16:00:00.000Z";
+    await sql`
+      INSERT INTO organizations (id, name, slug)
+      VALUES (${orgId}, ${"Staging Quota Org"}, ${`staging-quota-${suffix}`})
+    `;
+    await sql`
+      INSERT INTO workspaces (id, org_id, name, slug)
+      VALUES (${workspaceId}, ${orgId}, ${"Staging Quota Workspace"}, ${`ws-staging-quota-${suffix}`})
+    `;
+    const provisioned = await commercial.provisionScope({
+      environment: "STAGING",
+      orgId,
+      workspaceId,
+      actorUserId,
+      createdAt,
+    });
+    await sql.unsafe("SET session_replication_role = replica");
+    try {
+      await sql`
+        UPDATE certification_commercial_scopes
+           SET consumed_provider_submissions = 6,
+               spent_provider_cost_usd = 1.07,
+               reserved_provider_submissions = 0,
+               reserved_provider_cost_usd = 0.00
+         WHERE certification_scope_id = ${provisioned.scope.certificationScopeId}
+      `;
+      for (const index of [1, 2]) {
+        const integrity = createHash("sha256").update(`${suffix}-${index}`).digest("hex");
+        await sql`
+          INSERT INTO certification_submission_slot_reconciliations (
+            reconciliation_id, environment, org_id, workspace_id, certification_scope_id,
+            scene_execution_id, dispatch_id, certification_reservation_id, source_consumption_event_id,
+            outcome_classification, reason, actor_user_id, idempotency_key, evidence,
+            quota_before, quota_after, integrity_hash, contract_version, created_at
+          ) VALUES (
+            ${randomUUID()}, 'STAGING', ${orgId}, ${workspaceId}, ${provisioned.scope.certificationScopeId},
+            ${randomUUID()}, ${`dispatch-${suffix}-${index}`}, ${randomUUID()}, ${randomUUID()},
+            'PROVEN_NOT_SUBMITTED', 'PROVEN_PROVIDER_NON_ACCEPTANCE_RECONCILIATION', ${actorUserId},
+            ${`idem-${suffix}-${index}`}, ${sql.json({} as never)},
+            ${sql.json({ consumed: 6 } as never)}, ${sql.json({ consumed: 6 } as never)},
+            ${`sha256:${integrity}`}, 'certification-submission-slot-reconciliation.v1', now()
+          )
+        `;
+      }
+    } finally {
+      await sql.unsafe("SET session_replication_role = origin");
+    }
+    return { orgId, workspaceId, actorUserId, scopeId: provisioned.scope.certificationScopeId };
+  }
+
+  async function cleanup(input: { orgId: string; workspaceId: string; scopeId: string }) {
+    await sql.unsafe("SET session_replication_role = replica");
+    try {
+      await sql`DELETE FROM certification_submission_slot_reconciliations WHERE certification_scope_id = ${input.scopeId}`;
+      await sql`DELETE FROM certification_commercial_events WHERE certification_scope_id = ${input.scopeId}`;
+      await sql`DELETE FROM certification_commercial_scopes WHERE certification_scope_id = ${input.scopeId}`;
+      await sql`DELETE FROM billing_accounts WHERE org_id = ${input.orgId}`;
+      await sql`DELETE FROM workspaces WHERE id = ${input.workspaceId}`;
+      await sql`DELETE FROM organizations WHERE id = ${input.orgId}`;
+    } finally {
+      await sql.unsafe("SET session_replication_role = origin");
+    }
+  }
+
+  function amend(input: {
+    orgId: string; workspaceId: string; scopeId: string; actorUserId: string;
+    reason?: string; environment?: "STAGING" | "PRODUCTION"; max?: number; capabilityKey?: "ai_story.execute";
+  }) {
+    return commercial.amendActiveStagingSubmissionQuota({
+      environment: input.environment ?? "STAGING",
+      certificationScopeId: input.scopeId,
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      capabilityKey: input.capabilityKey ?? "ai_story.execute",
+      actorUserId: input.actorUserId,
+      humanAuthorizationReason: input.reason ?? STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON,
+      amendedAt: "2026-09-28T06:30:00.000Z",
+      maxProviderSubmissions: input.max ?? 9,
+    });
+  }
+
+  it("amends the active staging scope from 4 to 9 without resetting historical usage", async () => {
+    const seeded = await seedHistoricalScope();
+    try {
+      await expect(amend({ ...seeded, reason: PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_AMENDMENT_DENIED" });
+      await expect(amend({ ...seeded, reason: "unknown authorization" }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_AMENDMENT_DENIED" });
+      await expect(amend({ ...seeded, environment: "PRODUCTION" }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_AMENDMENT_DENIED" });
+      await expect(amend({ ...seeded, max: 3 }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_AMENDMENT_DENIED" });
+      await expect(amend({ ...seeded, max: 14 }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_AMENDMENT_DENIED" });
+      await expect(amend({ ...seeded, orgId: randomUUID() }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_MISMATCH" });
+      await expect(amend({ ...seeded, workspaceId: randomUUID() }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_MISMATCH" });
+      await expect(amend({ ...seeded, scopeId: randomUUID() }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_MISSING" });
+
+      const first = await amend(seeded);
+      expect(first.replayed).toBe(false);
+      expect(first.scope.maxProviderSubmissions).toBe(9);
+      expect(first.scope.consumedProviderSubmissions).toBe(6);
+      expect(first.scope.reservedProviderSubmissions).toBe(0);
+      expect(first.scope.spentProviderCostUsd).toBe("1.07");
+      expect(first.scope.reservedProviderCostUsd).toBe("0.00");
+      expect(first.scope.maxProviderCostUsd).toBe("5.00");
+      expect(first.scope.status).toBe("ACTIVE");
+
+      const reconciliations = await sql<{ count: number }[]>`
+        SELECT count(*)::int AS count
+          FROM certification_submission_slot_reconciliations
+         WHERE certification_scope_id = ${seeded.scopeId}
+      `;
+      expect(reconciliations[0]?.count).toBe(2);
+
+      const replay = await amend(seeded);
+      expect(replay.replayed).toBe(true);
+      expect(replay.scope.maxProviderSubmissions).toBe(9);
+      expect(replay.scope.integrityHash).toBe(first.scope.integrityHash);
+
+      const events = await sql<{ event_body: Record<string, unknown> }[]>`
+        SELECT event_body FROM certification_commercial_events
+         WHERE certification_scope_id = ${seeded.scopeId}
+           AND event_type = 'SUBMISSION_QUOTA_AMENDED'
+      `;
+      expect(events).toHaveLength(1);
+      expect(events[0]?.event_body).toMatchObject({
+        environment: "STAGING",
+        oldMaxProviderSubmissions: 4,
+        newMaxProviderSubmissions: 9,
+        effectiveConsumedAtAmendment: 4,
+        authorizedAdditionalSubmissions: 5,
+        reason: STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON,
+        actorUserId: seeded.actorUserId,
+        occurredAt: "2026-09-28T06:30:00.000Z",
+      });
+      await expect(amend({ ...seeded, max: 8 }))
+        .rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_AMENDMENT_DENIED" });
+
+      await sql`
+        UPDATE certification_commercial_scopes
+           SET status = 'REVOKED'
+         WHERE certification_scope_id = ${seeded.scopeId}
+      `;
+      await expect(amend({ ...seeded, max: 9 })).rejects.toMatchObject({ code: "CERTIFICATION_SCOPE_INACTIVE" });
+    } finally {
+      await cleanup(seeded);
     }
   });
 });

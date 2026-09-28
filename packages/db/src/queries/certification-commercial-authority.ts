@@ -11,6 +11,10 @@ import {
   CertificationCommercialScopeSchema,
   PRODUCTION_ADDITIONAL_SUBMISSION_QUOTA_AMENDMENT_REASON,
   PRODUCTION_SETTLEMENT_CEILING_AMENDMENT_REASON,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_ADDITIONAL_SUBMISSIONS,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_PREVIOUS_MAX_SUBMISSIONS,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON,
+  STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_TARGET,
   ProviderUsdPricingRuleSchema,
   certifiedSeedanceFirstFrameI2vSiblingFields,
   certifiedSeedanceFirstFrameI2vSiblingIdentity,
@@ -463,6 +467,139 @@ export class CertificationCommercialAuthorityService {
         details: {
           oldMaxProviderSubmissions: row.maxProviderSubmissions,
           newMaxProviderSubmissions: input.maxProviderSubmissions,
+        },
+      });
+      const updated = await tx.select().from(schema.certificationCommercialScopes)
+        .where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId))
+        .limit(1);
+      return { scope: scopeFromRow(updated[0]!), replayed: false };
+    });
+  }
+
+  /**
+   * Bounded STAGING-only quota path for the PR #178 successor certification.
+   * Authorizes exactly max 4 → max 9 when effective usage is 4. Does not
+   * mutate consumed, reserved, spent, reconciliation rows, or the cost ceiling.
+   * Production +1 amendment remains amendActiveProductionSubmissionQuota().
+   */
+  async amendActiveStagingSubmissionQuota(input: {
+    environment: CertificationEnvironment;
+    certificationScopeId: string;
+    orgId: string;
+    workspaceId: string;
+    capabilityKey: "ai_story.execute";
+    actorUserId: string;
+    humanAuthorizationReason: string;
+    amendedAt: string;
+    maxProviderSubmissions: number;
+  }): Promise<{ scope: CertificationCommercialScope; replayed: boolean }> {
+    if (input.environment !== "STAGING") {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Staging submission quota amendment requires environment=STAGING"
+      );
+    }
+    if (input.capabilityKey !== "ai_story.execute") {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_MISMATCH",
+        "Capability identity must remain ai_story.execute"
+      );
+    }
+    if (!input.actorUserId?.trim()) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Staging submission quota amendment requires an explicit actorUserId"
+      );
+    }
+    if (input.humanAuthorizationReason !== STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Staging submission quota amendment requires explicit human authorization"
+      );
+    }
+    if (!Number.isInteger(input.maxProviderSubmissions) || input.maxProviderSubmissions <= 0) {
+      throw new CertificationCommercialError(
+        "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+        "Target maxProviderSubmissions must be a positive integer"
+      );
+    }
+    return this.db.transaction(async (tx) => {
+      const ownership = await tx.select({ workspaceId: schema.workspaces.id }).from(schema.workspaces).where(and(
+        eq(schema.workspaces.id, input.workspaceId), eq(schema.workspaces.orgId, input.orgId),
+      )).limit(1);
+      if (!ownership[0]) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISMATCH", "Workspace does not belong to organization");
+      }
+      const rows = await tx.select().from(schema.certificationCommercialScopes).where(and(
+        eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId),
+        eq(schema.certificationCommercialScopes.environment, "STAGING"),
+        eq(schema.certificationCommercialScopes.orgId, input.orgId),
+        eq(schema.certificationCommercialScopes.workspaceId, input.workspaceId),
+        eq(schema.certificationCommercialScopes.capabilityKey, "ai_story.execute"),
+      )).limit(1).for("update");
+      const row = rows[0];
+      if (!row) {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_MISSING", "Staging certification scope not found");
+      }
+      if (row.status !== "ACTIVE") {
+        throw new CertificationCommercialError("CERTIFICATION_SCOPE_INACTIVE", "Staging certification scope is not active");
+      }
+      if (input.maxProviderSubmissions === row.maxProviderSubmissions) {
+        return { scope: scopeFromRow(row), replayed: true };
+      }
+      if (input.maxProviderSubmissions < row.maxProviderSubmissions) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "Staging submission quota amendment allows only an upward change"
+        );
+      }
+      if (
+        row.maxProviderSubmissions !== STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_PREVIOUS_MAX_SUBMISSIONS ||
+        input.maxProviderSubmissions !== STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_TARGET
+      ) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "This bounded path authorizes exactly maxProviderSubmissions 4 to 9"
+        );
+      }
+      const reconciliationCountRows = await tx.select({
+        count: sql<number>`count(*)::int`,
+      }).from(schema.certificationSubmissionSlotReconciliations).where(eq(
+        schema.certificationSubmissionSlotReconciliations.certificationScopeId,
+        row.certificationScopeId
+      ));
+      const reconciledNonSubmissions = Number(reconciliationCountRows[0]?.count ?? 0);
+      const effectiveConsumed = row.consumedProviderSubmissions - reconciledNonSubmissions;
+      if (effectiveConsumed < 0) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_RESERVATION_INVALID",
+          "Certification quota reconciliation exceeds gross consumption"
+        );
+      }
+      if (effectiveConsumed + STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_ADDITIONAL_SUBMISSIONS !== input.maxProviderSubmissions) {
+        throw new CertificationCommercialError(
+          "CERTIFICATION_SCOPE_AMENDMENT_DENIED",
+          "Staging quota target must equal effective usage plus the five authorized submissions"
+        );
+      }
+      const nextScope = advanceScope(row, { maxProviderSubmissions: input.maxProviderSubmissions });
+      await tx.update(schema.certificationCommercialScopes).set({
+        maxProviderSubmissions: nextScope.maxProviderSubmissions,
+        integrityHash: nextScope.integrityHash,
+        scopeBody: nextScope,
+      }).where(eq(schema.certificationCommercialScopes.certificationScopeId, input.certificationScopeId));
+      await recordEvent(tx, {
+        scopeId: input.certificationScopeId,
+        type: CERTIFICATION_COMMERCIAL_EVENT_SUBMISSION_QUOTA_AMENDED,
+        actorUserId: input.actorUserId,
+        reason: STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_QUOTA_AMENDMENT_REASON,
+        occurredAt: input.amendedAt,
+        details: {
+          environment: "STAGING",
+          oldMaxProviderSubmissions: row.maxProviderSubmissions,
+          newMaxProviderSubmissions: input.maxProviderSubmissions,
+          effectiveConsumedAtAmendment: effectiveConsumed,
+          authorizedAdditionalSubmissions: STAGING_BOUNDED_SUCCESSOR_SEEDANCE_CERTIFICATION_ADDITIONAL_SUBMISSIONS,
         },
       });
       const updated = await tx.select().from(schema.certificationCommercialScopes)
