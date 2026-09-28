@@ -81,6 +81,28 @@ import type { ProviderPolicyEligibilityAuthority } from "./provider-policy-eligi
 
 export { SceneSchedulingError };
 
+/**
+ * Current Canonical Scene executions must take compilation authority from
+ * persisted Pre-Generation QC. Instruction-snapshot hashes remain only for
+ * historical intents that have no Scene Version.
+ */
+export function resolveCurrentEpisodeCompilationAuthority<T>(input: {
+  sceneVersionId?: string | null;
+  persistedAuthority: T | null;
+  historicalInstructionAuthority: T;
+}): { authority: T; source: "PERSISTED_QC" | "HISTORICAL_INSTRUCTION_HASH" } {
+  if (input.persistedAuthority) {
+    return { authority: input.persistedAuthority, source: "PERSISTED_QC" };
+  }
+  if (input.sceneVersionId) {
+    throw new SceneSchedulingError(
+      "SCENE_NOT_AUTHORIZED",
+      "EPISODE_DISPATCH_AUTHORITY_REQUIRED: current Episode execution has no persisted pre-generation QC authority",
+    );
+  }
+  return { authority: input.historicalInstructionAuthority, source: "HISTORICAL_INSTRUCTION_HASH" };
+}
+
 export type SceneSchedulingIntegrityInput = {
   readonly ownership: RuntimeAuthorizedFact["ownership"];
   readonly sceneExecutionId: string;
@@ -1014,33 +1036,37 @@ export class SceneSchedulingCoordinator {
           storyId: fact.ownership.storyId,
           storyVersionId: fact.ownership.storyVersionId,
         });
-      const compilationAuthority = persistedCompilationAuthority ?? {
-        qcEvaluationId: deterministicPersistenceUuid(
-          "ai-story-scene-intent-validation-authority",
-          { sceneExecutionId: input.sceneExecutionId, validationResults }
-        ),
-        qcFingerprint: canonicalPersistenceHash({
-          kind: "ai-story-scene-intent-validation-authority.v1",
-          sceneExecutionId: input.sceneExecutionId,
-          validationResults,
-        }),
-        qcCapabilityVersion: "ai-story-scene-intent-validation.v1",
-        directorFingerprint: canonicalPersistenceHash({
-          kind: "ai-story-director-instruction-snapshot.v1",
-          sceneExecutionId: input.sceneExecutionId,
-          shots: instructions.shots,
-        }),
-        motionFingerprint: canonicalPersistenceHash({
-          kind: "ai-story-motion-instruction-snapshot.v1",
-          sceneExecutionId: input.sceneExecutionId,
-          durationMs: instructions.durationMs,
-          shots: instructions.shots.map((shot) => ({
-            shotId: shot.shotId,
-            durationMs: shot.durationMs,
-            cameraMovement: shot.cameraMovement,
-          })),
-        }),
-      };
+      const compilationAuthority = resolveCurrentEpisodeCompilationAuthority({
+        sceneVersionId: sceneIntent.identity.sceneVersionId,
+        persistedAuthority: persistedCompilationAuthority,
+        historicalInstructionAuthority: {
+          qcEvaluationId: deterministicPersistenceUuid(
+            "ai-story-scene-intent-validation-authority",
+            { sceneExecutionId: input.sceneExecutionId, validationResults }
+          ),
+          qcFingerprint: canonicalPersistenceHash({
+            kind: "ai-story-scene-intent-validation-authority.v1",
+            sceneExecutionId: input.sceneExecutionId,
+            validationResults,
+          }),
+          qcCapabilityVersion: "ai-story-scene-intent-validation.v1",
+          directorFingerprint: canonicalPersistenceHash({
+            kind: "ai-story-director-instruction-snapshot.v1",
+            sceneExecutionId: input.sceneExecutionId,
+            shots: instructions.shots,
+          }),
+          motionFingerprint: canonicalPersistenceHash({
+            kind: "ai-story-motion-instruction-snapshot.v1",
+            sceneExecutionId: input.sceneExecutionId,
+            durationMs: instructions.durationMs,
+            shots: instructions.shots.map((shot) => ({
+              shotId: shot.shotId,
+              durationMs: shot.durationMs,
+              cameraMovement: shot.cameraMovement,
+            })),
+          }),
+        },
+      }).authority;
       const effectiveReferenceIds = (sceneIntent.generationAuthority ?? instructions.generationAuthority)?.effectiveReferenceIds ?? sceneIntent.referencedAssetIds;
       const generationAuthority = sceneIntent.generationAuthority ?? instructions.generationAuthority;
       const textToVideo = generationAuthority?.strategy === "TEXT_TO_VIDEO";

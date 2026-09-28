@@ -539,6 +539,25 @@
       "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
       "completionMarker": "index:photo_scene_generations_inflight_fingerprint_idx",
       "sha256": "ce2e1c801d892a09d01b2ff625f1728aceefaec558d8575ae272bd34216b0739"
+    },
+    {
+      "order": 25,
+      "file": "packages/db/sql/ai-story-episode-projected-authority-contract-v1.sql",
+      "reason": "Allow authored and episode-projected Director and Motion contract versions",
+      "requires": [
+        "table:ai_story_director_plan_versions",
+        "table:ai_story_motion_plan_versions"
+      ],
+      "provides": [
+        "constraint:ai_story_director_plan_versions.ai_story_director_plan_contract_version_check",
+        "constraint:ai_story_motion_plan_versions.ai_story_motion_plan_contract_version_check"
+      ],
+      "productionPredecessorAssumption": "Director and Motion tables exist with authored v1 contract checks and no incompatible contract versions.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "constraint:ai_story_motion_plan_versions.ai_story_motion_plan_contract_version_check",
+      "sha256": "b61f0309472ae55b08bdc336438b0b3394b2257abe67455c80f625fa591ae826"
     }
   ]
 }

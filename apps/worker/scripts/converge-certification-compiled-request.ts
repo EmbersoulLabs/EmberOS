@@ -8,8 +8,6 @@ import {
   AiStorySceneExecutionPersistenceRepository,
   CertificationCommercialAuthorityService,
   SceneSchedulingRepository,
-  canonicalPersistenceHash,
-  deterministicPersistenceUuid,
   getDb,
   schema,
 } from "@ceo-agent/db";
@@ -91,33 +89,10 @@ async function main(): Promise<void> {
   ) {
     throw new Error("FROZEN_T2V_VALIDATION_AUTHORITY_REQUIRED");
   }
-  const authority = persistedAuthority ?? {
-    qcEvaluationId: deterministicPersistenceUuid(
-      "ai-story-scene-intent-validation-authority",
-      { sceneExecutionId: TARGET.sceneExecutionId, validationResults }
-    ),
-    qcFingerprint: canonicalPersistenceHash({
-      kind: "ai-story-scene-intent-validation-authority.v1",
-      sceneExecutionId: TARGET.sceneExecutionId,
-      validationResults,
-    }),
-    qcCapabilityVersion: "ai-story-scene-intent-validation.v1",
-    directorFingerprint: canonicalPersistenceHash({
-      kind: "ai-story-director-instruction-snapshot.v1",
-      sceneExecutionId: TARGET.sceneExecutionId,
-      shots: instructions.shots,
-    }),
-    motionFingerprint: canonicalPersistenceHash({
-      kind: "ai-story-motion-instruction-snapshot.v1",
-      sceneExecutionId: TARGET.sceneExecutionId,
-      durationMs: instructions.durationMs,
-      shots: instructions.shots.map((shot) => ({
-        shotId: shot.shotId,
-        durationMs: shot.durationMs,
-        cameraMovement: shot.cameraMovement,
-      })),
-    }),
-  };
+  if (!persistedAuthority) {
+    throw new Error("PERSISTED_QC_AUTHORITY_REQUIRED");
+  }
+  const authority = persistedAuthority;
 
   const expectedRequest = compileImmutableSceneProviderRequest({
     providerId: bundle.routingDecision.selectedProviderId,

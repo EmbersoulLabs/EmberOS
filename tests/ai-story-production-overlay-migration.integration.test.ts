@@ -207,7 +207,7 @@ describeIntegration("AI Story bounded overlay from actual Production predecessor
   });
 
   it("topologically upgrades all 30 gaps with no destructive or hidden data authority", async () => {
-    expect(manifest.entries).toHaveLength(24);
+    expect(manifest.entries).toHaveLength(25);
     expect(manifest.gapTables).toHaveLength(30);
     const known = new Set(predecessor.tables.map((table) => `table:${table.table}`));
     for (const [index, entry] of manifest.entries.entries()) {
