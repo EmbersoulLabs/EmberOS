@@ -352,10 +352,11 @@ describeIntegration("Production commercial submission quota amendment service", 
 });
 
 describeIntegration("Staging successor certification submission quota amendment", () => {
-  const commercial = new CertificationCommercialAuthorityService();
+  let commercial: CertificationCommercialAuthorityService;
   let sql: Sql;
 
   beforeAll(() => {
+    commercial = new CertificationCommercialAuthorityService();
     sql = createIntegrationSql();
   });
 
