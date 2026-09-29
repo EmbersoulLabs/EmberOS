@@ -123,7 +123,7 @@ function commercialOutline(overrides: Record<string, unknown> = {}): AiStoryOutl
 
 type SceneSpec = {
   id: string; beatId: string; entryId: string; order: number; sceneFunction: AiStoryScriptVersion["scenes"][number]["sceneFunction"];
-  narrativeFunction: string; action: string; effect: string; information: string;
+  narrativeFunction: string; action: string; effect: string; information: string; dialogue?: string;
   product?: boolean; contribution?: NonNullable<AiStoryScriptVersion["scenes"][number]["commercialContribution"]>;
   preconditions?: string[]; consequence?: string;
   stateIn?: AiStoryScriptVersion["scenes"][number]["sceneStateIn"];
@@ -136,7 +136,10 @@ function sceneFrom(spec: SceneSpec): AiStoryScriptVersion["scenes"][number] {
     scriptSceneId: spec.id, order: spec.order, outlineBeatClaims: [{ outlineBeatId: spec.beatId, claim: spec.effect }],
     sceneFunction: spec.sceneFunction, sceneFunctionRegistryVersion: 1,
     sceneStateIn: spec.stateIn ?? [], sceneStateDeltas: spec.deltas ?? [], sceneStateOut: spec.stateOut ?? spec.stateIn ?? [],
-    entries: [{ entryId: spec.entryId, order: 0, type: "ACTION", subjectId: I.character, ...(spec.product ? { objectId: I.product } : {}), action: spec.action, storyEffect: spec.effect, durationRange: { minSeconds: 2, maxSeconds: 4 } }],
+    entries: [
+      { entryId: spec.entryId, order: 0, type: "ACTION", subjectId: I.character, ...(spec.product ? { objectId: I.product } : {}), action: spec.action, storyEffect: spec.effect, durationRange: { minSeconds: 2, maxSeconds: 4 } },
+      ...(spec.dialogue ? [{ entryId: id(27), order: 1, type: "DIALOGUE" as const, speakerId: I.character, line: spec.dialogue, language: "en-SG", durationRange: { minSeconds: 1, maxSeconds: 2 } }] : []),
+    ],
     characterIds: [I.character], locationIds: [], propIds: [], assetIds: spec.product ? [I.product] : [], productAuthorityRefs: spec.product ? [I.product] : [],
     targetDurationRange: { minSeconds: 3, maxSeconds: 7 }, mustKeep: ["Story causality"], mustAvoid: ["Unsupported claims"],
     newInformation: [spec.information], newEvidence: spec.product ? ["Commercial subject participates"] : [], newActionOutcomes: [spec.effect], productEvidence: spec.product ? ["Canonical commercial subject"] : [],
@@ -595,6 +598,19 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
     const nonlinear = flowerScenes().map((spec) => ({ ...spec }));
     nonlinear[0]!.narrativeFunction = "HOOK";
     nonlinear[2]!.narrativeFunction = "EXT:example.future:NONLINEAR_REVEAL";
+    const spokenOnly = flowerScenes();
+    spokenOnly[2] = {
+      ...spokenOnly[2]!,
+      action: "admire",
+      effect: "Wah, this mini fan damn strong sia... shiok leh.",
+      dialogue: "Wah, this mini fan damn strong sia... shiok leh.",
+    };
+    expect(blocks(outline, commercialScript(outline, spokenOnly))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "DIALOGUE_ONLY_VISIBLE_ACTION" }),
+    ]));
+    const visible = flowerScenes();
+    visible[2] = { ...visible[2]!, dialogue: "Wah, this mini fan damn strong sia... shiok leh." };
+    expect(blocks(outline, commercialScript(outline, visible)).map((issue) => issue.reasonCode)).not.toContain("DIALOGUE_ONLY_VISIBLE_ACTION");
     expect(blocks(outline, commercialScript(outline, nonlinear))).toEqual([]);
     expect(blocks(outline, commercialScript(outline, flowerScenes().slice(0, 4).concat(flowerScenes().slice(4))))).toEqual([]);
   });

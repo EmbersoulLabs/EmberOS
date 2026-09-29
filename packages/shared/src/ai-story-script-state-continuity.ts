@@ -115,3 +115,48 @@ export function carryForwardUnchangedScriptSceneState(
 
   return next;
 }
+
+function boundCharacterSpeaker(speaker: string, characterNames: readonly string[]) {
+  const normalized = speaker.trim().toLocaleLowerCase("en-US");
+  return characterNames.some((name) => name.trim().toLocaleLowerCase("en-US") === normalized);
+}
+
+/**
+ * A supplied line whose speaker is not a bound character authority is off-screen.
+ * It stays in the scene as information. It is not spoken by an on-screen character.
+ */
+export function detachOffScreenSuppliedDialogue(
+  scenes: readonly ProposalScene[],
+  input: {
+    characterNames: readonly string[];
+    suppliedDialogue: readonly { speaker: string; line: string }[];
+  },
+): ProposalScene[] {
+  const offScreenLines = new Set(
+    input.suppliedDialogue
+      .filter((line) => !boundCharacterSpeaker(line.speaker, input.characterNames))
+      .map((line) => line.line.trim()),
+  );
+  if (offScreenLines.size === 0) return scenes.map((scene) => ({ ...scene, entries: [...scene.entries] }));
+  return scenes.map((scene) => {
+    const detached = scene.entries.filter(
+      (entry) => entry.type === "DIALOGUE" && offScreenLines.has(entry.line.trim()),
+    );
+    if (detached.length === 0) return scene;
+    const entries = scene.entries.filter(
+      (entry) => !(entry.type === "DIALOGUE" && offScreenLines.has(entry.line.trim())),
+    );
+    const preserved = new Set(scene.newInformation.map((item) => item.trim()));
+    const newInformation = [...scene.newInformation];
+    for (const entry of detached) {
+      if (entry.type !== "DIALOGUE" || preserved.has(entry.line.trim())) continue;
+      preserved.add(entry.line.trim());
+      newInformation.push(entry.line);
+    }
+    return {
+      ...scene,
+      entries: entries.length > 0 ? entries : scene.entries,
+      newInformation,
+    };
+  });
+}
