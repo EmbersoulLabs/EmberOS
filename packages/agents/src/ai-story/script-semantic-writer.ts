@@ -108,12 +108,16 @@ const VISIBLE_ACTION_SCENE_FUNCTIONS = Object.entries(AI_STORY_SCENE_FUNCTION_RE
   .join(", ");
 
 function providerSceneEntries(scene: {
-  entries?: z.infer<typeof ProviderEntriesSchema>;
-  visibleAction?: z.infer<typeof ProviderVisibleActionSchema>;
-  followingEntries?: z.infer<typeof ProviderEntriesSchema>;
+  entries?: unknown;
+  visibleAction?: unknown;
+  followingEntries?: unknown;
 }) {
-  if (scene.visibleAction) return [scene.visibleAction, ...(scene.followingEntries ?? [])];
-  return scene.entries ?? [];
+  if (scene.visibleAction) {
+    const action = ProviderVisibleActionSchema.parse(scene.visibleAction);
+    const following = z.array(ProviderEntriesSchema.element).parse(scene.followingEntries ?? []);
+    return [action, ...following];
+  }
+  return ProviderEntriesSchema.parse(scene.entries ?? []);
 }
 
 function canonicalizeProviderProposal(
