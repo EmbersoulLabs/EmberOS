@@ -62,6 +62,47 @@ export function resolveCommercialActionParticipation(intent: string): "ENABLE" |
   return "REVEAL";
 }
 
+/**
+ * True only when the newer outline differs by the server-compiled participation
+ * kind and that kind is what the preserved creative intent compiles to.
+ * Any other policy change is not a compilation drift.
+ */
+export function isServerCompiledParticipationDrift(
+  previous: AiStoryCommercialStoryOutlinePolicy | undefined,
+  next: AiStoryCommercialStoryOutlinePolicy | undefined,
+): boolean {
+  const previousIntegration = previous?.commercialIntegration;
+  const nextIntegration = next?.commercialIntegration;
+  if (!previous || !next || !previousIntegration || !nextIntegration) return false;
+  const compiled = resolveCommercialActionParticipation(next.userCreativeIntent.join("\n"));
+  if (nextIntegration.commercialActionOrParticipation !== compiled) return false;
+  if (previousIntegration.commercialActionOrParticipation === nextIntegration.commercialActionOrParticipation) return false;
+  const aligned = structuredClone(previous);
+  aligned.commercialIntegration!.commercialActionOrParticipation = compiled;
+  return JSON.stringify(aligned) === JSON.stringify(next);
+}
+
+/**
+ * A shot plan built before the compiled outline, or against a participation
+ * kind the preserved intent no longer compiles to, must not be reused.
+ */
+export function planningPackageIsStaleForCompiledOutline(input: {
+  packageCreatedAt: Date | string;
+  outlineFrozenAt?: string | null;
+  storedParticipation?: string | null;
+  userCreativeIntent?: readonly string[] | null;
+}): boolean {
+  const intent = input.userCreativeIntent ?? [];
+  if (input.storedParticipation && intent.length > 0) {
+    const compiled = resolveCommercialActionParticipation(intent.join("\n"));
+    if (compiled !== input.storedParticipation) return true;
+  }
+  if (!input.outlineFrozenAt) return false;
+  const outlineTime = new Date(input.outlineFrozenAt).getTime();
+  const packageTime = new Date(input.packageCreatedAt).getTime();
+  return Number.isFinite(outlineTime) && Number.isFinite(packageTime) && outlineTime > packageTime;
+}
+
 /** Sentences in the preserved creative intent that already state a physical product obligation. */
 export function compileInheritedCommercialMustKeep(intent: readonly string[], participation: string): string[] {
   if (participation !== "ENABLE" && participation !== "CAUSE" && participation !== "INTENSIFY") return [];

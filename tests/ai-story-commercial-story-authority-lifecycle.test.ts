@@ -283,6 +283,59 @@ describe("COMMERCIAL_STORY authority lifecycle", () => {
     expect(readFileSync("apps/web/src/lib/ai-story-canonical-script-producer.ts", "utf8")).not.toContain("shotPlan");
   });
 
+  it("re-promotes an authorized proposal when only compiled participation changes and does not call the model", async () => {
+    const previous = frozenOutline();
+    previous.commercialStoryProfile!.userCreativeIntent = ["The keeper holds the lantern. Show light movement."];
+    previous.commercialStoryProfile!.commercialIntegration!.commercialActionOrParticipation = "REVEAL";
+    const next = structuredClone(previous);
+    next.outlineVersionId = id(40);
+    next.version = 2;
+    next.sourceHash = hash("c");
+    next.commercialStoryProfile!.commercialIntegration!.commercialActionOrParticipation = "ENABLE";
+    const semantic = proposal();
+    let writerCalls = 0;
+    let history: AiStoryScriptVersion[] = [scriptFor(previous, semantic)];
+    const transition = (status: "VALIDATED" | "APPROVED" | "FROZEN") => async (_db: never, _scope: never, scriptVersionId: string) => {
+      const index = history.findIndex((item) => item.scriptVersionId === scriptVersionId);
+      const prior = history[index]!;
+      history[index] = AiStoryScriptVersionSchema.parse({ ...prior, status, approvedBy: I.actor, approvedAt: "2026-09-27T00:11:00.000Z", frozenAt: status === "FROZEN" ? "2026-09-27T00:12:00.000Z" : prior.frozenAt });
+      return history[index]!;
+    };
+    const deps = (): CanonicalScriptProducerDependencies => ({
+      resolveCurrentOutline: async () => next,
+      history: async () => history,
+      generateSemanticProposal: async () => { writerCalls += 1; throw new Error("SCRIPT_MODEL_CALLED"); },
+      promoteSemanticProposal: promoteAiStoryScriptSemanticProposalV1,
+      propose: async (_db, _scope, script) => { history.push(script); return script; },
+      validate: transition("VALIDATED"), approve: transition("APPROVED"), freeze: transition("FROZEN"),
+      resolveAuthorizedProposal: async () => ({ proposal: semantic, semanticInputFingerprint: fingerprint(previous), profileId: "COMMERCIAL_STORY" }),
+      resolveOutlineHistory: async () => [previous, next],
+      now: () => "2026-09-27T00:10:00.000Z",
+    });
+    const input = {
+      db: {} as never, orgId: I.org, workspaceId: I.workspace, campaignId: I.campaign, storyId: I.story, storyVersionId: I.storyVersion, actorUserId: I.actor,
+      story: STORY, storyBeats: BEATS, scenePlan: PLAN, creativeContext: CREATIVE, directorThinking: DIRECTOR, characterAuthorities: [CHARACTER],
+    };
+    const authored = await produceAuthorizedCommercialStoryScriptProposal(input, deps());
+    expect(authored.semanticWriterCalled).toBe(false);
+    expect(writerCalls).toBe(0);
+    const consumed = await ensureCurrentFrozenCanonicalScript(input, deps());
+    expect(consumed.semanticWriterCalled).toBe(false);
+    expect(writerCalls).toBe(0);
+    expect(consumed.script.scenes[0]?.mustKeep).toEqual(expect.arrayContaining([
+      "The keeper holds the lantern.",
+      "Show light movement.",
+    ]));
+    expect(consumed.script.authorityReferences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ authorityType: "CHARACTER", authorityId: I.character }),
+      expect.objectContaining({ authorityType: "PRODUCT", authorityId: I.product }),
+    ]));
+    expect(consumed.script.scenes[1]?.entries.filter((entry) => entry.type === "DIALOGUE")).toEqual([]);
+    const again = await produceAuthorizedCommercialStoryScriptProposal(input, deps());
+    expect(again.semanticWriterCalled).toBe(false);
+    expect(writerCalls).toBe(0);
+  });
+
   it("rejects an unowned dialogue candidate before authorization and accepts the corrected candidate on the same story version", async () => {
     const outline = frozenOutline();
     const store = new Map<string, AiStoryScriptSemanticProposalV1>();
