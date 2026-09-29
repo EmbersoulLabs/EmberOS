@@ -24,6 +24,19 @@ export type CreateCampaignWorkflowResult =
  * Canonical Wave 3 command: create/reuse one Campaign, then bind it to main's
  * existing idempotent Campaign run identity. Provider execution stays downstream.
  */
+/**
+ * Standard Campaign creation. The Campaign is a container. It does not start
+ * a generation workflow.
+ */
+export async function createCampaign(input: {
+  orgId: string;
+  userId: string;
+  context: CreateCampaignContext;
+}): Promise<{ campaignId: string; campaignReused: boolean }> {
+  const created = await createCampaignFromContext(getDb(), input);
+  return { campaignId: created.campaign.id, campaignReused: created.reused };
+}
+
 export async function createCampaignAndStartWorkflow(input: {
   orgId: string;
   userId: string;

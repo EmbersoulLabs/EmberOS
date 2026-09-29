@@ -231,6 +231,17 @@ export function CampaignDashboard({
           </dl>
         </section>
 
+        <section aria-labelledby="module-chooser-title" data-testid="campaign-module-chooser" className="rounded-2xl border border-border bg-white p-4 shadow-card sm:p-6">
+          <h2 id="module-chooser-title" className="text-lg font-bold text-navy">{!task && creatives.length === 0 ? "What do you want to create?" : "Create in this Campaign"}</h2>
+          <p className="mt-1 text-sm text-ink-secondary">A Campaign can hold more than one module. Choosing one does not assign every asset to it.</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Link href={`/w/${slug}/campaigns/${campaignId}/ai-stories/episodes/new`} className="rounded-xl border border-border p-4 text-sm font-semibold text-navy hover:bg-surface-muted">AI Story</Link>
+            <a href="#photo-scene" className="rounded-xl border border-border p-4 text-sm font-semibold text-navy hover:bg-surface-muted">Photo Scene</a>
+            <a href="#module-video-studio" className="rounded-xl border border-border p-4 text-sm font-semibold text-navy hover:bg-surface-muted">Video Studio</a>
+            <a href="#marketing-package-title" className="rounded-xl border border-border p-4 text-sm font-semibold text-navy hover:bg-surface-muted">Marketing</a>
+          </div>
+        </section>
+
         <section aria-labelledby="content-modules-title">
           <div className="mb-4">
             <h2 id="content-modules-title" className="text-lg font-bold text-navy">Content</h2>
@@ -250,7 +261,7 @@ export function CampaignDashboard({
             </WorkspaceCard>
             <AiStoryModule slug={slug} campaignId={campaignId} />
           </div>
-          <div className="mt-4 space-y-4" data-testid="photo-scene-main-engine">
+          <div id="photo-scene" className="mt-4 space-y-4" data-testid="photo-scene-main-engine">
             <PhotoSceneExtractionPanel campaignId={campaignId} assets={assets} />
             <PhotoSceneOfficialLibraryPanel campaignId={campaignId} />
             <PhotoSceneMarketingImagePanel campaignId={campaignId} />

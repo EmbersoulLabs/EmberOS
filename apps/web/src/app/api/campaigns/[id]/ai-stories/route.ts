@@ -11,6 +11,7 @@ import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
 import {
   assertCampaignAssets,
+  ensureCampaignLibraryAvailability,
   listCampaignAiStories,
   replaceAiStoryAssetLinks,
 } from "@/lib/ai-story-service";
@@ -67,6 +68,7 @@ export async function POST(
     const assetIds = parsed.data.assetIds;
     const productAssetIds = parsed.data.productAssetIds;
     if (assetIds.length) {
+      await ensureCampaignLibraryAvailability(db, campaignId, campaign.workspaceId, assetIds);
       await assertCampaignAssets(db, campaignId, campaign.workspaceId, assetIds);
     }
     await assertAuthorizedStoryProductSourceSelection(db, {
@@ -96,7 +98,7 @@ export async function POST(
 
     if (!story) return apiError("Failed to create AI Story", "INTERNAL", 500);
     if (assetIds.length) {
-      await replaceAiStoryAssetLinks(db, story.id, assetIds, productAssetIds);
+      await replaceAiStoryAssetLinks(db, story.id, assetIds, productAssetIds, parsed.data);
     }
 
     return apiSuccess({ story }, 201);
