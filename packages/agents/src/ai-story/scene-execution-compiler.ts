@@ -292,7 +292,14 @@ export function compileSceneExecutionIntents(
         ? { groundingLineage: scene.groundingLineage }
         : {}),
       worldContinuity: pkg.worldContinuity as unknown as Record<string, unknown>,
-      productIdentityConstraints: [...PRODUCT_IDENTITY_CONSTRAINTS],
+      productIdentityConstraints: [
+        ...PRODUCT_IDENTITY_CONSTRAINTS,
+        ...(pkg.creativeContext.productAuthorities ?? []).flatMap((authority) =>
+          authority.confirmedVariant
+            ? [`confirmedVariant ${authority.productAuthorityId}=${authority.confirmedVariant}`]
+            : []
+        ),
+      ],
     });
 
     const instructionHash = integrityHash(instructions);

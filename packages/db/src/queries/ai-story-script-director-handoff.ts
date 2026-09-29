@@ -64,13 +64,28 @@ export class AiStoryScriptDirectorHandoffAuthorityService {
         inArray(schema.assets.id, productIds), eq(schema.assets.orgId, scope.orgId), eq(schema.assets.workspaceId, scope.workspaceId), isNull(schema.assets.deletedAt),
       )).for("share") : [];
       if (productAssets.length !== productIds.length || productAssets.some((asset) => !asset.contentHash || !/^sha256:[0-9a-f]{64}$/.test(asset.contentHash))) throw new AiStoryScriptDirectorHandoffAuthorityError("HANDOFF_PRODUCT_AUTHORITY_INVALID", "Every Product authority must resolve to an exact source asset content hash");
+      const variantRows = productIds.length ? await tx.select({
+        assetId: schema.aiStoryAssetLinks.assetId,
+        confirmedVariant: schema.aiStoryAssetLinks.confirmedVariant,
+      }).from(schema.aiStoryAssetLinks).where(and(
+        eq(schema.aiStoryAssetLinks.storyId, scope.storyId),
+        inArray(schema.aiStoryAssetLinks.assetId, productIds),
+        eq(schema.aiStoryAssetLinks.usageType, "product_source"),
+      )) : [];
+      const variants = new Map(variantRows.map((row) => [row.assetId, row.confirmedVariant]));
 
       const currentRows = await tx.select().from(schema.aiStoryScriptDirectorHandoffs).where(and(eq(schema.aiStoryScriptDirectorHandoffs.storyId, scope.storyId), eq(schema.aiStoryScriptDirectorHandoffs.authorityStatus, "CURRENT"))).orderBy(asc(schema.aiStoryScriptDirectorHandoffs.version)).for("update");
       const prior = currentRows.at(-1);
       if (prior && script.supersedesScriptVersionId !== prior.scriptVersionId) throw new AiStoryScriptDirectorHandoffAuthorityError("HANDOFF_LINEAGE_INVALID", "New handoff must extend the currently authoritative Script handoff");
       const handoff = buildAiStoryScriptDirectorHandoff({
         script,
-        productAuthorityBindings: productAssets.map((asset) => ({ productAuthorityId: asset.id, sourceAssetId: asset.id, sourceAssetContentHash: asset.contentHash!, requiredRoles: deriveProductBindingRoles(script, asset.id) })),
+        productAuthorityBindings: productAssets.map((asset) => ({
+          productAuthorityId: asset.id,
+          sourceAssetId: asset.id,
+          sourceAssetContentHash: asset.contentHash!,
+          ...(variants.get(asset.id) ? { confirmedVariant: variants.get(asset.id)! } : {}),
+          requiredRoles: deriveProductBindingRoles(script, asset.id),
+        })),
         supersedesHandoffId: prior?.handoffId ?? null,
         createdBy: scope.actorUserId,
         createdAt,

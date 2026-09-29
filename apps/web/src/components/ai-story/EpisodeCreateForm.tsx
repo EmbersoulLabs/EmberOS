@@ -23,16 +23,11 @@ type AssetRow = {
   id: string;
   displayName?: string | null;
   originalFilename?: string | null;
-  metadata?: { variant?: unknown; productVariant?: unknown } | null;
+  variantCandidates?: readonly string[];
 };
 
 function assetLabel(asset: AssetRow): string {
   return asset.displayName ?? asset.originalFilename ?? asset.id.slice(0, 8);
-}
-
-function assetVariant(asset: AssetRow): string | null {
-  const value = asset.metadata?.variant ?? asset.metadata?.productVariant;
-  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 export type EpisodeCreatePayload = {
@@ -46,6 +41,7 @@ export type EpisodeCreatePayload = {
   styleAssetIds: string[];
   genericAssetIds: string[];
   characterPortraitAssetIds: string[];
+  productVariantSelections: { assetId: string; variant: string }[];
   mappingConfirmed: true;
   offscreenSpeaker?: string;
   episodeIntent: {
@@ -115,6 +111,7 @@ export function EpisodeCreateForm({
   const [genericAssetIds, setGenericAssetIds] = useState<string[]>([]);
   const [offscreenSpeaker, setOffscreenSpeaker] = useState("");
   const [mappingConfirmed, setMappingConfirmed] = useState(false);
+  const [productVariantSelections, setProductVariantSelections] = useState<{ assetId: string; variant: string }[]>([]);
   const [liveCostLabel, setLiveCostLabel] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -154,7 +151,6 @@ export function EpisodeCreateForm({
       cancelled = true;
     };
   }, [aspectRatio, campaignId, customDurationSec, durationSec, nativeDialogue]);
-  const ready = title.trim().length > 0 && idea.trim().length > 0 && mappingConfirmed;
   const selectedCharacter = characters.find((character) => character.reusableCharacterId === reusableCharacterId) ?? null;
   const portraitAssetId = selectedCharacter?.portraitAssetId ?? null;
   const authority = compileAiStoryIntakeAuthority({
@@ -166,13 +162,15 @@ export function EpisodeCreateForm({
       styleAssetIds,
       genericAssetIds,
       characterPortraitAssetIds: portraitAssetId ? [portraitAssetId] : [],
+      productVariantSelections,
       mappingConfirmed,
     },
     assets: assets.map((asset) => ({
       assetId: asset.id,
       label: assetLabel(asset),
-      variant: assetVariant(asset),
+      variantCandidates: asset.variantCandidates ?? [],
     })),
+    userIntent: idea,
     character: selectedCharacter
       ? {
           name: selectedCharacter.name,
@@ -183,6 +181,8 @@ export function EpisodeCreateForm({
       : null,
     offscreenSpeaker,
   });
+  const variantBlocked = authority.products.some((item) => item.variantStatus === "unresolved" || item.variantStatus === "conflict");
+  const ready = title.trim().length > 0 && idea.trim().length > 0 && mappingConfirmed && !variantBlocked;
 
   function assignRole(assetId: string, role: "product_source" | "location_reference" | "brand_reference" | "style_reference" | "generic_reference", enabled: boolean) {
     const lists = {
@@ -227,6 +227,7 @@ export function EpisodeCreateForm({
           styleAssetIds: authority.other.filter((item) => item.role === "style_reference").map((item) => item.assetId),
           genericAssetIds: authority.other.filter((item) => item.role === "generic_reference").map((item) => item.assetId),
           characterPortraitAssetIds: portraitAssetId ? [portraitAssetId] : [],
+          productVariantSelections,
           mappingConfirmed: true,
           offscreenSpeaker: offscreenSpeaker.trim() || undefined,
           episodeIntent: {
@@ -362,13 +363,24 @@ export function EpisodeCreateForm({
         <p className="text-xs text-ink-secondary">This preview is the authority that will be saved. Unresolved items stay unresolved.</p>
         <dl className="space-y-2 text-sm">
           <div><dt className="font-medium text-navy">Main character</dt><dd>{authority.character ? `${authority.character.name} — identity locked` : "None selected"}</dd></div>
-          <div><dt className="font-medium text-navy">Product</dt><dd>{authority.products.length ? authority.products.map((item) => `${item.label}${item.variant ? ` — variant ${item.variant}` : " — variant unresolved"}`).join("; ") : "None"}</dd></div>
+          <div><dt className="font-medium text-navy">Product</dt><dd>{authority.products.length ? authority.products.map((item) => `${item.label}${item.variantStatus === "not_required" ? "" : item.variant ? ` — variant ${item.variant}` : item.code === "PRODUCT_VARIANT_CONFLICT" ? " — PRODUCT_VARIANT_CONFLICT" : " — choose a variant"}`).join("; ") : "None"}</dd></div>
+          {authority.products.filter((item) => (assets.find((asset) => asset.id === item.assetId)?.variantCandidates?.length ?? 0) > 1).map((item) => (
+            <fieldset key={item.assetId} className="space-y-1">
+              <legend className="text-xs font-medium text-navy">Choose variant</legend>
+              {(assets.find((asset) => asset.id === item.assetId)?.variantCandidates ?? []).map((variant) => (
+                <label key={variant} className="mr-3 text-sm">
+                  <input className="mr-1" type="radio" name={`variant-${item.assetId}`} checked={productVariantSelections.some((selection) => selection.assetId === item.assetId && selection.variant === variant)} onChange={() => { setProductVariantSelections((current) => [...current.filter((selection) => selection.assetId !== item.assetId), { assetId: item.assetId, variant }]); setMappingConfirmed(false); }} />
+                  {variant}
+                </label>
+              ))}
+            </fieldset>
+          ))}
           <div><dt className="font-medium text-navy">Location</dt><dd>{authority.locations.length ? authority.locations.map((item) => item.label).join("; ") : "None"}</dd></div>
           <div><dt className="font-medium text-navy">Off-screen speaker</dt><dd>{authority.offscreenSpeaker ? `${authority.offscreenSpeaker.name} — no visual reference` : "None declared"}</dd></div>
           <div><dt className="font-medium text-navy">Other references</dt><dd>{authority.other.length ? authority.other.map((item) => `${item.label} (${item.role})`).join("; ") : "None"}</dd></div>
         </dl>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={mappingConfirmed} onChange={(event) => setMappingConfirmed(event.target.checked)} />
+          <input type="checkbox" checked={mappingConfirmed} disabled={variantBlocked} onChange={(event) => setMappingConfirmed(event.target.checked)} />
           Confirm this mapping
         </label>
       </section>

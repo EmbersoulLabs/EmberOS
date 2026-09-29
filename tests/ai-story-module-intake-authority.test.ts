@@ -110,14 +110,14 @@ describe("module-first intake authority", () => {
     const authority = compileAiStoryIntakeAuthority({
       selection,
       assets: [
-        { assetId: product, label: "Mini Handheld Fan", variant: "Pink" },
-        { assetId: location, label: "Florist workbench", variant: null },
+        { assetId: product, label: "Mini Handheld Fan", variantCandidates: ["Pink"] },
+        { assetId: location, label: "Florist workbench" },
       ],
       character: { name: "Yuki", characterId: character, characterVersionId: null, portraitAssetId: portrait },
       offscreenSpeaker: "Boss",
     });
     expect(authority.character).toMatchObject({ name: "Yuki", characterId: character, identityLocked: true });
-    expect(authority.products).toEqual([{ assetId: product, label: "Mini Handheld Fan", variant: "Pink", role: "product_source" }]);
+    expect(authority.products).toEqual([{ assetId: product, label: "Mini Handheld Fan", variant: "Pink", variantStatus: "confirmed", role: "product_source" }]);
     expect(authority.locations).toEqual([{ assetId: location, label: "Florist workbench", role: "location_reference" }]);
     expect(authority.offscreenSpeaker).toEqual({ name: "Boss", visualReference: false });
     expect(authority.bindings).toEqual(planAiStoryAssetLinkUsage(selection));

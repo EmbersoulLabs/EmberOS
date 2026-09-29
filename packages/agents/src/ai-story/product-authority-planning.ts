@@ -12,6 +12,7 @@ const ResolvedStoryProductSourceSchema = z
     assetId: z.string().uuid(),
     usageType: z.literal("product_source"),
     contentHash: SourceAssetContentHashSchema,
+    confirmedVariant: z.string().trim().min(1).max(80).nullable().optional(),
   })
   .passthrough();
 
@@ -19,6 +20,7 @@ export type StoryProductSourceAuthorityForPlanning = {
   assetId: string;
   usageType: "product_source";
   contentHash: string;
+  confirmedVariant?: string | null;
 };
 
 export class AiStoryPlanningProductAuthorityError extends Error {
@@ -72,6 +74,7 @@ export function projectStoryProductSourcesToPlanning(
           productAuthorityId: source.assetId,
           sourceAssetId: source.assetId,
           sourceAssetContentHash: source.contentHash,
+          ...(source.confirmedVariant ? { confirmedVariant: source.confirmedVariant } : {}),
         });
       })
     );
@@ -133,7 +136,7 @@ export function planningProductAuthorityPrompt(
     return "No accepted Story Product source authority is currently available.";
   }
   return [
-    "ACCEPTED STORY PRODUCT AUTHORITY (exact IDs and content hashes are immutable):",
+    "ACCEPTED STORY PRODUCT AUTHORITY (exact IDs, content hashes, and confirmed variants are immutable):",
     JSON.stringify(authoritative, null, 2),
     "Use a Product only by exact productAuthorityId. You may decide narrative role, presence, interaction, evidence intent, and story significance. Never redefine Product identity from a label, filename, prose description, generic prop, or visual guess. Product availability does not require visual conditioning or select a generation mode.",
   ].join("\n");

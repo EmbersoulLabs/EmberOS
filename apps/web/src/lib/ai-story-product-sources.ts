@@ -35,6 +35,7 @@ export type AiStoryResolvedProductSource = {
   campaignId: string;
   contentHash: SourceAssetContentHash;
   status: string;
+  confirmedVariant?: string | null;
 };
 
 type VerifiedProductSourceAsset = Omit<
@@ -205,7 +206,10 @@ export async function resolveStoryProductSources(
   }
 
   const links = await db
-    .select({ assetId: schema.aiStoryAssetLinks.assetId })
+    .select({
+      assetId: schema.aiStoryAssetLinks.assetId,
+      confirmedVariant: schema.aiStoryAssetLinks.confirmedVariant,
+    })
     .from(schema.aiStoryAssetLinks)
     .where(
       and(
@@ -218,11 +222,15 @@ export async function resolveStoryProductSources(
     loadProductCandidates(db, productAssetIds),
     loadCampaignAssetIds(db, input.campaignId, productAssetIds),
   ]);
+  const variants = new Map(links.map((link) => [link.assetId, link.confirmedVariant]));
   return verifyExplicitStoryProductSources({
     ...input,
     assetIds: productAssetIds,
     productAssetIds,
     assets,
     campaignAssetIds,
-  });
+  }).map((source) => ({
+    ...source,
+    ...(variants.get(source.assetId) ? { confirmedVariant: variants.get(source.assetId) } : {}),
+  }));
 }

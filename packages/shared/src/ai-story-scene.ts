@@ -25,7 +25,7 @@ export const AiStoryLocationAuthorityVersionSchema=z.object({locationVersionId:I
 
 export const AiStorySceneLocationStateSchema=z.object({timeOfDay:Text.optional(),weather:Text.optional(),crowdState:Text.optional(),temporaryFacts:z.array(Text)}).strict();
 export const AiStorySceneDiscontinuitySchema=z.object({kind:z.string().regex(/^(?:[A-Z][A-Z0-9_]{1,63}|EXT:[a-z0-9.-]+:[A-Z][A-Z0-9_]{1,63})$/),explanation:Text,preservesCharacterIdentity:z.literal(true),preservesProductIdentity:z.literal(true)}).strict();
-const AiStorySceneProductIdentityBindingSchema=z.object({productAuthorityId:Id,sourceAssetId:Id,sourceAssetContentHash:Hash});
+const AiStorySceneProductIdentityBindingSchema=z.object({productAuthorityId:Id,sourceAssetId:Id,sourceAssetContentHash:Hash,confirmedVariant:z.string().trim().min(1).max(80).optional()});
 
 /** Historical ai-story-scene.v1 snapshots predate explicit per-Product visual requirements. */
 export const AiStoryLegacySceneProductBindingSchema=AiStorySceneProductIdentityBindingSchema.strict();

@@ -130,7 +130,7 @@ export function evaluateAiStoryPreGenerationQc(raw:AiStoryPreGenerationQcInput):
       fingerprint:canonical?.fingerprint??direction.canonicalSceneBinding?.sceneFingerprint??directorPlan.directorFingerprint,
       locationBinding:{id:canonical?.locationBinding.id??scriptScene.locationIds[0]??direction.scriptSceneId},
       castBindings:(canonical?.castBindings??scriptScene.characterIds.map((id)=>({id}))),
-      productBindings:canonical?.productBindings??handoff.productAuthorityBindings.map((binding)=>({productAuthorityId:binding.productAuthorityId,sourceAssetId:binding.sourceAssetId,sourceAssetContentHash:binding.sourceAssetContentHash})),
+      productBindings:canonical?.productBindings??handoff.productAuthorityBindings.map((binding)=>({productAuthorityId:binding.productAuthorityId,sourceAssetId:binding.sourceAssetId,sourceAssetContentHash:binding.sourceAssetContentHash,...(binding.confirmedVariant?{confirmedVariant:binding.confirmedVariant}:{})})),
       sourceScriptEntryIds:canonical?.sourceScriptEntryIds??scriptScene.entries.map((entry)=>entry.entryId),
       discontinuity:canonical?.discontinuity??null,
     };

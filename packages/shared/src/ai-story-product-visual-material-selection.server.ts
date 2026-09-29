@@ -91,17 +91,20 @@ function sameProduct(
     productAuthorityId: string;
     sourceAssetId: string;
     sourceAssetContentHash: string;
+    confirmedVariant?: string | null;
   },
   actual: {
     productAuthorityId: string;
     sourceAssetId: string;
     sourceAssetContentHash: string;
+    confirmedVariant?: string | null;
   }
 ): boolean {
   return (
     expected.productAuthorityId === actual.productAuthorityId &&
     expected.sourceAssetId === actual.sourceAssetId &&
-    expected.sourceAssetContentHash === actual.sourceAssetContentHash
+    expected.sourceAssetContentHash === actual.sourceAssetContentHash &&
+    (expected.confirmedVariant ?? null) === (actual.confirmedVariant ?? null)
   );
 }
 
@@ -147,6 +150,7 @@ export function deriveProductVisualMaterialSelectionAuthority(
     productAuthorityId: sceneBinding.productAuthorityId,
     sourceAssetId: sceneBinding.sourceAssetId,
     sourceAssetContentHash: sceneBinding.sourceAssetContentHash,
+    ...(sceneBinding.confirmedVariant ? { confirmedVariant: sceneBinding.confirmedVariant } : {}),
   };
   if (
     canonicalProduct.productAuthorityId !== canonicalProduct.sourceAssetId ||
