@@ -577,8 +577,10 @@ export async function runSinglePlanningStage(input: {
           characterAuthorities: ctx.characterAuthorities,
           creativeContext: draft.creativeContext,
         });
+        const episodeIntent = ctx.loaded.story.outlineProfile?.profileId === "COMMERCIAL_STORY"
+          ? AiStoryEpisodeIntentAuthoritySchema.safeParse(ctx.loaded.story.episodeIntent)
+          : null;
         if (ctx.loaded.story.outlineProfile?.profileId === "COMMERCIAL_STORY") {
-          const episodeIntent = AiStoryEpisodeIntentAuthoritySchema.safeParse(ctx.loaded.story.episodeIntent);
           const authored = await produceAuthorizedCommercialStoryScriptProposal({
             db,
             orgId: ctx.campaign.orgId,
@@ -593,7 +595,7 @@ export async function runSinglePlanningStage(input: {
             creativeContext: draft.creativeContext!,
             directorThinking: draft.directorThinking!,
             characterAuthorities: storyCharacterAuthorities,
-            ...(episodeIntent.success ? { episodeIntent: episodeIntent.data } : {}),
+            ...(episodeIntent?.success ? { episodeIntent: episodeIntent.data } : {}),
           });
           usage = addUsage(usage, authored.usage);
           stageCostUsd += authored.usage.costUsd;
@@ -612,6 +614,7 @@ export async function runSinglePlanningStage(input: {
           creativeContext: draft.creativeContext!,
           directorThinking: draft.directorThinking!,
           characterAuthorities: storyCharacterAuthorities,
+          ...(episodeIntent?.success ? { episodeIntent: episodeIntent.data } : {}),
         });
         canonicalScript = canonical.script;
         usage = addUsage(usage, canonical.usage);

@@ -394,6 +394,7 @@ export async function ensureCurrentFrozenCanonicalScript(
     directorThinking: input.directorThinking,
     characterAuthorities: input.characterAuthorities,
     productAuthorityIds,
+    ...(input.episodeIntent ? { episodeIntent: input.episodeIntent } : {}),
   });
   const scope: AiStoryScriptScope = {
     orgId: input.orgId,
