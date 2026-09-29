@@ -444,12 +444,17 @@ export async function runSinglePlanningStage(input: {
           proposedStoryBeats: draft.storyBeats!,
         });
       }
+      const episodeIntent = AiStoryEpisodeIntentAuthoritySchema.safeParse(ctx.loaded.story.episodeIntent);
       const generated = await generateScenePlan({
         story: ctx.storyDraft,
         creativeContext: draft.creativeContext!,
         directorThinking: draft.directorThinking!,
         storyBeats: draft.storyBeats!,
         assetGrounding: ctx.assetGrounding,
+        ...(episodeIntent.success ? {
+          targetDurationSec: episodeIntent.data.requestedDurationSec,
+          storyBrief: ctx.loaded.story.originalIdea,
+        } : {}),
       });
       usage = addUsage(usage, generated.usage);
       stageCostUsd += generated.usage.costUsd;

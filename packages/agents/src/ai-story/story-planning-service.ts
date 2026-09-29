@@ -619,6 +619,95 @@ export async function generateStoryBeats(input: {
   return { storyBeats: value, usage };
 }
 
+export const SCENE_PLAN_EPISODE_BUDGET_CODES = [
+  "SCENE_PLAN_DURATION_BUDGET_INVALID",
+  "SCENE_PLAN_BEAT_COVERAGE_INVALID",
+  "SCENE_PLAN_BEAT_DUPLICATED",
+  "SCENE_PLAN_UNKNOWN_BEAT",
+  "SCENE_PLAN_DUPLICATE_ID",
+  "SCENE_PLAN_ORDER_INVALID",
+] as const;
+
+export type ScenePlanEpisodeBudgetCode = (typeof SCENE_PLAN_EPISODE_BUDGET_CODES)[number];
+
+export class ScenePlanEpisodeBudgetError extends Error {
+  readonly code: ScenePlanEpisodeBudgetCode;
+
+  constructor(code: ScenePlanEpisodeBudgetCode, message: string) {
+    super(`${code}: ${message}`);
+    this.name = "ScenePlanEpisodeBudgetError";
+    this.code = code;
+  }
+}
+
+type ScenePlanBudgetScene = {
+  readonly id: string;
+  readonly order: number;
+  readonly durationSec: number;
+  readonly beatIds: readonly string[];
+};
+
+/**
+ * Accepts or rejects an Episode-intent Scene Plan. It does not rewrite durations,
+ * delete scenes, or merge beats.
+ */
+export function assertScenePlanEpisodeBudget(input: {
+  readonly scenes: readonly ScenePlanBudgetScene[];
+  readonly beats: readonly { readonly id: string }[];
+  readonly targetDurationSec: number;
+}): void {
+  const sceneIds = input.scenes.map((scene) => scene.id);
+  if (new Set(sceneIds).size !== sceneIds.length) {
+    throw new ScenePlanEpisodeBudgetError(
+      "SCENE_PLAN_DUPLICATE_ID",
+      "Scene ids must be unique",
+    );
+  }
+  const sequential = input.scenes.every((scene, index) => scene.order === index);
+  if (!sequential) {
+    throw new ScenePlanEpisodeBudgetError(
+      "SCENE_PLAN_ORDER_INVALID",
+      "Scene order must be sequential from zero in plan order",
+    );
+  }
+  const knownBeats = new Set(input.beats.map((beat) => beat.id));
+  const owners = new Map<string, string>();
+  for (const scene of input.scenes) {
+    const ownedHere = new Set<string>();
+    for (const beatId of scene.beatIds) {
+      if (!knownBeats.has(beatId)) {
+        throw new ScenePlanEpisodeBudgetError(
+          "SCENE_PLAN_UNKNOWN_BEAT",
+          `Scene ${scene.id} names unknown beat ${beatId}`,
+        );
+      }
+      if (ownedHere.has(beatId) || owners.has(beatId)) {
+        throw new ScenePlanEpisodeBudgetError(
+          "SCENE_PLAN_BEAT_DUPLICATED",
+          `Story beat ${beatId} is owned more than once`,
+        );
+      }
+      ownedHere.add(beatId);
+      owners.set(beatId, scene.id);
+    }
+  }
+  for (const beat of input.beats) {
+    if (!owners.has(beat.id)) {
+      throw new ScenePlanEpisodeBudgetError(
+        "SCENE_PLAN_BEAT_COVERAGE_INVALID",
+        `Story beat ${beat.id} is not owned by exactly one scene`,
+      );
+    }
+  }
+  const totalDurationSec = input.scenes.reduce((sum, scene) => sum + scene.durationSec, 0);
+  if (Math.abs(totalDurationSec - input.targetDurationSec) > 1e-6) {
+    throw new ScenePlanEpisodeBudgetError(
+      "SCENE_PLAN_DURATION_BUDGET_INVALID",
+      `Scene durations sum to ${totalDurationSec}, not episode duration ${input.targetDurationSec}`,
+    );
+  }
+}
+
 export async function generateScenePlan(input: {
   story: AiStoryStructuredDraft;
   creativeContext: CreativeContext;
@@ -626,15 +715,28 @@ export async function generateScenePlan(input: {
   storyBeats: StoryBeat[];
   /** Required by the normal staged runtime; optional for legacy all-at-once compatibility. */
   assetGrounding?: AiStoryScenePlanningGroundingContext;
+  /** Authoritative Episode Intent duration. Historical planning omits it. */
+  targetDurationSec?: number;
+  /** Existing story brief. A preferred partition inside it is guidance for this story only. */
+  storyBrief?: string | null;
 }): Promise<{ scenePlan: ScenePlanItem[]; usage: Usage }> {
   const providerOutputSchema = buildScenePlanProviderOutputSchema(
     input.assetGrounding?.bindings.map((binding) => binding.bindingId) ?? [],
   );
+  const episodeDurationAuthority = typeof input.targetDurationSec === "number";
   const completion = await callStructuredJsonModel({
     system: [
       "You are an animation scene planner.",
       "Create scenes that cover every story beat, merging beats only when continuityNotes explicitly say which beat was merged.",
       "Use sequential order values starting at 0 and stable scene ids.",
+      ...(episodeDurationAuthority ? [
+        `Target Episode duration is exactly ${input.targetDurationSec} seconds. storyDraft.estimatedDuration is descriptive context and is not the duration authority.`,
+        "The sum of all Scene durationSec values MUST equal that target. Do not exceed it and do not leave a remainder.",
+        "Assign each Story Beat id exactly once. A Scene may merge multiple different Story Beat ids. Never copy the same Beat id into more than one Scene.",
+        "Use the minimum number of Scenes needed for clear execution. Do not duplicate CTA or Ending beats to fill time.",
+        "If the supplied story brief names a preferred scene duration partition, prefer it only when those durations sum exactly to the target. A preferred partition is guidance for this story, not a template for every story.",
+        "Scene planning is provider-neutral. Do not choose or reject durations because of a video provider's supported duration set.",
+      ] : []),
       "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
       "FIRST_FRAME_IMAGE_TO_VIDEO and PRODUCT_GROUNDED_VIDEO always require productVisualIdentityRequirement REQUIRED. They may never use NONE. TEXT_TO_VIDEO may use REQUIRED only when the Scene still visually depicts a grounded Product.",
       "The supplied accepted Asset grounding authority is immutable. Return groundingSelections with exactly one entry per Scene, in the same order as scenePlan. Use only exact accepted binding IDs and exact facts from those bindings. Copy bindingId verbatim; never invent or transform a UUID.",
@@ -657,6 +759,13 @@ export async function generateScenePlan(input: {
   const rawScenePlan = z.array(
     ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema }),
   ).min(1).parse(providerOutput.scenePlan);
+  if (episodeDurationAuthority) {
+    assertScenePlanEpisodeBudget({
+      scenes: rawScenePlan,
+      beats: input.storyBeats,
+      targetDurationSec: input.targetDurationSec!,
+    });
+  }
   const assetGrounding = input.assetGrounding;
   if (!assetGrounding) return { scenePlan: rawScenePlan, usage: completion.usage };
   const sceneIds = rawScenePlan.map((scene) => scene.id);
