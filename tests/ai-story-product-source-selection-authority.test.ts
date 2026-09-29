@@ -58,7 +58,14 @@ function verify(options: {
 
 describe("AI Story explicit Story Product source authority", () => {
   it("supports only reference and explicit product_source usage", () => {
-    expect(AI_STORY_ASSET_USAGE_TYPES).toEqual(["reference", "product_source"]);
+    expect(AI_STORY_ASSET_USAGE_TYPES).toEqual([
+      "reference",
+      "product_source",
+      "location_reference",
+      "brand_reference",
+      "style_reference",
+      "generic_reference",
+    ]);
   });
 
   it("persists one deterministic semantic row per selected Asset", () => {
@@ -153,10 +160,10 @@ describe("AI Story explicit Story Product source authority", () => {
       "utf8"
     );
     expect(ui).toContain("const [productAssetIds, setProductAssetIds] = useState<string[]>([])");
-    expect(ui).toContain("setProductAssetIds([])");
-    expect(ui).toContain("prev.filter((id) => id !== asset.id)");
-    expect(ui).toContain("productAssetIds,");
-    expect(ui).toContain("This is a Product");
+    expect(ui).toContain("current.filter((id) => id !== assetId)");
+    expect(ui).toContain("productAssetIds");
+    expect(ui).toContain('title="Product"');
+    expect(ui).not.toContain("assets.map((asset) => asset.id)");
   });
 
   it("does not classify by Product-like labels, filenames, or Photo Scene metadata", () => {

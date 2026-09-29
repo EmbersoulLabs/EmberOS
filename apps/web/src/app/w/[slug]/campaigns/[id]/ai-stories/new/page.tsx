@@ -58,10 +58,16 @@ export default function CreateAiStoryPage() {
             nativeCharacterDialogue: payload.episodeIntent.nativeCharacterDialogue,
             pacing: payload.episodeIntent.pacing,
             cta: payload.episodeIntent.cta,
-          }),
+          }) + (payload.offscreenSpeaker ? `\nOff-screen speaker: ${payload.offscreenSpeaker}. No visual reference.` : ""),
           outlineProfile: payload.outlineProfile,
           assetIds: payload.assetIds,
           productAssetIds: payload.productAssetIds,
+          locationAssetIds: payload.locationAssetIds,
+          brandAssetIds: payload.brandAssetIds,
+          styleAssetIds: payload.styleAssetIds,
+          genericAssetIds: payload.genericAssetIds,
+          characterPortraitAssetIds: payload.characterPortraitAssetIds,
+          mappingConfirmed: payload.mappingConfirmed,
           episodeIntent: {
             episodeType: payload.episodeIntent.episodeType,
             requestedDurationSec: payload.episodeIntent.durationSec === "custom"
@@ -112,7 +118,7 @@ export default function CreateAiStoryPage() {
           <h1 className="mt-3 text-2xl font-bold text-navy">Create Episode</h1>
           <p className="mt-1 text-sm text-ink-secondary">Describe one Episode. EmberOS handles Scenes and shots internally.</p>
         </div>
-        <EpisodeCreateForm campaignId={campaignId} workspaceId={workspaceId} assets={assets} loading={loading} error={error} onGenerate={(payload) => void onGenerate(payload)} />
+        <EpisodeCreateForm campaignId={campaignId} workspaceId={workspaceId} assets={assets} loading={loading} error={error} onAssetsChange={setAssets} onGenerate={(payload) => void onGenerate(payload)} />
         <TapaoJomEpisodeUxFixture />
       </div>
     </AppShell>

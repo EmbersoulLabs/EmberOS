@@ -7,6 +7,7 @@ import {
   planAiStoryAssetLinkUsage,
   assertAiStoryTransition,
   nextAiStoryVersionNumber,
+  type AiStoryAssetSelection,
   type AiStoryStatus,
   type AiStoryStructuredDraft,
 } from "@ceo-agent/shared";
@@ -113,13 +114,39 @@ export async function setAiStoryStatus(
     .where(eq(schema.aiStories.id, storyId));
 }
 
+export async function ensureCampaignLibraryAvailability(
+  db: Db,
+  campaignId: string,
+  workspaceId: string,
+  assetIds: string[]
+) {
+  const unique = [...new Set(assetIds)];
+  if (unique.length === 0) return;
+  const rows = await db
+    .select({ id: schema.assets.id })
+    .from(schema.assets)
+    .where(and(
+      eq(schema.assets.workspaceId, workspaceId),
+      inArray(schema.assets.id, unique),
+      isNull(schema.assets.deletedAt)
+    ));
+  if (rows.length !== unique.length) {
+    throw new Error("One or more assets are invalid for this workspace");
+  }
+  await db
+    .insert(schema.campaignAssetRefs)
+    .values(unique.map((assetId, index) => ({ campaignId, assetId, sortOrder: index })))
+    .onConflictDoNothing();
+}
+
 export async function replaceAiStoryAssetLinks(
   db: Db,
   storyId: string,
   assetIds: string[],
-  productAssetIds: string[] = []
+  productAssetIds: string[] = [],
+  typed: Partial<AiStoryAssetSelection> = {}
 ) {
-  const plan = planAiStoryAssetLinkUsage({ assetIds, productAssetIds });
+  const plan = planAiStoryAssetLinkUsage({ ...typed, assetIds, productAssetIds });
   await db.delete(schema.aiStoryAssetLinks).where(eq(schema.aiStoryAssetLinks.storyId, storyId));
   if (plan.length === 0) return;
   await db.insert(schema.aiStoryAssetLinks).values(

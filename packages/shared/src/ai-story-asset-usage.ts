@@ -3,6 +3,19 @@ import { z } from "zod";
 export const AI_STORY_ASSET_USAGE_TYPES = [
   "reference",
   "product_source",
+  "location_reference",
+  "brand_reference",
+  "style_reference",
+  "generic_reference",
+] as const;
+
+/** Roles a new module intake may assign. Legacy rows stay stored as "reference". */
+export const AI_STORY_MODULE_ASSET_ROLES = [
+  "product_source",
+  "location_reference",
+  "brand_reference",
+  "style_reference",
+  "generic_reference",
 ] as const;
 
 export const AiStoryAssetUsageTypeSchema = z.enum(AI_STORY_ASSET_USAGE_TYPES);
@@ -20,22 +33,72 @@ const UniqueAssetIdsSchema = z
     }
   });
 
+export const AiStoryModuleAssetRoleSchema = z.enum(AI_STORY_MODULE_ASSET_ROLES);
+export type AiStoryModuleAssetRole = z.infer<typeof AiStoryModuleAssetRoleSchema>;
+
+export const AiStoryModuleAssetBindingSchema = z.object({
+  assetId: z.string().uuid(),
+  role: AiStoryModuleAssetRoleSchema,
+}).strict();
+export type AiStoryModuleAssetBinding = z.infer<typeof AiStoryModuleAssetBindingSchema>;
+
+const ROLE_FIELDS = [
+  ["productAssetIds", "product_source"],
+  ["locationAssetIds", "location_reference"],
+  ["brandAssetIds", "brand_reference"],
+  ["styleAssetIds", "style_reference"],
+  ["genericAssetIds", "generic_reference"],
+] as const;
+
 /** Explicit Story selection; no filename, label, media, or metadata inference is authority. */
 export const AiStoryAssetSelectionSchema = z
   .object({
     assetIds: UniqueAssetIdsSchema.default([]),
     productAssetIds: UniqueAssetIdsSchema.default([]),
+    locationAssetIds: UniqueAssetIdsSchema.default([]),
+    brandAssetIds: UniqueAssetIdsSchema.default([]),
+    styleAssetIds: UniqueAssetIdsSchema.default([]),
+    genericAssetIds: UniqueAssetIdsSchema.default([]),
+    assetBindings: z.array(AiStoryModuleAssetBindingSchema).max(32).optional(),
+    characterPortraitAssetIds: UniqueAssetIdsSchema.default([]),
+    mappingConfirmed: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
     const selected = new Set(value.assetIds);
-    for (const productAssetId of value.productAssetIds) {
-      if (!selected.has(productAssetId)) {
+    const typed = [
+      ...value.productAssetIds,
+      ...value.locationAssetIds,
+      ...value.brandAssetIds,
+      ...value.styleAssetIds,
+      ...value.genericAssetIds,
+      ...(value.assetBindings ?? []).map((binding) => binding.assetId),
+    ];
+    for (const assetId of typed) {
+      if (!selected.has(assetId)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ["productAssetIds"],
-          message: `Product Asset ${productAssetId} must also be selected for the Story`,
+          path: ["assetIds"],
+          message: `Asset ${assetId} must also be selected for the Story`,
         });
       }
+    }
+    const roleByAsset = new Map<string, string>();
+    const claim = (assetId: string, role: string, path: string) => {
+      const existing = roleByAsset.get(assetId);
+      if (existing && existing !== role) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [path],
+          message: `Asset ${assetId} cannot have both ${existing} and ${role}`,
+        });
+      }
+      roleByAsset.set(assetId, role);
+    };
+    for (const [field, role] of ROLE_FIELDS) {
+      for (const assetId of value[field]) claim(assetId, role, field);
+    }
+    for (const binding of value.assetBindings ?? []) {
+      claim(binding.assetId, binding.role, "assetBindings");
     }
   });
 
@@ -50,18 +113,152 @@ export type AiStoryAssetLinkUsagePlan = z.infer<
   typeof AiStoryAssetLinkUsagePlanSchema
 >;
 
-/** Deterministic one-row-per-Asset persistence plan. product_source implies reference availability. */
-export function planAiStoryAssetLinkUsage(
-  input: AiStoryAssetSelection
-): AiStoryAssetLinkUsagePlan[] {
+/**
+ * Read projection only. Stored legacy rows remain "reference".
+ * New writes use generic_reference when the intake role is generic.
+ */
+export function projectLegacyAiStoryAssetUsage(
+  usageType: AiStoryAssetUsageType
+): Exclude<AiStoryAssetUsageType, "reference"> {
+  return usageType === "reference" ? "generic_reference" : usageType;
+}
+
+/**
+ * Character portraits stay on Character Binding. They are removed from a
+ * generic Story reference unless the same asset was explicitly given another
+ * module role.
+ */
+export function omitCharacterPortraitGenericReferences(
+  input: z.input<typeof AiStoryAssetSelectionSchema>,
+  portraitAssetIds: readonly string[]
+): AiStoryAssetSelection {
   const selection = AiStoryAssetSelectionSchema.parse(input);
-  const products = new Set(selection.productAssetIds);
-  return [...selection.assetIds]
-    .sort((left, right) => left.localeCompare(right))
-    .map((assetId) =>
-      AiStoryAssetLinkUsagePlanSchema.parse({
-        assetId,
-        usageType: products.has(assetId) ? "product_source" : "reference",
-      })
+  const portraits = new Set(portraitAssetIds);
+  const explicit = new Set([
+    ...selection.productAssetIds,
+    ...selection.locationAssetIds,
+    ...selection.brandAssetIds,
+    ...selection.styleAssetIds,
+  ]);
+  const drop = (assetId: string) => portraits.has(assetId) && !explicit.has(assetId);
+  return AiStoryAssetSelectionSchema.parse({
+    ...selection,
+    assetIds: selection.assetIds.filter((assetId) => !drop(assetId)),
+    genericAssetIds: selection.genericAssetIds.filter((assetId) => !drop(assetId)),
+    characterPortraitAssetIds: [...portraits],
+    assetBindings: selection.assetBindings?.filter(
+      (binding) => !(drop(binding.assetId) && binding.role === "generic_reference")
+    ),
+  });
+}
+
+/** Deterministic one-row-per-Asset persistence plan. Untyped legacy ids stay "reference". */
+export function planAiStoryAssetLinkUsage(
+  input: z.input<typeof AiStoryAssetSelectionSchema>
+): AiStoryAssetLinkUsagePlan[] {
+  const selection = omitCharacterPortraitGenericReferences(
+    input,
+    input.characterPortraitAssetIds ?? []
+  );
+  const roleByAsset = new Map<string, AiStoryAssetUsageType>();
+  for (const assetId of selection.assetIds) roleByAsset.set(assetId, "reference");
+  for (const [field, role] of ROLE_FIELDS) {
+    for (const assetId of selection[field]) roleByAsset.set(assetId, role);
+  }
+  for (const binding of selection.assetBindings ?? []) {
+    roleByAsset.set(binding.assetId, binding.role);
+  }
+  return [...roleByAsset.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([assetId, usageType]) =>
+      AiStoryAssetLinkUsagePlanSchema.parse({ assetId, usageType })
     );
+}
+
+export type AiStoryIntakeAssetLabel = {
+  assetId: string;
+  label: string;
+  variant?: string | null;
+};
+
+export type AiStoryIntakeAuthority = {
+  character: {
+    name: string;
+    characterId: string;
+    characterVersionId: string | null;
+    portraitAssetId: string | null;
+    identityLocked: true;
+  } | null;
+  products: { assetId: string; label: string; variant: string | null; role: "product_source" }[];
+  locations: { assetId: string; label: string; role: "location_reference" }[];
+  other: { assetId: string; label: string; role: Exclude<AiStoryModuleAssetRole, "product_source" | "location_reference"> }[];
+  offscreenSpeaker: { name: string; visualReference: false } | null;
+  bindings: AiStoryAssetLinkUsagePlan[];
+};
+
+/** Preview and persistence use the same resolved selection. Unresolved variants stay null. */
+export function compileAiStoryIntakeAuthority(input: {
+  selection: z.input<typeof AiStoryAssetSelectionSchema>;
+  assets: readonly AiStoryIntakeAssetLabel[];
+  character?: {
+    name: string;
+    characterId: string;
+    characterVersionId?: string | null;
+    portraitAssetId?: string | null;
+  } | null;
+  offscreenSpeaker?: string | null;
+}): AiStoryIntakeAuthority {
+  const portraits = [
+    ...(input.selection.characterPortraitAssetIds ?? []),
+    ...(input.character?.portraitAssetId ? [input.character.portraitAssetId] : []),
+  ];
+  const selection = omitCharacterPortraitGenericReferences(input.selection, portraits);
+  const labels = new Map(input.assets.map((asset) => [asset.assetId, asset]));
+  const bindings = planAiStoryAssetLinkUsage(selection);
+  const labelFor = (assetId: string) => labels.get(assetId)?.label ?? assetId;
+  const variantFor = (assetId: string) => {
+    const variant = labels.get(assetId)?.variant?.trim();
+    return variant ? variant : null;
+  };
+  return {
+    character: input.character
+      ? {
+          name: input.character.name,
+          characterId: input.character.characterId,
+          characterVersionId: input.character.characterVersionId ?? null,
+          portraitAssetId: input.character.portraitAssetId ?? null,
+          identityLocked: true,
+        }
+      : null,
+    products: bindings
+      .filter((binding) => binding.usageType === "product_source")
+      .map((binding) => ({
+        assetId: binding.assetId,
+        label: labelFor(binding.assetId),
+        variant: variantFor(binding.assetId),
+        role: "product_source" as const,
+      })),
+    locations: bindings
+      .filter((binding) => binding.usageType === "location_reference")
+      .map((binding) => ({
+        assetId: binding.assetId,
+        label: labelFor(binding.assetId),
+        role: "location_reference" as const,
+      })),
+    other: bindings
+      .filter((binding) =>
+        binding.usageType === "brand_reference"
+        || binding.usageType === "style_reference"
+        || binding.usageType === "generic_reference"
+      )
+      .map((binding) => ({
+        assetId: binding.assetId,
+        label: labelFor(binding.assetId),
+        role: binding.usageType as Exclude<AiStoryModuleAssetRole, "product_source" | "location_reference">,
+      })),
+    offscreenSpeaker: input.offscreenSpeaker?.trim()
+      ? { name: input.offscreenSpeaker.trim(), visualReference: false }
+      : null,
+    bindings,
+  };
 }
