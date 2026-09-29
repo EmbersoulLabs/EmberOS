@@ -218,8 +218,15 @@ describe("commercial script state continuity", () => {
   });
 
   it("drops a commercial contribution that does not change state", () => {
+    const passive = scene({ scenePlanItemId: "scene-001", sceneStateIn: [], sceneStateOut: [] });
+    passive.entries = [{
+      type: "ACTION",
+      subjectId: IDS.character,
+      action: "The character stands beside the product.",
+      storyEffect: "The product stays in the background.",
+    }];
     const [sceneWithContribution] = dropUnchangedPhysicalScriptChanges([{
-      ...scene({ scenePlanItemId: "scene-001", sceneStateIn: [], sceneStateOut: [] }),
+      ...passive,
       commercialContribution: {
         commercialRole: "PRODUCT",
         narrativeFunction: "ACTION",
@@ -231,6 +238,33 @@ describe("commercial script state continuity", () => {
       },
     }]);
     expect(sceneWithContribution!.commercialContribution).toBeUndefined();
+  });
+
+  it("keeps continued product use when the product state does not change", () => {
+    const product = held("holding the same product");
+    const contribution = {
+      commercialRole: "PRODUCT" as const,
+      narrativeFunction: "ACTION",
+      participationKind: "ENABLE" as const,
+      commercialAuthorityIds: [IDS.product],
+      preState: "holding the same product",
+      postState: "holding the same product",
+      storyConsequence: "The product remains in use.",
+    };
+    const [first, second] = dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState([
+      {
+        ...scene({ scenePlanItemId: "scene-001", sceneStateIn: [product], sceneStateOut: [product] }),
+        commercialContribution: contribution,
+      },
+      {
+        ...scene({ scenePlanItemId: "scene-002", sceneStateIn: [], sceneStateOut: [], action: "The character keeps holding the same product." }),
+        newInformation: ["The camera moves closer."],
+      },
+    ]));
+    expect(first!.commercialContribution?.participationKind).toBe("ENABLE");
+    expect(first!.entries[0]).toMatchObject({ type: "ACTION", objectId: IDS.product });
+    expect(second!.sceneStateIn).toEqual([product]);
+    expect(second!.entries[0]).toMatchObject({ objectId: IDS.product });
   });
 
   it("moves an unbound speaker line out of on-screen dialogue", () => {
@@ -271,6 +305,7 @@ describe("commercial script state continuity", () => {
       "She keeps holding the fan toward her face.",
       "Hah?!",
     ]);
+    expect(kept!.entries[0]).toMatchObject({ type: "ACTION", objectId: IDS.product });
     expect(kept!.newActionOutcomes).toBeDefined();
     expect(kept!.newInformation).toContain("Yuki! That order you forgot already ah?!");
   });

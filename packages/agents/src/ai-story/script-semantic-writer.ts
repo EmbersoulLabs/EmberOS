@@ -223,7 +223,11 @@ export async function generateAiStoryScriptSemanticProposalV1(
         "Do not emit a POSSESSION, LOCATION, or PHYSICAL_CONDITION delta when that value stays the same. A spoken line is not a physical state change.",
         "If a supplied dialogue speaker name is not a characterAuthorities name, the line is off-screen. Put that exact line in visibleAction.storyEffect or newInformation. Do not assign it to the on-screen character.",
         "visibleAction.action must describe a visible physical action in at least four words. It must not be a single verb and must not copy a spoken line. Dialogue that mentions the product is not that action.",
-        "Include commercialContribution on every Scene where that ACTION happens. preState and postState must differ. Do not replace the narrative with a product showcase, catalog shot, or detached cutaway.",
+        "PRODUCT PRESENCE is not PRODUCT PARTICIPATION. A product id, a visible prop, or dialogue that mentions the product does not integrate it.",
+        "When product authority ids are supplied, at least one visibleAction.objectId must be one of those ids, and visibleAction.action must describe the character physically using that product.",
+        "Put commercialContribution on that scene. participationKind is the product's narrative role and commercialAuthorityIds contains that product id. If the same product remains in use, preState and postState may match. Keep the contribution. Do not omit it and do not invent a replacement product to force a difference.",
+        "A later scene whose productVisualIdentityRequirement is NONE does not remove a product the character is already holding. Copy that held product forward. Off-screen speech does not remove it.",
+        "Do not replace the narrative with a product showcase, catalog shot, or detached cutaway.",
         "When the product remains in use, keep its physical state fact identical across Scenes. Do not invent a new product state just to start the next Scene.",
       ] : []),
       ...(input.episodeIntent ? [

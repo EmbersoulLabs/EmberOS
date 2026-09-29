@@ -18,8 +18,9 @@ function sameText(left: string, right: string) {
 
 /**
  * Drops physical deltas that do not change the scene's incoming and outgoing
- * value, and drops a commercial contribution whose pre-state and post-state
- * are the same. A physical value that actually changes is left untouched.
+ * value. A commercial contribution with no state change is dropped unless an
+ * ACTION already uses one of its commercial authorities. A physical value that
+ * actually changes is left untouched.
  */
 export function dropUnchangedPhysicalScriptChanges(
   scenes: readonly ProposalScene[],
@@ -34,7 +35,14 @@ export function dropUnchangedPhysicalScriptChanges(
     });
     const retained = new Set(sceneStateDeltas.map((delta) => JSON.stringify(delta)));
     const contribution = scene.commercialContribution;
-    const commercialContribution = contribution && !sameText(contribution.preState, contribution.postState)
+    const productAction = contribution
+      ? scene.entries.some((entry) =>
+        entry.type === "ACTION"
+        && entry.objectId !== undefined
+        && contribution.commercialAuthorityIds.includes(entry.objectId))
+      : false;
+    const commercialContribution = contribution
+      && (!sameText(contribution.preState, contribution.postState) || productAction)
       ? contribution
       : undefined;
     const { commercialContribution: _existing, ...rest } = scene;

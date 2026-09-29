@@ -124,6 +124,7 @@ function commercialOutline(overrides: Record<string, unknown> = {}): AiStoryOutl
 type SceneSpec = {
   id: string; beatId: string; entryId: string; order: number; sceneFunction: AiStoryScriptVersion["scenes"][number]["sceneFunction"];
   narrativeFunction: string; action: string; effect: string; information: string; dialogue?: string;
+  passiveProduct?: boolean;
   product?: boolean; contribution?: NonNullable<AiStoryScriptVersion["scenes"][number]["commercialContribution"]>;
   preconditions?: string[]; consequence?: string;
   stateIn?: AiStoryScriptVersion["scenes"][number]["sceneStateIn"];
@@ -140,7 +141,7 @@ function sceneFrom(spec: SceneSpec): AiStoryScriptVersion["scenes"][number] {
       { entryId: spec.entryId, order: 0, type: "ACTION", subjectId: I.character, ...(spec.product ? { objectId: I.product } : {}), action: spec.action, storyEffect: spec.effect, durationRange: { minSeconds: 2, maxSeconds: 4 } },
       ...(spec.dialogue ? [{ entryId: id(27), order: 1, type: "DIALOGUE" as const, speakerId: I.character, line: spec.dialogue, language: "en-SG", durationRange: { minSeconds: 1, maxSeconds: 2 } }] : []),
     ],
-    characterIds: [I.character], locationIds: [], propIds: [], assetIds: spec.product ? [I.product] : [], productAuthorityRefs: spec.product ? [I.product] : [],
+    characterIds: [I.character], locationIds: [], propIds: [], assetIds: spec.product || spec.passiveProduct ? [I.product] : [], productAuthorityRefs: spec.product || spec.passiveProduct ? [I.product] : [],
     targetDurationRange: { minSeconds: 3, maxSeconds: 7 }, mustKeep: ["Story causality"], mustAvoid: ["Unsupported claims"],
     newInformation: [spec.information], newEvidence: spec.product ? ["Commercial subject participates"] : [], newActionOutcomes: [spec.effect], productEvidence: spec.product ? ["Canonical commercial subject"] : [],
     narrativeFunction: spec.narrativeFunction, causalPreconditions: spec.preconditions ?? [], storyConsequence: spec.consequence ?? spec.effect,
@@ -591,6 +592,58 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
     ]));
     const source = readFileSync("packages/shared/src/ai-story-commercial-story-profile.server.ts", "utf8").toLowerCase();
     for (const forbidden of ["seedance", "scene 1 must", "interesting", "viral", "beautiful", "funny enough"]) expect(source).not.toContain(forbidden);
+  });
+
+  it("accepts a visible product action and rejects presence or dialogue alone", () => {
+    const outline = commercialOutline();
+    const participating = flowerScenes();
+    participating[2] = {
+      ...participating[2]!,
+      contribution: {
+        ...participating[2]!.contribution!,
+        preState: "holding the product",
+        postState: "holding the product",
+      },
+    };
+    expect(blocks(outline, commercialScript(outline, participating))).toEqual([]);
+
+    const spoken = flowerScenes().map((spec) => ({ ...spec, product: false }));
+    spoken[2] = {
+      ...spoken[2]!,
+      dialogue: "This product is useful.",
+      contribution: {
+        commercialRole: "PRODUCT",
+        narrativeFunction: "PRODUCT_INTERVENTION",
+        participationKind: "REVEAL",
+        commercialAuthorityIds: [I.product],
+        preState: "unaware of the product",
+        postState: "mentions the product",
+        storyConsequence: "The line names the product",
+      },
+    };
+    expect(blocks(outline, commercialScript(outline, spoken))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reasonCode: "PRODUCT_PARTICIPATION_MISSING" }),
+    ]));
+
+    const background = flowerScenes().map((spec) => ({ ...spec, product: false }));
+    background[2] = {
+      ...background[2]!,
+      passiveProduct: true,
+      action: "The product remains visible in the background.",
+      contribution: {
+        commercialRole: "PRODUCT",
+        narrativeFunction: "PRODUCT_INTERVENTION",
+        participationKind: "REVEAL",
+        commercialAuthorityIds: [I.product],
+        preState: "product nearby",
+        postState: "product nearby",
+        storyConsequence: "The product stays in the background",
+      },
+    };
+    expect(blocks(outline, commercialScript(outline, background))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reasonCode: "PRODUCT_PARTICIPATION_MISSING" }),
+      expect.objectContaining({ reasonCode: "PRODUCT_INSERTION_WITHOUT_NARRATIVE_ROLE" }),
+    ]));
   });
 
   it("does not encode a rigid Scene-order template and allows namespaced narrative functions", () => {
