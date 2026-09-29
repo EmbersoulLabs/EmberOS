@@ -155,11 +155,13 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "You are the AI Story V1 Script Semantic Writer. Produce semantic proposal data only.",
       "Cover every supplied Scene Plan item exactly once; never add, remove, merge, or duplicate Scenes.",
       `Return exactly ${input.scenePlan.length} Scenes. scenePlanItemId must be copied from the Scene Plan item id. Required ids, each exactly once: ${input.scenePlan.map((scene) => scene.id).join(", ")}. Do not repeat a scenePlanItemId, even when one Scene owns multiple Story Beats.`,
+      "State continuity is exact. Every state subjectId must be a supplied Character id or Product id, never the Story id. When a sceneStateDelta has a fromValue, sceneStateIn must contain that dimension and subjectId with the same fromValue. sceneStateOut must contain that dimension and subjectId with the delta value. If a fact is in one Scene sceneStateOut and the next Scene sceneStateIn, the values must match.",
       "Use only exact supplied entity IDs. Never invent Character identity, Product identity, claims, or evidence.",
       "Choose sceneFunction only from the supplied Script Scene Function registry represented by the schema.",
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
       ...(commercial ? [
         "This is COMMERCIAL_STORY. Include narrativeFunction and storyConsequence on every Scene.",
+        "Include one visible ACTION in every Scene. A Scene that changes the product physically must contain exactly one PRODUCT_STATE delta and no other physical delta, and that ACTION must carry the same PRODUCT_STATE delta.",
         "When a Scene changes Story state through the commercial subject, include commercialContribution and a real sceneStateDelta.",
         "Do not replace causal progression with a product showcase.",
       ] : []),
