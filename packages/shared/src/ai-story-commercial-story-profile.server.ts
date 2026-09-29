@@ -216,6 +216,19 @@ export function validateAiStoryCommercialStoryProfile(
     if (policy.commercialIntegration?.naturalnessRationale && !contributions.length) {
       add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "NATURALNESS_RATIONALE_INSUFFICIENT", "Freeform naturalness rationale is evidence only and cannot pass commercial integration");
     }
+    for (const scene of script.scenes) {
+      const spoken = new Set(
+        scene.entries.filter((entry) => entry.type === "DIALOGUE").map((entry) => normalize(entry.line)),
+      );
+      for (const entry of scene.entries) {
+        if (entry.type !== "ACTION" || spoken.size === 0) continue;
+        const words = entry.action.trim().split(/\s+/).filter(Boolean);
+        const copiesSpokenLine = spoken.has(normalize(entry.action)) || spoken.has(normalize(entry.storyEffect));
+        if (words.length < 4 && copiesSpokenLine) {
+          add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "DIALOGUE_ONLY_VISIBLE_ACTION", `Scene ${scene.scriptSceneId} uses spoken dialogue as its visible action`);
+        }
+      }
+    }
   }
 
   const payoffScene = script.scenes.some((scene) => {

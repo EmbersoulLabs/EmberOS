@@ -6,6 +6,7 @@ import {
   AiStoryScriptStateDeltaSchema,
   AiStoryScriptStateFactSchema,
   carryForwardUnchangedScriptSceneState,
+  detachOffScreenSuppliedDialogue,
   dropUnchangedPhysicalScriptChanges,
   AiStoryCommercialSceneContributionSchema,
   AiStoryNarrativeFunctionSchema,
@@ -221,6 +222,7 @@ export async function generateAiStoryScriptSemanticProposalV1(
         "Every Scene has a required visibleAction. Its objectId is the product authority ID when a product is in use. Put dialogue in followingEntries. Dialogue that mentions the product is not commercial integration.",
         "Do not emit a POSSESSION, LOCATION, or PHYSICAL_CONDITION delta when that value stays the same. A spoken line is not a physical state change.",
         "If a supplied dialogue speaker name is not a characterAuthorities name, the line is off-screen. Put that exact line in visibleAction.storyEffect or newInformation. Do not assign it to the on-screen character.",
+        "visibleAction.action must describe a visible physical action in at least four words. It must not be a single verb and must not copy a spoken line. Dialogue that mentions the product is not that action.",
         "Include commercialContribution on every Scene where that ACTION happens. preState and postState must differ. Do not replace the narrative with a product showcase, catalog shot, or detached cutaway.",
         "When the product remains in use, keep its physical state fact identical across Scenes. Do not invent a new product state just to start the next Scene.",
       ] : []),
@@ -248,11 +250,15 @@ export async function generateAiStoryScriptSemanticProposalV1(
   const ordered = input.scenePlan.map((scene) =>
     canonicalized.scenes.find((item) => item.scenePlanItemId === scene.id),
   );
+  const continued = ordered.every((scene) => scene)
+    ? dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(ordered as NonNullable<(typeof ordered)[number]>[]))
+    : canonicalized.scenes;
   const semanticProposal = AiStoryScriptSemanticProposalV1Schema.parse({
     ...canonicalized,
-    scenes: ordered.every((scene) => scene)
-      ? dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(ordered as NonNullable<(typeof ordered)[number]>[]))
-      : canonicalized.scenes,
+    scenes: detachOffScreenSuppliedDialogue(continued, {
+      characterNames: input.characterAuthorities.map((authority) => authority.name),
+      suppliedDialogue: input.creativeContext.narrativeContext.dialogue,
+    }),
   });
   if (input.episodeIntent?.nativeCharacterDialogue) {
     const dialogue = evaluateNativeDialogueIntent({

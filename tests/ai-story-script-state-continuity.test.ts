@@ -3,6 +3,7 @@ import {
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   CreativeContextSchema,
   carryForwardUnchangedScriptSceneState,
+  detachOffScreenSuppliedDialogue,
   dropUnchangedPhysicalScriptChanges,
   validateAiStoryScript,
   type AiStoryOutlineVersion,
@@ -230,6 +231,48 @@ describe("commercial script state continuity", () => {
       },
     }]);
     expect(sceneWithContribution!.commercialContribution).toBeUndefined();
+  });
+
+  it("moves an unbound speaker line out of on-screen dialogue", () => {
+    const product = held("holding the same product");
+    const [kept] = detachOffScreenSuppliedDialogue([
+      {
+        ...scene({ scenePlanItemId: "scene-001", sceneStateIn: [product], sceneStateOut: [product] }),
+        entries: [
+          {
+            type: "ACTION",
+            subjectId: IDS.character,
+            objectId: IDS.product,
+            action: "She keeps holding the fan toward her face.",
+            storyEffect: "The airflow stays visible.",
+          },
+          {
+            type: "DIALOGUE",
+            speakerId: IDS.character,
+            line: "Yuki! That order you forgot already ah?!",
+            language: "en-SG",
+          },
+          {
+            type: "DIALOGUE",
+            speakerId: IDS.character,
+            line: "Hah?!",
+            language: "en-SG",
+          },
+        ],
+      },
+    ], {
+      characterNames: ["Yuki"],
+      suppliedDialogue: [
+        { speaker: "Yuki", line: "Hah?!" },
+        { speaker: "off-screen boss", line: "Yuki! That order you forgot already ah?!" },
+      ],
+    });
+    expect(kept!.entries.map((entry) => entry.type === "DIALOGUE" ? entry.line : entry.action)).toEqual([
+      "She keeps holding the fan toward her face.",
+      "Hah?!",
+    ]);
+    expect(kept!.newActionOutcomes).toBeDefined();
+    expect(kept!.newInformation).toContain("Yuki! That order you forgot already ah?!");
   });
 
   it("rebases an ACTION stateDelta together with the scene delta", () => {
