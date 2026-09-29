@@ -117,6 +117,35 @@ export type AiStoryAssetLinkUsagePlan = z.infer<
  * Read projection only. Stored legacy rows remain "reference".
  * New writes use generic_reference when the intake role is generic.
  */
+export const AI_STORY_EXPLICIT_ROLE_HINTS = [
+  "PRODUCT_SOURCE",
+  "LOCATION_REFERENCE",
+  "BRAND_REFERENCE",
+  "STYLE_REFERENCE",
+  "GENERIC_REFERENCE",
+  "REFERENCE",
+] as const;
+
+export type AiStoryExplicitRoleHint = (typeof AI_STORY_EXPLICIT_ROLE_HINTS)[number];
+
+/** Planning hint for one persisted usage. Legacy "reference" stays REFERENCE. */
+export function explicitRoleHintForAiStoryUsage(usageType: string): AiStoryExplicitRoleHint {
+  switch (usageType) {
+    case "product_source":
+      return "PRODUCT_SOURCE";
+    case "location_reference":
+      return "LOCATION_REFERENCE";
+    case "brand_reference":
+      return "BRAND_REFERENCE";
+    case "style_reference":
+      return "STYLE_REFERENCE";
+    case "generic_reference":
+      return "GENERIC_REFERENCE";
+    default:
+      return "REFERENCE";
+  }
+}
+
 export function projectLegacyAiStoryAssetUsage(
   usageType: AiStoryAssetUsageType
 ): Exclude<AiStoryAssetUsageType, "reference"> {
