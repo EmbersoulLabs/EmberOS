@@ -1,7 +1,9 @@
 import {
+  AiStoryOutlineAuthorityService,
   AiStoryScriptAuthorityService,
   AiStoryScriptSemanticProposalAuthorityService,
   resolveCurrentFrozenOutlineForStoryVersion,
+  type AiStoryOutlineScope,
   type AiStoryScriptScope,
   getDb,
 } from "@ceo-agent/db";
@@ -29,6 +31,7 @@ import {
   buildAiStoryScriptVersion,
   computeAiStoryScriptSemanticInputFingerprint,
   computeAiStoryScriptSourceHash,
+  isServerCompiledParticipationDrift,
   promoteAiStoryScriptSemanticProposalV1,
   validateAiStoryCommercialStoryProfile,
 } from "@ceo-agent/shared/server";
@@ -87,6 +90,7 @@ export type CanonicalScriptProducerDependencies = {
     authorizedAt: string,
     profileId: "PRODUCT_STORY" | "COMMERCIAL_STORY",
   ) => Promise<void>;
+  resolveOutlineHistory?: (db: Db, scope: AiStoryOutlineScope) => Promise<AiStoryOutlineVersion[]>;
   now: () => string;
 };
 
@@ -118,6 +122,7 @@ const defaultDependencies: CanonicalScriptProducerDependencies = {
       authorizedAt,
     });
   },
+  resolveOutlineHistory: (db, scope) => new AiStoryOutlineAuthorityService(db).history(scope),
   now: () => new Date().toISOString(),
 };
 
@@ -155,10 +160,18 @@ type AuthorizedSemanticProposal = {
   profileId?: "PRODUCT_STORY" | "COMMERCIAL_STORY";
 };
 
-function requireCommercialSemanticAuthority(
+/**
+ * Reuse an authorized proposal when the fingerprint still matches, or when the
+ * only outline change is the server-compiled participation kind. Any other
+ * mismatch stays stale and does not call the script model.
+ */
+async function resolveReusableCommercialProposal(
+  input: EnsureCurrentFrozenCanonicalScriptInput,
+  outline: AiStoryOutlineVersion,
   persisted: AuthorizedSemanticProposal | null,
   semanticInputFingerprint: string,
-): AiStoryScriptSemanticProposalV1 {
+  deps: CanonicalScriptProducerDependencies,
+): Promise<AiStoryScriptSemanticProposalV1> {
   if (!persisted) {
     throw new AiStoryCanonicalScriptProducerError(
       "COMMERCIAL_STORY_SCRIPT_SEMANTIC_AUTHORITY_REQUIRED",
@@ -178,13 +191,36 @@ function requireCommercialSemanticAuthority(
       "Persisted COMMERCIAL_STORY semantic proposal failed integrity validation.",
     );
   }
-  if (persisted.semanticInputFingerprint !== semanticInputFingerprint) {
-    throw new AiStoryCanonicalScriptProducerError(
-      "CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE",
-      "Authorized semantic Script proposal does not match this Story Version input",
-    );
+  if (persisted.semanticInputFingerprint === semanticInputFingerprint) return parsed.data;
+  const scope: AiStoryScriptScope = {
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    storyVersionId: input.storyVersionId,
+    actorUserId: input.actorUserId,
+    requireCurrentFrozenStoryVersion: true,
+  };
+  const latest = (await deps.history(input.db, scope)).at(-1);
+  if (
+    latest?.status === "FROZEN"
+    && latest.semanticInputFingerprint === semanticInputFingerprint
+    && latest.outlineVersionId === outline.outlineVersionId
+    && latest.outlineSourceHash === outline.sourceHash
+  ) {
+    return parsed.data;
   }
-  return parsed.data;
+  const previousOutline = latest && latest.outlineVersionId !== outline.outlineVersionId
+    ? (await (deps.resolveOutlineHistory ?? defaultDependencies.resolveOutlineHistory!)(input.db, scope))
+      .find((item) => item.outlineVersionId === latest.outlineVersionId)
+    : undefined;
+  if (previousOutline && isServerCompiledParticipationDrift(previousOutline.commercialStoryProfile, outline.commercialStoryProfile)) {
+    return parsed.data;
+  }
+  throw new AiStoryCanonicalScriptProducerError(
+    "CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE",
+    "Authorized semantic Script proposal does not match this Story Version input",
+  );
 }
 
 /**
@@ -304,7 +340,7 @@ export async function produceAuthorizedCommercialStoryScriptProposal(
   const persisted = await (deps.resolveAuthorizedProposal ?? (async () => null))(input.db, scope);
   if (persisted) {
     return {
-      proposal: requireCommercialSemanticAuthority(persisted, semanticInputFingerprint),
+      proposal: await resolveReusableCommercialProposal(input, outline, persisted, semanticInputFingerprint, deps),
       semanticInputFingerprint,
       usage: zeroUsage(),
       semanticWriterCalled: false,
@@ -410,7 +446,9 @@ export async function ensureCurrentFrozenCanonicalScript(
   const persistedEarly = commercial
     ? await (deps.resolveAuthorizedProposal ?? (async () => null))(input.db, scope)
     : null;
-  const commercialProposal = commercial ? requireCommercialSemanticAuthority(persistedEarly, semanticInputFingerprint) : null;
+  const commercialProposal = commercial
+    ? await resolveReusableCommercialProposal(input, outline, persistedEarly, semanticInputFingerprint, deps)
+    : null;
   if (latest?.status === "SUPERSEDED") {
     throw new AiStoryCanonicalScriptProducerError("CANONICAL_SCRIPT_LINEAGE_INVALID", "Latest durable Script cannot be SUPERSEDED without a successor");
   }

@@ -2,9 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   compileInheritedCommercialMustKeep,
-  resolveCommercialActionParticipation,
+  computeAiStoryScriptSemanticInputFingerprint,
+  isServerCompiledParticipationDrift,
+  planningPackageIsStaleForCompiledOutline,
 } from "@ceo-agent/shared/server";
-import { computeAiStoryScriptSemanticInputFingerprint } from "@ceo-agent/shared/server";
+import { resolveCommercialActionParticipation } from "@ceo-agent/shared/server";
 
 const useIntent = "The character holds the product and uses it. Show cooling through hair movement.";
 const revealIntent = "Reveal the product on a shelf and display it for the audience.";
@@ -118,6 +120,57 @@ describe("commercial constraint inheritance", () => {
       },
     });
     expect(withIntent).not.toBe(withoutIntent);
+  });
+
+  it("15 recompiles reveal to enable only when preserved intent requires physical use", () => {
+    const shared = {
+      userCreativeIntent: ["The character holds the product. Show airflow movement."],
+      commercialIntegration: {
+        commercialAuthorityRefs: ["11111111-1111-4111-8111-111111111111"],
+        integrationType: "PRODUCT" as const,
+        entryPoint: { kind: "BEAT_ID" as const, beatId: "22222222-2222-4222-8222-222222222222" },
+        narrativeFunction: "PRODUCT_INTERVENTION",
+        preIntegrationState: "before",
+        postIntegrationState: "after",
+        storyConsequence: "The product stays in the action.",
+        audienceUnderstanding: "The audience sees the use.",
+        naturalnessRationale: "The use is part of the scene.",
+        commercialActionOrParticipation: "REVEAL" as const,
+      },
+    };
+    const next = structuredClone(shared);
+    next.commercialIntegration.commercialActionOrParticipation = "ENABLE";
+    expect(isServerCompiledParticipationDrift(shared as never, next as never)).toBe(true);
+    const passive = structuredClone(shared);
+    passive.userCreativeIntent = ["Reveal the product on a shelf."];
+    passive.commercialIntegration.commercialActionOrParticipation = "REVEAL";
+    const passiveNext = structuredClone(passive);
+    const changedIntent = structuredClone(next);
+    changedIntent.userCreativeIntent = ["A different obligation."];
+    expect(isServerCompiledParticipationDrift(shared as never, changedIntent as never)).toBe(false);
+    expect(isServerCompiledParticipationDrift(passive as never, passiveNext as never)).toBe(false);
+    expect(resolveCommercialActionParticipation(passive.userCreativeIntent[0]!)).toBe("REVEAL");
+  });
+
+  it("16 a stale shot plan does not keep an outdated compiled participation", () => {
+    expect(planningPackageIsStaleForCompiledOutline({
+      packageCreatedAt: "2026-09-29T02:00:00.000Z",
+      outlineFrozenAt: "2026-09-29T01:00:00.000Z",
+      storedParticipation: "REVEAL",
+      userCreativeIntent: ["The character holds the product."],
+    })).toBe(true);
+    expect(planningPackageIsStaleForCompiledOutline({
+      packageCreatedAt: "2026-09-29T03:00:00.000Z",
+      outlineFrozenAt: "2026-09-29T02:00:00.000Z",
+      storedParticipation: "REVEAL",
+      userCreativeIntent: ["Reveal the product on a shelf."],
+    })).toBe(false);
+    expect(planningPackageIsStaleForCompiledOutline({
+      packageCreatedAt: "2026-09-29T02:00:00.000Z",
+      outlineFrozenAt: "2026-09-29T03:00:00.000Z",
+      storedParticipation: "ENABLE",
+      userCreativeIntent: ["The character holds the product."],
+    })).toBe(true);
   });
 
   it("14 omitting episode intent preserves the historical fingerprint input", () => {

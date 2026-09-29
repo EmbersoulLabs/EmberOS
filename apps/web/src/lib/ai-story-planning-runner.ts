@@ -4,6 +4,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import {
   AiStoryCharacterAuthorityService,
+  resolveCurrentFrozenOutlineForStoryVersion,
   AiStoryAssetMatchingRepository,
   BillingAccountRepositoryImpl,
   ControlledSelfUseAuthorityService,
@@ -46,6 +47,7 @@ import {
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
 import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
+import { planningPackageIsStaleForCompiledOutline } from "@ceo-agent/shared/server";
 import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
 import { ensureCurrentFrozenCanonicalScript, produceAuthorizedCommercialStoryScriptProposal } from "@/lib/ai-story-canonical-script-producer";
 import { ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
@@ -305,6 +307,27 @@ async function reuseDurablePlanningStage(input: {
   }
   const draft = readPlanningDraftFromPackage(latestPackage);
   if (!draft || !planningStageIsDurable(draft, input.stage)) return null;
+  if (
+    (input.stage === "shot_plan" || input.stage === "character_continuity" || input.stage === "world_continuity")
+    && input.ctx.loaded.currentVersion
+  ) {
+    const outline = await resolveCurrentFrozenOutlineForStoryVersion(input.db, {
+      orgId: input.ctx.campaign.orgId,
+      workspaceId: input.ctx.campaign.workspaceId,
+      campaignId: input.campaignId,
+      storyId: input.storyId,
+      storyVersionId: input.ctx.loaded.currentVersion.id,
+    }).catch(() => null);
+    const policy = outline?.commercialStoryProfile;
+    if (outline && planningPackageIsStaleForCompiledOutline({
+      packageCreatedAt: latestPackage.createdAt,
+      outlineFrozenAt: outline.frozenAt,
+      storedParticipation: policy?.commercialIntegration?.commercialActionOrParticipation,
+      userCreativeIntent: policy?.userCreativeIntent,
+    })) {
+      return null;
+    }
+  }
   if (draft.creativeContext) {
     try {
       assertPlanningCharacterAuthorityCurrent({
