@@ -130,6 +130,30 @@ export const AiStoryCharacterDnaSchema = z
   })
   .strict();
 
+export const CHARACTER_DNA_FAILURE_CODES = [
+  "CHARACTER_DNA_PROVIDER_CALL_FAILED",
+  "CHARACTER_DNA_JSON_PARSE_FAILED",
+  "CHARACTER_DNA_SCHEMA_VALIDATION_FAILED",
+  "SENSITIVE_TRAIT_INFERENCE_BLOCKED",
+  "CHARACTER_DNA_IMAGE_GENERATION_BLOCKED",
+  "CHARACTER_DNA_ANALYSIS_INVALID",
+  "CHARACTER_DNA_UNKNOWN_FAILURE",
+] as const;
+
+export const CHARACTER_DNA_FAILURE_STAGES = [
+  "PROVIDER",
+  "JSON_PARSE",
+  "SANITIZE",
+  "SCHEMA",
+  "SAFETY",
+  "UNKNOWN",
+] as const;
+
+const FailureCode = z.enum(CHARACTER_DNA_FAILURE_CODES).nullable().default(null);
+const FailureStage = z.enum(CHARACTER_DNA_FAILURE_STAGES).nullable().default(null);
+const SafeDiagnosticId = z.string().trim().min(1).max(120).regex(/^[A-Za-z0-9._:-]+$/).nullable().default(null);
+const SafeFieldPath = z.string().trim().min(1).max(160).regex(/^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)*$/);
+
 export const AiStoryCharacterDnaAnalysisJobSchema = z
   .object({
     id: Id,
@@ -157,6 +181,13 @@ export const AiStoryCharacterDnaAnalysisJobSchema = z
     reusableCharacterId: Id.nullable(),
     reusableCharacterVersionId: Id.nullable(),
     userSafeError: z.string().max(400).nullable(),
+    failureCode: FailureCode,
+    failureStage: FailureStage,
+    failureFieldPaths: z.array(SafeFieldPath).max(32).nullable().default(null),
+    providerRequestId: SafeDiagnosticId,
+    requestedModelId: SafeDiagnosticId,
+    providerModelId: SafeDiagnosticId,
+    outputFingerprint: Hash.nullable().default(null),
     createdBy: Id,
     createdAt: z.string().datetime(),
     completedAt: z.string().datetime().nullable(),
@@ -190,6 +221,7 @@ export const AiStoryCharacterDnaPublicJobSchema = z
     costUsd: z.string().nullable(),
     imageGenerationCalls: z.literal(0),
     userSafeError: z.string().nullable(),
+    failureCode: FailureCode,
   })
   .strict();
 
@@ -198,11 +230,24 @@ export type AiStoryCharacterDnaAnalysisJob = z.infer<typeof AiStoryCharacterDnaA
 export type AiStoryCharacterDnaCostEstimate = z.infer<typeof AiStoryCharacterDnaCostEstimateSchema>;
 export type AiStoryCharacterDnaPublicJob = z.infer<typeof AiStoryCharacterDnaPublicJobSchema>;
 export type AiStoryCharacterIdentityMode = (typeof AI_STORY_CHARACTER_IDENTITY_MODES)[number];
+export type CharacterDnaFailureCode = (typeof CHARACTER_DNA_FAILURE_CODES)[number];
+export type CharacterDnaFailureStage = (typeof CHARACTER_DNA_FAILURE_STAGES)[number];
+
+export type CharacterDnaAnalysisFailureDiagnostic = {
+  failureCode: CharacterDnaFailureCode;
+  failureStage: CharacterDnaFailureStage;
+  failureFieldPaths: string[] | null;
+  providerRequestId: string | null;
+  requestedModelId: string | null;
+  providerModelId: string | null;
+  outputFingerprint: string | null;
+};
 
 export class AiStoryCharacterDnaError extends Error {
   constructor(
     readonly code: string,
-    message: string
+    message: string,
+    readonly failureDiagnostic?: CharacterDnaAnalysisFailureDiagnostic
   ) {
     super(message);
     this.name = "AiStoryCharacterDnaError";
@@ -272,6 +317,7 @@ export function publicCharacterDnaJob(job: AiStoryCharacterDnaAnalysisJob): AiSt
     costUsd: job.costUsd,
     imageGenerationCalls: job.imageGenerationCalls,
     userSafeError: job.userSafeError,
+    failureCode: job.failureCode,
   });
 }
 
