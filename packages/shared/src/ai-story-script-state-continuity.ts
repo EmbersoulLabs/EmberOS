@@ -28,6 +28,9 @@ export function carryForwardUnchangedScriptSceneState(
     sceneStateIn: scene.sceneStateIn.map((fact) => ({ ...fact })),
     sceneStateDeltas: scene.sceneStateDeltas.map((delta) => ({ ...delta })),
     sceneStateOut: scene.sceneStateOut.map((fact) => ({ ...fact })),
+    entries: scene.entries.map((entry) => entry.type === "ACTION" && entry.stateDelta
+      ? { ...entry, stateDelta: { ...entry.stateDelta } }
+      : { ...entry }),
   }));
 
   for (let index = 1; index < next.length; index += 1) {
@@ -52,8 +55,20 @@ export function carryForwardUnchangedScriptSceneState(
         (item) => keyOf(item) === key && item.fromValue === incoming.value,
       );
       if (!delta) continue;
+      const previousFrom = incoming.value;
       incoming.value = fact.value;
       delta.fromValue = fact.value;
+      for (const entry of scene.entries) {
+        if (
+          entry.type === "ACTION"
+          && entry.stateDelta
+          && keyOf(entry.stateDelta) === key
+          && entry.stateDelta.fromValue === previousFrom
+          && entry.stateDelta.value === delta.value
+        ) {
+          entry.stateDelta.fromValue = fact.value;
+        }
+      }
     }
   }
 
