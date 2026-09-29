@@ -33,6 +33,7 @@ export type ProductBackgroundSuitabilitySourceAuthority = {
   productAuthorityId: string;
   sourceAssetId: string;
   sourceAssetContentHash: string;
+  confirmedVariant?: string | null;
   mimeType: string;
 };
 
@@ -74,6 +75,7 @@ export function deriveProductBackgroundSuitabilityAuthority(input: {
     productAuthorityId: input.source.productAuthorityId,
     sourceAssetId: input.source.sourceAssetId,
     sourceAssetContentHash: expectedHash,
+    ...(input.source.confirmedVariant ? { confirmedVariant: input.source.confirmedVariant } : {}),
     mimeType: input.source.mimeType,
     inspectionVersion: PRODUCT_TRANSPARENCY_INSPECTION_POLICY.version,
     inspection: {

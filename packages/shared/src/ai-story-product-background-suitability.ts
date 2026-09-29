@@ -42,6 +42,7 @@ export const ProductBackgroundSuitabilityAuthoritySchema = z
     productAuthorityId: z.string().uuid(),
     sourceAssetId: z.string().uuid(),
     sourceAssetContentHash: SourceAssetContentHashSchema,
+    confirmedVariant: z.string().trim().min(1).max(80).optional(),
     mimeType: z.string().min(1),
     inspectionVersion: z.literal(PRODUCT_TRANSPARENCY_INSPECTION_POLICY.version),
     inspection: z

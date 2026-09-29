@@ -56,6 +56,7 @@ export const AiStoryResolvedProductAuthoritySchema = z.object({
   productAuthorityId: Id,
   sourceAssetId: Id,
   sourceAssetContentHash: Hash,
+  confirmedVariant: z.string().trim().min(1).max(80).optional(),
   displayName: Text.max(300),
   identityFacts: z.array(Text).min(1),
   visibleEvidenceGoals: z.array(Text),

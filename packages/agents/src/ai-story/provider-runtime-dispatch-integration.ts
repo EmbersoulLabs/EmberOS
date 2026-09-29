@@ -904,8 +904,16 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       ...(groundedFacts.length > 0
         ? [{ section: "REQUIRED_EVIDENCE" as const, facts: groundedFacts }]
         : []),
-      ...(observedVisualClaims.length > 0
-        ? [{ section: "PRODUCT_AUTHORITY" as const, facts: observedVisualClaims }]
+      ...((productMaterial?.productAuthority.confirmedVariant || observedVisualClaims.length > 0)
+        ? [{
+            section: "PRODUCT_AUTHORITY" as const,
+            facts: [
+              ...(productMaterial?.productAuthority.confirmedVariant
+                ? [`confirmedVariant=${productMaterial.productAuthority.confirmedVariant}`]
+                : []),
+              ...observedVisualClaims,
+            ],
+          }]
         : []),
       ...(input.instructions.continuityNotes
         ? [{ section: "ENTRY_STATE" as const, facts: [input.instructions.continuityNotes] }]

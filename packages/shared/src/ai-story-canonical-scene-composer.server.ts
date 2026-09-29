@@ -40,6 +40,7 @@ export class AiStoryCanonicalSceneComposerError extends Error {
 export type AiStoryCanonicalSceneProductSourceV1 = {
   assetId: string;
   contentHash: string;
+  confirmedVariant?: string | null;
 };
 
 export type ComposeAiStoryCanonicalSceneSetV1Input = {
@@ -167,6 +168,7 @@ function candidateInput(
       productAuthorityId,
       sourceAssetId: source.assetId,
       sourceAssetContentHash: source.contentHash,
+      ...(source.confirmedVariant ? { confirmedVariant: source.confirmedVariant } : {}),
       visualIdentityRequirement: productRequirement(scriptScene, productAuthorityId),
     };
   });

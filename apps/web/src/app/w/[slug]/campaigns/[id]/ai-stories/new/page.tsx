@@ -67,6 +67,7 @@ export default function CreateAiStoryPage() {
           styleAssetIds: payload.styleAssetIds,
           genericAssetIds: payload.genericAssetIds,
           characterPortraitAssetIds: payload.characterPortraitAssetIds,
+          productVariantSelections: payload.productVariantSelections,
           mappingConfirmed: payload.mappingConfirmed,
           episodeIntent: {
             episodeType: payload.episodeIntent.episodeType,

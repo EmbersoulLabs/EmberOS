@@ -10,7 +10,9 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
 import {
+  AiStoryProductVariantAuthorityError,
   assertCampaignAssets,
+  confirmedProductVariantsForIntake,
   ensureCampaignLibraryAvailability,
   listCampaignAiStories,
   replaceAiStoryAssetLinks,
@@ -78,6 +80,13 @@ export async function POST(
       assetIds,
       productAssetIds,
     });
+    const confirmedVariants = await confirmedProductVariantsForIntake(db, {
+      workspaceId: campaign.workspaceId,
+      productAssetIds,
+      userIntent: parsed.data.originalIdea,
+      selections: parsed.data.productVariantSelections,
+      confirmed: parsed.data.mappingConfirmed === true,
+    });
 
     const [story] = await db
       .insert(schema.aiStories)
@@ -98,11 +107,12 @@ export async function POST(
 
     if (!story) return apiError("Failed to create AI Story", "INTERNAL", 500);
     if (assetIds.length) {
-      await replaceAiStoryAssetLinks(db, story.id, assetIds, productAssetIds, parsed.data);
+      await replaceAiStoryAssetLinks(db, story.id, assetIds, productAssetIds, parsed.data, confirmedVariants);
     }
 
     return apiSuccess({ story }, 201);
   } catch (error) {
+    if (error instanceof AiStoryProductVariantAuthorityError) return apiError(error.message, error.code, 409);
     return handleApiError(error);
   }
 }

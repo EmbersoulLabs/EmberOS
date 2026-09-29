@@ -60,6 +60,7 @@ export * from "./ai-story";
 export * from "./ai-story-status-convergence";
 export * from "./ai-story-asset-usage";
 export * from "./ai-story-product-planning";
+export * from "./ai-story-product-variant";
 export * from "./ai-story-product-background-suitability";
 export * from "./ai-story-product-derivative-resolution";
 export * from "./ai-story-product-visual-material-selection";

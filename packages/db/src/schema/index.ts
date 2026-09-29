@@ -1739,6 +1739,8 @@ export const aiStoryAssetLinks = pgTable(
       .notNull()
       .references(() => assets.id, { onDelete: "restrict" }),
     usageType: text("usage_type").notNull().default("reference"),
+    /** Confirmed product appearance. Null on legacy rows and non-product roles. */
+    confirmedVariant: text("confirmed_variant"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

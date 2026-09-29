@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { resolveProductVariantMapping, type AiStoryProductVariantStatus } from "./ai-story-product-variant";
 
 export const AI_STORY_ASSET_USAGE_TYPES = [
   "reference",
@@ -61,6 +62,10 @@ export const AiStoryAssetSelectionSchema = z
     genericAssetIds: UniqueAssetIdsSchema.default([]),
     assetBindings: z.array(AiStoryModuleAssetBindingSchema).max(32).optional(),
     characterPortraitAssetIds: UniqueAssetIdsSchema.default([]),
+    productVariantSelections: z.array(z.object({
+      assetId: z.string().uuid(),
+      variant: z.string().trim().min(1).max(80),
+    }).strict()).max(32).default([]),
     mappingConfirmed: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
@@ -207,7 +212,7 @@ export function planAiStoryAssetLinkUsage(
 export type AiStoryIntakeAssetLabel = {
   assetId: string;
   label: string;
-  variant?: string | null;
+  variantCandidates?: readonly string[];
 };
 
 export type AiStoryIntakeAuthority = {
@@ -218,7 +223,14 @@ export type AiStoryIntakeAuthority = {
     portraitAssetId: string | null;
     identityLocked: true;
   } | null;
-  products: { assetId: string; label: string; variant: string | null; role: "product_source" }[];
+  products: {
+    assetId: string;
+    label: string;
+    variant: string | null;
+    variantStatus: AiStoryProductVariantStatus;
+    role: "product_source";
+    code?: "PRODUCT_VARIANT_CONFLICT" | "PRODUCT_VARIANT_UNRESOLVED";
+  }[];
   locations: { assetId: string; label: string; role: "location_reference" }[];
   other: { assetId: string; label: string; role: Exclude<AiStoryModuleAssetRole, "product_source" | "location_reference"> }[];
   offscreenSpeaker: { name: string; visualReference: false } | null;
@@ -236,6 +248,7 @@ export function compileAiStoryIntakeAuthority(input: {
     portraitAssetId?: string | null;
   } | null;
   offscreenSpeaker?: string | null;
+  userIntent?: string | null;
 }): AiStoryIntakeAuthority {
   const portraits = [
     ...(input.selection.characterPortraitAssetIds ?? []),
@@ -246,8 +259,13 @@ export function compileAiStoryIntakeAuthority(input: {
   const bindings = planAiStoryAssetLinkUsage(selection);
   const labelFor = (assetId: string) => labels.get(assetId)?.label ?? assetId;
   const variantFor = (assetId: string) => {
-    const variant = labels.get(assetId)?.variant?.trim();
-    return variant ? variant : null;
+    const selected = selection.productVariantSelections.find((item) => item.assetId === assetId)?.variant;
+    return resolveProductVariantMapping({
+      candidates: labels.get(assetId)?.variantCandidates ?? [],
+      userIntent: input.userIntent,
+      selectedVariant: selected,
+      confirmed: selection.mappingConfirmed === true,
+    });
   };
   return {
     character: input.character
@@ -264,7 +282,9 @@ export function compileAiStoryIntakeAuthority(input: {
       .map((binding) => ({
         assetId: binding.assetId,
         label: labelFor(binding.assetId),
-        variant: variantFor(binding.assetId),
+        variant: variantFor(binding.assetId).variant,
+        variantStatus: variantFor(binding.assetId).status,
+        ...(variantFor(binding.assetId).code ? { code: variantFor(binding.assetId).code } : {}),
         role: "product_source" as const,
       })),
     locations: bindings
