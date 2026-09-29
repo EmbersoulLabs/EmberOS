@@ -345,6 +345,7 @@ export function EpisodeCreateForm({
         ) : null}
       </fieldset>
 
+      <h2 className="text-sm font-semibold text-navy">References</h2>
       <AssetSlot title="Product" role="product_source" assets={assets} selected={productAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("product_source", file)} />
       <AssetSlot title="Location" role="location_reference" assets={assets} selected={locationAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("location_reference", file)} />
       <AssetSlot title="Brand" role="brand_reference" assets={assets} selected={brandAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("brand_reference", file)} />
