@@ -68,6 +68,25 @@ export function projectAcceptedCharactersToPlanning(input: {
     .sort((left, right) => left.characterId.localeCompare(right.characterId));
 }
 
+/**
+ * Story planning uses the Characters already bound by Creative Context.
+ * Other campaign Characters, including another projection of the same name,
+ * stay in the campaign and are not Script speakers or state subjects.
+ * When Creative Context has not bound a canonical Character, the campaign set remains.
+ */
+export function selectStoryBoundCharacterAuthorities(input: {
+  characterAuthorities: readonly PlanningCharacterAuthorityProjection[];
+  creativeContext?: CreativeContext | null;
+}): PlanningCharacterAuthorityProjection[] {
+  const boundIds = new Set(
+    (input.creativeContext?.characterContext.characters ?? [])
+      .map((character) => character.canonicalAuthority?.characterId)
+      .filter((characterId): characterId is string => Boolean(characterId)),
+  );
+  if (boundIds.size === 0) return [...input.characterAuthorities];
+  return input.characterAuthorities.filter((authority) => boundIds.has(authority.characterId));
+}
+
 function normalizedName(value: string): string {
   return value.trim().toLocaleLowerCase("en-US");
 }

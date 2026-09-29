@@ -27,6 +27,7 @@ import {
   withControlledSelfUseProviderContext,
   projectAcceptedCharactersToPlanning,
   projectStoryProductSourcesToPlanning,
+  selectStoryBoundCharacterAuthorities,
 } from "@ceo-agent/agents";
 import {
   AiStoryEpisodeIntentAuthoritySchema,
@@ -572,6 +573,10 @@ export async function runSinglePlanningStage(input: {
           actorUserId: input.actorUserId,
           proposedStoryBeats: draft.storyBeats!,
         });
+        const storyCharacterAuthorities = selectStoryBoundCharacterAuthorities({
+          characterAuthorities: ctx.characterAuthorities,
+          creativeContext: draft.creativeContext,
+        });
         if (ctx.loaded.story.outlineProfile?.profileId === "COMMERCIAL_STORY") {
           const episodeIntent = AiStoryEpisodeIntentAuthoritySchema.safeParse(ctx.loaded.story.episodeIntent);
           const authored = await produceAuthorizedCommercialStoryScriptProposal({
@@ -587,7 +592,7 @@ export async function runSinglePlanningStage(input: {
             scenePlan: draft.scenePlan!,
             creativeContext: draft.creativeContext!,
             directorThinking: draft.directorThinking!,
-            characterAuthorities: ctx.characterAuthorities,
+            characterAuthorities: storyCharacterAuthorities,
             ...(episodeIntent.success ? { episodeIntent: episodeIntent.data } : {}),
           });
           usage = addUsage(usage, authored.usage);
@@ -606,7 +611,7 @@ export async function runSinglePlanningStage(input: {
           scenePlan: draft.scenePlan!,
           creativeContext: draft.creativeContext!,
           directorThinking: draft.directorThinking!,
-          characterAuthorities: ctx.characterAuthorities,
+          characterAuthorities: storyCharacterAuthorities,
         });
         canonicalScript = canonical.script;
         usage = addUsage(usage, canonical.usage);

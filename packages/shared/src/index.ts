@@ -81,6 +81,7 @@ export * from "./ai-story-post-generation-qc";
 export * from "./ai-story-outline";
 export * from "./ai-story-script";
 export * from "./ai-story-script-semantic-writer";
+export * from "./ai-story-script-state-continuity";
 export * from "./ai-story-script-director-handoff";
 export * from "./ai-story-director-plan";
 export * from "./ai-story-episode-dispatch-projection";
