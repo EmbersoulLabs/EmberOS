@@ -6,6 +6,7 @@ import {
   AiStoryScriptStateDeltaSchema,
   AiStoryScriptStateFactSchema,
   carryForwardUnchangedScriptSceneState,
+  dropUnchangedPhysicalScriptChanges,
   AiStoryCommercialSceneContributionSchema,
   AiStoryNarrativeFunctionSchema,
   AiStoryOutlineVersionSchema,
@@ -62,7 +63,16 @@ const ProviderEntriesSchema = z.array(z.discriminatedUnion("type", [
   }).strict(),
 ])).min(1);
 
-function providerOutputSchema(commercial: boolean) {
+const ProviderVisibleActionSchema = z.object({
+  type: z.literal("ACTION"),
+  subjectId: ProviderId,
+  action: ProviderText.max(2000),
+  objectId: ProviderId,
+  storyEffect: ProviderText.max(1000),
+  stateDelta: AiStoryScriptStateDeltaSchema.nullable(),
+}).strict();
+
+export function buildAiStoryScriptSemanticProviderOutputSchema(commercial: boolean) {
   return z.object({
     contractVersion: z.literal(AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION),
     scenes: z.array(z.object({
@@ -72,22 +82,22 @@ function providerOutputSchema(commercial: boolean) {
       sceneStateIn: z.array(AiStoryScriptStateFactSchema),
       sceneStateDeltas: z.array(AiStoryScriptStateDeltaSchema),
       sceneStateOut: z.array(AiStoryScriptStateFactSchema),
-      entries: ProviderEntriesSchema,
       newInformation: z.array(ProviderText.max(1000)),
       newActionOutcomes: z.array(ProviderText.max(1000)),
       ...(commercial
         ? {
+            visibleAction: ProviderVisibleActionSchema,
+            followingEntries: z.array(ProviderEntriesSchema.element).default([]),
             narrativeFunction: AiStoryNarrativeFunctionSchema,
             storyConsequence: ProviderText.max(1000),
-            causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
-            commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
           }
         : {
+            entries: ProviderEntriesSchema,
             narrativeFunction: AiStoryNarrativeFunctionSchema.nullable().optional(),
-            causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
             storyConsequence: ProviderText.max(1000).nullable().optional(),
-            commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
           }),
+      causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
+      commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
     }).strict()).min(1),
   }).strict();
 }
@@ -97,8 +107,17 @@ const VISIBLE_ACTION_SCENE_FUNCTIONS = Object.entries(AI_STORY_SCENE_FUNCTION_RE
   .map(([name]) => name)
   .join(", ");
 
+function providerSceneEntries(scene: {
+  entries?: z.infer<typeof ProviderEntriesSchema>;
+  visibleAction?: z.infer<typeof ProviderVisibleActionSchema>;
+  followingEntries?: z.infer<typeof ProviderEntriesSchema>;
+}) {
+  if (scene.visibleAction) return [scene.visibleAction, ...(scene.followingEntries ?? [])];
+  return scene.entries ?? [];
+}
+
 function canonicalizeProviderProposal(
-  value: z.infer<ReturnType<typeof providerOutputSchema>>,
+  value: z.infer<ReturnType<typeof buildAiStoryScriptSemanticProviderOutputSchema>>,
 ): AiStoryScriptSemanticProposalV1 {
   return AiStoryScriptSemanticProposalV1Schema.parse({
     ...value,
@@ -115,7 +134,7 @@ function canonicalizeProviderProposal(
       ...(scene.causalPreconditions?.length ? { causalPreconditions: scene.causalPreconditions } : {}),
       ...(scene.storyConsequence ? { storyConsequence: scene.storyConsequence } : {}),
       ...(scene.commercialContribution ? { commercialContribution: scene.commercialContribution } : {}),
-      entries: scene.entries.map((entry) => {
+      entries: providerSceneEntries(scene).map((entry) => {
         if (entry.type === "ACTION") {
           const { objectId, stateDelta, ...required } = entry;
           return {
@@ -195,7 +214,9 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
       ...(commercial ? [
         "This is COMMERCIAL_STORY. narrativeFunction and storyConsequence are required on every Scene.",
-        "The commercial subject must participate through a visible ACTION, as the ACTION subject or object. Dialogue that mentions it is not commercial integration.",
+        "Every Scene has a required visibleAction. Its objectId is the product authority ID when a product is in use. Put dialogue in followingEntries. Dialogue that mentions the product is not commercial integration.",
+        "Do not emit a POSSESSION, LOCATION, or PHYSICAL_CONDITION delta when that value stays the same. A spoken line is not a physical state change.",
+        "If a supplied dialogue speaker name is not a characterAuthorities name, the line is off-screen. Put that exact line in visibleAction.storyEffect or newInformation. Do not assign it to the on-screen character.",
         "Include commercialContribution on every Scene where that ACTION happens. preState and postState must differ. Do not replace the narrative with a product showcase, catalog shot, or detached cutaway.",
         "When the product remains in use, keep its physical state fact identical across Scenes. Do not invent a new product state just to start the next Scene.",
       ] : []),
@@ -211,14 +232,14 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(promptInput, null, 2),
-    schema: providerOutputSchema(commercial),
+    schema: buildAiStoryScriptSemanticProviderOutputSchema(commercial),
     schemaName: "ai_story_script_semantic_proposal_v1",
     certificationStage: "script_semantic_writer",
   });
   if (completion.decodeIssue) {
     throw new Error(`SCRIPT_SEMANTIC_WRITER_${completion.decodeIssue}`);
   }
-  const parsed = providerOutputSchema(commercial).parse(completion.result);
+  const parsed = buildAiStoryScriptSemanticProviderOutputSchema(commercial).parse(completion.result);
   const canonicalized = canonicalizeProviderProposal(parsed);
   const ordered = input.scenePlan.map((scene) =>
     canonicalized.scenes.find((item) => item.scenePlanItemId === scene.id),
@@ -226,7 +247,7 @@ export async function generateAiStoryScriptSemanticProposalV1(
   const semanticProposal = AiStoryScriptSemanticProposalV1Schema.parse({
     ...canonicalized,
     scenes: ordered.every((scene) => scene)
-      ? carryForwardUnchangedScriptSceneState(ordered as NonNullable<(typeof ordered)[number]>[])
+      ? dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(ordered as NonNullable<(typeof ordered)[number]>[]))
       : canonicalized.scenes,
   });
   if (input.episodeIntent?.nativeCharacterDialogue) {

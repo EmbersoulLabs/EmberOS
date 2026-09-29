@@ -19,7 +19,7 @@ import {
   promoteAiStoryScriptSemanticProposalV1,
   validateAiStoryProductStoryProfile,
 } from "@ceo-agent/shared/server";
-import { generateAiStoryScriptSemanticProposalV1 } from "../packages/agents/src/ai-story/script-semantic-writer";
+import { buildAiStoryScriptSemanticProviderOutputSchema, generateAiStoryScriptSemanticProposalV1 } from "../packages/agents/src/ai-story/script-semantic-writer";
 
 const id = (n: number) => `96000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
 const I = {
@@ -217,6 +217,11 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     const known = new Set([`CHARACTER:${I.character}`, `PRODUCT:${I.product}`]);
     expect(validateAiStoryScript(script, source, { knownAuthorityReferences: known }).filter((issue) => issue.severity === "BLOCK")).toEqual([]);
     expect(validateAiStoryProductStoryProfile(source, script).filter((issue) => issue.severity === "BLOCK")).toEqual([]);
+  });
+
+  it("requires a commercial visible action instead of dialogue alone", () => {
+    const schema = buildAiStoryScriptSemanticProviderOutputSchema(true);
+    expect(schema.safeParse(structuredProviderProposal()).success).toBe(false);
   });
 
   it("uses one existing model call and returns only a validated proposal", async () => {
