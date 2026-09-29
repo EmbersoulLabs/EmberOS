@@ -190,6 +190,45 @@ describe("commercial script state continuity", () => {
     expect(aligned[1]!.sceneStateIn[0]!.value).toBe(prior.value);
     expect(aligned[1]!.sceneStateDeltas[0]!.fromValue).toBe(prior.value);
   });
+
+  it("rebases an ACTION stateDelta together with the scene delta", () => {
+    const prior = { dimension: "KNOWLEDGE" as const, subjectId: IDS.character, value: "delighted by the product" };
+    const restated = { ...prior, value: "about to mention the price" };
+    const delta = {
+      ...restated,
+      fromValue: restated.value,
+      value: "mentions the price",
+      reason: "The next beat starts",
+    };
+    const aligned = carryForwardUnchangedScriptSceneState([
+      scene({ scenePlanItemId: "scene-001", sceneStateIn: [prior], sceneStateOut: [prior] }),
+      {
+        ...scene({
+          scenePlanItemId: "scene-002",
+          sceneStateIn: [restated],
+          sceneStateDeltas: [delta],
+          sceneStateOut: [{ ...prior, value: "mentions the price" }],
+        }),
+        entries: [{
+          type: "ACTION",
+          subjectId: IDS.character,
+          objectId: IDS.product,
+          action: "The character keeps using the product.",
+          storyEffect: "The product stays in the story.",
+          stateDelta: delta,
+        }],
+      },
+    ]);
+    expect(aligned[1]!.entries[0]).toMatchObject({
+      type: "ACTION",
+      stateDelta: { fromValue: prior.value, value: "mentions the price", reason: "The next beat starts" },
+    });
+    expect(aligned[1]!.sceneStateDeltas[0]).toEqual(
+      aligned[1]!.entries[0] && aligned[1]!.entries[0].type === "ACTION"
+        ? aligned[1]!.entries[0].stateDelta
+        : null,
+    );
+  });
 });
 
 function frozenOutline(): AiStoryOutlineVersion {
