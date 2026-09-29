@@ -4,6 +4,7 @@ import {
   CreateCampaignContextSchema,
   compileAiStoryIntakeAuthority,
   omitCharacterPortraitGenericReferences,
+  explicitRoleHintForAiStoryUsage,
   planAiStoryAssetLinkUsage,
   projectLegacyAiStoryAssetUsage,
 } from "@ceo-agent/shared";
@@ -87,6 +88,8 @@ describe("module-first intake authority", () => {
     ]);
     expect(projectLegacyAiStoryAssetUsage("reference")).toBe("generic_reference");
     expect(projectLegacyAiStoryAssetUsage("product_source")).toBe("product_source");
+    expect(explicitRoleHintForAiStoryUsage("location_reference")).toBe("LOCATION_REFERENCE");
+    expect(explicitRoleHintForAiStoryUsage("reference")).toBe("REFERENCE");
   });
 
   it("lets one asset take a different role in another selection without changing the id", () => {

@@ -15,6 +15,7 @@ import {
   AiStoryAssetAnalysisSnapshotSchema,
   AiStoryAssetRegistryEntrySchema,
   compileStoryAssetGroundingContext,
+  explicitRoleHintForAiStoryUsage,
   matchAnalyzedAssetsToStory,
   visualSemanticFactsFromSnapshot,
   type AiStoryStoryAssetGroundingContext,
@@ -159,8 +160,7 @@ export async function prepareStoryAssetGrounding(input: {
     assets: analyzedAssets.map((entry) => ({
       registry: entry.registry,
       snapshot: entry.snapshot,
-      explicitRoleHint:
-        entry.usageType === "product_source" ? "PRODUCT_SOURCE" : "REFERENCE",
+      explicitRoleHint: explicitRoleHintForAiStoryUsage(entry.usageType),
     })),
   });
   return { context, analyzedAssets, semanticAnalyzerCalls };

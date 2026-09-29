@@ -3,6 +3,10 @@ import {
   AiStoryAssetAnalysisSnapshotSchema,
   AiStoryAssetRegistryEntrySchema,
 } from "./ai-story-asset-aware-execution-planner";
+import {
+  AI_STORY_EXPLICIT_ROLE_HINTS,
+  type AiStoryExplicitRoleHint,
+} from "./ai-story-asset-usage";
 
 export const AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION =
   "ai-story-asset-visual-semantics.v1" as const;
@@ -72,7 +76,7 @@ export const AiStoryStoryAssetGroundingEntrySchema = z
     assetId: Id,
     contentHash: Hash,
     analysisSnapshotId: Id,
-    explicitRoleHint: z.enum(["PRODUCT_SOURCE", "REFERENCE"]).nullable(),
+    explicitRoleHint: z.enum(AI_STORY_EXPLICIT_ROLE_HINTS).nullable(),
     observed: AiStoryVisualSemanticFactsSchema.shape.observed,
     inferred: AiStoryVisualSemanticFactsSchema.shape.inferred,
   })
@@ -135,7 +139,7 @@ export function compileStoryAssetGroundingContext(input: {
   readonly assets: readonly {
     readonly registry: z.infer<typeof AiStoryAssetRegistryEntrySchema>;
     readonly snapshot: z.infer<typeof AiStoryAssetAnalysisSnapshotSchema>;
-    readonly explicitRoleHint?: "PRODUCT_SOURCE" | "REFERENCE" | null;
+    readonly explicitRoleHint?: AiStoryExplicitRoleHint | null;
   }[];
 }): AiStoryStoryAssetGroundingContext {
   if (input.assets.length === 0) {

@@ -44,10 +44,18 @@ async function mockWizard(page: Page) {
   await page.route(`**/api/workspaces/${workspace.id}/campaign-brief/assist`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ text: "Polished launch brief", proposal: true }) }));
 }
 
-test("desktop five-step flow uses defaults, explicit AI acceptance, and automatic handoff", async ({ page }) => {
+test("desktop four-step flow uses defaults, explicit AI acceptance, and opens the Campaign workspace", async ({ page }) => {
   await mockWizard(page); await authenticate(page);
   let createPayload: Record<string, unknown> | null = null;
-  await page.route("**/api/campaigns/create", async (route) => { createPayload = route.request().postDataJSON(); await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ campaignId: "00000000-0000-4000-8000-000000000040", taskId: "00000000-0000-4000-8000-000000000050" }) }); });
+  let workflowStarted = false;
+  await page.route("**/api/campaigns/create", async (route) => {
+    workflowStarted = true;
+    await route.fulfill({ status: 500, contentType: "application/json", body: "{\"error\":\"workflow must not start\"}" });
+  });
+  await page.route("**/api/campaigns/container", async (route) => {
+    createPayload = route.request().postDataJSON();
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ campaignId: "00000000-0000-4000-8000-000000000040" }) });
+  });
   await page.goto(`/w/${workspace.slug}/campaigns/new`);
   await page.getByLabel("Campaign Name").fill("Launch Campaign"); await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("button", { name: "Instagram" })).toHaveAttribute("aria-pressed", "true");
@@ -56,16 +64,23 @@ test("desktop five-step flow uses defaults, explicit AI acceptance, and automati
   await expect(page.getByRole("textbox", { name: "Target Audience", exact: true })).toHaveValue("Initial audience");
   await page.getByRole("button", { name: "Accept" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByText("Product", { exact: true }).click(); await page.getByText("Launch Story", { exact: true }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel(/Campaign Brief/).fill("Launch our premium gift");
   await page.getByRole("button", { name: /polish/i }).click();
   await page.getByRole("button", { name: "Accept" }).click(); await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByText("Inferred Language")).toBeVisible();
   await expect(page.getByText(/AI Output Language|Subtitle Language|Voice|BGM|Content Style/)).toHaveCount(0);
+  await expect(page.getByText("Product", { exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Create Campaign" }).click();
-  await page.waitForURL("**/task?taskId=00000000-0000-4000-8000-000000000050");
-  expect(createPayload).toMatchObject({ name: "Launch Campaign", objective: "awareness", publishingPlatforms: ["instagram"], campaignBrief: "Polished launch brief" });
+  await page.waitForURL("**/w/wave-3/campaigns/00000000-0000-4000-8000-000000000040", { waitUntil: "commit" });
+  expect(workflowStarted).toBe(false);
+  expect(createPayload).toMatchObject({
+    name: "Launch Campaign",
+    objective: "awareness",
+    publishingPlatforms: ["instagram"],
+    campaignBrief: "Polished launch brief",
+    assetReferences: [],
+    assetStoryReferences: [],
+  });
 });
 
 test("mobile wizard remains reachable and preserves back navigation", async ({ page }) => {
