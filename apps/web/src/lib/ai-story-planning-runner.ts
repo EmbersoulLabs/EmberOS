@@ -751,7 +751,14 @@ export async function runSinglePlanningStage(input: {
         creativeContext: draft.creativeContext!,
         directorThinking: draft.directorThinking!,
         worldContinuity: draft.worldContinuity!,
-        characterAuthorities: ctx.characterAuthorities,
+        characterAuthorities: selectStoryBoundCharacterAuthorities({
+          characterAuthorities: ctx.characterAuthorities,
+          creativeContext: draft.creativeContext,
+        }),
+        ...(ctx.loaded.story.outlineProfile?.profileId === "COMMERCIAL_STORY"
+          && AiStoryEpisodeIntentAuthoritySchema.safeParse(ctx.loaded.story.episodeIntent).success
+          ? { episodeIntent: AiStoryEpisodeIntentAuthoritySchema.parse(ctx.loaded.story.episodeIntent) }
+          : {}),
       });
       const animationPackagePayload = buildAnimationPackage({
         story: ctx.storyDraft,
