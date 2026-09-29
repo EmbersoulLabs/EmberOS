@@ -225,6 +225,7 @@ export async function generateAiStoryScriptSemanticProposalV1(
         "visibleAction.action must describe a visible physical action in at least four words. It must not be a single verb and must not copy a spoken line. Dialogue that mentions the product is not that action.",
         "PRODUCT PRESENCE is not PRODUCT PARTICIPATION. A product id, a visible prop, or dialogue that mentions the product does not integrate it.",
         "When product authority ids are supplied, at least one visibleAction.objectId must be one of those ids, and visibleAction.action must describe the character physically using that product.",
+        "If commercialActionOrParticipation is ENABLE, perform the physical use and visible effect already written in userCreativeIntent. Do not replace that use with admiration, a price remark, or product presence.",
         "Put commercialContribution on that scene. participationKind is the product's narrative role and commercialAuthorityIds contains that product id. If the same product remains in use, preState and postState may match. Keep the contribution. Do not omit it and do not invent a replacement product to force a difference.",
         "A later scene whose productVisualIdentityRequirement is NONE does not remove a product the character is already holding. Copy that held product forward. Off-screen speech does not remove it.",
         "Do not replace the narrative with a product showcase, catalog shot, or detached cutaway.",

@@ -49,6 +49,7 @@ export type EnsureCurrentFrozenCanonicalSceneSetInput = {
   directorThinking: DirectorThinking;
   worldContinuity: WorldContinuity;
   characterAuthorities: PlanningCharacterAuthorityProjection[];
+  episodeIntent?: import("@ceo-agent/shared").AiStoryEpisodeIntentAuthority;
 };
 
 export type CanonicalSceneProducerDependencies = {
@@ -131,6 +132,7 @@ export async function ensureCurrentFrozenCanonicalSceneSet(
     directorThinking: input.directorThinking,
     characterAuthorities: input.characterAuthorities,
     productAuthorityIds,
+    ...(input.episodeIntent ? { episodeIntent: input.episodeIntent } : {}),
   });
   if (!script.semanticInputFingerprint || script.semanticInputFingerprint !== semanticInputFingerprint) {
     throw new AiStoryCanonicalSceneProducerError("CANONICAL_SCENE_SCRIPT_PLANNING_INPUT_STALE", "Persisted planning semantics no longer match the current FROZEN Script");
