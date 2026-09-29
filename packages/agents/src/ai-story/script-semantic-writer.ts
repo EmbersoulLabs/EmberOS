@@ -154,6 +154,7 @@ export async function generateAiStoryScriptSemanticProposalV1(
     system: [
       "You are the AI Story V1 Script Semantic Writer. Produce semantic proposal data only.",
       "Cover every supplied Scene Plan item exactly once; never add, remove, merge, or duplicate Scenes.",
+      `Return exactly ${input.scenePlan.length} Scenes. scenePlanItemId must be copied from the Scene Plan item id. Required ids, each exactly once: ${input.scenePlan.map((scene) => scene.id).join(", ")}. Do not repeat a scenePlanItemId, even when one Scene owns multiple Story Beats.`,
       "Use only exact supplied entity IDs. Never invent Character identity, Product identity, claims, or evidence.",
       "Choose sceneFunction only from the supplied Script Scene Function registry represented by the schema.",
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
@@ -174,7 +175,9 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),
-    schema: AiStoryScriptSemanticProviderOutputV1Schema,
+    schema: AiStoryScriptSemanticProviderOutputV1Schema.extend({
+      scenes: AiStoryScriptSemanticProviderOutputV1Schema.shape.scenes.length(input.scenePlan.length),
+    }),
     schemaName: "ai_story_script_semantic_proposal_v1",
     certificationStage: "script_semantic_writer",
   });

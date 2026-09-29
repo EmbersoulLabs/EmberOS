@@ -232,6 +232,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(callStructuredJsonModel).toHaveBeenCalledWith(expect.objectContaining({
       schemaName: "ai_story_script_semantic_proposal_v1",
       certificationStage: "script_semantic_writer",
+      system: expect.stringContaining(`Return exactly ${SCENES.length} Scenes. scenePlanItemId must be copied from the Scene Plan item id. Required ids, each exactly once: ${SCENES.map((scene) => scene.id).join(", ")}. Do not repeat a scenePlanItemId, even when one Scene owns multiple Story Beats.`),
     }));
     expect(result.semanticProposal).toEqual(proposal());
   });
