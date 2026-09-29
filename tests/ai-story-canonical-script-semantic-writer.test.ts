@@ -232,6 +232,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(callStructuredJsonModel).toHaveBeenCalledWith(expect.objectContaining({
       schemaName: "ai_story_script_semantic_proposal_v1",
       certificationStage: "script_semantic_writer",
+      system: expect.stringContaining("sceneStateIn must copy every fact from the previous Scene sceneStateOut"),
     }));
     expect(result.semanticProposal).toEqual(proposal());
   });
