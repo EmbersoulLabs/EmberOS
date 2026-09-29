@@ -224,6 +224,48 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(schema.safeParse(structuredProviderProposal()).success).toBe(false);
   });
 
+  it("preserves a structured product action and commercial contribution", () => {
+    const schema = buildAiStoryScriptSemanticProviderOutputSchema(true);
+    const parsed = schema.parse({
+      contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
+      scenes: [{
+        scenePlanItemId: "scene-001",
+        sceneFunction: "DEMONSTRATE",
+        sceneFunctionRegistryVersion: 1,
+        sceneStateIn: [],
+        sceneStateDeltas: [],
+        sceneStateOut: [],
+        newInformation: ["The product is in use."],
+        newActionOutcomes: ["The character uses the product."],
+        visibleAction: {
+          type: "ACTION",
+          subjectId: I.character,
+          action: "The character holds the authorized product and uses it.",
+          objectId: I.product,
+          storyEffect: "The product participates in the action.",
+          stateDelta: null,
+        },
+        followingEntries: [],
+        narrativeFunction: "PRODUCT_INTERVENTION",
+        storyConsequence: "The product remains in the character's action.",
+        commercialContribution: {
+          commercialRole: "PRODUCT",
+          narrativeFunction: "PRODUCT_INTERVENTION",
+          participationKind: "ENABLE",
+          commercialAuthorityIds: [I.product],
+          preState: "holding the product",
+          postState: "holding the product",
+          storyConsequence: "The same product stays in use.",
+        },
+      }],
+    });
+    expect(parsed.scenes[0]?.visibleAction).toMatchObject({ objectId: I.product });
+    expect(parsed.scenes[0]?.commercialContribution).toMatchObject({
+      participationKind: "ENABLE",
+      commercialAuthorityIds: [I.product],
+    });
+  });
+
   it("uses one existing model call and returns only a validated proposal", async () => {
     callStructuredJsonModel.mockResolvedValueOnce({ result: structuredProviderProposal(), usage: { input: 10, output: 5, costUsd: 0.01 } });
     const source = outline();

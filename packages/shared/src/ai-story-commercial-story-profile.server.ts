@@ -197,7 +197,11 @@ export function validateAiStoryCommercialStoryProfile(
       add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "COMMERCIAL_AUTHORITY_NEVER_PARTICIPATES", "Good narrative without commercial participation is not a Commercial Story");
     }
     for (const { scene, contribution } of contributions) {
-      if (normalize(contribution.preState) === normalize(contribution.postState)) {
+      const actionUsesAuthority = scene.entries.some((entry) =>
+        entry.type === "ACTION"
+        && entry.objectId !== undefined
+        && contribution.commercialAuthorityIds.includes(entry.objectId));
+      if (normalize(contribution.preState) === normalize(contribution.postState) && !actionUsesAuthority) {
         add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "PRODUCT_INSERTION_WITHOUT_NARRATIVE_ROLE", `Scene ${scene.scriptSceneId} displays commercial authority without narrative participation`);
       }
       if (physicalRequired && contribution.commercialAuthorityIds.some((id) => !policy.productOrServiceAuthorityRefs.includes(id))) {
@@ -215,6 +219,15 @@ export function validateAiStoryCommercialStoryProfile(
     }
     if (policy.commercialIntegration?.naturalnessRationale && !contributions.length) {
       add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "NATURALNESS_RATIONALE_INSUFFICIENT", "Freeform naturalness rationale is evidence only and cannot pass commercial integration");
+    }
+    if (physicalRequired) {
+      const participated = script.scenes.some((scene) => scene.entries.some((entry) =>
+        entry.type === "ACTION"
+        && entry.objectId !== undefined
+        && policy.productOrServiceAuthorityRefs.includes(entry.objectId)));
+      if (!participated) {
+        add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "PRODUCT_PARTICIPATION_MISSING", "The authorized product must be the object of a visible action. Presence and spoken mention are not participation");
+      }
     }
     for (const scene of script.scenes) {
       const spoken = new Set(
