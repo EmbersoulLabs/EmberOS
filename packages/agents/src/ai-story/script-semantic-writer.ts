@@ -161,8 +161,10 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
       ...(commercial ? [
         "This is COMMERCIAL_STORY. Include narrativeFunction and storyConsequence on every Scene.",
-        "Include one visible ACTION in every Scene. A Scene that changes the product physically must contain exactly one PRODUCT_STATE delta and no other physical delta, and that ACTION must carry the same PRODUCT_STATE delta.",
-        "When a Scene changes Story state through the commercial subject, include commercialContribution and a real sceneStateDelta.",
+        `Character ids: ${input.characterAuthorities.map((authority) => authority.characterId).join(", ") || "none"}. Product ids: ${input.productAuthorityIds.join(", ") || "none"}.`,
+        "Include one visible ACTION in every Scene. ACTION subjectId must be one of those Character ids.",
+        "Use one state pattern. Exactly one Scene contains exactly one PRODUCT_STATE delta and no LOCATION, POSSESSION, or PHYSICAL_CONDITION delta. Its subjectId is a Product id. sceneStateIn contains that dimension and subjectId with value equal to fromValue. sceneStateOut contains the same fact with value equal to the delta value. That Scene has exactly one ACTION and that ACTION stateDelta copies the same PRODUCT_STATE delta. Scenes before that change have empty sceneStateIn, sceneStateDeltas, and sceneStateOut. Every later Scene copies the changed sceneStateOut into both sceneStateIn and sceneStateOut and uses an empty sceneStateDeltas array.",
+        "When the product participates, include commercialContribution with a preState that differs from postState.",
         "Do not replace causal progression with a product showcase.",
       ] : []),
       ...(input.episodeIntent ? [
