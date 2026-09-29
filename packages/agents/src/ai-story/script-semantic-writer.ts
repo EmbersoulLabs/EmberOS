@@ -14,6 +14,8 @@ import {
   CreativeContextSchema,
   DirectorThinkingSchema,
   PlanningCharacterAuthorityProjectionSchema,
+  AiStoryEpisodeIntentAuthoritySchema,
+  evaluateNativeDialogueIntent,
   ScenePlanItemSchema,
   StoryBeatSchema,
   type AiStoryOutlineVersion,
@@ -21,6 +23,7 @@ import {
   type AiStoryStructuredDraft,
   type CreativeContext,
   type DirectorThinking,
+  type AiStoryEpisodeIntentAuthority,
   type PlanningCharacterAuthorityProjection,
   type PlanningUsage,
   type ScenePlanItem,
@@ -121,6 +124,7 @@ export type GenerateAiStoryScriptSemanticProposalV1Input = {
   directorThinking: DirectorThinking;
   characterAuthorities: PlanningCharacterAuthorityProjection[];
   productAuthorityIds: string[];
+  episodeIntent?: AiStoryEpisodeIntentAuthority;
 };
 
 /** One proposal-only structured planning call. Canonical identity is added downstream. */
@@ -136,6 +140,9 @@ export async function generateAiStoryScriptSemanticProposalV1(
     directorThinking: DirectorThinkingSchema.parse(rawInput.directorThinking),
     characterAuthorities: PlanningCharacterAuthorityProjectionSchema.array().parse(rawInput.characterAuthorities),
     productAuthorityIds: z.array(z.string().uuid()).parse([...new Set(rawInput.productAuthorityIds)].sort()),
+    ...(rawInput.episodeIntent
+      ? { episodeIntent: AiStoryEpisodeIntentAuthoritySchema.parse(rawInput.episodeIntent) }
+      : {}),
   };
   if (input.frozenOutline.status !== "FROZEN") throw new Error("CANONICAL_SCRIPT_FROZEN_OUTLINE_REQUIRED");
   const outlineProductIds = resolveOutlineBoundProductAuthorityIds(input.frozenOutline);
@@ -147,28 +154,49 @@ export async function generateAiStoryScriptSemanticProposalV1(
     system: [
       "You are the AI Story V1 Script Semantic Writer. Produce semantic proposal data only.",
       "Cover every supplied Scene Plan item exactly once; never add, remove, merge, or duplicate Scenes.",
+      `Return exactly ${input.scenePlan.length} Scenes. scenePlanItemId must be copied from the Scene Plan item id. Required ids, each exactly once: ${input.scenePlan.map((scene) => scene.id).join(", ")}. Do not repeat a scenePlanItemId, even when one Scene owns multiple Story Beats.`,
+      "State continuity is exact. Every state subjectId must be a supplied Character id or Product id, never the Story id. When a sceneStateDelta has a fromValue, sceneStateIn must contain that dimension and subjectId with the same fromValue. sceneStateOut must contain that dimension and subjectId with the delta value. If a fact is in one Scene sceneStateOut and the next Scene sceneStateIn, the values must match.",
       "Use only exact supplied entity IDs. Never invent Character identity, Product identity, claims, or evidence.",
       "Choose sceneFunction only from the supplied Script Scene Function registry represented by the schema.",
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
       ...(commercial ? [
         "This is COMMERCIAL_STORY. Include narrativeFunction and storyConsequence on every Scene.",
-        "When a Scene changes Story state through the commercial subject, include commercialContribution and a real sceneStateDelta.",
+        `Character ids: ${input.characterAuthorities.map((authority) => authority.characterId).join(", ") || "none"}. Product ids: ${input.productAuthorityIds.join(", ") || "none"}.`,
+        "Include one visible ACTION in every Scene. ACTION subjectId must be one of those Character ids.",
+        "Use one state pattern. Exactly one Scene contains exactly one PRODUCT_STATE delta and no LOCATION, POSSESSION, or PHYSICAL_CONDITION delta. Its subjectId is a Product id. sceneStateIn contains that dimension and subjectId with value equal to fromValue. sceneStateOut contains the same fact with value equal to the delta value. That Scene has exactly one ACTION and that ACTION stateDelta copies the same PRODUCT_STATE delta. Scenes before that change have empty sceneStateIn, sceneStateDeltas, and sceneStateOut. Every later Scene copies the changed sceneStateOut into both sceneStateIn and sceneStateOut and uses an empty sceneStateDeltas array.",
+        "When the product participates, include commercialContribution with a preState that differs from postState.",
         "Do not replace causal progression with a product showcase.",
+      ] : []),
+      ...(input.episodeIntent ? [
+        "Episode intent is structured authority. Do not recover native dialogue, spoken language, visual text languages, or character continuity from originalIdea prose.",
+        `spokenLanguage=${input.episodeIntent.spokenLanguage}; dialogueStyle=${input.episodeIntent.dialogueStyle}; nativeCharacterDialogue=${input.episodeIntent.nativeCharacterDialogue}; cta=${input.episodeIntent.cta ?? "none"}.`,
+        ...(input.episodeIntent.nativeCharacterDialogue ? [
+          "nativeCharacterDialogue is true. Include at least one visible DIALOGUE entry. The speakerId must be an exact supplied character ID. The line is the exact spoken text. The language must be the spokenLanguage locale. Do not satisfy this with voice-over.",
+        ] : [
+          "nativeCharacterDialogue is false. Do not require Native AV dialogue.",
+        ]),
       ] : []),
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),
-    schema: AiStoryScriptSemanticProviderOutputV1Schema,
+    schema: AiStoryScriptSemanticProviderOutputV1Schema.extend({
+      scenes: AiStoryScriptSemanticProviderOutputV1Schema.shape.scenes.length(input.scenePlan.length),
+    }),
     schemaName: "ai_story_script_semantic_proposal_v1",
     certificationStage: "script_semantic_writer",
   });
   if (completion.decodeIssue) {
     throw new Error(`SCRIPT_SEMANTIC_WRITER_${completion.decodeIssue}`);
   }
-  return {
-    semanticProposal: canonicalizeProviderProposal(
-      AiStoryScriptSemanticProviderOutputV1Schema.parse(completion.result),
-    ),
-    usage: completion.usage,
-  };
+  const semanticProposal = canonicalizeProviderProposal(
+    AiStoryScriptSemanticProviderOutputV1Schema.parse(completion.result),
+  );
+  if (input.episodeIntent?.nativeCharacterDialogue) {
+    const dialogue = evaluateNativeDialogueIntent({
+      requested: true,
+      entries: semanticProposal.scenes.flatMap((scene) => scene.entries),
+    });
+    if (dialogue.status === "BLOCK") throw new Error("NATIVE_DIALOGUE_REQUEST_UNSATISFIED");
+  }
+  return { semanticProposal, usage: completion.usage };
 }

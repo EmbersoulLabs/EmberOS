@@ -275,6 +275,74 @@ export async function callVisionJsonModel<T>(
   };
 }
 
+/** GPT-4o vision with a Zod-derived strict response schema. The decoded object is not canonical Character DNA. */
+export async function callVisionStructuredJsonModel<T>(input: {
+  system: string;
+  userText: string;
+  imageDataUrls: string[];
+  schema: ZodType<T>;
+  schemaName: string;
+  requestOptions?: { maxRetries: number };
+}): Promise<{
+  result: unknown;
+  usage: { input: number; output: number; costUsd: number };
+  providerRequestId: string | null;
+  requestedModelId: "gpt-4o";
+  providerModelId: string | null;
+}> {
+  const openai = getOpenAI();
+  const response = await openai.chat.completions.create(
+    {
+      model: "gpt-4o",
+      response_format: zodResponseFormat(input.schema, input.schemaName),
+      messages: [
+        { role: "system", content: input.system },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: input.userText },
+            ...input.imageDataUrls.slice(0, 8).map((url) => ({
+              type: "image_url" as const,
+              image_url: { url, detail: "high" as const },
+            })),
+          ],
+        },
+      ],
+      temperature: 0.4,
+    },
+    { maxRetries: input.requestOptions?.maxRetries ?? 0 }
+  );
+
+  const content = response.choices[0]?.message?.content ?? "";
+  const inputTokens = response.usage?.prompt_tokens ?? 0;
+  const outputTokens = response.usage?.completion_tokens ?? 0;
+  const usage = {
+    input: inputTokens,
+    output: outputTokens,
+    costUsd: (inputTokens * 2.5 + outputTokens * 10) / 1_000_000,
+  };
+  let result: unknown;
+  try {
+    result = JSON.parse(content);
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw Object.assign(new SyntaxError("CHARACTER_DNA_JSON_PARSE_FAILED"), {
+        request_id: response.id ?? null,
+        model: response.model ?? null,
+        usage,
+      });
+    }
+    throw error;
+  }
+  return {
+    result,
+    usage,
+    providerRequestId: response.id ?? null,
+    requestedModelId: "gpt-4o",
+    providerModelId: response.model ?? null,
+  };
+}
+
 export function buildDefaultTaskGraph(): TaskGraph {
   return {
     version: "1.0",

@@ -19,6 +19,7 @@ import {
   applyCharacterDnaAnalysisSuccess,
   approveCharacterDna,
   buildAiStoryCharacterDnaAnalysisJob,
+  classifyCharacterDnaAnalysisFailure,
   computeCharacterDnaFingerprint,
 } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
@@ -175,7 +176,10 @@ export class AiStoryCharacterDnaService {
         createdAt: now,
       });
       if (result.imageGenerationCalls !== 0 || result.gptImageCalls !== 0) {
-        throw new AiStoryCharacterDnaError("CHARACTER_DNA_IMAGE_GENERATION_BLOCKED", "Character DNA analysis cannot call image generation.");
+        throw new AiStoryCharacterDnaError(
+          "CHARACTER_DNA_IMAGE_GENERATION_BLOCKED",
+          "Character DNA analysis cannot call image generation."
+        );
       }
       job = applyCharacterDnaAnalysisSuccess(job, {
         dna: result.dna,
@@ -186,8 +190,12 @@ export class AiStoryCharacterDnaService {
         costUsd: result.costUsd,
         completedAt: new Date().toISOString(),
       });
-    } catch {
-      job = applyCharacterDnaAnalysisFailure(job, new Date().toISOString());
+    } catch (error) {
+      job = applyCharacterDnaAnalysisFailure(
+        job,
+        new Date().toISOString(),
+        classifyCharacterDnaAnalysisFailure(error)
+      );
     }
     await this.db.update(schema.aiStoryCharacterDnaAnalysisJobs).set(jobRow(job))
       .where(eq(schema.aiStoryCharacterDnaAnalysisJobs.jobId, job.id));

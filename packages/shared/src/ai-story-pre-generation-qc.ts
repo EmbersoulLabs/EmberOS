@@ -5,9 +5,10 @@ export const AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION = "ai-story-pre-generat
 export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1 = 1 as const;
 export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2 = 2 as const;
 export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3 = 3 as const;
-/** Current evaluations use Gate Set V3. Historical rows remain Gate Set V1 / V2. */
-export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION = AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3;
-export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSIONS = [AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1, AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2, AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3] as const;
+export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V4 = 4 as const;
+/** Current evaluations use Gate Set V4. Historical rows remain Gate Set V1 / V2 / V3. */
+export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION = AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V4;
+export const AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSIONS = [AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1, AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2, AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3, AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V4] as const;
 
 export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1 = [
   "UPSTREAM_ARTIFACT_INTEGRITY_GATE",
@@ -56,7 +57,18 @@ export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V3 = [
   ...AI_STORY_PRE_GENERATION_QC_GENERATION_UNIT_GATES,
 ] as const;
 
-export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER = AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V3;
+export const AI_STORY_PRE_GENERATION_QC_COMMERCIAL_EPISODE_GATES = [
+  "CHARACTER_CONTINUITY_GATE",
+  "NATIVE_DIALOGUE_INTENT_GATE",
+  "VISUAL_TEXT_POLICY_GATE",
+] as const;
+
+export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V4 = [
+  ...AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V3,
+  ...AI_STORY_PRE_GENERATION_QC_COMMERCIAL_EPISODE_GATES,
+] as const;
+
+export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER = AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V4;
 export const AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1_LENGTH = AI_STORY_PRE_GENERATION_QC_GATE_ORDER_V1.length;
 
 export const AI_STORY_PRE_GENERATION_QC_CLASSIFICATIONS = ["HARD_GATE", "SOFT_WARNING", "AI_QC", "HUMAN_PREVIEW"] as const;
@@ -109,7 +121,7 @@ export const AiStoryPreGenerationQcEvaluationSchema = z.object({
   sceneExecutionId: Id,
   sceneVersionIds: z.array(Id).optional(),
   contractVersion: z.literal(AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION),
-  gateSetVersion: z.union([z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1), z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2), z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3)]),
+  gateSetVersion: z.union([z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V1), z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V2), z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V3), z.literal(AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION_V4)]),
   providerCapabilityId: Text.max(160),
   providerCapabilityVersion: Text.max(160),
   productAuthorityIds: z.array(Id),
@@ -126,6 +138,20 @@ export const AiStoryPreGenerationQcEvaluationSchema = z.object({
   motionRiskClass: z.enum(["LOW", "MODERATE", "HIGH"]),
   productGrounded: z.boolean(),
   profileId: Text.max(160),
+  /** Present only when this Story Version has Episode intent. Historical rows omit it. */
+  episodeRepairAuthority: z.object({
+    episodeIntentContractVersion: z.literal("ai-story-episode-intent.v1"),
+    spokenLanguage: Text.max(40),
+    nativeCharacterDialogue: z.boolean(),
+    visualTextLanguages: z.array(Text.max(40)).min(1),
+    visualTextPolicy: Text.max(80),
+    visualTextConstraint: Text.max(2000),
+    characterDnaFingerprint: Hash.nullable(),
+    dialogueAuthorityFingerprint: Hash.nullable(),
+    sceneId: Text.max(80),
+    generateAudio: z.boolean(),
+    audioMode: z.enum(["NATIVE_AV", "VIDEO_ONLY"]),
+  }).strict().optional(),
   qcFingerprint: Hash,
   evaluatedBy: Id,
   evaluatedAt: z.string().datetime(),

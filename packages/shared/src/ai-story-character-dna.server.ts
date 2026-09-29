@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { ZodError } from "zod";
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "./canonical-integrity";
 import {
   AI_STORY_CHARACTER_DNA_ANALYSIS_VERSION,
@@ -8,6 +9,7 @@ import {
   AiStoryCharacterDnaSchema,
   CHARACTER_CONSISTENCY_MODE,
   CHARACTER_DNA_ANALYSIS,
+  CHARACTER_DNA_FAILURE_CODES,
   containsForbiddenCharacterDnaLanguage,
   DEFAULT_CHARACTER_DNA_MUST_PRESERVE,
   DEFAULT_CHARACTER_DNA_MUTABLE_TRAITS,
@@ -15,6 +17,9 @@ import {
   sourcePhotoSentToVideoProviderForDna,
   type AiStoryCharacterDna,
   type AiStoryCharacterDnaAnalysisJob,
+  type CharacterDnaAnalysisFailureDiagnostic,
+  type CharacterDnaFailureCode,
+  type CharacterDnaFailureStage,
 } from "./ai-story-character-dna";
 import type { AiStoryCharacterEpisodeLook } from "./ai-story-reusable-character";
 
@@ -150,15 +155,143 @@ export function applyCharacterDnaToSeedanceRequest<T extends {
   };
 }
 
+const SAFE_DIAGNOSTIC_ID = /^[A-Za-z0-9._:-]{1,120}$/;
+const SAFE_FIELD_PATH = /^[A-Za-z][A-Za-z0-9]*(\.[A-Za-z0-9]+)*$/;
+const FAILURE_CODE_SET = new Set<string>(CHARACTER_DNA_FAILURE_CODES);
+
+const FAILURE_STAGE_BY_CODE: Record<CharacterDnaFailureCode, CharacterDnaFailureStage> = {
+  CHARACTER_DNA_PROVIDER_CALL_FAILED: "PROVIDER",
+  CHARACTER_DNA_JSON_PARSE_FAILED: "JSON_PARSE",
+  CHARACTER_DNA_SCHEMA_VALIDATION_FAILED: "SCHEMA",
+  SENSITIVE_TRAIT_INFERENCE_BLOCKED: "SAFETY",
+  CHARACTER_DNA_IMAGE_GENERATION_BLOCKED: "SAFETY",
+  CHARACTER_DNA_ANALYSIS_INVALID: "SANITIZE",
+  CHARACTER_DNA_UNKNOWN_FAILURE: "UNKNOWN",
+};
+
+function emptyFailureDiagnostic(
+  failureCode: CharacterDnaFailureCode = "CHARACTER_DNA_UNKNOWN_FAILURE"
+): CharacterDnaAnalysisFailureDiagnostic {
+  return {
+    failureCode,
+    failureStage: FAILURE_STAGE_BY_CODE[failureCode],
+    failureFieldPaths: null,
+    providerRequestId: null,
+    requestedModelId: null,
+    providerModelId: null,
+    outputFingerprint: null,
+    provider: null,
+    providerModel: null,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: null,
+  };
+}
+
+function safeUsageCount(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function safeCostUsd(value: unknown) {
+  return typeof value === "string" && /^\d+\.\d{4}$/.test(value) ? value : null;
+}
+
+export function characterDnaAnalysisOutputFingerprint(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  return sha256CanonicalIntegrityHash(payload);
+}
+
+function safeDiagnosticId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return SAFE_DIAGNOSTIC_ID.test(trimmed) ? trimmed : null;
+}
+
+function safeSchemaFieldPaths(error: ZodError) {
+  const paths: string[] = [];
+  for (const issue of error.issues) {
+    const path = issue.path
+      .filter((part) => typeof part === "string" || typeof part === "number")
+      .map(String)
+      .join(".");
+    if (!SAFE_FIELD_PATH.test(path) || path.length > 160) continue;
+    if (containsForbiddenCharacterDnaLanguage(path)) continue;
+    paths.push(path);
+  }
+  const unique = [...new Set(paths)];
+  return unique.length ? unique.slice(0, 32) : null;
+}
+
+export function classifyCharacterDnaAnalysisFailure(error: unknown): CharacterDnaAnalysisFailureDiagnostic {
+  if (error instanceof AiStoryCharacterDnaError && error.failureDiagnostic) {
+    return persistableCharacterDnaFailureDiagnostic(error.failureDiagnostic);
+  }
+  if (error instanceof AiStoryCharacterDnaError && FAILURE_CODE_SET.has(error.code)) {
+    return emptyFailureDiagnostic(error.code as CharacterDnaFailureCode);
+  }
+  if (error instanceof ZodError) {
+    return {
+      ...emptyFailureDiagnostic("CHARACTER_DNA_SCHEMA_VALIDATION_FAILED"),
+      failureFieldPaths: safeSchemaFieldPaths(error),
+    };
+  }
+  if (error instanceof SyntaxError) {
+    return emptyFailureDiagnostic("CHARACTER_DNA_JSON_PARSE_FAILED");
+  }
+  return emptyFailureDiagnostic();
+}
+
+export function persistableCharacterDnaFailureDiagnostic(
+  diagnostic: CharacterDnaAnalysisFailureDiagnostic
+): CharacterDnaAnalysisFailureDiagnostic {
+  const failureCode = FAILURE_CODE_SET.has(diagnostic.failureCode)
+    ? diagnostic.failureCode
+    : "CHARACTER_DNA_UNKNOWN_FAILURE";
+  const failureStage = FAILURE_STAGE_BY_CODE[failureCode];
+  const fingerprint = diagnostic.outputFingerprint;
+  const failureFieldPaths = failureStage === "SCHEMA" && diagnostic.failureFieldPaths
+    ? diagnostic.failureFieldPaths.filter((path) =>
+      SAFE_FIELD_PATH.test(path) &&
+      path.length <= 160 &&
+      !containsForbiddenCharacterDnaLanguage(path)
+    ).slice(0, 32)
+    : [];
+  return {
+    failureCode,
+    failureStage,
+    failureFieldPaths: failureFieldPaths.length ? failureFieldPaths : null,
+    providerRequestId: safeDiagnosticId(diagnostic.providerRequestId),
+    requestedModelId: safeDiagnosticId(diagnostic.requestedModelId),
+    providerModelId: safeDiagnosticId(diagnostic.providerModelId),
+    outputFingerprint: typeof fingerprint === "string" && /^sha256:[0-9a-f]{64}$/.test(fingerprint)
+      ? fingerprint
+      : null,
+    provider: safeDiagnosticId(diagnostic.provider),
+    providerModel: safeDiagnosticId(diagnostic.providerModel),
+    inputTokens: safeUsageCount(diagnostic.inputTokens),
+    outputTokens: safeUsageCount(diagnostic.outputTokens),
+    costUsd: safeCostUsd(diagnostic.costUsd),
+  };
+}
+
+function throwCharacterDnaAnalysisFailure(diagnostic: CharacterDnaAnalysisFailureDiagnostic): never {
+  const safe = persistableCharacterDnaFailureDiagnostic(diagnostic);
+  throw new AiStoryCharacterDnaError(
+    safe.failureCode,
+    AI_STORY_CHARACTER_DNA_COPY.analysisFailed,
+    safe
+  );
+}
+
 export function rejectSensitiveCharacterDnaPayload(payload: unknown) {
   if (!payload || typeof payload !== "object") return;
   const record = payload as Record<string, unknown>;
   for (const key of SENSITIVE_KEYS) {
     if (key in record) {
-      throw new AiStoryCharacterDnaError(
-        "SENSITIVE_TRAIT_INFERENCE_BLOCKED",
-        AI_STORY_CHARACTER_DNA_COPY.analysisFailed
-      );
+      throwCharacterDnaAnalysisFailure({
+        ...emptyFailureDiagnostic("SENSITIVE_TRAIT_INFERENCE_BLOCKED"),
+        outputFingerprint: characterDnaAnalysisOutputFingerprint(payload),
+      });
     }
   }
 }
@@ -170,10 +303,17 @@ export function sanitizeCharacterDnaAnalysisOutput(input: {
   createdAt: string;
 }): AiStoryCharacterDna {
   rejectSensitiveCharacterDnaPayload(input.payload);
-  if (!input.payload || typeof input.payload !== "object") {
-    throw new AiStoryCharacterDnaError("CHARACTER_DNA_ANALYSIS_INVALID", AI_STORY_CHARACTER_DNA_COPY.analysisFailed);
+  if (!input.payload || typeof input.payload !== "object" || Array.isArray(input.payload)) {
+    throwCharacterDnaAnalysisFailure(emptyFailureDiagnostic("CHARACTER_DNA_ANALYSIS_INVALID"));
   }
   const raw = input.payload as Record<string, unknown>;
+  const outputFingerprint = characterDnaAnalysisOutputFingerprint(raw);
+  if (collectDnaStrings(raw).some(containsForbiddenCharacterDnaLanguage)) {
+    throwCharacterDnaAnalysisFailure({
+      ...emptyFailureDiagnostic("SENSITIVE_TRAIT_INFERENCE_BLOCKED"),
+      outputFingerprint,
+    });
+  }
   const parsed = AiStoryCharacterDnaSchema.safeParse({
     ...raw,
     mustPreserve:
@@ -190,11 +330,18 @@ export function sanitizeCharacterDnaAnalysisOutput(input: {
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : input.createdAt,
   });
   if (!parsed.success) {
-    throw new AiStoryCharacterDnaError("CHARACTER_DNA_ANALYSIS_INVALID", AI_STORY_CHARACTER_DNA_COPY.analysisFailed);
+    throwCharacterDnaAnalysisFailure({
+      ...emptyFailureDiagnostic("CHARACTER_DNA_SCHEMA_VALIDATION_FAILED"),
+      failureFieldPaths: safeSchemaFieldPaths(parsed.error),
+      outputFingerprint,
+    });
   }
   const strings = collectDnaStrings(parsed.data);
   if (strings.some(containsForbiddenCharacterDnaLanguage)) {
-    throw new AiStoryCharacterDnaError("SENSITIVE_TRAIT_INFERENCE_BLOCKED", AI_STORY_CHARACTER_DNA_COPY.analysisFailed);
+    throwCharacterDnaAnalysisFailure({
+      ...emptyFailureDiagnostic("SENSITIVE_TRAIT_INFERENCE_BLOCKED"),
+      outputFingerprint,
+    });
   }
   return parsed.data;
 }
@@ -244,6 +391,13 @@ export function buildAiStoryCharacterDnaAnalysisJob(input: {
     reusableCharacterId: null,
     reusableCharacterVersionId: null,
     userSafeError: null,
+    failureCode: null,
+    failureStage: null,
+    failureFieldPaths: null,
+    providerRequestId: null,
+    requestedModelId: null,
+    providerModelId: null,
+    outputFingerprint: null,
     createdBy: input.createdBy,
     createdAt: input.createdAt,
     completedAt: null,
@@ -278,13 +432,22 @@ export function applyCharacterDnaAnalysisSuccess(
     compiledCharacterIdentityFingerprint: computeCompiledCharacterIdentityFingerprint(input.dna),
     completedAt: input.completedAt,
     userSafeError: null,
+    failureCode: null,
+    failureStage: null,
+    failureFieldPaths: null,
+    providerRequestId: null,
+    requestedModelId: null,
+    providerModelId: null,
+    outputFingerprint: null,
   };
 }
 
 export function applyCharacterDnaAnalysisFailure(
   job: AiStoryCharacterDnaAnalysisJob,
-  completedAt: string
+  completedAt: string,
+  diagnostic?: CharacterDnaAnalysisFailureDiagnostic | null
 ): AiStoryCharacterDnaAnalysisJob {
+  const safe = persistableCharacterDnaFailureDiagnostic(diagnostic ?? emptyFailureDiagnostic());
   return {
     ...job,
     status: "FAILED",
@@ -294,6 +457,18 @@ export function applyCharacterDnaAnalysisFailure(
     characterDnaFingerprint: null,
     compiledCharacterIdentityFingerprint: null,
     userSafeError: AI_STORY_CHARACTER_DNA_COPY.analysisFailed,
+    failureCode: safe.failureCode,
+    failureStage: safe.failureStage,
+    failureFieldPaths: safe.failureFieldPaths,
+    provider: safe.provider ?? job.provider,
+    providerModel: safe.providerModel ?? job.providerModel,
+    providerRequestId: safe.providerRequestId,
+    requestedModelId: safe.requestedModelId,
+    providerModelId: safe.providerModelId,
+    inputTokens: safe.inputTokens,
+    outputTokens: safe.outputTokens,
+    costUsd: safe.costUsd,
+    outputFingerprint: safe.outputFingerprint,
   };
 }
 

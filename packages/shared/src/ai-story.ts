@@ -5,6 +5,7 @@ import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
 import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
 import { AiStoryOutlineProfileReferenceSchema } from "./ai-story-outline-profile";
+import { AiStoryEpisodeIntentInputSchema } from "./ai-story-episode-intent";
 import { EpisodeContinuityPlanningContextSchema } from "./ai-story-episode-continuity";
 import { AiStorySceneGroundingLineageSchema } from "./ai-story-scene-grounding";
 
@@ -53,6 +54,7 @@ export const AiStoryCreateBodySchema = z
     title: z.string().trim().min(1).max(200),
     originalIdea: z.string().trim().min(1).max(8000),
     outlineProfile: AiStoryOutlineProfileReferenceSchema,
+    episodeIntent: AiStoryEpisodeIntentInputSchema.optional(),
   })
   .and(AiStoryAssetSelectionSchema);
 

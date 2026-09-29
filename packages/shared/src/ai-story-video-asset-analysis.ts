@@ -136,6 +136,8 @@ const AiStoryVideoAssetObservationObject = z.object({
   layoutImportant: z.boolean(),
   lightingMoodImportant: z.boolean(),
   signageIdentityVisible: z.boolean(),
+  observedTextReadable: z.boolean().nullable().default(null),
+  observedReadableText: z.string().trim().max(500).nullable().default(null),
   backgroundClutterImportant: z.boolean(),
   visiblePeopleEstimate: z.number().int().nonnegative(),
   primaryPersonPresent: z.boolean(),
