@@ -12,6 +12,47 @@ type ProposalScene = AiStoryScriptSemanticProposalV1["scenes"][number];
 const keyOf = (fact: { dimension: string; subjectId: string }) =>
   `${fact.dimension}:${fact.subjectId}`;
 
+function sameText(left: string, right: string) {
+  return left.trim().toLocaleLowerCase("en-US") === right.trim().toLocaleLowerCase("en-US");
+}
+
+/**
+ * Drops physical deltas that do not change the scene's incoming and outgoing
+ * value, and drops a commercial contribution whose pre-state and post-state
+ * are the same. A physical value that actually changes is left untouched.
+ */
+export function dropUnchangedPhysicalScriptChanges(
+  scenes: readonly ProposalScene[],
+): ProposalScene[] {
+  return scenes.map((scene) => {
+    const incoming = new Map(scene.sceneStateIn.map((fact) => [keyOf(fact), fact.value]));
+    const outgoing = new Map(scene.sceneStateOut.map((fact) => [keyOf(fact), fact.value]));
+    const sceneStateDeltas = scene.sceneStateDeltas.filter((delta) => {
+      if (!PHYSICAL_DIMENSIONS.has(delta.dimension)) return true;
+      if (delta.fromValue !== null && delta.fromValue === delta.value) return false;
+      return incoming.get(keyOf(delta)) !== outgoing.get(keyOf(delta));
+    });
+    const retained = new Set(sceneStateDeltas.map((delta) => JSON.stringify(delta)));
+    const contribution = scene.commercialContribution;
+    const commercialContribution = contribution && !sameText(contribution.preState, contribution.postState)
+      ? contribution
+      : undefined;
+    const { commercialContribution: _existing, ...rest } = scene;
+    return {
+      ...rest,
+      sceneStateDeltas,
+      entries: scene.entries.map((entry) => {
+        if (entry.type !== "ACTION" || !entry.stateDelta) return entry;
+        if (retained.has(JSON.stringify(entry.stateDelta))) return entry;
+        if (!PHYSICAL_DIMENSIONS.has(entry.stateDelta.dimension)) return entry;
+        const { stateDelta: _removed, ...action } = entry;
+        return action;
+      }),
+      ...(commercialContribution ? { commercialContribution } : {}),
+    };
+  });
+}
+
 /**
  * Projects unchanged story-world state across Scene boundaries.
  * Omitted physical facts are copied forward. A non-physical fact that the

@@ -3,6 +3,7 @@ import {
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   CreativeContextSchema,
   carryForwardUnchangedScriptSceneState,
+  dropUnchangedPhysicalScriptChanges,
   validateAiStoryScript,
   type AiStoryOutlineVersion,
   type AiStoryScriptSemanticProposalV1,
@@ -189,6 +190,46 @@ describe("commercial script state continuity", () => {
     ]);
     expect(aligned[1]!.sceneStateIn[0]!.value).toBe(prior.value);
     expect(aligned[1]!.sceneStateDeltas[0]!.fromValue).toBe(prior.value);
+  });
+
+  it("drops an unchanged physical delta and keeps a real location change", () => {
+    const place = { dimension: "LOCATION" as const, subjectId: IDS.character, value: "florist workbench" };
+    const moved = { ...place, value: "different shop" };
+    const product = held("holding the same product");
+    const [unchanged, changed] = dropUnchangedPhysicalScriptChanges([
+      scene({
+        scenePlanItemId: "scene-001",
+        sceneStateIn: [product, place],
+        sceneStateOut: [product, place],
+        sceneStateDeltas: [{ ...product, fromValue: product.value, value: product.value, reason: "Still holding" }],
+      }),
+      scene({
+        scenePlanItemId: "scene-002",
+        sceneStateIn: [place],
+        sceneStateOut: [moved],
+        sceneStateDeltas: [{ ...place, fromValue: place.value, value: moved.value, reason: "Unexplained move" }],
+      }),
+    ]);
+    expect(unchanged!.sceneStateDeltas).toEqual([]);
+    expect(changed!.sceneStateDeltas).toEqual([
+      { ...place, fromValue: place.value, value: moved.value, reason: "Unexplained move" },
+    ]);
+  });
+
+  it("drops a commercial contribution that does not change state", () => {
+    const [sceneWithContribution] = dropUnchangedPhysicalScriptChanges([{
+      ...scene({ scenePlanItemId: "scene-001", sceneStateIn: [], sceneStateOut: [] }),
+      commercialContribution: {
+        commercialRole: "PRODUCT",
+        narrativeFunction: "ACTION",
+        participationKind: "ENABLE",
+        commercialAuthorityIds: [IDS.product],
+        preState: "same",
+        postState: "same",
+        storyConsequence: "No change",
+      },
+    }]);
+    expect(sceneWithContribution!.commercialContribution).toBeUndefined();
   });
 
   it("rebases an ACTION stateDelta together with the scene delta", () => {
