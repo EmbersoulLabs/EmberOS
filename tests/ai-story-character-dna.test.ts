@@ -17,6 +17,7 @@ import {
   AiStoryCharacterDnaAnalysisJobSchema,
   AiStoryCharacterDnaError,
   AiStoryCharacterDnaSchema,
+  AiStoryCharacterDnaVisionOutputSchema,
   AiStoryReusableCharacterVersionSchema,
   characterDnaAnalysisCostEstimate,
   publicCharacterDnaJob,
@@ -48,7 +49,9 @@ import {
 } from "@ceo-agent/shared/server";
 import {
   CHARACTER_DNA_VISION_REQUEST_OPTIONS,
+  CHARACTER_DNA_VISION_SCHEMA_NAME,
   MockCharacterDnaAnalysisProvider,
+  characterDnaVisionResponseFormat,
   VisionCharacterDnaAnalysisProvider,
   assertNoImageGenerationForCharacterDna,
   type CharacterDnaVisionCaller,
@@ -167,18 +170,17 @@ describe("AI Story Character DNA from Photo V1", () => {
     expect(CHARACTER_DNA_ANALYSIS).toBe("CHARACTER_DNA_ANALYSIS");
   });
 
+  function visionOutput(overrides: Record<string, unknown> = {}) {
+    const { sourceAssetId: _source, sourceContentHash: _hash, analysisVersion: _version, createdAt: _created, ...visible } = dna();
+    return { ...visible, ...overrides };
+  }
+
   it("configures the real Character DNA Vision SDK request with zero retries", async () => {
-    let receivedOptions: { maxRetries: number } | undefined;
-    const fakeVision: CharacterDnaVisionCaller = async <T>(
-      _system: string,
-      _userText: string,
-      _imageDataUrls: string[],
-      _schemaHint: string,
-      requestOptions?: { maxRetries: number }
-    ) => {
-      receivedOptions = requestOptions;
+    let received: Parameters<CharacterDnaVisionCaller>[0] | undefined;
+    const fakeVision: CharacterDnaVisionCaller = async (input) => {
+      received = input;
       return {
-        result: dna() as T,
+        result: visionOutput(),
         usage: { input: 10, output: 20, costUsd: 0.001 },
       };
     };
@@ -190,8 +192,12 @@ describe("AI Story Character DNA from Photo V1", () => {
     });
 
     expect(CHARACTER_DNA_VISION_REQUEST_OPTIONS).toEqual({ maxRetries: 0 });
-    expect(receivedOptions).toEqual({ maxRetries: 0 });
+    expect(received?.requestOptions).toEqual({ maxRetries: 0 });
+    expect(received?.schema).toBe(AiStoryCharacterDnaVisionOutputSchema);
+    expect(received?.schemaName).toBe(CHARACTER_DNA_VISION_SCHEMA_NAME);
     expect(result.providerModel).toBe("gpt-4o");
+    expect(result.dna.sourceAssetId).toBe(IDS.source);
+    expect(result.dna.sourceContentHash).toBe(HASH);
     expect(result.imageGenerationCalls).toBe(0);
     expect(result.gptImageCalls).toBe(0);
   });
@@ -404,6 +410,10 @@ describe("AI Story Character DNA from Photo V1", () => {
     expect(providerJob.providerRequestId).toBe("req_safe_123");
     expect(providerJob.requestedModelId).toBe("gpt-4o");
     expect(providerJob.providerModelId).toBe("gpt-4o-2024-08-06");
+    expect(providerJob.inputTokens).toBeNull();
+    expect(providerJob.outputTokens).toBeNull();
+    expect(providerJob.costUsd).toBeNull();
+    expect(providerJob.provider).toBe("pending");
     expect(JSON.stringify(providerJob)).not.toContain("SECRET_PROVIDER_BODY");
 
     const parseJob = persist(await new VisionCharacterDnaAnalysisProvider(async () => {
@@ -524,6 +534,107 @@ describe("AI Story Character DNA from Photo V1", () => {
     expect(published).not.toHaveProperty("providerRequestId");
     expect(published).not.toHaveProperty("outputFingerprint");
     expect(JSON.stringify(published)).not.toContain("LEAKED_SCHEMA_VALUE_42");
+  });
+
+  it("enforces strict vision arrays and keeps usage when canonical validation rejects", async () => {
+    const format = characterDnaVisionResponseFormat();
+    const responseSchema = format.json_schema.schema as {
+      additionalProperties?: boolean;
+      properties: Record<string, { type?: string; items?: { type?: string; $ref?: string } }>;
+      required?: string[];
+      definitions?: Record<string, { type?: string }>;
+    };
+    const factItems = responseSchema.properties.distinctiveVisualFacts?.items;
+    const factItemKey = factItems?.$ref?.split("/").pop() ?? "";
+    expect(format.type).toBe("json_schema");
+    expect(responseSchema.additionalProperties).toBe(false);
+    expect(responseSchema.properties.distinctiveVisualFacts?.type).toBe("array");
+    expect(responseSchema.definitions?.[factItemKey]?.type).toBe("string");
+    expect(responseSchema.required).toEqual(expect.arrayContaining(["distinctiveVisualFacts", "mustPreserve", "mutableTraits"]));
+    expect(responseSchema.properties.sourceAssetId).toBeUndefined();
+    expect(readFileSync(resolve(process.cwd(), "packages/agents/src/llm.ts"), "utf8")).toContain(
+      "maxRetries: input.requestOptions?.maxRetries ?? 0"
+    );
+
+    expect(AiStoryCharacterDnaVisionOutputSchema.safeParse(visionOutput()).success).toBe(true);
+    const missing = visionOutput();
+    delete (missing as { distinctiveVisualFacts?: unknown }).distinctiveVisualFacts;
+    expect(AiStoryCharacterDnaVisionOutputSchema.safeParse(missing).success).toBe(false);
+    expect(AiStoryCharacterDnaVisionOutputSchema.safeParse(visionOutput({
+      distinctiveVisualFacts: "STRING_FACT_SENTINEL_QQ",
+    })).success).toBe(false);
+    expect(AiStoryCharacterDnaVisionOutputSchema.safeParse(visionOutput({
+      distinctiveVisualFacts: [],
+    })).success).toBe(true);
+
+    const request = {
+      sourceAssetId: IDS.source, sourceContentHash: HASH, imageDataUrl: "data:image/jpeg;base64,AA==",
+      createdAt: "2026-09-23T00:00:00.000Z",
+    };
+    const queued = buildAiStoryCharacterDnaAnalysisJob({
+      orgId: IDS.org, workspaceId: IDS.workspace, sourceAssetId: IDS.source, sourceContentHash: HASH,
+      permissionConfirmed: true, createdBy: IDS.actor, createdAt: "2026-09-23T00:00:00.000Z",
+    });
+    const usage = { input: 321, output: 45, costUsd: 0.0012 };
+    const persist = async (result: unknown) => applyCharacterDnaAnalysisFailure(
+      queued,
+      "2026-09-23T00:01:00.000Z",
+      classifyCharacterDnaAnalysisFailure(result)
+    );
+
+    const empty = await new VisionCharacterDnaAnalysisProvider(async () => ({
+      result: visionOutput({ distinctiveVisualFacts: [] }),
+      usage,
+      providerRequestId: "chatcmpl-empty",
+      requestedModelId: "gpt-4o",
+      providerModelId: "gpt-4o-2024-08-06",
+    })).analyzeCharacter(request);
+    expect(empty.dna.distinctiveVisualFacts).toEqual([]);
+    expect(empty.dna.sourceAssetId).toBe(IDS.source);
+    expect(empty.dna.sourceContentHash).toBe(HASH);
+
+    const sensitivePayload = visionOutput({ distinctiveVisualFacts: ["SECRET_BEAUTIFUL_FACT"] });
+    const sensitiveJob = await persist(await new VisionCharacterDnaAnalysisProvider(async () => ({
+      result: sensitivePayload,
+      usage,
+      providerRequestId: "chatcmpl-sensitive",
+      requestedModelId: "gpt-4o",
+      providerModelId: "gpt-4o-2024-08-06",
+    })).analyzeCharacter(request).catch((error) => error));
+    expect(sensitiveJob.failureCode).toBe("SENSITIVE_TRAIT_INFERENCE_BLOCKED");
+    expect(sensitiveJob.failureStage).toBe("SAFETY");
+    expect(sensitiveJob.proposedDna).toBeNull();
+    expect(sensitiveJob.inputTokens).toBe(321);
+    expect(sensitiveJob.outputTokens).toBe(45);
+    expect(sensitiveJob.costUsd).toBe("0.0012");
+    expect(sensitiveJob.provider).toBe("openai-vision");
+    expect(sensitiveJob.providerModel).toBe("gpt-4o-2024-08-06");
+    expect(JSON.stringify(sensitiveJob)).not.toContain("SECRET_BEAUTIFUL_FACT");
+
+    const stringJob = await persist(await new VisionCharacterDnaAnalysisProvider(async () => ({
+      result: visionOutput({ distinctiveVisualFacts: "STRING_FACT_SENTINEL_QQ" }),
+      usage,
+      providerRequestId: "chatcmpl-string",
+      requestedModelId: "gpt-4o",
+      providerModelId: "gpt-4o-2024-08-06",
+    })).analyzeCharacter(request).catch((error) => error));
+    expect(stringJob.failureCode).toBe("CHARACTER_DNA_SCHEMA_VALIDATION_FAILED");
+    expect(stringJob.failureStage).toBe("SCHEMA");
+    expect(stringJob.failureFieldPaths).toContain("distinctiveVisualFacts");
+    expect(stringJob.inputTokens).toBe(321);
+    expect(stringJob.costUsd).toBe("0.0012");
+    expect(stringJob.proposedDna).toBeNull();
+    expect(JSON.stringify(stringJob)).not.toContain("STRING_FACT_SENTINEL_QQ");
+
+    const missingJob = await persist(await new VisionCharacterDnaAnalysisProvider(async () => ({
+      result: missing,
+      usage,
+      providerRequestId: "chatcmpl-missing",
+    })).analyzeCharacter(request).catch((error) => error));
+    expect(missingJob.failureFieldPaths).toContain("distinctiveVisualFacts");
+    expect(missingJob.inputTokens).toBe(321);
+    expect(missingJob.outputTokens).toBe(45);
+    expect(missingJob.costUsd).toBe("0.0012");
   });
 
   it("normal UI no longer exposes Premium 3D generation", () => {

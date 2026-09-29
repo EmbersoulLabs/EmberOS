@@ -110,6 +110,56 @@ export const AiStoryCharacterDnaAppearanceSchema = z
   })
   .strict();
 
+const VisionText = z.string();
+
+export const AiStoryCharacterDnaVisionOutputSchema = z
+  .object({
+    identityDescription: VisionText,
+    face: z.object({
+      shape: VisionText,
+      jawline: VisionText,
+      forehead: VisionText,
+      cheeks: VisionText,
+      chin: VisionText,
+    }).strict(),
+    eyes: z.object({
+      shape: VisionText,
+      size: VisionText,
+      colorDescription: VisionText,
+      eyebrowShape: VisionText,
+    }).strict(),
+    nose: z.object({
+      bridge: VisionText,
+      width: VisionText,
+      tip: VisionText,
+    }).strict(),
+    mouth: z.object({
+      lipShape: VisionText,
+      lipFullness: VisionText,
+    }).strict(),
+    hair: z.object({
+      length: VisionText,
+      texture: VisionText,
+      parting: VisionText,
+      style: VisionText,
+      colorDescription: VisionText,
+    }).strict(),
+    body: z.object({
+      build: VisionText,
+      proportionDescription: VisionText,
+      heightImpression: VisionText,
+    }).strict(),
+    appearance: z.object({
+      defaultExpression: VisionText,
+      overallImpression: VisionText,
+      presentationStyle: VisionText,
+    }).strict(),
+    distinctiveVisualFacts: z.array(VisionText).max(32),
+    mustPreserve: z.array(VisionText).max(32),
+    mutableTraits: z.array(VisionText).max(32),
+  })
+  .strict();
+
 export const AiStoryCharacterDnaSchema = z
   .object({
     identityDescription: visualFact(4000),
@@ -225,6 +275,7 @@ export const AiStoryCharacterDnaPublicJobSchema = z
   })
   .strict();
 
+export type AiStoryCharacterDnaVisionOutput = z.infer<typeof AiStoryCharacterDnaVisionOutputSchema>;
 export type AiStoryCharacterDna = z.infer<typeof AiStoryCharacterDnaSchema>;
 export type AiStoryCharacterDnaAnalysisJob = z.infer<typeof AiStoryCharacterDnaAnalysisJobSchema>;
 export type AiStoryCharacterDnaCostEstimate = z.infer<typeof AiStoryCharacterDnaCostEstimateSchema>;
@@ -241,6 +292,11 @@ export type CharacterDnaAnalysisFailureDiagnostic = {
   requestedModelId: string | null;
   providerModelId: string | null;
   outputFingerprint: string | null;
+  provider: string | null;
+  providerModel: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  costUsd: string | null;
 };
 
 export class AiStoryCharacterDnaError extends Error {

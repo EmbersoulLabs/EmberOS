@@ -180,7 +180,20 @@ function emptyFailureDiagnostic(
     requestedModelId: null,
     providerModelId: null,
     outputFingerprint: null,
+    provider: null,
+    providerModel: null,
+    inputTokens: null,
+    outputTokens: null,
+    costUsd: null,
   };
+}
+
+function safeUsageCount(value: unknown) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function safeCostUsd(value: unknown) {
+  return typeof value === "string" && /^\d+\.\d{4}$/.test(value) ? value : null;
 }
 
 export function characterDnaAnalysisOutputFingerprint(payload: unknown) {
@@ -253,6 +266,11 @@ export function persistableCharacterDnaFailureDiagnostic(
     outputFingerprint: typeof fingerprint === "string" && /^sha256:[0-9a-f]{64}$/.test(fingerprint)
       ? fingerprint
       : null,
+    provider: safeDiagnosticId(diagnostic.provider),
+    providerModel: safeDiagnosticId(diagnostic.providerModel),
+    inputTokens: safeUsageCount(diagnostic.inputTokens),
+    outputTokens: safeUsageCount(diagnostic.outputTokens),
+    costUsd: safeCostUsd(diagnostic.costUsd),
   };
 }
 
@@ -442,9 +460,14 @@ export function applyCharacterDnaAnalysisFailure(
     failureCode: safe.failureCode,
     failureStage: safe.failureStage,
     failureFieldPaths: safe.failureFieldPaths,
+    provider: safe.provider ?? job.provider,
+    providerModel: safe.providerModel ?? job.providerModel,
     providerRequestId: safe.providerRequestId,
     requestedModelId: safe.requestedModelId,
     providerModelId: safe.providerModelId,
+    inputTokens: safe.inputTokens,
+    outputTokens: safe.outputTokens,
+    costUsd: safe.costUsd,
     outputFingerprint: safe.outputFingerprint,
   };
 }
