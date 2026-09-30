@@ -6,9 +6,9 @@ const APPEARANCE_TOKENS = [
 
 export const AI_STORY_PRODUCT_VARIANT_STATUSES = [
   "not_required",
-  "proposed",
+  "analysis_required",
+  "selection_required",
   "confirmed",
-  "unresolved",
   "conflict",
 ] as const;
 
@@ -22,6 +22,21 @@ export type ProductVariantSemanticFacts = {
   };
   inferred?: {
     productCandidates?: readonly { name?: string; relationship?: string }[];
+    productVariantCandidates?: readonly ProductVariantCandidateEvidence[];
+  };
+};
+
+export type ProductVariantCandidateEvidence = {
+  label: string;
+  observableAttributes: readonly string[];
+  confidence: number;
+  evidence: readonly string[];
+  regionEvidence?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    confidence: number;
   };
 };
 
@@ -29,7 +44,24 @@ export type ProductVariantResolution = {
   status: AiStoryProductVariantStatus;
   variant: string | null;
   candidates: string[];
-  code?: "PRODUCT_VARIANT_CONFLICT" | "PRODUCT_VARIANT_UNRESOLVED";
+  code?:
+    | "PRODUCT_VARIANT_ANALYSIS_REQUIRED"
+    | "PRODUCT_VARIANT_SELECTION_REQUIRED"
+    | "PRODUCT_VARIANT_CONFLICT";
+};
+
+export type ProductVariantVisualGrounding = {
+  status: "analysis_required" | "confirmed" | "user_reference_required";
+  visualReferenceId: string | null;
+  visualReferenceContentHash: string | null;
+  sourceMultiVariant: boolean | null;
+  lineage: {
+    kind: "SOURCE_ASSET" | "DERIVED_REGION";
+    sourceAssetId: string;
+    sourceAssetContentHash: string | null;
+    analysisSnapshotId?: string;
+  } | null;
+  code?: "PRODUCT_VARIANT_ANALYSIS_REQUIRED" | "PRODUCT_VARIANT_VISUAL_REFERENCE_REQUIRED";
 };
 
 function titleCase(token: string): string {
@@ -44,10 +76,15 @@ function appearanceTokensIn(text: string): string[] {
   return [...found];
 }
 
-/** Candidates come only from durable semantic facts. Empty means no variant distinction. */
+/** Candidates come only from durable semantic facts. Empty means unknown, not conflict. */
 export function extractProductVariantCandidates(facts: ProductVariantSemanticFacts | null | undefined): string[] {
   if (!facts) return [];
   const found = new Set<string>();
+  for (const candidate of facts.inferred?.productVariantCandidates ?? []) {
+    if (candidate.label.trim() && candidate.confidence >= 0.5 && candidate.evidence.length > 0) {
+      found.add(candidate.label.trim());
+    }
+  }
   const phrases = [
     ...(facts.observed?.namedItems ?? []),
     ...(facts.observed?.objects ?? []),
@@ -86,23 +123,119 @@ export function resolveProductVariantMapping(input: {
   const candidates = [...new Set(input.candidates.map((candidate) => candidate.trim()).filter(Boolean))]
     .sort((left, right) => left.localeCompare(right));
   const requested = appearanceTokensIn(input.userIntent ?? "");
+  const selectedInput = input.selectedVariant?.trim() || null;
+  const variantMatters = requested.length > 0 || selectedInput !== null;
+  if (candidates.length === 0) {
+    if (variantMatters) {
+      return {
+        status: "analysis_required",
+        variant: selectedInput,
+        candidates,
+        code: "PRODUCT_VARIANT_ANALYSIS_REQUIRED",
+      };
+    }
+    return { status: "not_required", variant: null, candidates };
+  }
   const missing = requested.filter((token) => !candidates.some((candidate) => candidate.toLocaleLowerCase() === token.toLocaleLowerCase()));
   if (missing.length > 0) {
     return { status: "conflict", variant: null, candidates, code: "PRODUCT_VARIANT_CONFLICT" };
   }
-  const selected = matchCandidate(candidates, input.selectedVariant);
+  const selected = matchCandidate(candidates, selectedInput);
+  if (selectedInput && !selected) {
+    return { status: "conflict", variant: null, candidates, code: "PRODUCT_VARIANT_CONFLICT" };
+  }
   const intentMatch = requested.length === 1 ? matchCandidate(candidates, requested[0]) : null;
   const determined = selected ?? intentMatch ?? (candidates.length === 1 ? candidates[0]! : null);
-  if (candidates.length === 0) {
-    return { status: "not_required", variant: null, candidates };
-  }
   if (!determined) {
-    return { status: "unresolved", variant: null, candidates, code: "PRODUCT_VARIANT_UNRESOLVED" };
+    return {
+      status: "selection_required",
+      variant: null,
+      candidates,
+      code: "PRODUCT_VARIANT_SELECTION_REQUIRED",
+    };
   }
   if (input.confirmed) {
     return { status: "confirmed", variant: determined, candidates };
   }
-  return { status: "proposed", variant: determined, candidates };
+  return {
+    status: "selection_required",
+    variant: determined,
+    candidates,
+    code: "PRODUCT_VARIANT_SELECTION_REQUIRED",
+  };
+}
+
+/**
+ * Intake grounding is deliberately stricter than semantic selection. A
+ * multi-variant source is not executable merely because a label was chosen.
+ * V1 accepts the original source only when it is itself single-variant; a
+ * clear replacement Asset is the normal user resolution for ambiguity.
+ */
+export function resolveProductVariantVisualGrounding(input: {
+  sourceAssetId: string;
+  sourceAssetContentHash?: string | null;
+  resolution: ProductVariantResolution;
+  derivedReference?: {
+    assetId: string;
+    contentHash: string;
+    sourceAssetId: string;
+    sourceAssetContentHash: string;
+    analysisSnapshotId: string;
+    variant: string;
+  } | null;
+}): ProductVariantVisualGrounding {
+  if (input.resolution.status === "analysis_required") {
+    return {
+      status: "analysis_required",
+      visualReferenceId: null,
+      visualReferenceContentHash: null,
+      sourceMultiVariant: null,
+      lineage: null,
+      code: "PRODUCT_VARIANT_ANALYSIS_REQUIRED",
+    };
+  }
+  if (input.resolution.candidates.length > 1) {
+    const derived = input.derivedReference;
+    if (
+      derived
+      && input.resolution.variant
+      && derived.variant.toLocaleLowerCase() === input.resolution.variant.toLocaleLowerCase()
+      && derived.sourceAssetId === input.sourceAssetId
+      && derived.sourceAssetContentHash === input.sourceAssetContentHash
+    ) {
+      return {
+        status: "confirmed",
+        visualReferenceId: derived.assetId,
+        visualReferenceContentHash: derived.contentHash,
+        sourceMultiVariant: true,
+        lineage: {
+          kind: "DERIVED_REGION",
+          sourceAssetId: input.sourceAssetId,
+          sourceAssetContentHash: input.sourceAssetContentHash ?? null,
+          analysisSnapshotId: derived.analysisSnapshotId,
+        },
+      };
+    }
+    return {
+      status: "user_reference_required",
+      visualReferenceId: null,
+      visualReferenceContentHash: null,
+      sourceMultiVariant: true,
+      lineage: null,
+      code: "PRODUCT_VARIANT_VISUAL_REFERENCE_REQUIRED",
+    };
+  }
+  return {
+    status: "confirmed",
+    visualReferenceId: input.sourceAssetId,
+    visualReferenceContentHash: input.sourceAssetContentHash ?? null,
+    sourceMultiVariant: false,
+    lineage: {
+      kind: "SOURCE_ASSET",
+      sourceAssetId: input.sourceAssetId,
+      sourceAssetContentHash: input.sourceAssetContentHash ?? null,
+    },
+  };
 }
 
 export function withConfirmedVariant<T extends object>(value: T, confirmedVariant: string | null | undefined): T & { confirmedVariant?: string } {

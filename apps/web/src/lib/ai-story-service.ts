@@ -3,10 +3,12 @@
  */
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb, schema, CampaignAssetRefError } from "@ceo-agent/db";
+import { VISUAL_SEMANTIC_ANALYZER_VERSION } from "@ceo-agent/agents";
 import {
   extractProductVariantCandidates,
   planAiStoryAssetLinkUsage,
   resolveProductVariantMapping,
+  resolveProductVariantVisualGrounding,
   type ProductVariantSemanticFacts,
   assertAiStoryTransition,
   nextAiStoryVersionNumber,
@@ -144,7 +146,11 @@ export async function ensureCampaignLibraryAvailability(
 
 export class AiStoryProductVariantAuthorityError extends Error {
   constructor(
-    readonly code: "PRODUCT_VARIANT_CONFLICT" | "PRODUCT_VARIANT_UNRESOLVED",
+    readonly code:
+      | "PRODUCT_VARIANT_ANALYSIS_REQUIRED"
+      | "PRODUCT_VARIANT_SELECTION_REQUIRED"
+      | "PRODUCT_VARIANT_VISUAL_REFERENCE_REQUIRED"
+      | "PRODUCT_VARIANT_CONFLICT",
     message: string
   ) {
     super(message);
@@ -171,37 +177,66 @@ export async function confirmedProductVariantsForIntake(
 ): Promise<Record<string, string | null>> {
   const productAssetIds = [...new Set(input.productAssetIds)];
   if (productAssetIds.length === 0 || !input.confirmed) return {};
+  const assets = await db
+    .select({ id: schema.assets.id, contentHash: schema.assets.contentHash })
+    .from(schema.assets)
+    .where(and(
+      eq(schema.assets.workspaceId, input.workspaceId),
+      inArray(schema.assets.id, productAssetIds),
+      isNull(schema.assets.deletedAt)
+    ));
+  if (assets.length !== productAssetIds.length || assets.some((asset) => !asset.contentHash)) {
+    throw new AiStoryProductVariantAuthorityError(
+      "PRODUCT_VARIANT_ANALYSIS_REQUIRED",
+      "Product variant analysis requires finalized source identity"
+    );
+  }
   const rows = await db
     .select({
-      sourceAssetId: schema.assetAnalysisSnapshots.sourceAssetId,
+      analyzedContentHash: schema.assetAnalysisSnapshots.analyzedContentHash,
       analysis: schema.assetAnalysisSnapshots.analysis,
       createdAt: schema.assetAnalysisSnapshots.createdAt,
     })
     .from(schema.assetAnalysisSnapshots)
     .where(and(
       eq(schema.assetAnalysisSnapshots.workspaceId, input.workspaceId),
-      inArray(schema.assetAnalysisSnapshots.sourceAssetId, productAssetIds),
+      inArray(schema.assetAnalysisSnapshots.analyzedContentHash, assets.map((asset) => asset.contentHash!)),
+      eq(schema.assetAnalysisSnapshots.analyzerVersion, VISUAL_SEMANTIC_ANALYZER_VERSION),
       eq(schema.assetAnalysisSnapshots.schemaVersion, "ai-story-asset-visual-semantics.v1")
     ))
     .orderBy(desc(schema.assetAnalysisSnapshots.createdAt));
-  const factsByAsset = new Map<string, ProductVariantSemanticFacts | null>();
+  const factsByHash = new Map<string, ProductVariantSemanticFacts | null>();
   for (const row of rows) {
-    if (!factsByAsset.has(row.sourceAssetId)) factsByAsset.set(row.sourceAssetId, visualSemanticFacts(row.analysis));
+    if (!factsByHash.has(row.analyzedContentHash)) factsByHash.set(row.analyzedContentHash, visualSemanticFacts(row.analysis));
   }
   const confirmedVariants: Record<string, string | null> = {};
   for (const assetId of productAssetIds) {
+    const asset = assets.find((candidate) => candidate.id === assetId)!;
     const resolution = resolveProductVariantMapping({
-      candidates: extractProductVariantCandidates(factsByAsset.get(assetId)),
+      candidates: extractProductVariantCandidates(factsByHash.get(asset.contentHash!)),
       userIntent: input.userIntent,
       selectedVariant: input.selections.find((item) => item.assetId === assetId)?.variant,
       confirmed: true,
     });
-    if (resolution.status === "conflict" || resolution.status === "unresolved") {
+    if (resolution.status === "analysis_required" || resolution.status === "selection_required" || resolution.status === "conflict") {
       throw new AiStoryProductVariantAuthorityError(
-        resolution.code ?? "PRODUCT_VARIANT_UNRESOLVED",
+        resolution.code ?? "PRODUCT_VARIANT_SELECTION_REQUIRED",
         resolution.status === "conflict"
           ? "The requested product variant is not in the source analysis"
-          : "Choose one product variant before confirming the mapping"
+          : resolution.status === "analysis_required"
+            ? "Product variant analysis is required before confirming the mapping"
+            : "Choose one product variant before confirming the mapping"
+      );
+    }
+    const grounding = resolveProductVariantVisualGrounding({
+      sourceAssetId: assetId,
+      sourceAssetContentHash: asset.contentHash,
+      resolution,
+    });
+    if (grounding.status !== "confirmed") {
+      throw new AiStoryProductVariantAuthorityError(
+        grounding.code ?? "PRODUCT_VARIANT_VISUAL_REFERENCE_REQUIRED",
+        "Choose or upload a clear reference for the confirmed Product variant"
       );
     }
     confirmedVariants[assetId] = resolution.variant;

@@ -12,7 +12,7 @@ import type {
 } from "./asset-analysis-service";
 
 export const VISUAL_SEMANTIC_ANALYZER_VERSION =
-  "emberos-asset-visual-semantic-analyzer.v2" as const;
+  "emberos-asset-visual-semantic-analyzer.v3" as const;
 
 const ModelSemanticOutputSchema = AiStoryVisualSemanticFactsSchema.omit({
   contractVersion: true,
@@ -45,6 +45,19 @@ const defaultModelAdapter: VisualSemanticModelAdapter = async (input) => {
           relationship: "PRIMARY_PRODUCT | ADDON_OR_COMPONENT | CATALOG_CHOICE | UNSPECIFIED_PRODUCT",
           confidence: "number from 0 to 1",
           evidence: ["reference to an observed fact"],
+        }],
+        productVariantCandidates: [{
+          label: "short observable variant label such as Pink or Matte Black",
+          observableAttributes: ["directly visible color, finish, pattern, or form"],
+          confidence: "number from 0 to 1",
+          evidence: ["reference to a directly observed fact"],
+          regionEvidence: {
+            x: "normalized left coordinate from 0 to 1",
+            y: "normalized top coordinate from 0 to 1",
+            width: "normalized width from 0 to 1",
+            height: "normalized height from 0 to 1",
+            confidence: "number from 0 to 1",
+          },
         }],
         productGroundingSupported: false,
         characterGroundingSupported: false,
@@ -98,6 +111,9 @@ export class VisualSemanticAssetAnalyzer implements AssetIntelligenceAnalyzer {
           "Report only directly visible text, names, objects, people, environments, and brand/logo cues under observed.",
           "Put classifications and relationships under inferred; never upgrade uncertainty into observation.",
           "Product candidates must cite visible evidence. Distinguish a primary product, add-on/component, catalog choice, and unspecified product when supported.",
+          "Report productVariantCandidates only for visually distinguishable variants. Use observable color, finish, pattern, or form; never invent catalogue data.",
+          "When several variants are visible, return one candidate per distinguishable variant. Include normalized region evidence only when the candidate can be localized confidently.",
+          "When no variant distinction is visually supported, return an empty productVariantCandidates array.",
           "Do not invent names, prices, claims, brands, or relationships. Use empty arrays when unsupported.",
         ].join(" "),
         user: "Return the typed semantic analysis for this single asset.",

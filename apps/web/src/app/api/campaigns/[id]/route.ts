@@ -1,6 +1,7 @@
 import { eq, and, desc, asc, getTableColumns, inArray, isNull } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import { extractProductVariantCandidates, type ProductVariantSemanticFacts } from "@ceo-agent/shared";
+import { VISUAL_SEMANTIC_ANALYZER_VERSION } from "@ceo-agent/agents";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { isCampaignDeletable } from "@/lib/campaigns";
@@ -53,30 +54,39 @@ export async function GET(
     const assets = [...referencedAssets, ...legacyAssets].filter(
       (asset, index, rows) => rows.findIndex((candidate) => candidate.id === asset.id) === index
     );
-    const assetIds = assets.map((asset) => asset.id);
-    const snapshots = assetIds.length === 0 ? [] : await db
+    const contentHashes = assets.flatMap((asset) => asset.contentHash ? [asset.contentHash] : []);
+    const snapshots = contentHashes.length === 0 ? [] : await db
       .select({
-        sourceAssetId: schema.assetAnalysisSnapshots.sourceAssetId,
+        analyzedContentHash: schema.assetAnalysisSnapshots.analyzedContentHash,
         analysis: schema.assetAnalysisSnapshots.analysis,
       })
       .from(schema.assetAnalysisSnapshots)
       .where(and(
         eq(schema.assetAnalysisSnapshots.workspaceId, campaign.workspaceId),
-        inArray(schema.assetAnalysisSnapshots.sourceAssetId, assetIds),
+        inArray(schema.assetAnalysisSnapshots.analyzedContentHash, contentHashes),
+        eq(schema.assetAnalysisSnapshots.analyzerVersion, VISUAL_SEMANTIC_ANALYZER_VERSION),
         eq(schema.assetAnalysisSnapshots.schemaVersion, "ai-story-asset-visual-semantics.v1")
       ))
       .orderBy(desc(schema.assetAnalysisSnapshots.createdAt));
     const variantCandidates = new Map<string, string[]>();
+    const variantCandidateEvidence = new Map<string, NonNullable<ProductVariantSemanticFacts["inferred"]>["productVariantCandidates"]>();
     for (const row of snapshots) {
-      if (variantCandidates.has(row.sourceAssetId)) continue;
+      if (variantCandidates.has(row.analyzedContentHash)) continue;
       const facts = row.analysis && typeof row.analysis === "object"
         ? (row.analysis as { facts?: { visualSemantics?: ProductVariantSemanticFacts } }).facts?.visualSemantics
         : null;
-      variantCandidates.set(row.sourceAssetId, extractProductVariantCandidates(facts));
+      variantCandidates.set(row.analyzedContentHash, extractProductVariantCandidates(facts));
+      variantCandidateEvidence.set(row.analyzedContentHash, facts?.inferred?.productVariantCandidates ?? []);
     }
     const assetsWithVariants = assets.map((asset) => ({
       ...asset,
-      variantCandidates: variantCandidates.get(asset.id) ?? [],
+      variantCandidates: asset.contentHash ? variantCandidates.get(asset.contentHash) ?? [] : [],
+      variantCandidateEvidence: asset.contentHash ? variantCandidateEvidence.get(asset.contentHash) ?? [] : [],
+      variantAnalysisState: !asset.contentHash || !variantCandidates.has(asset.contentHash)
+        ? "MISSING"
+        : (variantCandidates.get(asset.contentHash)?.length ?? 0) > 0
+          ? "READY"
+          : "INSUFFICIENT",
     }));
 
     const assetStories = await db

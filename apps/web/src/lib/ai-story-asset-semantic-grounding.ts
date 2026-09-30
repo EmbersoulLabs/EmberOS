@@ -77,6 +77,43 @@ async function loadAssetBytes(storagePath: string): Promise<Uint8Array> {
   return new Uint8Array(await data.arrayBuffer());
 }
 
+/**
+ * Canonical on-demand semantic analysis boundary used by intake and planning.
+ * The repository cache is keyed by Workspace, content hash, analyzer version,
+ * and schema version, so repeated UI reads never repeat a paid analysis call.
+ */
+export async function analyzeVisualSemanticAsset(input: {
+  readonly db: Db;
+  readonly orgId: string;
+  readonly workspaceId: string;
+  readonly assetId: string;
+}) {
+  const [asset] = await input.db
+    .select()
+    .from(schema.assets)
+    .where(and(
+      eq(schema.assets.id, input.assetId),
+      eq(schema.assets.orgId, input.orgId),
+      eq(schema.assets.workspaceId, input.workspaceId),
+      isNull(schema.assets.deletedAt)
+    ))
+    .limit(1);
+  if (!asset || asset.status !== "ready" || asset.type !== "image") {
+    throw new AiStorySemanticGroundingRuntimeError(
+      "ASSET_SEMANTIC_SNAPSHOT_REQUIRED",
+      "Product variant analysis requires a ready image in the authorized Workspace"
+    );
+  }
+  const service = new AssetAnalysisService(
+    new AiStoryAssetAwareExecutionPlannerRepository(input.db),
+    new VisualSemanticAssetAnalyzer()
+  );
+  return service.analyzeFinalizedAsset({
+    asset,
+    loadRawBytes: () => loadAssetBytes(asset.storagePath),
+  });
+}
+
 export type PreparedStoryAssetGrounding = {
   readonly context: AiStoryStoryAssetGroundingContext | null;
   readonly analyzedAssets: readonly {
@@ -116,10 +153,6 @@ export async function prepareStoryAssetGrounding(input: {
     );
   }
   const linkByAssetId = new Map(input.assetLinks.map((link) => [link.assetId, link]));
-  const service = new AssetAnalysisService(
-    new AiStoryAssetAwareExecutionPlannerRepository(input.db),
-    new VisualSemanticAssetAnalyzer()
-  );
   let semanticAnalyzerCalls = 0;
   const analyzedAssets = [] as Array<PreparedStoryAssetGrounding["analyzedAssets"][number]>;
   for (const assetId of selectedIds) {
@@ -134,9 +167,11 @@ export async function prepareStoryAssetGrounding(input: {
     // authorities continue through their certified analysis/runtime paths.
     if (asset.type !== "image") continue;
     try {
-      const outcome = await service.analyzeFinalizedAsset({
-        asset,
-        loadRawBytes: () => loadAssetBytes(asset.storagePath),
+      const outcome = await analyzeVisualSemanticAsset({
+        db: input.db,
+        orgId: input.orgId,
+        workspaceId: input.workspaceId,
+        assetId: asset.id,
       });
       if (outcome.analyzerInvoked) semanticAnalyzerCalls += 1;
       analyzedAssets.push({
