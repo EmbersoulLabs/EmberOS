@@ -30,6 +30,11 @@ type AssetRow = {
   variantAnalysisState?: "MISSING" | "READY" | "INSUFFICIENT";
 };
 
+type LibraryAssetRow = AssetRow & {
+  type?: string;
+  status?: string;
+};
+
 function assetLabel(asset: AssetRow): string {
   return asset.displayName ?? asset.originalFilename ?? asset.id.slice(0, 8);
 }
@@ -68,9 +73,12 @@ type Props = {
   campaignId: string;
   workspaceId?: string;
   assets: AssetRow[];
+  libraryAssets?: LibraryAssetRow[];
   onAssetsChange?: (assets: AssetRow[]) => void;
+  onAttachLibraryAsset?: (assetId: string) => Promise<AssetRow>;
   loading: boolean;
   error: string;
+  onSaveDraft?: (payload: EpisodeCreatePayload) => void;
   onGenerate: (payload: EpisodeCreatePayload) => void;
 };
 
@@ -88,10 +96,13 @@ export function EpisodeCreateForm({
   campaignId,
   workspaceId,
   assets,
+  libraryAssets = [],
   loading,
   error,
   onGenerate,
+  onSaveDraft,
   onAssetsChange,
+  onAttachLibraryAsset,
 }: Props) {
   const [title, setTitle] = useState("");
   const [idea, setIdea] = useState("");
@@ -264,6 +275,48 @@ export function EpisodeCreateForm({
     assignRole(uploaded.id, role, true);
   }
 
+  async function chooseFromLibrary(
+    role: "product_source" | "location_reference" | "brand_reference" | "style_reference" | "generic_reference",
+    assetId: string,
+  ) {
+    if (!onAttachLibraryAsset) return;
+    const attached = await onAttachLibraryAsset(assetId);
+    onAssetsChange?.([...assets.filter((asset) => asset.id !== attached.id), attached]);
+    assignRole(attached.id, role, true);
+  }
+
+  function buildPayload(): EpisodeCreatePayload {
+    return {
+      title: title.trim(),
+      originalIdea: idea.trim(),
+      outlineProfile: mapEpisodeTypeToOutlineProfile(episodeType),
+      assetIds: authority.bindings.map((binding) => binding.assetId),
+      productAssetIds: authority.products.map((item) => item.assetId),
+      locationAssetIds: authority.locations.map((item) => item.assetId),
+      brandAssetIds: authority.other.filter((item) => item.role === "brand_reference").map((item) => item.assetId),
+      styleAssetIds: authority.other.filter((item) => item.role === "style_reference").map((item) => item.assetId),
+      genericAssetIds: authority.other.filter((item) => item.role === "generic_reference").map((item) => item.assetId),
+      characterPortraitAssetIds: portraitAssetId ? [portraitAssetId] : [],
+      productVariantSelections,
+      mappingConfirmed: true,
+      offscreenSpeaker: offscreenSpeaker.trim() || undefined,
+      episodeIntent: {
+        episodeType,
+        durationSec: durationSec === "custom" ? "custom" : durationSec,
+        customDurationSec: durationSec === "custom" ? customDurationSec : undefined,
+        aspectRatio,
+        language,
+        dialogueStyle,
+        nativeCharacterDialogue: nativeDialogue,
+        pacing,
+        cta: cta.trim() || undefined,
+        reusableCharacterId: reusableCharacterId === "new" ? null : reusableCharacterId,
+        episodeLookWardrobe: reusableCharacterId === "new" ? undefined : episodeLookWardrobe.trim() || undefined,
+        worldRequirement: worldRequirement.trim() || undefined,
+      },
+    };
+  }
+
   return (
     <form
       className="space-y-6"
@@ -271,35 +324,7 @@ export function EpisodeCreateForm({
       onSubmit={(event) => {
         event.preventDefault();
         if (!ready || loading) return;
-        onGenerate({
-          title: title.trim(),
-          originalIdea: idea.trim(),
-          outlineProfile: mapEpisodeTypeToOutlineProfile(episodeType),
-          assetIds: authority.bindings.map((binding) => binding.assetId),
-          productAssetIds: authority.products.map((item) => item.assetId),
-          locationAssetIds: authority.locations.map((item) => item.assetId),
-          brandAssetIds: authority.other.filter((item) => item.role === "brand_reference").map((item) => item.assetId),
-          styleAssetIds: authority.other.filter((item) => item.role === "style_reference").map((item) => item.assetId),
-          genericAssetIds: authority.other.filter((item) => item.role === "generic_reference").map((item) => item.assetId),
-          characterPortraitAssetIds: portraitAssetId ? [portraitAssetId] : [],
-          productVariantSelections,
-          mappingConfirmed: true,
-          offscreenSpeaker: offscreenSpeaker.trim() || undefined,
-          episodeIntent: {
-            episodeType,
-            durationSec: durationSec === "custom" ? "custom" : durationSec,
-            customDurationSec: durationSec === "custom" ? customDurationSec : undefined,
-            aspectRatio,
-            language,
-            dialogueStyle,
-            nativeCharacterDialogue: nativeDialogue,
-            pacing,
-            cta: cta.trim() || undefined,
-            reusableCharacterId: reusableCharacterId === "new" ? null : reusableCharacterId,
-            episodeLookWardrobe: reusableCharacterId === "new" ? undefined : episodeLookWardrobe.trim() || undefined,
-            worldRequirement: worldRequirement.trim() || undefined,
-          },
-        });
+        onGenerate(buildPayload());
       }}
     >
       <input type="hidden" name="outlineProfile" value={mapEpisodeTypeToOutlineProfile(episodeType).profileId} />
@@ -403,16 +428,16 @@ export function EpisodeCreateForm({
       </fieldset>
 
       <h2 className="text-sm font-semibold text-navy">References</h2>
-      <AssetSlot title="Product" role="product_source" assets={assets} selected={productAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("product_source", file)} />
+      <AssetSlot title="Product" role="product_source" assets={assets} libraryAssets={libraryAssets} selected={productAssetIds} onAssign={assignRole} onChooseFromLibrary={(assetId) => void chooseFromLibrary("product_source", assetId)} onUpload={(file) => void uploadInto("product_source", file)} />
       <label className="block space-y-1">
         <span className="text-sm font-medium text-navy">World setting</span>
         <input className="w-full rounded-lg border border-border px-3 py-2 text-sm" value={worldRequirement} onChange={(event) => { setWorldRequirement(event.target.value); setMappingConfirmed(false); }} placeholder="Florist / flower shop workbench" />
         <span className="text-xs text-ink-secondary">Describe the world here. A Location image is optional unless a later selected generation mode requires visual grounding.</span>
       </label>
-      <AssetSlot title="Location reference (optional)" role="location_reference" assets={assets} selected={locationAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("location_reference", file)} />
-      <AssetSlot title="Brand" role="brand_reference" assets={assets} selected={brandAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("brand_reference", file)} />
-      <AssetSlot title="Style" role="style_reference" assets={assets} selected={styleAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("style_reference", file)} />
-      <AssetSlot title="Other references" role="generic_reference" assets={assets} selected={genericAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("generic_reference", file)} />
+      <AssetSlot title="Location reference (optional)" role="location_reference" assets={assets} libraryAssets={libraryAssets} selected={locationAssetIds} onAssign={assignRole} onChooseFromLibrary={(assetId) => void chooseFromLibrary("location_reference", assetId)} onUpload={(file) => void uploadInto("location_reference", file)} />
+      <AssetSlot title="Brand" role="brand_reference" assets={assets} libraryAssets={libraryAssets} selected={brandAssetIds} onAssign={assignRole} onChooseFromLibrary={(assetId) => void chooseFromLibrary("brand_reference", assetId)} onUpload={(file) => void uploadInto("brand_reference", file)} />
+      <AssetSlot title="Style" role="style_reference" assets={assets} libraryAssets={libraryAssets} selected={styleAssetIds} onAssign={assignRole} onChooseFromLibrary={(assetId) => void chooseFromLibrary("style_reference", assetId)} onUpload={(file) => void uploadInto("style_reference", file)} />
+      <AssetSlot title="Other references" role="generic_reference" assets={assets} libraryAssets={libraryAssets} selected={genericAssetIds} onAssign={assignRole} onChooseFromLibrary={(assetId) => void chooseFromLibrary("generic_reference", assetId)} onUpload={(file) => void uploadInto("generic_reference", file)} />
 
       <label className="block space-y-1">
         <span className="text-sm font-medium text-navy">Off-screen speaker <span className="font-normal text-ink-secondary">(optional, no visual reference)</span></span>
@@ -456,7 +481,7 @@ export function EpisodeCreateForm({
                   <div className="space-y-2">
                     <p className="text-sm">Needs a clear {item.variant ?? "selected variant"} reference. Deselect this ambiguous source, then choose or upload a clear reference.</p>
                     <div className="flex gap-2">
-                      <a href="#episode-slot-product_source" className="rounded-md border border-border px-2 py-1 text-xs font-medium text-navy">Choose from Library</a>
+                      <a href="#episode-slot-product_source-library" className="rounded-md border border-border px-2 py-1 text-xs font-medium text-navy">Choose from Library</a>
                       <a href="#episode-slot-product_source" className="rounded-md border border-border px-2 py-1 text-xs font-medium text-navy">Upload</a>
                     </div>
                   </div>
@@ -518,9 +543,16 @@ export function EpisodeCreateForm({
 
       {error ? <p className="text-sm text-red-600">{error}</p> : null}
 
-      <button type="submit" disabled={loading || !ready} className="min-h-11 w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60 sm:w-auto">
-        {loading ? "Planning your episode…" : AI_STORY_EPISODE_COPY.generateEpisode}
-      </button>
+      <div className="flex flex-wrap gap-3">
+        {onSaveDraft ? (
+          <button type="button" disabled={loading || !ready} onClick={() => onSaveDraft(buildPayload())} className="min-h-11 rounded-lg border border-primary px-4 py-2 text-sm font-medium text-primary disabled:opacity-60">
+            {loading ? "Saving intake…" : "Save intake without planning"}
+          </button>
+        ) : null}
+        <button type="submit" disabled={loading || !ready} className="min-h-11 w-full rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60 sm:w-auto">
+          {loading ? "Planning your episode…" : AI_STORY_EPISODE_COPY.generateEpisode}
+        </button>
+      </div>
     </form>
   );
 }
@@ -529,15 +561,19 @@ function AssetSlot({
   title,
   role,
   assets,
+  libraryAssets,
   selected,
   onAssign,
+  onChooseFromLibrary,
   onUpload,
 }: {
   title: string;
   role: "product_source" | "location_reference" | "brand_reference" | "style_reference" | "generic_reference";
   assets: AssetRow[];
+  libraryAssets: LibraryAssetRow[];
   selected: string[];
   onAssign: (assetId: string, role: "product_source" | "location_reference" | "brand_reference" | "style_reference" | "generic_reference", enabled: boolean) => void;
+  onChooseFromLibrary: (assetId: string) => void;
   onUpload: (file: File | undefined) => void;
 }) {
   return (
@@ -556,6 +592,18 @@ function AssetSlot({
           ))}
         </ul>
       ) : <p className="text-sm text-ink-secondary">No library assets are attached to this Campaign yet.</p>}
+      <details id={`episode-slot-${role}-library`} className="rounded-lg bg-surface-muted p-3">
+        <summary className="cursor-pointer text-xs font-medium text-navy">Choose from Workspace Library</summary>
+        <div className="mt-2 max-h-56 space-y-1 overflow-auto">
+          {libraryAssets.filter((asset) => !assets.some((attached) => attached.id === asset.id)).length ? libraryAssets
+            .filter((asset) => !assets.some((attached) => attached.id === asset.id))
+            .map((asset) => (
+              <button key={asset.id} type="button" onClick={() => onChooseFromLibrary(asset.id)} className="block w-full rounded-md border border-border bg-white px-2 py-2 text-left text-sm text-navy">
+                {assetLabel(asset)}{asset.type ? ` — ${asset.type}` : ""}
+              </button>
+            )) : <p className="text-xs text-ink-secondary">No additional ready Assets are available.</p>}
+        </div>
+      </details>
       <label className="block text-xs font-medium text-navy">
         Upload into this slot
         <input className="mt-1 block text-sm" type="file" onChange={(event) => onUpload(event.target.files?.[0])} />
