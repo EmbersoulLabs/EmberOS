@@ -88,13 +88,28 @@ describe("AI Story Intake UX V1 product variant closure", () => {
     const route = readFileSync("apps/web/src/app/api/campaigns/[id]/assets/[assetId]/variant-analysis/route.ts", "utf8");
     const grounding = readFileSync("apps/web/src/lib/ai-story-asset-semantic-grounding.ts", "utf8");
     const form = readFileSync("apps/web/src/components/ai-story/EpisodeCreateForm.tsx", "utf8");
+    const page = readFileSync("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/new/page.tsx", "utf8");
     expect(route).toContain("analyzeVisualSemanticAsset");
     expect(grounding).toContain("AiStoryAssetAwareExecutionPlannerRepository");
     expect(grounding).toContain("new VisualSemanticAssetAnalyzer()");
     expect(form).toContain("Analyzing product variants…");
     expect(form).toContain("Choose from Library");
+    expect(form).toContain("Choose from Workspace Library");
     expect(form).toContain("Needs a clear");
+    expect(page).toContain("/assets/attach");
+    expect(page).toContain("/library?sort=newest");
+    expect(page).toContain("Attached Asset was not returned by the Campaign authority readback");
     expect(form).not.toMatch(/Mini Handheld Fan|Yuki/);
+  });
+
+  it("can freeze and persist intake without starting planning or generation", () => {
+    const page = readFileSync("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/new/page.tsx", "utf8");
+    const form = readFileSync("apps/web/src/components/ai-story/EpisodeCreateForm.tsx", "utf8");
+    expect(form).toContain("Save intake without planning");
+    expect(form).toContain("onSaveDraft(buildPayload())");
+    expect(page).toContain("createEpisode(payload, false)");
+    expect(page).toContain("if (startPlanning)");
+    expect(page).toContain("/generate`");
   });
 
   it("keys intake readback by content identity and exact analyzer version", () => {
