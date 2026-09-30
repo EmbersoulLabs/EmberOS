@@ -43,6 +43,35 @@ export const AiStoryVisualProductCandidateSchema = z
   })
   .strict();
 
+export const AiStoryVisualVariantRegionSchema = z
+  .object({
+    /** Normalized source-image coordinates. Evidence only; not a derived Asset. */
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().gt(0).max(1),
+    height: z.number().gt(0).max(1),
+    confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((region, context) => {
+    if (region.x + region.width > 1 || region.y + region.height > 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Variant region must remain inside normalized source bounds",
+      });
+    }
+  });
+
+export const AiStoryVisualProductVariantCandidateSchema = z
+  .object({
+    label: EvidenceText,
+    observableAttributes: z.array(EvidenceText).min(1).max(12),
+    confidence: z.number().min(0).max(1),
+    evidence: z.array(EvidenceText).min(1).max(12),
+    regionEvidence: AiStoryVisualVariantRegionSchema.optional(),
+  })
+  .strict();
+
 /**
  * Provider-neutral semantic payload. Observations are limited to directly
  * visible evidence; classifications remain explicitly inferred.
@@ -64,6 +93,11 @@ export const AiStoryVisualSemanticFactsSchema = z
       .object({
         categories: z.array(AiStoryVisualSemanticCategorySchema).default([]),
         productCandidates: z.array(AiStoryVisualProductCandidateSchema).default([]),
+        /** Visually distinguishable variants only; never catalogue-only claims. */
+        productVariantCandidates: z
+          .array(AiStoryVisualProductVariantCandidateSchema)
+          .max(24)
+          .default([]),
         productGroundingSupported: z.boolean(),
         characterGroundingSupported: z.boolean(),
       })

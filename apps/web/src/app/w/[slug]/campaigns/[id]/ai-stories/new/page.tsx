@@ -7,9 +7,18 @@ import { AppShell } from "@/components/AppShell";
 import { EpisodeCreateForm, type EpisodeCreatePayload } from "@/components/ai-story/EpisodeCreateForm";
 import { TapaoJomEpisodeUxFixture } from "@/components/ai-story/TapaoJomEpisodeUxFixture";
 import { composeEpisodeOriginalIdea } from "@ceo-agent/shared";
+import type { ProductVariantCandidateEvidence } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 
-type AssetRow = { id: string; displayName?: string | null; originalFilename?: string | null };
+type AssetRow = {
+  id: string;
+  displayName?: string | null;
+  originalFilename?: string | null;
+  contentHash?: string | null;
+  variantCandidates?: readonly string[];
+  variantCandidateEvidence?: readonly ProductVariantCandidateEvidence[];
+  variantAnalysisState?: "MISSING" | "READY" | "INSUFFICIENT";
+};
 
 export default function CreateAiStoryPage() {
   const params = useParams();
@@ -58,7 +67,9 @@ export default function CreateAiStoryPage() {
             nativeCharacterDialogue: payload.episodeIntent.nativeCharacterDialogue,
             pacing: payload.episodeIntent.pacing,
             cta: payload.episodeIntent.cta,
-          }) + (payload.offscreenSpeaker ? `\nOff-screen speaker: ${payload.offscreenSpeaker}. No visual reference.` : ""),
+          })
+            + (payload.episodeIntent.worldRequirement ? `\nWorld setting: ${payload.episodeIntent.worldRequirement}.` : "")
+            + (payload.offscreenSpeaker ? `\nOff-screen speaker: ${payload.offscreenSpeaker}. No visual reference.` : ""),
           outlineProfile: payload.outlineProfile,
           assetIds: payload.assetIds,
           productAssetIds: payload.productAssetIds,

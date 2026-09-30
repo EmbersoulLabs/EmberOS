@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AI_STORY_AUDIO_LOCALES,
   AI_STORY_EPISODE_ASPECT_RATIOS,
@@ -14,6 +14,7 @@ import {
   mapEpisodeTypeToOutlineProfile,
   type AiStoryEpisodeUserType,
   type AiStoryReusableCharacterCard,
+  type ProductVariantCandidateEvidence,
 } from "@ceo-agent/shared";
 
 import { CharacterPortrait } from "@/components/ai-story/CharacterPortrait";
@@ -23,7 +24,10 @@ type AssetRow = {
   id: string;
   displayName?: string | null;
   originalFilename?: string | null;
+  contentHash?: string | null;
   variantCandidates?: readonly string[];
+  variantCandidateEvidence?: readonly ProductVariantCandidateEvidence[];
+  variantAnalysisState?: "MISSING" | "READY" | "INSUFFICIENT";
 };
 
 function assetLabel(asset: AssetRow): string {
@@ -56,6 +60,7 @@ export type EpisodeCreatePayload = {
     cta?: string;
     reusableCharacterId?: string | null;
     episodeLookWardrobe?: string;
+    worldRequirement?: string;
   };
 };
 
@@ -110,8 +115,12 @@ export function EpisodeCreateForm({
   const [styleAssetIds, setStyleAssetIds] = useState<string[]>([]);
   const [genericAssetIds, setGenericAssetIds] = useState<string[]>([]);
   const [offscreenSpeaker, setOffscreenSpeaker] = useState("");
+  const [worldRequirement, setWorldRequirement] = useState("");
   const [mappingConfirmed, setMappingConfirmed] = useState(false);
   const [productVariantSelections, setProductVariantSelections] = useState<{ assetId: string; variant: string }[]>([]);
+  const [analyzingVariantAssetIds, setAnalyzingVariantAssetIds] = useState<string[]>([]);
+  const [variantAnalysisErrors, setVariantAnalysisErrors] = useState<Record<string, string>>({});
+  const requestedVariantAnalyses = useRef(new Set<string>());
   const [liveCostLabel, setLiveCostLabel] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -151,6 +160,44 @@ export function EpisodeCreateForm({
       cancelled = true;
     };
   }, [aspectRatio, campaignId, customDurationSec, durationSec, nativeDialogue]);
+  useEffect(() => {
+    for (const assetId of productAssetIds) {
+      const asset = assets.find((candidate) => candidate.id === assetId);
+      if ((asset?.variantAnalysisState ?? "MISSING") !== "MISSING") continue;
+      if (requestedVariantAnalyses.current.has(assetId)) continue;
+      requestedVariantAnalyses.current.add(assetId);
+      setAnalyzingVariantAssetIds((current) => [...new Set([...current, assetId])]);
+      void fetch(`/api/campaigns/${campaignId}/assets/${assetId}/variant-analysis`, { method: "POST" })
+        .then(async (response) => ({ ok: response.ok, body: await response.json() }))
+        .then(({ ok, body }) => {
+          if (!ok) throw new Error(body.error ?? "Product variant analysis failed");
+          onAssetsChange?.(assets.map((candidate) => candidate.id === assetId
+            ? {
+                ...candidate,
+                variantAnalysisState: body.variantAnalysisState,
+                variantCandidates: body.variantCandidates ?? [],
+                variantCandidateEvidence: body.variantCandidateEvidence ?? [],
+              }
+            : candidate));
+          setVariantAnalysisErrors((current) => {
+            const next = { ...current };
+            delete next[assetId];
+            return next;
+          });
+        })
+        .catch((analysisError) => {
+          setVariantAnalysisErrors((current) => ({
+            ...current,
+            [assetId]: analysisError instanceof Error
+              ? analysisError.message
+              : "Product variant analysis failed",
+          }));
+        })
+        .finally(() => {
+          setAnalyzingVariantAssetIds((current) => current.filter((id) => id !== assetId));
+        });
+    }
+  }, [assets, campaignId, onAssetsChange, productAssetIds]);
   const selectedCharacter = characters.find((character) => character.reusableCharacterId === reusableCharacterId) ?? null;
   const portraitAssetId = selectedCharacter?.portraitAssetId ?? null;
   const authority = compileAiStoryIntakeAuthority({
@@ -168,7 +215,10 @@ export function EpisodeCreateForm({
     assets: assets.map((asset) => ({
       assetId: asset.id,
       label: assetLabel(asset),
+      contentHash: asset.contentHash,
       variantCandidates: asset.variantCandidates ?? [],
+      variantCandidateEvidence: asset.variantCandidateEvidence ?? [],
+      variantAnalysisState: asset.variantAnalysisState ?? "MISSING",
     })),
     userIntent: idea,
     character: selectedCharacter
@@ -181,7 +231,12 @@ export function EpisodeCreateForm({
       : null,
     offscreenSpeaker,
   });
-  const variantBlocked = authority.products.some((item) => item.variantStatus === "unresolved" || item.variantStatus === "conflict");
+  const variantBlocked = authority.products.some((item) =>
+    item.variantStatus === "analysis_required"
+    || item.variantStatus === "conflict"
+    || (item.variantStatus === "selection_required" && !item.variant)
+    || item.visualGroundingStatus !== "confirmed"
+  );
   const ready = title.trim().length > 0 && idea.trim().length > 0 && mappingConfirmed && !variantBlocked;
 
   function assignRole(assetId: string, role: "product_source" | "location_reference" | "brand_reference" | "style_reference" | "generic_reference", enabled: boolean) {
@@ -242,6 +297,7 @@ export function EpisodeCreateForm({
             cta: cta.trim() || undefined,
             reusableCharacterId: reusableCharacterId === "new" ? null : reusableCharacterId,
             episodeLookWardrobe: reusableCharacterId === "new" ? undefined : episodeLookWardrobe.trim() || undefined,
+            worldRequirement: worldRequirement.trim() || undefined,
           },
         });
       }}
@@ -348,7 +404,12 @@ export function EpisodeCreateForm({
 
       <h2 className="text-sm font-semibold text-navy">References</h2>
       <AssetSlot title="Product" role="product_source" assets={assets} selected={productAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("product_source", file)} />
-      <AssetSlot title="Location" role="location_reference" assets={assets} selected={locationAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("location_reference", file)} />
+      <label className="block space-y-1">
+        <span className="text-sm font-medium text-navy">World setting</span>
+        <input className="w-full rounded-lg border border-border px-3 py-2 text-sm" value={worldRequirement} onChange={(event) => { setWorldRequirement(event.target.value); setMappingConfirmed(false); }} placeholder="Florist / flower shop workbench" />
+        <span className="text-xs text-ink-secondary">Describe the world here. A Location image is optional unless a later selected generation mode requires visual grounding.</span>
+      </label>
+      <AssetSlot title="Location reference (optional)" role="location_reference" assets={assets} selected={locationAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("location_reference", file)} />
       <AssetSlot title="Brand" role="brand_reference" assets={assets} selected={brandAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("brand_reference", file)} />
       <AssetSlot title="Style" role="style_reference" assets={assets} selected={styleAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("style_reference", file)} />
       <AssetSlot title="Other references" role="generic_reference" assets={assets} selected={genericAssetIds} onAssign={assignRole} onUpload={(file) => void uploadInto("generic_reference", file)} />
@@ -363,7 +424,48 @@ export function EpisodeCreateForm({
         <p className="text-xs text-ink-secondary">This preview is the authority that will be saved. Unresolved items stay unresolved.</p>
         <dl className="space-y-2 text-sm">
           <div><dt className="font-medium text-navy">Main character</dt><dd>{authority.character ? `${authority.character.name} — identity locked` : "None selected"}</dd></div>
-          <div><dt className="font-medium text-navy">Product</dt><dd>{authority.products.length ? authority.products.map((item) => `${item.label}${item.variantStatus === "not_required" ? "" : item.variant ? ` — variant ${item.variant}` : item.code === "PRODUCT_VARIANT_CONFLICT" ? " — PRODUCT_VARIANT_CONFLICT" : " — choose a variant"}`).join("; ") : "None"}</dd></div>
+          <div>
+            <dt className="font-medium text-navy">Product</dt>
+            <dd>{authority.products.length ? authority.products.map((item) => `${item.label}${item.variantStatus === "not_required" ? "" : item.variant ? ` — variant ${item.variant}` : item.variantStatus === "analysis_required" ? " — analyzing product variants…" : item.variantStatus === "conflict" ? " — requested variant does not match the source" : " — choose a variant"}`).join("; ") : "None"}</dd>
+          </div>
+          {authority.products.map((item) => {
+            const analyzing = analyzingVariantAssetIds.includes(item.assetId);
+            const analysisError = variantAnalysisErrors[item.assetId];
+            return (
+              <div key={`variant-status-${item.assetId}`} className="rounded-lg bg-surface-muted p-3" data-testid={`product-variant-status-${item.assetId}`}>
+                <p className="text-xs font-medium text-navy">Variant</p>
+                <p className="text-sm">
+                  {analyzing
+                    ? "Analyzing product variants…"
+                    : item.variantStatus === "analysis_required"
+                      ? "Analysis is required before this variant can be confirmed."
+                      : item.variantStatus === "conflict"
+                        ? `Requested variant is unavailable. Source variants: ${item.variant ? item.variant : (assets.find((asset) => asset.id === item.assetId)?.variantCandidates ?? []).join(", ") || "none confirmed"}.`
+                        : item.variant
+                          ? `${item.variant}${item.variantStatus === "confirmed" ? " ✓" : " — proposed"}`
+                          : "No variant distinction required"}
+                </p>
+                {analysisError ? <p className="mt-1 text-xs text-red-600">{analysisError}</p> : null}
+                <p className="mt-2 text-xs font-medium text-navy">Visual reference</p>
+                {item.visualGroundingStatus === "confirmed" && workspaceId ? (
+                  <div className="mt-1 flex items-center gap-3">
+                    <CharacterPortrait workspaceId={workspaceId} assetId={item.visualReferenceId} label={`${item.variant ?? item.label} reference`} className="h-16 w-16 rounded-md object-cover" />
+                    <span className="text-sm">{item.variant ?? item.label} source — Ready</span>
+                  </div>
+                ) : item.visualGroundingStatus === "user_reference_required" ? (
+                  <div className="space-y-2">
+                    <p className="text-sm">Needs a clear {item.variant ?? "selected variant"} reference. Deselect this ambiguous source, then choose or upload a clear reference.</p>
+                    <div className="flex gap-2">
+                      <a href="#episode-slot-product_source" className="rounded-md border border-border px-2 py-1 text-xs font-medium text-navy">Choose from Library</a>
+                      <a href="#episode-slot-product_source" className="rounded-md border border-border px-2 py-1 text-xs font-medium text-navy">Upload</a>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm">Available after product variant analysis.</p>
+                )}
+              </div>
+            );
+          })}
           {authority.products.filter((item) => (assets.find((asset) => asset.id === item.assetId)?.variantCandidates?.length ?? 0) > 1).map((item) => (
             <fieldset key={item.assetId} className="space-y-1">
               <legend className="text-xs font-medium text-navy">Choose variant</legend>
@@ -375,7 +477,8 @@ export function EpisodeCreateForm({
               ))}
             </fieldset>
           ))}
-          <div><dt className="font-medium text-navy">Location</dt><dd>{authority.locations.length ? authority.locations.map((item) => item.label).join("; ") : "None"}</dd></div>
+          <div><dt className="font-medium text-navy">World</dt><dd>{worldRequirement.trim() || "Not specified"}</dd></div>
+          <div><dt className="font-medium text-navy">Location reference</dt><dd>{authority.locations.length ? authority.locations.map((item) => item.label).join("; ") : "Optional / none selected"}</dd></div>
           <div><dt className="font-medium text-navy">Off-screen speaker</dt><dd>{authority.offscreenSpeaker ? `${authority.offscreenSpeaker.name} — no visual reference` : "None declared"}</dd></div>
           <div><dt className="font-medium text-navy">Other references</dt><dd>{authority.other.length ? authority.other.map((item) => `${item.label} (${item.role})`).join("; ") : "None"}</dd></div>
         </dl>
@@ -438,7 +541,7 @@ function AssetSlot({
   onUpload: (file: File | undefined) => void;
 }) {
   return (
-    <section className="space-y-2 rounded-xl border border-border p-4" data-testid={`episode-slot-${role}`}>
+    <section id={`episode-slot-${role}`} className="space-y-2 rounded-xl border border-border p-4" data-testid={`episode-slot-${role}`}>
       <h2 className="text-sm font-semibold text-navy">{title}</h2>
       <p className="text-xs text-ink-secondary">Nothing in this slot is selected until you choose it.</p>
       {assets.length ? (

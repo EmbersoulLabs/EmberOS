@@ -146,7 +146,7 @@ describe("P0 visual semantic intelligence and Story grounding", () => {
 
   it("uses a distinct analyzer and schema identity", () => {
     expect(VISUAL_SEMANTIC_ANALYZER_VERSION).toBe(
-      "emberos-asset-visual-semantic-analyzer.v2"
+      "emberos-asset-visual-semantic-analyzer.v3"
     );
     expect(VISUAL_SEMANTIC_ANALYZER_VERSION).not.toBe(ASSET_INTELLIGENCE_ANALYZER_VERSION);
     expect(AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION).not.toBe(ASSET_INTELLIGENCE_SCHEMA_VERSION);

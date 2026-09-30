@@ -110,14 +110,36 @@ describe("module-first intake authority", () => {
     const authority = compileAiStoryIntakeAuthority({
       selection,
       assets: [
-        { assetId: product, label: "Mini Handheld Fan", variantCandidates: ["Pink"] },
+        {
+          assetId: product,
+          label: "Mini Handheld Fan",
+          contentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          variantCandidates: ["Pink"],
+          variantAnalysisState: "READY",
+        },
         { assetId: location, label: "Florist workbench" },
       ],
       character: { name: "Yuki", characterId: character, characterVersionId: null, portraitAssetId: portrait },
       offscreenSpeaker: "Boss",
     });
     expect(authority.character).toMatchObject({ name: "Yuki", characterId: character, identityLocked: true });
-    expect(authority.products).toEqual([{ assetId: product, label: "Mini Handheld Fan", variant: "Pink", variantStatus: "confirmed", role: "product_source" }]);
+    expect(authority.products).toEqual([{
+      assetId: product,
+      label: "Mini Handheld Fan",
+      variant: "Pink",
+      variantStatus: "confirmed",
+      role: "product_source",
+      analysisState: "READY",
+      sourceMultiVariant: false,
+      visualGroundingStatus: "confirmed",
+      visualReferenceId: product,
+      visualReferenceContentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      visualReferenceLineage: {
+        kind: "SOURCE_ASSET",
+        sourceAssetId: product,
+        sourceAssetContentHash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      },
+    }]);
     expect(authority.locations).toEqual([{ assetId: location, label: "Florist workbench", role: "location_reference" }]);
     expect(authority.offscreenSpeaker).toEqual({ name: "Boss", visualReference: false });
     expect(authority.bindings).toEqual(planAiStoryAssetLinkUsage(selection));

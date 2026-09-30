@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { resolveProductVariantMapping, type AiStoryProductVariantStatus } from "./ai-story-product-variant";
+import {
+  resolveProductVariantMapping,
+  resolveProductVariantVisualGrounding,
+  type AiStoryProductVariantStatus,
+  type ProductVariantCandidateEvidence,
+} from "./ai-story-product-variant";
 
 export const AI_STORY_ASSET_USAGE_TYPES = [
   "reference",
@@ -212,7 +217,10 @@ export function planAiStoryAssetLinkUsage(
 export type AiStoryIntakeAssetLabel = {
   assetId: string;
   label: string;
+  contentHash?: string | null;
   variantCandidates?: readonly string[];
+  variantCandidateEvidence?: readonly ProductVariantCandidateEvidence[];
+  variantAnalysisState?: "MISSING" | "READY" | "INSUFFICIENT";
 };
 
 export type AiStoryIntakeAuthority = {
@@ -229,7 +237,17 @@ export type AiStoryIntakeAuthority = {
     variant: string | null;
     variantStatus: AiStoryProductVariantStatus;
     role: "product_source";
-    code?: "PRODUCT_VARIANT_CONFLICT" | "PRODUCT_VARIANT_UNRESOLVED";
+    code?:
+      | "PRODUCT_VARIANT_ANALYSIS_REQUIRED"
+      | "PRODUCT_VARIANT_SELECTION_REQUIRED"
+      | "PRODUCT_VARIANT_CONFLICT";
+    analysisState: "MISSING" | "READY" | "INSUFFICIENT";
+    sourceMultiVariant: boolean | null;
+    visualGroundingStatus: "analysis_required" | "confirmed" | "user_reference_required";
+    visualReferenceId: string | null;
+    visualReferenceContentHash: string | null;
+    visualReferenceLineage: import("./ai-story-product-variant").ProductVariantVisualGrounding["lineage"];
+    visualGroundingCode?: "PRODUCT_VARIANT_ANALYSIS_REQUIRED" | "PRODUCT_VARIANT_VISUAL_REFERENCE_REQUIRED";
   }[];
   locations: { assetId: string; label: string; role: "location_reference" }[];
   other: { assetId: string; label: string; role: Exclude<AiStoryModuleAssetRole, "product_source" | "location_reference"> }[];
@@ -267,6 +285,21 @@ export function compileAiStoryIntakeAuthority(input: {
       confirmed: selection.mappingConfirmed === true,
     });
   };
+  const productFor = (assetId: string) => {
+    const asset = labels.get(assetId);
+    const resolution = variantFor(assetId);
+    const grounding = resolveProductVariantVisualGrounding({
+      sourceAssetId: assetId,
+      sourceAssetContentHash: asset?.contentHash,
+      resolution,
+    });
+    return {
+      resolution,
+      grounding,
+      analysisState: asset?.variantAnalysisState
+        ?? (resolution.candidates.length > 0 ? "READY" as const : "MISSING" as const),
+    };
+  };
   return {
     character: input.character
       ? {
@@ -279,14 +312,24 @@ export function compileAiStoryIntakeAuthority(input: {
       : null,
     products: bindings
       .filter((binding) => binding.usageType === "product_source")
-      .map((binding) => ({
-        assetId: binding.assetId,
-        label: labelFor(binding.assetId),
-        variant: variantFor(binding.assetId).variant,
-        variantStatus: variantFor(binding.assetId).status,
-        ...(variantFor(binding.assetId).code ? { code: variantFor(binding.assetId).code } : {}),
-        role: "product_source" as const,
-      })),
+      .map((binding) => {
+        const product = productFor(binding.assetId);
+        return {
+          assetId: binding.assetId,
+          label: labelFor(binding.assetId),
+          variant: product.resolution.variant,
+          variantStatus: product.resolution.status,
+          ...(product.resolution.code ? { code: product.resolution.code } : {}),
+          role: "product_source" as const,
+          analysisState: product.analysisState,
+          sourceMultiVariant: product.grounding.sourceMultiVariant,
+          visualGroundingStatus: product.grounding.status,
+          visualReferenceId: product.grounding.visualReferenceId,
+          visualReferenceContentHash: product.grounding.visualReferenceContentHash,
+          visualReferenceLineage: product.grounding.lineage,
+          ...(product.grounding.code ? { visualGroundingCode: product.grounding.code } : {}),
+        };
+      }),
     locations: bindings
       .filter((binding) => binding.usageType === "location_reference")
       .map((binding) => ({
