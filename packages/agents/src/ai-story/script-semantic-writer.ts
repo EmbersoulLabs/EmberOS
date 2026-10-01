@@ -144,6 +144,17 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     fromValue: ProviderText.max(1000).nullable(),
     reason: ProviderText.max(1000),
   }).strict();
+  const ordinaryStateFact = commercial && characterId
+    ? z.object({
+        dimension: StateDimension,
+        subjectId: characterId,
+        value: ProviderText.max(1000),
+      }).strict()
+    : stateFact;
+  const ordinaryStateDelta = ordinaryStateFact.extend({
+    fromValue: ProviderText.max(1000).nullable(),
+    reason: ProviderText.max(1000),
+  }).strict();
   const commercialProductStateDelta = commercialObjectId
     ? z.object({
         dimension: z.literal("PRODUCT_STATE"),
@@ -167,7 +178,7 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     action: ProviderText.max(2000),
     objectId: ordinaryActionEntityId.nullable(),
     storyEffect: ProviderText.max(1000),
-    stateDelta: stateDelta.nullable(),
+    stateDelta: ordinaryStateDelta.nullable(),
   }).strict();
   const entriesFor = (actionSchema: typeof action | typeof ordinaryAction) => z.array(characterId
     ? z.discriminatedUnion("type", [
@@ -209,19 +220,26 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
   const sceneSchemas = Array.from({ length: sceneCount }, (_, index) => {
     const integrationAnchor = index === commercialIntegrationAnchorSceneIndex;
     const visibleAction = integrationAnchor && commercialObjectId
-      ? action.extend({ objectId: commercialObjectId }).strict()
+      ? z.object({
+          type: z.literal("ACTION"),
+          subjectId: characterId ?? allowedEntityId,
+          action: ProviderText.max(2000),
+          objectId: commercialObjectId,
+          storyEffect: ProviderText.max(1000),
+          stateDelta: commercialProductStateDelta!.nullable(),
+        }).strict()
       : commercial ? ordinaryAction : action;
     const entries = entriesFor(action);
     return z.object({
       sceneFunction: ProviderSceneFunction,
       sceneFunctionRegistryVersion: z.literal(1),
-      sceneStateIn: z.array(stateFact),
+      sceneStateIn: z.array(commercial ? ordinaryStateFact : stateFact),
       sceneStateDeltas: index === stateChangeAnchorSceneIndex
         ? commercialProductStateDelta
           ? z.array(commercialProductStateDelta).length(1)
           : z.array(stateDelta).min(1)
-        : z.array(stateDelta),
-      sceneStateOut: z.array(stateFact),
+        : z.array(commercial ? ordinaryStateDelta : stateDelta),
+      sceneStateOut: z.array(commercial ? ordinaryStateFact : stateFact),
       newInformation: z.array(ProviderText.max(1000)),
       newActionOutcomes: z.array(ProviderText.max(1000)),
       ...(commercial
@@ -278,13 +296,58 @@ function canonicalizeProviderProposal(
   }
   return AiStoryScriptSemanticProposalV1Schema.parse({
     contractVersion: value.contractVersion,
-    scenes: scenes.map((scene, index) => ({
+    scenes: scenes.map((scene, index) => {
+      const integration = commercialIntegrationAnchorSceneIndex === index
+        ? frozenOutline.commercialStoryProfile?.commercialIntegration
+        : undefined;
+      const firstEntry = providerSceneEntries(scene)[0];
+      const commercialProductAuthorityId = integration
+        && firstEntry?.type === "ACTION"
+        && typeof firstEntry.objectId === "string"
+        && integration.commercialAuthorityRefs.includes(firstEntry.objectId)
+        ? firstEntry.objectId
+        : null;
+      const serverBoundProductDelta = integration
+        && commercialProductAuthorityId
+        && ["PRODUCT", "OFFER"].includes(frozenOutline.commercialStoryProfile?.commercialRole ?? "NONE")
+        ? {
+            dimension: "PRODUCT_STATE" as const,
+            subjectId: commercialProductAuthorityId,
+            fromValue: integration.preIntegrationState,
+            value: integration.postIntegrationState,
+            reason: `Frozen commercial integration: ${integration.commercialActionOrParticipation}; ${integration.storyConsequence}`,
+          }
+        : null;
+      const withoutBoundProduct = <T extends { dimension: string; subjectId: string }>(facts: readonly T[]) =>
+        serverBoundProductDelta
+          ? facts.filter((fact) => !(fact.dimension === "PRODUCT_STATE" && fact.subjectId === serverBoundProductDelta.subjectId))
+          : [...facts];
+      return ({
       scenePlanItemId: scenePlan[index]!.id,
       sceneFunction: scene.sceneFunction,
       sceneFunctionRegistryVersion: scene.sceneFunctionRegistryVersion,
-      sceneStateIn: scene.sceneStateIn,
-      sceneStateDeltas: scene.sceneStateDeltas,
-      sceneStateOut: scene.sceneStateOut,
+      sceneStateIn: serverBoundProductDelta
+        ? [...withoutBoundProduct(scene.sceneStateIn), {
+            dimension: serverBoundProductDelta.dimension,
+            subjectId: serverBoundProductDelta.subjectId,
+            value: serverBoundProductDelta.fromValue,
+          }]
+        : scene.sceneStateIn,
+      sceneStateDeltas: serverBoundProductDelta
+        ? [
+            ...scene.sceneStateDeltas.filter(
+              (delta: { dimension: string }) => delta.dimension !== "PRODUCT_STATE",
+            ),
+            serverBoundProductDelta,
+          ]
+        : scene.sceneStateDeltas,
+      sceneStateOut: serverBoundProductDelta
+        ? [...withoutBoundProduct(scene.sceneStateOut), {
+            dimension: serverBoundProductDelta.dimension,
+            subjectId: serverBoundProductDelta.subjectId,
+            value: serverBoundProductDelta.value,
+          }]
+        : scene.sceneStateOut,
       newInformation: scene.newInformation,
       newActionOutcomes: scene.newActionOutcomes,
       ...(scene.narrativeFunction ? { narrativeFunction: scene.narrativeFunction } : {}),
@@ -306,16 +369,10 @@ function canonicalizeProviderProposal(
       entries: providerSceneEntries(scene).map((entry, entryIndex) => {
         if (entry.type === "ACTION") {
           const { objectId, stateDelta, ...required } = entry;
-          const serverBoundProductDelta = commercialIntegrationAnchorSceneIndex === index
-            && entryIndex === 0
-            && frozenOutline.commercialStoryProfile
-            && ["PRODUCT", "OFFER"].includes(frozenOutline.commercialStoryProfile.commercialRole)
-            ? scene.sceneStateDeltas[0]
-            : null;
           return {
             ...required,
             ...(objectId ? { objectId } : {}),
-            ...(serverBoundProductDelta
+            ...(serverBoundProductDelta && entryIndex === 0
               ? { stateDelta: serverBoundProductDelta }
               : stateDelta ? { stateDelta } : {}),
           };
@@ -326,7 +383,8 @@ function canonicalizeProviderProposal(
         }
         return entry;
       }),
-    })),
+      });
+    }),
   });
 }
 

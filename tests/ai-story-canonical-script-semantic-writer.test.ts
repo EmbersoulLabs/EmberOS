@@ -123,13 +123,11 @@ function commercialProviderProposal(anchorIndex = 1) {
     scenes: source.scenes.map((scene, index) => ({
       ...scene,
       sceneFunction: index === 0 ? "INTRODUCE" : "DEMONSTRATE",
-      sceneStateIn: [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "available but unused" }],
+      sceneStateIn: [],
       sceneStateDeltas: index === anchorIndex
         ? [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "available but unused", value: "actively used in the story", reason: "The Product is visibly used" }]
         : [],
-      sceneStateOut: index === anchorIndex
-        ? [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "actively used in the story" }]
-        : [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "available but unused" }],
+      sceneStateOut: [],
       visibleAction: {
         type: "ACTION",
         subjectId: I.character,
@@ -399,7 +397,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
         sceneFunctionRegistryVersion: 1,
         sceneStateIn: [],
         sceneStateDeltas: [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "available but unused", value: "actively used in the story", reason: "The character uses the product" }],
-        sceneStateOut: [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "actively used in the story" }],
+        sceneStateOut: [],
         newInformation: ["The product is in use."],
         newActionOutcomes: ["The character uses the product."],
         visibleAction: {
@@ -480,6 +478,12 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       stateDelta: null,
     }];
     expect(schema.safeParse(productFollowingAction).success).toBe(false);
+
+    const productState = providerTransport(commercialProviderProposal(1));
+    productState.scenesByOrder.scene_0!.sceneStateIn = [{
+      dimension: "PRODUCT_STATE", subjectId: I.product, value: "mechanically inserted",
+    }];
+    expect(schema.safeParse(productState).success).toBe(false);
   });
 
   it("rejects a non-commercial object at the physical integration anchor", () => {
@@ -492,6 +496,13 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
   it("projects the anchor contribution exclusively from frozen Outline authority", async () => {
     const source = commercialOutline();
     const transport = providerTransport(commercialProviderProposal(1));
+    transport.scenesByOrder.scene_1!.sceneStateDeltas = [{
+      dimension: "PRODUCT_STATE",
+      subjectId: I.product,
+      fromValue: "provider-owned wrong pre-state",
+      value: "provider-owned wrong post-state",
+      reason: "Provider semantic wording only",
+    }];
     callStructuredJsonModel.mockResolvedValueOnce({ result: transport, usage: { input: 10, output: 5, costUsd: 0.01 } });
     const result = await generateAiStoryScriptSemanticProposalV1({
       frozenOutline: source, story: STORY, storyBeats: BEATS, scenePlan: SCENES,
@@ -501,6 +512,9 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     });
     const integration = source.commercialStoryProfile!.commercialIntegration!;
     expect(result.semanticProposal.scenes[0]!.commercialContribution).toBeUndefined();
+    expect(result.semanticProposal.scenes[0]!.sceneStateIn).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ subjectId: I.product }),
+    ]));
     expect(result.semanticProposal.scenes[1]!.commercialContribution).toEqual({
       commercialRole: source.commercialStoryProfile!.commercialRole,
       narrativeFunction: integration.narrativeFunction,
@@ -510,6 +524,12 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       postState: integration.postIntegrationState,
       storyConsequence: integration.storyConsequence,
     });
+    expect(result.semanticProposal.scenes[1]!.sceneStateIn).toEqual(expect.arrayContaining([
+      expect.objectContaining({ dimension: "PRODUCT_STATE", subjectId: I.product, value: integration.preIntegrationState }),
+    ]));
+    expect(result.semanticProposal.scenes[1]!.sceneStateOut).toEqual(expect.arrayContaining([
+      expect.objectContaining({ dimension: "PRODUCT_STATE", subjectId: I.product, value: integration.postIntegrationState }),
+    ]));
     const material = promoteAiStoryScriptSemanticProposalV1({
       storyId: I.story,
       storyVersionId: I.storyVersion,
@@ -545,8 +565,8 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       stateDelta: {
         dimension: "PRODUCT_STATE",
         subjectId: I.product,
-        fromValue: "available but unused",
-        value: "actively used in the story",
+        fromValue: integration.preIntegrationState,
+        value: integration.postIntegrationState,
       },
     });
   });
