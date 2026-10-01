@@ -3,8 +3,6 @@ import { z } from "zod";
 import {
   AI_STORY_SCENE_FUNCTION_REGISTRY,
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
-  AiStoryScriptStateDeltaSchema,
-  AiStoryScriptStateFactSchema,
   carryForwardUnchangedScriptSceneState,
   detachOffScreenSuppliedDialogue,
   dropUnchangedPhysicalScriptChanges,
@@ -32,77 +30,153 @@ import {
   type ScenePlanItem,
   type StoryBeat,
 } from "@ceo-agent/shared";
+import { buildCanonicalOutlineBeatBasis } from "@ceo-agent/shared/server";
 
-const ProviderId = z.string().uuid();
 const ProviderText = z.string().trim().min(1);
 const ProviderSceneFunction = z.enum(Object.keys(AI_STORY_SCENE_FUNCTION_REGISTRY) as [
   keyof typeof AI_STORY_SCENE_FUNCTION_REGISTRY,
   ...(keyof typeof AI_STORY_SCENE_FUNCTION_REGISTRY)[],
 ]);
-const ProviderEntriesSchema = z.array(z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("ACTION"),
-    subjectId: ProviderId,
-    action: ProviderText.max(2000),
-    objectId: ProviderId.nullable(),
-    storyEffect: ProviderText.max(1000),
-    stateDelta: AiStoryScriptStateDeltaSchema.nullable(),
-  }).strict(),
-  z.object({
-    type: z.literal("DIALOGUE"),
-    speakerId: ProviderId,
-    line: ProviderText.max(4000),
-    deliveryOrSubtext: ProviderText.max(1000).nullable(),
-    language: ProviderText.max(50),
-  }).strict(),
-  z.object({
-    type: z.literal("VO"),
-    voiceOwnerId: ProviderId,
-    line: ProviderText.max(4000),
-    narrativePurpose: ProviderText.max(1000),
-    language: ProviderText.max(50),
-  }).strict(),
-])).min(1);
+const StateDimension = z.enum([
+  "KNOWLEDGE", "POSSESSION", "RELATIONSHIP", "LOCATION", "COMMITMENT",
+  "PHYSICAL_CONDITION", "OPTION_SET", "DEADLINE", "COST", "PRODUCT_STATE",
+]);
 
-const ProviderVisibleActionSchema = z.object({
-  type: z.literal("ACTION"),
-  subjectId: ProviderId,
-  action: ProviderText.max(2000),
-  objectId: ProviderId,
-  storyEffect: ProviderText.max(1000),
-  stateDelta: AiStoryScriptStateDeltaSchema.nullable(),
-}).strict();
+function exactAuthorityIdSchema(ids: readonly string[], errorCode: string) {
+  const values = [...new Set(ids)].sort();
+  if (values.length === 0) throw new Error(errorCode);
+  return z.enum(values as [string, ...string[]]);
+}
 
-export function buildAiStoryScriptSemanticProviderOutputSchema(commercial: boolean, sceneCount: number) {
+export type AiStoryScriptSemanticProviderSchemaInput = {
+  commercial: boolean;
+  sceneCount: number;
+  stateChangeAnchorSceneIndex: number | null;
+  characterIds: readonly string[];
+  productAuthorityIds: readonly string[];
+};
+
+export function resolveCommercialStateChangeAnchorSceneIndex(input: {
+  frozenOutline: AiStoryOutlineVersion;
+  storyBeats: readonly StoryBeat[];
+  scenePlan: readonly ScenePlanItem[];
+}): number {
+  const outline = AiStoryOutlineVersionSchema.parse(input.frozenOutline);
+  const storyBeats = StoryBeatSchema.array().min(1).parse(input.storyBeats);
+  const scenePlan = ScenePlanItemSchema.array().min(1).parse(input.scenePlan);
+  scenePlan.forEach((scene, index) => {
+    if (scene.order !== index) throw new Error("CANONICAL_SCRIPT_SCENE_PLAN_ORDER_INVALID");
+  });
+  const entryPoint = outline.commercialStoryProfile?.commercialIntegration?.entryPoint;
+  if (!entryPoint) throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+  if (entryPoint.kind === "SCENE_ORDER") {
+    const index = scenePlan.findIndex((scene) => scene.order === entryPoint.sceneOrder);
+    if (index < 0) throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+    return index;
+  }
+  const canonicalBeatBasis = buildCanonicalOutlineBeatBasis({
+    storyId: outline.storyId,
+    storyVersionId: outline.storyVersionId,
+    profile: outline.profile,
+    proposedStoryBeats: storyBeats,
+  });
+  if (canonicalBeatBasis.length !== outline.beats.length
+    || canonicalBeatBasis.some((beat, index) => beat.id !== outline.beats[index]?.id)) {
+    throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+  }
+  const beatIndex = canonicalBeatBasis.findIndex((beat) => beat.id === entryPoint.beatId);
+  const proposalBeatId = storyBeats[beatIndex]?.id;
+  if (beatIndex < 0 || !proposalBeatId) throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+  const matchingScenes = scenePlan
+    .map((scene, index) => ({ scene, index }))
+    .filter(({ scene }) => scene.beatIds.includes(proposalBeatId));
+  if (matchingScenes.length !== 1) throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+  return matchingScenes[0]!.index;
+}
+
+export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScriptSemanticProviderSchemaInput) {
+  const { commercial, sceneCount, stateChangeAnchorSceneIndex } = input;
   if (!Number.isSafeInteger(sceneCount) || sceneCount < 1) {
     throw new Error("SCRIPT_SEMANTIC_WRITER_SCENE_COUNT_INVALID");
   }
-  const sceneSchema = z.object({
-    sceneFunction: ProviderSceneFunction,
-    sceneFunctionRegistryVersion: z.literal(1),
-    sceneStateIn: z.array(AiStoryScriptStateFactSchema),
-    sceneStateDeltas: z.array(AiStoryScriptStateDeltaSchema),
-    sceneStateOut: z.array(AiStoryScriptStateFactSchema),
-    newInformation: z.array(ProviderText.max(1000)),
-    newActionOutcomes: z.array(ProviderText.max(1000)),
-    ...(commercial
-      ? {
-          visibleAction: ProviderVisibleActionSchema,
-          followingEntries: z.array(ProviderEntriesSchema.element).default([]),
-          narrativeFunction: AiStoryNarrativeFunctionSchema,
-          storyConsequence: ProviderText.max(1000),
-        }
-      : {
-          entries: ProviderEntriesSchema,
-          narrativeFunction: AiStoryNarrativeFunctionSchema.nullable().optional(),
-          storyConsequence: ProviderText.max(1000).nullable().optional(),
-        }),
-    causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
-    commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
+  if (commercial && (stateChangeAnchorSceneIndex === null
+    || stateChangeAnchorSceneIndex < 0
+    || stateChangeAnchorSceneIndex >= sceneCount)) {
+    throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+  }
+  const characterId = input.characterIds.length
+    ? exactAuthorityIdSchema(input.characterIds, "SCRIPT_SEMANTIC_WRITER_CHARACTER_AUTHORITY_REQUIRED")
+    : null;
+  const allowedEntityId = exactAuthorityIdSchema(
+    [...input.characterIds, ...input.productAuthorityIds],
+    "SCRIPT_SEMANTIC_WRITER_ENTITY_AUTHORITY_REQUIRED",
+  );
+  const productOrEntityId = input.productAuthorityIds.length
+    ? exactAuthorityIdSchema(input.productAuthorityIds, "SCRIPT_SEMANTIC_WRITER_PRODUCT_AUTHORITY_REQUIRED")
+    : allowedEntityId;
+  const stateFact = z.object({
+    dimension: StateDimension,
+    subjectId: allowedEntityId,
+    value: ProviderText.max(1000),
   }).strict();
+  const stateDelta = stateFact.extend({
+    fromValue: ProviderText.max(1000).nullable(),
+    reason: ProviderText.max(1000),
+  }).strict();
+  const action = z.object({
+    type: z.literal("ACTION"),
+    subjectId: allowedEntityId,
+    action: ProviderText.max(2000),
+    objectId: allowedEntityId.nullable(),
+    storyEffect: ProviderText.max(1000),
+    stateDelta: stateDelta.nullable(),
+  }).strict();
+  const entries = z.array(characterId
+    ? z.discriminatedUnion("type", [
+        action,
+        z.object({
+          type: z.literal("DIALOGUE"),
+          speakerId: characterId,
+          line: ProviderText.max(4000),
+          deliveryOrSubtext: ProviderText.max(1000).nullable(),
+          language: ProviderText.max(50),
+        }).strict(),
+        z.object({
+          type: z.literal("VO"),
+          voiceOwnerId: characterId,
+          line: ProviderText.max(4000),
+          narrativePurpose: ProviderText.max(1000),
+          language: ProviderText.max(50),
+        }).strict(),
+      ])
+    : action).min(1);
+  const visibleAction = action.extend({ objectId: productOrEntityId }).strict();
+  const sceneSchemas = Array.from({ length: sceneCount }, (_, index) => z.object({
+      sceneFunction: ProviderSceneFunction,
+      sceneFunctionRegistryVersion: z.literal(1),
+      sceneStateIn: z.array(stateFact),
+      sceneStateDeltas: index === stateChangeAnchorSceneIndex ? z.array(stateDelta).min(1) : z.array(stateDelta),
+      sceneStateOut: z.array(stateFact),
+      newInformation: z.array(ProviderText.max(1000)),
+      newActionOutcomes: z.array(ProviderText.max(1000)),
+      ...(commercial
+        ? {
+            visibleAction,
+            followingEntries: z.array(entries.element).default([]),
+            narrativeFunction: AiStoryNarrativeFunctionSchema,
+            storyConsequence: ProviderText.max(1000),
+          }
+        : {
+            entries,
+            narrativeFunction: AiStoryNarrativeFunctionSchema.nullable().optional(),
+            storyConsequence: ProviderText.max(1000).nullable().optional(),
+          }),
+      causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
+      commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
+    }).strict());
   return z.object({
     contractVersion: z.literal(AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION),
-    scenes: z.array(sceneSchema).length(sceneCount),
+    scenes: z.tuple(sceneSchemas as unknown as [z.ZodTypeAny, ...z.ZodTypeAny[]]),
   }).strict();
 }
 
@@ -111,17 +185,17 @@ const VISIBLE_ACTION_SCENE_FUNCTIONS = Object.entries(AI_STORY_SCENE_FUNCTION_RE
   .map(([name]) => name)
   .join(", ");
 
+type ProviderEntry = { type: string; [key: string]: unknown };
+
 function providerSceneEntries(scene: {
   entries?: unknown;
   visibleAction?: unknown;
   followingEntries?: unknown;
-}) {
+}): ProviderEntry[] {
   if (scene.visibleAction) {
-    const action = ProviderVisibleActionSchema.parse(scene.visibleAction);
-    const following = z.array(ProviderEntriesSchema.element).parse(scene.followingEntries ?? []);
-    return [action, ...following];
+    return [scene.visibleAction, ...((scene.followingEntries ?? []) as unknown[])] as ProviderEntry[];
   }
-  return ProviderEntriesSchema.parse(scene.entries ?? []);
+  return (scene.entries ?? []) as ProviderEntry[];
 }
 
 function canonicalizeProviderProposal(
@@ -206,6 +280,20 @@ export async function generateAiStoryScriptSemanticProposalV1(
     throw new Error("CANONICAL_SCRIPT_PRODUCT_AUTHORITY_MISMATCH");
   }
   const commercial = input.frozenOutline.profile.profileId === "COMMERCIAL_STORY";
+  const stateChangeAnchorSceneIndex = commercial
+    ? resolveCommercialStateChangeAnchorSceneIndex({
+        frozenOutline: input.frozenOutline,
+        storyBeats: input.storyBeats,
+        scenePlan: input.scenePlan,
+      })
+    : null;
+  const providerSchema = buildAiStoryScriptSemanticProviderOutputSchema({
+    commercial,
+    sceneCount: input.scenePlan.length,
+    stateChangeAnchorSceneIndex,
+    characterIds: input.characterAuthorities.map((authority) => authority.characterId),
+    productAuthorityIds: input.productAuthorityIds,
+  });
   const allowedCharacterIds = new Set(input.characterAuthorities.map((authority) => authority.characterId));
   const promptInput = {
     ...input,
@@ -233,6 +321,7 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
       ...(commercial ? [
         "This is COMMERCIAL_STORY. narrativeFunction and storyConsequence are required on every Scene.",
+        `Scene array index ${stateChangeAnchorSceneIndex} is the frozen commercial-integration state-change anchor. That Scene must contain at least one meaningful typed sceneStateDelta. Other Scenes may have no state delta when nothing changes.`,
         "Every Scene has a required visibleAction. Its objectId is the product authority ID when a product is in use. Put dialogue in followingEntries. Dialogue that mentions the product is not commercial integration.",
         "Do not emit a POSSESSION, LOCATION, or PHYSICAL_CONDITION delta when that value stays the same. A spoken line is not a physical state change.",
         "If a supplied dialogue speaker name is not a characterAuthorities name, the line is off-screen. Put that exact line in visibleAction.storyEffect or newInformation. Do not assign it to the on-screen character.",
@@ -257,14 +346,14 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(promptInput, null, 2),
-    schema: buildAiStoryScriptSemanticProviderOutputSchema(commercial, input.scenePlan.length),
+    schema: providerSchema,
     schemaName: "ai_story_script_semantic_proposal_v1",
     certificationStage: "script_semantic_writer",
   });
   if (completion.decodeIssue) {
     throw new Error(`SCRIPT_SEMANTIC_WRITER_${completion.decodeIssue}`);
   }
-  const parsed = buildAiStoryScriptSemanticProviderOutputSchema(commercial, input.scenePlan.length).parse(completion.result);
+  const parsed = providerSchema.parse(completion.result);
   const canonicalized = canonicalizeProviderProposal(parsed, input.scenePlan);
   const continued = dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(canonicalized.scenes));
   const semanticProposal = AiStoryScriptSemanticProposalV1Schema.parse({

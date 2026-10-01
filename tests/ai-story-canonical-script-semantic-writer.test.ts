@@ -5,6 +5,7 @@ vi.mock("../packages/agents/src/llm", () => ({ callStructuredJsonModel }));
 
 import {
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
+  AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   AiStoryOutlineVersionSchema,
   AiStoryScriptSemanticProposalV1Schema,
@@ -15,11 +16,12 @@ import {
   AI_STORY_SCRIPT_SEMANTIC_PROMOTION_POLICY_V1,
   AiStoryScriptSemanticPromotionError,
   buildAiStoryScriptVersion,
+  composeAiStoryCanonicalCommercialOutlineV1,
   composeAiStoryCanonicalOutlineV1,
   promoteAiStoryScriptSemanticProposalV1,
   validateAiStoryProductStoryProfile,
 } from "@ceo-agent/shared/server";
-import { buildAiStoryScriptSemanticProviderOutputSchema, generateAiStoryScriptSemanticProposalV1 } from "../packages/agents/src/ai-story/script-semantic-writer";
+import { buildAiStoryScriptSemanticProviderOutputSchema, generateAiStoryScriptSemanticProposalV1, resolveCommercialStateChangeAnchorSceneIndex } from "../packages/agents/src/ai-story/script-semantic-writer";
 
 const id = (n: number) => `96000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
 const I = {
@@ -27,6 +29,7 @@ const I = {
   actor: id(6), product: id(7), character: id(8), characterVersion: id(9),
 };
 const PROFILE = { profileId: "PRODUCT_STORY" as const, profileVersion: 1 as const, policyFingerprint: AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT };
+const COMMERCIAL_PROFILE = { profileId: "COMMERCIAL_STORY" as const, profileVersion: 1 as const, policyFingerprint: AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT };
 const STORY = { title: "Story", summary: "A precise story", objective: "Build awareness", targetAudience: "People", tone: "Clear", estimatedDuration: "8s", story: { opening: "Open", development: "Advance", ending: "End" }, keyMessages: [], cta: "Learn", assetReferences: [], warnings: [] };
 const BEATS = [
   { id: "proposal-beat-a", order: 0, name: "Introduce", purpose: "Introduce the Product", summary: "The Product becomes part of the story." },
@@ -51,6 +54,29 @@ function outline() {
     originalIdea: "Exact intent", supersedesOutlineVersionId: null, createdBy: I.actor, createdAt: "2026-09-15T00:00:00.000Z",
   });
   return AiStoryOutlineVersionSchema.parse({ ...draft, status: "FROZEN", approvedBy: I.actor, approvedAt: "2026-09-15T00:01:00.000Z", frozenAt: "2026-09-15T00:02:00.000Z" });
+}
+
+function commercialOutline() {
+  const draft = composeAiStoryCanonicalCommercialOutlineV1({
+    storyId: I.story, storyVersionId: I.storyVersion, orgId: I.org, workspaceId: I.workspace,
+    campaignId: I.campaign, version: 1, profile: COMMERCIAL_PROFILE, storyDraft: STORY,
+    proposedStoryBeats: BEATS, campaignObjective: "sales", customObjective: null,
+    productAuthorityIds: [I.product], characterAuthorities: [{ characterId: I.character, characterVersionId: I.characterVersion, characterFingerprint: CHARACTER.characterFingerprint }],
+    originalIdea: "The character physically uses the product and learns its benefit", supersedesOutlineVersionId: null,
+    createdBy: I.actor, createdAt: "2026-09-15T00:00:00.000Z",
+  });
+  return AiStoryOutlineVersionSchema.parse({ ...draft, status: "FROZEN", approvedBy: I.actor, approvedAt: "2026-09-15T00:01:00.000Z", frozenAt: "2026-09-15T00:02:00.000Z" });
+}
+
+function providerSchema(input: Partial<Parameters<typeof buildAiStoryScriptSemanticProviderOutputSchema>[0]> = {}) {
+  return buildAiStoryScriptSemanticProviderOutputSchema({
+    commercial: false,
+    sceneCount: 2,
+    stateChangeAnchorSceneIndex: null,
+    characterIds: [I.character],
+    productAuthorityIds: [I.product],
+    ...input,
+  });
 }
 
 function proposal(): AiStoryScriptSemanticProposalV1 {
@@ -80,6 +106,45 @@ function structuredProviderProposal() {
           ? { ...entry, deliveryOrSubtext: entry.deliveryOrSubtext ?? null }
           : entry),
     })),
+  };
+}
+
+function commercialProviderProposal(anchorIndex = 1) {
+  const source = structuredProviderProposal();
+  return {
+    ...source,
+    scenes: source.scenes.map((scene, index) => ({
+      ...scene,
+      sceneFunction: index === 0 ? "INTRODUCE" : "DEMONSTRATE",
+      sceneStateIn: index === 0 ? [] : [{ dimension: "KNOWLEDGE", subjectId: I.character, value: "unaware" }],
+      sceneStateDeltas: index === anchorIndex
+        ? [{ dimension: "KNOWLEDGE", subjectId: I.character, fromValue: "unaware", value: "understands the benefit", reason: "The Product is visibly used" }]
+        : [],
+      sceneStateOut: index === anchorIndex
+        ? [{ dimension: "KNOWLEDGE", subjectId: I.character, value: "understands the benefit" }]
+        : index === 0 ? [] : [{ dimension: "KNOWLEDGE", subjectId: I.character, value: "unaware" }],
+      visibleAction: {
+        type: "ACTION",
+        subjectId: I.character,
+        action: "The character visibly uses the exact authorized Product.",
+        objectId: I.product,
+        storyEffect: "The Product changes the character's understanding.",
+        stateDelta: null,
+      },
+      followingEntries: [],
+      narrativeFunction: index === 0 ? "SETUP" : "PRODUCT_INTERVENTION",
+      storyConsequence: "The Product participates in the causal Story.",
+      commercialContribution: {
+        commercialRole: "PRODUCT",
+        narrativeFunction: "PRODUCT_INTERVENTION",
+        participationKind: "ENABLE",
+        commercialAuthorityIds: [I.product],
+        preState: "The character has not used the Product",
+        postState: "The character understands the Product benefit",
+        storyConsequence: "The visible use changes the Story state",
+      },
+      entries: undefined,
+    })).map(({ entries: _entries, ...scene }) => scene),
   };
 }
 
@@ -224,20 +289,83 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
   });
 
   it("requires a commercial visible action instead of dialogue alone", () => {
-    const schema = buildAiStoryScriptSemanticProviderOutputSchema(true, 2);
+    const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 0 });
     expect(schema.safeParse(structuredProviderProposal()).success).toBe(false);
   });
 
+  it("resolves the commercial state-change anchor from exact SCENE_ORDER authority", () => {
+    const source = commercialOutline();
+    const withSceneOrder = AiStoryOutlineVersionSchema.parse({
+      ...source,
+      commercialStoryProfile: {
+        ...source.commercialStoryProfile!,
+        commercialIntegration: {
+          ...source.commercialStoryProfile!.commercialIntegration,
+          entryPoint: { kind: "SCENE_ORDER", sceneOrder: 1 },
+        },
+      },
+    });
+    expect(resolveCommercialStateChangeAnchorSceneIndex({ frozenOutline: withSceneOrder, storyBeats: BEATS, scenePlan: SCENES })).toBe(1);
+  });
+
+  it("resolves BEAT_ID through the canonical Beat basis to the exact claiming Scene", () => {
+    const source = commercialOutline();
+    expect(source.commercialStoryProfile?.commercialIntegration.entryPoint.kind).toBe("BEAT_ID");
+    expect(resolveCommercialStateChangeAnchorSceneIndex({ frozenOutline: source, storyBeats: BEATS, scenePlan: SCENES })).toBe(1);
+    expect(() => resolveCommercialStateChangeAnchorSceneIndex({
+      frozenOutline: source,
+      storyBeats: BEATS,
+      scenePlan: SCENES.map((scene) => ({ ...scene, beatIds: [BEATS[0]!.id] })),
+    })).toThrow("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+  });
+
+  it("fails before the model call when the frozen commercial anchor cannot be resolved", async () => {
+    await expect(generateAiStoryScriptSemanticProposalV1({
+      frozenOutline: commercialOutline(), story: STORY, storyBeats: BEATS,
+      scenePlan: SCENES.map((scene) => ({ ...scene, beatIds: [BEATS[0]!.id] })),
+      creativeContext: { storyContext: STORY, characterContext: { characters: [], relationships: [] }, productContext: { source: "NONE", products: [] }, worldContext: { locations: [], timePeriod: "", worldRules: [] }, narrativeContext: { arc: "Arc", pacing: "Pace", emotionalJourney: "Journey", themes: [] } },
+      directorThinking: { coreMessage: "Message", hero: "Hero", conflict: "Conflict", turningPoint: "Turn", climax: "Climax", takeaway: "Takeaway" },
+      characterAuthorities: [CHARACTER], productAuthorityIds: [I.product],
+    })).rejects.toThrow("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+    expect(callStructuredJsonModel).not.toHaveBeenCalled();
+  });
+
+  it("requires a typed delta on only the exact commercial anchor Scene", () => {
+    const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
+    const valid = commercialProviderProposal(1);
+    expect(schema.safeParse(valid).success).toBe(true);
+    expect(schema.safeParse({
+      ...valid,
+      scenes: valid.scenes.map((scene) => ({ ...scene, sceneStateDeltas: [] })),
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      ...valid,
+      scenes: valid.scenes.map((scene, index) => index === 0 ? { ...scene, sceneStateDeltas: [] } : scene),
+    }).success).toBe(true);
+  });
+
+  it("constrains state subjects to exact Character and Product authority IDs", () => {
+    const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
+    const characterState = commercialProviderProposal(1);
+    expect(schema.safeParse(characterState).success).toBe(true);
+    const productState = commercialProviderProposal(1);
+    productState.scenes[1]!.sceneStateDeltas[0] = { ...productState.scenes[1]!.sceneStateDeltas[0]!, subjectId: I.product };
+    expect(schema.safeParse(productState).success).toBe(true);
+    const unknownState = commercialProviderProposal(1);
+    unknownState.scenes[1]!.sceneStateDeltas[0] = { ...unknownState.scenes[1]!.sceneStateDeltas[0]!, subjectId: id(999) };
+    expect(schema.safeParse(unknownState).success).toBe(false);
+  });
+
   it("preserves a structured product action and commercial contribution", () => {
-    const schema = buildAiStoryScriptSemanticProviderOutputSchema(true, 1);
+    const schema = providerSchema({ commercial: true, sceneCount: 1, stateChangeAnchorSceneIndex: 0 });
     const parsed = schema.parse({
       contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
       scenes: [{
         sceneFunction: "DEMONSTRATE",
         sceneFunctionRegistryVersion: 1,
         sceneStateIn: [],
-        sceneStateDeltas: [],
-        sceneStateOut: [],
+        sceneStateDeltas: [{ dimension: "KNOWLEDGE", subjectId: I.character, fromValue: null, value: "knows the product benefit", reason: "The character uses the product" }],
+        sceneStateOut: [{ dimension: "KNOWLEDGE", subjectId: I.character, value: "knows the product benefit" }],
         newInformation: ["The product is in use."],
         newActionOutcomes: ["The character uses the product."],
         visibleAction: {
@@ -270,7 +398,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
   });
 
   it("keeps Scene Plan identity out of provider output and requires the exact Scene count", () => {
-    const schema = buildAiStoryScriptSemanticProviderOutputSchema(false, 5);
+    const schema = providerSchema({ sceneCount: 5 });
     const scene = structuredProviderProposal().scenes[0]!;
     expect(schema.safeParse({
       contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
