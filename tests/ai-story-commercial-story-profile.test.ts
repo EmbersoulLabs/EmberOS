@@ -413,6 +413,26 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
     ]));
   });
 
+  it("does not mistake an unchanged initial Product pre-state for visual insertion", () => {
+    const outline = commercialOutline();
+    const specs = flowerScenes();
+    specs[0] = {
+      ...specs[0]!,
+      passiveProduct: true,
+      stateIn: [
+        ...specs[0]!.stateIn!,
+        { dimension: "PRODUCT_STATE", subjectId: I.product, value: "available but unused" },
+      ],
+      stateOut: [
+        ...specs[0]!.stateOut!,
+        { dimension: "PRODUCT_STATE", subjectId: I.product, value: "available but unused" },
+      ],
+    };
+    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))
+      .map((issue) => issue.reasonCode))
+      .not.toContain("RANDOM_PRODUCT_INSERTION");
+  });
+
   it("SERVICE STORY WITHOUT PRODUCT PASS", () => {
     const outline = serviceOutline();
     const specs = flowerScenes().map((spec, index) => ({
