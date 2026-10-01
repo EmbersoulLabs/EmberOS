@@ -38,6 +38,7 @@ import {
   type StoryBeat,
   type WorldContinuity,
   WorldContinuitySchema,
+  AiStorySceneGroundingError,
   bindSceneGroundingLineage,
   type AiStoryScenePlanningGroundingContext,
 } from "@ceo-agent/shared";
@@ -358,6 +359,68 @@ export function buildScenePlanProviderOutputSchema(
       }).strict(),
     }).strict()).min(1),
   }).strict();
+}
+
+/**
+ * Binds an exact provider-selected Asset visual subject to its unique accepted
+ * grounding binding. The model may choose whether to make a claim, but it does
+ * not own the claim's evidence lineage.
+ */
+export function bindVisualClaimSubjectEvidence(input: {
+  context: AiStoryScenePlanningGroundingContext;
+  characterNames: readonly string[];
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
+}): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  const normalized = (value: string) => value.trim().toLocaleLowerCase();
+  const characterNames = new Set(input.characterNames.map(normalized).filter(Boolean));
+
+  return input.proposals.map((proposal) => {
+    const evidence = proposal.evidence.map((selection) => ({
+      ...selection,
+      groundedFacts: [...selection.groundedFacts],
+    }));
+
+    for (const claim of proposal.visualClaims) {
+      const subjectKey = normalized(claim.subject);
+      if (characterNames.has(subjectKey)) {
+        throw new AiStorySceneGroundingError(
+          "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED",
+          `Scene ${proposal.sceneId} may not bind Character ${claim.subject} as an Asset visual subject`,
+        );
+      }
+
+      const supportingBindings = input.context.bindings.filter((binding) =>
+        binding.namedItems.some((item) => normalized(item) === subjectKey) ||
+        binding.productCandidates.some((candidate) => normalized(candidate.name) === subjectKey));
+
+      if (supportingBindings.length === 0) {
+        throw new AiStorySceneGroundingError(
+          "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED",
+          `Scene ${proposal.sceneId} has no accepted binding for visual subject ${claim.subject}`,
+        );
+      }
+      if (supportingBindings.length !== 1) {
+        throw new AiStorySceneGroundingError(
+          "SCENE_GROUNDING_SUBJECT_BINDING_AMBIGUOUS",
+          `Scene ${proposal.sceneId} has multiple accepted bindings for visual subject ${claim.subject}`,
+        );
+      }
+
+      const binding = supportingBindings[0]!;
+      const canonicalSubject = [
+        ...binding.namedItems,
+        ...binding.productCandidates.map((candidate) => candidate.name),
+      ].find((candidate) => normalized(candidate) === subjectKey)!;
+      const existing = evidence.find((selection) => selection.bindingId === binding.bindingId);
+      if (!existing) {
+        evidence.push({ bindingId: binding.bindingId, groundedFacts: [canonicalSubject] });
+      } else if (!existing.groundedFacts.some((fact) => normalized(fact) === subjectKey)) {
+        existing.groundedFacts.push(canonicalSubject);
+      }
+    }
+
+    return { ...proposal, evidence };
+  });
 }
 
 /**
@@ -742,7 +805,11 @@ export async function generateScenePlan(input: {
           context: assetGrounding,
           proposals: bindMentionedCatalogChoiceEvidence({
             context: assetGrounding,
-            proposals: orderedGrounding,
+            proposals: bindVisualClaimSubjectEvidence({
+              context: assetGrounding,
+              characterNames: input.creativeContext.characterContext.characters.map((character) => character.name),
+              proposals: orderedGrounding,
+            }),
           }),
         }),
       })),
