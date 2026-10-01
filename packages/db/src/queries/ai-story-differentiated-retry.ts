@@ -39,7 +39,7 @@ export function assertGeneratedSceneRetryProviderTruth(input: {
     providerRequestId: string | null;
     status: string;
   };
-  result: { status: string; providerAttemptId: string };
+  result: { status: string; providerAttemptId: string | null };
   workerResults: readonly {
     providerAttemptId: string;
     providerExecutionId: string;

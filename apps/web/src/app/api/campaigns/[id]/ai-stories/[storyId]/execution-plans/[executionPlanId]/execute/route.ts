@@ -24,8 +24,6 @@ import {
   executionPlanRouteErrorResponse,
   resolveAuthorizedExecutionPlan,
 } from "@/lib/ai-story-execution-plan-access";
-import { resolveCanonicalWebExecuteProviderAuthority } from "@/lib/ai-story-canonical-execute-router";
-import { createCanonicalProductMaterialSchedulingCoordinator } from "@/lib/ai-story-product-material-scheduling";
 
 type RouteParams = {
   params: Promise<{ id: string; storyId: string; executionPlanId: string }>;
@@ -108,14 +106,11 @@ export async function POST(request: Request, { params }: RouteParams) {
       executionPlanId: ctx.executionPlanId,
     };
 
-    const providerRouting = await resolveCanonicalWebExecuteProviderAuthority();
     const result = await authorizeAndExecuteExecutionPlan({
       executionPlanId: ctx.executionPlanId,
       actorUserId: user.id,
       ownership,
-      router: providerRouting.router,
-      schedulingCoordinator: createCanonicalProductMaterialSchedulingCoordinator(providerRouting.router),
-      routingPolicy: providerRouting.routingPolicy,
+      executionMode: "MANUAL_LOCAL",
       executionAuthorization,
     });
 
@@ -125,6 +120,14 @@ export async function POST(request: Request, { params }: RouteParams) {
         // Explicit lock stamp for legacy-path clarity; selective Execute is allowed.
         phase1LockRemainsOnLegacyPaths: true as const,
         selectiveUnlockPath: "canonical-execute" as const,
+        videoExecutionPolicy: {
+          mode: "MANUAL_LOCAL" as const,
+          localManualHandoff: true as const,
+          seedanceEnabledForNormalExecution: false as const,
+          seedanceAutoFallback: false as const,
+          runwayAutoFallback: false as const,
+          cloudVideoProviderCostUsd: 0 as const,
+        },
         executionLockCode: PHASE1_EXECUTION_LOCKED,
       },
       result.httpStatus

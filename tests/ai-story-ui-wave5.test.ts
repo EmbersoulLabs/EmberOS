@@ -41,8 +41,10 @@ describe("Wave 5 AI Story normal-user UI", () => {
   });
 
   it("keeps runtime and review product-facing without exposing machinery", () => {
-    expect(runtime).toContain("Generating episode moments");
-    expect(runtime).toContain("Generate Episode");
+    expect(runtime).toContain("Animation Package Ready");
+    expect(runtime).toContain("Local Generation");
+    expect(runtime).toContain("Animate");
+    expect(runtime).toContain("does not submit to a cloud video Provider");
     expect(runtime).not.toContain("story-runtime-timeout-trace");
     expect(runtime).not.toContain("Correlation ID");
     expect(review).toContain("Generation couldn't start");

@@ -269,9 +269,14 @@ export class GeneratedSceneReviewRepository {
           eq(schema.aiStoryGeneratedSceneReviews.decision, "APPROVED")
         )
       );
-    return rows
+    const localRows = await this.db.execute(sql`
+      select s.scene_result_id from ai_story_scene_results s
+      join ai_story_generation_result_decisions d on d.generation_result_id=s.generation_result_id
+      where s.execution_plan_id=${executionPlanId} and d.decision='APPROVED'`);
+    return [...rows
       .map((row) => row.sceneResultId)
-      .filter((id): id is string => typeof id === "string" && id.length > 0);
+      .filter((id): id is string => typeof id === "string" && id.length > 0),
+      ...localRows.map(row => String(row.scene_result_id))];
   }
 
   async lockSceneForDecision(input: {

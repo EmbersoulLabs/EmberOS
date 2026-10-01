@@ -86,6 +86,11 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/ai-story-production-overlay-migration.integration.test.ts
 
+      - name: Certify provider-neutral Generation Result predecessor upgrade
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-generation-result-migration.integration.test.ts
+
       - name: Bootstrap Supabase auth prerequisites on isolated PostgreSQL
         run: pnpm exec tsx scripts/bootstrap-test-supabase-auth.ts
 

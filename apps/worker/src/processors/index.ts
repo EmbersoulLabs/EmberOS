@@ -881,6 +881,16 @@ export function startWorkers() {
   );
 
   const providerLoopMs = parseInt(process.env.PROVIDER_EXECUTION_POLL_MS ?? "5000", 10);
+  let localMediaCycleRunning = false;
+  const localMediaLoop = setInterval(() => {
+    if (localMediaCycleRunning) return;
+    localMediaCycleRunning = true;
+    void import("../ai-story-local-media-worker-cycle")
+      .then(({ runAiStoryLocalMediaWorkerCycle }) => runAiStoryLocalMediaWorkerCycle())
+      .catch(() => console.warn("[ai-story-local-media] CPU processing unavailable"))
+      .finally(() => { localMediaCycleRunning = false; });
+  }, 5000);
+  localMediaLoop.unref?.();
   const providerLoop = setInterval(() => {
     void (async () => {
       try {

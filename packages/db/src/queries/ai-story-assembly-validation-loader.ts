@@ -114,7 +114,7 @@ export class AssemblyValidationRepositoryImpl implements AssemblyValidationLoade
       .where(eq(schema.aiStorySceneResults.executionPlanId, executionPlanId))
       .orderBy(asc(schema.aiStorySceneResults.sceneOrder));
     return rows.map((row) => {
-      const projected = ProjectedSceneResultSchema.parse(row.result);
+      const projected = CanonicalSceneResultSchema.parse(row.result);
       return CanonicalSceneResultSchema.parse(projected);
     });
   }
@@ -136,7 +136,7 @@ export class AssemblyValidationRepositoryImpl implements AssemblyValidationLoade
       .where(eq(schema.aiStorySceneResults.sceneResultId, sceneResultId))
       .limit(1);
     if (!row) return null;
-    const projected = ProjectedSceneResultSchema.parse(row.result);
+    const projected = CanonicalSceneResultSchema.parse(row.result);
     if (!projected.mediaReference || projected.status !== "SUCCEEDED") return null;
     const mediaType = projected.mediaReference.mediaType;
     return AssemblySceneMediaMetadataSchema.parse({

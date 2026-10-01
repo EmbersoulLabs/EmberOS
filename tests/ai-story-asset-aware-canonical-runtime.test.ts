@@ -20,6 +20,7 @@ import {
   compileSeedanceProviderIntentDryRun,
   resolveAiStoryProvider,
   scheduleAssetAwareCanonicalProviderExecution,
+  materializeLocalGenerationPackage,
   type AiStoryCanonicalExecutionAuthority,
   type AiStoryCurrentExecutionAuthorityState,
 } from "@ceo-agent/agents";
@@ -1252,6 +1253,89 @@ describe("Ticket A Repair 01 canonical Execute bridge", () => {
       code: "STALE_EXECUTION_AUTHORITY",
     });
     expect(test.scheduling.scheduleAuthorizedScene).not.toHaveBeenCalled();
+  });
+});
+
+describe("Manual Local Generation handoff", () => {
+  it("materializes a provider-free native-dialogue package from the immutable scheduling authority", () => {
+    const request = nativeT2vRequest(true);
+    const authority = authorizedSchedulingAuthority({
+      request,
+      plan: plannerFor(request, { dna: true, audio: "NEED_NATIVE_DIALOGUE" }),
+    });
+    const item = materializeLocalGenerationPackage({
+      authority,
+      runtimeAuthorizationId: id(994),
+      order: 1,
+      createdAt,
+    });
+    expect(item).toMatchObject({
+      executionMode: "MANUAL_LOCAL",
+      recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      generationMode: "TEXT_TO_VIDEO",
+      generateAudio: true,
+      audioBlocked: false,
+      state: "AWAITING_LOCAL_OUTPUT",
+    });
+    expect(item.dialogue[0]?.text).toBe(request.nativeAvRequest.dialogueAuthority.exactText);
+    expect(item.characterAuthority?.dnaFingerprint).toBe(
+      request.characterDnaAuthority?.characterDnaFingerprint,
+    );
+    expect(item.characterAuthority?.sourcePhotoSentToVideoProvider).toBe(false);
+    expect(item.references).toHaveLength(0);
+  });
+
+  it("recommends WAN I2V and retains the exact pinned source reference", () => {
+    const request = imageToVideoRequest();
+    const authority = authorizedSchedulingAuthority({
+      request,
+      plan: plannerFor(request, { mode: "IMAGE_TO_VIDEO" }),
+    });
+    const item = materializeLocalGenerationPackage({
+      authority,
+      runtimeAuthorizationId: id(996),
+      order: 1,
+      createdAt,
+    });
+    expect(item.recommendedWorkflow).toBe("WAN_I2V");
+    expect(item.generationMode).toBe("FIRST_FRAME_IMAGE_TO_VIDEO");
+    expect(item.references).toEqual([
+      expect.objectContaining({
+        assetId: request.referenceMappings[0]?.assetId,
+        contentHash: authority.analysisAuthorities[0]?.contentHash,
+        authorityType: "FIRST_FRAME",
+        providerWireRole: "first_frame",
+      }),
+    ]);
+  });
+
+  it("prepares every Unit and stops before scheduling, commercial reservation, or Provider routing", async () => {
+    const seed = authorizedSchedulingAuthority({
+      request: nativeT2vRequest(true),
+      plan: plannerFor(nativeT2vRequest(true), { dna: true, audio: "NEED_NATIVE_DIALOGUE" }),
+    });
+    const test = canonicalExecuteHarness(seed);
+    const prepare = vi.fn().mockResolvedValue({
+      packageIds: [id(995)],
+      unitIds: [seed.sceneExecutionId],
+      replayed: false,
+    });
+    const result = await authorizeAndExecuteExecutionPlan({
+      ...test.input,
+      executionMode: "MANUAL_LOCAL",
+      localGenerationService: { prepare },
+    });
+    expect(result.response).toMatchObject({
+      runtimeStatus: "LOCAL_GENERATION_PREPARED",
+      executionMode: "MANUAL_LOCAL",
+      scheduledSceneCount: 0,
+      localGenerationUnitCount: 1,
+      automaticFallbackEnabled: false,
+    });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(test.scheduling.scheduleAuthorizedScene).not.toHaveBeenCalled();
+    expect(test.route).not.toHaveBeenCalled();
+    expect(result.commercialAuthorizationId).toBeNull();
   });
 });
 

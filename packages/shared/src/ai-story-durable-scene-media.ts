@@ -19,7 +19,7 @@ const IntegrityHashSchema = z
 const IsoDatetimeSchema = z.string().datetime();
 
 /** Redacted source descriptor — never persists signed query tokens. */
-export const DurableMediaSourceReferenceSchema = z
+const RemoteDurableMediaSourceReferenceSchema = z
   .object({
     scheme: z.literal("https"),
     host: NonEmptyTextSchema,
@@ -28,6 +28,11 @@ export const DurableMediaSourceReferenceSchema = z
     mediaTypeHint: z.string().min(1).optional(),
   })
   .strict();
+
+export const DurableMediaSourceReferenceSchema = z.union([
+  RemoteDurableMediaSourceReferenceSchema,
+  z.object({ scheme: z.literal("generation-result"), generationResultId: UuidSchema }).strict(),
+]);
 
 export type DurableMediaSourceReference = z.infer<
   typeof DurableMediaSourceReferenceSchema
@@ -75,7 +80,7 @@ export function parseDurableSceneMediaAttestation(
   return DurableSceneMediaAttestationSchema.parse(value);
 }
 
-export function redactHttpsMediaUri(uri: string): DurableMediaSourceReference {
+export function redactHttpsMediaUri(uri: string): z.infer<typeof RemoteDurableMediaSourceReferenceSchema> {
   let parsed: URL;
   try {
     parsed = new URL(uri);

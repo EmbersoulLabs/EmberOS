@@ -151,9 +151,13 @@ describe("Worker authority projection secret boundary", () => {
     expect(JSON.stringify(authority)).not.toContain("apiKey");
   });
 
-  it("wires every product-reachable release route through Worker authority", () => {
+  it("keeps manual Animate provider-free while legacy release routes retain Worker authority", () => {
+    const execute = readFileSync(join(ROOT,
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"
+    ), "utf8");
+    expect(execute).toContain('executionMode: "MANUAL_LOCAL"');
+    expect(execute).not.toContain("resolveCanonicalWebExecuteProviderAuthority");
     const routePaths = [
-      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts",
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/release-next-scene/route.ts",
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/release-remaining-scenes/route.ts",
     ];
@@ -173,9 +177,7 @@ describe("Worker authority projection secret boundary", () => {
       ),
       "utf8"
     );
-    expect(source.indexOf("authorizeAiStoryExecution")).toBeLessThan(
-      source.indexOf("resolveCanonicalWebExecuteProviderAuthority")
-    );
+    expect(source.indexOf("authorizeAiStoryExecution")).toBeLessThan(source.indexOf('executionMode: "MANUAL_LOCAL"'));
     expect(source).toContain("executionAuthorization");
     expect(source).toContain("authorizeAndExecuteExecutionPlan");
   });

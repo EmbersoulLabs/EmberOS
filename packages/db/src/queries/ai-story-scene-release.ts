@@ -64,7 +64,7 @@ export class AiStorySceneReleaseRepository {
           eq(schema.aiStorySceneResults.providerAttemptId, approved.providerAttemptId),
           eq(schema.aiStorySceneResults.status, "SUCCEEDED")
         )).limit(1);
-      if (!result) throw new Error("FIRST_SCENE_DURABLE_RESULT_REQUIRED");
+      if (!result || !result.providerExecutionId) throw new Error("FIRST_SCENE_DURABLE_RESULT_REQUIRED");
       const terminalAuthority = await resolveSuccessfulProviderAttemptTerminalAuthority({
         reader: tx,
         providerAttemptId: approved.providerAttemptId,
@@ -167,7 +167,7 @@ export class AiStorySceneReleaseRepository {
             eq(schema.aiStorySceneResults.providerAttemptId, approved.providerAttemptId),
             eq(schema.aiStorySceneResults.status, "SUCCEEDED")
           )).limit(1);
-        if (!result) throw new Error("PRIOR_SCENE_DURABLE_RESULT_REQUIRED");
+        if (!result || !result.providerExecutionId) throw new Error("PRIOR_SCENE_DURABLE_RESULT_REQUIRED");
         const terminalAuthority = await resolveSuccessfulProviderAttemptTerminalAuthority({
           reader: tx,
           providerAttemptId: approved.providerAttemptId,
