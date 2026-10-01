@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { zodResponseFormat } from "../packages/agents/node_modules/openai/helpers/zod.mjs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const callStructuredJsonModel = vi.hoisted(() => vi.fn());
@@ -124,11 +125,9 @@ function commercialProviderProposal(anchorIndex = 1) {
     scenes: source.scenes.map((scene, index) => ({
       ...scene,
       sceneFunction: index === 0 ? "INTRODUCE" : "DEMONSTRATE",
-      sceneStateIn: [],
       sceneStateDeltas: index === anchorIndex
         ? [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "available but unused", value: "actively used in the story", reason: "The Product is visibly used" }]
         : [],
-      sceneStateOut: [],
       visibleAction: {
         type: "ACTION",
         subjectId: I.character,
@@ -145,7 +144,7 @@ function commercialProviderProposal(anchorIndex = 1) {
       narrativeFunction: index === 0 ? "SETUP" : "PRODUCT_INTERVENTION",
       storyConsequence: "The Product participates in the causal Story.",
       entries: undefined,
-    })).map(({ entries: _entries, ...scene }) => scene),
+    })).map(({ entries: _entries, sceneStateIn: _sceneStateIn, sceneStateOut: _sceneStateOut, ...scene }) => scene),
   };
 }
 
@@ -396,9 +395,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       scenesByOrder: { scene_0: {
         sceneFunction: "DEMONSTRATE",
         sceneFunctionRegistryVersion: 1,
-        sceneStateIn: [],
         sceneStateDeltas: [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "available but unused", value: "actively used in the story", reason: "The character uses the product" }],
-        sceneStateOut: [],
         newInformation: ["The product is in use."],
         newActionOutcomes: ["The character uses the product."],
         visibleAction: {
@@ -481,10 +478,16 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(schema.safeParse(productFollowingAction).success).toBe(false);
 
     const productState = providerTransport(commercialProviderProposal(1));
-    productState.scenesByOrder.scene_0!.sceneStateIn = [{
-      dimension: "PRODUCT_STATE", subjectId: I.product, value: "mechanically inserted",
-    }];
-    expect(schema.safeParse(productState).success).toBe(false);
+    expect(schema.safeParse({
+      ...productState,
+      scenesByOrder: {
+        ...productState.scenesByOrder,
+        scene_0: {
+          ...productState.scenesByOrder.scene_0,
+          sceneStateIn: [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "mechanically inserted" }],
+        },
+      },
+    }).success).toBe(false);
   });
 
   it("rejects a non-commercial object at the physical integration anchor", () => {
@@ -706,13 +709,170 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       .not.toMatch(/Mini Fan|Nasi Lemak|\bYuki\b/);
   });
 
+  function assertResponseFormatHasNoUnsupportedNot(value: unknown): void {
+    if (Array.isArray(value)) {
+      for (const item of value) assertResponseFormatHasNoUnsupportedNot(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      expect(key).not.toBe("not");
+      assertResponseFormatHasNoUnsupportedNot(child);
+    }
+  }
+
+  it("generates an OpenAI response schema without impossible commercial state snapshots", () => {
+    const sceneCount = 6;
+    const anchor = 1;
+    const schema = providerSchema({
+      commercial: true,
+      sceneCount,
+      stateChangeAnchorSceneIndex: anchor,
+      commercialIntegrationAnchorSceneIndex: anchor,
+      physicalCommercialParticipationRequired: true,
+      commercialAuthorityIds: [I.product],
+      characterIds: [I.character],
+      productAuthorityIds: [I.product],
+    });
+    const format = zodResponseFormat(schema, "ai_story_script_semantic_proposal_v1");
+    assertResponseFormatHasNoUnsupportedNot(format);
+    const jsonSchema = format.json_schema.schema as {
+      definitions?: Record<string, unknown>;
+      properties: {
+        scenesByOrder: {
+          properties: Record<string, { properties: Record<string, { properties?: Record<string, { $ref?: string }> }> }>;
+        };
+      };
+    };
+    const scenes = jsonSchema.properties.scenesByOrder.properties;
+    expect(Object.keys(scenes).sort()).toEqual(Array.from({ length: sceneCount }, (_, index) => `scene_${index}`));
+    const resolveRef = (ref: string | undefined) => {
+      const name = ref?.replace("#/definitions/", "");
+      return name ? jsonSchema.definitions?.[name] : undefined;
+    };
+    for (const [key, scene] of Object.entries(scenes)) {
+      expect(scene.properties).not.toHaveProperty("sceneStateIn");
+      expect(scene.properties).not.toHaveProperty("sceneStateOut");
+      expect(scene.properties).toHaveProperty("sceneStateDeltas");
+      expect(scene.properties).toHaveProperty("visibleAction");
+      expect(scene.properties).toHaveProperty("followingEntries");
+      const objectId = scene.properties.visibleAction?.properties?.objectId;
+      const resolved = JSON.stringify(resolveRef(objectId?.$ref) ?? objectId ?? {});
+      if (key === `scene_${anchor}`) expect(resolved).toContain(I.product);
+      if (key !== `scene_${anchor}`) expect(resolved).not.toContain(I.product);
+    }
+    const ordinary = providerSchema();
+    assertResponseFormatHasNoUnsupportedNot(zodResponseFormat(ordinary, "ai_story_script_semantic_proposal_v1"));
+    const ordinaryScene = (zodResponseFormat(ordinary, "ai_story_script_semantic_proposal_v1").json_schema.schema as {
+      properties: { scenesByOrder: { properties: { scene_0: { properties: Record<string, unknown> } } } };
+    }).properties.scenesByOrder.properties.scene_0.properties;
+    expect(ordinaryScene).toHaveProperty("sceneStateIn");
+    expect(ordinaryScene).toHaveProperty("sceneStateOut");
+    expect(readFileSync("packages/agents/src/ai-story/script-semantic-writer.ts", "utf8")).not.toContain("z.never(");
+
+    const base = commercialProviderProposal(anchor).scenes[0]!;
+    const scenesByOrder = Object.fromEntries(Array.from({ length: sceneCount }, (_, index) => [
+      `scene_${index}`,
+      {
+        ...base,
+        sceneStateDeltas: index === anchor
+          ? [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "available but unused", value: "actively used", reason: "The Product participates" }]
+          : [],
+        visibleAction: {
+          ...base.visibleAction,
+          objectId: index === anchor ? I.product : null,
+          action: index === anchor ? "The character physically uses the authorized Product." : "The character walks toward the workbench.",
+        },
+      },
+    ]));
+    expect(schema.safeParse({
+      contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
+      scenesByOrder,
+    }).success).toBe(true);
+    expect(scenesByOrder.scene_0).not.toHaveProperty("sceneStateIn");
+    expect(scenesByOrder.scene_0).not.toHaveProperty("sceneStateOut");
+  });
+
+  it("materializes canonical state across every scene from provider deltas only", async () => {
+    const sceneCount = 6;
+    const anchor = 1;
+    const base = commercialOutline();
+    const source = AiStoryOutlineVersionSchema.parse({
+      ...base,
+      commercialStoryProfile: {
+        ...base.commercialStoryProfile!,
+        commercialIntegration: {
+          ...base.commercialStoryProfile!.commercialIntegration!,
+          entryPoint: { kind: "SCENE_ORDER", sceneOrder: anchor },
+        },
+      },
+    });
+    const scenePlan = Array.from({ length: sceneCount }, (_, order) => ({
+      ...SCENES[order % SCENES.length]!,
+      id: `scene-plan-${order}`,
+      order,
+      beatIds: [BEATS[Math.min(order, BEATS.length - 1)]!.id],
+    }));
+    const template = commercialProviderProposal(anchor).scenes[0]!;
+    const scenes = Array.from({ length: sceneCount }, (_, index) => ({
+      ...template,
+      sceneStateDeltas: index === anchor
+        ? [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "provider pre", value: "provider post", reason: "Provider wording" }]
+        : index === 2
+          ? [{ dimension: "LOCATION", subjectId: I.character, fromValue: null, value: "workbench", reason: "The character arrives." }]
+          : [],
+      visibleAction: {
+        ...template.visibleAction,
+        objectId: index === anchor ? I.product : null,
+        action: index === anchor
+          ? "The character physically uses the authorized Product."
+          : "The character walks toward the workbench.",
+      },
+    }));
+    callStructuredJsonModel.mockResolvedValueOnce({
+      result: {
+        contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
+        scenesByOrder: Object.fromEntries(scenes.map((scene, index) => [`scene_${index}`, scene])),
+      },
+      usage: { input: 10, output: 5, costUsd: 0.01 },
+    });
+    const result = await generateAiStoryScriptSemanticProposalV1({
+      ...commercialPlanningInput(source),
+      scenePlan,
+    });
+    const integration = source.commercialStoryProfile!.commercialIntegration!;
+    const productOut = { dimension: "PRODUCT_STATE", subjectId: I.product, value: integration.postIntegrationState };
+    const location = { dimension: "LOCATION", subjectId: I.character, value: "workbench" };
+    const canonical = result.semanticProposal.scenes;
+    expect(canonical[0]!.sceneStateIn).toEqual([]);
+    expect(canonical[0]!.sceneStateOut).toEqual([]);
+    expect(canonical[1]!.sceneStateIn).toEqual([
+      expect.objectContaining({ dimension: "PRODUCT_STATE", subjectId: I.product, value: integration.preIntegrationState }),
+    ]);
+    expect(canonical[1]!.sceneStateOut).toEqual([productOut]);
+    expect(canonical[2]!.sceneStateIn).toEqual(canonical[1]!.sceneStateOut);
+    expect(canonical[2]!.sceneStateOut).toEqual([productOut, location]);
+    for (let index = 3; index < sceneCount; index += 1) {
+      expect(canonical[index]!.sceneStateIn).toEqual(canonical[index - 1]!.sceneStateOut);
+      expect(canonical[index]!.sceneStateOut).toEqual(canonical[index]!.sceneStateIn);
+    }
+    expect(canonical.map((scene) => scene.scenePlanItemId)).toEqual(scenePlan.map((scene) => scene.id));
+  });
+
   it("keeps commercial state snapshots server-owned and rejects model restatements", () => {
     const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
     const value = providerTransport(commercialProviderProposal(1));
-    value.scenesByOrder.scene_0!.sceneStateIn = [{
-      dimension: "LOCATION", subjectId: I.character, value: "provider-owned location",
-    }];
-    expect(schema.safeParse(value).success).toBe(false);
+    expect(schema.safeParse({
+      ...value,
+      scenesByOrder: {
+        ...value.scenesByOrder,
+        scene_0: {
+          ...value.scenesByOrder.scene_0,
+          sceneStateIn: [{ dimension: "LOCATION", subjectId: I.character, value: "provider-owned location" }],
+          sceneStateOut: [{ dimension: "LOCATION", subjectId: I.character, value: "provider-owned location" }],
+        },
+      },
+    }).success).toBe(false);
   });
 
   it("uses one frozen entry-point resolver for state change and commercial integration", () => {
