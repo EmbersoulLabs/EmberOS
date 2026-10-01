@@ -16,6 +16,7 @@ import {
 import { DurableSceneMediaAttestationSchema, type DurableSceneMediaAttestation } from "@ceo-agent/shared/server";
 import { getDb } from "../client";
 import * as schema from "../schema/index";
+import { AiStoryGenerationResultRepository, materializeGenerationResult } from "./ai-story-generation-result";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -124,7 +125,7 @@ export class AiStoryPostGenerationQcRepository {
     );
     const latest = new Map<string, AiStoryPostGenerationQcEvaluation>();
     for (const row of rows) {
-      if (!latest.has(row.providerAttemptId)) {
+      if (row.providerAttemptId && !latest.has(row.providerAttemptId)) {
         latest.set(row.providerAttemptId, AiStoryPostGenerationQcEvaluationSchema.parse(row.evaluation));
       }
     }
@@ -189,9 +190,10 @@ export class AiStoryPostGenerationQcRepository {
       schema.aiStorySceneResults.sceneExecutionId,
       sceneExecutionId,
     )).orderBy(desc(schema.aiStorySceneResults.projectedAt)).limit(1);
-    if (!sceneResult || sceneResult.status !== "SUCCEEDED") return null;
+    // Local outputs enter QC directly via Generation Result, never Provider recovery.
+    if (!sceneResult || sceneResult.status !== "SUCCEEDED" || !sceneResult.providerAttemptId || !sceneResult.providerExecutionId) return null;
 
-    const classification = await this.classifyRuntimeRecovery(sceneResult);
+    const classification = await this.classifyRuntimeRecovery({ ...sceneResult, providerAttemptId: sceneResult.providerAttemptId, providerExecutionId: sceneResult.providerExecutionId });
     if (classification.kind === "HISTORICAL_NOT_AUTO_RECOVERABLE") return null;
     if (classification.kind === "CURRENT_RUNTIME_AUTHORITY_CORRUPT") {
       throw new AiStoryPostGenerationQcRuntimeAuthorityError(
@@ -305,7 +307,7 @@ export class AiStoryPostGenerationQcRepository {
     limit: number,
     offset: number,
   ): Promise<readonly PendingRecoverySceneResult[]> {
-    return this.db.select({
+    const rows = await this.db.select({
       sceneExecutionId: schema.aiStorySceneResults.sceneExecutionId,
       sceneResultId: schema.aiStorySceneResults.sceneResultId,
       providerAttemptId: schema.aiStorySceneResults.providerAttemptId,
@@ -331,6 +333,7 @@ export class AiStoryPostGenerationQcRepository {
       .orderBy(asc(schema.aiStorySceneResults.projectedAt))
       .limit(limit)
       .offset(offset);
+    return rows.filter((row): row is PendingRecoverySceneResult => row.providerAttemptId !== null && row.providerExecutionId !== null);
   }
 
   private async classifyRuntimeRecovery(
@@ -503,12 +506,68 @@ export class AiStoryPostGenerationQcRepository {
     return { kind: "HISTORICAL_NOT_AUTO_RECOVERABLE" };
   }
 
+  async resolveGenerationResultInput(inputPackage: AiStoryPostGenerationQcInputPackage): Promise<AiStoryPostGenerationQcInputPackage> {
+    const results = new AiStoryGenerationResultRepository(this.db);
+    let generationResultId = inputPackage.generationResultId;
+    // Failed media-integrity evidence remains a readable legacy QC rejection;
+    // it must never be projected as valid generated media.
+    if (!generationResultId && inputPackage.providerAttemptId && inputPackage.media.readable &&
+        inputPackage.media.decodable && inputPackage.media.durationMs && inputPackage.media.durationMs > 0) {
+      const [plan] = await this.db.select().from(schema.aiStoryExecutionPlans).where(
+        eq(schema.aiStoryExecutionPlans.id, (
+          await this.db.select({ planId: schema.aiStorySceneExecutions.executionPlanId }).from(schema.aiStorySceneExecutions)
+            .where(eq(schema.aiStorySceneExecutions.id, inputPackage.sceneExecutionId)).limit(1)
+        )[0]?.planId ?? "00000000-0000-0000-0000-000000000000"),
+      ).limit(1);
+      const [runtime] = plan ? await this.db.select().from(schema.aiStoryRuntimeAuthorizedFacts).where(
+        eq(schema.aiStoryRuntimeAuthorizedFacts.executionPlanId, plan.id),
+      ).limit(1) : [];
+      const [scene] = await this.db.select().from(schema.aiStorySceneExecutions).where(
+        eq(schema.aiStorySceneExecutions.id, inputPackage.sceneExecutionId),
+      ).limit(1);
+      if (!plan || !runtime || !scene) throw new Error("POST_QC_GENERATION_RESULT_AUTHORITY_MISSING");
+      const result = materializeGenerationResult({
+        ownership: { orgId: plan.orgId, workspaceId: plan.workspaceId, campaignId: plan.campaignId,
+          storyId: plan.storyId, storyVersionId: plan.storyVersionId, animationPackageId: plan.animationPackageId, executionPlanId: plan.id },
+        runtimeAuthorizationId: runtime.runtimeAuthorizationId,
+        generationUnitId: inputPackage.sceneExecutionId, sceneExecutionId: inputPackage.sceneExecutionId,
+        sceneId: scene.sceneId, sceneOrder: scene.sceneOrder,
+        source: { sourceKind: "REMOTE_PROVIDER", providerAttemptId: inputPackage.providerAttemptId, localGenerationOutputId: null, localWorkerOutputId: null },
+        compiledRequestId: inputPackage.compiledRequestId, compiledRequestFingerprint: inputPackage.compiledRequestFingerprint,
+        inputAuthorityFingerprint: inputPackage.sceneExecutionFingerprint,
+        inputAuthority: { compiledRequestId: inputPackage.compiledRequestId },
+        media: { assetId: inputPackage.privateMediaAssetId, contentHash: inputPackage.privateMediaContentHash,
+          durableObjectReference: inputPackage.media.durableObjectReference, storagePath: inputPackage.media.durableObjectReference,
+          byteSize: inputPackage.media.byteSize, mediaType: "video/mp4", durationMs: inputPackage.media.durationMs ?? 0,
+          width: inputPackage.media.width, height: inputPackage.media.height, readable: true, decodable: true },
+        createdAt: inputPackage.createdAt,
+      });
+      generationResultId = (await results.accept(result)).result.generationResultId;
+    }
+    return generationResultId ? { ...inputPackage, generationResultId, sourceKind: inputPackage.providerAttemptId ? "REMOTE_PROVIDER" : inputPackage.sourceKind } : inputPackage;
+  }
+
   async accept(inputPackage: AiStoryPostGenerationQcInputPackage, evaluation: AiStoryPostGenerationQcEvaluation): Promise<{ evaluation: AiStoryPostGenerationQcEvaluation; replayed: boolean }>;
   async accept(evaluation: AiStoryPostGenerationQcEvaluation): Promise<{ evaluation: AiStoryPostGenerationQcEvaluation; replayed: boolean }>;
   async accept(first: AiStoryPostGenerationQcInputPackage | AiStoryPostGenerationQcEvaluation, second?: AiStoryPostGenerationQcEvaluation) {
     const evaluation = AiStoryPostGenerationQcEvaluationSchema.parse(second ?? first);
     const inputPackage = second ? first as AiStoryPostGenerationQcInputPackage : null;
     if (!inputPackage) throw new AiStoryPostGenerationQcPersistenceError("POST_QC_IMMUTABLE_CONFLICT", "Durable Post-QC acceptance requires its immutable input package");
+    const generationResultId=inputPackage.generationResultId;
+    const results=new AiStoryGenerationResultRepository(this.db);
+    if (generationResultId) {
+      const result = await results.get(inputPackage.workspaceId, generationResultId);
+      if (!result || result.ownership.orgId !== inputPackage.orgId || result.ownership.storyId !== inputPackage.storyId ||
+          result.ownership.campaignId !== inputPackage.campaignId || result.ownership.storyVersionId !== inputPackage.storyVersionId ||
+          result.sceneExecutionId !== inputPackage.sceneExecutionId || result.media.contentHash !== inputPackage.privateMediaContentHash ||
+          result.media.assetId !== inputPackage.privateMediaAssetId || result.source.providerAttemptId !== inputPackage.providerAttemptId ||
+          result.compiledRequestFingerprint !== inputPackage.compiledRequestFingerprint ||
+          evaluation.generationResultId !== inputPackage.generationResultId ||
+          evaluation.sourceKind !== inputPackage.sourceKind ||
+          evaluation.postQcInputId !== inputPackage.postQcInputId || evaluation.mediaContentHash !== result.media.contentHash) {
+        throw new Error("POST_QC_GENERATION_RESULT_LINEAGE_MISMATCH");
+      }
+    }
     const inserted = await this.db.insert(schema.aiStoryPostGenerationQcEvaluations).values({
       postQcEvaluationId: evaluation.postQcEvaluationId,
       postQcInputId: evaluation.postQcInputId,
@@ -516,7 +575,8 @@ export class AiStoryPostGenerationQcRepository {
       orgId: evaluation.orgId,
       workspaceId: evaluation.workspaceId,
       providerAttemptId: evaluation.providerAttemptId,
-      mediaAssetId: evaluation.mediaAssetId,
+      generationResultId,
+      mediaAssetId: evaluation.providerAttemptId ? evaluation.mediaAssetId : null,
       sceneExecutionId: evaluation.sceneExecutionId,
       aggregateStatus: evaluation.aggregateStatus,
       evaluationFingerprint: evaluation.evaluationFingerprint,
@@ -535,7 +595,12 @@ export class AiStoryPostGenerationQcRepository {
 
 /** Adapter keeps the service repository interface while preserving immutable input. */
 export class BoundAiStoryPostGenerationQcRepository {
-  constructor(private readonly input: AiStoryPostGenerationQcInputPackage, private readonly repository = new AiStoryPostGenerationQcRepository()) {}
+  constructor(private input: AiStoryPostGenerationQcInputPackage, private readonly repository = new AiStoryPostGenerationQcRepository()) {}
+  async prepareInput(input:AiStoryPostGenerationQcInputPackage) {
+    if(input.postQcInputId!==this.input.postQcInputId)throw new Error("POST_QC_IMMUTABLE_CONFLICT");
+    this.input=await this.repository.resolveGenerationResultInput(input);
+    return this.input;
+  }
   getByIdentity(identity: { postQcInputId: string; evaluationVersion: number }) { return this.repository.getByIdentity(identity); }
   accept(evaluation: AiStoryPostGenerationQcEvaluation) { return this.repository.accept(this.input, evaluation); }
 }

@@ -18,7 +18,8 @@ import {
   type CanonicalSceneResult,
   type StoryAssemblyDefinition,
 } from "@ceo-agent/shared/server";
-import { createInMemoryAssemblyArtifactRepository } from "@ceo-agent/db";
+import { createInMemoryAssemblyArtifactRepository, materializeGenerationResult, projectApprovedGenerationResult } from "@ceo-agent/db";
+import { extractLocalGenerationEndFrame, validateLocalGenerationMedia } from "../apps/web/src/lib/ai-story-local-generation-media";
 import {
   createFixtureAssemblyMediaAccessPort,
   createInMemoryAssemblyJobRepository,
@@ -269,6 +270,33 @@ describeMedia("Sprint 3 PR 3.6 Assembly Runtime — controlled media", () => {
   afterAll(async () => {
     if (root) await rm(root, { recursive: true, force: true });
   });
+
+  it("approved provider-neutral local results enter the real assembly runtime and derive an exact end frame", async () => {
+    const localResults = await Promise.all(results.map(async (scene,index)=>{
+      const clip=index===0?clipA:clipB;
+      const bytes=await readFile(clip.path);
+      await validateLocalGenerationMedia(bytes,clip.hash,index===0);
+      const result=materializeGenerationResult({ownership:OWNERSHIP,runtimeAuthorizationId:AUTH_ID,
+        generationUnitId:scene.sceneExecutionId,sceneExecutionId:scene.sceneExecutionId,sceneId:scene.sceneId,sceneOrder:scene.sceneOrder,
+        source:{sourceKind:"MANUAL_LOCAL",providerAttemptId:null,localGenerationOutputId:index===0?SCENE_RESULT_A:SCENE_RESULT_B,localWorkerOutputId:null},
+        compiledRequestId:AUTH_ID,compiledRequestFingerprint:clip.hash,inputAuthorityFingerprint:clip.hash,inputAuthority:{synthetic:true},
+        media:{assetId:index===0?SCENE_RESULT_A:SCENE_RESULT_B,contentHash:clip.hash,durableObjectReference:`${OWNERSHIP.workspaceId}/local/${index}.mp4`,storagePath:`${OWNERSHIP.workspaceId}/local/${index}.mp4`,byteSize:bytes.length,durationMs:1000,mediaType:"video/mp4",width:1280,height:720,readable:true,decodable:true},createdAt:job.acceptedAt,
+      });
+      const frame=await extractLocalGenerationEndFrame(bytes,result.media.contentHash);
+      expect(frame.contentHash).toBe(hashBytes(frame.bytes));
+      expect(frame.bytes.length).toBeGreaterThan(0);
+      await expect(extractLocalGenerationEndFrame(bytes,`sha256:${"0".repeat(64)}`)).rejects.toThrow("CONTENT_MISMATCH");
+      return projectApprovedGenerationResult(result,{decisionId:AUTH_ID,generationResultId:result.generationResultId,postQcEvaluationId:AUTH_ID,decision:"APPROVED",actorUserId:AUTH_ID,rationale:"Synthetic approved media fixture",decidedAt:job.acceptedAt});
+    }));
+    const ids=localResults.map(item=>item.sceneResultId);
+    const identity=buildAssemblyJobIdentity({executionPlanId:job.executionPlanId,assemblyDefinitionId:job.assemblyDefinitionId,orderedSceneResultIds:ids,orderedSceneContentHashes:job.orderedSceneContentHashes,assemblyContractVersion:"1",assemblyEngineSnapshotHash:job.assemblyEngineSnapshotHash});
+    const localJob=AssemblyJobSchema.parse({...job,assemblyJobId:identity.assemblyJobId,deterministicFingerprint:identity.deterministicFingerprint,orderedSceneResultIds:ids});
+    const output=await runDeterministicAssemblyRuntime({assemblyJobId:localJob.assemblyJobId,sources:{definition,memberships,sceneResults:localResults},
+      jobRepository:createInMemoryAssemblyJobRepository([localJob]),artifactRepository:createInMemoryAssemblyArtifactRepository(),
+      mediaAccess:createFixtureAssemblyMediaAccessPort(new Map([[ids[0]!,clipA.path],[ids[1]!,clipB.path]]),OWNERSHIP),blobStore:createLocalAssemblyArtifactBlobStore(join(root,"local-result-artifacts")),
+    });
+    expect(output.status).toBe("SUCCEEDED");
+  },180_000);
 
   it("concatenates ordered scenes and converges equivalent replay", async () => {
     const jobRepo = createInMemoryAssemblyJobRepository([job]);

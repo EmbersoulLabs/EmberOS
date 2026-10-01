@@ -23,6 +23,8 @@ export type CanonicalExecuteRequest = z.infer<typeof CanonicalExecuteRequestSche
 export const CanonicalExecuteRuntimeStatusSchema = z.enum([
   "AUTHORIZED_AND_SCHEDULED",
   "ALREADY_AUTHORIZED_AND_SCHEDULED",
+  "LOCAL_GENERATION_PREPARED",
+  "ALREADY_LOCAL_GENERATION_PREPARED",
 ]);
 
 export type CanonicalExecuteRuntimeStatus = z.infer<
@@ -43,6 +45,8 @@ export const CanonicalExecuteResponseSchema = z.object({
   /** Phase 1 lock remains in force for legacy paths; selective Execute is the sole unlock. */
   executionLockCode: z.literal(PHASE1_EXECUTION_LOCKED),
   automaticFallbackEnabled: z.literal(false),
+  executionMode: z.enum(["MANUAL_LOCAL", "REMOTE_PROVIDER"]).optional(),
+  localGenerationUnitCount: z.number().int().nonnegative().optional(),
 });
 
 export type CanonicalExecuteResponse = z.infer<typeof CanonicalExecuteResponseSchema>;

@@ -1,0 +1,169 @@
+import { z } from "zod";
+import { AiStoryPostQcRequirementSchema } from "./ai-story-post-generation-qc";
+
+export const AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION =
+  "local-generation-package.v1" as const;
+export const AI_STORY_VIDEO_EXECUTION_MODES = [
+  "MANUAL_LOCAL",
+  "REMOTE_PROVIDER",
+] as const;
+export const AI_STORY_LOCAL_WORKFLOWS = [
+  "MINIMAX_H3_NATIVE_DIALOGUE",
+  "WAN_I2V",
+  "WAN_T2V",
+  "WAN_S2V",
+  "WAN_ANIMATE",
+  "GENERIC_LOCAL_VIDEO",
+] as const;
+export const AI_STORY_LOCAL_GENERATION_STATES = [
+  "AWAITING_LOCAL_OUTPUT",
+  "LOCAL_OUTPUT_UPLOADED",
+  "LOCAL_REGENERATION_REQUIRED",
+  "QC_PASS",
+] as const;
+
+const Id = z.string().uuid();
+const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const Text = z.string().trim().min(1).max(100_000);
+
+export const AiStoryLocalReferenceSchema = z.object({
+  assetId: Id,
+  contentHash: Hash,
+  authorityType: z.enum(["CHARACTER", "PRODUCT", "LOCATION", "FIRST_FRAME", "OTHER"]),
+  authorityId: Id,
+  displayName: z.string().trim().min(1).max(300),
+  mediaType: z.string().trim().min(1).max(160).optional(),
+  storagePath: z.string().trim().min(1).optional(),
+  providerWireRole: z.enum(["first_frame", "reference_image"]).optional(),
+}).strict();
+
+export const AiStoryLocalGenerationPackageSchema = z.object({
+  version: z.literal(AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION),
+  packageId: Id,
+  packageFingerprint: Hash,
+  executionMode: z.literal("MANUAL_LOCAL"),
+  organizationId: Id,
+  workspaceId: Id,
+  campaignId: Id,
+  storyId: Id,
+  storyVersionId: Id,
+  executionPlanId: Id,
+  runtimeAuthorizationId: Id,
+  unitId: Id,
+  sceneExecutionId: Id,
+  sceneId: Text,
+  order: z.number().int().positive(),
+  durationSec: z.number().positive(),
+  aspectRatio: z.enum(["9:16", "16:9", "1:1"]),
+  resolutionIntent: z.enum(["480p", "720p", "1080p"]),
+  recommendedWorkflow: z.enum(AI_STORY_LOCAL_WORKFLOWS),
+  generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO", "PRODUCT_GROUNDED_VIDEO"]),
+  prompt: Text,
+  negativePrompt: z.string().max(10_000).default(""),
+  dialogue: z.array(z.object({
+    speakerCharacterId: Id.optional(),
+    speakerLabel: Text,
+    text: Text,
+    offscreen: z.boolean(),
+  }).strict()),
+  generateAudio: z.boolean(),
+  audioBlocked: z.boolean(),
+  characterAuthority: z.object({
+    characterId: Id,
+    characterVersionId: Id,
+    dnaFingerprint: Hash,
+    sourcePhotoSentToVideoProvider: z.literal(false),
+  }).strict().nullable(),
+  productAuthority: z.object({
+    assetId: Id,
+    contentHash: Hash,
+    confirmedVariant: z.string().trim().min(1).max(160).nullable(),
+  }).strict().nullable(),
+  worldDescription: z.string().max(4_000),
+  mustKeep: z.array(Text),
+  mustAvoid: z.array(Text),
+  qcRequirements: z.array(AiStoryPostQcRequirementSchema),
+  continuityRequirements: z.array(Text),
+  previousUnitEndState: z.array(Text),
+  currentUnitStartState: z.array(Text),
+  expectedEndState: z.array(Text),
+  references: z.array(AiStoryLocalReferenceSchema),
+  sourceAuthority: z.object({
+    schedulingAuthorityId: Id,
+    schedulingAuthorityFingerprint: Hash,
+    plannerSnapshotId: Id,
+    compiledRequestId: Id,
+    compiledRequestFingerprint: Hash,
+    sceneFingerprint: Hash,
+    semanticPlanFingerprint: Hash,
+    preGenerationQcEvaluationId: Id,
+    preGenerationQcFingerprint: Hash,
+    directorFingerprint: Hash,
+    motionFingerprint: Hash,
+    castSnapshotFingerprint: Hash,
+    locationSnapshotFingerprint: Hash,
+    productSnapshotFingerprint: Hash,
+  }).strict(),
+  planningAuthority: z.object({
+    planningLineageSource:z.enum(["FROZEN_SCRIPT_DIRECTOR","LEGACY_COMPILED_V1"]),
+    sceneVersion:z.number().int().positive(),
+    scriptVersionId:Id.nullable(), handoffId:Id.nullable(), handoffFingerprint:Hash.nullable(),
+  }).strict(),
+  instructions: Text,
+  state: z.enum(AI_STORY_LOCAL_GENERATION_STATES),
+  retryOfPackageId: Id.nullable(),
+  retryNumber: z.number().int().nonnegative(),
+  createdAt: z.string().datetime(),
+}).strict().superRefine((value, context) => {
+  if (value.planningAuthority.planningLineageSource==="FROZEN_SCRIPT_DIRECTOR" &&
+      (!value.planningAuthority.scriptVersionId || !value.planningAuthority.handoffId || !value.planningAuthority.handoffFingerprint)) {
+    context.addIssue({code:z.ZodIssueCode.custom,message:"Frozen planning authority is incomplete"});
+  }
+  if (value.generateAudio === value.audioBlocked) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "generateAudio and audioBlocked must preserve one consistent audio authority",
+    });
+  }
+  if (value.generationMode === "TEXT_TO_VIDEO" && value.references.some((reference) => reference.authorityType === "FIRST_FRAME")) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "TEXT_TO_VIDEO cannot carry a first-frame reference",
+    });
+  }
+});
+
+export const AiStoryLocalGenerationOutputSchema = z.object({
+  outputId: Id,
+  packageId: Id,
+  unitId: Id,
+  sceneExecutionId: Id,
+  assetId: Id,
+  contentHash: Hash,
+  mediaType: z.literal("video/mp4"),
+  durationSec: z.number().positive(),
+  width: z.number().int().positive().nullable(),
+  height: z.number().int().positive().nullable(),
+  uploadedBy: Id,
+  uploadedAt: z.string().datetime(),
+  qcState: z.enum(["PENDING", "PASS", "LOCAL_REGENERATION_REQUIRED"]),
+  continuityFrameAssetId: Id.nullable(),
+}).strict();
+
+export type AiStoryVideoExecutionMode = (typeof AI_STORY_VIDEO_EXECUTION_MODES)[number];
+export type AiStoryLocalWorkflow = (typeof AI_STORY_LOCAL_WORKFLOWS)[number];
+export type AiStoryLocalGenerationPackage = z.infer<typeof AiStoryLocalGenerationPackageSchema>;
+export type AiStoryLocalGenerationOutput = z.infer<typeof AiStoryLocalGenerationOutputSchema>;
+
+export const AiStoryLocalMediaJobIdentitySchema = z.object({
+  workspaceId:Id, executionPlanId:Id, packageId:Id, actorUserId:Id,
+});
+export const AiStoryLocalMediaJobSchema = AiStoryLocalMediaJobIdentitySchema.extend({
+  jobId:Id, kind:z.enum(["VALIDATE_OUTPUT","EXTRACT_FRAME"]),
+  assetId:Id.nullable(), generationResultId:Id.nullable(),
+  state:z.enum(["PENDING","RUNNING","SUCCEEDED","FAILED"]), claimToken:Id.nullable(),
+  errorCode:z.string().nullable(),
+});
+export type AiStoryLocalMediaJob = z.infer<typeof AiStoryLocalMediaJobSchema>;
+export type AiStoryLocalMediaJobInput = z.infer<typeof AiStoryLocalMediaJobIdentitySchema> &
+  ({kind:"VALIDATE_OUTPUT";assetId:string}|{kind:"EXTRACT_FRAME";generationResultId:string});

@@ -35,6 +35,7 @@ export interface AiStoryVisualEvidenceProvider {
 }
 
 export interface AiStoryPostGenerationQcRepository {
+  prepareInput?(input:AiStoryPostGenerationQcInputPackage):Promise<AiStoryPostGenerationQcInputPackage>;
   getByIdentity(input: { postQcInputId: string; evaluationVersion: number }): Promise<AiStoryPostGenerationQcEvaluation | null>;
   accept(evaluation: AiStoryPostGenerationQcEvaluation): Promise<{ evaluation: AiStoryPostGenerationQcEvaluation; replayed: boolean }>;
 }
@@ -588,9 +589,7 @@ export function isAiStoryPostQcCurrentForMedia(evaluation: AiStoryPostGeneration
   return evaluation.mediaAssetId === mediaAssetId && evaluation.mediaContentHash === mediaContentHash;
 }
 
-export function postQcAllowsHumanApproval(evaluation: AiStoryPostGenerationQcEvaluation): boolean {
-  return !evaluation.findings.some((item) => item.result === "REJECT" && item.waiverPolicy === "NON_WAIVABLE_INTEGRITY");
-}
+export { postQcAllowsHumanApproval } from "@ceo-agent/shared";
 
 export function buildAiStoryPostQcHumanReviewEvidence(input: { evaluation: AiStoryPostGenerationQcEvaluation; sceneSummary: string }): AiStoryPostQcHumanReviewEvidence {
   const byId = new Map(input.evaluation.observations.map((item) => [item.observationId, item]));
@@ -625,9 +624,10 @@ export class AiStoryPostGenerationQcService {
       readonly renderPolicy: AiStoryVisualTextRenderPolicy;
     } | null,
   ) {
-    const input = AiStoryPostGenerationQcInputPackageSchema.parse(rawInput);
+    let input = AiStoryPostGenerationQcInputPackageSchema.parse(rawInput);
     const current = await this.dependencies.repository.getByIdentity({ postQcInputId: input.postQcInputId, evaluationVersion });
     if (current) return { evaluation: current, replayed: true };
+    if(this.dependencies.repository.prepareInput) input=AiStoryPostGenerationQcInputPackageSchema.parse(await this.dependencies.repository.prepareInput(input));
     let visual: readonly AiStoryPostQcObservation[] = [];
     let evidenceUnavailable = false;
     try { visual = await this.dependencies.evidenceProvider.analyze(input); }
@@ -649,6 +649,7 @@ export class AiStoryPostGenerationQcService {
       orgId: input.orgId,
       workspaceId: input.workspaceId,
       providerAttemptId: input.providerAttemptId,
+      ...(input.generationResultId ? { generationResultId: input.generationResultId, sourceKind: input.sourceKind } : {}),
       mediaAssetId: input.privateMediaAssetId,
       mediaContentHash: input.privateMediaContentHash,
       sceneExecutionId: input.sceneExecutionId,

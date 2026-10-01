@@ -55,6 +55,7 @@ export function assertSceneMediaResultAuthority(input: {
 
   const source = redactHttpsMediaUri(result.mediaReference.uri);
   if (
+    source.scheme !== "https" || attestation.sourceMediaReference.scheme !== "https" ||
     source.scheme !== attestation.sourceMediaReference.scheme ||
     source.host !== attestation.sourceMediaReference.host ||
     source.path !== attestation.sourceMediaReference.path

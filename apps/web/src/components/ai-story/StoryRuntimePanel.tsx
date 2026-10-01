@@ -11,12 +11,12 @@ import { FinalStoryResultViewer } from "@/components/ai-story/FinalStoryResultVi
 import { SceneReviewWorkspacePanel } from "@/components/ai-story/SceneReviewWorkspacePanel";
 import { EpisodePreviewPanel } from "@/components/ai-story/EpisodePreviewPanel";
 import { EpisodeDebugPanel } from "@/components/ai-story/EpisodeDebugPanel";
+import { LocalGenerationPanel } from "@/components/ai-story/LocalGenerationPanel";
 import {
   AI_STORY_EPISODE_COPY,
   classifyEpisodeMomentRepair,
   episodeMomentMarker,
   formatEpisodeActualCostUsd,
-  formatEpisodeLiveCostEstimateUsd,
   resolveEpisodeDurationLabel,
   resolveFullEpisodePreviewState,
   resolveInternalRetryScopeFromEpisodeMoment,
@@ -29,7 +29,6 @@ import {
   StoryRuntimeClientError,
   getProductRuntimeProjection,
   postCanonicalExecute,
-  postEpisodeCostEstimate,
   postEpisodeRevision,
   postGeneratedSceneReviewDecision,
   postPreDispatchRecovery,
@@ -69,7 +68,8 @@ export function StoryRuntimePanel({
   const [executing, setExecuting] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [liveCostLabel, setLiveCostLabel] = useState<string | null>(null);
+  const [liveCostLabel] = useState<string | null>("Cloud video Provider cost: $0 · Local GPU cost not metered by EmberOS V1");
+  const [localGenerationRefreshToken, setLocalGenerationRefreshToken] = useState(0);
   const [revisionStatusLabel, setRevisionStatusLabel] = useState<string | null>(null);
   const [revisionHistory, setRevisionHistory] = useState<{ version: number; summary: string }[]>([]);
   const [revisionDiagnostics, setRevisionDiagnostics] = useState<Record<string, unknown> | null>(null);
@@ -166,27 +166,6 @@ export function StoryRuntimePanel({
     ensurePolling(projection);
   }, [projection, ensurePolling]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const result = await postEpisodeCostEstimate({
-          campaignId,
-          unitCount: Math.max(1, projection?.requiredSceneCount ?? 6),
-          durationSeconds: 8,
-          aspectRatio: "9:16",
-          nativeAudio: true,
-        });
-        if (!cancelled) setLiveCostLabel(formatEpisodeLiveCostEstimateUsd(result.estimate));
-      } catch {
-        if (!cancelled) setLiveCostLabel(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [campaignId, projection?.requiredSceneCount]);
-
   async function submitRevision(body: Record<string, unknown>) {
     try {
       const result = await postEpisodeRevision({
@@ -230,6 +209,7 @@ export function StoryRuntimePanel({
     setError(null);
     try {
       await postCanonicalExecute({ campaignId, storyId, executionPlanId });
+      setLocalGenerationRefreshToken((value) => value + 1);
       const next = await refresh();
       ensurePolling(next);
     } catch (err) {
@@ -323,9 +303,9 @@ export function StoryRuntimePanel({
     <div className="space-y-4" data-testid="story-runtime-panel">
       <section className="space-y-4 rounded-2xl border border-border bg-white p-5">
         <div>
-          <h2 className="text-lg font-bold text-navy">Generating episode moments</h2>
+          <h2 className="text-lg font-bold text-navy">Animation Package Ready</h2>
           <p className="mt-1 text-sm text-ink-secondary">
-            Follow your Episode from generation through review. Progress comes from saved server state.
+            Animate prepares downloadable Local Generation packages. It does not submit to a cloud video Provider.
           </p>
         </div>
 
@@ -380,7 +360,7 @@ export function StoryRuntimePanel({
             >
               {executing
                 ? t("aiStory.runtime.executing")
-                : "Generate Episode"}
+                : "Animate"}
             </button>
             {projection?.remainingReleasePermitted ? (
                <button type="button" disabled={releasing} onClick={() => void onReleaseNextScene()}
@@ -447,6 +427,13 @@ export function StoryRuntimePanel({
           </div>
         ) : null}
       </section>
+
+      <LocalGenerationPanel
+        campaignId={campaignId}
+        storyId={storyId}
+        executionPlanId={executionPlanId}
+        refreshToken={localGenerationRefreshToken}
+      />
 
       {showFinalEpisode ? (
         <FinalStoryResultViewer
