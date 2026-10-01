@@ -73,33 +73,36 @@ const ProviderVisibleActionSchema = z.object({
   stateDelta: AiStoryScriptStateDeltaSchema.nullable(),
 }).strict();
 
-export function buildAiStoryScriptSemanticProviderOutputSchema(commercial: boolean) {
+export function buildAiStoryScriptSemanticProviderOutputSchema(commercial: boolean, sceneCount: number) {
+  if (!Number.isSafeInteger(sceneCount) || sceneCount < 1) {
+    throw new Error("SCRIPT_SEMANTIC_WRITER_SCENE_COUNT_INVALID");
+  }
+  const sceneSchema = z.object({
+    sceneFunction: ProviderSceneFunction,
+    sceneFunctionRegistryVersion: z.literal(1),
+    sceneStateIn: z.array(AiStoryScriptStateFactSchema),
+    sceneStateDeltas: z.array(AiStoryScriptStateDeltaSchema),
+    sceneStateOut: z.array(AiStoryScriptStateFactSchema),
+    newInformation: z.array(ProviderText.max(1000)),
+    newActionOutcomes: z.array(ProviderText.max(1000)),
+    ...(commercial
+      ? {
+          visibleAction: ProviderVisibleActionSchema,
+          followingEntries: z.array(ProviderEntriesSchema.element).default([]),
+          narrativeFunction: AiStoryNarrativeFunctionSchema,
+          storyConsequence: ProviderText.max(1000),
+        }
+      : {
+          entries: ProviderEntriesSchema,
+          narrativeFunction: AiStoryNarrativeFunctionSchema.nullable().optional(),
+          storyConsequence: ProviderText.max(1000).nullable().optional(),
+        }),
+    causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
+    commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
+  }).strict();
   return z.object({
     contractVersion: z.literal(AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION),
-    scenes: z.array(z.object({
-      scenePlanItemId: ProviderText.max(500),
-      sceneFunction: ProviderSceneFunction,
-      sceneFunctionRegistryVersion: z.literal(1),
-      sceneStateIn: z.array(AiStoryScriptStateFactSchema),
-      sceneStateDeltas: z.array(AiStoryScriptStateDeltaSchema),
-      sceneStateOut: z.array(AiStoryScriptStateFactSchema),
-      newInformation: z.array(ProviderText.max(1000)),
-      newActionOutcomes: z.array(ProviderText.max(1000)),
-      ...(commercial
-        ? {
-            visibleAction: ProviderVisibleActionSchema,
-            followingEntries: z.array(ProviderEntriesSchema.element).default([]),
-            narrativeFunction: AiStoryNarrativeFunctionSchema,
-            storyConsequence: ProviderText.max(1000),
-          }
-        : {
-            entries: ProviderEntriesSchema,
-            narrativeFunction: AiStoryNarrativeFunctionSchema.nullable().optional(),
-            storyConsequence: ProviderText.max(1000).nullable().optional(),
-          }),
-      causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
-      commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
-    }).strict()).min(1),
+    scenes: z.array(sceneSchema).length(sceneCount),
   }).strict();
 }
 
@@ -123,11 +126,15 @@ function providerSceneEntries(scene: {
 
 function canonicalizeProviderProposal(
   value: z.infer<ReturnType<typeof buildAiStoryScriptSemanticProviderOutputSchema>>,
+  scenePlan: readonly ScenePlanItem[],
 ): AiStoryScriptSemanticProposalV1 {
+  if (value.scenes.length !== scenePlan.length) {
+    throw new Error("SCRIPT_SEMANTIC_WRITER_SCENE_COUNT_INVALID");
+  }
   return AiStoryScriptSemanticProposalV1Schema.parse({
     ...value,
-    scenes: value.scenes.map((scene) => ({
-      scenePlanItemId: scene.scenePlanItemId,
+    scenes: value.scenes.map((scene, index) => ({
+      scenePlanItemId: scenePlan[index]!.id,
       sceneFunction: scene.sceneFunction,
       sceneFunctionRegistryVersion: scene.sceneFunctionRegistryVersion,
       sceneStateIn: scene.sceneStateIn,
@@ -188,6 +195,12 @@ export async function generateAiStoryScriptSemanticProposalV1(
       : {}),
   };
   if (input.frozenOutline.status !== "FROZEN") throw new Error("CANONICAL_SCRIPT_FROZEN_OUTLINE_REQUIRED");
+  input.scenePlan.forEach((scene, index) => {
+    if (scene.order !== index) throw new Error("CANONICAL_SCRIPT_SCENE_PLAN_ORDER_INVALID");
+  });
+  if (new Set(input.scenePlan.map((scene) => scene.id)).size !== input.scenePlan.length) {
+    throw new Error("CANONICAL_SCRIPT_SCENE_PLAN_ID_AMBIGUOUS");
+  }
   const outlineProductIds = resolveOutlineBoundProductAuthorityIds(input.frozenOutline);
   if (JSON.stringify(input.productAuthorityIds) !== JSON.stringify(outlineProductIds)) {
     throw new Error("CANONICAL_SCRIPT_PRODUCT_AUTHORITY_MISMATCH");
@@ -206,7 +219,8 @@ export async function generateAiStoryScriptSemanticProposalV1(
   const completion = await callStructuredJsonModel({
     system: [
       "You are the AI Story V1 Script Semantic Writer. Produce semantic proposal data only.",
-      "Cover every supplied Scene Plan item exactly once; never add, remove, merge, or duplicate Scenes.",
+      `Return exactly ${input.scenePlan.length} semantic Scene objects, one for each supplied Scene Plan item in the same array order. Never add, remove, merge, duplicate, or reorder Scenes.`,
+      "Do not return Scene Plan IDs. Scene identity and order are server-owned and will be attached by array position after exact-count validation.",
       "Use only exact supplied entity IDs. Never invent Character identity, Product identity, claims, or evidence.",
       "Speakers, ACTION subjects, and state subjects must be characterAuthorities characterId values or product authority IDs. A Character ID that is not in characterAuthorities is unavailable, including another campaign Character with the same name.",
       "Choose sceneFunction only from the supplied Script Scene Function registry represented by the schema.",
@@ -243,21 +257,16 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(promptInput, null, 2),
-    schema: buildAiStoryScriptSemanticProviderOutputSchema(commercial),
+    schema: buildAiStoryScriptSemanticProviderOutputSchema(commercial, input.scenePlan.length),
     schemaName: "ai_story_script_semantic_proposal_v1",
     certificationStage: "script_semantic_writer",
   });
   if (completion.decodeIssue) {
     throw new Error(`SCRIPT_SEMANTIC_WRITER_${completion.decodeIssue}`);
   }
-  const parsed = buildAiStoryScriptSemanticProviderOutputSchema(commercial).parse(completion.result);
-  const canonicalized = canonicalizeProviderProposal(parsed);
-  const ordered = input.scenePlan.map((scene) =>
-    canonicalized.scenes.find((item) => item.scenePlanItemId === scene.id),
-  );
-  const continued = ordered.every((scene) => scene)
-    ? dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(ordered as NonNullable<(typeof ordered)[number]>[]))
-    : canonicalized.scenes;
+  const parsed = buildAiStoryScriptSemanticProviderOutputSchema(commercial, input.scenePlan.length).parse(completion.result);
+  const canonicalized = canonicalizeProviderProposal(parsed, input.scenePlan);
+  const continued = dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(canonicalized.scenes));
   const semanticProposal = AiStoryScriptSemanticProposalV1Schema.parse({
     ...canonicalized,
     scenes: detachOffScreenSuppliedDialogue(continued, {

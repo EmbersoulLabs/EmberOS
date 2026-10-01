@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const callStructuredJsonModel = vi.hoisted(() => vi.fn());
 vi.mock("../packages/agents/src/llm", () => ({ callStructuredJsonModel }));
@@ -73,7 +73,7 @@ function structuredProviderProposal() {
   return {
     ...value,
     scenes: value.scenes.map((scene) => ({
-      ...scene,
+      ...Object.fromEntries(Object.entries(scene).filter(([key]) => key !== "scenePlanItemId")),
       entries: scene.entries.map((entry) => entry.type === "ACTION"
         ? { ...entry, objectId: entry.objectId ?? null, stateDelta: entry.stateDelta ?? null }
         : entry.type === "DIALOGUE"
@@ -97,6 +97,10 @@ function expectCode(run: () => unknown, code: string) {
 }
 
 describe("AI Story Canonical Script Semantic Writer V1", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("keeps the strict semantic proposal separate from canonical authority", () => {
     const value = AiStoryScriptSemanticProposalV1Schema.parse(proposal());
     expect(value.scenes[0]).not.toHaveProperty("scriptSceneId");
@@ -220,16 +224,15 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
   });
 
   it("requires a commercial visible action instead of dialogue alone", () => {
-    const schema = buildAiStoryScriptSemanticProviderOutputSchema(true);
+    const schema = buildAiStoryScriptSemanticProviderOutputSchema(true, 2);
     expect(schema.safeParse(structuredProviderProposal()).success).toBe(false);
   });
 
   it("preserves a structured product action and commercial contribution", () => {
-    const schema = buildAiStoryScriptSemanticProviderOutputSchema(true);
+    const schema = buildAiStoryScriptSemanticProviderOutputSchema(true, 1);
     const parsed = schema.parse({
       contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
       scenes: [{
-        scenePlanItemId: "scene-001",
         sceneFunction: "DEMONSTRATE",
         sceneFunctionRegistryVersion: 1,
         sceneStateIn: [],
@@ -264,6 +267,51 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       participationKind: "ENABLE",
       commercialAuthorityIds: [I.product],
     });
+  });
+
+  it("keeps Scene Plan identity out of provider output and requires the exact Scene count", () => {
+    const schema = buildAiStoryScriptSemanticProviderOutputSchema(false, 5);
+    const scene = structuredProviderProposal().scenes[0]!;
+    expect(schema.safeParse({
+      contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
+      scenes: Array.from({ length: 5 }, () => scene),
+    }).success).toBe(true);
+    expect(schema.safeParse({
+      contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
+      scenes: Array.from({ length: 4 }, () => scene),
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
+      scenes: Array.from({ length: 6 }, () => scene),
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
+      scenes: Array.from({ length: 5 }, (_, index) => ({ ...scene, scenePlanItemId: `model-scene-${index}` })),
+    }).success).toBe(false);
+  });
+
+  it("injects exact canonical Scene Plan IDs by server-owned array order", async () => {
+    const fiveScenes = Array.from({ length: 5 }, (_, order) => ({
+      ...SCENES[order % SCENES.length]!,
+      id: `scene-plan-${order}`,
+      order,
+    }));
+    const providerScene = structuredProviderProposal().scenes[0]!;
+    callStructuredJsonModel.mockResolvedValueOnce({
+      result: {
+        contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
+        scenes: Array.from({ length: 5 }, () => providerScene),
+      },
+      usage: { input: 10, output: 5, costUsd: 0.01 },
+    });
+    const result = await generateAiStoryScriptSemanticProposalV1({
+      frozenOutline: outline(), story: STORY, storyBeats: BEATS, scenePlan: fiveScenes,
+      creativeContext: { storyContext: STORY, characterContext: { characters: [], relationships: [] }, productContext: { source: "NONE", products: [] }, worldContext: { locations: [], timePeriod: "", worldRules: [] }, narrativeContext: { arc: "Arc", pacing: "Pace", emotionalJourney: "Journey", themes: [] } },
+      directorThinking: { coreMessage: "Message", hero: "Hero", conflict: "Conflict", turningPoint: "Turn", climax: "Climax", takeaway: "Takeaway" },
+      characterAuthorities: [CHARACTER], productAuthorityIds: [I.product],
+    });
+    expect(result.semanticProposal.scenes.map((scene) => scene.scenePlanItemId)).toEqual(fiveScenes.map((scene) => scene.id));
+    expect(callStructuredJsonModel).toHaveBeenCalledTimes(1);
   });
 
   it("uses one existing model call and returns only a validated proposal", async () => {
