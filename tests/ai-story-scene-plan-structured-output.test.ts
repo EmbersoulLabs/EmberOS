@@ -8,6 +8,7 @@ vi.mock("../packages/agents/src/llm", () => ({
 
 import {
   bindMentionedCatalogChoiceEvidence,
+  bindVisualClaimSubjectEvidence,
   bindSceneGroundingProposalIdsByPlanOrder,
   buildScenePlanProviderOutputSchema,
   deriveAllowedSceneVisualSubjects,
@@ -80,6 +81,15 @@ const groundingSelection = { sceneId: "scene-001", ...groundingFields };
 const validProviderResult = {
   scenePlan: [{ ...plannedScene, grounding: groundingFields }],
 };
+
+function captureError(action: () => unknown): unknown {
+  try {
+    action();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
 
 describe("AI Story Scene Plan strict structured output", () => {
   beforeEach(() => callStructuredJsonModel.mockReset());
@@ -426,6 +436,171 @@ describe("AI Story Scene Plan strict structured output", () => {
       bindingId: menuBindingId,
       groundedFacts: ["Ayam Rendang"],
     }]);
+  });
+
+  it("auto-binds an exact visual subject to its unique accepted binding", () => {
+    const bindingId = "80000000-0000-4000-8000-000000000010";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: [],
+        namedItems: ["Nasi Lemak"],
+        productCandidates: [],
+      }],
+    };
+    const [proposal] = bindVisualClaimSubjectEvidence({
+      context,
+      characterNames: ["Yuki"],
+      proposals: [{
+        ...groundingSelection,
+        evidence: [],
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    });
+
+    expect(proposal?.evidence).toEqual([{ bindingId, groundedFacts: ["Nasi Lemak"] }]);
+  });
+
+  it("merges canonical subject evidence without duplicating the binding or fact", () => {
+    const bindingId = "80000000-0000-4000-8000-000000000010";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "PRODUCT_AUTHORITY" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: ["rice and sambal"],
+        namedItems: ["Nasi Lemak"],
+        productCandidates: [{
+          name: "Nasi Lemak",
+          relationship: "PRIMARY_PRODUCT" as const,
+          evidence: ["rice and sambal"],
+        }],
+      }],
+    };
+    const [proposal] = bindVisualClaimSubjectEvidence({
+      context,
+      characterNames: [],
+      proposals: [{
+        ...groundingSelection,
+        evidence: [{ bindingId, groundedFacts: ["rice and sambal", "Nasi Lemak"] }],
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    });
+
+    expect(proposal?.evidence).toEqual([{
+      bindingId,
+      groundedFacts: ["rice and sambal", "Nasi Lemak"],
+    }]);
+  });
+
+  it("adds the canonical subject binding without reinterpreting unrelated evidence", () => {
+    const subjectBindingId = "80000000-0000-4000-8000-000000000010";
+    const unrelatedBindingId = "80000000-0000-4000-8000-000000000011";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId: subjectBindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: [],
+        namedItems: [],
+        productCandidates: [{
+          name: "Nasi Lemak",
+          relationship: "CATALOG_CHOICE" as const,
+          evidence: ["menu text"],
+        }],
+      }, {
+        bindingId: unrelatedBindingId,
+        assetId: "60000000-0000-4000-8000-000000000007",
+        role: "PRODUCT_AUTHORITY" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000009",
+        observedFacts: ["pink fan"],
+        namedItems: ["Mini Fan"],
+        productCandidates: [],
+      }],
+    };
+    const [proposal] = bindVisualClaimSubjectEvidence({
+      context,
+      characterNames: [],
+      proposals: [{
+        ...groundingSelection,
+        evidence: [{ bindingId: unrelatedBindingId, groundedFacts: ["pink fan"] }],
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    });
+
+    expect(proposal?.evidence).toEqual([
+      { bindingId: unrelatedBindingId, groundedFacts: ["pink fan"] },
+      { bindingId: subjectBindingId, groundedFacts: ["Nasi Lemak"] },
+    ]);
+  });
+
+  it("fails closed when an exact visual subject has no accepted binding", () => {
+    const error = captureError(() => bindVisualClaimSubjectEvidence({
+      context: input.assetGrounding,
+      characterNames: [],
+      proposals: [{
+        ...groundingSelection,
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    }));
+    expect(error).toMatchObject({ code: "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED" });
+  });
+
+  it("fails closed instead of choosing between duplicate subject bindings", () => {
+    const binding = {
+      assetId: "60000000-0000-4000-8000-000000000006",
+      role: "SUPPORTING_REFERENCE" as const,
+      analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+      observedFacts: [],
+      namedItems: ["Nasi Lemak"],
+      productCandidates: [],
+    };
+    const error = captureError(() => bindVisualClaimSubjectEvidence({
+      context: {
+        ...input.assetGrounding,
+        bindings: [
+          { ...binding, bindingId: "80000000-0000-4000-8000-000000000010" },
+          { ...binding, bindingId: "80000000-0000-4000-8000-000000000011" },
+        ],
+      },
+      characterNames: [],
+      proposals: [{
+        ...groundingSelection,
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    }));
+    expect(error).toMatchObject({ code: "SCENE_GROUNDING_SUBJECT_BINDING_AMBIGUOUS" });
+  });
+
+  it("never auto-binds a canonical Character name as Asset evidence", () => {
+    const error = captureError(() => bindVisualClaimSubjectEvidence({
+      context: {
+        ...input.assetGrounding,
+        bindings: [{
+          bindingId: "80000000-0000-4000-8000-000000000010",
+          assetId: "60000000-0000-4000-8000-000000000006",
+          role: "SUPPORTING_REFERENCE" as const,
+          analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+          observedFacts: [],
+          namedItems: ["Yuki"],
+          productCandidates: [],
+        }],
+      },
+      characterNames: ["Yuki"],
+      proposals: [{
+        ...groundingSelection,
+        visualClaims: [{ subject: "Yuki", detail: "Yuki", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    }));
+    expect(error).toMatchObject({ code: "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED" });
   });
 
   it("fails closed when structured fields conflict with canonical generation authority", async () => {
