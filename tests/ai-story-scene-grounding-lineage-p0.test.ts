@@ -262,6 +262,34 @@ describe("P0 Scene grounding lineage", () => {
     })).toThrow(/unsupported visual subject/);
   });
 
+  it("rejects a globally accepted subject when the Scene selects only an unrelated binding", () => {
+    expect(() => bindSceneGroundingLineage({
+      context,
+      sceneIds: ["scene-1"],
+      proposals: [{
+        sceneId: "scene-1", narrativeIntent: "The customer reads the menu", visualIntent: "Show the menu",
+        evidence: [{ bindingId: ids.menuBinding, groundedFacts: ["Ayam Rendang"] }],
+        visualClaims: [{ subject: "sambal", detail: "sambal", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    })).toThrow(/unsupported visual subject/);
+  });
+
+  it("keeps legacy composite visual subjects fail-closed", () => {
+    expect(() => bindSceneGroundingLineage({
+      context,
+      sceneIds: ["scene-1"],
+      proposals: [{
+        sceneId: "scene-1", narrativeIntent: "Yuki enjoys the Nasi Lemak", visualIntent: "Show the meal",
+        evidence: [{ bindingId: ids.productBinding, groundedFacts: ["Nasi Lemak"] }],
+        visualClaims: [{
+          subject: "Yuki enjoying Nasi Lemak",
+          detail: "Yuki enjoying Nasi Lemak",
+          evidenceLevel: "EXISTENCE_ONLY",
+        }],
+      }],
+    })).toThrow(/unsupported visual subject/);
+  });
+
   it("rejects facts that do not exist in the selected immutable Snapshot", () => {
     expect(() => bindSceneGroundingLineage({
       context,

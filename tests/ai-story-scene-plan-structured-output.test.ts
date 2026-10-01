@@ -10,6 +10,7 @@ import {
   bindMentionedCatalogChoiceEvidence,
   bindSceneGroundingProposalIdsByPlanOrder,
   buildScenePlanProviderOutputSchema,
+  deriveAllowedSceneVisualSubjects,
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
   reconcileSupportingOnlySceneAuthority,
@@ -195,6 +196,63 @@ describe("AI Story Scene Plan strict structured output", () => {
     expect(schema.safeParse({
       scenePlan: [{ ...plannedScene }],
     }).success).toBe(false);
+  });
+
+  it("constrains provider visual subjects to exact accepted Asset authority", () => {
+    const accepted = "80000000-0000-4000-8000-000000000010";
+    const schema = buildScenePlanProviderOutputSchema([accepted], ["Nasi Lemak"]);
+    const withSubject = (subject: string) => ({
+      scenePlan: [{
+        ...plannedScene,
+        grounding: {
+          ...groundingFields,
+          evidence: [{ bindingId: accepted, groundedFacts: ["Nasi Lemak"] }],
+          visualClaims: [{ subject, detail: subject, evidenceLevel: "EXISTENCE_ONLY" }],
+        },
+      }],
+    });
+
+    expect(schema.safeParse(withSubject("Nasi Lemak")).success).toBe(true);
+    expect(schema.safeParse(withSubject("Yuki enjoying Nasi Lemak")).success).toBe(false);
+    expect(schema.safeParse(withSubject("Yuki holding Mini Fan")).success).toBe(false);
+  });
+
+  it("requires an empty visual claim list when accepted Asset authority exposes no subjects", () => {
+    const schema = buildScenePlanProviderOutputSchema([]);
+    expect(schema.safeParse(validProviderResult).success).toBe(true);
+    expect(schema.safeParse({
+      scenePlan: [{
+        ...plannedScene,
+        grounding: {
+          ...groundingFields,
+          narrativeIntent: "Yuki smiles while greeting a customer.",
+          visualIntent: "Show Yuki greeting the customer.",
+          visualClaims: [{ subject: "Yuki", detail: "Yuki", evidenceLevel: "EXISTENCE_ONLY" }],
+        },
+      }],
+    }).success).toBe(false);
+  });
+
+  it("derives canonical Asset subjects, excludes exact Character names, and deduplicates spelling", () => {
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId: "80000000-0000-4000-8000-000000000010",
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: ["Yuki", "Nasi Lemak"],
+        namedItems: ["Yuki", "Nasi Lemak", "Menu"],
+        productCandidates: [{
+          name: "nasi lemak",
+          relationship: "CATALOG_CHOICE" as const,
+          evidence: ["visible menu text"],
+        }],
+      }],
+    };
+
+    expect(deriveAllowedSceneVisualSubjects({ context, characterNames: ["Yuki"] }))
+      .toEqual(["Nasi Lemak", "Menu"]);
   });
 
   it("drops story character names from asset visual claims", () => {
