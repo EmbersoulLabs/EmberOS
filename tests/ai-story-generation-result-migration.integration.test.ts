@@ -17,7 +17,7 @@ const suite=RUN_DB_INTEGRATION&&getIntegrationDbUrl()?describe:describe.skip;
 const read=(file:string)=>readFileSync(resolve(process.cwd(),file),"utf8");
 const migrations=["packages/db/sql/ai-story-manual-local-generation-handoff-v1.sql","packages/db/sql/ai-story-provider-neutral-generation-result-v1.sql"];
 suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
-  let admin:Sql, db:Sql, name:string, restore:()=>void;
+  let admin:Sql, db:Sql, ormClient:Sql, name:string, restore:()=>void;
   let before:unknown;
   async function evidence(){return db`select jsonb_agg(to_jsonb(t) order by t.attempt_id) as rows from provider_attempts t`;}
   beforeAll(async()=>{
@@ -25,6 +25,9 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
     const url=new URL(urlValue);if(!["localhost","127.0.0.1","::1"].includes(url.hostname))throw new Error("LOCAL_POSTGRES_REQUIRED");
     name=`emberos_generation_result_${randomUUID().replaceAll("-","")}_test`;
     admin=postgres(urlValue,{max:1,prepare:false});await admin.unsafe(`CREATE DATABASE "${name}"`);url.pathname=`/${name}`;db=postgres(url.toString(),{max:1,prepare:false});
+    // Drizzle installs identity JSON serializers on its client. Keep the raw
+    // predecessor fixture/snapshot connection separate from ORM persistence.
+    ormClient=postgres(url.toString(),{max:1,prepare:false});
     await db.unsafe(read("tests/fixtures/ai-story-production-predecessor-schema.sql"));
     await db.unsafe("DO $$ BEGIN CREATE ROLE anon NOLOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$;");
     await db.unsafe(read("tests/fixtures/ai-story-production-predecessor-preservation-seed.sql"));before=await evidence();
@@ -32,7 +35,7 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
     for(const entry of manifest.entries){const source=read(entry.file);await db.unsafe(/^\s*(?:--[^\n]*\n\s*)*BEGIN\s*;/i.test(source)?source:`BEGIN;\n${source}\nCOMMIT;`);}
     for(const file of migrations)await db.unsafe(read(file));
   },120_000);
-  afterAll(async()=>{await db?.end();if(admin&&/^emberos_generation_result_[a-f0-9]+_test$/.test(name))await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);await admin?.end();restore?.();},120_000);
+  afterAll(async()=>{await ormClient?.end();await db?.end();if(admin&&/^emberos_generation_result_[a-f0-9]+_test$/.test(name))await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);await admin?.end();restore?.();},120_000);
   it("loads both additive migrations against the certified predecessor closure",async()=>{const rows=await db`select tablename from pg_tables where schemaname='public' and tablename in ('ai_story_generation_results','ai_story_generation_result_decisions','ai_story_generation_result_continuity_frames','ai_story_local_generation_packages','ai_story_local_generation_outputs','ai_story_local_media_jobs')`;expect(rows).toHaveLength(6);});
   it("preserves all historical Provider Attempt rows",async()=>{expect(await evidence()).toEqual(before);});
   it("preserves four Production-only Provider historical relations",async()=>{for(const table of ["provider_execution_finalizations","provider_finalization_costs","provider_finalization_usage","provider_terminal_ledger_records"]){const rows=await db.unsafe(`select count(*)::int as count from ${table}`);expect(rows[0]?.count).toBe(1);}});
@@ -50,7 +53,7 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
     await expect(db`delete from ai_story_generation_results where generation_result_id=${values.generation_result_id}`).rejects.toThrow("GENERATION_RESULT_IMMUTABLE_CONFLICT");
   });
   it("persists local output, neutral QC, Human approval, Scene Result and adjacent continuity without an Attempt",async()=>{
-    const orm=drizzle(db,{schema});
+    const orm=drizzle(ormClient,{schema});
     const packages=new AiStoryLocalGenerationRepository(orm),results=new AiStoryGenerationResultRepository(orm);
     const hash=`sha256:${"a".repeat(64)}`,now=new Date().toISOString();
     const id=(n:number)=>`10000000-0000-4000-8000-${String(n).padStart(12,"0")}`;
