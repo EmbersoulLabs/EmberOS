@@ -216,7 +216,7 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
           language: ProviderText.max(50),
         }).strict(),
       ]))
-    : z.array(z.never());
+    : null;
   const sceneSchemas = Array.from({ length: sceneCount }, (_, index) => {
     const integrationAnchor = index === commercialIntegrationAnchorSceneIndex;
     const visibleAction = integrationAnchor && commercialObjectId
@@ -233,22 +233,23 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     return z.object({
       sceneFunction: ProviderSceneFunction,
       sceneFunctionRegistryVersion: z.literal(1),
-      // Commercial Scene state snapshots are transport structure, not model
-      // authority. The model supplies typed deltas; the server materializes the
-      // ordered state-in/state-out timeline after parsing.
-      sceneStateIn: commercial ? z.array(z.never()).length(0) : z.array(stateFact),
+      // Commercial Scene snapshots are server-owned. The provider returns typed
+      // deltas only; empty or impossible snapshot schemas are not part of transport.
+      ...(commercial ? {} : {
+        sceneStateIn: z.array(stateFact),
+        sceneStateOut: z.array(stateFact),
+      }),
       sceneStateDeltas: index === stateChangeAnchorSceneIndex
         ? commercialProductStateDelta
           ? z.array(commercialProductStateDelta).length(1)
           : z.array(stateDelta).min(1)
         : z.array(commercial ? ordinaryStateDelta : stateDelta),
-      sceneStateOut: commercial ? z.array(z.never()).length(0) : z.array(stateFact),
       newInformation: z.array(ProviderText.max(1000)),
       newActionOutcomes: z.array(ProviderText.max(1000)),
       ...(commercial
         ? {
             visibleAction,
-            followingEntries,
+            ...(followingEntries ? { followingEntries } : {}),
             narrativeFunction: AiStoryNarrativeFunctionSchema,
             storyConsequence: ProviderText.max(1000),
           }
@@ -358,6 +359,12 @@ function canonicalizeProviderProposal(
             reason: `Frozen commercial integration: ${integration.commercialActionOrParticipation}; ${integration.storyConsequence}`,
           }
         : null;
+      const providerSnapshots = scene as {
+        sceneStateIn?: AiStoryScriptSemanticProposalV1["scenes"][number]["sceneStateIn"];
+        sceneStateOut?: AiStoryScriptSemanticProposalV1["scenes"][number]["sceneStateOut"];
+      };
+      const temporaryStateIn = providerSnapshots.sceneStateIn ?? [];
+      const temporaryStateOut = providerSnapshots.sceneStateOut ?? [];
       const withoutBoundProduct = <T extends { dimension: string; subjectId: string }>(facts: readonly T[]) =>
         serverBoundProductDelta
           ? facts.filter((fact) => !(fact.dimension === "PRODUCT_STATE" && fact.subjectId === serverBoundProductDelta.subjectId))
@@ -367,12 +374,12 @@ function canonicalizeProviderProposal(
       sceneFunction: scene.sceneFunction,
       sceneFunctionRegistryVersion: scene.sceneFunctionRegistryVersion,
       sceneStateIn: serverBoundProductDelta
-        ? [...withoutBoundProduct(scene.sceneStateIn), {
+        ? [...withoutBoundProduct(temporaryStateIn), {
             dimension: serverBoundProductDelta.dimension,
             subjectId: serverBoundProductDelta.subjectId,
             value: serverBoundProductDelta.fromValue,
           }]
-        : scene.sceneStateIn,
+        : temporaryStateIn,
       sceneStateDeltas: serverBoundProductDelta
         ? [
             ...scene.sceneStateDeltas.filter(
@@ -382,12 +389,12 @@ function canonicalizeProviderProposal(
           ]
         : scene.sceneStateDeltas,
       sceneStateOut: serverBoundProductDelta
-        ? [...withoutBoundProduct(scene.sceneStateOut), {
+        ? [...withoutBoundProduct(temporaryStateOut), {
             dimension: serverBoundProductDelta.dimension,
             subjectId: serverBoundProductDelta.subjectId,
             value: serverBoundProductDelta.value,
           }]
-        : scene.sceneStateOut,
+        : temporaryStateOut,
       newInformation: scene.newInformation,
       newActionOutcomes: scene.newActionOutcomes,
       ...(scene.narrativeFunction ? { narrativeFunction: scene.narrativeFunction } : {}),
@@ -509,8 +516,13 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Choose sceneFunction only from the supplied Script Scene Function registry represented by the schema.",
       `These scene functions require at least one ACTION entry: ${VISIBLE_ACTION_SCENE_FUNCTIONS}. Dialogue alone is not a visible action.`,
       "Scene state is story-world state, not camera state. Camera, framing, transition, and shot choices are not state facts and must not change POSSESSION, LOCATION, PHYSICAL_CONDITION, or PRODUCT_STATE.",
-      "Order Scenes by the supplied Scene Plan. For every Scene after the first, sceneStateIn must copy every fact from the previous Scene sceneStateOut with the exact same dimension, subjectId, and value.",
-      "A Scene boundary, dialogue beat, or reaction beat does not reset state. Change a fact only inside a Scene: sceneStateDelta.fromValue equals that Scene sceneStateIn value, and sceneStateOut equals the delta value.",
+      ...(commercial ? [
+        "Do not return sceneStateIn or sceneStateOut. Those Scene snapshots are server-owned. Return only typed sceneStateDeltas for facts that change inside that Scene.",
+        "A Scene boundary, dialogue beat, or reaction beat does not reset state. The server copies unchanged facts forward. A sceneStateDelta.fromValue must equal the current value for that exact dimension and subject.",
+      ] : [
+        "Order Scenes by the supplied Scene Plan. For every Scene after the first, sceneStateIn must copy every fact from the previous Scene sceneStateOut with the exact same dimension, subjectId, and value.",
+        "A Scene boundary, dialogue beat, or reaction beat does not reset state. Change a fact only inside a Scene: sceneStateDelta.fromValue equals that Scene sceneStateIn value, and sceneStateOut equals the delta value.",
+      ]),
       "A change to POSSESSION, LOCATION, PHYSICAL_CONDITION, or PRODUCT_STATE must be caused by an ACTION entry. Copy an unchanged held object or product forward exactly. Do not drop it at a Scene boundary.",
       "Off-screen speech is not a new Character and does not add a physical state. Do not assign an off-screen line to a different Character ID. Keep the on-screen character's physical state unchanged when they only hear or react.",
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
