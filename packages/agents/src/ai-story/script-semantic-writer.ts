@@ -124,6 +124,13 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     [...input.characterIds, ...input.productAuthorityIds],
     "SCRIPT_SEMANTIC_WRITER_ENTITY_AUTHORITY_REQUIRED",
   );
+  // A commercial Product may enter ACTION authority only at the frozen
+  // integration anchor. Ordinary Scenes still require a visible action, but
+  // their action identities are limited to canonical Characters so the model
+  // cannot manufacture a second, contribution-free Product insertion.
+  const ordinaryActionEntityId = commercial
+    ? exactAuthorityIdSchema(input.characterIds, "SCRIPT_SEMANTIC_WRITER_CHARACTER_AUTHORITY_REQUIRED")
+    : allowedEntityId;
   const anchorCommercialAuthorityIds = input.commercialAuthorityIds ?? input.productAuthorityIds;
   const commercialObjectId = input.physicalCommercialParticipationRequired
     ? exactAuthorityIdSchema(anchorCommercialAuthorityIds, "SCRIPT_SEMANTIC_WRITER_COMMERCIAL_AUTHORITY_REQUIRED")
@@ -145,9 +152,17 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     storyEffect: ProviderText.max(1000),
     stateDelta: stateDelta.nullable(),
   }).strict();
-  const entries = z.array(characterId
+  const ordinaryAction = z.object({
+    type: z.literal("ACTION"),
+    subjectId: ordinaryActionEntityId,
+    action: ProviderText.max(2000),
+    objectId: ordinaryActionEntityId.nullable(),
+    storyEffect: ProviderText.max(1000),
+    stateDelta: stateDelta.nullable(),
+  }).strict();
+  const entriesFor = (actionSchema: typeof action | typeof ordinaryAction) => z.array(characterId
     ? z.discriminatedUnion("type", [
-        action,
+        actionSchema,
         z.object({
           type: z.literal("DIALOGUE"),
           speakerId: characterId,
@@ -163,11 +178,14 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
           language: ProviderText.max(50),
         }).strict(),
       ])
-    : action).min(1);
+    : actionSchema).min(1);
   const sceneSchemas = Array.from({ length: sceneCount }, (_, index) => {
-    const visibleAction = index === commercialIntegrationAnchorSceneIndex && commercialObjectId
+    const integrationAnchor = index === commercialIntegrationAnchorSceneIndex;
+    const visibleAction = integrationAnchor && commercialObjectId
       ? action.extend({ objectId: commercialObjectId }).strict()
-      : action;
+      : commercial ? ordinaryAction : action;
+    const followingEntries = entriesFor(integrationAnchor ? action : commercial ? ordinaryAction : action);
+    const entries = entriesFor(action);
     return z.object({
       sceneFunction: ProviderSceneFunction,
       sceneFunctionRegistryVersion: z.literal(1),
@@ -179,7 +197,7 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
       ...(commercial
         ? {
             visibleAction,
-            followingEntries: z.array(entries.element),
+            followingEntries: z.array(followingEntries.element),
             narrativeFunction: AiStoryNarrativeFunctionSchema,
             storyConsequence: ProviderText.max(1000),
           }

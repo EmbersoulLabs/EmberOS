@@ -432,6 +432,29 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(Object.values(scenesByOrder).filter((scene) => scene.visibleAction.objectId === I.product)).toHaveLength(1);
   });
 
+  it("structurally rejects Product ACTION authority outside the frozen integration anchor", () => {
+    const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
+
+    const productObject = providerTransport(commercialProviderProposal(1));
+    productObject.scenesByOrder.scene_0!.visibleAction.objectId = I.product;
+    expect(schema.safeParse(productObject).success).toBe(false);
+
+    const productSubject = providerTransport(commercialProviderProposal(1));
+    productSubject.scenesByOrder.scene_0!.visibleAction.subjectId = I.product;
+    expect(schema.safeParse(productSubject).success).toBe(false);
+
+    const productFollowingAction = providerTransport(commercialProviderProposal(1));
+    productFollowingAction.scenesByOrder.scene_0!.followingEntries = [{
+      type: "ACTION",
+      subjectId: I.character,
+      action: "The character visibly handles the commercial Product.",
+      objectId: I.product,
+      storyEffect: "The Product appears outside its integration authority.",
+      stateDelta: null,
+    }];
+    expect(schema.safeParse(productFollowingAction).success).toBe(false);
+  });
+
   it("rejects a non-commercial object at the physical integration anchor", () => {
     const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
     const value = providerTransport(commercialProviderProposal(1));
