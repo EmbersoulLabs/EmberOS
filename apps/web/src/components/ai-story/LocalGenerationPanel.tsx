@@ -37,6 +37,12 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
     const response = await fetch(`${base}/local-generation`, { cache: "no-store" });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error ?? "Local Generation packages could not be loaded");
+    // An unavailable/mismatched local read model must not crash historical
+    // cloud Scene review or the existing Final Story Result player.
+    if (body?.executionMode !== "MANUAL_LOCAL" || !Array.isArray(body.packages)
+      || !Array.isArray(body.outputs) || !Array.isArray(body.mediaJobs)) {
+      throw new Error("Local Generation packages are temporarily unavailable");
+    }
     setModel(body as ReadModel);
   }, [base]);
 
