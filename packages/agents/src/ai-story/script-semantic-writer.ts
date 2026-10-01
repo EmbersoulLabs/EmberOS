@@ -162,7 +162,7 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
       ...(commercial
         ? {
             visibleAction,
-            followingEntries: z.array(entries.element).default([]),
+            followingEntries: z.array(entries.element),
             narrativeFunction: AiStoryNarrativeFunctionSchema,
             storyConsequence: ProviderText.max(1000),
           }
@@ -174,9 +174,12 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
       causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
       commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
     }).strict());
+  const scenesByOrder = Object.fromEntries(
+    sceneSchemas.map((schema, index) => [`scene_${index}`, schema]),
+  ) as Record<string, z.ZodTypeAny>;
   return z.object({
     contractVersion: z.literal(AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION),
-    scenes: z.tuple(sceneSchemas as unknown as [z.ZodTypeAny, ...z.ZodTypeAny[]]),
+    scenesByOrder: z.object(scenesByOrder).strict(),
   }).strict();
 }
 
@@ -202,12 +205,13 @@ function canonicalizeProviderProposal(
   value: z.infer<ReturnType<typeof buildAiStoryScriptSemanticProviderOutputSchema>>,
   scenePlan: readonly ScenePlanItem[],
 ): AiStoryScriptSemanticProposalV1 {
-  if (value.scenes.length !== scenePlan.length) {
+  const scenes = scenePlan.map((_, index) => value.scenesByOrder[`scene_${index}`]);
+  if (scenes.some((scene) => !scene)) {
     throw new Error("SCRIPT_SEMANTIC_WRITER_SCENE_COUNT_INVALID");
   }
   return AiStoryScriptSemanticProposalV1Schema.parse({
-    ...value,
-    scenes: value.scenes.map((scene, index) => ({
+    contractVersion: value.contractVersion,
+    scenes: scenes.map((scene, index) => ({
       scenePlanItemId: scenePlan[index]!.id,
       sceneFunction: scene.sceneFunction,
       sceneFunctionRegistryVersion: scene.sceneFunctionRegistryVersion,
@@ -307,8 +311,8 @@ export async function generateAiStoryScriptSemanticProposalV1(
   const completion = await callStructuredJsonModel({
     system: [
       "You are the AI Story V1 Script Semantic Writer. Produce semantic proposal data only.",
-      `Return exactly ${input.scenePlan.length} semantic Scene objects, one for each supplied Scene Plan item in the same array order. Never add, remove, merge, duplicate, or reorder Scenes.`,
-      "Do not return Scene Plan IDs. Scene identity and order are server-owned and will be attached by array position after exact-count validation.",
+      `Return exactly ${input.scenePlan.length} semantic Scene objects inside scenesByOrder, using only the exact keys ${input.scenePlan.map((_, index) => `scene_${index}`).join(", ")}. Never add, remove, merge, duplicate, or reorder Scenes.`,
+      "Do not return Scene Plan IDs. Scene identity and order are server-owned and will be attached from the fixed scene_N property order after exact-count validation.",
       "Use only exact supplied entity IDs. Never invent Character identity, Product identity, claims, or evidence.",
       "Speakers, ACTION subjects, and state subjects must be characterAuthorities characterId values or product authority IDs. A Character ID that is not in characterAuthorities is unavailable, including another campaign Character with the same name.",
       "Choose sceneFunction only from the supplied Script Scene Function registry represented by the schema.",

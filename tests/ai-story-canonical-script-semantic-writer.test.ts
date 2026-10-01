@@ -148,6 +148,14 @@ function commercialProviderProposal(anchorIndex = 1) {
   };
 }
 
+function providerTransport(value: ReturnType<typeof structuredProviderProposal> | ReturnType<typeof commercialProviderProposal>) {
+  const { scenes, ...authority } = value;
+  return {
+    ...authority,
+    scenesByOrder: Object.fromEntries(scenes.map((scene, index) => [`scene_${index}`, scene])),
+  };
+}
+
 function promote(overrides: Partial<Parameters<typeof promoteAiStoryScriptSemanticProposalV1>[0]> = {}) {
   return promoteAiStoryScriptSemanticProposalV1({
     storyId: I.story, storyVersionId: I.storyVersion, frozenOutline: outline(),
@@ -333,34 +341,32 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
   it("requires a typed delta on only the exact commercial anchor Scene", () => {
     const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
     const valid = commercialProviderProposal(1);
-    expect(schema.safeParse(valid).success).toBe(true);
-    expect(schema.safeParse({
-      ...valid,
-      scenes: valid.scenes.map((scene) => ({ ...scene, sceneStateDeltas: [] })),
-    }).success).toBe(false);
-    expect(schema.safeParse({
-      ...valid,
-      scenes: valid.scenes.map((scene, index) => index === 0 ? { ...scene, sceneStateDeltas: [] } : scene),
-    }).success).toBe(true);
+    expect(schema.safeParse(providerTransport(valid)).success).toBe(true);
+    const allZero = commercialProviderProposal(1);
+    allZero.scenes = allZero.scenes.map((scene) => ({ ...scene, sceneStateDeltas: [] }));
+    expect(schema.safeParse(providerTransport(allZero)).success).toBe(false);
+    const nonAnchorZero = commercialProviderProposal(1);
+    nonAnchorZero.scenes = nonAnchorZero.scenes.map((scene, index) => index === 0 ? { ...scene, sceneStateDeltas: [] } : scene);
+    expect(schema.safeParse(providerTransport(nonAnchorZero)).success).toBe(true);
   });
 
   it("constrains state subjects to exact Character and Product authority IDs", () => {
     const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
     const characterState = commercialProviderProposal(1);
-    expect(schema.safeParse(characterState).success).toBe(true);
+    expect(schema.safeParse(providerTransport(characterState)).success).toBe(true);
     const productState = commercialProviderProposal(1);
     productState.scenes[1]!.sceneStateDeltas[0] = { ...productState.scenes[1]!.sceneStateDeltas[0]!, subjectId: I.product };
-    expect(schema.safeParse(productState).success).toBe(true);
+    expect(schema.safeParse(providerTransport(productState)).success).toBe(true);
     const unknownState = commercialProviderProposal(1);
     unknownState.scenes[1]!.sceneStateDeltas[0] = { ...unknownState.scenes[1]!.sceneStateDeltas[0]!, subjectId: id(999) };
-    expect(schema.safeParse(unknownState).success).toBe(false);
+    expect(schema.safeParse(providerTransport(unknownState)).success).toBe(false);
   });
 
   it("preserves a structured product action and commercial contribution", () => {
     const schema = providerSchema({ commercial: true, sceneCount: 1, stateChangeAnchorSceneIndex: 0 });
     const parsed = schema.parse({
       contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
-      scenes: [{
+      scenesByOrder: { scene_0: {
         sceneFunction: "DEMONSTRATE",
         sceneFunctionRegistryVersion: 1,
         sceneStateIn: [],
@@ -388,10 +394,10 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
           postState: "holding the product",
           storyConsequence: "The same product stays in use.",
         },
-      }],
+      } },
     });
-    expect(parsed.scenes[0]?.visibleAction).toMatchObject({ objectId: I.product });
-    expect(parsed.scenes[0]?.commercialContribution).toMatchObject({
+    expect(parsed.scenesByOrder.scene_0?.visibleAction).toMatchObject({ objectId: I.product });
+    expect(parsed.scenesByOrder.scene_0?.commercialContribution).toMatchObject({
       participationKind: "ENABLE",
       commercialAuthorityIds: [I.product],
     });
@@ -402,19 +408,19 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     const scene = structuredProviderProposal().scenes[0]!;
     expect(schema.safeParse({
       contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
-      scenes: Array.from({ length: 5 }, () => scene),
+      scenesByOrder: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`scene_${index}`, scene])),
     }).success).toBe(true);
     expect(schema.safeParse({
       contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
-      scenes: Array.from({ length: 4 }, () => scene),
+      scenesByOrder: Object.fromEntries(Array.from({ length: 4 }, (_, index) => [`scene_${index}`, scene])),
     }).success).toBe(false);
     expect(schema.safeParse({
       contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
-      scenes: Array.from({ length: 6 }, () => scene),
+      scenesByOrder: Object.fromEntries(Array.from({ length: 6 }, (_, index) => [`scene_${index}`, scene])),
     }).success).toBe(false);
     expect(schema.safeParse({
       contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
-      scenes: Array.from({ length: 5 }, (_, index) => ({ ...scene, scenePlanItemId: `model-scene-${index}` })),
+      scenesByOrder: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`scene_${index}`, { ...scene, scenePlanItemId: `model-scene-${index}` }])),
     }).success).toBe(false);
   });
 
@@ -428,7 +434,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     callStructuredJsonModel.mockResolvedValueOnce({
       result: {
         contractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
-        scenes: Array.from({ length: 5 }, () => providerScene),
+        scenesByOrder: Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`scene_${index}`, providerScene])),
       },
       usage: { input: 10, output: 5, costUsd: 0.01 },
     });
@@ -443,7 +449,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
   });
 
   it("uses one existing model call and returns only a validated proposal", async () => {
-    callStructuredJsonModel.mockResolvedValueOnce({ result: structuredProviderProposal(), usage: { input: 10, output: 5, costUsd: 0.01 } });
+    callStructuredJsonModel.mockResolvedValueOnce({ result: providerTransport(structuredProviderProposal()), usage: { input: 10, output: 5, costUsd: 0.01 } });
     const source = outline();
     const result = await generateAiStoryScriptSemanticProposalV1({
       frozenOutline: source, story: STORY, storyBeats: BEATS, scenePlan: SCENES,
