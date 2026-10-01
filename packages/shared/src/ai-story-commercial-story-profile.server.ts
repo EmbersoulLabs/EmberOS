@@ -20,8 +20,6 @@ const SHOWCASE_FUNCTIONS = new Set([
   "PRODUCT_INTRODUCTION", "PRODUCT_DETAIL_REVEAL", "PRODUCT_USAGE", "PRODUCT_BENEFIT_PROOF",
   "PRODUCT_PAYOFF", "PACKSHOT", "CTA",
 ]);
-const INTERVENTION_FUNCTIONS = new Set(["PRODUCT_INTERVENTION", "SERVICE_INTERVENTION", "DISCOVERY", "ACTION", "TURN", "TRANSFORMATION"]);
-
 function normalize(value: string) {
   return value.trim().toLowerCase();
 }
@@ -208,12 +206,24 @@ export function validateAiStoryCommercialStoryProfile(
         add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "COMMERCIAL_SCENE_AUTHORITY_UNBOUND", `Scene ${scene.scriptSceneId} references unbound commercial authority`);
       }
     }
-    for (const scene of script.scenes) {
-      const inserted = scene.productAuthorityRefs.length > 0 && !scene.commercialContribution;
-      const functionLocal = narrativeFunctionOf(scene);
-      const intervention = INTERVENTION_FUNCTIONS.has(functionLocal) || functionLocal.includes("INTERVENTION");
-      const stateChanged = scene.sceneStateDeltas.some((delta) => delta.fromValue !== delta.value);
-      if (inserted && !stateChanged && !intervention) {
+    for (const [index, scene] of script.scenes.entries()) {
+      const previous = index > 0 ? script.scenes[index - 1] : undefined;
+      const previousProductState = new Map((previous?.sceneStateOut ?? [])
+        .filter((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
+        .map((fact) => [`${fact.dimension}:${fact.subjectId}`, fact.value]));
+      const inheritedProductStateOnly = scene.productAuthorityRefs.length > 0
+        && !scene.entries.some((entry) => entry.type === "ACTION"
+          && (policy.productOrServiceAuthorityRefs.includes(entry.subjectId)
+            || (entry.objectId !== undefined && policy.productOrServiceAuthorityRefs.includes(entry.objectId))))
+        && !scene.sceneStateDeltas.some((delta) => policy.productOrServiceAuthorityRefs.includes(delta.subjectId))
+        && scene.sceneStateIn.some((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
+        && scene.sceneStateIn
+          .filter((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
+          .every((fact) => previousProductState.get(`${fact.dimension}:${fact.subjectId}`) === fact.value);
+      const inserted = scene.productAuthorityRefs.length > 0
+        && !scene.commercialContribution
+        && !inheritedProductStateOnly;
+      if (inserted) {
         add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "RANDOM_PRODUCT_INSERTION", `Scene ${scene.scriptSceneId} inserts commercial visibility without narrative relationship`);
       }
     }
