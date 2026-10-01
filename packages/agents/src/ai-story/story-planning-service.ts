@@ -331,24 +331,62 @@ const ScenePlanProviderSceneSchema = z.object({
   grounding: SceneGroundingFieldsSchema,
 }).strict();
 
-const ScenePlanProviderOutputSchema = z.object({
-  scenePlan: z.array(ScenePlanProviderSceneSchema).min(1),
-}).strict();
-
 export function buildScenePlanProviderOutputSchema(
   acceptedBindingIds: readonly string[],
+  allowedVisualSubjects: readonly string[] = [],
 ) {
-  if (acceptedBindingIds.length === 0) return ScenePlanProviderOutputSchema;
+  const visualClaims = allowedVisualSubjects.length === 0
+    ? z.array(SceneGroundingFieldsSchema.shape.visualClaims.element).length(0)
+    : z.array(SceneGroundingFieldsSchema.shape.visualClaims.element.extend({
+      subject: z.enum(allowedVisualSubjects as [string, ...string[]]),
+    }).strict());
+  const groundingFields = SceneGroundingFieldsSchema.extend({ visualClaims }).strict();
+  if (acceptedBindingIds.length === 0) {
+    return z.object({
+      scenePlan: z.array(ScenePlanProviderSceneSchema.extend({
+        grounding: groundingFields,
+      }).strict()).min(1),
+    }).strict();
+  }
   const bindingIdSchema = z.enum(acceptedBindingIds as [string, ...string[]]);
   return z.object({
     scenePlan: z.array(ScenePlanProviderSceneSchema.extend({
-      grounding: SceneGroundingFieldsSchema.extend({
-        evidence: z.array(SceneGroundingFieldsSchema.shape.evidence.element.extend({
+      grounding: groundingFields.extend({
+        evidence: z.array(groundingFields.shape.evidence.element.extend({
           bindingId: bindingIdSchema,
         }).strict()),
       }).strict(),
     }).strict()).min(1),
   }).strict();
+}
+
+/**
+ * Projects the only Asset subject identities the Scene Planner may claim.
+ * Canonical spelling comes from accepted semantic grounding; no Story prose,
+ * filenames, labels, or inferred Character aliases participate.
+ */
+export function deriveAllowedSceneVisualSubjects(input: {
+  context?: AiStoryScenePlanningGroundingContext;
+  characterNames: readonly string[];
+}): string[] {
+  if (!input.context) return [];
+  const normalize = (value: string) => value.trim().toLocaleLowerCase();
+  const characterNames = new Set(input.characterNames.map(normalize).filter(Boolean));
+  const seen = new Set<string>();
+  const subjects: string[] = [];
+  for (const binding of input.context.bindings) {
+    for (const candidate of [
+      ...binding.namedItems,
+      ...binding.productCandidates.map((product) => product.name),
+    ]) {
+      const canonical = candidate.trim();
+      const key = normalize(canonical);
+      if (!key || characterNames.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      subjects.push(canonical);
+    }
+  }
+  return subjects;
 }
 
 export type AiStoryPlanningCampaignContext = {
@@ -648,8 +686,13 @@ export async function generateScenePlan(input: {
   /** Required by the normal staged runtime; optional for legacy all-at-once compatibility. */
   assetGrounding?: AiStoryScenePlanningGroundingContext;
 }): Promise<{ scenePlan: ScenePlanItem[]; usage: Usage }> {
+  const allowedVisualSubjects = deriveAllowedSceneVisualSubjects({
+    context: input.assetGrounding,
+    characterNames: input.creativeContext.characterContext.characters.map((character) => character.name),
+  });
   const providerOutputSchema = buildScenePlanProviderOutputSchema(
     input.assetGrounding?.bindings.map((binding) => binding.bindingId) ?? [],
+    allowedVisualSubjects,
   );
   const completion = await callStructuredJsonModel({
     system: [
@@ -662,7 +705,8 @@ export async function generateScenePlan(input: {
       "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
       "If a Scene has only SUPPORTING_REFERENCE evidence, use TEXT_TO_VIDEO with REFERENCE_FREE_T2V and productVisualIdentityRequirement NONE. Never select image-conditioned mode or REQUIRED product identity from a supporting-only binding.",
       "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",
-      "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims. Do not put story character names in visualClaims.",
+      `visualClaims.subject must be one exact allowed Asset visual subject: ${JSON.stringify(allowedVisualSubjects)}. If this list is empty, visualClaims must be empty. Narrative and visual intent may describe Characters and actions, but visualClaims.subject must never contain Character/action phrases, sentence fragments, descriptions, or combined Character/Product prose. A narrative such as \"the Character enjoys the Product\" must use only the exact allowed Product subject, never the combined prose phrase.`,
+      "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims. Character identity comes from Character authority, not Asset visualClaims.",
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),
