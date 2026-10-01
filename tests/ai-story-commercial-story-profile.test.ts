@@ -381,6 +381,38 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
     expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE" })]));
   });
 
+  it("distinguishes inherited unchanged Product state from a fresh random insertion", () => {
+    const outline = commercialOutline();
+    const specs = flowerScenes();
+    specs[2] = {
+      ...specs[2]!,
+      stateOut: [
+        ...specs[2]!.stateOut!,
+        { dimension: "POSSESSION", subjectId: I.product, value: "held by the character" },
+      ],
+    };
+    specs[3] = {
+      ...specs[3]!,
+      passiveProduct: true,
+      stateIn: [
+        ...specs[3]!.stateIn!,
+        { dimension: "POSSESSION", subjectId: I.product, value: "held by the character" },
+      ],
+      stateOut: [
+        ...specs[3]!.stateOut!,
+        { dimension: "POSSESSION", subjectId: I.product, value: "held by the character" },
+      ],
+    };
+    const issues = validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs));
+    expect(issues.map((issue) => issue.reasonCode)).not.toContain("RANDOM_PRODUCT_INSERTION");
+
+    const inserted = flowerScenes();
+    inserted[1] = { ...inserted[1]!, product: true, contribution: undefined };
+    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, inserted))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reasonCode: "RANDOM_PRODUCT_INSERTION" }),
+    ]));
+  });
+
   it("SERVICE STORY WITHOUT PRODUCT PASS", () => {
     const outline = serviceOutline();
     const specs = flowerScenes().map((spec, index) => ({
@@ -509,7 +541,18 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
       commercialStoryProfile: commercialPolicy({ commercialIntegration: undefined, productOrServiceAuthorityRefs: [I.product] }),
     });
     const specs = flowerScenes().map((spec) => ({ ...spec, product: false, contribution: undefined }));
-    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "COMMERCIAL_AUTHORITY_NEVER_PARTICIPATES" })]));
+    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "COMMERCIAL_AUTHORITY_NEVER_PARTICIPATES" }),
+    ]));
+  });
+
+  it("does not treat naturalness rationale as commercial participation authority", () => {
+    const outline = commercialOutline();
+    const specs = flowerScenes().map((spec) => ({ ...spec, product: false, contribution: undefined }));
+    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "COMMERCIAL_AUTHORITY_NEVER_PARTICIPATES" }),
+      expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "NATURALNESS_RATIONALE_INSUFFICIENT" }),
+    ]));
   });
 
   it("PRODUCT SHOWCASE MISLABELED AS COMMERCIAL_STORY BLOCKED and SAME SHOWCASE UNDER PRODUCT_STORY PASS", () => {

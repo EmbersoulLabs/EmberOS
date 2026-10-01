@@ -6,7 +6,6 @@ import {
   carryForwardUnchangedScriptSceneState,
   detachOffScreenSuppliedDialogue,
   dropUnchangedPhysicalScriptChanges,
-  AiStoryCommercialSceneContributionSchema,
   AiStoryNarrativeFunctionSchema,
   AiStoryOutlineVersionSchema,
   AiStoryScriptSemanticProposalV1Schema,
@@ -52,6 +51,9 @@ export type AiStoryScriptSemanticProviderSchemaInput = {
   commercial: boolean;
   sceneCount: number;
   stateChangeAnchorSceneIndex: number | null;
+  commercialIntegrationAnchorSceneIndex?: number | null;
+  physicalCommercialParticipationRequired?: boolean;
+  commercialAuthorityIds?: readonly string[];
   characterIds: readonly string[];
   productAuthorityIds: readonly string[];
 };
@@ -94,8 +96,13 @@ export function resolveCommercialStateChangeAnchorSceneIndex(input: {
   return matchingScenes[0]!.index;
 }
 
+/** The frozen commercial entry point owns both integration and state-change placement. */
+export const resolveCommercialIntegrationAnchorSceneIndex = resolveCommercialStateChangeAnchorSceneIndex;
+
 export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScriptSemanticProviderSchemaInput) {
   const { commercial, sceneCount, stateChangeAnchorSceneIndex } = input;
+  const commercialIntegrationAnchorSceneIndex = input.commercialIntegrationAnchorSceneIndex
+    ?? stateChangeAnchorSceneIndex;
   if (!Number.isSafeInteger(sceneCount) || sceneCount < 1) {
     throw new Error("SCRIPT_SEMANTIC_WRITER_SCENE_COUNT_INVALID");
   }
@@ -104,6 +111,12 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     || stateChangeAnchorSceneIndex >= sceneCount)) {
     throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
   }
+  if (commercial && (commercialIntegrationAnchorSceneIndex === null
+    || commercialIntegrationAnchorSceneIndex === undefined
+    || commercialIntegrationAnchorSceneIndex < 0
+    || commercialIntegrationAnchorSceneIndex >= sceneCount)) {
+    throw new Error("SCRIPT_COMMERCIAL_INTEGRATION_ANCHOR_REQUIRED");
+  }
   const characterId = input.characterIds.length
     ? exactAuthorityIdSchema(input.characterIds, "SCRIPT_SEMANTIC_WRITER_CHARACTER_AUTHORITY_REQUIRED")
     : null;
@@ -111,9 +124,10 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     [...input.characterIds, ...input.productAuthorityIds],
     "SCRIPT_SEMANTIC_WRITER_ENTITY_AUTHORITY_REQUIRED",
   );
-  const productOrEntityId = input.productAuthorityIds.length
-    ? exactAuthorityIdSchema(input.productAuthorityIds, "SCRIPT_SEMANTIC_WRITER_PRODUCT_AUTHORITY_REQUIRED")
-    : allowedEntityId;
+  const anchorCommercialAuthorityIds = input.commercialAuthorityIds ?? input.productAuthorityIds;
+  const commercialObjectId = input.physicalCommercialParticipationRequired
+    ? exactAuthorityIdSchema(anchorCommercialAuthorityIds, "SCRIPT_SEMANTIC_WRITER_COMMERCIAL_AUTHORITY_REQUIRED")
+    : null;
   const stateFact = z.object({
     dimension: StateDimension,
     subjectId: allowedEntityId,
@@ -150,8 +164,11 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
         }).strict(),
       ])
     : action).min(1);
-  const visibleAction = action.extend({ objectId: productOrEntityId }).strict();
-  const sceneSchemas = Array.from({ length: sceneCount }, (_, index) => z.object({
+  const sceneSchemas = Array.from({ length: sceneCount }, (_, index) => {
+    const visibleAction = index === commercialIntegrationAnchorSceneIndex && commercialObjectId
+      ? action.extend({ objectId: commercialObjectId }).strict()
+      : action;
+    return z.object({
       sceneFunction: ProviderSceneFunction,
       sceneFunctionRegistryVersion: z.literal(1),
       sceneStateIn: z.array(stateFact),
@@ -172,8 +189,8 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
             storyConsequence: ProviderText.max(1000).nullable().optional(),
           }),
       causalPreconditions: z.array(ProviderText.max(1000)).nullable().optional(),
-      commercialContribution: AiStoryCommercialSceneContributionSchema.nullable().optional(),
-    }).strict());
+    }).strict();
+  });
   const scenesByOrder = Object.fromEntries(
     sceneSchemas.map((schema, index) => [`scene_${index}`, schema]),
   ) as Record<string, z.ZodTypeAny>;
@@ -204,6 +221,8 @@ function providerSceneEntries(scene: {
 function canonicalizeProviderProposal(
   value: z.infer<ReturnType<typeof buildAiStoryScriptSemanticProviderOutputSchema>>,
   scenePlan: readonly ScenePlanItem[],
+  frozenOutline: AiStoryOutlineVersion,
+  commercialIntegrationAnchorSceneIndex: number | null,
 ): AiStoryScriptSemanticProposalV1 {
   const scenes = scenePlan.map((_, index) => value.scenesByOrder[`scene_${index}`]);
   if (scenes.some((scene) => !scene)) {
@@ -223,7 +242,19 @@ function canonicalizeProviderProposal(
       ...(scene.narrativeFunction ? { narrativeFunction: scene.narrativeFunction } : {}),
       ...(scene.causalPreconditions?.length ? { causalPreconditions: scene.causalPreconditions } : {}),
       ...(scene.storyConsequence ? { storyConsequence: scene.storyConsequence } : {}),
-      ...(scene.commercialContribution ? { commercialContribution: scene.commercialContribution } : {}),
+      ...(commercialIntegrationAnchorSceneIndex === index && frozenOutline.commercialStoryProfile?.commercialIntegration
+        ? {
+            commercialContribution: {
+              commercialRole: frozenOutline.commercialStoryProfile.commercialRole,
+              narrativeFunction: frozenOutline.commercialStoryProfile.commercialIntegration.narrativeFunction,
+              participationKind: frozenOutline.commercialStoryProfile.commercialIntegration.commercialActionOrParticipation,
+              commercialAuthorityIds: frozenOutline.commercialStoryProfile.commercialIntegration.commercialAuthorityRefs,
+              preState: frozenOutline.commercialStoryProfile.commercialIntegration.preIntegrationState,
+              postState: frozenOutline.commercialStoryProfile.commercialIntegration.postIntegrationState,
+              storyConsequence: frozenOutline.commercialStoryProfile.commercialIntegration.storyConsequence,
+            },
+          }
+        : {}),
       entries: providerSceneEntries(scene).map((entry) => {
         if (entry.type === "ACTION") {
           const { objectId, stateDelta, ...required } = entry;
@@ -291,10 +322,16 @@ export async function generateAiStoryScriptSemanticProposalV1(
         scenePlan: input.scenePlan,
       })
     : null;
+  const commercialPolicy = input.frozenOutline.commercialStoryProfile;
+  const physicalCommercialParticipationRequired = commercial
+    && ["PRODUCT", "OFFER"].includes(commercialPolicy?.commercialRole ?? "NONE");
   const providerSchema = buildAiStoryScriptSemanticProviderOutputSchema({
     commercial,
     sceneCount: input.scenePlan.length,
     stateChangeAnchorSceneIndex,
+    commercialIntegrationAnchorSceneIndex: stateChangeAnchorSceneIndex,
+    physicalCommercialParticipationRequired,
+    commercialAuthorityIds: commercialPolicy?.commercialIntegration?.commercialAuthorityRefs ?? [],
     characterIds: input.characterAuthorities.map((authority) => authority.characterId),
     productAuthorityIds: input.productAuthorityIds,
   });
@@ -326,14 +363,14 @@ export async function generateAiStoryScriptSemanticProposalV1(
       ...(commercial ? [
         "This is COMMERCIAL_STORY. narrativeFunction and storyConsequence are required on every Scene.",
         `Scene array index ${stateChangeAnchorSceneIndex} is the frozen commercial-integration state-change anchor. That Scene must contain at least one meaningful typed sceneStateDelta. Other Scenes may have no state delta when nothing changes.`,
-        "Every Scene has a required visibleAction. Its objectId is the product authority ID when a product is in use. Put dialogue in followingEntries. Dialogue that mentions the product is not commercial integration.",
+        "Every Scene has a required visibleAction. Ordinary Scenes may use objectId=null or another exact supplied entity. Only the frozen commercial-integration anchor must use the exact authorized commercial object when physical participation is required. Put dialogue in followingEntries. Dialogue that mentions the product is not commercial integration.",
         "Do not emit a POSSESSION, LOCATION, or PHYSICAL_CONDITION delta when that value stays the same. A spoken line is not a physical state change.",
         "If a supplied dialogue speaker name is not a characterAuthorities name, the line is off-screen. Put that exact line in visibleAction.storyEffect or newInformation. Do not assign it to the on-screen character.",
         "visibleAction.action must describe a visible physical action in at least four words. It must not be a single verb and must not copy a spoken line. Dialogue that mentions the product is not that action.",
         "PRODUCT PRESENCE is not PRODUCT PARTICIPATION. A product id, a visible prop, or dialogue that mentions the product does not integrate it.",
-        "When product authority ids are supplied, at least one visibleAction.objectId must be one of those ids, and visibleAction.action must describe the character physically using that product.",
+        `Scene array index ${stateChangeAnchorSceneIndex} is also the frozen commercial-integration anchor. Its visibleAction.objectId must be the exact authorized commercial authority when physical participation is required, and its action must describe genuine narrative participation. Do not insert the Product into ordinary Scenes merely because its authority is available.`,
         "If commercialActionOrParticipation is ENABLE, perform the physical use and visible effect already written in userCreativeIntent. Do not replace that use with admiration, a price remark, or product presence.",
-        "Put commercialContribution on that scene. participationKind is the product's narrative role and commercialAuthorityIds contains that product id. If the same product remains in use, preState and postState may match. Keep the contribution. Do not omit it and do not invent a replacement product to force a difference.",
+        "Do not return commercialContribution. The server projects its immutable role, participation kind, authority IDs, pre/post state, and consequence onto the frozen integration anchor from Outline authority.",
         "A later scene whose productVisualIdentityRequirement is NONE does not remove a product the character is already holding. Copy that held product forward. Off-screen speech does not remove it.",
         "Do not replace the narrative with a product showcase, catalog shot, or detached cutaway.",
         "When the product remains in use, keep its physical state fact identical across Scenes. Do not invent a new product state just to start the next Scene.",
@@ -358,7 +395,12 @@ export async function generateAiStoryScriptSemanticProposalV1(
     throw new Error(`SCRIPT_SEMANTIC_WRITER_${completion.decodeIssue}`);
   }
   const parsed = providerSchema.parse(completion.result);
-  const canonicalized = canonicalizeProviderProposal(parsed, input.scenePlan);
+  const canonicalized = canonicalizeProviderProposal(
+    parsed,
+    input.scenePlan,
+    input.frozenOutline,
+    stateChangeAnchorSceneIndex,
+  );
   const continued = dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(canonicalized.scenes));
   const semanticProposal = AiStoryScriptSemanticProposalV1Schema.parse({
     ...canonicalized,
