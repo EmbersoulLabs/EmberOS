@@ -211,7 +211,7 @@ export function validateAiStoryCommercialStoryProfile(
       const previousProductState = new Map((previous?.sceneStateOut ?? [])
         .filter((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
         .map((fact) => [`${fact.dimension}:${fact.subjectId}`, fact.value]));
-      const inheritedProductStateOnly = scene.productAuthorityRefs.length > 0
+      const unchangedProductStateOnly = scene.productAuthorityRefs.length > 0
         && !scene.entries.some((entry) => entry.type === "ACTION"
           && (policy.productOrServiceAuthorityRefs.includes(entry.subjectId)
             || (entry.objectId !== undefined && policy.productOrServiceAuthorityRefs.includes(entry.objectId))))
@@ -219,10 +219,15 @@ export function validateAiStoryCommercialStoryProfile(
         && scene.sceneStateIn.some((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
         && scene.sceneStateIn
           .filter((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
-          .every((fact) => previousProductState.get(`${fact.dimension}:${fact.subjectId}`) === fact.value);
+          .every((fact) => {
+            if (previous) return previousProductState.get(`${fact.dimension}:${fact.subjectId}`) === fact.value;
+            return scene.sceneStateOut.some((output) => output.dimension === fact.dimension
+              && output.subjectId === fact.subjectId
+              && output.value === fact.value);
+          });
       const inserted = scene.productAuthorityRefs.length > 0
         && !scene.commercialContribution
-        && !inheritedProductStateOnly;
+        && !unchangedProductStateOnly;
       if (inserted) {
         add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "RANDOM_PRODUCT_INSERTION", `Scene ${scene.scriptSceneId} inserts commercial visibility without narrative relationship`);
       }

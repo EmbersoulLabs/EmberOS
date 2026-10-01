@@ -144,6 +144,15 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     fromValue: ProviderText.max(1000).nullable(),
     reason: ProviderText.max(1000),
   }).strict();
+  const commercialProductStateDelta = commercialObjectId
+    ? z.object({
+        dimension: z.literal("PRODUCT_STATE"),
+        subjectId: commercialObjectId,
+        value: ProviderText.max(1000),
+        fromValue: ProviderText.max(1000),
+        reason: ProviderText.max(1000),
+      }).strict()
+    : null;
   const action = z.object({
     type: z.literal("ACTION"),
     subjectId: allowedEntityId,
@@ -179,25 +188,46 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
         }).strict(),
       ])
     : actionSchema).min(1);
+  const followingEntries = characterId
+    ? z.array(z.discriminatedUnion("type", [
+        z.object({
+          type: z.literal("DIALOGUE"),
+          speakerId: characterId,
+          line: ProviderText.max(4000),
+          deliveryOrSubtext: ProviderText.max(1000).nullable(),
+          language: ProviderText.max(50),
+        }).strict(),
+        z.object({
+          type: z.literal("VO"),
+          voiceOwnerId: characterId,
+          line: ProviderText.max(4000),
+          narrativePurpose: ProviderText.max(1000),
+          language: ProviderText.max(50),
+        }).strict(),
+      ]))
+    : z.array(z.never());
   const sceneSchemas = Array.from({ length: sceneCount }, (_, index) => {
     const integrationAnchor = index === commercialIntegrationAnchorSceneIndex;
     const visibleAction = integrationAnchor && commercialObjectId
       ? action.extend({ objectId: commercialObjectId }).strict()
       : commercial ? ordinaryAction : action;
-    const followingEntries = entriesFor(integrationAnchor ? action : commercial ? ordinaryAction : action);
     const entries = entriesFor(action);
     return z.object({
       sceneFunction: ProviderSceneFunction,
       sceneFunctionRegistryVersion: z.literal(1),
       sceneStateIn: z.array(stateFact),
-      sceneStateDeltas: index === stateChangeAnchorSceneIndex ? z.array(stateDelta).min(1) : z.array(stateDelta),
+      sceneStateDeltas: index === stateChangeAnchorSceneIndex
+        ? commercialProductStateDelta
+          ? z.array(commercialProductStateDelta).length(1)
+          : z.array(stateDelta).min(1)
+        : z.array(stateDelta),
       sceneStateOut: z.array(stateFact),
       newInformation: z.array(ProviderText.max(1000)),
       newActionOutcomes: z.array(ProviderText.max(1000)),
       ...(commercial
         ? {
             visibleAction,
-            followingEntries: z.array(followingEntries.element),
+            followingEntries,
             narrativeFunction: AiStoryNarrativeFunctionSchema,
             storyConsequence: ProviderText.max(1000),
           }
@@ -273,13 +303,21 @@ function canonicalizeProviderProposal(
             },
           }
         : {}),
-      entries: providerSceneEntries(scene).map((entry) => {
+      entries: providerSceneEntries(scene).map((entry, entryIndex) => {
         if (entry.type === "ACTION") {
           const { objectId, stateDelta, ...required } = entry;
+          const serverBoundProductDelta = commercialIntegrationAnchorSceneIndex === index
+            && entryIndex === 0
+            && frozenOutline.commercialStoryProfile
+            && ["PRODUCT", "OFFER"].includes(frozenOutline.commercialStoryProfile.commercialRole)
+            ? scene.sceneStateDeltas[0]
+            : null;
           return {
             ...required,
             ...(objectId ? { objectId } : {}),
-            ...(stateDelta ? { stateDelta } : {}),
+            ...(serverBoundProductDelta
+              ? { stateDelta: serverBoundProductDelta }
+              : stateDelta ? { stateDelta } : {}),
           };
         }
         if (entry.type === "DIALOGUE") {
@@ -380,13 +418,13 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
       ...(commercial ? [
         "This is COMMERCIAL_STORY. narrativeFunction and storyConsequence are required on every Scene.",
-        `Scene array index ${stateChangeAnchorSceneIndex} is the frozen commercial-integration state-change anchor. That Scene must contain at least one meaningful typed sceneStateDelta. Other Scenes may have no state delta when nothing changes.`,
+        `Scene array index ${stateChangeAnchorSceneIndex} is the frozen commercial-integration state-change anchor. For physical Product or Offer participation, that Scene must contain exactly one PRODUCT_STATE sceneStateDelta for the exact authorized commercial Product, with a non-null fromValue and a changed value. Other Scenes may have no state delta when nothing changes.`,
         "Every Scene has a required visibleAction. Ordinary Scenes may use objectId=null or another exact supplied entity. Only the frozen commercial-integration anchor must use the exact authorized commercial object when physical participation is required. Put dialogue in followingEntries. Dialogue that mentions the product is not commercial integration.",
         "Do not emit a POSSESSION, LOCATION, or PHYSICAL_CONDITION delta when that value stays the same. A spoken line is not a physical state change.",
         "If a supplied dialogue speaker name is not a characterAuthorities name, the line is off-screen. Put that exact line in visibleAction.storyEffect or newInformation. Do not assign it to the on-screen character.",
         "visibleAction.action must describe a visible physical action in at least four words. It must not be a single verb and must not copy a spoken line. Dialogue that mentions the product is not that action.",
         "PRODUCT PRESENCE is not PRODUCT PARTICIPATION. A product id, a visible prop, or dialogue that mentions the product does not integrate it.",
-        `Scene array index ${stateChangeAnchorSceneIndex} is also the frozen commercial-integration anchor. Its visibleAction.objectId must be the exact authorized commercial authority when physical participation is required, and its action must describe genuine narrative participation. Do not insert the Product into ordinary Scenes merely because its authority is available.`,
+        `Scene array index ${stateChangeAnchorSceneIndex} is also the frozen commercial-integration anchor. Its visibleAction.objectId must be the exact authorized commercial authority when physical participation is required, and its action must describe genuine narrative participation. The server binds that ACTION to the exact PRODUCT_STATE delta; do not add another ACTION to followingEntries. Do not insert the Product into ordinary Scenes merely because its authority is available.`,
         "If commercialActionOrParticipation is ENABLE, perform the physical use and visible effect already written in userCreativeIntent. Do not replace that use with admiration, a price remark, or product presence.",
         "Do not return commercialContribution. The server projects its immutable role, participation kind, authority IDs, pre/post state, and consequence onto the frozen integration anchor from Outline authority.",
         "A later scene whose productVisualIdentityRequirement is NONE does not remove a product the character is already holding. Copy that held product forward. Off-screen speech does not remove it.",

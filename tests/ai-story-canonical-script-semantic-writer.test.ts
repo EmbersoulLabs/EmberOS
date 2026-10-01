@@ -9,6 +9,7 @@ import {
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   AiStoryOutlineVersionSchema,
   AiStoryScriptSemanticProposalV1Schema,
+  evaluateCommercialProductActionCausality,
   validateAiStoryScript,
   type AiStoryScriptSemanticProposalV1,
 } from "@ceo-agent/shared";
@@ -122,13 +123,13 @@ function commercialProviderProposal(anchorIndex = 1) {
     scenes: source.scenes.map((scene, index) => ({
       ...scene,
       sceneFunction: index === 0 ? "INTRODUCE" : "DEMONSTRATE",
-      sceneStateIn: index === 0 ? [] : [{ dimension: "KNOWLEDGE", subjectId: I.character, value: "unaware" }],
+      sceneStateIn: [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "available but unused" }],
       sceneStateDeltas: index === anchorIndex
-        ? [{ dimension: "KNOWLEDGE", subjectId: I.character, fromValue: "unaware", value: "understands the benefit", reason: "The Product is visibly used" }]
+        ? [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "available but unused", value: "actively used in the story", reason: "The Product is visibly used" }]
         : [],
       sceneStateOut: index === anchorIndex
-        ? [{ dimension: "KNOWLEDGE", subjectId: I.character, value: "understands the benefit" }]
-        : index === 0 ? [] : [{ dimension: "KNOWLEDGE", subjectId: I.character, value: "unaware" }],
+        ? [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "actively used in the story" }]
+        : [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "available but unused" }],
       visibleAction: {
         type: "ACTION",
         subjectId: I.character,
@@ -351,12 +352,38 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(schema.safeParse(providerTransport(nonAnchorZero)).success).toBe(true);
   });
 
+  it("requires the physical commercial anchor to expose exactly one causal Product state transition", () => {
+    const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
+    const valid = providerTransport(commercialProviderProposal(1));
+    expect(schema.safeParse(valid).success).toBe(true);
+
+    const knowledgeOnly = providerTransport(commercialProviderProposal(1));
+    knowledgeOnly.scenesByOrder.scene_1!.sceneStateDeltas = [{
+      dimension: "KNOWLEDGE", subjectId: I.character, fromValue: "unaware",
+      value: "understands", reason: "The character learns",
+    }];
+    expect(schema.safeParse(knowledgeOnly).success).toBe(false);
+
+    const wrongProduct = providerTransport(commercialProviderProposal(1));
+    wrongProduct.scenesByOrder.scene_1!.sceneStateDeltas = [{
+      ...wrongProduct.scenesByOrder.scene_1!.sceneStateDeltas[0]!,
+      subjectId: id(999),
+    }];
+    expect(schema.safeParse(wrongProduct).success).toBe(false);
+
+    const duplicate = providerTransport(commercialProviderProposal(1));
+    duplicate.scenesByOrder.scene_1!.sceneStateDeltas.push({
+      ...duplicate.scenesByOrder.scene_1!.sceneStateDeltas[0]!,
+      value: "used twice",
+    });
+    expect(schema.safeParse(duplicate).success).toBe(false);
+  });
+
   it("constrains state subjects to exact Character and Product authority IDs", () => {
     const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
     const characterState = commercialProviderProposal(1);
     expect(schema.safeParse(providerTransport(characterState)).success).toBe(true);
     const productState = commercialProviderProposal(1);
-    productState.scenes[1]!.sceneStateDeltas[0] = { ...productState.scenes[1]!.sceneStateDeltas[0]!, subjectId: I.product };
     expect(schema.safeParse(providerTransport(productState)).success).toBe(true);
     const unknownState = commercialProviderProposal(1);
     unknownState.scenes[1]!.sceneStateDeltas[0] = { ...unknownState.scenes[1]!.sceneStateDeltas[0]!, subjectId: id(999) };
@@ -371,8 +398,8 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
         sceneFunction: "DEMONSTRATE",
         sceneFunctionRegistryVersion: 1,
         sceneStateIn: [],
-        sceneStateDeltas: [{ dimension: "KNOWLEDGE", subjectId: I.character, fromValue: null, value: "knows the product benefit", reason: "The character uses the product" }],
-        sceneStateOut: [{ dimension: "KNOWLEDGE", subjectId: I.character, value: "knows the product benefit" }],
+        sceneStateDeltas: [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "available but unused", value: "actively used in the story", reason: "The character uses the product" }],
+        sceneStateOut: [{ dimension: "PRODUCT_STATE", subjectId: I.product, value: "actively used in the story" }],
         newInformation: ["The product is in use."],
         newActionOutcomes: ["The character uses the product."],
         visibleAction: {
@@ -419,7 +446,7 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       {
         ...base,
         sceneStateDeltas: index === anchor
-          ? [{ dimension: "KNOWLEDGE", subjectId: I.character, fromValue: null, value: "changed", reason: "The Product participates" }]
+          ? [{ dimension: "PRODUCT_STATE", subjectId: I.product, fromValue: "available but unused", value: "actively used", reason: "The Product participates" }]
           : [],
         visibleAction: {
           ...base.visibleAction,
@@ -511,6 +538,17 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(validateAiStoryCommercialStoryProfile(source, script)
       .filter((issue) => issue.gate === "COMMERCIAL_INTEGRATION_GATE" && issue.severity === "BLOCK"))
       .toEqual([]);
+    expect(evaluateCommercialProductActionCausality(script)).toEqual([]);
+    expect(script.scenes[1]!.entries[0]).toMatchObject({
+      type: "ACTION",
+      objectId: I.product,
+      stateDelta: {
+        dimension: "PRODUCT_STATE",
+        subjectId: I.product,
+        fromValue: "available but unused",
+        value: "actively used in the story",
+      },
+    });
   });
 
   it("uses one frozen entry-point resolver for state change and commercial integration", () => {
