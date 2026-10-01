@@ -2,12 +2,14 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import {
   AiStoryGenerationResultSchema, AiStoryGenerationResultDecisionSchema,
   AiStoryPostGenerationQcEvaluationSchema, CanonicalSceneResultSchema,
+  AiStoryProviderAttemptBindingSchema,
   postQcAllowsHumanApproval,
   type AiStoryGenerationResult, type AiStoryGenerationResultDecision,
   type CanonicalSceneResult,
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 import { canonicalPersistenceHash, deterministicPersistenceUuid } from "./ai-story-scene-execution-persistence";
+import { resolveSuccessfulProviderAttemptTerminalAuthority } from "./provider-execution-finalizer";
 
 export function generationResultFingerprint(result: Omit<AiStoryGenerationResult, "fingerprint">): string {
   const { createdAt: _createdAt, ...facts } = result;
@@ -112,7 +114,37 @@ export class AiStoryGenerationResultRepository {
         const [attestation] = await tx.select().from(schema.aiStoryDurableSceneMediaAttestations).where(
           eq(schema.aiStoryDurableSceneMediaAttestations.mediaAttestationId, result.media.assetId),
         ).limit(1);
-        if (!attempt || !attestation || attempt.requestHash !== result.compiledRequestFingerprint ||
+        const [compiled] = await tx.select().from(schema.aiStoryCompiledProviderRequests).where(
+          eq(schema.aiStoryCompiledProviderRequests.compiledRequestId, result.compiledRequestId),
+        ).limit(1);
+        const bindings = await tx.select().from(schema.aiStoryProviderAttemptCompiledBindings).where(
+          eq(schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId, result.source.providerAttemptId),
+        );
+        const binding = bindings.length === 1
+          ? AiStoryProviderAttemptBindingSchema.safeParse(bindings[0]!.binding) : null;
+        // A canonical execution/envelope hash and its compiled wire fingerprint
+        // are distinct authorities. Current Attempts join them through the exact
+        // immutable binding, not through an assumed hash equality. Historical
+        // unbound evidence retains its direct compiled-hash compatibility path.
+        const compiledBindingMatches = binding?.success === true && !!attempt &&
+          binding.data.providerAttemptId === attempt.attemptId &&
+          binding.data.providerExecutionId === attempt.executionId &&
+          binding.data.contractVersion === attempt.contractVersion &&
+          binding.data.orgId === plan.orgId && binding.data.workspaceId === plan.workspaceId &&
+          binding.data.campaignId === plan.campaignId && binding.data.storyId === plan.storyId &&
+          binding.data.storyVersionId === plan.storyVersionId &&
+          binding.data.sceneExecutionId === result.sceneExecutionId &&
+          binding.data.compiledRequestId === result.compiledRequestId &&
+          binding.data.requestFingerprint === result.compiledRequestFingerprint &&
+          bindings[0]!.requestFingerprint === binding.data.requestFingerprint;
+        if (!attempt || !attestation || !compiled ||
+            compiled.sceneExecutionId !== result.sceneExecutionId ||
+            compiled.requestFingerprint !== result.compiledRequestFingerprint ||
+            compiled.orgId !== plan.orgId || compiled.workspaceId !== plan.workspaceId ||
+            compiled.campaignId !== plan.campaignId || compiled.storyId !== plan.storyId ||
+            compiled.storyVersionId !== plan.storyVersionId ||
+            (bindings.length > 0 && !compiledBindingMatches) ||
+            (!compiledBindingMatches && (attempt.status === "PENDING" || attempt.requestHash !== result.compiledRequestFingerprint)) ||
             attestation.sceneExecutionId !== result.sceneExecutionId || attestation.durableObjectReference !== result.media.storagePath ||
             attestation.executionPlanId !== plan.id || attestation.contentHash !== result.media.contentHash) {
           throw new Error("GENERATION_RESULT_REMOTE_SOURCE_MISMATCH");
@@ -120,7 +152,14 @@ export class AiStoryGenerationResultRepository {
         const [sceneResult] = await tx.select().from(schema.aiStorySceneResults).where(
           eq(schema.aiStorySceneResults.sceneResultId, attestation.sceneResultId),
         ).limit(1);
-        if (!sceneResult || sceneResult.providerAttemptId !== attempt.attemptId || sceneResult.providerExecutionId !== attempt.executionId || sceneResult.status !== "SUCCEEDED") {
+        if (!sceneResult || !["PENDING", "SUCCEEDED"].includes(attempt.status) ||
+            sceneResult.providerAttemptId !== attempt.attemptId || sceneResult.providerExecutionId !== attempt.executionId || sceneResult.status !== "SUCCEEDED") {
+          throw new Error("GENERATION_RESULT_REMOTE_TERMINAL_REQUIRED");
+        }
+        if (attempt.status === "PENDING" && !await resolveSuccessfulProviderAttemptTerminalAuthority({
+          reader: tx, providerAttemptId: attempt.attemptId,
+          providerExecutionId: attempt.executionId, sceneExecutionId: result.sceneExecutionId,
+        })) {
           throw new Error("GENERATION_RESULT_REMOTE_TERMINAL_REQUIRED");
         }
       } else {
