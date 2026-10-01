@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const callStructuredJsonModel = vi.hoisted(() => vi.fn());
@@ -569,6 +570,149 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
         value: integration.postIntegrationState,
       },
     });
+  });
+
+  it("carries the server-owned commercial Product state beyond the anchor without adding participation", async () => {
+    const base = commercialOutline();
+    const source = AiStoryOutlineVersionSchema.parse({
+      ...base,
+      commercialStoryProfile: {
+        ...base.commercialStoryProfile!,
+        commercialIntegration: {
+          ...base.commercialStoryProfile!.commercialIntegration!,
+          entryPoint: { kind: "SCENE_ORDER", sceneOrder: 0 },
+        },
+      },
+    });
+    callStructuredJsonModel.mockResolvedValueOnce({
+      result: providerTransport(commercialProviderProposal(0)),
+      usage: { input: 10, output: 5, costUsd: 0.01 },
+    });
+    const result = await generateAiStoryScriptSemanticProposalV1({
+      frozenOutline: source, story: STORY, storyBeats: BEATS, scenePlan: SCENES,
+      creativeContext: { storyContext: STORY, characterContext: { characters: [], relationships: [] }, productContext: { source: "NONE", products: [] }, worldContext: { locations: [], timePeriod: "", worldRules: [] }, narrativeContext: { arc: "Arc", pacing: "Pace", emotionalJourney: "Journey", themes: [] } },
+      directorThinking: { coreMessage: "Message", hero: "Hero", conflict: "Conflict", turningPoint: "Turn", climax: "Climax", takeaway: "Takeaway" },
+      characterAuthorities: [CHARACTER], productAuthorityIds: [I.product],
+    });
+    const integration = source.commercialStoryProfile!.commercialIntegration!;
+    expect(result.semanticProposal.scenes[1]!.sceneStateIn).toEqual(expect.arrayContaining([
+      expect.objectContaining({ dimension: "PRODUCT_STATE", subjectId: I.product, value: integration.postIntegrationState }),
+    ]));
+    expect(result.semanticProposal.scenes[1]!.sceneStateOut).toEqual(expect.arrayContaining([
+      expect.objectContaining({ dimension: "PRODUCT_STATE", subjectId: I.product, value: integration.postIntegrationState }),
+    ]));
+    expect(result.semanticProposal.scenes[1]!.commercialContribution).toBeUndefined();
+    expect(result.semanticProposal.scenes[1]!.entries).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "ACTION", objectId: I.product }),
+    ]));
+  });
+
+  function commercialPlanningInput(frozenOutline: ReturnType<typeof commercialOutline>) {
+    return {
+      frozenOutline, story: STORY, storyBeats: BEATS, scenePlan: SCENES,
+      creativeContext: { storyContext: STORY, characterContext: { characters: [], relationships: [] }, productContext: { source: "NONE" as const, products: [] }, worldContext: { locations: [], timePeriod: "", worldRules: [] }, narrativeContext: { arc: "Arc", pacing: "Pace", emotionalJourney: "Journey", themes: [], dialogue: [] } },
+      directorThinking: { coreMessage: "Message", hero: "Hero", conflict: "Conflict", turningPoint: "Turn", climax: "Climax", takeaway: "Takeaway" },
+      characterAuthorities: [CHARACTER], productAuthorityIds: [I.product],
+    };
+  }
+
+  it("materializes each commercial scene from the previous state and explicit deltas only", async () => {
+    const base = commercialOutline();
+    const source = AiStoryOutlineVersionSchema.parse({
+      ...base,
+      commercialStoryProfile: {
+        ...base.commercialStoryProfile!,
+        commercialIntegration: {
+          ...base.commercialStoryProfile!.commercialIntegration!,
+          entryPoint: { kind: "SCENE_ORDER", sceneOrder: 0 },
+        },
+      },
+    });
+    const transport = providerTransport(commercialProviderProposal(0));
+    transport.scenesByOrder.scene_1!.sceneStateDeltas = [
+      { dimension: "LOCATION", subjectId: I.character, fromValue: null, value: "workbench", reason: "The character arrives." },
+      { dimension: "POSSESSION", subjectId: I.character, fromValue: null, value: "held tool", reason: "The character picks up a tool." },
+      { dimension: "KNOWLEDGE", subjectId: I.character, fromValue: null, value: "knows the next step", reason: "The character learns the next step." },
+    ];
+    callStructuredJsonModel.mockResolvedValueOnce({ result: transport, usage: { input: 10, output: 5, costUsd: 0.01 } });
+    const result = await generateAiStoryScriptSemanticProposalV1(commercialPlanningInput(source));
+    const integration = source.commercialStoryProfile!.commercialIntegration!;
+    const product = { dimension: "PRODUCT_STATE", subjectId: I.product, value: integration.postIntegrationState };
+    const first = result.semanticProposal.scenes[0]!;
+    const second = result.semanticProposal.scenes[1]!;
+    expect(first.sceneStateIn).toEqual([
+      expect.objectContaining({ dimension: "PRODUCT_STATE", subjectId: I.product, value: integration.preIntegrationState }),
+    ]);
+    expect(first.sceneStateOut).toEqual([product]);
+    expect(second.sceneStateIn).toEqual([product]);
+    expect(second.sceneStateOut).toEqual([
+      product,
+      { dimension: "LOCATION", subjectId: I.character, value: "workbench" },
+      { dimension: "POSSESSION", subjectId: I.character, value: "held tool" },
+      { dimension: "KNOWLEDGE", subjectId: I.character, value: "knows the next step" },
+    ]);
+    expect(second.sceneStateOut).toEqual(expect.arrayContaining([product]));
+    expect(second.commercialContribution).toBeUndefined();
+    expect(second.entries).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "ACTION", objectId: I.product }),
+    ]));
+    const material = promoteAiStoryScriptSemanticProposalV1({
+      storyId: I.story, storyVersionId: I.storyVersion, frozenOutline: source,
+      storyBeatProposals: BEATS, scenePlan: SCENES, characterAuthorities: [CHARACTER],
+      semanticProposal: result.semanticProposal,
+    });
+    const script = buildAiStoryScriptVersion({
+      storyId: I.story, storyVersionId: I.storyVersion, outlineVersionId: source.outlineVersionId,
+      orgId: I.org, workspaceId: I.workspace, version: 1, profileId: "COMMERCIAL_STORY", profileVersion: 1,
+      outlineSourceHash: source.sourceHash, scenes: material.scenes, authorityReferences: material.authorityReferences,
+      supersedesScriptVersionId: null, createdBy: I.actor, createdAt: "2026-09-15T01:00:00.000Z",
+    });
+    expect(validateAiStoryCommercialStoryProfile(source, script)
+      .filter((issue) => issue.gate === "COMMERCIAL_INTEGRATION_GATE" && issue.severity === "BLOCK"))
+      .toEqual([]);
+    expect(result.semanticProposal.scenes.map((scene) => scene.scenePlanItemId)).toEqual(SCENES.map((scene) => scene.id));
+  });
+
+  it("fails closed when a later commercial delta names a fromValue that is not current state", async () => {
+    const base = commercialOutline();
+    const source = AiStoryOutlineVersionSchema.parse({
+      ...base,
+      commercialStoryProfile: {
+        ...base.commercialStoryProfile!,
+        commercialIntegration: {
+          ...base.commercialStoryProfile!.commercialIntegration!,
+          entryPoint: { kind: "SCENE_ORDER", sceneOrder: 0 },
+        },
+      },
+    });
+    const transport = providerTransport(commercialProviderProposal(0));
+    transport.scenesByOrder.scene_1!.sceneStateDeltas = [{
+      dimension: "LOCATION", subjectId: I.character, fromValue: "unestablished room", value: "workbench", reason: "The prior location was never established.",
+    }];
+    callStructuredJsonModel.mockResolvedValueOnce({ result: transport, usage: { input: 10, output: 5, costUsd: 0.01 } });
+    await expect(generateAiStoryScriptSemanticProposalV1(commercialPlanningInput(source)))
+      .rejects.toThrow("CANONICAL_SCRIPT_STATE_CONTRADICTION");
+  });
+
+  it("does not fabricate first-scene state or story-specific facts", async () => {
+    callStructuredJsonModel.mockResolvedValueOnce({
+      result: providerTransport(commercialProviderProposal(1)),
+      usage: { input: 10, output: 5, costUsd: 0.01 },
+    });
+    const result = await generateAiStoryScriptSemanticProposalV1(commercialPlanningInput(commercialOutline()));
+    expect(result.semanticProposal.scenes[0]!.sceneStateIn).toEqual([]);
+    expect(result.semanticProposal.scenes[0]!.sceneStateOut).toEqual([]);
+    expect(readFileSync("packages/agents/src/ai-story/script-semantic-writer.ts", "utf8"))
+      .not.toMatch(/Mini Fan|Nasi Lemak|\bYuki\b/);
+  });
+
+  it("keeps commercial state snapshots server-owned and rejects model restatements", () => {
+    const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
+    const value = providerTransport(commercialProviderProposal(1));
+    value.scenesByOrder.scene_0!.sceneStateIn = [{
+      dimension: "LOCATION", subjectId: I.character, value: "provider-owned location",
+    }];
+    expect(schema.safeParse(value).success).toBe(false);
   });
 
   it("uses one frozen entry-point resolver for state change and commercial integration", () => {

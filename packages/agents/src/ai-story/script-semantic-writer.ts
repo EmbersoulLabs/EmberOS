@@ -233,13 +233,16 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
     return z.object({
       sceneFunction: ProviderSceneFunction,
       sceneFunctionRegistryVersion: z.literal(1),
-      sceneStateIn: z.array(commercial ? ordinaryStateFact : stateFact),
+      // Commercial Scene state snapshots are transport structure, not model
+      // authority. The model supplies typed deltas; the server materializes the
+      // ordered state-in/state-out timeline after parsing.
+      sceneStateIn: commercial ? z.array(z.never()).length(0) : z.array(stateFact),
       sceneStateDeltas: index === stateChangeAnchorSceneIndex
         ? commercialProductStateDelta
           ? z.array(commercialProductStateDelta).length(1)
           : z.array(stateDelta).min(1)
         : z.array(commercial ? ordinaryStateDelta : stateDelta),
-      sceneStateOut: z.array(commercial ? ordinaryStateFact : stateFact),
+      sceneStateOut: commercial ? z.array(z.never()).length(0) : z.array(stateFact),
       newInformation: z.array(ProviderText.max(1000)),
       newActionOutcomes: z.array(ProviderText.max(1000)),
       ...(commercial
@@ -282,6 +285,43 @@ function providerSceneEntries(scene: {
     return [scene.visibleAction, ...((scene.followingEntries ?? []) as unknown[])] as ProviderEntry[];
   }
   return (scene.entries ?? []) as ProviderEntry[];
+}
+
+function materializeCommercialStateTimeline(
+  scenes: readonly AiStoryScriptSemanticProposalV1["scenes"][number][],
+): AiStoryScriptSemanticProposalV1["scenes"] {
+  type Fact = AiStoryScriptSemanticProposalV1["scenes"][number]["sceneStateIn"][number];
+  const current = new Map<string, Fact>();
+  const keyOf = (fact: { dimension: string; subjectId: string }) => `${fact.dimension}:${fact.subjectId}`;
+
+  return scenes.map((scene, index) => {
+    const sceneStateIn = [...current.values()].map((fact) => ({ ...fact }));
+    for (const delta of scene.sceneStateDeltas) {
+      const key = keyOf(delta);
+      const prior = current.get(key);
+      if (delta.fromValue !== null && prior?.value !== delta.fromValue) {
+        const frozenProductDelta = !prior
+          && delta.dimension === "PRODUCT_STATE"
+          && scene.commercialContribution?.commercialAuthorityIds.includes(delta.subjectId) === true
+          && delta.fromValue === scene.commercialContribution.preState;
+        const establishesKnownState = !prior && (index === 0 || frozenProductDelta);
+        if (!establishesKnownState) {
+          throw new Error("CANONICAL_SCRIPT_STATE_CONTRADICTION");
+        }
+        sceneStateIn.push({
+          dimension: delta.dimension,
+          subjectId: delta.subjectId,
+          value: delta.fromValue,
+        });
+      }
+      current.set(key, { dimension: delta.dimension, subjectId: delta.subjectId, value: delta.value });
+    }
+    return {
+      ...scene,
+      sceneStateIn,
+      sceneStateOut: [...current.values()].map((fact) => ({ ...fact })),
+    };
+  });
 }
 
 function canonicalizeProviderProposal(
@@ -515,7 +555,10 @@ export async function generateAiStoryScriptSemanticProposalV1(
     input.frozenOutline,
     stateChangeAnchorSceneIndex,
   );
-  const continued = dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(canonicalized.scenes));
+  const stateOwned = input.frozenOutline.profile.profileId === "COMMERCIAL_STORY"
+    ? materializeCommercialStateTimeline(canonicalized.scenes)
+    : canonicalized.scenes;
+  const continued = dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(stateOwned));
   const semanticProposal = AiStoryScriptSemanticProposalV1Schema.parse({
     ...canonicalized,
     scenes: detachOffScreenSuppliedDialogue(continued, {
