@@ -4,24 +4,45 @@ describe("AI Story planning pipeline assembly", () => {
   it("runs planning stages in order and returns a review Animation Package", async () => {
     vi.resetModules();
     const usage = { input: 10, output: 5, costUsd: 0.01 };
-    const callStructuredJsonModel = vi.fn(async () => ({
-      result: {
-        scenePlan: [
-          {
-            id: "scene-001",
-            beatIds: ["beat-001"],
-            purpose: "Need and discovery",
-            durationSec: 6,
-            transition: "Cut",
-            continuityNotes: "",
-            order: 0,
-            generationAuthority: { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" },
-            grounding: { narrativeIntent: "Need and discovery", visualIntent: "Hero finds the gift", evidence: [], visualClaims: [] },
+    const callStructuredJsonModel = vi.fn(async () => {
+      if (callStructuredJsonModel.mock.calls.length === 1) {
+        return {
+          result: {
+            scenePlan: [
+              {
+                id: "scene-001",
+                beatIds: ["beat-001"],
+                purpose: "Need and discovery",
+                durationSec: 6,
+                transition: "Cut",
+                continuityNotes: "",
+                order: 0,
+                generationAuthority: { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" },
+                grounding: { narrativeIntent: "Need and discovery", visualIntent: "Hero finds the gift", evidence: [], visualClaims: [] },
+              },
+            ],
           },
-        ],
-      },
-      usage,
-    }));
+          usage,
+        };
+      }
+      return {
+        result: {
+          shotsByScene: {
+            scene_0: [{
+              cameraFamily: "PAN",
+              composition: "Product foreground",
+              framing: "Vertical",
+              lensSuggestion: "35mm",
+              durationSec: 3,
+              focus: "Gift box",
+              emotion: "Relief",
+              information: "Product solves need",
+            }],
+          },
+        },
+        usage,
+      };
+    });
     const callJsonModel = vi.fn(async () => {
       const calls = callJsonModel.mock.calls.length;
       if (calls === 1) {
@@ -113,29 +134,6 @@ describe("AI Story planning pipeline assembly", () => {
       if (calls === 4) {
         return {
           result: {
-            shotPlan: [
-              {
-                id: "shot-001",
-                sceneId: "scene-001",
-                cameraType: "Close-up",
-                cameraMovement: "Push in",
-                composition: "Product foreground",
-                framing: "Vertical",
-                lensSuggestion: "35mm",
-                durationSec: 3,
-                focus: "Gift box",
-                emotion: "Relief",
-                information: "Product solves need",
-                order: 0,
-              },
-            ],
-          },
-          usage,
-        };
-      }
-      if (calls === 5) {
-        return {
-          result: {
             characterContinuity: [
               {
                 characterId: "hero",
@@ -198,8 +196,8 @@ describe("AI Story planning pipeline assembly", () => {
       ],
     });
 
-    expect(callJsonModel).toHaveBeenCalledTimes(6);
-    expect(callStructuredJsonModel).toHaveBeenCalledTimes(1);
+    expect(callJsonModel).toHaveBeenCalledTimes(5);
+    expect(callStructuredJsonModel).toHaveBeenCalledTimes(2);
     expect(payload.status).toBe("review");
     expect(payload.narrativeIntegration.consistent).toBe(true);
     expect(payload.creativeContext.productAuthorities).toEqual([
