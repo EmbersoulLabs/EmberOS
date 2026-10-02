@@ -9,6 +9,8 @@ import { callJsonModel, callStructuredJsonModel } from "../llm";
 import type { CertificationPlanningStage } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
+  AI_STORY_CAMERA_FAMILIES,
+  AI_STORY_PRODUCT_CAMERA_SAFETY_POLICY,
   AI_STORY_SHOT_AUTHORITY_LINEAGE_VERSION,
   AiStorySceneGenerationAuthoritySchema,
   AiStorySceneGroundingProposalSchema,
@@ -858,6 +860,78 @@ export async function generateScenePlan(input: {
   return { scenePlan, usage: completion.usage };
 }
 
+const ShotProviderText = z.string().trim().min(1).max(2000);
+
+function providerShotSchema(productIdentityRequired: boolean) {
+  return z.object({
+    cameraFamily: productIdentityRequired
+      ? z.enum(AI_STORY_PRODUCT_CAMERA_SAFETY_POLICY.identitySafeFamilies)
+      : z.enum(AI_STORY_CAMERA_FAMILIES),
+    composition: ShotProviderText,
+    framing: ShotProviderText,
+    lensSuggestion: z.string().max(500),
+    durationSec: z.number().positive(),
+    focus: ShotProviderText,
+    emotion: ShotProviderText,
+    information: ShotProviderText,
+  }).strict();
+}
+
+type ShotPlanCameraScene = {
+  id?: string;
+  generationAuthority?: { productVisualIdentityRequirement?: "NONE" | "REQUIRED" } | null;
+};
+
+/**
+ * Scene-keyed Shot transport. Scene identity and Shot order stay server-owned.
+ * Product-identity Scenes may only emit an identity-safe camera family.
+ * Other Scenes use the full registered camera-family set, never free text.
+ */
+export function buildShotPlanProviderOutputSchema(scenePlan: readonly ShotPlanCameraScene[]) {
+  if (scenePlan.length === 0) throw new Error("SHOT_PLAN_SCENE_PLAN_REQUIRED");
+  const shotsByScene = Object.fromEntries(
+    scenePlan.map((scene, index) => [
+      `scene_${index}`,
+      z.array(providerShotSchema(scene.generationAuthority?.productVisualIdentityRequirement === "REQUIRED")).min(1),
+    ]),
+  ) as Record<string, z.ZodTypeAny>;
+  return z.object({
+    shotsByScene: z.object(shotsByScene).strict(),
+  }).strict();
+}
+
+type ProviderShot = z.infer<ReturnType<typeof providerShotSchema>>;
+
+/** Flattens scene_N transport into Scene Plan IDs and global Shot order. */
+export function materializeShotPlanFromProvider(input: {
+  scenePlan: readonly { id: string }[];
+  shotsByScene: Readonly<Record<string, readonly ProviderShot[]>>;
+}): ShotPlanItem[] {
+  const shots: ShotPlanItem[] = [];
+  for (const [sceneIndex, scene] of input.scenePlan.entries()) {
+    const sceneShots = input.shotsByScene[`scene_${sceneIndex}`];
+    if (!sceneShots?.length) throw new Error(`SHOT_PLAN_SCENE_COVERAGE_REQUIRED:${scene.id}`);
+    for (const shot of sceneShots) {
+      const order = shots.length;
+      shots.push(ShotPlanItemSchema.parse({
+        id: `shot-${String(order + 1).padStart(3, "0")}`,
+        sceneId: scene.id,
+        cameraType: shot.cameraFamily,
+        cameraMovement: shot.cameraFamily,
+        composition: shot.composition,
+        framing: shot.framing,
+        lensSuggestion: shot.lensSuggestion,
+        durationSec: shot.durationSec,
+        focus: shot.focus,
+        emotion: shot.emotion,
+        information: shot.information,
+        order,
+      }));
+    }
+  }
+  return shots;
+}
+
 export function bindShotPlanAuthorityLineage(input: {
   planningPackageId?: string;
   scenePlan: ScenePlanItem[];
@@ -920,49 +994,40 @@ export async function generateShotPlan(input: {
   if (canonicalScript && (canonicalScript.scenes.length !== input.scenePlan.length || canonicalScript.scenes.some((scene, index) => scene.order !== input.scenePlan[index]!.order))) {
     throw new Error("CANONICAL_SCRIPT_SCENE_PLAN_MAPPING_INVALID");
   }
-  const schemaHint = JSON.stringify({
-    shotPlan: [
-      {
-        id: "shot-001",
-        sceneId: "scene-001",
-        cameraType: "string",
-        cameraMovement: "string",
-        composition: "string",
-        framing: "string",
-        lensSuggestion: "string",
-        durationSec: 2,
-        focus: "string",
-        emotion: "string",
-        information: "string",
-        order: 0,
-      },
-    ],
-  });
-  const { value, usage } = await callStage<ShotPlanItem[]>(
-    "Shot plan",
-    [
+  const providerOutputSchema = buildShotPlanProviderOutputSchema(input.scenePlan);
+  const sceneKeys = input.scenePlan.map((_, index) => `scene_${index}`).join(", ");
+  const completion = await callStructuredJsonModel({
+    system: [
       "You are an animation shot planner.",
       ...(canonicalScript ? [
-        "The supplied Canonical Script is authoritative. Map Scene Plan items to Canonical Script Scenes by their exact shared order and preserve Script semantics.",
+        "The supplied Canonical Script is authoritative. Preserve Script semantics for the Scene at the same order.",
         "Camera and shot choices must not change Script actions, Character IDs, Product authority, Outline Beat claims, dialogue, evidence, or action outcomes.",
         "Do not add unsupported dialogue, action, Product facts, claims, or evidence.",
       ] : []),
-      "Every scene must receive at least one shot.",
-      "Use sequential order values starting at 0 and stable shot ids.",
-      "Preserve each Scene Plan generationAuthority exactly; Product or Asset presence never selects or changes generation mode. For image-conditioned Product Scenes, the exact approved Product Asset remains visual identity authority.",
-      "For PRODUCT_GROUNDED_VIDEO use only identity-safe camera motion: static/locked framing, slow push-in, slow pull-back, minor lateral dolly, a small 10-20 degree arc, close-up detail, rack focus, or gentle parallax.",
-      "Never request a 180/360-degree orbit, circle-around-product, unseen-backside reveal, dramatic perspective change, product morphing, or container/wrapping transformation.",
-      "Return planning-only camera language; no provider execution fields.",
-      "Return ONLY JSON.",
+      `Return exactly ${input.scenePlan.length} Scene shot arrays inside shotsByScene, using only the exact keys ${sceneKeys}.`,
+      "The server owns Scene identity, Scene order, Shot IDs, and global Shot order. Do not return sceneId, shot id, or global order.",
+      "Every Scene must contain at least one Shot. You choose how many Shots each Scene needs.",
+      "cameraFamily must be one exact allowed schema value for that Scene. Do not put prose in cameraFamily.",
+      `Product visual-identity Scenes may use only ${AI_STORY_PRODUCT_CAMERA_SAFETY_POLICY.identitySafeFamilies.join(", ")}.`,
+      "Other Scenes may use any registered camera family the schema allows for that Scene, including families outside the Product-safe subset.",
+      "Put creative description in composition, framing, focus, and information.",
+      "Preserve each Scene Plan generationAuthority exactly. Product or Asset presence never selects or changes generation mode. For image-conditioned Product Scenes, the exact approved Product Asset remains visual identity authority.",
+      "Do not request an orbit around a Product, an unseen-backside reveal, a dramatic perspective change, product morphing, or a container or wrapping transformation.",
+      "Return planning-only camera language and no provider execution fields.",
     ].join(" "),
-    JSON.stringify({ ...input, ...(canonicalScript ? { canonicalScript } : {}) }, null, 2),
-    schemaHint,
-    z.array(ShotPlanItemSchema).min(1),
-    (result) => result.shotPlan
-  );
+    user: JSON.stringify({ ...input, ...(canonicalScript ? { canonicalScript } : {}) }, null, 2),
+    schema: providerOutputSchema,
+    schemaName: "ai_story_shot_plan_v1",
+    certificationStage: "shot_plan",
+  });
+  if (completion.decodeIssue) throw new Error(`SHOT_PLAN_${completion.decodeIssue}`);
+  const providerOutput = providerOutputSchema.parse(completion.result);
   const shotPlan = bindProductShotCameraSafety({
     scenePlan: input.scenePlan,
-    shotPlan: value,
+    shotPlan: materializeShotPlanFromProvider({
+      scenePlan: input.scenePlan,
+      shotsByScene: providerOutput.shotsByScene,
+    }),
   });
   return {
     shotPlan: bindShotPlanAuthorityLineage({
@@ -970,7 +1035,7 @@ export async function generateShotPlan(input: {
       scenePlan: input.scenePlan,
       shotPlan,
     }),
-    usage,
+    usage: completion.usage,
   };
 }
 
