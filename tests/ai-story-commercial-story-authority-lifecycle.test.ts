@@ -86,9 +86,15 @@ const BEATS = [
 ];
 const T2V = { strategy: "TEXT_TO_VIDEO" as const, referenceSource: "REFERENCE_FREE_T2V" as const, referenceAssetIds: [] as string[], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" as const };
 const I2V = { strategy: "FIRST_FRAME_IMAGE_TO_VIDEO" as const, referenceSource: "SCENE_EXPLICIT" as const, referenceAssetIds: [I.product], firstFrameAssetId: I.product, productVisualIdentityRequirement: "REQUIRED" as const };
+const productGrounding = (assetId: string) => ({
+  contractVersion: "ai-story-scene-grounding-lineage.v1" as const, storyId: I.story, storyVersionId: I.storyVersion, matchingResultId: I.matching,
+  narrativeIntent: "Show the exact product", visualIntent: "Hold the exact product",
+  evidence: [{ bindingId: I.binding, assetId, role: "PRODUCT_AUTHORITY" as const, semanticSnapshotId: I.snapshot, groundedFacts: ["Visible product"] }],
+  visualClaims: [] as [],
+});
 const PLAN = [
   { id: "scene-plan-0", beatIds: [BEATS[0]!.id], purpose: "Open on the dark watch", durationSec: 4, transition: "", continuityNotes: "", order: 0, generationAuthority: T2V },
-  { id: "scene-plan-1", beatIds: [BEATS[1]!.id], purpose: "The lantern becomes visible", durationSec: 4, transition: "", continuityNotes: "", order: 1, generationAuthority: I2V },
+  { id: "scene-plan-1", beatIds: [BEATS[1]!.id], purpose: "The lantern becomes visible", durationSec: 4, transition: "", continuityNotes: "", order: 1, generationAuthority: I2V, groundingLineage: productGrounding(I.product) },
   { id: "scene-plan-2", beatIds: [BEATS[2]!.id], purpose: "The watch continues in the light", durationSec: 4, transition: "", continuityNotes: "", order: 2, generationAuthority: T2V },
 ];
 const CHARACTER = {
@@ -584,8 +590,8 @@ describe("COMMERCIAL_STORY authority lifecycle", () => {
     const wrongAsset = { ...I2V, referenceAssetIds: [I.supporting], firstFrameAssetId: I.supporting };
     expect(() => composeAiStoryCanonicalSceneSetV1({
       orgId: I.org, workspaceId: I.workspace, campaignId: I.campaign, storyId: I.story, storyVersionId: I.storyVersion, actorUserId: I.actor,
-      frozenOutline: outline, frozenScript: script, scenePlan: PLAN.map((item, index) => index === 1 ? { ...item, generationAuthority: wrongAsset } : item),
-      worldContinuity: WORLD, characterAuthorities: [CHARACTER], productSources: [{ assetId: I.product, contentHash: hash("b") }], createdAt: "2026-09-27T02:00:00.000Z",
+      frozenOutline: outline, frozenScript: script, scenePlan: PLAN.map((item, index) => index === 1 ? { ...item, generationAuthority: wrongAsset, groundingLineage: productGrounding(I.supporting) } : item),
+      worldContinuity: WORLD, characterAuthorities: [CHARACTER], productSources: [{ assetId: I.product, contentHash: hash("b") }, { assetId: I.supporting, contentHash: hash("s") }], createdAt: "2026-09-27T02:00:00.000Z",
     })).toThrowError(expect.objectContaining({ code: "CANONICAL_SCENE_GENERATION_MODE_MATERIAL_MISMATCH" }));
 
     const grounding = (order: number) => ({
