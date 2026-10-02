@@ -67,6 +67,9 @@ function script() {
   return AiStoryScriptVersionSchema.parse({...draft,status:"FROZEN",approvedBy:I.actor,approvedAt:"2026-09-15T01:01:00.000Z",frozenAt:"2026-09-15T01:02:00.000Z"});
 }
 
+function productGrounding(assetId: string) {
+  return {contractVersion:"ai-story-scene-grounding-lineage.v1" as const,storyId:I.story,storyVersionId:I.storyVersion,matchingResultId:id(20),narrativeIntent:"Show the exact product",visualIntent:"Hold the exact product",evidence:[{bindingId:id(21),assetId,role:"PRODUCT_AUTHORITY" as const,semanticSnapshotId:id(22),groundedFacts:["Visible product"]}],visualClaims:[]};
+}
 const composerInput = () => ({orgId:I.org,workspaceId:I.workspace,campaignId:I.campaign,storyId:I.story,storyVersionId:I.storyVersion,actorUserId:I.actor,frozenOutline:outline(),frozenScript:script(),scenePlan:PLAN,worldContinuity:WORLD,characterAuthorities:[CHARACTER],productSources:[{assetId:I.product,contentHash:hash("b")}],createdAt:"2026-09-15T02:00:00.000Z"});
 const frozen = (scenes: AiStoryCanonicalScene[], status: "DRAFT"|"VALIDATED"|"APPROVED"|"FROZEN"="FROZEN") => scenes.map((scene)=>AiStoryCanonicalSceneSchema.parse({...scene,status,approvedBy:status==="APPROVED"||status==="FROZEN"?I.actor:null,approvedAt:status==="APPROVED"||status==="FROZEN"?"2026-09-15T02:01:00.000Z":null,frozenAt:status==="FROZEN"?"2026-09-15T02:02:00.000Z":null}));
 
@@ -96,17 +99,18 @@ describe("AI Story Canonical Scene Package 1",()=>{
     const missing=PLAN.map((item)=>({...item,generationAuthority:undefined}));
     expect(()=>composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:missing})).toThrowError(expect.objectContaining({code:"CANONICAL_SCENE_GENERATION_MODE_AUTHORITY_MISSING"}));
     const firstFrame={strategy:"FIRST_FRAME_IMAGE_TO_VIDEO" as const,referenceSource:"SCENE_EXPLICIT" as const,referenceAssetIds:[I.product],firstFrameAssetId:I.product,productVisualIdentityRequirement:"REQUIRED" as const};
-    const exact=PLAN.map((item)=>({...item,generationAuthority:firstFrame}));
+    const exact=PLAN.map((item)=>({...item,generationAuthority:firstFrame,groundingLineage:productGrounding(I.product)}));
     expect(composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:exact}).map((scene)=>scene.generationAuthority?.strategy)).toEqual(["FIRST_FRAME_IMAGE_TO_VIDEO","FIRST_FRAME_IMAGE_TO_VIDEO"]);
-    const wrong=PLAN.map((item)=>({...item,generationAuthority:{...firstFrame,referenceAssetIds:[id(99)],firstFrameAssetId:id(99)}}));
-    expect(()=>composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:wrong})).toThrowError(expect.objectContaining({code:"CANONICAL_SCENE_GENERATION_MODE_MATERIAL_MISMATCH"}));
+    const wrongAsset=id(99);
+    const wrong=PLAN.map((item)=>({...item,generationAuthority:{...firstFrame,referenceAssetIds:[wrongAsset],firstFrameAssetId:wrongAsset},groundingLineage:productGrounding(wrongAsset)}));
+    expect(()=>composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:wrong,productSources:[{assetId:I.product,contentHash:hash("b")},{assetId:wrongAsset,contentHash:hash("c")}]} )).toThrowError(expect.objectContaining({code:"CANONICAL_SCENE_GENERATION_MODE_MATERIAL_MISMATCH"}));
     expect(composeAiStoryCanonicalSceneSetV1(composerInput()).every((scene)=>scene.generationAuthority?.strategy==="TEXT_TO_VIDEO")).toBe(true);
   });
 
   it("revises Scene mode with a new fingerprint while preserving the old FROZEN snapshot",()=>{
     const old=frozen(composeAiStoryCanonicalSceneSetV1(composerInput()));
     const firstFrame={strategy:"FIRST_FRAME_IMAGE_TO_VIDEO" as const,referenceSource:"SCENE_EXPLICIT" as const,referenceAssetIds:[I.product],firstFrameAssetId:I.product,productVisualIdentityRequirement:"REQUIRED" as const};
-    const next=composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:PLAN.map((item)=>({...item,generationAuthority:firstFrame})),currentScenes:old});
+    const next=composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:PLAN.map((item)=>({...item,generationAuthority:firstFrame,groundingLineage:productGrounding(I.product)})),currentScenes:old});
     expect(next.every((scene,index)=>scene.version===2&&scene.parentSceneVersionIds[0]===old[index]!.sceneVersionId)).toBe(true);
     expect(next[0]!.fingerprint).not.toBe(old[0]!.fingerprint);
     expect(old[0]!.generationAuthority?.strategy).toBe("TEXT_TO_VIDEO");
