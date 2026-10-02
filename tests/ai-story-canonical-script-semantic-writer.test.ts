@@ -8,6 +8,7 @@ vi.mock("../packages/agents/src/llm", () => ({ callStructuredJsonModel }));
 import {
   AI_STORY_PRODUCT_STORY_PROFILE_POLICY_FINGERPRINT,
   AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY_FINGERPRINT,
+  AI_STORY_NARRATIVE_HOOK_FUNCTIONS,
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   AiStoryOutlineVersionSchema,
   AiStoryScriptSemanticProposalV1Schema,
@@ -857,6 +858,75 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
       expect(canonical[index]!.sceneStateOut).toEqual(canonical[index]!.sceneStateIn);
     }
     expect(canonical.map((scene) => scene.scenePlanItemId)).toEqual(scenePlan.map((scene) => scene.id));
+  });
+
+  it("constrains the commercial opening to a hook-compatible narrative function", () => {
+    const schema = providerSchema({ commercial: true, stateChangeAnchorSceneIndex: 1 });
+    const base = providerTransport(commercialProviderProposal(1));
+    for (const narrativeFunction of ["SETUP", "PROBLEM", "DISCOVERY"] as const) {
+      expect(schema.safeParse({
+        ...base,
+        scenesByOrder: {
+          ...base.scenesByOrder,
+          scene_0: { ...base.scenesByOrder.scene_0, narrativeFunction, newInformation: [] },
+        },
+      }).success).toBe(true);
+    }
+    expect(schema.safeParse({
+      ...base,
+      scenesByOrder: {
+        ...base.scenesByOrder,
+        scene_0: { ...base.scenesByOrder.scene_0, narrativeFunction: "PAYOFF" },
+      },
+    }).success).toBe(false);
+    expect(schema.safeParse({
+      ...base,
+      scenesByOrder: {
+        ...base.scenesByOrder,
+        scene_1: { ...base.scenesByOrder.scene_1, narrativeFunction: "PAYOFF" },
+      },
+    }).success).toBe(true);
+    expect(base.scenesByOrder.scene_0?.visibleAction.objectId).toBeNull();
+    const format = zodResponseFormat(schema, "ai_story_script_semantic_proposal_v1");
+    assertResponseFormatHasNoUnsupportedNot(format);
+    const root = format.json_schema.schema as {
+      definitions?: Record<string, unknown>;
+      properties: { scenesByOrder: { properties: Record<string, { properties: { narrativeFunction?: { $ref?: string } } }> } };
+    };
+    const resolve = (ref: string | undefined) => {
+      const name = ref?.replace("#/definitions/", "");
+      return name ? root.definitions?.[name] : undefined;
+    };
+    const scenes = root.properties.scenesByOrder.properties;
+    const openingSchema = scenes.scene_0?.properties.narrativeFunction;
+    const opening = JSON.stringify(resolve(openingSchema?.$ref) ?? openingSchema);
+    for (const name of AI_STORY_NARRATIVE_HOOK_FUNCTIONS) expect(opening).toContain(name);
+    expect(opening).not.toContain("PAYOFF");
+    const laterSchema = scenes.scene_1?.properties.narrativeFunction;
+    expect(JSON.stringify(resolve(laterSchema?.$ref) ?? laterSchema)).not.toContain("\"enum\"");
+  });
+
+  it("does not fabricate opening information or state to satisfy the hook gate", async () => {
+    const source = commercialOutline();
+    const question = source.commercialStoryProfile!.storyCausality.storyQuestion;
+    const transport = providerTransport(commercialProviderProposal(1));
+    transport.scenesByOrder.scene_0!.narrativeFunction = "SETUP";
+    transport.scenesByOrder.scene_0!.newInformation = [];
+    callStructuredJsonModel.mockResolvedValueOnce({ result: transport, usage: { input: 10, output: 5, costUsd: 0.01 } });
+    const result = await generateAiStoryScriptSemanticProposalV1(commercialPlanningInput(source));
+    const opening = result.semanticProposal.scenes[0]!;
+    expect(opening.narrativeFunction).toBe("SETUP");
+    expect(opening.newInformation).toEqual([]);
+    expect(opening.sceneStateIn).toEqual([]);
+    expect(opening.newInformation.join(" ")).not.toContain(question);
+    expect(callStructuredJsonModel).toHaveBeenCalledWith(expect.objectContaining({
+      system: expect.stringContaining("Scene 0 is the opening narrative anchor"),
+    }));
+    expect(callStructuredJsonModel).toHaveBeenCalledWith(expect.objectContaining({
+      system: expect.stringContaining(question),
+    }));
+    expect(readFileSync("packages/agents/src/ai-story/script-semantic-writer.ts", "utf8"))
+      .not.toMatch(/Mini Fan|Nasi Lemak|\bYuki\b/);
   });
 
   it("keeps commercial state snapshots server-owned and rejects model restatements", () => {

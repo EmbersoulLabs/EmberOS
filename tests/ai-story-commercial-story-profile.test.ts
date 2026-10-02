@@ -343,6 +343,32 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
     expect(validateAiStoryCommercialStoryProfile(drifted, commercialScript(drifted), marketingSnapshot)).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "MARKETING_INTENT_CONSUMPTION_GATE", reasonCode: "MARKETING_INTENT_OBJECTIVE_DRIFT" })]));
   });
 
+  it("passes NARRATIVE_HOOK_GATE from Scene 0 SETUP when outline hooks are empty", () => {
+    const outline = commercialOutline({ hooks: [] });
+    expect(outline.hooks).toEqual([]);
+    expect(outline.commercialStoryProfile?.storyCausality.storyQuestion.length).toBeGreaterThan(0);
+    const script = commercialScript(outline);
+    script.scenes[0]!.narrativeFunction = "SETUP";
+    script.scenes[0]!.newInformation = [];
+    script.scenes[0]!.sceneStateIn = [];
+    expect(script.scenes[0]!.productAuthorityRefs).toEqual([]);
+    expect(validateAiStoryCommercialStoryProfile(outline, script)
+      .filter((issue) => issue.gate === "NARRATIVE_HOOK_GATE" && issue.severity === "BLOCK"))
+      .toEqual([]);
+  });
+
+  it("still fails NARRATIVE_HOOK_GATE when the opening has no hook evidence", () => {
+    const outline = commercialOutline({ hooks: [] });
+    const script = commercialScript(outline);
+    script.scenes[0]!.narrativeFunction = "PAYOFF";
+    script.scenes[0]!.newInformation = [];
+    script.scenes[0]!.sceneStateIn = [];
+    expect(validateAiStoryCommercialStoryProfile(outline, script)
+      .filter((issue) => issue.gate === "NARRATIVE_HOOK_GATE" && issue.severity === "BLOCK")
+      .map((issue) => issue.reasonCode))
+      .toContain("NARRATIVE_HOOK_MISSING");
+  });
+
   it("NARRATIVE_HOOK_GATE PASS, CAUSAL_PROGRESSION_GATE PASS, STATE_CHANGE_GATE PASS, SCENE_PURPOSE_PROGRESSION_GATE PASS, COMMERCIAL_INTEGRATION_GATE PASS, COMMERCIAL_PAYOFF_GATE PASS", () => {
     const outline = commercialOutline();
     const issues = validateAiStoryCommercialStoryProfile(outline, commercialScript(outline));

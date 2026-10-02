@@ -7,6 +7,7 @@ import {
   detachOffScreenSuppliedDialogue,
   dropUnchangedPhysicalScriptChanges,
   AiStoryNarrativeFunctionSchema,
+  AiStoryNarrativeHookFunctionSchema,
   AiStoryOutlineVersionSchema,
   AiStoryScriptSemanticProposalV1Schema,
   resolveOutlineBoundProductAuthorityIds,
@@ -250,7 +251,9 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
         ? {
             visibleAction,
             ...(followingEntries ? { followingEntries } : {}),
-            narrativeFunction: AiStoryNarrativeFunctionSchema,
+            narrativeFunction: index === 0
+              ? AiStoryNarrativeHookFunctionSchema
+              : AiStoryNarrativeFunctionSchema,
             storyConsequence: ProviderText.max(1000),
           }
         : {
@@ -528,6 +531,10 @@ export async function generateAiStoryScriptSemanticProposalV1(
       "Do not create canonical Script Scene IDs, Entry IDs, Script versions, provider prompts, shots, or video instructions.",
       ...(commercial ? [
         "This is COMMERCIAL_STORY. narrativeFunction and storyConsequence are required on every Scene.",
+        "Scene 0 is the opening narrative anchor. Its narrativeFunction must use one of the allowed hook-compatible functions, and its action and story effect must establish a reason for the audience to continue. The server owns that placement. Choose the compatible opening function that fits the Story. Do not turn the opening into an unrelated Product showcase, and do not force the Product into Scene 0.",
+        ...(commercialPolicy?.storyCausality.storyQuestion ? [
+          `Preserve the frozen storyQuestion as the opening tension to express: ${commercialPolicy.storyCausality.storyQuestion}. Do not copy that question verbatim into a Script field.`,
+        ] : []),
         `Scene array index ${stateChangeAnchorSceneIndex} is the frozen commercial-integration state-change anchor. For physical Product or Offer participation, that Scene must contain exactly one PRODUCT_STATE sceneStateDelta for the exact authorized commercial Product, with a non-null fromValue and a changed value. Other Scenes may have no state delta when nothing changes.`,
         "Every Scene has a required visibleAction. Ordinary Scenes may use objectId=null or another exact supplied entity. Only the frozen commercial-integration anchor must use the exact authorized commercial object when physical participation is required. Put dialogue in followingEntries. Dialogue that mentions the product is not commercial integration.",
         "Do not emit a POSSESSION, LOCATION, or PHYSICAL_CONDITION delta when that value stays the same. A spoken line is not a physical state change.",
