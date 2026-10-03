@@ -528,7 +528,9 @@ export async function authorizeAndExecuteExecutionPlan(
             });
             return;
           }
-          if (!defaultDbRepositories) return;
+          // Remote scheduling keeps its existing authority path. MANUAL_LOCAL
+          // must prove current Pre-QC before a RuntimeAuthorizedFact is stored.
+          if (input.executionMode !== "MANUAL_LOCAL" || !defaultDbRepositories) return;
           await assertCurrentPreGenerationQcForRuntimeAuthorization({
             db: getDb(),
             scope: {
