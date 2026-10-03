@@ -5,6 +5,8 @@
 import { and, eq } from "drizzle-orm";
 import {
   AiStoryPreGenerationQcAuthorityService,
+  AiStorySceneAuthorityError,
+  ensureCurrentEpisodeDispatchAuthorityProjection,
   getDb,
   schema,
   type AiStoryScriptScope,
@@ -12,6 +14,7 @@ import {
 import {
   AI_STORY_LOCAL_PACKAGE_GENERATION_MODES,
   AI_STORY_LOCAL_REFERENCE_AUTHORITY_TYPES,
+  EpisodeProjectedAuthorityError,
   EXECUTION_CAPABILITY_IDS,
   type AiStoryEffectiveSceneGenerationAuthority,
   type AiStoryGenerateReviewPreQcSummary,
@@ -186,6 +189,47 @@ export async function loadCurrentFrozenMotionChain(
   return selectUniqueFrozenMotionChain({ motions, directors, handoffs, scripts, outlines, scope });
 }
 
+function motionAuthorityAbsent(): GenerateReviewPreQcError {
+  return new GenerateReviewPreQcError(
+    "PRE_QC_MOTION_AUTHORITY_ABSENT",
+    "Current frozen Writer-to-Motion authority is absent"
+  );
+}
+
+/**
+ * Commercial Episodes freeze Outline, Script, Scenes, and the approved
+ * Animation Package before Generate Review. The Handoff → Director → Motion
+ * chain is projected from that frozen source, then accepted only when it is
+ * the single current frozen chain.
+ */
+export async function resolveFrozenMotionForGenerateReview(
+  db: Db,
+  scope: AiStoryScriptScope,
+  dependencies: {
+    load?: (db: Db, scope: FrozenMotionScope) => Promise<{ motionPlanId: string }>;
+    projectEpisode?: (scope: AiStoryScriptScope, db: Db) => Promise<unknown>;
+  } = {}
+): Promise<{ motionPlanId: string }> {
+  const load = dependencies.load ?? loadCurrentFrozenMotionChain;
+  try {
+    return await load(db, scope);
+  } catch (error) {
+    if (!(error instanceof GenerateReviewPreQcError) || error.code !== "PRE_QC_MOTION_AUTHORITY_ABSENT") {
+      throw error;
+    }
+  }
+  const project = dependencies.projectEpisode ?? ensureCurrentEpisodeDispatchAuthorityProjection;
+  try {
+    await project(scope, db);
+  } catch (error) {
+    if (error instanceof EpisodeProjectedAuthorityError || error instanceof AiStorySceneAuthorityError) {
+      throw motionAuthorityAbsent();
+    }
+    throw error;
+  }
+  return load(db, scope);
+}
+
 export function buildManualLocalPreGenerationQcCapabilitySnapshot(): AiStoryPreGenerationQcProviderCapability {
   const supportedExecutionModes = [...AI_STORY_LOCAL_PACKAGE_GENERATION_MODES];
   const supportedReferenceRoles = [...AI_STORY_LOCAL_REFERENCE_AUTHORITY_TYPES];
@@ -282,7 +326,7 @@ export async function materializeGenerateReviewPreGenerationQc(input: {
   }
   const motion = input.resolveMotion
     ? await input.resolveMotion()
-    : await loadCurrentFrozenMotionChain(input.db, input.scope);
+    : await resolveFrozenMotionForGenerateReview(input.db, input.scope);
   const capability = buildManualLocalPreGenerationQcCapabilitySnapshot();
   const qc = input.qc ?? new AiStoryPreGenerationQcAuthorityService(input.db);
   const scenes: AiStoryGenerateReviewPreQcSummary["scenes"] = [];

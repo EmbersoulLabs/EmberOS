@@ -5,6 +5,7 @@ import {
   AI_STORY_LOCAL_PACKAGE_GENERATION_MODES,
   AI_STORY_LOCAL_REFERENCE_AUTHORITY_TYPES,
   AI_STORY_PRE_GENERATION_QC_GATE_SET_VERSION,
+  EpisodeProjectedAuthorityError,
   EXECUTION_CAPABILITY_IDS,
   type AiStoryEffectiveSceneGenerationAuthority,
   type AiStoryPreGenerationQcEvaluation,
@@ -16,8 +17,10 @@ import {
   buildManualLocalPreGenerationQcCapabilitySnapshot,
   buildManualLocalPreQcCompilationRequest,
   MANUAL_LOCAL_PRE_QC_CAPABILITY_VERSION,
+  GenerateReviewPreQcError,
   materializeGenerateReviewPreGenerationQc,
   persistRuntimeAuthorizationAfterPreQc,
+  resolveFrozenMotionForGenerateReview,
   selectUniqueFrozenMotionChain,
   type DirectorChainRow,
   type HandoffChainRow,
@@ -336,6 +339,49 @@ describe("Generate Review Pre-Generation QC materialization", () => {
     }))).toBe("PRE_QC_MOTION_AUTHORITY_AMBIGUOUS");
   });
 
+  it("projects the episode motion chain only when current frozen authority is absent", async () => {
+    const db = {} as never;
+    const projectedMotionId = "20000000-0000-4000-8000-000000000099";
+    const projectEpisode = vi.fn(async () => ({ motionPlanId: projectedMotionId }));
+    let loads = 0;
+    const resolved = await resolveFrozenMotionForGenerateReview(db, scriptScope, {
+      load: async () => {
+        loads += 1;
+        if (loads === 1) throw new GenerateReviewPreQcError("PRE_QC_MOTION_AUTHORITY_ABSENT", "absent");
+        return { motionPlanId: projectedMotionId };
+      },
+      projectEpisode,
+    });
+    expect(projectEpisode).toHaveBeenCalledOnce();
+    expect(resolved.motionPlanId).toBe(projectedMotionId);
+
+    const projectAmbiguous = vi.fn();
+    await expect(resolveFrozenMotionForGenerateReview(db, scriptScope, {
+      load: async () => {
+        throw new GenerateReviewPreQcError("PRE_QC_MOTION_AUTHORITY_AMBIGUOUS", "ambiguous");
+      },
+      projectEpisode: projectAmbiguous,
+    })).rejects.toMatchObject({ code: "PRE_QC_MOTION_AUTHORITY_AMBIGUOUS" });
+    expect(projectAmbiguous).not.toHaveBeenCalled();
+
+    const projectExisting = vi.fn();
+    const existing = await resolveFrozenMotionForGenerateReview(db, scriptScope, {
+      load: async () => ({ motionPlanId: current.motion.motionPlanId }),
+      projectEpisode: projectExisting,
+    });
+    expect(projectExisting).not.toHaveBeenCalled();
+    expect(existing.motionPlanId).toBe(current.motion.motionPlanId);
+
+    await expect(resolveFrozenMotionForGenerateReview(db, scriptScope, {
+      load: async () => {
+        throw new GenerateReviewPreQcError("PRE_QC_MOTION_AUTHORITY_ABSENT", "absent");
+      },
+      projectEpisode: async () => {
+        throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "missing");
+      },
+    })).rejects.toMatchObject({ code: "PRE_QC_MOTION_AUTHORITY_ABSENT" });
+  });
+
   it("fails closed for stale scenes, tampered fingerprints, blocked or missing Pre-QC", async () => {
     const sceneExecutionId = "30000000-0000-4000-8000-000000000001";
     const currentEvidence = evaluation({ sceneExecutionId });
@@ -415,7 +461,13 @@ describe("Generate Review Pre-Generation QC materialization", () => {
       "utf8"
     );
     expect(materializer).toContain(".evaluate(");
+    expect(materializer).toContain("ensureCurrentEpisodeDispatchAuthorityProjection");
     expect(materializer).not.toContain(".insert(");
+    const runtimeGate = materializer.slice(
+      materializer.indexOf("export async function assertCurrentPreGenerationQcForRuntimeAuthorization")
+    );
+    expect(runtimeGate).toContain("loadCurrentFrozenMotionChain");
+    expect(runtimeGate).not.toContain("ensureCurrentEpisodeDispatchAuthorityProjection");
     expect(materializer.toLowerCase()).not.toContain("seedance");
     expect(materializer).not.toContain("provider_outbox");
     expect(materializer).not.toContain("ProviderAttempt");
