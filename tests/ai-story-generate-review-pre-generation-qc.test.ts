@@ -446,5 +446,6 @@ describe("Generate Review Pre-Generation QC materialization", () => {
     expect(gate).toBeGreaterThan(0);
     expect(gate).toBeLessThan(acceptFact);
     expect(execute).toContain("assertCurrentPreGenerationQcForRuntimeAuthorization");
+    expect(execute).toContain('input.executionMode !== "MANUAL_LOCAL"');
   });
 });
