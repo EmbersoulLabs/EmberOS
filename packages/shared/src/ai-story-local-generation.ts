@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import {
+  AI_STORY_SCENE_GENERATION_STRATEGIES,
+  AiStoryEffectiveSceneGenerationAuthoritySchema,
+} from "./ai-story-generation-authority";
 import { AiStoryPostQcRequirementSchema } from "./ai-story-post-generation-qc";
 import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
 
@@ -27,6 +30,17 @@ export const AI_STORY_LOCAL_GENERATION_STATES = [
   "LOCAL_REGENERATION_REQUIRED",
   "QC_PASS",
 ] as const;
+/** Modes Local Generation Package v2 can express. Not a cloud Provider catalog. */
+export const AI_STORY_LOCAL_PACKAGE_GENERATION_MODES =
+  AI_STORY_SCENE_GENERATION_STRATEGIES;
+/** Reference authority types stored on a Local Generation Package reference. */
+export const AI_STORY_LOCAL_REFERENCE_AUTHORITY_TYPES = [
+  "CHARACTER",
+  "PRODUCT",
+  "LOCATION",
+  "FIRST_FRAME",
+  "OTHER",
+] as const;
 
 const Id = z.string().uuid();
 const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -35,7 +49,7 @@ const Text = z.string().trim().min(1).max(100_000);
 export const AiStoryLocalReferenceSchema = z.object({
   assetId: Id,
   contentHash: Hash,
-  authorityType: z.enum(["CHARACTER", "PRODUCT", "LOCATION", "FIRST_FRAME", "OTHER"]),
+  authorityType: z.enum(AI_STORY_LOCAL_REFERENCE_AUTHORITY_TYPES),
   authorityId: Id,
   displayName: z.string().trim().min(1).max(300),
   mediaType: z.string().trim().min(1).max(160).optional(),
@@ -63,7 +77,7 @@ const AiStoryLocalGenerationPackageV1Schema = z.object({
   aspectRatio: z.enum(["9:16", "16:9", "1:1"]),
   resolutionIntent: z.enum(["480p", "720p", "1080p"]),
   recommendedWorkflow: z.enum(AI_STORY_LOCAL_WORKFLOWS),
-  generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO", "PRODUCT_GROUNDED_VIDEO"]),
+  generationMode: z.enum(AI_STORY_LOCAL_PACKAGE_GENERATION_MODES),
   prompt: Text,
   negativePrompt: z.string().max(10_000).default(""),
   dialogue: z.array(z.object({
@@ -199,7 +213,7 @@ const AiStoryLocalGenerationPackageV2Schema = z.object({
   aspectRatio: z.enum(["9:16", "16:9", "1:1"]),
   resolutionIntent: z.enum(["480p", "720p", "1080p"]),
   recommendedWorkflow: z.enum(AI_STORY_LOCAL_WORKFLOWS),
-  generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO", "PRODUCT_GROUNDED_VIDEO"]),
+  generationMode: z.enum(AI_STORY_LOCAL_PACKAGE_GENERATION_MODES),
   prompt: Text,
   negativePrompt: z.string().max(10_000).default(""),
   dialogue: z.array(z.object({

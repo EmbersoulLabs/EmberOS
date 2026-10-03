@@ -181,6 +181,9 @@ export const AiStoryPreGenerationQcCompilationRequestSchema = z.object({
   timingStructure: Text.max(160),
   providerNeutralInputsComplete: z.boolean(),
 }).strict();
+export type AiStoryPreGenerationQcCompilationRequest = z.infer<
+  typeof AiStoryPreGenerationQcCompilationRequestSchema
+>;
 
 export const AiStoryPreGenerationQcProductAuthoritySchema = z.object({
   productAuthorityId: Id,

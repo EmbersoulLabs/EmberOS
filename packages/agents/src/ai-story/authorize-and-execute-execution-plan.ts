@@ -40,6 +40,10 @@ import {
   AiStoryLocalGenerationService,
   type AiStoryLocalGenerationPreparationPort,
 } from "./local-generation-service";
+import {
+  assertCurrentPreGenerationQcForRuntimeAuthorization,
+  persistRuntimeAuthorizationAfterPreQc,
+} from "./generate-review-pre-generation-qc";
 import { AiStoryLocalGenerationError } from "./local-generation-package";
 import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
 import {
@@ -130,6 +134,14 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
     executionPlanId: string,
     orderedSceneExecutionIds: readonly string[]
   ) => Promise<RuntimeAuthorizationQcInput[]>;
+  /**
+   * Test seam for the Pre-QC gate. Production uses the durable current-chain check.
+   * Injected repository tests that are not the product path omit this and skip it.
+   */
+  readonly preGenerationQcGate?: (gate: {
+    orderedSceneExecutionIds: readonly string[];
+    storyVersionId: string;
+  }) => Promise<void>;
 };
 
 export type AuthorizeAndExecuteExecutionPlanResult = {
@@ -507,20 +519,45 @@ export async function authorizeAndExecuteExecutionPlan(
       : issued.fact;
 
     try {
-      const accepted = canonicalSnapshot && dbAuthority
-        ? await snapshotRepository.acceptOrReturnCanonicalSnapshotInTransaction(
-            factToPersist,
-            canonicalSnapshot,
-            dbAuthority as RuntimeAuthorizationTransactionDb,
-            persistenceTimings
-          )
-        : dbAuthority
-          ? await authRepo.acceptOrReturnInTransaction(
-              factToPersist,
-              dbAuthority as RuntimeAuthorizationTransactionDb,
-              persistenceTimings
-            )
-          : await authRepo.acceptOrReturn(factToPersist);
+      const accepted = await persistRuntimeAuthorizationAfterPreQc(
+        async () => {
+          if (input.preGenerationQcGate) {
+            await input.preGenerationQcGate({
+              orderedSceneExecutionIds,
+              storyVersionId: input.ownership.storyVersionId,
+            });
+            return;
+          }
+          if (!defaultDbRepositories) return;
+          await assertCurrentPreGenerationQcForRuntimeAuthorization({
+            db: getDb(),
+            scope: {
+              orgId: input.ownership.orgId,
+              workspaceId: input.ownership.workspaceId,
+              campaignId: input.ownership.campaignId,
+              storyId: input.ownership.storyId,
+              storyVersionId: input.ownership.storyVersionId,
+              actorUserId: input.actorUserId,
+            },
+            orderedSceneExecutionIds,
+          });
+        },
+        async () =>
+          canonicalSnapshot && dbAuthority
+            ? await snapshotRepository.acceptOrReturnCanonicalSnapshotInTransaction(
+                factToPersist,
+                canonicalSnapshot,
+                dbAuthority as RuntimeAuthorizationTransactionDb,
+                persistenceTimings
+              )
+            : dbAuthority
+              ? await authRepo.acceptOrReturnInTransaction(
+                  factToPersist,
+                  dbAuthority as RuntimeAuthorizationTransactionDb,
+                  persistenceTimings
+                )
+              : await authRepo.acceptOrReturn(factToPersist)
+      );
       return { accepted, orderedSceneExecutionIds };
     } catch (error) {
       if (

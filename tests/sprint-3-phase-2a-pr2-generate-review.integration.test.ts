@@ -274,6 +274,7 @@ describeIntegration("Sprint 3 Phase 2A PR2 Generate Review persistence", () => {
         storyId: PHASE_2A_IDS.storyId,
         workspaceId: PHASE_2A_IDS.workspaceId,
         orgId: PHASE_2A_IDS.orgId,
+        actorUserId: PHASE_2A_IDS.orgId,
       });
 
       expect(first.overallQcStatus).not.toBe("failed");
@@ -295,6 +296,7 @@ describeIntegration("Sprint 3 Phase 2A PR2 Generate Review persistence", () => {
         storyId: PHASE_2A_IDS.storyId,
         workspaceId: PHASE_2A_IDS.workspaceId,
         orgId: PHASE_2A_IDS.orgId,
+        actorUserId: PHASE_2A_IDS.orgId,
       });
 
       expect(second.persistenceStatus).toBe("reloaded");

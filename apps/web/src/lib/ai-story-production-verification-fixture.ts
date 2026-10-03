@@ -431,6 +431,7 @@ export async function createProductionVerificationFixture(input: {
       storyId: story.id,
       workspaceId: campaign.workspaceId,
       orgId: campaign.orgId,
+      actorUserId: input.user.id,
     }));
     if (generated.sceneExecutionIds.length !== 3 || !generated.storyExecutionId) {
       throw new Error("Verification fixture did not compile exactly three Scenes");

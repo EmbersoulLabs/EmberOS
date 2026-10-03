@@ -435,6 +435,29 @@ export type AiStoryGenerateReviewValidationSummary = z.infer<
   typeof AiStoryGenerateReviewValidationSummarySchema
 >;
 
+export const AiStoryGenerateReviewPreQcSceneSchema = z.object({
+  sceneExecutionId: z.string().uuid(),
+  qcEvaluationId: z.string().uuid(),
+  qcFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  dispatchDecision: z.enum([
+    "DISPATCH_ELIGIBLE",
+    "DISPATCH_ELIGIBLE_WITH_WARNINGS",
+    "DISPATCH_BLOCKED",
+  ]),
+});
+
+/** Bounded Pre-Generation QC evidence written during Generate Review. */
+export const AiStoryGenerateReviewPreQcSummarySchema = z.object({
+  PRE_QC_SCENE_COUNT: z.number().int().nonnegative(),
+  PRE_QC_BLOCKED_COUNT: z.number().int().nonnegative(),
+  PRE_QC_WARNING_COUNT: z.number().int().nonnegative(),
+  scenes: z.array(AiStoryGenerateReviewPreQcSceneSchema),
+});
+
+export type AiStoryGenerateReviewPreQcSummary = z.infer<
+  typeof AiStoryGenerateReviewPreQcSummarySchema
+>;
+
 /** Aggregate QC + estimate payload returned by Generate Review (Phase 1 + Phase 2A PR2). */
 export const AiStoryGenerateReviewResultSchema = z.object({
   estimate: AiStoryExecutionReviewEstimateSchema,
@@ -449,6 +472,7 @@ export const AiStoryGenerateReviewResultSchema = z.object({
   sceneExecutionIds: z.array(z.string().uuid()),
   compilationHash: z.string().nullable(),
   validationSummary: AiStoryGenerateReviewValidationSummarySchema,
+  preGenerationQc: AiStoryGenerateReviewPreQcSummarySchema,
   phase: z.literal("phase_1_qc_only"),
 });
 
