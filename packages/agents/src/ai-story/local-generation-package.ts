@@ -248,5 +248,5 @@ export function materializeLocalGenerationPackage(input: {
 export function localGenerationPackageFingerprint(value: Omit<AiStoryLocalGenerationPackage,"packageFingerprint">) {
   const {createdAt:_createdAt,...facts}=value;
   Reflect.deleteProperty(facts,"packageFingerprint");
-  return integrityHash({kind:AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION,...facts});
+  return integrityHash({kind:value.version,...facts});
 }

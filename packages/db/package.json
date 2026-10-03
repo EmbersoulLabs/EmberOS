@@ -45,6 +45,7 @@
     "sql:ai-story-provider-runtime": "tsx scripts/apply-ai-story-provider-runtime-v1.ts",
     "sql:ai-story-post-generation-qc": "tsx scripts/apply-ai-story-post-generation-qc-v1.ts",
     "sql:ai-story-provider-neutral-generation": "tsx scripts/apply-ai-story-provider-neutral-generation-v1.ts",
+    "sql:ai-story-local-generation-package-contract-v2": "tsx scripts/apply-ai-story-local-generation-package-contract-v2.ts",
     "sql:ai-story-character": "tsx scripts/apply-ai-story-character-v1.ts",
     "sql:ai-story-reusable-character": "tsx scripts/apply-ai-story-reusable-character-v1.ts",
     "sql:ai-story-character-virtualizer": "tsx scripts/apply-ai-story-character-virtualizer-v1.ts",

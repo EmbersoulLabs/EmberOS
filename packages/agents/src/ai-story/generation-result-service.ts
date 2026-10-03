@@ -15,6 +15,43 @@ import {
 import { AiStoryPostGenerationQcService, type AiStoryVisualEvidenceProvider } from "./post-generation-qc-service";
 import { localGenerationPackageFingerprint } from "./local-generation-package";
 
+function localGenerationResultLineage(pkg: AiStoryLocalGenerationPackage) {
+  if (pkg.version === "local-generation-package.v2") {
+    return {
+      compiledRequestId: null,
+      compiledRequestFingerprint: null,
+      localSourceAuthorityId: pkg.sourceAuthority.localSourceAuthorityId,
+      localSourceAuthorityFingerprint: pkg.sourceAuthority.localSourceAuthorityFingerprint,
+      inputAuthorityFingerprint: pkg.sourceAuthority.localSourceAuthorityFingerprint,
+      sceneFingerprint: pkg.sourceAuthority.sceneFingerprint,
+      semanticPlanFingerprint: pkg.sourceAuthority.instructionContentHash,
+      preGenerationQcEvaluationId: pkg.sourceAuthority.preGenerationQcEvaluationId,
+      preGenerationQcFingerprint: pkg.sourceAuthority.preGenerationQcFingerprint,
+      directorFingerprint: pkg.sourceAuthority.directorFingerprint,
+      motionFingerprint: pkg.sourceAuthority.motionFingerprint,
+      castSnapshotFingerprint: pkg.sourceAuthority.characterAuthorityFingerprint,
+      locationSnapshotFingerprint: pkg.sourceAuthority.worldAuthorityFingerprint,
+      productSnapshotFingerprint: pkg.sourceAuthority.productMaterialFingerprint,
+    };
+  }
+  return {
+    compiledRequestId: pkg.sourceAuthority.compiledRequestId,
+    compiledRequestFingerprint: pkg.sourceAuthority.compiledRequestFingerprint,
+    localSourceAuthorityId: undefined,
+    localSourceAuthorityFingerprint: undefined,
+    inputAuthorityFingerprint: pkg.sourceAuthority.schedulingAuthorityFingerprint,
+    sceneFingerprint: pkg.sourceAuthority.sceneFingerprint,
+    semanticPlanFingerprint: pkg.sourceAuthority.semanticPlanFingerprint,
+    preGenerationQcEvaluationId: pkg.sourceAuthority.preGenerationQcEvaluationId,
+    preGenerationQcFingerprint: pkg.sourceAuthority.preGenerationQcFingerprint,
+    directorFingerprint: pkg.sourceAuthority.directorFingerprint,
+    motionFingerprint: pkg.sourceAuthority.motionFingerprint,
+    castSnapshotFingerprint: pkg.sourceAuthority.castSnapshotFingerprint,
+    locationSnapshotFingerprint: pkg.sourceAuthority.locationSnapshotFingerprint,
+    productSnapshotFingerprint: pkg.sourceAuthority.productSnapshotFingerprint,
+  };
+}
+
 export function materializeLocalGenerationResult(input: {
   package: AiStoryLocalGenerationPackage; output: AiStoryLocalGenerationOutput;
   animationPackageId: string; sceneId: string; sceneOrder: number;
@@ -25,14 +62,20 @@ export function materializeLocalGenerationResult(input: {
       output.sceneExecutionId !== pkg.sceneExecutionId || !input.decodable) {
     throw new Error("GENERATION_RESULT_LOCAL_SOURCE_MISMATCH");
   }
+  const lineage = localGenerationResultLineage(pkg);
   return materializeGenerationResult({
     ownership: { orgId: pkg.organizationId, workspaceId: pkg.workspaceId, campaignId: pkg.campaignId,
       storyId: pkg.storyId, storyVersionId: pkg.storyVersionId, animationPackageId: input.animationPackageId, executionPlanId: pkg.executionPlanId },
     runtimeAuthorizationId: pkg.runtimeAuthorizationId,
     generationUnitId: pkg.unitId, sceneExecutionId: pkg.sceneExecutionId, sceneId: input.sceneId, sceneOrder: input.sceneOrder,
     source: { sourceKind: "MANUAL_LOCAL", providerAttemptId: null, localGenerationOutputId: output.outputId, localWorkerOutputId: null },
-    compiledRequestId: pkg.sourceAuthority.compiledRequestId, compiledRequestFingerprint: pkg.sourceAuthority.compiledRequestFingerprint,
-    inputAuthorityFingerprint: pkg.sourceAuthority.schedulingAuthorityFingerprint,
+    compiledRequestId: lineage.compiledRequestId,
+    compiledRequestFingerprint: lineage.compiledRequestFingerprint,
+    inputAuthorityFingerprint: lineage.inputAuthorityFingerprint,
+    ...(lineage.localSourceAuthorityId ? {
+      localSourceAuthorityId: lineage.localSourceAuthorityId,
+      localSourceAuthorityFingerprint: lineage.localSourceAuthorityFingerprint,
+    } : {}),
     inputAuthority: { localPackageId: pkg.packageId, localPackageFingerprint: pkg.packageFingerprint,
       characterAuthority: pkg.characterAuthority, productAuthority: pkg.productAuthority,
       references: pkg.references, generationMode: pkg.generationMode, generateAudio: pkg.generateAudio,
@@ -53,8 +96,10 @@ export function buildGenerationResultPostQcInput(result: AiStoryGenerationResult
     storyId: pkg.storyId, storyVersionId: pkg.storyVersionId, executionPlanId: pkg.executionPlanId,
     sceneExecutionId: pkg.sceneExecutionId, generationUnitId: pkg.unitId,
   });
-  if (result.compiledRequestFingerprint !== pkg.sourceAuthority.compiledRequestFingerprint ||
-      result.inputAuthorityFingerprint !== pkg.sourceAuthority.schedulingAuthorityFingerprint) {
+  const lineage = localGenerationResultLineage(pkg);
+  if (result.compiledRequestFingerprint !== lineage.compiledRequestFingerprint ||
+      result.inputAuthorityFingerprint !== lineage.inputAuthorityFingerprint ||
+      result.localSourceAuthorityId !== lineage.localSourceAuthorityId) {
     throw new Error("POST_QC_GENERATION_RESULT_LINEAGE_MISMATCH");
   }
   const requirements: AiStoryPostQcRequirement[] = [{
@@ -87,16 +132,20 @@ export function buildGenerationResultPostQcInput(result: AiStoryGenerationResult
     campaignId: result.ownership.campaignId, storyId: result.ownership.storyId, storyVersionId: result.ownership.storyVersionId,
     ...pkg.planningAuthority,
     sceneExecutionId: result.sceneExecutionId, sceneId: result.sceneId,
-    sceneFingerprint: pkg.sourceAuthority.sceneFingerprint, sceneExecutionFingerprint: result.inputAuthorityFingerprint,
+    sceneFingerprint: lineage.sceneFingerprint, sceneExecutionFingerprint: result.inputAuthorityFingerprint,
     generationResultId: result.generationResultId, sourceKind: result.source.sourceKind, providerAttemptId: result.source.providerAttemptId,
     generationMode: pkg.generationMode === "TEXT_TO_VIDEO" ? "TEXT_TO_VIDEO" : "FIRST_FRAME_IMAGE_TO_VIDEO",
     privateMediaAssetId: result.media.assetId, privateMediaContentHash: result.media.contentHash,
-    compiledRequestId: result.compiledRequestId, compiledRequestFingerprint: result.compiledRequestFingerprint,
-    semanticPlanFingerprint: pkg.sourceAuthority.semanticPlanFingerprint,
-    preGenerationQcEvaluationId: pkg.sourceAuthority.preGenerationQcEvaluationId, preGenerationQcFingerprint: pkg.sourceAuthority.preGenerationQcFingerprint,
-    directorFingerprint: pkg.sourceAuthority.directorFingerprint, motionFingerprint: pkg.sourceAuthority.motionFingerprint,
-    shotRecipeFingerprint: null, castSnapshotFingerprint: pkg.sourceAuthority.castSnapshotFingerprint,
-    locationSnapshotFingerprint: pkg.sourceAuthority.locationSnapshotFingerprint, productSnapshotFingerprint: pkg.sourceAuthority.productSnapshotFingerprint,
+    compiledRequestId: lineage.compiledRequestId, compiledRequestFingerprint: lineage.compiledRequestFingerprint,
+    ...(lineage.localSourceAuthorityId ? {
+      localSourceAuthorityId: lineage.localSourceAuthorityId,
+      localSourceAuthorityFingerprint: lineage.localSourceAuthorityFingerprint,
+    } : {}),
+    semanticPlanFingerprint: lineage.semanticPlanFingerprint,
+    preGenerationQcEvaluationId: lineage.preGenerationQcEvaluationId, preGenerationQcFingerprint: lineage.preGenerationQcFingerprint,
+    directorFingerprint: lineage.directorFingerprint, motionFingerprint: lineage.motionFingerprint,
+    shotRecipeFingerprint: null, castSnapshotFingerprint: lineage.castSnapshotFingerprint,
+    locationSnapshotFingerprint: lineage.locationSnapshotFingerprint, productSnapshotFingerprint: lineage.productSnapshotFingerprint,
     entryState: pkg.currentUnitStartState, scriptActions: pkg.mustKeep, requiredExitState: pkg.expectedEndState,
     mustKeep: pkg.mustKeep, mustAvoid: pkg.mustAvoid, newAudienceInformation: [], requiredEvidence: pkg.continuityRequirements,
     requirements, providerMetadata: { sourceKind: result.source.sourceKind },

@@ -78,8 +78,10 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
   privateMediaAssetId: Id,
   privateMediaContentHash: Hash,
-  compiledRequestId: Id,
-  compiledRequestFingerprint: Hash,
+  compiledRequestId: Id.nullable(),
+  compiledRequestFingerprint: Hash.nullable(),
+  localSourceAuthorityId: Id.optional(),
+  localSourceAuthorityFingerprint: Hash.optional(),
   semanticPlanFingerprint: Hash,
   preGenerationQcEvaluationId: Id,
   preGenerationQcFingerprint: Hash,
@@ -124,6 +126,15 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   if (value.planningLineageSource === "LEGACY_COMPILED_V1" &&
       (value.scriptVersionId || value.handoffId || value.handoffFingerprint)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Legacy compiled V1 lineage must not fabricate Script or Handoff authority" });
+  }
+  const local = Boolean(value.localSourceAuthorityId || value.localSourceAuthorityFingerprint);
+  if (local) {
+    if (value.sourceKind !== "MANUAL_LOCAL" || value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
+        !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_LOCAL_AUTHORITY_REQUIRED" });
+    }
+  } else if (value.compiledRequestId === null || value.compiledRequestFingerprint === null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_COMPILED_REQUEST_LINEAGE_REQUIRED" });
   }
 });
 
@@ -174,7 +185,7 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   mediaContentHash: Hash,
   sceneExecutionId: Id,
   sceneFingerprint: Hash,
-  compiledRequestFingerprint: Hash,
+  compiledRequestFingerprint: Hash.nullable(),
   generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
   observations: z.array(AiStoryPostQcObservationSchema),
   findings: z.array(AiStoryPostQcFindingSchema),
@@ -191,6 +202,9 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   if ((!value.providerAttemptId && (!value.generationResultId || !value.sourceKind || value.sourceKind === "REMOTE_PROVIDER")) ||
       (value.sourceKind && value.sourceKind !== "REMOTE_PROVIDER" && value.providerAttemptId !== null)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_SOURCE_LINEAGE_REQUIRED" });
+  }
+  if (value.compiledRequestFingerprint === null && value.sourceKind !== "MANUAL_LOCAL") {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_COMPILED_REQUEST_LINEAGE_REQUIRED" });
   }
 });
 

@@ -91,9 +91,13 @@ export class AiStoryGenerationResultRepository {
             output.unitId !== result.generationUnitId || output.sceneExecutionId !== result.sceneExecutionId ||
             output.assetId !== result.media.assetId || output.contentHash !== result.media.contentHash ||
             pkg.executionPlanId !== plan.id || pkg.runtimeAuthorizationId !== runtime.runtimeAuthorizationId ||
-            pkg.package.sourceAuthority.schedulingAuthorityFingerprint !== result.inputAuthorityFingerprint ||
-            pkg.package.sourceAuthority.compiledRequestId !== result.compiledRequestId ||
-            pkg.package.sourceAuthority.compiledRequestFingerprint !== result.compiledRequestFingerprint ||
+            (pkg.package.version === "local-generation-package.v2"
+              ? pkg.package.sourceAuthority.localSourceAuthorityFingerprint !== result.inputAuthorityFingerprint ||
+                pkg.package.sourceAuthority.localSourceAuthorityId !== result.localSourceAuthorityId ||
+                result.compiledRequestId !== null
+              : pkg.package.sourceAuthority.schedulingAuthorityFingerprint !== result.inputAuthorityFingerprint ||
+                pkg.package.sourceAuthority.compiledRequestId !== result.compiledRequestId ||
+                pkg.package.sourceAuthority.compiledRequestFingerprint !== result.compiledRequestFingerprint) ||
             result.inputAuthority.localPackageId !== pkg.packageId || result.inputAuthority.localPackageFingerprint !== pkg.packageFingerprint ||
             canonicalPersistenceHash(result.inputAuthority) !== canonicalPersistenceHash({
               localPackageId:pkg.packageId,localPackageFingerprint:pkg.packageFingerprint,
@@ -108,6 +112,11 @@ export class AiStoryGenerationResultRepository {
           throw new Error("GENERATION_RESULT_LOCAL_SOURCE_MISMATCH");
         }
       } else if (result.source.sourceKind === "REMOTE_PROVIDER") {
+        if (!result.compiledRequestId || !result.compiledRequestFingerprint) {
+          throw new Error("GENERATION_RESULT_REMOTE_SOURCE_MISMATCH");
+        }
+        const compiledRequestId = result.compiledRequestId;
+        const compiledRequestFingerprint = result.compiledRequestFingerprint;
         const [attempt] = await tx.select().from(schema.providerAttempts).where(
           eq(schema.providerAttempts.attemptId, result.source.providerAttemptId),
         ).limit(1);
@@ -115,7 +124,7 @@ export class AiStoryGenerationResultRepository {
           eq(schema.aiStoryDurableSceneMediaAttestations.mediaAttestationId, result.media.assetId),
         ).limit(1);
         const [compiled] = await tx.select().from(schema.aiStoryCompiledProviderRequests).where(
-          eq(schema.aiStoryCompiledProviderRequests.compiledRequestId, result.compiledRequestId),
+          eq(schema.aiStoryCompiledProviderRequests.compiledRequestId, compiledRequestId),
         ).limit(1);
         const bindings = await tx.select().from(schema.aiStoryProviderAttemptCompiledBindings).where(
           eq(schema.aiStoryProviderAttemptCompiledBindings.providerAttemptId, result.source.providerAttemptId),
@@ -134,17 +143,17 @@ export class AiStoryGenerationResultRepository {
           binding.data.campaignId === plan.campaignId && binding.data.storyId === plan.storyId &&
           binding.data.storyVersionId === plan.storyVersionId &&
           binding.data.sceneExecutionId === result.sceneExecutionId &&
-          binding.data.compiledRequestId === result.compiledRequestId &&
-          binding.data.requestFingerprint === result.compiledRequestFingerprint &&
+          binding.data.compiledRequestId === compiledRequestId &&
+          binding.data.requestFingerprint === compiledRequestFingerprint &&
           bindings[0]!.requestFingerprint === binding.data.requestFingerprint;
         if (!attempt || !attestation || !compiled ||
             compiled.sceneExecutionId !== result.sceneExecutionId ||
-            compiled.requestFingerprint !== result.compiledRequestFingerprint ||
+            compiled.requestFingerprint !== compiledRequestFingerprint ||
             compiled.orgId !== plan.orgId || compiled.workspaceId !== plan.workspaceId ||
             compiled.campaignId !== plan.campaignId || compiled.storyId !== plan.storyId ||
             compiled.storyVersionId !== plan.storyVersionId ||
             (bindings.length > 0 && !compiledBindingMatches) ||
-            (!compiledBindingMatches && (attempt.status === "PENDING" || attempt.requestHash !== result.compiledRequestFingerprint)) ||
+            (!compiledBindingMatches && (attempt.status === "PENDING" || attempt.requestHash !== compiledRequestFingerprint)) ||
             attestation.sceneExecutionId !== result.sceneExecutionId || attestation.durableObjectReference !== result.media.storagePath ||
             attestation.executionPlanId !== plan.id || attestation.contentHash !== result.media.contentHash) {
           throw new Error("GENERATION_RESULT_REMOTE_SOURCE_MISMATCH");
