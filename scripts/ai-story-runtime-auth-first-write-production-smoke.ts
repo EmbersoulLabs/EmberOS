@@ -220,6 +220,7 @@ async function createFreshApprovedPlan(actor: AuthUser) {
     storyId: story.id,
     workspaceId: campaign.workspaceId,
     orgId: campaign.orgId,
+    actorUserId: actor.id,
   });
   if (!generated.storyExecutionId || generated.sceneExecutionIds.length !== 3) {
     throw new Error("SMOKE_PLAN_NOT_EXACTLY_THREE_SCENES");

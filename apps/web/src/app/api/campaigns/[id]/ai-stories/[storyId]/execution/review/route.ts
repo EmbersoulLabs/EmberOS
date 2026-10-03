@@ -53,6 +53,7 @@ export async function POST(
         storyId,
         workspaceId: campaign.workspaceId,
         orgId: campaign.orgId,
+        actorUserId: user.id,
       })
     );
 
@@ -97,9 +98,23 @@ export async function POST(
       persistenceStatus: review.persistenceStatus,
       executionAllowed: review.executionAllowed,
       executionLockCode: review.executionLockCode,
-      qcPass: review.overallQcStatus !== "failed",
+      preGenerationQc: review.preGenerationQc,
+      PRE_QC_SCENE_COUNT: review.preGenerationQc.PRE_QC_SCENE_COUNT,
+      PRE_QC_BLOCKED_COUNT: review.preGenerationQc.PRE_QC_BLOCKED_COUNT,
+      PRE_QC_WARNING_COUNT: review.preGenerationQc.PRE_QC_WARNING_COUNT,
+      qcPass: review.overallQcStatus !== "failed" && review.preGenerationQc.PRE_QC_BLOCKED_COUNT === 0,
     });
   } catch (error) {
+    if (
+      error instanceof Error
+      && "code" in error
+      && typeof (error as { code: unknown }).code === "string"
+    ) {
+      const code = (error as { code: string }).code;
+      if (code.startsWith("PRE_QC_") || code.startsWith("QC_")) {
+        return apiError(error.message, code, 409);
+      }
+    }
     return handleApiError(error);
   }
 }
