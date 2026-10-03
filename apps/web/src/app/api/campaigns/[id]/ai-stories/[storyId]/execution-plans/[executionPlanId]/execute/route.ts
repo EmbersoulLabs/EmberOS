@@ -10,9 +10,11 @@
 import {
   authorizeAndExecuteExecutionPlan,
   authorizeAiStoryExecution,
+  AiStoryLocalGenerationService,
   CanonicalExecuteError,
   AiStoryExecutionDeniedError,
 } from "@ceo-agent/agents";
+import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
 import {
   CANONICAL_EXECUTE_FORBIDDEN_BODY_KEYS,
   CanonicalExecuteRequestSchema,
@@ -112,6 +114,9 @@ export async function POST(request: Request, { params }: RouteParams) {
       ownership,
       executionMode: "MANUAL_LOCAL",
       executionAuthorization,
+      localGenerationService: new AiStoryLocalGenerationService({
+        productMaterial: resolveCurrentSceneProductMaterialForScheduling,
+      }),
     });
 
     return apiSuccess(

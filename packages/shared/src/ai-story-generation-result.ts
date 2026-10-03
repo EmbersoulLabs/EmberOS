@@ -22,8 +22,11 @@ export const AiStoryGenerationResultSchema = z.object({
   sceneId: z.string().min(1),
   sceneOrder: z.number().int().nonnegative(),
   source: Source,
-  compiledRequestId: Id,
-  compiledRequestFingerprint: Hash,
+  compiledRequestId: Id.nullable(),
+  compiledRequestFingerprint: Hash.nullable(),
+  /** Present for provider-neutral local packages. Historical results omit it. */
+  localSourceAuthorityId: Id.optional(),
+  localSourceAuthorityFingerprint: Hash.optional(),
   inputAuthorityFingerprint: Hash,
   media: z.object({
     assetId: Id,
@@ -49,6 +52,15 @@ export const AiStoryGenerationResultSchema = z.object({
     if (value.media.storagePath !== value.media.durableObjectReference || /[?#]/.test(value.media.storagePath)) throw new Error("Invalid durable reference");
   } catch {
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "GENERATION_RESULT_PRIVATE_MEDIA_REQUIRED" });
+  }
+  const local = Boolean(value.localSourceAuthorityId || value.localSourceAuthorityFingerprint);
+  if (value.source.sourceKind === "MANUAL_LOCAL" && local) {
+    if (value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
+        !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "GENERATION_RESULT_LOCAL_AUTHORITY_REQUIRED" });
+    }
+  } else if (value.compiledRequestId === null || value.compiledRequestFingerprint === null || local) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "GENERATION_RESULT_COMPILED_REQUEST_LINEAGE_REQUIRED" });
   }
 });
 

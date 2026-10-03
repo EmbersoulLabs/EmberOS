@@ -15,7 +15,7 @@ import { FakeAiStoryVisualEvidenceProvider } from "../packages/agents/src/ai-sto
 if(process.env.CI==="true"&&(!RUN_DB_INTEGRATION||!getIntegrationDbUrl())) throw new Error("GENERATION_RESULT_POSTGRES_REQUIRED_IN_CI");
 const suite=RUN_DB_INTEGRATION&&getIntegrationDbUrl()?describe:describe.skip;
 const read=(file:string)=>readFileSync(resolve(process.cwd(),file),"utf8");
-const migrations=["packages/db/sql/ai-story-manual-local-generation-handoff-v1.sql","packages/db/sql/ai-story-provider-neutral-generation-result-v1.sql"];
+const migrations=["packages/db/sql/ai-story-manual-local-generation-handoff-v1.sql","packages/db/sql/ai-story-provider-neutral-generation-result-v1.sql","packages/db/sql/ai-story-local-generation-package-contract-v2.sql"];
 suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
   let admin:Sql, db:Sql, ormClient:Sql, name:string, restore:()=>void;
   let before:unknown;
@@ -37,6 +37,13 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
   },120_000);
   afterAll(async()=>{await ormClient?.end();await db?.end();if(admin&&/^emberos_generation_result_[a-f0-9]+_test$/.test(name))await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);await admin?.end();restore?.();},120_000);
   it("loads both additive migrations against the certified predecessor closure",async()=>{const rows=await db`select tablename from pg_tables where schemaname='public' and tablename in ('ai_story_generation_results','ai_story_generation_result_decisions','ai_story_generation_result_continuity_frames','ai_story_local_generation_packages','ai_story_local_generation_outputs','ai_story_local_media_jobs')`;expect(rows).toHaveLength(6);});
+  it("accepts V1 and V2 local package contracts without rewriting rows",async()=>{
+    const [before]=await db`select count(*)::int as count from ai_story_local_generation_packages`;
+    const [check]=await db`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='ai_story_local_generation_packages'::regclass and conname='ai_story_local_generation_package_contract_version_check'`;
+    expect(check?.definition).toContain("local-generation-package.v1");
+    expect(check?.definition).toContain("local-generation-package.v2");
+    expect(before?.count).toBe(0);
+  });
   it("preserves all historical Provider Attempt rows",async()=>{expect(await evidence()).toEqual(before);});
   it("preserves four Production-only Provider historical relations",async()=>{for(const table of ["provider_execution_finalizations","provider_finalization_costs","provider_finalization_usage","provider_terminal_ledger_records"]){const rows=await db.unsafe(`select count(*)::int as count from ${table}`);expect(rows[0]?.count).toBe(1);}});
   it("allows null Provider provenance only with canonical result authority",async()=>{const columns=await db`select column_name,is_nullable from information_schema.columns where table_name='ai_story_post_generation_qc_evaluations' and column_name in ('provider_attempt_id','media_asset_id','generation_result_id')`;expect(columns).toHaveLength(3);expect(columns.every(row=>row.is_nullable==="YES")).toBe(true);});
