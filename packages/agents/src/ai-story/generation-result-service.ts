@@ -16,7 +16,7 @@ import { AiStoryPostGenerationQcService, type AiStoryVisualEvidenceProvider } fr
 import { localGenerationPackageFingerprint } from "./local-generation-package";
 
 function localGenerationResultLineage(pkg: AiStoryLocalGenerationPackage) {
-  if (pkg.version === "local-generation-package.v2") {
+  if (pkg.version !== "local-generation-package.v1") {
     return {
       compiledRequestId: null,
       compiledRequestFingerprint: null,
