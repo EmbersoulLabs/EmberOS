@@ -27,6 +27,7 @@ import {
   AI_STORY_EPISODE_PROJECTED_MOTION_COMPLEXITY_POLICY,
   evaluateEpisodeProjectedCameraExecution,
   proveEpisodeProjectedPhysicalCompletion,
+  proveProjectedProductObjectPersistence,
   type AiStoryEpisodeProjectedDirectorPlan,
   type AiStoryEpisodeProjectedMotionPlan,
 } from "./ai-story-episode-projected-authority";
@@ -194,7 +195,7 @@ function projectedDirectorIssues(plan: AiStoryEpisodeProjectedDirectorPlan, hand
     if (scene.mustKeep.state === "KNOWN" && scene.mustAvoid.state === "KNOWN" && scene.mustKeep.value.some((item) => scene.mustAvoid.state === "KNOWN" && scene.mustAvoid.value.includes(item))) sceneIssue("MUST_KEEP_MUST_CHANGE_SEPARATION_GATE", `Projected must-keep contradicts must-avoid for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.sceneOrder > 0 && scene.differentiation.state === "NOT_ASSERTED") sceneIssue("DIFFERENTIATION_REQUIREMENT_GATE", `Projected differentiation is not asserted for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.sceneOrder === 0 && scene.differentiation.state === "KNOWN") sceneIssue("DIFFERENTIATION_REQUIREMENT_GATE", `Opening Scene differentiation claims a comparison baseline`, scene.scriptSceneId);
-    const identitySensitive = scene.productBindingIds.length > 0 || (scene.generationAuthority.state === "KNOWN" && scene.generationAuthority.value.productVisualIdentityRequirement === "REQUIRED");
+    const identitySensitive = scene.generationAuthority.state === "KNOWN" && scene.generationAuthority.value.productVisualIdentityRequirement === "REQUIRED";
     const safetyMissing = [scene.shots.some((shot) => shot.perspectiveChange.state === "NOT_ASSERTED"), scene.shots.some((shot) => shot.revealsUnseenProductSurface.state === "NOT_ASSERTED"), scene.shots.some((shot) => shot.productIdentityTransformation.state === "NOT_ASSERTED")].some(Boolean);
     if (identitySensitive && safetyMissing) sceneIssue("PRODUCT_CAMERA_SAFETY_GATE", `PROJECTED_PRODUCT_CAMERA_SAFETY_EVIDENCE_REQUIRED for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.generationAuthority.state === "NOT_ASSERTED") sceneIssue("GENERATION_UNIT_BINDING_GATE", `Projected generation authority is not asserted for ${scene.scriptSceneId}`, scene.scriptSceneId);
@@ -244,7 +245,15 @@ function projectedMotionIssues(plan: AiStoryEpisodeProjectedMotionPlan, director
     if (evaluateEpisodeProjectedCameraExecution(scene.shots).outcome !== "BOUNDED_CAMERA_EXECUTION_PROVEN") sceneIssue("CAMERA_EXECUTION_GATE", `CAMERA_EXECUTION_NOT_PROVEN for ${scene.scriptSceneId}`, scene.scriptSceneId);
     const policy = AI_STORY_EPISODE_PROJECTED_MOTION_COMPLEXITY_POLICY;
     if (scene.measuredFacts.actionCount > policy.maxActions || scene.measuredFacts.shotCount > policy.maxShots || scene.measuredFacts.cameraBehaviorCount > policy.maxCameraBehaviors || scene.measuredFacts.durationSec > policy.maxDurationSec) sceneIssue("MOTION_BUDGET_GATE", `Measured Episode complexity exceeds ${policy.policyId}`, scene.scriptSceneId);
-    if (scene.productBindingIds.length > 0 && physicalProof.state !== "KNOWN") sceneIssue("OBJECT_PERSISTENCE_GATE", `Projected object persistence is not proven for ${scene.scriptSceneId}`, scene.scriptSceneId);
+    const objectPersistence = proveProjectedProductObjectPersistence({
+      productAuthorityRefs: scriptScene.productAuthorityRefs,
+      actions: scene.actions,
+      events: scene.events,
+      sceneStateDeltas: scene.sceneStateDeltas,
+      entryState: scene.entryState,
+      exitState: scene.exitState,
+    });
+    if (objectPersistence.state === "NOT_ASSERTED") sceneIssue("OBJECT_PERSISTENCE_GATE", `Projected object persistence is not proven for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.measuredFacts.productIdentitySensitive && physicalProof.state === "NOT_ASSERTED") sceneIssue("PRODUCT_GROUNDED_MOTION_GATE", `Identity-sensitive Product motion has no proven physical completion for ${scene.scriptSceneId}`, scene.scriptSceneId);
   }
   for (let index = 1; index < plan.sceneMotionPlans.length; index += 1) {
