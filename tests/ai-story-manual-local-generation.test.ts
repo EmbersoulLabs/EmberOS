@@ -93,7 +93,7 @@ describe("Manual Local Generation handoff certification", () => {
 
   it("the UI exposes prompt, full instructions, package, references, and MP4 upload", () => {
     const ui = read("apps/web/src/components/ai-story/LocalGenerationPanel.tsx");
-    for (const label of ["Copy Prompt", "Copy Full Instructions", "Download Unit Package", "Download ", "Upload Generated Video"]) {
+    for (const label of ["Copy Prompt", "Copy Full Instructions", "Download Unit Package", "Download ", "Upload Generated Video", "Not recorded on this package"]) {
       expect(ui).toContain(label);
     }
   });
