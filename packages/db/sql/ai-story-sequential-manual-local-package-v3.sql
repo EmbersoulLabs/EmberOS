@@ -46,26 +46,26 @@ WITH plan_lineage AS (
       scene.execution_plan_id = release.execution_plan_id
       AND scene.workspace_id = release.workspace_id
       AND scene.scene_order + 1 = release.scene_order
-      AND authorization.execution_plan_id = release.execution_plan_id
-      AND authorization.workspace_id = release.workspace_id
-      AND authorization.runtime_authorization_id = release.runtime_authorization_id
-      AND authorization.ordered_scene_execution_ids
+      AND "authorization".execution_plan_id = release.execution_plan_id
+      AND "authorization".workspace_id = release.workspace_id
+      AND "authorization".runtime_authorization_id = release.runtime_authorization_id
+      AND "authorization".ordered_scene_execution_ids
         ->> (release.scene_order - 1) = release.scene_execution_id::text
     ) AS canonical_runtime_ledger,
     count(*) = max(
-      jsonb_array_length(authorization.ordered_scene_execution_ids)
+      jsonb_array_length("authorization".ordered_scene_execution_ids)
     ) AS complete_runtime_ledger,
     bool_or(
       release.scene_order = 1
       AND release.release_state = 'RELEASED'
-      AND release.released_by = authorization.authorized_by
+      AND release.released_by = "authorization".authorized_by
       AND release.released_at IS NOT NULL
     ) AS canonical_initial_actor
   FROM ai_story_scene_release_states release
   JOIN ai_story_scene_executions scene
     ON scene.id = release.scene_execution_id
-  JOIN ai_story_runtime_authorized_facts authorization
-    ON authorization.runtime_authorization_id = release.runtime_authorization_id
+  JOIN ai_story_runtime_authorized_facts "authorization"
+    ON "authorization".runtime_authorization_id = release.runtime_authorization_id
   GROUP BY release.execution_plan_id
 )
 SELECT

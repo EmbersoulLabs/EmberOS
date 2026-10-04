@@ -529,8 +529,12 @@ describe("Sequential Manual Local Package V3 Phase 1", () => {
     expect(sql).toContain("classification = 'UNKNOWN'");
     expect(sql).toContain("ai_story_scene_scheduling_correlations");
     expect(sql).toContain("ai_story_local_generation_packages");
-    expect(sql).toContain("authorization.ordered_scene_execution_ids");
-    expect(sql).toContain("release.released_by = authorization.authorized_by");
+    expect(sql).toContain('"authorization".ordered_scene_execution_ids');
+    expect(sql).toContain('release.released_by = "authorization".authorized_by');
+    expect(sql).not.toMatch(/\bauthorization\.[a-z_]/i);
+    expect(sql).toContain(
+      'JOIN ai_story_runtime_authorized_facts "authorization"',
+    );
     expect(sql).toContain("'local-generation-package.v1'");
     expect(sql).toContain("'local-generation-package.v2'");
     expect(sql).toContain("'local-generation-package.v3'");
