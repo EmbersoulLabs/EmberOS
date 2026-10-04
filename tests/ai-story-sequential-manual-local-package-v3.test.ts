@@ -524,7 +524,13 @@ describe("Sequential Manual Local Package V3 Phase 1", () => {
     expect(sql).toContain("pg_get_constraintdef");
     expect(sql).toContain("SEQUENTIAL_LOCAL_V3_PREFLIGHT");
     expect(sql).toContain("SEQUENTIAL_LOCAL_V3_UNCLASSIFIABLE_RELEASE_ROWS");
-    expect(sql).toContain("unknown=0");
+    expect(sql).toContain("REMOTE_PROVIDER_PROVEN");
+    expect(sql).toContain("MANUAL_LOCAL_PROVEN");
+    expect(sql).toContain("classification = 'UNKNOWN'");
+    expect(sql).toContain("ai_story_scene_scheduling_correlations");
+    expect(sql).toContain("ai_story_local_generation_packages");
+    expect(sql).toContain("authorization.ordered_scene_execution_ids");
+    expect(sql).toContain("release.released_by = authorization.authorized_by");
     expect(sql).toContain("'local-generation-package.v1'");
     expect(sql).toContain("'local-generation-package.v2'");
     expect(sql).toContain("'local-generation-package.v3'");
@@ -532,5 +538,110 @@ describe("Sequential Manual Local Package V3 Phase 1", () => {
       /UPDATE\s+ai_story_local_generation_packages|DELETE\s+FROM\s+ai_story_local_generation_packages/i,
     );
     expect(sql).not.toContain("ALTER TABLE ai_story_local_media_jobs");
+    expect(sql.indexOf("SEQUENTIAL_LOCAL_V3_UNCLASSIFIABLE_RELEASE_ROWS"))
+      .toBeLessThan(sql.indexOf("UPDATE ai_story_scene_release_states"));
+    expect(sql).not.toMatch(
+      /SET\s+org_id\s*=\s*workspace\.org_id,\s*execution_mode/si,
+    );
+    expect(sql).not.toMatch(
+      /SET\s+execution_mode\s*=\s*'REMOTE_PROVIDER'/i,
+    );
+  });
+});
+
+type PreflightPlanEvidence = {
+  providerPlanProven: boolean;
+  manualPlanProven: boolean;
+  predatesManualLocalCode: boolean;
+  canonicalRuntimeLedger: boolean;
+  completeRuntimeLedger: boolean;
+  canonicalInitialActor: boolean;
+};
+
+function classifyPreflightPlan(evidence: PreflightPlanEvidence) {
+  const historicalRemote =
+    evidence.predatesManualLocalCode
+    && evidence.canonicalRuntimeLedger
+    && evidence.completeRuntimeLedger
+    && evidence.canonicalInitialActor;
+  const remote = evidence.providerPlanProven || historicalRemote;
+  if (evidence.manualPlanProven && !remote) return "MANUAL_LOCAL_PROVEN";
+  if (!evidence.manualPlanProven && remote) return "REMOTE_PROVIDER_PROVEN";
+  return "UNKNOWN";
+}
+
+describe("Sequential Manual Local V3 proof-based release preflight", () => {
+  const none: PreflightPlanEvidence = {
+    providerPlanProven: false,
+    manualPlanProven: false,
+    predatesManualLocalCode: false,
+    canonicalRuntimeLedger: false,
+    completeRuntimeLedger: false,
+    canonicalInitialActor: false,
+  };
+
+  it("keeps a shape-only remote-looking row UNKNOWN", () => {
+    expect(classifyPreflightPlan(none)).toBe("UNKNOWN");
+  });
+
+  it.each([
+    ["initial Unit", "RELEASED", 1],
+    ["released successor", "RELEASED", 2],
+    ["waiting successor", "AUTHORIZED_NOT_RELEASED", 2],
+  ])("classifies a proven Remote %s independently of row shape", (_label) => {
+    expect(classifyPreflightPlan({ ...none, providerPlanProven: true }))
+      .toBe("REMOTE_PROVIDER_PROVEN");
+  });
+
+  it("accepts a complete pre-Manual-Local canonical runtime ledger", () => {
+    expect(classifyPreflightPlan({
+      ...none,
+      predatesManualLocalCode: true,
+      canonicalRuntimeLedger: true,
+      completeRuntimeLedger: true,
+      canonicalInitialActor: true,
+    })).toBe("REMOTE_PROVIDER_PROVEN");
+  });
+
+  it("does not classify a partial historical ledger as Remote", () => {
+    expect(classifyPreflightPlan({
+      ...none,
+      predatesManualLocalCode: true,
+      canonicalRuntimeLedger: true,
+      canonicalInitialActor: true,
+    })).toBe("UNKNOWN");
+  });
+
+  it("classifies Manual Local proof without defaulting it to Remote", () => {
+    expect(classifyPreflightPlan({ ...none, manualPlanProven: true }))
+      .toBe("MANUAL_LOCAL_PROVEN");
+  });
+
+  it("keeps conflicting Remote and Manual proof UNKNOWN", () => {
+    expect(classifyPreflightPlan({
+      ...none,
+      providerPlanProven: true,
+      manualPlanProven: true,
+    })).toBe("UNKNOWN");
+  });
+
+  it("keeps UNKNOWN blocking before ownership or mode backfill", () => {
+    const sql =
+      read("packages/db/sql/ai-story-sequential-manual-local-package-v3.sql");
+    const guard = sql.indexOf("IF unknown_release_rows <> 0");
+    const ownership = sql.indexOf("-- Ownership is independently");
+    const mode = sql.indexOf("-- Mode is filled only");
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(ownership);
+    expect(ownership).toBeLessThan(mode);
+  });
+
+  it("leaves historical package rows and migration application untouched", () => {
+    const sql =
+      read("packages/db/sql/ai-story-sequential-manual-local-package-v3.sql");
+    expect(sql).not.toMatch(
+      /UPDATE\s+ai_story_local_generation_packages|DELETE\s+FROM\s+ai_story_local_generation_packages/i,
+    );
+    expect(sql).toContain("PHASE 1 ONLY: write/review this migration; DO NOT APPLY");
   });
 });

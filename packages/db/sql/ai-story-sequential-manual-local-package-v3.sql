@@ -3,11 +3,116 @@
 -- Historical package JSON and package_fingerprint values are never rewritten.
 BEGIN;
 
+/*
+ * Freeze a proof-only classification before any historical UPDATE.
+ *
+ * Direct Remote proof is a scheduling correlation bound to the same Plan,
+ * Runtime Authorization, and Workspace. Manual Local proof is a package bound
+ * to that same tuple.
+ *
+ * One older failure window needs repository-certified historical proof:
+ * before 417fa7106f8941744c1c6559816a6a000c9418c8 introduced Manual Local
+ * (2026-10-01T03:44:36Z), canonical Execute could only initialize this exact
+ * release ledger and then attempt Provider scheduling. Classification therefore
+ * additionally requires the complete ordered Runtime Authorization ledger,
+ * exact Scene/Plan/Workspace relations, zero Manual Local package lineage, and
+ * the initial release actor to equal the Runtime Authorization actor. Time or
+ * release-row shape alone is never sufficient.
+ */
+CREATE TEMP TABLE sequential_local_v3_release_classification
+ON COMMIT DROP
+AS
+WITH plan_lineage AS (
+  SELECT
+    release.execution_plan_id,
+    bool_or(EXISTS (
+      SELECT 1
+      FROM ai_story_scene_scheduling_correlations correlation
+      WHERE correlation.execution_plan_id = release.execution_plan_id
+        AND correlation.runtime_authorization_id = release.runtime_authorization_id
+        AND correlation.workspace_id = release.workspace_id
+    )) AS provider_plan_proven,
+    bool_or(EXISTS (
+      SELECT 1
+      FROM ai_story_local_generation_packages package
+      WHERE package.execution_plan_id = release.execution_plan_id
+        AND package.runtime_authorization_id = release.runtime_authorization_id
+        AND package.workspace_id = release.workspace_id
+    )) AS manual_plan_proven,
+    bool_and(
+      release.created_at < timestamptz '2026-10-01T03:44:36Z'
+    ) AS predates_manual_local_code,
+    bool_and(
+      scene.execution_plan_id = release.execution_plan_id
+      AND scene.workspace_id = release.workspace_id
+      AND scene.scene_order + 1 = release.scene_order
+      AND authorization.execution_plan_id = release.execution_plan_id
+      AND authorization.workspace_id = release.workspace_id
+      AND authorization.runtime_authorization_id = release.runtime_authorization_id
+      AND authorization.ordered_scene_execution_ids
+        ->> (release.scene_order - 1) = release.scene_execution_id::text
+    ) AS canonical_runtime_ledger,
+    count(*) = max(
+      jsonb_array_length(authorization.ordered_scene_execution_ids)
+    ) AS complete_runtime_ledger,
+    bool_or(
+      release.scene_order = 1
+      AND release.release_state = 'RELEASED'
+      AND release.released_by = authorization.authorized_by
+      AND release.released_at IS NOT NULL
+    ) AS canonical_initial_actor
+  FROM ai_story_scene_release_states release
+  JOIN ai_story_scene_executions scene
+    ON scene.id = release.scene_execution_id
+  JOIN ai_story_runtime_authorized_facts authorization
+    ON authorization.runtime_authorization_id = release.runtime_authorization_id
+  GROUP BY release.execution_plan_id
+)
+SELECT
+  release.scene_execution_id,
+  release.execution_plan_id,
+  CASE
+    WHEN lineage.manual_plan_proven
+      AND NOT (
+        lineage.provider_plan_proven
+        OR (
+          lineage.predates_manual_local_code
+          AND lineage.canonical_runtime_ledger
+          AND lineage.complete_runtime_ledger
+          AND lineage.canonical_initial_actor
+        )
+      )
+      THEN 'MANUAL_LOCAL_PROVEN'
+    WHEN NOT lineage.manual_plan_proven
+      AND (
+        lineage.provider_plan_proven
+        OR (
+          lineage.predates_manual_local_code
+          AND lineage.canonical_runtime_ledger
+          AND lineage.complete_runtime_ledger
+          AND lineage.canonical_initial_actor
+        )
+      )
+      THEN 'REMOTE_PROVIDER_PROVEN'
+    ELSE 'UNKNOWN'
+  END AS classification,
+  CASE
+    WHEN release.scene_order = 1 THEN 'INITIAL_UNIT'
+    WHEN release.release_state = 'AUTHORIZED_NOT_RELEASED'
+      THEN 'PREDECESSOR_PROVIDER_RESULT'
+    ELSE 'PREDECESSOR_PROVIDER_RESULT'
+  END AS gate_kind
+FROM ai_story_scene_release_states release
+JOIN plan_lineage lineage
+  ON lineage.execution_plan_id = release.execution_plan_id;
+
 DO $preflight$
 DECLARE
   package_rows bigint;
   release_rows bigint;
   continuity_rows bigint;
+  remote_release_rows bigint;
+  manual_release_rows bigint;
   unknown_release_rows bigint;
   package_contract_checks integer;
   package_retry_uniques integer;
@@ -44,58 +149,23 @@ BEGIN
     RAISE EXCEPTION 'SEQUENTIAL_LOCAL_V3_UNKNOWN_RELEASE_STATE';
   END IF;
 
-  /*
-   * Repository-certified historical classifications:
-   * - LEGACY_REMOTE_WAITING: held rows created by staged-release initialize.
-   * - LEGACY_REMOTE_INITIAL: first released row, with no predecessor gate.
-   * - LEGACY_REMOTE_SUCCESSOR: released row with complete Provider gate.
-   *
-   * No predecessor authority is synthesized. Unknown/unclassifiable rows must
-   * be zero before application. Operators must inspect the NOTICE row counts
-   * and classification counts against the target database before COMMIT.
-   */
+  SELECT count(*) INTO remote_release_rows
+  FROM sequential_local_v3_release_classification
+  WHERE classification = 'REMOTE_PROVIDER_PROVEN';
+  SELECT count(*) INTO manual_release_rows
+  FROM sequential_local_v3_release_classification
+  WHERE classification = 'MANUAL_LOCAL_PROVEN';
   SELECT count(*) INTO unknown_release_rows
-  FROM ai_story_scene_release_states
-  WHERE NOT (
-    (
-      release_state = 'AUTHORIZED_NOT_RELEASED'
-      AND scene_order > 1
-      AND release_stage IS NULL
-      AND released_by IS NULL
-      AND released_at IS NULL
-      AND gate_scene_execution_id IS NULL
-      AND gate_provider_attempt_id IS NULL
-      AND gate_scene_result_id IS NULL
-    )
-    OR (
-      release_state = 'RELEASED'
-      AND scene_order = 1
-      AND release_stage = 1
-      AND released_by IS NOT NULL
-      AND released_at IS NOT NULL
-      AND gate_scene_execution_id IS NULL
-      AND gate_provider_attempt_id IS NULL
-      AND gate_scene_result_id IS NULL
-    )
-    OR (
-      release_state = 'RELEASED'
-      AND scene_order > 1
-      AND release_stage IS NOT NULL
-      AND released_by IS NOT NULL
-      AND released_at IS NOT NULL
-      AND gate_scene_execution_id IS NOT NULL
-      AND gate_provider_attempt_id IS NOT NULL
-      AND gate_scene_result_id IS NOT NULL
-    )
-  );
+  FROM sequential_local_v3_release_classification
+  WHERE classification = 'UNKNOWN';
+
+  RAISE NOTICE 'SEQUENTIAL_LOCAL_V3_RELEASE_CLASSIFICATION remote=% manual=% unknown=%',
+    remote_release_rows, manual_release_rows, unknown_release_rows;
+
+  -- This guard intentionally runs before every historical UPDATE below.
   IF unknown_release_rows <> 0 THEN
     RAISE EXCEPTION 'SEQUENTIAL_LOCAL_V3_UNCLASSIFIABLE_RELEASE_ROWS:%', unknown_release_rows;
   END IF;
-
-  RAISE NOTICE 'SEQUENTIAL_LOCAL_V3_RELEASE_CLASSIFICATION waiting=% initial=% successor=% unknown=0',
-    (SELECT count(*) FROM ai_story_scene_release_states WHERE release_state='AUTHORIZED_NOT_RELEASED'),
-    (SELECT count(*) FROM ai_story_scene_release_states WHERE release_state='RELEASED' AND scene_order=1),
-    (SELECT count(*) FROM ai_story_scene_release_states WHERE release_state='RELEASED' AND scene_order>1);
 
   SELECT count(*) INTO package_contract_checks
   FROM pg_constraint
@@ -243,17 +313,25 @@ ALTER TABLE ai_story_scene_release_states
   ADD COLUMN current_local_generation_package_id uuid
     REFERENCES ai_story_local_generation_packages(package_id) ON DELETE RESTRICT;
 
--- Ownership and legacy mode are safely derivable; no predecessor lineage is.
+-- Ownership is independently and unambiguously derived from Workspace.
 UPDATE ai_story_scene_release_states release
-SET org_id = workspace.org_id,
-    execution_mode = 'REMOTE_PROVIDER',
-    gate_kind = CASE
-      WHEN release.scene_order = 1 THEN 'INITIAL_UNIT'
-      WHEN release.release_state = 'AUTHORIZED_NOT_RELEASED' THEN 'PREDECESSOR_PROVIDER_RESULT'
-      ELSE 'PREDECESSOR_PROVIDER_RESULT'
-    END
+SET org_id = workspace.org_id
 FROM workspaces workspace
 WHERE workspace.id = release.workspace_id;
+
+-- Mode is filled only from the proof table; ownership never implies mode.
+UPDATE ai_story_scene_release_states release
+SET execution_mode = CASE classification.classification
+      WHEN 'REMOTE_PROVIDER_PROVEN' THEN 'REMOTE_PROVIDER'
+      WHEN 'MANUAL_LOCAL_PROVEN' THEN 'MANUAL_LOCAL'
+    END,
+    gate_kind = classification.gate_kind
+FROM sequential_local_v3_release_classification classification
+WHERE classification.scene_execution_id = release.scene_execution_id
+  AND classification.classification IN (
+    'REMOTE_PROVIDER_PROVEN',
+    'MANUAL_LOCAL_PROVEN'
+  );
 
 ALTER TABLE ai_story_scene_release_states
   ALTER COLUMN org_id SET NOT NULL,
