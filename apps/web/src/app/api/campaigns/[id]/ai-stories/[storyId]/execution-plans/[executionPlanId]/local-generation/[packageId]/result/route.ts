@@ -1,4 +1,4 @@
-import { AiStoryGenerationResultRepository, AiStoryLocalGenerationRepository, deterministicPersistenceUuid } from "@ceo-agent/db";
+import { AiStoryGenerationResultRepository, AiStoryLocalGenerationRepository, AiStoryLocalMediaJobRepository, deterministicPersistenceUuid } from "@ceo-agent/db";
 import { AiStoryGenerationResultService, buildGenerationResultPostQcInput } from "@ceo-agent/agents";
 import { AiStoryPostQcObservationSchema } from "@ceo-agent/shared";
 import { z } from "zod";
@@ -31,6 +31,8 @@ export async function GET(_request: Request, { params }: Params) {
     const { pkg, result, results } = await resolve(params, "client_viewer");
     const playback=await createAdminClient().storage.from(process.env.SUPABASE_STORAGE_BUCKET??"campaign-assets")
       .createSignedUrl(result.media.storagePath,600);
+    const jobs = await new AiStoryLocalMediaJobRepository().list(result.ownership.workspaceId, result.ownership.executionPlanId);
+    const continuityJob = jobs.find((job) => job.kind === "EXTRACT_FRAME" && job.generationResultId === result.generationResultId) ?? null;
     return apiSuccess({
       generationResultId: result.generationResultId,
       sourceKind: result.source.sourceKind,
@@ -39,6 +41,7 @@ export async function GET(_request: Request, { params }: Params) {
       evaluation: await results.latestQc(result.ownership.workspaceId, result.generationResultId),
       decision: await results.decision(result.generationResultId),
       continuityFrame: await results.continuityFrame(result.ownership.workspaceId,result.generationResultId),
+      continuityJob: continuityJob ? { state: continuityJob.state, errorCode: continuityJob.errorCode } : null,
     });
   } catch (error) { return handleApiError(error); }
 }
@@ -51,14 +54,16 @@ const Command = z.discriminatedUnion("action", [
 
 export async function POST(request: Request, { params }: Params) {
   try {
-    const { user, pkg, result } = await resolve(params, "operator");
+    const { user, pkg, result, results } = await resolve(params, "operator");
     const command = Command.parse(await request.json());
     const service = new AiStoryGenerationResultService();
     if (command.action === "DERIVE_CONTINUITY") return apiSuccess(await deriveApprovedGenerationResultContinuity(result,user.id));
     if (command.action === "APPROVE") {
       const approved=await service.approve(result, user.id, command.rationale);
+      const frame = await results.continuityFrame(result.ownership.workspaceId, result.generationResultId);
+      if (frame) return apiSuccess({ ...approved, continuityJobId: null, continuityReady: true });
       const continuityJob=await deriveApprovedGenerationResultContinuity(result,user.id);
-      return apiSuccess({...approved,continuityJobId:continuityJob.jobId});
+      return apiSuccess({...approved,continuityJobId:continuityJob.jobId,continuityState:continuityJob.state,continuityReady:false});
     }
     const allowed = new Set(buildGenerationResultPostQcInput(result, pkg).requirements.map(item => item.requirementId));
     if (command.observations.some(item => item.source !== "HUMAN_SUPPLIED_EVIDENCE" || !allowed.has(item.requirementId))) {
