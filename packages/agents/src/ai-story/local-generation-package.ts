@@ -17,7 +17,8 @@ export class AiStoryLocalGenerationError extends Error {
       | "LOCAL_GENERATION_AUTHORITY_INVALID"
       | "LOCAL_GENERATION_REFERENCE_HASH_MISSING"
       | "LOCAL_GENERATION_IMMUTABLE_CONFLICT"
-      | "LOCAL_GENERATION_OUTPUT_INVALID",
+      | "LOCAL_GENERATION_OUTPUT_INVALID"
+      | "LOCAL_WORKFLOW_CERTIFICATION_REQUIRED",
     message: string,
     readonly status = 409,
   ) {

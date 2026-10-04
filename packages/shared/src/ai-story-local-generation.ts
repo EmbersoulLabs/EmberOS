@@ -46,6 +46,18 @@ const Id = z.string().uuid();
 const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const Text = z.string().trim().min(1).max(100_000);
 
+/**
+ * `locale` is absent on historical packages. New writes copy the frozen
+ * dialogue language and must not default it.
+ */
+const AiStoryLocalDialogueLineSchema = z.object({
+  speakerCharacterId: Id.optional(),
+  speakerLabel: Text,
+  text: Text,
+  offscreen: z.boolean(),
+  locale: z.string().trim().min(1).max(50).optional(),
+}).strict();
+
 export const AiStoryLocalReferenceSchema = z.object({
   assetId: Id,
   contentHash: Hash,
@@ -80,12 +92,7 @@ const AiStoryLocalGenerationPackageV1Schema = z.object({
   generationMode: z.enum(AI_STORY_LOCAL_PACKAGE_GENERATION_MODES),
   prompt: Text,
   negativePrompt: z.string().max(10_000).default(""),
-  dialogue: z.array(z.object({
-    speakerCharacterId: Id.optional(),
-    speakerLabel: Text,
-    text: Text,
-    offscreen: z.boolean(),
-  }).strict()),
+  dialogue: z.array(AiStoryLocalDialogueLineSchema),
   generateAudio: z.boolean(),
   audioBlocked: z.boolean(),
   characterAuthority: z.object({
@@ -216,12 +223,7 @@ const AiStoryLocalGenerationPackageV2Schema = z.object({
   generationMode: z.enum(AI_STORY_LOCAL_PACKAGE_GENERATION_MODES),
   prompt: Text,
   negativePrompt: z.string().max(10_000).default(""),
-  dialogue: z.array(z.object({
-    speakerCharacterId: Id.optional(),
-    speakerLabel: Text,
-    text: Text,
-    offscreen: z.boolean(),
-  }).strict()),
+  dialogue: z.array(AiStoryLocalDialogueLineSchema),
   generateAudio: z.boolean(),
   audioBlocked: z.boolean(),
   characterAuthority: z.object({

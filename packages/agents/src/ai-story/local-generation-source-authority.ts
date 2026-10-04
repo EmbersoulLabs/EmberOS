@@ -58,17 +58,153 @@ function stateText(facts: readonly { dimension: string; value: string }[]): stri
   return facts.map((fact) => `${fact.dimension}: ${fact.value}`);
 }
 
-function dialogueFrom(scene: AiStoryCanonicalScene) {
+const UUID_TEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** The only registered MiniMax H3 native-dialogue workflow. Generation mode stays separate. */
+const CERTIFIED_MINIMAX_NATIVE_DIALOGUE_WORKFLOW = "MINIMAX_H3_NATIVE_DIALOGUE" as const;
+
+export type LocalOperatorDialogueLine = {
+  readonly speakerLabel: string;
+  readonly text: string;
+  readonly offscreen: boolean;
+  readonly locale?: string;
+};
+
+export type LocalOperatorInstructionInput = {
+  readonly recommendedWorkflow: string;
+  readonly durationSec: number;
+  readonly aspectRatio: string;
+  readonly resolutionIntent: string;
+  readonly generationMode: string;
+  readonly references: readonly { readonly authorityType: string; readonly displayName: string }[];
+  readonly hasCharacterAuthority: boolean;
+  readonly hasProductAuthority: boolean;
+  readonly sceneSummary: string;
+  readonly shotLines: readonly string[];
+  readonly dialogue: readonly LocalOperatorDialogueLine[];
+  readonly generateAudio: boolean;
+  readonly mustKeep: readonly string[];
+  readonly mustAvoid: readonly string[];
+  readonly continuity: readonly string[];
+  readonly expectedEndState: readonly string[];
+};
+
+function humanName(value: string | undefined): string | null {
+  const name = value?.trim();
+  if (!name || UUID_TEXT.test(name)) return null;
+  return name;
+}
+
+function speakerName(
+  scene: AiStoryCanonicalScene,
+  instructions: AiStorySceneCompiledInstructions,
+  speakerId: string | undefined,
+  offscreen: boolean,
+): string {
+  const named = humanName(instructions.characterReferences.find((item) => item.characterId === speakerId)?.name);
+  if (named) return named;
+  const cast = scene.castBindings.find((item) => item.id === speakerId);
+  const castName = cast && "displayName" in cast ? humanName(cast.displayName) : null;
+  if (castName) return castName;
+  return offscreen ? "The authorized off-screen speaker" : "The authorized on-screen speaker";
+}
+
+function dialogueFrom(scene: AiStoryCanonicalScene, instructions: AiStorySceneCompiledInstructions) {
   return scene.events.flatMap((event) => {
     if (event.type !== "DIALOGUE" && event.type !== "VO") return [];
     const speakerId = event.type === "DIALOGUE" ? event.speakerId : event.voiceOwnerId;
+    const offscreen = event.type !== "DIALOGUE";
+    const language = "language" in event ? event.language : undefined;
+    if (typeof language !== "string" || language.trim().length === 0) {
+      fail("Frozen dialogue is missing its language");
+    }
     return [{
       ...(speakerId ? { speakerCharacterId: speakerId } : {}),
-      speakerLabel: speakerId,
-      text: event.type === "DIALOGUE" ? event.line : event.line,
-      offscreen: event.type === "VO",
+      speakerLabel: speakerName(scene, instructions, speakerId, offscreen),
+      text: event.line,
+      offscreen,
+      locale: language.trim(),
     }];
   });
+}
+
+function certifiedLocalWorkflow(hasVisibleDialogue: boolean) {
+  if (!hasVisibleDialogue) {
+    throw new AiStoryLocalGenerationError(
+      "LOCAL_WORKFLOW_CERTIFICATION_REQUIRED",
+      "No certified MiniMax workflow is registered for a Unit without visible dialogue. WAN and Seedance are not fallbacks.",
+    );
+  }
+  return CERTIFIED_MINIMAX_NATIVE_DIALOGUE_WORKFLOW;
+}
+
+function factBlock(title: string, facts: readonly string[]): string {
+  return [title, ...(facts.length > 0 ? facts : ["None."])].join("\n");
+}
+
+/** Operator text for one Unit. It copies frozen facts and does not call a model or Provider. */
+export function buildLocalGenerationOperatorInstructions(input: LocalOperatorInstructionInput): string {
+  const visible = input.dialogue.filter((line) => !line.offscreen);
+  const characterNames = [...new Set(visible.map((line) => line.speakerLabel))];
+  const character = input.hasCharacterAuthority || characterNames.length > 0
+    ? [
+        "CHARACTER",
+        `Use the supplied ${characterNames.join(", ") || "authorized Character"} Character authority where the workflow supports it.`,
+        "Do not substitute another Character.",
+      ].join("\n")
+    : "CHARACTER\nNo Character authority is bound to this Unit. Do not invent a Character.";
+  const product = input.hasProductAuthority
+    ? "PRODUCT\nPreserve the authorized Product identity.\nUse only the supplied Product reference.\nDo not substitute another Product."
+    : "PRODUCT\nNo Product visual is bound to this Unit. Do not invent a Product.";
+  const firstFrame = input.references.find((reference) => reference.authorityType === "FIRST_FRAME");
+  const firstFrameText = firstFrame
+    ? `FIRST FRAME\nUse the supplied authorized first-frame reference: ${firstFrame.displayName}.\nDo not substitute another Product or Character.`
+    : "FIRST FRAME\nNone. This Unit has no first-frame reference.";
+  const referenceLines = input.references.map((reference) => `- ${reference.authorityType.replaceAll("_", " ")}: ${reference.displayName}`);
+  const dialogue = input.dialogue.length > 0
+    ? [
+        "DIALOGUE",
+        ...input.dialogue.map((line) => `${line.speakerLabel} says exactly, ${line.offscreen ? "off screen" : "on screen"}:\n"${line.text}"`),
+      ].join("\n")
+    : "DIALOGUE\nNo frozen visible dialogue. Do not invent speech, narration, or subtitles.";
+  const locales = [...new Set(input.dialogue.flatMap((line) => line.locale ? [line.locale] : []))];
+  const audio = input.generateAudio && visible.length > 0
+    ? [
+        "AUDIO",
+        "Generate dialogue, mouth movement, facial expression, body performance and scene audio together as one synchronized audiovisual result.",
+        "Do not use detached TTS.",
+        "Do not replace the frozen character dialogue with narration.",
+        "Do not burn subtitles into the generated video.",
+      ].join("\n")
+    : "AUDIO\nVideo only. Do not invent speech, narration, or subtitles.";
+  return [
+    `WORKFLOW\n${input.recommendedWorkflow}`,
+    `DURATION\n${input.durationSec} seconds`,
+    `ASPECT RATIO\n${input.aspectRatio}`,
+    `RESOLUTION\n${input.resolutionIntent}`,
+    `GENERATION MODE\n${input.generationMode}`,
+    factBlock("REFERENCES", referenceLines),
+    character,
+    product,
+    firstFrameText,
+    `SCENE\n${input.sceneSummary}`,
+    factBlock("ACTION / SHOTS", input.shotLines),
+    dialogue,
+    factBlock("LANGUAGE", locales),
+    audio,
+    factBlock("MUST KEEP", input.mustKeep),
+    factBlock("MUST AVOID", input.mustAvoid),
+    factBlock("CONTINUITY", input.continuity),
+    factBlock("EXPECTED END STATE", input.expectedEndState),
+    [
+      "OUTPUT RULES",
+      "Render this Unit locally with the workflow named above.",
+      "Do not substitute references, generation mode, Product, or Character identity.",
+      "Do not call a cloud video Provider.",
+      "Do not burn subtitles into the generated video.",
+      "Upload the MP4 for this Unit only.",
+    ].join("\n"),
+  ].join("\n\n");
 }
 
 export function materializeProviderNeutralLocalGenerationPackage(
@@ -166,8 +302,10 @@ export function materializeProviderNeutralLocalGenerationPackage(
     mediaType: facts.selectedMaterialAsset.mediaType,
     storagePath: facts.selectedMaterialAsset.storagePath,
   }] : [];
-  const dialogue = dialogueFrom(scene);
-  const generateAudio = dialogue.length > 0;
+  const dialogue = dialogueFrom(scene, instructions);
+  const visibleDialogue = dialogue.filter((line) => !line.offscreen);
+  const workflow = certifiedLocalWorkflow(visibleDialogue.length > 0);
+  const generateAudio = visibleDialogue.length > 0;
   const previous = stateText(scene.entryState);
   const expectedEnd = stateText(scene.exitState);
   const mustKeep = scene.mustKeep.length ? [...scene.mustKeep] : [instructions.purpose];
@@ -184,7 +322,6 @@ export function materializeProviderNeutralLocalGenerationPackage(
     `Shot ${shot.order + 1}: ${shot.cameraType}; ${shot.cameraMovement}; ${shot.composition}; ${shot.framing}; focus ${shot.focus}; ${shot.information}`,
   );
   const prompt = [instructions.purpose, ...shotLines, ...mustKeep.map((fact) => `Keep: ${fact}`)].join("\n");
-  const workflow = generationAuthority.strategy === "TEXT_TO_VIDEO" ? "WAN_T2V" as const : "WAN_I2V" as const;
   const generationMode = generationAuthority.strategy === "TEXT_TO_VIDEO"
     ? "TEXT_TO_VIDEO" as const
     : generationAuthority.strategy === "PRODUCT_GROUNDED_VIDEO"
@@ -247,23 +384,24 @@ export function materializeProviderNeutralLocalGenerationPackage(
     localSourceAuthorityId,
     retryNumber,
   });
-  const instructionsText = [
-    `Generation Unit ${facts.order}`,
-    `Recommended local workflow: ${workflow}`,
-    `Audio: ${generateAudio ? "speak the frozen dialogue" : "video-only"}`,
-    `Resolution intent: 720p`,
-    "",
-    "PROMPT",
-    prompt,
-    "",
-    "MUST KEEP",
-    ...mustKeep.map((fact) => `- ${fact}`),
-    "",
-    "CONTINUITY",
-    ...continuity.map((fact) => `- ${fact}`),
-    "",
-    "Render locally from this frozen Scene authority. Do not substitute references, generation mode, Product material, or Character identity.",
-  ].join("\n");
+  const instructionsText = buildLocalGenerationOperatorInstructions({
+    recommendedWorkflow: workflow,
+    durationSec: instructions.durationMs / 1000,
+    aspectRatio: facts.aspectRatio,
+    resolutionIntent: "720p",
+    generationMode,
+    references,
+    hasCharacterAuthority: characterAuthority !== null,
+    hasProductAuthority: productAuthority !== null,
+    sceneSummary: world || instructions.purpose,
+    shotLines,
+    dialogue,
+    generateAudio,
+    mustKeep,
+    mustAvoid,
+    continuity,
+    expectedEndState: expectedEnd,
+  });
   const unsigned = {
     version: AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION_V2,
     packageId,
