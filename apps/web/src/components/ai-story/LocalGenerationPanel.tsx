@@ -31,6 +31,12 @@ function spokenLanguageLabel(dialogue: ReadonlyArray<{ locale?: string }>): stri
   return dialogue.length > 0 ? "Not recorded on this package" : "No spoken dialogue";
 }
 
+function localReferenceRole(
+  reference: AiStoryLocalGenerationPackage["references"][number],
+): string {
+  return "role" in reference ? reference.role : reference.authorityType;
+}
+
 function fallbackCopy(value: string): boolean {
   const area = document.createElement("textarea");
   area.value = value;
@@ -217,7 +223,7 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
               {item.references.length > 0 ? (
                 <ul className="mt-3 text-sm text-navy">
                   {item.references.map((reference) => (
-                    <li key={reference.assetId}>Reference role: {reference.authorityType.replaceAll("_", " ")} — {reference.displayName}</li>
+                    <li key={reference.assetId}>Reference role: {localReferenceRole(reference).replaceAll("_", " ")} — {reference.displayName}</li>
                   ))}
                 </ul>
               ) : null}
@@ -228,7 +234,7 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
                 <button type="button" className="rounded-lg border border-border px-3 py-1.5 text-sm" disabled={downloadPhase[packageKey] === "busy"} onClick={() => void downloadFile(packageKey, `${base}/${item.downloadPath}`)}>{downloadActionLabel("Download Unit Package", downloadPhase[packageKey] ?? "idle")}</button>
                 {item.references.map((reference) => {
                   const referenceKey = `${item.packageId}:reference:${reference.assetId}`;
-                  const label = `Download ${reference.authorityType.toLowerCase()} reference`;
+                  const label = `Download ${localReferenceRole(reference).toLowerCase()} reference`;
                   return (
                     <button key={reference.assetId} type="button" className="rounded-lg border border-border px-3 py-1.5 text-sm" disabled={downloadPhase[referenceKey] === "busy"} onClick={() => void downloadFile(referenceKey, `${base}/${reference.downloadPath}`)}>
                       {downloadActionLabel(label, downloadPhase[referenceKey] ?? "idle")}

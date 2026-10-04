@@ -91,7 +91,7 @@ export class AiStoryGenerationResultRepository {
             output.unitId !== result.generationUnitId || output.sceneExecutionId !== result.sceneExecutionId ||
             output.assetId !== result.media.assetId || output.contentHash !== result.media.contentHash ||
             pkg.executionPlanId !== plan.id || pkg.runtimeAuthorizationId !== runtime.runtimeAuthorizationId ||
-            (pkg.package.version === "local-generation-package.v2"
+            (pkg.package.version !== "local-generation-package.v1"
               ? pkg.package.sourceAuthority.localSourceAuthorityFingerprint !== result.inputAuthorityFingerprint ||
                 pkg.package.sourceAuthority.localSourceAuthorityId !== result.localSourceAuthorityId ||
                 result.compiledRequestId !== null

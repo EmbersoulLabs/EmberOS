@@ -21,8 +21,10 @@ export async function GET(
     const [asset] = await getDb().select().from(schema.assets).where(and(
       eq(schema.assets.id, assetId), eq(schema.assets.workspaceId, ctx.workspaceId),
     )).limit(1);
+    const frozenStoragePath = reference && "storagePath" in reference ? reference.storagePath : undefined;
     if (!asset || asset.orgId !== item.organizationId || asset.status !== "ready" ||
-        asset.contentHash !== (reference?.contentHash ?? frame?.contentHash) || (reference && asset.storagePath !== reference.storagePath)) {
+        asset.contentHash !== (reference?.contentHash ?? frame?.contentHash) ||
+        (frozenStoragePath && asset.storagePath !== frozenStoragePath)) {
       return new Response("Reference authority is stale", { status: 409 });
     }
     assertWorkspaceScopedDurableObjectKey(ctx.workspaceId, asset.storagePath);
