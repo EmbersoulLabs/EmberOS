@@ -10,6 +10,7 @@ import { CharacterPanel } from "@/components/ai-story/CharacterPanel";
 import { CharacterIdentityReviewPanel } from "@/components/ai-story/CharacterIdentityReviewPanel";
 import { SupportingCastPanel } from "@/components/ai-story/SupportingCastPanel";
 import { ExecutionPlanReviewPanel } from "@/components/ai-story-review/ExecutionPlanReviewPanel";
+import { VisualStyleAuthorityPreview } from "@/components/ai-story-review/VisualStyleAuthorityPreview";
 import { executionPlanStorageKey } from "@/lib/ai-story-review-assembly-ui";
 import { fetchCurrentExecutionPlan } from "@/lib/ai-story-execution-plan-discovery-client";
 import {
@@ -85,6 +86,7 @@ export default function AiStoryReviewPage() {
   const [polishPreview, setPolishPreview] = useState<AiStoryStructuredDraft | null>(null);
   const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | string | null>(null);
   const [storyVersionId, setStoryVersionId] = useState<string | null>(null);
+  const [storyVersionNumber, setStoryVersionNumber] = useState<number | null>(null);
   const [animationPackageRecordId, setAnimationPackageRecordId] = useState<string | null>(null);
   const [initialCharacters, setInitialCharacters] = useState<AiStoryCharacterAuthorityVersion[] | undefined>();
   const [initialSupportingCharacters, setInitialSupportingCharacters] = useState<AiStorySupportingCharacterVersion[] | undefined>();
@@ -119,6 +121,13 @@ export default function AiStoryReviewPage() {
       setInitialCharacters(Array.isArray(data.characters) ? data.characters : undefined);
       setInitialSupportingCharacters(Array.isArray(data.supportingCharacters) ? data.supportingCharacters : undefined);
       setStoryVersionId(typeof data.currentVersion?.id === "string" ? data.currentVersion.id : null);
+      setStoryVersionNumber(
+        typeof data.currentVersion?.versionNumber === "number" &&
+        Number.isInteger(data.currentVersion.versionNumber) &&
+        data.currentVersion.versionNumber > 0
+          ? data.currentVersion.versionNumber
+          : null
+      );
       const content = data.currentVersion?.structuredContent as AiStoryStructuredDraft | undefined;
       if (content) {
         const normalized = normalizeDraft(content);
@@ -292,6 +301,14 @@ export default function AiStoryReviewPage() {
         {status === "ready_for_execution" ? <div className="rounded-xl border border-brand-teal/30 bg-brand-teal/5 p-4 text-sm font-semibold text-brand-teal">Your Episode is ready for generation review.</div> : null}
         {warnings.length > 0 ? <ul className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul> : null}
         {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</p> : null}
+
+        {storyVersionId && storyVersionNumber !== null ? (
+          <VisualStyleAuthorityPreview
+            storyId={storyId}
+            storyVersionId={storyVersionId}
+            storyVersionNumber={storyVersionNumber}
+          />
+        ) : null}
 
         <section className="space-y-4 rounded-2xl border border-border bg-white p-5" aria-labelledby="story-review-heading">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="story-review-heading" className="text-lg font-bold text-navy">Review Episode</h2><p className="mt-1 text-sm text-ink-secondary">Review the Episode the audience will watch. EmberOS keeps Scenes internal.</p></div>{!readOnly ? <span className="text-xs text-ink-secondary" role="status" data-testid="story-save-state">{saveState === "SAVING" ? "Saving…" : saveState === "ERROR" ? "Save failed" : saveState === "DIRTY" ? "Unsaved changes" : "Saved"}</span> : null}</div>
