@@ -6,6 +6,8 @@ import {
   resolveCommercialEpisodeRepairQc,
   type AiStoryCanonicalScene,
   type AiStoryDirectorPlan,
+  type AiStoryEpisodeProjectedDirectorPlan,
+  type AiStoryEpisodeProjectedMotionPlan,
   type AiStoryMotionPlan,
   type AiStoryScriptVersion,
   type CharacterContinuityScene,
@@ -14,6 +16,7 @@ import {
 import {
   CommercialVisibleDialogueProjectionError,
   projectCommercialSceneVisibleDialogue,
+  projectEpisodeProjectedVisibleDialogue,
 } from "@ceo-agent/shared/server";
 import { getDb } from "../client";
 import * as schema from "../schema";
@@ -55,6 +58,8 @@ export async function loadCommercialEpisodeRepairForQc(
     readonly canonicalScenes: readonly AiStoryCanonicalScene[];
     readonly directorPlan: AiStoryDirectorPlan | null;
     readonly motionPlan: AiStoryMotionPlan | null;
+    readonly projectedDirectorPlan?: AiStoryEpisodeProjectedDirectorPlan | null;
+    readonly projectedMotionPlan?: AiStoryEpisodeProjectedMotionPlan | null;
     readonly sceneExecutionId: string;
   },
 ): Promise<ReturnType<typeof resolveCommercialEpisodeRepairQc>> {
@@ -173,6 +178,25 @@ export async function loadCommercialEpisodeRepairForQc(
         script: input.script,
         directorPlan: input.directorPlan,
         motionPlan: input.motionPlan,
+        canonicalScene: target,
+      });
+      dialogueProjection = authority
+        ? { ok: true, fingerprint: authority.dialogueFingerprint, characterId: authority.characterId }
+        : null;
+    } catch (error) {
+      if (error instanceof CommercialVisibleDialogueProjectionError) {
+        dialogueProjection = { ok: false, fingerprint: null, characterId: null };
+      } else {
+        throw error;
+      }
+    }
+  } else if (targetHasDialogue && target && input.projectedDirectorPlan && input.projectedMotionPlan) {
+    try {
+      const authority = projectEpisodeProjectedVisibleDialogue({
+        intent: intent.data,
+        script: input.script,
+        directorPlan: input.projectedDirectorPlan,
+        motionPlan: input.projectedMotionPlan,
         canonicalScene: target,
       });
       dialogueProjection = authority

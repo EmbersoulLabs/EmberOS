@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   projectEpisodeDirectorScenes,
   projectEpisodeMotionScenes,
+  proveEpisodeProjectedPhysicalCompletion,
+  proveProjectedProductObjectPersistence,
+  resolveProductCameraSafety,
   type EpisodeProjectedAuthoritySource,
 } from "@ceo-agent/shared";
 import {
@@ -347,5 +350,92 @@ describe("scene-scoped projected pre-generation QC", () => {
     expect(service).toContain("resolveProjectedQcTargetScene");
     expect(service).not.toContain("update(schema.aiStoryPreGenerationQcEvaluations)");
     expect(service).toContain("evaluationVersion:prior.length+1");
+  });
+
+  it("does not treat a visual-only product binding as a persistence or camera obligation", () => {
+    const built = story();
+    const beforeRefs = built.script.scenes[0]!.productAuthorityRefs.length;
+    const direction = built.directorPlan.sceneDirections[0]!;
+    const motion = built.motionPlan.sceneMotionPlans[0]!;
+    direction.productBindingIds = [PRODUCT];
+    direction.generationAuthority = { state: "KNOWN", value: { ...imageToVideo, productVisualIdentityRequirement: "NONE" } };
+    motion.productBindingIds = [PRODUCT];
+    motion.generationAuthority = direction.generationAuthority;
+    motion.measuredFacts = { ...motion.measuredFacts, productIdentitySensitive: false };
+    const evaluation = evaluate(0, built);
+    expect(built.script.scenes[0]!.productAuthorityRefs).toHaveLength(beforeRefs);
+    expect(gate(evaluation, "MOTION_PHYSICAL_PLAUSIBILITY_GATE").safeEvidence.join(" ")).not.toContain("OBJECT_PERSISTENCE_GATE");
+    expect(gate(evaluation, "PRODUCT_GROUNDED_MOTION_SAFETY_GATE").status).toBe("PASS");
+    expect(proveProjectedProductObjectPersistence({
+      productAuthorityRefs: [],
+      actions: motion.actions,
+      events: motion.events,
+      sceneStateDeltas: motion.sceneStateDeltas,
+      entryState: motion.entryState,
+      exitState: motion.exitState,
+    }).state).toBe("NOT_APPLICABLE");
+  });
+
+  it("proves unchanged product entry and exit without inventing a physical change", () => {
+    const preserved = { dimension: "PRODUCT_STATE", subjectId: PRODUCT, value: "packed" };
+    const proof = proveProjectedProductObjectPersistence({
+      productAuthorityRefs: [PRODUCT],
+      actions: [],
+      events: [],
+      sceneStateDeltas: [],
+      entryState: [preserved],
+      exitState: [preserved],
+    });
+    expect(proof).toEqual({ state: "KNOWN", value: { outcome: "PRESERVED" } });
+    expect(proveEpisodeProjectedPhysicalCompletion({
+      actions: [],
+      events: [],
+      sceneStateDeltas: [],
+      entryState: [preserved],
+      exitState: [preserved],
+    }).state).toBe("NOT_APPLICABLE");
+  });
+
+  it("blocks when an obligated product is absent at exit", () => {
+    const proof = proveProjectedProductObjectPersistence({
+      productAuthorityRefs: [PRODUCT],
+      actions: [],
+      events: [],
+      sceneStateDeltas: [],
+      entryState: [{ dimension: "PRODUCT_STATE", subjectId: PRODUCT, value: "packed" }],
+      exitState: [],
+    });
+    expect(proof.state).toBe("NOT_ASSERTED");
+  });
+
+  it("does not require camera safety for narrative product authority without visual identity", () => {
+    const built = story();
+    const direction = built.directorPlan.sceneDirections[1]!;
+    direction.generationAuthority = { state: "KNOWN", value: textToVideo };
+    direction.productBindingIds = [PRODUCT];
+    built.motionPlan.sceneMotionPlans[1]!.generationAuthority = direction.generationAuthority;
+    built.motionPlan.sceneMotionPlans[1]!.measuredFacts = {
+      ...built.motionPlan.sceneMotionPlans[1]!.measuredFacts,
+      productIdentitySensitive: false,
+    };
+    const evaluation = evaluate(1, built);
+    expect(gate(evaluation, "PRODUCT_GROUNDED_MOTION_SAFETY_GATE").safeEvidence.join(" ")).not.toContain("PROJECTED_PRODUCT_CAMERA_SAFETY_EVIDENCE_REQUIRED");
+  });
+
+  it("blocks a required visual product scene when persisted camera safety is tampered", () => {
+    const rows = specs();
+    const projected = source(rows);
+    const proven = resolveProductCameraSafety("slow push-in", "static");
+    expect(proven).not.toBeNull();
+    projected.shotPlan = projected.shotPlan.map((shot) => shot.sceneId === "scene-002"
+      ? { ...shot, cameraSafety: { ...proven!, perspectiveChange: "LARGE" } }
+      : shot);
+    const scenes = projectEpisodeDirectorScenes(projected);
+    const productShot = scenes[1]!.shots[0]!;
+    expect(productShot.perspectiveChange.state).toBe("NOT_ASSERTED");
+    const built = story(rows);
+    built.directorPlan.sceneDirections[1] = scenes[1]!;
+    const evaluation = evaluate(1, built);
+    expect(gate(evaluation, "PRODUCT_GROUNDED_MOTION_SAFETY_GATE").safeEvidence.join(" ")).toContain("PROJECTED_PRODUCT_CAMERA_SAFETY_EVIDENCE_REQUIRED");
   });
 });
