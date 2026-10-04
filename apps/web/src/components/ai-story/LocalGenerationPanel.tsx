@@ -14,6 +14,21 @@ type Props = {
   refreshToken?: number;
 };
 
+async function copyOperatorText(value: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "true");
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+}
+
 type ReadModel = {
   executionMode: "MANUAL_LOCAL";
   cloudVideoProviderCostUsd: 0;
@@ -113,8 +128,10 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <h3 className="font-semibold text-navy">Unit {item.order} of {model.packages.length}</h3>
-                  <p className="text-sm text-ink-secondary">Recommended: {item.recommendedWorkflow.replaceAll("_", " ")}</p>
+                  <p className="text-sm text-ink-secondary">Recommended workflow: {item.recommendedWorkflow.replaceAll("_", " ")}</p>
                   <p className="text-xs text-ink-secondary">{item.durationSec}s · {item.aspectRatio} · {item.generationMode}</p>
+                  <p className="text-xs text-ink-secondary">Language: {item.dialogue.flatMap((line) => line.locale ? [line.locale] : []).filter((locale, index, all) => all.indexOf(locale) === index).join(", ") || "No spoken dialogue"}</p>
+                  <p className="text-xs text-ink-secondary">Audio mode: {item.generateAudio ? "Native synchronized audiovisual" : "Video only"}</p>
                 </div>
                 <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-medium text-navy">
                   {output ? (output.qcState === "PENDING" ? "Uploaded · awaiting QC" : output.qcState) : validating ? "Validating uploaded media…" : "Awaiting Local Generation"}
@@ -127,12 +144,20 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
               {item.dialogue.length > 0 ? (
                 <div className="mt-3 text-sm">
                   <p className="font-semibold text-navy">Dialogue</p>
-                  {item.dialogue.map((line, index) => <p key={index}>{line.offscreen ? "Off-screen" : line.speakerLabel}: “{line.text}”</p>)}
+                  {item.dialogue.map((line, index) => <p key={index}>{line.offscreen ? "Off-screen" : "On-screen"} {line.speakerLabel}: “{line.text}”</p>)}
                 </div>
               ) : null}
+              {item.references.length > 0 ? (
+                <ul className="mt-3 text-sm text-navy">
+                  {item.references.map((reference) => (
+                    <li key={reference.assetId}>Reference role: {reference.authorityType.replaceAll("_", " ")} — {reference.displayName}</li>
+                  ))}
+                </ul>
+              ) : null}
+              <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-surface-muted p-3 text-xs text-navy" data-testid={`local-generation-instructions-${item.order}`}>{item.instructions}</pre>
               <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" className="rounded-lg border border-border px-3 py-1.5 text-sm" onClick={() => void navigator.clipboard.writeText(item.prompt)}>Copy Prompt</button>
-                <button type="button" className="rounded-lg border border-border px-3 py-1.5 text-sm" onClick={() => void navigator.clipboard.writeText(item.instructions)}>Copy Full Instructions</button>
+                <button type="button" className="brand-btn-primary" onClick={() => void copyOperatorText(item.instructions)}>Copy Full Instructions</button>
+                <button type="button" className="rounded-lg border border-border px-3 py-1.5 text-sm" onClick={() => void copyOperatorText(item.prompt)}>Copy Prompt</button>
                 <a className="rounded-lg border border-border px-3 py-1.5 text-sm" href={`${base}/${item.downloadPath}`}>Download Unit Package</a>
                 {item.references.map((reference) => (
                   <a key={reference.assetId} className="rounded-lg border border-border px-3 py-1.5 text-sm" href={`${base}/${reference.downloadPath}`}>

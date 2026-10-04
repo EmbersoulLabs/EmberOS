@@ -12,9 +12,11 @@ import {
 } from "@ceo-agent/shared";
 import { sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { canonicalPersistenceHash } from "@ceo-agent/db";
+import { AiStoryLocalGenerationError } from "../packages/agents/src/ai-story/local-generation-package";
 import { AiStoryLocalGenerationService } from "../packages/agents/src/ai-story/local-generation-service";
 import { materializeLocalRetryPackage } from "../packages/agents/src/ai-story/generation-result-service";
 import {
+  buildLocalGenerationOperatorInstructions,
   materializeProviderNeutralLocalGenerationPackage,
   type ProviderNeutralLocalSceneFacts,
 } from "../packages/agents/src/ai-story/local-generation-source-authority";
@@ -93,7 +95,7 @@ function facts(mode: "I2V" | "T2V", sceneExecutionId = id("101")): ProviderNeutr
       composition: "center", framing: "tight", lensSuggestion: "", focus: "product", emotion: "curious",
       information: "the product is visible",
     }],
-    characterReferences: [],
+    characterReferences: [{ characterId: id("601"), name: "Yuki", integrityHash: hash("yuki") }],
     referencedAssetIds: [],
     generationAuthority,
     groundingLineage: [],
@@ -142,7 +144,10 @@ function facts(mode: "I2V" | "T2V", sceneExecutionId = id("101")): ProviderNeutr
       productAuthorityId: id("70235a91"), sourceAssetId: id("70235a91"), sourceAssetContentHash: hash("d"),
       visualIdentityRequirement: "REQUIRED",
     }] : [],
-    events: [], entryState: [{ dimension: "LOCATION", subjectId: id("601"), value: "at the counter" }],
+    events: [{
+      type: "DIALOGUE", speakerId: id("601"), language: "en-SG",
+      line: "Look at this beautiful fruit pavlova, handcrafted with care and perfect for any occasion!",
+    }], entryState: [{ dimension: "LOCATION", subjectId: id("601"), value: "at the counter" }],
     exitState: [{ dimension: "LOCATION", subjectId: id("601"), value: "still at the counter" }],
     mustKeep: ["exact product identity"], mustAvoid: ["substitute another product"], continuityFacts: ["same counter"],
     locationBinding: { scope: "EPHEMERAL_ENVIRONMENT", id: id("701"), storyId: id("ba6"), sceneId, displayName: "counter", environmentDescription: "counter", visualIdentityRequirement: "NONE" },
@@ -269,6 +274,99 @@ describe("provider-neutral local generation authority", () => {
       audioBlocked: true,
     }).success).toBe(false);
     expect(materializeLocalRetryPackage).toBeTypeOf("function");
+  });
+
+  const exactLine = "Look at this beautiful fruit pavlova, handcrafted with care and perfect for any occasion!";
+
+  it("writes self-contained native-dialogue instructions without a model or provider", () => {
+    const item = materializeProviderNeutralLocalGenerationPackage(facts("I2V"));
+    const instructions = item.instructions;
+    expect(item.recommendedWorkflow).toBe("MINIMAX_H3_NATIVE_DIALOGUE");
+    expect(item.generateAudio).toBe(true);
+    expect(item.audioBlocked).toBe(false);
+    expect(item.dialogue[0]).toMatchObject({
+      speakerLabel: "Yuki",
+      text: exactLine,
+      offscreen: false,
+      locale: "en-SG",
+    });
+    expect(instructions.split(exactLine).length - 1).toBe(1);
+    expect(instructions).toContain('Yuki says exactly, on screen:\n"' + exactLine + '"');
+    expect(instructions).toContain("LANGUAGE\nen-SG");
+    expect(instructions).toContain("Generate dialogue, mouth movement, facial expression, body performance and scene audio together as one synchronized audiovisual result.");
+    expect(instructions).toContain("Do not use detached TTS.");
+    expect(instructions).toContain("Do not burn subtitles into the generated video.");
+    expect(instructions).toContain("Use the supplied authorized first-frame reference: selected product first frame.");
+    expect(instructions).toContain("Do not substitute another Product.");
+    expect(instructions).toContain("Do not substitute another Character.");
+    expect(instructions).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i);
+    expect(instructions).not.toMatch(/paraphras|in other words|subtitle track/i);
+  });
+
+  it("does not invent speech for a Unit with no frozen dialogue", () => {
+    const silent = buildLocalGenerationOperatorInstructions({
+      recommendedWorkflow: "UNRESOLVED",
+      durationSec: 5,
+      aspectRatio: "9:16",
+      resolutionIntent: "720p",
+      generationMode: "FIRST_FRAME_IMAGE_TO_VIDEO",
+      references: [],
+      hasCharacterAuthority: false,
+      hasProductAuthority: false,
+      sceneSummary: "A quiet counter",
+      shotLines: ["Shot 1: still"],
+      dialogue: [],
+      generateAudio: false,
+      mustKeep: [],
+      mustAvoid: [],
+      continuity: [],
+      expectedEndState: [],
+    });
+    expect(silent).toContain("Do not invent speech, narration, or subtitles.");
+    expect(silent).not.toContain(exactLine);
+    expect(silent).not.toContain("says exactly");
+    expect(silent).not.toContain("Do not use detached TTS.");
+    const input = facts("I2V");
+    expect(() => materializeProviderNeutralLocalGenerationPackage({
+      ...input,
+      scene: { ...input.scene, events: [] },
+    })).toThrow(AiStoryLocalGenerationError);
+    try {
+      materializeProviderNeutralLocalGenerationPackage({
+        ...input,
+        scene: { ...input.scene, events: [] },
+      });
+    } catch (error) {
+      expect(error).toMatchObject({ code: "LOCAL_WORKFLOW_CERTIFICATION_REQUIRED" });
+    }
+  });
+
+  it("keeps historical V2 packages without dialogue locale readable and new writes deterministic", () => {
+    const first = materializeProviderNeutralLocalGenerationPackage(facts("I2V"));
+    const replay = materializeProviderNeutralLocalGenerationPackage(facts("I2V"));
+    expect(replay.packageFingerprint).toBe(first.packageFingerprint);
+    const historical = {
+      ...first,
+      dialogue: first.dialogue.map(({ locale: _locale, ...line }) => line),
+    };
+    const parsed = AiStoryLocalGenerationPackageSchema.parse(historical);
+    expect(parsed.version).toBe("local-generation-package.v2");
+    expect(parsed.dialogue[0]?.locale).toBeUndefined();
+    expect(first.dialogue[0]?.locale).toBe("en-SG");
+  });
+
+  it("does not call an LLM or provider and does not fall back to WAN or Seedance", () => {
+    const source = read("packages/agents/src/ai-story/local-generation-source-authority.ts");
+    expect(source).toContain("MINIMAX_H3_NATIVE_DIALOGUE");
+    expect(source).toContain("LOCAL_WORKFLOW_CERTIFICATION_REQUIRED");
+    expect(source).not.toContain("WAN_I2V");
+    expect(source).not.toContain("WAN_T2V");
+    expect(source).not.toContain("en-SG");
+    expect(source).not.toMatch(/callVision|openai|ProviderRouter|seedanceAutoFallback|runwayAutoFallback/i);
+    const textToVideo = materializeProviderNeutralLocalGenerationPackage(facts("T2V"));
+    expect(textToVideo.recommendedWorkflow).toBe("MINIMAX_H3_NATIVE_DIALOGUE");
+    expect(textToVideo.generationMode).toBe("TEXT_TO_VIDEO");
+    expect(textToVideo.instructions).toContain("FIRST FRAME\nNone.");
   });
 
   it("widens package storage for V2 without rewriting V1 rows", () => {
