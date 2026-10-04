@@ -26,6 +26,14 @@ export async function POST(request: Request, { params }: Params) {
     if (body.mimeType !== "video/mp4" || !body.filename?.toLowerCase().endsWith(".mp4")) {
       return apiError("Local output must be an MP4 video", "LOCAL_GENERATION_MEDIA_TYPE_INVALID", 422);
     }
+    const existingOutput = (await resolved.repository.listOutputs({
+      workspaceId: resolved.ctx.workspaceId, executionPlanId: resolved.executionPlanId,
+    })).find((output) => output.packageId === resolved.packageId);
+    const activeValidation = (await new AiStoryLocalMediaJobRepository().list(resolved.ctx.workspaceId, resolved.executionPlanId))
+      .some((job) => job.packageId === resolved.packageId && job.kind === "VALIDATE_OUTPUT" && (job.state === "PENDING" || job.state === "RUNNING"));
+    if (existingOutput || activeValidation) {
+      return apiError("This Unit already has a generated video", "LOCAL_GENERATION_OUTPUT_ALREADY_BOUND", 409);
+    }
     if (!body.fileSizeBytes || !Number.isSafeInteger(body.fileSizeBytes) || body.fileSizeBytes <= 0 || body.fileSizeBytes > 100_000_000) {
       return apiError("Local output size is invalid", "LOCAL_GENERATION_MEDIA_SIZE_INVALID", 422);
     }

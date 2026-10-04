@@ -27,9 +27,17 @@ export async function GET(
     }
     assertWorkspaceScopedDurableObjectKey(ctx.workspaceId, asset.storagePath);
     const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
-    const { data, error } = await createAdminClient().storage.from(bucket).createSignedUrl(asset.storagePath, 60);
-    if (error || !data?.signedUrl) return new Response("Reference unavailable", { status: 502 });
-    return Response.redirect(data.signedUrl, 302);
+    const { data, error } = await createAdminClient().storage.from(bucket).download(asset.storagePath);
+    if (error || !data) return new Response("Reference unavailable", { status: 502 });
+    const filename = (asset.originalFilename || "reference.bin").replace(/[^A-Za-z0-9._-]+/g, "_");
+    return new Response(data, {
+      status: 200,
+      headers: {
+        "content-type": asset.mimeType || "application/octet-stream",
+        "content-disposition": `attachment; filename="${filename}"`,
+        "cache-control": "private, no-store",
+      },
+    });
   } catch (error) {
     return handleApiError(error);
   }
