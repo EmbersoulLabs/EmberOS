@@ -136,6 +136,7 @@ export * from "./ai-story-scene-scheduling";
 export * from "./ai-story-worker-runtime";
 export * from "./ai-story-scene-projection";
 export * from "./ai-story-production-ops";
+export * from "./visual-style-authority";
 export * from "./marketing-output-strategy";
 export * from "./ai-provider-env";
 export * from "./bounded-timeout";
