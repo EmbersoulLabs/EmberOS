@@ -29,7 +29,8 @@ export async function GET(
     const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
     const { data, error } = await createAdminClient().storage.from(bucket).download(asset.storagePath);
     if (error || !data) return new Response("Reference unavailable", { status: 502 });
-    const filename = (asset.originalFilename || "reference.bin").replace(/[^A-Za-z0-9._-]+/g, "_");
+    const extension = asset.mimeType === "image/png" ? "png" : asset.mimeType === "image/jpeg" ? "jpg" : asset.mimeType === "image/webp" ? "webp" : "bin";
+    const filename = (asset.originalFilename || `reference.${extension}`).replace(/[^A-Za-z0-9._-]+/g, "_");
     return new Response(data, {
       status: 200,
       headers: {
