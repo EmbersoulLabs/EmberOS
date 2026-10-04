@@ -14,6 +14,12 @@ type Props = {
   refreshToken?: number;
 };
 
+function spokenLanguageLabel(dialogue: ReadonlyArray<{ locale?: string }>): string {
+  const locales = dialogue.flatMap((line) => line.locale ? [line.locale] : []).filter((locale, index, all) => all.indexOf(locale) === index);
+  if (locales.length > 0) return locales.join(", ");
+  return dialogue.length > 0 ? "Not recorded on this package" : "No spoken dialogue";
+}
+
 async function copyOperatorText(value: string) {
   try {
     await navigator.clipboard.writeText(value);
@@ -130,7 +136,7 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
                   <h3 className="font-semibold text-navy">Unit {item.order} of {model.packages.length}</h3>
                   <p className="text-sm text-ink-secondary">Recommended workflow: {item.recommendedWorkflow.replaceAll("_", " ")}</p>
                   <p className="text-xs text-ink-secondary">{item.durationSec}s · {item.aspectRatio} · {item.generationMode}</p>
-                  <p className="text-xs text-ink-secondary">Language: {item.dialogue.flatMap((line) => line.locale ? [line.locale] : []).filter((locale, index, all) => all.indexOf(locale) === index).join(", ") || "No spoken dialogue"}</p>
+                  <p className="text-xs text-ink-secondary">Language: {spokenLanguageLabel(item.dialogue)}</p>
                   <p className="text-xs text-ink-secondary">Audio mode: {item.generateAudio ? "Native synchronized audiovisual" : "Video only"}</p>
                 </div>
                 <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-medium text-navy">
