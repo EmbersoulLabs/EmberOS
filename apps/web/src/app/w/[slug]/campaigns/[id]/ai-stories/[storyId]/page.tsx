@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, StatusBadge } from "@/components/AppShell";
 import { ExecutionPlanReviewPanel } from "@/components/ai-story-review/ExecutionPlanReviewPanel";
+import { VisualStyleAuthorityPreview } from "@/components/ai-story-review/VisualStyleAuthorityPreview";
 import { executionPlanStorageKey } from "@/lib/ai-story-review-assembly-ui";
 import {
   STORY_PLANNING_STAGE_ORDER,
@@ -60,6 +61,7 @@ export default function AiStoryReviewPage() {
   const [error, setError] = useState("");
   const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | string | null>(null);
   const [storyVersionId, setStoryVersionId] = useState<string | null>(null);
+  const [storyVersionNumber, setStoryVersionNumber] = useState<number | null>(null);
   const [animationPackageRecordId, setAnimationPackageRecordId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,6 +92,11 @@ export default function AiStoryReviewPage() {
     setStatus(data.story.status);
     setStoryVersionId(
       typeof data.currentVersion?.id === "string" ? data.currentVersion.id : null
+    );
+    setStoryVersionNumber(
+      typeof data.currentVersion?.versionNumber === "number"
+        ? data.currentVersion.versionNumber
+        : null
     );
     const content = data.currentVersion?.structuredContent as AiStoryStructuredDraft | undefined;
     if (content) {
@@ -388,6 +395,14 @@ export default function AiStoryReviewPage() {
         ) : null}
 
         {error ? <p className="text-sm text-red-600">{error}</p> : null}
+
+        {storyVersionId && storyVersionNumber ? (
+          <VisualStyleAuthorityPreview
+            storyId={storyId}
+            storyVersionId={storyVersionId}
+            storyVersionNumber={storyVersionNumber}
+          />
+        ) : null}
 
         <div className="grid gap-4">
           {(
