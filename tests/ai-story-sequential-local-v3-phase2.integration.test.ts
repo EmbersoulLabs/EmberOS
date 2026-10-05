@@ -15,13 +15,17 @@ import type {
   AiStoryLocalGenerationPackage,
   AiStoryLocalGenerationPackageV3,
 } from "@ceo-agent/shared";
-import { AiStoryGenerationResultDecisionSchema } from "@ceo-agent/shared";
+import {
+  AiStoryGenerationResultDecisionSchema,
+  AiStoryPostGenerationQcEvaluationSchema,
+} from "@ceo-agent/shared";
 import {
   computeAiStoryLocalGenerationPackageV3Fingerprint,
   deterministicAiStoryLocalGenerationPackageV3Id,
 } from "@ceo-agent/shared/server";
 import {
   AiStoryGenerationResultService,
+  buildGenerationResultPostQcInput,
   materializeLocalGenerationResult,
   materializeSequentialLocalPackageV3,
 } from "@ceo-agent/agents";
@@ -203,12 +207,40 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
         drizzle(ormClient, { schema }),
       ),
     );
-    const qc = (await service.evaluateLocal(
+    const evaluated = (await service.evaluateLocal(
       result,
       pkg,
       new FakeAiStoryVisualEvidenceProvider([]),
       ids.actor,
     )).evaluation;
+    const qc = AiStoryPostGenerationQcEvaluationSchema.parse({
+      ...evaluated,
+      postQcEvaluationId: randomUUID(),
+      evaluationVersion: evaluated.evaluationVersion + 1,
+      aggregateStatus: "POST_QC_PASS",
+      evidenceUnavailable: false,
+      evaluationFingerprint: hash(`certified-qc-${result.generationResultId}`),
+      evaluatedAt: now,
+    });
+    const qcInput = buildGenerationResultPostQcInput(result, pkg);
+    await drizzle(ormClient, { schema }).insert(
+      schema.aiStoryPostGenerationQcEvaluations,
+    ).values({
+      postQcEvaluationId: qc.postQcEvaluationId,
+      postQcInputId: qc.postQcInputId,
+      evaluationVersion: qc.evaluationVersion,
+      orgId: qc.orgId,
+      workspaceId: qc.workspaceId,
+      providerAttemptId: qc.providerAttemptId,
+      generationResultId: qc.generationResultId,
+      mediaAssetId: qc.mediaAssetId,
+      sceneExecutionId: qc.sceneExecutionId,
+      aggregateStatus: qc.aggregateStatus,
+      evaluationFingerprint: qc.evaluationFingerprint,
+      inputPackage: qcInput,
+      evaluation: qc,
+      evaluatedAt: new Date(qc.evaluatedAt),
+    });
     const decision = AiStoryGenerationResultDecisionSchema.parse({
       decisionId: randomUUID(),
       generationResultId: result.generationResultId,
