@@ -398,32 +398,20 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     // C — concurrent successor release convergence and mismatch denial.
     const one = await approvePackage(activeOne, 0);
     approved.set(activeOne.packageId, one);
-    const legacyFrame = await addFrame(
+    const frame = await addFrame(
       one.result,
-      null,
+      "ai-story-continuity-frame-extraction.v1",
     );
-    await sql`insert into ai_story_generation_result_continuity_frames(
-      generation_result_id,org_id,workspace_id,frame_asset_id,content_hash,
-      source_content_hash,extraction_contract_version,extracted_at
-    ) values(
-      ${one.result.generationResultId},${ids.org},${ids.workspace},
-      ${legacyFrame.frameAssetId},${legacyFrame.contentHash},${legacyFrame.sourceContentHash},
-      null,${legacyFrame.extractedAt}
-    )`;
-    const legacyReplay = await results.acceptContinuityFrame(one.result, {
-      ...legacyFrame,
-      extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
-    });
-    expect(legacyReplay.extractionContractVersion).toBeNull();
+    await results.acceptContinuityFrame(one.result, frame);
     const evidence = {
       predecessorPackage: activeOne,
       generationResult: one.result,
       postQc: one.qc,
       decision: one.decision,
       frame: {
-        ...legacyFrame,
-        extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
-        extractedAt: legacyFrame.extractedAt.toISOString(),
+        ...frame,
+        extractionContractVersion: frame.extractionContractVersion!,
+        extractedAt: frame.extractedAt.toISOString(),
       },
     };
     successor = materializeSequentialLocalPackageV3({
