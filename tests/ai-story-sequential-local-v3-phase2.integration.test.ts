@@ -342,7 +342,8 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     await sql?.end();
   }, 120_000);
 
-  it("A — enforces the complete positional Runtime Authorization ledger", async () => {
+  it("A-F — certifies canonical sequential repositories and concurrency", async () => {
+    // A — complete positional Runtime Authorization ledger.
     initial = materializeSequentialLocalPackageV3({
       basePackage: base(1),
       release: { releaseRevision: 0, releasedBy: ids.actor, releasedAt: now },
@@ -375,9 +376,8 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       { scene_order: 2, release_state: "WAITING_FOR_PREDECESSOR", current_local_generation_package_id: null },
       { scene_order: 3, release_state: "WAITING_FOR_PREDECESSOR", current_local_generation_package_id: null },
     ]);
-  });
 
-  it("B — activates one immutable retry exactly once under concurrency", async () => {
+    // B — exactly-once immutable retry activation under true concurrency.
     const retry = retryOf(initial, "AUTHORIZED RETRY");
     const calls = await Promise.all([
       packages.insertOrActivateSequentialRetry({ package: retry, createdBy: ids.actor }),
@@ -393,9 +393,8 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     await expect(packages.insertOrActivateSequentialRetry({
       package: bad, createdBy: ids.actor,
     })).rejects.toThrow("exactly once");
-  });
 
-  it("C — converges concurrent successor release and rejects mismatched authority", async () => {
+    // C — concurrent successor release convergence and mismatch denial.
     const one = await approvePackage(activeOne, 0);
     approved.set(activeOne.packageId, one);
     const frame = await addFrame(
@@ -447,9 +446,8 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     await expect(releases.releaseSuccessor({
       package: mismatched, actorUserId: ids.actor,
     })).rejects.toThrow("RELEASE_STATE_CONFLICT");
-  });
 
-  it("D — rejects new NULL continuity contracts and non-null immutable mismatch", async () => {
+    // D — legacy NULL compatibility, new NULL denial, immutable mismatch denial.
     const two = await approvePackage(successor, 1);
     approved.set(successor.packageId, two);
     unitTwoResult = two.result;
@@ -467,9 +465,8 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       ...frame,
       extractionContractVersion: "ai-story-continuity-frame-extraction.v2",
     })).rejects.toThrow("IMMUTABLE_CONFLICT");
-  });
 
-  it("E — fails stale-current-package execution after locked retry activation", async () => {
+    // E — stale-current-package execution fence after locked activation.
     const retry = retryOf(successor, "UNIT TWO SUPERSESSION");
     await packages.insertOrActivateSequentialRetry({ package: retry, createdBy: ids.actor });
     await expect(packages.getExecutablePackage({
@@ -488,9 +485,8 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       durationSec: 5, width: 720, height: 1280, qcState: "PENDING",
       continuityFrameAssetId: null, uploadedBy: ids.actor, uploadedAt: now,
     })).rejects.toMatchObject({ code: "LOCAL_GENERATION_PACKAGE_NOT_CURRENT" });
-  });
 
-  it("F — preserves separated authorities and immutable historical snapshots", async () => {
+    // F — separated authorities and historical snapshot immutability.
     expect(successor.generationMode).toBe("TEXT_TO_VIDEO");
     expect(successor.sourceAuthority.generationAuthority.strategy).toBe("TEXT_TO_VIDEO");
     expect(successor.visualStartAuthority.sourceType).toBe("PREDECESSOR_CONTINUITY");
