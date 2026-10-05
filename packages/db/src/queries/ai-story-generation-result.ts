@@ -306,7 +306,7 @@ export class AiStoryGenerationResultRepository {
           && stored.extractedAt.getTime() === frame.extractedAt.getTime()
           && (
             stored.extractionContractVersion === extractionContractVersion
-            || (!sequentialV3 && stored.extractionContractVersion === null)
+            || stored.extractionContractVersion === null
           );
         if (!exactLegacyOrCurrent) {
           throw new Error("GENERATION_RESULT_IMMUTABLE_CONFLICT");
