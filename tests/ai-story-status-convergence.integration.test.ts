@@ -261,11 +261,13 @@ describeIntegration.sequential("AI Story status convergence PostgreSQL authority
       `;
       await sql`
         INSERT INTO ai_story_scene_release_states (
-          scene_execution_id, execution_plan_id, runtime_authorization_id, workspace_id, scene_order, release_state
+          scene_execution_id, execution_plan_id, runtime_authorization_id,
+          workspace_id, org_id, scene_order, release_state, execution_mode,
+          gate_kind
         ) VALUES
-          (${ids.reviewScene1}, ${ids.reviewPlan}, ${crypto.randomUUID()}, ${ids.workspace}, 1, 'RELEASED'),
-          (${ids.reviewScene2}, ${ids.reviewPlan}, ${crypto.randomUUID()}, ${ids.workspace}, 2, 'AUTHORIZED_NOT_RELEASED'),
-          (${ids.reviewScene3}, ${ids.reviewPlan}, ${crypto.randomUUID()}, ${ids.workspace}, 3, 'AUTHORIZED_NOT_RELEASED')
+          (${ids.reviewScene1}, ${ids.reviewPlan}, ${crypto.randomUUID()}, ${ids.workspace}, ${ids.org}, 1, 'RELEASED', 'REMOTE_PROVIDER', 'INITIAL_UNIT'),
+          (${ids.reviewScene2}, ${ids.reviewPlan}, ${crypto.randomUUID()}, ${ids.workspace}, ${ids.org}, 2, 'AUTHORIZED_NOT_RELEASED', 'REMOTE_PROVIDER', 'PREDECESSOR_PROVIDER_RESULT'),
+          (${ids.reviewScene3}, ${ids.reviewPlan}, ${crypto.randomUUID()}, ${ids.workspace}, ${ids.org}, 3, 'AUTHORIZED_NOT_RELEASED', 'REMOTE_PROVIDER', 'PREDECESSOR_PROVIDER_RESULT')
       `;
     } finally {
       await sql.unsafe("SET session_replication_role = origin");
