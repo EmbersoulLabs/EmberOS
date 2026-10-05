@@ -40,7 +40,9 @@ if (process.env.CI === "true" && (!RUN_DB_INTEGRATION || !getIntegrationDbUrl())
   throw new Error("SEQUENTIAL_LOCAL_V3_POSTGRES_REQUIRED_IN_CI");
 }
 
-const suite = RUN_DB_INTEGRATION && getIntegrationDbUrl() ? describe : describe.skip;
+const suite = RUN_DB_INTEGRATION && getIntegrationDbUrl()
+  ? describe.sequential
+  : describe.skip;
 const hash = (value: string) =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const now = "2026-10-05T00:00:00.000Z";
