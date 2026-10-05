@@ -235,7 +235,8 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       workspaceId: qc.workspaceId,
       providerAttemptId: qc.providerAttemptId,
       generationResultId: qc.generationResultId,
-      mediaAssetId: qc.mediaAssetId,
+      // MANUAL_LOCAL evidence has no durable provider-media attestation FK.
+      mediaAssetId: null,
       sceneExecutionId: qc.sceneExecutionId,
       aggregateStatus: qc.aggregateStatus,
       evaluationFingerprint: qc.evaluationFingerprint,
