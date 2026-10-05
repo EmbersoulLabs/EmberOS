@@ -3,7 +3,8 @@ import { and, eq, isNull } from "drizzle-orm";
 import { getDb, schema, AiStoryLocalMediaJobRepository, AiStoryLocalGenerationRepository,
   AiStoryGenerationResultRepository, deterministicPersistenceUuid, type LocalMediaJob } from "@ceo-agent/db";
 import { assertLocalGenerationDuration, inspectLocalGenerationMp4, validateLocalGenerationMedia,
-  extractLocalGenerationEndFrame, materializeLocalGenerationResult } from "@ceo-agent/agents";
+  extractLocalGenerationEndFrame, materializeLocalGenerationResult,
+  AiStoryLocalGenerationService } from "@ceo-agent/agents";
 import { CanonicalAdapterRegistry } from "@ceo-agent/agents";
 import { downloadStorageBytes, uploadStorageBytesImmutable } from "./storage";
 
@@ -11,7 +12,7 @@ import { downloadStorageBytes, uploadStorageBytesImmutable } from "./storage";
 export async function processAiStoryLocalMediaJob(job:LocalMediaJob) {
   const db=getDb();
   const packages=new AiStoryLocalGenerationRepository(db), results=new AiStoryGenerationResultRepository(db);
-  const pkg=await packages.getPackage(job);
+  const pkg=await packages.getExecutablePackage(job);
   if(!pkg)throw new Error("LOCAL_MEDIA_PACKAGE_NOT_FOUND");
   if(job.kind==="VALIDATE_OUTPUT") {
     const [asset]=await db.select().from(schema.assets).where(and(eq(schema.assets.id,job.assetId!),
@@ -49,7 +50,9 @@ export async function processAiStoryLocalMediaJob(job:LocalMediaJob) {
   const result=await results.get(job.workspaceId,job.generationResultId!);
   if(!result||result.ownership.executionPlanId!==pkg.executionPlanId||result.inputAuthority.localPackageId!==pkg.packageId||
     (await results.decision(result.generationResultId))?.decision!=="APPROVED")throw new Error("GENERATION_RESULT_APPROVAL_REQUIRED");
-  if(await results.continuityFrame(job.workspaceId,result.generationResultId)) {
+  const existingFrame=await results.continuityFrame(job.workspaceId,result.generationResultId);
+  if(existingFrame) {
+    await releaseImmediateSuccessor(result,pkg,existingFrame,job.actorUserId);
     await continueApprovedLocalAssembly(result);
     return;
   }
@@ -67,8 +70,63 @@ export async function processAiStoryLocalMediaJob(job:LocalMediaJob) {
     uploadedBy:job.actorUserId,fileSizeBytes:frame.bytes.length,displayName:"Approved Generation Unit end frame",
     metadata:{generationResultId:result.generationResultId,sourceContentHash:result.media.contentHash,generationUnitId:result.generationUnitId},
   }).onConflictDoNothing();
-  await results.acceptContinuityFrame(result,{frameAssetId,contentHash:frame.contentHash,sourceContentHash:result.media.contentHash,extractedAt:new Date()});
+  const acceptedFrame=await results.acceptContinuityFrame(result,{
+    frameAssetId,
+    contentHash:frame.contentHash,
+    sourceContentHash:result.media.contentHash,
+    extractionContractVersion:"ai-story-continuity-frame-extraction.v1",
+    extractedAt:new Date(),
+  });
+  await releaseImmediateSuccessor(result,pkg,acceptedFrame,job.actorUserId);
   await continueApprovedLocalAssembly(result);
+}
+
+async function releaseImmediateSuccessor(
+  result:import("@ceo-agent/shared").AiStoryGenerationResult,
+  pkg:import("@ceo-agent/shared").AiStoryLocalGenerationPackage,
+  frame:typeof schema.aiStoryGenerationResultContinuityFrames.$inferSelect,
+  actorUserId:string,
+) {
+  if(pkg.version!=="local-generation-package.v3")return;
+  const db=getDb();
+  const results=new AiStoryGenerationResultRepository(db);
+  const [postQc,decision,runtime]=await Promise.all([
+    results.latestQc(result.ownership.workspaceId,result.generationResultId),
+    results.decision(result.generationResultId),
+    db.select().from(schema.aiStoryRuntimeAuthorizedFacts).where(and(
+      eq(schema.aiStoryRuntimeAuthorizedFacts.workspaceId,result.ownership.workspaceId),
+      eq(schema.aiStoryRuntimeAuthorizedFacts.executionPlanId,result.ownership.executionPlanId),
+      eq(schema.aiStoryRuntimeAuthorizedFacts.runtimeAuthorizationId,result.runtimeAuthorizationId),
+    )).limit(1).then(rows=>rows[0]??null),
+  ]);
+  if(!postQc||!decision||!runtime||!frame.extractionContractVersion) {
+    throw new Error("SEQUENTIAL_LOCAL_PREDECESSOR_NOT_READY");
+  }
+  await new AiStoryLocalGenerationService().releaseImmediateSuccessor({
+    orgId:result.ownership.orgId,
+    workspaceId:result.ownership.workspaceId,
+    campaignId:result.ownership.campaignId,
+    storyId:result.ownership.storyId,
+    storyVersionId:result.ownership.storyVersionId,
+    executionPlanId:result.ownership.executionPlanId,
+    runtimeAuthorizationId:result.runtimeAuthorizationId,
+    orderedSceneExecutionIds:runtime.orderedSceneExecutionIds,
+    actorUserId,
+    createdAt:new Date().toISOString(),
+    predecessor:{
+      predecessorPackage:pkg,
+      generationResult:result,
+      postQc,
+      decision,
+      frame:{
+        frameAssetId:frame.frameAssetId,
+        contentHash:frame.contentHash,
+        sourceContentHash:frame.sourceContentHash,
+        extractionContractVersion:frame.extractionContractVersion,
+        extractedAt:frame.extractedAt.toISOString(),
+      },
+    },
+  });
 }
 
 async function continueApprovedLocalAssembly(result:import("@ceo-agent/shared").AiStoryGenerationResult) {

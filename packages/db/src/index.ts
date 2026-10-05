@@ -68,6 +68,7 @@ export * from "./queries/ai-story-episode-revision-persistence";
 export * from "./queries/ai-story-episode-continuity";
 export * from "./queries/ai-story-episode-continuity-runtime";
 export * from "./queries/ai-story-local-generation";
+export * from "./queries/ai-story-sequential-local-release";
 export * from "./queries/ai-story-generation-result";
 export * from "./queries/ai-story-animation-package-approval-convergence";
 export * from "./queries/ai-story-script-director-handoff";

@@ -440,6 +440,7 @@ export async function prepareAuthorizedSchedulingPlan(input: {
     await new AiStorySceneReleaseRepository().initialize({
       executionPlanId,
       runtimeAuthorizationId: acceptedAuthorization.fact.runtimeAuthorizationId,
+      orgId: ids.orgId,
       workspaceId: ids.workspaceId,
       orderedSceneExecutionIds: sceneExecutionIds,
       actorUserId: userId,

@@ -14,6 +14,10 @@ import {
 } from "@ceo-agent/db";
 import { AiStoryPostGenerationQcService, type AiStoryVisualEvidenceProvider } from "./post-generation-qc-service";
 import { localGenerationPackageFingerprint } from "./local-generation-package";
+import {
+  computeAiStoryLocalGenerationPackageV3Fingerprint,
+  deterministicAiStoryLocalGenerationPackageV3Id,
+} from "@ceo-agent/shared/server";
 
 function localGenerationResultLineage(pkg: AiStoryLocalGenerationPackage) {
   if (pkg.version !== "local-generation-package.v1") {
@@ -178,7 +182,60 @@ export function materializeLocalRetryPackage(pkg: AiStoryLocalGenerationPackage,
     instructions: `${pkg.instructions}\n\nLOCAL REGENERATION REQUIRED\n${corrections.join("\n")}`,
     state: "AWAITING_LOCAL_OUTPUT" as const,
   };
+  if (base.version === "local-generation-package.v3") {
+    const packageFingerprint =
+      computeAiStoryLocalGenerationPackageV3Fingerprint(base);
+    return {
+      ...base,
+      packageFingerprint,
+      packageId:
+        deterministicAiStoryLocalGenerationPackageV3Id(packageFingerprint),
+    };
+  }
   return { ...base, packageFingerprint: localGenerationPackageFingerprint(base) };
+}
+
+export function materializeSequentialSupersessionPackage(
+  pkg: Extract<AiStoryLocalGenerationPackage, { version: "local-generation-package.v3" }>,
+  result: AiStoryGenerationResult,
+  rationale: string,
+) {
+  if (
+    result.source.sourceKind !== "MANUAL_LOCAL"
+    || result.generationUnitId !== pkg.unitId
+    || result.sceneExecutionId !== pkg.sceneExecutionId
+    || result.runtimeAuthorizationId !== pkg.runtimeAuthorizationId
+    || result.ownership.orgId !== pkg.organizationId
+    || result.ownership.workspaceId !== pkg.workspaceId
+    || result.ownership.campaignId !== pkg.campaignId
+    || result.ownership.storyId !== pkg.storyId
+    || result.ownership.storyVersionId !== pkg.storyVersionId
+    || result.ownership.executionPlanId !== pkg.executionPlanId
+    || result.inputAuthority.localPackageId !== pkg.packageId
+    || result.inputAuthority.localPackageFingerprint !== pkg.packageFingerprint
+    || !rationale.trim()
+  ) {
+    throw new Error("SEQUENTIAL_LOCAL_SUPERSESSION_INVALID");
+  }
+  const retryNumber = pkg.retryNumber + 1;
+  const draft = {
+    ...pkg,
+    packageId: pkg.packageId,
+    packageFingerprint: pkg.packageFingerprint,
+    retryOfPackageId: pkg.packageId,
+    retryNumber,
+    instructions: `${pkg.instructions}\n\nAPPROVED LINEAGE SUPERSEDED\n${rationale.trim()}`,
+    state: "AWAITING_LOCAL_OUTPUT" as const,
+    createdAt: new Date().toISOString(),
+  };
+  const packageFingerprint =
+    computeAiStoryLocalGenerationPackageV3Fingerprint(draft);
+  return {
+    ...draft,
+    packageFingerprint,
+    packageId:
+      deterministicAiStoryLocalGenerationPackageV3Id(packageFingerprint),
+  };
 }
 
 export class AiStoryGenerationResultService {
@@ -199,9 +256,22 @@ export class AiStoryGenerationResultService {
       repository: new BoundAiStoryPostGenerationQcRepository(input, this.qc), evidenceProvider,
     }).evaluate(input, (latest?.evaluationVersion ?? 0) + 1);
     if (evaluation.evaluation.aggregateStatus === "POST_QC_REJECT" && result.source.sourceKind === "MANUAL_LOCAL") {
-      await this.packages.insertOrConverge({
-        packages: [materializeLocalRetryPackage(pkg, result, evaluation.evaluation)], createdBy: actorUserId,
-      });
+      const retry = materializeLocalRetryPackage(
+        pkg,
+        result,
+        evaluation.evaluation,
+      );
+      if (retry.version === "local-generation-package.v3") {
+        await this.packages.insertOrActivateSequentialRetry({
+          package: retry,
+          createdBy: actorUserId,
+        });
+      } else {
+        await this.packages.insertOrConverge({
+          packages: [retry],
+          createdBy: actorUserId,
+        });
+      }
     }
     return evaluation;
   }
@@ -223,6 +293,35 @@ export class AiStoryGenerationResultService {
       );
     }
     return accepted;
+  }
+
+  async supersedeApprovedLocal(
+    result: AiStoryGenerationResult,
+    pkg: AiStoryLocalGenerationPackage,
+    actorUserId: string,
+    rationale: string,
+  ) {
+    if (pkg.version !== "local-generation-package.v3") {
+      throw new Error("SEQUENTIAL_LOCAL_V3_REQUIRED");
+    }
+    const decision = await this.results.decision(result.generationResultId);
+    if (decision?.decision !== "APPROVED") {
+      throw new Error("GENERATION_RESULT_APPROVAL_REQUIRED");
+    }
+    const replacement = materializeSequentialSupersessionPackage(
+      pkg,
+      result,
+      rationale,
+    );
+    const accepted = await this.packages.insertOrActivateSequentialRetry({
+      package: replacement,
+      createdBy: actorUserId,
+    });
+    return {
+      packageId: accepted.packages[0]!.packageId,
+      supersedesPackageId: pkg.packageId,
+      replayed: accepted.replayed,
+    };
   }
 }
 
