@@ -378,13 +378,13 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     ]);
 
     // B — exactly-once immutable retry activation under true concurrency.
-    const retry = retryOf(initial, "AUTHORIZED RETRY");
-    const calls = await Promise.all([
-      packages.insertOrActivateSequentialRetry({ package: retry, createdBy: ids.actor }),
-      packages.insertOrActivateSequentialRetry({ package: retry, createdBy: ids.actor }),
+    const initialRetry = retryOf(initial, "AUTHORIZED RETRY");
+    const retryActivationCalls = await Promise.all([
+      packages.insertOrActivateSequentialRetry({ package: initialRetry, createdBy: ids.actor }),
+      packages.insertOrActivateSequentialRetry({ package: initialRetry, createdBy: ids.actor }),
     ]);
-    expect(calls.map((call) => call.replayed).sort()).toEqual([false, true]);
-    activeOne = retry;
+    expect(retryActivationCalls.map((call) => call.replayed).sort()).toEqual([false, true]);
+    activeOne = initialRetry;
     const historical = await packages.getPackage({
       workspaceId: ids.workspace, executionPlanId: ids.plan, packageId: initial.packageId,
     });
@@ -397,7 +397,7 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     // C — concurrent successor release convergence and mismatch denial.
     const one = await approvePackage(activeOne, 0);
     approved.set(activeOne.packageId, one);
-    const frame = await addFrame(
+    const legacyFrame = await addFrame(
       one.result,
       null,
     );
@@ -406,11 +406,11 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       source_content_hash,extraction_contract_version,extracted_at
     ) values(
       ${one.result.generationResultId},${ids.org},${ids.workspace},
-      ${frame.frameAssetId},${frame.contentHash},${frame.sourceContentHash},
-      null,${frame.extractedAt}
+      ${legacyFrame.frameAssetId},${legacyFrame.contentHash},${legacyFrame.sourceContentHash},
+      null,${legacyFrame.extractedAt}
     )`;
     const legacyReplay = await results.acceptContinuityFrame(one.result, {
-      ...frame,
+      ...legacyFrame,
       extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
     });
     expect(legacyReplay.extractionContractVersion).toBeNull();
@@ -420,9 +420,9 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       postQc: one.qc,
       decision: one.decision,
       frame: {
-        ...frame,
+        ...legacyFrame,
         extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
-        extractedAt: frame.extractedAt.toISOString(),
+        extractedAt: legacyFrame.extractedAt.toISOString(),
       },
     };
     successor = materializeSequentialLocalPackageV3({
@@ -430,11 +430,11 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       release: { releaseRevision: 1, releasedBy: ids.actor, releasedAt: now },
       predecessor: evidence,
     });
-    const calls = await Promise.all([
+    const releaseCalls = await Promise.all([
       releases.releaseSuccessor({ package: successor, actorUserId: ids.actor }),
       releases.releaseSuccessor({ package: successor, actorUserId: ids.actor }),
     ]);
-    expect(calls.map((call) => call.replayed).sort()).toEqual([false, true]);
+    expect(releaseCalls.map((call) => call.replayed).sort()).toEqual([false, true]);
     const mismatched = materializeSequentialLocalPackageV3({
       basePackage: base(2),
       release: { releaseRevision: 1, releasedBy: ids.actor, releasedAt: now },
@@ -451,30 +451,30 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     const two = await approvePackage(successor, 1);
     approved.set(successor.packageId, two);
     unitTwoResult = two.result;
-    const frame = await addFrame(two.result, null);
-    await expect(results.acceptContinuityFrame(two.result, frame))
+    const unitTwoFrame = await addFrame(two.result, null);
+    await expect(results.acceptContinuityFrame(two.result, unitTwoFrame))
       .rejects.toThrow("EXTRACTION_CONTRACT_REQUIRED");
     const accepted = await results.acceptContinuityFrame(two.result, {
-      ...frame,
+      ...unitTwoFrame,
       extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
     });
     expect(accepted.extractionContractVersion).toBe(
       "ai-story-continuity-frame-extraction.v1",
     );
     await expect(results.acceptContinuityFrame(two.result, {
-      ...frame,
+      ...unitTwoFrame,
       extractionContractVersion: "ai-story-continuity-frame-extraction.v2",
     })).rejects.toThrow("IMMUTABLE_CONFLICT");
 
     // E — stale-current-package execution fence after locked activation.
-    const retry = retryOf(successor, "UNIT TWO SUPERSESSION");
-    await packages.insertOrActivateSequentialRetry({ package: retry, createdBy: ids.actor });
+    const unitTwoRetry = retryOf(successor, "UNIT TWO SUPERSESSION");
+    await packages.insertOrActivateSequentialRetry({ package: unitTwoRetry, createdBy: ids.actor });
     await expect(packages.getExecutablePackage({
       workspaceId: ids.workspace, executionPlanId: ids.plan, packageId: successor.packageId,
     })).resolves.toBeNull();
     await expect(packages.getExecutablePackage({
-      workspaceId: ids.workspace, executionPlanId: ids.plan, packageId: retry.packageId,
-    })).resolves.toEqual(retry);
+      workspaceId: ids.workspace, executionPlanId: ids.plan, packageId: unitTwoRetry.packageId,
+    })).resolves.toEqual(unitTwoRetry);
     const staleAsset = randomUUID();
     await sql`insert into assets(id,org_id,workspace_id,campaign_id,type,mime_type,storage_path,status,content_hash,uploaded_by)
       values(${staleAsset},${ids.org},${ids.workspace},${ids.campaign},'video','video/mp4',${`${ids.workspace}/stale.mp4`},'ready',${hash("stale")},${ids.actor})`;
