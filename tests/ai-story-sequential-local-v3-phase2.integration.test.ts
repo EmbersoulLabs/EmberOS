@@ -15,6 +15,7 @@ import type {
   AiStoryLocalGenerationPackage,
   AiStoryLocalGenerationPackageV3,
 } from "@ceo-agent/shared";
+import { AiStoryGenerationResultDecisionSchema } from "@ceo-agent/shared";
 import {
   computeAiStoryLocalGenerationPackageV3Fingerprint,
   deterministicAiStoryLocalGenerationPackageV3Id,
@@ -208,11 +209,22 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       new FakeAiStoryVisualEvidenceProvider([]),
       ids.actor,
     )).evaluation;
-    const decision = (await service.approve(
-      result,
-      ids.actor,
-      "Canonical PostgreSQL integration approval",
-    )).decision;
+    const decision = AiStoryGenerationResultDecisionSchema.parse({
+      decisionId: randomUUID(),
+      generationResultId: result.generationResultId,
+      postQcEvaluationId: qc.postQcEvaluationId,
+      decision: "APPROVED",
+      actorUserId: ids.actor,
+      rationale: "Canonical PostgreSQL integration approval",
+      decidedAt: now,
+    });
+    await drizzle(ormClient, { schema }).insert(
+      schema.aiStoryGenerationResultDecisions,
+    ).values({
+      ...decision,
+      fact: decision,
+      decidedAt: new Date(decision.decidedAt),
+    });
     return { result, qc, decision };
   }
 
@@ -310,7 +322,7 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     ]) {
       await expect(packages.initializeSequential({
         package: initial, orderedSceneExecutionIds: invalid, createdBy: ids.actor,
-      })).rejects.toThrow("Runtime Authorization");
+      })).rejects.toMatchObject({ code: "LOCAL_GENERATION_AUTHORITY_INVALID" });
     }
     const crossScope = materializeSequentialLocalPackageV3({
       basePackage: { ...base(1), workspaceId: randomUUID() },
@@ -319,7 +331,7 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     });
     await expect(packages.initializeSequential({
       package: crossScope, orderedSceneExecutionIds: ids.scenes, createdBy: ids.actor,
-    })).rejects.toThrow("Runtime Authorization");
+    })).rejects.toMatchObject({ code: "LOCAL_GENERATION_AUTHORITY_INVALID" });
     await packages.initializeSequential({
       package: initial, orderedSceneExecutionIds: ids.scenes, createdBy: ids.actor,
     });
@@ -354,9 +366,21 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     approved.set(activeOne.packageId, one);
     const frame = await addFrame(
       one.result,
-      "ai-story-continuity-frame-extraction.v1",
+      null,
     );
-    await results.acceptContinuityFrame(one.result, frame);
+    await sql`insert into ai_story_generation_result_continuity_frames(
+      generation_result_id,org_id,workspace_id,frame_asset_id,content_hash,
+      source_content_hash,extraction_contract_version,extracted_at
+    ) values(
+      ${one.result.generationResultId},${ids.org},${ids.workspace},
+      ${frame.frameAssetId},${frame.contentHash},${frame.sourceContentHash},
+      null,${frame.extractedAt}
+    )`;
+    const legacyReplay = await results.acceptContinuityFrame(one.result, {
+      ...frame,
+      extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
+    });
+    expect(legacyReplay.extractionContractVersion).toBeNull();
     const evidence = {
       predecessorPackage: activeOne,
       generationResult: one.result,
@@ -364,7 +388,7 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       decision: one.decision,
       frame: {
         ...frame,
-        extractionContractVersion: frame.extractionContractVersion!,
+        extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
         extractedAt: frame.extractedAt.toISOString(),
       },
     };

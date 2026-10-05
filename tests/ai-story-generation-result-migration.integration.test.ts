@@ -44,7 +44,7 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
   it("loads both additive migrations against the certified predecessor closure",async()=>{const rows=await db`select tablename from pg_tables where schemaname='public' and tablename in ('ai_story_generation_results','ai_story_generation_result_decisions','ai_story_generation_result_continuity_frames','ai_story_local_generation_packages','ai_story_local_generation_outputs','ai_story_local_media_jobs')`;expect(rows).toHaveLength(6);});
   it("accepts V1, V2, and V3 local package contracts without rewriting rows",async()=>{
     const [before]=await db`select count(*)::int as count from ai_story_local_generation_packages`;
-    const [check]=await db`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='ai_story_local_generation_packages'::regclass and conname='ai_story_local_generation_package_contract_version_v3_check'`;
+    const [check]=await db`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='ai_story_local_generation_packages'::regclass and contype='c' and pg_get_constraintdef(oid) like '%local-generation-package.v3%'`;
     expect(check?.definition).toContain("local-generation-package.v1");
     expect(check?.definition).toContain("local-generation-package.v2");
     expect(check?.definition).toContain("local-generation-package.v3");
