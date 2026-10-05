@@ -15,7 +15,12 @@ import { FakeAiStoryVisualEvidenceProvider } from "../packages/agents/src/ai-sto
 if(process.env.CI==="true"&&(!RUN_DB_INTEGRATION||!getIntegrationDbUrl())) throw new Error("GENERATION_RESULT_POSTGRES_REQUIRED_IN_CI");
 const suite=RUN_DB_INTEGRATION&&getIntegrationDbUrl()?describe:describe.skip;
 const read=(file:string)=>readFileSync(resolve(process.cwd(),file),"utf8");
-const migrations=["packages/db/sql/ai-story-manual-local-generation-handoff-v1.sql","packages/db/sql/ai-story-provider-neutral-generation-result-v1.sql","packages/db/sql/ai-story-local-generation-package-contract-v2.sql"];
+const migrations=[
+  "packages/db/sql/ai-story-manual-local-generation-handoff-v1.sql",
+  "packages/db/sql/ai-story-provider-neutral-generation-result-v1.sql",
+  "packages/db/sql/ai-story-local-generation-package-contract-v2.sql",
+  "packages/db/sql/ai-story-sequential-manual-local-package-v3.sql",
+];
 suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
   let admin:Sql, db:Sql, ormClient:Sql, name:string, restore:()=>void;
   let before:unknown;
@@ -37,11 +42,12 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
   },120_000);
   afterAll(async()=>{await ormClient?.end();await db?.end();if(admin&&/^emberos_generation_result_[a-f0-9]+_test$/.test(name))await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);await admin?.end();restore?.();},120_000);
   it("loads both additive migrations against the certified predecessor closure",async()=>{const rows=await db`select tablename from pg_tables where schemaname='public' and tablename in ('ai_story_generation_results','ai_story_generation_result_decisions','ai_story_generation_result_continuity_frames','ai_story_local_generation_packages','ai_story_local_generation_outputs','ai_story_local_media_jobs')`;expect(rows).toHaveLength(6);});
-  it("accepts V1 and V2 local package contracts without rewriting rows",async()=>{
+  it("accepts V1, V2, and V3 local package contracts without rewriting rows",async()=>{
     const [before]=await db`select count(*)::int as count from ai_story_local_generation_packages`;
-    const [check]=await db`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='ai_story_local_generation_packages'::regclass and conname='ai_story_local_generation_package_contract_version_check'`;
+    const [check]=await db`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='ai_story_local_generation_packages'::regclass and contype='c' and pg_get_constraintdef(oid) like '%local-generation-package.v3%'`;
     expect(check?.definition).toContain("local-generation-package.v1");
     expect(check?.definition).toContain("local-generation-package.v2");
+    expect(check?.definition).toContain("local-generation-package.v3");
     expect(before?.count).toBe(0);
   });
   it("preserves all historical Provider Attempt rows",async()=>{expect(await evidence()).toEqual(before);});
@@ -108,7 +114,8 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
     const frameAssetId=randomUUID();
     await orm.insert(schema.assets).values({id:frameAssetId,orgId:id(1),workspaceId:id(2),campaignId:id(3),type:"image",
       mimeType:"image/png",storagePath:`${id(2)}/ai-story/continuity/test.png`,contentHash:hash,status:"ready",uploadedBy:actor});
-    await results.acceptContinuityFrame(result,{frameAssetId,contentHash:hash,sourceContentHash:hash,extractedAt:new Date()});
+    await results.acceptContinuityFrame(result,{frameAssetId,contentHash:hash,sourceContentHash:hash,
+      extractionContractVersion:"ai-story-continuity-frame-extraction.v1",extractedAt:new Date()});
     const continuity=await results.previousUnitContinuity({...pkg,order:2});
     expect(continuity?.frameAssetId).toBe(frameAssetId);expect(continuity?.automaticModeSelection).toBe(false);
     const jobs=new AiStoryLocalMediaJobRepository(orm);

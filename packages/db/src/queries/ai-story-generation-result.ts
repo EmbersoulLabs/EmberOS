@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import {
   AiStoryGenerationResultSchema, AiStoryGenerationResultDecisionSchema,
   AiStoryPostGenerationQcEvaluationSchema, CanonicalSceneResultSchema,
@@ -80,6 +80,7 @@ export class AiStoryGenerationResultRepository {
         throw new Error("GENERATION_RESULT_RUNTIME_AUTHORITY_MISMATCH");
       }
       if (result.source.sourceKind === "MANUAL_LOCAL") {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${plan.id}))`);
         const [output] = await tx.select().from(schema.aiStoryLocalGenerationOutputs).where(
           eq(schema.aiStoryLocalGenerationOutputs.outputId, result.source.localGenerationOutputId),
         ).limit(1);
@@ -87,7 +88,17 @@ export class AiStoryGenerationResultRepository {
           eq(schema.aiStoryLocalGenerationPackages.packageId, output.packageId),
         ).limit(1) : [];
         const [asset] = await tx.select().from(schema.assets).where(eq(schema.assets.id, result.media.assetId)).limit(1);
+        const [release] = pkg?.contractVersion === "local-generation-package.v3"
+          ? await tx.select().from(schema.aiStorySceneReleaseStates).where(and(
+              eq(schema.aiStorySceneReleaseStates.workspaceId, plan.workspaceId),
+              eq(schema.aiStorySceneReleaseStates.executionPlanId, plan.id),
+              eq(schema.aiStorySceneReleaseStates.sceneExecutionId, result.sceneExecutionId),
+              eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
+              eq(schema.aiStorySceneReleaseStates.currentLocalGenerationPackageId, pkg.packageId),
+            )).limit(1).for("share")
+          : [true];
         if (!output || !pkg || !asset || asset.status !== "ready" ||
+            !release ||
             output.unitId !== result.generationUnitId || output.sceneExecutionId !== result.sceneExecutionId ||
             output.assetId !== result.media.assetId || output.contentHash !== result.media.contentHash ||
             pkg.executionPlanId !== plan.id || pkg.runtimeAuthorizationId !== runtime.runtimeAuthorizationId ||
@@ -216,16 +227,104 @@ export class AiStoryGenerationResultRepository {
     return frame ?? null;
   }
 
-  async acceptContinuityFrame(result: AiStoryGenerationResult, frame: { frameAssetId:string; contentHash:string; sourceContentHash:string; extractedAt:Date }) {
-    const approved = await this.decision(result.generationResultId);
-    if (approved?.decision !== "APPROVED" || frame.sourceContentHash !== result.media.contentHash) throw new Error("GENERATION_RESULT_APPROVAL_REQUIRED");
-    const [asset] = await this.db.select().from(schema.assets).where(eq(schema.assets.id, frame.frameAssetId)).limit(1);
-    if (!asset || asset.status !== "ready" || asset.workspaceId !== result.ownership.workspaceId || asset.orgId !== result.ownership.orgId ||
-        asset.campaignId !== result.ownership.campaignId || asset.contentHash !== frame.contentHash || asset.mimeType !== "image/png") throw new Error("GENERATION_RESULT_FRAME_AUTHORITY_INVALID");
-    await this.db.insert(schema.aiStoryGenerationResultContinuityFrames).values({ generationResultId:result.generationResultId, ...frame }).onConflictDoNothing();
-    const stored = await this.continuityFrame(result.ownership.workspaceId, result.generationResultId);
-    if (!stored || stored.frameAssetId !== frame.frameAssetId || stored.contentHash !== frame.contentHash || stored.sourceContentHash !== frame.sourceContentHash) throw new Error("GENERATION_RESULT_IMMUTABLE_CONFLICT");
-    return stored;
+  async acceptContinuityFrame(result: AiStoryGenerationResult, frame: {
+    frameAssetId:string; contentHash:string; sourceContentHash:string;
+    extractionContractVersion?:string|null; extractedAt:Date;
+  }) {
+    return this.db.transaction(async (tx) => {
+      const localPackageId = result.source.sourceKind === "MANUAL_LOCAL"
+        ? result.inputAuthority.localPackageId
+        : null;
+      const [localPackage] = typeof localPackageId === "string"
+        ? await tx.select({
+            contractVersion:
+              schema.aiStoryLocalGenerationPackages.contractVersion,
+          }).from(schema.aiStoryLocalGenerationPackages).where(eq(
+            schema.aiStoryLocalGenerationPackages.packageId,
+            localPackageId,
+          )).limit(1)
+        : [];
+      const sequentialV3 =
+        localPackage?.contractVersion === "local-generation-package.v3";
+      const extractionContractVersion =
+        frame.extractionContractVersion?.trim() || null;
+      if (sequentialV3 && !extractionContractVersion) {
+        throw new Error("GENERATION_RESULT_EXTRACTION_CONTRACT_REQUIRED");
+      }
+      // The Generation Result row is the convergence lock for its one immutable
+      // continuity frame. Legacy stored NULL contract versions may replay only
+      // when every other persisted field is byte-for-byte equivalent.
+      const [accepted] = await tx.select()
+        .from(schema.aiStoryGenerationResults)
+        .where(and(
+          eq(schema.aiStoryGenerationResults.workspaceId, result.ownership.workspaceId),
+          eq(schema.aiStoryGenerationResults.generationResultId, result.generationResultId),
+        ))
+        .limit(1)
+        .for("update");
+      const [approved] = await tx.select()
+        .from(schema.aiStoryGenerationResultDecisions)
+        .where(and(
+          eq(schema.aiStoryGenerationResultDecisions.generationResultId, result.generationResultId),
+          eq(schema.aiStoryGenerationResultDecisions.decision, "APPROVED"),
+        ))
+        .limit(1);
+      if (!accepted || accepted.fingerprint !== result.fingerprint || !approved ||
+          frame.sourceContentHash !== result.media.contentHash) {
+        throw new Error("GENERATION_RESULT_APPROVAL_REQUIRED");
+      }
+      const [asset] = await tx.select().from(schema.assets).where(and(
+        eq(schema.assets.id, frame.frameAssetId),
+        eq(schema.assets.workspaceId, result.ownership.workspaceId),
+        eq(schema.assets.orgId, result.ownership.orgId),
+        eq(schema.assets.campaignId, result.ownership.campaignId),
+      )).limit(1);
+      if (!asset || asset.status !== "ready" || asset.contentHash !== frame.contentHash ||
+          asset.mimeType !== "image/png") {
+        throw new Error("GENERATION_RESULT_FRAME_AUTHORITY_INVALID");
+      }
+      const [stored] = await tx.select()
+        .from(schema.aiStoryGenerationResultContinuityFrames)
+        .where(eq(
+          schema.aiStoryGenerationResultContinuityFrames.generationResultId,
+          result.generationResultId,
+        ))
+        .limit(1)
+        .for("update");
+      if (stored) {
+        const exactLegacyOrCurrent = stored.frameAssetId === frame.frameAssetId
+          && stored.contentHash === frame.contentHash
+          && stored.sourceContentHash === frame.sourceContentHash
+          && (
+            stored.orgId === result.ownership.orgId
+            || (!sequentialV3 && stored.orgId === null)
+          )
+          && (
+            stored.workspaceId === result.ownership.workspaceId
+            || (!sequentialV3 && stored.workspaceId === null)
+          )
+          && stored.extractedAt.getTime() === frame.extractedAt.getTime()
+          && (
+            stored.extractionContractVersion === extractionContractVersion
+            || stored.extractionContractVersion === null
+          );
+        if (!exactLegacyOrCurrent) {
+          throw new Error("GENERATION_RESULT_IMMUTABLE_CONFLICT");
+        }
+        return stored;
+      }
+      const [inserted] = await tx.insert(
+        schema.aiStoryGenerationResultContinuityFrames,
+      ).values({
+        generationResultId:result.generationResultId,
+        orgId:result.ownership.orgId,
+        workspaceId:result.ownership.workspaceId,
+        ...frame,
+        extractionContractVersion,
+      }).returning();
+      if (!inserted) throw new Error("GENERATION_RESULT_IMMUTABLE_CONFLICT");
+      return inserted;
+    });
   }
 
   /** Exact adjacent Unit in the same frozen Plan; never a global/latest-media lookup. */
@@ -276,21 +375,91 @@ export class AiStoryGenerationResultRepository {
         if (existing.decision !== decision.decision) throw new Error("GENERATION_RESULT_DECISION_IMMUTABLE_CONFLICT");
         return { decision: AiStoryGenerationResultDecisionSchema.parse(existing.fact), replayed: true };
       }
+      const localPackageId = result.source.sourceKind === "MANUAL_LOCAL"
+        ? result.inputAuthority.localPackageId
+        : null;
+      const [localPackage] = typeof localPackageId === "string"
+        ? await tx.select({
+            contractVersion:
+              schema.aiStoryLocalGenerationPackages.contractVersion,
+          }).from(schema.aiStoryLocalGenerationPackages).where(eq(
+            schema.aiStoryLocalGenerationPackages.packageId,
+            localPackageId,
+          )).limit(1)
+        : [];
+      const sequentialV3 =
+        localPackage?.contractVersion === "local-generation-package.v3";
+      if (sequentialV3) {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${result.ownership.executionPlanId}))`);
+      }
       if (decision.decision === "APPROVED") {
         const [inFlight] = await tx.execute(sql`
           select execution_id from provider_executions where execution_id in (
             select provider_execution_id from ai_story_scene_scheduling_correlations where scene_execution_id=${result.sceneExecutionId})
           and status not in ('SUCCEEDED','TERMINAL_FAILURE') limit 1`);
         if (inFlight) throw new Error("GENERATED_SCENE_EXECUTION_IN_FLIGHT");
-        const [approved] = await tx.execute(sql`
-          select scene_result_id from ai_story_scene_results where scene_execution_id=${result.sceneExecutionId}
-          and (generation_result_id in(select generation_result_id from ai_story_generation_result_decisions where decision='APPROVED')
-            or scene_result_id in(select scene_result_id from ai_story_generated_scene_reviews where decision='APPROVED')) limit 1`);
-        if (approved) throw new Error("GENERATED_SCENE_REVIEW_STATE_CONFLICT");
+        if (!sequentialV3) {
+          const [approved] = await tx.execute(sql`
+            select scene_result_id from ai_story_scene_results where scene_execution_id=${result.sceneExecutionId}
+            and (generation_result_id in(select generation_result_id from ai_story_generation_result_decisions where decision='APPROVED')
+              or scene_result_id in(select scene_result_id from ai_story_generated_scene_reviews where decision='APPROVED')) limit 1`);
+          if (approved) throw new Error("GENERATED_SCENE_REVIEW_STATE_CONFLICT");
+        }
       }
       await tx.insert(schema.aiStoryGenerationResultDecisions).values({
         ...decision, fact: decision, decidedAt: new Date(decision.decidedAt),
       });
+      if (decision.decision === "APPROVED" && sequentialV3) {
+        if (typeof localPackageId !== "string") {
+          throw new Error("GENERATION_RESULT_LOCAL_SOURCE_MISMATCH");
+        }
+        const [release] = await tx.select().from(schema.aiStorySceneReleaseStates)
+          .where(and(
+            eq(schema.aiStorySceneReleaseStates.workspaceId, result.ownership.workspaceId),
+            eq(schema.aiStorySceneReleaseStates.executionPlanId, result.ownership.executionPlanId),
+            eq(schema.aiStorySceneReleaseStates.sceneExecutionId, result.sceneExecutionId),
+          )).limit(1);
+        if (
+          !release
+          || release.releaseState !== "RELEASED"
+          || release.currentLocalGenerationPackageId
+            !== result.inputAuthority.localPackageId
+        ) {
+          throw new Error("SEQUENTIAL_LOCAL_CURRENT_PACKAGE_REQUIRED");
+        }
+        const [successor] = await tx.select().from(schema.aiStorySceneReleaseStates)
+          .where(and(
+            eq(schema.aiStorySceneReleaseStates.workspaceId, result.ownership.workspaceId),
+            eq(schema.aiStorySceneReleaseStates.executionPlanId, result.ownership.executionPlanId),
+            eq(schema.aiStorySceneReleaseStates.sceneOrder, release.sceneOrder + 1),
+          )).limit(1);
+        if (
+          successor?.gateGenerationResultId
+          && successor.gateGenerationResultId !== result.generationResultId
+        ) {
+          await tx.update(schema.aiStorySceneReleaseStates).set({
+            releaseState: "WAITING_FOR_PREDECESSOR",
+            releaseRevision: sql`${schema.aiStorySceneReleaseStates.releaseRevision} + 1`,
+            releaseAuthorityId: null,
+            releaseAuthorityFingerprint: null,
+            predecessorAuthorityFingerprint: null,
+            gateGenerationResultId: null,
+            gateGenerationResultDecisionId: null,
+            currentLocalGenerationPackageId: null,
+            releaseStage: null,
+            releasedBy: null,
+            releasedAt: null,
+            gateSceneExecutionId: null,
+            gateProviderAttemptId: null,
+            gateSceneResultId: null,
+            updatedAt: new Date(decision.decidedAt),
+          }).where(and(
+            eq(schema.aiStorySceneReleaseStates.workspaceId, result.ownership.workspaceId),
+            eq(schema.aiStorySceneReleaseStates.executionPlanId, result.ownership.executionPlanId),
+            gt(schema.aiStorySceneReleaseStates.sceneOrder, release.sceneOrder),
+          ));
+        }
+      }
       if (decision.decision === "APPROVED" && result.source.sourceKind !== "REMOTE_PROVIDER") {
         const scene = projectApprovedGenerationResult(result, decision);
         await tx.execute(sql`

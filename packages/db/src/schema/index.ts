@@ -1957,6 +1957,10 @@ export const aiStoryLocalGenerationPackages = pgTable(
     sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
     unitId: uuid("unit_id").notNull(),
     unitOrder: integer("unit_order").notNull(),
+    successorNumber: integer("successor_number").notNull().default(0),
+    successorOfPackageId: uuid("successor_of_package_id"),
+    releaseAuthorityId: uuid("release_authority_id"),
+    releaseAuthorityFingerprint: text("release_authority_fingerprint"),
     retryOfPackageId: uuid("retry_of_package_id"),
     retryNumber: integer("retry_number").notNull().default(0),
     contractVersion: text("contract_version").notNull(),
@@ -1966,7 +1970,12 @@ export const aiStoryLocalGenerationPackages = pgTable(
   },
   (t) => [
     unique("ai_story_local_generation_package_fingerprint_unique").on(t.workspaceId, t.packageFingerprint),
-    unique("ai_story_local_generation_unit_retry_unique").on(t.runtimeAuthorizationId, t.unitId, t.retryNumber),
+    unique("ai_story_local_generation_unit_successor_retry_unique").on(
+      t.runtimeAuthorizationId,
+      t.unitId,
+      t.successorNumber,
+      t.retryNumber,
+    ),
     index("ai_story_local_generation_plan_order_idx").on(t.executionPlanId, t.unitOrder),
   ],
 );
@@ -2036,9 +2045,12 @@ export const aiStoryGenerationResultDecisions = pgTable("ai_story_generation_res
 
 export const aiStoryGenerationResultContinuityFrames = pgTable("ai_story_generation_result_continuity_frames", {
   generationResultId: uuid("generation_result_id").primaryKey().references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
+  orgId: uuid("org_id").references(() => organizations.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "restrict" }),
   frameAssetId: uuid("frame_asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
   contentHash: text("content_hash").notNull(),
   sourceContentHash: text("source_content_hash").notNull(),
+  extractionContractVersion: text("extraction_contract_version"),
   extractedAt: timestamp("extracted_at", { withTimezone: true }).notNull(),
 });
 
@@ -2758,8 +2770,23 @@ export const aiStorySceneReleaseStates = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "restrict" }),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
     sceneOrder: integer("scene_order").notNull(),
     releaseState: text("release_state").notNull(),
+    executionMode: text("execution_mode").notNull(),
+    gateKind: text("gate_kind").notNull(),
+    releaseRevision: integer("release_revision").notNull().default(0),
+    releaseAuthorityId: uuid("release_authority_id"),
+    releaseAuthorityFingerprint: text("release_authority_fingerprint"),
+    predecessorAuthorityFingerprint: text("predecessor_authority_fingerprint"),
+    gateGenerationResultId: uuid("gate_generation_result_id")
+      .references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
+    gateGenerationResultDecisionId: uuid("gate_generation_result_decision_id")
+      .references(() => aiStoryGenerationResultDecisions.decisionId, { onDelete: "restrict" }),
+    currentLocalGenerationPackageId: uuid("current_local_generation_package_id")
+      .references(() => aiStoryLocalGenerationPackages.packageId, { onDelete: "restrict" }),
     releaseStage: integer("release_stage"),
     releasedBy: uuid("released_by"),
     releasedAt: timestamp("released_at", { withTimezone: true }),

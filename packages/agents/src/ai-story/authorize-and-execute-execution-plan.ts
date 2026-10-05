@@ -738,6 +738,7 @@ export async function authorizeAndExecuteExecutionPlan(
   const releaseRows = await releases.initialize({
     executionPlanId: input.executionPlanId,
     runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
+    orgId: input.ownership.orgId,
     workspaceId: input.ownership.workspaceId,
     orderedSceneExecutionIds,
     actorUserId: input.actorUserId,
