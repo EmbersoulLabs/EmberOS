@@ -8,6 +8,7 @@
  */
 import {
   AI_STORY_EXECUTION_CONTRACT_VERSION,
+  plannedDurationMatchesRecommendedDuration,
   AiStoryAiQcResultSchema,
   AiStorySceneCompiledInstructionsSchema,
   AiStorySceneExecutionIntentSchema,
@@ -251,6 +252,23 @@ export function validateSceneExecutionIntent(
     errors.push(
       finding("SCENE_DURATION_INVALID", "plannedDurationMs", "Scene duration must be positive.")
     );
+  }
+  if (intent.recommendedDurationAuthority) {
+    if (
+      instructions.durationMs !== intent.plannedDurationMs ||
+      !plannedDurationMatchesRecommendedDuration(
+        intent.recommendedDurationAuthority,
+        intent.plannedDurationMs
+      )
+    ) {
+      errors.push(
+        finding(
+          "SCENE_DURATION_INVALID",
+          "plannedDurationMs",
+          "Planned duration must equal the Recommended Duration Authority."
+        )
+      );
+    }
   }
 
   const world = instructions.worldContinuity ?? {};
