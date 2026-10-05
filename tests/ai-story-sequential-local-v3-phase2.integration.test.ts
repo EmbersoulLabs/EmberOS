@@ -396,13 +396,17 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
     })).rejects.toThrow("exactly once");
 
     // C — concurrent successor release convergence and mismatch denial.
+    // The predecessor is a current V3 frame, never a legacy NULL row.
     const one = await approvePackage(activeOne, 0);
     approved.set(activeOne.packageId, one);
     const frame = await addFrame(
       one.result,
       "ai-story-continuity-frame-extraction.v1",
     );
-    await results.acceptContinuityFrame(one.result, frame);
+    const acceptedFrame = await results.acceptContinuityFrame(one.result, frame);
+    expect(acceptedFrame.extractionContractVersion).toBe(
+      "ai-story-continuity-frame-extraction.v1",
+    );
     const evidence = {
       predecessorPackage: activeOne,
       generationResult: one.result,
@@ -419,6 +423,8 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       release: { releaseRevision: 1, releasedBy: ids.actor, releasedAt: now },
       predecessor: evidence,
     });
+    expect(successor.predecessorAuthority?.semantic.extractionContractVersion)
+      .toBe("ai-story-continuity-frame-extraction.v1");
     const releaseCalls = await Promise.all([
       releases.releaseSuccessor({ package: successor, actorUserId: ids.actor }),
       releases.releaseSuccessor({ package: successor, actorUserId: ids.actor }),
@@ -436,24 +442,67 @@ suite("Sequential Local V3 canonical PostgreSQL repositories", () => {
       package: mismatched, actorUserId: ids.actor,
     })).rejects.toThrow("RELEASE_STATE_CONFLICT");
 
-    // D — legacy NULL compatibility, new NULL denial, immutable mismatch denial.
+    // D — new V3 contract rules stay separate from legacy NULL convergence.
     const two = await approvePackage(successor, 1);
     approved.set(successor.packageId, two);
     unitTwoResult = two.result;
-    const unitTwoFrame = await addFrame(two.result, null);
-    await expect(results.acceptContinuityFrame(two.result, unitTwoFrame))
+    const newNullFrame = await addFrame(two.result, null);
+    await expect(results.acceptContinuityFrame(two.result, newNullFrame))
       .rejects.toThrow("EXTRACTION_CONTRACT_REQUIRED");
-    const accepted = await results.acceptContinuityFrame(two.result, {
-      ...unitTwoFrame,
-      extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
-    });
-    expect(accepted.extractionContractVersion).toBe(
-      "ai-story-continuity-frame-extraction.v1",
-    );
-    await expect(results.acceptContinuityFrame(two.result, {
-      ...unitTwoFrame,
+    await expect(results.acceptContinuityFrame(one.result, {
+      ...frame,
       extractionContractVersion: "ai-story-continuity-frame-extraction.v2",
     })).rejects.toThrow("IMMUTABLE_CONFLICT");
+
+    // Seed an existing historical continuity row. Requesting the current v1
+    // contract converges only when every other lineage field matches, and the
+    // stored NULL version is not rewritten.
+    const legacyFrame = newNullFrame;
+    await sql`insert into ai_story_generation_result_continuity_frames(
+      generation_result_id,org_id,workspace_id,frame_asset_id,content_hash,
+      source_content_hash,extraction_contract_version,extracted_at
+    ) values(
+      ${two.result.generationResultId},${ids.org},${ids.workspace},
+      ${legacyFrame.frameAssetId},${legacyFrame.contentHash},${legacyFrame.sourceContentHash},
+      null,${legacyFrame.extractedAt}
+    )`;
+    const legacyBefore = await sql`select generation_result_id,org_id,workspace_id,frame_asset_id,content_hash,source_content_hash,extraction_contract_version,extracted_at
+      from ai_story_generation_result_continuity_frames
+      where generation_result_id=${two.result.generationResultId}`;
+    const legacyReplay = await results.acceptContinuityFrame(two.result, {
+      ...legacyFrame,
+      extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
+    });
+    expect(legacyReplay.extractionContractVersion).toBeNull();
+    const legacyAfter = await sql`select generation_result_id,org_id,workspace_id,frame_asset_id,content_hash,source_content_hash,extraction_contract_version,extracted_at
+      from ai_story_generation_result_continuity_frames
+      where generation_result_id=${two.result.generationResultId}`;
+    expect(legacyAfter).toEqual(legacyBefore);
+    expect(legacyAfter[0]?.extraction_contract_version).toBeNull();
+
+    // A historical NULL frame must not authorize a new successor that claims v1.
+    const unauthorized = materializeSequentialLocalPackageV3({
+      basePackage: base(3),
+      release: { releaseRevision: 1, releasedBy: ids.actor, releasedAt: now },
+      predecessor: {
+        predecessorPackage: successor,
+        generationResult: two.result,
+        postQc: two.qc,
+        decision: two.decision,
+        frame: {
+          ...legacyFrame,
+          extractionContractVersion: "ai-story-continuity-frame-extraction.v1",
+          extractedAt: legacyFrame.extractedAt.toISOString(),
+        },
+      },
+    });
+    await expect(releases.releaseSuccessor({
+      package: unauthorized, actorUserId: ids.actor,
+    })).rejects.toThrow("SEQUENTIAL_LOCAL_PREDECESSOR_AUTHORITY_STALE");
+    const legacyAfterDenial = await sql`select generation_result_id,org_id,workspace_id,frame_asset_id,content_hash,source_content_hash,extraction_contract_version,extracted_at
+      from ai_story_generation_result_continuity_frames
+      where generation_result_id=${two.result.generationResultId}`;
+    expect(legacyAfterDenial).toEqual(legacyBefore);
 
     // E — stale-current-package execution fence after locked activation.
     const unitTwoRetry = retryOf(successor, "UNIT TWO SUPERSESSION");
