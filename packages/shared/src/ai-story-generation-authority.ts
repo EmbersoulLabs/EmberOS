@@ -121,11 +121,15 @@ export const AiStoryEffectiveSceneGenerationAuthorityV2Schema = z.object({
       });
     }
   }
-  if (value.strategy === "TEXT_TO_VIDEO" && value.visualStartAuthority.sourceType !== "NONE") {
+  if (
+    value.strategy === "TEXT_TO_VIDEO"
+    && value.visualStartAuthority.sourceType !== "NONE"
+    && value.visualStartAuthority.sourceType !== "PREDECESSOR_CONTINUITY"
+  ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["visualStartAuthority"],
-      message: "TEXT_TO_VIDEO cannot carry visual-start conditioning",
+      message: "TEXT_TO_VIDEO cannot carry initial-material conditioning",
     });
   }
   if (value.strategy !== "TEXT_TO_VIDEO" && value.visualStartAuthority.sourceType === "NONE") {

@@ -74,6 +74,7 @@ export * from "./provider-capability-resolution";
 export * from "./local-generation-package";
 export * from "./local-generation-service";
 export * from "./local-generation-source-authority";
+export * from "./sequential-local-generation";
 export * from "./generation-result-service";
 export * from "./asset-aware-execution-authority";
 export * from "./asset-aware-canonical-scheduler";

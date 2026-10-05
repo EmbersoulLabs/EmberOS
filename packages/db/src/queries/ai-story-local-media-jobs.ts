@@ -16,7 +16,7 @@ export class AiStoryLocalMediaJobRepository {
   constructor(private readonly db= getDb()) {}
   async enqueue(input:AiStoryLocalMediaJobInput) {
     AiStoryLocalMediaJobIdentitySchema.parse(input);
-    const pkg=await new AiStoryLocalGenerationRepository(this.db).getPackage(input);
+    const pkg=await new AiStoryLocalGenerationRepository(this.db).getExecutablePackage(input);
     if(!pkg)throw new Error("LOCAL_MEDIA_PACKAGE_NOT_FOUND");
     const assetId=input.kind==="VALIDATE_OUTPUT"?input.assetId:null;
     const generationResultId=input.kind==="EXTRACT_FRAME"?input.generationResultId:null;

@@ -239,8 +239,8 @@ describe("provider-neutral local generation authority", () => {
     const service = new AiStoryLocalGenerationService({
       loadFacts: async () => prepared,
       packages: {
-        async insertOrConverge(input) {
-          return { packages: input.packages, replayed: false };
+        async initializeSequential(input) {
+          return { packages: [input.package], replayed: false };
         },
       } as never,
     });
@@ -249,8 +249,8 @@ describe("provider-neutral local generation authority", () => {
       executionPlanId: id("801"), runtimeAuthorizationId: id("901"), orderedSceneExecutionIds: ordered,
       actorUserId: id("1"), createdAt,
     });
-    expect(result.unitIds).toEqual(ordered);
-    expect(result.packageIds).toHaveLength(2);
+    expect(result.unitIds).toEqual([ordered[0]]);
+    expect(result.packageIds).toHaveLength(1);
     await expect(service.prepare({
       orgId: id("93"), workspaceId: id("3af"), campaignId: id("4d3"), storyId: id("ba6"), storyVersionId: id("7df"),
       executionPlanId: id("801"), runtimeAuthorizationId: id("901"), orderedSceneExecutionIds: [...ordered].reverse(),

@@ -357,6 +357,7 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
     const release = new AiStorySceneReleaseRepository();
     await release.initialize({ executionPlanId: planId,
       runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
+      orgId: ids.orgId,
       workspaceId: ids.workspaceId, orderedSceneExecutionIds: sceneExecutionIds,
       actorUserId: PR32_USER_A, releasedAt: new Date("2026-09-18T01:03:00.000Z") });
     const commercial = await acceptCommercialAuthorizationFixture({

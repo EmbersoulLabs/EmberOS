@@ -13,7 +13,9 @@ async function context(params: Params["params"], minRole: "operator" | "client_v
   const { id: campaignId, storyId, executionPlanId, packageId } = await params;
   const ctx = await resolveAuthorizedExecutionPlan({ userId: user.id, campaignId, storyId, executionPlanId, minRole });
   const repository = new AiStoryLocalGenerationRepository();
-  const item = await repository.getPackage({ workspaceId: ctx.workspaceId, executionPlanId, packageId });
+  const item = minRole === "operator"
+    ? await repository.getExecutablePackage({ workspaceId: ctx.workspaceId, executionPlanId, packageId })
+    : await repository.getPackage({ workspaceId: ctx.workspaceId, executionPlanId, packageId });
   return { user, campaignId, storyId, executionPlanId, packageId, ctx, repository, item };
 }
 

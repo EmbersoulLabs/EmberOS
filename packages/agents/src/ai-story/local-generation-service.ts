@@ -8,6 +8,7 @@ import {
 } from "@ceo-agent/shared";
 import {
   AiStoryLocalGenerationRepository,
+  AiStorySequentialLocalReleaseRepository,
   AiStorySceneExecutionPersistenceRepository,
   getDb,
   resolveCurrentFrozenCanonicalSceneSet,
@@ -18,6 +19,10 @@ import {
   materializeProviderNeutralLocalGenerationPackage,
   type ProviderNeutralLocalSceneFacts,
 } from "./local-generation-source-authority";
+import {
+  materializeSequentialLocalPackageV3,
+  type SequentialContinuityEvidence,
+} from "./sequential-local-generation";
 
 export interface AiStoryLocalGenerationPreparationPort {
   prepare(input: {
@@ -56,22 +61,37 @@ export class AiStoryLocalGenerationService implements AiStoryLocalGenerationPrep
     readonly loadFacts?: (input: Parameters<AiStoryLocalGenerationPreparationPort["prepare"]>[0]) => Promise<readonly ProviderNeutralLocalSceneFacts[]>;
     readonly productMaterial?: AiStoryLocalProductMaterialResolver;
     readonly persistence?: AiStorySceneExecutionPersistenceRepository;
+    readonly releases?: AiStorySequentialLocalReleaseRepository;
   } = {}) {}
 
   async prepare(input: Parameters<AiStoryLocalGenerationPreparationPort["prepare"]>[0]) {
     const facts = this.options.loadFacts
       ? await this.options.loadFacts(input)
       : await this.loadFrozenFacts(input);
-    if (facts.length !== input.orderedSceneExecutionIds.length ||
+    if (facts.length === 0 || facts.length !== input.orderedSceneExecutionIds.length ||
         facts.some((fact, index) => fact.sceneExecutionId !== input.orderedSceneExecutionIds[index])) {
       throw new AiStoryLocalGenerationError(
         "LOCAL_GENERATION_AUTHORITY_INVALID",
         "Local Generation units do not match the approved Assembly order",
       );
     }
-    const packages = facts.map((fact) => materializeProviderNeutralLocalGenerationPackage(fact));
-    const accepted = await (this.options.packages ?? new AiStoryLocalGenerationRepository()).insertOrConverge({
-      packages,
+    const initial = materializeSequentialLocalPackageV3({
+      basePackage: materializeProviderNeutralLocalGenerationPackage(facts[0]!) as Extract<
+        import("@ceo-agent/shared").AiStoryLocalGenerationPackage,
+        { version: "local-generation-package.v2" }
+      >,
+      release: {
+        releaseRevision: 0,
+        releasedBy: input.actorUserId,
+        releasedAt: input.createdAt,
+      },
+      predecessor: null,
+    });
+    const repository = this.options.packages
+      ?? new AiStoryLocalGenerationRepository();
+    const accepted = await repository.initializeSequential({
+      package: initial,
+      orderedSceneExecutionIds: input.orderedSceneExecutionIds,
       createdBy: input.actorUserId,
     });
     return {
@@ -81,7 +101,87 @@ export class AiStoryLocalGenerationService implements AiStoryLocalGenerationPrep
     };
   }
 
-  private async loadFrozenFacts(input: Parameters<AiStoryLocalGenerationPreparationPort["prepare"]>[0]) {
+  async releaseImmediateSuccessor(input: Parameters<
+    AiStoryLocalGenerationPreparationPort["prepare"]
+  >[0] & {
+    predecessor: SequentialContinuityEvidence;
+  }) {
+    const releases = this.options.releases
+      ?? new AiStorySequentialLocalReleaseRepository();
+    const context = await releases.nextReleaseContext({
+      workspaceId: input.workspaceId,
+      executionPlanId: input.executionPlanId,
+      predecessorSceneExecutionId:
+        input.predecessor.predecessorPackage.sceneExecutionId,
+    });
+    if (!context.candidate) {
+      return { packageId: null, unitId: null, replayed: true, complete: true };
+    }
+    if (
+      !(
+        context.candidate.releaseState === "WAITING_FOR_PREDECESSOR"
+        || (
+          context.candidate.releaseState === "RELEASED"
+          && context.candidate.currentLocalGenerationPackageId
+        )
+      )
+      || context.candidate.sceneOrder
+        !== input.predecessor.predecessorPackage.order + 1
+    ) {
+      throw new AiStoryLocalGenerationError(
+        "LOCAL_GENERATION_AUTHORITY_INVALID",
+        "The immediate successor is not waiting on this predecessor",
+      );
+    }
+    const facts = this.options.loadFacts
+      ? await this.options.loadFacts(input)
+      : await this.loadFrozenFacts(
+          input,
+          context.candidate.sceneExecutionId,
+        );
+    const fact = facts.find(
+      (candidate) =>
+        candidate.sceneExecutionId === context.candidate!.sceneExecutionId
+        && candidate.order === context.candidate!.sceneOrder,
+    );
+    if (!fact) {
+      throw new AiStoryLocalGenerationError(
+        "LOCAL_GENERATION_AUTHORITY_INVALID",
+        "The immediate successor frozen Unit is missing",
+      );
+    }
+    const base = materializeProviderNeutralLocalGenerationPackage(fact);
+    if (base.version !== "local-generation-package.v2") {
+      throw new AiStoryLocalGenerationError(
+        "LOCAL_GENERATION_AUTHORITY_INVALID",
+        "Sequential successor requires the provider-neutral V2 base snapshot",
+      );
+    }
+    const pkg = materializeSequentialLocalPackageV3({
+      basePackage: base,
+      release: {
+        releaseRevision: context.candidate.releaseRevision,
+        releasedBy: input.actorUserId,
+        releasedAt: input.createdAt,
+      },
+      predecessor: input.predecessor,
+    });
+    const accepted = await releases.releaseSuccessor({
+      package: pkg,
+      actorUserId: input.actorUserId,
+    });
+    return {
+      packageId: accepted.package.packageId,
+      unitId: accepted.package.unitId,
+      replayed: accepted.replayed,
+      complete: false,
+    };
+  }
+
+  private async loadFrozenFacts(
+    input: Parameters<AiStoryLocalGenerationPreparationPort["prepare"]>[0],
+    onlySceneExecutionId?: string,
+  ) {
     const db = getDb();
     const persistence = this.options.persistence ?? new AiStorySceneExecutionPersistenceRepository();
     const compilation = await persistence.getByExecutionPlanId(input.executionPlanId);
@@ -99,6 +199,9 @@ export class AiStoryLocalGenerationService implements AiStoryLocalGenerationPrep
     const scenes = await resolveCurrentFrozenCanonicalSceneSet(db, input);
     const facts: ProviderNeutralLocalSceneFacts[] = [];
     for (const [index, sceneExecutionId] of input.orderedSceneExecutionIds.entries()) {
+      if (onlySceneExecutionId && sceneExecutionId !== onlySceneExecutionId) {
+        continue;
+      }
       const intent = compilation.intents.find((candidate) => candidate.identity.sceneExecutionId === sceneExecutionId);
       const instructions = compilation.instructionsBySceneExecutionId[sceneExecutionId];
       const [sceneExecution] = await db.select().from(schema.aiStorySceneExecutions).where(eq(schema.aiStorySceneExecutions.id, sceneExecutionId)).limit(1);
