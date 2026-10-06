@@ -2,15 +2,18 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import {
   AiStoryCharacterVirtualizerService,
+  AiStoryCharacterVoiceDnaPersistenceError,
   AiStoryReusableCharacterError,
   AiStoryReusableCharacterService,
   getDb,
+  loadReusableCharacterVoiceIdentity,
   schema,
 } from "@ceo-agent/db";
 import {
   AiStoryCharacterDefaultLookSchema,
   AiStoryCharacterIdentityCoreSchema,
   AiStoryCharacterMutableLookPolicySchema,
+  AiStoryCharacterVoiceDnaError,
   isUuid,
   publicReusableCharacterCard,
 } from "@ceo-agent/shared";
@@ -55,10 +58,15 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       history,
       visualClass: virtual?.visualClass ?? null,
       virtualStyle: virtual?.style ?? null,
-      voiceIdentity: null,
+      voiceIdentity: await loadReusableCharacterVoiceIdentity(ctx.db, ctx.scope, {
+        reusableCharacterId: character.reusableCharacterId,
+        reusableCharacterVersionId: character.reusableCharacterVersionId,
+      }),
     });
   } catch (error) {
     if (error instanceof AiStoryReusableCharacterError) return apiError(error.message, error.code, 409);
+    if (error instanceof AiStoryCharacterVoiceDnaPersistenceError) return apiError(error.message, error.code, 409);
+    if (error instanceof AiStoryCharacterVoiceDnaError) return apiError(error.message, error.code, 409);
     return handleApiError(error);
   }
 }

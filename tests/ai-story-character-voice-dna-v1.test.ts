@@ -18,6 +18,7 @@ import {
 } from "@ceo-agent/shared";
 import {
   buildAiStoryCharacterVoiceDna,
+  recomputeAiStoryCharacterVoiceDnaFingerprint,
   buildAiStoryReusableCharacterVersion,
   buildCampaignProjectionFromReusableCharacter,
   buildEpisodeCharacterBinding,
@@ -191,6 +192,7 @@ describe("Character Voice DNA V1", () => {
     expect(first.contractVersion).toBe("ai-story-character-voice-dna.v1");
     expect(first.voiceDnaFingerprint).toBe(second.voiceDnaFingerprint);
     expect(first.voiceDnaId).toBe(second.voiceDnaId);
+    expect(recomputeAiStoryCharacterVoiceDnaFingerprint(first)).toBe(first.voiceDnaFingerprint);
   });
 
   it("refuses a Voice DNA built for another character version", () => {
