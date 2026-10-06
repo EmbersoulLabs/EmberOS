@@ -15,6 +15,7 @@ export * from "./ai-story-commercial-story-outline-policy.server";
 export * from "./ai-story-canonical-outline-composer.server";
 export * from "./ai-story-character.server";
 export * from "./ai-story-reusable-character.server";
+export * from "./ai-story-character-reference-pack.server";
 export * from "./ai-story-character-dna.server";
 export * from "./ai-story-character-virtualizer.server";
 export * from "./ai-story-cast.server";

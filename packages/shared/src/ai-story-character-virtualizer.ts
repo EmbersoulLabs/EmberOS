@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AI_STORY_DERIVATIVE_REFERENCE_ASSET_ROLES,
   AI_STORY_REUSABLE_CHARACTER_ASSET_ROLES,
   publicReusableCharacterCard,
   type AiStoryReusableCharacterCard,
@@ -407,7 +408,12 @@ export function virtualCharacterLibraryCard(
 
 export function additionalReferenceRoles() {
   return AI_STORY_REUSABLE_CHARACTER_ASSET_ROLES.filter(
-    (role) => role !== "IDENTITY_MASTER" && role !== "CHARACTER_SOURCE_PORTRAIT"
+    (role) =>
+      role !== "IDENTITY_MASTER" &&
+      role !== "CHARACTER_SOURCE_PORTRAIT" &&
+      !AI_STORY_DERIVATIVE_REFERENCE_ASSET_ROLES.includes(
+        role as (typeof AI_STORY_DERIVATIVE_REFERENCE_ASSET_ROLES)[number]
+      )
   );
 }
 
