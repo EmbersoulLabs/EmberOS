@@ -7,6 +7,8 @@ import {
   AI_STORY_CHARACTER_DNA_COPY,
   AI_STORY_CHARACTER_VIRTUALIZER_COPY,
   additionalReferenceRoles,
+  describeVoiceIdentity,
+  type AiStoryCharacterVoiceDna,
   type AiStoryReusableCharacterVersion,
 } from "@ceo-agent/shared";
 import { AppShell } from "@/components/AppShell";
@@ -28,6 +30,7 @@ export default function CharacterEditPage() {
   const { slug, characterId } = useParams<{ slug: string; characterId: string }>();
   const [workspace, setWorkspace] = useState<{ id: string; name: string; role?: string } | null>(null);
   const [character, setCharacter] = useState<AiStoryReusableCharacterVersion | null>(null);
+  const [voiceIdentity, setVoiceIdentity] = useState<AiStoryCharacterVoiceDna | null>(null);
   const [error, setError] = useState("");
   const [virtualize, setVirtualize] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -37,6 +40,7 @@ export default function CharacterEditPage() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "Character could not be loaded");
     setCharacter(data.character);
+    setVoiceIdentity(data.voiceIdentity ?? null);
   }
 
   useEffect(() => {
@@ -90,6 +94,7 @@ export default function CharacterEditPage() {
       {workspace && character ? (
         <section className="mt-4 space-y-4" data-testid="character-edit">
           <h1 className="text-2xl font-bold text-navy">{character.name}</h1>
+          <VoiceIdentitySection voiceIdentity={voiceIdentity} />
           {dnaMode ? (
             <div data-testid="character-dna-edit">
               <p className="text-sm text-ink-secondary">{AI_STORY_CHARACTER_DNA_COPY.characterDnaCertified}</p>
@@ -158,5 +163,22 @@ export default function CharacterEditPage() {
         </section>
       ) : <p className="mt-4 text-sm text-ink-secondary">Loading…</p>}
     </AppShell>
+  );
+}
+
+function VoiceIdentitySection({ voiceIdentity }: { voiceIdentity: AiStoryCharacterVoiceDna | null }) {
+  const identity = describeVoiceIdentity(voiceIdentity);
+  return (
+    <section className="rounded-xl border border-border bg-white p-4" data-testid="voice-identity">
+      <h2 className="text-sm font-semibold text-navy">Voice Identity</h2>
+      <dl className="mt-2 grid gap-1 text-sm text-ink-secondary">
+        <div>Primary language: {identity.primaryLanguage}</div>
+        <div>Delivery identity: {identity.deliveryIdentity}</div>
+        <div>Voice presentation: {identity.voicePresentation}</div>
+        <div>Consistency mode: {identity.consistencyMode}</div>
+        <div>Status: {identity.status}</div>
+      </dl>
+      <p className="mt-2 text-sm text-navy" data-testid="voice-continuity-statement">{identity.continuityStatement}</p>
+    </section>
   );
 }
