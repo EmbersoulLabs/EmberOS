@@ -168,6 +168,14 @@ export default function CharacterEditPage() {
 
 function VoiceIdentitySection({ voiceIdentity }: { voiceIdentity: AiStoryCharacterVoiceDna | null }) {
   const identity = describeVoiceIdentity(voiceIdentity);
+  if (!voiceIdentity) {
+    return (
+      <section className="rounded-xl border border-border bg-white p-4" data-testid="voice-identity">
+        <h2 className="text-sm font-semibold text-navy">Voice Identity</h2>
+        <p className="mt-2 text-sm text-navy" data-testid="voice-continuity-statement">Not pinned</p>
+      </section>
+    );
+  }
   return (
     <section className="rounded-xl border border-border bg-white p-4" data-testid="voice-identity">
       <h2 className="text-sm font-semibold text-navy">Voice Identity</h2>

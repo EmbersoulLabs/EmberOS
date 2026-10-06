@@ -1096,6 +1096,39 @@ export const aiStoryEpisodeCharacterBindings = pgTable(
   ],
 );
 
+export const aiStoryCharacterVoiceDnaAuthorities = pgTable(
+  "ai_story_character_voice_dna_authorities",
+  {
+    voiceDnaId: uuid("voice_dna_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    reusableCharacterId: uuid("reusable_character_id").notNull(),
+    reusableCharacterVersionId: uuid("reusable_character_version_id").notNull(),
+    characterIdentityFingerprint: text("character_identity_fingerprint").notNull(),
+    voiceDnaFingerprint: text("voice_dna_fingerprint").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    status: text("status").notNull(),
+    supersedesVoiceDnaId: uuid("supersedes_voice_dna_id"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryCharacterVoiceDna>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    foreignKey({ name: "as_voice_dna_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_voice_dna_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_voice_dna_root_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_voice_dna_ver_fk", columns: [t.reusableCharacterVersionId], foreignColumns: [aiStoryReusableCharacterVersions.reusableCharacterVersionId] }).onDelete("restrict"),
+    foreignKey({ name: "as_voice_dna_supersede_fk", columns: [t.supersedesVoiceDnaId], foreignColumns: [t.voiceDnaId] }).onDelete("restrict"),
+    unique("ai_story_character_voice_dna_version_fingerprint_unique").on(t.reusableCharacterVersionId, t.voiceDnaFingerprint),
+    index("ai_story_character_voice_dna_scope_idx").on(t.orgId, t.workspaceId),
+    index("ai_story_character_voice_dna_version_idx").on(t.workspaceId, t.reusableCharacterId, t.reusableCharacterVersionId),
+    check("ai_story_character_voice_dna_status_check", sql`${t.status} in ('APPROVED', 'FROZEN')`),
+    check("ai_story_character_voice_dna_contract_check", sql`${t.contractVersion} = 'ai-story-character-voice-dna.v1'`),
+    check("ai_story_character_voice_dna_fingerprint_check", sql`${t.voiceDnaFingerprint} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("ai_story_character_voice_dna_identity_fingerprint_check", sql`${t.characterIdentityFingerprint} ~ '^sha256:[0-9a-f]{64}$'`),
+  ],
+);
+
 export const aiStoryCharacterContinuityAnchors = pgTable(
   "ai_story_character_continuity_anchors",
   {

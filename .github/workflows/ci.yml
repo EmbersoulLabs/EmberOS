@@ -232,6 +232,9 @@ jobs:
       - name: Certify reusable Character cross-Episode identity on PostgreSQL
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-reusable-character.integration.test.ts
 
+      - name: Certify durable Character Voice DNA authority on PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-character-voice-dna.integration.test.ts
+
       - name: Certify Character DNA analysis jobs server-only RLS
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts

@@ -27,3 +27,12 @@ export function buildAiStoryCharacterVoiceDna(
     voiceDnaFingerprint,
   });
 }
+
+/** Recompute the semantic fingerprint. Id and stored fingerprint are excluded. */
+export function recomputeAiStoryCharacterVoiceDnaFingerprint(
+  authority: AiStoryCharacterVoiceDna
+): string {
+  const { voiceDnaId: _voiceDnaId, voiceDnaFingerprint: _voiceDnaFingerprint, ...semantic } =
+    authority;
+  return sha256CanonicalIntegrityHash(semantic);
+}
