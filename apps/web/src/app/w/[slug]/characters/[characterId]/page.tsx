@@ -11,6 +11,7 @@ import {
 } from "@ceo-agent/shared";
 import { AppShell } from "@/components/AppShell";
 import { CharacterPortrait } from "@/components/ai-story/CharacterPortrait";
+import { CharacterReferencePackPanel } from "@/components/ai-story/CharacterReferencePackPanel";
 import { CharacterDnaWizard } from "@/components/ai-story/CharacterDnaWizard";
 import { CharacterVirtualizerWizard } from "@/components/ai-story/CharacterVirtualizerWizard";
 import { uploadLibraryFile } from "@/lib/library-upload";
@@ -135,6 +136,7 @@ export default function CharacterEditPage() {
               onSaved={() => { setVirtualize(false); void loadCharacter(workspace.id); }}
             />
           ) : null}
+          <CharacterReferencePackPanel workspaceId={workspace.id} character={character} />
           {dnaMode ? null : <div>
             <h2 className="text-sm font-semibold text-navy">{AI_STORY_CHARACTER_VIRTUALIZER_COPY.additionalReferences}</h2>
             <div className="mt-2 flex flex-wrap gap-2">
