@@ -38,8 +38,9 @@ export function collectReferencedAssetIds(
     if (id) ids.add(id);
   }
   for (const scene of animationPackage.scenePlan) {
-    if (scene.generationAuthority?.referenceSource !== "SCENE_EXPLICIT") continue;
-    for (const id of scene.generationAuthority.referenceAssetIds) {
+    const source = scene.generationAuthority?.referenceSource;
+    if (source !== "SCENE_EXPLICIT" && source !== "CHARACTER_SYNTHETIC_ANCHOR") continue;
+    for (const id of scene.generationAuthority?.referenceAssetIds ?? []) {
       if (id) ids.add(id);
     }
   }
