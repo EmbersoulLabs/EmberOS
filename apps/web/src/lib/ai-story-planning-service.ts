@@ -19,6 +19,7 @@ import {
 } from "@ceo-agent/shared";
 import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent } from "@ceo-agent/shared/server";
 import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
+import { assertCharacterContinuityBeforeStoryVersionFreeze } from "@/lib/ai-story-service";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -600,6 +601,11 @@ export async function createApprovedAnimationPackageRevision(
         `Animation Package revision is inconsistent: ${consistencyReport.issues.join("; ")}`
       );
     }
+    await assertCharacterContinuityBeforeStoryVersionFreeze(tx as unknown as Db, {
+      storyId: input.storyId,
+      storyVersionId: previousVersion.id,
+      freezeAt: now,
+    });
     const versionId = randomUUID();
     const animationPackageId = randomUUID();
     const versionNumber = Math.max(...versions.map((version) => version.versionNumber)) + 1;

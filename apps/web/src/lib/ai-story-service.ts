@@ -11,13 +11,100 @@ import {
   resolveProductVariantVisualGrounding,
   type ProductVariantSemanticFacts,
   assertAiStoryTransition,
+  evaluateStoryVersionFreezeContinuity,
   nextAiStoryVersionNumber,
   type AiStoryAssetSelection,
   type AiStoryStatus,
   type AiStoryStructuredDraft,
+  type StoryVersionFreezeBinding,
+  type StoryVersionFreezeBlockReason,
+  type StoryVersionFreezeScene,
 } from "@ceo-agent/shared";
 
 type Db = ReturnType<typeof getDb>;
+
+export class StoryVersionFreezeBlockedError extends Error {
+  readonly code: StoryVersionFreezeBlockReason;
+  constructor(reason: StoryVersionFreezeBlockReason) {
+    super(reason);
+    this.code = reason;
+  }
+}
+
+function freezeScenesFromScript(script: unknown): StoryVersionFreezeScene[] {
+  const scenes = (script as { scenes?: unknown[] } | null)?.scenes;
+  if (!Array.isArray(scenes)) return [];
+  return scenes.flatMap((scene) => {
+    if (!scene || typeof scene !== "object") return [];
+    const record = scene as {
+      characterIds?: unknown[];
+      entries?: Array<{ type?: string; speakerId?: string; voiceOwnerId?: string }>;
+    };
+    const persistentCharacterIds = (record.characterIds ?? []).filter(
+      (id): id is string => typeof id === "string"
+    );
+    const voiceCharacterIds = (record.entries ?? []).flatMap((entry) => {
+      if (entry?.type === "DIALOGUE" && entry.speakerId) return [entry.speakerId];
+      if (entry?.type === "VO" && entry.voiceOwnerId) return [entry.voiceOwnerId];
+      return [];
+    });
+    return [{ persistentCharacterIds, voiceCharacterIds }];
+  });
+}
+
+export async function assertCharacterContinuityBeforeStoryVersionFreeze(
+  db: Db,
+  input: { storyId: string; storyVersionId: string; freezeAt: Date }
+) {
+  const [story] = await db
+    .select({ orgId: schema.aiStories.orgId, workspaceId: schema.aiStories.workspaceId })
+    .from(schema.aiStories)
+    .where(eq(schema.aiStories.id, input.storyId))
+    .limit(1);
+  if (!story) throw new Error("Story not found");
+
+  const scripts = await db
+    .select({ script: schema.aiStoryScriptVersions.script })
+    .from(schema.aiStoryScriptVersions)
+    .where(
+      and(
+        eq(schema.aiStoryScriptVersions.storyId, input.storyId),
+        eq(schema.aiStoryScriptVersions.storyVersionId, input.storyVersionId)
+      )
+    );
+  const scenes = scripts.flatMap((row) => freezeScenesFromScript(row.script));
+  const rows = await db
+    .select()
+    .from(schema.aiStoryEpisodeCharacterBindings)
+    .where(eq(schema.aiStoryEpisodeCharacterBindings.storyId, input.storyId));
+  const bindings: StoryVersionFreezeBinding[] = rows.map((row) => {
+    const snapshot = row.snapshot as {
+      voiceDnaId?: string | null;
+      voiceDnaFingerprint?: string | null;
+    };
+    return {
+      orgId: row.orgId,
+      workspaceId: row.workspaceId,
+      campaignCharacterId: row.campaignCharacterId,
+      reusableCharacterId: row.reusableCharacterId,
+      reusableCharacterVersionId: row.reusableCharacterVersionId,
+      identityFingerprint: row.identityFingerprint,
+      voiceDnaId: snapshot.voiceDnaId ?? null,
+      voiceDnaFingerprint: snapshot.voiceDnaFingerprint ?? null,
+      createdAt: row.createdAt.toISOString(),
+    };
+  });
+  const decision = evaluateStoryVersionFreezeContinuity({
+    orgId: story.orgId,
+    workspaceId: story.workspaceId,
+    freezeAt: input.freezeAt.toISOString(),
+    scenes,
+    bindings,
+  });
+  if (decision.status === "BLOCK" && decision.reasonCode !== "PASS") {
+    throw new StoryVersionFreezeBlockedError(decision.reasonCode);
+  }
+}
 
 export async function loadCampaignAiStory(
   db: Db,
@@ -371,9 +458,16 @@ export async function freezeAiStoryVersion(
     return version;
   }
 
+  const freezeAt = new Date();
+  await assertCharacterContinuityBeforeStoryVersionFreeze(db, {
+    storyId: input.storyId,
+    storyVersionId: input.versionId,
+    freezeAt,
+  });
+
   const [frozen] = await db
     .update(schema.aiStoryVersions)
-    .set({ frozenAt: new Date(), frozenBy: input.frozenBy })
+    .set({ frozenAt: freezeAt, frozenBy: input.frozenBy })
     .where(
       and(
         eq(schema.aiStoryVersions.id, input.versionId),
@@ -394,4 +488,74 @@ export async function freezeAiStoryVersion(
     .where(eq(schema.aiStories.id, input.storyId));
 
   return frozen;
+}
+
+export async function freezeSuccessorStoryVersionAfterCharacterBinding(
+  db: Db,
+  input: { storyId: string; frozenBy: string; bindingCreatedAt: string }
+) {
+  const [story] = await db
+    .select()
+    .from(schema.aiStories)
+    .where(eq(schema.aiStories.id, input.storyId))
+    .limit(1);
+  if (!story?.currentVersionId) return null;
+  if (
+    ![
+      "draft",
+      "generating",
+      "review",
+      "approved",
+      "ready_for_animation",
+    ].includes(story.status)
+  ) {
+    return null;
+  }
+  const versions = await db
+    .select()
+    .from(schema.aiStoryVersions)
+    .where(eq(schema.aiStoryVersions.storyId, input.storyId))
+    .orderBy(asc(schema.aiStoryVersions.versionNumber));
+  const current = versions.find((version) => version.id === story.currentVersionId);
+  if (!current?.frozenAt) return null;
+  const historicalFrozenAt = current.frozenAt;
+  if (input.bindingCreatedAt <= historicalFrozenAt.toISOString()) return null;
+
+  const freezeAt = new Date(
+    Math.max(Date.now(), new Date(input.bindingCreatedAt).getTime())
+  );
+  await assertCharacterContinuityBeforeStoryVersionFreeze(db, {
+    storyId: input.storyId,
+    storyVersionId: current.id,
+    freezeAt,
+  });
+  const [successor] = await db
+    .insert(schema.aiStoryVersions)
+    .values({
+      storyId: input.storyId,
+      versionNumber: nextAiStoryVersionNumber(versions),
+      structuredContent: current.structuredContent,
+      sourceContextSnapshot: current.sourceContextSnapshot,
+      aiMetadata: current.aiMetadata,
+      userEdited: current.userEdited,
+      createdBy: input.frozenBy,
+      frozenAt: freezeAt,
+      frozenBy: input.frozenBy,
+    })
+    .returning();
+  if (!successor) throw new Error("Failed to create successor Story Version");
+
+  const [unchanged] = await db
+    .select({ frozenAt: schema.aiStoryVersions.frozenAt })
+    .from(schema.aiStoryVersions)
+    .where(eq(schema.aiStoryVersions.id, current.id))
+    .limit(1);
+  if (unchanged?.frozenAt?.toISOString() !== historicalFrozenAt.toISOString()) {
+    throw new Error("Historical Story Version cutoff was mutated");
+  }
+  await db
+    .update(schema.aiStories)
+    .set({ currentVersionId: successor.id, updatedAt: new Date() })
+    .where(eq(schema.aiStories.id, input.storyId));
+  return { successor, historicalVersionId: current.id, historicalFrozenAt };
 }

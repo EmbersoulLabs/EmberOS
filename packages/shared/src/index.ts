@@ -72,6 +72,7 @@ export * from "./ai-story-capability-mode-resolution";
 export * from "./ai-story-generation-authority";
 export * from "./ai-story-character";
 export * from "./ai-story-reusable-character";
+export * from "./ai-story-story-version-freeze-guard";
 export * from "./ai-story-character-reference-pack";
 export * from "./ai-story-character-dna";
 export * from "./ai-story-character-virtualizer";

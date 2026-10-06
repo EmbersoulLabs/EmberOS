@@ -4,7 +4,11 @@ import { isUuid, type AiStoryStatus } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
-import { freezeAiStoryVersion, loadCampaignAiStory } from "@/lib/ai-story-service";
+import {
+  StoryVersionFreezeBlockedError,
+  freezeAiStoryVersion,
+  loadCampaignAiStory,
+} from "@/lib/ai-story-service";
 
 export async function POST(
   _request: Request,
@@ -59,6 +63,9 @@ export async function POST(
       status: "ready_for_animation",
     });
   } catch (error) {
+    if (error instanceof StoryVersionFreezeBlockedError) {
+      return apiError(error.code, error.code, 409);
+    }
     return handleApiError(error);
   }
 }
