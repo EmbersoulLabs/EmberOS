@@ -39,6 +39,7 @@ export * from "./ai-story-local-generation";
 export * from "./ai-story-local-generation-v3.server";
 export * from "./ai-story-generation-result";
 export * from "./ai-story-v2v-execution";
+export * from "./ai-story-recommended-duration.server";
 export * from "./ai-story-v2v-execution.server";
 export * from "./ai-story-narrative-editorial-plan.server";
 export * from "./ai-story-assembly-v2";
