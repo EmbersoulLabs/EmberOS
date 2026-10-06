@@ -55,6 +55,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       history,
       visualClass: virtual?.visualClass ?? null,
       virtualStyle: virtual?.style ?? null,
+      voiceIdentity: null,
     });
   } catch (error) {
     if (error instanceof AiStoryReusableCharacterError) return apiError(error.message, error.code, 409);

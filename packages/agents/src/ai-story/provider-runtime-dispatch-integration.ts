@@ -168,6 +168,7 @@ export function compileImmutableSeedanceNativeAvRequest(input: {
     `The visible on-screen character bound to authority ${dialogue.characterId} speaks exactly: “${dialogue.exactText}”`,
     `Primary locale: ${dialogue.primaryLocale}. Delivery: ${dialogue.deliveryStyle}.`,
     `Performance intent: ${dialogue.performanceIntent}`,
+    ...(dialogue.voiceIdentityInstruction ? [dialogue.voiceIdentityInstruction] : []),
     `Emotion: ${dialogue.emotionIntent}; intensity: ${dialogue.speechIntensity}; pace: ${dialogue.paceIntent}.`,
     "Generate the voice, mouth movement, facial expression, body performance, and scene sound together in the same audiovisual result.",
     "Do not rewrite, translate, expand, paraphrase, or add discourse particles to the dialogue.",

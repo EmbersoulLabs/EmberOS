@@ -106,6 +106,7 @@ export * from "./ai-story-assembly-v2";
 export * from "./ai-story-audio-plan";
 export * from "./ai-story-voice-human-listening-review";
 export * from "./ai-story-native-dialogue";
+export * from "./ai-story-character-voice-dna";
 export * from "./ai-story-episode-first-ui";
 export * from "./ai-story-episode-intent";
 export * from "./ai-story-full-episode-preview";
