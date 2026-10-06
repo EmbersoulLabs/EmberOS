@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AiStoryAudioQcResultSchema } from "./ai-story-audio-qc";
 import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
 
 export const AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION = "ai-story-post-generation-qc.v1" as const;
@@ -196,6 +197,8 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   autoRetryAuthorized: z.literal(false),
   autoReleaseAuthorized: z.literal(false),
   creativeAuthority: z.literal(false),
+  /** Present only when this evaluation carried Audio QC. Historical rows omit it. */
+  audioQcResult: AiStoryAudioQcResultSchema.optional(),
   evaluationFingerprint: Hash,
   evaluatedAt: z.string().datetime(),
 }).strict().superRefine((value, context) => {

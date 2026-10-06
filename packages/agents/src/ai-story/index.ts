@@ -45,6 +45,7 @@ export * from "./assembly-v2-engine";
 export * from "./audio-mix-engine";
 export * from "./tts-execution-adapter";
 export * from "./native-av-result-validator";
+export * from "./audio-qc-media-facts";
 export * from "./assembly-runtime-facts";
 export * from "./assembly-runtime-projection";
 export * from "./assembly-runtime-job-memory";

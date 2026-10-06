@@ -7,6 +7,7 @@
  * plan/intent AI QC + mandatory human generated-media review (this module).
  */
 import { z } from "zod";
+import { AiStoryAudioQcResultSchema } from "./ai-story-audio-qc";
 import { RetryEligibilitySchema } from "./ai-story-differentiated-retry";
 import { AiStoryPostQcHumanReviewEvidenceSchema } from "./ai-story-post-generation-qc";
 
@@ -219,6 +220,7 @@ export const GeneratedSceneReviewReadModelSchema = z
     attempts: z.array(GeneratedSceneAttemptReadModelSchema),
     generatedMedia: GeneratedSceneMediaReadModelSchema.nullable().default(null),
     postGenerationQcEvidence: AiStoryPostQcHumanReviewEvidenceSchema.optional(),
+    audioQcResult: AiStoryAudioQcResultSchema.optional(),
     presentation: AiStorySceneReviewPresentationSchema.optional(),
   })
   .strict();
