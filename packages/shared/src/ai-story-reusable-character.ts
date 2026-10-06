@@ -59,6 +59,13 @@ export const AI_STORY_REUSABLE_CHARACTER_ASSET_ROLES = [
   "STYLE_REFERENCE",
   "CHARACTER_SOURCE_PORTRAIT",
   "SYNTHETIC_IDENTITY_ANCHOR",
+  "FULL_BODY_BACK",
+  "DETAIL_REFERENCE",
+] as const;
+/** Derived reference-pack semantics. They are not identity-version uploads. */
+export const AI_STORY_DERIVATIVE_REFERENCE_ASSET_ROLES = [
+  "FULL_BODY_BACK",
+  "DETAIL_REFERENCE",
 ] as const;
 export const AI_STORY_CHARACTER_CONTINUITY_ANCHOR_STATUSES = [
   "PROPOSED",
