@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { postQcAllowsHumanApproval, type AiStoryPostGenerationQcEvaluation, type AiStoryPostQcRequirement } from "@ceo-agent/shared";
+import { describeAudioQcResult, postQcAllowsHumanApproval, type AiStoryPostGenerationQcEvaluation, type AiStoryPostQcRequirement } from "@ceo-agent/shared";
 import {
   approveActionLabel,
   continuityStatusLabel,
@@ -138,6 +138,7 @@ export function LocalGenerationReview({ endpoint }: { endpoint: string }) {
     <button type="button" disabled={qcBusy || approveBusy} onClick={() => void saveQc()} className="rounded border px-3 py-2">{qcPhase === "done" && terminal ? terminal : qcActionLabel(qcPhase)}</button>
     {model.evaluation ? <>
       <p>Post-QC: {terminal}</p>
+      {model.evaluation.audioQcResult ? <section data-testid="local-audio-qc"><p>Audio QC</p><p>Expectation: {describeAudioQcResult(model.evaluation.audioQcResult).expectation}</p><p>Technical audio: {describeAudioQcResult(model.evaluation.audioQcResult).technicalAudio}</p><p>Voice identity lineage: {describeAudioQcResult(model.evaluation.audioQcResult).voiceIdentityLineage}</p><p>Dialogue audio: {describeAudioQcResult(model.evaluation.audioQcResult).dialogueAudio}</p><p>Human review: {describeAudioQcResult(model.evaluation.audioQcResult).humanReview}</p><p>Result: {model.evaluation.audioQcResult.overallResult}</p></section> : null}
       {model.evaluation.findings.filter(item => item.result !== "PASS").map(item => <p key={item.findingId} className="text-sm">{item.reason}</p>)}
       {model.evaluation.aggregateStatus === "POST_QC_REJECT" ? <p>Local regeneration required. Refresh the packages to download the retry instructions. No cloud fallback is used.</p> : null}
       <button type="button" disabled={approveBusy || qcBusy || !model.evaluation.eligibleForHumanReview || !postQcAllowsHumanApproval(model.evaluation)} onClick={() => void approve()} className="brand-btn-primary">{approveActionLabel(approvePhase)}</button>

@@ -104,6 +104,7 @@ export * from "./ai-story-video-observation-extraction";
 export * from "./ai-story-narrative-editorial-plan";
 export * from "./ai-story-assembly-v2";
 export * from "./ai-story-audio-plan";
+export * from "./ai-story-audio-qc";
 export * from "./ai-story-voice-human-listening-review";
 export * from "./ai-story-native-dialogue";
 export * from "./ai-story-character-voice-dna";
