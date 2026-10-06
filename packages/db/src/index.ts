@@ -57,6 +57,7 @@ export * from "./queries/ai-story-outline";
 export * from "./queries/ai-story-outline-profile-authority";
 export * from "./queries/ai-story-character";
 export * from "./queries/ai-story-reusable-character";
+export * from "./queries/ai-story-character-voice-dna";
 export * from "./queries/ai-story-character-virtualizer";
 export * from "./queries/ai-story-character-dna";
 export * from "./queries/ai-story-asset-aware-execution-planner";

@@ -48,6 +48,7 @@
     "sql:ai-story-local-generation-package-contract-v2": "tsx scripts/apply-ai-story-local-generation-package-contract-v2.ts",
     "sql:ai-story-character": "tsx scripts/apply-ai-story-character-v1.ts",
     "sql:ai-story-reusable-character": "tsx scripts/apply-ai-story-reusable-character-v1.ts",
+    "sql:ai-story-character-voice-dna": "tsx scripts/apply-ai-story-character-voice-dna-v1.ts",
     "sql:ai-story-character-virtualizer": "tsx scripts/apply-ai-story-character-virtualizer-v1.ts",
     "sql:ai-story-character-virtualizer-real-provider-calls": "tsx scripts/apply-ai-story-character-virtualizer-real-provider-calls-01.ts",
     "sql:ai-story-character-dna": "tsx scripts/apply-ai-story-character-dna-from-photo-v1.ts",

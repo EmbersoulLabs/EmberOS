@@ -49,6 +49,7 @@ export * from "./ai-story-voice-human-listening-review";
 export * from "./ai-story-voice-human-listening-review.server";
 export * from "./ai-story-native-dialogue";
 export * from "./ai-story-native-dialogue.server";
+export * from "./ai-story-character-voice-dna.server";
 export * from "./ai-story-episode-revision-authority";
 export * from "./ai-story-episode-revision-authority.server";
 export * from "./ai-story-episode-continuity";
