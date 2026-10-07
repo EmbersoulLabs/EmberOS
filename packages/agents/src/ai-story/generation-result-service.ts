@@ -2,9 +2,13 @@ import {
   AiStoryGenerationResultSchema, AiStoryPostGenerationQcInputPackageSchema,
   AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION, AI_STORY_POST_QC_POLICY_VERSION,
   postQcAllowsHumanApproval,
+  buildLocalGpuGenerationInputAuthority,
+  isDesktopFilesystemPath,
+  localGpuWorkspaceAssetPath,
   type AiStoryGenerationResult, type AiStoryLocalGenerationPackage,
   type AiStoryLocalGenerationOutput, type AiStoryPostQcRequirement,
   type AiStoryPostGenerationQcEvaluation, type AiStoryGenerationResultDecision,
+  type LocalGpuAudioPolicy, type LocalGpuEnvironment,
 } from "@ceo-agent/shared";
 import {
   materializeGenerationResult, assertGenerationResultScope, deterministicPersistenceUuid,
@@ -89,6 +93,106 @@ export function materializeLocalGenerationResult(input: {
       durationMs: Math.round(output.durationSec * 1000), mediaType: "video/mp4",
       width: output.width, height: output.height, readable: true, decodable: true },
     createdAt: output.uploadedAt,
+  });
+}
+
+/** Binds a completed LOCAL_GPU worker result to the existing Generation Result. */
+export function materializeLocalGpuGenerationResult(input: {
+  package: AiStoryLocalGenerationPackage;
+  serverEnvironment: LocalGpuEnvironment;
+  jobId: string;
+  workflow: string;
+  audioPolicy: LocalGpuAudioPolicy;
+  plannedDurationMs: number;
+  animationPackageId: string;
+  sceneId: string;
+  sceneOrder: number;
+  assetId: string;
+  contentHash: string;
+  byteSize: number;
+  actualDurationMs: number;
+  width: number | null;
+  height: number | null;
+  fps: number;
+  hasAudio: boolean;
+  createdAt: string;
+}) {
+  const storagePath = localGpuWorkspaceAssetPath(input.package.workspaceId, input.contentHash);
+  if (isDesktopFilesystemPath(storagePath)) {
+    throw new Error("LOCAL_GPU_FILESYSTEM_PATH_REJECTED");
+  }
+  const lineage = localGenerationResultLineage(input.package);
+  const localWorkerOutputId = deterministicPersistenceUuid("local-gpu-worker-output.v1", {
+    environment: input.serverEnvironment,
+    jobId: input.jobId,
+    contentHash: input.contentHash,
+  });
+  return materializeGenerationResult({
+    ownership: {
+      orgId: input.package.organizationId,
+      workspaceId: input.package.workspaceId,
+      campaignId: input.package.campaignId,
+      storyId: input.package.storyId,
+      storyVersionId: input.package.storyVersionId,
+      animationPackageId: input.animationPackageId,
+      executionPlanId: input.package.executionPlanId,
+    },
+    runtimeAuthorizationId: input.package.runtimeAuthorizationId,
+    generationUnitId: input.package.unitId,
+    sceneExecutionId: input.package.sceneExecutionId,
+    sceneId: input.sceneId,
+    sceneOrder: input.sceneOrder,
+    source: {
+      sourceKind: "LOCAL_GPU_WORKER",
+      providerAttemptId: null,
+      localGenerationOutputId: null,
+      localWorkerOutputId,
+    },
+    compiledRequestId: lineage.compiledRequestId,
+    compiledRequestFingerprint: lineage.compiledRequestFingerprint,
+    inputAuthorityFingerprint: lineage.inputAuthorityFingerprint,
+    ...(lineage.localSourceAuthorityId ? {
+      localSourceAuthorityId: lineage.localSourceAuthorityId,
+      localSourceAuthorityFingerprint: lineage.localSourceAuthorityFingerprint,
+    } : {}),
+    inputAuthority: buildLocalGpuGenerationInputAuthority({
+      localGpuEnvironment: input.serverEnvironment,
+      localGpuJobId: input.jobId,
+      localGpuWorkflow: input.workflow,
+      workspaceId: input.package.workspaceId,
+      storyId: input.package.storyId,
+      storyVersionId: input.package.storyVersionId,
+      sceneExecutionId: input.package.sceneExecutionId,
+      audioPolicy: input.audioPolicy,
+      plannedDurationMs: input.plannedDurationMs,
+      actualDurationMs: input.actualDurationMs,
+      fps: input.fps,
+      hasAudio: input.hasAudio,
+      localPackageId: input.package.packageId,
+      localPackageFingerprint: input.package.packageFingerprint,
+      characterAuthority: input.package.characterAuthority,
+      productAuthority: input.package.productAuthority,
+      references: input.package.references,
+      generationMode: input.package.generationMode,
+      generateAudio: input.package.generateAudio,
+      audioBlocked: input.package.audioBlocked,
+      sourceAuthority: input.package.sourceAuthority,
+      planningAuthority: input.package.planningAuthority,
+    }),
+    media: {
+      assetId: input.assetId,
+      contentHash: input.contentHash,
+      durableObjectReference: storagePath,
+      storagePath,
+      byteSize: input.byteSize,
+      durationMs: input.actualDurationMs,
+      mediaType: "video/mp4",
+      width: input.width,
+      height: input.height,
+      readable: true,
+      decodable: true,
+    },
+    createdAt: input.createdAt,
   });
 }
 

@@ -3,6 +3,9 @@ import {
   AiStoryGenerationResultSchema, AiStoryGenerationResultDecisionSchema,
   AiStoryPostGenerationQcEvaluationSchema, CanonicalSceneResultSchema,
   AiStoryProviderAttemptBindingSchema,
+  LocalGpuGenerationInputAuthoritySchema,
+  assertLocalGpuGenerationResultBinding,
+  buildLocalGpuGenerationInputAuthority,
   postQcAllowsHumanApproval,
   type AiStoryGenerationResult, type AiStoryGenerationResultDecision,
   type CanonicalSceneResult,
@@ -182,9 +185,63 @@ export class AiStoryGenerationResultRepository {
         })) {
           throw new Error("GENERATION_RESULT_REMOTE_TERMINAL_REQUIRED");
         }
+      } else if (result.source.sourceKind === "LOCAL_GPU_WORKER") {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${plan.id}))`);
+        const parsedAuthority = LocalGpuGenerationInputAuthoritySchema.safeParse(result.inputAuthority);
+        if (!parsedAuthority.success) throw new Error("LOCAL_GPU_GENERATION_RESULT_AUTHORITY_INVALID");
+        const configured = process.env.LOCAL_GPU_ENVIRONMENT?.trim();
+        const serverEnvironment = configured === "staging" || configured === "production" ? configured : null;
+        try {
+          assertLocalGpuGenerationResultBinding({
+            serverEnvironment,
+            authority: parsedAuthority.data,
+            mediaDurationMs: result.media.durationMs,
+          });
+        } catch (error) {
+          throw new Error(error instanceof Error ? error.message : "LOCAL_GPU_GENERATION_RESULT_AUTHORITY_INVALID");
+        }
+        const [pkg] = await tx.select().from(schema.aiStoryLocalGenerationPackages).where(
+          eq(schema.aiStoryLocalGenerationPackages.packageId, parsedAuthority.data.localPackageId),
+        ).limit(1);
+        const [asset] = await tx.select().from(schema.assets).where(eq(schema.assets.id, result.media.assetId)).limit(1);
+        const [release] = pkg?.contractVersion === "local-generation-package.v3"
+          ? await tx.select().from(schema.aiStorySceneReleaseStates).where(and(
+              eq(schema.aiStorySceneReleaseStates.workspaceId, plan.workspaceId),
+              eq(schema.aiStorySceneReleaseStates.executionPlanId, plan.id),
+              eq(schema.aiStorySceneReleaseStates.sceneExecutionId, result.sceneExecutionId),
+              eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
+              eq(schema.aiStorySceneReleaseStates.currentLocalGenerationPackageId, pkg.packageId),
+            )).limit(1).for("share")
+          : [true];
+        const expectedAuthority = pkg ? buildLocalGpuGenerationInputAuthority({
+          ...parsedAuthority.data,
+          workspaceId: pkg.package.workspaceId,
+          storyId: pkg.package.storyId,
+          storyVersionId: pkg.package.storyVersionId,
+          sceneExecutionId: pkg.package.sceneExecutionId,
+          localPackageId: pkg.packageId,
+          localPackageFingerprint: pkg.packageFingerprint,
+          characterAuthority: pkg.package.characterAuthority,
+          productAuthority: pkg.package.productAuthority,
+          references: pkg.package.references,
+          generationMode: pkg.package.generationMode,
+          generateAudio: pkg.package.generateAudio,
+          audioBlocked: pkg.package.audioBlocked,
+          sourceAuthority: pkg.package.sourceAuthority,
+          planningAuthority: pkg.package.planningAuthority,
+        }) : null;
+        if (!pkg || !asset || !release || !expectedAuthority || asset.status !== "ready" ||
+            pkg.unitId !== result.generationUnitId || pkg.sceneExecutionId !== result.sceneExecutionId ||
+            pkg.executionPlanId !== plan.id || pkg.runtimeAuthorizationId !== runtime.runtimeAuthorizationId ||
+            pkg.workspaceId !== plan.workspaceId ||
+            canonicalPersistenceHash(result.inputAuthority) !== canonicalPersistenceHash(expectedAuthority) ||
+            asset.fileSizeBytes !== result.media.byteSize ||
+            asset.workspaceId !== plan.workspaceId || asset.orgId !== plan.orgId || asset.campaignId !== plan.campaignId ||
+            asset.contentHash !== result.media.contentHash || asset.storagePath !== result.media.storagePath) {
+          throw new Error("GENERATION_RESULT_LOCAL_GPU_SOURCE_MISMATCH");
+        }
       } else {
-        // Contract is ready; no local Worker producer is enabled in V1.
-        throw new Error("LOCAL_GPU_WORKER_SOURCE_NOT_ENABLED");
+        throw new Error("GENERATION_RESULT_SOURCE_UNSUPPORTED");
       }
       const rows = await tx.insert(schema.aiStoryGenerationResults).values({
         generationResultId: result.generationResultId, ...result.ownership,
