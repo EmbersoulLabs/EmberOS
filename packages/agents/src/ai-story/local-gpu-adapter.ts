@@ -4,6 +4,7 @@ import {
   isDesktopFilesystemPath,
   LOCAL_GPU_AUDIO_POLICIES,
   LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
+  LOCAL_GPU_CAPABILITIES_ACTION,
   LOCAL_GPU_DEFAULT_REQUEST_TTL_MS,
   LOCAL_GPU_JOB_STATES,
   LOCAL_GPU_PROVIDER_ID,
@@ -131,24 +132,27 @@ export class LocalGpuCloudAdapter {
     return { environment: this.config.environment, secret: this.config.signingSecret };
   }
 
-  private authorize(scope: LocalGpuJobScope, workflow: string, jobId: string): { token: string; fields: LocalGpuSignedFields } {
+  private authorize(scope: LocalGpuJobScope, action: string, workflow: string, jobId: string): { token: string; fields: LocalGpuSignedFields } {
     assertLocalGpuAccess(scope.actor, { workspaceId: scope.workspaceId }, {
       agencyLocalGpuEnabled: this.config.agencyEnabled,
     });
     const { environment, secret } = this.requireEnabledEnvironment();
-    const expiresAt = new Date(this.clock.now().getTime() + LOCAL_GPU_DEFAULT_REQUEST_TTL_MS).toISOString();
+    const expiresAt = this.clock.now().getTime() + LOCAL_GPU_DEFAULT_REQUEST_TTL_MS;
     assertLocalGpuRequestExpiry(expiresAt, this.clock.now());
+    const authority = scope.actor.platformAdminStatus === "ACTIVE_GRANT" ? "SUPERADMIN" : "AGENCY";
     const fields: LocalGpuSignedFields = {
+      v: 1,
       environment,
+      action,
       jobId,
       workspaceId: scope.workspaceId,
       actorId: scope.actor.userId,
+      authority,
       workflow,
+      sceneExecutionId: scope.sceneExecutionId ?? "",
       expiresAt,
       nonce: this.clock.nonce(),
-      ...(scope.sceneExecutionId ? { sceneExecutionId: scope.sceneExecutionId } : {}),
-      ...(scope.storyId ? { storyId: scope.storyId } : {}),
-      ...(scope.storyVersionId ? { storyVersionId: scope.storyVersionId } : {}),
+      uploadBinding: {},
     };
     return { token: signLocalGpuRequest(secret, fields).token, fields };
   }
@@ -199,7 +203,7 @@ export class LocalGpuCloudAdapter {
 
   async capabilities(scope: LocalGpuJobScope): Promise<{ workflows: string[] }> {
     const jobId = randomUUID();
-    const { token } = this.authorize({ ...scope, workflow: "CAPABILITIES" }, "CAPABILITIES", jobId);
+    const { token } = this.authorize(scope, LOCAL_GPU_CAPABILITIES_ACTION, "", jobId);
     const response = await this.send({ method: "GET", path: "/v1/capabilities", token });
     if (response.status !== 200) throw new LocalGpuContractError("LOCAL_GPU_CAPABILITIES_FAILED");
     return { workflows: collectWorkflows(response.json) };
@@ -260,7 +264,7 @@ export class LocalGpuCloudAdapter {
       pinnedVoiceDna: input.pinnedVoiceDna,
     });
     const jobId = this.jobIdFor(input.package);
-    const { token, fields } = this.authorize(scope, workflow, jobId);
+    const { token, fields } = this.authorize(scope, "submit", workflow, jobId);
     const body = {
       environment: fields.environment,
       jobId,
@@ -302,7 +306,7 @@ export class LocalGpuCloudAdapter {
     state: LocalGpuJobState;
     disposition: ReturnType<typeof localGpuTerminalDisposition>;
   }> {
-    const { token } = this.authorize(scope, scope.workflow, jobId);
+    const { token } = this.authorize(scope, "status", scope.workflow, jobId);
     const response = await this.send({ method: "GET", path: `/v1/jobs/${jobId}`, token });
     if (response.status !== 200) throw new LocalGpuContractError("LOCAL_GPU_STATUS_FAILED");
     const record = asRecord(asRecord(response.json).job ?? response.json);
@@ -315,7 +319,7 @@ export class LocalGpuCloudAdapter {
     confirmed: boolean;
     state: LocalGpuJobState | "CANCELLATION_REQUESTED";
   }> {
-    const { token } = this.authorize(scope, scope.workflow, jobId);
+    const { token } = this.authorize(scope, "cancel", scope.workflow, jobId);
     const response = await this.send({ method: "POST", path: `/v1/jobs/${jobId}/cancel`, token, body: {} });
     if (response.status < 200 || response.status >= 300) {
       throw new LocalGpuContractError("LOCAL_GPU_CANCEL_FAILED");
@@ -339,7 +343,7 @@ export class LocalGpuCloudAdapter {
     hasAudio: boolean;
     byteSize: number | null;
   }> {
-    const { token } = this.authorize(scope, scope.workflow, jobId);
+    const { token } = this.authorize(scope, "result", scope.workflow, jobId);
     const response = await this.send({ method: "GET", path: `/v1/jobs/${jobId}/result`, token });
     if (response.status !== 200) throw new LocalGpuContractError("LOCAL_GPU_RESULT_FAILED");
     const record = asRecord(asRecord(response.json).result ?? response.json);

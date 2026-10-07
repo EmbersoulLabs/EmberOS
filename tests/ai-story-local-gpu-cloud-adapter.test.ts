@@ -10,7 +10,10 @@ import {
   assertLocalGpuResultEnvironment,
   canonicalLocalGpuSigningPayload,
   LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
+  LOCAL_GPU_CAPABILITIES_ACTION,
+  LOCAL_GPU_CLAIM_ORDER,
   LOCAL_GPU_PROVIDER_ID,
+  LOCAL_GPU_PUBLIC_DUMMY_SIGNING_SECRET,
   LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
   localGpuPlannedDurationMs,
   mapLocalGpuAudioPolicy,
@@ -147,20 +150,41 @@ function harness(handler: (call: Call) => { status: number; body: string }, envi
   return { client, calls };
 }
 
+const expiresAtMs = Date.parse("2026-10-07T04:02:00.000Z");
+
 function signedFields(environment: "staging" | "production" = "staging") {
   return {
+    v: 1 as const,
     environment,
+    action: "submit" as const,
     jobId: id(70),
     workspaceId: id(3),
     actorId: id(16),
+    authority: "SUPERADMIN",
     workflow: "MINIMAX_H3_R2V",
-    expiresAt: "2026-10-07T04:02:00.000Z",
-    nonce: "nonce-1",
     sceneExecutionId: id(9),
-    storyId: id(5),
-    storyVersionId: id(6),
-  } as const;
+    expiresAt: expiresAtMs,
+    nonce: "nonce-1",
+    uploadBinding: {},
+  };
 }
+
+const DUMMY_CAPABILITIES_CLAIMS = {
+  v: 1 as const,
+  environment: "production" as const,
+  action: LOCAL_GPU_CAPABILITIES_ACTION,
+  jobId: id(70),
+  workspaceId: id(3),
+  actorId: id(16),
+  authority: "SUPERADMIN",
+  workflow: "",
+  sceneExecutionId: "",
+  expiresAt: expiresAtMs,
+  nonce: "nonce-1",
+  uploadBinding: {},
+};
+const DESKTOP_DUMMY_PAYLOAD = "eyJ2IjoxLCJlbnZpcm9ubWVudCI6InByb2R1Y3Rpb24iLCJhY3Rpb24iOiJjYXBhYmlsaXRpZXMiLCJqb2JJZCI6IjAwMDAwMDcwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsIndvcmtzcGFjZUlkIjoiMDAwMDAwMDMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIiwiYWN0b3JJZCI6IjAwMDAwMDE2LTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImF1dGhvcml0eSI6IlNVUEVSQURNSU4iLCJ3b3JrZmxvdyI6IiIsInNjZW5lRXhlY3V0aW9uSWQiOiIiLCJleHBpcmVzQXQiOjE3OTEzNDU3MjAwMDAsIm5vbmNlIjoibm9uY2UtMSIsInVwbG9hZEJpbmRpbmciOnt9fQ";
+const DESKTOP_DUMMY_SIGNATURE = "ansdm4e94jw7GeqUCdtgMN9wmX0JRzyvrXBXg_it5bI";
 
 describe("LOCAL_GPU cloud adapter", () => {
   it("keeps the provider disabled until the environment enables it", async () => {
@@ -209,31 +233,64 @@ describe("LOCAL_GPU cloud adapter", () => {
     expect(() => assertLocalGpuAccess({ ...actor("DENIED"), isSuperadmin: true } as never, { workspaceId: id(3) })).toThrow("LOCAL_GPU_CLIENT_AUTHORITY_REJECTED");
   });
 
-  it("signs environment, nonce, and expiry in a deterministic payload", () => {
+  it("signs environment, nonce, and epoch-millisecond expiry over the base64url payload", () => {
     const staging = signLocalGpuRequest(secret, signedFields("staging"));
     const reordered = signLocalGpuRequest(secret, {
+      uploadBinding: {},
       nonce: "nonce-1",
-      expiresAt: "2026-10-07T04:02:00.000Z",
+      expiresAt: expiresAtMs,
+      sceneExecutionId: id(9),
       workflow: "MINIMAX_H3_R2V",
+      authority: "SUPERADMIN",
       actorId: id(16),
       workspaceId: id(3),
       jobId: id(70),
+      action: "submit",
       environment: "staging",
-      storyVersionId: id(6),
-      storyId: id(5),
-      sceneExecutionId: id(9),
+      v: 1,
     });
     const production = signLocalGpuRequest(productionSecret, signedFields("production"));
     expect(staging).toEqual(reordered);
+    expect(Object.keys(JSON.parse(staging.canonicalPayload))).toEqual([...LOCAL_GPU_CLAIM_ORDER]);
     expect(staging.canonicalPayload).toContain('"environment":"staging"');
     expect(staging.canonicalPayload).toContain('"nonce":"nonce-1"');
-    expect(staging.canonicalPayload).toContain('"expiresAt":"2026-10-07T04:02:00.000Z"');
-    expect(staging.signature).toBe(createHmac("sha256", secret).update(staging.canonicalPayload, "utf8").digest("hex"));
+    expect(staging.canonicalPayload).toContain(`"expiresAt":${expiresAtMs}`);
+    expect(staging.canonicalPayload).not.toContain("2026-10-07T04:02:00.000Z");
+    expect(staging.signature).toBe(createHmac("sha256", Buffer.from(secret, "utf8")).update(staging.payload, "utf8").digest("base64url"));
+    expect(staging.signature).not.toBe(createHmac("sha256", secret).update(staging.canonicalPayload, "utf8").digest("hex"));
+    expect(staging.token).toBe(`Bearer ${staging.payload}.${staging.signature}`.replace(/^Bearer /, ""));
+    expect(staging.payload.includes("=")).toBe(false);
+    expect(staging.signature.includes("=")).toBe(false);
     expect(staging.signature).not.toBe(production.signature);
     expect(staging.token).not.toContain(secret);
+    expect(staging.token).not.toContain("GET");
+    expect(staging.token).not.toContain("/v1/");
     expect(canonicalLocalGpuSigningPayload(signedFields("staging"))).toBe(staging.canonicalPayload);
-    expect(() => assertLocalGpuRequestExpiry("2026-10-07T03:00:00.000Z", now)).toThrow("LOCAL_GPU_REQUEST_EXPIRY_INVALID");
-    expect(() => assertLocalGpuRequestExpiry("2026-10-08T04:00:00.000Z", now)).toThrow("LOCAL_GPU_REQUEST_EXPIRY_INVALID");
+    expect(() => assertLocalGpuRequestExpiry(now.getTime() - 1, now)).toThrow("LOCAL_GPU_REQUEST_EXPIRY_INVALID");
+    expect(() => assertLocalGpuRequestExpiry(now.getTime() + 600_001, now)).toThrow("LOCAL_GPU_REQUEST_EXPIRY_INVALID");
+    const signer = readFileSync(join(root, "packages/agents/src/ai-story/local-gpu-signing.ts"), "utf8");
+    expect(signer).toContain('Buffer.from(secret, "utf8")');
+    expect(signer).not.toContain('Buffer.from(secret, "hex")');
+    expect(signer).not.toContain("hexToBytes");
+    expect(signer).not.toContain("decodeHex");
+  });
+
+  it("matches the public desktop dummy capabilities vector byte for byte", () => {
+    const signed = signLocalGpuRequest(LOCAL_GPU_PUBLIC_DUMMY_SIGNING_SECRET, DUMMY_CAPABILITIES_CLAIMS);
+    expect(signed.payload).toBe(DESKTOP_DUMMY_PAYLOAD);
+    expect(signed.signature).toBe(DESKTOP_DUMMY_SIGNATURE);
+    expect(signed.token).toBe(`${DESKTOP_DUMMY_PAYLOAD}.${DESKTOP_DUMMY_SIGNATURE}`);
+    expect(LOCAL_GPU_PUBLIC_DUMMY_SIGNING_SECRET).not.toBe(secret);
+    expect(LOCAL_GPU_PUBLIC_DUMMY_SIGNING_SECRET).not.toBe(productionSecret);
+    const decoded = JSON.parse(Buffer.from(signed.payload, "base64url").toString("utf8")) as {
+      action: string;
+      environment: string;
+      expiresAt: number;
+    };
+    expect(decoded.action).toBe("capabilities");
+    expect(decoded.environment).toBe("production");
+    expect(decoded.expiresAt).toBe(expiresAtMs);
+    expect(signed.canonicalPayload).not.toContain("/v1/capabilities");
   });
 
   it("maps the certified execution package without recalculating duration or collapsing references", async () => {

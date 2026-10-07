@@ -5,8 +5,9 @@
  * remote video provider and it does not own duration, character, product,
  * sequential release, voice, or QC authority.
  *
- * The live worker accepts `Authorization: Bearer <base64url(payload)>.<hex hmac>`.
- * The payload is this module's canonical JSON, with keys in a fixed order.
+ * The desktop worker accepts `Authorization: Bearer <base64url(payload)>.<base64url(hmac)>`.
+ * HMAC-SHA256 covers the base64url payload string. The secret is a UTF-8 string.
+ * Claim order is fixed. expiresAt is Unix epoch milliseconds. HTTP transport is not signed.
  */
 import { z } from "zod";
 import type { AiStoryAudioQcExpectation } from "./ai-story-audio-qc";
@@ -20,9 +21,28 @@ export const LOCAL_GPU_AUTOMATIC_GENERATION_RETRY = 0 as const;
 export const LOCAL_GPU_REMOTE_PROVIDER_FALLBACK = 0 as const;
 export const LOCAL_GPU_AUTO_APPROVED = false as const;
 export const LOCAL_GPU_DEFAULT_AGENCY_ENABLED = false as const;
-export const LOCAL_GPU_DEFAULT_REQUEST_TTL_MS = 120_000 as const;
+export const LOCAL_GPU_DEFAULT_REQUEST_TTL_MS = 600_000 as const;
 export const LOCAL_GPU_MAX_REQUEST_TTL_MS = 600_000 as const;
 export const LOCAL_GPU_SIGNING_VERSION = "local-gpu-job-token.v1" as const;
+export const LOCAL_GPU_TOKEN_VERSION = 1 as const;
+/** Capabilities operation claim. This is not the HTTP route. */
+export const LOCAL_GPU_CAPABILITIES_ACTION = "capabilities" as const;
+export const LOCAL_GPU_CLAIM_ORDER = [
+  "v",
+  "environment",
+  "action",
+  "jobId",
+  "workspaceId",
+  "actorId",
+  "authority",
+  "workflow",
+  "sceneExecutionId",
+  "expiresAt",
+  "nonce",
+  "uploadBinding",
+] as const;
+/** Public dummy only. Never a staging or production signing secret. */
+export const LOCAL_GPU_PUBLIC_DUMMY_SIGNING_SECRET = "local-gpu-public-dummy-secret" as const;
 
 export const LOCAL_GPU_ENVIRONMENTS = ["staging", "production"] as const;
 export const LOCAL_GPU_AUDIO_POLICIES = ["NATIVE", "REMOVE_AUDIO", "PRESERVE"] as const;
@@ -38,20 +58,7 @@ export const LOCAL_GPU_JOB_STATES = [
 ] as const;
 export const LOCAL_GPU_HEALTH_STATES = ["AVAILABLE", "UNAVAILABLE", "DISABLED"] as const;
 
-export const LOCAL_GPU_SIGNED_FIELDS = [
-  "environment",
-  "jobId",
-  "workspaceId",
-  "actorId",
-  "workflow",
-  "expiresAt",
-  "nonce",
-] as const;
-export const LOCAL_GPU_BOUND_FIELDS = [
-  "sceneExecutionId",
-  "storyId",
-  "storyVersionId",
-] as const;
+export const LOCAL_GPU_SIGNED_FIELDS = LOCAL_GPU_CLAIM_ORDER;
 
 const Id = z.string().uuid();
 const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -73,43 +80,56 @@ export class LocalGpuContractError extends Error {
 }
 
 export type LocalGpuSignedFields = {
+  v?: typeof LOCAL_GPU_TOKEN_VERSION;
   environment: LocalGpuEnvironment;
+  action: string;
   jobId: string;
   workspaceId: string;
   actorId: string;
+  authority: string;
   workflow: string;
-  expiresAt: string;
+  sceneExecutionId: string;
+  expiresAt: number;
   nonce: string;
-  sceneExecutionId?: string;
-  storyId?: string;
-  storyVersionId?: string;
+  uploadBinding: Record<string, unknown>;
 };
 
-function assertSignedScalar(value: string, field: string): string {
-  if (!value || /[\r\n]/.test(value)) {
+function assertSignedString(value: string, field: string, allowEmpty = false): string {
+  if (typeof value !== "string" || (!allowEmpty && value.length === 0) || /[\r\n]/.test(value)) {
     throw new LocalGpuContractError(`LOCAL_GPU_SIGNED_FIELD_INVALID:${field}`);
   }
   return value;
 }
 
-/** Deterministic JSON. Key order is the signing contract, not object enumeration. */
+/** Compact JSON in desktop claim order. Callers cannot reorder or omit claims. */
 export function canonicalLocalGpuSigningPayload(fields: LocalGpuSignedFields): string {
-  const environment = LocalGpuEnvironmentSchema.parse(fields.environment);
-  const entries: Array<[string, string]> = LOCAL_GPU_SIGNED_FIELDS.map((key) => {
-    const value = key === "environment" ? environment : fields[key];
-    return [key, assertSignedScalar(value, key)];
-  });
-  for (const key of LOCAL_GPU_BOUND_FIELDS) {
-    const value = fields[key];
-    if (value) entries.push([key, assertSignedScalar(value, key)]);
+  if (!Number.isInteger(fields.expiresAt)) {
+    throw new LocalGpuContractError("LOCAL_GPU_SIGNED_FIELD_INVALID:expiresAt");
   }
-  return `{${entries.map(([key, value]) => `${JSON.stringify(key)}:${JSON.stringify(value)}`).join(",")}}`;
+  if (!fields.uploadBinding || typeof fields.uploadBinding !== "object" || Array.isArray(fields.uploadBinding)) {
+    throw new LocalGpuContractError("LOCAL_GPU_SIGNED_FIELD_INVALID:uploadBinding");
+  }
+  const uploadBinding = fields.uploadBinding;
+  const claims = {
+    v: LOCAL_GPU_TOKEN_VERSION,
+    environment: LocalGpuEnvironmentSchema.parse(fields.environment),
+    action: assertSignedString(fields.action, "action"),
+    jobId: assertSignedString(fields.jobId, "jobId"),
+    workspaceId: assertSignedString(fields.workspaceId, "workspaceId"),
+    actorId: assertSignedString(fields.actorId, "actorId"),
+    authority: assertSignedString(fields.authority, "authority"),
+    workflow: assertSignedString(fields.workflow, "workflow", true),
+    sceneExecutionId: assertSignedString(fields.sceneExecutionId, "sceneExecutionId", true),
+    expiresAt: fields.expiresAt,
+    nonce: assertSignedString(fields.nonce, "nonce"),
+    uploadBinding,
+  };
+  return JSON.stringify(claims);
 }
 
-export function assertLocalGpuRequestExpiry(expiresAt: string, now: Date): void {
-  const expiresAtMs = Date.parse(expiresAt);
-  const ttlMs = expiresAtMs - now.getTime();
-  if (!Number.isFinite(expiresAtMs) || ttlMs <= 0 || ttlMs > LOCAL_GPU_MAX_REQUEST_TTL_MS) {
+export function assertLocalGpuRequestExpiry(expiresAt: number, now: Date): void {
+  const ttlMs = expiresAt - now.getTime();
+  if (!Number.isInteger(expiresAt) || ttlMs <= 0 || ttlMs > LOCAL_GPU_MAX_REQUEST_TTL_MS) {
     throw new LocalGpuContractError("LOCAL_GPU_REQUEST_EXPIRY_INVALID");
   }
 }
