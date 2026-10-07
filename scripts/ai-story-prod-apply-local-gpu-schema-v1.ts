@@ -76,8 +76,8 @@ async function main() {
         WHERE scene.id = release.scene_execution_id
       )
       OR NOT EXISTS (
-        SELECT 1 FROM ai_story_runtime_authorized_facts authorization
-        WHERE authorization.runtime_authorization_id = release.runtime_authorization_id
+        SELECT 1 FROM ai_story_runtime_authorized_facts runtime_fact
+        WHERE runtime_fact.runtime_authorization_id = release.runtime_authorization_id
       )
       OR NOT EXISTS (
         SELECT 1 FROM workspaces workspace
@@ -105,23 +105,23 @@ async function main() {
             scene.execution_plan_id = release.execution_plan_id
             AND scene.workspace_id = release.workspace_id
             AND scene.scene_order + 1 = release.scene_order
-            AND authorization.execution_plan_id = release.execution_plan_id
-            AND authorization.workspace_id = release.workspace_id
-            AND authorization.runtime_authorization_id = release.runtime_authorization_id
-            AND authorization.ordered_scene_execution_ids
+            AND runtime_fact.execution_plan_id = release.execution_plan_id
+            AND runtime_fact.workspace_id = release.workspace_id
+            AND runtime_fact.runtime_authorization_id = release.runtime_authorization_id
+            AND runtime_fact.ordered_scene_execution_ids
               ->> (release.scene_order - 1) = release.scene_execution_id::text
           ) AS canonical_runtime_ledger,
-          count(*) = max(jsonb_array_length(authorization.ordered_scene_execution_ids)) AS complete_runtime_ledger,
+          count(*) = max(jsonb_array_length(runtime_fact.ordered_scene_execution_ids)) AS complete_runtime_ledger,
           bool_or(
             release.scene_order = 1
             AND release.release_state = 'RELEASED'
-            AND release.released_by = authorization.authorized_by
+            AND release.released_by = runtime_fact.authorized_by
             AND release.released_at IS NOT NULL
           ) AS canonical_initial_actor
         FROM ai_story_scene_release_states release
         JOIN ai_story_scene_executions scene ON scene.id = release.scene_execution_id
-        JOIN ai_story_runtime_authorized_facts authorization
-          ON authorization.runtime_authorization_id = release.runtime_authorization_id
+        JOIN ai_story_runtime_authorized_facts runtime_fact
+          ON runtime_fact.runtime_authorization_id = release.runtime_authorization_id
         GROUP BY release.execution_plan_id
       )
       SELECT
