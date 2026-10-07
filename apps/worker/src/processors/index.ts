@@ -897,10 +897,11 @@ export function startWorkers() {
     localGpuCycleRunning = true;
     void import("../ai-story-local-gpu-execution-cycle")
       .then(({ runProductionLocalGpuExecutionCycle }) => runProductionLocalGpuExecutionCycle())
-      .catch((error) => console.warn(
-        "[local-gpu] cycle unavailable:",
-        error instanceof Error ? error.message : error,
-      ))
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes("does not exist")) return;
+        console.warn("[local-gpu] cycle unavailable:", message);
+      })
       .finally(() => { localGpuCycleRunning = false; });
   }, 5000);
   localGpuLoop.unref?.();

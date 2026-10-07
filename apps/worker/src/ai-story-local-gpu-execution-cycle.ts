@@ -14,6 +14,7 @@ import { createProductionAiStoryCanonicalAdapterRegistry } from "./ai-story-cano
 
 const PROBE_ACTOR_ID = "11111111-1111-4111-8111-111111111111";
 let callerProbed = false;
+let ledgerUnavailable = false;
 
 function workerActor(userId: string, workspaceId: string) {
   return {
@@ -75,6 +76,21 @@ export async function probeProductionLocalGpuCaller(): Promise<void> {
  */
 export async function runProductionLocalGpuExecutionCycle(): Promise<void> {
   await probeProductionLocalGpuCaller();
+  if (ledgerUnavailable) return;
+  try {
+    await claimExplicitLocalGpuRelease();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("does not exist")) {
+      ledgerUnavailable = true;
+      console.warn("[local-gpu] production release ledger cannot queue LOCAL_GPU:", message);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function claimExplicitLocalGpuRelease(): Promise<void> {
   const registry = createProductionAiStoryCanonicalAdapterRegistry();
   const adapter = registry.resolve(LOCAL_GPU_PROVIDER_ID, LOCAL_GPU_ADAPTER_VERSION);
   if (!(adapter instanceof LocalGpuCanonicalAdapter)) return;
