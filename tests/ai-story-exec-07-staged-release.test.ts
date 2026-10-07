@@ -104,7 +104,9 @@ describe("EXEC-07 durable staged Scene release", () => {
     expect(route).toContain("authorizeAndExecuteExecutionPlan");
     expect(agentsBarrel).toContain('export * from "./ai-story"');
     expect(aiStoryBarrel).toContain('export * from "./authorize-and-execute-execution-plan"');
-    expect(route.match(/authorizeAndExecuteExecutionPlan\(/g)).toHaveLength(1);
+    expect(route.match(/authorizeAndExecuteExecutionPlan\(/g)).toHaveLength(2);
+    expect(route).not.toContain("scheduleAuthorizedScene");
+    expect(route).not.toContain('executionMode: "REMOTE_PROVIDER"');
   });
 
   it("resolves billable authority before release and always converges scheduling", () => {

@@ -156,7 +156,9 @@ describe("Worker authority projection secret boundary", () => {
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"
     ), "utf8");
     expect(execute).toContain('executionMode: "MANUAL_LOCAL"');
-    expect(execute).not.toContain("resolveCanonicalWebExecuteProviderAuthority");
+    const defaultExecute = execute.slice(execute.lastIndexOf('executionMode: "MANUAL_LOCAL"'));
+    expect(defaultExecute).not.toContain("resolveCanonicalWebExecuteProviderAuthority");
+    expect(execute).toContain('explicitProvider === "LOCAL_GPU"');
     const routePaths = [
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/release-next-scene/route.ts",
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/release-remaining-scenes/route.ts",
