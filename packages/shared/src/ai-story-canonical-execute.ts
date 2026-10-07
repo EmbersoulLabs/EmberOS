@@ -14,7 +14,13 @@ export const CANONICAL_EXECUTE_CONTRACT_VERSION = "1" as const;
  * Strict empty/object request. Forbidden authority fields are rejected (not ignored).
  */
 export const CanonicalExecuteRequestSchema = z
-  .object({})
+  .object({
+    /**
+     * Explicit LOCAL_GPU selection only. Empty requests keep the existing
+     * Manual Local / Seedance / MiniMax path. This is not a role or permission.
+     */
+    explicitProvider: z.literal("LOCAL_GPU").optional(),
+  })
   .strict()
   .describe("Canonical Execute accepts no client authority fields");
 

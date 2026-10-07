@@ -41,9 +41,13 @@ describe("Manual Local Generation handoff certification", () => {
 
   it("normal Animate selects MANUAL_LOCAL without constructing the Provider Router", () => {
     const route = read("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts");
-    expect(route).toContain('executionMode: "MANUAL_LOCAL"');
-    expect(route).not.toContain("resolveCanonicalWebExecuteProviderAuthority");
+    const manual = route.lastIndexOf('executionMode: "MANUAL_LOCAL"');
+    expect(manual).toBeGreaterThan(0);
+    const defaultExecute = route.slice(manual);
+    expect(defaultExecute).not.toContain("resolveCanonicalWebExecuteProviderAuthority");
+    expect(defaultExecute).not.toContain("bindExplicitLocalGpuRelease");
     expect(route).not.toContain("createCanonicalProductMaterialSchedulingCoordinator");
+    expect(route).not.toContain('executionMode: "REMOTE_PROVIDER"');
   });
 
   it("manual Execute returns before commercial reservation and scheduling", () => {

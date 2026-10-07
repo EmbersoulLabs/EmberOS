@@ -1,6 +1,8 @@
 import {
   getAiProviderConfig,
   isAiProviderReady,
+  LOCAL_GPU_PROVIDER_ID,
+  LOCAL_GPU_WORKER_WORKFLOW,
   type ProviderExecutorAuthority,
   type ProviderExecutorCapabilityAuthority,
 } from "@ceo-agent/shared";
@@ -35,6 +37,18 @@ export function buildProviderExecutorAuthority(
   const grouped = new Map<string, ProviderExecutorCapabilityAuthority>();
 
   for (const declaration of declarations) {
+    if (declaration.providerId === LOCAL_GPU_PROVIDER_ID) {
+      grouped.set(LOCAL_GPU_PROVIDER_ID, {
+        providerId: LOCAL_GPU_PROVIDER_ID,
+        adapterVersion: declaration.adapterVersion,
+        productEnabled: true,
+        executorRegistered: true,
+        executorReady: true,
+        capabilityIds: [declaration.capabilityId],
+        supportedModels: [LOCAL_GPU_WORKER_WORKFLOW],
+      });
+      continue;
+    }
     if (declaration.providerId !== "seedance" && declaration.providerId !== "minimax") {
       continue;
     }

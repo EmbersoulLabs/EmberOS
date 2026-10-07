@@ -891,6 +891,19 @@ export function startWorkers() {
       .finally(() => { localMediaCycleRunning = false; });
   }, 5000);
   localMediaLoop.unref?.();
+  let localGpuCycleRunning = false;
+  const localGpuLoop = setInterval(() => {
+    if (localGpuCycleRunning) return;
+    localGpuCycleRunning = true;
+    void import("../ai-story-local-gpu-execution-cycle")
+      .then(({ runProductionLocalGpuExecutionCycle }) => runProductionLocalGpuExecutionCycle())
+      .catch((error) => console.warn(
+        "[local-gpu] cycle unavailable:",
+        error instanceof Error ? error.message : error,
+      ))
+      .finally(() => { localGpuCycleRunning = false; });
+  }, 5000);
+  localGpuLoop.unref?.();
   const providerLoop = setInterval(() => {
     void (async () => {
       try {
