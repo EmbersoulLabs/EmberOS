@@ -187,6 +187,7 @@ export async function GET(request: Request, { params }: RouteParams) {
           ...scene,
           ...(presentation ? { presentation } : {}),
           ...(postGenerationQcEvidence ? { postGenerationQcEvidence } : {}),
+          ...(evaluation?.audioQcResult ? { audioQcResult: evaluation.audioQcResult } : {}),
         };
         if (!scene.generatedMedia) return enriched;
         try {

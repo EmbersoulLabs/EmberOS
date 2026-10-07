@@ -5,6 +5,11 @@ import { AiStoryCharacterEpisodeLookSchema, isUuid } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
+import { StoryVersionSuccessorAuthorityError } from "@/lib/ai-story-successor-authority";
+import {
+  StoryVersionFreezeBlockedError,
+  freezeSuccessorStoryVersionAfterCharacterBinding,
+} from "@/lib/ai-story-service";
 
 const BindSchema = z.object({
   reusableCharacterId: z.string().uuid(),
@@ -46,6 +51,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         episodeLook: look,
       }
     );
+    await freezeSuccessorStoryVersionAfterCharacterBinding(db, {
+      storyId,
+      frozenBy: user.id,
+      bindingCreatedAt: bound.binding.createdAt,
+      voiceDnaId: bound.binding.voiceDnaId ?? null,
+      voiceDnaFingerprint: bound.binding.voiceDnaFingerprint ?? null,
+    });
     return apiSuccess({
       binding: {
         reusableCharacterId: bound.binding.reusableCharacterId,
@@ -54,6 +66,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       },
     }, 201);
   } catch (error) {
+    if (error instanceof StoryVersionFreezeBlockedError) return apiError(error.code, error.code, 409);
+    if (error instanceof StoryVersionSuccessorAuthorityError) return apiError(error.code, error.code, 409);
     if (error instanceof AiStoryReusableCharacterError) return apiError(error.message, error.code, 409);
     return handleApiError(error);
   }

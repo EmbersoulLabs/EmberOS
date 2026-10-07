@@ -2,6 +2,7 @@ import {
   AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION_V2,
   AI_STORY_LOCAL_GENERATION_SOURCE_AUTHORITY_VERSION,
   AiStoryLocalGenerationPackageSchema,
+  localGenerationDurationSecFromPlannedDurationMs,
   type AiStoryEffectiveSceneGenerationAuthority,
   type AiStoryLocalGenerationPackage,
   type AiStoryPostQcRequirement,
@@ -386,7 +387,7 @@ export function materializeProviderNeutralLocalGenerationPackage(
   });
   const instructionsText = buildLocalGenerationOperatorInstructions({
     recommendedWorkflow: workflow,
-    durationSec: instructions.durationMs / 1000,
+    durationSec: localGenerationDurationSecFromPlannedDurationMs(instructions.durationMs),
     aspectRatio: facts.aspectRatio,
     resolutionIntent: "720p",
     generationMode,
@@ -417,7 +418,7 @@ export function materializeProviderNeutralLocalGenerationPackage(
     sceneExecutionId: facts.sceneExecutionId,
     sceneId: scene.sceneId,
     order: facts.order,
-    durationSec: instructions.durationMs / 1000,
+    durationSec: localGenerationDurationSecFromPlannedDurationMs(instructions.durationMs),
     aspectRatio: facts.aspectRatio,
     resolutionIntent: "720p" as const,
     recommendedWorkflow: workflow,

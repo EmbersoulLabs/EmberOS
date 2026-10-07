@@ -408,9 +408,34 @@ export class AiStoryReusableCharacterService {
     });
     if (lookIssues.length) throw new AiStoryReusableCharacterError(lookIssues[0]!.gate, lookIssues[0]!.message);
     const projection = await this.projectToCampaign(scope, { reusableCharacterVersionId: reusable.reusableCharacterVersionId, campaignId: input.campaignId, now });
+    const syntheticAnchor = reusable.canonicalAssets.find((asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR");
+    if (syntheticAnchor) {
+      await persistSameWorkspaceCampaignAssetRef(this.db, {
+        campaignId: input.campaignId,
+        assetId: syntheticAnchor.assetId,
+        workspaceId: scope.workspaceId,
+        orgId: scope.orgId,
+      });
+    }
+    const { AiStoryCharacterVoiceDnaService } = await import("./ai-story-character-voice-dna");
+    const currentVoice = await new AiStoryCharacterVoiceDnaService(this.db).readCurrentForReusableCharacterVersion(scope, {
+      reusableCharacterId: reusable.reusableCharacterId,
+      reusableCharacterVersionId: reusable.reusableCharacterVersionId,
+    });
     const binding = buildEpisodeCharacterBinding({
       storyId: input.storyId, reusable, projection, episodeLook: input.episodeLook,
       continuityAnchorIds: input.continuityAnchorIds, createdBy: scope.actorUserId, createdAt: now,
+      ...(currentVoice
+        ? {
+            voiceDna: {
+              voiceDnaId: currentVoice.voiceDnaId,
+              voiceDnaFingerprint: currentVoice.voiceDnaFingerprint,
+              reusableCharacterId: currentVoice.reusableCharacterId,
+              reusableCharacterVersionId: currentVoice.reusableCharacterVersionId,
+              characterIdentityFingerprint: currentVoice.characterIdentityFingerprint,
+            },
+          }
+        : {}),
     });
     const existingBinding = await this.db.select().from(schema.aiStoryEpisodeCharacterBindings).where(and(
       eq(schema.aiStoryEpisodeCharacterBindings.storyId, input.storyId),

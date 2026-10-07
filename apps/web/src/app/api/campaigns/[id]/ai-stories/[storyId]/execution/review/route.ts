@@ -84,6 +84,10 @@ export async function POST(
         sceneId: intent.identity.sceneId,
         sceneOrder: intent.identity.sceneOrder,
         plannedDurationMs: intent.plannedDurationMs,
+        recommendedDurationSec:
+          intent.recommendedDurationAuthority?.decision.recommendedDurationSec ?? null,
+        recommendedDurationResolution:
+          intent.recommendedDurationAuthority?.decision.resolution ?? null,
         shotCount: intent.shotReferences.length,
         referencedAssetIds: intent.referencedAssetIds,
         deterministicFingerprint: intent.identity.deterministicFingerprint,

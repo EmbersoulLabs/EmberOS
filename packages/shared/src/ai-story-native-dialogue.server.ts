@@ -24,6 +24,14 @@ import {
   type AiStoryCodeSwitchPolicySchema,
 } from "./ai-story-audio-plan";
 import type { z } from "zod";
+import {
+  assertDialogueVoiceDnaBinding,
+  assertSpeakerOwnsVoiceDna,
+  assertVoiceContinuityPinned,
+  assertVoiceDnaDialogueLocale,
+  projectVoiceDnaNativePerformanceInstruction,
+  type AiStoryCharacterVoiceDna,
+} from "./ai-story-character-voice-dna";
 
 type Locale = (typeof AI_STORY_AUDIO_LOCALES)[number];
 type DeliveryStyle = (typeof AI_STORY_DELIVERY_STYLES)[number];
@@ -113,6 +121,16 @@ export function compileAiStoryCharacterDialoguePerformanceAuthority(input: {
    * Historical callers keep the Script Scene id on the Generation Unit.
    */
   readonly boundCanonicalSceneId?: string;
+  readonly voiceDna?: AiStoryCharacterVoiceDna;
+  readonly voiceContinuityRequired?: boolean;
+  readonly speakerReusableCharacterId?: string;
+  readonly episodeCharacterBinding?: {
+    voiceDnaId?: string;
+    voiceDnaFingerprint?: string;
+    reusableCharacterId: string;
+    reusableCharacterVersionId: string;
+    identityFingerprint: string;
+  };
 }): AiStoryCharacterDialoguePerformanceAuthority {
   if (input.script.status !== "FROZEN") {
     fail(
@@ -165,6 +183,38 @@ export function compileAiStoryCharacterDialoguePerformanceAuthority(input: {
       "Requested primary locale differs from frozen Script authority"
     );
   }
+  if (input.voiceContinuityRequired) {
+    assertVoiceContinuityPinned({
+      voiceDnaId: input.voiceDna?.voiceDnaId,
+      voiceDnaFingerprint: input.voiceDna?.voiceDnaFingerprint,
+    });
+  }
+  if (input.voiceDna) {
+    if (input.speakerReusableCharacterId) {
+      assertSpeakerOwnsVoiceDna(input.speakerReusableCharacterId, input.voiceDna);
+    }
+    assertVoiceDnaDialogueLocale({
+      voiceDna: input.voiceDna,
+      primaryLocale: input.primaryLocale,
+      secondaryLocales: input.secondaryLocales,
+      codeSwitchPolicy: input.codeSwitchPolicy,
+    });
+    if (input.episodeCharacterBinding) {
+      assertDialogueVoiceDnaBinding({
+        voiceDna: input.voiceDna,
+        voiceDnaId: input.voiceDna.voiceDnaId,
+        voiceDnaFingerprint: input.voiceDna.voiceDnaFingerprint,
+        episodeBinding: input.episodeCharacterBinding,
+      });
+    }
+  }
+  const voiceIdentity = input.voiceDna
+    ? {
+        voiceDnaId: input.voiceDna.voiceDnaId,
+        voiceDnaFingerprint: input.voiceDna.voiceDnaFingerprint,
+        voiceIdentityInstruction: projectVoiceDnaNativePerformanceInstruction(input.voiceDna),
+      }
+    : {};
   const withoutIdentity = {
     contractVersion: AI_STORY_NATIVE_DIALOGUE_CONTRACT_VERSION,
     storyId: input.script.storyId,
@@ -198,6 +248,7 @@ export function compileAiStoryCharacterDialoguePerformanceAuthority(input: {
       "Invented dialect particles",
       ...(input.mustAvoid ?? []),
     ],
+    ...voiceIdentity,
   };
   const dialogueFingerprint =
     computeAiStoryNativeDialogueFingerprint(withoutIdentity);

@@ -25,6 +25,11 @@ import {
   type AiStorySceneExecutionIntent,
   type AiStorySceneExecutionPackage,
 } from "@ceo-agent/shared";
+import {
+  evaluateAiStoryAudioQc,
+  type AiStoryAudioQcEvidence,
+  type AiStoryAudioQcExpectation,
+} from "@ceo-agent/shared/server";
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
 import { integrityHash } from "./scene-execution-compiler";
 
@@ -623,6 +628,10 @@ export class AiStoryPostGenerationQcService {
       readonly signageIdentityVisible: boolean;
       readonly renderPolicy: AiStoryVisualTextRenderPolicy;
     } | null,
+    audioQc?: {
+      readonly expectation: AiStoryAudioQcExpectation;
+      readonly evidence: AiStoryAudioQcEvidence;
+    } | null,
   ) {
     let input = AiStoryPostGenerationQcInputPackageSchema.parse(rawInput);
     const current = await this.dependencies.repository.getByIdentity({ postQcInputId: input.postQcInputId, evaluationVersion });
@@ -666,10 +675,15 @@ export class AiStoryPostGenerationQcService {
       autoReleaseAuthorized: false as const,
       creativeAuthority: false as const,
     };
+    const evaluatedAt = this.dependencies.now?.() ?? new Date().toISOString();
+    const audioQcResult = audioQc
+      ? evaluateAiStoryAudioQc({ expectation: audioQc.expectation, evidence: audioQc.evidence, evaluatedAt })
+      : undefined;
+    const evaluationBody = audioQcResult ? { ...base, audioQcResult } : base;
     const evaluation = AiStoryPostGenerationQcEvaluationSchema.parse({
-      ...base,
-      evaluationFingerprint: computeAiStoryPostQcEvaluationFingerprint(base),
-      evaluatedAt: this.dependencies.now?.() ?? new Date().toISOString(),
+      ...evaluationBody,
+      evaluationFingerprint: computeAiStoryPostQcEvaluationFingerprint(evaluationBody),
+      evaluatedAt,
     });
     return this.dependencies.repository.accept(evaluation);
   }

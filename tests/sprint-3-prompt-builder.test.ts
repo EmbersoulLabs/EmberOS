@@ -163,6 +163,15 @@ describe("Sprint 3 execution compiler", () => {
     expect(estimate.targetOutputCount).toBe(5);
     expect(estimate.preferredCapabilityId).toBe("animation-video-generation");
     expect(estimate.referencedAssetIds).toEqual([ASSET_A]);
+    expect(collectReferencedAssetIds({
+      story: { assetReferences: [] },
+      scenePlan: [{
+        generationAuthority: {
+          referenceSource: "CHARACTER_SYNTHETIC_ANCHOR",
+          referenceAssetIds: [ASSET_B],
+        },
+      }],
+    } as never)).toEqual([ASSET_B]);
     expect(estimate.aiSummary.toLowerCase()).not.toContain("seedance");
   });
 
