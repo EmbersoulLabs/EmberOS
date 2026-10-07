@@ -20,6 +20,7 @@ const migrations=[
   "packages/db/sql/ai-story-provider-neutral-generation-result-v1.sql",
   "packages/db/sql/ai-story-local-generation-package-contract-v2.sql",
   "packages/db/sql/ai-story-sequential-manual-local-package-v3.sql",
+  "packages/db/sql/ai-story-local-gpu-execution-mode-v1.sql",
 ];
 suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
   let admin:Sql, db:Sql, ormClient:Sql, name:string, restore:()=>void;
@@ -38,7 +39,8 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
     await db.unsafe(read("tests/fixtures/ai-story-production-predecessor-preservation-seed.sql"));before=await evidence();
     const manifest=JSON.parse(read("docs/releases/ai-story-v1-production-migration-manifest.json")) as {entries:Array<{file:string}>};
     for(const entry of manifest.entries){const source=read(entry.file);await db.unsafe(/^\s*(?:--[^\n]*\n\s*)*BEGIN\s*;/i.test(source)?source:`BEGIN;\n${source}\nCOMMIT;`);}
-    for(const file of migrations)await db.unsafe(read(file));
+    const applied=new Set(manifest.entries.map((entry)=>entry.file));
+    for(const file of migrations){if(!applied.has(file))await db.unsafe(read(file));}
   },120_000);
   afterAll(async()=>{await ormClient?.end();await db?.end();if(admin&&/^emberos_generation_result_[a-f0-9]+_test$/.test(name))await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);await admin?.end();restore?.();},120_000);
   it("loads both additive migrations against the certified predecessor closure",async()=>{const rows=await db`select tablename from pg_tables where schemaname='public' and tablename in ('ai_story_generation_results','ai_story_generation_result_decisions','ai_story_generation_result_continuity_frames','ai_story_local_generation_packages','ai_story_local_generation_outputs','ai_story_local_media_jobs')`;expect(rows).toHaveLength(6);});
@@ -128,6 +130,49 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
     await jobs.finish(claimed,null);
     await expect(db`update ai_story_local_media_jobs set package_id=${randomUUID()} where job_id=${job.jobId}`).rejects.toThrow("IDENTITY_IMMUTABLE");
     expect(await evidence()).toEqual(before);
+  });
+  it("accepts LOCAL_GPU execution mode without rewriting packages or historical modes",async()=>{
+    const packagesBefore=await db`select package_id, package::text as package from ai_story_local_generation_packages order by package_id`;
+    const releasesBefore=await db`select scene_execution_id, execution_mode from ai_story_scene_release_states order by scene_execution_id`;
+    const tables=await db`select relname, count(*)::int as copies from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relkind='r' and relname in ('ai_story_local_generation_packages','ai_story_local_generation_outputs','ai_story_generation_results','ai_story_generation_result_decisions','ai_story_generation_result_continuity_frames','ai_story_local_media_jobs') group by relname order by relname`;
+    expect(tables).toHaveLength(6);
+    expect(tables.every((row)=>row.copies===1)).toBe(true);
+    const columns=await db`select column_name from information_schema.columns where table_schema='public' and table_name='ai_story_scene_release_states' and column_name in ('org_id','execution_mode','gate_kind','release_revision','release_authority_id','release_authority_fingerprint','predecessor_authority_fingerprint','gate_generation_result_id','gate_generation_result_decision_id','current_local_generation_package_id')`;
+    expect(columns).toHaveLength(10);
+    const postQc=await db`select 1 from information_schema.columns where table_schema='public' and table_name='ai_story_post_generation_qc_evaluations' and column_name='generation_result_id'`;
+    expect(postQc).toHaveLength(1);
+    const id=(n:number)=>`10000000-0000-4000-8000-${String(n).padStart(12,"0")}`;
+    const hash=`sha256:${"d".repeat(64)}`;
+    const [runtime]=await db`select runtime_authorization_id from ai_story_runtime_authorized_facts where execution_plan_id=${id(8)} limit 1`;
+    await db.begin(async (tx)=>{
+      const runtimeId=runtime?.runtime_authorization_id ?? randomUUID();
+      if(!runtime){
+        await tx`insert into ai_story_runtime_authorized_facts ${tx({
+          runtime_authorization_id:runtimeId,org_id:id(1),workspace_id:id(2),campaign_id:id(3),story_id:id(4),story_version_id:id(5),
+          animation_package_id:id(6),execution_plan_id:id(8),runtime_authorization_version:1,review_decision_id:randomUUID(),
+          review_hash:hash,assembly_definition_id:randomUUID(),assembly_hash:hash,ordered_scene_execution_ids:tx.json([id(9)]),
+          qc_result_ids:tx.json([]),authorized_by:randomUUID(),authorized_at:new Date(),authorization_contract_version:"1",
+          deterministic_integrity_hash:hash,fact:{synthetic:true},
+        })}`;
+      }
+      await tx`insert into ai_story_scene_release_states ${tx({
+        scene_execution_id:id(9),execution_plan_id:id(8),runtime_authorization_id:runtimeId,workspace_id:id(2),org_id:id(1),
+        scene_order:1,release_state:"AUTHORIZED_NOT_RELEASED",execution_mode:"LOCAL_GPU",gate_kind:"INITIAL_UNIT",
+      })}`;
+      await tx`update ai_story_scene_release_states set execution_mode='REMOTE_PROVIDER' where scene_execution_id=${id(9)}`;
+      await tx`update ai_story_scene_release_states set execution_mode='MANUAL_LOCAL' where scene_execution_id=${id(9)}`;
+      await tx`update ai_story_scene_release_states set execution_mode='LOCAL_GPU' where scene_execution_id=${id(9)}`;
+      await tx`savepoint unknown_mode`;
+      await expect(tx`update ai_story_scene_release_states set execution_mode='NOT_A_MODE' where scene_execution_id=${id(9)}`).rejects.toThrow();
+      await tx`rollback to savepoint unknown_mode`;
+      const [row]=await tx`select execution_mode from ai_story_scene_release_states where scene_execution_id=${id(9)}`;
+      expect(row?.execution_mode).toBe("LOCAL_GPU");
+      throw new Error("ROLLBACK_LOCAL_GPU_MODE_FIXTURE");
+    }).catch((error:unknown)=>{
+      if(!(error instanceof Error) || error.message!=="ROLLBACK_LOCAL_GPU_MODE_FIXTURE") throw error;
+    });
+    expect(await db`select package_id, package::text as package from ai_story_local_generation_packages order by package_id`).toEqual(packagesBefore);
+    expect(await db`select scene_execution_id, execution_mode from ai_story_scene_release_states order by scene_execution_id`).toEqual(releasesBefore);
   });
   it("replay fails atomically without changing historical or result rows",async()=>{const beforeResults=await db`select * from ai_story_generation_results order by generation_result_id`;for(const file of migrations){await expect(db.unsafe(read(file))).rejects.toThrow();await db.unsafe("ROLLBACK");}expect(await evidence()).toEqual(before);expect(await db`select * from ai_story_generation_results order by generation_result_id`).toEqual(beforeResults);});
 });

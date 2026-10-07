@@ -92,24 +92,33 @@ describe("bounded Production overlay migration manifest", () => {
   });
 
   it("has an exact-source, topologically ordered, non-row-mutating 25-step closure", () => {
-    expect(manifest.entries).toHaveLength(25);
+    const baseline = manifest.entries.slice(0, 25);
+    expect(baseline).toHaveLength(25);
+    expect(manifest.entries).toHaveLength(30);
     const known = new Set(catalog.tables.map((table: { table: string }) => `table:${table.table}`));
     const created = new Set<string>();
     for (const [index, entry] of manifest.entries.entries()) {
       expect(entry.order).toBe(index + 1);
       expect(entry.destructive).toBe(false);
-      expect(entry.modifiesExistingRows).toBe(false);
+      expect(entry.modifiesExistingRows).toBe(entry.order === 29);
       expect(entry.replayPolicy).toBe("ONE_SHOT_FAIL_CLOSED");
       for (const dependency of entry.requires) expect(known.has(dependency), `${entry.file} requires ${dependency}`).toBe(true);
       const source = read(entry.file);
       expect(createHash("sha256").update(source.replace(/\r\n/g, "\n")).digest("hex"), entry.file).toBe(entry.sha256);
       expect(source).not.toMatch(/\b(?:DROP\s+TABLE|TRUNCATE\s+TABLE|DELETE\s+FROM)\b/i);
       for (const provision of entry.provides) {
-        if (provision.startsWith("table:") && !known.has(provision)) created.add(provision.slice(6));
+        if (index < 25 && provision.startsWith("table:") && !known.has(provision)) created.add(provision.slice(6));
         known.add(provision);
       }
     }
     expect([...created].sort()).toEqual(exactGap);
     expect(productionOnly.every((name) => known.has(`table:${name}`))).toBe(true);
+    expect(manifest.entries.slice(25).map((entry: { file: string }) => entry.file)).toEqual([
+      "packages/db/sql/ai-story-manual-local-generation-handoff-v1.sql",
+      "packages/db/sql/ai-story-provider-neutral-generation-result-v1.sql",
+      "packages/db/sql/ai-story-local-generation-package-contract-v2.sql",
+      "packages/db/sql/ai-story-sequential-manual-local-package-v3.sql",
+      "packages/db/sql/ai-story-local-gpu-execution-mode-v1.sql",
+    ]);
   });
 });

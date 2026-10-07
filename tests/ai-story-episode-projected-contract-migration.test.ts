@@ -21,8 +21,9 @@ describe("episode projected contract migration", () => {
     expect(migration).not.toMatch(/\bUPDATE\b|\bDELETE\s+FROM\b|\bDROP\s+TABLE\b/i);
     expect(readFileSync("packages/db/sql/ai-story-director-plan-v1.sql", "utf8")).toContain("contract_version='ai-story-director-plan.v1'");
     expect(readFileSync("packages/db/sql/ai-story-motion-plan-v1.sql", "utf8")).toContain("contract_version='ai-story-motion-plan.v1'");
-    const entry = manifest.entries.at(-1);
-    expect(entry.file).toBe("packages/db/sql/ai-story-episode-projected-authority-contract-v1.sql");
+    const entry = manifest.entries.find((item: { file: string }) => item.file === "packages/db/sql/ai-story-episode-projected-authority-contract-v1.sql");
+    if (!entry) throw new Error("EPISODE_PROJECTED_MANIFEST_ENTRY_REQUIRED");
+    expect(entry.order).toBe(25);
     expect(createHash("sha256").update(migration.replace(/\r\n/g, "\n")).digest("hex")).toBe(entry.sha256);
   });
 });

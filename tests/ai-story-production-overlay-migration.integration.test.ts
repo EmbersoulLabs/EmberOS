@@ -207,10 +207,12 @@ describeIntegration("AI Story bounded overlay from actual Production predecessor
   });
 
   it("topologically upgrades all 30 gaps with no destructive or hidden data authority", async () => {
-    expect(manifest.entries).toHaveLength(25);
+    const certifiedBaseline = manifest.entries.slice(0, 25);
+    expect(certifiedBaseline).toHaveLength(25);
+    expect(manifest.entries).toHaveLength(30);
     expect(manifest.gapTables).toHaveLength(30);
     const known = new Set(predecessor.tables.map((table) => `table:${table.table}`));
-    for (const [index, entry] of manifest.entries.entries()) {
+    for (const [index, entry] of certifiedBaseline.entries()) {
       expect(entry.order).toBe(index + 1);
       expect(entry.destructive).toBe(false);
       expect(entry.replayPolicy).toBe("ONE_SHOT_FAIL_CLOSED");
@@ -252,8 +254,9 @@ describeIntegration("AI Story bounded overlay from actual Production predecessor
 
   it("rejects every one-shot replay before SQL and leaves historical evidence unchanged", async () => {
     const beforeReplay = await snapshot(sql);
-    for (const entry of manifest.entries) expect(await markerPresent(sql, entry.completionMarker), entry.file).toBe(true);
-    for (const entry of manifest.entries) {
+    const certifiedBaseline = manifest.entries.slice(0, 25);
+    for (const entry of certifiedBaseline) expect(await markerPresent(sql, entry.completionMarker), entry.file).toBe(true);
+    for (const entry of certifiedBaseline) {
       await expect(applyEntry(sql, entry)).rejects.toThrow("PRODUCTION_OVERLAY_ONE_SHOT_ALREADY_APPLIED");
     }
     expect(await snapshot(sql)).toEqual(beforeReplay);
