@@ -78,9 +78,16 @@ export function evaluateStoryVersionFreezeContinuity(input: {
       binding.identityFingerprint.length > 0 &&
       bindingVisibleAtFrozenCutoff(binding.createdAt, input.freezeAt)
   );
+  const latestVisible = new Map<string, StoryVersionFreezeBinding>();
+  for (const binding of visible) {
+    const current = latestVisible.get(binding.campaignCharacterId);
+    if (!current || binding.createdAt > current.createdAt) {
+      latestVisible.set(binding.campaignCharacterId, binding);
+    }
+  }
 
   for (const [characterId, requirement] of required) {
-    const binding = visible.find((item) => item.campaignCharacterId === characterId);
+    const binding = latestVisible.get(characterId);
     if (!binding) {
       return {
         status: "BLOCK",

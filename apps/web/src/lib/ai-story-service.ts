@@ -1,7 +1,7 @@
 /**
  * Campaign-owned AI Story persistence helpers.
  */
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb, schema, CampaignAssetRefError } from "@ceo-agent/db";
 import { VISUAL_SEMANTIC_ANALYZER_VERSION } from "@ceo-agent/agents";
 import {
@@ -492,70 +492,90 @@ export async function freezeAiStoryVersion(
 
 export async function freezeSuccessorStoryVersionAfterCharacterBinding(
   db: Db,
-  input: { storyId: string; frozenBy: string; bindingCreatedAt: string }
+  input: {
+    storyId: string;
+    frozenBy: string;
+    bindingCreatedAt: string;
+    voiceDnaId?: string | null;
+    voiceDnaFingerprint?: string | null;
+  }
 ) {
-  const [story] = await db
-    .select()
-    .from(schema.aiStories)
-    .where(eq(schema.aiStories.id, input.storyId))
-    .limit(1);
-  if (!story?.currentVersionId) return null;
-  if (
-    ![
-      "draft",
-      "generating",
-      "review",
-      "approved",
-      "ready_for_animation",
-    ].includes(story.status)
-  ) {
-    return null;
-  }
-  const versions = await db
-    .select()
-    .from(schema.aiStoryVersions)
-    .where(eq(schema.aiStoryVersions.storyId, input.storyId))
-    .orderBy(asc(schema.aiStoryVersions.versionNumber));
-  const current = versions.find((version) => version.id === story.currentVersionId);
-  if (!current?.frozenAt) return null;
-  const historicalFrozenAt = current.frozenAt;
-  if (input.bindingCreatedAt <= historicalFrozenAt.toISOString()) return null;
-
-  const freezeAt = new Date(
-    Math.max(Date.now(), new Date(input.bindingCreatedAt).getTime())
+  const { createAuthorityPreservingSuccessor, lateBindingSuccessorDecision } = await import(
+    "@/lib/ai-story-successor-authority"
   );
-  await assertCharacterContinuityBeforeStoryVersionFreeze(db, {
-    storyId: input.storyId,
-    storyVersionId: current.id,
-    freezeAt,
-  });
-  const [successor] = await db
-    .insert(schema.aiStoryVersions)
-    .values({
-      storyId: input.storyId,
-      versionNumber: nextAiStoryVersionNumber(versions),
-      structuredContent: current.structuredContent,
-      sourceContextSnapshot: current.sourceContextSnapshot,
-      aiMetadata: current.aiMetadata,
-      userEdited: current.userEdited,
-      createdBy: input.frozenBy,
-      frozenAt: freezeAt,
-      frozenBy: input.frozenBy,
-    })
-    .returning();
-  if (!successor) throw new Error("Failed to create successor Story Version");
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`ai-story-late-character-successor:${input.storyId}`}))`);
+    const [story] = await tx
+      .select()
+      .from(schema.aiStories)
+      .where(eq(schema.aiStories.id, input.storyId))
+      .limit(1)
+      .for("update");
+    if (!story?.currentVersionId) return null;
+    const versions = await tx
+      .select()
+      .from(schema.aiStoryVersions)
+      .where(eq(schema.aiStoryVersions.storyId, input.storyId))
+      .orderBy(asc(schema.aiStoryVersions.versionNumber));
+    const current = versions.find((version) => version.id === story.currentVersionId);
+    if (!current?.frozenAt) return null;
+    const historicalFrozenAt = current.frozenAt;
+    const decision = lateBindingSuccessorDecision({
+      status: story.status,
+      frozenAt: historicalFrozenAt.toISOString(),
+      bindingCreatedAt: input.bindingCreatedAt,
+    });
+    if (decision === "NONE" || decision === "IDEMPOTENT") return null;
+    if (decision === "PRESERVE_AUTHORITY") {
+      return createAuthorityPreservingSuccessor(tx as unknown as Db, {
+        story,
+        current,
+        versions,
+        frozenBy: input.frozenBy,
+        bindingCreatedAt: input.bindingCreatedAt,
+        voiceDnaId: input.voiceDnaId,
+        voiceDnaFingerprint: input.voiceDnaFingerprint,
+      });
+    }
 
-  const [unchanged] = await db
-    .select({ frozenAt: schema.aiStoryVersions.frozenAt })
-    .from(schema.aiStoryVersions)
-    .where(eq(schema.aiStoryVersions.id, current.id))
-    .limit(1);
-  if (unchanged?.frozenAt?.toISOString() !== historicalFrozenAt.toISOString()) {
-    throw new Error("Historical Story Version cutoff was mutated");
-  }
-  await db
-    .update(schema.aiStories)
-    .set({ currentVersionId: successor.id, updatedAt: new Date() })
-    .where(eq(schema.aiStories.id, input.storyId));
-  return { successor, historicalVersionId: current.id, historicalFrozenAt };
+    const freezeAt = new Date(Math.max(Date.now(), new Date(input.bindingCreatedAt).getTime()));
+    await assertCharacterContinuityBeforeStoryVersionFreeze(tx as unknown as Db, {
+      storyId: input.storyId,
+      storyVersionId: current.id,
+      freezeAt,
+    });
+    const [successor] = await tx
+      .insert(schema.aiStoryVersions)
+      .values({
+        storyId: input.storyId,
+        versionNumber: nextAiStoryVersionNumber(versions),
+        structuredContent: current.structuredContent,
+        sourceContextSnapshot: current.sourceContextSnapshot,
+        aiMetadata: current.aiMetadata,
+        userEdited: current.userEdited,
+        createdBy: input.frozenBy,
+        frozenAt: freezeAt,
+        frozenBy: input.frozenBy,
+      })
+      .returning();
+    if (!successor) throw new Error("Failed to create successor Story Version");
+    const [unchanged] = await tx
+      .select({ frozenAt: schema.aiStoryVersions.frozenAt })
+      .from(schema.aiStoryVersions)
+      .where(eq(schema.aiStoryVersions.id, current.id))
+      .limit(1);
+    if (unchanged?.frozenAt?.toISOString() !== historicalFrozenAt.toISOString()) {
+      throw new Error("Historical Story Version cutoff was mutated");
+    }
+    const switched = await tx
+      .update(schema.aiStories)
+      .set({ currentVersionId: successor.id, updatedAt: new Date() })
+      .where(and(
+        eq(schema.aiStories.id, input.storyId),
+        eq(schema.aiStories.currentVersionId, current.id),
+      ))
+      .returning({ id: schema.aiStories.id });
+    if (!switched[0]) throw new Error("Historical Story Version is no longer current");
+    return { successor, historicalVersionId: current.id, historicalFrozenAt };
+  });
 }

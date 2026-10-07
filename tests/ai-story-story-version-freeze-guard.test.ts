@@ -111,6 +111,22 @@ describe("story version freeze continuity guard", () => {
     expect(decision.reasonCode).toBe("CHARACTER_CONTINUITY_AUTHORITY_REQUIRED");
   });
 
+  it("uses the latest visible binding pin instead of an earlier unpinned binding", () => {
+    const decision = evaluateStoryVersionFreezeContinuity({
+      orgId: ORG,
+      workspaceId: WORKSPACE,
+      freezeAt: "2026-10-06T15:00:00.000Z",
+      scenes,
+      bindings: [
+        binding("2026-10-06T14:40:00.000Z", false),
+        binding("2026-10-06T14:55:30.088Z", true),
+      ],
+    });
+    expect(decision).toEqual({ status: "PASS", reasonCode: "PASS" });
+    expect(bindingVisibleAtFrozenCutoff("2026-10-06T14:55:30.088Z", "2026-10-06T14:31:27.923Z")).toBe(false);
+    expect(bindingVisibleAtFrozenCutoff("2026-10-06T14:55:30.088Z", "2026-10-06T15:00:00.000Z")).toBe(true);
+  });
+
   it("blocks freeze when required voice dna is not pinned", () => {
     const decision = evaluateStoryVersionFreezeContinuity({
       orgId: ORG,
