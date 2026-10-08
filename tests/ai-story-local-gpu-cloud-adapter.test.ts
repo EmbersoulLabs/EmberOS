@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -6,16 +6,22 @@ import {
   AI_STORY_AUDIO_QC_EXPECTATION_KINDS,
   AiStoryLocalGenerationPackageSchema,
   assertDistinctLocalGpuSecrets,
+  assertLocalGpuPackageCompatibility,
   assertLocalGpuRequestExpiry,
   assertLocalGpuResultEnvironment,
+  assertLocalGpuUploadBinding,
+  buildLocalGpuDesktopSubmit,
   canonicalLocalGpuSigningPayload,
   LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
   LOCAL_GPU_CAPABILITIES_ACTION,
   LOCAL_GPU_CLAIM_ORDER,
+  LOCAL_GPU_SUBMIT_ACTION,
+  readLocalGpuUpstreamFailure,
   LOCAL_GPU_PROVIDER_ID,
   LOCAL_GPU_PUBLIC_DUMMY_SIGNING_SECRET,
   LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
   localGpuPlannedDurationMs,
+  localGpuUploadBindingDigest,
   mapLocalGpuAudioPolicy,
   selectLocalGpuReferences,
 } from "@ceo-agent/shared";
@@ -25,7 +31,7 @@ import {
   materializeLocalGpuGenerationResult,
 } from "../packages/agents/src/ai-story/generation-result-service";
 import { assertLocalGpuAccess, localGpuActorFromResolution } from "../packages/agents/src/ai-story/local-gpu-access";
-import { LocalGpuCloudAdapter, createLocalGpuProviderRegistry } from "../packages/agents/src/ai-story/local-gpu-adapter";
+import { LocalGpuCloudAdapter, LocalGpuSubmitFailedError, createLocalGpuProviderRegistry } from "../packages/agents/src/ai-story/local-gpu-adapter";
 import { loadLocalGpuConfigFromEnv, redactLocalGpuConfig } from "../packages/agents/src/ai-story/local-gpu-config";
 import { handoffLocalGpuToExistingReview } from "../packages/agents/src/ai-story/local-gpu-handoff";
 import { signLocalGpuRequest } from "../packages/agents/src/ai-story/local-gpu-signing";
@@ -38,6 +44,22 @@ import {
 const root = join(__dirname, "..");
 const id = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
 const hash = `sha256:${"ab".repeat(32)}`;
+const referenceUrl = "https://storage.example.test/reference.png";
+const uploadUrl = "https://storage.example.test/upload/result.mp4";
+
+function approvedReference(role: "CHARACTER" | "PRODUCT" = "CHARACTER", assetUrl = referenceUrl) {
+  return { approval: "APPROVED" as const, role, assetUrl, contentHash: hash };
+}
+
+function secureUpload() {
+  return {
+    environment: "staging" as const,
+    method: "PUT",
+    url: uploadUrl,
+    headers: { "content-type": "video/mp4" },
+    assetId: id(90),
+  };
+}
 const now = new Date("2026-10-07T04:00:00.000Z");
 const secret = "staging-signing-secret";
 const productionSecret = "production-signing-secret";
@@ -156,7 +178,7 @@ function signedFields(environment: "staging" | "production" = "staging") {
   return {
     v: 1 as const,
     environment,
-    action: "submit" as const,
+    action: LOCAL_GPU_SUBMIT_ACTION,
     jobId: id(70),
     workspaceId: id(3),
     actorId: id(16),
@@ -219,10 +241,13 @@ describe("LOCAL_GPU cloud adapter", () => {
   });
 
   it("parses worker capabilities", async () => {
-    const { client } = harness(() => ({ status: 200, body: JSON.stringify({ workflows: [{ id: "MINIMAX_H3_R2V" }] }) }));
+    const { client, calls } = harness(() => ({ status: 200, body: JSON.stringify({ workflows: [{ id: "MINIMAX_H3_R2V" }] }) }));
     await expect(client.capabilities({ actor: actor(), workspaceId: id(3), workflow: "CAPABILITIES" })).resolves.toEqual({
       workflows: ["MINIMAX_H3_R2V"],
     });
+    const token = calls[0]?.headers.authorization?.replace(/^Bearer /, "") ?? "";
+    const claims = JSON.parse(Buffer.from(token.split(".")[0]!, "base64url").toString("utf8")) as { uploadBinding: unknown };
+    expect(claims.uploadBinding).toEqual({});
   });
 
   it("allows only an active superadmin grant", () => {
@@ -245,7 +270,7 @@ describe("LOCAL_GPU cloud adapter", () => {
       actorId: id(16),
       workspaceId: id(3),
       jobId: id(70),
-      action: "submit",
+      action: LOCAL_GPU_SUBMIT_ACTION,
       environment: "staging",
       v: 1,
     });
@@ -302,10 +327,8 @@ describe("LOCAL_GPU cloud adapter", () => {
       recommendedDurationAuthority: authority,
       workerWorkflows: ["MINIMAX_H3_R2V"],
       audioExpectationKind: "SILENT_OUTPUT",
-      characterReferencePack: [
-        { assetId: id(40), contentHash: hash, status: "APPROVED", displayName: "Approved face" },
-        { assetId: id(49), contentHash: hash, status: "GENERATED", displayName: "Unapproved portrait" },
-      ],
+      references: [approvedReference("CHARACTER"), approvedReference("PRODUCT", "https://storage.example.test/product.png")],
+      upload: secureUpload(),
       pinnedVoiceDna: {
         voiceDnaId: id(60),
         voiceDnaFingerprint: hash,
@@ -319,15 +342,28 @@ describe("LOCAL_GPU cloud adapter", () => {
     expect(body).toMatchObject({
       environment: "staging",
       workflow: "MINIMAX_H3_R2V",
-      plannedDurationMs: 5000,
+      durationSec: 5,
+      durationSource: "RECOMMENDED_DURATION_AUTHORITY",
       audioPolicy: "REMOVE_AUDIO",
       prompt: "A deterministic synthetic Scene.",
+      aspectRatio: "9:16",
+      voiceInstructions: "Warm and exact.",
     });
-    expect(body.plannedDurationMs).not.toBe(4000);
-    expect(body.characterReferences).toEqual([{ assetId: id(40), contentHash: hash, displayName: "Approved face" }]);
-    expect(body.productReferences).toEqual([{ assetId: id(41), contentHash: hash, displayName: "Product" }]);
-    expect(body.predecessorFrame).toBeNull();
-    expect(body.voicePerformance.voiceDna).toMatchObject({ voiceDnaId: id(60), performanceInstruction: "Warm and exact." });
+    expect(body.references).toHaveLength(2);
+    expect(body.upload).toMatchObject({ environment: "staging", method: "PUT", url: uploadUrl });
+    expect(body.authority).toBeUndefined();
+    expect(body.uploadBinding).toBeUndefined();
+    expect(body.plannedDurationMs).toBeUndefined();
+    expect(body.actorId).toBeUndefined();
+    expect(body.characterReferences).toBeUndefined();
+    expect(body.productReferences).toBeUndefined();
+    expect(body.voiceDna).toBeUndefined();
+    expect(body.generationMode).toBeUndefined();
+    const token = calls[0]?.headers.authorization?.replace(/^Bearer /, "") ?? "";
+    const claims = JSON.parse(Buffer.from(token.split(".")[0]!, "base64url").toString("utf8")) as { uploadBinding: string; authority: string };
+    expect(claims.authority).toBe("SUPERADMIN");
+    expect(claims.uploadBinding).toBe(localGpuUploadBindingDigest(body.upload));
+    expect(claims.uploadBinding).toBe(createHash("sha256").update(`staging\nPUT\n${uploadUrl}`, "utf8").digest("hex"));
     expect(body.class_type).toBeUndefined();
     expect(calls[0]?.headers.authorization?.startsWith("Bearer ")).toBe(true);
     expect(receipt).toMatchObject({
@@ -474,5 +510,232 @@ describe("LOCAL_GPU cloud adapter", () => {
       LOCAL_GPU_BASE_URL: "https://local-gpu.embersoullabs.com",
       LOCAL_GPU_SIGNING_SECRET: secret,
     })).toThrow("LOCAL_GPU_ENVIRONMENT_REQUIRED");
+  });
+
+  it("keeps a non-2xx Desktop response as a redacted structured failure and does not retry", async () => {
+    const failure = readLocalGpuUpstreamFailure(422, {
+      code: "WORKFLOW_REJECTED",
+      message: "Bearer secret-token workflow is not allowed https://user:password@uploads.example/put",
+      correlationId: "corr-8c268e0f",
+      authorization: "Bearer raw-token",
+      signature: "raw-signature",
+    });
+    expect(failure).toEqual({
+      code: "LOCAL_GPU_SUBMIT_FAILED",
+      httpStatus: 422,
+      upstreamCode: "WORKFLOW_REJECTED",
+      upstreamMessage: "[REDACTED] workflow is not allowed [REDACTED]",
+      correlationId: "corr-8c268e0f",
+    });
+    expect(JSON.stringify(failure)).not.toContain("secret-token");
+    expect(JSON.stringify(failure)).not.toContain("password");
+    expect(JSON.stringify(failure)).not.toContain("raw-token");
+    expect(JSON.stringify(failure)).not.toContain("raw-signature");
+    const nested = readLocalGpuUpstreamFailure(401, {
+      error: { code: "SIGNATURE_MISMATCH", message: "signature: abc.def" },
+      requestId: "req-1",
+    });
+    expect(nested.upstreamCode).toBe("SIGNATURE_MISMATCH");
+    expect(nested.upstreamMessage).toBe("[REDACTED]");
+    expect(nested.correlationId).toBe("req-1");
+    expect(readLocalGpuUpstreamFailure(500, null)).toMatchObject({
+      httpStatus: 500,
+      upstreamCode: null,
+      upstreamMessage: null,
+      correlationId: null,
+    });
+
+    const { client, calls } = harness(() => ({
+      status: 422,
+      body: JSON.stringify({ code: "WORKFLOW_REJECTED", message: "workflow", requestId: "req-submit" }),
+    }));
+    const rejected = client.submit({
+      actor: actor(),
+      package: pkg(),
+      recommendedDurationAuthority: { decision: { plannedDurationMs: 5000 } },
+      workerWorkflows: ["MINIMAX_H3_R2V"],
+      references: [approvedReference()],
+      upload: secureUpload(),
+    });
+    await expect(rejected).rejects.toBeInstanceOf(LocalGpuSubmitFailedError);
+    await expect(rejected).rejects.toMatchObject({
+      message: "LOCAL_GPU_SUBMIT_FAILED",
+      failure: {
+        code: "LOCAL_GPU_SUBMIT_FAILED",
+        httpStatus: 422,
+        upstreamCode: "WORKFLOW_REJECTED",
+        upstreamMessage: "workflow",
+        correlationId: "req-submit",
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url).toBe("https://local-gpu.embersoullabs.com/v1/jobs");
+  });
+
+  it("accepts one staging submit token and body under Desktop verifier semantics", async () => {
+    const { client, calls } = harness(() => ({ status: 202, body: JSON.stringify({ state: "QUEUED" }) }));
+    await client.submit({
+      actor: actor(),
+      package: pkg(),
+      recommendedDurationAuthority: { decision: { plannedDurationMs: 5000 } },
+      workerWorkflows: ["MINIMAX_H3_R2V"],
+      audioExpectationKind: "NATIVE_CHARACTER_DIALOGUE",
+      references: [approvedReference()],
+      upload: secureUpload(),
+    });
+    const call = calls[0]!;
+    const token = call.headers.authorization?.replace(/^Bearer /, "") ?? "";
+    const [payload, signature] = token.split(".");
+    expect(payload?.includes("=")).toBe(false);
+    expect(signature?.includes("=")).toBe(false);
+    expect(signature).toBe(createHmac("sha256", Buffer.from(secret, "utf8")).update(payload!, "utf8").digest("base64url"));
+    const claims = JSON.parse(Buffer.from(payload!, "base64url").toString("utf8")) as Record<string, unknown>;
+    expect(Object.keys(claims)).toEqual([...LOCAL_GPU_CLAIM_ORDER]);
+    expect(claims.action).toBe(LOCAL_GPU_SUBMIT_ACTION);
+    expect(claims.action).not.toBe("POST");
+    expect(String(claims.action)).not.toContain("/v1/jobs");
+    expect(claims.environment).toBe("staging");
+    expect(claims.workflow).toBe("MINIMAX_H3_R2V");
+    expect(claims.authority).toBe("SUPERADMIN");
+    expect(claims.uploadBinding).toBe(localGpuUploadBindingDigest({
+      environment: "staging",
+      method: "PUT",
+      url: uploadUrl,
+    }));
+    expect(typeof claims.expiresAt).toBe("number");
+    expect(typeof claims.nonce).toBe("string");
+    const body = JSON.parse(call.body!) as Record<string, unknown> & {
+      upload: { environment: string; method: string; url: string };
+    };
+    expect(body.environment).toBe(claims.environment);
+    expect(body.jobId).toBe(claims.jobId);
+    expect(body.workspaceId).toBe(claims.workspaceId);
+    expect(body.actorId).toBeUndefined();
+    expect(body.authority).toBeUndefined();
+    expect(body.workflow).toBe("MINIMAX_H3_R2V");
+    expect(body.workflow).not.toBe("MINIMAX_H3_NATIVE_DIALOGUE");
+    expect(body.sceneExecutionId).toBe(claims.sceneExecutionId);
+    expect(body.uploadBinding).toBeUndefined();
+    expect(body.durationSec).toBe(5);
+    expect(body.durationSource).toBe("RECOMMENDED_DURATION_AUTHORITY");
+    expect(body.audioPolicy).toBe("NATIVE");
+    expect(body.prompt).toBe("A deterministic synthetic Scene.");
+    expect(claims.uploadBinding).toBe(localGpuUploadBindingDigest(body.upload));
+    expect(Array.isArray(body.references)).toBe(true);
+    expect(call.body).not.toContain(secret);
+    expect(token).not.toContain(secret);
+  });
+
+  it("matches the certified Desktop job contract and rejects incompatible packages before HTTP", async () => {
+    const fixture = JSON.parse(readFileSync(join(root, "tests/fixtures/desktop-post-v1-jobs.contract.json"), "utf8")) as {
+      action: string;
+      workflow: string;
+      durationSource: string;
+      durationSec: { min: number; max: number };
+      referenceCount: { min: number; max: number };
+      requiredBodyFields: string[];
+      requiredUploadFields: string[];
+      requiredReferenceFields: string[];
+      forbiddenBodyFields: string[];
+    };
+    const base = {
+      environment: "staging" as const,
+      jobId: id(70),
+      sceneExecutionId: id(9),
+      workspaceId: id(3),
+      workflow: "MINIMAX_H3_R2V",
+      prompt: "A deterministic synthetic Scene.",
+      plannedDurationMs: 5000,
+      references: [approvedReference()],
+      audioPolicy: "NATIVE",
+      upload: secureUpload(),
+      generationMode: "TEXT_TO_VIDEO",
+    };
+    const accepted = buildLocalGpuDesktopSubmit(base);
+    expect(fixture.action).toBe("submit");
+    expect(fixture.workflow).toBe("MINIMAX_H3_R2V");
+    expect(accepted.body.workflow).toBe(fixture.workflow);
+    expect(accepted.body.durationSource).toBe(fixture.durationSource);
+    expect(accepted.body.durationSec).toBeGreaterThanOrEqual(fixture.durationSec.min);
+    expect(accepted.body.durationSec).toBeLessThanOrEqual(fixture.durationSec.max);
+    expect(accepted.body.references.length).toBeGreaterThanOrEqual(fixture.referenceCount.min);
+    expect(accepted.body.references.length).toBeLessThanOrEqual(fixture.referenceCount.max);
+    for (const field of fixture.requiredBodyFields) expect(accepted.body).toHaveProperty(field);
+    for (const field of fixture.requiredUploadFields) expect(accepted.body.upload).toHaveProperty(field);
+    for (const field of fixture.requiredReferenceFields) expect(accepted.body.references[0]).toHaveProperty(field);
+    for (const field of fixture.forbiddenBodyFields) expect(accepted.body).not.toHaveProperty(field);
+    expect(accepted.uploadBinding).toBe(localGpuUploadBindingDigest(accepted.body.upload));
+    assertLocalGpuUploadBinding(accepted.body.upload, accepted.uploadBinding);
+
+    const two = buildLocalGpuDesktopSubmit({
+      ...base,
+      references: [approvedReference("CHARACTER"), approvedReference("PRODUCT", "https://storage.example.test/product.png")],
+    });
+    expect(two.body.references).toHaveLength(2);
+    expect(buildLocalGpuDesktopSubmit({ ...base, plannedDurationMs: 5000 }).body.durationSec).toBe(5);
+    expect(buildLocalGpuDesktopSubmit({ ...base, plannedDurationMs: 15000 }).body.durationSec).toBe(15);
+    expect(buildLocalGpuDesktopSubmit({ ...base, audioPolicy: "NATIVE" }).body.audioPolicy).toBe("NATIVE");
+    expect(buildLocalGpuDesktopSubmit({ ...base, audioPolicy: "REMOVE_AUDIO" }).body.audioPolicy).toBe("REMOVE_AUDIO");
+    expect(buildLocalGpuDesktopSubmit({ ...base, audioPolicy: "NATIVE" }).body.workflow).not.toBe("MINIMAX_H3_NATIVE_DIALOGUE");
+
+    const binding = accepted.uploadBinding;
+    expect(() => assertLocalGpuUploadBinding({ ...accepted.body.upload, environment: "production" }, binding)).toThrow("LOCAL_GPU_UPLOAD_BINDING_MISMATCH");
+    expect(() => assertLocalGpuUploadBinding({ ...accepted.body.upload, method: "POST" }, binding)).toThrow("LOCAL_GPU_UPLOAD_BINDING_MISMATCH");
+    expect(() => assertLocalGpuUploadBinding({ ...accepted.body.upload, url: `${uploadUrl}?changed=1` }, binding)).toThrow("LOCAL_GPU_UPLOAD_BINDING_MISMATCH");
+
+    expect(() => buildLocalGpuDesktopSubmit({ ...base, references: [] })).toThrow("LOCAL_GPU_REFERENCES_REQUIRED");
+    expect(() => buildLocalGpuDesktopSubmit({
+      ...base,
+      references: [
+        approvedReference(),
+        approvedReference("PRODUCT", "https://storage.example.test/product.png"),
+        { approval: "APPROVED" as const, role: "STYLE" as const, assetUrl: "https://storage.example.test/style.png", contentHash: hash },
+      ],
+    })).toThrow("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+    expect(() => buildLocalGpuDesktopSubmit({
+      ...base,
+      references: [{ ...approvedReference(), approval: "PENDING" as "APPROVED" }],
+    })).toThrow("LOCAL_GPU_REFERENCE_NOT_APPROVED");
+    expect(() => buildLocalGpuDesktopSubmit({
+      ...base,
+      references: [{ ...approvedReference(), assetUrl: "" }],
+    })).toThrow("LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
+    expect(() => buildLocalGpuDesktopSubmit({
+      ...base,
+      references: [{ ...approvedReference(), contentHash: "" }],
+    })).toThrow("LOCAL_GPU_REFERENCE_CONTENT_HASH_REQUIRED");
+    expect(() => buildLocalGpuDesktopSubmit({ ...base, plannedDurationMs: 4000 })).toThrow("LOCAL_GPU_DURATION_UNSUPPORTED");
+    expect(() => buildLocalGpuDesktopSubmit({ ...base, plannedDurationMs: 16000 })).toThrow("LOCAL_GPU_DURATION_UNSUPPORTED");
+    expect(() => buildLocalGpuDesktopSubmit({ ...base, workflow: "MINIMAX_H3_NATIVE_DIALOGUE" })).toThrow("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
+    expect(() => buildLocalGpuDesktopSubmit({ ...base, workflow: "OTHER_WORKFLOW" })).toThrow("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
+    expect(() => assertLocalGpuPackageCompatibility({
+      recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      plannedDurationMs: 4000,
+      generationMode: "TEXT_TO_VIDEO",
+      references: [],
+      audioPolicy: "NATIVE",
+    })).toThrow("LOCAL_GPU_DURATION_UNSUPPORTED");
+
+    const denied = harness(() => ({ status: 202, body: JSON.stringify({ state: "QUEUED" }) }));
+    await expect(denied.client.submit({
+      actor: actor(),
+      package: pkg(),
+      recommendedDurationAuthority: { decision: { plannedDurationMs: 4000 } },
+      workerWorkflows: ["MINIMAX_H3_R2V"],
+      references: [approvedReference()],
+      upload: secureUpload(),
+    })).rejects.toThrow("LOCAL_GPU_DURATION_UNSUPPORTED");
+    await expect(denied.client.submit({
+      actor: actor(),
+      package: pkg(),
+      recommendedDurationAuthority: { decision: { plannedDurationMs: 5000 } },
+      workerWorkflows: ["MINIMAX_H3_R2V"],
+      references: [],
+      upload: secureUpload(),
+    })).rejects.toThrow("LOCAL_GPU_REFERENCES_REQUIRED");
+    expect(denied.calls).toHaveLength(0);
+    expect(JSON.stringify(accepted.body)).not.toContain("Authorization");
+    expect(accepted.uploadBinding).not.toContain(uploadUrl);
   });
 });

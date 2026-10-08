@@ -6,6 +6,7 @@ import {
   LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
   LOCAL_GPU_CAPABILITIES_ACTION,
   LOCAL_GPU_DEFAULT_REQUEST_TTL_MS,
+  LOCAL_GPU_SUBMIT_ACTION,
   LOCAL_GPU_JOB_STATES,
   LOCAL_GPU_PROVIDER_ID,
   LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
@@ -14,21 +15,52 @@ import {
   LocalGpuJobStateSchema,
   localGpuPlannedDurationMs,
   localGpuTerminalDisposition,
+  readLocalGpuUpstreamFailure,
+  assertLocalGpuUploadBinding,
+  buildLocalGpuDesktopSubmit,
   mapCertifiedWorkflowToLocalGpu,
   mapLocalGpuAudioPolicy,
   mapLocalGpuVoicePerformance,
-  selectLocalGpuReferences,
   type AiStoryLocalGenerationPackage,
-  type LocalGpuAudioPolicy,
+  type LocalGpuDesktopReference,
   type LocalGpuEnvironment,
   type LocalGpuHealthState,
   type LocalGpuJobState,
   type LocalGpuSignedFields,
+  type LocalGpuUploadDestination,
+  type LocalGpuUpstreamFailure,
 } from "@ceo-agent/shared";
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
 import type { LocalGpuConfig } from "./local-gpu-config";
 import { assertLocalGpuAccess, type LocalGpuServerActor } from "./local-gpu-access";
 import { signLocalGpuRequest } from "./local-gpu-signing";
+
+export class LocalGpuSubmitFailedError extends LocalGpuContractError {
+  readonly failure: LocalGpuUpstreamFailure;
+
+  constructor(failure: LocalGpuUpstreamFailure) {
+    super(failure.code);
+    this.name = "LocalGpuSubmitFailedError";
+    this.failure = failure;
+  }
+}
+
+export function localGpuSubmitFailureLog(error: unknown): LocalGpuUpstreamFailure | {
+  code: string;
+  httpStatus: null;
+  upstreamCode: null;
+  upstreamMessage: null;
+  correlationId: null;
+} {
+  if (error instanceof LocalGpuSubmitFailedError) return error.failure;
+  return {
+    code: error instanceof Error ? error.message : "LOCAL_GPU_SUBMIT_FAILED",
+    httpStatus: null,
+    upstreamCode: null,
+    upstreamMessage: null,
+    correlationId: null,
+  };
+}
 
 export type LocalGpuHttp = (input: {
   method: "GET" | "POST";
@@ -110,8 +142,12 @@ export type LocalGpuSubmitInput = {
   recommendedDurationAuthority: { readonly decision: { readonly plannedDurationMs: number } };
   workerWorkflows: readonly string[];
   audioExpectationKind?: Parameters<typeof mapLocalGpuAudioPolicy>[0]["expectationKind"];
-  characterReferencePack?: Parameters<typeof selectLocalGpuReferences>[0]["characterReferencePack"];
   pinnedVoiceDna?: Parameters<typeof mapLocalGpuVoicePerformance>[0]["pinnedVoiceDna"];
+  /** Resolved approved execution references. The adapter does not invent asset URLs. */
+  references?: readonly LocalGpuDesktopReference[];
+  /** Secure upload destination already produced by EmberOS. */
+  upload?: LocalGpuUploadDestination | null;
+  firstFrame?: { assetUrl: string; contentHash: string } | null;
 };
 
 export class LocalGpuCloudAdapter {
@@ -132,7 +168,13 @@ export class LocalGpuCloudAdapter {
     return { environment: this.config.environment, secret: this.config.signingSecret };
   }
 
-  private authorize(scope: LocalGpuJobScope, action: string, workflow: string, jobId: string): { token: string; fields: LocalGpuSignedFields } {
+  private authorize(
+    scope: LocalGpuJobScope,
+    action: string,
+    workflow: string,
+    jobId: string,
+    uploadBinding: LocalGpuSignedFields["uploadBinding"] = {},
+  ): { token: string; fields: LocalGpuSignedFields } {
     assertLocalGpuAccess(scope.actor, { workspaceId: scope.workspaceId }, {
       agencyLocalGpuEnabled: this.config.agencyEnabled,
     });
@@ -152,7 +194,7 @@ export class LocalGpuCloudAdapter {
       sceneExecutionId: scope.sceneExecutionId ?? "",
       expiresAt,
       nonce: this.clock.nonce(),
-      uploadBinding: {},
+      uploadBinding,
     };
     return { token: signLocalGpuRequest(secret, fields).token, fields };
   }
@@ -242,19 +284,7 @@ export class LocalGpuCloudAdapter {
     this.requireEnabledEnvironment();
     const plannedDurationMs = localGpuPlannedDurationMs(input.recommendedDurationAuthority);
     const workflow = mapCertifiedWorkflowToLocalGpu(input.package.recommendedWorkflow, input.workerWorkflows);
-    const predecessor = input.package.version === "local-generation-package.v3"
-      ? input.package.predecessorAuthority
-      : null;
-    const references = selectLocalGpuReferences({
-      packageReferences: input.package.references,
-      characterReferencePack: input.characterReferencePack,
-      predecessorAuthorityPresent: Boolean(predecessor),
-      predecessorFrame: predecessor ? {
-        assetId: predecessor.semantic.continuityFrameAssetId,
-        contentHash: predecessor.semantic.continuityFrameContentHash,
-      } : null,
-    });
-    const audioPolicy: LocalGpuAudioPolicy = mapLocalGpuAudioPolicy({
+    const audioPolicy = mapLocalGpuAudioPolicy({
       generateAudio: input.package.generateAudio,
       audioBlocked: input.package.audioBlocked,
       expectationKind: input.audioExpectationKind,
@@ -264,30 +294,36 @@ export class LocalGpuCloudAdapter {
       pinnedVoiceDna: input.pinnedVoiceDna,
     });
     const jobId = this.jobIdFor(input.package);
-    const { token, fields } = this.authorize(scope, "submit", workflow, jobId);
-    const body = {
-      environment: fields.environment,
+    const { environment } = this.requireEnabledEnvironment();
+    const desktop = buildLocalGpuDesktopSubmit({
+      environment,
       jobId,
       sceneExecutionId: input.package.sceneExecutionId,
-      storyId: input.package.storyId,
-      storyVersionId: input.package.storyVersionId,
       workspaceId: input.package.workspaceId,
-      actorId: input.actor.userId,
       workflow,
       prompt: input.package.prompt,
       plannedDurationMs,
-      characterReferences: references.characterReferences,
-      productReferences: references.productReferences,
-      predecessorFrame: references.predecessorFrame,
+      references: input.references ?? [],
       audioPolicy,
-      voicePerformance,
+      upload: input.upload,
+      generationMode: input.package.generationMode,
       aspectRatio: input.package.aspectRatio,
-      resolutionIntent: input.package.resolutionIntent,
-    };
+      voiceInstructions: voicePerformance.voiceDna?.performanceInstruction,
+      firstFrame: input.firstFrame,
+    });
+    const { token, fields } = this.authorize(
+      scope,
+      LOCAL_GPU_SUBMIT_ACTION,
+      workflow,
+      jobId,
+      desktop.uploadBinding,
+    );
+    assertLocalGpuUploadBinding(desktop.body.upload, String(fields.uploadBinding));
+    const body = desktop.body;
     assertSemanticRequest(body);
     const response = await this.send({ method: "POST", path: "/v1/jobs", token, body });
     if (response.status < 200 || response.status >= 300) {
-      throw new LocalGpuContractError("LOCAL_GPU_SUBMIT_FAILED");
+      throw new LocalGpuSubmitFailedError(readLocalGpuUpstreamFailure(response.status, response.json));
     }
     const state = readState(asRecord(response.json).state ?? asRecord(response.json).status ?? "QUEUED");
     return {

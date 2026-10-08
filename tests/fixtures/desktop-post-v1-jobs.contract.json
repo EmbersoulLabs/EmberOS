@@ -1,0 +1,36 @@
+{
+  "note": "Certified Desktop POST /v1/jobs contract. apps/local-worker/src/test/fixtures/post-v1-jobs.json is not in this repository, so this fixture records that contract for the Laptop interop test.",
+  "action": "submit",
+  "workflow": "MINIMAX_H3_R2V",
+  "durationSource": "RECOMMENDED_DURATION_AUTHORITY",
+  "durationSec": { "min": 5, "max": 15 },
+  "referenceCount": { "min": 1, "max": 2 },
+  "referenceRoles": ["CHARACTER", "PRODUCT", "STYLE", "OTHER"],
+  "referenceApproval": "APPROVED",
+  "requiredBodyFields": [
+    "environment",
+    "jobId",
+    "sceneExecutionId",
+    "workspaceId",
+    "workflow",
+    "prompt",
+    "durationSec",
+    "durationSource",
+    "references",
+    "audioPolicy",
+    "upload"
+  ],
+  "requiredUploadFields": ["environment", "method", "url"],
+  "requiredReferenceFields": ["approval", "role", "assetUrl", "contentHash"],
+  "forbiddenBodyFields": [
+    "authority",
+    "uploadBinding",
+    "actorId",
+    "plannedDurationMs",
+    "characterReferences",
+    "productReferences",
+    "voiceDna",
+    "generationMode"
+  ],
+  "uploadBindingCanonical": "environment\\nmethod\\nurl"
+}

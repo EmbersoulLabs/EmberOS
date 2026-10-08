@@ -122,6 +122,20 @@ export async function createSignedStorageReadUrl(
   });
 }
 
+/**
+ * Mint the same private signed upload the local-generation output route uses.
+ * The URL is returned to the Desktop job body and is never logged.
+ */
+export async function createSignedStorageUploadUrl(storagePath: string): Promise<string> {
+  return withNetworkRetry("sign local gpu result upload", async () => {
+    const { data, error } = await getAdminClient().storage.from(getBucket()).createSignedUploadUrl(storagePath);
+    if (error || !data?.signedUrl) {
+      throw new Error("LOCAL_GPU_UPLOAD_DESTINATION_REQUIRED");
+    }
+    return data.signedUrl;
+  });
+}
+
 export async function uploadStorageFile(
   storagePath: string,
   localPath: string,
