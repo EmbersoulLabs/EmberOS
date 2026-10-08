@@ -268,6 +268,7 @@ async function resolveFrozenDesktopReferences(
       contentHash: string;
     };
     const role = localGpuDesktopReferenceRole(source);
+    if (!role) continue;
     if (!source.contentHash || !/^sha256:[0-9a-f]{64}$/.test(source.contentHash)) {
       throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_CONTENT_HASH_REQUIRED");
     }

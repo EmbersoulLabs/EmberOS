@@ -341,11 +341,9 @@ const DESKTOP_ROLE_BY_SOURCE: Record<string, LocalGpuDesktopReferenceRole> = {
 export function localGpuDesktopReferenceRole(reference: {
   role?: string;
   authorityType?: string;
-}): LocalGpuDesktopReferenceRole {
+}): LocalGpuDesktopReferenceRole | null {
   const source = reference.role ?? reference.authorityType ?? "";
-  const mapped = DESKTOP_ROLE_BY_SOURCE[source];
-  if (!mapped) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_ROLE_UNSUPPORTED");
-  return mapped;
+  return DESKTOP_ROLE_BY_SOURCE[source] ?? null;
 }
 
 /** Integer seconds from frozen Recommended Duration. Values outside 5–15 are rejected, never clamped. */
@@ -404,9 +402,9 @@ export function assertLocalGpuPackageCompatibility(input: {
   if (!LOCAL_GPU_AUDIO_POLICIES.includes(input.audioPolicy as LocalGpuAudioPolicy)) {
     throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
   }
-  assertDesktopReferenceCardinality(input.references.length, input.generationMode);
-  for (const reference of input.references) {
-    localGpuDesktopReferenceRole(reference);
+  const desktopReferences = input.references.filter((reference) => localGpuDesktopReferenceRole(reference));
+  assertDesktopReferenceCardinality(desktopReferences.length, input.generationMode);
+  for (const reference of desktopReferences) {
     if (!reference.assetId) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
     if (!reference.contentHash || !/^sha256:[0-9a-f]{64}$/.test(reference.contentHash)) {
       throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_CONTENT_HASH_REQUIRED");
@@ -509,6 +507,7 @@ export function buildLocalGpuDesktopSubmit(input: {
       throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_NOT_APPROVED");
     }
     const role = localGpuDesktopReferenceRole({ role: reference.role });
+    if (!role) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_ROLE_UNSUPPORTED");
     if (!reference.assetUrl) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
     assertHttpsDestination(reference.assetUrl, "LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
     if (!reference.contentHash || !/^sha256:[0-9a-f]{64}$/.test(reference.contentHash)) {

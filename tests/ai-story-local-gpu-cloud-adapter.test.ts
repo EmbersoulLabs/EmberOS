@@ -716,6 +716,23 @@ describe("LOCAL_GPU cloud adapter", () => {
       references: [],
       audioPolicy: "NATIVE",
     })).toThrow("LOCAL_GPU_DURATION_UNSUPPORTED");
+    expect(() => assertLocalGpuPackageCompatibility({
+      recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      plannedDurationMs: 6000,
+      generationMode: "FIRST_FRAME_IMAGE_TO_VIDEO",
+      references: [
+        { role: "VISUAL_START", assetId: id(40), contentHash: hash },
+        { role: "PRODUCT_IDENTITY", assetId: id(41), contentHash: hash },
+      ],
+      audioPolicy: "NATIVE",
+    })).not.toThrow();
+    expect(() => assertLocalGpuPackageCompatibility({
+      recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      plannedDurationMs: 6000,
+      generationMode: "FIRST_FRAME_IMAGE_TO_VIDEO",
+      references: [{ role: "VISUAL_START", assetId: id(40), contentHash: hash }],
+      audioPolicy: "NATIVE",
+    })).toThrow("LOCAL_GPU_REFERENCES_REQUIRED");
 
     const denied = harness(() => ({ status: 202, body: JSON.stringify({ state: "QUEUED" }) }));
     await expect(denied.client.submit({
