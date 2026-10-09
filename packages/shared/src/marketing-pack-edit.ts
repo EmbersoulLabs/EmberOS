@@ -95,7 +95,15 @@ function writeLocaleCaption(
   if (!normalized) {
     throw new Error("Invalid marketing pack");
   }
-  return normalized;
+  // Normalize folds hook, hashtags, and CTA into the Chinese caption map.
+  // A locale save must keep the caption written above, not that joined copy.
+  return {
+    ...normalized,
+    captions,
+    captionsEn,
+    captionsMs,
+    platformAssets: assets,
+  };
 }
 
 /** Update one platform in one locale. Other locales and platforms stay as stored. */

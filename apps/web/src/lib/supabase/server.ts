@@ -1,5 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
+import type { User } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
+import { E2E_SESSION_COOKIE, readE2ESessionUser } from "@/lib/e2e-local-auth";
 
 export async function createClient() {
   const cookieStore = await cookies();
@@ -27,6 +29,10 @@ export async function createClient() {
 }
 
 export async function getAuthUser() {
+  const cookieStore = await cookies();
+  const local = await readE2ESessionUser(cookieStore.get(E2E_SESSION_COOKIE)?.value);
+  if (local) return { id: local.id, email: local.email } as User;
+
   const supabase = await createClient();
   const {
     data: { user },

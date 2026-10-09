@@ -2,7 +2,6 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import {
   attachMarketingPackRevision,
-  isTaskBudgetExhausted,
   readMarketingPackRevision,
   type MarketingContentPackage,
   type StepProgress,
@@ -21,6 +20,38 @@ function money(value: number): string {
 function asMoney(value: string | number | null | undefined): number {
   const parsed = typeof value === "number" ? value : Number(value ?? "0");
   return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+/** A crashed request cannot clear its own reservation. The next call recovers it after this TTL. */
+const MARKETING_BUDGET_HOLD_MS = 120_000;
+const MARKETING_BUDGET_HOLD_KEY = "marketing_budget_hold";
+
+type MarketingBudgetHold = {
+  spentBefore: number;
+  budget: number;
+  expiresAt: string;
+};
+
+function progressRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? { ...(value as Record<string, unknown>) } : {};
+}
+
+function readBudgetHold(value: unknown): MarketingBudgetHold | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const spentBefore = asMoney(record.spentBefore as number | string | null | undefined);
+  const budget = asMoney(record.budget as number | string | null | undefined);
+  const expiresAt = typeof record.expiresAt === "string" ? record.expiresAt : "";
+  if (!Number.isFinite(spentBefore) || !Number.isFinite(budget) || Number.isNaN(Date.parse(expiresAt))) {
+    return null;
+  }
+  return { spentBefore, budget, expiresAt };
+}
+
+function withoutBudgetHold(progress: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...progress };
+  delete next[MARKETING_BUDGET_HOLD_KEY];
+  return next;
 }
 
 export async function saveMarketingPackIfCurrent(input: {
@@ -57,6 +88,7 @@ export async function saveMarketingPackIfCurrent(input: {
 /**
  * Hold the task row and reserve the remaining budget before a paid model call.
  * A second caller waits on the row lock, then sees the reservation and does not start another call.
+ * If the process dies before finish or cancel, the hold expires and the next call restores the prior spend.
  */
 export async function beginPaidMarketingCall(taskId: string): Promise<
   | { ok: true; reservation: MarketingBudgetReservation }
@@ -71,16 +103,31 @@ export async function beginPaidMarketingCall(taskId: string): Promise<
       .for("update")
       .limit(1);
     if (!locked) return { ok: false as const, reason: "not_found" as const };
-    if (isTaskBudgetExhausted(locked.costUsd, locked.costBudgetUsd)) {
+
+    const progress = progressRecord(locked.stepProgress);
+    const hold = readBudgetHold(progress[MARKETING_BUDGET_HOLD_KEY]);
+    let spent = asMoney(locked.costUsd);
+    const budget = asMoney(locked.costBudgetUsd);
+    if (hold && Math.abs(spent - hold.budget) < 1e-9 && Date.parse(hold.expiresAt) <= Date.now()) {
+      spent = hold.spentBefore;
+    }
+    if (!Number.isFinite(spent) || !Number.isFinite(budget) || spent >= budget) {
       return { ok: false as const, reason: "budget" as const };
     }
-    const spentBefore = asMoney(locked.costUsd);
-    const budget = asMoney(locked.costBudgetUsd);
+
+    const nextHold: MarketingBudgetHold = {
+      spentBefore: spent,
+      budget,
+      expiresAt: new Date(Date.now() + MARKETING_BUDGET_HOLD_MS).toISOString(),
+    };
     await tx
       .update(schema.tasks)
-      .set({ costUsd: money(budget) })
+      .set({
+        costUsd: money(budget),
+        stepProgress: { ...progress, [MARKETING_BUDGET_HOLD_KEY]: nextHold },
+      })
       .where(eq(schema.tasks.id, taskId));
-    return { ok: true as const, reservation: { taskId, spentBefore, budget } };
+    return { ok: true as const, reservation: { taskId, spentBefore: spent, budget } };
   });
 }
 
@@ -105,7 +152,10 @@ export async function finishPaidMarketingCall(
     const next = reservation.spentBefore + input.usage.costUsd;
     await tx
       .update(schema.tasks)
-      .set({ costUsd: money(next) })
+      .set({
+        costUsd: money(next),
+        stepProgress: withoutBudgetHold(progressRecord(locked.stepProgress)),
+      })
       .where(eq(schema.tasks.id, reservation.taskId));
     if (input.usage.costUsd > 0 || input.usage.input > 0 || input.usage.output > 0) {
       await tx.insert(schema.agentLogs).values({
@@ -133,10 +183,14 @@ export async function cancelPaidMarketingCall(reservation: MarketingBudgetReserv
       .for("update")
       .limit(1);
     if (!locked) return;
-    if (Math.abs(asMoney(locked.costUsd) - reservation.budget) > 1e-9) return;
+    const progress = withoutBudgetHold(progressRecord(locked.stepProgress));
+    const stillReserved = Math.abs(asMoney(locked.costUsd) - reservation.budget) < 1e-9;
     await tx
       .update(schema.tasks)
-      .set({ costUsd: money(reservation.spentBefore) })
+      .set({
+        ...(stillReserved ? { costUsd: money(reservation.spentBefore) } : {}),
+        stepProgress: progress,
+      })
       .where(eq(schema.tasks.id, reservation.taskId));
   });
 }

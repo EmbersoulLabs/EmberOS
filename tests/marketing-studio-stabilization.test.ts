@@ -80,6 +80,45 @@ describe("marketing studio locale integrity", () => {
     expect(next.captions.instagram).toBe(base.captions.instagram);
   });
 
+  it("keeps a stored Chinese caption when the platform asset also has a hook and CTA", () => {
+    const normalized = normalizeMarketingContentPackage({
+      voiceScripts: { "15s": "十五秒", "30s": "三十秒", "60s": "六十秒" },
+      captions: {
+        tiktok: "抖音中文",
+        instagram: "",
+        facebook: "",
+        linkedin: "",
+        xiaohongshu: "",
+        youtubeShorts: "",
+        googleBusiness: "",
+      },
+      hooks: [{ text: "钩子", type: "curiosity" }],
+      cta: [{ text: "了解" }],
+      platformAssets: {
+        tiktok: { caption: "抖音中文", hook: "十秒钩子", cta: "立即了解", hashtags: ["cafe"] },
+      },
+    });
+    expect(normalized?.captions.tiktok).toBe("抖音中文");
+  });
+
+  it("does not fold hook and CTA into the Chinese caption when English is saved", () => {
+    const base = pack();
+    base.captions = { ...base.captions, tiktok: "抖音中文" };
+    base.platformAssets = {
+      ...base.platformAssets,
+      tiktok: { caption: "抖音中文", hook: "十秒钩子", cta: "立即了解", hashtags: ["cafe"] },
+    };
+    const next = applyPlatformLocaleEdit(
+      base,
+      "tiktok",
+      { caption: "Updated English", hook: "十秒钩子", cta: "立即了解", hashtags: ["cafe"] },
+      "en"
+    );
+    expect(next.captions.tiktok).toBe("抖音中文");
+    expect(next.captionsEn?.tiktok).toBe("Updated English");
+    expect(next.platformAssets?.tiktok?.caption).toBe("抖音中文");
+  });
+
   it("editing Malay Instagram preserves Chinese and English Instagram", () => {
     const base = pack();
     const next = applyPlatformLocaleEdit(base, "instagram", asset("IG Melayu baru"), "ms");
@@ -263,11 +302,36 @@ describe("marketing route contracts", () => {
 
   it("asks the client for one translation attempt and keeps drafts on conflict", () => {
     expect(panel).toContain("translateAttempts");
+    expect(panel).toContain("[packLocale, taskId]");
     expect(panel).toContain("locale: packLocale");
     expect(panel).toContain('throw new Error("conflict")');
     expect(dashboard).toContain("marketing.action.conflict");
     expect(dashboard).toContain("marketing.origin.fallback");
     expect(dashboard).toContain("marketing.scripts.title");
     expect(dashboard).toContain("marketing.metric.unavailable");
+  });
+});
+
+describe("local e2e auth gate", () => {
+  it("stays disabled in production even when the flag and secret are set", async () => {
+    const { e2eLocalAuthEnabled, readE2ESessionUser } = await import("../apps/web/src/lib/e2e-local-auth");
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousFlag = process.env.E2E_LOCAL_AUTH;
+    const previousSecret = process.env.E2E_LOCAL_AUTH_SECRET;
+    process.env.E2E_LOCAL_AUTH = "1";
+    process.env.E2E_LOCAL_AUTH_SECRET = "unit-secret";
+    try {
+      process.env.NODE_ENV = "production";
+      expect(e2eLocalAuthEnabled()).toBe(false);
+      expect(await readE2ESessionUser("not-a-session")).toBeNull();
+      process.env.NODE_ENV = "development";
+      expect(e2eLocalAuthEnabled()).toBe(true);
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+      if (previousFlag === undefined) delete process.env.E2E_LOCAL_AUTH;
+      else process.env.E2E_LOCAL_AUTH = previousFlag;
+      if (previousSecret === undefined) delete process.env.E2E_LOCAL_AUTH_SECRET;
+      else process.env.E2E_LOCAL_AUTH_SECRET = previousSecret;
+    }
   });
 });

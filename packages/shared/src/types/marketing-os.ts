@@ -389,6 +389,7 @@ function mergeCaptionsFromPlatformAssets(
   const merged = { ...captions };
   for (const [id, asset] of Object.entries(assets)) {
     if (id === "threads") continue;
+    if ((merged as Record<string, string>)[id]?.trim()) continue;
     const cap = captionFromPlatformAsset(asset);
     if (cap && id in merged) {
       (merged as Record<string, string>)[id] = cap;

@@ -157,8 +157,14 @@ async function insertTask(input: {
   costUsd?: string;
   budget?: string;
   historical?: boolean;
+  budgetHold?: { spentBefore: number; budget: number; expiresAt: string };
 }) {
   const taskId = crypto.randomUUID();
+  const stepProgress = progressFor(input.content, input.historical ? undefined : input.revision ?? 0) as Record<
+    string,
+    unknown
+  >;
+  if (input.budgetHold) stepProgress.marketing_budget_hold = input.budgetHold;
   await dbApi.getDb().insert(dbApi.schema.tasks).values({
     id: taskId,
     orgId,
@@ -166,7 +172,7 @@ async function insertTask(input: {
     campaignId,
     status: "completed",
     strategyJson: strategy,
-    stepProgress: progressFor(input.content, input.historical ? undefined : input.revision ?? 0),
+    stepProgress,
     costUsd: input.costUsd ?? "0",
     costBudgetUsd: input.budget ?? "0.50",
   });
@@ -455,9 +461,156 @@ describe("postgres marketing budget and authorization", () => {
     expect(response.status).toBeGreaterThanOrEqual(400);
     const task = await loadTask(taskId);
     expect(Number(task.costUsd)).toBeCloseTo(0.02, 5);
+    expect((task.stepProgress as Record<string, unknown>).marketing_budget_hold).toBeUndefined();
     expect(storedPack(task).content_generate?.output?.captions.tiktok).toContain("抖音中文");
     const logs = (await dbApi.getDb().select().from(dbApi.schema.agentLogs)).filter((row) => row.taskId === taskId);
     expect(logs).toHaveLength(0);
+  });
+
+  it("keeps an unexpired reservation from starting another paid call", async () => {
+    callJsonModel.mockReset();
+    const taskId = await insertTask({
+      content: needsModelTranslation(pack()),
+      costUsd: "0.50",
+      budget: "0.50",
+      budgetHold: {
+        spentBefore: 0,
+        budget: 0.5,
+        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      },
+    });
+    const response = await routes.translate(
+      new Request("http://127.0.0.1/translate", {
+        method: "POST",
+        body: JSON.stringify({ locale: "en", contentRevision: 0 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    expect(response.status).toBe(402);
+    expect((await jsonOf(response)).code).toBe("BUDGET_EXCEEDED");
+    expect(callJsonModel).not.toHaveBeenCalled();
+    const task = await loadTask(taskId);
+    expect(Number(task.costUsd)).toBeCloseTo(0.5, 5);
+    expect((task.stepProgress as Record<string, unknown>).marketing_budget_hold).toBeTruthy();
+  });
+
+  it("recovers a budget reservation left by an interrupted request after the hold expires", async () => {
+    callJsonModel.mockReset();
+    callJsonModel.mockResolvedValue({
+      result: {
+        hooksEn: ["Opening hook"],
+        hooksMs: ["Cangkuk"],
+        ctaEn: ["Learn more"],
+        ctaMs: ["Ketahui"],
+        captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
+        captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+      },
+      usage: { input: 20, output: 10, costUsd: 0.04 },
+    });
+    const taskId = await insertTask({
+      content: needsModelTranslation(pack()),
+      costUsd: "0.50",
+      budget: "0.50",
+      budgetHold: {
+        spentBefore: 0,
+        budget: 0.5,
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      },
+    });
+    const response = await routes.translate(
+      new Request("http://127.0.0.1/translate", {
+        method: "POST",
+        body: JSON.stringify({ locale: "en", contentRevision: 0 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    expect(response.status).toBe(200);
+    expect(callJsonModel).toHaveBeenCalledTimes(1);
+    const task = await loadTask(taskId);
+    expect(Number(task.costUsd)).toBeCloseTo(0.04, 5);
+    expect((task.stepProgress as Record<string, unknown>).marketing_budget_hold).toBeUndefined();
+  });
+
+  it("does not rewind a recorded spend when an expired hold no longer matches the reserved amount", async () => {
+    callJsonModel.mockReset();
+    callJsonModel.mockResolvedValue({
+      result: {
+        hooksEn: ["Opening hook"],
+        hooksMs: ["Cangkuk"],
+        ctaEn: ["Learn more"],
+        ctaMs: ["Ketahui"],
+        captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
+        captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+      },
+      usage: { input: 4, output: 2, costUsd: 0.01 },
+    });
+    const taskId = await insertTask({
+      content: needsModelTranslation(pack()),
+      costUsd: "0.04",
+      budget: "0.50",
+      budgetHold: {
+        spentBefore: 0,
+        budget: 0.5,
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      },
+    });
+    const response = await routes.translate(
+      new Request("http://127.0.0.1/translate", {
+        method: "POST",
+        body: JSON.stringify({ locale: "en", contentRevision: 0 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    expect(response.status).toBe(200);
+    const task = await loadTask(taskId);
+    expect(Number(task.costUsd)).toBeCloseTo(0.05, 5);
+    expect((task.stepProgress as Record<string, unknown>).marketing_budget_hold).toBeUndefined();
+  });
+
+  it("does not mint a local test session in a production process", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousFlag = process.env.E2E_LOCAL_AUTH;
+    const previousSecret = process.env.E2E_LOCAL_AUTH_SECRET;
+    process.env.E2E_LOCAL_AUTH = "1";
+    process.env.E2E_LOCAL_AUTH_SECRET = "cert-secret";
+    try {
+      process.env.NODE_ENV = "production";
+      const route = await import("../apps/web/src/app/api/e2e/session/route");
+      expect((await route.GET()).status).toBe(404);
+      process.env.NODE_ENV = "development";
+      expect((await route.GET()).status).toBe(200);
+      const denied = await route.POST(
+        new Request("http://127.0.0.1/api/e2e/session", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ userId: editorId }),
+        })
+      );
+      expect(denied.status).toBe(403);
+      const minted = await route.POST(
+        new Request("http://127.0.0.1/api/e2e/session", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-e2e-auth-secret": "cert-secret" },
+          body: JSON.stringify({ userId: editorId }),
+        })
+      );
+      expect(minted.status).toBe(200);
+      expect(minted.headers.get("set-cookie") ?? "").toContain("emberos_e2e_session");
+      const stranger = await route.POST(
+        new Request("http://127.0.0.1/api/e2e/session", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-e2e-auth-secret": "cert-secret" },
+          body: JSON.stringify({ userId: crypto.randomUUID() }),
+        })
+      );
+      expect(stranger.status).toBe(403);
+    } finally {
+      process.env.NODE_ENV = previousNodeEnv;
+      if (previousFlag === undefined) delete process.env.E2E_LOCAL_AUTH;
+      else process.env.E2E_LOCAL_AUTH = previousFlag;
+      if (previousSecret === undefined) delete process.env.E2E_LOCAL_AUTH_SECRET;
+      else process.env.E2E_LOCAL_AUTH_SECRET = previousSecret;
+    }
   });
 
   it("does not save template copy when regeneration output is unusable", async () => {

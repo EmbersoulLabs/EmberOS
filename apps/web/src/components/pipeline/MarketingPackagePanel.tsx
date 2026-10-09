@@ -123,7 +123,7 @@ export function MarketingPackagePanel({
       setPkg(data.contentPackage);
       if (typeof data.contentRevision === "number") setRevision(data.contentRevision);
     },
-    [taskId]
+    [packLocale, taskId]
   );
 
   const onRegeneratePlatform = useCallback(
@@ -147,7 +147,7 @@ export function MarketingPackagePanel({
       setPkg(data.contentPackage);
       if (typeof data.contentRevision === "number") setRevision(data.contentRevision);
     },
-    [taskId]
+    [packLocale, taskId]
   );
 
   return (
