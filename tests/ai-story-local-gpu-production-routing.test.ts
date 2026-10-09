@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   LocalGpuCanonicalAdapter,
+  assertLocalGenerationDuration,
   createExplicitLocalGpuProviderRouter,
   localGpuActorFromResolution,
   localGpuQueuedAction,
@@ -213,5 +214,28 @@ describe("LOCAL_GPU production routing", () => {
       "utf8",
     );
     expect(cycle).toContain('localGpuQueuedAction(row.gateProviderAttemptId) !== "stop"');
+    expect(cycle).toContain("recoverCompletedLocalGpuResults");
+    expect(cycle).toContain("gateProviderAttemptId: `result:${jobId}`");
+    const finalization = readFileSync(
+      join(__dirname, "../apps/worker/src/ai-story-local-gpu-result-finalization.ts"),
+      "utf8",
+    );
+    expect(finalization).toContain("materializeLocalGpuGenerationResult");
+    expect(finalization).toContain("assertLocalGenerationDuration");
+    expect(finalization).toContain("NO_DIALOGUE_WITH_AMBIENT_AUDIO");
+    expect(finalization).not.toContain("adapter.cloud.submit");
+    expect(finalization).not.toContain(".approve(");
+    const review = readFileSync(
+      join(__dirname, "../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/local-generation/[packageId]/result/route.ts"),
+      "utf8",
+    );
+    expect(review).toContain('"LOCAL_GPU_WORKER"');
+  });
+
+  it("keeps the existing duration tolerance for a 6584ms result against a 6000ms plan", () => {
+    expect(() => assertLocalGenerationDuration({ actualSec: 6.584, targetSec: 6 })).not.toThrow();
+    expect(() => assertLocalGenerationDuration({ actualSec: 8, targetSec: 6 })).toThrow(
+      "LOCAL_GENERATION_MEDIA_DURATION_OUT_OF_RANGE",
+    );
   });
 });

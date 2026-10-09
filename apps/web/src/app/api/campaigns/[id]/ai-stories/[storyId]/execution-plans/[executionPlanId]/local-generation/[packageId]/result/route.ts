@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { AiStoryGenerationResultRepository, AiStoryLocalGenerationRepository, AiStoryLocalMediaJobRepository, deterministicPersistenceUuid, getDb, schema } from "@ceo-agent/db";
+import { AiStoryGenerationResultRepository, AiStoryLocalGenerationRepository, AiStoryLocalMediaJobRepository, deterministicPersistenceUuid, getDb, schema, validateGenerationResult } from "@ceo-agent/db";
 import { AiStoryGenerationResultService, AiStoryLocalGenerationService, buildGenerationResultPostQcInput } from "@ceo-agent/agents";
 import { AiStoryPostQcObservationSchema } from "@ceo-agent/shared";
 import { z } from "zod";
@@ -19,14 +19,27 @@ async function resolve(params: Params["params"], role: "operator" | "client_view
   const pkg = role === "operator"
     ? await packages.getExecutablePackage({ workspaceId: ctx.workspaceId, executionPlanId, packageId })
     : await packages.getPackage({ workspaceId: ctx.workspaceId, executionPlanId, packageId });
+  if (!pkg) throw new Error("GENERATION_RESULT_NOT_FOUND");
   const output = (await packages.listOutputs({ workspaceId: ctx.workspaceId, executionPlanId })).find(item => item.packageId === packageId);
-  if (!pkg || !output) throw new Error("GENERATION_RESULT_NOT_FOUND");
   const results = new AiStoryGenerationResultRepository();
-  const resultId = deterministicPersistenceUuid("ai-story-generation-result", {
-    sourceKind: "MANUAL_LOCAL", providerAttemptId: null, localGenerationOutputId: output.outputId, localWorkerOutputId: null,
-  });
-  const result = await results.get(ctx.workspaceId, resultId);
-  if (!result) throw new Error("GENERATION_RESULT_NOT_FOUND");
+  if (output) {
+    const resultId = deterministicPersistenceUuid("ai-story-generation-result", {
+      sourceKind: "MANUAL_LOCAL", providerAttemptId: null, localGenerationOutputId: output.outputId, localWorkerOutputId: null,
+    });
+    const result = await results.get(ctx.workspaceId, resultId);
+    if (!result) throw new Error("GENERATION_RESULT_NOT_FOUND");
+    return { user, pkg, result, results };
+  }
+  const rows = await getDb().select().from(schema.aiStoryGenerationResults).where(and(
+    eq(schema.aiStoryGenerationResults.workspaceId, ctx.workspaceId),
+    eq(schema.aiStoryGenerationResults.executionPlanId, executionPlanId),
+    eq(schema.aiStoryGenerationResults.sceneExecutionId, pkg.sceneExecutionId),
+    eq(schema.aiStoryGenerationResults.sourceKind, "LOCAL_GPU_WORKER"),
+  ));
+  const result = rows
+    .map((row) => validateGenerationResult(row.result))
+    .find((item) => item.inputAuthority.localPackageId === pkg.packageId);
+  if (!result || result.source.sourceKind !== "LOCAL_GPU_WORKER") throw new Error("GENERATION_RESULT_NOT_FOUND");
   return { user, pkg, result, results };
 }
 

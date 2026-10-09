@@ -8,6 +8,7 @@ import {
   type AiStoryGenerationResult, type AiStoryLocalGenerationPackage,
   type AiStoryLocalGenerationOutput, type AiStoryPostQcRequirement,
   type AiStoryPostGenerationQcEvaluation, type AiStoryGenerationResultDecision,
+  type AiStoryAudioQcEvidence, type AiStoryAudioQcExpectation,
   type LocalGpuAudioPolicy, type LocalGpuEnvironment,
 } from "@ceo-agent/shared";
 import {
@@ -350,7 +351,13 @@ export class AiStoryGenerationResultService {
     private readonly durableMedia = new DurableSceneMediaAttestationRepositoryImpl(),
   ) {}
 
-  async evaluateLocal(result: AiStoryGenerationResult, pkg: AiStoryLocalGenerationPackage, evidenceProvider: AiStoryVisualEvidenceProvider, actorUserId: string) {
+  async evaluateLocal(
+    result: AiStoryGenerationResult,
+    pkg: AiStoryLocalGenerationPackage,
+    evidenceProvider: AiStoryVisualEvidenceProvider,
+    actorUserId: string,
+    audioQc?: { readonly expectation: AiStoryAudioQcExpectation; readonly evidence: AiStoryAudioQcEvidence } | null,
+  ) {
     const accepted = await this.results.get(result.ownership.workspaceId, result.generationResultId);
     if (!accepted || accepted.fingerprint !== result.fingerprint) throw new Error("GENERATION_RESULT_NOT_ACCEPTED");
     const input = buildGenerationResultPostQcInput(accepted, pkg);
@@ -358,7 +365,7 @@ export class AiStoryGenerationResultService {
     const latest = await this.results.latestQc(result.ownership.workspaceId, result.generationResultId);
     const evaluation = await new AiStoryPostGenerationQcService({
       repository: new BoundAiStoryPostGenerationQcRepository(input, this.qc), evidenceProvider,
-    }).evaluate(input, (latest?.evaluationVersion ?? 0) + 1);
+    }).evaluate(input, (latest?.evaluationVersion ?? 0) + 1, null, audioQc ?? null);
     if (evaluation.evaluation.aggregateStatus === "POST_QC_REJECT" && result.source.sourceKind === "MANUAL_LOCAL") {
       const retry = materializeLocalRetryPackage(
         pkg,

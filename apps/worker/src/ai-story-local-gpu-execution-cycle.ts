@@ -21,6 +21,7 @@ import {
   type LocalGpuUploadDestination,
 } from "@ceo-agent/shared";
 import { createProductionAiStoryCanonicalAdapterRegistry } from "./ai-story-canonical-adapter-registry";
+import { recoverCompletedLocalGpuResults } from "./ai-story-local-gpu-result-finalization";
 import { createSignedStorageReadUrl, createSignedStorageUploadUrl } from "./storage";
 
 const PROBE_ACTOR_ID = "11111111-1111-4111-8111-111111111111";
@@ -106,6 +107,22 @@ async function claimExplicitLocalGpuRelease(): Promise<void> {
   const adapter = registry.resolve(LOCAL_GPU_PROVIDER_ID, LOCAL_GPU_ADAPTER_VERSION);
   if (!(adapter instanceof LocalGpuCanonicalAdapter)) return;
   const db = getDb();
+  const environment = localGpuServerEnvironment();
+  await recoverCompletedLocalGpuResults({
+    db,
+    environment,
+    readResult: async (jobId, release, pkg) => {
+      const media = await adapter.cloud.result(jobId, {
+        actor: workerActor(release.releasedBy!, release.workspaceId),
+        workspaceId: release.workspaceId,
+        workflow: LOCAL_GPU_WORKER_WORKFLOW,
+        sceneExecutionId: pkg.sceneExecutionId,
+        storyId: pkg.storyId,
+        storyVersionId: pkg.storyVersionId,
+      });
+      return media;
+    },
+  });
   const releases = await db
     .select()
     .from(schema.aiStorySceneReleaseStates)
@@ -212,12 +229,26 @@ async function claimExplicitLocalGpuRelease(): Promise<void> {
       return;
     }
     if (next === "finalize") {
-      await adapter.cloud.result(jobId, scope);
+      const media = await adapter.cloud.result(jobId, scope);
       await db
         .update(schema.aiStorySceneReleaseStates)
         .set({ gateProviderAttemptId: `result:${jobId}`, updatedAt: new Date() })
         .where(eq(schema.aiStorySceneReleaseStates.sceneExecutionId, release.sceneExecutionId));
-      console.warn("[local-gpu] result metadata stored; media bytes are not in the certified result contract");
+      await recoverCompletedLocalGpuResults({
+        db,
+        environment,
+        readResult: async (requestedJobId, requestedRelease, requestedPackage) => {
+          if (requestedJobId === jobId) return media;
+          return adapter.cloud.result(requestedJobId, {
+            actor: workerActor(requestedRelease.releasedBy!, requestedRelease.workspaceId),
+            workspaceId: requestedRelease.workspaceId,
+            workflow: LOCAL_GPU_WORKER_WORKFLOW,
+            sceneExecutionId: requestedPackage.sceneExecutionId,
+            storyId: requestedPackage.storyId,
+            storyVersionId: requestedPackage.storyVersionId,
+          });
+        },
+      });
     }
   } catch (error) {
     await db
