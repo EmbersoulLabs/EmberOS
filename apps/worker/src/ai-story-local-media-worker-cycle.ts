@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb, schema, AiStoryLocalMediaJobRepository, AiStoryLocalGenerationRepository,
   AiStoryGenerationResultRepository, deterministicPersistenceUuid, type LocalMediaJob } from "@ceo-agent/db";
-import { assertLocalGenerationDuration, inspectLocalGenerationMp4, validateLocalGenerationMedia,
+import { assertDistinctSceneMediaContent, assertLocalGenerationDuration, inspectLocalGenerationMp4, validateLocalGenerationMedia,
   extractLocalGenerationEndFrame, materializeLocalGenerationResult,
   AiStoryLocalGenerationService } from "@ceo-agent/agents";
 import { CanonicalAdapterRegistry } from "@ceo-agent/agents";
@@ -27,6 +27,15 @@ export async function processAiStoryLocalMediaJob(job:LocalMediaJob) {
     if(bytes.length>100_000_000||bytes.length!==asset.fileSizeBytes)throw new Error("LOCAL_GENERATION_MEDIA_SIZE_INVALID");
     const inspected=inspectLocalGenerationMp4(bytes);
     if(asset.status==="ready"&&asset.contentHash!==inspected.contentHash)throw new Error("GENERATION_RESULT_CONTENT_MISMATCH");
+    const peers=await db.select({
+      sceneExecutionId:schema.aiStoryGenerationResults.sceneExecutionId,
+      contentHash:schema.aiStoryGenerationResults.contentHash,
+    }).from(schema.aiStoryGenerationResults).where(eq(schema.aiStoryGenerationResults.executionPlanId,pkg.executionPlanId));
+    assertDistinctSceneMediaContent({
+      sceneExecutionId:pkg.sceneExecutionId,
+      contentHash:inspected.contentHash,
+      peers,
+    });
     const probe=await validateLocalGenerationMedia(bytes,inspected.contentHash,pkg.generateAudio);
     assertLocalGenerationDuration({actualSec:probe.durationMs/1000,targetSec:pkg.durationSec});
     const [scene]=await db.select().from(schema.aiStorySceneExecutions).where(eq(schema.aiStorySceneExecutions.id,pkg.sceneExecutionId)).limit(1);

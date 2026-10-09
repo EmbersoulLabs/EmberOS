@@ -22,6 +22,7 @@ import {
 import {
   loadAssemblyRuntimeInput,
   AssemblyRuntimeInputError,
+  deriveSceneCompleteReadiness,
   buildAssemblyNormalizationPlan,
   buildNormalizationFilter,
   projectAssemblyRuntime,
@@ -240,6 +241,118 @@ describe("Sprint 3 PR 3.6 Assembly Runtime — unit", () => {
     const ok = loadAssemblyRuntimeInput({ job, definition, memberships, sceneResults: results });
     expect(ok.orderedScenes).toHaveLength(2);
     expect(ok.orderedScenes[0]!.sceneResultId).toBe(SCENE_RESULT_A);
+    expect(ok.orderedScenes[1]!.sceneResultId).toBe(SCENE_RESULT_B);
+
+    const sceneC = "10000000-0000-4000-8000-000000000203";
+    const resultC = "10000000-0000-5000-8000-000000000303";
+    const hashC = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+    const threeResults = [
+      ...results,
+      makeResult({
+        sceneResultId: resultC,
+        sceneExecutionId: sceneC,
+        sceneId: "scene-c",
+        sceneOrder: 2,
+        contentHash: hashC,
+      }),
+    ];
+    const threeMemberships = [
+      ...memberships,
+      {
+        ...memberships[1]!,
+        membershipId: "10000000-0000-4000-8000-000000000503",
+        sceneExecutionId: sceneC,
+        sceneId: "scene-c",
+        sceneOrder: 2,
+      },
+    ];
+    const three = loadAssemblyRuntimeInput({
+      job: makeJob({
+        orderedSceneResultIds: [SCENE_RESULT_A, SCENE_RESULT_B, resultC],
+        orderedSceneContentHashes: [HASH_A, HASH_B, hashC],
+      }),
+      definition: makeDefinition([SCENE_EXEC_A, SCENE_EXEC_B, sceneC]),
+      memberships: threeMemberships,
+      sceneResults: threeResults,
+    });
+    expect(three.orderedScenes.map((scene) => scene.sceneId)).toEqual([
+      "scene-a",
+      "scene-b",
+      "scene-c",
+    ]);
+
+    expect(() =>
+      loadAssemblyRuntimeInput({
+        job: makeJob({
+          orderedSceneContentHashes: [HASH_A, HASH_A],
+        }),
+        definition,
+        memberships,
+        sceneResults: [
+          results[0]!,
+          makeResult({
+            sceneResultId: SCENE_RESULT_B,
+            sceneExecutionId: SCENE_EXEC_B,
+            sceneId: "scene-b",
+            sceneOrder: 1,
+            contentHash: HASH_A,
+          }),
+        ],
+      })
+    ).toThrow(/ASSEMBLY_DUPLICATE_SCENE_CONTENT/);
+
+    expect(() =>
+      loadAssemblyRuntimeInput({
+        job,
+        definition,
+        memberships,
+        sceneResults: [
+          results[0]!,
+          {
+            ...results[1]!,
+            mediaReference: {
+              ...results[1]!.mediaReference!,
+              uri: results[0]!.mediaReference!.uri,
+            },
+          },
+        ],
+      })
+    ).toThrow(/ASSEMBLY_DUPLICATE_SCENE_CONTENT/);
+
+    expect(() =>
+      loadAssemblyRuntimeInput({
+        job,
+        definition,
+        memberships,
+        sceneResults: [
+          results[0]!,
+          {
+            ...results[1]!,
+            ownership: {
+              ...OWNERSHIP,
+              storyVersionId: "10000000-0000-4000-8000-000000000099",
+            },
+          },
+        ],
+      })
+    ).toThrow(/ownership/i);
+
+    expect(
+      deriveSceneCompleteReadiness({
+        definition,
+        memberships,
+        sceneResults: [
+          results[0]!,
+          makeResult({
+            sceneResultId: SCENE_RESULT_B,
+            sceneExecutionId: SCENE_EXEC_B,
+            sceneId: "scene-b",
+            sceneOrder: 1,
+            contentHash: HASH_A,
+          }),
+        ],
+      }).reason
+    ).toBe("ASSEMBLY_DUPLICATE_SCENE_CONTENT");
 
     expect(() =>
       loadAssemblyRuntimeInput({
@@ -337,6 +450,9 @@ describe("Sprint 3 PR 3.6 Assembly Runtime — unit", () => {
 
   it("defines stable failure classifications with retry/terminal policies", () => {
     expect(ASSEMBLY_RUNTIME_FAILURE_CLASSIFICATIONS).toContain("ASSEMBLY_CONCATENATION_FAILED");
+    expect(ASSEMBLY_RUNTIME_FAILURE_CLASSIFICATIONS).toContain("ASSEMBLY_DUPLICATE_SCENE_CONTENT");
+    expect(ASSEMBLY_RUNTIME_FAILURE_POLICIES.ASSEMBLY_DUPLICATE_SCENE_CONTENT.retryAllowed).toBe(false);
+    expect(ASSEMBLY_RUNTIME_FAILURE_POLICIES.ASSEMBLY_DUPLICATE_SCENE_CONTENT.terminal).toBe(true);
     expect(ASSEMBLY_RUNTIME_FAILURE_POLICIES.ASSEMBLY_MEDIA_UNAVAILABLE.retryAllowed).toBe(true);
     expect(ASSEMBLY_RUNTIME_FAILURE_POLICIES.ASSEMBLY_ORDER_CONFLICT.retryAllowed).toBe(false);
     expect(ASSEMBLY_RUNTIME_FAILURE_POLICIES.ASSEMBLY_ORDER_CONFLICT.terminal).toBe(true);
