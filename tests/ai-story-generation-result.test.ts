@@ -3,6 +3,7 @@ import { AiStoryGenerationResultSchema, AiStoryLocalGenerationPackageSchema } fr
 import { DurableSceneMediaAttestationSchema } from "@ceo-agent/shared/server";
 import { materializeGenerationResult, validateGenerationResult, projectApprovedGenerationResult } from "@ceo-agent/db";
 import { materializeLocalGenerationResult, buildGenerationResultPostQcInput, assertGenerationResultApproval, materializeLocalRetryPackage, materializeGenerationResultDurableAttestation } from "../packages/agents/src/ai-story/generation-result-service";
+import { assertDistinctSceneMediaContent } from "../packages/agents/src/ai-story/local-generation-media";
 import { AiStoryPostGenerationQcService, FakeAiStoryVisualEvidenceProvider, InMemoryAiStoryPostGenerationQcRepository } from "../packages/agents/src/ai-story/post-generation-qc-service";
 
 const id = (n: number) => `${String(n).padStart(8,"0")}-0000-4000-8000-000000000000`;
@@ -36,6 +37,27 @@ function decision(result=local()) { return {decisionId:id(18),generationResultId
 describe("Provider-neutral Generation Result",()=>{
   it("accepts manual output without any Provider Attempt",()=>{expect(local().source.providerAttemptId).toBeNull();expect(validateGenerationResult(local())).toEqual(local());});
   it("rejects a fake Provider Attempt on local media",()=>{const result=local();expect(AiStoryGenerationResultSchema.safeParse({...result,source:{...result.source,providerAttemptId:id(21)}}).success).toBe(false);});
+  it("blocks a successor Scene that repeats another Scene Execution's video bytes",()=>{
+    const scene = local();
+    expect(() => assertDistinctSceneMediaContent({
+      sceneExecutionId: id(99),
+      contentHash: scene.media.contentHash,
+      peers: [{ sceneExecutionId: scene.sceneExecutionId, contentHash: scene.media.contentHash }],
+    })).toThrow("LOCAL_GENERATION_DUPLICATE_SCENE_CONTENT");
+    expect(() => assertDistinctSceneMediaContent({
+      sceneExecutionId: scene.sceneExecutionId,
+      contentHash: scene.media.contentHash,
+      peers: [{ sceneExecutionId: scene.sceneExecutionId, contentHash: scene.media.contentHash }],
+    })).not.toThrow();
+  });
+  it("rejects output bound to a different Scene Execution Unit",()=>{
+    const item = pkg();
+    expect(() => materializeLocalGenerationResult({
+      package: item,
+      output: { outputId: id(14), packageId: item.packageId, unitId: item.unitId, sceneExecutionId: id(90), assetId: id(15), contentHash: hash, mediaType: "video/mp4", durationSec: 4, width: 720, height: 1280, uploadedBy: id(16), uploadedAt: now, qcState: "PENDING", continuityFrameAssetId: null },
+      animationPackageId: id(17), sceneId: "scene-1", sceneOrder: 0, storagePath: `${item.workspaceId}/ai-story/local/output.mp4`, byteSize: 2000, decodable: true,
+    })).toThrow("GENERATION_RESULT_LOCAL_SOURCE_MISMATCH");
+  });
   it("rejects both missing and multiple source references",()=>{const result=local();for(const source of [{...result.source,localGenerationOutputId:null},{...result.source,localWorkerOutputId:id(22)}]) expect(AiStoryGenerationResultSchema.safeParse({...result,source}).success).toBe(false);});
   it("reprocessing identical source converges to deterministic identity",()=>{expect(local().generationResultId).toBe(local().generationResultId);expect(local().fingerprint).toBe(local().fingerprint);});
   it("retry output has new identity and preserves original immutable result",()=>{const original=local();expect(local(id(23)).generationResultId).not.toBe(original.generationResultId);expect(original).toEqual(local());});
