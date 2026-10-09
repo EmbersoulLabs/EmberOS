@@ -145,8 +145,12 @@ const PlatformPanel = memo(function PlatformPanel({
         hashtags: (draft.hashtags ?? []).map((h) => h.trim()).filter(Boolean),
       });
       setEditing(false);
-    } catch {
-      setError(t("marketing.action.saveError"));
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message === "conflict"
+          ? t("marketing.action.conflict")
+          : t("marketing.action.saveError")
+      );
     } finally {
       setBusy(null);
     }
@@ -158,8 +162,12 @@ const PlatformPanel = memo(function PlatformPanel({
     setError(null);
     try {
       await onRegenerate();
-    } catch {
-      setError(t("marketing.action.regenerateError"));
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message === "conflict"
+          ? t("marketing.action.conflict")
+          : t("marketing.action.regenerateError")
+      );
     } finally {
       setBusy(null);
     }
@@ -351,15 +359,19 @@ function OverviewSection({
           </div>
         </div>
         <div className="grid min-w-[200px] flex-1 grid-cols-3 gap-2 sm:max-w-lg">
-          <MetricChip label={t("marketing.metric.ctr")} value={analysis.estimatedCtr} accent="blue" />
+          <MetricChip
+            label={t("marketing.metric.ctr")}
+            value={analysis.estimatedCtr || t("marketing.metric.unavailable")}
+            accent="blue"
+          />
           <MetricChip
             label={t("marketing.metric.engagement")}
-            value={analysis.estimatedEngagement}
+            value={analysis.estimatedEngagement || t("marketing.metric.unavailable")}
             accent="teal"
           />
           <MetricChip
             label={t("marketing.metric.conversion")}
-            value={analysis.estimatedConversion}
+            value={analysis.estimatedConversion || t("marketing.metric.unavailable")}
             accent="navy"
           />
         </div>
@@ -461,6 +473,63 @@ function PlatformTabs({
   );
 }
 
+function ReadOnlyCopy({ label, text }: { label: string; text: string }) {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">{label}</p>
+        <CopyFieldButton text={trimmed} />
+      </div>
+      <pre className="whitespace-pre-wrap font-sans text-sm text-navy">{trimmed}</pre>
+    </div>
+  );
+}
+
+function ProductionSection({ pkg }: { pkg: MarketingContentPackage }) {
+  const { t } = useI18n();
+  const timeline = (pkg.subtitleTimeline ?? [])
+    .map((segment) => `${segment.startSec}s–${segment.endSec}s ${segment.text}`)
+    .filter((line) => line.trim())
+    .join("\n");
+  const posting = [
+    pkg.postingRecommendation?.bestPostingTime,
+    pkg.postingRecommendation?.bestPlatform,
+    pkg.postingRecommendation?.idealAudience,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <DashboardSection title={t("marketing.scripts.title")} subtitle={t("marketing.scripts.subtitle")}>
+      <Badge variant="outline">{t("marketing.scripts.readonly")}</Badge>
+      <div className="mt-3 grid gap-3">
+        <ReadOnlyCopy label={t("marketing.scripts.15")} text={pkg.voiceScripts?.["15s"] ?? ""} />
+        <ReadOnlyCopy label={t("marketing.scripts.30")} text={pkg.voiceScripts?.["30s"] ?? ""} />
+        <ReadOnlyCopy label={t("marketing.scripts.60")} text={pkg.voiceScripts?.["60s"] ?? ""} />
+        <ReadOnlyCopy
+          label={t("marketing.scripts.zh")}
+          text={[pkg.voiceScriptsZh?.["15s"], pkg.voiceScriptsZh?.["30s"], pkg.voiceScriptsZh?.["60s"]]
+            .filter(Boolean)
+            .join("\n\n")}
+        />
+        <ReadOnlyCopy
+          label={t("marketing.scripts.en")}
+          text={[pkg.voiceScriptsEn?.["15s"], pkg.voiceScriptsEn?.["30s"], pkg.voiceScriptsEn?.["60s"]]
+            .filter(Boolean)
+            .join("\n\n")}
+        />
+        <ReadOnlyCopy label={t("marketing.scripts.timeline")} text={timeline} />
+        <ReadOnlyCopy label={t("marketing.scripts.broll")} text={(pkg.broll ?? []).join("\n")} />
+        <ReadOnlyCopy label={t("marketing.scripts.music")} text={pkg.musicMood ?? ""} />
+        <ReadOnlyCopy label={t("marketing.scripts.effects")} text={(pkg.effects ?? []).join("\n")} />
+        <ReadOnlyCopy label={t("marketing.scripts.posting")} text={posting} />
+      </div>
+    </DashboardSection>
+  );
+}
+
 export function MarketingDashboard({
   pkg,
   strategy,
@@ -516,6 +585,12 @@ export function MarketingDashboard({
 
   return (
     <div className="space-y-5">
+      {pkg.contentOrigin === "template_fallback" ? (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          {t("marketing.origin.fallback")}
+        </p>
+      ) : null}
+      <p className="text-xs text-ink-secondary">{t("marketing.metric.note")}</p>
       <OverviewSection analysis={analysis} insightsCtx={insightsCtx} />
 
       <DashboardSection
@@ -531,6 +606,8 @@ export function MarketingDashboard({
           <StrategyField label={t("marketing.strategy.ctaStrategy")} value={brief.ctaStrategy} />
         </div>
       </DashboardSection>
+
+      <ProductionSection pkg={pkg} />
 
       <DashboardSection
         title={t("marketing.platforms.title")}

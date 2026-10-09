@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
+import { getDb, schema, requireWorkspaceRole, getBusinessProfileByWorkspace } from "@ceo-agent/db";
 import {
   regeneratePlatformAsset,
   provideCampaignAIContextFromCampaign,
@@ -9,10 +9,14 @@ import {
   MARKETING_PLATFORM_IDS,
   normalizeMarketingContentPackage,
   normalizeStrategyPlan,
-  resolvePlatformAssets,
   BrandProfileSchema,
+  applyPlatformRegeneration,
+  isTaskBudgetExhausted,
+  readMarketingPackRevision,
+  selectBusinessFacts,
   type BrandProfile,
-  type MarketingCaptions,
+  type ContentLocale,
+  type MarketingPackLocale,
   type MarketingPlatformId,
   type Platform,
   type StepProgress,
@@ -21,10 +25,9 @@ import {
 } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { recordMarketingModelUsage, saveMarketingPackIfCurrent } from "@/lib/marketing-pack-persistence";
 
-const CAPTION_KEYS = MARKETING_PLATFORM_IDS.filter(
-  (id) => id !== "threads"
-) as MarketingPlatformId[];
+const LOCALES = new Set<MarketingPackLocale>(["zh", "en", "ms"]);
 
 /** Regenerate a single platform's marketing copy with AI (grounded in the asset). */
 export async function POST(
@@ -40,11 +43,23 @@ export async function POST(
     if (!task) return apiError("Task not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(task.workspaceId, user.id, "editor");
 
-    const body = (await request.json().catch(() => null)) as { platformId?: string } | null;
+    if (isTaskBudgetExhausted(task.costUsd, task.costBudgetUsd)) {
+      return apiError("Task AI budget is exhausted", "BUDGET_EXCEEDED", 402);
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      platformId?: string;
+      locale?: string;
+      contentRevision?: number;
+    } | null;
     const platformId = body?.platformId as MarketingPlatformId | undefined;
     if (!platformId || !MARKETING_PLATFORM_IDS.includes(platformId)) {
       return apiError("Invalid platformId", "INVALID", 400);
     }
+    if (body?.locale !== undefined && !LOCALES.has(body.locale as MarketingPackLocale)) {
+      return apiError("Invalid locale", "INVALID", 400);
+    }
+    const locale = (body?.locale as MarketingPackLocale | undefined) ?? "zh";
 
     const progress = (task.stepProgress as StepProgress) ?? {};
     const step = progress.content_generate;
@@ -85,9 +100,8 @@ export async function POST(
       return apiError("Campaign not found", "NOT_FOUND", 404);
     }
 
-    const prevAssets = resolvePlatformAssets(existing);
-    const previousCaption = prevAssets[platformId]?.caption;
-
+    const profile = await getBusinessProfileByWorkspace(task.workspaceId);
+    const businessInformation = selectBusinessFacts(profile, brandProfile);
     const campaignContext = provideCampaignAIContextFromCampaign({
       brandProfile,
       campaign: campaignRow,
@@ -102,66 +116,52 @@ export async function POST(
       strategy,
       vision,
       campaignName,
-      previousCaption,
+      previousCaption: existing.platformAssets?.[platformId]?.caption,
+      businessInformation: { ...businessInformation } as Record<string, unknown>,
+      locale: locale as ContentLocale,
     });
 
-    const assets = { ...prevAssets };
-    assets[platformId] = asset;
-
-    const captions = { ...existing.captions } as MarketingCaptions;
-    const captionsEn = { ...(existing.captionsEn ?? {}) } as Partial<MarketingCaptions>;
-    const captionsMs = { ...(existing.captionsMs ?? {}) } as Partial<MarketingCaptions>;
-    if (CAPTION_KEYS.includes(platformId)) {
-      const key = platformId as keyof MarketingCaptions;
-      captions[key] = asset.caption;
-      captionsEn[key] = asset.caption;
-      captionsMs[key] = asset.caption;
-    }
-
-    const updatedPackage = normalizeMarketingContentPackage({
-      ...existing,
-      platformAssets: assets,
-      captions,
-      captionsEn,
-      captionsMs,
+    await recordMarketingModelUsage({
+      orgId: task.orgId,
+      workspaceId: task.workspaceId,
+      taskId: id,
+      agent: "marketing_regenerate",
+      usage,
     });
-    if (!updatedPackage) return apiError("Invalid marketing pack", "INVALID", 400);
 
-    const updatedProgress: StepProgress = {
-      ...progress,
-      content_generate: { ...step, output: updatedPackage },
-    };
-    await db
-      .update(schema.tasks)
-      .set({ stepProgress: updatedProgress })
-      .where(eq(schema.tasks.id, id));
-
-    // Keep creative.copyVariants aligned with the regenerated marketing pack
-    const platforms = (campaignRow.platforms?.length
-      ? campaignRow.platforms
-      : ["tiktok"]) as Platform[];
-    const refreshedVariants = contentPackageToCopyVariants(updatedPackage, strategy, platforms);
-    const creatives = await db
-      .select()
-      .from(schema.creatives)
-      .where(eq(schema.creatives.taskId, id));
-    for (const creative of creatives) {
-      const prior = (creative.copyVariants ?? []) as CopyVariant[];
-      const merged =
-        refreshedVariants.length > 0
-          ? refreshedVariants
-          : prior.map((v) =>
-              v.platform === platformId
-                ? { ...v, body: asset.caption, hook: asset.caption.slice(0, 80) }
-                : v
-            );
-      await db
-        .update(schema.creatives)
-        .set({ copyVariants: merged, updatedAt: new Date() })
-        .where(eq(schema.creatives.id, creative.id));
+    const updatedPackage = applyPlatformRegeneration(existing, platformId, asset, locale);
+    const expectedRevision =
+      typeof body?.contentRevision === "number" ? body.contentRevision : readMarketingPackRevision(progress);
+    const saved = await saveMarketingPackIfCurrent({
+      taskId: id,
+      expectedRevision,
+      contentPackage: updatedPackage,
+    });
+    if (!saved.ok) {
+      return apiError(
+        "Marketing pack was updated by someone else. Regeneration was not saved.",
+        "CONFLICT",
+        409
+      );
     }
 
-    return apiSuccess({ contentPackage: updatedPackage, usage });
+    if (locale === "zh" || platformId === "xiaohongshu") {
+      const platforms = (campaignRow.platforms?.length ? campaignRow.platforms : ["tiktok"]) as Platform[];
+      const refreshedVariants = contentPackageToCopyVariants(updatedPackage, strategy, platforms);
+      const creatives = await db.select().from(schema.creatives).where(eq(schema.creatives.taskId, id));
+      for (const creative of creatives) {
+        const prior = (creative.copyVariants ?? []) as CopyVariant[];
+        await db
+          .update(schema.creatives)
+          .set({
+            copyVariants: refreshedVariants.length > 0 ? refreshedVariants : prior,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.creatives.id, creative.id));
+      }
+    }
+
+    return apiSuccess({ contentPackage: updatedPackage, contentRevision: saved.revision, usage });
   } catch (error) {
     return handleApiError(error);
   }

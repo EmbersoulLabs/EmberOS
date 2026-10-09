@@ -3,26 +3,20 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import {
   MARKETING_PLATFORM_IDS,
   PlatformMarketingAssetSchema,
+  applyPlatformLocaleEdit,
   normalizeMarketingContentPackage,
-  resolvePlatformAssets,
-  type MarketingCaptions,
+  readMarketingPackRevision,
+  type MarketingPackLocale,
   type MarketingPlatformId,
-  type PlatformMarketingAsset,
   type StepProgress,
 } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { saveMarketingPackIfCurrent } from "@/lib/marketing-pack-persistence";
 
-// Platforms that have a flat legacy caption entry (threads is assets-only).
-const CAPTION_KEYS = MARKETING_PLATFORM_IDS.filter(
-  (id) => id !== "threads"
-) as Exclude<MarketingPlatformId, "threads">[];
+const LOCALES = new Set<MarketingPackLocale>(["zh", "en", "ms"]);
 
-function isCaptionKey(id: MarketingPlatformId): id is Exclude<MarketingPlatformId, "threads"> {
-  return (CAPTION_KEYS as MarketingPlatformId[]).includes(id);
-}
-
-/** Save an inline-edited platform marketing asset. */
+/** Save an inline-edited platform marketing asset for one locale. */
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -38,16 +32,21 @@ export async function PATCH(
 
     const body = (await request.json().catch(() => null)) as {
       platformId?: string;
-      asset?: Partial<PlatformMarketingAsset>;
+      asset?: unknown;
+      locale?: string;
+      contentRevision?: number;
     } | null;
 
     const platformId = body?.platformId as MarketingPlatformId | undefined;
     if (!platformId || !MARKETING_PLATFORM_IDS.includes(platformId)) {
       return apiError("Invalid platformId", "INVALID", 400);
     }
-    if (!body?.asset || typeof body.asset !== "object") {
-      return apiError("Missing asset", "INVALID", 400);
+    const locale = body?.locale;
+    if (locale !== undefined && !LOCALES.has(locale as MarketingPackLocale)) {
+      return apiError("Invalid locale", "INVALID", 400);
     }
+    const validated = PlatformMarketingAssetSchema.safeParse(body?.asset);
+    if (!validated.success) return apiError("Invalid asset", "INVALID", 400);
 
     const progress = (task.stepProgress as StepProgress) ?? {};
     const step = progress.content_generate;
@@ -58,54 +57,29 @@ export async function PATCH(
     const existing = normalizeMarketingContentPackage(step.output);
     if (!existing) return apiError("Invalid marketing pack", "INVALID", 400);
 
-    const assets = { ...resolvePlatformAssets(existing) };
-    const prev = assets[platformId] ?? { caption: "", cta: "", hashtags: [] };
-    const merged: PlatformMarketingAsset = {
-      ...prev,
-      ...body.asset,
-      caption: (body.asset.caption ?? prev.caption ?? "").toString(),
-      cta: (body.asset.cta ?? prev.cta ?? "").toString(),
-      hashtags: Array.isArray(body.asset.hashtags)
-        ? body.asset.hashtags.filter((h): h is string => typeof h === "string")
-        : (prev.hashtags ?? []),
-    };
+    const expectedRevision =
+      typeof body?.contentRevision === "number" ? body.contentRevision : readMarketingPackRevision(progress);
+    const updatedPackage = applyPlatformLocaleEdit(
+      existing,
+      platformId,
+      validated.data,
+      (locale as MarketingPackLocale | undefined) ?? "zh"
+    );
 
-    const validated = PlatformMarketingAssetSchema.safeParse(merged);
-    if (!validated.success) return apiError("Invalid asset", "INVALID", 400);
-    assets[platformId] = validated.data;
-
-    // Mirror the edited caption into every locale map so it displays regardless
-    // of the active language tab (edits are authoritative across locales).
-    const captions = { ...existing.captions } as MarketingCaptions;
-    const captionsEn = { ...(existing.captionsEn ?? {}) } as Partial<MarketingCaptions>;
-    const captionsMs = { ...(existing.captionsMs ?? {}) } as Partial<MarketingCaptions>;
-    if (isCaptionKey(platformId)) {
-      const text = validated.data.caption;
-      captions[platformId] = text;
-      captionsEn[platformId] = text;
-      captionsMs[platformId] = text;
+    const saved = await saveMarketingPackIfCurrent({
+      taskId: id,
+      expectedRevision,
+      contentPackage: updatedPackage,
+    });
+    if (!saved.ok) {
+      return apiError(
+        "Marketing pack was updated by someone else. Your draft is still in the editor.",
+        "CONFLICT",
+        409
+      );
     }
 
-    const updatedPackage = normalizeMarketingContentPackage({
-      ...existing,
-      platformAssets: assets,
-      captions,
-      captionsEn,
-      captionsMs,
-    });
-    if (!updatedPackage) return apiError("Invalid marketing pack", "INVALID", 400);
-
-    const updatedProgress: StepProgress = {
-      ...progress,
-      content_generate: { ...step, output: updatedPackage },
-    };
-
-    await db
-      .update(schema.tasks)
-      .set({ stepProgress: updatedProgress })
-      .where(eq(schema.tasks.id, id));
-
-    return apiSuccess({ contentPackage: updatedPackage });
+    return apiSuccess({ contentPackage: updatedPackage, contentRevision: saved.revision });
   } catch (error) {
     return handleApiError(error);
   }
