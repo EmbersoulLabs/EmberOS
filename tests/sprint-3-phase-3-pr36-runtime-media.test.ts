@@ -95,6 +95,32 @@ function snapshotHash() {
   });
 }
 
+function sampleCenterColor(file: string, seconds: number): { r: number; g: number; b: number } {
+  const bytes = execFileSync(
+    process.env.FFMPEG_PATH ?? "ffmpeg",
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-ss",
+      String(seconds),
+      "-i",
+      file,
+      "-frames:v",
+      "1",
+      "-vf",
+      "crop=iw/2:ih/2:iw/4:ih/4,scale=1:1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "pipe:1",
+    ],
+    { windowsHide: true, maxBuffer: 1024 * 1024 }
+  );
+  return { r: bytes[0] ?? 0, g: bytes[1] ?? 0, b: bytes[2] ?? 0 };
+}
+
 function hashBytes(bytes: Buffer): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
@@ -345,6 +371,13 @@ describeMedia("Sprint 3 PR 3.6 Assembly Runtime — controlled media", () => {
     const facts = await jobRepo.loadAssemblyFacts(job.assemblyJobId);
     expect(facts.filter((f) => f.factKind === "SUCCEEDED")).toHaveLength(1);
     expect(facts.filter((f) => f.factKind === "PROCESSING_STARTED").length).toBeLessThanOrEqual(1);
+
+    const assembledPath = join(blobRoot, first.artifact.artifactReference);
+    const opening = sampleCenterColor(assembledPath, 0.25);
+    const closing = sampleCenterColor(assembledPath, 1.25);
+    expect(opening.r).toBeGreaterThan(opening.b + 80);
+    expect(closing.b).toBeGreaterThan(closing.r + 80);
+    expect(first.artifact.artifactReference).not.toContain(clipA.hash.replace("sha256:", ""));
   }, 180_000);
 
   it("fails closed on missing / failed / wrong order / duplicate scene results", () => {

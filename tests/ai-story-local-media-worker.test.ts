@@ -41,6 +41,8 @@ describe("Local CPU media Worker boundary",()=>{
     expect(readFileSync("infra/docker/Dockerfile.worker","utf8")).toContain("ffmpeg");
     const source=readFileSync("apps/worker/src/ai-story-local-media-worker-cycle.ts","utf8");
     expect(source).toContain('decision!=="APPROVED"');
+    expect(source).toContain("assertDistinctSceneMediaContent");
+    expect(readFileSync("packages/agents/src/ai-story/local-generation-media.ts","utf8")).toContain("LOCAL_GENERATION_DUPLICATE_SCENE_CONTENT");
     expect(source).not.toMatch(/ProviderRouter|Seedance|Runway|authorizeExecutionPlanExecute|provider_outbox_jobs/);
   });
 });

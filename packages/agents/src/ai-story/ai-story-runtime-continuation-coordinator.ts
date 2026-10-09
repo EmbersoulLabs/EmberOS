@@ -154,6 +154,7 @@ export function deriveSceneCompleteReadiness(input: {
   }
   const orderedSceneResultIds: string[] = [];
   const orderedSceneContentHashes: string[] = [];
+  const seenMediaUris = new Set<string>();
   for (let i = 0; i < ordered.length; i++) {
     const membership = ordered[i]!;
     if (membership.sceneExecutionId !== input.definition.orderedSceneExecutionIds[i]) {
@@ -181,6 +182,18 @@ export function deriveSceneCompleteReadiness(input: {
         reason: `Scene Result not SUCCEEDED (${result.status})`,
       };
     }
+    if (
+      orderedSceneContentHashes.includes(result.mediaReference.contentHash) ||
+      seenMediaUris.has(result.mediaReference.uri)
+    ) {
+      return {
+        ready: false,
+        orderedSceneResultIds: [],
+        orderedSceneContentHashes: [],
+        reason: "ASSEMBLY_DUPLICATE_SCENE_CONTENT",
+      };
+    }
+    seenMediaUris.add(result.mediaReference.uri);
     orderedSceneResultIds.push(result.sceneResultId);
     orderedSceneContentHashes.push(result.mediaReference.contentHash);
   }

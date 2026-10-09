@@ -38,6 +38,7 @@ export const ASSEMBLY_RUNTIME_FAILURE_CLASSIFICATIONS = [
   "ASSEMBLY_ORDER_CONFLICT",
   "ASSEMBLY_MEDIA_UNAVAILABLE",
   "ASSEMBLY_MEDIA_HASH_MISMATCH",
+  "ASSEMBLY_DUPLICATE_SCENE_CONTENT",
   "ASSEMBLY_MEDIA_UNSUPPORTED",
   "ASSEMBLY_MEDIA_PROBE_FAILED",
   "ASSEMBLY_NORMALIZATION_FAILED",
@@ -109,6 +110,15 @@ export const ASSEMBLY_RUNTIME_FAILURE_POLICIES: Record<
     userActionRequired: true,
     safePublicMessage: "Scene media integrity check failed.",
     terminalFactClassification: "SCENE_MEDIA_HASH_MISMATCH",
+  },
+  ASSEMBLY_DUPLICATE_SCENE_CONTENT: {
+    classification: "ASSEMBLY_DUPLICATE_SCENE_CONTENT",
+    retryAllowed: false,
+    terminal: true,
+    userActionRequired: true,
+    safePublicMessage:
+      "Ordered Scene media content is duplicated. Assembly refused to repeat another Scene.",
+    terminalFactClassification: "ASSEMBLY_IDENTITY_CONFLICT",
   },
   ASSEMBLY_MEDIA_UNSUPPORTED: {
     classification: "ASSEMBLY_MEDIA_UNSUPPORTED",
