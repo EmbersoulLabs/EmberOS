@@ -14,6 +14,23 @@ import {
   applyGroundingToAnalysisScores,
 } from "./content-grounding";
 
+const PSEUDO_PERFORMANCE_ESTIMATES = new Set([
+  "2.4% – 4.1%",
+  "2.4% - 4.1%",
+  "1.2% – 2.8%",
+  "1.2% - 2.8%",
+  "Medium–High",
+  "Medium-High",
+  "Low (ungrounded)",
+]);
+
+/** Empty string means the metric is unavailable. Known placeholder ranges are not analytics. */
+export function displayPerformanceEstimate(value: string | undefined | null): string {
+  const text = value?.trim() ?? "";
+  if (!text || PSEUDO_PERFORMANCE_ESTIMATES.has(text)) return "";
+  return text;
+}
+
 export type { PlatformMarketingAsset, MarketingAnalysis, ContentStrategyBrief, SeoPack, HashtagPack };
 export {
   MarketingAnalysisSchema,
@@ -189,9 +206,9 @@ export function deriveAnalysisFromPackage(
     seoScore: Math.min(100, base - 2 + (strategy?.keywords.length ?? 0)),
     emotionalScore: Math.min(100, base + 2),
     conversionScore: Math.min(100, base - 4 + pkg.cta.length),
-    estimatedCtr: "2.4% – 4.1%",
-    estimatedEngagement: "Medium–High",
-    estimatedConversion: "1.2% – 2.8%",
+    estimatedCtr: "",
+    estimatedEngagement: "",
+    estimatedConversion: "",
   };
 
   const grounding = assessContentGrounding({
@@ -214,7 +231,13 @@ export function deriveAnalysisFromPackage(
     grounding.scorePenalty
   );
 
-  return { ...raw, ...adjusted };
+  return {
+    ...raw,
+    ...adjusted,
+    estimatedCtr: displayPerformanceEstimate(raw.estimatedCtr),
+    estimatedEngagement: displayPerformanceEstimate(raw.estimatedEngagement),
+    estimatedConversion: displayPerformanceEstimate(raw.estimatedConversion),
+  };
 }
 
 export function deriveStrategyBrief(
