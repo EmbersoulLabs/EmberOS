@@ -100,9 +100,6 @@ function writeLocaleCaption(
   return {
     ...normalized,
     captions,
-    captionsEn,
-    captionsMs,
-    platformAssets: assets,
   };
 }
 
