@@ -33,6 +33,7 @@ const ProductAuthoritySchema = z
     productAuthorityId: Id,
     sourceAssetId: Id,
     sourceAssetContentHash: SourceAssetContentHashSchema,
+    confirmedVariant: z.string().trim().min(1).max(80).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {

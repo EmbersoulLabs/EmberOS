@@ -12,6 +12,7 @@ const ExactProductDerivativeResolutionBaseSchema = z
     productAuthorityId: z.string().uuid(),
     sourceAssetId: z.string().uuid(),
     sourceAssetContentHash: SourceAssetContentHashSchema,
+    confirmedVariant: z.string().trim().min(1).max(80).optional(),
   })
   .strict();
 

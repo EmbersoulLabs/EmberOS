@@ -12,8 +12,12 @@ export const AI_STORY_SCENE_REFERENCE_SOURCES = [
   "REFERENCE_FREE_T2V",
   "CHARACTER_SYNTHETIC_ANCHOR",
 ] as const;
+export const AI_STORY_EFFECTIVE_SCENE_GENERATION_AUTHORITY_VERSION_V2 =
+  "ai-story-effective-scene-generation-authority.v2" as const;
 
 const AssetId = z.string().uuid();
+const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const ImageMediaType = z.string().regex(/^image\/[a-z0-9.+-]+$/i);
 
 /** Historical readers may omit this authority; current execution must not infer it. */
 export const AiStorySceneGenerationAuthoritySchema = z.union([
@@ -62,11 +66,99 @@ export const AiStoryEffectiveSceneGenerationAuthoritySchema = z.object({
   productVisualIdentityRequirement: z.enum(["NONE", "REQUIRED"]),
 }).strict();
 
+/**
+ * Provider-neutral visual starting state. This authority never implies Product
+ * identity, even when both roles intentionally use the same immutable Asset.
+ */
+export const AiStoryVisualStartAuthoritySchema = z.discriminatedUnion("sourceType", [
+  z.object({
+    sourceType: z.literal("NONE"),
+  }).strict(),
+  z.object({
+    sourceType: z.literal("INITIAL_MATERIAL"),
+    assetId: AssetId,
+    contentHash: Hash,
+    mediaType: ImageMediaType,
+  }).strict(),
+  z.object({
+    sourceType: z.literal("PREDECESSOR_CONTINUITY"),
+    assetId: AssetId,
+    contentHash: Hash,
+    mediaType: ImageMediaType,
+  }).strict(),
+]);
+
+/**
+ * V2 preserves the canonical generation strategy while separating visual
+ * conditioning from Product-reference authority. The historical effective
+ * authority above keeps `firstFrameAssetId` unchanged for V1/V2 readers.
+ */
+export const AiStoryEffectiveSceneGenerationAuthorityV2Schema = z.object({
+  contractVersion: z.literal(AI_STORY_EFFECTIVE_SCENE_GENERATION_AUTHORITY_VERSION_V2),
+  strategy: z.enum(AI_STORY_SCENE_GENERATION_STRATEGIES),
+  referenceSource: z.enum(AI_STORY_SCENE_REFERENCE_SOURCES),
+  effectiveReferenceIds: z.array(AssetId),
+  productReferenceAssetIds: z.array(AssetId),
+  visualStartAuthority: AiStoryVisualStartAuthoritySchema,
+  productVisualIdentityRequirement: z.enum(["NONE", "REQUIRED"]),
+}).strict().superRefine((value, context) => {
+  const visualAssetId = value.visualStartAuthority.sourceType === "NONE"
+    ? null
+    : value.visualStartAuthority.assetId;
+  if (visualAssetId && !value.effectiveReferenceIds.includes(visualAssetId)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["visualStartAuthority", "assetId"],
+      message: "Visual-start authority must belong to the effective reference set",
+    });
+  }
+  for (const assetId of value.productReferenceAssetIds) {
+    if (!value.effectiveReferenceIds.includes(assetId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["productReferenceAssetIds"],
+        message: "Product authority must belong to the effective reference set",
+      });
+    }
+  }
+  if (
+    value.strategy === "TEXT_TO_VIDEO"
+    && value.visualStartAuthority.sourceType !== "NONE"
+    && value.visualStartAuthority.sourceType !== "PREDECESSOR_CONTINUITY"
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["visualStartAuthority"],
+      message: "TEXT_TO_VIDEO cannot carry initial-material conditioning",
+    });
+  }
+  if (value.strategy !== "TEXT_TO_VIDEO" && value.visualStartAuthority.sourceType === "NONE") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["visualStartAuthority"],
+      message: "Image-conditioned generation requires visual-start authority",
+    });
+  }
+  if (value.productVisualIdentityRequirement === "REQUIRED" && value.productReferenceAssetIds.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["productReferenceAssetIds"],
+      message: "Required Product identity must name an explicit Product reference",
+    });
+  }
+});
+
 export type AiStorySceneGenerationAuthority = z.infer<
   typeof AiStorySceneGenerationAuthoritySchema
 >;
 export type AiStoryEffectiveSceneGenerationAuthority = z.infer<
   typeof AiStoryEffectiveSceneGenerationAuthoritySchema
+>;
+export type AiStoryVisualStartAuthority = z.infer<
+  typeof AiStoryVisualStartAuthoritySchema
+>;
+export type AiStoryEffectiveSceneGenerationAuthorityV2 = z.infer<
+  typeof AiStoryEffectiveSceneGenerationAuthorityV2Schema
 >;
 
 export class AiStorySceneGenerationModeAuthorityError extends Error {

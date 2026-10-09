@@ -3,10 +3,16 @@
  */
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { getDb, schema, CampaignAssetRefError } from "@ceo-agent/db";
+import { VISUAL_SEMANTIC_ANALYZER_VERSION } from "@ceo-agent/agents";
 import {
+  extractProductVariantCandidates,
   planAiStoryAssetLinkUsage,
+  resolveProductVariantMapping,
+  resolveProductVariantVisualGrounding,
+  type ProductVariantSemanticFacts,
   assertAiStoryTransition,
   nextAiStoryVersionNumber,
+  type AiStoryAssetSelection,
   type AiStoryStatus,
   type AiStoryStructuredDraft,
 } from "@ceo-agent/shared";
@@ -113,13 +119,140 @@ export async function setAiStoryStatus(
     .where(eq(schema.aiStories.id, storyId));
 }
 
+export async function ensureCampaignLibraryAvailability(
+  db: Db,
+  campaignId: string,
+  workspaceId: string,
+  assetIds: string[]
+) {
+  const unique = [...new Set(assetIds)];
+  if (unique.length === 0) return;
+  const rows = await db
+    .select({ id: schema.assets.id })
+    .from(schema.assets)
+    .where(and(
+      eq(schema.assets.workspaceId, workspaceId),
+      inArray(schema.assets.id, unique),
+      isNull(schema.assets.deletedAt)
+    ));
+  if (rows.length !== unique.length) {
+    throw new Error("One or more assets are invalid for this workspace");
+  }
+  await db
+    .insert(schema.campaignAssetRefs)
+    .values(unique.map((assetId, index) => ({ campaignId, assetId, sortOrder: index })))
+    .onConflictDoNothing();
+}
+
+export class AiStoryProductVariantAuthorityError extends Error {
+  constructor(
+    readonly code:
+      | "PRODUCT_VARIANT_ANALYSIS_REQUIRED"
+      | "PRODUCT_VARIANT_SELECTION_REQUIRED"
+      | "PRODUCT_VARIANT_VISUAL_REFERENCE_REQUIRED"
+      | "PRODUCT_VARIANT_CONFLICT",
+    message: string
+  ) {
+    super(message);
+    this.name = "AiStoryProductVariantAuthorityError";
+  }
+}
+
+function visualSemanticFacts(analysis: unknown): ProductVariantSemanticFacts | null {
+  if (!analysis || typeof analysis !== "object") return null;
+  const facts = (analysis as { facts?: { visualSemantics?: ProductVariantSemanticFacts } }).facts?.visualSemantics;
+  return facts ?? null;
+}
+
+/** Freezes confirmed variants from durable semantic facts. Does not invent a variant. */
+export async function confirmedProductVariantsForIntake(
+  db: Db,
+  input: {
+    workspaceId: string;
+    productAssetIds: readonly string[];
+    userIntent: string;
+    selections: readonly { assetId: string; variant: string }[];
+    confirmed: boolean;
+  }
+): Promise<Record<string, string | null>> {
+  const productAssetIds = [...new Set(input.productAssetIds)];
+  if (productAssetIds.length === 0 || !input.confirmed) return {};
+  const assets = await db
+    .select({ id: schema.assets.id, contentHash: schema.assets.contentHash })
+    .from(schema.assets)
+    .where(and(
+      eq(schema.assets.workspaceId, input.workspaceId),
+      inArray(schema.assets.id, productAssetIds),
+      isNull(schema.assets.deletedAt)
+    ));
+  if (assets.length !== productAssetIds.length || assets.some((asset) => !asset.contentHash)) {
+    throw new AiStoryProductVariantAuthorityError(
+      "PRODUCT_VARIANT_ANALYSIS_REQUIRED",
+      "Product variant analysis requires finalized source identity"
+    );
+  }
+  const rows = await db
+    .select({
+      analyzedContentHash: schema.assetAnalysisSnapshots.analyzedContentHash,
+      analysis: schema.assetAnalysisSnapshots.analysis,
+      createdAt: schema.assetAnalysisSnapshots.createdAt,
+    })
+    .from(schema.assetAnalysisSnapshots)
+    .where(and(
+      eq(schema.assetAnalysisSnapshots.workspaceId, input.workspaceId),
+      inArray(schema.assetAnalysisSnapshots.analyzedContentHash, assets.map((asset) => asset.contentHash!)),
+      eq(schema.assetAnalysisSnapshots.analyzerVersion, VISUAL_SEMANTIC_ANALYZER_VERSION),
+      eq(schema.assetAnalysisSnapshots.schemaVersion, "ai-story-asset-visual-semantics.v1")
+    ))
+    .orderBy(desc(schema.assetAnalysisSnapshots.createdAt));
+  const factsByHash = new Map<string, ProductVariantSemanticFacts | null>();
+  for (const row of rows) {
+    if (!factsByHash.has(row.analyzedContentHash)) factsByHash.set(row.analyzedContentHash, visualSemanticFacts(row.analysis));
+  }
+  const confirmedVariants: Record<string, string | null> = {};
+  for (const assetId of productAssetIds) {
+    const asset = assets.find((candidate) => candidate.id === assetId)!;
+    const resolution = resolveProductVariantMapping({
+      candidates: extractProductVariantCandidates(factsByHash.get(asset.contentHash!)),
+      userIntent: input.userIntent,
+      selectedVariant: input.selections.find((item) => item.assetId === assetId)?.variant,
+      confirmed: true,
+    });
+    if (resolution.status === "analysis_required" || resolution.status === "selection_required" || resolution.status === "conflict") {
+      throw new AiStoryProductVariantAuthorityError(
+        resolution.code ?? "PRODUCT_VARIANT_SELECTION_REQUIRED",
+        resolution.status === "conflict"
+          ? "The requested product variant is not in the source analysis"
+          : resolution.status === "analysis_required"
+            ? "Product variant analysis is required before confirming the mapping"
+            : "Choose one product variant before confirming the mapping"
+      );
+    }
+    const grounding = resolveProductVariantVisualGrounding({
+      sourceAssetId: assetId,
+      sourceAssetContentHash: asset.contentHash,
+      resolution,
+    });
+    if (grounding.status !== "confirmed") {
+      throw new AiStoryProductVariantAuthorityError(
+        grounding.code ?? "PRODUCT_VARIANT_VISUAL_REFERENCE_REQUIRED",
+        "Choose or upload a clear reference for the confirmed Product variant"
+      );
+    }
+    confirmedVariants[assetId] = resolution.variant;
+  }
+  return confirmedVariants;
+}
+
 export async function replaceAiStoryAssetLinks(
   db: Db,
   storyId: string,
   assetIds: string[],
-  productAssetIds: string[] = []
+  productAssetIds: string[] = [],
+  typed: Partial<AiStoryAssetSelection> = {},
+  confirmedVariants: Readonly<Record<string, string | null>> = {}
 ) {
-  const plan = planAiStoryAssetLinkUsage({ assetIds, productAssetIds });
+  const plan = planAiStoryAssetLinkUsage({ ...typed, assetIds, productAssetIds });
   await db.delete(schema.aiStoryAssetLinks).where(eq(schema.aiStoryAssetLinks.storyId, storyId));
   if (plan.length === 0) return;
   await db.insert(schema.aiStoryAssetLinks).values(
@@ -127,6 +260,7 @@ export async function replaceAiStoryAssetLinks(
       storyId,
       assetId,
       usageType,
+      confirmedVariant: usageType === "product_source" ? confirmedVariants[assetId] ?? null : null,
     }))
   );
 }

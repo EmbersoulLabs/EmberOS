@@ -3,6 +3,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  AiStoryCanonicalSceneExecutionIntentSchema,
+  AiStorySceneExecutionPlanSchema,
   AnimationPackagePayloadSchema,
   CreativeContextSchema,
   DirectorThinkingSchema,
@@ -270,6 +272,35 @@ describe("Phase 1 Scene Execution Compiler", () => {
       b.intents[0]!.identity.deterministicFingerprint
     );
     expect(a.storyExecutionPlan.compilationHash).toBe(b.storyExecutionPlan.compilationHash);
+  });
+
+  it("binds new compilation to Recommended Duration and keeps historical reads", () => {
+    const compiled = compileSceneExecutionIntents(samplePackage(), baseCtx);
+    const sceneOne = compiled.intents[0]!;
+    const sceneTwo = compiled.intents[1]!;
+    expect(sceneOne.recommendedDurationAuthority?.decision).toMatchObject({
+      resolution: "SHOT_TIMING",
+      recommendedDurationSec: 6,
+      plannedDurationMs: 6000,
+    });
+    expect(sceneOne.plannedDurationMs).toBe(6000);
+    expect(sceneTwo.recommendedDurationAuthority?.decision.recommendedDurationSec).toBe(8);
+    expect(sceneTwo.plannedDurationMs).toBe(8000);
+    expect(
+      compiled.instructionsBySceneExecutionId[sceneOne.identity.sceneExecutionId]?.durationMs
+    ).toBe(6000);
+    expect(compiled.estimate.estimatedDurationSec).toBe(14);
+
+    const historical = { ...sceneOne };
+    delete historical.recommendedDurationAuthority;
+    expect(
+      AiStorySceneExecutionPlanSchema.parse(historical).recommendedDurationAuthority
+    ).toBeUndefined();
+    expect(historical.plannedDurationMs).toBe(6000);
+    expect(() => AiStoryCanonicalSceneExecutionIntentSchema.parse(historical)).toThrow();
+    expect(() =>
+      AiStorySceneExecutionPlanSchema.parse({ ...sceneOne, plannedDurationMs: 10000 })
+    ).toThrow(/PLANNED_DURATION_AUTHORITY_MISMATCH/);
   });
 
   it("preserves character and asset references without invoking providers", () => {

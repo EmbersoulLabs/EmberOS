@@ -9,6 +9,8 @@ import { callJsonModel, callStructuredJsonModel } from "../llm";
 import type { CertificationPlanningStage } from "@ceo-agent/db";
 import {
   AnimationPackagePayloadSchema,
+  AI_STORY_CAMERA_FAMILIES,
+  AI_STORY_PRODUCT_CAMERA_SAFETY_POLICY,
   AI_STORY_SHOT_AUTHORITY_LINEAGE_VERSION,
   AiStorySceneGenerationAuthoritySchema,
   AiStorySceneGroundingProposalSchema,
@@ -38,6 +40,7 @@ import {
   type StoryBeat,
   type WorldContinuity,
   WorldContinuitySchema,
+  AiStorySceneGroundingError,
   bindSceneGroundingLineage,
   type AiStoryScenePlanningGroundingContext,
 } from "@ceo-agent/shared";
@@ -73,6 +76,21 @@ export function bindSceneGroundingProposalIdsByPlanOrder(input: {
   return input.proposals.map((proposal, index) => ({
     ...proposal,
     sceneId: input.sceneIds[index]!,
+  }));
+}
+
+/** Character identity is not an Asset visual claim. Drop those subjects before lineage validation. */
+export function omitCharacterNamedVisualClaims(input: {
+  characterNames: readonly string[];
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
+}): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  const names = new Set(
+    input.characterNames.map((name) => name.trim().toLocaleLowerCase()).filter((name) => name.length > 0),
+  );
+  if (names.size === 0) return [...input.proposals];
+  return input.proposals.map((proposal) => ({
+    ...proposal,
+    visualClaims: proposal.visualClaims.filter((claim) => !names.has(claim.subject.trim().toLocaleLowerCase())),
   }));
 }
 
@@ -302,32 +320,138 @@ export function resolveScenePlanGenerationAuthority(input: {
   });
 }
 
-const ScenePlanProviderOutputSchema = z.object({
-  scenePlan: z.array(z.object({
-    id: z.string().trim().min(1),
-    beatIds: z.array(z.string().trim().min(1)).min(1),
-    purpose: z.string().trim().min(1),
-    durationSec: z.number().positive(),
-    transition: z.string(),
-    continuityNotes: z.string(),
-    order: z.number().int().nonnegative(),
-    generationAuthority: AiStorySceneGenerationAuthoritySchema,
-  }).strict()).min(1),
-  groundingSelections: z.array(AiStorySceneGroundingProposalSchema).default([]),
+const SceneGroundingFieldsSchema = AiStorySceneGroundingProposalSchema.omit({ sceneId: true }).strict();
+
+const ScenePlanProviderSceneSchema = z.object({
+  id: z.string().trim().min(1),
+  beatIds: z.array(z.string().trim().min(1)).min(1),
+  purpose: z.string().trim().min(1),
+  durationSec: z.number().positive(),
+  transition: z.string(),
+  continuityNotes: z.string(),
+  order: z.number().int().nonnegative(),
+  generationAuthority: AiStorySceneGenerationAuthoritySchema,
+  grounding: SceneGroundingFieldsSchema,
 }).strict();
 
 export function buildScenePlanProviderOutputSchema(
   acceptedBindingIds: readonly string[],
+  allowedVisualSubjects: readonly string[] = [],
 ) {
-  if (acceptedBindingIds.length === 0) return ScenePlanProviderOutputSchema;
+  const visualClaims = allowedVisualSubjects.length === 0
+    ? z.array(SceneGroundingFieldsSchema.shape.visualClaims.element).length(0)
+    : z.array(SceneGroundingFieldsSchema.shape.visualClaims.element.extend({
+      subject: z.enum(allowedVisualSubjects as [string, ...string[]]),
+    }).strict());
+  const groundingFields = SceneGroundingFieldsSchema.extend({ visualClaims }).strict();
+  if (acceptedBindingIds.length === 0) {
+    return z.object({
+      scenePlan: z.array(ScenePlanProviderSceneSchema.extend({
+        grounding: groundingFields,
+      }).strict()).min(1),
+    }).strict();
+  }
   const bindingIdSchema = z.enum(acceptedBindingIds as [string, ...string[]]);
-  return ScenePlanProviderOutputSchema.extend({
-    groundingSelections: z.array(AiStorySceneGroundingProposalSchema.extend({
-      evidence: z.array(AiStorySceneGroundingProposalSchema.shape.evidence.element.extend({
-        bindingId: bindingIdSchema,
-      }).strict()),
-    }).strict()).default([]),
+  return z.object({
+    scenePlan: z.array(ScenePlanProviderSceneSchema.extend({
+      grounding: groundingFields.extend({
+        evidence: z.array(groundingFields.shape.evidence.element.extend({
+          bindingId: bindingIdSchema,
+        }).strict()),
+      }).strict(),
+    }).strict()).min(1),
   }).strict();
+}
+
+/**
+ * Binds an exact provider-selected Asset visual subject to its unique accepted
+ * grounding binding. The model may choose whether to make a claim, but it does
+ * not own the claim's evidence lineage.
+ */
+export function bindVisualClaimSubjectEvidence(input: {
+  context: AiStoryScenePlanningGroundingContext;
+  characterNames: readonly string[];
+  proposals: readonly z.infer<typeof AiStorySceneGroundingProposalSchema>[];
+}): z.infer<typeof AiStorySceneGroundingProposalSchema>[] {
+  const normalized = (value: string) => value.trim().toLocaleLowerCase();
+  const characterNames = new Set(input.characterNames.map(normalized).filter(Boolean));
+
+  return input.proposals.map((proposal) => {
+    const evidence = proposal.evidence.map((selection) => ({
+      ...selection,
+      groundedFacts: [...selection.groundedFacts],
+    }));
+
+    for (const claim of proposal.visualClaims) {
+      const subjectKey = normalized(claim.subject);
+      if (characterNames.has(subjectKey)) {
+        throw new AiStorySceneGroundingError(
+          "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED",
+          `Scene ${proposal.sceneId} may not bind Character ${claim.subject} as an Asset visual subject`,
+        );
+      }
+
+      const supportingBindings = input.context.bindings.filter((binding) =>
+        binding.namedItems.some((item) => normalized(item) === subjectKey) ||
+        binding.productCandidates.some((candidate) => normalized(candidate.name) === subjectKey));
+
+      if (supportingBindings.length === 0) {
+        throw new AiStorySceneGroundingError(
+          "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED",
+          `Scene ${proposal.sceneId} has no accepted binding for visual subject ${claim.subject}`,
+        );
+      }
+      if (supportingBindings.length !== 1) {
+        throw new AiStorySceneGroundingError(
+          "SCENE_GROUNDING_SUBJECT_BINDING_AMBIGUOUS",
+          `Scene ${proposal.sceneId} has multiple accepted bindings for visual subject ${claim.subject}`,
+        );
+      }
+
+      const binding = supportingBindings[0]!;
+      const canonicalSubject = [
+        ...binding.namedItems,
+        ...binding.productCandidates.map((candidate) => candidate.name),
+      ].find((candidate) => normalized(candidate) === subjectKey)!;
+      const existing = evidence.find((selection) => selection.bindingId === binding.bindingId);
+      if (!existing) {
+        evidence.push({ bindingId: binding.bindingId, groundedFacts: [canonicalSubject] });
+      } else if (!existing.groundedFacts.some((fact) => normalized(fact) === subjectKey)) {
+        existing.groundedFacts.push(canonicalSubject);
+      }
+    }
+
+    return { ...proposal, evidence };
+  });
+}
+
+/**
+ * Projects the only Asset subject identities the Scene Planner may claim.
+ * Canonical spelling comes from accepted semantic grounding; no Story prose,
+ * filenames, labels, or inferred Character aliases participate.
+ */
+export function deriveAllowedSceneVisualSubjects(input: {
+  context?: AiStoryScenePlanningGroundingContext;
+  characterNames: readonly string[];
+}): string[] {
+  if (!input.context) return [];
+  const normalize = (value: string) => value.trim().toLocaleLowerCase();
+  const characterNames = new Set(input.characterNames.map(normalize).filter(Boolean));
+  const seen = new Set<string>();
+  const subjects: string[] = [];
+  for (const binding of input.context.bindings) {
+    for (const candidate of [
+      ...binding.namedItems,
+      ...binding.productCandidates.map((product) => product.name),
+    ]) {
+      const canonical = candidate.trim();
+      const key = normalize(canonical);
+      if (!key || characterNames.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      subjects.push(canonical);
+    }
+  }
+  return subjects;
 }
 
 export type AiStoryPlanningCampaignContext = {
@@ -627,8 +751,13 @@ export async function generateScenePlan(input: {
   /** Required by the normal staged runtime; optional for legacy all-at-once compatibility. */
   assetGrounding?: AiStoryScenePlanningGroundingContext;
 }): Promise<{ scenePlan: ScenePlanItem[]; usage: Usage }> {
+  const allowedVisualSubjects = deriveAllowedSceneVisualSubjects({
+    context: input.assetGrounding,
+    characterNames: input.creativeContext.characterContext.characters.map((character) => character.name),
+  });
   const providerOutputSchema = buildScenePlanProviderOutputSchema(
     input.assetGrounding?.bindings.map((binding) => binding.bindingId) ?? [],
+    allowedVisualSubjects,
   );
   const completion = await callStructuredJsonModel({
     system: [
@@ -637,11 +766,12 @@ export async function generateScenePlan(input: {
       "Use sequential order values starting at 0 and stable scene ids.",
       "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
       "FIRST_FRAME_IMAGE_TO_VIDEO and PRODUCT_GROUNDED_VIDEO always require productVisualIdentityRequirement REQUIRED. They may never use NONE. TEXT_TO_VIDEO may use REQUIRED only when the Scene still visually depicts a grounded Product.",
-      "The supplied accepted Asset grounding authority is immutable. For every Scene return one groundingSelections entry using only exact accepted binding IDs and exact facts from those bindings. Copy bindingId verbatim; never invent or transform a UUID.",
+      "The supplied accepted Asset grounding authority is immutable. Every Scene must include its own grounding object using only exact accepted binding IDs and exact facts from those bindings. Copy bindingId verbatim; never invent or transform a UUID.",
       "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
       "If a Scene has only SUPPORTING_REFERENCE evidence, use TEXT_TO_VIDEO with REFERENCE_FREE_T2V and productVisualIdentityRequirement NONE. Never select image-conditioned mode or REQUIRED product identity from a supporting-only binding.",
       "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",
-      "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims.",
+      `visualClaims.subject must be one exact allowed Asset visual subject: ${JSON.stringify(allowedVisualSubjects)}. If this list is empty, visualClaims must be empty. Narrative and visual intent may describe Characters and actions, but visualClaims.subject must never contain Character/action phrases, sentence fragments, descriptions, or combined Character/Product prose. A narrative such as \"the Character enjoys the Product\" must use only the exact allowed Product subject, never the combined prose phrase.`,
+      "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims. Character identity comes from Character authority, not Asset visualClaims.",
       "Return JSON only and no extra fields.",
     ].join(" "),
     user: JSON.stringify(input, null, 2),
@@ -655,27 +785,37 @@ export async function generateScenePlan(input: {
   const providerOutput = providerOutputSchema.parse(completion.result);
   const rawScenePlan = z.array(
     ScenePlanItemSchema.extend({ generationAuthority: AiStorySceneGenerationAuthoritySchema }),
-  ).min(1).parse(providerOutput.scenePlan);
+  ).min(1).parse(providerOutput.scenePlan.map(({ grounding: _grounding, ...scene }) => scene));
   const assetGrounding = input.assetGrounding;
   if (!assetGrounding) return { scenePlan: rawScenePlan, usage: completion.usage };
   const sceneIds = rawScenePlan.map((scene) => scene.id);
   const orderedGrounding = bindSceneGroundingProposalIdsByPlanOrder({
     sceneIds,
-    proposals: providerOutput.groundingSelections,
+    proposals: providerOutput.scenePlan.map((scene) => ({
+      sceneId: scene.id,
+      ...scene.grounding,
+    })),
   });
   const lineageByScene = bindSceneGroundingLineage({
     context: assetGrounding,
     sceneIds,
-    proposals: normalizeExistenceOnlySceneGrounding(removeUnsupportedObservedAppearance({
-      context: assetGrounding,
-      proposals: retainSupportedSceneGroundingEvidence({
+    proposals: omitCharacterNamedVisualClaims({
+      characterNames: input.creativeContext.characterContext.characters.map((character) => character.name),
+      proposals: normalizeExistenceOnlySceneGrounding(removeUnsupportedObservedAppearance({
         context: assetGrounding,
-        proposals: bindMentionedCatalogChoiceEvidence({
+        proposals: retainSupportedSceneGroundingEvidence({
           context: assetGrounding,
-          proposals: orderedGrounding,
+          proposals: bindMentionedCatalogChoiceEvidence({
+            context: assetGrounding,
+            proposals: bindVisualClaimSubjectEvidence({
+              context: assetGrounding,
+              characterNames: input.creativeContext.characterContext.characters.map((character) => character.name),
+              proposals: orderedGrounding,
+            }),
+          }),
         }),
-      }),
-    })),
+      })),
+    }),
   });
   const acceptedAssetIds = new Set(assetGrounding.bindings.map((binding) => binding.assetId));
   const productBindingIds = new Set(
@@ -718,6 +858,78 @@ export async function generateScenePlan(input: {
     return ScenePlanItemSchema.parse({ ...scene, generationAuthority, groundingLineage: lineage });
   });
   return { scenePlan, usage: completion.usage };
+}
+
+const ShotProviderText = z.string().trim().min(1).max(2000);
+
+function providerShotSchema(productIdentityRequired: boolean) {
+  return z.object({
+    cameraFamily: productIdentityRequired
+      ? z.enum(AI_STORY_PRODUCT_CAMERA_SAFETY_POLICY.identitySafeFamilies)
+      : z.enum(AI_STORY_CAMERA_FAMILIES),
+    composition: ShotProviderText,
+    framing: ShotProviderText,
+    lensSuggestion: z.string().max(500),
+    durationSec: z.number().positive(),
+    focus: ShotProviderText,
+    emotion: ShotProviderText,
+    information: ShotProviderText,
+  }).strict();
+}
+
+type ShotPlanCameraScene = {
+  id?: string;
+  generationAuthority?: { productVisualIdentityRequirement?: "NONE" | "REQUIRED" } | null;
+};
+
+/**
+ * Scene-keyed Shot transport. Scene identity and Shot order stay server-owned.
+ * Product-identity Scenes may only emit an identity-safe camera family.
+ * Other Scenes use the full registered camera-family set, never free text.
+ */
+export function buildShotPlanProviderOutputSchema(scenePlan: readonly ShotPlanCameraScene[]) {
+  if (scenePlan.length === 0) throw new Error("SHOT_PLAN_SCENE_PLAN_REQUIRED");
+  const shotsByScene = Object.fromEntries(
+    scenePlan.map((scene, index) => [
+      `scene_${index}`,
+      z.array(providerShotSchema(scene.generationAuthority?.productVisualIdentityRequirement === "REQUIRED")).min(1),
+    ]),
+  ) as Record<string, z.ZodTypeAny>;
+  return z.object({
+    shotsByScene: z.object(shotsByScene).strict(),
+  }).strict();
+}
+
+type ProviderShot = z.infer<ReturnType<typeof providerShotSchema>>;
+
+/** Flattens scene_N transport into Scene Plan IDs and global Shot order. */
+export function materializeShotPlanFromProvider(input: {
+  scenePlan: readonly { id: string }[];
+  shotsByScene: Readonly<Record<string, readonly ProviderShot[]>>;
+}): ShotPlanItem[] {
+  const shots: ShotPlanItem[] = [];
+  for (const [sceneIndex, scene] of input.scenePlan.entries()) {
+    const sceneShots = input.shotsByScene[`scene_${sceneIndex}`];
+    if (!sceneShots?.length) throw new Error(`SHOT_PLAN_SCENE_COVERAGE_REQUIRED:${scene.id}`);
+    for (const shot of sceneShots) {
+      const order = shots.length;
+      shots.push(ShotPlanItemSchema.parse({
+        id: `shot-${String(order + 1).padStart(3, "0")}`,
+        sceneId: scene.id,
+        cameraType: shot.cameraFamily,
+        cameraMovement: shot.cameraFamily,
+        composition: shot.composition,
+        framing: shot.framing,
+        lensSuggestion: shot.lensSuggestion,
+        durationSec: shot.durationSec,
+        focus: shot.focus,
+        emotion: shot.emotion,
+        information: shot.information,
+        order,
+      }));
+    }
+  }
+  return shots;
 }
 
 export function bindShotPlanAuthorityLineage(input: {
@@ -782,49 +994,40 @@ export async function generateShotPlan(input: {
   if (canonicalScript && (canonicalScript.scenes.length !== input.scenePlan.length || canonicalScript.scenes.some((scene, index) => scene.order !== input.scenePlan[index]!.order))) {
     throw new Error("CANONICAL_SCRIPT_SCENE_PLAN_MAPPING_INVALID");
   }
-  const schemaHint = JSON.stringify({
-    shotPlan: [
-      {
-        id: "shot-001",
-        sceneId: "scene-001",
-        cameraType: "string",
-        cameraMovement: "string",
-        composition: "string",
-        framing: "string",
-        lensSuggestion: "string",
-        durationSec: 2,
-        focus: "string",
-        emotion: "string",
-        information: "string",
-        order: 0,
-      },
-    ],
-  });
-  const { value, usage } = await callStage<ShotPlanItem[]>(
-    "Shot plan",
-    [
+  const providerOutputSchema = buildShotPlanProviderOutputSchema(input.scenePlan);
+  const sceneKeys = input.scenePlan.map((_, index) => `scene_${index}`).join(", ");
+  const completion = await callStructuredJsonModel({
+    system: [
       "You are an animation shot planner.",
       ...(canonicalScript ? [
-        "The supplied Canonical Script is authoritative. Map Scene Plan items to Canonical Script Scenes by their exact shared order and preserve Script semantics.",
+        "The supplied Canonical Script is authoritative. Preserve Script semantics for the Scene at the same order.",
         "Camera and shot choices must not change Script actions, Character IDs, Product authority, Outline Beat claims, dialogue, evidence, or action outcomes.",
         "Do not add unsupported dialogue, action, Product facts, claims, or evidence.",
       ] : []),
-      "Every scene must receive at least one shot.",
-      "Use sequential order values starting at 0 and stable shot ids.",
-      "Preserve each Scene Plan generationAuthority exactly; Product or Asset presence never selects or changes generation mode. For image-conditioned Product Scenes, the exact approved Product Asset remains visual identity authority.",
-      "For PRODUCT_GROUNDED_VIDEO use only identity-safe camera motion: static/locked framing, slow push-in, slow pull-back, minor lateral dolly, a small 10-20 degree arc, close-up detail, rack focus, or gentle parallax.",
-      "Never request a 180/360-degree orbit, circle-around-product, unseen-backside reveal, dramatic perspective change, product morphing, or container/wrapping transformation.",
-      "Return planning-only camera language; no provider execution fields.",
-      "Return ONLY JSON.",
+      `Return exactly ${input.scenePlan.length} Scene shot arrays inside shotsByScene, using only the exact keys ${sceneKeys}.`,
+      "The server owns Scene identity, Scene order, Shot IDs, and global Shot order. Do not return sceneId, shot id, or global order.",
+      "Every Scene must contain at least one Shot. You choose how many Shots each Scene needs.",
+      "cameraFamily must be one exact allowed schema value for that Scene. Do not put prose in cameraFamily.",
+      `Product visual-identity Scenes may use only ${AI_STORY_PRODUCT_CAMERA_SAFETY_POLICY.identitySafeFamilies.join(", ")}.`,
+      "Other Scenes may use any registered camera family the schema allows for that Scene, including families outside the Product-safe subset.",
+      "Put creative description in composition, framing, focus, and information.",
+      "Preserve each Scene Plan generationAuthority exactly. Product or Asset presence never selects or changes generation mode. For image-conditioned Product Scenes, the exact approved Product Asset remains visual identity authority.",
+      "Do not request an orbit around a Product, an unseen-backside reveal, a dramatic perspective change, product morphing, or a container or wrapping transformation.",
+      "Return planning-only camera language and no provider execution fields.",
     ].join(" "),
-    JSON.stringify({ ...input, ...(canonicalScript ? { canonicalScript } : {}) }, null, 2),
-    schemaHint,
-    z.array(ShotPlanItemSchema).min(1),
-    (result) => result.shotPlan
-  );
+    user: JSON.stringify({ ...input, ...(canonicalScript ? { canonicalScript } : {}) }, null, 2),
+    schema: providerOutputSchema,
+    schemaName: "ai_story_shot_plan_v1",
+    certificationStage: "shot_plan",
+  });
+  if (completion.decodeIssue) throw new Error(`SHOT_PLAN_${completion.decodeIssue}`);
+  const providerOutput = providerOutputSchema.parse(completion.result);
   const shotPlan = bindProductShotCameraSafety({
     scenePlan: input.scenePlan,
-    shotPlan: value,
+    shotPlan: materializeShotPlanFromProvider({
+      scenePlan: input.scenePlan,
+      shotsByScene: providerOutput.shotsByScene,
+    }),
   });
   return {
     shotPlan: bindShotPlanAuthorityLineage({
@@ -832,7 +1035,7 @@ export async function generateShotPlan(input: {
       scenePlan: input.scenePlan,
       shotPlan,
     }),
-    usage,
+    usage: completion.usage,
   };
 }
 

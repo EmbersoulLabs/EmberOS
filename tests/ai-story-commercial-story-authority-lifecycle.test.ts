@@ -86,9 +86,15 @@ const BEATS = [
 ];
 const T2V = { strategy: "TEXT_TO_VIDEO" as const, referenceSource: "REFERENCE_FREE_T2V" as const, referenceAssetIds: [] as string[], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" as const };
 const I2V = { strategy: "FIRST_FRAME_IMAGE_TO_VIDEO" as const, referenceSource: "SCENE_EXPLICIT" as const, referenceAssetIds: [I.product], firstFrameAssetId: I.product, productVisualIdentityRequirement: "REQUIRED" as const };
+const productGrounding = (assetId: string) => ({
+  contractVersion: "ai-story-scene-grounding-lineage.v1" as const, storyId: I.story, storyVersionId: I.storyVersion, matchingResultId: I.matching,
+  narrativeIntent: "Show the exact product", visualIntent: "Hold the exact product",
+  evidence: [{ bindingId: I.binding, assetId, role: "PRODUCT_AUTHORITY" as const, semanticSnapshotId: I.snapshot, groundedFacts: ["Visible product"] }],
+  visualClaims: [] as [],
+});
 const PLAN = [
   { id: "scene-plan-0", beatIds: [BEATS[0]!.id], purpose: "Open on the dark watch", durationSec: 4, transition: "", continuityNotes: "", order: 0, generationAuthority: T2V },
-  { id: "scene-plan-1", beatIds: [BEATS[1]!.id], purpose: "The lantern becomes visible", durationSec: 4, transition: "", continuityNotes: "", order: 1, generationAuthority: I2V },
+  { id: "scene-plan-1", beatIds: [BEATS[1]!.id], purpose: "The lantern becomes visible", durationSec: 4, transition: "", continuityNotes: "", order: 1, generationAuthority: I2V, groundingLineage: productGrounding(I.product) },
   { id: "scene-plan-2", beatIds: [BEATS[2]!.id], purpose: "The watch continues in the light", durationSec: 4, transition: "", continuityNotes: "", order: 2, generationAuthority: T2V },
 ];
 const CHARACTER = {
@@ -281,6 +287,59 @@ describe("COMMERCIAL_STORY authority lifecycle", () => {
     await expect(produceAuthorizedCommercialStoryScriptProposal({ ...input, scenePlan: changedPlan }, deps())).rejects.toMatchObject<Partial<AiStoryCanonicalScriptProducerError>>({ code: "CANONICAL_SCRIPT_SEMANTIC_AUTHORITY_STALE" });
     expect(writerCalls).toBe(1);
     expect(readFileSync("apps/web/src/lib/ai-story-canonical-script-producer.ts", "utf8")).not.toContain("shotPlan");
+  });
+
+  it("re-promotes an authorized proposal when only compiled participation changes and does not call the model", async () => {
+    const previous = frozenOutline();
+    previous.commercialStoryProfile!.userCreativeIntent = ["The keeper holds the lantern. Show light movement."];
+    previous.commercialStoryProfile!.commercialIntegration!.commercialActionOrParticipation = "REVEAL";
+    const next = structuredClone(previous);
+    next.outlineVersionId = id(40);
+    next.version = 2;
+    next.sourceHash = hash("c");
+    next.commercialStoryProfile!.commercialIntegration!.commercialActionOrParticipation = "ENABLE";
+    const semantic = proposal();
+    let writerCalls = 0;
+    let history: AiStoryScriptVersion[] = [scriptFor(previous, semantic)];
+    const transition = (status: "VALIDATED" | "APPROVED" | "FROZEN") => async (_db: never, _scope: never, scriptVersionId: string) => {
+      const index = history.findIndex((item) => item.scriptVersionId === scriptVersionId);
+      const prior = history[index]!;
+      history[index] = AiStoryScriptVersionSchema.parse({ ...prior, status, approvedBy: I.actor, approvedAt: "2026-09-27T00:11:00.000Z", frozenAt: status === "FROZEN" ? "2026-09-27T00:12:00.000Z" : prior.frozenAt });
+      return history[index]!;
+    };
+    const deps = (): CanonicalScriptProducerDependencies => ({
+      resolveCurrentOutline: async () => next,
+      history: async () => history,
+      generateSemanticProposal: async () => { writerCalls += 1; throw new Error("SCRIPT_MODEL_CALLED"); },
+      promoteSemanticProposal: promoteAiStoryScriptSemanticProposalV1,
+      propose: async (_db, _scope, script) => { history.push(script); return script; },
+      validate: transition("VALIDATED"), approve: transition("APPROVED"), freeze: transition("FROZEN"),
+      resolveAuthorizedProposal: async () => ({ proposal: semantic, semanticInputFingerprint: fingerprint(previous), profileId: "COMMERCIAL_STORY" }),
+      resolveOutlineHistory: async () => [previous, next],
+      now: () => "2026-09-27T00:10:00.000Z",
+    });
+    const input = {
+      db: {} as never, orgId: I.org, workspaceId: I.workspace, campaignId: I.campaign, storyId: I.story, storyVersionId: I.storyVersion, actorUserId: I.actor,
+      story: STORY, storyBeats: BEATS, scenePlan: PLAN, creativeContext: CREATIVE, directorThinking: DIRECTOR, characterAuthorities: [CHARACTER],
+    };
+    const authored = await produceAuthorizedCommercialStoryScriptProposal(input, deps());
+    expect(authored.semanticWriterCalled).toBe(false);
+    expect(writerCalls).toBe(0);
+    const consumed = await ensureCurrentFrozenCanonicalScript(input, deps());
+    expect(consumed.semanticWriterCalled).toBe(false);
+    expect(writerCalls).toBe(0);
+    expect(consumed.script.scenes[0]?.mustKeep).toEqual(expect.arrayContaining([
+      "The keeper holds the lantern.",
+      "Show light movement.",
+    ]));
+    expect(consumed.script.authorityReferences).toEqual(expect.arrayContaining([
+      expect.objectContaining({ authorityType: "CHARACTER", authorityId: I.character }),
+      expect.objectContaining({ authorityType: "PRODUCT", authorityId: I.product }),
+    ]));
+    expect(consumed.script.scenes[1]?.entries.filter((entry) => entry.type === "DIALOGUE")).toEqual([]);
+    const again = await produceAuthorizedCommercialStoryScriptProposal(input, deps());
+    expect(again.semanticWriterCalled).toBe(false);
+    expect(writerCalls).toBe(0);
   });
 
   it("rejects an unowned dialogue candidate before authorization and accepts the corrected candidate on the same story version", async () => {
@@ -531,8 +590,8 @@ describe("COMMERCIAL_STORY authority lifecycle", () => {
     const wrongAsset = { ...I2V, referenceAssetIds: [I.supporting], firstFrameAssetId: I.supporting };
     expect(() => composeAiStoryCanonicalSceneSetV1({
       orgId: I.org, workspaceId: I.workspace, campaignId: I.campaign, storyId: I.story, storyVersionId: I.storyVersion, actorUserId: I.actor,
-      frozenOutline: outline, frozenScript: script, scenePlan: PLAN.map((item, index) => index === 1 ? { ...item, generationAuthority: wrongAsset } : item),
-      worldContinuity: WORLD, characterAuthorities: [CHARACTER], productSources: [{ assetId: I.product, contentHash: hash("b") }], createdAt: "2026-09-27T02:00:00.000Z",
+      frozenOutline: outline, frozenScript: script, scenePlan: PLAN.map((item, index) => index === 1 ? { ...item, generationAuthority: wrongAsset, groundingLineage: productGrounding(I.supporting) } : item),
+      worldContinuity: WORLD, characterAuthorities: [CHARACTER], productSources: [{ assetId: I.product, contentHash: hash("b") }, { assetId: I.supporting, contentHash: hash("s") }], createdAt: "2026-09-27T02:00:00.000Z",
     })).toThrowError(expect.objectContaining({ code: "CANONICAL_SCENE_GENERATION_MODE_MATERIAL_MISMATCH" }));
 
     const grounding = (order: number) => ({

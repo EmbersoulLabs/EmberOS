@@ -68,6 +68,13 @@ export async function downloadStorageBytes(storagePath: string): Promise<Buffer>
     return Buffer.from(await data.arrayBuffer());
   });
 }
+/** Immutable CPU-derived media upload. Existing bytes are verified by the caller. */
+export async function uploadStorageBytesImmutable(storagePath:string,bytes:Uint8Array,contentType:string):Promise<"created"|"already_exists"> {
+  const {error}=await getAdminClient().storage.from(getBucket()).upload(storagePath,bytes,{contentType,upsert:false});
+  if(!error)return "created";
+  if(/already exists|Duplicate|409|resource already/i.test(error.message))return "already_exists";
+  throw new Error("LOCAL_MEDIA_STORAGE_UPLOAD_FAILED");
+}
 /** Resolve only the exact server-derived object, with bounded legacy URL support. */
 export function resolveExpectedStoragePath(
   reference: string,
@@ -110,6 +117,20 @@ export async function createSignedStorageReadUrl(
       throw new Error(
         `Failed to create provider asset access${error?.message ? ` — ${error.message}` : ""}`
       );
+    }
+    return data.signedUrl;
+  });
+}
+
+/**
+ * Mint the same private signed upload the local-generation output route uses.
+ * The URL is returned to the Desktop job body and is never logged.
+ */
+export async function createSignedStorageUploadUrl(storagePath: string): Promise<string> {
+  return withNetworkRetry("sign local gpu result upload", async () => {
+    const { data, error } = await getAdminClient().storage.from(getBucket()).createSignedUploadUrl(storagePath);
+    if (error || !data?.signedUrl) {
+      throw new Error("LOCAL_GPU_UPLOAD_DESTINATION_REQUIRED");
     }
     return data.signedUrl;
   });

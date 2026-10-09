@@ -121,6 +121,7 @@ export async function deriveStoryProductBackgroundSuitability(
       productAuthorityId: source.assetId,
       sourceAssetId: source.assetId,
       sourceAssetContentHash: source.contentHash,
+      ...(source.confirmedVariant ? { confirmedVariant: source.confirmedVariant } : {}),
       mimeType: asset.mimeType,
     },
     bytes,

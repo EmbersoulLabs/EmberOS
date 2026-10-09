@@ -15,6 +15,7 @@ import {
   type ScenePlanItem,
   type StoryBeat,
 } from "./ai-story";
+import { AiStoryEpisodeIntentAuthoritySchema } from "./ai-story-episode-intent";
 import { AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION } from "./ai-story-script-semantic-writer";
 import { AI_STORY_SCRIPT_SEMANTIC_PROMOTION_POLICY_V1 } from "./ai-story-script-semantic-writer.server";
 
@@ -34,6 +35,7 @@ export type AiStoryScriptSemanticInputFingerprintInput = {
   directorThinking: DirectorThinking;
   characterAuthorities: PlanningCharacterAuthorityProjection[];
   productAuthorityIds: string[];
+  episodeIntent?: z.infer<typeof AiStoryEpisodeIntentAuthoritySchema>;
 };
 
 const AiStoryScriptSemanticInputFingerprintSchema = z.object({
@@ -48,6 +50,7 @@ const AiStoryScriptSemanticInputFingerprintSchema = z.object({
   directorThinking: DirectorThinkingSchema,
   characterAuthorities: PlanningCharacterAuthorityProjectionSchema.array(),
   productAuthorityIds: z.array(z.string().uuid()),
+  episodeIntent: AiStoryEpisodeIntentAuthoritySchema.optional(),
 }).strict();
 
 /** Canonical pre-model provenance for one Script semantic generation input. */
@@ -59,11 +62,13 @@ export function computeAiStoryScriptSemanticInputFingerprint(raw: AiStoryScriptS
       .sort((left, right) => left.characterId.localeCompare(right.characterId)),
     productAuthorityIds: [...new Set(parsed.productAuthorityIds)].sort(),
   };
+  const { episodeIntent, ...withoutIntent } = input;
   return sha256CanonicalIntegrityHash({
     contractVersion: AI_STORY_SCRIPT_SEMANTIC_INPUT_CONTRACT_VERSION,
     semanticProposalContractVersion: AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
     semanticPromotionPolicy: AI_STORY_SCRIPT_SEMANTIC_PROMOTION_POLICY_V1,
-    ...input,
+    ...withoutIntent,
+    ...(episodeIntent ? { episodeIntent } : {}),
   });
 }
 

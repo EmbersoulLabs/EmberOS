@@ -558,6 +558,135 @@
       "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
       "completionMarker": "constraint:ai_story_motion_plan_versions.ai_story_motion_plan_contract_version_check",
       "sha256": "b61f0309472ae55b08bdc336438b0b3394b2257abe67455c80f625fa591ae826"
+    },
+    {
+      "order": 26,
+      "file": "packages/db/sql/ai-story-manual-local-generation-handoff-v1.sql",
+      "reason": "Persist Manual Local generation packages and outputs",
+      "requires": [
+        "table:organizations",
+        "table:workspaces",
+        "table:campaigns",
+        "table:ai_stories",
+        "table:ai_story_versions",
+        "table:ai_story_execution_plans",
+        "table:ai_story_runtime_authorized_facts",
+        "table:ai_story_scene_executions",
+        "table:assets"
+      ],
+      "provides": [
+        "table:ai_story_local_generation_packages",
+        "table:ai_story_local_generation_outputs"
+      ],
+      "productionPredecessorAssumption": "The provided tables are absent. Predecessor organization, workspace, campaign, story, execution, and asset tables have the checked-in live-catalog contract.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_local_generation_packages",
+      "sha256": "383e502852ec26238c1ef3bb7548dd52a0ff751bd2c70b9ad8c1712db22aa846"
+    },
+    {
+      "order": 27,
+      "file": "packages/db/sql/ai-story-provider-neutral-generation-result-v1.sql",
+      "reason": "Persist provider-neutral generation results and link Post-QC",
+      "requires": [
+        "table:ai_story_local_generation_packages",
+        "table:ai_story_post_generation_qc_evaluations",
+        "table:ai_story_scene_results",
+        "table:provider_attempts",
+        "table:assets",
+        "table:organizations",
+        "table:workspaces",
+        "table:campaigns",
+        "table:ai_stories",
+        "table:ai_story_execution_plans",
+        "table:ai_story_scene_executions"
+      ],
+      "provides": [
+        "table:ai_story_generation_results",
+        "table:ai_story_generation_result_decisions",
+        "table:ai_story_generation_result_continuity_frames",
+        "table:ai_story_local_media_jobs",
+        "column:ai_story_post_generation_qc_evaluations.generation_result_id"
+      ],
+      "productionPredecessorAssumption": "Manual Local packages exist. Post-QC and Scene Result tables have the predecessor contract, including required provider provenance.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "table:ai_story_generation_results",
+      "sha256": "836d7b861aa7968c020f28a11d21eb584d9675cacb34e9f1216651ce15281986"
+    },
+    {
+      "order": 28,
+      "file": "packages/db/sql/ai-story-local-generation-package-contract-v2.sql",
+      "reason": "Allow local-generation-package v2 without rewriting package JSON",
+      "requires": [
+        "table:ai_story_local_generation_packages"
+      ],
+      "provides": [
+        "constraint:ai_story_local_generation_packages.ai_story_local_generation_package_contract_version_check"
+      ],
+      "productionPredecessorAssumption": "Packages exist only at local-generation-package.v1 and have one contract_version check.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "constraint:ai_story_local_generation_packages.ai_story_local_generation_package_contract_version_check",
+      "sha256": "58580def7e910ea9cc2803aaa17ffe78f2b8c71d728302a1b1f8f8f9c7a63d7b"
+    },
+    {
+      "order": 29,
+      "file": "packages/db/sql/ai-story-sequential-manual-local-package-v3.sql",
+      "reason": "Add sequential release ownership and execution mode from proven classification",
+      "requires": [
+        "table:ai_story_local_generation_packages",
+        "table:ai_story_scene_release_states",
+        "table:ai_story_generation_results",
+        "table:ai_story_generation_result_decisions",
+        "table:ai_story_generation_result_continuity_frames",
+        "table:organizations",
+        "table:workspaces",
+        "table:ai_story_scene_executions",
+        "table:ai_story_runtime_authorized_facts",
+        "table:ai_story_scene_scheduling_correlations"
+      ],
+      "provides": [
+        "column:ai_story_scene_release_states.org_id",
+        "column:ai_story_scene_release_states.execution_mode",
+        "column:ai_story_scene_release_states.gate_kind",
+        "column:ai_story_scene_release_states.release_revision",
+        "column:ai_story_scene_release_states.release_authority_id",
+        "column:ai_story_scene_release_states.release_authority_fingerprint",
+        "column:ai_story_scene_release_states.predecessor_authority_fingerprint",
+        "column:ai_story_scene_release_states.gate_generation_result_id",
+        "column:ai_story_scene_release_states.gate_generation_result_decision_id",
+        "column:ai_story_scene_release_states.current_local_generation_package_id",
+        "constraint:ai_story_scene_release_states.ai_story_scene_release_execution_mode_check"
+      ],
+      "productionPredecessorAssumption": "Release rows are absent or classifiable as remote provider or manual local. Package JSON is not rewritten.",
+      "destructive": false,
+      "modifiesExistingRows": true,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "column:ai_story_scene_release_states.execution_mode",
+      "sha256": "7b0136c13c0b19303ffaa7b8a91d02fc1664b9e8b0cc91b7075adaa86262ed49"
+    },
+    {
+      "order": 30,
+      "file": "packages/db/sql/ai-story-local-gpu-execution-mode-v1.sql",
+      "reason": "Allow explicit LOCAL_GPU execution mode without rewriting historical rows",
+      "requires": [
+        "table:ai_story_scene_release_states",
+        "column:ai_story_scene_release_states.execution_mode",
+        "constraint:ai_story_scene_release_states.ai_story_scene_release_execution_mode_check"
+      ],
+      "provides": [
+        "constraint:ai_story_scene_release_states.ai_story_scene_release_execution_mode_check"
+      ],
+      "productionPredecessorAssumption": "The v3 execution mode check allows only REMOTE_PROVIDER and MANUAL_LOCAL. No row is LOCAL_GPU yet.",
+      "destructive": false,
+      "modifiesExistingRows": false,
+      "replayPolicy": "ONE_SHOT_FAIL_CLOSED",
+      "completionMarker": "constraint:ai_story_scene_release_states.ai_story_scene_release_execution_mode_check",
+      "sha256": "2d58333749030585d10a3011fbc84254efd8f3dc84ff0b360bd02f3d92d5c3d7"
     }
   ]
 }

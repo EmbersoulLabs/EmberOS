@@ -357,6 +357,7 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
     const release = new AiStorySceneReleaseRepository();
     await release.initialize({ executionPlanId: planId,
       runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
+      orgId: ids.orgId,
       workspaceId: ids.workspaceId, orderedSceneExecutionIds: sceneExecutionIds,
       actorUserId: PR32_USER_A, releasedAt: new Date("2026-09-18T01:03:00.000Z") });
     const commercial = await acceptCommercialAuthorizationFixture({
@@ -652,6 +653,20 @@ describeIntegration("FROM BUD TO BLOOM isolated production authority dry run", (
           readable: true, decodable: true,
         },
       });
+      // The real canonical Attempt may carry the execution/envelope hash,
+      // rather than the compiled wire fingerprint. Projection must resolve its
+      // exact persisted binding and terminal chain, never accept substituted
+      // compiled identity just because the Scene already succeeded.
+      const resultProjection = new AiStoryPostGenerationQcRepository();
+      await expect(resultProjection.resolveGenerationResultInput({
+        ...qcInput, compiledRequestFingerprint: `sha256:${"f".repeat(64)}`,
+      })).rejects.toThrow("GENERATION_RESULT_REMOTE_SOURCE_MISMATCH");
+      await expect(resultProjection.resolveGenerationResultInput({
+        ...qcInput, compiledRequestId: id(999),
+      })).rejects.toThrow("GENERATION_RESULT_REMOTE_SOURCE_MISMATCH");
+      const projectedInput = await resultProjection.resolveGenerationResultInput(qcInput);
+      expect(projectedInput.generationResultId).toBeTruthy();
+      expect(projectedInput.sourceKind).toBe("REMOTE_PROVIDER");
       const qc = await new AiStoryPostGenerationQcService({
         repository: new BoundAiStoryPostGenerationQcRepository(qcInput),
         evidenceProvider: new FakeAiStoryVisualEvidenceProvider([]),

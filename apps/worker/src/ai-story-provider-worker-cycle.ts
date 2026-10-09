@@ -21,6 +21,7 @@ import {
   createDurableAssemblyArtifactBlobStore,
   createDurableAssemblyMediaAccessPort,
   createLocalDurableObjectStore,
+  loadLocalGpuConfigFromEnv,
   resolveProductionAssemblyEngineSnapshotHash,
   type AiStoryContinuationOutcome,
   type CanonicalAdapterRegistry,
@@ -176,7 +177,9 @@ async function loadCurrentAssetAwareAuthorityState(input: {
     providerAvailable:
       authority.providerCapability.providerId === "seedance"
         ? isAiProviderReady(providerConfig, "seedance")
-        : false,
+        : authority.providerCapability.providerId === "LOCAL_GPU"
+          ? loadLocalGpuConfigFromEnv(process.env).enabled === true
+          : false,
   };
 }
 

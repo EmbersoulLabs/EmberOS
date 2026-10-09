@@ -168,7 +168,20 @@ export function resolveAiStoryCommercialStoryObjectivePolicy(objective: typeof C
   return AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY.objectivePolicies[objective];
 }
 
-const HOOK_FUNCTIONS = new Set(["HOOK", "SETUP", "DESIRE", "PROBLEM", "DISCOVERY", "ACTION", "PRODUCT_INTERVENTION", "SERVICE_INTERVENTION"]);
+export const AI_STORY_NARRATIVE_HOOK_FUNCTIONS = [
+  "HOOK",
+  "SETUP",
+  "DESIRE",
+  "PROBLEM",
+  "DISCOVERY",
+  "ACTION",
+  "PRODUCT_INTERVENTION",
+  "SERVICE_INTERVENTION",
+] as const;
+
+export const AiStoryNarrativeHookFunctionSchema = z.enum(AI_STORY_NARRATIVE_HOOK_FUNCTIONS);
+
+const HOOK_FUNCTIONS = new Set<string>(AI_STORY_NARRATIVE_HOOK_FUNCTIONS);
 
 export function isAiStoryNarrativeHookFunction(value: string) {
   const local = value.includes(":") ? value.split(":").pop() ?? value : value;

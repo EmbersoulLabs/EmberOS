@@ -41,16 +41,32 @@ type Props = {
   animationPackageId?: string | null;
   compilationHash?: string | null;
   workspaceRole: WorkspaceRole | string | null;
+  /** Story-level human/planner hint. Not execution authority. */
+  storyEstimatedDuration?: string | null;
   sceneIntentHints?: ReadonlyArray<{
     sceneExecutionId: string;
     sceneId?: string;
     sceneOrder?: number;
     purpose?: string;
     plannedDurationMs?: number;
+    recommendedDurationSec?: number | null;
+    recommendedDurationResolution?: string | null;
     shotCount?: number;
     referencedAssetIds?: string[];
   }>;
 };
+
+function formatDurationSec(durationSec: number): string {
+  const rounded = Math.round(durationSec * 1000) / 1000;
+  return `${rounded}s`;
+}
+
+function planningSourceLabel(resolution: string | null | undefined): string {
+  if (resolution === "SHOT_TIMING") return "Shot timing";
+  if (resolution === "SCENE_PLAN_FALLBACK") return "Scene plan";
+  if (resolution === "SOURCE_LOCKED") return "Source duration locked";
+  return "Execution plan";
+}
 
 type PendingAction =
   | null
@@ -70,6 +86,7 @@ export function ExecutionPlanReviewPanel({
   animationPackageId,
   compilationHash,
   workspaceRole,
+  storyEstimatedDuration,
   sceneIntentHints = [],
 }: Props) {
   const canMutate = canMutateReviewAssembly(workspaceRole);
@@ -282,6 +299,24 @@ export function ExecutionPlanReviewPanel({
             label="Scene count"
             value={String(model?.review.scenes.length ?? sceneIntentHints.length ?? 0)}
           />
+          {sceneIntentHints.length > 0 &&
+          sceneIntentHints.every((hint) => typeof hint.recommendedDurationSec === "number") ? (
+            <SummaryRow
+              label="Recommended execution duration"
+              value={formatDurationSec(
+                sceneIntentHints.reduce(
+                  (sum, hint) => sum + (hint.plannedDurationMs ?? 0),
+                  0
+                ) / 1000
+              )}
+            />
+          ) : null}
+          {storyEstimatedDuration?.trim() ? (
+            <SummaryRow
+              label="Requested/estimated Story duration"
+              value={storyEstimatedDuration}
+            />
+          ) : null}
           <SummaryRow
             label="Assembly"
             value={
@@ -289,6 +324,18 @@ export function ExecutionPlanReviewPanel({
             }
           />
         </dl>
+        {sceneIntentHints.length > 0 &&
+        sceneIntentHints.every((hint) => typeof hint.recommendedDurationSec === "number") ? (
+          <p className="mt-3 text-sm text-navy" data-testid="recommended-story-runtime">
+            Recommended Story runtime:{" "}
+            {formatDurationSec(
+              sceneIntentHints.reduce((sum, hint) => sum + (hint.plannedDurationMs ?? 0), 0) / 1000
+            )}
+            <span className="mt-1 block text-xs font-normal text-ink-secondary">
+              Projection of Scene recommendations. This does not replace the Story estimate.
+            </span>
+          </p>
+        ) : null}
         <button
           type="button"
           className="mt-3 text-xs text-brand-blue hover:underline"
@@ -397,15 +444,35 @@ export function ExecutionPlanReviewPanel({
                         {hint?.purpose ? (
                           <p className="mt-1 text-sm text-ink-secondary">{hint.purpose}</p>
                         ) : null}
-                        <p className="mt-1 text-xs text-ink-secondary">
-                          {hint?.shotCount != null ? `${hint.shotCount} shots · ` : null}
-                          {hint?.plannedDurationMs != null
-                            ? `${(hint.plannedDurationMs / 1000).toFixed(1)}s planned`
-                            : null}
-                          {hint?.referencedAssetIds?.length
-                            ? ` · ${hint.referencedAssetIds.length} asset(s)`
-                            : null}
-                        </p>
+                        {typeof hint?.recommendedDurationSec === "number" ? (
+                          <p
+                            className="mt-1 text-xs text-navy"
+                            data-testid={`recommended-duration-${scene.sceneOrder}`}
+                          >
+                            Recommended: {formatDurationSec(hint.recommendedDurationSec)}
+                            {hint.recommendedDurationResolution === "SOURCE_LOCKED" ? (
+                              <span className="ml-2 text-ink-secondary">Source duration locked</span>
+                            ) : (
+                              <span className="ml-2 text-ink-secondary">
+                                Planning source: {planningSourceLabel(hint.recommendedDurationResolution)}
+                              </span>
+                            )}
+                            {hint.recommendedDurationResolution === "SHOT_TIMING" &&
+                            hint.shotCount != null ? (
+                              <span className="ml-2 text-ink-secondary">{hint.shotCount} shots</span>
+                            ) : null}
+                          </p>
+                        ) : (
+                          <p className="mt-1 text-xs text-ink-secondary">
+                            {hint?.shotCount != null ? `${hint.shotCount} shots · ` : null}
+                            {hint?.plannedDurationMs != null
+                              ? `${(hint.plannedDurationMs / 1000).toFixed(1)}s planned`
+                              : null}
+                            {hint?.referencedAssetIds?.length
+                              ? ` · ${hint.referencedAssetIds.length} asset(s)`
+                              : null}
+                          </p>
+                        )}
                       </div>
                       <div className="text-right text-xs">
                         <div>

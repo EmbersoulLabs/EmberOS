@@ -20,8 +20,6 @@ const SHOWCASE_FUNCTIONS = new Set([
   "PRODUCT_INTRODUCTION", "PRODUCT_DETAIL_REVEAL", "PRODUCT_USAGE", "PRODUCT_BENEFIT_PROOF",
   "PRODUCT_PAYOFF", "PACKSHOT", "CTA",
 ]);
-const INTERVENTION_FUNCTIONS = new Set(["PRODUCT_INTERVENTION", "SERVICE_INTERVENTION", "DISCOVERY", "ACTION", "TURN", "TRANSFORMATION"]);
-
 function normalize(value: string) {
   return value.trim().toLowerCase();
 }
@@ -197,24 +195,67 @@ export function validateAiStoryCommercialStoryProfile(
       add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "COMMERCIAL_AUTHORITY_NEVER_PARTICIPATES", "Good narrative without commercial participation is not a Commercial Story");
     }
     for (const { scene, contribution } of contributions) {
-      if (normalize(contribution.preState) === normalize(contribution.postState)) {
+      const actionUsesAuthority = scene.entries.some((entry) =>
+        entry.type === "ACTION"
+        && entry.objectId !== undefined
+        && contribution.commercialAuthorityIds.includes(entry.objectId));
+      if (normalize(contribution.preState) === normalize(contribution.postState) && !actionUsesAuthority) {
         add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "PRODUCT_INSERTION_WITHOUT_NARRATIVE_ROLE", `Scene ${scene.scriptSceneId} displays commercial authority without narrative participation`);
       }
       if (physicalRequired && contribution.commercialAuthorityIds.some((id) => !policy.productOrServiceAuthorityRefs.includes(id))) {
         add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "COMMERCIAL_SCENE_AUTHORITY_UNBOUND", `Scene ${scene.scriptSceneId} references unbound commercial authority`);
       }
     }
-    for (const scene of script.scenes) {
-      const inserted = scene.productAuthorityRefs.length > 0 && !scene.commercialContribution;
-      const functionLocal = narrativeFunctionOf(scene);
-      const intervention = INTERVENTION_FUNCTIONS.has(functionLocal) || functionLocal.includes("INTERVENTION");
-      const stateChanged = scene.sceneStateDeltas.some((delta) => delta.fromValue !== delta.value);
-      if (inserted && !stateChanged && !intervention) {
+    for (const [index, scene] of script.scenes.entries()) {
+      const previous = index > 0 ? script.scenes[index - 1] : undefined;
+      const previousProductState = new Map((previous?.sceneStateOut ?? [])
+        .filter((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
+        .map((fact) => [`${fact.dimension}:${fact.subjectId}`, fact.value]));
+      const unchangedProductStateOnly = scene.productAuthorityRefs.length > 0
+        && !scene.entries.some((entry) => entry.type === "ACTION"
+          && (policy.productOrServiceAuthorityRefs.includes(entry.subjectId)
+            || (entry.objectId !== undefined && policy.productOrServiceAuthorityRefs.includes(entry.objectId))))
+        && !scene.sceneStateDeltas.some((delta) => policy.productOrServiceAuthorityRefs.includes(delta.subjectId))
+        && scene.sceneStateIn.some((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
+        && scene.sceneStateIn
+          .filter((fact) => policy.productOrServiceAuthorityRefs.includes(fact.subjectId))
+          .every((fact) => {
+            if (previous) return previousProductState.get(`${fact.dimension}:${fact.subjectId}`) === fact.value;
+            return scene.sceneStateOut.some((output) => output.dimension === fact.dimension
+              && output.subjectId === fact.subjectId
+              && output.value === fact.value);
+          });
+      const inserted = scene.productAuthorityRefs.length > 0
+        && !scene.commercialContribution
+        && !unchangedProductStateOnly;
+      if (inserted) {
         add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "RANDOM_PRODUCT_INSERTION", `Scene ${scene.scriptSceneId} inserts commercial visibility without narrative relationship`);
       }
     }
     if (policy.commercialIntegration?.naturalnessRationale && !contributions.length) {
       add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "NATURALNESS_RATIONALE_INSUFFICIENT", "Freeform naturalness rationale is evidence only and cannot pass commercial integration");
+    }
+    if (physicalRequired) {
+      const participated = script.scenes.some((scene) => scene.entries.some((entry) =>
+        entry.type === "ACTION"
+        && entry.objectId !== undefined
+        && policy.productOrServiceAuthorityRefs.includes(entry.objectId)));
+      if (!participated) {
+        add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "PRODUCT_PARTICIPATION_MISSING", "The authorized product must be the object of a visible action. Presence and spoken mention are not participation");
+      }
+    }
+    for (const scene of script.scenes) {
+      const spoken = new Set(
+        scene.entries.filter((entry) => entry.type === "DIALOGUE").map((entry) => normalize(entry.line)),
+      );
+      for (const entry of scene.entries) {
+        if (entry.type !== "ACTION" || spoken.size === 0) continue;
+        const words = entry.action.trim().split(/\s+/).filter(Boolean);
+        const copiesSpokenLine = spoken.has(normalize(entry.action)) || spoken.has(normalize(entry.storyEffect));
+        if (words.length < 4 && copiesSpokenLine) {
+          add("COMMERCIAL_INTEGRATION_GATE", "BLOCK", "DIALOGUE_ONLY_VISIBLE_ACTION", `Scene ${scene.scriptSceneId} uses spoken dialogue as its visible action`);
+        }
+      }
     }
   }
 

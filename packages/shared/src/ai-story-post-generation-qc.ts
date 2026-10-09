@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AiStoryAudioQcResultSchema } from "./ai-story-audio-qc";
 import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
 
 export const AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION = "ai-story-post-generation-qc.v1" as const;
@@ -72,12 +73,16 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   sceneVersion: z.number().int().positive(),
   sceneFingerprint: Hash,
   sceneExecutionFingerprint: Hash,
-  providerAttemptId: Text.max(300),
+  providerAttemptId: Text.max(300).nullable(),
+  generationResultId: Id.optional(),
+  sourceKind: z.enum(["REMOTE_PROVIDER", "MANUAL_LOCAL", "LOCAL_GPU_WORKER"]).optional(),
   generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
   privateMediaAssetId: Id,
   privateMediaContentHash: Hash,
-  compiledRequestId: Id,
-  compiledRequestFingerprint: Hash,
+  compiledRequestId: Id.nullable(),
+  compiledRequestFingerprint: Hash.nullable(),
+  localSourceAuthorityId: Id.optional(),
+  localSourceAuthorityFingerprint: Hash.optional(),
   semanticPlanFingerprint: Hash,
   preGenerationQcEvaluationId: Id,
   preGenerationQcFingerprint: Hash,
@@ -111,6 +116,10 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   }).strict(),
   createdAt: z.string().datetime(),
 }).strict().superRefine((value, context) => {
+  if ((!value.providerAttemptId && (!value.generationResultId || !value.sourceKind || value.sourceKind === "REMOTE_PROVIDER")) ||
+      (value.sourceKind && value.sourceKind !== "REMOTE_PROVIDER" && value.providerAttemptId !== null)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_SOURCE_LINEAGE_REQUIRED" });
+  }
   if (value.planningLineageSource === "FROZEN_SCRIPT_DIRECTOR" &&
       (!value.scriptVersionId || !value.handoffId || !value.handoffFingerprint)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Frozen Script/Director lineage requires Script, Handoff, and Handoff fingerprint authority" });
@@ -118,6 +127,15 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
   if (value.planningLineageSource === "LEGACY_COMPILED_V1" &&
       (value.scriptVersionId || value.handoffId || value.handoffFingerprint)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Legacy compiled V1 lineage must not fabricate Script or Handoff authority" });
+  }
+  const local = Boolean(value.localSourceAuthorityId || value.localSourceAuthorityFingerprint);
+  if (local) {
+    if (value.sourceKind !== "MANUAL_LOCAL" || value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
+        !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_LOCAL_AUTHORITY_REQUIRED" });
+    }
+  } else if (value.compiledRequestId === null || value.compiledRequestFingerprint === null) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_COMPILED_REQUEST_LINEAGE_REQUIRED" });
   }
 });
 
@@ -161,12 +179,14 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   postQcInputId: Id,
   orgId: Id,
   workspaceId: Id,
-  providerAttemptId: Text.max(300),
+  providerAttemptId: Text.max(300).nullable(),
+  generationResultId: Id.optional(),
+  sourceKind: z.enum(["REMOTE_PROVIDER", "MANUAL_LOCAL", "LOCAL_GPU_WORKER"]).optional(),
   mediaAssetId: Id,
   mediaContentHash: Hash,
   sceneExecutionId: Id,
   sceneFingerprint: Hash,
-  compiledRequestFingerprint: Hash,
+  compiledRequestFingerprint: Hash.nullable(),
   generationMode: z.enum(["TEXT_TO_VIDEO", "FIRST_FRAME_IMAGE_TO_VIDEO"]),
   observations: z.array(AiStoryPostQcObservationSchema),
   findings: z.array(AiStoryPostQcFindingSchema),
@@ -177,9 +197,19 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   autoRetryAuthorized: z.literal(false),
   autoReleaseAuthorized: z.literal(false),
   creativeAuthority: z.literal(false),
+  /** Present only when this evaluation carried Audio QC. Historical rows omit it. */
+  audioQcResult: AiStoryAudioQcResultSchema.optional(),
   evaluationFingerprint: Hash,
   evaluatedAt: z.string().datetime(),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if ((!value.providerAttemptId && (!value.generationResultId || !value.sourceKind || value.sourceKind === "REMOTE_PROVIDER")) ||
+      (value.sourceKind && value.sourceKind !== "REMOTE_PROVIDER" && value.providerAttemptId !== null)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_SOURCE_LINEAGE_REQUIRED" });
+  }
+  if (value.compiledRequestFingerprint === null && value.sourceKind !== "MANUAL_LOCAL") {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_COMPILED_REQUEST_LINEAGE_REQUIRED" });
+  }
+});
 
 export const AiStoryPostQcHumanReviewEvidenceSchema = z.object({
   postQcEvaluationId: Id,
@@ -205,6 +235,11 @@ export type AiStoryPostQcObservation = z.infer<typeof AiStoryPostQcObservationSc
 export type AiStoryPostQcFinding = z.infer<typeof AiStoryPostQcFindingSchema>;
 export type AiStoryPostGenerationQcEvaluation = z.infer<typeof AiStoryPostGenerationQcEvaluationSchema>;
 export type AiStoryPostQcHumanReviewEvidence = z.infer<typeof AiStoryPostQcHumanReviewEvidenceSchema>;
+
+/** Shared immutable approval policy for every generation source. */
+export function postQcAllowsHumanApproval(evaluation: AiStoryPostGenerationQcEvaluation): boolean {
+  return !evaluation.findings.some((item) => item.result === "REJECT" && item.waiverPolicy === "NON_WAIVABLE_INTEGRITY");
+}
 
 export const POST_QC_CREATIVE_AUTHORITY = false as const;
 export const POST_QC_AUTO_RETRY = false as const;

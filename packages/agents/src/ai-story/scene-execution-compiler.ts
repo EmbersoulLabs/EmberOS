@@ -22,7 +22,9 @@ import {
   type AiStorySceneExecutionIntent,
   type AnimationPackagePayload,
   type ScenePlanItem,
+  positiveDurationSecToMs,
 } from "@ceo-agent/shared";
+import { buildAiStoryRecommendedDurationAuthority } from "@ceo-agent/shared/server";
 import { collectReferencedAssetIds } from "./execution-compiler";
 
 export type SceneCompilerContext = {
@@ -80,11 +82,6 @@ export function uuidFromIntegrityHash(hash: string): string {
   bytes[8] = (bytes[8]! & 0x3f) | 0x80; // RFC 4122 variant
   const h = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
-}
-
-function durationSecToMs(sec: number): number {
-  const ms = Math.round(sec * 1000);
-  return ms > 0 ? ms : 1;
 }
 
 function sortedUnique(values: readonly string[]): string[] {
@@ -226,11 +223,45 @@ export function compileSceneExecutionIntents(
         }
       }
     }
+    const durationAuthority = buildAiStoryRecommendedDurationAuthority({
+      organizationId: ctx.orgId,
+      workspaceId: ctx.workspaceId,
+      campaignId: ctx.campaignId,
+      storyId: ctx.storyId,
+      storyVersionId: ctx.storyVersionId,
+      animationPackageId: ctx.animationPackageId,
+      sceneId: canonical.sceneId,
+      planningSceneId: scene.id,
+      sceneOrder: scene.order,
+      generationStrategy: generationAuthority.strategy,
+      sceneProposedDurationSec: scene.durationSec,
+      shots: sceneShots.map((shot) => ({
+        shotId: shot.id,
+        planningSceneId: shot.sceneId,
+        durationSec: shot.durationSec,
+        ...(shot.authorityLineage
+          ? {
+              storyVersionId: shot.authorityLineage.storyVersionId,
+              animationPackageId: ctx.animationPackageId,
+            }
+          : {}),
+      })),
+      sourceDurationLocked: false,
+    });
+    const plannedDurationMs = durationAuthority.decision.plannedDurationMs;
+    if (
+      durationAuthority.decision.resolution === "SHOT_TIMING" &&
+      sceneShots.reduce((sum, shot) => sum + positiveDurationSecToMs(shot.durationSec), 0) !==
+        plannedDurationMs
+    ) {
+      throw new Error("RECOMMENDED_DURATION_SHOT_TOTAL_MISMATCH");
+    }
+
     const shotReferences = sceneShots.map((shot) => ({
       shotId: shot.id,
       sceneId: canonical.sceneId,
       order: shot.order,
-      durationMs: durationSecToMs(shot.durationSec),
+      durationMs: positiveDurationSecToMs(shot.durationSec),
       integrityHash: integrityHash({
         shotId: shot.id,
         sceneId: canonical.sceneId,
@@ -247,11 +278,6 @@ export function compileSceneExecutionIntents(
         ...(shot.cameraSafety ? { cameraSafety: shot.cameraSafety } : {}),
       }),
     }));
-
-    const plannedDurationMs =
-      durationSecToMs(scene.durationSec) ||
-      shotReferences.reduce((sum, s) => sum + s.durationMs, 0) ||
-      1;
 
     const instructions = AiStoryCanonicalSceneCompiledInstructionsSchema.parse({
       contractVersion: AI_STORY_EXECUTION_CONTRACT_VERSION,
@@ -270,7 +296,7 @@ export function compileSceneExecutionIntents(
       shots: sceneShots.map((shot) => ({
         shotId: shot.id,
         order: shot.order,
-        durationMs: durationSecToMs(shot.durationSec),
+        durationMs: positiveDurationSecToMs(shot.durationSec),
         cameraType: shot.cameraType,
         cameraMovement: shot.cameraMovement,
         composition: shot.composition,
@@ -292,7 +318,14 @@ export function compileSceneExecutionIntents(
         ? { groundingLineage: scene.groundingLineage }
         : {}),
       worldContinuity: pkg.worldContinuity as unknown as Record<string, unknown>,
-      productIdentityConstraints: [...PRODUCT_IDENTITY_CONSTRAINTS],
+      productIdentityConstraints: [
+        ...PRODUCT_IDENTITY_CONSTRAINTS,
+        ...(pkg.creativeContext.productAuthorities ?? []).flatMap((authority) =>
+          authority.confirmedVariant
+            ? [`confirmedVariant ${authority.productAuthorityId}=${authority.confirmedVariant}`]
+            : []
+        ),
+      ],
     });
 
     const instructionHash = integrityHash(instructions);
@@ -312,6 +345,7 @@ export function compileSceneExecutionIntents(
       sceneOrder: scene.order,
       packageHash,
       instructionHash,
+      recommendedDurationFingerprint: durationAuthority.semanticFingerprint,
     });
 
     const sceneExecutionId = uuidFromIntegrityHash(
@@ -351,11 +385,13 @@ export function compileSceneExecutionIntents(
         mediaType: "application/json",
       },
       plannedDurationMs,
+      recommendedDurationAuthority: durationAuthority,
       compiledAt,
       compilationHash: integrityHash({
         fingerprint,
         instructionHash,
         shotReferences,
+        recommendedDurationFingerprint: durationAuthority.semanticFingerprint,
       }),
     });
 

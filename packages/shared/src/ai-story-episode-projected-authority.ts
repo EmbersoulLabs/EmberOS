@@ -439,7 +439,7 @@ export function projectEpisodeMotionScenes(
         cameraBehaviorCount: cameraBehaviors.size,
         durationSec,
         imageConditioned: authority ? authority.strategy !== "TEXT_TO_VIDEO" : false,
-        productIdentitySensitive: authority?.productVisualIdentityRequirement === "REQUIRED" || direction.productBindingIds.length > 0,
+        productIdentitySensitive: authority?.productVisualIdentityRequirement === "REQUIRED",
       },
       physicalCompletion: proveEpisodeProjectedPhysicalCompletion({
         actions: script.actions.map((action) => ({
@@ -476,6 +476,80 @@ function isPhysicalChange(fact: PhysicalFact) {
 
 function samePhysicalChange(left: PhysicalFact, right: PhysicalFact) {
   return left.dimension === right.dimension && left.subjectId === right.subjectId && left.fromValue === right.fromValue && left.value === right.value;
+}
+
+/**
+ * Narrative or physical product participation. A visual-generation binding
+ * does not create this obligation by itself.
+ */
+export function projectedProductPersistenceSubjectIds(input: {
+  productAuthorityRefs: readonly string[];
+  actions: readonly { subjectId: string; objectId?: string | null; stateDelta: PhysicalFact | null }[];
+  events: readonly { subjectId?: string; objectId?: string | null; stateDelta: PhysicalFact | null }[];
+  sceneStateDeltas: readonly PhysicalFact[];
+  entryState: readonly PhysicalFact[];
+  exitState: readonly PhysicalFact[];
+}): string[] {
+  const physical = [
+    ...input.sceneStateDeltas,
+    ...input.entryState,
+    ...input.exitState,
+    ...input.actions.flatMap((action) => action.stateDelta ? [action.stateDelta] : []),
+    ...input.events.flatMap((event) => event.stateDelta ? [event.stateDelta] : []),
+  ].filter((fact) => PHYSICAL_SCRIPT_DIMENSIONS.has(fact.dimension));
+  const productStateSubjects = physical
+    .filter((fact) => fact.dimension === "PRODUCT_STATE")
+    .map((fact) => fact.subjectId);
+  const narrative = new Set(input.productAuthorityRefs);
+  const obligated = new Set<string>([...narrative, ...productStateSubjects]);
+  for (const action of [...input.actions, ...input.events]) {
+    for (const subjectId of [action.subjectId, action.objectId]) {
+      if (subjectId && (narrative.has(subjectId) || obligated.has(subjectId))) obligated.add(subjectId);
+    }
+  }
+  return [...obligated];
+}
+
+/**
+ * Object persistence is whether an obligated product remains present.
+ * Physical completion is whether a physical state change finished.
+ */
+export function proveProjectedProductObjectPersistence(input: {
+  productAuthorityRefs: readonly string[];
+  actions: readonly { entryId: string; semanticAction: string; subjectId: string; objectId?: string | null; stateDelta: PhysicalFact | null }[];
+  events: readonly { entryId: string; action: string; subjectId?: string; objectId?: string | null; stateDelta: PhysicalFact | null }[];
+  sceneStateDeltas: readonly PhysicalFact[];
+  entryState: readonly PhysicalFact[];
+  exitState: readonly PhysicalFact[];
+}) {
+  const obligated = projectedProductPersistenceSubjectIds(input);
+  if (obligated.length === 0) return notApplicable("No narrative or physical product persistence obligation");
+  const productChanges = input.sceneStateDeltas.filter((fact) =>
+    obligated.includes(fact.subjectId) && isPhysicalChange(fact),
+  );
+  if (productChanges.length > 0) {
+    const completion = proveEpisodeProjectedPhysicalCompletion(input);
+    const change = productChanges.length === 1 ? productChanges[0] : undefined;
+    if (
+      completion.state !== "KNOWN" ||
+      !change ||
+      completion.value.dimension !== change.dimension ||
+      completion.value.fromValue !== change.fromValue ||
+      completion.value.toValue !== change.value
+    ) return notAsserted;
+    return known({ outcome: "PRESERVED" as const });
+  }
+  const signature = (facts: readonly PhysicalFact[], subjectId: string) => facts
+    .filter((fact) => PHYSICAL_SCRIPT_DIMENSIONS.has(fact.dimension) && fact.subjectId === subjectId)
+    .map((fact) => `${fact.dimension}:${fact.value}`)
+    .sort()
+    .join("|");
+  for (const subjectId of obligated) {
+    const entry = signature(input.entryState, subjectId);
+    const exit = signature(input.exitState, subjectId);
+    if (!entry || !exit || entry !== exit) return notAsserted;
+  }
+  return known({ outcome: "PRESERVED" as const });
 }
 
 /**

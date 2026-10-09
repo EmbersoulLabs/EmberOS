@@ -86,11 +86,21 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/ai-story-production-overlay-migration.integration.test.ts
 
+      - name: Certify provider-neutral Generation Result predecessor upgrade
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-generation-result-migration.integration.test.ts
+
       - name: Bootstrap Supabase auth prerequisites on isolated PostgreSQL
         run: pnpm exec tsx scripts/bootstrap-test-supabase-auth.ts
 
       - name: Apply canonical Drizzle schema
         run: pnpm --filter @ceo-agent/db exec drizzle-kit push --force
+
+      - name: Certify Sequential Local V3 recursion on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-sequential-local-v3-phase2.integration.test.ts
 
       - name: Certify Platform Admin Control Plane server-only authority
         run: >-
@@ -160,6 +170,9 @@ jobs:
       - name: Apply AI Story keyframe paid authorization contract
         run: pnpm --filter @ceo-agent/db sql:ai-story-keyframe-paid-authorization
 
+      - name: Apply AI Story Episode intent column
+        run: pnpm --filter @ceo-agent/db sql:ai-story-episode-intent
+
       - name: Detect masked SQL migration defects from predecessor schema
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
@@ -218,6 +231,9 @@ jobs:
 
       - name: Certify reusable Character cross-Episode identity on PostgreSQL
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-reusable-character.integration.test.ts
+
+      - name: Certify durable Character Voice DNA authority on PostgreSQL
+        run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-character-voice-dna.integration.test.ts
 
       - name: Certify Character DNA analysis jobs server-only RLS
         run: >-

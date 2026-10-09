@@ -10,6 +10,7 @@ import { validateAiStoryCommercialStoryProfile } from "./ai-story-commercial-sto
 import { validateCharacterAuthorityBindings } from "./ai-story-character";
 import { validateCastReferences } from "./ai-story-cast";
 import { validateAiStoryCanonicalScenes } from "./ai-story-scene.server";
+import { commercialEpisodeRepairGateEvidence } from "./ai-story-episode-intent";
 import {
   AI_STORY_PRE_GENERATION_QC_CONTRACT_VERSION,
   AI_STORY_PRE_GENERATION_QC_GATE_ORDER,
@@ -26,6 +27,7 @@ import {
   AI_STORY_EPISODE_PROJECTED_MOTION_COMPLEXITY_POLICY,
   evaluateEpisodeProjectedCameraExecution,
   proveEpisodeProjectedPhysicalCompletion,
+  proveProjectedProductObjectPersistence,
   type AiStoryEpisodeProjectedDirectorPlan,
   type AiStoryEpisodeProjectedMotionPlan,
 } from "./ai-story-episode-projected-authority";
@@ -193,7 +195,7 @@ function projectedDirectorIssues(plan: AiStoryEpisodeProjectedDirectorPlan, hand
     if (scene.mustKeep.state === "KNOWN" && scene.mustAvoid.state === "KNOWN" && scene.mustKeep.value.some((item) => scene.mustAvoid.state === "KNOWN" && scene.mustAvoid.value.includes(item))) sceneIssue("MUST_KEEP_MUST_CHANGE_SEPARATION_GATE", `Projected must-keep contradicts must-avoid for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.sceneOrder > 0 && scene.differentiation.state === "NOT_ASSERTED") sceneIssue("DIFFERENTIATION_REQUIREMENT_GATE", `Projected differentiation is not asserted for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.sceneOrder === 0 && scene.differentiation.state === "KNOWN") sceneIssue("DIFFERENTIATION_REQUIREMENT_GATE", `Opening Scene differentiation claims a comparison baseline`, scene.scriptSceneId);
-    const identitySensitive = scene.productBindingIds.length > 0 || (scene.generationAuthority.state === "KNOWN" && scene.generationAuthority.value.productVisualIdentityRequirement === "REQUIRED");
+    const identitySensitive = scene.generationAuthority.state === "KNOWN" && scene.generationAuthority.value.productVisualIdentityRequirement === "REQUIRED";
     const safetyMissing = [scene.shots.some((shot) => shot.perspectiveChange.state === "NOT_ASSERTED"), scene.shots.some((shot) => shot.revealsUnseenProductSurface.state === "NOT_ASSERTED"), scene.shots.some((shot) => shot.productIdentityTransformation.state === "NOT_ASSERTED")].some(Boolean);
     if (identitySensitive && safetyMissing) sceneIssue("PRODUCT_CAMERA_SAFETY_GATE", `PROJECTED_PRODUCT_CAMERA_SAFETY_EVIDENCE_REQUIRED for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.generationAuthority.state === "NOT_ASSERTED") sceneIssue("GENERATION_UNIT_BINDING_GATE", `Projected generation authority is not asserted for ${scene.scriptSceneId}`, scene.scriptSceneId);
@@ -243,7 +245,15 @@ function projectedMotionIssues(plan: AiStoryEpisodeProjectedMotionPlan, director
     if (evaluateEpisodeProjectedCameraExecution(scene.shots).outcome !== "BOUNDED_CAMERA_EXECUTION_PROVEN") sceneIssue("CAMERA_EXECUTION_GATE", `CAMERA_EXECUTION_NOT_PROVEN for ${scene.scriptSceneId}`, scene.scriptSceneId);
     const policy = AI_STORY_EPISODE_PROJECTED_MOTION_COMPLEXITY_POLICY;
     if (scene.measuredFacts.actionCount > policy.maxActions || scene.measuredFacts.shotCount > policy.maxShots || scene.measuredFacts.cameraBehaviorCount > policy.maxCameraBehaviors || scene.measuredFacts.durationSec > policy.maxDurationSec) sceneIssue("MOTION_BUDGET_GATE", `Measured Episode complexity exceeds ${policy.policyId}`, scene.scriptSceneId);
-    if (scene.productBindingIds.length > 0 && physicalProof.state !== "KNOWN") sceneIssue("OBJECT_PERSISTENCE_GATE", `Projected object persistence is not proven for ${scene.scriptSceneId}`, scene.scriptSceneId);
+    const objectPersistence = proveProjectedProductObjectPersistence({
+      productAuthorityRefs: scriptScene.productAuthorityRefs,
+      actions: scene.actions,
+      events: scene.events,
+      sceneStateDeltas: scene.sceneStateDeltas,
+      entryState: scene.entryState,
+      exitState: scene.exitState,
+    });
+    if (objectPersistence.state === "NOT_ASSERTED") sceneIssue("OBJECT_PERSISTENCE_GATE", `Projected object persistence is not proven for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.measuredFacts.productIdentitySensitive && physicalProof.state === "NOT_ASSERTED") sceneIssue("PRODUCT_GROUNDED_MOTION_GATE", `Identity-sensitive Product motion has no proven physical completion for ${scene.scriptSceneId}`, scene.scriptSceneId);
   }
   for (let index = 1; index < plan.sceneMotionPlans.length; index += 1) {
@@ -370,6 +380,14 @@ export function evaluateEpisodeProjectedPreGenerationQc(raw: EpisodeProjectedPre
     hard("INTRA_SCENE_SHOT_PROGRESSION_GATE", blocked(directorIssues, ["INTRA_SCENE_SHOT_PROGRESSION_GATE"], "DIRECTOR", "DIRECTOR"), ids),
     hard("GENERATION_UNIT_COVERAGE_GATE", target.director.shots.length < 1 ? [reason("PROJECTED_SHOT_COVERAGE_REQUIRED", "Projected Scene has no Shot Plan coverage", "DIRECTOR", "DIRECTOR")] : [], ids),
     hard("GENERATION_UNIT_BINDING_GATE", blocked(directorIssues, ["GENERATION_UNIT_BINDING_GATE"], "DIRECTOR", "DIRECTOR"), ids),
+    ...(() => {
+      const gates = commercialEpisodeRepairGateEvidence(raw.commercialEpisodeRepair);
+      return [
+        hard("CHARACTER_CONTINUITY_GATE", gates.character.map((item) => reason(item.code, item.evidence, "CAST", "CAST")), ids),
+        hard("NATIVE_DIALOGUE_INTENT_GATE", gates.nativeDialogue.map((item) => reason(item.code, item.evidence, "SCRIPT", "SCRIPT")), ids),
+        hard("VISUAL_TEXT_POLICY_GATE", gates.visualText.map((item) => reason(item.code, item.evidence, "SCENE", "SCENE")), ids),
+      ];
+    })(),
   ];
   if (results.map((result) => result.gateId).join("|") !== AI_STORY_PRE_GENERATION_QC_GATE_ORDER.join("|")) {
     throw new Error("PROJECTED_QC_GATE_ORDER_MISMATCH");
@@ -409,6 +427,7 @@ export function evaluateEpisodeProjectedPreGenerationQc(raw: EpisodeProjectedPre
     profileId: script.profileId,
     evaluatedBy: raw.evaluatedBy,
     evaluatedAt: raw.evaluatedAt,
+    ...(raw.episodeRepairAuthority ? { episodeRepairAuthority: raw.episodeRepairAuthority } : {}),
   };
   const qcFingerprint = computeAiStoryPreGenerationQcFingerprint(base);
   return AiStoryPreGenerationQcEvaluationSchema.parse({ ...base, qcEvaluationId: deterministicUuidFromFingerprint("ai-story-pre-generation-qc", `${compilation.sceneExecutionId}:${qcFingerprint}`), qcFingerprint });

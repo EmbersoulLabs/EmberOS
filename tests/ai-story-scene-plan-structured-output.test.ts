@@ -8,11 +8,14 @@ vi.mock("../packages/agents/src/llm", () => ({
 
 import {
   bindMentionedCatalogChoiceEvidence,
+  bindVisualClaimSubjectEvidence,
   bindSceneGroundingProposalIdsByPlanOrder,
   buildScenePlanProviderOutputSchema,
+  deriveAllowedSceneVisualSubjects,
   generateScenePlan,
   normalizeExistenceOnlySceneGrounding,
   reconcileSupportingOnlySceneAuthority,
+  omitCharacterNamedVisualClaims,
   retainSupportedSceneGroundingEvidence,
   removeUnsupportedObservedAppearance,
 } from "../packages/agents/src/ai-story/story-planning-service";
@@ -52,31 +55,41 @@ const input = {
   },
 };
 
-const validProviderResult = {
-  scenePlan: [{
-    id: "scene-001",
-    beatIds: ["beat-001"],
-    purpose: "Introduce the florist and lilies.",
-    durationSec: 8,
-    transition: "cut",
-    continuityNotes: "The same florist remains in the flower shop.",
-    order: 0,
-    generationAuthority: {
-      strategy: "TEXT_TO_VIDEO",
-      referenceSource: "REFERENCE_FREE_T2V",
-      referenceAssetIds: [],
-      firstFrameAssetId: null,
-      productVisualIdentityRequirement: "NONE",
-    },
-  }],
-  groundingSelections: [{
-    sceneId: "scene-001",
-    narrativeIntent: "Introduce the florist.",
-    visualIntent: "Show the florist in the flower shop.",
-    evidence: [],
-    visualClaims: [],
-  }],
+const plannedScene = {
+  id: "scene-001",
+  beatIds: ["beat-001"],
+  purpose: "Introduce the florist and lilies.",
+  durationSec: 8,
+  transition: "cut",
+  continuityNotes: "The same florist remains in the flower shop.",
+  order: 0,
+  generationAuthority: {
+    strategy: "TEXT_TO_VIDEO" as const,
+    referenceSource: "REFERENCE_FREE_T2V" as const,
+    referenceAssetIds: [] as string[],
+    firstFrameAssetId: null,
+    productVisualIdentityRequirement: "NONE" as const,
+  },
 };
+const groundingFields = {
+  narrativeIntent: "Introduce the florist.",
+  visualIntent: "Show the florist in the flower shop.",
+  evidence: [] as { bindingId: string; groundedFacts: string[] }[],
+  visualClaims: [] as { subject: string; detail: string; evidenceLevel: "EXISTENCE_ONLY" | "OBSERVED_APPEARANCE" }[],
+};
+const groundingSelection = { sceneId: "scene-001", ...groundingFields };
+const validProviderResult = {
+  scenePlan: [{ ...plannedScene, grounding: groundingFields }],
+};
+
+function captureError(action: () => unknown): unknown {
+  try {
+    action();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
 
 describe("AI Story Scene Plan strict structured output", () => {
   beforeEach(() => callStructuredJsonModel.mockReset());
@@ -86,7 +99,7 @@ describe("AI Story Scene Plan strict structured output", () => {
 
     const result = await generateScenePlan(input);
 
-    expect(result.scenePlan).toMatchObject(validProviderResult.scenePlan);
+    expect(result.scenePlan).toMatchObject([plannedScene]);
     expect(result.scenePlan[0]?.groundingLineage).toMatchObject({
       storyVersionId: input.assetGrounding.storyVersionId,
       matchingResultId: input.assetGrounding.matchingResultId,
@@ -110,6 +123,28 @@ describe("AI Story Scene Plan strict structured output", () => {
         },
       }],
     }).success).toBe(false);
+  });
+
+  it("requires grounding on every scene instead of a separate optional selection list", async () => {
+    const second = {
+      ...plannedScene,
+      id: "scene-002",
+      order: 1,
+      grounding: {
+        ...groundingFields,
+        narrativeIntent: "Continue the florist scene.",
+        visualIntent: "Keep the same flower shop.",
+      },
+    };
+    callStructuredJsonModel.mockResolvedValueOnce({
+      result: { scenePlan: [validProviderResult.scenePlan[0], second] },
+      usage: { input: 20, output: 10, costUsd: 0.01 },
+    });
+
+    const result = await generateScenePlan(input);
+
+    expect(result.scenePlan.map((scene) => scene.id)).toEqual(["scene-001", "scene-002"]);
+    expect(result.scenePlan.every((scene) => scene.groundingLineage)).toBe(true);
   });
 
   it("fails closed on a provider decode issue", async () => {
@@ -140,8 +175,8 @@ describe("AI Story Scene Plan strict structured output", () => {
     expect(bindSceneGroundingProposalIdsByPlanOrder({
       sceneIds: ["scene-001", "scene-002"],
       proposals: [
-        { ...validProviderResult.groundingSelections[0]!, sceneId: "scene-1" },
-        { ...validProviderResult.groundingSelections[0]!, sceneId: "scene-2" },
+        { ...groundingSelection, sceneId: "scene-1" },
+        { ...groundingSelection, sceneId: "scene-2" },
       ],
     }).map((proposal) => proposal.sceneId)).toEqual(["scene-001", "scene-002"]);
   });
@@ -149,7 +184,7 @@ describe("AI Story Scene Plan strict structured output", () => {
   it("does not fabricate missing Scene grounding selections", () => {
     expect(bindSceneGroundingProposalIdsByPlanOrder({
       sceneIds: ["scene-001", "scene-002"],
-      proposals: [validProviderResult.groundingSelections[0]!],
+      proposals: [groundingSelection],
     })).toHaveLength(1);
   });
 
@@ -158,14 +193,90 @@ describe("AI Story Scene Plan strict structured output", () => {
     const invented = "80000000-0000-4000-8000-000000000099";
     const schema = buildScenePlanProviderOutputSchema([accepted]);
     const withBinding = (bindingId: string) => ({
-      ...validProviderResult,
-      groundingSelections: [{
-        ...validProviderResult.groundingSelections[0],
-        evidence: [{ bindingId, groundedFacts: ["Nasi Lemak"] }],
+      scenePlan: [{
+        ...plannedScene,
+        grounding: {
+          ...groundingFields,
+          evidence: [{ bindingId, groundedFacts: ["Nasi Lemak"] }],
+        },
       }],
     });
     expect(schema.safeParse(withBinding(accepted)).success).toBe(true);
     expect(schema.safeParse(withBinding(invented)).success).toBe(false);
+    expect(schema.safeParse({
+      scenePlan: [{ ...plannedScene }],
+    }).success).toBe(false);
+  });
+
+  it("constrains provider visual subjects to exact accepted Asset authority", () => {
+    const accepted = "80000000-0000-4000-8000-000000000010";
+    const schema = buildScenePlanProviderOutputSchema([accepted], ["Nasi Lemak"]);
+    const withSubject = (subject: string) => ({
+      scenePlan: [{
+        ...plannedScene,
+        grounding: {
+          ...groundingFields,
+          evidence: [{ bindingId: accepted, groundedFacts: ["Nasi Lemak"] }],
+          visualClaims: [{ subject, detail: subject, evidenceLevel: "EXISTENCE_ONLY" }],
+        },
+      }],
+    });
+
+    expect(schema.safeParse(withSubject("Nasi Lemak")).success).toBe(true);
+    expect(schema.safeParse(withSubject("Yuki enjoying Nasi Lemak")).success).toBe(false);
+    expect(schema.safeParse(withSubject("Yuki holding Mini Fan")).success).toBe(false);
+  });
+
+  it("requires an empty visual claim list when accepted Asset authority exposes no subjects", () => {
+    const schema = buildScenePlanProviderOutputSchema([]);
+    expect(schema.safeParse(validProviderResult).success).toBe(true);
+    expect(schema.safeParse({
+      scenePlan: [{
+        ...plannedScene,
+        grounding: {
+          ...groundingFields,
+          narrativeIntent: "Yuki smiles while greeting a customer.",
+          visualIntent: "Show Yuki greeting the customer.",
+          visualClaims: [{ subject: "Yuki", detail: "Yuki", evidenceLevel: "EXISTENCE_ONLY" }],
+        },
+      }],
+    }).success).toBe(false);
+  });
+
+  it("derives canonical Asset subjects, excludes exact Character names, and deduplicates spelling", () => {
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId: "80000000-0000-4000-8000-000000000010",
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: ["Yuki", "Nasi Lemak"],
+        namedItems: ["Yuki", "Nasi Lemak", "Menu"],
+        productCandidates: [{
+          name: "nasi lemak",
+          relationship: "CATALOG_CHOICE" as const,
+          evidence: ["visible menu text"],
+        }],
+      }],
+    };
+
+    expect(deriveAllowedSceneVisualSubjects({ context, characterNames: ["Yuki"] }))
+      .toEqual(["Nasi Lemak", "Menu"]);
+  });
+
+  it("drops story character names from asset visual claims", () => {
+    const [proposal] = omitCharacterNamedVisualClaims({
+      characterNames: ["Yuki"],
+      proposals: [{
+        ...groundingSelection,
+        visualClaims: [
+          { subject: "Yuki", detail: "Yuki", evidenceLevel: "EXISTENCE_ONLY" },
+          { subject: "Mini Fan", detail: "Mini Fan", evidenceLevel: "EXISTENCE_ONLY" },
+        ],
+      }],
+    });
+    expect(proposal?.visualClaims.map((claim) => claim.subject)).toEqual(["Mini Fan"]);
   });
 
   it("downgrades unsupported model appearance instead of accepting invented detail", () => {
@@ -187,7 +298,7 @@ describe("AI Story Scene Plan strict structured output", () => {
       }],
     };
     const proposals = [{
-      ...validProviderResult.groundingSelections[0]!,
+      ...groundingSelection,
       evidence: [{ bindingId, groundedFacts: ["Nasi Lemak"] }],
       visualClaims: [{
         subject: "Nasi Lemak",
@@ -221,7 +332,7 @@ describe("AI Story Scene Plan strict structured output", () => {
       }],
     };
     const proposals = [{
-      ...validProviderResult.groundingSelections[0]!,
+      ...groundingSelection,
       narrativeIntent: "The customer plans to try Ayam Rendang tomorrow.",
       evidence: [],
     }];
@@ -317,7 +428,7 @@ describe("AI Story Scene Plan strict structured output", () => {
       }],
     };
     const proposals = [{
-      ...validProviderResult.groundingSelections[0]!,
+      ...groundingSelection,
       evidence: [{ bindingId: menuBindingId, groundedFacts: ["Ayam Rendang", "lobster"] }],
     }];
 
@@ -327,17 +438,182 @@ describe("AI Story Scene Plan strict structured output", () => {
     }]);
   });
 
+  it("auto-binds an exact visual subject to its unique accepted binding", () => {
+    const bindingId = "80000000-0000-4000-8000-000000000010";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: [],
+        namedItems: ["Nasi Lemak"],
+        productCandidates: [],
+      }],
+    };
+    const [proposal] = bindVisualClaimSubjectEvidence({
+      context,
+      characterNames: ["Yuki"],
+      proposals: [{
+        ...groundingSelection,
+        evidence: [],
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    });
+
+    expect(proposal?.evidence).toEqual([{ bindingId, groundedFacts: ["Nasi Lemak"] }]);
+  });
+
+  it("merges canonical subject evidence without duplicating the binding or fact", () => {
+    const bindingId = "80000000-0000-4000-8000-000000000010";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "PRODUCT_AUTHORITY" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: ["rice and sambal"],
+        namedItems: ["Nasi Lemak"],
+        productCandidates: [{
+          name: "Nasi Lemak",
+          relationship: "PRIMARY_PRODUCT" as const,
+          evidence: ["rice and sambal"],
+        }],
+      }],
+    };
+    const [proposal] = bindVisualClaimSubjectEvidence({
+      context,
+      characterNames: [],
+      proposals: [{
+        ...groundingSelection,
+        evidence: [{ bindingId, groundedFacts: ["rice and sambal", "Nasi Lemak"] }],
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    });
+
+    expect(proposal?.evidence).toEqual([{
+      bindingId,
+      groundedFacts: ["rice and sambal", "Nasi Lemak"],
+    }]);
+  });
+
+  it("adds the canonical subject binding without reinterpreting unrelated evidence", () => {
+    const subjectBindingId = "80000000-0000-4000-8000-000000000010";
+    const unrelatedBindingId = "80000000-0000-4000-8000-000000000011";
+    const context = {
+      ...input.assetGrounding,
+      bindings: [{
+        bindingId: subjectBindingId,
+        assetId: "60000000-0000-4000-8000-000000000006",
+        role: "SUPPORTING_REFERENCE" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+        observedFacts: [],
+        namedItems: [],
+        productCandidates: [{
+          name: "Nasi Lemak",
+          relationship: "CATALOG_CHOICE" as const,
+          evidence: ["menu text"],
+        }],
+      }, {
+        bindingId: unrelatedBindingId,
+        assetId: "60000000-0000-4000-8000-000000000007",
+        role: "PRODUCT_AUTHORITY" as const,
+        analysisSnapshotId: "70000000-0000-4000-8000-000000000009",
+        observedFacts: ["pink fan"],
+        namedItems: ["Mini Fan"],
+        productCandidates: [],
+      }],
+    };
+    const [proposal] = bindVisualClaimSubjectEvidence({
+      context,
+      characterNames: [],
+      proposals: [{
+        ...groundingSelection,
+        evidence: [{ bindingId: unrelatedBindingId, groundedFacts: ["pink fan"] }],
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    });
+
+    expect(proposal?.evidence).toEqual([
+      { bindingId: unrelatedBindingId, groundedFacts: ["pink fan"] },
+      { bindingId: subjectBindingId, groundedFacts: ["Nasi Lemak"] },
+    ]);
+  });
+
+  it("fails closed when an exact visual subject has no accepted binding", () => {
+    const error = captureError(() => bindVisualClaimSubjectEvidence({
+      context: input.assetGrounding,
+      characterNames: [],
+      proposals: [{
+        ...groundingSelection,
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    }));
+    expect(error).toMatchObject({ code: "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED" });
+  });
+
+  it("fails closed instead of choosing between duplicate subject bindings", () => {
+    const binding = {
+      assetId: "60000000-0000-4000-8000-000000000006",
+      role: "SUPPORTING_REFERENCE" as const,
+      analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+      observedFacts: [],
+      namedItems: ["Nasi Lemak"],
+      productCandidates: [],
+    };
+    const error = captureError(() => bindVisualClaimSubjectEvidence({
+      context: {
+        ...input.assetGrounding,
+        bindings: [
+          { ...binding, bindingId: "80000000-0000-4000-8000-000000000010" },
+          { ...binding, bindingId: "80000000-0000-4000-8000-000000000011" },
+        ],
+      },
+      characterNames: [],
+      proposals: [{
+        ...groundingSelection,
+        visualClaims: [{ subject: "Nasi Lemak", detail: "Nasi Lemak", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    }));
+    expect(error).toMatchObject({ code: "SCENE_GROUNDING_SUBJECT_BINDING_AMBIGUOUS" });
+  });
+
+  it("never auto-binds a canonical Character name as Asset evidence", () => {
+    const error = captureError(() => bindVisualClaimSubjectEvidence({
+      context: {
+        ...input.assetGrounding,
+        bindings: [{
+          bindingId: "80000000-0000-4000-8000-000000000010",
+          assetId: "60000000-0000-4000-8000-000000000006",
+          role: "SUPPORTING_REFERENCE" as const,
+          analysisSnapshotId: "70000000-0000-4000-8000-000000000008",
+          observedFacts: [],
+          namedItems: ["Yuki"],
+          productCandidates: [],
+        }],
+      },
+      characterNames: ["Yuki"],
+      proposals: [{
+        ...groundingSelection,
+        visualClaims: [{ subject: "Yuki", detail: "Yuki", evidenceLevel: "EXISTENCE_ONLY" }],
+      }],
+    }));
+    expect(error).toMatchObject({ code: "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED" });
+  });
+
   it("fails closed when structured fields conflict with canonical generation authority", async () => {
     callStructuredJsonModel.mockResolvedValueOnce({
       result: {
         scenePlan: [{
-          ...validProviderResult.scenePlan[0],
+          ...plannedScene,
           generationAuthority: {
-            ...validProviderResult.scenePlan[0]!.generationAuthority,
-            referenceSource: "SCENE_EXPLICIT",
+            ...plannedScene.generationAuthority,
+            referenceSource: "SCENE_EXPLICIT" as const,
           },
+          grounding: groundingFields,
         }],
-        groundingSelections: validProviderResult.groundingSelections,
       },
       usage: { input: 20, output: 10, costUsd: 0.01 },
     });

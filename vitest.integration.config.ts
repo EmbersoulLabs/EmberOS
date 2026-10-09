@@ -58,6 +58,10 @@ export default defineConfig({
         "packages/agents/src/commercial/index.ts"
       ),
       "@ceo-agent/agents": path.resolve(__dirname, "packages/agents/src/index.ts"),
+      "@ceo-agent/queue/copy-cache": path.resolve(
+        __dirname,
+        "packages/queue/src/copy-cache.ts"
+      ),
       "@ceo-agent/queue": path.resolve(__dirname, "packages/queue/src/index.ts"),
       "drizzle-orm": path.resolve(__dirname, "packages/db/node_modules/drizzle-orm"),
       bullmq: path.resolve(__dirname, "apps/worker/node_modules/bullmq"),

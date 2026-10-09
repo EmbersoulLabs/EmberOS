@@ -14,7 +14,46 @@ import {
   type AiStoryLocationAuthorityVersion,
   type AiStorySceneIssue,
 } from "./ai-story-scene";
+import type { AiStorySceneGenerationAuthority } from "./ai-story-generation-authority";
 import type { AiStoryScriptVersion } from "./ai-story-script";
+
+type CanonicalSceneProductBindingAuthority = {
+  productAuthorityId: string;
+  sourceAssetId: string;
+  visualIdentityRequirement?: string;
+};
+
+/**
+ * Expected Canonical Scene Product authorities are the Script narrative set,
+ * plus one Scene-explicit first-frame Product when that visual authority exists.
+ * A narrative Product that is not the first-frame Product is a conflict, not a union.
+ */
+export function deriveExpectedCanonicalSceneProductAuthorities(input: {
+  scriptProductAuthorityRefs: readonly string[];
+  generationAuthority?: AiStorySceneGenerationAuthority;
+  productBindings: readonly CanonicalSceneProductBindingAuthority[];
+}):
+  | { ok: true; productAuthorityIds: string[] }
+  | { ok: false; reason: "VISUAL_SCRIPT_CONFLICT" | "VISUAL_PRODUCT_BINDING_INVALID" } {
+  const scriptIds = [...new Set(input.scriptProductAuthorityRefs)].sort();
+  const authority = input.generationAuthority;
+  const visualAssetId = authority
+    && authority.referenceSource === "SCENE_EXPLICIT"
+    && (authority.strategy === "FIRST_FRAME_IMAGE_TO_VIDEO" || authority.strategy === "PRODUCT_GROUNDED_VIDEO")
+    && authority.productVisualIdentityRequirement === "REQUIRED"
+    ? authority.firstFrameAssetId
+    : null;
+  if (!visualAssetId) return { ok: true, productAuthorityIds: scriptIds };
+  const visualBindings = input.productBindings.filter((binding) =>
+    binding.sourceAssetId === visualAssetId && binding.visualIdentityRequirement === "REQUIRED",
+  );
+  if (visualBindings.length !== 1) return { ok: false, reason: "VISUAL_PRODUCT_BINDING_INVALID" };
+  const visualId = visualBindings[0]!.productAuthorityId;
+  if (scriptIds.some((productAuthorityId) => productAuthorityId !== visualId)) {
+    return { ok: false, reason: "VISUAL_SCRIPT_CONFLICT" };
+  }
+  return { ok: true, productAuthorityIds: [visualId] };
+}
 
 export function computeAiStoryLocationFingerprint(
   value: Omit<AiStoryLocationAuthorityVersion, "fingerprint" | "locationVersionId"> | AiStoryLocationAuthorityVersion,
@@ -242,13 +281,32 @@ export function validateAiStoryCanonicalScenes(
     if (scene.productBindings.some((product) => !AiStoryAuthoritativeSceneProductBindingSchema.safeParse(product).success)) {
       add("PRODUCT_BINDING_GATE", "Scene Product visual identity requirement must be explicitly resolved", "PRODUCT_AUTHORITY");
     }
-    const expectedProducts = new Set(sources.flatMap((source) => source?.productAuthorityRefs ?? []));
-    const boundProducts = new Set(scene.productBindings.map((product) => product.productAuthorityId));
-    if (
-      expectedProducts.size !== boundProducts.size ||
-      [...expectedProducts].some((productId) => !boundProducts.has(productId))
-    ) {
-      add("PRODUCT_BINDING_GATE", "Scene Product bindings differ from Script authority", "PRODUCT_AUTHORITY");
+    const expected = deriveExpectedCanonicalSceneProductAuthorities({
+      scriptProductAuthorityRefs: sources.flatMap((source) => source?.productAuthorityRefs ?? []),
+      generationAuthority: scene.generationAuthority,
+      productBindings: scene.productBindings,
+    });
+    if (!expected.ok) {
+      add(
+        "PRODUCT_BINDING_GATE",
+        expected.reason === "VISUAL_SCRIPT_CONFLICT"
+          ? "Scene generation visual Product conflicts with Script narrative Product authority"
+          : "Scene Product bindings differ from authorized Script narrative and generation visual Product authority",
+        "PRODUCT_AUTHORITY",
+      );
+    } else {
+      const expectedProducts = new Set(expected.productAuthorityIds);
+      const boundProducts = new Set(scene.productBindings.map((product) => product.productAuthorityId));
+      if (
+        expectedProducts.size !== boundProducts.size ||
+        [...expectedProducts].some((productId) => !boundProducts.has(productId))
+      ) {
+        add(
+          "PRODUCT_BINDING_GATE",
+          "Scene Product bindings differ from authorized Script narrative and generation visual Product authority",
+          "PRODUCT_AUTHORITY",
+        );
+      }
     }
 
     const exactSource = sources.length === 1 ? sources[0] : undefined;

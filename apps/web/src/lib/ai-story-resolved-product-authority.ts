@@ -175,7 +175,8 @@ export async function resolveCurrentSceneProductAuthority(
     matchingSources.length !== 1 ||
     !source ||
     source.assetId !== binding.sourceAssetId ||
-    source.contentHash !== binding.sourceAssetContentHash
+    source.contentHash !== binding.sourceAssetContentHash ||
+    (source.confirmedVariant ?? null) !== (binding.confirmedVariant ?? null)
   ) {
     throw new CurrentSceneProductAuthorityResolutionError(
       "CURRENT_STORY_PRODUCT_SOURCE_MISMATCH",
@@ -187,9 +188,11 @@ export async function resolveCurrentSceneProductAuthority(
     productAuthorityId: binding.productAuthorityId,
     sourceAssetId: binding.sourceAssetId,
     sourceAssetContentHash: binding.sourceAssetContentHash,
+    ...(source.confirmedVariant ? { confirmedVariant: source.confirmedVariant } : {}),
     displayName: `Product ${binding.productAuthorityId}`,
     identityFacts: [
       `Canonical Product source ${binding.sourceAssetId} with content identity ${binding.sourceAssetContentHash}`,
+      ...(source.confirmedVariant ? [`Confirmed variant ${source.confirmedVariant}`] : []),
     ],
     visibleEvidenceGoals: [],
     sceneStateFacts: productStateFacts(scene, binding.productAuthorityId),

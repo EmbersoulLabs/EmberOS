@@ -3,6 +3,10 @@ import {
   AiStoryAssetAnalysisSnapshotSchema,
   AiStoryAssetRegistryEntrySchema,
 } from "./ai-story-asset-aware-execution-planner";
+import {
+  AI_STORY_EXPLICIT_ROLE_HINTS,
+  type AiStoryExplicitRoleHint,
+} from "./ai-story-asset-usage";
 
 export const AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION =
   "ai-story-asset-visual-semantics.v1" as const;
@@ -39,6 +43,35 @@ export const AiStoryVisualProductCandidateSchema = z
   })
   .strict();
 
+export const AiStoryVisualVariantRegionSchema = z
+  .object({
+    /** Normalized source-image coordinates. Evidence only; not a derived Asset. */
+    x: z.number().min(0).max(1),
+    y: z.number().min(0).max(1),
+    width: z.number().gt(0).max(1),
+    height: z.number().gt(0).max(1),
+    confidence: z.number().min(0).max(1),
+  })
+  .strict()
+  .superRefine((region, context) => {
+    if (region.x + region.width > 1 || region.y + region.height > 1) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Variant region must remain inside normalized source bounds",
+      });
+    }
+  });
+
+export const AiStoryVisualProductVariantCandidateSchema = z
+  .object({
+    label: EvidenceText,
+    observableAttributes: z.array(EvidenceText).min(1).max(12),
+    confidence: z.number().min(0).max(1),
+    evidence: z.array(EvidenceText).min(1).max(12),
+    regionEvidence: AiStoryVisualVariantRegionSchema.optional(),
+  })
+  .strict();
+
 /**
  * Provider-neutral semantic payload. Observations are limited to directly
  * visible evidence; classifications remain explicitly inferred.
@@ -60,6 +93,11 @@ export const AiStoryVisualSemanticFactsSchema = z
       .object({
         categories: z.array(AiStoryVisualSemanticCategorySchema).default([]),
         productCandidates: z.array(AiStoryVisualProductCandidateSchema).default([]),
+        /** Visually distinguishable variants only; never catalogue-only claims. */
+        productVariantCandidates: z
+          .array(AiStoryVisualProductVariantCandidateSchema)
+          .max(24)
+          .default([]),
         productGroundingSupported: z.boolean(),
         characterGroundingSupported: z.boolean(),
       })
@@ -72,7 +110,7 @@ export const AiStoryStoryAssetGroundingEntrySchema = z
     assetId: Id,
     contentHash: Hash,
     analysisSnapshotId: Id,
-    explicitRoleHint: z.enum(["PRODUCT_SOURCE", "REFERENCE"]).nullable(),
+    explicitRoleHint: z.enum(AI_STORY_EXPLICIT_ROLE_HINTS).nullable(),
     observed: AiStoryVisualSemanticFactsSchema.shape.observed,
     inferred: AiStoryVisualSemanticFactsSchema.shape.inferred,
   })
@@ -135,7 +173,7 @@ export function compileStoryAssetGroundingContext(input: {
   readonly assets: readonly {
     readonly registry: z.infer<typeof AiStoryAssetRegistryEntrySchema>;
     readonly snapshot: z.infer<typeof AiStoryAssetAnalysisSnapshotSchema>;
-    readonly explicitRoleHint?: "PRODUCT_SOURCE" | "REFERENCE" | null;
+    readonly explicitRoleHint?: AiStoryExplicitRoleHint | null;
   }[];
 }): AiStoryStoryAssetGroundingContext {
   if (input.assets.length === 0) {

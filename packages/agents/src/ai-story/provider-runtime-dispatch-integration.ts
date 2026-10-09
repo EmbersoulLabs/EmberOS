@@ -27,6 +27,7 @@ import {
   type AiStorySeedanceNativeAudioCapability,
   type ProductVisualMaterialSelectionAuthority,
   isAiStoryProviderAttemptTransitionAllowed,
+  productI2vCharacterReferenceComposition,
 } from "@ceo-agent/shared";
 import {
   compileCharacterDnaEpisodePrompt,
@@ -81,6 +82,9 @@ export class AiStoryProviderRuntimeError extends Error {
       | "ATTEMPT_NOT_FOUND"
       | "SUBMISSION_NOT_CLAIMED"
       | "CHARACTER_DNA_SOURCE_PHOTO_PROVIDER_LEAK_BLOCKED"
+      | "CHARACTER_CONTINUITY_AUTHORITY_REQUIRED"
+      | "PRODUCT_I2V_CHARACTER_REFERENCE_COMPOSITION_BLOCKER"
+      | "NATIVE_DIALOGUE_CHARACTER_MISMATCH"
       | "PROVIDER_RECONCILIATION_REQUIRED",
     message: string
   ) {
@@ -164,6 +168,7 @@ export function compileImmutableSeedanceNativeAvRequest(input: {
     `The visible on-screen character bound to authority ${dialogue.characterId} speaks exactly: “${dialogue.exactText}”`,
     `Primary locale: ${dialogue.primaryLocale}. Delivery: ${dialogue.deliveryStyle}.`,
     `Performance intent: ${dialogue.performanceIntent}`,
+    ...(dialogue.voiceIdentityInstruction ? [dialogue.voiceIdentityInstruction] : []),
     `Emotion: ${dialogue.emotionIntent}; intensity: ${dialogue.speechIntensity}; pace: ${dialogue.paceIntent}.`,
     "Generate the voice, mouth movement, facial expression, body performance, and scene sound together in the same audiovisual result.",
     "Do not rewrite, translate, expand, paraphrase, or add discourse particles to the dialogue.",
@@ -573,6 +578,9 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
   readonly preparedSceneFrame?: PreparedSceneFrameAuthority | null;
   readonly providerPolicyEligibility?: ProviderPolicyEligibilityAuthority | null;
   readonly characterDnaAuthority?: AiStoryCharacterDnaCompilationAuthority | null;
+  readonly characterContinuityRequired?: boolean;
+  readonly visualTextConstraint?: string | null;
+  readonly visibleDialogue?: AiStoryCharacterDialoguePerformanceAuthority | null;
 }): AiStoryCompiledProviderRequest {
   const canonicalScene = Boolean(input.intent.identity.sceneVersionId);
   const authority = input.intent.generationAuthority ??
@@ -745,6 +753,38 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       "Character DNA source portrait cannot be emitted to the video Provider"
     );
   }
+  if (input.characterContinuityRequired && !dnaAuthority) {
+    throw new AiStoryProviderRuntimeError(
+      "CHARACTER_CONTINUITY_AUTHORITY_REQUIRED",
+      "Recurring character continuity requires Character DNA before reservation"
+    );
+  }
+  if (
+    productI2vCharacterReferenceComposition({
+      generationMode: textToVideo ? "TEXT_TO_VIDEO" : "FIRST_FRAME_IMAGE_TO_VIDEO",
+      characterConsistencyMode: dnaAuthority?.characterConsistencyMode ?? null,
+    }) === "PRODUCT_I2V_CHARACTER_REFERENCE_COMPOSITION_BLOCKER"
+  ) {
+    throw new AiStoryProviderRuntimeError(
+      "PRODUCT_I2V_CHARACTER_REFERENCE_COMPOSITION_BLOCKER",
+      "Product first-frame execution cannot add a character reference image under the certified Seedance mapping"
+    );
+  }
+  if (input.visibleDialogue) {
+    const dialogue = AiStoryCharacterDialoguePerformanceAuthoritySchema.parse(
+      input.visibleDialogue
+    );
+    if (
+      !dnaAuthority ||
+      (dialogue.characterId !== dnaAuthority.reusableCharacterId &&
+        dialogue.characterId !== dnaAuthority.campaignCharacterId)
+    ) {
+      throw new AiStoryProviderRuntimeError(
+        "NATIVE_DIALOGUE_CHARACTER_MISMATCH",
+        "Visible dialogue speaker does not match the scene Character DNA authority"
+      );
+    }
+  }
   const firstFrameAssetId = textToVideo
     ? null
     : productMaterial?.selectedMaterial?.assetId ?? providerReadySceneInput?.assetId ?? authority?.firstFrameAssetId ?? (!canonicalScene ? referenceIds[0] : null);
@@ -832,12 +872,15 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     ),
     ...input.instructions.productIdentityConstraints,
   ].filter(Boolean).join("\n");
-  const compiledPrompt = dnaAuthority
-    ? `${compileCharacterDnaEpisodePrompt({
-        dna: dnaAuthority.dna,
-        episodeLook: dnaAuthority.episodeLook,
-      })}\n\n${scenePrompt}`
-    : scenePrompt;
+  const compiledPrompt = [
+    dnaAuthority
+      ? `${compileCharacterDnaEpisodePrompt({
+          dna: dnaAuthority.dna,
+          episodeLook: dnaAuthority.episodeLook,
+        })}\n\n${scenePrompt}`
+      : scenePrompt,
+    input.visualTextConstraint?.trim() ? input.visualTextConstraint.trim() : "",
+  ].filter(Boolean).join("\n\n");
   const semanticPlan = {
     contractVersion: "ai-story-seedance-semantic-plan.v1" as const,
     sceneExecutionPackageId: deterministicPersistenceUuid(
@@ -862,8 +905,16 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
       ...(groundedFacts.length > 0
         ? [{ section: "REQUIRED_EVIDENCE" as const, facts: groundedFacts }]
         : []),
-      ...(observedVisualClaims.length > 0
-        ? [{ section: "PRODUCT_AUTHORITY" as const, facts: observedVisualClaims }]
+      ...((productMaterial?.productAuthority.confirmedVariant || observedVisualClaims.length > 0)
+        ? [{
+            section: "PRODUCT_AUTHORITY" as const,
+            facts: [
+              ...(productMaterial?.productAuthority.confirmedVariant
+                ? [`confirmedVariant=${productMaterial.productAuthority.confirmedVariant}`]
+                : []),
+              ...observedVisualClaims,
+            ],
+          }]
         : []),
       ...(input.instructions.continuityNotes
         ? [{ section: "ENTRY_STATE" as const, facts: [input.instructions.continuityNotes] }]
@@ -1013,7 +1064,13 @@ export function compileImmutableSeedanceRequestFromSceneCompilation(input: {
     requestFingerprint: computeAiStoryCompiledRequestFingerprint(withoutFingerprint),
   });
   assertAiStoryCompiledProviderWireModeCompatibility(request);
-  return request;
+  if (!input.visibleDialogue) return request;
+  return compileImmutableSeedanceNativeAvRequest({
+    baseRequest: request,
+    dialogueAuthority: input.visibleDialogue,
+    capability: buildSeedanceNativeAudioCapability(),
+    compiledAt: input.compiledAt,
+  });
 }
 
 export type AiStoryRuntimeFreshness = {

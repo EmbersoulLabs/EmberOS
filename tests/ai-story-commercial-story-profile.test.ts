@@ -123,7 +123,8 @@ function commercialOutline(overrides: Record<string, unknown> = {}): AiStoryOutl
 
 type SceneSpec = {
   id: string; beatId: string; entryId: string; order: number; sceneFunction: AiStoryScriptVersion["scenes"][number]["sceneFunction"];
-  narrativeFunction: string; action: string; effect: string; information: string;
+  narrativeFunction: string; action: string; effect: string; information: string; dialogue?: string;
+  passiveProduct?: boolean;
   product?: boolean; contribution?: NonNullable<AiStoryScriptVersion["scenes"][number]["commercialContribution"]>;
   preconditions?: string[]; consequence?: string;
   stateIn?: AiStoryScriptVersion["scenes"][number]["sceneStateIn"];
@@ -136,8 +137,11 @@ function sceneFrom(spec: SceneSpec): AiStoryScriptVersion["scenes"][number] {
     scriptSceneId: spec.id, order: spec.order, outlineBeatClaims: [{ outlineBeatId: spec.beatId, claim: spec.effect }],
     sceneFunction: spec.sceneFunction, sceneFunctionRegistryVersion: 1,
     sceneStateIn: spec.stateIn ?? [], sceneStateDeltas: spec.deltas ?? [], sceneStateOut: spec.stateOut ?? spec.stateIn ?? [],
-    entries: [{ entryId: spec.entryId, order: 0, type: "ACTION", subjectId: I.character, ...(spec.product ? { objectId: I.product } : {}), action: spec.action, storyEffect: spec.effect, durationRange: { minSeconds: 2, maxSeconds: 4 } }],
-    characterIds: [I.character], locationIds: [], propIds: [], assetIds: spec.product ? [I.product] : [], productAuthorityRefs: spec.product ? [I.product] : [],
+    entries: [
+      { entryId: spec.entryId, order: 0, type: "ACTION", subjectId: I.character, ...(spec.product ? { objectId: I.product } : {}), action: spec.action, storyEffect: spec.effect, durationRange: { minSeconds: 2, maxSeconds: 4 } },
+      ...(spec.dialogue ? [{ entryId: id(27), order: 1, type: "DIALOGUE" as const, speakerId: I.character, line: spec.dialogue, language: "en-SG", durationRange: { minSeconds: 1, maxSeconds: 2 } }] : []),
+    ],
+    characterIds: [I.character], locationIds: [], propIds: [], assetIds: spec.product || spec.passiveProduct ? [I.product] : [], productAuthorityRefs: spec.product || spec.passiveProduct ? [I.product] : [],
     targetDurationRange: { minSeconds: 3, maxSeconds: 7 }, mustKeep: ["Story causality"], mustAvoid: ["Unsupported claims"],
     newInformation: [spec.information], newEvidence: spec.product ? ["Commercial subject participates"] : [], newActionOutcomes: [spec.effect], productEvidence: spec.product ? ["Canonical commercial subject"] : [],
     narrativeFunction: spec.narrativeFunction, causalPreconditions: spec.preconditions ?? [], storyConsequence: spec.consequence ?? spec.effect,
@@ -339,6 +343,32 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
     expect(validateAiStoryCommercialStoryProfile(drifted, commercialScript(drifted), marketingSnapshot)).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "MARKETING_INTENT_CONSUMPTION_GATE", reasonCode: "MARKETING_INTENT_OBJECTIVE_DRIFT" })]));
   });
 
+  it("passes NARRATIVE_HOOK_GATE from Scene 0 SETUP when outline hooks are empty", () => {
+    const outline = commercialOutline({ hooks: [] });
+    expect(outline.hooks).toEqual([]);
+    expect(outline.commercialStoryProfile?.storyCausality.storyQuestion.length).toBeGreaterThan(0);
+    const script = commercialScript(outline);
+    script.scenes[0]!.narrativeFunction = "SETUP";
+    script.scenes[0]!.newInformation = [];
+    script.scenes[0]!.sceneStateIn = [];
+    expect(script.scenes[0]!.productAuthorityRefs).toEqual([]);
+    expect(validateAiStoryCommercialStoryProfile(outline, script)
+      .filter((issue) => issue.gate === "NARRATIVE_HOOK_GATE" && issue.severity === "BLOCK"))
+      .toEqual([]);
+  });
+
+  it("still fails NARRATIVE_HOOK_GATE when the opening has no hook evidence", () => {
+    const outline = commercialOutline({ hooks: [] });
+    const script = commercialScript(outline);
+    script.scenes[0]!.narrativeFunction = "PAYOFF";
+    script.scenes[0]!.newInformation = [];
+    script.scenes[0]!.sceneStateIn = [];
+    expect(validateAiStoryCommercialStoryProfile(outline, script)
+      .filter((issue) => issue.gate === "NARRATIVE_HOOK_GATE" && issue.severity === "BLOCK")
+      .map((issue) => issue.reasonCode))
+      .toContain("NARRATIVE_HOOK_MISSING");
+  });
+
   it("NARRATIVE_HOOK_GATE PASS, CAUSAL_PROGRESSION_GATE PASS, STATE_CHANGE_GATE PASS, SCENE_PURPOSE_PROGRESSION_GATE PASS, COMMERCIAL_INTEGRATION_GATE PASS, COMMERCIAL_PAYOFF_GATE PASS", () => {
     const outline = commercialOutline();
     const issues = validateAiStoryCommercialStoryProfile(outline, commercialScript(outline));
@@ -375,6 +405,58 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
       consequence: "Product is shown",
     });
     expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE" })]));
+  });
+
+  it("distinguishes inherited unchanged Product state from a fresh random insertion", () => {
+    const outline = commercialOutline();
+    const specs = flowerScenes();
+    specs[2] = {
+      ...specs[2]!,
+      stateOut: [
+        ...specs[2]!.stateOut!,
+        { dimension: "POSSESSION", subjectId: I.product, value: "held by the character" },
+      ],
+    };
+    specs[3] = {
+      ...specs[3]!,
+      passiveProduct: true,
+      stateIn: [
+        ...specs[3]!.stateIn!,
+        { dimension: "POSSESSION", subjectId: I.product, value: "held by the character" },
+      ],
+      stateOut: [
+        ...specs[3]!.stateOut!,
+        { dimension: "POSSESSION", subjectId: I.product, value: "held by the character" },
+      ],
+    };
+    const issues = validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs));
+    expect(issues.map((issue) => issue.reasonCode)).not.toContain("RANDOM_PRODUCT_INSERTION");
+
+    const inserted = flowerScenes();
+    inserted[1] = { ...inserted[1]!, product: true, contribution: undefined };
+    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, inserted))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reasonCode: "RANDOM_PRODUCT_INSERTION" }),
+    ]));
+  });
+
+  it("does not mistake an unchanged initial Product pre-state for visual insertion", () => {
+    const outline = commercialOutline();
+    const specs = flowerScenes();
+    specs[0] = {
+      ...specs[0]!,
+      passiveProduct: true,
+      stateIn: [
+        ...specs[0]!.stateIn!,
+        { dimension: "PRODUCT_STATE", subjectId: I.product, value: "available but unused" },
+      ],
+      stateOut: [
+        ...specs[0]!.stateOut!,
+        { dimension: "PRODUCT_STATE", subjectId: I.product, value: "available but unused" },
+      ],
+    };
+    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))
+      .map((issue) => issue.reasonCode))
+      .not.toContain("RANDOM_PRODUCT_INSERTION");
   });
 
   it("SERVICE STORY WITHOUT PRODUCT PASS", () => {
@@ -505,7 +587,18 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
       commercialStoryProfile: commercialPolicy({ commercialIntegration: undefined, productOrServiceAuthorityRefs: [I.product] }),
     });
     const specs = flowerScenes().map((spec) => ({ ...spec, product: false, contribution: undefined }));
-    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))).toEqual(expect.arrayContaining([expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "COMMERCIAL_AUTHORITY_NEVER_PARTICIPATES" })]));
+    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "COMMERCIAL_AUTHORITY_NEVER_PARTICIPATES" }),
+    ]));
+  });
+
+  it("does not treat naturalness rationale as commercial participation authority", () => {
+    const outline = commercialOutline();
+    const specs = flowerScenes().map((spec) => ({ ...spec, product: false, contribution: undefined }));
+    expect(validateAiStoryCommercialStoryProfile(outline, commercialScript(outline, specs))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "COMMERCIAL_AUTHORITY_NEVER_PARTICIPATES" }),
+      expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "NATURALNESS_RATIONALE_INSUFFICIENT" }),
+    ]));
   });
 
   it("PRODUCT SHOWCASE MISLABELED AS COMMERCIAL_STORY BLOCKED and SAME SHOWCASE UNDER PRODUCT_STORY PASS", () => {
@@ -590,11 +683,76 @@ describe("AI Story COMMERCIAL_STORY profile", () => {
     for (const forbidden of ["seedance", "scene 1 must", "interesting", "viral", "beautiful", "funny enough"]) expect(source).not.toContain(forbidden);
   });
 
+  it("accepts a visible product action and rejects presence or dialogue alone", () => {
+    const outline = commercialOutline();
+    const participating = flowerScenes();
+    participating[2] = {
+      ...participating[2]!,
+      contribution: {
+        ...participating[2]!.contribution!,
+        preState: "holding the product",
+        postState: "holding the product",
+      },
+    };
+    expect(blocks(outline, commercialScript(outline, participating))).toEqual([]);
+
+    const spoken = flowerScenes().map((spec) => ({ ...spec, product: false }));
+    spoken[2] = {
+      ...spoken[2]!,
+      dialogue: "This product is useful.",
+      contribution: {
+        commercialRole: "PRODUCT",
+        narrativeFunction: "PRODUCT_INTERVENTION",
+        participationKind: "REVEAL",
+        commercialAuthorityIds: [I.product],
+        preState: "unaware of the product",
+        postState: "mentions the product",
+        storyConsequence: "The line names the product",
+      },
+    };
+    expect(blocks(outline, commercialScript(outline, spoken))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reasonCode: "PRODUCT_PARTICIPATION_MISSING" }),
+    ]));
+
+    const background = flowerScenes().map((spec) => ({ ...spec, product: false }));
+    background[2] = {
+      ...background[2]!,
+      passiveProduct: true,
+      action: "The product remains visible in the background.",
+      contribution: {
+        commercialRole: "PRODUCT",
+        narrativeFunction: "PRODUCT_INTERVENTION",
+        participationKind: "REVEAL",
+        commercialAuthorityIds: [I.product],
+        preState: "product nearby",
+        postState: "product nearby",
+        storyConsequence: "The product stays in the background",
+      },
+    };
+    expect(blocks(outline, commercialScript(outline, background))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reasonCode: "PRODUCT_PARTICIPATION_MISSING" }),
+      expect.objectContaining({ reasonCode: "PRODUCT_INSERTION_WITHOUT_NARRATIVE_ROLE" }),
+    ]));
+  });
+
   it("does not encode a rigid Scene-order template and allows namespaced narrative functions", () => {
     const outline = commercialOutline();
     const nonlinear = flowerScenes().map((spec) => ({ ...spec }));
     nonlinear[0]!.narrativeFunction = "HOOK";
     nonlinear[2]!.narrativeFunction = "EXT:example.future:NONLINEAR_REVEAL";
+    const spokenOnly = flowerScenes();
+    spokenOnly[2] = {
+      ...spokenOnly[2]!,
+      action: "admire",
+      effect: "Wah, this mini fan damn strong sia... shiok leh.",
+      dialogue: "Wah, this mini fan damn strong sia... shiok leh.",
+    };
+    expect(blocks(outline, commercialScript(outline, spokenOnly))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ gate: "COMMERCIAL_INTEGRATION_GATE", reasonCode: "DIALOGUE_ONLY_VISIBLE_ACTION" }),
+    ]));
+    const visible = flowerScenes();
+    visible[2] = { ...visible[2]!, dialogue: "Wah, this mini fan damn strong sia... shiok leh." };
+    expect(blocks(outline, commercialScript(outline, visible)).map((issue) => issue.reasonCode)).not.toContain("DIALOGUE_ONLY_VISIBLE_ACTION");
     expect(blocks(outline, commercialScript(outline, nonlinear))).toEqual([]);
     expect(blocks(outline, commercialScript(outline, flowerScenes().slice(0, 4).concat(flowerScenes().slice(4))))).toEqual([]);
   });

@@ -9,6 +9,9 @@ import {
   AiStoryPostQcHumanReviewEvidenceSchema,
   AiStoryPostQcObservationSchema,
   compileCinematicPromptFacts,
+  evaluateVisualTextLanguageGate,
+  projectVisualTextObservationFromCache,
+  type AiStoryVisualTextRenderPolicy,
   type AiStoryPostGenerationQcEvaluation,
   type AiStoryPostGenerationQcInputPackage,
   type AiStoryPostQcFinding,
@@ -22,6 +25,11 @@ import {
   type AiStorySceneExecutionIntent,
   type AiStorySceneExecutionPackage,
 } from "@ceo-agent/shared";
+import {
+  evaluateAiStoryAudioQc,
+  type AiStoryAudioQcEvidence,
+  type AiStoryAudioQcExpectation,
+} from "@ceo-agent/shared/server";
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
 import { integrityHash } from "./scene-execution-compiler";
 
@@ -32,6 +40,7 @@ export interface AiStoryVisualEvidenceProvider {
 }
 
 export interface AiStoryPostGenerationQcRepository {
+  prepareInput?(input:AiStoryPostGenerationQcInputPackage):Promise<AiStoryPostGenerationQcInputPackage>;
   getByIdentity(input: { postQcInputId: string; evaluationVersion: number }): Promise<AiStoryPostGenerationQcEvaluation | null>;
   accept(evaluation: AiStoryPostGenerationQcEvaluation): Promise<{ evaluation: AiStoryPostGenerationQcEvaluation; replayed: boolean }>;
 }
@@ -507,6 +516,69 @@ function findingFor(input: AiStoryPostGenerationQcInputPackage, requirement: AiS
   };
 }
 
+function visualTextObservation(
+  input: AiStoryPostGenerationQcInputPackage,
+  cached: {
+    readonly observedTextReadable: boolean | null;
+    readonly observedReadableText: string | null;
+    readonly signageIdentityVisible: boolean;
+    readonly renderPolicy: AiStoryVisualTextRenderPolicy;
+  },
+): AiStoryPostQcObservation {
+  const projected = projectVisualTextObservationFromCache(cached);
+  const unresolved = cached.observedTextReadable === null;
+  const gate = unresolved
+    ? { status: "WARN" as const, reasonCode: "VISUAL_TEXT_UNREADABLE" as const }
+    : evaluateVisualTextLanguageGate(projected);
+  return AiStoryPostQcObservationSchema.parse({
+    observationId: observationId(input, "visual-text-language", "cached-video-observation"),
+    evidenceVersion: AI_STORY_VISUAL_EVIDENCE_CONTRACT_VERSION,
+    requirementId: "visual-text-language",
+    source: "DETERMINISTIC_MEDIA_CHECK",
+    summary: gate.status === "BLOCK"
+      ? `Cached video observation contains visual text outside the authorized script policy (${gate.reasonCode}).`
+      : gate.status === "WARN"
+        ? "Cached video observation could not determine visual text readability."
+        : "Cached video observation matches the authorized visual text policy.",
+    observableSignal: gate.status === "BLOCK" ? "VIOLATED" : gate.status === "PASS" ? "SATISFIED" : "UNCERTAIN",
+    confidence: { level: projected.readable || cached.observedTextReadable === false ? "HIGH" : "LOW", score: projected.readable ? 1 : 0.4, evidenceQuality: "DETERMINISTIC" },
+    timeRangeMs: null,
+    subjects: [input.privateMediaAssetId],
+    artifactSeverity: gate.status === "BLOCK" ? "SEVERE" : null,
+    subjectiveTasteOnly: false,
+  });
+}
+
+function visualTextFinding(
+  input: AiStoryPostGenerationQcInputPackage,
+  cached: {
+    readonly observedTextReadable: boolean | null;
+    readonly observedReadableText: string | null;
+    readonly signageIdentityVisible: boolean;
+    readonly renderPolicy: AiStoryVisualTextRenderPolicy;
+  },
+  observations: readonly AiStoryPostQcObservation[],
+): AiStoryPostQcFinding {
+  const requirement = {
+    requirementId: "visual-text-language",
+    dimension: "TEXT_CONTAMINATION" as const,
+    summary: "Readable visual text must stay inside the Episode visual-text script policy.",
+    required: true,
+    waiverPolicy: "NON_WAIVABLE_INTEGRITY" as const,
+    sourceOwner: "SCENE" as const,
+    visuallyObservable: true,
+  };
+  const finding = findingFor(input, requirement, observations);
+  const unresolved = cached.observedTextReadable === null;
+  const gate = unresolved
+    ? { status: "WARN" as const, reasonCode: "VISUAL_TEXT_UNREADABLE" as const }
+    : evaluateVisualTextLanguageGate(projectVisualTextObservationFromCache(cached));
+  if (gate.status === "WARN") {
+    return { ...finding, result: "WARN", failureClass: null, reason: `QC interpretation: cached observation did not determine visual text. ${gate.reasonCode}` };
+  }
+  return finding;
+}
+
 function aggregate(findings: readonly AiStoryPostQcFinding[]) {
   if (findings.some((item) => item.result === "REJECT")) return "POST_QC_REJECT" as const;
   if (findings.some((item) => item.result === "UNVERIFIED")) return "POST_QC_REQUIRES_HUMAN_CONFIRMATION" as const;
@@ -522,9 +594,7 @@ export function isAiStoryPostQcCurrentForMedia(evaluation: AiStoryPostGeneration
   return evaluation.mediaAssetId === mediaAssetId && evaluation.mediaContentHash === mediaContentHash;
 }
 
-export function postQcAllowsHumanApproval(evaluation: AiStoryPostGenerationQcEvaluation): boolean {
-  return !evaluation.findings.some((item) => item.result === "REJECT" && item.waiverPolicy === "NON_WAIVABLE_INTEGRITY");
-}
+export { postQcAllowsHumanApproval } from "@ceo-agent/shared";
 
 export function buildAiStoryPostQcHumanReviewEvidence(input: { evaluation: AiStoryPostGenerationQcEvaluation; sceneSummary: string }): AiStoryPostQcHumanReviewEvidence {
   const byId = new Map(input.evaluation.observations.map((item) => [item.observationId, item]));
@@ -549,16 +619,36 @@ export function buildAiStoryPostQcHumanReviewEvidence(input: { evaluation: AiSto
 
 export class AiStoryPostGenerationQcService {
   constructor(private readonly dependencies: { repository: AiStoryPostGenerationQcRepository; evidenceProvider: AiStoryVisualEvidenceProvider; now?: () => string }) {}
-  async evaluate(rawInput: AiStoryPostGenerationQcInputPackage, evaluationVersion = 1) {
-    const input = AiStoryPostGenerationQcInputPackageSchema.parse(rawInput);
+  async evaluate(
+    rawInput: AiStoryPostGenerationQcInputPackage,
+    evaluationVersion = 1,
+    cachedVideoObservation?: {
+      readonly observedTextReadable: boolean | null;
+      readonly observedReadableText: string | null;
+      readonly signageIdentityVisible: boolean;
+      readonly renderPolicy: AiStoryVisualTextRenderPolicy;
+    } | null,
+    audioQc?: {
+      readonly expectation: AiStoryAudioQcExpectation;
+      readonly evidence: AiStoryAudioQcEvidence;
+    } | null,
+  ) {
+    let input = AiStoryPostGenerationQcInputPackageSchema.parse(rawInput);
     const current = await this.dependencies.repository.getByIdentity({ postQcInputId: input.postQcInputId, evaluationVersion });
     if (current) return { evaluation: current, replayed: true };
+    if(this.dependencies.repository.prepareInput) input=AiStoryPostGenerationQcInputPackageSchema.parse(await this.dependencies.repository.prepareInput(input));
     let visual: readonly AiStoryPostQcObservation[] = [];
     let evidenceUnavailable = false;
     try { visual = await this.dependencies.evidenceProvider.analyze(input); }
     catch { evidenceUnavailable = true; }
-    const observations = [...deterministicMediaObservations(input), ...visual].map((item) => AiStoryPostQcObservationSchema.parse(item));
-    const findings = input.requirements.map((requirement) => findingFor(input, requirement, observations));
+    const visualText = cachedVideoObservation
+      ? [visualTextObservation(input, cachedVideoObservation)]
+      : [];
+    const observations = [...deterministicMediaObservations(input), ...visual, ...visualText].map((item) => AiStoryPostQcObservationSchema.parse(item));
+    const findings = [
+      ...input.requirements.map((requirement) => findingFor(input, requirement, observations)),
+      ...(cachedVideoObservation ? [visualTextFinding(input, cachedVideoObservation, observations)] : []),
+    ];
     const base = {
       postQcEvaluationId: deterministicPersistenceUuid("ai-story-post-qc-evaluation", { postQcInputId: input.postQcInputId, evaluationVersion }),
       contractVersion: AI_STORY_POST_GENERATION_QC_CONTRACT_VERSION,
@@ -568,6 +658,7 @@ export class AiStoryPostGenerationQcService {
       orgId: input.orgId,
       workspaceId: input.workspaceId,
       providerAttemptId: input.providerAttemptId,
+      ...(input.generationResultId ? { generationResultId: input.generationResultId, sourceKind: input.sourceKind } : {}),
       mediaAssetId: input.privateMediaAssetId,
       mediaContentHash: input.privateMediaContentHash,
       sceneExecutionId: input.sceneExecutionId,
@@ -584,10 +675,15 @@ export class AiStoryPostGenerationQcService {
       autoReleaseAuthorized: false as const,
       creativeAuthority: false as const,
     };
+    const evaluatedAt = this.dependencies.now?.() ?? new Date().toISOString();
+    const audioQcResult = audioQc
+      ? evaluateAiStoryAudioQc({ expectation: audioQc.expectation, evidence: audioQc.evidence, evaluatedAt })
+      : undefined;
+    const evaluationBody = audioQcResult ? { ...base, audioQcResult } : base;
     const evaluation = AiStoryPostGenerationQcEvaluationSchema.parse({
-      ...base,
-      evaluationFingerprint: computeAiStoryPostQcEvaluationFingerprint(base),
-      evaluatedAt: this.dependencies.now?.() ?? new Date().toISOString(),
+      ...evaluationBody,
+      evaluationFingerprint: computeAiStoryPostQcEvaluationFingerprint(evaluationBody),
+      evaluatedAt,
     });
     return this.dependencies.repository.accept(evaluation);
   }

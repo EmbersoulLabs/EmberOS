@@ -9,6 +9,9 @@ import {
   registerSeedanceCanonicalAdapter,
   loadMinimaxAdapterConfig,
   loadSeedanceAdapterConfig,
+  loadLocalGpuConfigFromEnv,
+  registerLocalGpuCanonicalAdapter,
+  LocalGpuCloudAdapter,
   type CanonicalAdapterRegistry as Registry,
   type MinimaxPayloadResolver,
   type MinimaxAssetAccessResolver,
@@ -174,5 +177,23 @@ export function createProductionAiStoryCanonicalAdapterRegistry(
     );
   }
 
+  try {
+    const localGpu = loadLocalGpuConfigFromEnv(env);
+    if (localGpu.enabled && localGpu.environment && localGpu.signingSecret) {
+      registerLocalGpuCanonicalAdapter(registry, {
+        cloud: new LocalGpuCloudAdapter(localGpu),
+      });
+    }
+  } catch (error) {
+    if (requireEnabled) throw error;
+    console.warn(
+      "[ai-story-adapters] LOCAL_GPU not registered:",
+      error instanceof Error ? error.message : error
+    );
+  }
+
   return registry;
 }
+
+/** Name used by Production execution ownership. Same registry, no second implementation. */
+export const createProductionAiStoryAdapterRegistry = createProductionAiStoryCanonicalAdapterRegistry;

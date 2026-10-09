@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@ceo-agent/db";
 import {
   AiStoryCreateBodySchema,
+  acceptAiStoryEpisodeIntent,
   canonicalAiStoryOutlineProfileReference,
   isUuid,
 } from "@ceo-agent/shared";
@@ -9,7 +10,10 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
 import {
+  AiStoryProductVariantAuthorityError,
   assertCampaignAssets,
+  confirmedProductVariantsForIntake,
+  ensureCampaignLibraryAvailability,
   listCampaignAiStories,
   replaceAiStoryAssetLinks,
 } from "@/lib/ai-story-service";
@@ -66,6 +70,7 @@ export async function POST(
     const assetIds = parsed.data.assetIds;
     const productAssetIds = parsed.data.productAssetIds;
     if (assetIds.length) {
+      await ensureCampaignLibraryAvailability(db, campaignId, campaign.workspaceId, assetIds);
       await assertCampaignAssets(db, campaignId, campaign.workspaceId, assetIds);
     }
     await assertAuthorizedStoryProductSourceSelection(db, {
@@ -74,6 +79,13 @@ export async function POST(
       campaignId,
       assetIds,
       productAssetIds,
+    });
+    const confirmedVariants = await confirmedProductVariantsForIntake(db, {
+      workspaceId: campaign.workspaceId,
+      productAssetIds,
+      userIntent: parsed.data.originalIdea,
+      selections: parsed.data.productVariantSelections,
+      confirmed: parsed.data.mappingConfirmed === true,
     });
 
     const [story] = await db
@@ -84,6 +96,9 @@ export async function POST(
         campaignId,
         title: parsed.data.title,
         originalIdea: parsed.data.originalIdea,
+        episodeIntent: parsed.data.episodeIntent
+          ? acceptAiStoryEpisodeIntent(parsed.data.episodeIntent, new Date().toISOString())
+          : null,
         outlineProfile: canonicalAiStoryOutlineProfileReference(parsed.data.outlineProfile),
         status: "draft",
         createdBy: user.id,
@@ -92,11 +107,12 @@ export async function POST(
 
     if (!story) return apiError("Failed to create AI Story", "INTERNAL", 500);
     if (assetIds.length) {
-      await replaceAiStoryAssetLinks(db, story.id, assetIds, productAssetIds);
+      await replaceAiStoryAssetLinks(db, story.id, assetIds, productAssetIds, parsed.data, confirmedVariants);
     }
 
     return apiSuccess({ story }, 201);
   } catch (error) {
+    if (error instanceof AiStoryProductVariantAuthorityError) return apiError(error.message, error.code, 409);
     return handleApiError(error);
   }
 }

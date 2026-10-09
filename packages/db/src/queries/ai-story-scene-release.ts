@@ -2,7 +2,10 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "../client";
 import { resolveSuccessfulProviderAttemptTerminalAuthority } from "./provider-execution-finalizer";
 
-export type AiStorySceneReleaseState = "AUTHORIZED_NOT_RELEASED" | "RELEASED";
+export type AiStorySceneReleaseState =
+  | "AUTHORIZED_NOT_RELEASED"
+  | "WAITING_FOR_PREDECESSOR"
+  | "RELEASED";
 export type AiStorySceneReleaseRow = typeof schema.aiStorySceneReleaseStates.$inferSelect;
 export type AiStoryNextSceneReleaseResult = {
   readonly rows: readonly AiStorySceneReleaseRow[];
@@ -15,7 +18,7 @@ export class AiStorySceneReleaseRepository {
   constructor(private readonly db = getDb()) {}
 
   async initialize(input: {
-    executionPlanId: string; runtimeAuthorizationId: string; workspaceId: string;
+    executionPlanId: string; runtimeAuthorizationId: string; orgId: string; workspaceId: string;
     orderedSceneExecutionIds: readonly string[]; actorUserId: string; releasedAt: Date;
   }): Promise<readonly AiStorySceneReleaseRow[]> {
     await this.db.transaction(async (tx) => {
@@ -26,9 +29,12 @@ export class AiStorySceneReleaseRepository {
           sceneExecutionId: input.orderedSceneExecutionIds[index]!,
           executionPlanId: input.executionPlanId,
           runtimeAuthorizationId: input.runtimeAuthorizationId,
+          orgId: input.orgId,
           workspaceId: input.workspaceId,
           sceneOrder: index + 1,
           releaseState: first ? "RELEASED" : "AUTHORIZED_NOT_RELEASED",
+          executionMode: "REMOTE_PROVIDER",
+          gateKind: first ? "INITIAL_UNIT" : "PREDECESSOR_PROVIDER_RESULT",
           releaseStage: first ? 1 : null,
           releasedBy: first ? input.actorUserId : null,
           releasedAt: first ? input.releasedAt : null,
@@ -64,7 +70,7 @@ export class AiStorySceneReleaseRepository {
           eq(schema.aiStorySceneResults.providerAttemptId, approved.providerAttemptId),
           eq(schema.aiStorySceneResults.status, "SUCCEEDED")
         )).limit(1);
-      if (!result) throw new Error("FIRST_SCENE_DURABLE_RESULT_REQUIRED");
+      if (!result || !result.providerExecutionId) throw new Error("FIRST_SCENE_DURABLE_RESULT_REQUIRED");
       const terminalAuthority = await resolveSuccessfulProviderAttemptTerminalAuthority({
         reader: tx,
         providerAttemptId: approved.providerAttemptId,
@@ -167,7 +173,7 @@ export class AiStorySceneReleaseRepository {
             eq(schema.aiStorySceneResults.providerAttemptId, approved.providerAttemptId),
             eq(schema.aiStorySceneResults.status, "SUCCEEDED")
           )).limit(1);
-        if (!result) throw new Error("PRIOR_SCENE_DURABLE_RESULT_REQUIRED");
+        if (!result || !result.providerExecutionId) throw new Error("PRIOR_SCENE_DURABLE_RESULT_REQUIRED");
         const terminalAuthority = await resolveSuccessfulProviderAttemptTerminalAuthority({
           reader: tx,
           providerAttemptId: approved.providerAttemptId,

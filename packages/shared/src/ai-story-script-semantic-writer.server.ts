@@ -16,6 +16,7 @@ import {
   type AiStoryScriptSemanticProposalV1,
 } from "./ai-story-script-semantic-writer";
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "./canonical-integrity";
+import { compileInheritedCommercialMustKeep } from "./ai-story-commercial-story-outline-policy.server";
 
 export const AI_STORY_SCRIPT_SEMANTIC_PROMOTION_POLICY_V1 = Object.freeze({
   policyId: "AI_STORY_SCRIPT_SEMANTIC_PROMOTION_POLICY",
@@ -275,7 +276,10 @@ export function promoteAiStoryScriptSemanticProposalV1(
       assetIds: [],
       productAuthorityRefs: [...usedProducts].sort(),
       targetDurationRange: { minSeconds: scenePlan.durationSec, maxSeconds: scenePlan.durationSec },
-      mustKeep: [],
+      mustKeep: compileInheritedCommercialMustKeep(
+        outline.commercialStoryProfile?.userCreativeIntent ?? [],
+        outline.commercialStoryProfile?.commercialIntegration?.commercialActionOrParticipation ?? "",
+      ),
       mustAvoid: [],
       newInformation: proposal.newInformation,
       newEvidence: [],

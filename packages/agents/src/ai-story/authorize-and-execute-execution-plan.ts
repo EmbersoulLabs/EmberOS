@@ -36,6 +36,15 @@ import {
   type RuntimeAuthorizationPersistenceTimings,
 } from "@ceo-agent/db";
 import type { ProviderRouter, ProviderRoutingPolicy } from "../provider-router";
+import {
+  AiStoryLocalGenerationService,
+  type AiStoryLocalGenerationPreparationPort,
+} from "./local-generation-service";
+import {
+  assertCurrentPreGenerationQcForRuntimeAuthorization,
+  persistRuntimeAuthorizationAfterPreQc,
+} from "./generate-review-pre-generation-qc";
+import { AiStoryLocalGenerationError } from "./local-generation-package";
 import { CommercialAuthorizationService } from "../commercial/commercial-authorization-runtime";
 import {
   CommercialAuthorizationError,
@@ -74,7 +83,10 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
   readonly executionPlanId: string;
   readonly actorUserId: string;
   readonly ownership: RuntimeOwnershipIdentity;
-  readonly router: ProviderRouter;
+  readonly router?: ProviderRouter;
+  /** Product policy. MANUAL_LOCAL stops before commercial reservation/outbox/Provider routing. */
+  readonly executionMode?: "MANUAL_LOCAL" | "REMOTE_PROVIDER";
+  readonly localGenerationService?: AiStoryLocalGenerationPreparationPort;
   /** Optional frozen routing policy. Product Execute supplies config-derived eligibility. */
   readonly routingPolicy?: ProviderRoutingPolicy;
   readonly preferredProviders?: readonly string[];
@@ -122,6 +134,14 @@ export type AuthorizeAndExecuteExecutionPlanInput = {
     executionPlanId: string,
     orderedSceneExecutionIds: readonly string[]
   ) => Promise<RuntimeAuthorizationQcInput[]>;
+  /**
+   * Test seam for the Pre-QC gate. Production uses the durable current-chain check.
+   * Injected repository tests that are not the product path omit this and skip it.
+   */
+  readonly preGenerationQcGate?: (gate: {
+    orderedSceneExecutionIds: readonly string[];
+    storyVersionId: string;
+  }) => Promise<void>;
 };
 
 export type AuthorizeAndExecuteExecutionPlanResult = {
@@ -265,9 +285,6 @@ export async function authorizeAndExecuteExecutionPlan(
     new RuntimeAuthorizationPersistenceRepository();
   const authService =
     input.authorizationService ?? new RuntimeAuthorizationService();
-  const scheduling =
-    input.schedulingCoordinator ??
-    new SceneSchedulingCoordinator({ router: input.router });
   const commercialAuth =
     input.commercialAuthorizationService ??
     new CommercialAuthorizationService();
@@ -502,20 +519,47 @@ export async function authorizeAndExecuteExecutionPlan(
       : issued.fact;
 
     try {
-      const accepted = canonicalSnapshot && dbAuthority
-        ? await snapshotRepository.acceptOrReturnCanonicalSnapshotInTransaction(
-            factToPersist,
-            canonicalSnapshot,
-            dbAuthority as RuntimeAuthorizationTransactionDb,
-            persistenceTimings
-          )
-        : dbAuthority
-          ? await authRepo.acceptOrReturnInTransaction(
-              factToPersist,
-              dbAuthority as RuntimeAuthorizationTransactionDb,
-              persistenceTimings
-            )
-          : await authRepo.acceptOrReturn(factToPersist);
+      const accepted = await persistRuntimeAuthorizationAfterPreQc(
+        async () => {
+          if (input.preGenerationQcGate) {
+            await input.preGenerationQcGate({
+              orderedSceneExecutionIds,
+              storyVersionId: input.ownership.storyVersionId,
+            });
+            return;
+          }
+          // Remote scheduling keeps its existing authority path. MANUAL_LOCAL
+          // must prove current Pre-QC before a RuntimeAuthorizedFact is stored.
+          if (input.executionMode !== "MANUAL_LOCAL" || !defaultDbRepositories) return;
+          await assertCurrentPreGenerationQcForRuntimeAuthorization({
+            db: getDb(),
+            scope: {
+              orgId: input.ownership.orgId,
+              workspaceId: input.ownership.workspaceId,
+              campaignId: input.ownership.campaignId,
+              storyId: input.ownership.storyId,
+              storyVersionId: input.ownership.storyVersionId,
+              actorUserId: input.actorUserId,
+            },
+            orderedSceneExecutionIds,
+          });
+        },
+        async () =>
+          canonicalSnapshot && dbAuthority
+            ? await snapshotRepository.acceptOrReturnCanonicalSnapshotInTransaction(
+                factToPersist,
+                canonicalSnapshot,
+                dbAuthority as RuntimeAuthorizationTransactionDb,
+                persistenceTimings
+              )
+            : dbAuthority
+              ? await authRepo.acceptOrReturnInTransaction(
+                  factToPersist,
+                  dbAuthority as RuntimeAuthorizationTransactionDb,
+                  persistenceTimings
+                )
+              : await authRepo.acceptOrReturn(factToPersist)
+      );
       return { accepted, orderedSceneExecutionIds };
     } catch (error) {
       if (
@@ -589,6 +633,64 @@ export async function authorizeAndExecuteExecutionPlan(
     ...boundaryTimings,
   }));
 
+  const executionMode = input.executionMode ?? "REMOTE_PROVIDER";
+  if (executionMode === "MANUAL_LOCAL") {
+    const localGeneration = input.localGenerationService ?? new AiStoryLocalGenerationService();
+    let prepared;
+    try {
+      prepared = await localGeneration.prepare({
+        orgId: input.ownership.orgId,
+        workspaceId: input.ownership.workspaceId,
+        campaignId: input.ownership.campaignId,
+        storyId: input.ownership.storyId,
+        storyVersionId: input.ownership.storyVersionId,
+        executionPlanId: input.executionPlanId,
+        runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
+        orderedSceneExecutionIds,
+        actorUserId: input.actorUserId,
+        createdAt: now().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof AiStoryLocalGenerationError) {
+        throw new CanonicalExecuteError(error.code, error.message, error.status);
+      }
+      throw error;
+    }
+    const runtimeStatus: CanonicalExecuteRuntimeStatus = prepared.replayed
+      ? "ALREADY_LOCAL_GENERATION_PREPARED"
+      : "LOCAL_GENERATION_PREPARED";
+    const response = CanonicalExecuteResponseSchema.parse({
+      contractVersion: "1",
+      executionPlanId: input.executionPlanId,
+      runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
+      runtimeStatus,
+      runtimeProjectionVersion: 1,
+      scheduledSceneCount: 0,
+      converged: prepared.replayed,
+      executionLockCode: PHASE1_EXECUTION_LOCKED,
+      automaticFallbackEnabled: false,
+      executionMode: "MANUAL_LOCAL",
+      localGenerationUnitCount: prepared.unitIds.length,
+    });
+    return {
+      response,
+      httpStatus: prepared.replayed ? 200 : 202,
+      runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
+      commercialAuthorizationId: null,
+      scheduledSceneIds: [],
+      executionAuthorization,
+    };
+  }
+
+  if (!input.schedulingCoordinator && !input.router) {
+    throw new CanonicalExecuteError(
+      "PROVIDER_ROUTER_REQUIRED",
+      "Remote Provider execution requires an explicit Provider Router",
+      500,
+    );
+  }
+  const scheduling = input.schedulingCoordinator ?? new SceneSchedulingCoordinator({ router: input.router! });
+
   const controlledSelfUseMode = isControlledSelfUseDispatchMode();
   if (controlledSelfUseMode) {
     try {
@@ -636,6 +738,7 @@ export async function authorizeAndExecuteExecutionPlan(
   const releaseRows = await releases.initialize({
     executionPlanId: input.executionPlanId,
     runtimeAuthorizationId: accepted.fact.runtimeAuthorizationId,
+    orgId: input.ownership.orgId,
     workspaceId: input.ownership.workspaceId,
     orderedSceneExecutionIds,
     actorUserId: input.actorUserId,

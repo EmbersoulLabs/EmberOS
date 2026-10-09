@@ -47,6 +47,79 @@ export type AiStoryCommercialStoryOutlinePolicyProducerV1Input = {
   originalIdea: string;
 };
 
+const ACTIVE_PRODUCT_USE = /\b(hold|holding|holds|use|using|uses|wear|wearing|operate|operating|point|aim|apply|applying)\b/i;
+const VISIBLE_PRODUCT_EFFECT = /\b(movement|moves|moving|airflow|blows|blown)\b/i;
+const SYMBOLIC_PRODUCT_ROLE = /\b(symboli[sz]e|symboli[sz]es|stands for|represents)\b/i;
+
+/**
+ * Product presence is not product participation. Active use is derived from
+ * the preserved creative intent. A product story that only reveals or displays
+ * the subject stays passive.
+ */
+export function resolveCommercialActionParticipation(intent: string): "ENABLE" | "REVEAL" | "SYMBOLIZE" {
+  if (ACTIVE_PRODUCT_USE.test(intent) || VISIBLE_PRODUCT_EFFECT.test(intent)) return "ENABLE";
+  if (SYMBOLIC_PRODUCT_ROLE.test(intent)) return "SYMBOLIZE";
+  return "REVEAL";
+}
+
+/**
+ * True only when the newer outline differs by the server-compiled participation
+ * kind and that kind is what the preserved creative intent compiles to.
+ * Any other policy change is not a compilation drift.
+ */
+export function isServerCompiledParticipationDrift(
+  previous: AiStoryCommercialStoryOutlinePolicy | undefined,
+  next: AiStoryCommercialStoryOutlinePolicy | undefined,
+): boolean {
+  const previousIntegration = previous?.commercialIntegration;
+  const nextIntegration = next?.commercialIntegration;
+  if (!previous || !next || !previousIntegration || !nextIntegration) return false;
+  const compiled = resolveCommercialActionParticipation(next.userCreativeIntent.join("\n"));
+  if (nextIntegration.commercialActionOrParticipation !== compiled) return false;
+  if (previousIntegration.commercialActionOrParticipation === nextIntegration.commercialActionOrParticipation) return false;
+  const aligned = structuredClone(previous);
+  aligned.commercialIntegration!.commercialActionOrParticipation = compiled;
+  return JSON.stringify(aligned) === JSON.stringify(next);
+}
+
+/**
+ * A shot plan built before the compiled outline, or against a participation
+ * kind the preserved intent no longer compiles to, must not be reused.
+ */
+export function planningPackageIsStaleForCompiledOutline(input: {
+  packageCreatedAt: Date | string;
+  outlineFrozenAt?: string | null;
+  storedParticipation?: string | null;
+  userCreativeIntent?: readonly string[] | null;
+}): boolean {
+  const intent = input.userCreativeIntent ?? [];
+  if (input.storedParticipation && intent.length > 0) {
+    const compiled = resolveCommercialActionParticipation(intent.join("\n"));
+    if (compiled !== input.storedParticipation) return true;
+  }
+  if (!input.outlineFrozenAt) return false;
+  const outlineTime = new Date(input.outlineFrozenAt).getTime();
+  const packageTime = new Date(input.packageCreatedAt).getTime();
+  return Number.isFinite(outlineTime) && Number.isFinite(packageTime) && outlineTime > packageTime;
+}
+
+/** Sentences in the preserved creative intent that already state a physical product obligation. */
+export function compileInheritedCommercialMustKeep(intent: readonly string[], participation: string): string[] {
+  if (participation !== "ENABLE" && participation !== "CAUSE" && participation !== "INTENSIFY") return [];
+  const sentences = intent.join(" ").split(/(?<=[.!?])\s+/u);
+  const kept: string[] = [];
+  for (const sentence of sentences) {
+    const text = sentence.trim();
+    if (!text || text.length > 1000) continue;
+    if (!ACTIVE_PRODUCT_USE.test(text) && !VISIBLE_PRODUCT_EFFECT.test(text)) continue;
+    if (!kept.includes(text)) kept.push(text);
+    if (kept.length === 8) break;
+  }
+  return kept.length > 0
+    ? kept
+    : ["The authorized product stays in physical use unless a visible action changes that state."];
+}
+
 function requiredText(value: string, code: string, max: number) {
   const text = value.trim();
   if (!text) throw new Error(code);
@@ -124,7 +197,7 @@ export function buildAiStoryCommercialStoryOutlinePolicyV1(
         entryPoint: { kind: "BEAT_ID" as const, beatId: integrationBeat.id },
         narrativeFunction: "PRODUCT_INTERVENTION",
         preIntegrationState: opening,
-        commercialActionOrParticipation: "REVEAL" as const,
+        commercialActionOrParticipation: resolveCommercialActionParticipation(input.originalIdea),
         postIntegrationState: ending,
         storyConsequence: ending,
         audienceUnderstanding: objective,

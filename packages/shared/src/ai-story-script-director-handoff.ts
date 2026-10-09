@@ -24,6 +24,7 @@ export const AiStoryDirectorHandoffProductBindingSchema = z.object({
   productAuthorityId: Id,
   sourceAssetId: Id,
   sourceAssetContentHash: Hash,
+  confirmedVariant: z.string().trim().min(1).max(80).optional(),
   requiredRoles: z.array(z.enum(["PRESENT", "PARTICIPATING", "EVIDENCE_REQUIRED"])).min(1),
 }).strict();
 

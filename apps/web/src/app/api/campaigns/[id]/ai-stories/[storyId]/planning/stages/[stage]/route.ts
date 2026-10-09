@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
-import { ControlledSelfUseAuthorityService, getDb, schema } from "@ceo-agent/db";
+import { getDb, schema } from "@ceo-agent/db";
+import { enqueueStoryPlanningStage } from "@ceo-agent/queue";
 import {
   STORY_PLANNING_STAGE_ORDER,
   isUuid,
@@ -10,7 +11,6 @@ import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
-import { runSinglePlanningStage } from "@/lib/ai-story-planning-runner";
 
 export async function POST(
   request: Request,
@@ -34,53 +34,45 @@ export async function POST(
       .where(eq(schema.campaigns.id, campaignId))
       .limit(1);
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
+    await authorizeAiStoryAccess({
+      user,
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      minRole: "operator",
+      request,
+    });
 
     const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
+    if (!loaded.currentVersion?.frozenAt) {
+      return apiError("Story Version must be frozen before planning", "VALIDATION_ERROR", 409);
+    }
 
     const status = loaded.story.status as AiStoryStatus;
     if (!["ready_for_animation", "planning", "planning_review", "failed"].includes(status)) {
       return apiError("Story cannot enter planning in its current state", "VALIDATION_ERROR", 409);
     }
 
-    try {
-      const result = await runSinglePlanningStage({
-        db,
-        campaignId,
-        storyId,
-        actorUserId: user.id,
-        stage,
-        storyStatus: status,
-        regenerationIdentity: request.headers.get("x-ai-story-certification-regeneration-id"),
-      });
-      return apiSuccess({
-        storyId,
-        status: result.status,
-        stage: result.stage,
-        completedStages: result.completedStages,
-        creativeContext: result.creativeContext,
-        animationPackage: result.animationPackage,
-        planningDraft: result.planningDraft,
-      });
-    } catch (error) {
-      if (["planning", "ready_for_animation", "planning_review", "failed"].includes(status)) {
-        try {
-          const { setAiStoryStatus } = await import("@/lib/ai-story-service");
-          await setAiStoryStatus(db, storyId, "planning", "failed");
-          await new ControlledSelfUseAuthorityService(db).reconcileUnusedTerminalPreProviderReservations({
-            occurredAt: new Date().toISOString(),
-          });
-        } catch {
-          /* best-effort */
-        }
-      }
-      return apiError(
-        error instanceof Error ? error.message : "AI Story planning stage failed",
-        "AI_PLANNING_FAILED",
-        502
-      );
-    }
+    const regenerationIdentity = request.headers.get("x-ai-story-certification-regeneration-id");
+    const job = await enqueueStoryPlanningStage({
+      campaignId,
+      storyId,
+      workspaceId: campaign.workspaceId,
+      orgId: campaign.orgId,
+      actorUserId: user.id,
+      storyVersionId: loaded.currentVersion.id,
+      stage,
+      regenerationIdentity: regenerationIdentity && isUuid(regenerationIdentity) ? regenerationIdentity : null,
+    });
+
+    return apiSuccess({
+      storyId,
+      storyVersionId: loaded.currentVersion.id,
+      status: "planning",
+      stage,
+      execution: "queued",
+      jobId: job.id,
+    }, 202);
   } catch (error) {
     return handleApiError(error);
   }

@@ -29,9 +29,9 @@ describe("Wave 3 Create Campaign contract", () => {
     expect(result.targetAudience.summary).toBe("Urban gift buyers");
   });
 
-  it("requires a custom Objective and at least one Asset authority", () => {
+  it("requires a custom Objective and allows a Campaign with zero assets", () => {
     expect(CreateCampaignContextSchema.safeParse({ ...base, objective: "other" }).success).toBe(false);
-    expect(CreateCampaignContextSchema.safeParse({ ...base, assetReferences: [] }).success).toBe(false);
+    expect(CreateCampaignContextSchema.safeParse({ ...base, assetReferences: [], assetStoryReferences: [] }).success).toBe(true);
     expect(campaignObjectiveText({ objective: "sales" })).toBe("Sales");
   });
 
@@ -43,7 +43,8 @@ describe("Wave 3 Create Campaign contract", () => {
 
   it("implements exactly five steps and omits obsolete generation controls", () => {
     const source = readFileSync("apps/web/src/components/campaign/CreateCampaignWizard.tsx", "utf8");
-    expect(source).toContain('"Campaign Name", "Campaign Context", "Assets", "Campaign Brief", "Review & Create"');
+    expect(source).toContain('"Campaign Name", "Campaign Context", "Campaign Brief", "Review & Create"');
+    expect(source).not.toContain("Select at least one Asset or Asset Story");
     expect(source).toContain("Business Profile defaults");
     expect(source).toContain("Inferred Language");
     expect(source).not.toMatch(/AI Output Language|Subtitle Language|Voice Preset|BGM|Content Style/);
@@ -62,8 +63,9 @@ describe("Wave 3 Create Campaign contract", () => {
     const selector = readFileSync("apps/web/src/components/campaign/CreateCampaignAssetSelector.tsx", "utf8");
     const wizard = readFileSync("apps/web/src/components/campaign/CreateCampaignWizard.tsx", "utf8");
     expect(selector).toContain("uploadLibraryFile(workspaceId");
-    expect(wizard).toContain('fetch("/api/campaigns/create"');
+    expect(wizard).toContain('fetch("/api/campaigns/container"');
     expect(wizard).toContain("Idempotency-Key");
-    expect(wizard).toContain("/task?taskId=");
+    expect(wizard).toContain("/campaigns/${body.campaignId}");
+    expect(wizard).not.toContain("/task?taskId=");
   });
 });

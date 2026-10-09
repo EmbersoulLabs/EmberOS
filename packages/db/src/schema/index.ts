@@ -644,6 +644,9 @@ export const aiStories = pgTable(
       .references(() => campaigns.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     originalIdea: text("original_idea").notNull(),
+    episodeIntent: jsonb("episode_intent").$type<
+      import("@ceo-agent/shared").AiStoryEpisodeIntentAuthority | null
+    >(),
     outlineProfile: jsonb("outline_profile")
       .$type<import("@ceo-agent/shared").AiStoryOutlineProfileReference>(),
     status: text("status").notNull().default("draft"),
@@ -1171,6 +1174,39 @@ export const aiStorySupportingCharacterVersions = pgTable(
     unique("ai_story_supporting_character_version_unique").on(t.supportingCharacterId, t.version),
     unique("ai_story_supporting_character_fingerprint_unique").on(t.supportingCharacterId, t.fingerprint),
     index("ai_story_supporting_character_versions_story_idx").on(t.storyId, t.supportingCharacterId, t.version),
+  ],
+);
+
+export const aiStoryCharacterVoiceDnaAuthorities = pgTable(
+  "ai_story_character_voice_dna_authorities",
+  {
+    voiceDnaId: uuid("voice_dna_id").primaryKey(),
+    orgId: uuid("org_id").notNull(),
+    workspaceId: uuid("workspace_id").notNull(),
+    reusableCharacterId: uuid("reusable_character_id").notNull(),
+    reusableCharacterVersionId: uuid("reusable_character_version_id").notNull(),
+    characterIdentityFingerprint: text("character_identity_fingerprint").notNull(),
+    voiceDnaFingerprint: text("voice_dna_fingerprint").notNull(),
+    contractVersion: text("contract_version").notNull(),
+    status: text("status").notNull(),
+    supersedesVoiceDnaId: uuid("supersedes_voice_dna_id"),
+    snapshot: jsonb("snapshot").$type<import("@ceo-agent/shared").AiStoryCharacterVoiceDna>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    foreignKey({ name: "as_voice_dna_org_fk", columns: [t.orgId], foreignColumns: [organizations.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_voice_dna_ws_fk", columns: [t.workspaceId], foreignColumns: [workspaces.id] }).onDelete("restrict"),
+    foreignKey({ name: "as_voice_dna_root_fk", columns: [t.reusableCharacterId], foreignColumns: [aiStoryReusableCharacters.reusableCharacterId] }).onDelete("restrict"),
+    foreignKey({ name: "as_voice_dna_ver_fk", columns: [t.reusableCharacterVersionId], foreignColumns: [aiStoryReusableCharacterVersions.reusableCharacterVersionId] }).onDelete("restrict"),
+    foreignKey({ name: "as_voice_dna_supersede_fk", columns: [t.supersedesVoiceDnaId], foreignColumns: [t.voiceDnaId] }).onDelete("restrict"),
+    unique("ai_story_character_voice_dna_version_fingerprint_unique").on(t.reusableCharacterVersionId, t.voiceDnaFingerprint),
+    index("ai_story_character_voice_dna_scope_idx").on(t.orgId, t.workspaceId),
+    index("ai_story_character_voice_dna_version_idx").on(t.workspaceId, t.reusableCharacterId, t.reusableCharacterVersionId),
+    check("ai_story_character_voice_dna_status_check", sql`${t.status} in ('APPROVED', 'FROZEN')`),
+    check("ai_story_character_voice_dna_contract_check", sql`${t.contractVersion} = 'ai-story-character-voice-dna.v1'`),
+    check("ai_story_character_voice_dna_fingerprint_check", sql`${t.voiceDnaFingerprint} ~ '^sha256:[0-9a-f]{64}$'`),
+    check("ai_story_character_voice_dna_identity_fingerprint_check", sql`${t.characterIdentityFingerprint} ~ '^sha256:[0-9a-f]{64}$'`),
   ],
 );
 
@@ -1736,6 +1772,8 @@ export const aiStoryAssetLinks = pgTable(
       .notNull()
       .references(() => assets.id, { onDelete: "restrict" }),
     usageType: text("usage_type").notNull().default("reference"),
+    /** Confirmed product appearance. Null on legacy rows and non-product roles. */
+    confirmedVariant: text("confirmed_variant"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -1936,7 +1974,141 @@ export const aiStoryAuthorizedSchedulingAuthorities = pgTable(
   ]
 );
 
+/** Durable provider-free handoff packages for manual local video generation. */
+export const aiStoryLocalGenerationPackages = pgTable(
+  "ai_story_local_generation_packages",
+  {
+    packageId: uuid("package_id").primaryKey(),
+    packageFingerprint: text("package_fingerprint").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    storyVersionId: uuid("story_version_id").notNull().references(() => aiStoryVersions.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    runtimeAuthorizationId: uuid("runtime_authorization_id").notNull().references(() => aiStoryRuntimeAuthorizedFacts.runtimeAuthorizationId, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    unitId: uuid("unit_id").notNull(),
+    unitOrder: integer("unit_order").notNull(),
+    successorNumber: integer("successor_number").notNull().default(0),
+    successorOfPackageId: uuid("successor_of_package_id"),
+    releaseAuthorityId: uuid("release_authority_id"),
+    releaseAuthorityFingerprint: text("release_authority_fingerprint"),
+    retryOfPackageId: uuid("retry_of_package_id"),
+    retryNumber: integer("retry_number").notNull().default(0),
+    contractVersion: text("contract_version").notNull(),
+    package: jsonb("package").$type<import("@ceo-agent/shared").AiStoryLocalGenerationPackage>().notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_local_generation_package_fingerprint_unique").on(t.workspaceId, t.packageFingerprint),
+    unique("ai_story_local_generation_unit_successor_retry_unique").on(
+      t.runtimeAuthorizationId,
+      t.unitId,
+      t.successorNumber,
+      t.retryNumber,
+    ),
+    index("ai_story_local_generation_plan_order_idx").on(t.executionPlanId, t.unitOrder),
+  ],
+);
+
+/** Uploaded local media is bound to one exact immutable package; it is never an automatic QC approval. */
+export const aiStoryLocalGenerationOutputs = pgTable(
+  "ai_story_local_generation_outputs",
+  {
+    outputId: uuid("output_id").primaryKey(),
+    packageId: uuid("package_id").notNull().references(() => aiStoryLocalGenerationPackages.packageId, { onDelete: "restrict" }),
+    unitId: uuid("unit_id").notNull(),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    assetId: uuid("asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+    contentHash: text("content_hash").notNull(),
+    mediaType: text("media_type").notNull(),
+    durationSec: numeric("duration_sec").notNull(),
+    width: integer("width"),
+    height: integer("height"),
+    qcState: text("qc_state").notNull().default("PENDING"),
+    continuityFrameAssetId: uuid("continuity_frame_asset_id").references(() => assets.id, { onDelete: "restrict" }),
+    uploadedBy: uuid("uploaded_by").notNull(),
+    uploadedAt: timestamp("uploaded_at", { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    unique("ai_story_local_generation_output_package_unique").on(t.packageId),
+    unique("ai_story_local_generation_output_asset_unique").on(t.assetId),
+    index("ai_story_local_generation_output_unit_idx").on(t.unitId, t.uploadedAt),
+  ],
+);
+
 /** Sprint 3 Phase 2A — append-only deterministic AI QC facts (not human review). */
+/** Accepted generated media before QC. Source attempt and downstream result are separate. */
+export const aiStoryGenerationResults = pgTable("ai_story_generation_results", {
+  generationResultId: uuid("generation_result_id").primaryKey(),
+  orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+  campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+  storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+  executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+  sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+  generationUnitId: uuid("generation_unit_id").notNull(),
+  sourceKind: text("source_kind").notNull(),
+  providerAttemptId: text("provider_attempt_id").references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+  localGenerationOutputId: uuid("local_generation_output_id").references(() => aiStoryLocalGenerationOutputs.outputId, { onDelete: "restrict" }),
+  localWorkerOutputId: uuid("local_worker_output_id"),
+  assetId: uuid("asset_id").notNull(),
+  contentHash: text("content_hash").notNull(),
+  fingerprint: text("fingerprint").notNull().unique(),
+  result: jsonb("result").$type<import("@ceo-agent/shared").AiStoryGenerationResult>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+}, (t) => [
+  unique("ai_story_generation_result_provider_unique").on(t.providerAttemptId),
+  unique("ai_story_generation_result_local_unique").on(t.localGenerationOutputId),
+  unique("ai_story_generation_result_worker_unique").on(t.localWorkerOutputId),
+  index("ai_story_generation_result_plan_idx").on(t.workspaceId, t.executionPlanId),
+]);
+
+export const aiStoryGenerationResultDecisions = pgTable("ai_story_generation_result_decisions", {
+  decisionId: uuid("decision_id").primaryKey(),
+  generationResultId: uuid("generation_result_id").notNull().references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
+  postQcEvaluationId: uuid("post_qc_evaluation_id").notNull().references(() => aiStoryPostGenerationQcEvaluations.postQcEvaluationId, { onDelete: "restrict" }),
+  decision: text("decision").notNull(),
+  actorUserId: uuid("actor_user_id").notNull(),
+  fact: jsonb("fact").$type<import("@ceo-agent/shared").AiStoryGenerationResultDecision>().notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
+}, (t) => [unique("ai_story_generation_result_decision_unique").on(t.generationResultId)]);
+
+export const aiStoryGenerationResultContinuityFrames = pgTable("ai_story_generation_result_continuity_frames", {
+  generationResultId: uuid("generation_result_id").primaryKey().references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
+  orgId: uuid("org_id").references(() => organizations.id, { onDelete: "restrict" }),
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "restrict" }),
+  frameAssetId: uuid("frame_asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+  contentHash: text("content_hash").notNull(),
+  sourceContentHash: text("source_content_hash").notNull(),
+  extractionContractVersion: text("extraction_contract_version"),
+  extractedAt: timestamp("extracted_at", { withTimezone: true }).notNull(),
+});
+
+/** Operational CPU processing only; immutable identity, fenced mutable lease. */
+export const aiStoryLocalMediaJobs = pgTable("ai_story_local_media_jobs", {
+  jobId:uuid("job_id").primaryKey(),
+  workspaceId:uuid("workspace_id").notNull().references(()=>workspaces.id,{onDelete:"restrict"}),
+  executionPlanId:uuid("execution_plan_id").notNull().references(()=>aiStoryExecutionPlans.id,{onDelete:"restrict"}),
+  packageId:uuid("package_id").notNull().references(()=>aiStoryLocalGenerationPackages.packageId,{onDelete:"restrict"}),
+  assetId:uuid("asset_id").references(()=>assets.id,{onDelete:"restrict"}),
+  generationResultId:uuid("generation_result_id").references(()=>aiStoryGenerationResults.generationResultId,{onDelete:"restrict"}),
+  actorUserId:uuid("actor_user_id").notNull(),
+  kind:text("kind").notNull(),
+  state:text("state").notNull().default("PENDING"),
+  claimToken:uuid("claim_token"),
+  leaseUntil:timestamp("lease_until",{withTimezone:true}),
+  errorCode:text("error_code"),
+  createdAt:timestamp("created_at",{withTimezone:true}).notNull().defaultNow(),
+},t=>[
+  index("ai_story_local_media_pending_idx").on(t.state,t.createdAt),
+  check("ai_story_local_media_jobs_kind_check",sql`${t.kind} IN ('VALIDATE_OUTPUT','EXTRACT_FRAME')`),
+  check("ai_story_local_media_jobs_state_check",sql`${t.state} IN ('PENDING','RUNNING','SUCCEEDED','FAILED')`),
+  check("ai_story_local_media_jobs_check",sql`(${t.kind}='VALIDATE_OUTPUT' AND ${t.assetId} IS NOT NULL AND ${t.generationResultId} IS NULL)
+    OR (${t.kind}='EXTRACT_FRAME' AND ${t.generationResultId} IS NOT NULL AND ${t.assetId} IS NULL)`),
+]);
 
 export const aiStorySceneIntentValidationResults = pgTable(
   "ai_story_scene_intent_validation_results",
@@ -2631,8 +2803,23 @@ export const aiStorySceneReleaseStates = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspaces.id, { onDelete: "restrict" }),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
     sceneOrder: integer("scene_order").notNull(),
     releaseState: text("release_state").notNull(),
+    executionMode: text("execution_mode").notNull(),
+    gateKind: text("gate_kind").notNull(),
+    releaseRevision: integer("release_revision").notNull().default(0),
+    releaseAuthorityId: uuid("release_authority_id"),
+    releaseAuthorityFingerprint: text("release_authority_fingerprint"),
+    predecessorAuthorityFingerprint: text("predecessor_authority_fingerprint"),
+    gateGenerationResultId: uuid("gate_generation_result_id")
+      .references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
+    gateGenerationResultDecisionId: uuid("gate_generation_result_decision_id")
+      .references(() => aiStoryGenerationResultDecisions.decisionId, { onDelete: "restrict" }),
+    currentLocalGenerationPackageId: uuid("current_local_generation_package_id")
+      .references(() => aiStoryLocalGenerationPackages.packageId, { onDelete: "restrict" }),
     releaseStage: integer("release_stage"),
     releasedBy: uuid("released_by"),
     releasedAt: timestamp("released_at", { withTimezone: true }),
@@ -4417,7 +4604,6 @@ export const aiStorySceneProjectionCorrelations = pgTable(
       .notNull()
       .references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
     workerExecutionResultId: uuid("worker_execution_result_id")
-      .notNull()
       .references(() => aiStoryWorkerExecutionResults.workerExecutionResultId, {
         onDelete: "restrict",
       }),
@@ -4482,20 +4668,20 @@ export const aiStorySceneResults = pgTable(
         onDelete: "restrict",
       }),
     projectionCorrelationId: uuid("projection_correlation_id")
-      .notNull()
       .references(() => aiStorySceneProjectionCorrelations.projectionCorrelationId, {
         onDelete: "restrict",
       }),
-    providerExecutionId: text("provider_execution_id").notNull(),
-    providerAttemptId: text("provider_attempt_id").notNull(),
-    providerFinalizationReference: text("provider_finalization_reference").notNull(),
+    generationResultId: uuid("generation_result_id").unique().references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
+    providerExecutionId: text("provider_execution_id"),
+    providerAttemptId: text("provider_attempt_id"),
+    providerFinalizationReference: text("provider_finalization_reference"),
     sceneId: text("scene_id").notNull(),
     sceneOrder: integer("scene_order").notNull(),
     status: text("status").notNull(),
     integrityHash: text("integrity_hash").notNull(),
     contractVersion: text("contract_version").notNull(),
     result: jsonb("result")
-      .$type<import("@ceo-agent/shared").ProjectedSceneResult>()
+      .$type<import("@ceo-agent/shared").CanonicalSceneResult>()
       .notNull(),
     acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
     projectedAt: timestamp("projected_at", { withTimezone: true }).notNull(),
@@ -4583,8 +4769,9 @@ export const aiStoryPostGenerationQcEvaluations = pgTable(
     evaluationVersion: integer("evaluation_version").notNull(),
     orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
     workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
-    providerAttemptId: text("provider_attempt_id").notNull().references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
-    mediaAssetId: uuid("media_asset_id").notNull().references(() => aiStoryDurableSceneMediaAttestations.mediaAttestationId, { onDelete: "restrict" }),
+    providerAttemptId: text("provider_attempt_id").references(() => providerAttempts.attemptId, { onDelete: "restrict" }),
+    generationResultId: uuid("generation_result_id").references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
+    mediaAssetId: uuid("media_asset_id").references(() => aiStoryDurableSceneMediaAttestations.mediaAttestationId, { onDelete: "restrict" }),
     sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
     aggregateStatus: text("aggregate_status").notNull(),
     evaluationFingerprint: text("evaluation_fingerprint").notNull(),

@@ -14,10 +14,9 @@ import {
 } from "@ceo-agent/shared";
 import { useI18n } from "@/lib/i18n/provider";
 import { CampaignBriefAssistant, TargetAudienceSuggestion } from "./CreateCampaignAssistants";
-import { CreateCampaignAssetSelector } from "./CreateCampaignAssetSelector";
 
-const STEPS = ["Campaign Name", "Campaign Context", "Assets", "Campaign Brief", "Review & Create"] as const;
-type Step = 0 | 1 | 2 | 3 | 4;
+const STEPS = ["Campaign Name", "Campaign Context", "Campaign Brief", "Review & Create"] as const;
+type Step = 0 | 1 | 2 | 3;
 type Draft = {
   idempotencyKey: string;
   name: string;
@@ -80,7 +79,7 @@ export function CreateCampaignWizard({ workspaceSlug }: { workspaceSlug: string 
         if (saved) {
           const restored = JSON.parse(saved) as { draft?: Draft; step?: number };
           if (restored.draft?.idempotencyKey) setDraft(restored.draft);
-          if (Number.isInteger(restored.step) && restored.step! >= 0 && restored.step! <= 4) setStep(restored.step as Step);
+          if (Number.isInteger(restored.step) && restored.step! >= 0 && restored.step! <= 3) setStep(restored.step as Step);
         }
         const meResponse = await fetch("/api/me");
         const me = await meResponse.json();
@@ -133,7 +132,6 @@ export function CreateCampaignWizard({ workspaceSlug }: { workspaceSlug: string 
       if (draft.publishingPlatforms.length === 0) return "Select at least one Publishing Platform";
       if (!draft.audienceSummary.trim()) return "Target Audience is required";
     }
-    if (index === 2 && draft.assetReferences.length + draft.assetStoryReferences.length === 0) return "Select at least one Asset or Asset Story";
     return null;
   }
 
@@ -141,12 +139,12 @@ export function CreateCampaignWizard({ workspaceSlug }: { workspaceSlug: string 
     const validation = validateStep(step);
     if (validation) return setError(validation);
     history.pushState({ createCampaignStep: step + 1 }, "");
-    setStep(Math.min(4, step + 1) as Step);
+    setStep(Math.min(3, step + 1) as Step);
   }
 
   async function create() {
     if (!workspaceId || submitting) return;
-    for (const index of [0, 1, 2] as Step[]) {
+    for (const index of [0, 1] as Step[]) {
       const validation = validateStep(index);
       if (validation) { setStep(index); setError(validation); return; }
     }
@@ -161,15 +159,15 @@ export function CreateCampaignWizard({ workspaceSlug }: { workspaceSlug: string 
     if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "Campaign context is invalid");
     setSubmitting(true); setError("");
     try {
-      const response = await fetch("/api/campaigns/create", {
+      const response = await fetch("/api/campaigns/container", {
         method: "POST",
         headers: { "Content-Type": "application/json", "Idempotency-Key": draft.idempotencyKey },
         body: JSON.stringify(parsed.data),
       });
       const body = await response.json();
-      if (!response.ok || !body.campaignId || !body.taskId) throw new Error(body.error ?? "Campaign creation failed");
+      if (!response.ok || !body.campaignId) throw new Error(body.error ?? "Campaign creation failed");
       sessionStorage.removeItem(storageKey);
-      router.push(`/w/${workspaceSlug}/campaigns/${body.campaignId}/task?taskId=${body.taskId}`);
+      router.push(`/w/${workspaceSlug}/campaigns/${body.campaignId}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Campaign creation failed. You can safely retry.");
     } finally { setSubmitting(false); }
@@ -184,19 +182,18 @@ export function CreateCampaignWizard({ workspaceSlug }: { workspaceSlug: string 
         <h1 ref={headingRef} tabIndex={-1} className="mt-1 text-2xl font-bold text-navy outline-none">{STEPS[step]}</h1>
         <p className="mt-2 text-sm text-ink-secondary">Step {step + 1} of {STEPS.length}</p>
       </header>
-      <ol aria-label="Campaign creation progress" className="mb-6 grid grid-cols-5 gap-1">
+      <ol aria-label="Campaign creation progress" className="mb-6 grid grid-cols-4 gap-1">
         {STEPS.map((label, index) => <li key={label} aria-current={index === step ? "step" : undefined} className={`rounded-lg px-2 py-2 text-center text-[10px] font-semibold sm:text-xs ${index === step ? "bg-navy text-white" : index < step ? "bg-emerald-50 text-emerald-800" : "bg-surface-muted text-ink-secondary"}`}><span className="sm:hidden">{index + 1}</span><span className="hidden sm:inline">{label}</span></li>)}
       </ol>
       <section className="brand-card p-5 sm:p-7">
         {step === 0 ? <label className="block text-sm font-semibold text-navy">Campaign Name<input autoFocus value={draft.name} onChange={(event) => set("name", event.target.value)} maxLength={200} className="mt-2 w-full rounded-xl border border-border px-4 py-3 font-normal" placeholder="e.g. Summer Product Launch" /></label> : null}
         {step === 1 ? <CampaignContextStep draft={draft} set={set} workspaceId={workspaceId} language={language} objectiveText={objectiveText} /> : null}
-        {step === 2 && workspaceId ? <CreateCampaignAssetSelector workspaceId={workspaceId} selectedAssetIds={draft.assetReferences} selectedStoryIds={draft.assetStoryReferences} onAssetsChange={(value) => set("assetReferences", value)} onStoriesChange={(value) => set("assetStoryReferences", value)} disabled={submitting} /> : null}
-        {step === 3 ? <div><label className="block text-sm font-semibold text-navy">Campaign Brief <span className="font-normal text-ink-secondary">(optional)</span><textarea value={draft.campaignBrief} onChange={(event) => set("campaignBrief", event.target.value)} rows={8} maxLength={10000} className="mt-2 w-full rounded-xl border border-border px-4 py-3 font-normal" placeholder="Describe the marketing intent and content direction." /></label>{workspaceId ? <CampaignBriefAssistant workspaceId={workspaceId} value={draft.campaignBrief} context={{ campaignName: draft.name, objective: objectiveText, platforms: draft.publishingPlatforms, targetAudience: draft.audienceSummary, language }} onAccept={(value) => set("campaignBrief", value)} /> : null}</div> : null}
-        {step === 4 ? <dl className="space-y-4"><Review label="Campaign Name" value={draft.name} /><Review label="Objective" value={objectiveText} /><Review label="Publishing Platforms" value={draft.publishingPlatforms.map(platformLabel).join(", ")} /><Review label="Target Audience" value={draft.audienceSummary} /><Review label="Assets" value={`${draft.assetReferences.length} direct assets; ${draft.assetStoryReferences.length} Asset Stories`} /><Review label="Campaign Brief" value={draft.campaignBrief || "Not provided"} /><Review label="Inferred Language" value={`${language.toUpperCase()} (read-only)`} /></dl> : null}
+        {step === 2 ? <div><label className="block text-sm font-semibold text-navy">Campaign Brief <span className="font-normal text-ink-secondary">(optional)</span><textarea value={draft.campaignBrief} onChange={(event) => set("campaignBrief", event.target.value)} rows={8} maxLength={10000} className="mt-2 w-full rounded-xl border border-border px-4 py-3 font-normal" placeholder="Describe the marketing intent and content direction." /></label>{workspaceId ? <CampaignBriefAssistant workspaceId={workspaceId} value={draft.campaignBrief} context={{ campaignName: draft.name, objective: objectiveText, platforms: draft.publishingPlatforms, targetAudience: draft.audienceSummary, language }} onAccept={(value) => set("campaignBrief", value)} /> : null}</div> : null}
+        {step === 3 ? <dl className="space-y-4"><Review label="Campaign Name" value={draft.name} /><Review label="Objective" value={objectiveText} /><Review label="Publishing Platforms" value={draft.publishingPlatforms.map(platformLabel).join(", ")} /><Review label="Target Audience" value={draft.audienceSummary} /><Review label="Shared assets" value="Optional. Choose assets inside a module." /><Review label="Campaign Brief" value={draft.campaignBrief || "Not provided"} /><Review label="Inferred Language" value={`${language.toUpperCase()} (read-only)`} /></dl> : null}
         {error ? <p role="alert" aria-live="assertive" className="mt-5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p> : null}
         <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-between">
           <button type="button" disabled={step === 0 || submitting} onClick={() => { setError(""); setStep(Math.max(0, step - 1) as Step); }} className="rounded-xl border border-border px-5 py-3 text-sm font-semibold disabled:opacity-40">Back</button>
-          {step < 4 ? <button type="button" onClick={next} className="rounded-xl bg-navy px-6 py-3 text-sm font-semibold text-white">Continue</button> : <button type="button" disabled={submitting} onClick={() => void create()} className="rounded-xl bg-navy px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">{submitting ? "Creating and starting workflow…" : "Create Campaign"}</button>}
+          {step < 3 ? <button type="button" onClick={next} className="rounded-xl bg-navy px-6 py-3 text-sm font-semibold text-white">Continue</button> : <button type="button" disabled={submitting} onClick={() => void create()} className="rounded-xl bg-navy px-6 py-3 text-sm font-semibold text-white disabled:opacity-50">{submitting ? "Creating Campaign…" : "Create Campaign"}</button>}
         </div>
       </section>
     </main>

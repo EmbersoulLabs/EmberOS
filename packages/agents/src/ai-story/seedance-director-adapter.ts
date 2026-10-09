@@ -132,7 +132,7 @@ function assertExactBindings(pkg: AiStorySceneExecutionPackage): void {
   const resolvedProducts = new Map(pkg.productAuthorities.map((authority) => [authority.productAuthorityId, authority]));
   if (sceneProducts.size !== resolvedProducts.size || [...sceneProducts].some(([id, binding]) => {
     const authority = resolvedProducts.get(id);
-    return !authority || authority.sourceAssetId !== binding.sourceAssetId || authority.sourceAssetContentHash !== binding.sourceAssetContentHash;
+    return !authority || authority.sourceAssetId !== binding.sourceAssetId || authority.sourceAssetContentHash !== binding.sourceAssetContentHash || (authority.confirmedVariant ?? null) !== (binding.confirmedVariant ?? null);
   })) {
     throw new SeedanceDirectorAdapterError("PRODUCT_BINDING_MISMATCH", "Resolved Product authority does not exactly match the canonical Scene", "PRODUCT_AUTHORITY");
   }

@@ -36,6 +36,7 @@ import {
   type ProviderRoutingPolicy,
   type ProviderRoutingRequest,
 } from "../provider-router";
+import { materializeGenerateReviewPreGenerationQc } from "./generate-review-pre-generation-qc";
 import {
   MemoryPayloadResolver,
   createProductionProviderRegistry,
@@ -143,6 +144,8 @@ export async function createGenerateReview(input: {
   storyId: string;
   workspaceId: string;
   orgId: string;
+  /** Authenticated operator. Persisted as Pre-QC evaluatedBy. Never fabricated. */
+  actorUserId: string;
 }): Promise<
   AiStoryGenerateReviewResult & {
     animationPackageId: string;
@@ -273,6 +276,30 @@ export async function createGenerateReview(input: {
     validationResults: qcResults,
   });
 
+  const preGenerationQc = persistence.persistenceStatus === "skipped_qc_failed"
+    ? {
+        PRE_QC_SCENE_COUNT: 0,
+        PRE_QC_BLOCKED_COUNT: 0,
+        PRE_QC_WARNING_COUNT: 0,
+        scenes: [],
+      }
+    : await materializeGenerateReviewPreGenerationQc({
+        db: input.db,
+        scope: {
+          orgId: input.orgId,
+          workspaceId: input.workspaceId,
+          campaignId: input.campaignId,
+          storyId: input.storyId,
+          storyVersionId: pkgRow.storyVersionId,
+          actorUserId: input.actorUserId,
+        },
+        scenes: persistence.sceneExecutionIds.map((sceneExecutionId) => ({
+          sceneExecutionId,
+          generationAuthority:
+            compiled.instructionsBySceneExecutionId[sceneExecutionId]?.generationAuthority,
+        })),
+      });
+
   const result = AiStoryGenerateReviewResultSchema.parse({
     estimate: {
       ...compiled.estimate,
@@ -280,6 +307,9 @@ export async function createGenerateReview(input: {
         ...compiled.estimate.risks,
         ...(overallQcStatus === "failed"
           ? ["AI QC reported blocking findings — execution cannot proceed."]
+          : []),
+        ...(preGenerationQc.PRE_QC_BLOCKED_COUNT > 0
+          ? ["Pre-Generation QC blocked one or more scenes. Execution remains unavailable."]
           : []),
         ...(resolvedAssets.length < referencedAssetIds.length
           ? ["Some Campaign Asset references could not be resolved in this workspace."]
@@ -297,6 +327,7 @@ export async function createGenerateReview(input: {
     sceneExecutionIds: [...persistence.sceneExecutionIds],
     compilationHash: persistence.compilationHash,
     validationSummary: persistence.validationSummary,
+    preGenerationQc,
     phase: "phase_1_qc_only",
   });
 

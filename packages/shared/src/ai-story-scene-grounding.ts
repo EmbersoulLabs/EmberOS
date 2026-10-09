@@ -95,6 +95,8 @@ export class AiStorySceneGroundingError extends Error {
       | "SCENE_GROUNDING_SCOPE_MISMATCH"
       | "SCENE_GROUNDING_STALE_STORY_VERSION"
       | "SCENE_GROUNDING_BINDING_INVALID"
+      | "SCENE_GROUNDING_SUBJECT_BINDING_REQUIRED"
+      | "SCENE_GROUNDING_SUBJECT_BINDING_AMBIGUOUS"
       | "SCENE_GROUNDING_UNSUPPORTED_CLAIM",
     message: string,
   ) {
@@ -234,7 +236,7 @@ export function bindSceneGroundingLineage(input: {
   ) {
     throw new AiStorySceneGroundingError(
       "SCENE_GROUNDING_AUTHORITY_REQUIRED",
-      "Scene grounding must cover every planned Scene exactly once",
+      `Scene grounding must cover every planned Scene exactly once (scenes=${input.sceneIds.length} selections=${proposals.length})`,
     );
   }
   const bindingById = new Map(context.bindings.map((binding) => [binding.bindingId, binding]));
@@ -250,6 +252,7 @@ export function bindSceneGroundingLineage(input: {
       const allowedFacts = new Set([
         ...binding.observedFacts,
         ...binding.namedItems,
+        ...binding.productCandidates.map((candidate) => candidate.name),
         ...binding.productCandidates.flatMap((candidate) => candidate.evidence),
       ].map(normalized));
       if (selection.groundedFacts.some((fact) => !allowedFacts.has(normalized(fact)))) {
@@ -270,6 +273,7 @@ export function bindSceneGroundingLineage(input: {
     for (const claim of proposal.visualClaims) {
       const sources = selectedBindings.filter((binding) =>
         binding.namedItems.some((item) => normalized(item) === normalized(claim.subject)) ||
+        binding.productCandidates.some((candidate) => normalized(candidate.name) === normalized(claim.subject)) ||
         binding.observedFacts.some((fact) => namesObservedSubject(fact, claim.subject)),
       );
       if (sources.length === 0) {

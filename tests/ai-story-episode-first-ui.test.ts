@@ -83,7 +83,8 @@ describe("AI Story Episode-first UI", () => {
     })).toBe("Generating episode moments");
     expect(AI_STORY_EPISODE_PROGRESS_STEPS).toContain("Finalizing audio and video");
     const runtime = read("apps/web/src/components/ai-story/StoryRuntimePanel.tsx");
-    expect(runtime).toContain("Generating episode moments");
+    expect(runtime).toContain("Animation Package Ready");
+    expect(runtime).toContain("Local Generation");
     expect(runtime).not.toContain(">Scene generation<");
   });
 

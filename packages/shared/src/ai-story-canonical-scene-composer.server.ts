@@ -40,6 +40,7 @@ export class AiStoryCanonicalSceneComposerError extends Error {
 export type AiStoryCanonicalSceneProductSourceV1 = {
   assetId: string;
   contentHash: string;
+  confirmedVariant?: string | null;
 };
 
 export type ComposeAiStoryCanonicalSceneSetV1Input = {
@@ -127,6 +128,81 @@ function productRequirement(scene: AiStoryScriptScene, productId: string) {
   return "PREFERRED" as const;
 }
 
+function explicitFirstFrameAssetId(scenePlan: ScenePlanItem) {
+  const authority = scenePlan.generationAuthority;
+  if (
+    !authority ||
+    authority.referenceSource !== "SCENE_EXPLICIT" ||
+    (authority.strategy !== "FIRST_FRAME_IMAGE_TO_VIDEO" && authority.strategy !== "PRODUCT_GROUNDED_VIDEO") ||
+    authority.productVisualIdentityRequirement !== "REQUIRED"
+  ) {
+    return null;
+  }
+  return authority.firstFrameAssetId;
+}
+
+function productBinding(
+  productAuthorityId: string,
+  source: AiStoryCanonicalSceneProductSourceV1 | undefined,
+  visualIdentityRequirement: "REQUIRED" | "PREFERRED",
+) {
+  if (!source?.contentHash) {
+    fail("CANONICAL_SCENE_PRODUCT_AUTHORITY_UNRESOLVED", `Product ${productAuthorityId} does not resolve to a current source Asset`);
+  }
+  return {
+    productAuthorityId,
+    sourceAssetId: source.assetId,
+    sourceAssetContentHash: source.contentHash,
+    ...(source.confirmedVariant ? { confirmedVariant: source.confirmedVariant } : {}),
+    visualIdentityRequirement,
+  };
+}
+
+/**
+ * Scene-explicit image conditioning owns visual material.
+ * Script product refs stay narrative participation and are not a first-frame source.
+ */
+function sceneProductBindings(
+  scriptScene: AiStoryScriptScene,
+  scenePlan: ScenePlanItem,
+  sourceMap: ReadonlyMap<string, AiStoryCanonicalSceneProductSourceV1>,
+) {
+  const narrativeIds = [...new Set(scriptScene.productAuthorityRefs)].sort();
+  const firstFrameAssetId = explicitFirstFrameAssetId(scenePlan);
+  if (!firstFrameAssetId) {
+    return narrativeIds.map((productAuthorityId) => productBinding(
+      productAuthorityId,
+      sourceMap.get(productAuthorityId),
+      productRequirement(scriptScene, productAuthorityId),
+    ));
+  }
+  const grounded = scenePlan.groundingLineage?.evidence.some((evidence) =>
+    evidence.role === "PRODUCT_AUTHORITY" && evidence.assetId === firstFrameAssetId,
+  ) === true;
+  if (!grounded) {
+    fail(
+      "CANONICAL_SCENE_FIRST_FRAME_GROUNDING_AUTHORITY_INVALID",
+      `Scene ${scenePlan.id} first-frame Asset is not proven by PRODUCT_AUTHORITY grounding`,
+    );
+  }
+  const visual = productBinding(firstFrameAssetId, sourceMap.get(firstFrameAssetId), "REQUIRED");
+  const conflictingIds = narrativeIds.filter((productAuthorityId) => productAuthorityId !== firstFrameAssetId);
+  if (conflictingIds.length > 0) {
+    assertExplicitAiStorySceneGenerationMode({
+      generationAuthority: scenePlan.generationAuthority,
+      productBindings: [
+        visual,
+        ...conflictingIds.map((productAuthorityId) => productBinding(
+          productAuthorityId,
+          sourceMap.get(productAuthorityId),
+          productRequirement(scriptScene, productAuthorityId),
+        )),
+      ],
+    });
+  }
+  return [visual];
+}
+
 function assertTopology(input: ComposeAiStoryCanonicalSceneSetV1Input) {
   if (!input.frozenScript.scenes.length || input.frozenScript.scenes.length !== input.scenePlan.length) {
     fail("CANONICAL_SCENE_TOPOLOGY_CHANGE_UNSUPPORTED_V1", "Script Scene and Scene Plan counts must match exactly");
@@ -160,16 +236,7 @@ function candidateInput(
     }
   }
   const sourceMap = new Map(input.productSources.map((source) => [source.assetId, source] as const));
-  const products = [...scriptScene.productAuthorityRefs].sort().map((productAuthorityId) => {
-    const source = sourceMap.get(productAuthorityId);
-    if (!source) fail("CANONICAL_SCENE_PRODUCT_AUTHORITY_UNRESOLVED", `Product ${productAuthorityId} does not resolve to a current source Asset`);
-    return {
-      productAuthorityId,
-      sourceAssetId: source.assetId,
-      sourceAssetContentHash: source.contentHash,
-      visualIdentityRequirement: productRequirement(scriptScene, productAuthorityId),
-    };
-  });
+  const products = sceneProductBindings(scriptScene, scenePlan, sourceMap);
   assertExplicitAiStorySceneGenerationMode({
     generationAuthority: scenePlan.generationAuthority,
     productBindings: products,

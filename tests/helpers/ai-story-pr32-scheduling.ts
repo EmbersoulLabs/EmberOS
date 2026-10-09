@@ -26,6 +26,7 @@ import {
   type Phase2aIdSet,
 } from "./ai-story-phase-2a";
 import { acceptCommercialAuthorizationFixture } from "./commercial-billable-execute";
+import { assertIsolatedTestDatabase, getIntegrationDbUrl } from "./db-integration";
 
 export const PR32_USER_A = "10000000-0000-4000-8000-000000000040";
 export const PR32_USER_B = "20000000-0000-4000-8000-000000000040";
@@ -209,6 +210,45 @@ export async function cleanupPr32Tenant(
   await sql`DELETE FROM ai_story_scene_release_states WHERE workspace_id = ${ids.workspaceId}`;
   await sql`DELETE FROM ai_story_durable_scene_media_attestations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_scene_results WHERE org_id = ${ids.orgId}`;
+  // New remote projections retain their Attempt FK. Only isolated synthetic
+  // fixture teardown may remove immutable results, before deleting that parent.
+  // Trigger changes are transactional, so failure restores the original state.
+  if (await sql`select to_regclass('public.ai_story_generation_results') as name`.then((rows) => Boolean(rows[0]?.name))) {
+    const testUrl = getIntegrationDbUrl();
+    if (!testUrl) throw new Error("ISOLATED_GENERATION_RESULT_TEARDOWN_REQUIRED");
+    assertIsolatedTestDatabase(testUrl);
+    await sql.begin(async (tx) => {
+      const immutableTriggers = [
+        ["ai_story_local_media_jobs", "local_media_job_identity_immutable"],
+        ["ai_story_generation_result_continuity_frames", "generation_result_frame_immutable"],
+        ["ai_story_generation_result_decisions", "generation_result_decision_immutable"],
+        ["ai_story_generation_results", "generation_result_immutable"],
+      ] as const;
+      const enabledTriggers: Array<readonly [string, string]> = [];
+      for (const [table, trigger] of immutableTriggers) {
+        const [state] = await tx`SELECT EXISTS (SELECT 1 FROM pg_trigger
+          WHERE tgrelid = to_regclass(${`public.${table}`})
+            AND tgname = ${trigger} AND tgenabled = 'O') AS enabled`;
+        // Drizzle-only test bootstrap has tables but not migration triggers.
+        if (state?.enabled) {
+          await tx.unsafe(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
+          enabledTriggers.push([table, trigger]);
+        }
+      }
+      await tx`DELETE FROM ai_story_local_media_jobs WHERE workspace_id = ${ids.workspaceId}`;
+      await tx`DELETE FROM ai_story_generation_result_continuity_frames
+        WHERE generation_result_id IN (SELECT generation_result_id FROM ai_story_generation_results
+          WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId})`;
+      await tx`DELETE FROM ai_story_generation_result_decisions
+        WHERE generation_result_id IN (SELECT generation_result_id FROM ai_story_generation_results
+          WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId})`;
+      await tx`DELETE FROM ai_story_generation_results
+        WHERE org_id = ${ids.orgId} AND workspace_id = ${ids.workspaceId}`;
+      for (const [table, trigger] of enabledTriggers) {
+        await tx.unsafe(`ALTER TABLE ${table} ENABLE TRIGGER ${trigger}`);
+      }
+    });
+  }
   await sql`DELETE FROM ai_story_scene_projection_correlations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_worker_attempt_observations WHERE org_id = ${ids.orgId}`;
   await sql`DELETE FROM ai_story_worker_execution_results WHERE org_id = ${ids.orgId}`;
@@ -400,6 +440,7 @@ export async function prepareAuthorizedSchedulingPlan(input: {
     await new AiStorySceneReleaseRepository().initialize({
       executionPlanId,
       runtimeAuthorizationId: acceptedAuthorization.fact.runtimeAuthorizationId,
+      orgId: ids.orgId,
       workspaceId: ids.workspaceId,
       orderedSceneExecutionIds: sceneExecutionIds,
       actorUserId: userId,

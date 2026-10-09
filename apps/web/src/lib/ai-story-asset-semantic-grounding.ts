@@ -15,6 +15,7 @@ import {
   AiStoryAssetAnalysisSnapshotSchema,
   AiStoryAssetRegistryEntrySchema,
   compileStoryAssetGroundingContext,
+  explicitRoleHintForAiStoryUsage,
   matchAnalyzedAssetsToStory,
   visualSemanticFactsFromSnapshot,
   type AiStoryStoryAssetGroundingContext,
@@ -76,6 +77,43 @@ async function loadAssetBytes(storagePath: string): Promise<Uint8Array> {
   return new Uint8Array(await data.arrayBuffer());
 }
 
+/**
+ * Canonical on-demand semantic analysis boundary used by intake and planning.
+ * The repository cache is keyed by Workspace, content hash, analyzer version,
+ * and schema version, so repeated UI reads never repeat a paid analysis call.
+ */
+export async function analyzeVisualSemanticAsset(input: {
+  readonly db: Db;
+  readonly orgId: string;
+  readonly workspaceId: string;
+  readonly assetId: string;
+}) {
+  const [asset] = await input.db
+    .select()
+    .from(schema.assets)
+    .where(and(
+      eq(schema.assets.id, input.assetId),
+      eq(schema.assets.orgId, input.orgId),
+      eq(schema.assets.workspaceId, input.workspaceId),
+      isNull(schema.assets.deletedAt)
+    ))
+    .limit(1);
+  if (!asset || asset.status !== "ready" || asset.type !== "image") {
+    throw new AiStorySemanticGroundingRuntimeError(
+      "ASSET_SEMANTIC_SNAPSHOT_REQUIRED",
+      "Product variant analysis requires a ready image in the authorized Workspace"
+    );
+  }
+  const service = new AssetAnalysisService(
+    new AiStoryAssetAwareExecutionPlannerRepository(input.db),
+    new VisualSemanticAssetAnalyzer()
+  );
+  return service.analyzeFinalizedAsset({
+    asset,
+    loadRawBytes: () => loadAssetBytes(asset.storagePath),
+  });
+}
+
 export type PreparedStoryAssetGrounding = {
   readonly context: AiStoryStoryAssetGroundingContext | null;
   readonly analyzedAssets: readonly {
@@ -115,10 +153,6 @@ export async function prepareStoryAssetGrounding(input: {
     );
   }
   const linkByAssetId = new Map(input.assetLinks.map((link) => [link.assetId, link]));
-  const service = new AssetAnalysisService(
-    new AiStoryAssetAwareExecutionPlannerRepository(input.db),
-    new VisualSemanticAssetAnalyzer()
-  );
   let semanticAnalyzerCalls = 0;
   const analyzedAssets = [] as Array<PreparedStoryAssetGrounding["analyzedAssets"][number]>;
   for (const assetId of selectedIds) {
@@ -133,9 +167,11 @@ export async function prepareStoryAssetGrounding(input: {
     // authorities continue through their certified analysis/runtime paths.
     if (asset.type !== "image") continue;
     try {
-      const outcome = await service.analyzeFinalizedAsset({
-        asset,
-        loadRawBytes: () => loadAssetBytes(asset.storagePath),
+      const outcome = await analyzeVisualSemanticAsset({
+        db: input.db,
+        orgId: input.orgId,
+        workspaceId: input.workspaceId,
+        assetId: asset.id,
       });
       if (outcome.analyzerInvoked) semanticAnalyzerCalls += 1;
       analyzedAssets.push({
@@ -159,8 +195,7 @@ export async function prepareStoryAssetGrounding(input: {
     assets: analyzedAssets.map((entry) => ({
       registry: entry.registry,
       snapshot: entry.snapshot,
-      explicitRoleHint:
-        entry.usageType === "product_source" ? "PRODUCT_SOURCE" : "REFERENCE",
+      explicitRoleHint: explicitRoleHintForAiStoryUsage(entry.usageType),
     })),
   });
   return { context, analyzedAssets, semanticAnalyzerCalls };
@@ -176,6 +211,7 @@ export async function persistStoryAssetMatching(input: {
   readonly storyVersionNumber: number;
   readonly structuredStory: unknown;
   readonly grounding: PreparedStoryAssetGrounding;
+  readonly nativeDialogueDesired?: boolean;
 }) {
   if (input.grounding.analyzedAssets.length === 0) return null;
   const createdAt = new Date().toISOString();
@@ -203,6 +239,7 @@ export async function persistStoryAssetMatching(input: {
     workspaceId: input.workspaceId,
     storyId: input.storyId,
     storyVersionId: input.storyVersionId,
+    nativeDialogueDesired: input.nativeDialogueDesired === true,
     snapshots: input.grounding.analyzedAssets.map((entry) => ({
       assetId: entry.registry.assetId,
       snapshotId: entry.snapshot.snapshotId,
@@ -235,7 +272,7 @@ export async function persistStoryAssetMatching(input: {
       productIdentityRequired: semanticDecisions.some(
         (decision) => decision.intent === "PRODUCT_IDENTITY"
       ),
-      nativeDialogueDesired: true,
+      nativeDialogueDesired: input.nativeDialogueDesired === true,
     },
     assets: input.grounding.analyzedAssets,
     semanticDecisions,

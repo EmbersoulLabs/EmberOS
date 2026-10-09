@@ -16,7 +16,12 @@ import {
   type StoryBeat,
 } from "@ceo-agent/shared";
 import { composeAiStoryCanonicalCommercialOutlineV1, composeAiStoryCanonicalOutlineV1 } from "@ceo-agent/shared/server";
+import { selectStoryBoundCharacterAuthorities } from "@ceo-agent/agents";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
+import {
+  getLatestAnimationPackageForStory,
+  readPlanningDraftFromPackage,
+} from "@/lib/ai-story-planning-service";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -111,10 +116,28 @@ const defaultDependencies: CanonicalOutlineProducerDependencies = {
       campaignId: upstream.campaignId,
       actorUserId,
     });
-    return values.map((value) => ({
+    const latest = await getLatestAnimationPackageForStory(db, {
+      campaignId: upstream.campaignId,
+      storyId: upstream.storyId,
+      workspaceId: upstream.workspaceId,
+    });
+    const draft = latest?.storyVersionId === upstream.storyVersionId
+      ? readPlanningDraftFromPackage(latest)
+      : null;
+    const selected = selectStoryBoundCharacterAuthorities({
+      characterAuthorities: values.map((value) => ({
+        characterId: value.characterId,
+        characterVersionId: value.characterVersionId,
+        characterFingerprint: value.fingerprint,
+        name: value.name,
+        canonicalFacts: value.canonicalFacts,
+      })),
+      creativeContext: draft?.creativeContext,
+    });
+    return selected.map((value) => ({
       characterId: value.characterId,
       characterVersionId: value.characterVersionId,
-      characterFingerprint: value.fingerprint,
+      characterFingerprint: value.characterFingerprint,
     }));
   },
   history: (db, scope) => new AiStoryOutlineAuthorityService(db).history(scope),

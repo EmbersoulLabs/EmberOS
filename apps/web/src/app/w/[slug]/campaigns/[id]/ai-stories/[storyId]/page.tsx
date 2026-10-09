@@ -10,6 +10,7 @@ import { CharacterPanel } from "@/components/ai-story/CharacterPanel";
 import { CharacterIdentityReviewPanel } from "@/components/ai-story/CharacterIdentityReviewPanel";
 import { SupportingCastPanel } from "@/components/ai-story/SupportingCastPanel";
 import { ExecutionPlanReviewPanel } from "@/components/ai-story-review/ExecutionPlanReviewPanel";
+import { VisualStyleAuthorityPreview } from "@/components/ai-story-review/VisualStyleAuthorityPreview";
 import { executionPlanStorageKey } from "@/lib/ai-story-review-assembly-ui";
 import { fetchCurrentExecutionPlan } from "@/lib/ai-story-execution-plan-discovery-client";
 import {
@@ -85,6 +86,10 @@ export default function AiStoryReviewPage() {
   const [polishPreview, setPolishPreview] = useState<AiStoryStructuredDraft | null>(null);
   const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | string | null>(null);
   const [storyVersionId, setStoryVersionId] = useState<string | null>(null);
+  const [episodeIntentPresent, setEpisodeIntentPresent] = useState(false);
+  const [nativeDialogueRequested, setNativeDialogueRequested] = useState(false);
+  const [visualTextLanguages, setVisualTextLanguages] = useState<string[]>([]);
+  const [storyVersionNumber, setStoryVersionNumber] = useState<number | null>(null);
   const [animationPackageRecordId, setAnimationPackageRecordId] = useState<string | null>(null);
   const [initialCharacters, setInitialCharacters] = useState<AiStoryCharacterAuthorityVersion[] | undefined>();
   const [initialSupportingCharacters, setInitialSupportingCharacters] = useState<AiStorySupportingCharacterVersion[] | undefined>();
@@ -119,6 +124,17 @@ export default function AiStoryReviewPage() {
       setInitialCharacters(Array.isArray(data.characters) ? data.characters : undefined);
       setInitialSupportingCharacters(Array.isArray(data.supportingCharacters) ? data.supportingCharacters : undefined);
       setStoryVersionId(typeof data.currentVersion?.id === "string" ? data.currentVersion.id : null);
+      const episodeIntent = data.story?.episodeIntent;
+      setEpisodeIntentPresent(Boolean(episodeIntent && typeof episodeIntent === "object"));
+      setNativeDialogueRequested(episodeIntent?.nativeCharacterDialogue === true);
+      setVisualTextLanguages(Array.isArray(episodeIntent?.visualTextLanguages) ? episodeIntent.visualTextLanguages : []);
+      setStoryVersionNumber(
+        typeof data.currentVersion?.versionNumber === "number" &&
+        Number.isInteger(data.currentVersion.versionNumber) &&
+        data.currentVersion.versionNumber > 0
+          ? data.currentVersion.versionNumber
+          : null
+      );
       const content = data.currentVersion?.structuredContent as AiStoryStructuredDraft | undefined;
       if (content) {
         const normalized = normalizeDraft(content);
@@ -227,6 +243,35 @@ export default function AiStoryReviewPage() {
     finally { setBusy(false); }
   }
 
+  async function waitForDurableStage(stage: StoryPlanningStage) {
+    const started = Date.now();
+    while (Date.now() - started < 8 * 60 * 1000) {
+      const planningRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`);
+      if (planningRes.ok) {
+        const planningData = await planningRes.json();
+        const stages = (planningData.planningDraft?.completedStages ?? []) as StoryPlanningStage[];
+        const packageReady = stage === "animation_package" && Boolean(planningData.completePackage);
+        if (stages.includes(stage) || packageReady) {
+          setCreativeContext((planningData.creativeContext?.payload as CreativeContext | undefined) ?? null);
+          setPlanningDraft((planningData.planningDraft as StoryPlanningDraft | undefined) ?? null);
+          if (packageReady) {
+            setAnimationPackage(planningData.completePackage as AnimationPackagePayload);
+          }
+          return;
+        }
+      }
+      const storyRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}`);
+      if (storyRes.ok) {
+        const storyData = await storyRes.json();
+        if (String(storyData.story?.status) === "failed") {
+          throw new Error("Planning stage failed before a durable result was saved");
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    throw new Error("Planning is still running. Refresh to read the durable result.");
+  }
+
   async function generatePlanning() {
     setBusy(true); setError("");
     try {
@@ -236,7 +281,11 @@ export default function AiStoryReviewPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Animation preparation failed");
-      setStatus(data.status ?? "planning_review"); await load();
+      setStatus(data.status ?? "planning");
+      if (data.execution === "queued" && data.stage) {
+        await waitForDurableStage(data.stage as StoryPlanningStage);
+      }
+      await load();
     } catch (err) { setError(err instanceof Error ? err.message : "Animation preparation failed"); }
     finally { setBusy(false); }
   }
@@ -250,7 +299,9 @@ export default function AiStoryReviewPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `Stage ${stage} failed`);
-      setStatus(data.status ?? status); await load();
+      setStatus(data.status ?? status);
+      if (data.execution === "queued") await waitForDurableStage(stage);
+      await load();
     } catch (err) { setError(err instanceof Error ? err.message : `Stage ${stage} failed`); }
     finally { setBusy(false); setBusyStage(null); }
   }
@@ -293,6 +344,14 @@ export default function AiStoryReviewPage() {
         {warnings.length > 0 ? <ul className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul> : null}
         {error ? <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{error}</p> : null}
 
+        {storyVersionId && storyVersionNumber !== null ? (
+          <VisualStyleAuthorityPreview
+            storyId={storyId}
+            storyVersionId={storyVersionId}
+            storyVersionNumber={storyVersionNumber}
+          />
+        ) : null}
+
         <section className="space-y-4 rounded-2xl border border-border bg-white p-5" aria-labelledby="story-review-heading">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 id="story-review-heading" className="text-lg font-bold text-navy">Review Episode</h2><p className="mt-1 text-sm text-ink-secondary">Review the Episode the audience will watch. EmberOS keeps Scenes internal.</p></div>{!readOnly ? <span className="text-xs text-ink-secondary" role="status" data-testid="story-save-state">{saveState === "SAVING" ? "Saving…" : saveState === "ERROR" ? "Save failed" : saveState === "DIRTY" ? "Unsaved changes" : "Saved"}</span> : null}</div>
           <div className="grid gap-4">
@@ -311,7 +370,8 @@ export default function AiStoryReviewPage() {
         {isPlanningStatus(status) && !advancedAuthorized ? <section className="rounded-2xl border border-border bg-white p-5" data-testid="internal-planning-hidden"><h2 className="text-lg font-bold text-navy">Animation preparation</h2><p className="mt-1 text-sm text-ink-secondary">EmberOS is handling directing and production planning. An authorized operator will continue when preparation is ready.</p></section> : null}
 
         {advancedAuthorized && isPlanningStatus(status) ? <details className="rounded-2xl border border-border bg-white p-5" data-testid="advanced-planning-diagnostics"><summary className="cursor-pointer text-sm font-semibold text-navy">Advanced animation preparation</summary><div className="mt-4 space-y-4"><p className="text-sm text-ink-secondary">Authorized operator controls for Plan QC and preparation. These internal planning artifacts are not part of the normal-user workflow.</p>{status !== "planning_review" && status !== "ready_for_execution" ? <button type="button" disabled={busy} onClick={() => void generatePlanning()} className="brand-btn-primary">{busy && !busyStage ? "Preparing…" : "Prepare Animation"}</button> : null}<div className="grid gap-2">{STORY_PLANNING_STAGE_ORDER.map((stage) => { const done=completedStages.has(stage)||(stage==="animation_package"&&Boolean(animationPackage)); const enabled=stageEnabled(stage); return <div key={stage} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 last:border-0"><div><p className="text-sm font-medium text-navy">{STAGE_LABELS[stage]}</p><p className="text-xs text-ink-secondary">{done?"Complete":enabled?"Ready":"Waiting on prior stage"}</p></div><button type="button" disabled={busy||!enabled||status==="ready_for_execution"} onClick={() => void runStage(stage)} className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50">{busyStage===stage?"Running…":done?`Regenerate ${STAGE_LABELS[stage].replace(/^Generate |^Assemble /,"")}`:STAGE_LABELS[stage]}</button></div>;})}</div><div className="flex flex-wrap gap-3"><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("characters")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Characters</button><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("dialogue")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Dialogue</button><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("narrative")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Narrative</button></div>{status === "planning_review" ? <PlanningApprovalControl campaignId={campaignId} storyId={storyId} storyVersionId={storyVersionId} animationPackageId={animationPackageRecordId} disabled={busy} onApproved={async (nextStatus) => { setStatus(nextStatus); await load(); }} onError={setError} /> : null}{creativeContext ? <PackageSection title="Creative Context" value={creativeContext} /> : null}{planningDraft ? <PackageSection title="Planning Draft Progress" value={{completedStages:planningDraft.completedStages,beats:planningDraft.storyBeats?.length??0,scenes:planningDraft.scenePlan?.length??0,shots:planningDraft.shotPlan?.length??0}} /> : null}{animationPackage ? <><PackageSection title="Director Thinking" value={animationPackage.directorThinking}/><PackageSection title="Beats" value={animationPackage.storyBeats}/><PackageSection title="Scenes" value={animationPackage.scenePlan}/><PackageSection title="Shots" value={animationPackage.shotPlan}/></> : null}</div></details> : null}
-        {executionActive ? <ExecutionPanel campaignId={campaignId} storyId={storyId} status={status} busy={busy} setBusy={setBusy} setError={setError} onDone={load} workspaceRole={workspaceRole} storyTitle={draft.title} storyVersionId={storyVersionId} animationPackageId={animationPackageRecordId} advancedAuthorized={advancedAuthorized} /> : null}
+        {advancedAuthorized && episodeIntentPresent ? <details className="rounded-2xl border border-border bg-white p-5" data-testid="commercial-episode-repair-diagnostics"><summary className="cursor-pointer text-sm font-semibold text-navy">Episode intent diagnostics</summary><div className="mt-3 space-y-1 text-sm text-ink-secondary"><p>Episode intent: present</p><p>Native character dialogue: {nativeDialogueRequested ? "yes" : "no"}</p><p>Visual text languages: {visualTextLanguages.join(", ") || "none"}</p></div></details> : null}
+        {executionActive ? <ExecutionPanel campaignId={campaignId} storyId={storyId} status={status} busy={busy} setBusy={setBusy} setError={setError} onDone={load} workspaceRole={workspaceRole} storyTitle={draft.title} storyVersionId={storyVersionId} animationPackageId={animationPackageRecordId} storyEstimatedDuration={draft.estimatedDuration} advancedAuthorized={advancedAuthorized} /> : null}
       </main>
     </AppShell>
   );
@@ -341,14 +401,14 @@ function PackageSection({ title, value }: { title: string; value: unknown }) {
   </div>;
 }
 
-type SafeSceneIntentHint = { sceneExecutionId: string; sceneId?: string; sceneOrder?: number; purpose?: string; plannedDurationMs?: number; shotCount?: number; referencedAssetIds?: string[] };
+type SafeSceneIntentHint = { sceneExecutionId: string; sceneId?: string; sceneOrder?: number; purpose?: string; plannedDurationMs?: number; recommendedDurationSec?: number | null; recommendedDurationResolution?: string | null; shotCount?: number; referencedAssetIds?: string[] };
 
-function ExecutionPanel({ campaignId, storyId, status, busy, setBusy, setError, onDone, workspaceRole, storyTitle, storyVersionId, animationPackageId, advancedAuthorized }: { campaignId:string; storyId:string; status:string; busy:boolean; setBusy:(value:boolean)=>void; setError:(value:string)=>void; onDone:()=>Promise<void>; workspaceRole:WorkspaceRole|string|null; storyTitle:string; storyVersionId:string|null; animationPackageId:string|null; advancedAuthorized:boolean }) {
+function ExecutionPanel({ campaignId, storyId, status, busy, setBusy, setError, onDone, workspaceRole, storyTitle, storyVersionId, animationPackageId, storyEstimatedDuration, advancedAuthorized }: { campaignId:string; storyId:string; status:string; busy:boolean; setBusy:(value:boolean)=>void; setError:(value:string)=>void; onDone:()=>Promise<void>; workspaceRole:WorkspaceRole|string|null; storyTitle:string; storyVersionId:string|null; animationPackageId:string|null; storyEstimatedDuration:string; advancedAuthorized:boolean }) {
   const [executionPlanId,setExecutionPlanId]=useState<string|null>(null);
   const [planReady,setPlanReady]=useState(false);
   const [compilationHash,setCompilationHash]=useState<string|null>(null);
   const [sceneIntentHints,setSceneIntentHints]=useState<SafeSceneIntentHint[]>([]);
   useEffect(()=>{let cancelled=false; void (async()=>{try{const data=await fetchCurrentExecutionPlan({ campaignId, storyId }); if(cancelled)return; const discoveredId=typeof data.executionPlan?.executionPlanId==="string"?data.executionPlan.executionPlanId:null; setExecutionPlanId(discoveredId); setPlanReady(Boolean(discoveredId)); try{discoveredId?sessionStorage.setItem(executionPlanStorageKey(storyId), discoveredId):sessionStorage.removeItem(executionPlanStorageKey(storyId));}catch{}}catch(err){if(!cancelled)setError(err instanceof Error?err.message:"Generation review could not be loaded");}})(); return()=>{cancelled=true;};},[campaignId,setError,storyId]);
   async function generateReview(){setBusy(true);setError("");try{const res=await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/execution/review`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({})});const data=await res.json();if(!res.ok)throw new Error(data.error??"Generation review failed");const id=typeof data.storyExecutionId==="string"?data.storyExecutionId:null;if(id){setExecutionPlanId(id);setPlanReady(true);try{sessionStorage.setItem(executionPlanStorageKey(storyId),id);}catch{}}setCompilationHash(typeof data.compilationHash==="string"?data.compilationHash:null);setSceneIntentHints(Array.isArray(data.sceneIntents)?(data.sceneIntents as SafeSceneIntentHint[]):[]);await onDone();}catch(err){setError(err instanceof Error?err.message:"Generation review failed");}finally{setBusy(false);}}
-  return <div className="space-y-4"><section className="space-y-4 rounded-2xl border border-border bg-white p-5"><div><h2 className="text-lg font-bold text-navy">Generate Episode</h2><p className="mt-1 text-sm text-ink-secondary">Review readiness, then explicitly start generation. No paid retry or later moment is started automatically.</p></div>{!planReady?<button type="button" disabled={busy||status==="executing"} onClick={()=>void generateReview()} className="brand-btn-primary" data-testid="generate-review" data-authority-action="Generate Review">Prepare generation review</button>:<p className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-900">Generation review ready</p>}</section>{executionPlanId?<StoryRuntimePanel campaignId={campaignId} storyId={storyId} executionPlanId={executionPlanId} workspaceRole={workspaceRole}/>:null}{executionPlanId&&advancedAuthorized?<details className="rounded-2xl border border-border bg-white p-5" data-testid="advanced-execution-diagnostics"><summary className="cursor-pointer text-sm font-semibold text-navy">Advanced operator review</summary><div className="mt-4"><ExecutionPlanReviewPanel campaignId={campaignId} storyId={storyId} executionPlanId={executionPlanId} storyTitle={storyTitle} storyVersionId={storyVersionId} animationPackageId={animationPackageId} compilationHash={compilationHash} workspaceRole={workspaceRole} sceneIntentHints={sceneIntentHints}/></div></details>:null}</div>;
+  return <div className="space-y-4"><section className="space-y-4 rounded-2xl border border-border bg-white p-5"><div><h2 className="text-lg font-bold text-navy">Generate Episode</h2><p className="mt-1 text-sm text-ink-secondary">Review readiness, then explicitly start generation. No paid retry or later moment is started automatically.</p></div>{!planReady?<button type="button" disabled={busy||status==="executing"} onClick={()=>void generateReview()} className="brand-btn-primary" data-testid="generate-review" data-authority-action="Generate Review">Prepare generation review</button>:<p className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-900">Generation review ready</p>}</section>{executionPlanId?<StoryRuntimePanel campaignId={campaignId} storyId={storyId} executionPlanId={executionPlanId} workspaceRole={workspaceRole}/>:null}{executionPlanId&&advancedAuthorized?<details className="rounded-2xl border border-border bg-white p-5" data-testid="advanced-execution-diagnostics"><summary className="cursor-pointer text-sm font-semibold text-navy">Advanced operator review</summary><div className="mt-4"><ExecutionPlanReviewPanel campaignId={campaignId} storyId={storyId} executionPlanId={executionPlanId} storyTitle={storyTitle} storyVersionId={storyVersionId} animationPackageId={animationPackageId} compilationHash={compilationHash} workspaceRole={workspaceRole} storyEstimatedDuration={storyEstimatedDuration} sceneIntentHints={sceneIntentHints}/></div></details>:null}</div>;
 }

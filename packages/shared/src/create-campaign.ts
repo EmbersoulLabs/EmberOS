@@ -67,13 +67,6 @@ export const CreateCampaignContextSchema = z
         message: "Custom Objective is required",
       });
     }
-    if (value.assetReferences.length + value.assetStoryReferences.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["assetReferences"],
-        message: "Select at least one Asset or Asset Story",
-      });
-    }
   });
 
 export type CreateCampaignContext = z.infer<typeof CreateCampaignContextSchema>;

@@ -195,6 +195,21 @@ async function mockGeneratedSceneWorkspace(page: Page) {
   }));
 }
 
+test("unavailable local metadata cannot hide historical cloud Scene review", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const calls = await authenticate(page, "operator");
+  await mockGeneratedSceneWorkspace(page);
+  await page.route(`**/execution-plans/*/local-generation`, (route) => route.fulfill({
+    status: 200, contentType: "application/json", body: "{}",
+  }));
+  await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
+  await expect(page.getByTestId("scene-review-workspace")).toBeVisible();
+  await expect(page.getByTestId("generated-scene-media-preview-0")).toBeVisible();
+  expect(errors).toEqual([]);
+  expect(calls.providerCalls()).toBe(0);
+});
+
 test("operator reviews Scene, Cast, Location, Product, video, and QC without Provider internals", async ({ page }) => {
   const calls = await authenticate(page, "operator");
   await mockGeneratedSceneWorkspace(page);

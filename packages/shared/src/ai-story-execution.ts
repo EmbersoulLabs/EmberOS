@@ -12,6 +12,10 @@
 import { z } from "zod";
 import { AiStoryEffectiveSceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 import { AiStorySceneGroundingLineageSchema } from "./ai-story-scene-grounding";
+import {
+  AiStoryRecommendedDurationAuthoritySchema,
+  plannedDurationMatchesRecommendedDuration,
+} from "./ai-story-recommended-duration";
 
 export const AI_STORY_EXECUTION_CONTRACT_VERSION = "1" as const;
 
@@ -114,8 +118,11 @@ export type AiStorySceneExecutionStatus = z.infer<
 /**
  * Provider-independent, immutable execution plan for exactly one Scene.
  * Prompt text and provider-specific request fields are not canonical Story data.
+ *
+ * recommendedDurationAuthority is optional so historical plans still parse.
+ * New canonical compilation uses the required schema below.
  */
-export const AiStorySceneExecutionPlanSchema = z.object({
+export const AiStorySceneExecutionPlanObjectSchema = z.object({
   identity: AiStorySceneExecutionIdentitySchema,
   frozenStoryVersion: AiStoryFrozenVersionReferenceSchema,
   animationPackage: AiStoryAnimationPackageExecutionReferenceSchema,
@@ -124,9 +131,40 @@ export const AiStorySceneExecutionPlanSchema = z.object({
   generationAuthority: AiStoryEffectiveSceneGenerationAuthoritySchema.optional(),
   normalizedPayloadReference: ImmutableReferenceSchema,
   plannedDurationMs: z.number().int().positive(),
+  recommendedDurationAuthority: AiStoryRecommendedDurationAuthoritySchema.optional(),
   compiledAt: z.string().datetime(),
   compilationHash: IntegrityHashSchema,
 });
+
+function refinePlannedDurationAuthority<Shape extends z.ZodRawShape>(
+  schema: z.ZodObject<Shape>
+) {
+  return schema.superRefine((value, ctx) => {
+    const plan = value as {
+      plannedDurationMs?: number;
+      recommendedDurationAuthority?: Parameters<
+        typeof plannedDurationMatchesRecommendedDuration
+      >[0];
+    };
+    if (!plan.recommendedDurationAuthority || plan.plannedDurationMs == null) return;
+    if (
+      !plannedDurationMatchesRecommendedDuration(
+        plan.recommendedDurationAuthority,
+        plan.plannedDurationMs
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["plannedDurationMs"],
+        message: "PLANNED_DURATION_AUTHORITY_MISMATCH",
+      });
+    }
+  });
+}
+
+export const AiStorySceneExecutionPlanSchema = refinePlannedDurationAuthority(
+  AiStorySceneExecutionPlanObjectSchema
+);
 
 export type AiStorySceneExecutionPlan = z.infer<
   typeof AiStorySceneExecutionPlanSchema
@@ -234,11 +272,13 @@ const AiStoryCanonicalSceneExecutionIdentitySchema =
   });
 
 /** Strict new-write execution contracts; base schemas remain historical-read compatible. */
-export const AiStoryCanonicalSceneExecutionIntentSchema =
-  AiStorySceneExecutionIntentSchema.extend({
+export const AiStoryCanonicalSceneExecutionIntentSchema = refinePlannedDurationAuthority(
+  AiStorySceneExecutionPlanObjectSchema.extend({
     identity: AiStoryCanonicalSceneExecutionIdentitySchema,
     animationPackage: AiStoryCanonicalAnimationPackageExecutionReferenceSchema,
-  });
+    recommendedDurationAuthority: AiStoryRecommendedDurationAuthoritySchema,
+  })
+);
 export const AiStoryCanonicalSceneCompiledInstructionsSchema =
   AiStorySceneCompiledInstructionsSchema.extend({
     sceneVersionId: z.string().uuid(),
@@ -435,6 +475,29 @@ export type AiStoryGenerateReviewValidationSummary = z.infer<
   typeof AiStoryGenerateReviewValidationSummarySchema
 >;
 
+export const AiStoryGenerateReviewPreQcSceneSchema = z.object({
+  sceneExecutionId: z.string().uuid(),
+  qcEvaluationId: z.string().uuid(),
+  qcFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  dispatchDecision: z.enum([
+    "DISPATCH_ELIGIBLE",
+    "DISPATCH_ELIGIBLE_WITH_WARNINGS",
+    "DISPATCH_BLOCKED",
+  ]),
+});
+
+/** Bounded Pre-Generation QC evidence written during Generate Review. */
+export const AiStoryGenerateReviewPreQcSummarySchema = z.object({
+  PRE_QC_SCENE_COUNT: z.number().int().nonnegative(),
+  PRE_QC_BLOCKED_COUNT: z.number().int().nonnegative(),
+  PRE_QC_WARNING_COUNT: z.number().int().nonnegative(),
+  scenes: z.array(AiStoryGenerateReviewPreQcSceneSchema),
+});
+
+export type AiStoryGenerateReviewPreQcSummary = z.infer<
+  typeof AiStoryGenerateReviewPreQcSummarySchema
+>;
+
 /** Aggregate QC + estimate payload returned by Generate Review (Phase 1 + Phase 2A PR2). */
 export const AiStoryGenerateReviewResultSchema = z.object({
   estimate: AiStoryExecutionReviewEstimateSchema,
@@ -449,6 +512,7 @@ export const AiStoryGenerateReviewResultSchema = z.object({
   sceneExecutionIds: z.array(z.string().uuid()),
   compilationHash: z.string().nullable(),
   validationSummary: AiStoryGenerateReviewValidationSummarySchema,
+  preGenerationQc: AiStoryGenerateReviewPreQcSummarySchema,
   phase: z.literal("phase_1_qc_only"),
 });
 
