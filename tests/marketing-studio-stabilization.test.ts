@@ -251,7 +251,8 @@ describe("marketing route contracts", () => {
     expect(patch).toContain('"CONFLICT"');
     expect(patch).toContain('"editor"');
     expect(regen).toContain("applyPlatformRegeneration");
-    expect(regen).toContain("isTaskBudgetExhausted");
+    expect(regen).toContain("beginPaidMarketingCall");
+    expect(translate).toContain("beginPaidMarketingCall");
     expect(translate).toContain('"editor"');
     expect(translate).not.toContain("client_viewer");
     expect(translate).toContain("TRANSLATION_INCOMPLETE");

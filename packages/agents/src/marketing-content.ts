@@ -933,8 +933,9 @@ export interface RegeneratePlatformAssetInput {
 
 /** Regenerate a single platform's marketing asset with the AI (per-platform refresh). */
 export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInput): Promise<{
-  asset: PlatformMarketingAsset;
+  asset: PlatformMarketingAsset | null;
   usage: { input: number; output: number; costUsd: number };
+  failed: boolean;
 }> {
   const resolved = resolveMarketingFields(input);
   const def = MARKETING_PLATFORMS[input.platformId];
@@ -977,24 +978,8 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
 
   const parsed = PlatformMarketingAssetSchema.safeParse(result);
   if (parsed.success && parsed.data.caption.trim()) {
-    return { asset: parsed.data, usage };
+    return { asset: parsed.data, usage, failed: false as const };
   }
 
-  // Fallback: derive a fresh single-platform asset from the strategy/vision.
-  const fallbackPkg = buildFallbackContent({
-    campaignContext: {
-      ...input.campaignContext,
-      strategy: resolved.strategy,
-      vision: resolved.vision,
-    },
-    strategy: resolved.strategy,
-    vision: resolved.vision,
-    campaignName: input.campaignName,
-    businessInformation: input.businessInformation,
-  });
-  const fallbackAsset = fallbackPkg.platformAssets?.[input.platformId];
-  return {
-    asset: fallbackAsset ?? { caption: "", cta: "", hashtags: [] },
-    usage,
-  };
+  return { asset: null, usage, failed: true as const };
 }

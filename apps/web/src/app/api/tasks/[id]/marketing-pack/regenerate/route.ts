@@ -11,7 +11,6 @@ import {
   normalizeStrategyPlan,
   BrandProfileSchema,
   applyPlatformRegeneration,
-  isTaskBudgetExhausted,
   readMarketingPackRevision,
   selectBusinessFacts,
   type BrandProfile,
@@ -25,7 +24,12 @@ import {
 } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
-import { recordMarketingModelUsage, saveMarketingPackIfCurrent } from "@/lib/marketing-pack-persistence";
+import {
+  beginPaidMarketingCall,
+  cancelPaidMarketingCall,
+  finishPaidMarketingCall,
+  saveMarketingPackIfCurrent,
+} from "@/lib/marketing-pack-persistence";
 
 const LOCALES = new Set<MarketingPackLocale>(["zh", "en", "ms"]);
 
@@ -42,10 +46,6 @@ export async function POST(
     const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, id)).limit(1);
     if (!task) return apiError("Task not found", "NOT_FOUND", 404);
     await requireWorkspaceRole(task.workspaceId, user.id, "editor");
-
-    if (isTaskBudgetExhausted(task.costUsd, task.costBudgetUsd)) {
-      return apiError("Task AI budget is exhausted", "BUDGET_EXCEEDED", 402);
-    }
 
     const body = (await request.json().catch(() => null)) as {
       platformId?: string;
@@ -110,25 +110,43 @@ export async function POST(
       transcript: vision.transcriptSummary ?? null,
     });
 
-    const { asset, usage } = await regeneratePlatformAsset({
-      campaignContext,
-      platformId,
-      strategy,
-      vision,
-      campaignName,
-      previousCaption: existing.platformAssets?.[platformId]?.caption,
-      businessInformation: { ...businessInformation } as Record<string, unknown>,
-      locale: locale as ContentLocale,
-    });
+    const gate = await beginPaidMarketingCall(id);
+    if (!gate.ok) {
+      return apiError("Task AI budget is exhausted", "BUDGET_EXCEEDED", 402);
+    }
 
-    await recordMarketingModelUsage({
-      orgId: task.orgId,
-      workspaceId: task.workspaceId,
-      taskId: id,
-      agent: "marketing_regenerate",
-      usage,
-    });
+    let usageRecorded = false;
+    let asset: Awaited<ReturnType<typeof regeneratePlatformAsset>>["asset"] = null;
+    let usage = { input: 0, output: 0, costUsd: 0 };
+    try {
+      const generated = await regeneratePlatformAsset({
+        campaignContext,
+        platformId,
+        strategy,
+        vision,
+        campaignName,
+        previousCaption: existing.platformAssets?.[platformId]?.caption,
+        businessInformation: { ...businessInformation } as Record<string, unknown>,
+        locale: locale as ContentLocale,
+      });
+      await finishPaidMarketingCall(gate.reservation, {
+        orgId: task.orgId,
+        workspaceId: task.workspaceId,
+        agent: "marketing_regenerate",
+        usage: generated.usage,
+      });
+      usageRecorded = true;
+      usage = generated.usage;
+      if (generated.failed || !generated.asset) {
+        return apiError("Regeneration did not return usable copy", "REGENERATION_FAILED", 422);
+      }
+      asset = generated.asset;
+    } catch (error) {
+      if (!usageRecorded) await cancelPaidMarketingCall(gate.reservation);
+      return handleApiError(error);
+    }
 
+    if (!asset) return apiError("Regeneration did not return usable copy", "REGENERATION_FAILED", 422);
     const updatedPackage = applyPlatformRegeneration(existing, platformId, asset, locale);
     const expectedRevision =
       typeof body?.contentRevision === "number" ? body.contentRevision : readMarketingPackRevision(progress);
