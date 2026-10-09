@@ -17,6 +17,7 @@ import {
 import { AiStoryLocalGenerationError } from "./local-generation-package";
 import {
   materializeProviderNeutralLocalGenerationPackage,
+  type ProductOnlyCandidateAdmission,
   type ProviderNeutralLocalSceneFacts,
 } from "./local-generation-source-authority";
 import {
@@ -60,6 +61,7 @@ export class AiStoryLocalGenerationService implements AiStoryLocalGenerationPrep
     readonly packages?: AiStoryLocalGenerationRepository;
     readonly loadFacts?: (input: Parameters<AiStoryLocalGenerationPreparationPort["prepare"]>[0]) => Promise<readonly ProviderNeutralLocalSceneFacts[]>;
     readonly productMaterial?: AiStoryLocalProductMaterialResolver;
+    readonly candidateAdmission?: ProductOnlyCandidateAdmission | null;
     readonly persistence?: AiStorySceneExecutionPersistenceRepository;
     readonly releases?: AiStorySequentialLocalReleaseRepository;
   } = {}) {}
@@ -76,7 +78,10 @@ export class AiStoryLocalGenerationService implements AiStoryLocalGenerationPrep
       );
     }
     const initial = materializeSequentialLocalPackageV3({
-      basePackage: materializeProviderNeutralLocalGenerationPackage(facts[0]!) as Extract<
+      basePackage: materializeProviderNeutralLocalGenerationPackage(
+        facts[0]!,
+        this.options.candidateAdmission,
+      ) as Extract<
         import("@ceo-agent/shared").AiStoryLocalGenerationPackage,
         { version: "local-generation-package.v2" }
       >,

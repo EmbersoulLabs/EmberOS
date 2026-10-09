@@ -292,7 +292,36 @@ function evaluateRequired(
     return;
   }
 
+  if (expectation.expectationKind === "NO_DIALOGUE_WITH_AMBIENT_AUDIO") {
+    evaluateNoDialogueAmbient(facts, dimensions);
+    return;
+  }
+
   evaluateFinalMix(expectation, evidence, dimensions, findings, humanReviewRequirements);
+}
+
+/**
+ * No-dialogue ambient QC. An audio stream is allowed and is not required.
+ * This repository has no reliable speech detector, so speech content stays
+ * in human review and is never an automatic PASS.
+ */
+function evaluateNoDialogueAmbient(
+  facts: AiStoryAudioQcEvidence["mediaFacts"],
+  dimensions: Dimension[],
+) {
+  if (facts.decodable) {
+    dimensions.push({
+      dimension: "TECHNICAL_AUDIO_STREAM",
+      result: facts.hasAudioStream ? "PASS" : "NOT_APPLICABLE",
+      findingCode: null,
+    });
+  }
+  dimensions.push({ dimension: "DIALOGUE_AUDIO_PRESENCE", result: "NOT_APPLICABLE", findingCode: null });
+  dimensions.push({
+    dimension: "SPEECH_CONTENT",
+    result: "HUMAN_REVIEW_REQUIRED",
+    findingCode: null,
+  });
 }
 
 function fail(

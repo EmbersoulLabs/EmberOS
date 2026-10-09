@@ -11,6 +11,10 @@
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import {
+  resolveAiStoryAudioGenerationSemantics,
+  type AiStoryAudioGenerationSemantics,
+} from "./ai-story-audio-generation";
 import type { AiStoryAudioQcExpectation } from "./ai-story-audio-qc";
 
 export const LOCAL_GPU_PROVIDER_ID = "LOCAL_GPU" as const;
@@ -18,6 +22,10 @@ export const LOCAL_GPU_EXECUTION_CLASS = "LOCAL_GPU" as const;
 export const LOCAL_GPU_BASE_URL = "https://local-gpu.embersoullabs.com" as const;
 export const LOCAL_GPU_WORKER_WORKFLOW = "MINIMAX_H3_R2V" as const;
 export const LOCAL_GPU_CERTIFIED_PACKAGE_WORKFLOW = "MINIMAX_H3_NATIVE_DIALOGUE" as const;
+/** Staging-only candidate. It is not a production-certified workflow. */
+export const LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW = "MINIMAX_H3_PRODUCT_ONLY_CANDIDATE_V1" as const;
+export const LOCAL_GPU_PRODUCT_ONLY_CERTIFICATION_STORY_ID = "7c9efbee-c50e-454d-941d-5af165f21355" as const;
+export const LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_DURATION_SEC = 6 as const;
 export const LOCAL_GPU_AUTOMATIC_GENERATION_RETRY = 0 as const;
 export const LOCAL_GPU_REMOTE_PROVIDER_FALLBACK = 0 as const;
 export const LOCAL_GPU_AUTO_APPROVED = false as const;
@@ -267,6 +275,184 @@ export function mapCertifiedWorkflowToLocalGpu(
   return LOCAL_GPU_WORKER_WORKFLOW;
 }
 
+export function assertProductOnlyCandidateAccess(input: {
+  environment: LocalGpuEnvironment;
+  platformAdminStatus: "ACTIVE_GRANT" | "BOOTSTRAP_ELIGIBLE" | "DENIED";
+  storyId: string;
+  workflow: string;
+}): void {
+  if (input.workflow !== LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW) {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_WORKFLOW_REQUIRED");
+  }
+  if (input.environment !== "staging") {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_PRODUCTION_DENIED");
+  }
+  if (input.platformAdminStatus !== "ACTIVE_GRANT") {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_ACCESS_DENIED");
+  }
+  if (input.storyId !== LOCAL_GPU_PRODUCT_ONLY_CERTIFICATION_STORY_ID) {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_STORY_MISMATCH");
+  }
+}
+
+export function mapProductOnlyCandidateToLocalGpu(input: {
+  environment: LocalGpuEnvironment;
+  platformAdminStatus: "ACTIVE_GRANT" | "BOOTSTRAP_ELIGIBLE" | "DENIED";
+  storyId: string;
+  packageWorkflow: string;
+  workerWorkflows: readonly string[];
+}): typeof LOCAL_GPU_WORKER_WORKFLOW {
+  assertProductOnlyCandidateAccess({
+    environment: input.environment,
+    platformAdminStatus: input.platformAdminStatus,
+    storyId: input.storyId,
+    workflow: input.packageWorkflow,
+  });
+  if (!input.workerWorkflows.includes(LOCAL_GPU_WORKER_WORKFLOW)) {
+    throw new LocalGpuContractError("LOCAL_GPU_WORKFLOW_UNAVAILABLE");
+  }
+  return LOCAL_GPU_WORKER_WORKFLOW;
+}
+
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+
+/**
+ * Offline Desktop evidence. A summary that says "MATCH" without the hashes
+ * and a worker identity is not evidence.
+ */
+export type DesktopNativeAudioOfflineEvidence = {
+  workflow: string;
+  audioPolicy: string;
+  dialogueRequired: boolean;
+  inputAudioCodec: string;
+  inputAudioDurationMs: number;
+  outputAudioCodec: string;
+  outputAudioDurationMs: number;
+  inputDecodedAudioSha256: string;
+  outputDecodedAudioSha256: string;
+  inputFileSha256: string;
+  outputFileSha256: string;
+  unintendedAudioRemoval: boolean;
+  localUploadPreparation: string;
+  desktopWireContract: string;
+  h3Submissions: number;
+  workerIdentity: string;
+};
+
+export function missingDesktopNativeAudioEvidence(
+  evidence: Partial<DesktopNativeAudioOfflineEvidence> | null,
+): string[] {
+  if (!evidence) return ["DESKTOP_NATIVE_AUDIO_EVIDENCE_FILE"];
+  const missing: string[] = [];
+  if (evidence.workflow !== LOCAL_GPU_WORKER_WORKFLOW) missing.push("workflow");
+  if (evidence.audioPolicy !== "NATIVE") missing.push("audioPolicy");
+  if (evidence.dialogueRequired !== false) missing.push("dialogueRequired");
+  if (evidence.inputAudioCodec !== "aac" || evidence.outputAudioCodec !== "aac") missing.push("audioCodec");
+  if (
+    typeof evidence.inputAudioDurationMs !== "number"
+    || evidence.inputAudioDurationMs !== evidence.outputAudioDurationMs
+    || evidence.inputAudioDurationMs <= 0
+  ) missing.push("audioDurationMs");
+  if (
+    !SHA256.test(evidence.inputDecodedAudioSha256 ?? "")
+    || evidence.inputDecodedAudioSha256 !== evidence.outputDecodedAudioSha256
+  ) missing.push("decodedAudioSha256");
+  if (
+    !SHA256.test(evidence.inputFileSha256 ?? "")
+    || evidence.inputFileSha256 !== evidence.outputFileSha256
+  ) missing.push("outputFileSha256");
+  if (evidence.unintendedAudioRemoval !== false) missing.push("unintendedAudioRemoval");
+  if (evidence.localUploadPreparation !== "PASS") missing.push("localUploadPreparation");
+  if (evidence.desktopWireContract !== "UNCHANGED") missing.push("desktopWireContract");
+  if (evidence.h3Submissions !== 0) missing.push("h3Submissions");
+  if (!evidence.workerIdentity?.trim()) missing.push("workerIdentity");
+  return missing;
+}
+
+/**
+ * Three separate checks. Cloud wire compatibility does not prove the Desktop
+ * implementation, and a capabilities response does not prove audio preservation.
+ */
+export function assessDesktopNativeAudioPreservation(input: {
+  audioPolicy: string;
+  workflow: string;
+  voiceInstructions?: string | null;
+  hasDialogueField: boolean;
+  hasVoiceDnaField: boolean;
+  offlineEvidence?: Partial<DesktopNativeAudioOfflineEvidence> | null;
+  deployedWorkflows?: readonly string[] | null;
+  deployedSigningAccepted?: boolean;
+}): {
+  cloudWireCompatible: boolean;
+  wireSelectsRemoval: boolean;
+  offlineImplementationVerified: boolean;
+  deployedWorkflowSupported: boolean;
+  compatible: boolean;
+  missing: string[];
+} {
+  const cloudWireCompatible = input.audioPolicy === "NATIVE"
+    && input.workflow === LOCAL_GPU_WORKER_WORKFLOW
+    && !input.voiceInstructions
+    && !input.hasDialogueField
+    && !input.hasVoiceDnaField;
+  const wireSelectsRemoval = input.audioPolicy === "REMOVE_AUDIO";
+  const missing = missingDesktopNativeAudioEvidence(input.offlineEvidence ?? null);
+  const offlineImplementationVerified = missing.length === 0;
+  const deployedWorkflowSupported = input.deployedSigningAccepted === true
+    && (input.deployedWorkflows ?? []).includes(LOCAL_GPU_WORKER_WORKFLOW);
+  if (!deployedWorkflowSupported) missing.push("deployedCapabilities");
+  return {
+    cloudWireCompatible,
+    wireSelectsRemoval,
+    offlineImplementationVerified,
+    deployedWorkflowSupported,
+    compatible: cloudWireCompatible && !wireSelectsRemoval && offlineImplementationVerified && deployedWorkflowSupported,
+    missing,
+  };
+}
+
+export function selectProductOnlyDesktopAudioPolicy(input: {
+  semantics: AiStoryAudioGenerationSemantics;
+  preservationCompatible: boolean;
+}): "NATIVE" | null {
+  if (
+    input.semantics.scriptedDialogueRequired
+    || input.semantics.silentOutputRequired
+    || !input.semantics.nativeAudioGeneration
+  ) {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_AUDIO_SEMANTICS_INVALID");
+  }
+  return input.preservationCompatible ? "NATIVE" : null;
+}
+
+export function assertProductOnlyCandidateShape(input: {
+  durationSec: number;
+  references: readonly { role?: string }[];
+  visibleDialogueCount: number;
+  explicitSilenceRequired: boolean;
+  existingJobId: string | null;
+}): AiStoryAudioGenerationSemantics {
+  if (input.existingJobId) {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_RESUBMIT_BLOCKED");
+  }
+  if (input.durationSec !== LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_DURATION_SEC) {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_DURATION_INVALID");
+  }
+  const products = input.references.filter((reference) =>
+    reference.role === "PRODUCT" || reference.role === "PRODUCT_IDENTITY");
+  if (input.references.length !== 1 || products.length !== 1) {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_REFERENCE_COUNT_INVALID");
+  }
+  const semantics = resolveAiStoryAudioGenerationSemantics({
+    visibleDialogueCount: input.visibleDialogueCount,
+    explicitSilenceRequired: input.explicitSilenceRequired,
+  });
+  if (semantics.scriptedDialogueRequired || semantics.silentOutputRequired || !semantics.nativeAudioGeneration) {
+    throw new LocalGpuContractError("LOCAL_GPU_CANDIDATE_AUDIO_SEMANTICS_INVALID");
+  }
+  return semantics;
+}
+
 export function mapLocalGpuAudioPolicy(input: {
   generateAudio: boolean;
   audioBlocked: boolean;
@@ -275,6 +461,12 @@ export function mapLocalGpuAudioPolicy(input: {
   const kind = input.expectationKind ?? null;
   if (kind === "PRESERVE_SOURCE_AUDIO") return "PRESERVE";
   if (kind === "NATIVE_CHARACTER_DIALOGUE") return "NATIVE";
+  if (kind === "NO_DIALOGUE_WITH_AMBIENT_AUDIO") {
+    if (!input.generateAudio || input.audioBlocked) {
+      throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
+    }
+    return "NATIVE";
+  }
   if (kind === "SILENT_OUTPUT" || kind === "TTS_SPEECH" || kind === "FINAL_AUDIO_MIX") {
     return "REMOVE_AUDIO";
   }
@@ -395,6 +587,7 @@ export function assertLocalGpuPackageCompatibility(input: {
   if (
     input.recommendedWorkflow !== LOCAL_GPU_CERTIFIED_PACKAGE_WORKFLOW
     && input.recommendedWorkflow !== LOCAL_GPU_WORKER_WORKFLOW
+    && input.recommendedWorkflow !== LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW
   ) {
     throw new LocalGpuContractError("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
   }

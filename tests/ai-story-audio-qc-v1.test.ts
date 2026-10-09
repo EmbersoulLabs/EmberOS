@@ -590,5 +590,20 @@ describe.skipIf(!ffmpegAvailable())("Audio QC media facts", () => {
     expect(audibleFacts.hasAudioStream).toBe(true);
     expect(audible.overallResult).toBe("FAIL");
     expect(audible.blockingFindings.map((item) => item.code)).toContain("UNEXPECTED_AUDIO_STREAM");
+    const ambient = run(
+      expectation({ expectationKind: "NO_DIALOGUE_WITH_AMBIENT_AUDIO" }),
+      evidence({ mediaFacts: audibleFacts, mediaAssetId: id(9) }),
+    );
+    const quiet = run(
+      expectation({ expectationKind: "NO_DIALOGUE_WITH_AMBIENT_AUDIO" }),
+      evidence({ mediaFacts: silentFacts, mediaAssetId: id(9) }),
+    );
+    expect(ambient.evaluatedDimensions.find((item) => item.dimension === "TECHNICAL_AUDIO_STREAM")?.result).toBe("PASS");
+    expect(ambient.evaluatedDimensions.find((item) => item.dimension === "SPEECH_CONTENT")?.result).toBe("HUMAN_REVIEW_REQUIRED");
+    expect(ambient.blockingFindings.map((item) => item.code)).not.toContain("UNEXPECTED_AUDIO_STREAM");
+    expect(ambient.overallResult).toBe("HUMAN_REVIEW_REQUIRED");
+    expect(quiet.evaluatedDimensions.find((item) => item.dimension === "TECHNICAL_AUDIO_STREAM")?.result).toBe("NOT_APPLICABLE");
+    expect(quiet.overallResult).toBe("HUMAN_REVIEW_REQUIRED");
+    expect(quiet.evaluatedDimensions.some((item) => item.result === "PASS" && item.dimension === "SPEECH_CONTENT")).toBe(false);
   });
 });

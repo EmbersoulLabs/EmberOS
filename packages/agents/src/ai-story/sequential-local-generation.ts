@@ -1,5 +1,6 @@
 import {
   AI_STORY_CERTIFIED_LOCAL_WORKFLOWS,
+  LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW,
   AiStoryLocalGenerationPackageV3Schema,
   type AiStoryGenerationResult,
   type AiStoryGenerationResultDecision,
@@ -125,9 +126,11 @@ export function materializeSequentialLocalPackageV3(input: {
   predecessor: SequentialContinuityEvidence | null;
 }): AiStoryLocalGenerationPackageV3 {
   const { basePackage: base, predecessor } = input;
-  const recommendedWorkflow = AI_STORY_CERTIFIED_LOCAL_WORKFLOWS.find(
-    (workflow) => workflow === base.recommendedWorkflow,
-  );
+  const recommendedWorkflow = base.recommendedWorkflow === LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW
+    ? LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW
+    : AI_STORY_CERTIFIED_LOCAL_WORKFLOWS.find(
+      (workflow) => workflow === base.recommendedWorkflow,
+    );
   if (!recommendedWorkflow) {
     throw new Error("LOCAL_WORKFLOW_CERTIFICATION_REQUIRED");
   }

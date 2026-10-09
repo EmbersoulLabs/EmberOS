@@ -467,6 +467,7 @@ describe("LOCAL_GPU cloud adapter", () => {
       "TTS_SPEECH",
       "FINAL_AUDIO_MIX",
       "PRESERVE_SOURCE_AUDIO",
+      "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
     ]);
     expect(handoff.postQcInput.sourceKind).toBe("LOCAL_GPU_WORKER");
     expect(() => assertGenerationResultApproval(result, null)).toThrow("POST_QC_REQUIRED");

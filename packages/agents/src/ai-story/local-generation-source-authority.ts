@@ -2,7 +2,10 @@ import {
   AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION_V2,
   AI_STORY_LOCAL_GENERATION_SOURCE_AUTHORITY_VERSION,
   AiStoryLocalGenerationPackageSchema,
+  LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW,
+  LOCAL_GPU_PRODUCT_ONLY_CERTIFICATION_STORY_ID,
   localGenerationDurationSecFromPlannedDurationMs,
+  verifyImportedDesktopEvidence,
   type AiStoryEffectiveSceneGenerationAuthority,
   type AiStoryLocalGenerationPackage,
   type AiStoryPostQcRequirement,
@@ -177,7 +180,14 @@ export function buildLocalGenerationOperatorInstructions(input: LocalOperatorIns
         "Do not replace the frozen character dialogue with narration.",
         "Do not burn subtitles into the generated video.",
       ].join("\n")
-    : "AUDIO\nVideo only. Do not invent speech, narration, or subtitles.";
+    : input.generateAudio
+      ? [
+          "AUDIO",
+          "Preserve generated scene audio, including ambient sound, product interaction, and music.",
+          "Do not invent speech, narration, or subtitles.",
+          "Do not remove the audio track.",
+        ].join("\n")
+      : "AUDIO\nVideo only. Do not invent speech, narration, or subtitles.";
   return [
     `WORKFLOW\n${input.recommendedWorkflow}`,
     `DURATION\n${input.durationSec} seconds`,
@@ -208,8 +218,15 @@ export function buildLocalGenerationOperatorInstructions(input: LocalOperatorIns
   ].join("\n\n");
 }
 
+export type ProductOnlyCandidateAdmission = Parameters<typeof verifyImportedDesktopEvidence>[0] & {
+  environment: "staging";
+  platformAdminStatus: "ACTIVE_GRANT";
+  requiredProductAssetId: string;
+};
+
 export function materializeProviderNeutralLocalGenerationPackage(
   facts: ProviderNeutralLocalSceneFacts,
+  admission?: ProductOnlyCandidateAdmission | null,
 ): AiStoryLocalGenerationPackage {
   const { scene, instructions, intent } = facts;
   if (!instructions.sceneVersionId || !instructions.sceneFingerprint || !instructions.scriptVersionId || !instructions.sceneSetFingerprint) {
@@ -305,8 +322,31 @@ export function materializeProviderNeutralLocalGenerationPackage(
   }] : [];
   const dialogue = dialogueFrom(scene, instructions);
   const visibleDialogue = dialogue.filter((line) => !line.offscreen);
-  const workflow = certifiedLocalWorkflow(visibleDialogue.length > 0);
-  const generateAudio = visibleDialogue.length > 0;
+  let workflow: AiStoryLocalGenerationPackage["recommendedWorkflow"];
+  let generateAudio: boolean;
+  let audioQcExpectationKind: "NO_DIALOGUE_WITH_AMBIENT_AUDIO" | undefined;
+  if (admission) {
+    if (admission.environment !== "staging" || admission.platformAdminStatus !== "ACTIVE_GRANT") {
+      fail("Product-only candidate admission is staging superadmin only");
+    }
+    if (facts.storyId !== LOCAL_GPU_PRODUCT_ONLY_CERTIFICATION_STORY_ID) {
+      fail("Product-only candidate is bound to its certification Story");
+    }
+    const evidence = verifyImportedDesktopEvidence(admission);
+    if (!evidence.compatible) {
+      fail(`Product-only candidate evidence was rejected: ${evidence.rejected.join(",")}`);
+    }
+    if (visibleDialogue.length !== 0) fail("Product-only candidate cannot carry scripted dialogue");
+    if (facts.selectedMaterialAsset?.assetId !== admission.requiredProductAssetId) {
+      fail("Product-only candidate requires the certified Product derivative");
+    }
+    workflow = LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW;
+    generateAudio = true;
+    audioQcExpectationKind = "NO_DIALOGUE_WITH_AMBIENT_AUDIO";
+  } else {
+    workflow = certifiedLocalWorkflow(visibleDialogue.length > 0);
+    generateAudio = visibleDialogue.length > 0;
+  }
   const previous = stateText(scene.entryState);
   const expectedEnd = stateText(scene.exitState);
   const mustKeep = scene.mustKeep.length ? [...scene.mustKeep] : [instructions.purpose];
@@ -322,7 +362,8 @@ export function materializeProviderNeutralLocalGenerationPackage(
   const shotLines = instructions.shots.map((shot) =>
     `Shot ${shot.order + 1}: ${shot.cameraType}; ${shot.cameraMovement}; ${shot.composition}; ${shot.framing}; focus ${shot.focus}; ${shot.information}`,
   );
-  const prompt = [instructions.purpose, ...shotLines, ...mustKeep.map((fact) => `Keep: ${fact}`)].join("\n");
+  const promptText = [instructions.purpose, ...shotLines, ...mustKeep.map((fact) => `Keep: ${fact}`)].join("\n");
+  const prompt = admission ? promptText.replace(/\s+/g, " ").trim() : promptText;
   const generationMode = generationAuthority.strategy === "TEXT_TO_VIDEO"
     ? "TEXT_TO_VIDEO" as const
     : generationAuthority.strategy === "PRODUCT_GROUNDED_VIDEO"
@@ -403,6 +444,8 @@ export function materializeProviderNeutralLocalGenerationPackage(
     continuity,
     expectedEndState: expectedEnd,
   });
+  const durationSec = localGenerationDurationSecFromPlannedDurationMs(instructions.durationMs);
+  if (admission && durationSec !== 6) fail("Product-only candidate duration must be 6 seconds");
   const unsigned = {
     version: AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION_V2,
     packageId,
@@ -418,7 +461,7 @@ export function materializeProviderNeutralLocalGenerationPackage(
     sceneExecutionId: facts.sceneExecutionId,
     sceneId: scene.sceneId,
     order: facts.order,
-    durationSec: localGenerationDurationSecFromPlannedDurationMs(instructions.durationMs),
+    durationSec,
     aspectRatio: facts.aspectRatio,
     resolutionIntent: "720p" as const,
     recommendedWorkflow: workflow,
@@ -428,6 +471,7 @@ export function materializeProviderNeutralLocalGenerationPackage(
     dialogue,
     generateAudio,
     audioBlocked: !generateAudio,
+    ...(audioQcExpectationKind ? { audioQcExpectationKind } : {}),
     characterAuthority,
     productAuthority,
     worldDescription: world || instructions.purpose,

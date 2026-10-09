@@ -6,6 +6,7 @@ import {
   AiStoryVisualStartAuthoritySchema,
 } from "./ai-story-generation-authority";
 import { AiStoryPostQcRequirementSchema } from "./ai-story-post-generation-qc";
+import { LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW } from "./ai-story-local-gpu";
 import { ProductVisualMaterialSelectionAuthoritySchema } from "./ai-story-product-visual-material-selection";
 
 export const AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION =
@@ -41,6 +42,15 @@ export const AI_STORY_LOCAL_WORKFLOWS = [
  */
 export const AI_STORY_CERTIFIED_LOCAL_WORKFLOWS = [
   "MINIMAX_H3_NATIVE_DIALOGUE",
+] as const;
+/** Package values that are not production-certified workflows. */
+export const AI_STORY_V2_PACKAGE_WORKFLOWS = [
+  ...AI_STORY_LOCAL_WORKFLOWS,
+  LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW,
+] as const;
+export const AI_STORY_V3_PACKAGE_WORKFLOWS = [
+  ...AI_STORY_CERTIFIED_LOCAL_WORKFLOWS,
+  LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW,
 ] as const;
 export const AI_STORY_LOCAL_GENERATION_STATES = [
   "AWAITING_LOCAL_OUTPUT",
@@ -243,13 +253,14 @@ const AiStoryLocalGenerationPackageV2Schema = z.object({
   durationSec: z.number().positive(),
   aspectRatio: z.enum(["9:16", "16:9", "1:1"]),
   resolutionIntent: z.enum(["480p", "720p", "1080p"]),
-  recommendedWorkflow: z.enum(AI_STORY_LOCAL_WORKFLOWS),
+  recommendedWorkflow: z.enum(AI_STORY_V2_PACKAGE_WORKFLOWS),
   generationMode: z.enum(AI_STORY_LOCAL_PACKAGE_GENERATION_MODES),
   prompt: Text,
   negativePrompt: z.string().max(10_000).default(""),
   dialogue: z.array(AiStoryLocalDialogueLineSchema),
   generateAudio: z.boolean(),
   audioBlocked: z.boolean(),
+  audioQcExpectationKind: z.literal("NO_DIALOGUE_WITH_AMBIENT_AUDIO").optional(),
   characterAuthority: z.object({
     characterId: Id,
     characterVersionId: Id,
@@ -411,7 +422,8 @@ export const AiStoryLocalGenerationPackageV3Schema = z.object({
   durationSec: z.number().positive(),
   aspectRatio: z.enum(["9:16", "16:9", "1:1"]),
   resolutionIntent: z.enum(["480p", "720p", "1080p"]),
-  recommendedWorkflow: z.enum(AI_STORY_CERTIFIED_LOCAL_WORKFLOWS),
+  recommendedWorkflow: z.enum(AI_STORY_V3_PACKAGE_WORKFLOWS),
+  audioQcExpectationKind: z.literal("NO_DIALOGUE_WITH_AMBIENT_AUDIO").optional(),
   /** Canonical strategy; deliberately independent from the local workflow. */
   generationMode: z.enum(AI_STORY_LOCAL_PACKAGE_GENERATION_MODES),
   prompt: Text,

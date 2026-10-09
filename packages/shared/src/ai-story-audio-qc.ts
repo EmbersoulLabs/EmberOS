@@ -32,6 +32,7 @@ export const AI_STORY_AUDIO_QC_EXPECTATION_KINDS = [
   "TTS_SPEECH",
   "FINAL_AUDIO_MIX",
   "PRESERVE_SOURCE_AUDIO",
+  "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
 ] as const;
 
 export const AI_STORY_AUDIO_QC_RESULTS = [
@@ -58,6 +59,7 @@ export const AI_STORY_AUDIO_QC_DIMENSIONS = [
   "TRUE_PEAK",
   "DUCKING_AUTHORITY",
   "SPEECH_TRACK_COHERENCE",
+  "SPEECH_CONTENT",
   "JL_CUT_COHERENCE",
   "HUMAN_PERFORMANCE",
 ] as const;
@@ -287,6 +289,7 @@ const EXPECTATION_LABEL: Record<AiStoryAudioQcExpectation["expectationKind"], st
   TTS_SPEECH: "TTS speech",
   FINAL_AUDIO_MIX: "Final audio mix",
   PRESERVE_SOURCE_AUDIO: "Preserved source audio",
+  NO_DIALOGUE_WITH_AMBIENT_AUDIO: "No dialogue with ambient audio",
 };
 
 function dimensionResult(

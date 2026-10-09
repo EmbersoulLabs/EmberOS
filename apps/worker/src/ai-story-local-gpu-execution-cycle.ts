@@ -137,9 +137,11 @@ async function claimExplicitLocalGpuRelease(): Promise<void> {
     const jobId = adapter.cloud.jobIdFor(pkg);
     const plannedDurationMs = positiveDurationSecToMs(pkg.durationSec);
     try {
+      const packageExpectation = "audioQcExpectationKind" in pkg ? pkg.audioQcExpectationKind : undefined;
       const audioPolicy = mapLocalGpuAudioPolicy({
         generateAudio: pkg.generateAudio,
         audioBlocked: pkg.audioBlocked,
+        expectationKind: packageExpectation,
       });
       assertLocalGpuPackageCompatibility({
         recommendedWorkflow: pkg.recommendedWorkflow,

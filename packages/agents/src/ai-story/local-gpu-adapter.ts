@@ -18,8 +18,10 @@ import {
   readLocalGpuUpstreamFailure,
   assertLocalGpuUploadBinding,
   buildLocalGpuDesktopSubmit,
+  LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW,
   mapCertifiedWorkflowToLocalGpu,
   mapLocalGpuAudioPolicy,
+  mapProductOnlyCandidateToLocalGpu,
   mapLocalGpuVoicePerformance,
   type AiStoryLocalGenerationPackage,
   type LocalGpuDesktopReference,
@@ -283,18 +285,29 @@ export class LocalGpuCloudAdapter {
     });
     this.requireEnabledEnvironment();
     const plannedDurationMs = localGpuPlannedDurationMs(input.recommendedDurationAuthority);
-    const workflow = mapCertifiedWorkflowToLocalGpu(input.package.recommendedWorkflow, input.workerWorkflows);
+    const { environment } = this.requireEnabledEnvironment();
+    const workflow = input.package.recommendedWorkflow === LOCAL_GPU_PRODUCT_ONLY_CANDIDATE_WORKFLOW
+      ? mapProductOnlyCandidateToLocalGpu({
+        environment,
+        platformAdminStatus: input.actor.platformAdminStatus,
+        storyId: input.package.storyId,
+        packageWorkflow: input.package.recommendedWorkflow,
+        workerWorkflows: input.workerWorkflows,
+      })
+      : mapCertifiedWorkflowToLocalGpu(input.package.recommendedWorkflow, input.workerWorkflows);
+    const packageExpectation = "audioQcExpectationKind" in input.package
+      ? input.package.audioQcExpectationKind
+      : undefined;
     const audioPolicy = mapLocalGpuAudioPolicy({
       generateAudio: input.package.generateAudio,
       audioBlocked: input.package.audioBlocked,
-      expectationKind: input.audioExpectationKind,
+      expectationKind: input.audioExpectationKind ?? packageExpectation,
     });
     const voicePerformance = mapLocalGpuVoicePerformance({
       dialogue: input.package.dialogue,
       pinnedVoiceDna: input.pinnedVoiceDna,
     });
     const jobId = this.jobIdFor(input.package);
-    const { environment } = this.requireEnabledEnvironment();
     const desktop = buildLocalGpuDesktopSubmit({
       environment,
       jobId,
