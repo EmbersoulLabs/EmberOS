@@ -307,6 +307,18 @@ export async function ingestCompletedLocalGpuUpload(input: {
   await persistMeasuredReview(input.pkg, accepted.result, input.release.releasedBy, probe);
 }
 
+/** True when the original job already has both a generation result and post-QC. */
+export async function localGpuCompletionRecorded(
+  db: WorkerDb,
+  pkg: AiStoryLocalGenerationPackage,
+  jobId: string,
+): Promise<boolean> {
+  const existing = await findAcceptedLocalGpuResult(db, pkg, jobId);
+  if (!existing) return false;
+  const qc = await new AiStoryGenerationResultRepository(db).latestQc(pkg.workspaceId, existing.generationResultId);
+  return Boolean(qc);
+}
+
 /** Completes result-marked LOCAL_GPU releases that never persisted a generation result. */
 export async function recoverCompletedLocalGpuResults(input: {
   readonly db: WorkerDb;
@@ -339,6 +351,7 @@ export async function recoverCompletedLocalGpuResults(input: {
     });
     if (!pkg) continue;
     try {
+      if (await localGpuCompletionRecorded(input.db, pkg, jobId)) continue;
       const desktop = await input.readResult(jobId, release, pkg);
       await ingestCompletedLocalGpuUpload({
         db: input.db,

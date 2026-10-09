@@ -220,6 +220,7 @@ describe("LOCAL_GPU production routing", () => {
       join(__dirname, "../apps/worker/src/ai-story-local-gpu-result-finalization.ts"),
       "utf8",
     );
+    expect(finalization).toContain("localGpuCompletionRecorded");
     expect(finalization).toContain("materializeLocalGpuGenerationResult");
     expect(finalization).toContain("assertLocalGenerationDuration");
     expect(finalization).toContain("NO_DIALOGUE_WITH_AMBIENT_AUDIO");
