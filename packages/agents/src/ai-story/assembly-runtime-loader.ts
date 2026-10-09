@@ -230,6 +230,19 @@ export function loadAssemblyRuntimeInput(
     });
   }
 
+  const seenContent = new Set<string>();
+  const seenMedia = new Set<string>();
+  for (const scene of orderedScenes) {
+    if (seenContent.has(scene.contentHash) || seenMedia.has(scene.mediaReference.uri)) {
+      throw new AssemblyRuntimeInputError(
+        "ASSEMBLY_DUPLICATE_SCENE_CONTENT",
+        "ASSEMBLY_DUPLICATE_SCENE_CONTENT: ordered Scene media content is duplicated across Scene executions"
+      );
+    }
+    seenContent.add(scene.contentHash);
+    seenMedia.add(scene.mediaReference.uri);
+  }
+
   for (const result of sceneResults) {
     if (!orderedScenes.some((scene) => scene.sceneResultId === result.sceneResultId)) {
       throw new AssemblyRuntimeInputError(

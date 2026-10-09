@@ -233,6 +233,23 @@ export async function runDeterministicAssemblyRuntime(input: {
     );
   }
 
+  const replayIdentity = buildAssemblyExecutionIdentity({
+    executionPlanId: job.executionPlanId,
+    assemblyDefinitionId: job.assemblyDefinitionId,
+    assemblyJobId: job.assemblyJobId,
+    orderedSceneResultIds: [...job.orderedSceneResultIds],
+    orderedSceneContentHashes: [...job.orderedSceneContentHashes],
+    assemblyRuntimeContractVersion: ASSEMBLY_RUNTIME_CONTRACT_VERSION,
+    assemblyEngineVersion: ASSEMBLY_ENGINE_VERSION,
+    normalizationPolicyVersion: ASSEMBLY_NORMALIZATION_POLICY_VERSION,
+  });
+  const priorFacts = await input.jobRepository.loadAssemblyFacts(job.assemblyJobId);
+  const priorArtifact =
+    (await input.artifactRepository.getByAssemblyJobId(job.assemblyJobId)) ??
+    (await input.artifactRepository.getByExecutionIdentity(replayIdentity));
+  const priorTerminal = terminalFromFacts(job, priorFacts, priorArtifact, replayIdentity);
+  if (priorTerminal) return priorTerminal;
+
   let runtimeInput: AssemblyRuntimeInput;
   try {
     runtimeInput = loadAssemblyRuntimeInput({

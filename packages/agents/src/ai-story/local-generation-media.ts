@@ -68,6 +68,28 @@ export function inspectLocalGenerationMp4(bytes: Uint8Array): {
   };
 }
 
+/**
+ * A successor Scene must not reuse another Scene Execution's accepted video bytes.
+ * Distinct encodes that merely look similar keep distinct hashes and remain allowed.
+ */
+export function assertDistinctSceneMediaContent(input: {
+  readonly sceneExecutionId: string;
+  readonly contentHash: string;
+  readonly peers: readonly {
+    readonly sceneExecutionId: string;
+    readonly contentHash: string;
+  }[];
+}): void {
+  const duplicate = input.peers.find(
+    (peer) =>
+      peer.sceneExecutionId !== input.sceneExecutionId &&
+      peer.contentHash === input.contentHash
+  );
+  if (duplicate) {
+    throw new Error("LOCAL_GENERATION_DUPLICATE_SCENE_CONTENT");
+  }
+}
+
 export function assertLocalGenerationDuration(input: {
   readonly actualSec: number;
   readonly targetSec: number;
