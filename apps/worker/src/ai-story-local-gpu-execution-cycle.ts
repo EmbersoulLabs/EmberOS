@@ -106,17 +106,20 @@ async function claimExplicitLocalGpuRelease(): Promise<void> {
   const adapter = registry.resolve(LOCAL_GPU_PROVIDER_ID, LOCAL_GPU_ADAPTER_VERSION);
   if (!(adapter instanceof LocalGpuCanonicalAdapter)) return;
   const db = getDb();
-  const [release] = await db
+  const releases = await db
     .select()
     .from(schema.aiStorySceneReleaseStates)
     .where(and(
       eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
       eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
-    ))
-    .limit(1);
+    ));
+  const release = releases.find((row) =>
+    localGpuQueuedAction(row.gateProviderAttemptId) !== "stop"
+    && row.currentLocalGenerationPackageId
+    && row.releasedBy
+  );
   if (!release?.currentLocalGenerationPackageId || !release.releasedBy) return;
   const action = localGpuQueuedAction(release.gateProviderAttemptId);
-  if (action === "stop") return;
   const packages = new AiStoryLocalGenerationRepository(db);
   const pkg = await packages.getExecutablePackage({
     workspaceId: release.workspaceId,

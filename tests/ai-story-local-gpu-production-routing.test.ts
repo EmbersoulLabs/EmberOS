@@ -208,5 +208,10 @@ describe("LOCAL_GPU production routing", () => {
     expect(localGpuQueuedAction("job-1", "COMPLETED")).toBe("finalize");
     expect(localGpuQueuedAction("completed:job-1", "COMPLETED")).toBe("stop");
     expect(localGpuQueuedAction("result:job-1")).toBe("stop");
+    const cycle = readFileSync(
+      join(__dirname, "../apps/worker/src/ai-story-local-gpu-execution-cycle.ts"),
+      "utf8",
+    );
+    expect(cycle).toContain('localGpuQueuedAction(row.gateProviderAttemptId) !== "stop"');
   });
 });
