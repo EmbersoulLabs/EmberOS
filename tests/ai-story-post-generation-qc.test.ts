@@ -186,6 +186,32 @@ describe("AI Story canonical Post-Generation QC", () => {
     })).toThrow(/must not fabricate/i);
   });
 
+  it("accepts LOCAL_GPU local-package authority without a compiled remote request", async () => {
+    const localGpu = AiStoryPostGenerationQcInputPackageSchema.parse({
+      ...input([requirement()]),
+      providerAttemptId: null,
+      generationResultId: ids[12],
+      sourceKind: "LOCAL_GPU_WORKER",
+      compiledRequestId: null,
+      compiledRequestFingerprint: null,
+      localSourceAuthorityId: ids[13],
+      localSourceAuthorityFingerprint: hash("8"),
+    });
+    expect(localGpu.sourceKind).toBe("LOCAL_GPU_WORKER");
+    expect(() => AiStoryPostGenerationQcInputPackageSchema.parse({
+      ...localGpu,
+      sourceKind: "REMOTE_PROVIDER",
+    })).toThrow(/POST_QC_LOCAL_AUTHORITY_REQUIRED/);
+    const evaluation = await new AiStoryPostGenerationQcService({
+      repository: new InMemoryAiStoryPostGenerationQcRepository(),
+      evidenceProvider: new FakeAiStoryVisualEvidenceProvider([]),
+      now: () => "2026-08-30T00:00:00.000Z",
+    }).evaluate(localGpu);
+    expect(evaluation.evaluation.sourceKind).toBe("LOCAL_GPU_WORKER");
+    expect(evaluation.evaluation.autoApproved).toBe(false);
+    expect(evaluation.evaluation.aggregateStatus).toBe("POST_QC_REQUIRES_HUMAN_CONFIRMATION");
+  });
+
   it("fails closed when V1 compiled authority and Attempt binding diverge", () => {
     expect(() => buildAiStoryPostGenerationQcInputFromCompiledAuthority({
       intent: { identity: { sceneExecutionId: ids[8]!, sceneId: "scene-1" }, compilationHash: hash("a") } as never,

@@ -351,7 +351,7 @@ export async function recoverCompletedLocalGpuResults(input: {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (permanentFinalizationFailure(error)) reportedPermanentFailures.add(jobId);
-      console.warn(`[local-gpu] result finalization pending for ${jobId}: ${message}`);
+      console.warn(`[local-gpu] result finalization pending for ${jobId}: ${message.replace(/\s+/g, " ").slice(0, 500)}`);
     }
   }
 }
