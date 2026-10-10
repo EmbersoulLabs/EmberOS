@@ -205,17 +205,27 @@ export function countScenesStillGenerating(input: {
   );
 }
 
+export function resolveLocalGpuSceneRuntimeState(input: {
+  readonly humanReviewStatus: "PENDING" | "APPROVED" | "REJECTED" | "LOCAL_REGENERATION_REQUIRED" | null;
+  readonly reviewState: string;
+  readonly derived: import("@ceo-agent/shared").GeneratedSceneRuntimeState;
+}): import("@ceo-agent/shared").GeneratedSceneRuntimeState {
+  if (input.humanReviewStatus === "APPROVED" && input.reviewState !== "APPROVED") return "APPROVED";
+  if (input.humanReviewStatus === "PENDING" && input.reviewState !== "APPROVED") return "PENDING_REVIEW";
+  return input.derived;
+}
+
 async function loadLocalGpuReviews(executionPlanId: string): Promise<Map<string, {
   packageId: string;
   generationResultId: string;
-  humanReviewStatus: "PENDING" | "DECIDED";
+  humanReviewStatus: "PENDING" | "APPROVED" | "REJECTED" | "LOCAL_REGENERATION_REQUIRED";
 }>> {
   const db = getDb();
   const [plan] = await db.select({ workspaceId: schema.aiStoryExecutionPlans.workspaceId })
     .from(schema.aiStoryExecutionPlans)
     .where(eq(schema.aiStoryExecutionPlans.id, executionPlanId))
     .limit(1);
-  const reviews = new Map<string, { packageId: string; generationResultId: string; humanReviewStatus: "PENDING" | "DECIDED" }>();
+  const reviews = new Map<string, { packageId: string; generationResultId: string; humanReviewStatus: "PENDING" | "APPROVED" | "REJECTED" | "LOCAL_REGENERATION_REQUIRED" }>();
   if (!plan) return reviews;
   const rows = await db.select({
     generationResultId: schema.aiStoryGenerationResults.generationResultId,
@@ -228,18 +238,23 @@ async function loadLocalGpuReviews(executionPlanId: string): Promise<Map<string,
   if (!rows.length) return reviews;
   const decisions = await db.select({
     generationResultId: schema.aiStoryGenerationResultDecisions.generationResultId,
+    decision: schema.aiStoryGenerationResultDecisions.decision,
   }).from(schema.aiStoryGenerationResultDecisions).where(
     inArray(schema.aiStoryGenerationResultDecisions.generationResultId, rows.map((row) => row.generationResultId)),
   );
-  const decided = new Set(decisions.map((row) => row.generationResultId));
+  const decisionByResult = new Map(decisions.map((row) => [row.generationResultId, row.decision]));
   for (const row of rows) {
     const parsed = validateGenerationResult(row.result);
     const packageId = parsed.inputAuthority.localPackageId;
     if (parsed.source.sourceKind !== "LOCAL_GPU_WORKER" || typeof packageId !== "string") continue;
+    const decision = decisionByResult.get(parsed.generationResultId);
+    const humanReviewStatus = decision === "APPROVED" || decision === "REJECTED" || decision === "LOCAL_REGENERATION_REQUIRED"
+      ? decision
+      : "PENDING";
     reviews.set(parsed.sceneExecutionId, {
       packageId,
       generationResultId: parsed.generationResultId,
-      humanReviewStatus: decided.has(parsed.generationResultId) ? "DECIDED" : "PENDING",
+      humanReviewStatus,
     });
   }
   return reviews;
@@ -459,9 +474,7 @@ export async function deriveProductRuntimeProjection(
     const releaseState = releaseStateByScene.get(review.sceneExecutionId);
     const reviewAvailable = Boolean(media && review.latestAttemptId);
     const localGpuReview = localGpuReviews.get(review.sceneExecutionId) ?? null;
-    const runtimeState = localGpuReview?.humanReviewStatus === "PENDING" && review.reviewState !== "APPROVED"
-      ? "PENDING_REVIEW" as const
-      : deriveGeneratedSceneRuntimeState({
+    const derivedRuntimeState = deriveGeneratedSceneRuntimeState({
       released: releaseState === "RELEASED",
       approved: Boolean(
         review.reviewState === "APPROVED" && review.approvedAttemptId
@@ -472,6 +485,11 @@ export async function deriveProductRuntimeProjection(
         review.sceneExecutionId
       ),
       reviewRuntimeState: review.runtimeState,
+    });
+    const runtimeState = resolveLocalGpuSceneRuntimeState({
+      humanReviewStatus: localGpuReview?.humanReviewStatus ?? null,
+      reviewState: review.reviewState,
+      derived: derivedRuntimeState,
     });
     return {
       ...review,

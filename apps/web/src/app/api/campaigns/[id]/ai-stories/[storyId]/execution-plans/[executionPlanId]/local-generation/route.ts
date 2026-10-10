@@ -33,20 +33,26 @@ export async function GET(
         eq(schema.aiStoryGenerationResults.sourceKind, "LOCAL_GPU_WORKER"),
       )),
     ]);
-    const decided = new Set(localGpuRows.length === 0 ? [] : (await db.select({
+    const decisionRows = localGpuRows.length === 0 ? [] : await db.select({
       generationResultId: schema.aiStoryGenerationResultDecisions.generationResultId,
+      decision: schema.aiStoryGenerationResultDecisions.decision,
     }).from(schema.aiStoryGenerationResultDecisions).where(
       inArray(schema.aiStoryGenerationResultDecisions.generationResultId, localGpuRows.map((row) => row.generationResultId)),
-    )).map((row) => row.generationResultId));
+    );
+    const decisionByResult = new Map(decisionRows.map((row) => [row.generationResultId, row.decision]));
     const localGpuReviews = localGpuRows.flatMap((row) => {
       const parsed = validateGenerationResult(row.result);
       const packageId = parsed.inputAuthority.localPackageId;
       if (parsed.source.sourceKind !== "LOCAL_GPU_WORKER" || typeof packageId !== "string") return [];
+      const decision = decisionByResult.get(parsed.generationResultId);
+      const humanReviewStatus = decision === "APPROVED" || decision === "REJECTED" || decision === "LOCAL_REGENERATION_REQUIRED"
+        ? decision
+        : "PENDING" as const;
       return [{
         packageId,
         generationResultId: parsed.generationResultId,
         sceneExecutionId: parsed.sceneExecutionId,
-        humanReviewStatus: decided.has(parsed.generationResultId) ? "DECIDED" as const : "PENDING" as const,
+        humanReviewStatus,
       }];
     });
     return apiSuccess({

@@ -15,7 +15,7 @@ import {
   createWorkerProductVisualAuthorityCertifier,
 } from "../apps/worker/src/ai-story-provider-asset-access";
 import { makePhase2aCompilation } from "./helpers/ai-story-phase-2a";
-import { countScenesStillGenerating, deriveGeneratedSceneRuntimeState } from "../packages/agents/src/ai-story/derive-product-runtime-projection";
+import { countScenesStillGenerating, deriveGeneratedSceneRuntimeState, resolveLocalGpuSceneRuntimeState } from "../packages/agents/src/ai-story/derive-product-runtime-projection";
 import { shouldPollRuntimeProjection } from "../apps/web/src/lib/ai-story-runtime-ui";
 
 const PRODUCT = "c0e04afc-01fc-4578-8697-ec76fb6d0a82";
@@ -173,6 +173,8 @@ describe("product visual authority certification propagation", () => {
     expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, reviewAvailable: true, reviewRuntimeState: "PENDING_REVIEW" })).toBe("PENDING_REVIEW");
     expect(countScenesStillGenerating({ requiredSceneCount: 1, succeededSceneCount: 0, failedSceneCount: 0, localGpuPendingReviewCount: 1 })).toBe(0);
     expect(countScenesStillGenerating({ requiredSceneCount: 1, succeededSceneCount: 0, failedSceneCount: 0, localGpuPendingReviewCount: 0 })).toBe(1);
+    expect(resolveLocalGpuSceneRuntimeState({ humanReviewStatus: "APPROVED", reviewState: "PENDING_REVIEW", derived: "QUEUED" })).toBe("APPROVED");
+    expect(resolveLocalGpuSceneRuntimeState({ humanReviewStatus: "PENDING", reviewState: "PENDING_REVIEW", derived: "QUEUED" })).toBe("PENDING_REVIEW");
     expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, approved: true, reviewAvailable: true, reviewRuntimeState: "APPROVED" })).toBe("APPROVED");
     expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, reviewAvailable: true, reviewRuntimeState: "REJECTED" })).toBe("REJECTED");
     expect(deriveGeneratedSceneRuntimeState({ ...base, released: true, reviewAvailable: true, reviewRuntimeState: "RETRY_AUTHORIZED" })).toBe("RETRY_AUTHORIZED");

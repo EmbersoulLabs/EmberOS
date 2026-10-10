@@ -4,7 +4,10 @@ import { describe, expect, it } from "vitest";
 import {
   AI_STORY_EPISODE_COPY,
   formatEpisodeClockDuration,
+  episodeAssemblyActivityCopy,
+  episodeAssemblyActivityIsLoading,
   fullEpisodePendingCopy,
+  resolveEpisodeAssemblyActivity,
   resolveEpisodeDurationLabel,
   resolveFullEpisodePreviewState,
 } from "@ceo-agent/shared";
@@ -101,6 +104,21 @@ describe("AI Story Full Episode preview UX", () => {
     expect(fullEpisodePendingCopy("GENERATING")).toBe(AI_STORY_EPISODE_COPY.generatingMoments);
     expect(fullEpisodePendingCopy("WAITING_FOR_REVIEW")).toBe(AI_STORY_EPISODE_COPY.waitingForReview);
     expect(fullEpisodePendingCopy("ASSEMBLING")).toBe(AI_STORY_EPISODE_COPY.assembling);
+    expect(resolveEpisodeAssemblyActivity({ previewState: "FINAL_READY", status: "SUCCEEDED" })).toBe("EPISODE_READY");
+    expect(resolveEpisodeAssemblyActivity({ previewState: "ASSEMBLING", status: "SCENES_COMPLETE", assemblyState: "NONE" })).toBe("WAITING_FOR_ASSEMBLY");
+    expect(resolveEpisodeAssemblyActivity({ previewState: "ASSEMBLING", status: "WAITING_FOR_ASSEMBLY", assemblyState: "ACCEPTED" })).toBe("ASSEMBLY_QUEUED");
+    expect(resolveEpisodeAssemblyActivity({ previewState: "ASSEMBLING", status: "ASSEMBLING", assemblyState: "PROCESSING" })).toBe("ASSEMBLING");
+    expect(resolveEpisodeAssemblyActivity({ previewState: "ASSEMBLY_FAILED", status: "ASSEMBLY_FAILED", assemblyState: "FAILED" })).toBe("ASSEMBLY_FAILED");
+    expect(resolveEpisodeAssemblyActivity({ previewState: "WAITING_FOR_REVIEW", approvalPhase: "approving" })).toBe("APPROVING");
+    expect(episodeAssemblyActivityCopy("APPROVING")).toBe("Saving your approval...");
+    expect(episodeAssemblyActivityCopy("ASSEMBLING")).toBe("Assembling your episode...");
+    expect(episodeAssemblyActivityCopy("ASSEMBLY_FAILED")).toBe("Episode assembly failed. Please check the status.");
+    expect(episodeAssemblyActivityIsLoading("ASSEMBLY_FAILED")).toBe(false);
+    expect(episodeAssemblyActivityIsLoading("ASSEMBLING")).toBe(true);
+    expect(preview).toContain("episode-assembly-activity");
+    expect(preview).toContain("animate-spin");
+    expect(viewer).toContain("final-story-media-loading");
+    expect(viewer).toContain("onError={() => setMediaPhase(\"error\")}");
     expect(preview).toContain("finalEpisodePending");
     expect(moments).toContain("Episode moments");
     expect(runtime).not.toMatch(/>Scene 1</);

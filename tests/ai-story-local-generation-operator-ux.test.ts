@@ -84,7 +84,7 @@ describe("Local Generation operator feedback", () => {
   });
 
   it("shows approval immediately and keeps it separate from continuity", () => {
-    expect(approveActionLabel("approving")).toBe("Approving…");
+    expect(approveActionLabel("approving")).toBe("Saving your approval...");
     expect(approveActionLabel("approved")).toBe("Approved ✓");
     expect(continuityStatusLabel({ frameReady: false, jobState: null, phase: "idle" })).toBe("Not prepared");
     expect(continuityStatusLabel({ frameReady: false, jobState: "PENDING", phase: "idle" })).toBe("Preparing continuity frame…");
@@ -93,7 +93,7 @@ describe("Local Generation operator feedback", () => {
     const review = read("apps/web/src/components/ai-story/LocalGenerationReview.tsx");
     expect(review).toContain("Human review: {model.decision.decision}");
     expect(review).toContain("Continuity frame:");
-    expect(review).toContain("if (!model || approveBusy || qcBusy) return");
+    expect(review).toContain("if (!model || approveBusy || qcBusy || model.decision) return");
     expect(review).toContain('method: "GET"');
   });
 

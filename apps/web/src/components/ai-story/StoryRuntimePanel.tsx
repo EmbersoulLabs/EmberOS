@@ -17,6 +17,7 @@ import {
   classifyEpisodeMomentRepair,
   episodeMomentMarker,
   formatEpisodeActualCostUsd,
+  resolveEpisodeAssemblyActivity,
   resolveEpisodeDurationLabel,
   resolveFullEpisodePreviewState,
   resolveInternalRetryScopeFromEpisodeMoment,
@@ -78,6 +79,7 @@ export function StoryRuntimePanel({
   const [currentVersionLabel, setCurrentVersionLabel] = useState<string | null>(null);
   const [previousVersionLabel, setPreviousVersionLabel] = useState<string | null>(null);
   const [finalDurationMs, setFinalDurationMs] = useState<number | null>(null);
+  const [approvalPhase, setApprovalPhase] = useState<"idle" | "approving" | "approved" | "error">("idle");
   const executeInFlight = useRef(false);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestGen = useRef(0);
@@ -294,6 +296,12 @@ export function StoryRuntimePanel({
     pendingReviewSceneCount: projection?.pendingReviewSceneCount,
     waitingForHumanReview,
   });
+  const episodeActivity = resolveEpisodeAssemblyActivity({
+    previewState,
+    status: projection?.status,
+    assemblyState: projection?.assemblyState,
+    approvalPhase,
+  });
   const showFinalEpisode = previewState === "FINAL_READY";
   const durationLabel = resolveEpisodeDurationLabel(finalDurationMs, {
     expected: showFinalEpisode,
@@ -451,6 +459,7 @@ export function StoryRuntimePanel({
         durationLabel={durationLabel}
         statusLabel={statusLabel}
         previewState={previewState}
+        activity={episodeActivity}
         actualCostLabel={
           projection?.providerSpend?.storyKnownAmount != null
             ? formatEpisodeActualCostUsd(String(projection.providerSpend.storyKnownAmount))
@@ -557,6 +566,7 @@ export function StoryRuntimePanel({
         workspaceRole={workspaceRole}
         scenes={projection?.generatedSceneReviews ?? []}
         onChanged={refresh}
+        onApprovalPhase={setApprovalPhase}
       />
     </div>
   );

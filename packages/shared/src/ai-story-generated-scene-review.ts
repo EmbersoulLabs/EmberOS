@@ -222,7 +222,7 @@ export const GeneratedSceneReviewReadModelSchema = z
     localGpuReview: z.object({
       packageId: z.string().uuid(),
       generationResultId: z.string().uuid(),
-      humanReviewStatus: z.enum(["PENDING", "DECIDED"]),
+      humanReviewStatus: z.enum(["PENDING", "APPROVED", "REJECTED", "LOCAL_REGENERATION_REQUIRED"]),
     }).strict().nullable().default(null),
     postGenerationQcEvidence: AiStoryPostQcHumanReviewEvidenceSchema.optional(),
     audioQcResult: AiStoryAudioQcResultSchema.optional(),

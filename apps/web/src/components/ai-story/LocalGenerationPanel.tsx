@@ -58,7 +58,7 @@ type ReadModel = {
   }>;
   outputs: AiStoryLocalGenerationOutput[];
   mediaJobs: Array<{packageId:string;kind:string;state:string;errorCode:string|null}>;
-  localGpuReviews: Array<{ packageId: string; generationResultId: string; humanReviewStatus: "PENDING" | "DECIDED" }>;
+  localGpuReviews: Array<{ packageId: string; generationResultId: string; humanReviewStatus: "PENDING" | "APPROVED" | "REJECTED" | "LOCAL_REGENERATION_REQUIRED" }>;
 };
 
 export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, refreshToken }: Props) {
@@ -212,7 +212,9 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
                 <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-medium text-navy">
                   {localGpuReview?.humanReviewStatus === "PENDING"
                     ? "Generation completed · human review pending"
-                    : localGpuReview?.humanReviewStatus === "DECIDED"
+                    : localGpuReview?.humanReviewStatus === "APPROVED"
+                      ? "Scene approved"
+                    : localGpuReview
                       ? "Generation completed · human review recorded"
                     : output ? (output.qcState === "PENDING" ? "Uploaded · awaiting QC" : output.qcState) : phase === "validating" ? "Validating media…" : "Awaiting Local Generation"}
                 </span>

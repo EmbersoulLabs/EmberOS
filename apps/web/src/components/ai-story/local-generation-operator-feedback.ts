@@ -41,7 +41,7 @@ export function postQcTerminalLabel(status: string | null | undefined): string {
 }
 
 export function approveActionLabel(phase: "idle" | "approving" | "approved" | "error"): string {
-  if (phase === "approving") return "Approving…";
+  if (phase === "approving") return "Saving your approval...";
   if (phase === "approved") return "Approved ✓";
   return "Approve inspected output";
 }

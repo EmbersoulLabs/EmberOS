@@ -9,12 +9,16 @@ import {
   aiStoryEpisodeRevisionCapability,
   classifyEpisodeMomentRepair,
   describeEpisodePartialFailure,
+  episodeAssemblyActivityCopy,
+  episodeAssemblyActivityIsLoading,
   fullEpisodePendingCopy,
+  resolveEpisodeAssemblyActivity,
   resolveEpisodeMomentFromTimeRange,
   revisionActionEnabled,
   type AiStoryEpisodePacing,
   type AiStoryEpisodeRevisionCapability,
   type AiStoryEpisodeTimelineMoment,
+  type EpisodeAssemblyActivity,
   type FullEpisodePreviewState,
 } from "@ceo-agent/shared";
 
@@ -25,6 +29,7 @@ type Props = {
   durationLabel: string;
   statusLabel: string;
   previewState: FullEpisodePreviewState;
+  activity?: EpisodeAssemblyActivity;
   actualCostLabel?: string;
   liveCostLabel?: string;
   moments: readonly AiStoryEpisodeTimelineMoment[];
@@ -51,6 +56,7 @@ export function EpisodePreviewPanel({
   durationLabel,
   statusLabel,
   previewState,
+  activity,
   actualCostLabel,
   liveCostLabel,
   moments,
@@ -118,6 +124,9 @@ export function EpisodePreviewPanel({
     revisionActionEnabled("ADJUST_ENDING", revisionCapability) && Boolean(onAdjustEnding);
   const canAdjustPacing =
     revisionActionEnabled("ADJUST_PACING", revisionCapability) && Boolean(onAdjustPacing);
+  const resolvedActivity = activity ?? resolveEpisodeAssemblyActivity({ previewState });
+  const activityCopy = episodeAssemblyActivityCopy(resolvedActivity);
+  const activityLoading = episodeAssemblyActivityIsLoading(resolvedActivity);
   const pendingCopy = fullEpisodePendingCopy(previewState);
 
   return (
@@ -129,8 +138,10 @@ export function EpisodePreviewPanel({
             className="flex aspect-[9/16] flex-col items-center justify-center gap-2 px-6 text-center text-sm text-white md:aspect-video"
             aria-label={AI_STORY_EPISODE_COPY.episodePreview}
           >
-            <p className="font-medium">{AI_STORY_EPISODE_COPY.finalEpisodePending}</p>
-            {pendingCopy ? <p className="text-white/80">{pendingCopy}</p> : null}
+            {activityLoading ? <span className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden="true" /> : null}
+            <p className="font-medium" role={resolvedActivity === "ASSEMBLY_FAILED" ? "alert" : "status"} aria-live={resolvedActivity === "ASSEMBLY_FAILED" ? "assertive" : "polite"} data-testid="episode-assembly-activity">{activityCopy}</p>
+            <p className="text-white/80">{AI_STORY_EPISODE_COPY.finalEpisodePending}</p>
+            {pendingCopy && pendingCopy !== activityCopy ? <p className="text-white/80">{pendingCopy}</p> : null}
           </div>
         </div>
       )}

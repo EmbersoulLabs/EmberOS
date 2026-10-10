@@ -22,7 +22,11 @@ type Model = {
 };
 
 /** Explicit operator observations, followed by a separate Human approval. Upload never supplies these. */
-export function LocalGenerationReview({ endpoint }: { endpoint: string }) {
+export function LocalGenerationReview({ endpoint, onApprovalPhase, onApproved }: {
+  endpoint: string;
+  onApprovalPhase?: (phase: "idle" | "approving" | "approved" | "error") => void;
+  onApproved?: () => Promise<unknown>;
+}) {
   const [model, setModel] = useState<Model | null>(null);
   const [signals, setSignals] = useState<Record<string, "SATISFIED" | "VIOLATED" | "UNCERTAIN">>({});
   const [error, setError] = useState<string | null>(null);
@@ -75,8 +79,9 @@ export function LocalGenerationReview({ endpoint }: { endpoint: string }) {
   }
 
   async function approve() {
-    if (!model || approveBusy || qcBusy) return;
+    if (!model || approveBusy || qcBusy || model.decision) return;
     setApprovePhase("approving");
+    onApprovalPhase?.("approving");
     setError(null);
     try {
       const response = await fetch(endpoint, {
@@ -86,9 +91,13 @@ export function LocalGenerationReview({ endpoint }: { endpoint: string }) {
       const body = await response.json();
       if (!response.ok) throw new Error(body.error ?? "Approval could not be saved");
       setApprovePhase("approved");
+      onApprovalPhase?.("approved");
       await load();
+      await onApproved?.();
+      onApprovalPhase?.("idle");
     } catch (cause) {
       setApprovePhase("error");
+      onApprovalPhase?.("error");
       setError(cause instanceof Error ? cause.message : "Approval failed");
     }
   }
@@ -135,13 +144,13 @@ export function LocalGenerationReview({ endpoint }: { endpoint: string }) {
       <select className="ml-2 rounded border p-1" disabled={qcBusy || approveBusy} value={signals[item.requirementId] ?? "UNCERTAIN"} onChange={event => { const value = event.target.value; if (value === "SATISFIED" || value === "VIOLATED" || value === "UNCERTAIN") setSignals(current => ({ ...current, [item.requirementId]: value })); }}>
         <option value="UNCERTAIN">Not verified</option><option value="SATISFIED">Verified</option><option value="VIOLATED">Requirement violated</option>
       </select></label>)}
-    <button type="button" disabled={qcBusy || approveBusy} onClick={() => void saveQc()} className="rounded border px-3 py-2">{qcPhase === "done" && terminal ? terminal : qcActionLabel(qcPhase)}</button>
+    <button type="button" disabled={qcBusy || approveBusy} aria-busy={qcBusy} onClick={() => void saveQc()} className="rounded border px-3 py-2">{qcPhase === "done" && terminal ? terminal : qcActionLabel(qcPhase)}</button>
     {model.evaluation ? <>
       <p>Post-QC: {terminal}</p>
       {model.evaluation.audioQcResult ? <section data-testid="local-audio-qc"><p>Audio QC</p><p>Expectation: {describeAudioQcResult(model.evaluation.audioQcResult).expectation}</p><p>Technical audio: {describeAudioQcResult(model.evaluation.audioQcResult).technicalAudio}</p><p>Voice identity lineage: {describeAudioQcResult(model.evaluation.audioQcResult).voiceIdentityLineage}</p><p>Dialogue audio: {describeAudioQcResult(model.evaluation.audioQcResult).dialogueAudio}</p><p>Human review: {describeAudioQcResult(model.evaluation.audioQcResult).humanReview}</p><p>Result: {model.evaluation.audioQcResult.overallResult}</p></section> : null}
       {model.evaluation.findings.filter(item => item.result !== "PASS").map(item => <p key={item.findingId} className="text-sm">{item.reason}</p>)}
       {model.evaluation.aggregateStatus === "POST_QC_REJECT" ? <p>Local regeneration required. Refresh the packages to download the retry instructions. No cloud fallback is used.</p> : null}
-      <button type="button" disabled={approveBusy || qcBusy || !model.evaluation.eligibleForHumanReview || !postQcAllowsHumanApproval(model.evaluation)} onClick={() => void approve()} className="brand-btn-primary">{approveActionLabel(approvePhase)}</button>
+      <button type="button" disabled={approveBusy || qcBusy || !model.evaluation.eligibleForHumanReview || !postQcAllowsHumanApproval(model.evaluation)} aria-busy={approveBusy} onClick={() => void approve()} className="brand-btn-primary min-h-11">{approveActionLabel(approvePhase)}</button>
     </> : null}
     {error ? <p role="alert" className="text-red-700">{error}</p> : null}
   </div>;

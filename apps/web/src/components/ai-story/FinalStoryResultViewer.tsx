@@ -38,6 +38,7 @@ export function FinalStoryResultViewer({
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [mediaPhase, setMediaPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
 
   async function downloadFinalVideo() {
     setDownloadLoading(true);
@@ -138,7 +139,8 @@ export function FinalStoryResultViewer({
         ) : null}
       </div>
       {loading ? (
-        <p className="text-sm text-ink-secondary" data-testid="final-story-loading">
+        <p className="flex items-center gap-2 text-sm text-ink-secondary" role="status" aria-live="polite" data-testid="final-story-loading">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-navy/20 border-t-navy" aria-hidden="true" />
           {t("aiStory.runtime.finalVideoLoading")}
         </p>
       ) : null}
@@ -157,7 +159,17 @@ export function FinalStoryResultViewer({
       ) : null}
       {model?.playbackUrl ? (
         <>
-          <video key={model.playbackUrl} controls playsInline className="w-full max-h-[480px] rounded-lg bg-black" src={model.playbackUrl} data-testid="final-story-video">
+          <p className="text-sm font-medium text-navy" role="status" data-testid="final-story-ready">Your episode is ready!</p>
+          {mediaPhase === "loading" ? (
+            <p className="flex items-center gap-2 text-sm text-ink-secondary" role="status" aria-live="polite" data-testid="final-story-media-loading">
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-navy/20 border-t-navy" aria-hidden="true" />
+              {t("aiStory.runtime.finalVideoLoading")}
+            </p>
+          ) : null}
+          {mediaPhase === "error" ? (
+            <p className="text-sm text-red-700" role="alert" data-testid="final-story-media-error">{t("aiStory.runtime.finalVideoTemporarilyUnavailable")}</p>
+          ) : null}
+          <video key={model.playbackUrl} controls playsInline className="aspect-[9/16] w-full max-h-[70vh] rounded-lg bg-black md:aspect-video" src={model.playbackUrl} data-testid="final-story-video" onLoadStart={() => setMediaPhase("loading")} onCanPlay={() => setMediaPhase("ready")} onError={() => setMediaPhase("error")}>
             <track kind="captions" />
           </video>
           <div className="space-y-2">
