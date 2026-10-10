@@ -76,10 +76,11 @@ test("authenticated Remember Me persists only the identifier", async ({ page }) 
   await page.locator('input[type="checkbox"]').first().check();
   await page.locator('button[type="submit"]').click();
 
-  await page.waitForFunction(({ rememberKey, emailKey }) =>
-    localStorage.getItem(rememberKey) === "1" && localStorage.getItem(emailKey) === "operator@example.com",
-  { rememberKey: REMEMBER_KEY, emailKey: EMAIL_KEY });
-  expect(await page.evaluate((key) => localStorage.getItem(key), PASSWORD_KEY)).toBeNull();
+  await page.waitForFunction(({ rememberKey, emailKey, passwordKey }) =>
+    localStorage.getItem(rememberKey) === "1"
+    && localStorage.getItem(emailKey) === "operator@example.com"
+    && localStorage.getItem(passwordKey) === null,
+  { rememberKey: REMEMBER_KEY, emailKey: EMAIL_KEY, passwordKey: PASSWORD_KEY });
 });
 
 test("disabled Remember Me clears the identifier and malformed legacy credential", async ({ page }) => {
