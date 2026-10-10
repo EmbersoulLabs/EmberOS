@@ -354,6 +354,8 @@ export const MarketingContentPackageSchema = z.object({
   hashtagPack: HashtagPackSchema.optional(),
   /** Actionable AI suggestions (short bullets). */
   aiSuggestions: z.array(z.string()).default([]),
+  /** model = normalized model JSON. template_fallback = deterministic template. Absent on older packages. */
+  contentOrigin: z.enum(["model", "template_fallback"]).optional(),
 });
 export type MarketingContentPackage = z.infer<typeof MarketingContentPackageSchema>;
 
@@ -387,6 +389,7 @@ function mergeCaptionsFromPlatformAssets(
   const merged = { ...captions };
   for (const [id, asset] of Object.entries(assets)) {
     if (id === "threads") continue;
+    if ((merged as Record<string, string>)[id]?.trim()) continue;
     const cap = captionFromPlatformAsset(asset);
     if (cap && id in merged) {
       (merged as Record<string, string>)[id] = cap;
@@ -563,9 +566,9 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
             seoScore: Number(analysisRaw.seoScore ?? 75),
             emotionalScore: Number(analysisRaw.emotionalScore ?? 80),
             conversionScore: Number(analysisRaw.conversionScore ?? 72),
-            estimatedCtr: String(analysisRaw.estimatedCtr ?? "2.4% – 4.1%"),
-            estimatedEngagement: String(analysisRaw.estimatedEngagement ?? "Medium–High"),
-            estimatedConversion: String(analysisRaw.estimatedConversion ?? "1.2% – 2.8%"),
+            estimatedCtr: String(analysisRaw.estimatedCtr ?? ""),
+            estimatedEngagement: String(analysisRaw.estimatedEngagement ?? ""),
+            estimatedConversion: String(analysisRaw.estimatedConversion ?? ""),
           }
         : undefined,
     strategyBrief: parseStrategyBriefBlock(strategyBriefRaw),
@@ -593,6 +596,10 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
           }
         : undefined,
     aiSuggestions: Array.isArray(data.aiSuggestions) ? (data.aiSuggestions as string[]) : [],
+    contentOrigin:
+      data.contentOrigin === "model" || data.contentOrigin === "template_fallback"
+        ? data.contentOrigin
+        : undefined,
   };
 
   // If the LLM produced no hooks/cta, synthesize minimal entries from voiceScripts so

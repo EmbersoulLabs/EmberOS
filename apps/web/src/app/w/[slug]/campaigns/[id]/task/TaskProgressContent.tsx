@@ -251,6 +251,7 @@ export default function TaskProgressContent() {
       output?: unknown;
       percent?: number;
       phase?: string;
+      contentRevision?: number;
     }
   >;
   const taskError = task?.errorMessage as string | undefined;
@@ -438,6 +439,7 @@ export default function TaskProgressContent() {
                 contentPackage={contentPackage}
                 taskId={activeTaskId}
                 strategy={strategyPlan}
+                contentRevision={progress.content_generate?.contentRevision ?? 0}
               />
             )}
 

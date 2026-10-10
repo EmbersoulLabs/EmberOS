@@ -312,6 +312,8 @@ export const StepProgressSchema = z.record(
     completedAt: z.string().optional(),
     output: z.unknown().optional(),
     error: z.string().optional(),
+    /** Optimistic concurrency token for marketing pack edits. Absent means revision 0. */
+    contentRevision: z.number().int().nonnegative().optional(),
   })
 );
 export type StepProgress = z.infer<typeof StepProgressSchema>;

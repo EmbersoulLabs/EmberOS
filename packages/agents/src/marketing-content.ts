@@ -31,7 +31,16 @@ import {
 export type { ContentLocale };
 export { contentLocaleFromMetadata };
 
+export const MARKETING_CONTENT_FACT_RULE = `Use only business facts, product details, and scene descriptions present in the input.
+Do not invent testimonials, prices, discounts, operating hours, addresses, awards, or performance numbers.
+If a fact is missing, omit it. Name the customer benefit and the buying reason that are actually supported.
+Hooks must be specific to the audience and the footage. 15s = hook + one benefit + CTA. 30s = hook + pain + benefit + CTA. 60s = hook + scene + two supported benefits + CTA.
+Write each language field in that language only. Do not copy one language into another.
+Platform captions must differ. Xiaohongshu stays Simplified Chinese.`;
+
 const CONTENT_SYSTEM_PROMPT = `# EmberOS Marketing Content Engine
+
+${MARKETING_CONTENT_FACT_RULE}
 
 You are a senior AI marketing strategist inside EmberOS — NOT a chatbot.
 Output structured JSON for an enterprise marketing dashboard.
@@ -63,8 +72,8 @@ hooks[10] with text/textEn/textMs + type, cta[5] UNIQUE styles (never duplicate 
 voiceStyle, broll, musicMood, effects, postingRecommendation, consistencyScore
 
 ### Dashboard: analysis
-marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100),
-estimatedCtr, estimatedEngagement, estimatedConversion (short ranges e.g. "2.1%–3.8%")
+marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100 content checklist, not live analytics),
+estimatedCtr, estimatedEngagement, estimatedConversion (empty strings unless the input already contains that measured figure)
 
 ### Dashboard: strategyBrief
 primaryGoal, targetAudience, contentAngle, painPoint, desiredEmotion, ctaStrategy (one line each)
@@ -435,9 +444,9 @@ function applyGroundingToPackage(
     seoScore: pkg.consistencyScore - 2,
     emotionalScore: pkg.consistencyScore + 2,
     conversionScore: pkg.consistencyScore - 4,
-    estimatedCtr: "2.4% – 4.1%",
-    estimatedEngagement: "Medium–High",
-    estimatedConversion: "1.2% – 2.8%",
+    estimatedCtr: "",
+    estimatedEngagement: "",
+    estimatedConversion: "",
   };
   const analysis = applyGroundingToAnalysisScores(
     {
@@ -768,14 +777,14 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
       bestPostingTime: zh ? "工作日 12:00 或 19:00" : "Weekdays 12pm or 7pm local",
       bestPlatform: s.platformPriority[0] ?? "TikTok",
       idealAudience: audience,
-      estimatedEngagement: "Medium–High",
+      estimatedEngagement: "",
     },
     consistencyScore: analysisScores.marketingScore,
     analysis: {
       ...analysisScores,
-      estimatedCtr: grounding.isUngrounded ? "—" : "2.4% – 4.1%",
-      estimatedEngagement: grounding.isUngrounded ? "Low (ungrounded)" : "Medium–High",
-      estimatedConversion: grounding.isUngrounded ? "—" : "1.2% – 2.8%",
+      estimatedCtr: "",
+      estimatedEngagement: "",
+      estimatedConversion: "",
     },
     strategyBrief: {
       primaryGoal: s.marketingGoal,
@@ -800,6 +809,7 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
       brand: [product.replace(/\s+/g, "")],
       industry: s.hashtags.industry,
     },
+    contentOrigin: "template_fallback",
     aiSuggestions:
       locale === "zh"
         ? [
@@ -877,7 +887,10 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   const normalized = normalizeMarketingContentPackage(result);
   if (normalized) {
     console.log(`[content] ok hooks=${normalized.hooks.length} voiceScripts=${!!normalized.voiceScripts["30s"]}`);
-    return { contentPackage: applyGroundingToPackage(normalized, input), usage };
+    return {
+      contentPackage: applyGroundingToPackage({ ...normalized, contentOrigin: "model" }, input),
+      usage,
+    };
   }
 
   // Log what the LLM actually returned so we can diagnose parse failures.
@@ -889,6 +902,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
 }
 
 const PLATFORM_REGEN_SYSTEM = `# EmberOS — Single Platform Copy Regenerator
+${MARKETING_CONTENT_FACT_RULE}
 You rewrite ONE social platform's marketing asset for an enterprise dashboard.
 GROUND THE COPY IN THE VIDEO ANALYSIS (vision): use the real subjects, products, scenes
 and transcript seen in the footage. Do NOT base the copy on the campaign name alone —
@@ -913,12 +927,15 @@ export interface RegeneratePlatformAssetInput {
   campaignName?: string;
   businessInformation?: string | Record<string, unknown> | null;
   previousCaption?: string;
+  /** Locale of the caption being regenerated. Xiaohongshu stays Chinese. */
+  locale?: ContentLocale;
 }
 
 /** Regenerate a single platform's marketing asset with the AI (per-platform refresh). */
 export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInput): Promise<{
-  asset: PlatformMarketingAsset;
+  asset: PlatformMarketingAsset | null;
   usage: { input: number; output: number; costUsd: number };
+  failed: boolean;
 }> {
   const resolved = resolveMarketingFields(input);
   const def = MARKETING_PLATFORMS[input.platformId];
@@ -926,7 +943,9 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
   const locale: ContentLocale =
     input.platformId === "xiaohongshu"
       ? "zh"
-      : resolved.contentLocale;
+      : input.locale === "zh" || input.locale === "en" || input.locale === "ms"
+        ? input.locale
+        : resolved.contentLocale;
 
   const user = JSON.stringify({
     platform: input.platformId,
@@ -959,24 +978,8 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
 
   const parsed = PlatformMarketingAssetSchema.safeParse(result);
   if (parsed.success && parsed.data.caption.trim()) {
-    return { asset: parsed.data, usage };
+    return { asset: parsed.data, usage, failed: false as const };
   }
 
-  // Fallback: derive a fresh single-platform asset from the strategy/vision.
-  const fallbackPkg = buildFallbackContent({
-    campaignContext: {
-      ...input.campaignContext,
-      strategy: resolved.strategy,
-      vision: resolved.vision,
-    },
-    strategy: resolved.strategy,
-    vision: resolved.vision,
-    campaignName: input.campaignName,
-    businessInformation: input.businessInformation,
-  });
-  const fallbackAsset = fallbackPkg.platformAssets?.[input.platformId];
-  return {
-    asset: fallbackAsset ?? { caption: "", cta: "", hashtags: [] },
-    usage,
-  };
+  return { asset: null, usage, failed: true as const };
 }

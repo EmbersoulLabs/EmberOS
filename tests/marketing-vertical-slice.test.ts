@@ -66,7 +66,7 @@ describe("Marketing vertical slice (Sprint 1)", () => {
 
   it("Campaign Workspace Generate redirects to task progress", () => {
     expect(workspace).toMatch(/\/api\/campaigns\/\$\{campaignId\}\/generate/);
-    expect(workspace).toMatch(/\/task\?taskId=\$\{taskId\}/);
+    expect(workspace).toMatch(/\/task\?taskId=\$\{task\.id\}/);
     expect(workspace).toContain("CampaignMarketingPackageView");
     expect(workspace).not.toContain("MARKETING_PACKAGE_PLACEHOLDER_ITEMS");
     expect(workspace).not.toContain("placeholderOnly");

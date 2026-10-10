@@ -118,6 +118,7 @@ export interface MarketingExecutionMetadata {
   creativeBrief?: unknown;
   videoAnalysis?: string | null;
   assetsUploaded: number;
+  workspaceId?: string;
 }
 
 /** Backward-compatible internal alias while call sites migrate. */

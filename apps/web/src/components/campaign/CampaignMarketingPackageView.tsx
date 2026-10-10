@@ -15,7 +15,7 @@ type TaskRecord = {
   status: string;
   stepProgress?: Record<
     string,
-    { status?: string; output?: unknown; error?: string }
+    { status?: string; output?: unknown; error?: string; contentRevision?: number }
   >;
 };
 
@@ -139,6 +139,7 @@ export function CampaignMarketingPackageView({
         contentPackage={contentPackage}
         taskId={task.id}
         strategy={strategyPlan}
+        contentRevision={progress.content_generate?.contentRevision ?? 0}
       />
       {marketingScore ? (
         <details className="rounded-xl border border-border bg-white p-4 text-sm">

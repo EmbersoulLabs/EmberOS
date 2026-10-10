@@ -293,6 +293,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
         creativeBrief,
         videoAnalysis,
         assetsUploaded: assets.length,
+        workspaceId: task.workspaceId,
       },
     },
   });

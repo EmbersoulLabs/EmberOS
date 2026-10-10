@@ -1,4 +1,5 @@
-import type { CampaignCreativeBrief } from "@ceo-agent/shared";
+import { getBusinessProfileByWorkspace } from "@ceo-agent/db";
+import { selectBusinessFacts, type CampaignCreativeBrief } from "@ceo-agent/shared";
 import type {
   MarketingExecutionMetadata,
   MergedCampaignContext,
@@ -66,6 +67,21 @@ export function runStrategyPipeline(merged: MergedCampaignContext) {
   );
 }
 
+async function loadBusinessFacts(merged: MergedCampaignContext) {
+  const brand = merged.campaignContext.businessProfile;
+  const workspaceId = executionMetadata(merged).workspaceId;
+  if (!workspaceId) return selectBusinessFacts(null, brand);
+  try {
+    const profile = await getBusinessProfileByWorkspace(workspaceId);
+    return selectBusinessFacts(profile, brand);
+  } catch (error) {
+    console.warn(
+      `[marketing] business profile unavailable: ${error instanceof Error ? error.message : "unknown"}`
+    );
+    return selectBusinessFacts(null, brand);
+  }
+}
+
 export function runMarketingContentPipeline(merged: MergedCampaignContext) {
   const metadata = executionMetadata(merged);
   const strategy = merged.campaignContext.strategy;
@@ -73,13 +89,16 @@ export function runMarketingContentPipeline(merged: MergedCampaignContext) {
   if (!strategy || !vision) {
     throw new Error("Merged Campaign context is missing Strategy or Vision");
   }
-  return runMarketingPipeline(merged, (campaignContext) =>
+  return runMarketingPipeline(merged, async (campaignContext) =>
     runMarketingContentAgent({
       campaignContext,
       strategy,
       vision,
       videoAnalysis: metadata.videoAnalysis,
       campaignName: metadata.campaignName,
+      businessInformation: {
+        ...(await loadBusinessFacts(merged)),
+      } as Record<string, unknown>,
     })
   );
 }
