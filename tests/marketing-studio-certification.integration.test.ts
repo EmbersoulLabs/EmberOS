@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { MarketingContentPackage, PlatformMarketingAsset } from "@ceo-agent/shared";
 
@@ -177,6 +179,20 @@ async function insertTask(input: {
     costBudgetUsd: input.budget ?? "0.50",
   });
   return taskId;
+}
+
+async function writeProgress(taskId: string, progress: Record<string, unknown>) {
+  const require = createRequire(path.resolve("packages/db/package.json"));
+  const postgres = require("postgres") as (
+    url: string,
+    options: { max: number }
+  ) => ((strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>) & {
+    json: (value: unknown) => unknown;
+    end: () => Promise<void>;
+  };
+  const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
+  await sql`update tasks set step_progress = ${sql.json(progress)} where id = ${taskId}::uuid`;
+  await sql.end();
 }
 
 async function loadTask(taskId: string) {
@@ -531,6 +547,174 @@ describe("postgres marketing budget and authorization", () => {
     expect((task.stepProgress as Record<string, unknown>).marketing_budget_hold).toBeUndefined();
   });
 
+  it("does not let an expired in-flight call settle a newer reservation", async () => {
+    const translation = {
+      hooksEn: ["Opening hook"],
+      hooksMs: ["Cangkuk"],
+      ctaEn: ["Learn more"],
+      ctaMs: ["Ketahui"],
+      captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
+      captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+    };
+    let releaseFirst: () => void = () => {};
+    let releaseSecond: () => void = () => {};
+    let markFirstEntered: () => void = () => {};
+    let markSecondEntered: () => void = () => {};
+    const firstEntered = new Promise<void>((resolve) => {
+      markFirstEntered = resolve;
+    });
+    const secondEntered = new Promise<void>((resolve) => {
+      markSecondEntered = resolve;
+    });
+    callJsonModel.mockReset();
+    callJsonModel.mockImplementationOnce(async () => {
+      markFirstEntered();
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return { result: translation, usage: { input: 10, output: 4, costUsd: 0.04 } };
+    });
+    callJsonModel.mockImplementationOnce(async () => {
+      markSecondEntered();
+      await new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+      return { result: translation, usage: { input: 8, output: 3, costUsd: 0.05 } };
+    });
+
+    const taskId = await insertTask({ content: needsModelTranslation(pack()), costUsd: "0", budget: "0.50" });
+    const pendingFirst = routes.translate(
+      new Request("http://127.0.0.1/translate", {
+        method: "POST",
+        body: JSON.stringify({ locale: "en", contentRevision: 0 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    await firstEntered;
+    const reserved = await loadTask(taskId);
+    const firstHold = (reserved.stepProgress as Record<string, { reservationId?: string; expiresAt?: string }>).marketing_budget_hold;
+    expect(firstHold?.reservationId).toBeTruthy();
+    await writeProgress(taskId, {
+      ...(reserved.stepProgress as Record<string, unknown>),
+      marketing_budget_hold: { ...firstHold, expiresAt: new Date(Date.now() - 1000).toISOString() },
+    });
+
+    const pendingSecond = routes.translate(
+      new Request("http://127.0.0.1/translate", {
+        method: "POST",
+        body: JSON.stringify({ locale: "en", contentRevision: 0 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    await secondEntered;
+    const duringSecond = await loadTask(taskId);
+    const secondHold = (duringSecond.stepProgress as Record<string, { reservationId?: string }>).marketing_budget_hold;
+    expect(secondHold?.reservationId).toBeTruthy();
+    expect(secondHold?.reservationId).not.toBe(firstHold?.reservationId);
+    expect(Number(duringSecond.costUsd)).toBeCloseTo(0.5, 5);
+
+    releaseFirst();
+    expect((await pendingFirst).status).toBe(200);
+    const afterFirst = await loadTask(taskId);
+    const holdAfterFirst = (afterFirst.stepProgress as Record<string, { reservationId?: string }>).marketing_budget_hold;
+    expect(holdAfterFirst?.reservationId).toBe(secondHold?.reservationId);
+    expect(Number(afterFirst.costUsd)).toBeCloseTo(0.5, 5);
+    expect(Number((afterFirst.stepProgress as Record<string, unknown>).marketing_budget_committed)).toBeCloseTo(0.04, 5);
+
+    releaseSecond();
+    const secondResponse = await pendingSecond;
+    expect([200, 409]).toContain(secondResponse.status);
+    const settled = await loadTask(taskId);
+    expect(Number(settled.costUsd)).toBeCloseTo(0.09, 5);
+    expect((settled.stepProgress as Record<string, unknown>).marketing_budget_hold).toBeUndefined();
+    const logs = (await dbApi.getDb().select().from(dbApi.schema.agentLogs)).filter((row) => row.taskId === taskId);
+    expect(logs).toHaveLength(2);
+    expect(logs.reduce((sum, row) => sum + Number(row.costUsd), 0)).toBeCloseTo(0.09, 5);
+  });
+
+  it("does not let a failed expired call clear a newer reservation", async () => {
+    const translation = {
+      hooksEn: ["Opening hook"],
+      hooksMs: ["Cangkuk"],
+      ctaEn: ["Learn more"],
+      ctaMs: ["Ketahui"],
+      captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
+      captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+    };
+    let releaseFirst: () => void = () => {};
+    let releaseSecond: () => void = () => {};
+    let markFirstEntered: () => void = () => {};
+    let markSecondEntered: () => void = () => {};
+    const firstEntered = new Promise<void>((resolve) => {
+      markFirstEntered = resolve;
+    });
+    const secondEntered = new Promise<void>((resolve) => {
+      markSecondEntered = resolve;
+    });
+    callJsonModel.mockReset();
+    callJsonModel.mockImplementationOnce(async () => {
+      markFirstEntered();
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      throw new Error("provider down");
+    });
+    callJsonModel.mockImplementationOnce(async () => {
+      markSecondEntered();
+      await new Promise<void>((resolve) => {
+        releaseSecond = resolve;
+      });
+      return { result: translation, usage: { input: 8, output: 3, costUsd: 0.05 } };
+    });
+
+    const taskId = await insertTask({ content: needsModelTranslation(pack()), costUsd: "0", budget: "0.50" });
+    const pendingFirst = routes.translate(
+      new Request("http://127.0.0.1/translate", {
+        method: "POST",
+        body: JSON.stringify({ locale: "en", contentRevision: 0 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    await firstEntered;
+    const reserved = await loadTask(taskId);
+    const firstHold = (reserved.stepProgress as Record<string, { reservationId?: string }>).marketing_budget_hold;
+    await writeProgress(taskId, {
+      ...(reserved.stepProgress as Record<string, unknown>),
+      marketing_budget_hold: {
+        ...firstHold,
+        expiresAt: new Date(Date.now() - 1000).toISOString(),
+      },
+    });
+
+    const pendingSecond = routes.translate(
+      new Request("http://127.0.0.1/translate", {
+        method: "POST",
+        body: JSON.stringify({ locale: "en", contentRevision: 0 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    await secondEntered;
+    const duringSecond = await loadTask(taskId);
+    const secondHold = (duringSecond.stepProgress as Record<string, { reservationId?: string }>).marketing_budget_hold;
+
+    releaseFirst();
+    expect((await pendingFirst).status).toBeGreaterThanOrEqual(400);
+    const afterCancel = await loadTask(taskId);
+    const holdAfterCancel = (afterCancel.stepProgress as Record<string, { reservationId?: string }>).marketing_budget_hold;
+    expect(holdAfterCancel?.reservationId).toBe(secondHold?.reservationId);
+    expect(Number(afterCancel.costUsd)).toBeCloseTo(0.5, 5);
+    expect((await dbApi.getDb().select().from(dbApi.schema.agentLogs)).filter((row) => row.taskId === taskId)).toHaveLength(0);
+
+    releaseSecond();
+    expect((await pendingSecond).status).toBe(200);
+    const settled = await loadTask(taskId);
+    expect(Number(settled.costUsd)).toBeCloseTo(0.05, 5);
+    expect((settled.stepProgress as Record<string, unknown>).marketing_budget_hold).toBeUndefined();
+    const logs = (await dbApi.getDb().select().from(dbApi.schema.agentLogs)).filter((row) => row.taskId === taskId);
+    expect(logs).toHaveLength(1);
+    expect(Number(logs[0]?.costUsd)).toBeCloseTo(0.05, 5);
+  });
+
   it("does not rewind a recorded spend when an expired hold no longer matches the reserved amount", async () => {
     callJsonModel.mockReset();
     callJsonModel.mockResolvedValue({
@@ -740,5 +924,46 @@ describe("mocked marketing package flow", () => {
     );
     expect(video.status).toBe(409);
     expect((await jsonOf(video)).code).toBe("VALIDATION_ERROR");
+  });
+});
+
+describe("unicode marketing captions", () => {
+  it("keeps Chinese, English, and Malay code points in PostgreSQL and the text export", async () => {
+    const zh = "花店新品推广，今天下单享优惠。🌸";
+    const en = "Fresh flowers delivered today.";
+    const ms = "Bunga segar dihantar hari ini.";
+    const taskId = await insertTask({ content: pack(), revision: 0 });
+    const edit = (caption: string, locale: string, revision: number) =>
+      routes.patchPack(
+        new Request("http://127.0.0.1/pack", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            platformId: "tiktok",
+            locale,
+            contentRevision: revision,
+            asset: { caption, cta: "Buy", hashtags: ["cafe"] },
+          }),
+        }),
+        { params: Promise.resolve({ id: taskId }) }
+      );
+
+    expect((await edit(zh, "zh", 0)).status).toBe(200);
+    expect((await edit(en, "en", 1)).status).toBe(200);
+    expect((await edit(ms, "ms", 2)).status).toBe(200);
+
+    const stored = storedPack(await loadTask(taskId)).content_generate?.output;
+    expect(Buffer.from(stored?.captions.tiktok ?? "", "utf8")).toEqual(Buffer.from(zh, "utf8"));
+    expect(Buffer.from(stored?.captionsEn?.tiktok ?? "", "utf8")).toEqual(Buffer.from(en, "utf8"));
+    expect(Buffer.from(stored?.captionsMs?.tiktok ?? "", "utf8")).toEqual(Buffer.from(ms, "utf8"));
+
+    const downloaded = await routes.download(new Request("http://127.0.0.1/download"), {
+      params: Promise.resolve({ id: taskId }),
+    });
+    expect(downloaded.status).toBe(200);
+    const bytes = Buffer.from(await downloaded.arrayBuffer());
+    expect(bytes.includes(Buffer.from(zh, "utf8"))).toBe(true);
+    expect(bytes.includes(Buffer.from(en, "utf8"))).toBe(true);
+    expect(bytes.includes(Buffer.from(ms, "utf8"))).toBe(true);
   });
 });

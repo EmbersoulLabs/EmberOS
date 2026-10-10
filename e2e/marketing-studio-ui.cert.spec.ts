@@ -315,3 +315,71 @@ test("enforces viewer, editor, and workspace authorization", async ({ browser })
   await outsider.close();
   await editor.close();
 });
+
+test("preserves Chinese, English, and Malay through the browser, clipboard, and download", async ({ browser }) => {
+  const zh = "花店新品推广，今天下单享优惠。🌸";
+  const en = "Fresh flowers delivered today.";
+  const ms = "Bunga segar dihantar hari ini.";
+  const context = await browser.newContext();
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await signIn(context, seed.editorId);
+  const page = await context.newPage();
+  watch(page);
+  await openPackage(page);
+
+  await switchLocale(page, "zh");
+  await page.getByRole("tab", { name: "TikTok" }).click();
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
+  await page.locator("textarea").first().fill(zh);
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(page.getByText(zh).first()).toBeVisible();
+
+  await switchLocale(page, "en");
+  await page.getByRole("tab", { name: "TikTok" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.locator("textarea").first().fill(en);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText(en).first()).toBeVisible();
+
+  await switchLocale(page, "ms");
+  await page.getByRole("tab", { name: "TikTok" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.locator("textarea").first().fill(ms);
+  await page.getByRole("button", { name: "Simpan", exact: true }).click();
+  await expect(page.getByText(ms).first()).toBeVisible();
+
+  const malayCaption = page.locator("div").filter({ has: page.getByText(ms, { exact: true }) }).last();
+  await malayCaption.getByRole("button", { name: "Salin" }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(ms);
+
+  await switchLocale(page, "zh");
+  await expect(page.getByText(zh).first()).toBeVisible();
+  const chineseCaption = page.locator("div").filter({ has: page.getByText(zh, { exact: true }) }).last();
+  await chineseCaption.getByRole("button", { name: "复制" }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(zh);
+
+  const [download, response] = await Promise.all([
+    page.waitForEvent("download"),
+    page.waitForResponse((res) => res.url().includes("/marketing-pack/download")),
+    page.getByRole("link", { name: "下载营销包" }).click(),
+  ]);
+  expect(response.status()).toBe(200);
+  const fileBytes = readFileSync((await download.path())!);
+  expect(fileBytes.includes(Buffer.from(zh, "utf8"))).toBe(true);
+  expect(fileBytes.includes(Buffer.from(en, "utf8"))).toBe(true);
+  expect(fileBytes.includes(Buffer.from(ms, "utf8"))).toBe(true);
+
+  const sql = openSql();
+  const rows = await sql`select step_progress from tasks where id = ${seed.taskId}::uuid`;
+  await sql.end();
+  const output = (rows[0]?.step_progress as { content_generate?: { output?: { captions?: { tiktok?: string }; captionsEn?: { tiktok?: string }; captionsMs?: { tiktok?: string } } } }).content_generate?.output;
+  expect(Buffer.from(output?.captions?.tiktok ?? "", "utf8")).toEqual(Buffer.from(zh, "utf8"));
+  expect(Buffer.from(output?.captionsEn?.tiktok ?? "", "utf8")).toEqual(Buffer.from(en, "utf8"));
+  expect(Buffer.from(output?.captionsMs?.tiktok ?? "", "utf8")).toEqual(Buffer.from(ms, "utf8"));
+  evidence.unicodeCodePoints = {
+    zh: Array.from(zh).map((char) => char.codePointAt(0)),
+    en: Array.from(en).map((char) => char.codePointAt(0)),
+    ms: Array.from(ms).map((char) => char.codePointAt(0)),
+  };
+  await context.close();
+});
