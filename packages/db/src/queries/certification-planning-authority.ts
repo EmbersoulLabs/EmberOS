@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { CertificationEnvironmentSchema, sha256CanonicalIntegrityHash, type CertificationEnvironment } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 import { deterministicPersistenceUuid } from "./ai-story-scene-execution-persistence";
@@ -61,6 +61,22 @@ export type CertificationPlanningIdentity = {
 
 export class CertificationPlanningAuthorityService {
   constructor(private readonly db: Db = getDb()) {}
+
+  /**
+   * Every authority for one campaign, including inactive rows.
+   * Callers fail closed when the ledger cannot be read.
+   */
+  async listCampaignPlanningAuthorities(input: {
+    orgId: string;
+    workspaceId: string;
+    campaignId: string;
+  }) {
+    return this.db.select().from(schema.certificationPlanningAuthorities).where(and(
+      eq(schema.certificationPlanningAuthorities.orgId, input.orgId),
+      eq(schema.certificationPlanningAuthorities.workspaceId, input.workspaceId),
+      eq(schema.certificationPlanningAuthorities.campaignId, input.campaignId),
+    ));
+  }
 
   /** Story polish retains the existing Provider ledger as usage evidence. */
   async assertStoryPolishLedgerAlignment(providerAttemptId: string) {
@@ -143,11 +159,23 @@ export class CertificationPlanningAuthorityService {
     }
     const projectedCents = maximumCertificationPlanningCostCents(input.maxOutputTokens);
     return this.db.transaction(async (tx) => {
-      const [authority] = await tx.select().from(schema.certificationPlanningAuthorities).where(and(
+      let [authority] = await tx.select().from(schema.certificationPlanningAuthorities).where(and(
         eq(schema.certificationPlanningAuthorities.environment, input.environment),
         eq(schema.certificationPlanningAuthorities.certificationRunId, input.certificationRunId),
       )).limit(1).for("update");
       if (!authority || authority.status !== "ACTIVE") throw new CertificationPlanningAuthorityError("PLANNING_AUTHORITY_MISSING", "Active certification planning authority required");
+      if (!authority.storyId) {
+        const [bound] = await tx.update(schema.certificationPlanningAuthorities).set({
+          storyId: input.storyId,
+        }).where(and(
+          eq(schema.certificationPlanningAuthorities.planningAuthorityId, authority.planningAuthorityId),
+          isNull(schema.certificationPlanningAuthorities.storyId),
+        )).returning();
+        if (!bound || bound.storyId !== input.storyId) {
+          throw new CertificationPlanningAuthorityError("PLANNING_SCOPE_INVALID", "Certification planning authority is bound to another episode");
+        }
+        authority = bound;
+      }
       if (authority.orgId !== input.orgId || authority.workspaceId !== input.workspaceId || authority.campaignId !== input.campaignId || authority.storyId !== input.storyId || authority.authorizedBy !== input.actorUserId || authority.model !== input.model || authority.maxTransportAttempts !== 1) {
         throw new CertificationPlanningAuthorityError("PLANNING_SCOPE_INVALID", "Certification planning authority does not match call scope");
       }
