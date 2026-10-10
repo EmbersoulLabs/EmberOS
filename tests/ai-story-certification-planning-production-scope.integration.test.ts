@@ -329,4 +329,78 @@ describeIntegration("certification planning and Production scope PostgreSQL auth
     expect(authority).toEqual({ spent: "0.00", reserved: "0.03", consumed: 1 });
     expect(blockedExternalNetworkAttempts()).toHaveLength(0);
   }, 120_000);
+
+  it("binds one unbound episode and keeps later stages on that aggregate USD 0.50 ledger", async () => {
+    const service = new CertificationPlanningAuthorityService();
+    const at = new Date().toISOString();
+    const certificationRunId = randomUUID();
+    const otherStoryId = randomUUID();
+    const unbound = { environment: "PRODUCTION" as const, certificationRunId, orgId: ids.orgId, workspaceId: ids.workspaceId, campaignId: ids.campaignId };
+    await service.provision({ ...unbound, storyId: null, authorizedBy: PR32_USER_A, authorizationReason: "one certification episode", authorizedAt: at, maxPlanningCostUsd: "0.50", maxLogicalCalls: 20, maxTransportAttempts: 1, model: "gpt-4o-mini-2024-07-18" });
+    const first = await service.claim({
+      ...unbound,
+      storyId: ids.storyId,
+      actorUserId: PR32_USER_A,
+      stage: "story_polish",
+      logicalCallIdentity: "story_polish:initial",
+      model: "gpt-4o-mini-2024-07-18",
+      maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS.story_polish,
+      maxRetries: 0,
+      claimedAt: at,
+    });
+    const [bound] = await sql`select story_id as "storyId", reserved_planning_cost_usd::text as reserved from certification_planning_authorities where certification_run_id=${certificationRunId}::uuid`;
+    expect(bound).toEqual({ storyId: ids.storyId, reserved: "0.03" });
+    await expect(service.claim({
+      ...unbound,
+      storyId: otherStoryId,
+      actorUserId: PR32_USER_A,
+      stage: "creative_context",
+      logicalCallIdentity: "creative_context:other-episode",
+      model: "gpt-4o-mini-2024-07-18",
+      maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS.creative_context,
+      maxRetries: 0,
+      claimedAt: at,
+    })).rejects.toThrow("does not match call scope");
+    const sameStage = await service.claim({
+      ...unbound,
+      storyId: ids.storyId,
+      actorUserId: PR32_USER_A,
+      stage: "scene_plan",
+      logicalCallIdentity: "scene_plan:initial",
+      model: "gpt-4o-mini-2024-07-18",
+      maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS.scene_plan,
+      maxRetries: 0,
+      claimedAt: at,
+    });
+    await service.failUnknown({ planningClaimId: first.planningClaimId, completedAt: at });
+    await expect(service.claim({
+      ...unbound,
+      storyId: ids.storyId,
+      actorUserId: PR32_USER_A,
+      stage: "story_polish",
+      logicalCallIdentity: "story_polish:initial",
+      model: "gpt-4o-mini-2024-07-18",
+      maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS.story_polish,
+      maxRetries: 0,
+      claimedAt: at,
+    })).rejects.toThrow("already claimed");
+    await service.settle({ planningClaimId: sameStage.planningClaimId, inputTokens: 1000, outputTokens: 100, completedAt: at });
+    const calls = Array.from({ length: 20 }, (_, index) => service.claim({
+      ...unbound,
+      storyId: ids.storyId,
+      actorUserId: PR32_USER_A,
+      stage: "story_beats",
+      logicalCallIdentity: `story_beats:concurrent-${index}`,
+      model: "gpt-4o-mini-2024-07-18",
+      maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS.story_beats,
+      maxRetries: 0,
+      claimedAt: at,
+    }));
+    const outcomes = await Promise.allSettled(calls);
+    const [ledger] = await sql`select spent_planning_cost_usd::text as spent, reserved_planning_cost_usd::text as reserved, (spent_planning_cost_usd + reserved_planning_cost_usd)::text as total from certification_planning_authorities where certification_run_id=${certificationRunId}::uuid`;
+    expect(Number(ledger?.total)).toBeLessThanOrEqual(0.5);
+    expect(Number(ledger?.spent) + Number(ledger?.reserved)).toBeLessThanOrEqual(0.5);
+    expect(outcomes.some((outcome) => outcome.status === "rejected")).toBe(true);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled").length).toBeGreaterThan(0);
+  }, 120_000);
 });

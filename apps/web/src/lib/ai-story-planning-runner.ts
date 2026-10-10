@@ -25,6 +25,7 @@ import {
   generateShotPlan,
   generateStoryBeats,
   generateWorldContinuity,
+  withCertificationPlanningContext,
   withControlledSelfUseProviderContext,
   projectAcceptedCharactersToPlanning,
   projectStoryProductSourcesToPlanning,
@@ -37,6 +38,7 @@ import {
   STORY_PLANNING_STAGE_ORDER,
   assessBusinessProfileCompletion,
   normalizeBusinessProfileRecord,
+  isUuid,
   prunePlanningDraftAfterStage,
   type AiStoryStructuredDraft,
   type AiStoryOutlineProfileReference,
@@ -45,7 +47,7 @@ import {
   type StoryPlanningStage,
 } from "@ceo-agent/shared";
 import { loadCampaignAiStory, setAiStoryStatus } from "@/lib/ai-story-service";
-import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
+import { loadPlanningCertificationRoute, withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
 import { resolveStoryProductSources } from "@/lib/ai-story-product-sources";
 import { planningPackageIsStaleForCompiledOutline } from "@ceo-agent/shared/server";
 import { ensureCurrentFrozenCanonicalOutline } from "@/lib/ai-story-canonical-outline-producer";
@@ -380,14 +382,16 @@ export async function runSinglePlanningStage(input: {
   const reused = await reuseDurablePlanningStage({ db, ctx, campaignId, storyId, stage });
   if (reused) return reused;
   let stageCostUsd = 0;
-  const runStage = () => withConfiguredCertificationPlanningContext({
+  const certificationScope = {
     orgId: ctx.campaign.orgId,
     workspaceId: ctx.campaign.workspaceId,
     campaignId,
     storyId,
     actorUserId: input.actorUserId,
     regenerationIdentity: input.regenerationIdentity,
-  }, async () => {
+  };
+  const certificationRoute = await loadPlanningCertificationRoute(certificationScope);
+  const stageWork = async () => {
   if (["ready_for_animation", "planning_review", "failed"].includes(input.storyStatus)) {
     await setAiStoryStatus(
       db,
@@ -839,7 +843,25 @@ export async function runSinglePlanningStage(input: {
     animationPackage: savedDraft,
     planningDraft: draft,
   };
-  });
+  };
+
+  if (certificationRoute.kind === "certification") {
+    if (input.regenerationIdentity && !isUuid(input.regenerationIdentity)) {
+      throw new Error("PLANNING_REGENERATION_ID_INVALID");
+    }
+    return withCertificationPlanningContext({
+      environment: certificationRoute.environment,
+      certificationRunId: certificationRoute.certificationRunId,
+      orgId: certificationScope.orgId,
+      workspaceId: certificationScope.workspaceId,
+      campaignId,
+      storyId,
+      actorUserId: input.actorUserId,
+      logicalCallSuffix: input.regenerationIdentity ?? "initial",
+    }, stageWork);
+  }
+
+  const runStage = () => withConfiguredCertificationPlanningContext(certificationScope, stageWork);
 
   if (process.env.AI_STORY_PROVIDER_DISPATCH_MODE !== "allowlisted_self_use") {
     return runStage();
