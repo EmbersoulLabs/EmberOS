@@ -17,6 +17,13 @@ describe("AI Story certification planning pre-call cost ceiling", () => {
     }
   });
 
+  it("keeps every certified stage ceiling inside one USD 0.50 aggregate", () => {
+    const reservedCents = Object.values(CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS)
+      .reduce((sum, maxOutputTokens) => sum + maximumCertificationPlanningCostCents(maxOutputTokens), 0);
+    expect(reservedCents).toBeLessThanOrEqual(50);
+    expect(reservedCents).toBeGreaterThan(0);
+  });
+
   it("rejects missing/unbounded output and usage outside the certified model bounds", () => {
     expect(() => maximumCertificationPlanningCostCents(0)).toThrow("Finite output-token limit");
     expect(() => maximumCertificationPlanningCostCents(16_385)).toThrow("Finite output-token limit");

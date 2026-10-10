@@ -17,9 +17,10 @@ import {
 } from "@ceo-agent/shared";
 import {
   polishAiStoryDraft,
+  withCertificationPlanningContext,
   withControlledSelfUseProviderContext,
 } from "@ceo-agent/agents";
-import { withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
+import { loadPlanningCertificationRoute, withConfiguredCertificationPlanningContext } from "@/lib/ai-story-certification-planning-context";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import {
@@ -157,7 +158,18 @@ export async function POST(
       throw new Error("AI_STORY_PLANNING_ACCOUNTING_INITIALIZATION_FAILED");
     }
 
-    const selfUse = process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use"
+    const certificationScope = {
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      campaignId,
+      storyId,
+      actorUserId: user.id,
+      regenerationIdentity: request.headers.get("x-ai-story-certification-regeneration-id"),
+      providerAttemptId: accountingIdentity.attemptId,
+    };
+    const certificationRoute = await loadPlanningCertificationRoute(certificationScope);
+    const selfUse = certificationRoute.kind === "legacy"
+      && process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use"
       ? new ControlledSelfUseAuthorityService(db)
       : null;
     let selfUseReservation: Awaited<ReturnType<ControlledSelfUseAuthorityService["reserve"]>>["reservation"] | null = null;
@@ -180,15 +192,7 @@ export async function POST(
         reservedAt: new Date().toISOString(),
       })).reservation;
     }
-    const runPolish = () => withConfiguredCertificationPlanningContext({
-      orgId: campaign.orgId,
-      workspaceId: campaign.workspaceId,
-      campaignId,
-      storyId,
-      actorUserId: user.id,
-      regenerationIdentity: request.headers.get("x-ai-story-certification-regeneration-id"),
-      providerAttemptId: accountingIdentity.attemptId,
-    }, () => polishAiStoryDraft({
+    const polishDraft = () => polishAiStoryDraft({
       originalIdea: loaded.story.originalIdea,
       campaign: {
         ...campaignPlanningFields(campaign),
@@ -208,7 +212,26 @@ export async function POST(
       assetLabels,
       assetGroundingContext: assetGrounding.context,
       businessProfileComplete: completion?.complete,
-    }));
+    });
+    const runPolish = () => {
+      if (certificationRoute.kind === "certification") {
+        if (certificationScope.regenerationIdentity && !isUuid(certificationScope.regenerationIdentity)) {
+          throw new Error("PLANNING_REGENERATION_ID_INVALID");
+        }
+        return withCertificationPlanningContext({
+          environment: certificationRoute.environment,
+          certificationRunId: certificationRoute.certificationRunId,
+          orgId: campaign.orgId,
+          workspaceId: campaign.workspaceId,
+          campaignId,
+          storyId,
+          actorUserId: user.id,
+          logicalCallSuffix: certificationScope.regenerationIdentity ?? "initial",
+          providerAttemptId: accountingIdentity.attemptId,
+        }, polishDraft);
+      }
+      return withConfiguredCertificationPlanningContext(certificationScope, polishDraft);
+    };
     const polish = selfUseReservation
       ? await withControlledSelfUseProviderContext({
           reservationId: selfUseReservation.reservationId,
@@ -244,7 +267,7 @@ export async function POST(
           await selfUse.release(selfUseReservation.reservationId, new Date().toISOString());
         }
       }
-      if (process.env.AI_STORY_CERTIFICATION_ENVIRONMENT && polish.accounting) {
+      if ((certificationRoute.kind === "certification" || process.env.AI_STORY_CERTIFICATION_ENVIRONMENT) && polish.accounting) {
         await new CertificationPlanningAuthorityService(db).assertStoryPolishLedgerAlignment(accountingIdentity.attemptId);
       }
       console.info("[ai-story-planning] terminal", {
@@ -279,7 +302,7 @@ export async function POST(
         polish.accounting.providerRequestId
       );
     }
-    if (process.env.AI_STORY_CERTIFICATION_ENVIRONMENT) {
+    if (certificationRoute.kind === "certification" || process.env.AI_STORY_CERTIFICATION_ENVIRONMENT) {
       await new CertificationPlanningAuthorityService(db).assertStoryPolishLedgerAlignment(accountingIdentity.attemptId);
     }
 
