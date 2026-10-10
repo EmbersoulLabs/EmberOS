@@ -26,6 +26,7 @@ import {
   FinalStoryResultRepositoryImpl,
   AiStorySceneReleaseRepository,
   RuntimeAuthorizationPersistenceRepository,
+  validateGenerationResult,
   reconstructAiStoryProviderSpendForPlan,
   getDb,
   schema,
@@ -190,6 +191,58 @@ async function countOpenReconciliations(
   for (const row of workerRows) reconDispatchIds.add(row.dispatchId);
   for (const row of observationRows) reconDispatchIds.add(row.dispatchId);
   return reconDispatchIds.size;
+}
+
+export function countScenesStillGenerating(input: {
+  readonly requiredSceneCount: number;
+  readonly succeededSceneCount: number;
+  readonly failedSceneCount: number;
+  readonly localGpuPendingReviewCount: number;
+}): number {
+  return Math.max(
+    0,
+    input.requiredSceneCount - input.succeededSceneCount - input.failedSceneCount - input.localGpuPendingReviewCount,
+  );
+}
+
+async function loadLocalGpuReviews(executionPlanId: string): Promise<Map<string, {
+  packageId: string;
+  generationResultId: string;
+  humanReviewStatus: "PENDING" | "DECIDED";
+}>> {
+  const db = getDb();
+  const [plan] = await db.select({ workspaceId: schema.aiStoryExecutionPlans.workspaceId })
+    .from(schema.aiStoryExecutionPlans)
+    .where(eq(schema.aiStoryExecutionPlans.id, executionPlanId))
+    .limit(1);
+  const reviews = new Map<string, { packageId: string; generationResultId: string; humanReviewStatus: "PENDING" | "DECIDED" }>();
+  if (!plan) return reviews;
+  const rows = await db.select({
+    generationResultId: schema.aiStoryGenerationResults.generationResultId,
+    result: schema.aiStoryGenerationResults.result,
+  }).from(schema.aiStoryGenerationResults).where(and(
+    eq(schema.aiStoryGenerationResults.workspaceId, plan.workspaceId),
+    eq(schema.aiStoryGenerationResults.executionPlanId, executionPlanId),
+    eq(schema.aiStoryGenerationResults.sourceKind, "LOCAL_GPU_WORKER"),
+  ));
+  if (!rows.length) return reviews;
+  const decisions = await db.select({
+    generationResultId: schema.aiStoryGenerationResultDecisions.generationResultId,
+  }).from(schema.aiStoryGenerationResultDecisions).where(
+    inArray(schema.aiStoryGenerationResultDecisions.generationResultId, rows.map((row) => row.generationResultId)),
+  );
+  const decided = new Set(decisions.map((row) => row.generationResultId));
+  for (const row of rows) {
+    const parsed = validateGenerationResult(row.result);
+    const packageId = parsed.inputAuthority.localPackageId;
+    if (parsed.source.sourceKind !== "LOCAL_GPU_WORKER" || typeof packageId !== "string") continue;
+    reviews.set(parsed.sceneExecutionId, {
+      packageId,
+      generationResultId: parsed.generationResultId,
+      humanReviewStatus: decided.has(parsed.generationResultId) ? "DECIDED" : "PENDING",
+    });
+  }
+  return reviews;
 }
 
 export function deriveGeneratedSceneRuntimeState(input: {
@@ -377,6 +430,7 @@ export async function deriveProductRuntimeProjection(
   const preDispatchBlockedSceneIds = authFact
     ? await loadPreDispatchBlockedSceneIds(executionPlanId)
     : new Set<string>();
+  const localGpuReviews = await loadLocalGpuReviews(executionPlanId);
   const generatedSceneReviews = generatedSceneReviewBase.map((review) => {
     const latestAttempt = review.attempts.find(
       (attempt) => attempt.attemptId === review.latestAttemptId
@@ -404,7 +458,10 @@ export async function deriveProductRuntimeProjection(
         : null;
     const releaseState = releaseStateByScene.get(review.sceneExecutionId);
     const reviewAvailable = Boolean(media && review.latestAttemptId);
-    const runtimeState = deriveGeneratedSceneRuntimeState({
+    const localGpuReview = localGpuReviews.get(review.sceneExecutionId) ?? null;
+    const runtimeState = localGpuReview?.humanReviewStatus === "PENDING" && review.reviewState !== "APPROVED"
+      ? "PENDING_REVIEW" as const
+      : deriveGeneratedSceneRuntimeState({
       released: releaseState === "RELEASED",
       approved: Boolean(
         review.reviewState === "APPROVED" && review.approvedAttemptId
@@ -419,6 +476,7 @@ export async function deriveProductRuntimeProjection(
     return {
       ...review,
       generatedMedia: media,
+      localGpuReview,
       runtimeState,
       reviewAvailable,
       recoveryMode:
@@ -461,10 +519,14 @@ export async function deriveProductRuntimeProjection(
     ? await countOpenReconciliations(executionPlanId, terminalSceneExecutionIds)
     : 0;
 
-  const incompleteSceneCount = Math.max(
-    0,
-    requiredSceneCount - succeededSceneCount - failedSceneCount
-  );
+  const localGpuPendingReviewCount = [...localGpuReviews.values()]
+    .filter((review) => review.humanReviewStatus === "PENDING").length;
+  const incompleteSceneCount = countScenesStillGenerating({
+    requiredSceneCount,
+    succeededSceneCount,
+    failedSceneCount,
+    localGpuPendingReviewCount,
+  });
 
   const hasActiveSceneRuntime =
     Boolean(authFact) &&

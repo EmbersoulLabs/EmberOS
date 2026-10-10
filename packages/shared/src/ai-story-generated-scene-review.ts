@@ -219,6 +219,11 @@ export const GeneratedSceneReviewReadModelSchema = z
     running: z.boolean(),
     attempts: z.array(GeneratedSceneAttemptReadModelSchema),
     generatedMedia: GeneratedSceneMediaReadModelSchema.nullable().default(null),
+    localGpuReview: z.object({
+      packageId: z.string().uuid(),
+      generationResultId: z.string().uuid(),
+      humanReviewStatus: z.enum(["PENDING", "DECIDED"]),
+    }).strict().nullable().default(null),
     postGenerationQcEvidence: AiStoryPostQcHumanReviewEvidenceSchema.optional(),
     audioQcResult: AiStoryAudioQcResultSchema.optional(),
     presentation: AiStorySceneReviewPresentationSchema.optional(),

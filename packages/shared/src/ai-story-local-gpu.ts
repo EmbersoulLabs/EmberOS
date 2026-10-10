@@ -9,7 +9,7 @@
  * HMAC-SHA256 covers the base64url payload string. The secret is a UTF-8 string.
  * Claim order is fixed. expiresAt is Unix epoch milliseconds. HTTP transport is not signed.
  */
-import { createHash } from "node:crypto";
+import { createHash } from "crypto";
 import { z } from "zod";
 import {
   resolveAiStoryAudioGenerationSemantics,

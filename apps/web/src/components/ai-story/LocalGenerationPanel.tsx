@@ -58,6 +58,7 @@ type ReadModel = {
   }>;
   outputs: AiStoryLocalGenerationOutput[];
   mediaJobs: Array<{packageId:string;kind:string;state:string;errorCode:string|null}>;
+  localGpuReviews: Array<{ packageId: string; generationResultId: string; humanReviewStatus: "PENDING" | "DECIDED" }>;
 };
 
 export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, refreshToken }: Props) {
@@ -78,7 +79,7 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
       || !Array.isArray(body.outputs) || !Array.isArray(body.mediaJobs)) {
       throw new Error("Local Generation packages are temporarily unavailable");
     }
-    setModel(body as ReadModel);
+    setModel({ ...body, localGpuReviews: Array.isArray(body.localGpuReviews) ? body.localGpuReviews : [] } as ReadModel);
   }, [base]);
 
   useEffect(() => {
@@ -173,6 +174,7 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
 
   if (!model || model.packages.length === 0) return null;
   const outputs = new Map(model.outputs.map((output) => [output.packageId, output]));
+  const localGpuReviews = new Map(model.localGpuReviews.map((review) => [review.packageId, review]));
 
   return (
     <section className="space-y-4 rounded-2xl border border-border bg-white p-5" data-testid="local-generation-panel">
@@ -189,6 +191,7 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
       <ol className="space-y-4">
         {model.packages.map((item) => {
           const output = outputs.get(item.packageId);
+          const localGpuReview = localGpuReviews.get(item.packageId);
           const mediaJob = model.mediaJobs.filter(job => job.packageId === item.packageId && job.kind === "VALIDATE_OUTPUT").at(-1);
           const validating = mediaJob?.state === "PENDING" || mediaJob?.state === "RUNNING";
           const phase = validating ? "validating" : (uploadPhase[item.packageId] ?? "idle");
@@ -207,7 +210,11 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
                   <p className="text-xs text-ink-secondary">Audio mode: {item.generateAudio ? "Native synchronized audiovisual" : "Video only"}</p>
                 </div>
                 <span className="rounded-full bg-surface-muted px-3 py-1 text-xs font-medium text-navy">
-                  {output ? (output.qcState === "PENDING" ? "Uploaded · awaiting QC" : output.qcState) : phase === "validating" ? "Validating media…" : "Awaiting Local Generation"}
+                  {localGpuReview?.humanReviewStatus === "PENDING"
+                    ? "Generation completed · human review pending"
+                    : localGpuReview?.humanReviewStatus === "DECIDED"
+                      ? "Generation completed · human review recorded"
+                    : output ? (output.qcState === "PENDING" ? "Uploaded · awaiting QC" : output.qcState) : phase === "validating" ? "Validating media…" : "Awaiting Local Generation"}
                 </span>
               </div>
               <div className="mt-3 rounded-lg bg-surface-muted p-3">
@@ -242,7 +249,8 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
                   );
                 })}
               </div>
-              {!output ? (
+              {localGpuReview ? <p className="mt-3 text-sm text-ink-secondary" data-testid={`local-gpu-review-pending-${item.order}`}>Generation is complete. Post-QC needs human confirmation. Review the video, original audio, and Coral product reference on this episode moment. Final certification stays pending until that decision.</p> : null}
+              {!output && !localGpuReview ? (
                 <div className="mt-3">
                   <input
                     ref={(node) => { fileRefs.current[item.packageId] = node; }}

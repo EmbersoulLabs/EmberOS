@@ -1,4 +1,5 @@
-import { AiStoryLocalGenerationRepository, AiStoryLocalMediaJobRepository } from "@ceo-agent/db";
+import { and, eq, inArray } from "drizzle-orm";
+import { AiStoryLocalGenerationRepository, AiStoryLocalMediaJobRepository, getDb, schema, validateGenerationResult } from "@ceo-agent/db";
 import { apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { resolveAuthorizedExecutionPlan } from "@/lib/ai-story-execution-plan-access";
@@ -18,11 +19,36 @@ export async function GET(
       minRole: "client_viewer",
     });
     const repository = new AiStoryLocalGenerationRepository();
-    const [packages, outputs, mediaJobs] = await Promise.all([
+    const db = getDb();
+    const [packages, outputs, mediaJobs, localGpuRows] = await Promise.all([
       repository.listByExecutionPlan({ workspaceId: ctx.workspaceId, executionPlanId }),
       repository.listOutputs({ workspaceId: ctx.workspaceId, executionPlanId }),
       new AiStoryLocalMediaJobRepository().list(ctx.workspaceId, executionPlanId),
+      db.select({
+        generationResultId: schema.aiStoryGenerationResults.generationResultId,
+        result: schema.aiStoryGenerationResults.result,
+      }).from(schema.aiStoryGenerationResults).where(and(
+        eq(schema.aiStoryGenerationResults.workspaceId, ctx.workspaceId),
+        eq(schema.aiStoryGenerationResults.executionPlanId, executionPlanId),
+        eq(schema.aiStoryGenerationResults.sourceKind, "LOCAL_GPU_WORKER"),
+      )),
     ]);
+    const decided = new Set(localGpuRows.length === 0 ? [] : (await db.select({
+      generationResultId: schema.aiStoryGenerationResultDecisions.generationResultId,
+    }).from(schema.aiStoryGenerationResultDecisions).where(
+      inArray(schema.aiStoryGenerationResultDecisions.generationResultId, localGpuRows.map((row) => row.generationResultId)),
+    )).map((row) => row.generationResultId));
+    const localGpuReviews = localGpuRows.flatMap((row) => {
+      const parsed = validateGenerationResult(row.result);
+      const packageId = parsed.inputAuthority.localPackageId;
+      if (parsed.source.sourceKind !== "LOCAL_GPU_WORKER" || typeof packageId !== "string") return [];
+      return [{
+        packageId,
+        generationResultId: parsed.generationResultId,
+        sceneExecutionId: parsed.sceneExecutionId,
+        humanReviewStatus: decided.has(parsed.generationResultId) ? "DECIDED" as const : "PENDING" as const,
+      }];
+    });
     return apiSuccess({
       executionMode: "MANUAL_LOCAL",
       cloudVideoProviderCostUsd: 0,
@@ -37,6 +63,7 @@ export async function GET(
         downloadPath: `local-generation/${item.packageId}/download`,
       })),
       outputs,
+      localGpuReviews,
       mediaJobs: mediaJobs.map(({claimToken:_token,actorUserId:_actor,...job})=>job),
     });
   } catch (error) {
