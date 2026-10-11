@@ -69,6 +69,31 @@ export function projectAcceptedCharactersToPlanning(input: {
 }
 
 /**
+ * A Creative Context character is Script authority only after explicit acceptance.
+ * Proposal ids such as proposed_character_1 are not canonical, and this does not
+ * create a Character, a fingerprint, or a visual Asset.
+ */
+export function assertCreativeCharactersMatchAuthorities(input: {
+  characters: readonly {
+    id?: string;
+    proposalOnly?: boolean;
+    canonicalAuthority?: { characterId: string } | null;
+  }[];
+  characterAuthorities: readonly { characterId: string }[];
+}): void {
+  const authorized = new Set(input.characterAuthorities.map((authority) => authority.characterId));
+  for (const character of input.characters) {
+    const canonicalId = character.canonicalAuthority?.characterId;
+    if (character.proposalOnly || !canonicalId) {
+      throw new Error("CHARACTER_PROPOSAL_ACCEPTANCE_REQUIRED");
+    }
+    if (!authorized.has(canonicalId) || (character.id !== undefined && character.id !== canonicalId)) {
+      throw new Error("CHARACTER_AUTHORITY_IDENTITY_REQUIRED");
+    }
+  }
+}
+
+/**
  * Story planning uses the Characters already bound by Creative Context.
  * Other campaign Characters, including another projection of the same name,
  * stay in the campaign and are not Script speakers or state subjects.
