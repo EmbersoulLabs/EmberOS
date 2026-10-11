@@ -24,6 +24,7 @@ import {
   type Platform,
   type StrategyPlan,
   type VisionAnalysis,
+  MARKETING_SKILL_GUIDANCE,
 } from "@ceo-agent/shared";
 
 export type { ContentLocale };
@@ -61,8 +62,10 @@ hooks[10] with text/textEn/textMs + type, cta[5] UNIQUE styles (never duplicate 
 voiceStyle, broll, musicMood, effects, postingRecommendation, consistencyScore
 
 ### Dashboard: analysis
-marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100),
-estimatedCtr, estimatedEngagement, estimatedConversion (short ranges e.g. "2.1%–3.8%")
+marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100 content checklist, not live analytics),
+estimatedCtr, estimatedEngagement, estimatedConversion (empty strings unless the input already contains that measured figure)
+
+${MARKETING_SKILL_GUIDANCE}
 
 ### Dashboard: strategyBrief
 primaryGoal, targetAudience, contentAngle, painPoint, desiredEmotion, ctaStrategy (one line each)

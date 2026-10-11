@@ -38,6 +38,7 @@ export * from "./review-flow";
 export * from "./pilot-metrics";
 export * from "./review-resubmit";
 export * from "./marketing-pack-locale";
+export * from "./marketing-studio-v1";
 export * from "./localize-marketing-pack";
 export * from "./marketing-dashboard";
 export * from "./export-pack";

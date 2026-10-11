@@ -18,6 +18,7 @@ import {
   type StrategyPlan,
   type VisionAnalysis,
   type Industry,
+  MARKETING_SKILL_GUIDANCE,
 } from "@ceo-agent/shared";
 import type { CampaignCreativeBrief } from "@ceo-agent/shared";
 import {
@@ -127,7 +128,9 @@ Works for any industry: retail, fashion, beauty, restaurant, cafe, bakery, real 
 
 Determine industry, business type, product/service, core selling points, brand personality, marketing goal, marketing angle, target audience (age, gender, location, interests, buying intent, pain points, desired outcome), customer journey stage, platform priorities, recommended tone, recommended video style, CTA strategy, keywords, and hashtag categories.
 
-Return ONLY JSON matching the schema. No markdown.`;
+Return ONLY JSON matching the schema. No markdown.
+
+${MARKETING_SKILL_GUIDANCE}`;
 
 const INDUSTRY_FALLBACK: Partial<
   Record<
