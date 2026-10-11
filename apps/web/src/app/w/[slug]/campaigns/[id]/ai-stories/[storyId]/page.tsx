@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AppShell, fetchCurrentUserProjection, StatusBadge } from "@/components/AppShell";
@@ -352,11 +352,59 @@ export default function AiStoryReviewPage() {
 
         {isPlanningStatus(status) && !advancedAuthorized ? <section className="rounded-2xl border border-border bg-white p-5" data-testid="internal-planning-hidden"><h2 className="text-lg font-bold text-navy">Animation preparation</h2><p className="mt-1 text-sm text-ink-secondary">EmberOS is handling directing and production planning. An authorized operator will continue when preparation is ready.</p></section> : null}
 
-        {advancedAuthorized && isPlanningStatus(status) ? <details className="rounded-2xl border border-border bg-white p-5" data-testid="advanced-planning-diagnostics"><summary className="cursor-pointer text-sm font-semibold text-navy">Advanced animation preparation</summary><div className="mt-4 space-y-4"><p className="text-sm text-ink-secondary">Authorized operator controls for Plan QC and preparation. These internal planning artifacts are not part of the normal-user workflow.</p>{status !== "planning_review" && status !== "ready_for_execution" ? <button type="button" disabled={busy} onClick={() => void generatePlanning()} className="brand-btn-primary">{busy && !busyStage ? "Preparing…" : "Prepare Animation"}</button> : null}<div className="grid gap-2">{STORY_PLANNING_STAGE_ORDER.map((stage) => { const done=completedStages.has(stage)||(stage==="animation_package"&&Boolean(animationPackage)); const enabled=stageEnabled(stage); return <div key={stage} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 last:border-0"><div><p className="text-sm font-medium text-navy">{STAGE_LABELS[stage]}</p><p className="text-xs text-ink-secondary">{done?"Complete":enabled?"Ready":"Waiting on prior stage"}</p></div><button type="button" disabled={busy||!enabled||status==="ready_for_execution"} onClick={() => void runStage(stage)} className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50">{busyStage===stage?"Running…":done?`Regenerate ${STAGE_LABELS[stage].replace(/^Generate |^Assemble /,"")}`:STAGE_LABELS[stage]}</button></div>;})}</div><div className="flex flex-wrap gap-3"><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("characters")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Characters</button><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("dialogue")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Dialogue</button><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("narrative")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Narrative</button></div>{status === "planning_review" ? <PlanningApprovalControl campaignId={campaignId} storyId={storyId} storyVersionId={storyVersionId} animationPackageId={animationPackageRecordId} disabled={busy} onApproved={async (nextStatus) => { setStatus(nextStatus); await load(); }} onError={setError} /> : null}{creativeContext ? <PackageSection title="Creative Context" value={creativeContext} /> : null}{planningDraft ? <PackageSection title="Planning Draft Progress" value={{completedStages:planningDraft.completedStages,beats:planningDraft.storyBeats?.length??0,scenes:planningDraft.scenePlan?.length??0,shots:planningDraft.shotPlan?.length??0}} /> : null}{animationPackage ? <><PackageSection title="Director Thinking" value={animationPackage.directorThinking}/><PackageSection title="Beats" value={animationPackage.storyBeats}/><PackageSection title="Scenes" value={animationPackage.scenePlan}/><PackageSection title="Shots" value={animationPackage.shotPlan}/></> : null}</div></details> : null}
+        {advancedAuthorized && isPlanningStatus(status) ? <details className="rounded-2xl border border-border bg-white p-5" data-testid="advanced-planning-diagnostics"><summary className="cursor-pointer text-sm font-semibold text-navy">Advanced animation preparation</summary><div className="mt-4 space-y-4"><p className="text-sm text-ink-secondary">Authorized operator controls for Plan QC and preparation. These internal planning artifacts are not part of the normal-user workflow.</p>{storyVersionId ? <NoAssetConfirmationControl campaignId={campaignId} storyId={storyId} storyVersionId={storyVersionId} disabled={busy} onError={setError} /> : null}{status !== "planning_review" && status !== "ready_for_execution" ? <button type="button" disabled={busy} onClick={() => void generatePlanning()} className="brand-btn-primary">{busy && !busyStage ? "Preparing…" : "Prepare Animation"}</button> : null}<div className="grid gap-2">{STORY_PLANNING_STAGE_ORDER.map((stage) => { const done=completedStages.has(stage)||(stage==="animation_package"&&Boolean(animationPackage)); const enabled=stageEnabled(stage); return <div key={stage} className="flex flex-wrap items-center justify-between gap-3 border-b border-border py-2 last:border-0"><div><p className="text-sm font-medium text-navy">{STAGE_LABELS[stage]}</p><p className="text-xs text-ink-secondary">{done?"Complete":enabled?"Ready":"Waiting on prior stage"}</p></div><button type="button" disabled={busy||!enabled||status==="ready_for_execution"} onClick={() => void runStage(stage)} className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50">{busyStage===stage?"Running…":done?`Regenerate ${STAGE_LABELS[stage].replace(/^Generate |^Assemble /,"")}`:STAGE_LABELS[stage]}</button></div>;})}</div><div className="flex flex-wrap gap-3"><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("characters")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Characters</button><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("dialogue")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Dialogue</button><button type="button" disabled={busy||status==="ready_for_execution"} onClick={() => void runScreenwriter("narrative")} className="rounded-lg border border-border px-3 py-1.5 text-sm">Generate Narrative</button></div>{status === "planning_review" ? <PlanningApprovalControl campaignId={campaignId} storyId={storyId} storyVersionId={storyVersionId} animationPackageId={animationPackageRecordId} disabled={busy} onApproved={async (nextStatus) => { setStatus(nextStatus); await load(); }} onError={setError} /> : null}{creativeContext ? <PackageSection title="Creative Context" value={creativeContext} /> : null}{planningDraft ? <PackageSection title="Planning Draft Progress" value={{completedStages:planningDraft.completedStages,beats:planningDraft.storyBeats?.length??0,scenes:planningDraft.scenePlan?.length??0,shots:planningDraft.shotPlan?.length??0}} /> : null}{animationPackage ? <><PackageSection title="Director Thinking" value={animationPackage.directorThinking}/><PackageSection title="Beats" value={animationPackage.storyBeats}/><PackageSection title="Scenes" value={animationPackage.scenePlan}/><PackageSection title="Shots" value={animationPackage.shotPlan}/></> : null}</div></details> : null}
         {advancedAuthorized && episodeIntentPresent ? <details className="rounded-2xl border border-border bg-white p-5" data-testid="commercial-episode-repair-diagnostics"><summary className="cursor-pointer text-sm font-semibold text-navy">Episode intent diagnostics</summary><div className="mt-3 space-y-1 text-sm text-ink-secondary"><p>Episode intent: present</p><p>Native character dialogue: {nativeDialogueRequested ? "yes" : "no"}</p><p>Visual text languages: {visualTextLanguages.join(", ") || "none"}</p></div></details> : null}
         {executionActive ? <ExecutionPanel campaignId={campaignId} storyId={storyId} status={status} busy={busy} setBusy={setBusy} setError={setError} onDone={load} workspaceRole={workspaceRole} storyTitle={draft.title} storyVersionId={storyVersionId} animationPackageId={animationPackageRecordId} advancedAuthorized={advancedAuthorized} /> : null}
       </main>
     </AppShell>
+  );
+}
+
+function NoAssetConfirmationControl({
+  campaignId, storyId, storyVersionId, disabled, onError,
+}: {
+  campaignId: string;
+  storyId: string;
+  storyVersionId: string;
+  disabled: boolean;
+  onError: (message: string) => void;
+}) {
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [savedId, setSavedId] = useState<string | null>(null);
+
+  async function confirm(event: FormEvent) {
+    event.preventDefault();
+    if (!acknowledged || disabled || submitting) return;
+    setSubmitting(true);
+    onError("");
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/asset-matching/no-asset-confirmation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmed: true, storyVersionId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "No-asset confirmation failed");
+      setSavedId(String(data.matchingResultId ?? ""));
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "No-asset confirmation failed");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <form className="space-y-2 rounded-lg border border-border p-3" data-testid="no-asset-confirmation" onSubmit={(event) => void confirm(event)}>
+      <label className="flex items-start gap-2 text-sm text-navy">
+        <input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} />
+        <span>Confirm this episode has no reference assets</span>
+      </label>
+      <button type="submit" className="rounded-lg border border-border px-3 py-1.5 text-sm disabled:opacity-50" disabled={disabled || submitting || !acknowledged}>
+        {submitting ? "Saving confirmation…" : "Continue without reference assets"}
+      </button>
+      {savedId ? <p className="text-xs text-ink-secondary">No-asset confirmation saved. Matching result {savedId}</p> : null}
+    </form>
   );
 }
 

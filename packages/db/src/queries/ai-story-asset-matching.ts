@@ -1,12 +1,18 @@
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
+  AI_STORY_NO_ASSET_CONFIRMATION_AUTHORITY_VERSION,
   AiStoryAssetAnalysisSnapshotSchema,
   AiStoryAssetMatchingResultSchema,
   AiStoryAssetRegistryEntrySchema,
   AiStorySceneGroundingError,
   buildScenePlanningGroundingContext,
+  matchAnalyzedAssetsToStory,
   type AiStoryAssetMatchingResult,
 } from "@ceo-agent/shared";
+import {
+  deterministicUuidFromFingerprint,
+  sha256CanonicalIntegrityHash,
+} from "@ceo-agent/shared/server";
 import { getDb } from "../client";
 import * as schema from "../schema/index";
 import { AiStoryAssetPlannerPersistenceError } from "./ai-story-asset-aware-execution-planner";
@@ -342,5 +348,177 @@ export class AiStoryAssetMatchingRepository {
       );
     }
     return replay;
+  }
+
+  /**
+   * Explicit reference-free confirmation for one frozen Story Version.
+   * Uses the same matching result table as analyzed-asset acceptance.
+   * It does not read Asset bytes or call a model.
+   */
+  async confirmNoReferenceAssets(input: {
+    readonly orgId: string;
+    readonly workspaceId: string;
+    readonly storyId: string;
+    readonly storyVersionId: string;
+    readonly confirmedBy: string;
+    readonly confirmedAt: string;
+    readonly nativeDialogueDesired?: boolean;
+  }): Promise<AiStoryAssetMatchingResult> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select id from ai_stories where id=${input.storyId} for update`);
+      await tx.execute(sql`select id from ai_story_versions where id=${input.storyVersionId} for update`);
+      const [story] = await tx
+        .select({
+          id: schema.aiStories.id,
+          orgId: schema.aiStories.orgId,
+          workspaceId: schema.aiStories.workspaceId,
+          currentVersionId: schema.aiStories.currentVersionId,
+        })
+        .from(schema.aiStories)
+        .where(eq(schema.aiStories.id, input.storyId))
+        .limit(1);
+      const [version] = await tx
+        .select({
+          id: schema.aiStoryVersions.id,
+          storyId: schema.aiStoryVersions.storyId,
+          versionNumber: schema.aiStoryVersions.versionNumber,
+          frozenAt: schema.aiStoryVersions.frozenAt,
+        })
+        .from(schema.aiStoryVersions)
+        .where(eq(schema.aiStoryVersions.id, input.storyVersionId))
+        .limit(1);
+      if (
+        !story ||
+        !version ||
+        story.orgId !== input.orgId ||
+        story.workspaceId !== input.workspaceId ||
+        version.storyId !== input.storyId
+      ) {
+        throw new AiStoryAssetPlannerPersistenceError(
+          "STORY_ASSET_BINDING_SCOPE_MISMATCH",
+          "No-asset confirmation is outside the authorized Story Workspace"
+        );
+      }
+      if (story.currentVersionId !== input.storyVersionId) {
+        throw new AiStoryAssetPlannerPersistenceError(
+          "NO_ASSET_CONFIRMATION_STALE_VERSION",
+          "No-asset confirmation does not match the current frozen Story Version"
+        );
+      }
+      if (!version.frozenAt) {
+        throw new AiStoryAssetPlannerPersistenceError(
+          "NO_ASSET_CONFIRMATION_VERSION_NOT_FROZEN",
+          "Story Version must be frozen before no-asset confirmation"
+        );
+      }
+      const boundAssets = await tx
+        .select({ assetId: schema.assets.id })
+        .from(schema.aiStoryAssetLinks)
+        .innerJoin(
+          schema.assets,
+          eq(schema.assets.id, schema.aiStoryAssetLinks.assetId)
+        )
+        .where(and(
+          eq(schema.aiStoryAssetLinks.storyId, input.storyId),
+          eq(schema.assets.orgId, input.orgId),
+          eq(schema.assets.workspaceId, input.workspaceId),
+          isNull(schema.assets.deletedAt),
+        ));
+      if (boundAssets.length > 0) {
+        throw new AiStoryAssetPlannerPersistenceError(
+          "NO_ASSET_CONFIRMATION_ASSETS_PRESENT",
+          "Reference assets are already bound. Use the existing Asset Matching flow."
+        );
+      }
+      const existingRows = await tx
+        .select({ result: schema.aiStoryAssetMatchingResults.result })
+        .from(schema.aiStoryAssetMatchingResults)
+        .where(and(
+          eq(schema.aiStoryAssetMatchingResults.orgId, input.orgId),
+          eq(schema.aiStoryAssetMatchingResults.workspaceId, input.workspaceId),
+          eq(schema.aiStoryAssetMatchingResults.storyId, input.storyId),
+          eq(schema.aiStoryAssetMatchingResults.storyVersionId, input.storyVersionId),
+        ));
+      if (existingRows.length > 1) {
+        throw new AiStoryAssetPlannerPersistenceError(
+          "NO_ASSET_CONFIRMATION_CONFLICT",
+          "This frozen Story Version already has more than one Asset matching result"
+        );
+      }
+      if (existingRows.length === 1) {
+        const existing = AiStoryAssetMatchingResultSchema.parse(existingRows[0]!.result);
+        const confirmation = existing.noAssetConfirmation;
+        if (
+          existing.assetRecommendationStatus === "CONFIRMED_NO_ASSETS" &&
+          existing.bindings.length === 0 &&
+          confirmation?.storyId === input.storyId &&
+          confirmation.storyVersionId === input.storyVersionId
+        ) {
+          return existing;
+        }
+        throw new AiStoryAssetPlannerPersistenceError(
+          "NO_ASSET_CONFIRMATION_CONFLICT",
+          "This frozen Story Version already has a different Asset matching result"
+        );
+      }
+      const confirmedAt = new Date(input.confirmedAt).toISOString();
+      const matchingResultId = deterministicUuidFromFingerprint(
+        "ai-story-no-asset-confirmation",
+        sha256CanonicalIntegrityHash({
+          orgId: input.orgId,
+          workspaceId: input.workspaceId,
+          storyId: input.storyId,
+          storyVersionId: input.storyVersionId,
+          authorityVersion: AI_STORY_NO_ASSET_CONFIRMATION_AUTHORITY_VERSION,
+        })
+      );
+      const result = matchAnalyzedAssetsToStory({
+        matchingResultId,
+        orgId: input.orgId,
+        workspaceId: input.workspaceId,
+        storyId: input.storyId,
+        storyVersionId: input.storyVersionId,
+        storyVersionNumber: version.versionNumber,
+        requirements: {
+          nativeDialogueDesired: input.nativeDialogueDesired === true,
+        },
+        assets: [],
+        semanticDecisions: [],
+        bindingIdByAssetId: {},
+        noAssetConfirmation: {
+          storyId: input.storyId,
+          storyVersionId: input.storyVersionId,
+          confirmedBy: input.confirmedBy,
+          confirmedAt,
+          authorityVersion: AI_STORY_NO_ASSET_CONFIRMATION_AUTHORITY_VERSION,
+        },
+        matcherVersion: "emberos-story-asset-grounding-matcher.v1",
+        createdAt: confirmedAt,
+      });
+      const resultFingerprint = sha256CanonicalIntegrityHash({ result });
+      const inserted = await tx
+        .insert(schema.aiStoryAssetMatchingResults)
+        .values({
+          matchingResultId: result.matchingResultId,
+          orgId: result.orgId,
+          workspaceId: result.workspaceId,
+          storyId: result.storyId,
+          storyVersionId: result.storyVersionId,
+          contractVersion: result.contractVersion,
+          result,
+          resultFingerprint,
+          matcherVersion: result.matcherVersion,
+          createdAt: new Date(result.createdAt),
+        })
+        .onConflictDoNothing()
+        .returning({ result: schema.aiStoryAssetMatchingResults.result });
+      if (!inserted[0]) {
+        throw new AiStoryAssetPlannerPersistenceError(
+          "NO_ASSET_CONFIRMATION_CONFLICT",
+          "No-asset confirmation conflicted with existing Asset matching authority"
+        );
+      }
+      return AiStoryAssetMatchingResultSchema.parse(inserted[0].result);
+    });
   }
 }
