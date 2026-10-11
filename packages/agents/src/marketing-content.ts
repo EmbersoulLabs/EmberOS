@@ -25,7 +25,9 @@ import {
   type VisionAnalysis,
   MARKETING_SKILL_GUIDANCE,
   CONTENT_JSON_CONTRACT,
+  authorizedMarketingFacts,
   evaluateContentContract,
+  explicitScriptDurationSec,
 } from "@ceo-agent/shared";
 
 export type { ContentLocale };
@@ -846,7 +848,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   // Content generation requires large structured JSON output (hooks×10, 8 platform assets,
   // bilingual voice scripts, analysis, SEO pack). gpt-4o-mini frequently produces malformed
   // or incomplete JSON at this scale; gpt-4o is significantly more reliable here.
-  const { result, usage } = await callJsonModel<unknown>(
+  const { result, usage, providerRequestId } = await callJsonModel<unknown>(
     CONTENT_SYSTEM_PROMPT,
     user,
     CONTENT_JSON_CONTRACT,
@@ -855,6 +857,9 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
 
   const evaluated = evaluateContentContract(result, {
     brief: substantiveCampaignBrief(input.userNotes, input.videoAnalysis) ?? null,
+    ...authorizedMarketingFacts(input.businessInformation),
+    durationSec: explicitScriptDurationSec(input.userNotes),
+    providerRequestId,
   });
   if (!evaluated.diagnostic.ok || !evaluated.contentPackage) {
     console.warn(`[content] contract failed codes=${evaluated.diagnostic.codes.join(",")}`);

@@ -24,13 +24,26 @@ export const STRATEGY_FACT_GROUNDING_RULE =
 export const STRATEGY_JSON_CONTRACT = `${describeZodContract(StrategyPlanSchema)} ${STRATEGY_FACT_GROUNDING_RULE}`;
 
 export const CONTENT_JSON_CONTRACT =
-  "Top-level voiceScripts {15s,30s,60s}, voiceScriptsEn, voiceScriptsZh, hooks [{text,type}], cta [{text}], musicMood, captions, broll, subtitleTimeline, postingRecommendation. Do not wrap these keys.";
+  "Top-level voiceScripts {15s,30s,60s}, voiceScriptsEn, voiceScriptsZh, hooks [{text,type}], cta [{text}], musicMood, captions, broll, subtitleTimeline [{startSec:number, endSec:number, text:string}], postingRecommendation. Do not wrap these keys.";
 
 export type MarketingContractAdjustment = {
   field: string;
   action: "map" | "remove";
   raw: string;
   result?: string | number;
+};
+
+export type MarketingClaimCategory = "delivery" | "discount" | "guarantee" | "ranking" | "location" | "testimonial";
+
+export type MarketingContractIssue = {
+  code: string;
+  field: string;
+  expected?: string;
+  received?: string;
+  claimCategory?: MarketingClaimCategory;
+  normalizable?: boolean;
+  excerpt?: string;
+  authorization?: string;
 };
 
 export type MarketingContractDiagnostic = {
@@ -41,6 +54,8 @@ export type MarketingContractDiagnostic = {
   fields: string[];
   fallback: "none";
   adjustments?: MarketingContractAdjustment[];
+  issues?: MarketingContractIssue[];
+  providerRequestId?: string;
 };
 
 export type StrategyContractFacts = {
@@ -49,6 +64,12 @@ export type StrategyContractFacts = {
   brief?: string | null;
   description?: string | null;
   brandKeywords?: string[] | null;
+  address?: string | null;
+};
+
+export type ContentContractFacts = StrategyContractFacts & {
+  durationSec?: number | null;
+  providerRequestId?: string | null;
 };
 
 const INSTRUCTION_LEAK = /promote only these authorized facts|do not add prices|video generation stays unauthorized|^request:/i;
@@ -65,8 +86,18 @@ function diagnostic(
   stage: MarketingContractDiagnostic["stage"],
   codes: string[],
   fields: string[],
-  adjustments: MarketingContractAdjustment[] = []
+  adjustments: MarketingContractAdjustment[] = [],
+  issues: MarketingContractIssue[] = [],
+  providerRequestId?: string | null
 ): MarketingContractDiagnostic {
+  const bounded = issues.slice(0, 12).map((issue) => ({
+    ...issue,
+    ...(issue.excerpt ? { excerpt: issue.excerpt.replace(/\s+/g, " ").trim().slice(0, 80) } : {}),
+    ...(issue.received ? { received: issue.received.slice(0, 120) } : {}),
+  }));
+  const requestId = typeof providerRequestId === "string" && /^[A-Za-z0-9_-]{8,80}$/.test(providerRequestId)
+    ? providerRequestId
+    : undefined;
   return {
     ok: codes.length === 0,
     stage,
@@ -75,6 +106,8 @@ function diagnostic(
     fields: [...new Set(fields)],
     fallback: "none",
     ...(adjustments.length ? { adjustments } : {}),
+    ...(bounded.length ? { issues: bounded } : {}),
+    ...(requestId ? { providerRequestId: requestId } : {}),
   };
 }
 
@@ -105,16 +138,18 @@ function issueFields(error: z.ZodError): string[] {
   return error.issues.map((issue) => issue.path.join(".") || issue.code);
 }
 
-const DELIVERY_CLAIM = /delivery|配送|送货|包邮|当日达|免运/i;
-const DISCOUNT_CLAIM = /(?:\d+\s*%|\bdiscount\b|半价|折扣|优惠|促销|\$\s?\d|\bRM\s?\d)/i;
-const GUARANTEE_CLAIM = /(?:\bguaranteed\b|保证转化|保证送达|保证到货|品质保证)/i;
-const SUPERLATIVE_CLAIM = /(?:\bbest\s+florist\b|最好的花店)/i;
+const DELIVERY_CLAIM = /delivery|配送|送货|包邮|当日达|免运|penghantaran/i;
+const DISCOUNT_CLAIM = /(?:\d+\s*%|\bdiscount\b|半价|折扣|优惠|促销|\$\s?\d|\bRM\s?\d|\bdiskaun\b)/i;
+const GUARANTEE_CLAIM = /(?:\bguaranteed\b|保证转化|保证送达|保证到货|品质保证|保证结果|\bdijamin\b)/i;
+const RANKING_CLAIM = /(?:\bbest\s+florist\b|bestflowerstore|bestflorist|#1\s*florist|number\s+one\s+florist|最好的花店|全岛第一|kedai bunga terbaik)/i;
+const LOCATION_CLAIM = /visit our (?:shop|store)|our (?:shop|store)\b|right in the heart of|in the heart of|storefront|walk-?in|shop address|市中心|到店|进店|门店|实体店|lawati kedai|di pusat bandar/i;
+const TESTIMONIAL_CLAIM = /customer reviews?|customers say|our customers love|five[- ]star|5[- ]star|客户评价|顾客说|真实评价|testimoni pelanggan|pelanggan kata/i;
 const CTA_OFFER = /\d+\s*%|\bdiscount\b|\bsale\b|free\s+delivery|优惠|折扣|半价|促销|买一送一/i;
 const CTA_DENIAL = /no\s+promotion|no\s+discount|not\s+on\s+sale|full\s+price|no\s+delivery|没有优惠|无折扣|不打折|无促销/i;
 const NEGATED_FACT = /\b(no|not|without)\b|不提供|不含|没有/i;
 
 function factLines(facts: StrategyContractFacts): string[] {
-  return [facts.description ?? "", ...(facts.services ?? []), ...(facts.brandKeywords ?? [])]
+  return [facts.description ?? "", facts.address ?? "", ...(facts.services ?? []), ...(facts.brandKeywords ?? [])]
     .map((item) => item?.trim() ?? "")
     .filter(Boolean);
 }
@@ -123,13 +158,52 @@ function profileAllows(lines: string[], pattern: RegExp): boolean {
   return lines.some((line) => pattern.test(line) && !NEGATED_FACT.test(line));
 }
 
-function unsupportedClaim(text: string, facts: StrategyContractFacts): boolean {
+const CLAIM_RULES: Array<{ category: MarketingClaimCategory; pattern: RegExp; allow: RegExp }> = [
+  { category: "delivery", pattern: DELIVERY_CLAIM, allow: DELIVERY_CLAIM },
+  { category: "discount", pattern: DISCOUNT_CLAIM, allow: DISCOUNT_CLAIM },
+  { category: "guarantee", pattern: GUARANTEE_CLAIM, allow: /guaranteed|保证|dijamin/i },
+  { category: "ranking", pattern: RANKING_CLAIM, allow: RANKING_CLAIM },
+  { category: "location", pattern: LOCATION_CLAIM, allow: LOCATION_CLAIM },
+  { category: "testimonial", pattern: TESTIMONIAL_CLAIM, allow: TESTIMONIAL_CLAIM },
+];
+
+function claimMatches(text: string, facts: StrategyContractFacts): Array<{ category: MarketingClaimCategory; excerpt: string }> {
   const lines = factLines(facts);
-  if (DELIVERY_CLAIM.test(text) && !profileAllows(lines, DELIVERY_CLAIM)) return true;
-  if (DISCOUNT_CLAIM.test(text) && !profileAllows(lines, DISCOUNT_CLAIM)) return true;
-  if (GUARANTEE_CLAIM.test(text) && !profileAllows(lines, /guaranteed|保证/i)) return true;
-  if (SUPERLATIVE_CLAIM.test(text) && !profileAllows(lines, SUPERLATIVE_CLAIM)) return true;
-  return false;
+  const hits: Array<{ category: MarketingClaimCategory; excerpt: string }> = [];
+  for (const rule of CLAIM_RULES) {
+    const match = text.match(rule.pattern);
+    if (!match) continue;
+    const allowed = rule.category === "location"
+      ? Boolean(facts.address?.trim()) || profileAllows(lines, rule.allow)
+      : profileAllows(lines, rule.allow);
+    if (allowed) continue;
+    hits.push({ category: rule.category, excerpt: match[0].replace(/\s+/g, " ").trim().slice(0, 80) });
+  }
+  return hits;
+}
+
+function unsupportedClaim(text: string, facts: StrategyContractFacts): boolean {
+  return claimMatches(text, facts).length > 0;
+}
+
+export function authorizedMarketingFacts(info: unknown): Pick<StrategyContractFacts, "services" | "description" | "address" | "companyName"> {
+  if (!info || typeof info !== "object" || Array.isArray(info)) return {};
+  const record = info as Record<string, unknown>;
+  const services = Array.isArray(record.services)
+    ? record.services.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : undefined;
+  return {
+    services,
+    description: typeof record.description === "string" ? record.description : null,
+    address: typeof record.address === "string" ? record.address : null,
+    companyName: typeof record.companyName === "string" ? record.companyName : null,
+  };
+}
+
+/** Only an explicit campaign duration line is an authorized subtitle boundary. */
+export function explicitScriptDurationSec(notes: string | null | undefined): number | undefined {
+  const match = notes?.match(/(?:^|\n)\s*Duration:\s*(15|30|60)\s+seconds\b/i);
+  return match ? Number(match[1]) : undefined;
 }
 
 function lowerFirstEnglish(text: string): string {
@@ -298,16 +372,32 @@ function stripOptionalClaims(
   items: unknown,
   field: string,
   facts: StrategyContractFacts,
-  adjustments: MarketingContractAdjustment[]
+  adjustments: MarketingContractAdjustment[],
+  issues?: MarketingContractIssue[]
 ): unknown {
   if (!Array.isArray(items)) return items;
   const kept: unknown[] = [];
   for (const item of items) {
-    if (typeof item === "string" && unsupportedClaim(item, facts)) {
-      adjustments.push({ field, action: "remove", raw: item });
+    if (typeof item !== "string") {
+      kept.push(item);
       continue;
     }
-    kept.push(item);
+    const hits = claimMatches(item, facts);
+    if (hits.length === 0) {
+      kept.push(item);
+      continue;
+    }
+    adjustments.push({ field, action: "remove", raw: item });
+    issues?.push({
+      code: "UNSUPPORTED_CLAIM",
+      field,
+      expected: "authorized business fact",
+      received: "string",
+      claimCategory: hits[0].category,
+      normalizable: true,
+      excerpt: item.trim().slice(0, 80),
+      authorization: "business_profile",
+    });
   }
   return kept;
 }
@@ -317,11 +407,26 @@ function rejectProseClaims(
   value: unknown,
   facts: StrategyContractFacts,
   codes: string[],
-  fields: string[]
+  fields: string[],
+  issues?: MarketingContractIssue[]
 ) {
-  if (typeof value !== "string" || !value.trim() || !unsupportedClaim(value, facts)) return;
+  if (typeof value !== "string" || !value.trim()) return;
+  const hits = claimMatches(value, facts);
+  if (hits.length === 0) return;
   codes.push("UNSUPPORTED_CLAIM");
   fields.push(field);
+  for (const hit of hits) {
+    issues?.push({
+      code: "UNSUPPORTED_CLAIM",
+      field,
+      expected: "authorized business fact",
+      received: "string",
+      claimCategory: hit.category,
+      normalizable: false,
+      excerpt: hit.excerpt,
+      authorization: "business_profile",
+    });
+  }
 }
 
 function coerceStrategyShape(raw: unknown): unknown {
@@ -363,6 +468,7 @@ export function evaluateStrategyContract(
   const codes: string[] = [];
   const fields: string[] = [];
   const adjustments: MarketingContractAdjustment[] = [];
+  const issues: MarketingContractIssue[] = [];
   const shaped = coerceStrategyShape(raw);
   if (!shaped || typeof shaped !== "object" || Array.isArray(shaped)) {
     return { diagnostic: diagnostic("strategy", ["STRATEGY_SCHEMA_INVALID"], ["body"]), plan: null };
@@ -376,32 +482,32 @@ export function evaluateStrategyContract(
     if (confidence == null) delete data.confidence;
     else data.confidence = confidence;
   }
-  data.keywords = stripOptionalClaims(data.keywords, "keywords", facts, adjustments);
-  data.brandPersonality = stripOptionalClaims(data.brandPersonality, "brandPersonality", facts, adjustments);
+  data.keywords = stripOptionalClaims(data.keywords, "keywords", facts, adjustments, issues);
+  data.brandPersonality = stripOptionalClaims(data.brandPersonality, "brandPersonality", facts, adjustments, issues);
   if (data.hashtags && typeof data.hashtags === "object" && !Array.isArray(data.hashtags)) {
     const hashtags = { ...(data.hashtags as Record<string, unknown>) };
     for (const key of ["industry", "local", "trending", "seo"]) {
-      hashtags[key] = stripOptionalClaims(hashtags[key], `hashtags.${key}`, facts, adjustments);
+      hashtags[key] = stripOptionalClaims(hashtags[key], `hashtags.${key}`, facts, adjustments, issues);
     }
     data.hashtags = hashtags;
   }
   for (const field of ["industry", "businessType", "product", "marketingGoal", "marketingAngle", "tone", "videoStyle", "customerJourney", "ctaStrategy"]) {
-    rejectProseClaims(field, data[field], facts, codes, fields);
+    rejectProseClaims(field, data[field], facts, codes, fields, issues);
   }
   const audience = data.audience && typeof data.audience === "object" && !Array.isArray(data.audience)
     ? data.audience as Record<string, unknown>
     : null;
   if (audience) {
     for (const field of ["desiredOutcome", "buyingIntent", "location"]) {
-      rejectProseClaims(`audience.${field}`, audience[field], facts, codes, fields);
+      rejectProseClaims(`audience.${field}`, audience[field], facts, codes, fields, issues);
     }
     for (const field of ["interests", "painPoints"]) {
       const items = audience[field];
       if (!Array.isArray(items)) continue;
-      if (items.some((item) => typeof item === "string" && unsupportedClaim(item, facts))) {
-        codes.push("UNSUPPORTED_CLAIM");
-        fields.push(`audience.${field}`);
-      }
+      items.forEach((item, index) => {
+        if (typeof item !== "string") return;
+        rejectProseClaims(`audience.${field}[${index}]`, item, facts, codes, fields, issues);
+      });
     }
   }
   const parsed = StrategyPlanSchema.safeParse(data);
@@ -411,9 +517,9 @@ export function evaluateStrategyContract(
       codes.push("STRATEGY_SCHEMA_INVALID");
       fields.push(...schemaFields);
     }
-    return { diagnostic: diagnostic("strategy", codes, fields, adjustments), plan: null };
+    return { diagnostic: diagnostic("strategy", codes, fields, adjustments, issues), plan: null };
   }
-  if (codes.length) return { diagnostic: diagnostic("strategy", codes, fields, adjustments), plan: null };
+  if (codes.length) return { diagnostic: diagnostic("strategy", codes, fields, adjustments, issues), plan: null };
   const product = parsed.data.product.trim();
   if (!product) {
     codes.push("PRODUCT_MISSING");
@@ -430,8 +536,8 @@ export function evaluateStrategyContract(
     codes.push("UNSUPPORTED_CLAIM");
     fields.push("strategy");
   }
-  if (codes.length > 0) return { diagnostic: diagnostic("strategy", codes, fields, adjustments), plan: null };
-  return { diagnostic: diagnostic("strategy", [], [], adjustments), plan: parsed.data };
+  if (codes.length > 0) return { diagnostic: diagnostic("strategy", codes, fields, adjustments, issues), plan: null };
+  return { diagnostic: diagnostic("strategy", [], [], adjustments, issues), plan: parsed.data };
 }
 
 function hasCreativeKeys(value: Record<string, unknown>): boolean {
@@ -465,39 +571,316 @@ function spokenLength(text: string): number {
   return characters + words;
 }
 
+const TIME_TOKEN = /^(-?\d+(?:\.\d+)?)s$/i;
+const CLOCK_TOKEN = /^(\d{1,2}):([0-5]\d)(?:\.(\d{1,3}))?$/;
+
+function finiteDuration(value: number | null | undefined): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return undefined;
+  return value;
+}
+
+function parseTimeToken(value: unknown): { ok: true; seconds: number } | { ok: false; received: string } {
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return { ok: false, received: String(value) };
+    return { ok: true, seconds: value };
+  }
+  if (typeof value !== "string") return { ok: false, received: value == null ? "missing" : typeof value };
+  const text = value.trim();
+  const seconds = TIME_TOKEN.exec(text);
+  if (seconds) {
+    const parsed = Number(seconds[1]);
+    if (!Number.isFinite(parsed)) return { ok: false, received: text };
+    return { ok: true, seconds: parsed };
+  }
+  const clock = CLOCK_TOKEN.exec(text);
+  if (clock) {
+    const fraction = clock[3] ? Number(clock[3]) / 10 ** clock[3].length : 0;
+    return { ok: true, seconds: Number(clock[1]) * 60 + Number(clock[2]) + fraction };
+  }
+  return { ok: false, received: text || "empty" };
+}
+
+function timelineIssue(
+  code: string,
+  field: string,
+  expected: string,
+  received: string
+): MarketingContractIssue {
+  const nonFinite = received === "NaN" || received === "Infinity" || received === "-Infinity";
+  return { code: nonFinite ? "TIMELINE_NON_FINITE" : code, field, expected, received, normalizable: false };
+}
+
+export function normalizeSubtitleTimeline(
+  raw: unknown,
+  durationSec?: number | null
+): { ok: true; timeline: Array<{ startSec: number; endSec: number; text: string; role?: string }> } | { ok: false; issues: MarketingContractIssue[] } {
+  if (raw == null) return { ok: true, timeline: [] };
+  if (!Array.isArray(raw)) {
+    return { ok: false, issues: [timelineIssue("TIMELINE_MALFORMED", "subtitleTimeline", "array", typeof raw)] };
+  }
+  const duration = finiteDuration(durationSec);
+  const issues: MarketingContractIssue[] = [];
+  const cues: Array<{ index: number; start: number; end?: number; text: string; role?: string }> = [];
+  raw.forEach((entry, index) => {
+    const field = `subtitleTimeline[${index}]`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      issues.push(timelineIssue("TIMELINE_MALFORMED", field, "object", typeof entry));
+      return;
+    }
+    const record = entry as Record<string, unknown>;
+    const text = typeof record.text === "string" ? record.text : "";
+    if (!text.trim()) {
+      issues.push(timelineIssue("TIMELINE_TEXT_EMPTY", `${field}.text`, "non-empty string", text ? "blank" : "empty"));
+      return;
+    }
+    const canonical = typeof record.startSec === "number" && typeof record.endSec === "number";
+    const startParsed = canonical ? parseTimeToken(record.startSec) : parseTimeToken(record.time ?? record.startSec ?? record.start);
+    if (!startParsed.ok) {
+      issues.push(timelineIssue("TIMELINE_TIME_UNPARSEABLE", `${field}.startSec`, "number | 0s | 2.5s | MM:SS | MM:SS.mmm", startParsed.received));
+      return;
+    }
+    if (startParsed.seconds < 0) {
+      issues.push(timelineIssue("TIMELINE_NEGATIVE", `${field}.startSec`, "non-negative seconds", String(startParsed.seconds)));
+      return;
+    }
+    let end: number | undefined;
+    if (canonical) {
+      const endParsed = parseTimeToken(record.endSec);
+      if (!endParsed.ok || endParsed.seconds < 0) {
+        issues.push(timelineIssue(endParsed.ok ? "TIMELINE_NEGATIVE" : "TIMELINE_TIME_UNPARSEABLE", `${field}.endSec`, "non-negative number", endParsed.ok ? String(endParsed.seconds) : endParsed.received));
+        return;
+      }
+      end = endParsed.seconds;
+    }
+    cues.push({
+      index,
+      start: startParsed.seconds,
+      end,
+      text,
+      ...(typeof record.role === "string" ? { role: record.role } : {}),
+    });
+  });
+  if (issues.length) return { ok: false, issues };
+  for (let index = 1; index < cues.length; index += 1) {
+    if (cues[index].start <= cues[index - 1].start) {
+      issues.push(timelineIssue("TIMELINE_NON_MONOTONIC", `subtitleTimeline[${cues[index].index}].startSec`, "strictly later than the previous cue", String(cues[index].start)));
+    }
+  }
+  if (issues.length) return { ok: false, issues };
+  cues.forEach((cue, index) => {
+    if (cue.end != null) return;
+    const next = cues[index + 1];
+    if (next) {
+      cue.end = next.start;
+      return;
+    }
+    if (duration != null && duration >= cue.start) {
+      cue.end = duration;
+      return;
+    }
+    if (duration != null) {
+      issues.push(timelineIssue("TIMELINE_BEYOND_DURATION", `subtitleTimeline[${cue.index}].startSec`, `within ${duration} seconds`, String(cue.start)));
+      return;
+    }
+    issues.push(timelineIssue("TIMELINE_END_UNBOUNDED", `subtitleTimeline[${cue.index}].endSec`, "next start or explicit duration", "missing"));
+  });
+  if (issues.length) return { ok: false, issues };
+  const timeline = cues.map((cue) => {
+    const end = cue.end as number;
+    const field = `subtitleTimeline[${cue.index}]`;
+    if (end <= cue.start) issues.push(timelineIssue("TIMELINE_ZERO_DURATION", `${field}.endSec`, "later than startSec", String(end)));
+    if (duration != null && (cue.start > duration || end > duration + 1e-6)) {
+      issues.push(timelineIssue("TIMELINE_BEYOND_DURATION", `${field}.endSec`, `within ${duration} seconds`, String(end)));
+    }
+    for (const earlier of cues) {
+      if (earlier.index >= cue.index || earlier.end == null) continue;
+      if (cue.start < earlier.end) {
+        issues.push(timelineIssue("TIMELINE_OVERLAP", `${field}.startSec`, "at or after the previous endSec", String(cue.start)));
+      }
+    }
+    return { startSec: cue.start, endSec: end, text: cue.text, ...(cue.role ? { role: cue.role } : {}) };
+  });
+  if (issues.length) return { ok: false, issues };
+  return { ok: true, timeline };
+}
+
+function schemaIssues(issues: Array<{ path: PropertyKey[]; message: string }>): MarketingContractIssue[] {
+  return issues.slice(0, 12).map((issue) => ({
+    code: "CONTENT_SCHEMA_INVALID",
+    field: issue.path.reduce<string>((path, part) => {
+      if (typeof part === "number") return `${path}[${part}]`;
+      const key = String(part);
+      return path ? `${path}.${key}` : key;
+    }, "") || "body",
+    expected: "canonical content field",
+    received: issue.message,
+    normalizable: false,
+  }));
+}
+
+function stripContentOptionalClaims(
+  payload: Record<string, unknown>,
+  facts: StrategyContractFacts,
+  adjustments: MarketingContractAdjustment[],
+  issues: MarketingContractIssue[]
+) {
+  const assets = payload.platformAssets;
+  if (assets && typeof assets === "object" && !Array.isArray(assets)) {
+    for (const [platform, asset] of Object.entries(assets as Record<string, unknown>)) {
+      if (!asset || typeof asset !== "object" || Array.isArray(asset)) continue;
+      const record = asset as Record<string, unknown>;
+      record.hashtags = stripOptionalClaims(record.hashtags, `platformAssets.${platform}.hashtags`, facts, adjustments, issues);
+    }
+  }
+  const pack = payload.hashtagPack;
+  if (pack && typeof pack === "object" && !Array.isArray(pack)) {
+    const record = pack as Record<string, unknown>;
+    for (const key of ["highVolume", "mediumVolume", "local", "brand", "industry"]) {
+      record[key] = stripOptionalClaims(record[key], `hashtagPack.${key}`, facts, adjustments, issues);
+    }
+  }
+  const seo = payload.seo;
+  if (seo && typeof seo === "object" && !Array.isArray(seo)) {
+    const record = seo as Record<string, unknown>;
+    for (const key of ["primaryKeywords", "secondaryKeywords", "longTailKeywords", "localKeywords"]) {
+      record[key] = stripOptionalClaims(record[key], `seo.${key}`, facts, adjustments, issues);
+    }
+  }
+}
+
+function pushClaim(
+  field: string,
+  value: unknown,
+  facts: StrategyContractFacts,
+  codes: string[],
+  fields: string[],
+  issues: MarketingContractIssue[]
+) {
+  rejectProseClaims(field, value, facts, codes, fields, issues);
+}
+
+function scanContentClaims(
+  contentPackage: MarketingContentPackage,
+  payload: Record<string, unknown>,
+  facts: StrategyContractFacts,
+  codes: string[],
+  fields: string[],
+  issues: MarketingContractIssue[]
+) {
+  for (const key of ["15s", "30s", "60s"] as const) {
+    pushClaim(`voiceScripts.${key}`, contentPackage.voiceScripts[key], facts, codes, fields, issues);
+    pushClaim(`voiceScriptsEn.${key}`, contentPackage.voiceScriptsEn?.[key], facts, codes, fields, issues);
+    pushClaim(`voiceScriptsZh.${key}`, contentPackage.voiceScriptsZh?.[key], facts, codes, fields, issues);
+  }
+  contentPackage.hooks.forEach((hook, index) => {
+    pushClaim(`hooks[${index}].text`, hook.text, facts, codes, fields, issues);
+    pushClaim(`hooks[${index}].textEn`, hook.textEn, facts, codes, fields, issues);
+    pushClaim(`hooks[${index}].textMs`, hook.textMs, facts, codes, fields, issues);
+  });
+  contentPackage.cta.forEach((item, index) => {
+    pushClaim(`cta[${index}].text`, item.text, facts, codes, fields, issues);
+    pushClaim(`cta[${index}].textEn`, item.textEn, facts, codes, fields, issues);
+    pushClaim(`cta[${index}].textMs`, item.textMs, facts, codes, fields, issues);
+  });
+  for (const [platform, caption] of Object.entries(contentPackage.captions ?? {})) {
+    pushClaim(`captions.${platform}`, caption, facts, codes, fields, issues);
+  }
+  for (const [platform, caption] of Object.entries(contentPackage.captionsEn ?? {})) {
+    pushClaim(`captionsEn.${platform}`, caption, facts, codes, fields, issues);
+  }
+  for (const [platform, caption] of Object.entries(contentPackage.captionsMs ?? {})) {
+    pushClaim(`captionsMs.${platform}`, caption, facts, codes, fields, issues);
+  }
+  contentPackage.subtitleTimeline.forEach((cue, index) => {
+    pushClaim(`subtitleTimeline[${index}].text`, cue.text, facts, codes, fields, issues);
+  });
+  contentPackage.broll.forEach((item, index) => pushClaim(`broll[${index}]`, item, facts, codes, fields, issues));
+  contentPackage.effects.forEach((item, index) => pushClaim(`effects[${index}]`, item, facts, codes, fields, issues));
+  const posting = contentPackage.postingRecommendation;
+  for (const key of ["bestPostingTime", "bestPlatform", "idealAudience", "estimatedEngagement"] as const) {
+    pushClaim(`postingRecommendation.${key}`, posting?.[key], facts, codes, fields, issues);
+  }
+  if (typeof payload.postingRecommendation === "string") {
+    pushClaim("postingRecommendation", payload.postingRecommendation, facts, codes, fields, issues);
+  }
+  const brief = contentPackage.strategyBrief;
+  if (brief) {
+    for (const key of ["primaryGoal", "targetAudience", "contentAngle", "painPoint", "desiredEmotion", "ctaStrategy"] as const) {
+      pushClaim(`strategyBrief.${key}`, brief[key], facts, codes, fields, issues);
+    }
+  }
+  for (const [platform, asset] of Object.entries(contentPackage.platformAssets ?? {})) {
+    if (!asset) continue;
+    for (const key of ["caption", "hook", "title", "description", "cta"] as const) {
+      pushClaim(`platformAssets.${platform}.${key}`, asset[key], facts, codes, fields, issues);
+    }
+  }
+  contentPackage.aiSuggestions.forEach((item, index) => {
+    pushClaim(`aiSuggestions[${index}]`, item, facts, codes, fields, issues);
+  });
+}
+
 export function evaluateContentContract(
   raw: unknown,
-  facts: { brief?: string | null } = {}
+  facts: ContentContractFacts = {}
 ): { diagnostic: MarketingContractDiagnostic; contentPackage: MarketingContentPackage | null } {
   if (typeof raw === "string") {
-    return { diagnostic: diagnostic("content", ["CONTENT_JSON_TRUNCATED"], ["body"]), contentPackage: null };
+    return { diagnostic: diagnostic("content", ["CONTENT_JSON_TRUNCATED"], ["body"], [], [], facts.providerRequestId), contentPackage: null };
   }
   const payload = unwrapMarketingContentPayload(raw);
   if (!payload) {
-    return { diagnostic: diagnostic("content", ["CONTENT_SCHEMA_INVALID"], ["body"]), contentPackage: null };
+    return { diagnostic: diagnostic("content", ["CONTENT_SCHEMA_INVALID"], ["body"], [], [], facts.providerRequestId), contentPackage: null };
   }
-  const contentPackage = normalizeMarketingContentPackage(payload);
+  const codes: string[] = [];
+  const fields: string[] = [];
+  const adjustments: MarketingContractAdjustment[] = [];
+  const issues: MarketingContractIssue[] = [];
+  if ("subtitleTimeline" in payload) {
+    const timeline = normalizeSubtitleTimeline(payload.subtitleTimeline, facts.durationSec);
+    if (!timeline.ok) {
+      return {
+        diagnostic: diagnostic(
+          "content",
+          ["CONTENT_SCHEMA_INVALID", ...timeline.issues.map((issue) => issue.code)],
+          timeline.issues.map((issue) => issue.field),
+          [],
+          timeline.issues,
+          facts.providerRequestId
+        ),
+        contentPackage: null,
+      };
+    }
+    payload.subtitleTimeline = timeline.timeline;
+  }
+  stripContentOptionalClaims(payload, facts, adjustments, issues);
+  const parsedIssues: Array<{ path: PropertyKey[]; message: string }> = [];
+  const contentPackage = normalizeMarketingContentPackage(payload, parsedIssues);
   if (!contentPackage) {
-    const codes: string[] = ["CONTENT_SCHEMA_INVALID"];
-    const fields: string[] = [];
+    codes.push("CONTENT_SCHEMA_INVALID");
     const hooks = payload.hooks ?? payload.hookList ?? payload.hook;
     const cta = payload.cta ?? payload.ctas ?? payload.callToAction;
     if (!hooks || (Array.isArray(hooks) && hooks.length === 0)) {
       codes.push("HOOKS_MISSING");
       fields.push("hooks");
+      issues.push({ code: "HOOKS_MISSING", field: "hooks", expected: "non-empty array", received: "missing", normalizable: false });
     }
     if (!cta || (Array.isArray(cta) && cta.length === 0)) {
       codes.push("CTA_MISSING");
       fields.push("cta");
+      issues.push({ code: "CTA_MISSING", field: "cta", expected: "non-empty array", received: "missing", normalizable: false });
     }
     if (!String(payload.musicMood ?? payload.music_mood ?? "").trim()) {
       codes.push("MUSIC_MOOD_MISSING");
       fields.push("musicMood");
+      issues.push({ code: "MUSIC_MOOD_MISSING", field: "musicMood", expected: "string", received: "missing", normalizable: false });
     }
-    return { diagnostic: diagnostic("content", codes, fields), contentPackage: null };
+    for (const issue of schemaIssues(parsedIssues)) {
+      if (fields.includes(issue.field)) continue;
+      fields.push(issue.field);
+      issues.push(issue);
+    }
+    return { diagnostic: diagnostic("content", codes, fields, adjustments, issues, facts.providerRequestId), contentPackage: null };
   }
-  const codes: string[] = [];
-  const fields: string[] = [];
   if (!contentPackage.musicMood.trim()) {
     codes.push("MUSIC_MOOD_MISSING");
     fields.push("musicMood");
@@ -535,8 +918,11 @@ export function evaluateContentContract(
     codes.push("UNSUPPORTED_CLAIM");
     fields.push("voiceScripts");
   }
-  if (codes.length > 0) return { diagnostic: diagnostic("content", codes, fields), contentPackage: null };
-  return { diagnostic: diagnostic("content", [], []), contentPackage };
+  scanContentClaims(contentPackage, payload, facts, codes, fields, issues);
+  if (codes.length > 0) {
+    return { diagnostic: diagnostic("content", codes, fields, adjustments, issues, facts.providerRequestId), contentPackage: null };
+  }
+  return { diagnostic: diagnostic("content", [], [], adjustments, issues, facts.providerRequestId), contentPackage };
 }
 
 export function contentAllowsTranslation(contentPackage: MarketingContentPackage | null | undefined): boolean {

@@ -1,0 +1,256 @@
+{
+  "voiceScripts": {
+    "15s": "Experience the elegance of Ember Florist. Discover our fresh flower bouquets, perfect for any occasion. Follow us for floral inspiration.",
+    "30s": "Ember Florist brings you luxurious floral arrangements right in the heart of Singapore. Our fresh flower bouquets are crafted to impress and inspire. Finding the perfect gift has never been easier. Follow us for more.",
+    "60s": "Step into the world of Ember Florist, where elegance meets creativity. Our fresh flower bouquets are designed to captivate and leave a lasting impression. Whether you're gifting or decorating, our arrangements offer the unique touch you’re looking for. Experience the beauty of flowers like never before. Follow us for endless floral inspiration."
+  },
+  "voiceScriptsZh": {
+    "15s": "体验 Ember Florist 的优雅魅力。发现我们新鲜的花束，适合任何场合。关注我们，获取更多花艺灵感。",
+    "30s": "Ember Florist 为您带来新加坡市中心的奢华花艺。我们的新鲜花束旨在打动和激发灵感。寻找完美礼物从未如此简单。关注我们，了解更多。",
+    "60s": "走进 Ember Florist 的世界，优雅与创意的完美结合。我们的新鲜花束旨在吸引并留下深刻印象。无论是送礼还是装饰，我们的花艺都能为您带来独特的体验。体验前所未有的花卉之美。关注我们，获取无尽的花艺灵感。"
+  },
+  "voiceScriptsEn": {
+    "15s": "Experience the elegance of Ember Florist. Discover our fresh flower bouquets, perfect for any occasion. Follow us for floral inspiration.",
+    "30s": "Ember Florist brings you luxurious floral arrangements right in the heart of Singapore. Our fresh flower bouquets are crafted to impress and inspire. Finding the perfect gift has never been easier. Follow us for more.",
+    "60s": "Step into the world of Ember Florist, where elegance meets creativity. Our fresh flower bouquets are designed to captivate and leave a lasting impression. Whether you're gifting or decorating, our arrangements offer the unique touch you’re looking for. Experience the beauty of flowers like never before. Follow us for endless floral inspiration."
+  },
+  "subtitleTimeline": [
+    {
+      "time": "0s",
+      "text": "Experience the elegance of Ember Florist."
+    },
+    {
+      "time": "5s",
+      "text": "Discover our fresh flower bouquets."
+    },
+    {
+      "time": "10s",
+      "text": "Perfect for any occasion."
+    },
+    {
+      "time": "15s",
+      "text": "Follow us for floral inspiration."
+    }
+  ],
+  "hooks": [
+    {
+      "text": "Elevate your gifting game with Ember Florist.",
+      "type": "emotional"
+    },
+    {
+      "text": "Discover bouquets that make a statement.",
+      "type": "informative"
+    },
+    {
+      "text": "Transform any space with our floral art.",
+      "type": "creative"
+    },
+    {
+      "text": "The bouquet that everyone will admire.",
+      "type": "descriptive"
+    },
+    {
+      "text": "A floral experience like no other.",
+      "type": "experiential"
+    },
+    {
+      "text": "Unleash the beauty of fresh blooms.",
+      "type": "emotional"
+    },
+    {
+      "text": "Crafted to captivate and inspire.",
+      "type": "artistic"
+    },
+    {
+      "text": "Find the perfect floral gift today.",
+      "type": "directive"
+    },
+    {
+      "text": "Bring luxury to your doorstep with flowers.",
+      "type": "luxury"
+    },
+    {
+      "text": "Follow us for endless floral inspiration.",
+      "type": "engagement"
+    }
+  ],
+  "cta": [
+    {
+      "text": "Follow us for more floral ideas."
+    },
+    {
+      "text": "Direct message to order your bouquet."
+    },
+    {
+      "text": "Save this post for future inspiration."
+    },
+    {
+      "text": "Explore our floral arrangements now."
+    },
+    {
+      "text": "Visit our shop for exclusive designs."
+    }
+  ],
+  "musicMood": "elegant and inspiring",
+  "broll": [
+    "close-up shots of fresh flower bouquets",
+    "scenes of a florist arranging flowers",
+    "wide shots of a beautifully decorated space with flowers"
+  ],
+  "postingRecommendation": "Post during late afternoon to engage after-work viewers.",
+  "consistencyScore": 85,
+  "marketingScore": 88,
+  "hookScore": 90,
+  "seoScore": 83,
+  "emotionalScore": 92,
+  "conversionScore": 80,
+  "estimatedCtr": "",
+  "estimatedEngagement": "",
+  "estimatedConversion": "",
+  "strategyBrief": {
+    "primaryGoal": "Raise brand awareness for Ember Florist.",
+    "targetAudience": "Florists and gifting enthusiasts in Singapore aged 25-45.",
+    "contentAngle": "Present luxury and creativity through floral arrangements.",
+    "painPoint": "Difficulty finding high-quality flower arrangements.",
+    "desiredEmotion": "Viewers should feel inspired and impressed.",
+    "ctaStrategy": "Encourage direct messages, saves, and follows."
+  },
+  "platformAssets": {
+    "tiktok": {
+      "caption": "Discover luxury in every petal 🌹 #FreshFlowers #SingaporeFlorist",
+      "hook": "Elevate your gifting game with Ember Florist.",
+      "hashtags": [
+        "#flowerarrangement",
+        "#giftideas",
+        "#florist"
+      ],
+      "cta": "Follow us for more floral ideas.",
+      "formatStyle": "Engage with trending TikTok challenges."
+    },
+    "instagram": {
+      "caption": "Transform your space with our luxurious bouquets 🌸✨",
+      "hashtags": [
+        "#florist",
+        "#flowerbouquet",
+        "#freshflowers",
+        "#SGgifts"
+      ],
+      "cta": "Follow us for floral inspiration.",
+      "formatStyle": "Short, emotional visuals with emojis."
+    },
+    "facebook": {
+      "caption": "At Ember Florist, we curate bouquets that are more than just flowers—they're a statement of elegance and creativity. Our fresh flower arrangements are crafted to captivate and inspire, making them perfect for any occasion. Whether it's a gift or a centerpiece, our designs are sure to impress. Follow us for more floral inspiration and bring luxury into your life with our exquisite creations.",
+      "hashtags": [
+        "#floristSingapore",
+        "#bestflowerstore"
+      ],
+      "cta": "Explore our floral arrangements now.",
+      "formatStyle": "Storytelling with a community focus."
+    },
+    "linkedin": {
+      "caption": "Ember Florist redefines floral artistry with bespoke arrangements that blend luxury and creativity. Our bouquets are designed to make a lasting impression, perfect for corporate gifting or enhancing your workspace. Discover why we're the florist of choice in Singapore. Connect with us for exclusive floral designs.",
+      "hashtags": [
+        "#floralartistry",
+        "#businessgifts",
+        "#Singapore"
+      ],
+      "cta": "Visit our shop for exclusive designs.",
+      "formatStyle": "Professional tone with an educational slant."
+    },
+    "xiaohongshu": {
+      "caption": "🌺 在 Ember Florist，鲜花不仅仅是花卉，它们是优雅和创意的象征。我们的花束经过精心制作，为您的生活带来奢华感。无论是送礼还是装饰，我们的设计都能让您印象深刻。立即关注我们，获取更多灵感！\n\n#鲜花 #花艺 #新加坡花店",
+      "hashtags": [
+        "#鲜花",
+        "#花艺",
+        "#新加坡花店",
+        "#礼物灵感"
+      ],
+      "cta": "立即关注我们，获取更多灵感！",
+      "formatStyle": "Use emojis and line breaks for lifestyle appeal."
+    },
+    "threads": {
+      "caption": "Why settle for ordinary when you can have extraordinary? 🌹 #BouquetOfTheDay",
+      "cta": "Direct message to order your bouquet.",
+      "formatStyle": "Conversational opinion hook."
+    },
+    "youtubeShorts": {
+      "title": "Experience Luxury with Ember Florist",
+      "hook": "Discover bouquets that make a statement.",
+      "description": "Ember Florist offers fresh flower arrangements designed to captivate and inspire. Perfect for all occasions.",
+      "hashtags": [
+        "#flowerarrangement",
+        "#giftideas",
+        "#floristSingapore"
+      ],
+      "formatStyle": "Engaging and visual."
+    },
+    "googleBusiness": {
+      "caption": "Fresh flower bouquets in Singapore - Explore unique and high-quality floral arrangements at Ember Florist. Call now for inquiries!",
+      "cta": "Call now for inquiries!",
+      "formatStyle": "Local SEO focused, direct."
+    }
+  },
+  "legacyCaptions": {
+    "tiktok": "Discover luxury in every petal 🌹 #FreshFlowers #SingaporeFlorist",
+    "instagram": "Transform your space with our luxurious bouquets 🌸✨",
+    "facebook": "At Ember Florist, we curate bouquets that are more than just flowers—they're a statement of elegance and creativity. Our fresh flower arrangements are crafted to captivate and inspire, making them perfect for any occasion. Whether it's a gift or a centerpiece, our designs are sure to impress. Follow us for more floral inspiration and bring luxury into your life with our exquisite creations.",
+    "linkedin": "Ember Florist redefines floral artistry with bespoke arrangements that blend luxury and creativity. Our bouquets are designed to make a lasting impression, perfect for corporate gifting or enhancing your workspace. Discover why we're the florist of choice in Singapore. Connect with us for exclusive floral designs.",
+    "xiaohongshu": "🌺 在 Ember Florist，鲜花不仅仅是花卉，它们是优雅和创意的象征。我们的花束经过精心制作，为您的生活带来奢华感。无论是送礼还是装饰，我们的设计都能让您印象深刻。立即关注我们，获取更多灵感！\n\n#鲜花 #花艺 #新加坡花店",
+    "threads": "Why settle for ordinary when you can have extraordinary? 🌹 #BouquetOfTheDay",
+    "youtubeShorts": "Experience Luxury with Ember Florist",
+    "googleBusiness": "Fresh flower bouquets in Singapore - Explore unique and high-quality floral arrangements at Ember Florist. Call now for inquiries!"
+  },
+  "seo": {
+    "primaryKeywords": [
+      "fresh flowers",
+      "floral arrangements",
+      "gift ideas"
+    ],
+    "secondaryKeywords": [
+      "luxury bouquets",
+      "Ember Florist"
+    ],
+    "longTailKeywords": [
+      "high-quality flower arrangements in Singapore",
+      "unique flower gifts Singapore"
+    ],
+    "localKeywords": [
+      "Singapore florist",
+      "SG gifts"
+    ],
+    "searchIntent": "informational and transactional"
+  },
+  "hashtagPack": {
+    "highVolume": [
+      "#florist",
+      "#flowerbouquet",
+      "#freshflowers"
+    ],
+    "mediumVolume": [
+      "#SGgifts",
+      "#floralartistry"
+    ],
+    "local": [
+      "#Singapore",
+      "#floristSingapore"
+    ],
+    "brand": [
+      "#EmberFlorist",
+      "#LuxuryBouquets"
+    ],
+    "industry": [
+      "#flowerarrangement",
+      "#giftideas"
+    ]
+  },
+  "aiSuggestions": [
+    "Post on TikTok during peak engagement times for young adults.",
+    "Use close-up shots of vibrant bouquets to captivate viewers.",
+    "Emphasize the luxury aspect in your captions to attract premium buyers.",
+    "Engage with local hashtags to increase visibility in Singapore.",
+    "Encourage followers to save posts for future inspiration.",
+    "Leverage trending floral arrangement challenges on TikTok.",
+    "Highlight the creativity and elegance of your arrangements in visuals.",
+    "Use line breaks and emojis to enhance readability and engagement on Xiaohongshu."
+  ]
+}
