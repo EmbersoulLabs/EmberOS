@@ -47,12 +47,20 @@ export async function GET(_request: Request, { params }: Params) {
       .createSignedUrl(result.media.storagePath,600);
     const jobs = await new AiStoryLocalMediaJobRepository().list(result.ownership.workspaceId, result.ownership.executionPlanId);
     const continuityJob = jobs.find((job) => job.kind === "EXTRACT_FRAME" && job.generationResultId === result.generationResultId) ?? null;
+    const evaluation = await results.latestQc(result.ownership.workspaceId, result.generationResultId);
     return apiSuccess({
       generationResultId: result.generationResultId,
       sourceKind: result.source.sourceKind,
       playbackUrl:playback.error?null:playback.data?.signedUrl??null,
       requirements: buildGenerationResultPostQcInput(result, pkg).requirements,
-      evaluation: await results.latestQc(result.ownership.workspaceId, result.generationResultId),
+      evaluation,
+      ...(result.source.sourceKind === "LOCAL_GPU_WORKER" ? {
+        audioEvidence: evaluation?.audioEvidenceId && evaluation.audioSpeechContent ? {
+          audioEvidenceId: evaluation.audioEvidenceId,
+          speechContent: evaluation.audioSpeechContent,
+          autoApproved: false as const,
+        } : null,
+      } : {}),
       decision: await results.decision(result.generationResultId),
       continuityFrame: await results.continuityFrame(result.ownership.workspaceId,result.generationResultId),
       continuityJob: continuityJob ? { state: continuityJob.state, errorCode: continuityJob.errorCode } : null,
@@ -152,7 +160,7 @@ export async function POST(request: Request, { params }: Params) {
       analyze: async () => command.observations,
     }, user.id));
   } catch (error) {
-    if (error instanceof Error && /^(GENERATION_RESULT_|GENERATED_SCENE_POST_QC_|LOCAL_RETRY_|SEQUENTIAL_LOCAL_)/.test(error.message)) {
+    if (error instanceof Error && /^(GENERATION_RESULT_|GENERATED_SCENE_POST_QC_|LOCAL_RETRY_|SEQUENTIAL_LOCAL_|LOCAL_GPU_AUDIO_)/.test(error.message)) {
       return apiError("Generated media authority or QC is not ready for this action", error.message, 409);
     }
     return handleApiError(error);

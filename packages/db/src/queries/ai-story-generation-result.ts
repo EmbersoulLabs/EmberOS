@@ -11,6 +11,7 @@ import {
 } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 import { canonicalPersistenceHash, deterministicPersistenceUuid } from "./ai-story-scene-execution-persistence";
+import { assertLocalGpuAudioApproval, localGpuDecisionDisposition, LocalGpuAudioEvidenceRepository } from "./ai-story-local-gpu-audio-evidence";
 import { assertLocalGpuWorkerResultLineage } from "./ai-story-local-gpu-result-authority";
 import { resolveSuccessfulProviderAttemptTerminalAuthority } from "./provider-execution-finalizer";
 
@@ -462,6 +463,10 @@ export class AiStoryGenerationResultRepository {
           (decision.decision === "APPROVED" && (!qc.eligibleForHumanReview || !postQcAllowsHumanApproval(qc)))) {
         throw new Error("GENERATED_SCENE_POST_QC_REQUIRED");
       }
+      if (result.source.sourceKind === "LOCAL_GPU_WORKER" && decision.decision === "APPROVED") {
+        const stored = await new LocalGpuAudioEvidenceRepository(tx).get(result.ownership.workspaceId, result.generationResultId);
+        assertLocalGpuAudioApproval(result, qc, stored);
+      }
       const [latestQc] = await tx.select().from(schema.aiStoryPostGenerationQcEvaluations).where(
         eq(schema.aiStoryPostGenerationQcEvaluations.generationResultId, result.generationResultId),
       ).orderBy(desc(schema.aiStoryPostGenerationQcEvaluations.evaluationVersion)).limit(1);
@@ -469,9 +474,8 @@ export class AiStoryGenerationResultRepository {
       const [existing] = await tx.select().from(schema.aiStoryGenerationResultDecisions).where(
         eq(schema.aiStoryGenerationResultDecisions.generationResultId, result.generationResultId),
       ).limit(1);
-      if (existing) {
-        if (existing.decision !== decision.decision) throw new Error("GENERATION_RESULT_DECISION_IMMUTABLE_CONFLICT");
-        return { decision: AiStoryGenerationResultDecisionSchema.parse(existing.fact), replayed: true };
+      if (localGpuDecisionDisposition(existing ? { decision: existing.decision, actorUserId: existing.actorUserId } : null, decision) === "replay") {
+        return { decision: AiStoryGenerationResultDecisionSchema.parse(existing!.fact), replayed: true };
       }
       const localPackageId = result.source.sourceKind === "MANUAL_LOCAL"
         ? result.inputAuthority.localPackageId

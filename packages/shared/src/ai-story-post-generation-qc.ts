@@ -203,6 +203,9 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   autoRetryAuthorized: z.literal(false),
   autoReleaseAuthorized: z.literal(false),
   creativeAuthority: z.literal(false),
+  audioEvidenceId: Id.optional(),
+  audioEvidenceFingerprint: Hash.optional(),
+  audioSpeechContent: z.enum(["HUMAN_REVIEW_REQUIRED", "NOT_APPLICABLE"]).optional(),
   evaluationFingerprint: Hash,
   evaluatedAt: z.string().datetime(),
 }).strict().superRefine((value, context) => {
@@ -215,6 +218,11 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   }
   if (value.compiledRequestFingerprint === null && value.sourceKind !== "MANUAL_LOCAL" && value.sourceKind !== "LOCAL_GPU_WORKER") {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_COMPILED_REQUEST_LINEAGE_REQUIRED" });
+  }
+  const audioFields = [value.audioEvidenceId, value.audioEvidenceFingerprint, value.audioSpeechContent];
+  const present = audioFields.filter((field) => field !== undefined).length;
+  if (present !== 0 && present !== audioFields.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "LOCAL_GPU_AUDIO_EVIDENCE_INCOMPLETE" });
   }
 });
 
@@ -234,6 +242,8 @@ export const AiStoryPostQcHumanReviewEvidenceSchema = z.object({
   warningsMayBeAccepted: z.literal(true),
   hardFailureWaiverPolicy: z.literal("EXPLICIT_NON_WAIVABLE_INTEGRITY_DENIAL"),
   humanDecisionRequired: z.literal(true),
+  audioEvidenceId: Id.optional(),
+  audioSpeechContent: z.enum(["HUMAN_REVIEW_REQUIRED", "NOT_APPLICABLE"]).optional(),
 }).strict();
 
 export type AiStoryPostQcRequirement = z.infer<typeof AiStoryPostQcRequirementSchema>;

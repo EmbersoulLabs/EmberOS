@@ -362,6 +362,7 @@ jobs:
           tests/ai-story-local-gpu-v1-core-phase2.test.ts
           tests/ai-story-local-gpu-v1-core-phase3.test.ts
           tests/ai-story-local-gpu-v1-core-phase4.test.ts
+          tests/ai-story-local-gpu-audio-evidence.test.ts
 
       - name: Install browser for auth security E2E
         run: pnpm exec playwright install --with-deps chromium
