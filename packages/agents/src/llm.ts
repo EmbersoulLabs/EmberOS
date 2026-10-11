@@ -5,11 +5,12 @@ import { zodResponseFormat } from "openai/helpers/zod";
 import type { ZodType } from "zod";
 import { LLM_BUDGET_PER_TASK_USD, CEO_MAX_RETRIES } from "@ceo-agent/shared";
 import type { TaskGraph } from "@ceo-agent/shared";
-import { controlledSelfUseProviderFetch } from "./controlled-self-use-provider-context";
+import { controlledSelfUseProviderFetch, withCertificationPlanningHttpGrant } from "./controlled-self-use-provider-context";
 import {
   CertificationPlanningAuthorityService,
   CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS,
   CERTIFICATION_PLANNING_MODEL,
+  type CertificationPlanningHttpGrant,
   type CertificationPlanningIdentity,
   type CertificationPlanningStage,
 } from "@ceo-agent/db";
@@ -42,9 +43,10 @@ async function claimCertificationCall(stage: CertificationPlanningStage | undefi
   if (!context) return null;
   if (!stage || model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_CALL_CONTRACT_INVALID");
   const authority = new CertificationPlanningAuthorityService();
+  const logicalCallIdentity = `${stage}:${context.logicalCallSuffix}`;
   const claim = await authority.claim({
     ...context,
-    logicalCallIdentity: `${stage}:${context.logicalCallSuffix}`,
+    logicalCallIdentity,
     stage,
     model: CERTIFICATION_PLANNING_MODEL,
     maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[stage],
@@ -52,7 +54,26 @@ async function claimCertificationCall(stage: CertificationPlanningStage | undefi
     providerAttemptId: context.providerAttemptId,
     claimedAt: new Date().toISOString(),
   });
-  return { authority, claim, maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[stage] };
+  const httpGrant: CertificationPlanningHttpGrant = {
+    planningClaimId: claim.planningClaimId,
+    environment: context.environment,
+    certificationRunId: context.certificationRunId,
+    orgId: context.orgId,
+    workspaceId: context.workspaceId,
+    campaignId: context.campaignId,
+    storyId: context.storyId,
+    actorUserId: context.actorUserId,
+    logicalCallIdentity,
+    model: CERTIFICATION_PLANNING_MODEL,
+  };
+  return { authority, claim, maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[stage], httpGrant };
+}
+
+function completeWithCertificationGrant<T>(
+  certification: { httpGrant: CertificationPlanningHttpGrant } | null,
+  run: () => Promise<T>
+): Promise<T> {
+  return certification ? withCertificationPlanningHttpGrant(certification.httpGrant, run) : run();
 }
 
 export function getOpenAI() {
@@ -106,7 +127,7 @@ export async function callStructuredJsonModel<T>(input: {
   const providerStartedAt = performance.now();
   let response;
   try {
-    response = await certificationModelAdapter().complete(
+    response = await completeWithCertificationGrant(certification, () => certificationModelAdapter().complete(
     {
       model,
       ...(certification ? { max_tokens: certification.maxOutputTokens } : {}),
@@ -118,7 +139,7 @@ export async function callStructuredJsonModel<T>(input: {
       temperature: 0.7,
     },
     { maxRetries: 0 }
-  );
+  ));
   } catch (error) {
     if (certification) await certification.authority.failUnknown({ planningClaimId: certification.claim.planningClaimId, completedAt: new Date().toISOString() });
     throw error;
@@ -194,7 +215,7 @@ export async function callJsonModel<T>(
   const certification = await claimCertificationCall(options?.certificationStage, model);
   let response;
   try {
-    response = await certificationModelAdapter().complete({
+    response = await completeWithCertificationGrant(certification, () => certificationModelAdapter().complete({
     model,
     ...(certification ? { max_tokens: certification.maxOutputTokens } : {}),
     response_format: { type: "json_object" },
@@ -203,7 +224,7 @@ export async function callJsonModel<T>(
       { role: "user", content: user },
     ],
     temperature: 0.7,
-  }, certification ? { maxRetries: 0 } : undefined);
+  }, certification ? { maxRetries: 0 } : undefined));
   } catch (error) {
     if (certification) await certification.authority.failUnknown({ planningClaimId: certification.claim.planningClaimId, completedAt: new Date().toISOString() });
     throw error;
