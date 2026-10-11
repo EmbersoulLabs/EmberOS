@@ -128,7 +128,14 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Legacy compiled V1 lineage must not fabricate Script or Handoff authority" });
   }
   const local = Boolean(value.localSourceAuthorityId || value.localSourceAuthorityFingerprint);
-  if (local) {
+  if (value.sourceKind === "LOCAL_GPU_WORKER") {
+    const reference = value.media.durableObjectReference;
+    if (value.providerAttemptId !== null || value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
+        !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint ||
+        !reference.startsWith(`${value.workspaceId}/`) || reference.includes("..") || reference.includes("\\")) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_LOCAL_AUTHORITY_REQUIRED" });
+    }
+  } else if (local) {
     if (value.sourceKind !== "MANUAL_LOCAL" || value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
         !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_LOCAL_AUTHORITY_REQUIRED" });
@@ -203,7 +210,10 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
       (value.sourceKind && value.sourceKind !== "REMOTE_PROVIDER" && value.providerAttemptId !== null)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_SOURCE_LINEAGE_REQUIRED" });
   }
-  if (value.compiledRequestFingerprint === null && value.sourceKind !== "MANUAL_LOCAL") {
+  if (value.sourceKind === "LOCAL_GPU_WORKER" && (value.providerAttemptId !== null || value.compiledRequestFingerprint !== null)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_LOCAL_AUTHORITY_REQUIRED" });
+  }
+  if (value.compiledRequestFingerprint === null && value.sourceKind !== "MANUAL_LOCAL" && value.sourceKind !== "LOCAL_GPU_WORKER") {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_COMPILED_REQUEST_LINEAGE_REQUIRED" });
   }
 });
