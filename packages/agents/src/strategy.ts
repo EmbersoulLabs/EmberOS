@@ -2,6 +2,7 @@ import { callJsonModel } from "./llm";
 import {
   normalizeStrategyPlan,
   evaluateStrategyContract,
+  STRATEGY_FACT_GROUNDING_RULE,
   STRATEGY_JSON_CONTRACT,
   resolveStrategyIndustryEnum,
   resolveStrategyPlatforms,
@@ -129,7 +130,9 @@ Works for any industry: retail, fashion, beauty, restaurant, cafe, bakery, real 
 
 Determine industry, business type, product/service, core selling points, brand personality, marketing goal, marketing angle, target audience (age, gender, location, interests, buying intent, pain points, desired outcome), customer journey stage, platform priorities, recommended tone, recommended video style, CTA strategy, keywords, and hashtag categories.
 
-Return ONLY JSON matching the schema. No markdown.
+Return ONLY JSON matching the schema appended to this prompt. No markdown.
+
+${STRATEGY_FACT_GROUNDING_RULE}
 
 ${MARKETING_SKILL_GUIDANCE}`;
 
@@ -445,6 +448,8 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
 
   const evaluated = evaluateStrategyContract(result, {
     services: input.brandProfile.services,
+    description: input.brandProfile.description,
+    brandKeywords: input.brandProfile.brandKeywords,
     companyName: input.brandProfile.businessName,
     brief: substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis) ?? null,
   });
