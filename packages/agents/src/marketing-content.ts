@@ -18,6 +18,7 @@ import {
   type CopyVariant,
   type HookSet,
   type HookType,
+  type MarketingBusinessFacts,
   type MarketingContentPackage,
   type MarketingPlatformId,
   type PlatformMarketingAsset,
@@ -61,8 +62,15 @@ hooks[10] with text/textEn/textMs + type, cta[5] UNIQUE styles (never duplicate 
 voiceStyle, broll, musicMood, effects, postingRecommendation, consistencyScore
 
 ### Dashboard: analysis
-marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100),
-estimatedCtr, estimatedEngagement, estimatedConversion (short ranges e.g. "2.1%–3.8%")
+Use only business facts, product details, and scene descriptions present in the input.
+Do not invent testimonials, prices, discounts, operating hours, addresses, awards, or performance numbers.
+If a fact is missing, omit it.
+Write each language field in that language only. Do not copy one language into another.
+Platform captions must differ. Xiaohongshu stays Simplified Chinese.
+15s = hook + one benefit + CTA. 30s = hook + pain + benefit + CTA. 60s = hook + scene + two supported benefits + CTA.
+
+marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100 content checklist, not live analytics),
+estimatedCtr, estimatedEngagement, estimatedConversion (empty strings unless the input already contains that measured figure)
 
 ### Dashboard: strategyBrief
 primaryGoal, targetAudience, contentAngle, painPoint, desiredEmotion, ctaStrategy (one line each)
@@ -113,7 +121,7 @@ export interface MarketingContentInput {
   strategy: StrategyPlan;
   vision: VisionAnalysis;
   videoAnalysis?: string | null;
-  businessInformation?: string | Record<string, unknown> | null;
+  businessInformation?: string | Record<string, unknown> | MarketingBusinessFacts | null;
   userNotes?: string | null;
   goal?: string;
   campaignName?: string;
@@ -410,9 +418,9 @@ function applyGroundingToPackage(
     seoScore: pkg.consistencyScore - 2,
     emotionalScore: pkg.consistencyScore + 2,
     conversionScore: pkg.consistencyScore - 4,
-    estimatedCtr: "2.4% – 4.1%",
-    estimatedEngagement: "Medium–High",
-    estimatedConversion: "1.2% – 2.8%",
+    estimatedCtr: "",
+    estimatedEngagement: "",
+    estimatedConversion: "",
   };
   const analysis = applyGroundingToAnalysisScores(
     {
@@ -743,14 +751,14 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
       bestPostingTime: zh ? "工作日 12:00 或 19:00" : "Weekdays 12pm or 7pm local",
       bestPlatform: s.platformPriority[0] ?? "TikTok",
       idealAudience: audience,
-      estimatedEngagement: "Medium–High",
+      estimatedEngagement: "",
     },
     consistencyScore: analysisScores.marketingScore,
     analysis: {
       ...analysisScores,
-      estimatedCtr: grounding.isUngrounded ? "—" : "2.4% – 4.1%",
-      estimatedEngagement: grounding.isUngrounded ? "Low (ungrounded)" : "Medium–High",
-      estimatedConversion: grounding.isUngrounded ? "—" : "1.2% – 2.8%",
+      estimatedCtr: "",
+      estimatedEngagement: "",
+      estimatedConversion: "",
     },
     strategyBrief: {
       primaryGoal: s.marketingGoal,
@@ -851,7 +859,10 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   const normalized = normalizeMarketingContentPackage(result);
   if (normalized) {
     console.log(`[content] ok hooks=${normalized.hooks.length} voiceScripts=${!!normalized.voiceScripts["30s"]}`);
-    return { contentPackage: applyGroundingToPackage(normalized, input), usage };
+    return {
+      contentPackage: applyGroundingToPackage({ ...normalized, contentOrigin: "model" }, input),
+      usage,
+    };
   }
 
   // Log what the LLM actually returned so we can diagnose parse failures.
@@ -859,7 +870,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   const hookCount = Array.isArray(raw?.hooks) ? (raw.hooks as unknown[]).length : typeof raw?.hooks;
   const ctaCount = Array.isArray(raw?.cta) ? (raw.cta as unknown[]).length : typeof raw?.cta;
   console.warn(`[content] normalizeMarketingContentPackage failed — using fallback template. hooks=${hookCount} cta=${ctaCount} musicMood=${raw?.musicMood}`);
-  return { contentPackage: buildFallbackContent(input), usage };
+  return { contentPackage: { ...buildFallbackContent(input), contentOrigin: "template_fallback" }, usage };
 }
 
 const PLATFORM_REGEN_SYSTEM = `# EmberOS — Single Platform Copy Regenerator
@@ -880,29 +891,34 @@ export interface RegeneratePlatformAssetInput {
   campaignName?: string;
   goal?: string;
   userNotes?: string;
-  businessInformation?: string | Record<string, unknown> | null;
+  businessInformation?: string | Record<string, unknown> | MarketingBusinessFacts | null;
   contentLocale?: ContentLocale;
+  /** Locale of the caption being regenerated. Xiaohongshu stays Chinese. */
+  locale?: ContentLocale;
   previousCaption?: string;
 }
 
 /** Regenerate a single platform's marketing asset with the AI (per-platform refresh). */
 export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInput): Promise<{
-  asset: PlatformMarketingAsset;
+  asset: PlatformMarketingAsset | null;
   usage: { input: number; output: number; costUsd: number };
+  failed: boolean;
 }> {
   const def = MARKETING_PLATFORMS[input.platformId];
   // Xiaohongshu is a Chinese-first platform — always regenerate in Chinese.
   const locale: ContentLocale =
     input.platformId === "xiaohongshu"
       ? "zh"
-      : (input.contentLocale ??
-        (/[\u4e00-\u9fff]/.test(
-          [input.goal, input.userNotes, input.strategy.tone, input.strategy.product]
-            .filter(Boolean)
-            .join("")
-        )
-          ? "zh"
-          : "en"));
+      : input.locale === "zh" || input.locale === "en" || input.locale === "ms"
+        ? input.locale
+        : (input.contentLocale ??
+          (/[\u4e00-\u9fff]/.test(
+            [input.goal, input.userNotes, input.strategy.tone, input.strategy.product]
+              .filter(Boolean)
+              .join("")
+          )
+            ? "zh"
+            : "en"));
 
   const user = JSON.stringify({
     platform: input.platformId,
@@ -935,22 +951,7 @@ export async function regeneratePlatformAsset(input: RegeneratePlatformAssetInpu
 
   const parsed = PlatformMarketingAssetSchema.safeParse(result);
   if (parsed.success && parsed.data.caption.trim()) {
-    return { asset: parsed.data, usage };
+    return { asset: parsed.data, usage, failed: false };
   }
-
-  // Fallback: derive a fresh single-platform asset from the strategy/vision.
-  const fallbackPkg = buildFallbackContent({
-    strategy: input.strategy,
-    vision: input.vision,
-    goal: input.goal,
-    userNotes: input.userNotes,
-    campaignName: input.campaignName,
-    businessInformation: input.businessInformation,
-    contentLocale: locale,
-  });
-  const fallbackAsset = fallbackPkg.platformAssets?.[input.platformId];
-  return {
-    asset: fallbackAsset ?? { caption: "", cta: "", hashtags: [] },
-    usage,
-  };
+  return { asset: null, usage, failed: true };
 }

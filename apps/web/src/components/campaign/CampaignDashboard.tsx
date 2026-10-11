@@ -30,6 +30,7 @@ export interface CampaignDashboardData {
   hasVideoAsset: boolean;
   clipCount: number;
   canDelete: boolean;
+  campaignAccess?: "operations" | "marketing";
 }
 
 const STATE_LABEL: Record<WorkspaceDisplayState, string> = {
@@ -159,13 +160,14 @@ export function CampaignDashboard({
   onDelete: () => void;
 }) {
   const { campaign, assets, assetStories = [], task, creatives, canDelete } = data;
+  const operations = data.campaignAccess !== "marketing";
   const campaignStatus = String(campaign.status || "draft");
   const taskId = task?.id ? String(task.id) : undefined;
   const taskStatus = task?.status ? String(task.status) : undefined;
   const taskState = mapTaskDisplayState(taskStatus);
   const continueTarget = resolveContinueCampaign({ slug, campaignId, campaignStatus, taskId, taskStatus });
   const taskHref = taskId ? `/w/${slug}/campaigns/${campaignId}/task?taskId=${taskId}` : null;
-  const progress = (task?.stepProgress ?? {}) as Record<string, { status?: string; output?: unknown }>;
+  const progress = (task?.stepProgress ?? {}) as Record<string, { status?: string; output?: unknown; contentRevision?: number }>;
   const contentPackage = progress.content_generate?.status === "completed"
     ? progress.content_generate.output as MarketingContentPackage | undefined
     : undefined;
@@ -194,14 +196,14 @@ export function CampaignDashboard({
             </div>
             <div className="flex flex-wrap gap-2">
               <Link href={`/w/${slug}/campaigns`} className="inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-navy hover:bg-surface-muted">All Campaigns</Link>
-              {canDelete ? <button type="button" disabled={deleting} onClick={onDelete} className="min-h-11 rounded-lg border border-red-200 px-4 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60">{deleting ? "Deleting…" : "Delete"}</button> : null}
+              {operations && canDelete ? <button type="button" disabled={deleting} onClick={onDelete} className="min-h-11 rounded-lg border border-red-200 px-4 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-60">{deleting ? "Deleting…" : "Delete"}</button> : null}
             </div>
           </div>
         </header>
 
         {deleteError ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{deleteError}</p> : null}
 
-        {continueTarget ? (
+        {operations && continueTarget ? (
           <section className="rounded-2xl border border-brand-blue/20 bg-brand-blue/5 p-4 sm:p-5" aria-labelledby="continue-campaign-title">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -226,12 +228,12 @@ export function CampaignDashboard({
             <div className="sm:col-span-2"><dt className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">Campaign Brief</dt><dd className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-navy">{String(campaign.campaignBrief || "Not provided")}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">Created</dt><dd className="mt-1 text-sm text-navy">{dateLabel(campaign.createdAt)}</dd></div>
             <div><dt className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">Last Updated</dt><dd className="mt-1 text-sm text-navy">{dateLabel(campaign.updatedAt)}</dd></div>
-            <div><dt className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">Assets</dt><dd className="mt-1 text-sm text-navy">{assets.length} attached</dd></div>
-            <div><dt className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">Asset Stories</dt><dd className="mt-1 text-sm text-navy">{assetStories.length ? assetStories.map((story) => String(story.name)).join(", ") : "None"}</dd></div>
+            {operations ? <div><dt className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">Assets</dt><dd className="mt-1 text-sm text-navy">{assets.length} attached</dd></div> : null}
+            {operations ? <div><dt className="text-xs font-semibold uppercase tracking-wide text-ink-secondary">Asset Stories</dt><dd className="mt-1 text-sm text-navy">{assetStories.length ? assetStories.map((story) => String(story.name)).join(", ") : "None"}</dd></div> : null}
           </dl>
         </section>
 
-        <section aria-labelledby="module-chooser-title" data-testid="campaign-module-chooser" className="rounded-2xl border border-border bg-white p-4 shadow-card sm:p-6">
+        {operations ? <section aria-labelledby="module-chooser-title" data-testid="campaign-module-chooser" className="rounded-2xl border border-border bg-white p-4 shadow-card sm:p-6">
           <h2 id="module-chooser-title" className="text-lg font-bold text-navy">{!task && creatives.length === 0 ? "What do you want to create?" : "Create in this Campaign"}</h2>
           <p className="mt-1 text-sm text-ink-secondary">A Campaign can hold more than one module. Choosing one does not assign every asset to it.</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -240,9 +242,9 @@ export function CampaignDashboard({
             <a href="#module-video-studio" className="rounded-xl border border-border p-4 text-sm font-semibold text-navy hover:bg-surface-muted">Video Studio</a>
             <a href="#marketing-package-title" className="rounded-xl border border-border p-4 text-sm font-semibold text-navy hover:bg-surface-muted">Marketing</a>
           </div>
-        </section>
+        </section> : null}
 
-        <section aria-labelledby="content-modules-title">
+        {operations ? <section aria-labelledby="content-modules-title">
           <div className="mb-4">
             <h2 id="content-modules-title" className="text-lg font-bold text-navy">Content</h2>
             <p className="mt-1 text-sm text-ink-secondary">Each module keeps its current main execution engine.</p>
@@ -266,16 +268,16 @@ export function CampaignDashboard({
             <PhotoSceneOfficialLibraryPanel campaignId={campaignId} />
             <PhotoSceneMarketingImagePanel campaignId={campaignId} />
           </div>
-        </section>
+        </section> : null}
 
         <section aria-labelledby="marketing-package-title" className="rounded-2xl border border-border bg-white p-4 shadow-card sm:p-6">
           <h2 id="marketing-package-title" className="text-lg font-bold text-navy">Marketing Package</h2>
           {contentPackage ? (
-            <MarketingPackagePanel contentPackage={contentPackage} taskId={taskId} strategy={strategy} />
+            <MarketingPackagePanel contentPackage={contentPackage} taskId={taskId} strategy={strategy} contentRevision={progress.content_generate?.contentRevision ?? 0} />
           ) : (
             <div className="mt-3">
               <p className="text-sm text-ink-secondary">{taskState === "IN_PROGRESS" || taskState === "QUEUED" ? "The Marketing Package is still being prepared." : taskState === "RECOVERY_AVAILABLE" ? "The workflow needs attention before a Marketing Package can be completed." : "No durable Marketing Package is available yet."}</p>
-              {taskHref ? <Link href={taskHref} className="mt-4 inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-navy hover:bg-surface-muted">Open workflow details</Link> : null}
+              {operations && taskHref ? <Link href={taskHref} className="mt-4 inline-flex min-h-11 items-center rounded-lg border border-border px-4 text-sm font-semibold text-navy hover:bg-surface-muted">Open workflow details</Link> : null}
             </div>
           )}
         </section>
@@ -285,8 +287,8 @@ export function CampaignDashboard({
           <p className="mt-1 text-sm text-ink-secondary">Latest durable facts; this is not a synthetic event timeline.</p>
           <ul className="mt-4 divide-y divide-border text-sm">
             <li className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="text-ink-secondary">Campaign updated</span><strong className="text-navy">{dateLabel(campaign.updatedAt)}</strong></li>
-            {task ? <li className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="text-ink-secondary">Latest workflow</span><span className="flex items-center gap-2"><StatusBadge status={taskStatus || "pending"} /><strong className="text-navy">{dateLabel(task.updatedAt || task.createdAt)}</strong></span></li> : null}
-            <li className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="text-ink-secondary">Generated results</span><strong className="text-navy">{creatives.length}</strong></li>
+            {operations && task ? <li className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="text-ink-secondary">Latest workflow</span><span className="flex items-center gap-2"><StatusBadge status={taskStatus || "pending"} /><strong className="text-navy">{dateLabel(task.updatedAt || task.createdAt)}</strong></span></li> : null}
+            {operations ? <li className="flex flex-wrap items-center justify-between gap-2 py-3"><span className="text-ink-secondary">Generated results</span><strong className="text-navy">{creatives.length}</strong></li> : null}
           </ul>
         </section>
       </div>

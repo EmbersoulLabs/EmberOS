@@ -3,8 +3,8 @@
   "private": true,
   "scripts": {
     "dev": "turbo dev",
-  "dev:sync": "node scripts/sync-env.mjs",
-  "predev": "node scripts/sync-env.mjs",
+    "dev:sync": "node scripts/sync-env.mjs",
+    "predev": "node scripts/sync-env.mjs",
     "build": "turbo build",
     "lint": "turbo lint",
     "typecheck": "turbo typecheck",
@@ -39,12 +39,13 @@
   },
   "devDependencies": {
     "@playwright/test": "1.62.0",
+    "dotenv": "^16.4.7",
+    "embedded-postgres": "18.4.0-beta.17",
+    "postgres": "^3.4.5",
     "tsx": "^4.19.2",
     "turbo": "^2.3.3",
     "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "postgres": "^3.4.5",
-    "dotenv": "^16.4.7"
+    "vitest": "^2.1.8"
   },
   "packageManager": "pnpm@9.15.0",
   "engines": {

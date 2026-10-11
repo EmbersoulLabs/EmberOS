@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   MarketingContentPackage,
   MarketingPlatformId,
@@ -21,10 +21,12 @@ export function MarketingPackagePanel({
   contentPackage: initialPackage,
   taskId,
   strategy,
+  contentRevision: initialRevision = 0,
 }: {
   contentPackage: MarketingContentPackage;
   taskId?: string;
   strategy?: StrategyPlan;
+  contentRevision?: number;
 }) {
   const { t, locale: uiLocale } = useI18n();
   const aiPref = getAiOutputLanguage();
@@ -32,16 +34,31 @@ export function MarketingPackagePanel({
     aiPref === "auto" ? uiLocaleToPackLocale(uiLocale) : aiPref
   ) as MarketingPackLocale;
   const [pkg, setPkg] = useState(initialPackage);
+  const [revision, setRevision] = useState(initialRevision);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
+  const translateAttempts = useRef(new Set<string>());
+  const pkgRef = useRef(pkg);
+  pkgRef.current = pkg;
+  const revisionRef = useRef(revision);
+  revisionRef.current = revision;
 
   useEffect(() => {
     setPkg(initialPackage);
-  }, [initialPackage]);
+    setRevision(initialRevision);
+  }, [initialPackage, initialRevision]);
+
+  useEffect(() => {
+    translateAttempts.current = new Set();
+  }, [taskId]);
 
   useEffect(() => {
     if (packLocale === "zh" || !taskId) return;
-    if (isMarketingPackLocaleReady(pkg, packLocale)) return;
+    const current = pkgRef.current;
+    if (isMarketingPackLocaleReady(current, packLocale)) return;
+    const attemptKey = `${taskId}:${packLocale}`;
+    if (translateAttempts.current.has(attemptKey)) return;
+    translateAttempts.current.add(attemptKey);
 
     let cancelled = false;
     setTranslating(true);
@@ -49,17 +66,24 @@ export function MarketingPackagePanel({
 
     (async () => {
       try {
-        const res = await fetch(`/api/tasks/${taskId}/marketing-pack/translate`, { method: "POST" });
+        const res = await fetch(`/api/tasks/${taskId}/marketing-pack/translate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ locale: packLocale, contentRevision: revisionRef.current }),
+        });
         const data = (await res.json()) as {
           contentPackage?: MarketingContentPackage;
+          contentRevision?: number;
+          translationComplete?: boolean;
           error?: string;
         };
         if (cancelled) return;
-        if (!res.ok) {
+        if (!res.ok || data.translationComplete !== true) {
           setTranslateError(data.error ?? t("error.translationFailed"));
           return;
         }
         if (data.contentPackage) setPkg(data.contentPackage);
+        if (typeof data.contentRevision === "number") setRevision(data.contentRevision);
       } catch {
         if (!cancelled) setTranslateError(t("error.translationFailed"));
       } finally {
@@ -70,7 +94,7 @@ export function MarketingPackagePanel({
     return () => {
       cancelled = true;
     };
-  }, [packLocale, taskId, pkg, t]);
+  }, [packLocale, taskId, t]);
 
   const displayPackage = useMemo(
     () => localizeMarketingPackage(pkg, packLocale),
@@ -83,13 +107,23 @@ export function MarketingPackagePanel({
       const res = await fetch(`/api/tasks/${taskId}/marketing-pack`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platformId, asset }),
+        body: JSON.stringify({
+          platformId,
+          asset,
+          locale: packLocale,
+          contentRevision: revisionRef.current,
+        }),
       });
-      const data = (await res.json()) as { contentPackage?: MarketingContentPackage };
+      const data = (await res.json()) as {
+        contentPackage?: MarketingContentPackage;
+        contentRevision?: number;
+      };
+      if (res.status === 409) throw new Error("conflict");
       if (!res.ok || !data.contentPackage) throw new Error("save_failed");
       setPkg(data.contentPackage);
+      if (typeof data.contentRevision === "number") setRevision(data.contentRevision);
     },
-    [taskId]
+    [packLocale, taskId]
   );
 
   const onRegeneratePlatform = useCallback(
@@ -98,13 +132,22 @@ export function MarketingPackagePanel({
       const res = await fetch(`/api/tasks/${taskId}/marketing-pack/regenerate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platformId }),
+        body: JSON.stringify({
+          platformId,
+          locale: packLocale,
+          contentRevision: revisionRef.current,
+        }),
       });
-      const data = (await res.json()) as { contentPackage?: MarketingContentPackage };
+      const data = (await res.json()) as {
+        contentPackage?: MarketingContentPackage;
+        contentRevision?: number;
+      };
+      if (res.status === 409) throw new Error("conflict");
       if (!res.ok || !data.contentPackage) throw new Error("regenerate_failed");
       setPkg(data.contentPackage);
+      if (typeof data.contentRevision === "number") setRevision(data.contentRevision);
     },
-    [taskId]
+    [packLocale, taskId]
   );
 
   return (
@@ -120,6 +163,15 @@ export function MarketingPackagePanel({
           {t("pipeline.marketingPackSubtitle")}
         </p>
       </div>
+
+      {taskId ? (
+        <a
+          href={`/api/tasks/${taskId}/marketing-pack/download`}
+          className="mb-4 inline-flex h-9 items-center rounded-md border border-border px-3 text-sm font-medium text-navy"
+        >
+          {t("marketing.action.download")}
+        </a>
+      ) : null}
 
       {translating && (
         <p className="mb-4 text-sm text-ink-secondary">{t("pipeline.marketingPackTranslating")}</p>

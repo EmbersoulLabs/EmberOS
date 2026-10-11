@@ -73,6 +73,7 @@ export default function TaskProgressContent() {
   const [approvalRequired, setApprovalRequired] = useState(false);
   const [pollError, setPollError] = useState("");
   const [initialLoad, setInitialLoad] = useState(true);
+  const [marketingOnly, setMarketingOnly] = useState(false);
   const [wrongCampaignTask, setWrongCampaignTask] = useState(false);
   const [displayedIsLatest, setDisplayedIsLatest] = useState(false);
   const [previewDeliveryErrorIds, setPreviewDeliveryErrorIds] = useState<Set<string>>(new Set());
@@ -92,6 +93,17 @@ export default function TaskProgressContent() {
         }
         const campData = await campRes.json();
         setPollError("");
+        if (campData.campaignAccess === "marketing") {
+          setMarketingOnly(true);
+          setTask(null);
+          setCreatives([]);
+          setCanDelete(false);
+          setInitialLoad(false);
+          setPollError("");
+          if (interval) clearInterval(interval);
+          return;
+        }
+
         const taskId = taskIdParam ?? campData.task?.id;
         setDisplayedIsLatest(Boolean(taskId && taskId === campData.task?.id));
         const campStatus = campData.campaign?.status as string | undefined;
@@ -264,6 +276,7 @@ export default function TaskProgressContent() {
       output?: unknown;
       percent?: number;
       phase?: string;
+      contentRevision?: number;
     }
   >;
   const taskError = task?.errorMessage as string | undefined;
@@ -406,6 +419,16 @@ export default function TaskProgressContent() {
     }
   }
 
+  if (marketingOnly) {
+    return (
+      <AppShell>
+        <p data-testid="marketing-only-workflow" className="mx-auto max-w-6xl text-sm text-ink-secondary">
+          This page is limited to the Marketing Package. Video Studio stays with the campaign operator.
+        </p>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell>
       <div className="mx-auto max-w-6xl">
@@ -509,6 +532,7 @@ export default function TaskProgressContent() {
                 contentPackage={contentPackage}
                 taskId={activeTaskId}
                 strategy={strategyPlan}
+                contentRevision={progress.content_generate?.contentRevision ?? 0}
               />
             )}
 
