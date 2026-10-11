@@ -40,8 +40,10 @@ describeIntegration("original character acceptance persists before outline freez
     if (!sql) return;
     await sql`delete from ai_story_animation_packages where story_id = ${storyId}::uuid`;
     await sql`delete from ai_story_creative_contexts where story_id = ${storyId}::uuid`;
-    await sql`delete from ai_story_character_versions where org_id = ${fixture.orgId}::uuid`;
-    await sql`delete from ai_story_characters where org_id = ${fixture.orgId}::uuid`;
+    await sql.begin(async (tx) => {
+      await tx`delete from ai_story_character_versions where campaign_id = ${fixture.campaignAId}::uuid and character_id in (select character_id from ai_story_characters where campaign_id = ${fixture.campaignAId}::uuid and name = 'Origin')`;
+      await tx`delete from ai_story_characters where campaign_id = ${fixture.campaignAId}::uuid and name = 'Origin'`;
+    });
     await sql`delete from ai_story_versions where story_id = ${storyId}::uuid`;
     await sql`delete from ai_stories where id = ${storyId}::uuid`;
     await cleanupRlsFixture(sql, fixture);
