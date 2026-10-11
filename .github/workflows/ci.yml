@@ -355,6 +355,14 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: LOCAL_GPU core unit tests
+        run: >-
+          pnpm exec vitest run --config vitest.config.ts
+          tests/ai-story-local-gpu-v1-core-phase1.test.ts
+          tests/ai-story-local-gpu-v1-core-phase2.test.ts
+          tests/ai-story-local-gpu-v1-core-phase3.test.ts
+          tests/ai-story-local-gpu-v1-core-phase4.test.ts
+
       - name: Install browser for auth security E2E
         run: pnpm exec playwright install --with-deps chromium
 

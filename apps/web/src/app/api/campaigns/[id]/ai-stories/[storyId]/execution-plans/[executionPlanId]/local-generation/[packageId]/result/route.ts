@@ -20,8 +20,18 @@ async function resolve(params: Params["params"], role: "operator" | "client_view
     ? await packages.getExecutablePackage({ workspaceId: ctx.workspaceId, executionPlanId, packageId })
     : await packages.getPackage({ workspaceId: ctx.workspaceId, executionPlanId, packageId });
   const output = (await packages.listOutputs({ workspaceId: ctx.workspaceId, executionPlanId })).find(item => item.packageId === packageId);
-  if (!pkg || !output) throw new Error("GENERATION_RESULT_NOT_FOUND");
+  if (!pkg) throw new Error("GENERATION_RESULT_NOT_FOUND");
   const results = new AiStoryGenerationResultRepository();
+  if (!output) {
+    const gpu = await results.findSoleLocalGpuWorkerResult({
+      workspaceId: ctx.workspaceId,
+      executionPlanId,
+      sceneExecutionId: pkg.sceneExecutionId,
+      packageId,
+    });
+    if (!gpu) throw new Error("GENERATION_RESULT_NOT_FOUND");
+    return { user, pkg, result: gpu, results };
+  }
   const resultId = deterministicPersistenceUuid("ai-story-generation-result", {
     sourceKind: "MANUAL_LOCAL", providerAttemptId: null, localGenerationOutputId: output.outputId, localWorkerOutputId: null,
   });

@@ -59,6 +59,28 @@ export class AiStoryGenerationResultRepository {
     return row ? validateGenerationResult(row.result) : null;
   }
 
+  /** One LOCAL_GPU result for this package. A second match is a duplicate, not a new submission. */
+  async findSoleLocalGpuWorkerResult(input: {
+    workspaceId: string;
+    executionPlanId: string;
+    sceneExecutionId: string;
+    packageId: string;
+  }) {
+    const rows = await this.db.select().from(schema.aiStoryGenerationResults).where(and(
+      eq(schema.aiStoryGenerationResults.workspaceId, input.workspaceId),
+      eq(schema.aiStoryGenerationResults.executionPlanId, input.executionPlanId),
+      eq(schema.aiStoryGenerationResults.sceneExecutionId, input.sceneExecutionId),
+      eq(schema.aiStoryGenerationResults.sourceKind, "LOCAL_GPU_WORKER"),
+    ));
+    const matches = rows.map((row) => validateGenerationResult(row.result)).filter((result) =>
+      result.ownership.workspaceId === input.workspaceId
+      && result.inputAuthority.localPackageId === input.packageId
+      && result.source.sourceKind === "LOCAL_GPU_WORKER"
+    );
+    if (matches.length > 1) throw new Error("LOCAL_GPU_DUPLICATE_RESULT");
+    return matches[0] ?? null;
+  }
+
   async accept(raw: AiStoryGenerationResult) {
     const result = validateGenerationResult(raw);
     return this.db.transaction(async tx => {
