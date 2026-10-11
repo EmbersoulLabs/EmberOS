@@ -417,7 +417,10 @@ function parseLocalizedItemText(value: unknown): {
 }
 
 /** Normalize LLM hooks/cta that may arrive as plain strings. */
-export function normalizeMarketingContentPackage(raw: unknown): MarketingContentPackage | null {
+export function normalizeMarketingContentPackage(
+  raw: unknown,
+  schemaIssues?: Array<{ path: PropertyKey[]; message: string }>
+): MarketingContentPackage | null {
   if (!raw || typeof raw !== "object") return null;
   const data = raw as Record<string, unknown>;
 
@@ -614,5 +617,9 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
   const finalCta: ContentCtaItem[] = cta;
 
   const parsed = MarketingContentPackageSchema.safeParse({ ...candidate, hooks: finalHooks, cta: finalCta });
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) {
+    schemaIssues?.push(...parsed.error.issues.map((issue) => ({ path: issue.path, message: issue.message })));
+    return null;
+  }
+  return parsed.data;
 }

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   STRATEGY_CONFIDENCE_CATEGORY,
@@ -5,7 +6,9 @@ import {
   contentAllowsTranslation,
   evaluateContentContract,
   evaluateStrategyContract,
+  explicitScriptDurationSec,
   isMarketingInstructionLeak,
+  normalizeSubtitleTimeline,
   strategyAllowsContent,
 } from "@ceo-agent/shared";
 
@@ -276,3 +279,209 @@ describe("strategy contract compatibility", () => {
 function strategyObject(overrides: Record<string, unknown>) {
   return { ...strategy(), hashtags: { industry: ["flowers"], local: [], trending: [], seo: [] }, ...overrides };
 }
+
+const THIRD_E2E_CONTENT = JSON.parse(readFileSync("tests/fixtures/marketing-v1-e2e-03-content.json", "utf8"));
+const THIRD_E2E_STRATEGY = JSON.parse(readFileSync("tests/fixtures/marketing-v1-e2e-03-strategy.json", "utf8"));
+const FLORIST = { ...FACTS, durationSec: 30 };
+
+describe("subtitle timeline normalization", () => {
+  it("preserves canonical cues and does not stretch them", () => {
+    const result = evaluateContentContract(content({
+      subtitleTimeline: [{ startSec: 0, endSec: 3, text: "Fresh flower bouquet", role: "hook" }],
+    }), FLORIST);
+    expect(result.diagnostic.ok).toBe(true);
+    expect(result.contentPackage?.subtitleTimeline).toEqual([{ startSec: 0, endSec: 3, text: "Fresh flower bouquet", role: "hook" }]);
+  });
+
+  it("normalizes legacy seconds, decimals, clock times, and milliseconds up to an explicit duration", () => {
+    const timeline = normalizeSubtitleTimeline([
+      { time: "0s", text: "Open" },
+      { time: "2.5s", text: "Detail" },
+      { time: "00:03", text: "Offer" },
+      { time: "00:03.500", text: "Close" },
+    ], 30);
+    expect(timeline.ok).toBe(true);
+    if (!timeline.ok) return;
+    expect(timeline.timeline.map((cue) => [cue.startSec, cue.endSec, cue.text])).toEqual([
+      [0, 2.5, "Open"],
+      [2.5, 3, "Detail"],
+      [3, 3.5, "Offer"],
+      [3.5, 30, "Close"],
+    ]);
+  });
+
+  it("rejects an open final cue when no authorized duration exists", () => {
+    const timeline = normalizeSubtitleTimeline([{ time: "0s", text: "Open" }], undefined);
+    expect(timeline.ok).toBe(false);
+    if (timeline.ok) return;
+    expect(timeline.issues[0]).toMatchObject({ code: "TIMELINE_END_UNBOUNDED", field: "subtitleTimeline[0].endSec", normalizable: false });
+  });
+
+  it("rejects non-monotonic, overlapping, zero-length, negative, beyond-duration, empty, and non-finite cues", () => {
+    expect(normalizeSubtitleTimeline([{ time: "5s", text: "Later" }, { time: "2s", text: "Earlier" }], 30).ok).toBe(false);
+    const overlap = normalizeSubtitleTimeline([{ startSec: 0, endSec: 5, text: "A" }, { startSec: 4, endSec: 8, text: "B" }], 30);
+    expect(overlap.ok).toBe(false);
+    if (!overlap.ok) expect(overlap.issues.some((issue) => issue.code === "TIMELINE_OVERLAP")).toBe(true);
+    const zero = normalizeSubtitleTimeline([{ startSec: 1, endSec: 1, text: "A" }], 30);
+    expect(zero.ok).toBe(false);
+    if (!zero.ok) expect(zero.issues[0].code).toBe("TIMELINE_ZERO_DURATION");
+    const negative = normalizeSubtitleTimeline([{ time: "-1s", text: "A" }], 30);
+    expect(negative.ok).toBe(false);
+    if (!negative.ok) expect(negative.issues[0]).toMatchObject({ code: "TIMELINE_NEGATIVE", field: "subtitleTimeline[0].startSec" });
+    const beyond = normalizeSubtitleTimeline([{ startSec: 0, endSec: 31, text: "A" }], 30);
+    expect(beyond.ok).toBe(false);
+    if (!beyond.ok) expect(beyond.issues[0].code).toBe("TIMELINE_BEYOND_DURATION");
+    const empty = normalizeSubtitleTimeline([{ time: "0s", text: " " }], 30);
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) expect(empty.issues[0]).toMatchObject({ code: "TIMELINE_TEXT_EMPTY", field: "subtitleTimeline[0].text" });
+    const infinite = normalizeSubtitleTimeline([{ startSec: Number.POSITIVE_INFINITY, endSec: 2, text: "A" }], 30);
+    expect(infinite.ok).toBe(false);
+    if (!infinite.ok) expect(infinite.issues[0].code).toBe("TIMELINE_NON_FINITE");
+    expect(normalizeSubtitleTimeline([{ time: "soon", text: "A" }], 30).ok).toBe(false);
+  });
+});
+
+describe("content grounding", () => {
+  it("removes an unsupported ranking hashtag and keeps a geographic tag", () => {
+    const result = evaluateContentContract(content({
+      platformAssets: { tiktok: { caption: "Fresh flower bouquet", hashtags: ["#SingaporeGifts", "#bestflowerstore", "#BestFloristSG"], cta: "Follow" } },
+    }), FLORIST);
+    expect(result.diagnostic.ok).toBe(true);
+    expect(result.contentPackage?.platformAssets?.tiktok?.hashtags).toEqual(["#SingaporeGifts"]);
+    expect(result.diagnostic.adjustments).toEqual(expect.arrayContaining([
+      { field: "platformAssets.tiktok.hashtags", action: "remove", raw: "#bestflowerstore" },
+      { field: "platformAssets.tiktok.hashtags", action: "remove", raw: "#BestFloristSG" },
+    ]));
+  });
+
+  it("keeps ranking, shop, and delivery claims only when the profile authorizes them", () => {
+    expect(evaluateStrategyContract(strategyObject({ marketingAngle: "Best florist in Singapore" }), {
+      ...FACTS,
+      description: "Voted best florist",
+    }).diagnostic.ok).toBe(true);
+    expect(evaluateContentContract(content({ cta: [{ text: "Visit our shop for exclusive designs." }] }), {
+      ...FLORIST,
+      address: "12 Orchard Road",
+    }).diagnostic.ok).toBe(true);
+    expect(evaluateContentContract(content({
+      voiceScripts: {
+        "15s": "Same-day delivery for this fresh flower bouquet.",
+        "30s": "Same-day delivery for this fresh flower bouquet is ready for Singapore gift buyers.",
+        "60s": "Same-day delivery for this fresh flower bouquet is ready for Singapore gift buyers who need it today.",
+      },
+    }), { ...FLORIST, services: ["Fresh flower bouquet", "Same-day delivery"] }).diagnostic.ok).toBe(true);
+  });
+
+  it("rejects unsupported shop, delivery, discount, guarantee, and testimonial claims in required copy", () => {
+    const shop = evaluateContentContract(content({ cta: [{ text: "Visit our shop for exclusive designs." }] }), FLORIST);
+    expect(shop.contentPackage).toBeNull();
+    expect(shop.diagnostic.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "cta[0].text", claimCategory: "location", normalizable: false, authorization: "business_profile" }),
+    ]));
+    expect(contentAllowsTranslation(shop.contentPackage)).toBe(false);
+    expect(evaluateContentContract(content({
+      voiceScripts: {
+        "15s": "Free delivery on this fresh flower bouquet.",
+        "30s": "Free delivery on this fresh flower bouquet for Singapore gift buyers today.",
+        "60s": "Free delivery on this fresh flower bouquet for Singapore gift buyers today and tomorrow.",
+      },
+    }), FLORIST).diagnostic.fields).toContain("voiceScripts.15s");
+    const discount = evaluateContentContract(content({ hooks: [{ text: "50% off this fresh flower bouquet", type: "offer" }] }), FLORIST);
+    expect(discount.diagnostic.issues?.some((issue) => issue.claimCategory === "discount" && issue.field === "hooks[0].text")).toBe(true);
+    expect(evaluateContentContract(content({ hooks: [{ text: "Guaranteed results for this bouquet", type: "offer" }] }), FLORIST).diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
+    expect(evaluateContentContract(content({ hooks: [{ text: "Customers say this bouquet made their day", type: "proof" }] }), FLORIST).diagnostic.issues)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ claimCategory: "testimonial", normalizable: false })]));
+    expect(evaluateContentContract(content({ hooks: [{ text: "Customers say this bouquet made their day", type: "proof" }] }), {
+      ...FLORIST,
+      description: "Customers say this bouquet made their day",
+    }).diagnostic.ok).toBe(true);
+  });
+
+  it("allows geographic audience targeting in English, Chinese, and Malay", () => {
+    const result = evaluateContentContract(content({
+      voiceScripts: {
+        "15s": "For customers in Singapore, this fresh flower bouquet is ready.",
+        "30s": "For customers in Singapore, this fresh flower bouquet from Ember Florist Test is ready today.",
+        "60s": "For customers in Singapore, this fresh flower bouquet from Ember Florist Test is ready today as a personal gift.",
+      },
+      voiceScriptsZh: {
+        "15s": "适合新加坡送礼的人。",
+        "30s": "适合新加坡送礼的人，今天可以选择新鲜花束。",
+        "60s": "适合新加坡送礼的人，今天可以选择新鲜花束，作为一份用心的礼物。",
+      },
+      cta: [{ text: "Untuk pelanggan di Singapura", textMs: "Untuk pelanggan di Singapura" }],
+    }), FLORIST);
+    expect(result.diagnostic.ok).toBe(true);
+    expect(contentAllowsTranslation(result.contentPackage)).toBe(true);
+  });
+
+  it("rejects Chinese and Malay physical-location claims without rewriting them", () => {
+    const chinese = evaluateContentContract(content({
+      voiceScriptsZh: { "30s": "鲜花就在新加坡市中心。" },
+    }), FLORIST);
+    expect(chinese.contentPackage).toBeNull();
+    expect(chinese.diagnostic.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "voiceScriptsZh.30s", claimCategory: "location", excerpt: "市中心" }),
+    ]));
+    const malay = evaluateContentContract(content({ cta: [{ text: "Lawati kedai kami untuk buket." }] }), FLORIST);
+    expect(malay.contentPackage).toBeNull();
+    expect(malay.diagnostic.issues?.some((issue) => issue.claimCategory === "location")).toBe(true);
+  });
+});
+
+describe("third real content response replay", () => {
+  it("normalizes the subtitle timeline, removes the ranking tag, and still blocks translation", () => {
+    const raw = structuredClone(THIRD_E2E_CONTENT);
+    const hooks = JSON.stringify(raw.hooks);
+    const cta = JSON.stringify(raw.cta);
+    const scripts = JSON.stringify({
+      voiceScripts: raw.voiceScripts,
+      voiceScriptsEn: raw.voiceScriptsEn,
+      voiceScriptsZh: raw.voiceScriptsZh,
+    });
+    const result = evaluateContentContract(raw, {
+      ...FLORIST,
+      providerRequestId: "chatcmpl-EXnKFxdeteqdqGeiCt94V6vqXUerM",
+    });
+    expect(explicitScriptDurationSec("Duration: 30 seconds.\nRequest: bouquet")).toBe(30);
+    expect(explicitScriptDurationSec("about 30 seconds")).toBeUndefined();
+    const normalized = normalizeSubtitleTimeline(THIRD_E2E_CONTENT.subtitleTimeline, 30);
+    expect(normalized.ok).toBe(true);
+    if (normalized.ok) {
+      expect(normalized.timeline.map((cue) => [cue.startSec, cue.endSec])).toEqual([[0, 5], [5, 10], [10, 15], [15, 30]]);
+      expect(normalized.timeline.map((cue) => cue.text)).toEqual(THIRD_E2E_CONTENT.subtitleTimeline.map((cue: { text: string }) => cue.text));
+    }
+    expect(result.diagnostic.codes).not.toContain("CONTENT_SCHEMA_INVALID");
+    expect(result.diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
+    expect(JSON.stringify(raw.hooks)).toBe(hooks);
+    expect(JSON.stringify(raw.cta)).toBe(cta);
+    expect(raw.musicMood).toBe("elegant and inspiring");
+    expect(JSON.stringify({
+      voiceScripts: raw.voiceScripts,
+      voiceScriptsEn: raw.voiceScriptsEn,
+      voiceScriptsZh: raw.voiceScriptsZh,
+    })).toBe(scripts);
+    expect(result.diagnostic.ok).toBe(false);
+    expect(result.diagnostic.stage).toBe("content");
+    expect(result.diagnostic.schemaVersion).toBe("marketing-output-v1");
+    expect(result.diagnostic.providerRequestId).toBe("chatcmpl-EXnKFxdeteqdqGeiCt94V6vqXUerM");
+    expect(result.diagnostic.adjustments).toContainEqual({ field: "platformAssets.facebook.hashtags", action: "remove", raw: "#bestflowerstore" });
+    expect(result.diagnostic.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "voiceScripts.30s", claimCategory: "location", excerpt: "right in the heart of" }),
+      expect.objectContaining({ field: "cta[4].text", claimCategory: "location" }),
+    ]));
+    expect(result.contentPackage).toBeNull();
+    expect(contentAllowsTranslation(result.contentPackage)).toBe(false);
+    expect(JSON.stringify(result.diagnostic)).not.toContain(FACTS.brief);
+  });
+
+  it("removes the unsupported strategy ranking tag and keeps Singapore audience tags", () => {
+    const result = evaluateStrategyContract(structuredClone(THIRD_E2E_STRATEGY), FACTS);
+    expect(result.diagnostic.ok).toBe(true);
+    expect(result.plan?.product).toBe("Fresh flower bouquet");
+    expect(result.plan?.hashtags.local).toEqual(["#Singapore", "#SGgifts"]);
+    expect(result.plan?.hashtags.seo).toEqual(["#floristSingapore"]);
+    expect(result.diagnostic.adjustments).toContainEqual({ field: "hashtags.seo", action: "remove", raw: "#bestflowerstore" });
+    expect(strategyAllowsContent(result)).toBe(true);
+  });
+});

@@ -1,0 +1,62 @@
+{
+  "industry": "florist",
+  "businessType": "retail",
+  "product": "Fresh flower bouquet",
+  "marketingGoal": "Brand awareness",
+  "marketingAngle": "Create a sense of luxury and appeal through the use of color and texture in floral arrangements.",
+  "brandPersonality": [
+    "elegant",
+    "inviting",
+    "creative"
+  ],
+  "tone": "friendly",
+  "videoStyle": "visual storytelling with a strong emotional appeal",
+  "audience": {
+    "age": "25-45",
+    "gender": "all",
+    "location": "Singapore",
+    "interests": [
+      "gifts",
+      "events",
+      "decor",
+      "flowers"
+    ],
+    "buyingIntent": "looking for unique and high-quality floral arrangements",
+    "painPoints": [
+      "difficulty finding high-quality flower arrangements",
+      "lack of inspiration for gifting"
+    ],
+    "desiredOutcome": "to find and purchase an impressive flower bouquet that stands out"
+  },
+  "customerJourney": "awareness",
+  "platformPriority": [
+    "tiktok"
+  ],
+  "ctaStrategy": "Encourage viewers to direct message for the same arrangement, save for future reference, and follow for more floral ideas.",
+  "keywords": [
+    "fresh flowers",
+    "floral arrangements",
+    "gift ideas",
+    "Singapore florist"
+  ],
+  "hashtags": {
+    "industry": [
+      "#florist",
+      "#flowerbouquet",
+      "#freshflowers"
+    ],
+    "local": [
+      "#Singapore",
+      "#SGgifts"
+    ],
+    "trending": [
+      "#flowerarrangement",
+      "#giftideas"
+    ],
+    "seo": [
+      "#floristSingapore",
+      "#bestflowerstore"
+    ]
+  },
+  "confidence": 0.9
+}
