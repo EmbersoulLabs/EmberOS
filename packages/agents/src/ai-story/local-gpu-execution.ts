@@ -136,24 +136,72 @@ export function planLocalGpuRoute(input: LocalGpuRouteInput): LocalGpuRoutePlan 
   }
 }
 
+const LOCAL_GPU_SCOPE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export type LocalGpuSceneScope = {
+  workspaceId: string;
+  storyId: string;
+  sceneExecutionId: string;
+};
+
+export type LocalGpuDispatchCandidate = {
+  workspaceId: string;
+  storyId: string;
+  sceneExecutionId: string;
+  packageId: string;
+  runtimeAuthorizationId: string | null;
+  existingGate: string | null;
+  route: LocalGpuRouteInput;
+};
+
+/** Injected Staging dispatch. The worker cycle does not construct this port. */
+export type LocalGpuDispatchPort = {
+  jobIdFor(input: { workspaceId: string; sceneExecutionId: string; packageId: string }): string;
+  claim(sceneExecutionId: string, jobId: string): Promise<boolean> | boolean;
+  post(jobId: string): Promise<"accepted" | "ambiguous" | "rejected">;
+  status(jobId: string): Promise<"found" | "not_found" | "uncertain">;
+};
+
+function enabledFlag(value: string | undefined): boolean {
+  return ["1", "true", "yes", "on"].includes((value ?? "").trim().toLowerCase());
+}
+
+function readScopeUuid(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? "";
+  return LOCAL_GPU_SCOPE_UUID.test(trimmed) ? trimmed.toLowerCase() : null;
+}
+
+export function readLocalGpuSceneScope(env: Record<string, string | undefined>): LocalGpuSceneScope | null {
+  const workspaceId = readScopeUuid(env.LOCAL_GPU_SCOPE_WORKSPACE_ID);
+  const storyId = readScopeUuid(env.LOCAL_GPU_SCOPE_STORY_ID);
+  const sceneExecutionId = readScopeUuid(env.LOCAL_GPU_SCOPE_SCENE_EXECUTION_ID);
+  if (!workspaceId || !storyId || !sceneExecutionId) return null;
+  return { workspaceId, storyId, sceneExecutionId };
+}
+
 export function localGpuDispatchGate(env: Record<string, string | undefined>): {
   dispatchAuthorized: boolean;
   environment: "staging" | "production" | null;
-  code: "DISABLED" | "LOCAL_GPU_PRODUCTION_DENIED" | "LOCAL_GPU_ENVIRONMENT_REQUIRED" | "AUTHORIZED";
+  code: "DISABLED" | "LOCAL_GPU_PRODUCTION_DENIED" | "LOCAL_GPU_ENVIRONMENT_REQUIRED" | "LOCAL_GPU_SCENE_SCOPE_REQUIRED" | "AUTHORIZED";
+  scope: LocalGpuSceneScope | null;
 } {
-  const providerEnabled = ["1", "true", "yes", "on"].includes((env.LOCAL_GPU_PROVIDER_ENABLED ?? "").trim().toLowerCase());
-  const singleRun = ["1", "true", "yes", "on"].includes((env.LOCAL_GPU_SINGLE_RUN_AUTHORIZED ?? "").trim().toLowerCase());
+  const providerEnabled = enabledFlag(env.LOCAL_GPU_PROVIDER_ENABLED);
+  const singleRun = enabledFlag(env.LOCAL_GPU_SINGLE_RUN_AUTHORIZED);
   if (!providerEnabled || !singleRun) {
-    return { dispatchAuthorized: false, environment: null, code: "DISABLED" };
+    return { dispatchAuthorized: false, environment: null, code: "DISABLED", scope: null };
   }
   const environment = env.LOCAL_GPU_ENVIRONMENT?.trim();
   if (environment === "production") {
-    return { dispatchAuthorized: false, environment: "production", code: "LOCAL_GPU_PRODUCTION_DENIED" };
+    return { dispatchAuthorized: false, environment: "production", code: "LOCAL_GPU_PRODUCTION_DENIED", scope: null };
   }
   if (environment !== "staging") {
-    return { dispatchAuthorized: false, environment: null, code: "LOCAL_GPU_ENVIRONMENT_REQUIRED" };
+    return { dispatchAuthorized: false, environment: null, code: "LOCAL_GPU_ENVIRONMENT_REQUIRED", scope: null };
   }
-  return { dispatchAuthorized: true, environment: "staging", code: "AUTHORIZED" };
+  const scope = readLocalGpuSceneScope(env);
+  if (!scope) {
+    return { dispatchAuthorized: false, environment: "staging", code: "LOCAL_GPU_SCENE_SCOPE_REQUIRED", scope: null };
+  }
+  return { dispatchAuthorized: true, environment: "staging", code: "AUTHORIZED", scope };
 }
 
 /** First observation may POST once. Every later observation is status-only. */
@@ -195,33 +243,84 @@ export async function runAuthorizedLocalGpuStep(input: {
   return { posts: 0, gets: 1, runtime, action: runtime.action };
 }
 
-/** Worker entry. Disabled and production environments never receive a dispatch port. */
+function sameScope(scope: LocalGpuSceneScope, candidate: LocalGpuDispatchCandidate): boolean {
+  return candidate.workspaceId.trim().toLowerCase() === scope.workspaceId
+    && candidate.storyId.trim().toLowerCase() === scope.storyId
+    && candidate.sceneExecutionId.trim().toLowerCase() === scope.sceneExecutionId;
+}
+
+/**
+ * One authorized Staging scene. Claims that scene only, posts at most once,
+ * and later observations stay on status for the same job id.
+ */
+export async function runScopedLocalGpuDispatch(input: {
+  scope: LocalGpuSceneScope;
+  candidate: LocalGpuDispatchCandidate;
+  port: LocalGpuDispatchPort;
+}): Promise<{ code: string; posts: number; gets: number; submit: false; jobId: string | null }> {
+  if (!sameScope(input.scope, input.candidate)) {
+    return { code: "LOCAL_GPU_SCENE_SCOPE_MISMATCH", posts: 0, gets: 0, submit: false, jobId: null };
+  }
+  if (!input.candidate.runtimeAuthorizationId || input.candidate.route.runtimeAuthorizationId !== input.candidate.runtimeAuthorizationId) {
+    return { code: "LOCAL_GPU_RUNTIME_AUTHORIZATION_REQUIRED", posts: 0, gets: 0, submit: false, jobId: null };
+  }
+  const route = planLocalGpuRoute(input.candidate.route);
+  if (!route.eligible) {
+    return { code: route.blocked ?? "LOCAL_GPU_WORKFLOW_UNSUPPORTED", posts: 0, gets: 0, submit: false, jobId: null };
+  }
+  const jobId = input.port.jobIdFor({
+    workspaceId: input.scope.workspaceId,
+    sceneExecutionId: input.scope.sceneExecutionId,
+    packageId: input.candidate.packageId,
+  });
+  const http = planLocalGpuHttp({
+    dispatchAuthorized: true,
+    existingGate: input.candidate.existingGate,
+    eligible: true,
+  });
+  if (http.http === "post_once") {
+    const claimed = await input.port.claim(input.scope.sceneExecutionId, jobId);
+    if (!claimed) return { code: "LOCAL_GPU_CLAIM_LOST", posts: 0, gets: 0, submit: false, jobId };
+    const step = await runAuthorizedLocalGpuStep({
+      http: "post_once",
+      jobId,
+      gate: null,
+      post: () => input.port.post(jobId),
+      status: () => input.port.status(jobId),
+    });
+    return { code: step.action, posts: step.posts, gets: step.gets, submit: false, jobId };
+  }
+  if (http.http === "status_only") {
+    if (input.candidate.existingGate !== jobId) {
+      return { code: "LOCAL_GPU_JOB_IDENTITY_MISMATCH", posts: 0, gets: 0, submit: false, jobId };
+    }
+    const step = await runAuthorizedLocalGpuStep({
+      http: "status_only",
+      jobId,
+      gate: input.candidate.existingGate,
+      post: () => input.port.post(jobId),
+      status: () => input.port.status(jobId),
+    });
+    return { code: step.action, posts: step.posts, gets: step.gets, submit: false, jobId };
+  }
+  return { code: "none", posts: 0, gets: 0, submit: false, jobId };
+}
+
+/** Worker entry. No port is constructed here, so this call cannot POST. */
 export async function runLocalGpuReleaseCycle(
   env: Record<string, string | undefined>,
   authorized?: {
-    jobId: string;
-    existingGate: string | null;
-    route: LocalGpuRouteInput;
-    post: () => Promise<"accepted" | "ambiguous" | "rejected">;
-    status: () => Promise<"found" | "not_found" | "uncertain">;
+    candidate: LocalGpuDispatchCandidate;
+    port: LocalGpuDispatchPort;
   },
 ): Promise<{ code: string; posts: number; gets: number; submit: false }> {
   const gate = localGpuDispatchGate(env);
-  if (!gate.dispatchAuthorized) return { code: gate.code, posts: 0, gets: 0, submit: false };
+  if (!gate.dispatchAuthorized || !gate.scope) return { code: gate.code, posts: 0, gets: 0, submit: false };
   if (!authorized) return { code: "AUTHORIZED_UNBOUND", posts: 0, gets: 0, submit: false };
-  const route = planLocalGpuRoute(authorized.route);
-  const http = planLocalGpuHttp({
-    dispatchAuthorized: true,
-    existingGate: authorized.existingGate,
-    eligible: route.eligible,
+  const step = await runScopedLocalGpuDispatch({
+    scope: gate.scope,
+    candidate: authorized.candidate,
+    port: authorized.port,
   });
-  if (!route.eligible) return { code: route.blocked ?? "LOCAL_GPU_WORKFLOW_UNSUPPORTED", posts: 0, gets: 0, submit: false };
-  const step = await runAuthorizedLocalGpuStep({
-    http: http.http,
-    jobId: authorized.jobId,
-    gate: authorized.existingGate,
-    post: authorized.post,
-    status: authorized.status,
-  });
-  return { code: step.action, posts: step.posts, gets: step.gets, submit: false };
+  return { code: step.code, posts: step.posts, gets: step.gets, submit: false };
 }

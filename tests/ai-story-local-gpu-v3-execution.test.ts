@@ -15,10 +15,18 @@ import {
 } from "@ceo-agent/shared/server";
 
 const id = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
+const scope = {
+  workspaceId: id(3),
+  storyId: id(5),
+  sceneExecutionId: id(40),
+};
 const stagingEnv = {
   LOCAL_GPU_PROVIDER_ENABLED: "true",
   LOCAL_GPU_SINGLE_RUN_AUTHORIZED: "true",
   LOCAL_GPU_ENVIRONMENT: "staging",
+  LOCAL_GPU_SCOPE_WORKSPACE_ID: scope.workspaceId,
+  LOCAL_GPU_SCOPE_STORY_ID: scope.storyId,
+  LOCAL_GPU_SCOPE_SCENE_EXECUTION_ID: scope.sceneExecutionId,
 };
 const capabilities = {
   contracts: {
@@ -171,52 +179,138 @@ describe("LOCAL_GPU V3 execution integration", () => {
     });
   });
 
-  it("posts once for an authorized staging release and reconciles ambiguity without a second POST", async () => {
+  it("posts once for the scoped staging scene and reconciles ambiguity without a second POST", async () => {
     let posts = 0;
-    const post = async () => {
-      posts += 1;
-      return "ambiguous" as const;
+    const postedJobs: string[] = [];
+    const claimed: string[] = [];
+    const port = {
+      jobIdFor: () => id(90),
+      claim: (sceneExecutionId: string, jobId: string) => {
+        claimed.push(`${sceneExecutionId}:${jobId}`);
+        return true;
+      },
+      post: async (jobId: string) => {
+        posts += 1;
+        postedJobs.push(jobId);
+        return "ambiguous" as const;
+      },
+      status: async () => "found" as const,
     };
-    const status = async () => "found" as const;
-    const first = await runLocalGpuReleaseCycle(stagingEnv, {
-      jobId: id(90),
-      existingGate: null,
+    const candidate = {
+      ...scope,
+      packageId: id(30),
+      runtimeAuthorizationId: id(70),
+      existingGate: null as string | null,
       route: zeroAsset(),
-      post,
-      status,
-    });
+    };
+    const first = await runLocalGpuReleaseCycle(stagingEnv, { candidate, port });
     expect(first).toMatchObject({ posts: 1, gets: 0, submit: false, code: "poll" });
+    expect(postedJobs).toEqual([id(90)]);
+    expect(claimed).toEqual([`${scope.sceneExecutionId}:${id(90)}`]);
     const second = await runLocalGpuReleaseCycle(stagingEnv, {
-      jobId: id(90),
-      existingGate: id(90),
-      route: zeroAsset(),
-      post,
-      status,
+      candidate: { ...candidate, existingGate: id(90) },
+      port,
     });
     expect(second).toMatchObject({ posts: 0, gets: 1, submit: false });
     expect(posts).toBe(1);
+    expect(claimed).toHaveLength(1);
     expect(planLocalGpuHttp({ dispatchAuthorized: true, existingGate: id(90), eligible: true }).http).toBe("status_only");
   });
 
-  it("does not post when dispatch is disabled or the environment is production", async () => {
+  it("stays disabled unless staging, both flags, and the exact scene scope are all present", async () => {
     let posts = 0;
-    const attempt = {
-      jobId: id(90),
-      existingGate: null,
-      route: zeroAsset(),
+    const port = {
+      jobIdFor: () => id(90),
+      claim: () => true,
       post: async () => {
         posts += 1;
         return "accepted" as const;
       },
       status: async () => "found" as const,
     };
-    expect(await runLocalGpuReleaseCycle({}, attempt)).toMatchObject({ code: "DISABLED", posts: 0 });
+    const candidate = {
+      ...scope,
+      packageId: id(30),
+      runtimeAuthorizationId: id(70),
+      existingGate: null,
+      route: zeroAsset(),
+    };
+    expect(await runLocalGpuReleaseCycle({}, { candidate, port })).toMatchObject({ code: "DISABLED", posts: 0 });
     expect(await runLocalGpuReleaseCycle({
       LOCAL_GPU_PROVIDER_ENABLED: "true",
       LOCAL_GPU_SINGLE_RUN_AUTHORIZED: "true",
       LOCAL_GPU_ENVIRONMENT: "production",
-    }, attempt)).toMatchObject({ code: "LOCAL_GPU_PRODUCTION_DENIED", posts: 0 });
+      ...{
+        LOCAL_GPU_SCOPE_WORKSPACE_ID: scope.workspaceId,
+        LOCAL_GPU_SCOPE_STORY_ID: scope.storyId,
+        LOCAL_GPU_SCOPE_SCENE_EXECUTION_ID: scope.sceneExecutionId,
+      },
+    }, { candidate, port })).toMatchObject({ code: "LOCAL_GPU_PRODUCTION_DENIED", posts: 0 });
+    expect(await runLocalGpuReleaseCycle({
+      LOCAL_GPU_PROVIDER_ENABLED: "true",
+      LOCAL_GPU_SINGLE_RUN_AUTHORIZED: "true",
+      LOCAL_GPU_ENVIRONMENT: "staging",
+    }, { candidate, port })).toMatchObject({ code: "LOCAL_GPU_SCENE_SCOPE_REQUIRED", posts: 0 });
+    expect(await runLocalGpuReleaseCycle(stagingEnv)).toMatchObject({ code: "AUTHORIZED_UNBOUND", posts: 0 });
+    expect(await runLocalGpuReleaseCycle(stagingEnv, {
+      candidate: { ...candidate, sceneExecutionId: id(41), route: zeroAsset() },
+      port,
+    })).toMatchObject({ code: "LOCAL_GPU_SCENE_SCOPE_MISMATCH", posts: 0 });
     expect(posts).toBe(0);
+  });
+
+  it("claims only the scoped scene when an earlier release is also waiting", async () => {
+    const rows = [
+      {
+        sceneExecutionId: id(39),
+        releasedAt: new Date("2026-10-10T00:00:00.000Z"),
+        gateProviderAttemptId: null as string | null,
+        executionMode: "LOCAL_GPU",
+        releaseState: "RELEASED",
+      },
+      {
+        sceneExecutionId: id(40),
+        releasedAt: new Date("2026-10-11T00:00:00.000Z"),
+        gateProviderAttemptId: null as string | null,
+        executionMode: "LOCAL_GPU",
+        releaseState: "RELEASED",
+      },
+    ];
+    const ledger = new InMemoryLocalGpuReleaseLedger(rows);
+    const result = await runLocalGpuReleaseCycle(stagingEnv, {
+      candidate: {
+        ...scope,
+        packageId: id(30),
+        runtimeAuthorizationId: id(70),
+        existingGate: null,
+        route: zeroAsset(),
+      },
+      port: {
+        jobIdFor: () => id(90),
+        claim: (sceneExecutionId, jobId) => ledger.claim(sceneExecutionId, jobId),
+        post: async () => "accepted" as const,
+        status: async () => "found" as const,
+      },
+    });
+    expect(result).toMatchObject({ posts: 1, submit: false });
+    expect(rows[0]?.gateProviderAttemptId).toBeNull();
+    expect(rows[1]?.gateProviderAttemptId).toBe(id(90));
+    const lost = await runLocalGpuReleaseCycle(stagingEnv, {
+      candidate: {
+        ...scope,
+        packageId: id(30),
+        runtimeAuthorizationId: id(70),
+        existingGate: null,
+        route: zeroAsset(),
+      },
+      port: {
+        jobIdFor: () => id(90),
+        claim: (sceneExecutionId, jobId) => ledger.claim(sceneExecutionId, jobId),
+        post: async () => "accepted" as const,
+        status: async () => "found" as const,
+      },
+    });
+    expect(lost).toMatchObject({ code: "LOCAL_GPU_CLAIM_LOST", posts: 0, submit: false });
   });
 
   it("lets only one worker claim a release, then reviews and assembles without another dispatch", () => {

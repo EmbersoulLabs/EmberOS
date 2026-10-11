@@ -911,6 +911,7 @@ export function startWorkers() {
           );
         }
         const { runLocalGpuReleaseCycle } = await import("@ceo-agent/agents");
+        // Environment only. A dispatch port is injected by an authorized caller, never by this loop.
         await runLocalGpuReleaseCycle(process.env);
       } catch (error) {
         console.warn(
