@@ -9,6 +9,16 @@ import {
   selectLocalGpuV3Workflow,
 } from "@ceo-agent/shared/server";
 import { advanceLocalGpuRelease, type LocalGpuReleaseRuntime } from "./local-gpu-release-cycle";
+import type { LocalGpuCloudAdapter } from "./local-gpu-adapter";
+import { planLocalGpuCompletion } from "./local-gpu-result-finalization";
+
+export type LocalGpuT2VRequest = Parameters<LocalGpuCloudAdapter["submitZeroAssetT2V"]>[0]["request"];
+type LocalGpuDispatchActor = {
+  userId: string;
+  workspaceId: string;
+  organizationPlan: string | null;
+  platformAdminStatus: "ACTIVE_GRANT";
+};
 
 export type LocalGpuAssetMode = "WITH_ASSET" | "WITHOUT_ASSET";
 
@@ -323,6 +333,96 @@ export async function runLocalGpuReleaseCycle(
     port: authorized.port,
   });
   return { code: step.code, posts: step.posts, gets: step.gets, submit: false };
+}
+
+export type LocalGpuEnabledDispatchAdapter = {
+  jobIdFor(input: { workspaceId: string; sceneExecutionId: string; packageId: string }): string;
+  submitZeroAssetT2V(input: {
+    actor: LocalGpuDispatchActor;
+    package: { workspaceId: string; sceneExecutionId: string; packageId: string };
+    request: LocalGpuT2VRequest;
+    capabilities: unknown;
+    existingGate: string | null;
+  }): Promise<{ jobId: string }>;
+  status(jobId: string, scope: {
+    actor: LocalGpuDispatchActor;
+    workspaceId: string;
+    sceneExecutionId: string;
+  }): Promise<{ found: boolean; uncertain?: boolean; state?: string }>;
+  result(jobId: string, scope: {
+    actor: LocalGpuDispatchActor;
+    workspaceId: string;
+    sceneExecutionId: string;
+  }): Promise<{ contentHash: string }>;
+};
+
+/**
+ * Enabled path. Claims only the scoped scene, posts at most once, then reconciles
+ * status and plans result finalization without another POST.
+ */
+export async function runEnabledLocalGpuDispatch(input: {
+  scope: LocalGpuSceneScope;
+  candidate: LocalGpuDispatchCandidate;
+  claim: (claim: { workspaceId: string; storyId: string; sceneExecutionId: string; jobId: string }) => Promise<boolean> | boolean;
+  adapter: LocalGpuEnabledDispatchAdapter;
+  actor: LocalGpuDispatchActor;
+  request: LocalGpuT2VRequest;
+  capabilities: unknown;
+  existingResultId: string | null;
+  finalize?: (completion: { jobId: string; existingResultId: string | null; contentHash: string }) => { action: string; submit: false };
+}): Promise<{ code: string; posts: number; gets: number; submit: false; jobId: string | null; completion: { action: string; submit: false } | null }> {
+  if (!sameScope(input.scope, input.candidate)) {
+    return { code: "LOCAL_GPU_SCENE_SCOPE_MISMATCH", posts: 0, gets: 0, submit: false, jobId: null, completion: null };
+  }
+  const route = planLocalGpuRoute(input.candidate.route);
+  if (!route.eligible) {
+    return { code: route.blocked ?? "LOCAL_GPU_WORKFLOW_UNSUPPORTED", posts: 0, gets: 0, submit: false, jobId: null, completion: null };
+  }
+  const jobId = input.adapter.jobIdFor({
+    workspaceId: input.scope.workspaceId,
+    sceneExecutionId: input.scope.sceneExecutionId,
+    packageId: input.candidate.packageId,
+  });
+  const scope = {
+    actor: input.actor,
+    workspaceId: input.scope.workspaceId,
+    sceneExecutionId: input.scope.sceneExecutionId,
+  };
+  if (input.candidate.existingGate === null) {
+    const claimed = await input.claim({
+      workspaceId: input.scope.workspaceId,
+      storyId: input.scope.storyId,
+      sceneExecutionId: input.scope.sceneExecutionId,
+      jobId,
+    });
+    if (!claimed) return { code: "LOCAL_GPU_CLAIM_LOST", posts: 0, gets: 0, submit: false, jobId, completion: null };
+    await input.adapter.submitZeroAssetT2V({
+      actor: input.actor,
+      package: {
+        workspaceId: input.scope.workspaceId,
+        sceneExecutionId: input.scope.sceneExecutionId,
+        packageId: input.candidate.packageId,
+      },
+      request: input.request,
+      capabilities: input.capabilities,
+      existingGate: null,
+    });
+    return { code: "accepted", posts: 1, gets: 0, submit: false, jobId, completion: null };
+  }
+  if (input.candidate.existingGate !== jobId) {
+    return { code: "LOCAL_GPU_JOB_IDENTITY_MISMATCH", posts: 0, gets: 0, submit: false, jobId, completion: null };
+  }
+  const observed = await input.adapter.status(jobId, scope);
+  if (!observed.found || observed.state !== "COMPLETED") {
+    return { code: observed.found ? "poll" : observed.uncertain ? "uncertain" : "not_found", posts: 0, gets: 1, submit: false, jobId, completion: null };
+  }
+  const result = await input.adapter.result(jobId, scope);
+  const completion = (input.finalize ?? planLocalGpuCompletion)({
+    jobId,
+    existingResultId: input.existingResultId,
+    contentHash: result.contentHash,
+  });
+  return { code: completion.action, posts: 0, gets: 2, submit: false, jobId, completion };
 }
 
 export type LocalGpuInstalledRelease = {
