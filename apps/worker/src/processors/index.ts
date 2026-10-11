@@ -910,6 +910,8 @@ export function startWorkers() {
                 : "")
           );
         }
+        const { runLocalGpuReleaseCycle } = await import("@ceo-agent/agents");
+        await runLocalGpuReleaseCycle(process.env);
       } catch (error) {
         console.warn(
           "[ai-story-runtime] cycle error:",

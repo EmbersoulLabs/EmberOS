@@ -104,3 +104,4 @@ export * from "./minimax-controlled-validation";
 export * from "./story-execution-orchestrator";
 export * from "./video-observation-service";
 export * from "./local-generation-media";
+export * from "./local-gpu-execution";

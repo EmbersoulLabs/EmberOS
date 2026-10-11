@@ -251,6 +251,63 @@ export function mapLocalGpuAudioPolicy(input: {
   throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
 }
 
+/**
+ * Desktop keeps the native audio stream. QC still expects no dialogue.
+ * Speech is never auto-passed.
+ */
+export function localGpuPersistedAudioSeparation(input: {
+  qcExpectation: "NO_DIALOGUE_WITH_AMBIENT_AUDIO" | "SILENT_OUTPUT" | "PRESERVE" | "NATIVE" | "REMOVE_AUDIO";
+  generateAudio: boolean;
+  audioBlocked: boolean;
+}): {
+  desktopAudioPolicy: LocalGpuAudioPolicy;
+  qcExpectation: typeof input.qcExpectation;
+  speechContent: "HUMAN_REVIEW_REQUIRED" | "NOT_APPLICABLE";
+  hasAudio: boolean;
+} {
+  if (input.qcExpectation === "NO_DIALOGUE_WITH_AMBIENT_AUDIO") {
+    return {
+      desktopAudioPolicy: mapLocalGpuAudioPolicy({
+        generateAudio: input.generateAudio,
+        audioBlocked: input.audioBlocked,
+        expectationKind: "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
+      }),
+      qcExpectation: "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
+      speechContent: "HUMAN_REVIEW_REQUIRED",
+      hasAudio: true,
+    };
+  }
+  if (input.qcExpectation === "SILENT_OUTPUT") {
+    return {
+      desktopAudioPolicy: mapLocalGpuAudioPolicy({
+        generateAudio: input.generateAudio,
+        audioBlocked: input.audioBlocked,
+        expectationKind: "SILENT_OUTPUT",
+      }),
+      qcExpectation: "SILENT_OUTPUT",
+      speechContent: "NOT_APPLICABLE",
+      hasAudio: false,
+    };
+  }
+  if (input.qcExpectation === "REMOVE_AUDIO") {
+    return {
+      desktopAudioPolicy: "REMOVE_AUDIO",
+      qcExpectation: "REMOVE_AUDIO",
+      speechContent: "NOT_APPLICABLE",
+      hasAudio: false,
+    };
+  }
+  if (input.qcExpectation === "PRESERVE" || input.qcExpectation === "NATIVE") {
+    return {
+      desktopAudioPolicy: input.qcExpectation,
+      qcExpectation: input.qcExpectation,
+      speechContent: "HUMAN_REVIEW_REQUIRED",
+      hasAudio: true,
+    };
+  }
+  throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
+}
+
 export function buildLocalGpuDesktopSubmit(input: {
   environment: LocalGpuEnvironment;
   jobId: string;
