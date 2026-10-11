@@ -49,7 +49,8 @@ export type LocalGpuSubmitPackage = {
   references: readonly { approval?: string; role?: string; assetUrl?: string; contentHash?: string }[];
 };
 
-const DEFINITE_REJECTION = new Set([400, 401, 403, 409, 422]);
+/** 400/401/403/422 reject before acceptance. 409 is not in this set: the Desktop contract fixture does not define it as a validation failure, and a client-supplied job id can already exist after a lost acceptance. */
+const DEFINITE_REJECTION = new Set([400, 401, 403, 422]);
 
 export class LocalGpuSubmitRejectedError extends LocalGpuContractError {
   readonly jobId: string;
@@ -63,7 +64,7 @@ export class LocalGpuSubmitRejectedError extends LocalGpuContractError {
 
 export class LocalGpuSubmitAmbiguousError extends LocalGpuContractError {
   readonly jobId: string;
-  readonly reason: "timeout" | "connection" | "not_found" | "unavailable" | "unreadable";
+  readonly reason: "timeout" | "connection" | "not_found" | "unavailable" | "unreadable" | "conflict";
   constructor(jobId: string, reason: LocalGpuSubmitAmbiguousError["reason"]) {
     super("LOCAL_GPU_SUBMIT_AMBIGUOUS");
     this.jobId = jobId;
@@ -215,6 +216,7 @@ export class LocalGpuCloudAdapter {
     }
     if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);
     if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found");
+    if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict");
     throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable");
   }
 
