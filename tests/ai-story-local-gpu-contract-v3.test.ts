@@ -13,6 +13,7 @@ import {
   localGpuCanonicalCreativeJob,
   localGpuCreativeBindingDigest,
   localGpuCreativeBindingForV2Body,
+  readLocalGpuV3T2vCapability,
   selectLocalGpuV3Workflow,
 } from "@ceo-agent/shared/server";
 import { LocalGpuCloudAdapter } from "../packages/agents/src/ai-story/local-gpu-adapter";
@@ -29,10 +30,22 @@ const secret = "contract-v3-test-secret";
 const now = new Date("2026-10-11T00:00:00.000Z");
 const upload = { environment: "staging" as const, method: "PUT", url: "https://uploads.example.test/scene.mp4" };
 const actor = { userId: id(16), workspaceId, organizationPlan: null, platformAdminStatus: "ACTIVE_GRANT" as const };
-const runtimeCapabilities = {
-  contractVersion: 3 as const,
-  workflowIds: [LOCAL_GPU_T2V_WORKFLOW],
-  runtimeExecutableWorkflows: [LOCAL_GPU_T2V_WORKFLOW],
+const signedCapabilities = {
+  contractVersion: 3,
+  acceptedContracts: [1, 2, 3],
+  contracts: {
+    v3: {
+      workflows: {
+        MINIMAX_H3_T2V: {
+          execution: "enabled",
+          textToVideo: true,
+          placeholderImage: false,
+          missingModels: [],
+          e2eCertified: false,
+        },
+      },
+    },
+  },
 };
 
 function code(run: () => void): string {
@@ -56,11 +69,16 @@ function t2v(overrides: Record<string, unknown> = {}) {
     plannedDurationMs: 6000,
     aspectRatio: "9:16",
     seed: 11,
+    megapixels: 1,
     audioPolicy: "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
     upload,
     assetRecommendationStatus: "CONFIRMED_NO_ASSETS",
     confirmationStoryId: storyId,
     confirmationStoryVersionId: storyVersionId,
+    confirmationWorkspaceId: workspaceId,
+    planningFrozen: true,
+    preGenerationQcEvaluationId: id(80),
+    runtimeAuthorizationId: id(70),
     director: { camera: "slow push in", motion: "hold the ending" },
     ...overrides,
   });
@@ -90,7 +108,9 @@ describe("zero-asset contract V3", () => {
     expect(result.body.voiceInstructions).toBeNull();
     expect(result.body.audioPolicy).toBe("NO_DIALOGUE_WITH_AMBIENT_AUDIO");
     expect(result.speechReviewRequired).toBe(true);
+    expect(result.body.megapixels).toBe(1);
     expect(result.body.director).toEqual({ guidance: "PROMPT_GUIDANCE", camera: "slow push in", motion: "hold the ending" });
+    expect(result.e2eCertified).toBe(false);
     expect(Object.keys(result.canonicalJob)).toEqual([...LOCAL_GPU_CREATIVE_BINDING_KEYS_V3]);
     expect(result.creativeBinding).toMatch(/^[0-9a-f]{64}$/);
     expect(result.body).not.toHaveProperty("remoteProviderFallback");
@@ -101,11 +121,18 @@ describe("zero-asset contract V3", () => {
     expect(code(() => t2v({ assetRecommendationStatus: "ASSET_RECOMMENDATION_REQUIRED" }))).toBe("LOCAL_GPU_NO_ASSET_AUTHORITY_REQUIRED");
     expect(code(() => t2v({ confirmationStoryId: id(8) }))).toBe("LOCAL_GPU_NO_ASSET_AUTHORITY_REQUIRED");
     expect(code(() => t2v({ imageReferenceCount: 1 }))).toBe("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+    expect(code(() => t2v({ planningFrozen: false }))).toBe("LOCAL_GPU_PLANNING_AUTHORITY_REQUIRED");
+    expect(code(() => t2v({ preGenerationQcEvaluationId: "" }))).toBe("LOCAL_GPU_PRE_QC_REQUIRED");
+    expect(code(() => t2v({ runtimeAuthorizationId: "" }))).toBe("LOCAL_GPU_RUNTIME_AUTHORIZATION_REQUIRED");
+    expect(code(() => t2v({ activeBindingCount: 1 }))).toBe("LOCAL_GPU_ASSET_BINDING_PRESENT");
     expect(selectLocalGpuV3Workflow({ assetMode: "WITHOUT_ASSET" }).workflow).toBe(LOCAL_GPU_T2V_WORKFLOW);
-    expect(code(() => selectLocalGpuV3Workflow({ assetMode: "WITHOUT_ASSET", imageReferenceCount: 1 }))).toBe("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
-    expect(code(() => selectLocalGpuV3Workflow({ assetMode: "WITHOUT_ASSET", nativeDialogue: true }))).toBe("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
-    expect(code(() => selectLocalGpuV3Workflow({ assetMode: "WITH_ASSET", audioReferenceCount: 1, imageReferenceCount: 1 }))).toBe("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
-    expect(code(() => selectLocalGpuV3Workflow({ assetMode: "WITH_ASSET", videoReferenceCount: 1, imageReferenceCount: 1 }))).toBe("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
+    expect(t2v({ dialogueLineCount: 3 }).body.workflow).toBe(LOCAL_GPU_T2V_WORKFLOW);
+    expect(t2v({ dialogueLineCount: 3 }).body.dialogue).toBeNull();
+    expect(code(() => t2v({ dialogueRequired: true }))).toBe("LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED");
+    expect(code(() => selectLocalGpuV3Workflow({ assetMode: "WITHOUT_ASSET", imageReferenceCount: 1 }))).toBe("LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED");
+    expect(code(() => selectLocalGpuV3Workflow({ assetMode: "WITHOUT_ASSET", dialogueRequired: true }))).toBe("LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED");
+    expect(code(() => selectLocalGpuV3Workflow({ assetMode: "WITH_ASSET", audioReferenceCount: 1, imageReferenceCount: 1 }))).toBe("LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED");
+    expect(code(() => selectLocalGpuV3Workflow({ assetMode: "WITH_ASSET", videoReferenceCount: 1, imageReferenceCount: 1 }))).toBe("LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED");
   });
 
   it("keeps silent output distinct from ambient preservation", () => {
@@ -175,6 +202,28 @@ describe("zero-asset contract V3", () => {
     expect(v1.body).not.toHaveProperty("creativeBinding");
   });
 
+  it("accepts Contract V3 only from contracts.v3 and records that runtime is not E2E certified", () => {
+    expect(readLocalGpuV3T2vCapability(signedCapabilities)).toEqual({
+      workflow: LOCAL_GPU_T2V_WORKFLOW,
+      execution: "enabled",
+      textToVideo: true,
+      placeholderImage: false,
+      missingModels: [],
+      e2eCertified: false,
+    });
+    expect(code(() => readLocalGpuV3T2vCapability({ contractVersion: 3, runtimeExecutableWorkflows: [LOCAL_GPU_T2V_WORKFLOW] }))).toBe("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
+    expect(code(() => readLocalGpuV3T2vCapability({
+      contracts: { v3: { workflows: { MINIMAX_H3_T2V: { ...signedCapabilities.contracts.v3.workflows.MINIMAX_H3_T2V, placeholderImage: true } } } },
+    }))).toBe("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
+    expect(code(() => readLocalGpuV3T2vCapability({
+      contracts: { v3: { workflows: { MINIMAX_H3_T2V: { ...signedCapabilities.contracts.v3.workflows.MINIMAX_H3_T2V, missingModels: ["minimax_h3_fl2va_pruned_int8_convrot.safetensors"] } } } },
+    }))).toBe("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
+    expect(code(() => readLocalGpuV3T2vCapability({
+      contracts: { v3: { workflows: { MINIMAX_H3_T2V: { ...signedCapabilities.contracts.v3.workflows.MINIMAX_H3_T2V, execution: "disabled" } } } },
+    }))).toBe("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
+    expect(LOCAL_GPU_V3_E2E_CERTIFIED).toBe(false);
+  });
+
   it("signs V3 claims in the desktop order and rejects a bad signature or workspace", () => {
     const result = t2v();
     const signed = signLocalGpuRequest(secret, {
@@ -226,6 +275,10 @@ describe("V3 dispatch stays closed without runtime capability", () => {
     plannedDurationMs: 6000,
     aspectRatio: "9:16" as const,
     seed: 11,
+    megapixels: 1,
+    planningFrozen: true,
+    preGenerationQcEvaluationId: id(80),
+    runtimeAuthorizationId: id(70),
     audioPolicy: "PRESERVE" as const,
     upload,
     assetRecommendationStatus: "CONFIRMED_NO_ASSETS" as const,
@@ -242,17 +295,17 @@ describe("V3 dispatch stays closed without runtime capability", () => {
     });
     await expect(cloud.submitZeroAssetT2V({
       actor, package: scope, request, existingGate: null,
-      capabilities: { contractVersion: 3, workflowIds: [LOCAL_GPU_T2V_WORKFLOW] },
+      capabilities: { contractVersion: 3 },
     })).rejects.toThrow("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
     await expect(cloud.submitZeroAssetT2V({
-      actor, package: scope, request, capabilities: runtimeCapabilities, existingGate: id(91),
+      actor, package: scope, request, capabilities: signedCapabilities, existingGate: id(91),
     })).rejects.toThrow("LOCAL_GPU_DUPLICATE_SUBMIT");
     const production = adapter(async () => {
       calls += 1;
       return { status: 200, body: "{}" };
     }, "production");
     await expect(production.submitZeroAssetT2V({
-      actor, package: scope, request, capabilities: runtimeCapabilities, existingGate: null,
+      actor, package: scope, request, capabilities: signedCapabilities, existingGate: null,
     })).rejects.toThrow("LOCAL_GPU_PRODUCTION_DENIED");
     expect(calls).toBe(0);
   });
@@ -264,7 +317,7 @@ describe("V3 dispatch stays closed without runtime capability", () => {
       return { status: 200, body: JSON.stringify({ state: "QUEUED" }) };
     });
     const accepted = await cloud.submitZeroAssetT2V({
-      actor, package: scope, request, capabilities: runtimeCapabilities, existingGate: null,
+      actor, package: scope, request, capabilities: signedCapabilities, existingGate: null,
     });
     expect(accepted.workflow).toBe("MINIMAX_H3_T2V");
     expect(accepted.remoteProviderFallback).toBe(0);

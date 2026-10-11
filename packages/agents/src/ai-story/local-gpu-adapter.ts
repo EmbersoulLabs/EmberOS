@@ -283,7 +283,7 @@ export class LocalGpuCloudAdapter {
     actor: LocalGpuServerActor;
     package: Pick<LocalGpuSubmitPackage, "workspaceId" | "sceneExecutionId" | "packageId">;
     request: Omit<Parameters<typeof buildLocalGpuZeroAssetT2VSubmit>[0], "environment" | "jobId" | "workspaceId" | "sceneExecutionId">;
-    capabilities: { contractVersion: number | null; workflowIds?: readonly string[]; runtimeExecutableWorkflows?: readonly string[] } | null;
+    capabilities: unknown;
     existingGate: string | null;
   }): Promise<{
     jobId: string;
@@ -296,7 +296,7 @@ export class LocalGpuCloudAdapter {
   }> {
     const { environment } = this.requireEnabled();
     if (environment === "production") throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
-    assertLocalGpuV3RuntimeCapabilities(input.capabilities, "MINIMAX_H3_T2V");
+    assertLocalGpuV3RuntimeCapabilities(input.capabilities);
     assertLocalGpuSubmitAllowed(input.existingGate);
     const jobId = this.jobIdFor(input.package);
     const desktop = buildLocalGpuZeroAssetT2VSubmit({
