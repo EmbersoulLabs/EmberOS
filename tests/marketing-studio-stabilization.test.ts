@@ -270,8 +270,9 @@ describe("marketing content fallback origin", () => {
       campaignName: "Cafe",
       businessInformation: { companyName: "Ember Cafe", city: "Kuala Lumpur" },
     });
-    expect(result.contentPackage.contentOrigin).toBe("template_fallback");
-    expect(result.contentPackage.analysis?.estimatedCtr ?? "").toBe("");
+    expect(result.contentPackage).toBeNull();
+    expect(result.validation.ok).toBe(false);
+    expect(result.validation.codes).toContain("CONTENT_SCHEMA_INVALID");
     expect(callJsonModel).toHaveBeenCalledTimes(1);
   });
 });

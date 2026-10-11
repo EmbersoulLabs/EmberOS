@@ -1,5 +1,6 @@
 import type { ContentStrategyBrief, MarketingCaptions, MarketingContentPackage } from "@ceo-agent/shared";
 import {
+  contentAllowsTranslation,
   isChineseText,
   isMarketingPackFullyTranslated,
 } from "@ceo-agent/shared";
@@ -89,6 +90,9 @@ function mergeTranslations(
 export async function enrichMarketingPackTranslations(
   pkg: MarketingContentPackage
 ): Promise<{ contentPackage: MarketingContentPackage; usage: { input: number; output: number; costUsd: number } }> {
+  if (!contentAllowsTranslation(pkg)) {
+    return { contentPackage: pkg, usage: { input: 0, output: 0, costUsd: 0 } };
+  }
   const needsVoiceScripts = needsEnglishVoiceScripts(pkg);
   const needsStrategyBrief = strategyBriefNeedsTranslation(pkg);
   if (isMarketingPackFullyTranslated(pkg) && !needsVoiceScripts && !needsStrategyBrief) {

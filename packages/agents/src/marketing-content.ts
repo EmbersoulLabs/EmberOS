@@ -1,7 +1,8 @@
 import { callJsonModel } from "./llm";
 import {
-  MarketingContentPackageSchema,
   normalizeMarketingContentPackage,
+  evaluateContentContract,
+  CONTENT_JSON_CONTRACT,
   strategyAudienceSummary,
   strategyPainPoints,
   isChineseText,
@@ -819,8 +820,9 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
 }
 
 export async function runMarketingContentAgent(input: MarketingContentInput): Promise<{
-  contentPackage: MarketingContentPackage;
+  contentPackage: MarketingContentPackage | null;
   usage: { input: number; output: number; costUsd: number };
+  validation: ReturnType<typeof evaluateContentContract>["diagnostic"];
 }> {
   const locale = resolveContentLocale(input);
 
@@ -855,25 +857,23 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   const { result, usage } = await callJsonModel<unknown>(
     CONTENT_SYSTEM_PROMPT,
     user,
-    MarketingContentPackageSchema.toString(),
+    CONTENT_JSON_CONTRACT,
     { model: "gpt-4o" }
   );
 
-  const normalized = normalizeMarketingContentPackage(result);
-  if (normalized) {
-    console.log(`[content] ok hooks=${normalized.hooks.length} voiceScripts=${!!normalized.voiceScripts["30s"]}`);
-    return {
-      contentPackage: applyGroundingToPackage({ ...normalized, contentOrigin: "model" }, input),
-      usage,
-    };
+  const evaluated = evaluateContentContract(result, {
+    brief: substantiveCampaignBrief(input.userNotes, input.videoAnalysis) ?? null,
+  });
+  if (!evaluated.diagnostic.ok || !evaluated.contentPackage) {
+    console.warn(`[content] contract failed codes=${evaluated.diagnostic.codes.join(",")}`);
+    return { contentPackage: null, usage, validation: evaluated.diagnostic };
   }
-
-  // Log what the LLM actually returned so we can diagnose parse failures.
-  const raw = result as Record<string, unknown> | null;
-  const hookCount = Array.isArray(raw?.hooks) ? (raw.hooks as unknown[]).length : typeof raw?.hooks;
-  const ctaCount = Array.isArray(raw?.cta) ? (raw.cta as unknown[]).length : typeof raw?.cta;
-  console.warn(`[content] normalizeMarketingContentPackage failed — using fallback template. hooks=${hookCount} cta=${ctaCount} musicMood=${raw?.musicMood}`);
-  return { contentPackage: { ...buildFallbackContent(input), contentOrigin: "template_fallback" }, usage };
+  console.log(`[content] ok hooks=${evaluated.contentPackage.hooks.length} voiceScripts=${!!evaluated.contentPackage.voiceScripts["30s"]}`);
+  return {
+    contentPackage: applyGroundingToPackage({ ...evaluated.contentPackage, contentOrigin: "model" }, input),
+    usage,
+    validation: evaluated.diagnostic,
+  };
 }
 
 const PLATFORM_REGEN_SYSTEM = `# EmberOS — Single Platform Copy Regenerator

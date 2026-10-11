@@ -1,7 +1,8 @@
 import { callJsonModel } from "./llm";
 import {
-  StrategyPlanSchema,
   normalizeStrategyPlan,
+  evaluateStrategyContract,
+  STRATEGY_JSON_CONTRACT,
   resolveStrategyIndustryEnum,
   resolveStrategyPlatforms,
   outputLanguagePrompt,
@@ -381,10 +382,11 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
 }
 
 export async function runStrategyAgent(input: StrategyInput): Promise<{
-  strategy: StrategyPlan;
+  strategy: StrategyPlan | null;
   industry: Industry;
   knowledgeSnippets: ReturnType<typeof queryKnowledge>;
   usage: { input: number; output: number; costUsd: number };
+  validation: ReturnType<typeof evaluateStrategyContract>["diagnostic"];
 }> {
   const inferred = inferIndustry(input.goal, strategyExtraContext(input), input.brandProfile.industry);
   const locale = resolveStrategyLocale(input);
@@ -438,24 +440,30 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const { result, usage } = await callJsonModel<unknown>(
     STRATEGY_SYSTEM_PROMPT,
     user,
-    StrategyPlanSchema.toString()
+    STRATEGY_JSON_CONTRACT
   );
 
-  const parsed = StrategyPlanSchema.safeParse(result);
-  let strategy = parsed.success
-    ? {
-        ...parsed.data,
-        platformPriority: parsed.data.platformPriority.length
-          ? parsed.data.platformPriority
+  const evaluated = evaluateStrategyContract(result, {
+    services: input.brandProfile.services,
+    companyName: input.brandProfile.businessName,
+    brief: substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis) ?? null,
+  });
+  const sanitized = evaluated.plan
+    ? sanitizeStrategyOutput({
+        ...evaluated.plan,
+        platformPriority: evaluated.plan.platformPriority.length
+          ? evaluated.plan.platformPriority
           : platformLabels(input.platforms),
-      }
-    : buildFallbackStrategy(input, inferred);
+      })
+    : null;
+  const strategy = sanitized?.product.trim() ? sanitized : null;
+  const validation = strategy || !evaluated.diagnostic.ok
+    ? evaluated.diagnostic
+    : { ...evaluated.diagnostic, ok: false, codes: ["PRODUCT_MISSING"], fields: ["product"] };
 
-  strategy = sanitizeStrategyOutput(strategy);
+  const industry = strategy ? resolveStrategyIndustryEnum(strategy, inferred) : inferred;
 
-  const industry = resolveStrategyIndustryEnum(strategy, inferred);
-
-  return { strategy, industry, knowledgeSnippets, usage };
+  return { strategy, industry, knowledgeSnippets, usage, validation };
 }
 
 /** Resolved platforms for downstream agents (copy mix, scoring). */

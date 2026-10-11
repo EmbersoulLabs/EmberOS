@@ -888,7 +888,7 @@ describe("postgres multilingual marketing persistence", () => {
 });
 
 describe("mocked marketing package flow", () => {
-  it("persists fallback content, exports text without videos, and keeps the video gate", async () => {
+  it("rejects invalid content, exports a valid pack without videos, and keeps the video gate", async () => {
     callJsonModel.mockReset();
     callJsonModel.mockResolvedValue({ result: { not: "a package" }, usage: { input: 1, output: 1, costUsd: 0 } });
     const { runMarketingContentAgent } = await import("../packages/agents/src/marketing-content");
@@ -902,20 +902,20 @@ describe("mocked marketing package flow", () => {
       campaignName: "Cafe",
       businessInformation: { companyName: "Ember Cafe", city: "Kuala Lumpur" },
     });
-    expect(generated.contentPackage.contentOrigin).toBe("template_fallback");
-    expect(generated.contentPackage.analysis?.estimatedCtr ?? "").toBe("");
+    expect(generated.contentPackage).toBeNull();
+    expect(generated.validation.ok).toBe(false);
     expect(callJsonModel).toHaveBeenCalledTimes(1);
 
-    const taskId = await insertTask({ content: generated.contentPackage, revision: 0 });
+    const contentPackage = pack();
+    const taskId = await insertTask({ content: contentPackage, revision: 0 });
     const downloaded = await routes.download(new Request("http://127.0.0.1/download"), {
       params: Promise.resolve({ id: taskId }),
     });
     expect(downloaded.status).toBe(200);
     const text = await downloaded.text();
-    expect(text).toContain("template fallback");
     expect(text.toLowerCase()).not.toContain("system prompt");
-    const direct = buildMarketingPackText(generated.contentPackage, "Cafe");
-    expect(direct).toContain(generated.contentPackage.voiceScripts["15s"]);
+    const direct = buildMarketingPackText(contentPackage, "Cafe");
+    expect(direct).toContain(contentPackage.voiceScripts["15s"]);
 
     const video = await routes.exportPost(
       new Request("http://127.0.0.1/export", {

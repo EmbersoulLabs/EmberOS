@@ -41,6 +41,7 @@ export * from "./marketing-pack-edit";
 export * from "./marketing-pack-export";
 export * from "./marketing-business-facts";
 export * from "./marketing-studio-v1";
+export * from "./marketing-output-contract";
 export * from "./marketing-pack-locale";
 export * from "./localize-marketing-pack";
 export * from "./marketing-dashboard";

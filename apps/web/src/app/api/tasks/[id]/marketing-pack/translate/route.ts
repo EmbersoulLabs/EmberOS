@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { enrichMarketingPackTranslations } from "@ceo-agent/agents";
 import {
+  contentAllowsTranslation,
   isMarketingPackLocaleReady,
   normalizeMarketingContentPackage,
   readMarketingPackRevision,
@@ -48,7 +49,9 @@ export async function POST(
     }
 
     const existing = normalizeMarketingContentPackage(step.output);
-    if (!existing) return apiError("Invalid marketing pack", "INVALID", 400);
+    if (!existing || !contentAllowsTranslation(existing)) {
+      return apiError("Marketing pack failed content validation", "CONTENT_CONTRACT_FAILED", 422);
+    }
 
     const requested = (locale as MarketingPackLocale | undefined) ?? "en";
     if (requested !== "zh" && isMarketingPackLocaleReady(existing, requested)) {
