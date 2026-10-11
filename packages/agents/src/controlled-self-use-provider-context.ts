@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { ControlledSelfUseAuthorityService } from "@ceo-agent/db";
+import {
+  CertificationPlanningAuthorityService,
+  ControlledSelfUseAuthorityService,
+  type CertificationPlanningHttpGrant,
+} from "@ceo-agent/db";
 
 export type ControlledSelfUseProviderContext = {
   reservationId: string;
@@ -10,6 +14,15 @@ export type ControlledSelfUseProviderContext = {
 };
 
 const context = new AsyncLocalStorage<ControlledSelfUseProviderContext>();
+const certificationHttpGrant = new AsyncLocalStorage<CertificationPlanningHttpGrant>();
+
+/** Binds a claim that `claim()` already persisted. Client flags cannot create this store. */
+export function withCertificationPlanningHttpGrant<T>(
+  grant: CertificationPlanningHttpGrant,
+  run: () => Promise<T>
+): Promise<T> {
+  return certificationHttpGrant.run(grant, run);
+}
 
 export function withControlledSelfUseProviderContext<T>(
   authority: ControlledSelfUseProviderContext,
@@ -27,22 +40,32 @@ export async function controlledSelfUseProviderFetch(
     return globalThis.fetch(input, init);
   }
   const current = context.getStore();
-  if (!current || current.providerKey !== "openai") {
-    throw new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED");
+  if (current) {
+    if (current.providerKey !== "openai") {
+      throw new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED");
+    }
+    const authority = new ControlledSelfUseAuthorityService();
+    const reservation = await authority.getReservationById(current.reservationId);
+    if (
+      !reservation ||
+      reservation.organizationId !== current.organizationId ||
+      reservation.workspaceId !== current.workspaceId ||
+      reservation.executionIdentity !== current.executionIdentity ||
+      reservation.providerKey !== "openai" ||
+      reservation.retryOrdinal !== 0 ||
+      !["RESERVED", "SUBMITTED"].includes(reservation.status)
+    ) {
+      throw new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED");
+    }
+    await authority.markSubmitted(reservation.reservationId, new Date().toISOString());
+  } else {
+    const grant = certificationHttpGrant.getStore();
+    if (!grant) throw new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED");
+    try {
+      await new CertificationPlanningAuthorityService().assertHttpTransportAuthorized(grant);
+    } catch {
+      throw new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED");
+    }
   }
-  const authority = new ControlledSelfUseAuthorityService();
-  const reservation = await authority.getReservationById(current.reservationId);
-  if (
-    !reservation ||
-    reservation.organizationId !== current.organizationId ||
-    reservation.workspaceId !== current.workspaceId ||
-    reservation.executionIdentity !== current.executionIdentity ||
-    reservation.providerKey !== "openai" ||
-    reservation.retryOrdinal !== 0 ||
-    !["RESERVED", "SUBMITTED"].includes(reservation.status)
-  ) {
-    throw new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED");
-  }
-  await authority.markSubmitted(reservation.reservationId, new Date().toISOString());
   return globalThis.fetch(input, init);
 }
