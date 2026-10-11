@@ -208,6 +208,7 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts --no-file-parallelism
           tests/ai-story-certification-planning-production-scope.integration.test.ts
           tests/ai-story-certification-http-authority.integration.test.ts
+          tests/ai-story-no-asset-confirmation.integration.test.ts
 
       - name: Certify ephemeral PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts

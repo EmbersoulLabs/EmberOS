@@ -9,6 +9,9 @@ import {
 export const AI_STORY_ASSET_MATCHING_CONTRACT_VERSION =
   "ai-story-asset-matching.v1" as const;
 
+export const AI_STORY_NO_ASSET_CONFIRMATION_AUTHORITY_VERSION =
+  "no-asset-confirmation.v1" as const;
+
 const Id = z.string().uuid();
 const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const Text = z.string().trim().min(1);
@@ -439,10 +442,10 @@ export function matchAnalyzedAssetsToStory(input: {
     (binding) => binding.role !== "UNUSED"
   );
   const assetRecommendationStatus =
-    missingRequirements.length === 0
-      ? "SATISFIED"
-      : usableBindings.length === 0 && noAssetConfirmation
-        ? "CONFIRMED_NO_ASSETS"
+    usableBindings.length === 0 && noAssetConfirmation
+      ? "CONFIRMED_NO_ASSETS"
+      : missingRequirements.length === 0
+        ? "SATISFIED"
         : "ASSET_RECOMMENDATION_REQUIRED";
 
   return AiStoryAssetMatchingResultSchema.parse({

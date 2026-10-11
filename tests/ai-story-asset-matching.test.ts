@@ -244,6 +244,25 @@ describe("Story Asset Matching", () => {
     );
   });
 
+  it("records an explicit empty confirmation as CONFIRMED_NO_ASSETS", () => {
+    const result = match({
+      assets: [],
+      confirmedNoAssets: true,
+    });
+    expect(result.assetRecommendationStatus).toBe("CONFIRMED_NO_ASSETS");
+    expect(result.bindings).toEqual([]);
+    expect(result.missingRequirements).toEqual([]);
+    expect(result.noAssetConfirmation?.confirmedBy).toBe(id(62));
+  });
+
+  it("keeps a satisfied Asset match distinct from no-asset confirmation", () => {
+    const result = match({
+      requirements: { productIdentityRequired: true },
+    });
+    expect(result.assetRecommendationStatus).toBe("SATISFIED");
+    expect(result.noAssetConfirmation).toBeNull();
+  });
+
   it("keeps confirmed-no-assets authority separate from mode selection", () => {
     const result = match({
       assets: [],
