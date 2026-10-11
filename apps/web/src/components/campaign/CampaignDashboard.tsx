@@ -165,7 +165,7 @@ export function CampaignDashboard({
   const taskState = mapTaskDisplayState(taskStatus);
   const continueTarget = resolveContinueCampaign({ slug, campaignId, campaignStatus, taskId, taskStatus });
   const taskHref = taskId ? `/w/${slug}/campaigns/${campaignId}/task?taskId=${taskId}` : null;
-  const progress = (task?.stepProgress ?? {}) as Record<string, { status?: string; output?: unknown }>;
+  const progress = (task?.stepProgress ?? {}) as Record<string, { status?: string; output?: unknown; contentRevision?: number }>;
   const contentPackage = progress.content_generate?.status === "completed"
     ? progress.content_generate.output as MarketingContentPackage | undefined
     : undefined;
@@ -271,7 +271,7 @@ export function CampaignDashboard({
         <section aria-labelledby="marketing-package-title" className="rounded-2xl border border-border bg-white p-4 shadow-card sm:p-6">
           <h2 id="marketing-package-title" className="text-lg font-bold text-navy">Marketing Package</h2>
           {contentPackage ? (
-            <MarketingPackagePanel contentPackage={contentPackage} taskId={taskId} strategy={strategy} />
+            <MarketingPackagePanel contentPackage={contentPackage} taskId={taskId} strategy={strategy} contentRevision={progress.content_generate?.contentRevision ?? 0} />
           ) : (
             <div className="mt-3">
               <p className="text-sm text-ink-secondary">{taskState === "IN_PROGRESS" || taskState === "QUEUED" ? "The Marketing Package is still being prepared." : taskState === "RECOVERY_AVAILABLE" ? "The workflow needs attention before a Marketing Package can be completed." : "No durable Marketing Package is available yet."}</p>

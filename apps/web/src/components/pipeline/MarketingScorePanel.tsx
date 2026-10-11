@@ -39,6 +39,9 @@ export function MarketingScorePanel({ score }: { score: Record<string, unknown> 
           <p className="text-xs font-semibold uppercase tracking-widest text-brand-amber">
 
             {t("pipeline.score.potential")}
+            <span className="mt-1 block normal-case tracking-normal text-ink-secondary">
+              {t("marketing.metric.note")}
+            </span>
 
           </p>
 
