@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { createServerClient } from "@supabase/ssr";
+import { E2E_SESSION_COOKIE, e2eLocalAuthEnabled, readE2ESessionUser } from "@/lib/e2e-local-auth";
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request: { headers: request.headers } });
 
+  const localUser = await readE2ESessionUser(request.cookies.get(E2E_SESSION_COOKIE)?.value);
+  let user: { id: string; email?: string | null } | null = localUser;
+
+  if (!user && !e2eLocalAuthEnabled()) {
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -24,9 +29,11 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    const {
+      data: { user: supabaseUser },
+    } = await supabase.auth.getUser();
+    user = supabaseUser;
+  }
 
   const isAuthPage = request.nextUrl.pathname.startsWith("/login");
   const isPortal = request.nextUrl.pathname.startsWith("/portal");

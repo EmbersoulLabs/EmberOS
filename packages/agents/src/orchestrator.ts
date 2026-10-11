@@ -16,6 +16,7 @@ import {
   effectiveCampaignGoal,
   resolveAutoClipSourceAsset,
   resolvePipelineContentLocale,
+  selectBusinessFacts,
   alignStrategyWithVision,
   emitVideoStudioOpsEvent,
   type ContentLocale,
@@ -29,6 +30,7 @@ import {
   contentPackageToCopyVariants,
 } from "./marketing-content";
 import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
+import { runPaidMarketingStep } from "./marketing-budget";
 import { runScoreAgent } from "./score";
 import { runVisionAgent } from "./vision";
 import { runCopyAgentMix } from "./copy";
@@ -121,7 +123,8 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     .limit(1);
   if (!campaign) throw new Error("Campaign not found");
 
-  const { brandProfile } = await loadCanonicalBusinessContext(task.workspaceId);
+  const { profile, brandProfile } = await loadCanonicalBusinessContext(task.workspaceId);
+  const businessInformation = selectBusinessFacts(profile, brandProfile);
   const assets = tracked.assets;
   const priorProgress = (task.stepProgress as StepProgress) ?? {};
   for (const [stepId, step] of Object.entries(priorProgress)) {
@@ -333,24 +336,35 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
     } else {
       await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-      const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
-        strategy,
-        vision,
-        videoAnalysis,
-        userNotes: creativeBrief.campaignBrief,
-        goal,
-        campaignName: campaign.name,
-        platforms: campaign.platforms,
-        contentLocale,
+      const { contentPackage: rawContentPackage, usage: contentUsage } = await runPaidMarketingStep({
+        taskId,
+        orgId: task.orgId,
+        workspaceId: task.workspaceId,
+        agent: "marketing_content",
+        outputOf: (result) => result.contentPackage,
+        run: () =>
+          runMarketingContentAgent({
+            strategy,
+            vision,
+            videoAnalysis,
+            userNotes: creativeBrief.campaignBrief,
+            goal,
+            campaignName: campaign.name,
+            platforms: campaign.platforms,
+            contentLocale,
+            businessInformation,
+          }),
       });
       totalCost += contentUsage.costUsd;
-      const { contentPackage, usage: translateUsage } =
-        await enrichMarketingPackTranslations(rawContentPackage);
+      const { contentPackage, usage: translateUsage } = await runPaidMarketingStep({
+        taskId,
+        orgId: task.orgId,
+        workspaceId: task.workspaceId,
+        agent: "marketing_translate",
+        outputOf: (result) => result.contentPackage,
+        run: () => enrichMarketingPackTranslations(rawContentPackage),
+      });
       totalCost += translateUsage.costUsd;
-      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
-      if (translateUsage.costUsd > 0) {
-        await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
-      }
       await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: contentPackage });
 
       if (totalCost > budget) throw new Error("Cost budget exceeded");
