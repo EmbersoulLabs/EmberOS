@@ -209,7 +209,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
 
     // strategy_plan — built from the asset analysis (primary), then brief, then name.
     await updateStep(taskId, "strategy_plan", { status: "running", startedAt: new Date().toISOString() });
-    const { strategy: rawStrategy, industry, knowledgeSnippets, usage: strategyUsage } = await runStrategyAgent({
+    const { strategy: rawStrategy, industry, knowledgeSnippets, usage: strategyUsage, validation: strategyValidation } = await runStrategyAgent({
       goal,
       campaignName: campaign.name,
       platforms: campaign.platforms,
@@ -221,6 +221,11 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       videoAnalysis,
       contentLocale,
     });
+    if (!strategyValidation.ok || !rawStrategy) {
+      await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategyValidation);
+      await updateStep(taskId, "strategy_plan", { status: "failed", completedAt: new Date().toISOString(), output: strategyValidation });
+      throw new Error("STRATEGY_CONTRACT_FAILED");
+    }
     let strategy = alignStrategyWithVision(rawStrategy, vision, {
       goal,
       campaignBrief: creativeBrief.campaignBrief,
@@ -334,7 +339,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
     } else {
       await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-      const { contentPackage, contentUsage, translateUsage } = await generateInitialMarketingPackage({
+      const { contentPackage, contentUsage, translateUsage, validation: contentValidation } = await generateInitialMarketingPackage({
         taskId,
         orgId: task.orgId,
         workspaceId: task.workspaceId,
@@ -352,6 +357,10 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
         translate: (rawContentPackage) => enrichMarketingPackTranslations(rawContentPackage),
       });
       totalCost += contentUsage.costUsd + translateUsage.costUsd;
+      if (!contentValidation.ok || !contentPackage) {
+        await updateStep(taskId, "content_generate", { status: "failed", completedAt: new Date().toISOString(), output: contentValidation });
+        throw new Error("CONTENT_CONTRACT_FAILED");
+      }
       await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: contentPackage });
 
       if (totalCost > budget) throw new Error("Cost budget exceeded");

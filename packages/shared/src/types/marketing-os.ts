@@ -354,6 +354,7 @@ export const MarketingContentPackageSchema = z.object({
   hashtagPack: HashtagPackSchema.optional(),
   /** Actionable AI suggestions (short bullets). */
   aiSuggestions: z.array(z.string()).default([]),
+  contentOrigin: z.enum(["model", "template_fallback"]).optional(),
 });
 export type MarketingContentPackage = z.infer<typeof MarketingContentPackageSchema>;
 
@@ -593,6 +594,10 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
           }
         : undefined,
     aiSuggestions: Array.isArray(data.aiSuggestions) ? (data.aiSuggestions as string[]) : [],
+    contentOrigin:
+      data.contentOrigin === "model" || data.contentOrigin === "template_fallback"
+        ? data.contentOrigin
+        : undefined,
   };
 
   // If the LLM produced no hooks/cta, synthesize minimal entries from voiceScripts so
@@ -604,7 +609,7 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
           const script = candidate.voiceScripts["15s"] || candidate.voiceScripts["30s"] || "";
           return script ? [{ text: script.slice(0, 100), type: "curiosity" }] : [];
         })();
-  const finalCta: ContentCtaItem[] = cta.length > 0 ? cta : [{ text: "Follow for more" }];
+  const finalCta: ContentCtaItem[] = cta;
 
   const parsed = MarketingContentPackageSchema.safeParse({ ...candidate, hooks: finalHooks, cta: finalCta });
   return parsed.success ? parsed.data : null;

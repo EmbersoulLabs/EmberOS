@@ -251,7 +251,7 @@ describe("worker marketing budget contract", () => {
         const task = await loadTask(taskId);
         expect((task.stepProgress as Record<string, unknown>).marketing_budget_hold).toBeTruthy();
         contentCalls += 1;
-        return { contentPackage: { caption: "中文包装" }, usage: { input: 3, output: 2, costUsd: 0.02 } };
+        return { contentPackage: { caption: "中文包装" }, usage: { input: 3, output: 2, costUsd: 0.02 }, validation: { ok: true, stage: "content" as const, schemaVersion: "marketing-output-v1" as const, codes: [], fields: [], fallback: "none" as const } };
       },
       translate: async (contentPackage) => {
         const task = await loadTask(taskId);
@@ -277,11 +277,38 @@ describe("worker marketing budget contract", () => {
       workspaceId,
       generate: async () => {
         extraCalls += 1;
-        return { contentPackage: { caption: "again" }, usage: { input: 1, output: 1, costUsd: 0.01 } };
+        return { contentPackage: { caption: "again" }, usage: { input: 1, output: 1, costUsd: 0.01 }, validation: { ok: true, stage: "content" as const, schemaVersion: "marketing-output-v1" as const, codes: [], fields: [], fallback: "none" as const } };
       },
       translate: async (contentPackage) => ({ contentPackage, usage: { input: 0, output: 0, costUsd: 0 } }),
     })).rejects.toThrow("Cost budget exceeded");
     expect(extraCalls).toBe(0);
+  });
+
+  it("settles a failed content contract once and does not call translation", async () => {
+    const { taskId, orgId, workspaceId } = await insertTask({});
+    let translateCalls = 0;
+    const generated = await budgetApi.generateInitialMarketingPackage({
+      taskId,
+      orgId,
+      workspaceId,
+      generate: async () => ({
+        contentPackage: null,
+        usage: { input: 3, output: 2, costUsd: 0.02 },
+        validation: { ok: false, stage: "content" as const, schemaVersion: "marketing-output-v1" as const, codes: ["HOOKS_MISSING"], fields: ["hooks"], fallback: "none" as const },
+      }),
+      translate: async (contentPackage) => {
+        translateCalls += 1;
+        return { contentPackage, usage: { input: 2, output: 2, costUsd: 0.01 } };
+      },
+    });
+    expect(generated.contentPackage).toBeNull();
+    expect(generated.validation.codes).toEqual(["HOOKS_MISSING"]);
+    expect(translateCalls).toBe(0);
+    expect(generated.translateUsage.costUsd).toBe(0);
+    const task = await loadTask(taskId);
+    expect(Number(task.costUsd)).toBeCloseTo(0.02, 5);
+    const logs = await dbApi.getDb().select().from(dbApi.schema.agentLogs).where(eq(dbApi.schema.agentLogs.taskId, taskId));
+    expect(logs.map((row) => row.agent)).toEqual(["marketing_content"]);
   });
 });
 
@@ -519,7 +546,7 @@ describe("marketing budget settlement idempotency", () => {
         const task = await loadTask(scope.taskId);
         reservations.push((task.stepProgress as { marketing_budget_hold?: { reservationId?: string } }).marketing_budget_hold?.reservationId ?? "");
         contentCalls += 1;
-        return { contentPackage: { caption: "中文包装" }, usage: { input: 3, output: 2, costUsd: 0.02 } };
+        return { contentPackage: { caption: "中文包装" }, usage: { input: 3, output: 2, costUsd: 0.02 }, validation: { ok: true, stage: "content" as const, schemaVersion: "marketing-output-v1" as const, codes: [], fields: [], fallback: "none" as const } };
       },
       translate: async (contentPackage) => {
         const task = await loadTask(scope.taskId);
