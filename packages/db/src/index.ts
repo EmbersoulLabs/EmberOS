@@ -84,3 +84,4 @@ export * from "./queries/ai-story-review-presentation";
 export * from "./queries/ai-story-approved-animation-package";
 export * from "./queries/ai-story-video-analysis-snapshot";
 export * from "./queries/ai-story-local-media-jobs";
+export * from "./queries/marketing-budget";

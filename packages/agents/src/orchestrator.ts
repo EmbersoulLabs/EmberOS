@@ -29,6 +29,7 @@ import {
   contentPackageToCopyVariants,
 } from "./marketing-content";
 import { enrichMarketingPackTranslations } from "./marketing-pack-translate";
+import { generateInitialMarketingPackage } from "./marketing-budget";
 import { runScoreAgent } from "./score";
 import { runVisionAgent } from "./vision";
 import { runCopyAgentMix } from "./copy";
@@ -333,24 +334,24 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
     } else {
       await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
-      const { contentPackage: rawContentPackage, usage: contentUsage } = await runMarketingContentAgent({
-        strategy,
-        vision,
-        videoAnalysis,
-        userNotes: creativeBrief.campaignBrief,
-        goal,
-        campaignName: campaign.name,
-        platforms: campaign.platforms,
-        contentLocale,
+      const { contentPackage, contentUsage, translateUsage } = await generateInitialMarketingPackage({
+        taskId,
+        orgId: task.orgId,
+        workspaceId: task.workspaceId,
+        generate: () =>
+          runMarketingContentAgent({
+            strategy,
+            vision,
+            videoAnalysis,
+            userNotes: creativeBrief.campaignBrief,
+            goal,
+            campaignName: campaign.name,
+            platforms: campaign.platforms,
+            contentLocale,
+          }),
+        translate: (rawContentPackage) => enrichMarketingPackTranslations(rawContentPackage),
       });
-      totalCost += contentUsage.costUsd;
-      const { contentPackage, usage: translateUsage } =
-        await enrichMarketingPackTranslations(rawContentPackage);
-      totalCost += translateUsage.costUsd;
-      await logAgent(task.orgId, task.workspaceId, taskId, "marketing_content", contentUsage, rawContentPackage);
-      if (translateUsage.costUsd > 0) {
-        await logAgent(task.orgId, task.workspaceId, taskId, "marketing_translate", translateUsage, contentPackage);
-      }
+      totalCost += contentUsage.costUsd + translateUsage.costUsd;
       await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: contentPackage });
 
       if (totalCost > budget) throw new Error("Cost budget exceeded");
