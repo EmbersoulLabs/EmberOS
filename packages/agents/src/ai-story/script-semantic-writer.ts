@@ -1,6 +1,7 @@
 import { callStructuredJsonModel } from "../llm";
 import { z } from "zod";
 import {
+  AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY,
   AI_STORY_SCENE_FUNCTION_REGISTRY,
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   carryForwardUnchangedScriptSceneState,
@@ -50,6 +51,8 @@ function exactAuthorityIdSchema(ids: readonly string[], errorCode: string) {
 
 export type AiStoryScriptSemanticProviderSchemaInput = {
   commercial: boolean;
+  /** Product and Offer stories require a resolved anchor. A product-free brand story does not. */
+  commercialAnchorRequired?: boolean;
   sceneCount: number;
   stateChangeAnchorSceneIndex: number | null;
   commercialIntegrationAnchorSceneIndex?: number | null;
@@ -100,19 +103,54 @@ export function resolveCommercialStateChangeAnchorSceneIndex(input: {
 /** The frozen commercial entry point owns both integration and state-change placement. */
 export const resolveCommercialIntegrationAnchorSceneIndex = resolveCommercialStateChangeAnchorSceneIndex;
 
+/**
+ * Commercial script authority follows the frozen outline policy.
+ * PRODUCT and OFFER keep a mandatory entry point. A brand story is narrative-only
+ * only when role, policy, integration, and product authority all agree.
+ * Every other combination fails before a model call.
+ */
+export function classifyCommercialScriptIntegrationContract(
+  outline: AiStoryOutlineVersion,
+): "NARRATIVE_ONLY" | "ANCHORED" {
+  if (outline.profile.profileId !== "COMMERCIAL_STORY" || !outline.commercialStoryProfile) {
+    throw new Error("SCRIPT_COMMERCIAL_INTEGRATION_CONTRACT_INVALID");
+  }
+  const policy = outline.commercialStoryProfile;
+  const integration = policy.commercialIntegration ?? null;
+  const productRefs = policy.productOrServiceAuthorityRefs;
+  const exempt = (AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY.integrationExemptRoles as readonly string[])
+    .includes(policy.commercialRole);
+  const physical = (AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY.physicalProductInteractionRequiredRoles as readonly string[])
+    .includes(policy.commercialRole);
+  const narrativeOnly = exempt
+    && policy.integrationPolicy === "NOT_REQUIRED"
+    && integration === null
+    && productRefs.length === 0;
+  if (narrativeOnly) return "NARRATIVE_ONLY";
+  if (exempt || policy.integrationPolicy === "NOT_REQUIRED") {
+    throw new Error("SCRIPT_COMMERCIAL_INTEGRATION_CONTRACT_INVALID");
+  }
+  if (physical && (policy.integrationPolicy !== "CAUSAL_REQUIRED" || productRefs.length === 0)) {
+    throw new Error("SCRIPT_COMMERCIAL_INTEGRATION_CONTRACT_INVALID");
+  }
+  if (!integration?.entryPoint) throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
+  return "ANCHORED";
+}
+
 export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScriptSemanticProviderSchemaInput) {
   const { commercial, sceneCount, stateChangeAnchorSceneIndex } = input;
+  const commercialAnchorRequired = input.commercialAnchorRequired ?? commercial;
   const commercialIntegrationAnchorSceneIndex = input.commercialIntegrationAnchorSceneIndex
     ?? stateChangeAnchorSceneIndex;
   if (!Number.isSafeInteger(sceneCount) || sceneCount < 1) {
     throw new Error("SCRIPT_SEMANTIC_WRITER_SCENE_COUNT_INVALID");
   }
-  if (commercial && (stateChangeAnchorSceneIndex === null
+  if (commercialAnchorRequired && (stateChangeAnchorSceneIndex === null
     || stateChangeAnchorSceneIndex < 0
     || stateChangeAnchorSceneIndex >= sceneCount)) {
     throw new Error("SCRIPT_STATE_CHANGE_ANCHOR_REQUIRED");
   }
-  if (commercial && (commercialIntegrationAnchorSceneIndex === null
+  if (commercialAnchorRequired && (commercialIntegrationAnchorSceneIndex === null
     || commercialIntegrationAnchorSceneIndex === undefined
     || commercialIntegrationAnchorSceneIndex < 0
     || commercialIntegrationAnchorSceneIndex >= sceneCount)) {
@@ -479,7 +517,10 @@ export async function generateAiStoryScriptSemanticProposalV1(
     throw new Error("CANONICAL_SCRIPT_PRODUCT_AUTHORITY_MISMATCH");
   }
   const commercial = input.frozenOutline.profile.profileId === "COMMERCIAL_STORY";
-  const stateChangeAnchorSceneIndex = commercial
+  const integrationMode = commercial
+    ? classifyCommercialScriptIntegrationContract(input.frozenOutline)
+    : null;
+  const stateChangeAnchorSceneIndex = integrationMode === "ANCHORED"
     ? resolveCommercialStateChangeAnchorSceneIndex({
         frozenOutline: input.frozenOutline,
         storyBeats: input.storyBeats,
@@ -488,9 +529,11 @@ export async function generateAiStoryScriptSemanticProposalV1(
     : null;
   const commercialPolicy = input.frozenOutline.commercialStoryProfile;
   const physicalCommercialParticipationRequired = commercial
-    && ["PRODUCT", "OFFER"].includes(commercialPolicy?.commercialRole ?? "NONE");
+    && (AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY.physicalProductInteractionRequiredRoles as readonly string[])
+      .includes(commercialPolicy?.commercialRole ?? "NONE");
   const providerSchema = buildAiStoryScriptSemanticProviderOutputSchema({
     commercial,
+    commercialAnchorRequired: integrationMode === "ANCHORED",
     sceneCount: input.scenePlan.length,
     stateChangeAnchorSceneIndex,
     commercialIntegrationAnchorSceneIndex: stateChangeAnchorSceneIndex,
@@ -535,18 +578,23 @@ export async function generateAiStoryScriptSemanticProposalV1(
         ...(commercialPolicy?.storyCausality.storyQuestion ? [
           `Preserve the frozen storyQuestion as the opening tension to express: ${commercialPolicy.storyCausality.storyQuestion}. Do not copy that question verbatim into a Script field.`,
         ] : []),
-        `Scene array index ${stateChangeAnchorSceneIndex} is the frozen commercial-integration state-change anchor. For physical Product or Offer participation, that Scene must contain exactly one PRODUCT_STATE sceneStateDelta for the exact authorized commercial Product, with a non-null fromValue and a changed value. Other Scenes may have no state delta when nothing changes.`,
+        ...(stateChangeAnchorSceneIndex === null ? [
+          "This Commercial Story has no product integration. Do not invent a Product, product authority, commercial entry point, or PRODUCT_STATE delta.",
+          "Narrative state may change only through a visible character action. Copy unchanged facts forward. Other Scenes may have no state delta when nothing changes.",
+        ] : [
+          `Scene array index ${stateChangeAnchorSceneIndex} is the frozen commercial-integration state-change anchor. For physical Product or Offer participation, that Scene must contain exactly one PRODUCT_STATE sceneStateDelta for the exact authorized commercial Product, with a non-null fromValue and a changed value. Other Scenes may have no state delta when nothing changes.`,
+          "PRODUCT PRESENCE is not PRODUCT PARTICIPATION. A product id, a visible prop, or dialogue that mentions the product does not integrate it.",
+          `Scene array index ${stateChangeAnchorSceneIndex} is also the frozen commercial-integration anchor. Its visibleAction.objectId must be the exact authorized commercial authority when physical participation is required, and its action must describe genuine narrative participation. The server binds that ACTION to the exact PRODUCT_STATE delta; do not add another ACTION to followingEntries. Do not insert the Product into ordinary Scenes merely because its authority is available.`,
+          "If commercialActionOrParticipation is ENABLE, perform the physical use and visible effect already written in userCreativeIntent. Do not replace that use with admiration, a price remark, or product presence.",
+          "Do not return commercialContribution. The server projects its immutable role, participation kind, authority IDs, pre/post state, and consequence onto the frozen integration anchor from Outline authority.",
+          "A later scene whose productVisualIdentityRequirement is NONE does not remove a product the character is already holding. Copy that held product forward. Off-screen speech does not remove it.",
+          "When the product remains in use, keep its physical state fact identical across Scenes. Do not invent a new product state just to start the next Scene.",
+        ]),
         "Every Scene has a required visibleAction. Ordinary Scenes may use objectId=null or another exact supplied entity. Only the frozen commercial-integration anchor must use the exact authorized commercial object when physical participation is required. Put dialogue in followingEntries. Dialogue that mentions the product is not commercial integration.",
         "Do not emit a POSSESSION, LOCATION, or PHYSICAL_CONDITION delta when that value stays the same. A spoken line is not a physical state change.",
         "If a supplied dialogue speaker name is not a characterAuthorities name, the line is off-screen. Put that exact line in visibleAction.storyEffect or newInformation. Do not assign it to the on-screen character.",
         "visibleAction.action must describe a visible physical action in at least four words. It must not be a single verb and must not copy a spoken line. Dialogue that mentions the product is not that action.",
-        "PRODUCT PRESENCE is not PRODUCT PARTICIPATION. A product id, a visible prop, or dialogue that mentions the product does not integrate it.",
-        `Scene array index ${stateChangeAnchorSceneIndex} is also the frozen commercial-integration anchor. Its visibleAction.objectId must be the exact authorized commercial authority when physical participation is required, and its action must describe genuine narrative participation. The server binds that ACTION to the exact PRODUCT_STATE delta; do not add another ACTION to followingEntries. Do not insert the Product into ordinary Scenes merely because its authority is available.`,
-        "If commercialActionOrParticipation is ENABLE, perform the physical use and visible effect already written in userCreativeIntent. Do not replace that use with admiration, a price remark, or product presence.",
-        "Do not return commercialContribution. The server projects its immutable role, participation kind, authority IDs, pre/post state, and consequence onto the frozen integration anchor from Outline authority.",
-        "A later scene whose productVisualIdentityRequirement is NONE does not remove a product the character is already holding. Copy that held product forward. Off-screen speech does not remove it.",
         "Do not replace the narrative with a product showcase, catalog shot, or detached cutaway.",
-        "When the product remains in use, keep its physical state fact identical across Scenes. Do not invent a new product state just to start the next Scene.",
       ] : []),
       ...(input.episodeIntent ? [
         "Episode intent is structured authority. Do not recover native dialogue, spoken language, visual text languages, or character continuity from originalIdea prose.",
