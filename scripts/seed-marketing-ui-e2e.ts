@@ -9,6 +9,7 @@ if (!process.env.DATABASE_URL?.includes("127.0.0.1")) {
 }
 
 const editorId = crypto.randomUUID();
+const operatorId = crypto.randomUUID();
 const viewerId = crypto.randomUUID();
 const outsiderId = crypto.randomUUID();
 const orgId = crypto.randomUUID();
@@ -161,7 +162,8 @@ await db.insert(schema.workspaces).values([
   },
 ]);
 await db.insert(schema.workspaceMembers).values([
-  { orgId, workspaceId, userId: editorId, role: "operator" },
+  { orgId, workspaceId, userId: editorId, role: "editor" },
+  { orgId, workspaceId, userId: operatorId, role: "operator" },
   { orgId, workspaceId, userId: viewerId, role: "client_viewer" },
   { orgId: otherOrgId, workspaceId: otherWorkspaceId, userId: outsiderId, role: "editor" },
 ]);
@@ -245,6 +247,7 @@ writeFileSync(
   JSON.stringify(
     {
       editorId,
+      operatorId,
       viewerId,
       outsiderId,
       workspaceSlug: "marketing-ui-e2e",

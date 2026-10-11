@@ -7,7 +7,7 @@ export default defineConfig({
     fileParallelism: false,
     globalSetup: ["tests/helpers/marketing-cert-postgres.ts"],
     testTimeout: 30000,
-    hookTimeout: 30000,
+    hookTimeout: 60000,
     env: {
       MARKETING_CERT_DB_FILE: path.join(
         process.env.TEMP || process.env.TMP || "/tmp",

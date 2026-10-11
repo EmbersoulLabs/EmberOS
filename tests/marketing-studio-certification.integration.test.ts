@@ -32,6 +32,7 @@ let dbApi: typeof import("@ceo-agent/db");
 let saveMarketingPackIfCurrent: typeof import("../apps/web/src/lib/marketing-pack-persistence").saveMarketingPackIfCurrent;
 
 const editorId = crypto.randomUUID();
+const operatorId = crypto.randomUUID();
 const viewerId = crypto.randomUUID();
 const orgId = crypto.randomUUID();
 const workspaceId = crypto.randomUUID();
@@ -242,6 +243,7 @@ beforeAll(async () => {
   });
   await db.insert(dbApi.schema.workspaceMembers).values([
     { orgId, workspaceId, userId: editorId, role: "editor" },
+    { orgId, workspaceId, userId: operatorId, role: "operator" },
     { orgId, workspaceId, userId: viewerId, role: "client_viewer" },
   ]);
   await db.insert(dbApi.schema.campaigns).values({
@@ -965,5 +967,124 @@ describe("unicode marketing captions", () => {
     expect(bytes.includes(Buffer.from(zh, "utf8"))).toBe(true);
     expect(bytes.includes(Buffer.from(en, "utf8"))).toBe(true);
     expect(bytes.includes(Buffer.from(ms, "utf8"))).toBe(true);
+  });
+});
+
+describe("campaign marketing role boundary", () => {
+  const outsiderId = crypto.randomUUID();
+
+  function campaignRequest(userId: string, method = "GET", slug = `ws-${workspaceId.slice(0, 8)}`) {
+    authState.userId = userId;
+    return new Request(`http://127.0.0.1/api/campaigns/${campaignId}`, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        "x-emberos-workspace-slug": slug,
+      },
+      body: method === "GET" ? undefined : JSON.stringify({ name: "Renamed by editor" }),
+    });
+  }
+
+  it("lets an editor read the marketing projection and keeps operator data on the operator read", async () => {
+    callJsonModel.mockReset();
+    const taskId = await insertTask({ content: pack(), revision: 0 });
+    await writeProgress(taskId, {
+      ...progressFor(pack(), 0),
+      export_packs: { "720p": { status: "completed", output: { filename: "operator-only-pack.zip" } } },
+    });
+    await dbApi.getDb().insert(dbApi.schema.assets).values({
+      orgId,
+      workspaceId,
+      campaignId,
+      type: "image",
+      storagePath: `${workspaceId}/cert-hidden.png`,
+    });
+
+    const campaignRoute = await import("../apps/web/src/app/api/campaigns/[id]/route");
+    const editorResponse = await campaignRoute.GET(campaignRequest(editorId), { params: Promise.resolve({ id: campaignId }) });
+    expect(editorResponse.status).toBe(200);
+    const editorBody = await editorResponse.json() as {
+      campaignAccess: string;
+      assets: unknown[];
+      creatives: unknown[];
+      canDelete: boolean;
+      task: { stepProgress: Record<string, unknown> };
+    };
+    expect(editorBody.campaignAccess).toBe("marketing");
+    expect(editorBody.assets).toEqual([]);
+    expect(editorBody.creatives).toEqual([]);
+    expect(editorBody.canDelete).toBe(false);
+    expect(editorBody.task.stepProgress.content_generate).toBeTruthy();
+    expect(editorBody.task.stepProgress.export_packs).toBeUndefined();
+    expect(JSON.stringify(editorBody)).not.toContain("operator-only-pack.zip");
+    expect(JSON.stringify(editorBody)).not.toContain("cert-hidden.png");
+
+    const operatorResponse = await campaignRoute.GET(campaignRequest(operatorId), { params: Promise.resolve({ id: campaignId }) });
+    expect(operatorResponse.status).toBe(200);
+    const operatorBody = await operatorResponse.json() as {
+      campaignAccess: string;
+      assets: Array<{ storagePath?: string }>;
+      task: { stepProgress: { export_packs?: unknown } };
+    };
+    expect(operatorBody.campaignAccess).toBe("operations");
+    expect(operatorBody.assets.some((asset) => asset.storagePath?.endsWith("cert-hidden.png"))).toBe(true);
+    expect(operatorBody.task.stepProgress.export_packs).toBeTruthy();
+
+    const renamed = await campaignRoute.PATCH(campaignRequest(editorId, "PATCH"), { params: Promise.resolve({ id: campaignId }) });
+    expect(renamed.status).toBe(404);
+    const removed = await campaignRoute.DELETE(campaignRequest(editorId, "DELETE"), { params: Promise.resolve({ id: campaignId }) });
+    expect(removed.status).toBe(404);
+    expect(callJsonModel).not.toHaveBeenCalled();
+
+    callJsonModel.mockResolvedValue({
+      result: { caption: "编辑再生", cta: "来", hashtags: ["咖啡"] },
+      usage: { input: 1, output: 1, costUsd: 0.01 },
+    });
+    const regenerated = await routes.regenerate(
+      new Request("http://127.0.0.1/regenerate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ platformId: "tiktok", locale: "zh", contentRevision: 0 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    expect(regenerated.status).toBe(200);
+
+    authState.userId = viewerId;
+    const viewerCampaign = await campaignRoute.GET(campaignRequest(viewerId), { params: Promise.resolve({ id: campaignId }) });
+    expect(viewerCampaign.status).toBe(404);
+    const viewerRegenerate = await routes.regenerate(
+      new Request("http://127.0.0.1/regenerate", {
+        method: "POST",
+        body: JSON.stringify({ platformId: "tiktok", locale: "zh", contentRevision: 1 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    expect(viewerRegenerate.status).toBe(403);
+    const viewerTranslate = await routes.translate(
+      new Request("http://127.0.0.1/translate", {
+        method: "POST",
+        body: JSON.stringify({ locale: "en", contentRevision: 1 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    expect(viewerTranslate.status).toBe(403);
+
+    const outsiderCampaign = await campaignRoute.GET(campaignRequest(outsiderId), { params: Promise.resolve({ id: campaignId }) });
+    expect(outsiderCampaign.status).toBe(404);
+    const wrongWorkspace = await campaignRoute.GET(
+      campaignRequest(editorId, "GET", "another-workspace"),
+      { params: Promise.resolve({ id: campaignId }) }
+    );
+    expect(wrongWorkspace.status).toBe(404);
+    authState.userId = outsiderId;
+    const outsiderRegenerate = await routes.regenerate(
+      new Request("http://127.0.0.1/regenerate", {
+        method: "POST",
+        body: JSON.stringify({ platformId: "tiktok", locale: "en", contentRevision: 1 }),
+      }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    expect(outsiderRegenerate.status).toBe(403);
   });
 });

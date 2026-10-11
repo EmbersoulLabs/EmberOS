@@ -6,6 +6,7 @@ import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 type Seed = {
   editorId: string;
+  operatorId: string;
   viewerId: string;
   outsiderId: string;
   workspaceSlug: string;
@@ -48,6 +49,9 @@ async function openPackage(page: Page) {
   expect(response.status(), await response.text()).toBe(200);
   await expect(page.getByRole("heading", { name: "Marketing Package" })).toBeVisible();
   await expect(page.getByText("抖音中文").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Video Studio workflow" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "AI Story" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
 }
 
 async function switchLocale(page: Page, locale: "zh" | "en" | "ms") {
@@ -319,6 +323,20 @@ test("enforces viewer, editor, and workspace authorization", async ({ browser })
   expect(budget.status()).toBe(402);
   expect(budgetBody.code).toBe("BUDGET_EXCEEDED");
 
+  const run = await editor.request.post(`/api/campaigns/${seed.campaignId}/run`, {
+    data: {},
+    headers: { "x-emberos-workspace-slug": seed.workspaceSlug },
+  });
+  const runBody = await run.json();
+  record("editorRun", run.status(), runBody);
+  expect(run.status()).toBe(404);
+  expect(runBody.code).toBe("NOT_FOUND");
+
+  const editorPage = await editor.newPage();
+  await editorPage.goto(`/w/${seed.workspaceSlug}/campaigns/${seed.campaignId}/task?taskId=${seed.taskId}`);
+  await expect(editorPage.getByTestId("marketing-only-workflow")).toBeVisible();
+  await expect(editorPage.getByRole("button", { name: /export/i })).toHaveCount(0);
+
   const sql = openSql();
   const rows = await sql`select cost_usd from tasks where id = ${seed.exhaustedTaskId}::uuid`;
   await sql.end();
@@ -329,6 +347,29 @@ test("enforces viewer, editor, and workspace authorization", async ({ browser })
   await viewer.close();
   await outsider.close();
   await editor.close();
+});
+
+test("keeps operator campaign controls", async ({ browser }) => {
+  const context = await browser.newContext();
+  await signIn(context, seed.operatorId);
+  const page = await context.newPage();
+  watch(page);
+  const campaign = page.waitForResponse(
+    (res) => res.url().includes(`/api/campaigns/${seed.campaignId}`) && res.request().method() === "GET",
+    { timeout: 90_000 }
+  );
+  await page.goto(`/w/${seed.workspaceSlug}/campaigns/${seed.campaignId}`);
+  const response = await campaign;
+  expect(response.status()).toBe(200);
+  const body = await response.json();
+  record("operatorCampaign", response.status(), { campaignAccess: body.campaignAccess });
+  expect(body.campaignAccess).toBe("operations");
+  await expect(page.getByRole("heading", { name: "Marketing Package" })).toBeVisible();
+  await expect(page.getByText("抖音中文").first()).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Video Studio workflow" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "AI Story" })).toBeVisible();
+  expect(paidRequests).toEqual([]);
+  await context.close();
 });
 
 test("preserves Chinese, English, and Malay through the browser, clipboard, and download", async ({ browser }) => {

@@ -64,3 +64,37 @@ export async function requireControlledSelfUseWorkspaceOperator(input: {
     return { ...workspace, accessMode: "CONTROLLED_SELF_USE_ADMIN" as const };
   }
 }
+
+/**
+ * Read authority for the Campaign Marketing surface.
+ * Editors can load the marketing projection. Operator mutations stay on
+ * requireControlledSelfUseWorkspaceOperator.
+ */
+export async function requireCampaignMarketingMember(input: {
+  request: Request;
+  userId: string;
+  workspaceId: string;
+}) {
+  const slug = selectedWorkspaceSlug(input.request);
+  if (!slug) throw new WorkspaceResourceMismatchError();
+  const db = getDb();
+  const rows = await db.select({
+    id: schema.workspaces.id,
+    orgId: schema.workspaces.orgId,
+    slug: schema.workspaces.slug,
+  }).from(schema.workspaces).where(and(
+    eq(schema.workspaces.id, input.workspaceId),
+    eq(schema.workspaces.slug, slug)
+  )).limit(1);
+  const workspace = rows[0];
+  if (!workspace) throw new WorkspaceResourceMismatchError();
+
+  try {
+    const membership = await requireWorkspaceRole(input.workspaceId, input.userId, "editor");
+    if (membership.orgId !== workspace.orgId) throw new WorkspaceResourceMismatchError();
+    return workspace;
+  } catch (error) {
+    if (error instanceof WorkspaceResourceMismatchError) throw error;
+    throw new WorkspaceResourceMismatchError();
+  }
+}

@@ -7,7 +7,9 @@ import { apiSuccess, apiError } from "@/lib/api";
 import { isCampaignDeletable } from "@/lib/campaigns";
 import { withSignedCreativeArtifacts, withSignedTaskExportProgress } from "@/lib/video-artifact-delivery";
 import { deleteCampaignCascade } from "@/lib/campaign-delete";
-import { requireControlledSelfUseWorkspaceOperator } from "@/lib/controlled-self-use-workspace-access";
+import { projectMarketingCampaignRead } from "@/lib/campaign-marketing-access";
+import { requireCampaignMarketingMember, requireControlledSelfUseWorkspaceOperator } from "@/lib/controlled-self-use-workspace-access";
+import { WorkspaceResourceMismatchError } from "@/lib/workspace-resource-authority";
 
 export async function GET(
   request: Request,
@@ -25,7 +27,30 @@ export async function GET(
       .limit(1);
 
     if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
-    await requireControlledSelfUseWorkspaceOperator({ request, userId: user.id, workspaceId: campaign.workspaceId, capabilityKey: "campaign.generate", providerKey: "openai" });
+    let campaignAccess: "operations" | "marketing" = "operations";
+    try {
+      await requireControlledSelfUseWorkspaceOperator({ request, userId: user.id, workspaceId: campaign.workspaceId, capabilityKey: "campaign.generate", providerKey: "openai" });
+    } catch (error) {
+      if (!(error instanceof WorkspaceResourceMismatchError)) throw error;
+      await requireCampaignMarketingMember({ request, userId: user.id, workspaceId: campaign.workspaceId });
+      campaignAccess = "marketing";
+    }
+
+    if (campaignAccess === "marketing") {
+      const [task] = await db
+        .select({
+          id: schema.tasks.id,
+          status: schema.tasks.status,
+          campaignId: schema.tasks.campaignId,
+          createdAt: schema.tasks.createdAt,
+          stepProgress: schema.tasks.stepProgress,
+        })
+        .from(schema.tasks)
+        .where(and(eq(schema.tasks.campaignId, id), eq(schema.tasks.workspaceId, campaign.workspaceId)))
+        .orderBy(desc(schema.tasks.createdAt))
+        .limit(1);
+      return apiSuccess(projectMarketingCampaignRead(campaign, task ?? null));
+    }
 
     const legacyAssets = await db
       .select()
@@ -141,6 +166,7 @@ export async function GET(
         )
       : null;
     return apiSuccess({
+      campaignAccess: "operations" as const,
       campaign: campaignRecord,
       assets: assetsWithVariants,
       assetStories,
