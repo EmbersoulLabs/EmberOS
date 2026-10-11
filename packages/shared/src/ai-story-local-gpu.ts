@@ -531,6 +531,9 @@ export const LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V3 = 3 as const;
 export const LOCAL_GPU_T2V_WORKFLOW = "MINIMAX_H3_T2V" as const;
 export const LOCAL_GPU_DIRECTOR_GUIDANCE = "PROMPT_GUIDANCE" as const;
 export const LOCAL_GPU_V3_E2E_CERTIFIED = false as const;
+/** Inclusive Desktop H3 T2V workflow range. Out-of-range values are rejected, not clamped. */
+export const LOCAL_GPU_T2V_MEGAPIXELS_MIN = 0.2;
+export const LOCAL_GPU_T2V_MEGAPIXELS_MAX = 0.98;
 export const LOCAL_GPU_CREATIVE_BINDING_KEYS_V2 = [
   "contractVersion",
   "assetMode",
@@ -804,6 +807,16 @@ export type LocalGpuDesktopSubmitBodyV3 = {
   upload: LocalGpuUploadDestination;
 };
 
+export function assertLocalGpuT2vMegapixels(megapixels: number): number {
+  if (!Number.isFinite(megapixels) || megapixels <= 0) {
+    throw new LocalGpuContractError("LOCAL_GPU_RESOLUTION_REQUIRED");
+  }
+  if (megapixels < LOCAL_GPU_T2V_MEGAPIXELS_MIN || megapixels > LOCAL_GPU_T2V_MEGAPIXELS_MAX) {
+    throw new LocalGpuContractError("LOCAL_GPU_RESOLUTION_UNSUPPORTED");
+  }
+  return megapixels;
+}
+
 export function buildLocalGpuZeroAssetT2VSubmit(input: {
   environment: LocalGpuEnvironment;
   jobId: string;
@@ -866,7 +879,7 @@ export function buildLocalGpuZeroAssetT2VSubmit(input: {
   if (!LOCAL_GPU_V2_AUDIO_POLICIES.includes(input.audioPolicy)) throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
   if (!input.prompt || /[\r\n]/.test(input.prompt)) throw new LocalGpuContractError("LOCAL_GPU_PROMPT_REQUIRED");
   if (!Number.isInteger(input.seed)) throw new LocalGpuContractError("LOCAL_GPU_SEED_REQUIRED");
-  if (!Number.isFinite(input.megapixels) || input.megapixels <= 0) throw new LocalGpuContractError("LOCAL_GPU_RESOLUTION_REQUIRED");
+  const megapixels = assertLocalGpuT2vMegapixels(input.megapixels);
   const durationSec = localGpuDesktopDurationSec(input.plannedDurationMs);
   const upload = input.upload;
   if (!upload?.environment || !upload.method || !upload.url || upload.environment !== input.environment) {
@@ -893,7 +906,7 @@ export function buildLocalGpuZeroAssetT2VSubmit(input: {
     durationSec,
     audioPolicy: input.audioPolicy,
     aspectRatio: input.aspectRatio,
-    megapixels: input.megapixels,
+    megapixels,
     voiceInstructions: null,
     seed: input.seed,
     references: [],
@@ -925,7 +938,7 @@ export function buildLocalGpuZeroAssetT2VSubmit(input: {
       durationSource: LOCAL_GPU_DURATION_SOURCE,
       audioPolicy: input.audioPolicy,
       aspectRatio: input.aspectRatio,
-      megapixels: input.megapixels,
+      megapixels,
       voiceInstructions: null,
       seed: input.seed,
       references: [],
