@@ -25,6 +25,9 @@ function asMoney(value: string | number | null | undefined): number {
 const MARKETING_BUDGET_HOLD_MS = 120_000;
 const MARKETING_BUDGET_HOLD_KEY = "marketing_budget_hold";
 const MARKETING_BUDGET_COMMITTED_KEY = "marketing_budget_committed";
+const MARKETING_BUDGET_SETTLED_KEY = "marketing_budget_settlements";
+const MARKETING_BUDGET_CANCELLED_KEY = "marketing_budget_cancellations";
+const MARKETING_BUDGET_OVER_KEY = "marketing_budget_over_budget";
 
 type MarketingBudgetHold = {
   reservationId?: string;
@@ -58,6 +61,42 @@ function readCommittedSpend(progress: Record<string, unknown>): number | null {
 
 function holdIsActive(hold: MarketingBudgetHold): boolean {
   return Date.parse(hold.expiresAt) > Date.now();
+}
+
+function addMoney(left: number, right: number): number {
+  return (Math.round(left * 1_000_000) + Math.round(right * 1_000_000)) / 1_000_000;
+}
+
+function exceedsMoney(spent: number, budget: number): boolean {
+  return Math.round(spent * 1_000_000) > Math.round(budget * 1_000_000);
+}
+
+type MarketingBudgetSettlement = {
+  costUsd: string;
+  input: number;
+  output: number;
+};
+
+function readSettlements(progress: Record<string, unknown>): Record<string, MarketingBudgetSettlement> {
+  const value = progress[MARKETING_BUDGET_SETTLED_KEY];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const settlements: Record<string, MarketingBudgetSettlement> = {};
+  for (const [reservationId, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const record = raw as Record<string, unknown>;
+    const costUsd = asMoney(record.costUsd as number | string | null | undefined);
+    const input = asMoney(record.input as number | string | null | undefined);
+    const output = asMoney(record.output as number | string | null | undefined);
+    if (!Number.isFinite(costUsd) || !Number.isFinite(input) || !Number.isFinite(output)) continue;
+    settlements[reservationId] = { costUsd: money(costUsd), input, output };
+  }
+  return settlements;
+}
+
+function readCancellations(progress: Record<string, unknown>): string[] {
+  const value = progress[MARKETING_BUDGET_CANCELLED_KEY];
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
 }
 
 /**
@@ -118,6 +157,12 @@ export async function beginPaidMarketingCall(taskId: string): Promise<
   });
 }
 
+/**
+ * Record provider usage for one reservation.
+ * The reservation id is the durable settlement identity. A repeated finish does not
+ * add cost or write another agent log, even when the reported usage differs.
+ * This makes local settlement idempotent. It does not make the external provider charge exactly once.
+ */
 export async function finishPaidMarketingCall(
   reservation: MarketingBudgetReservation,
   input: {
@@ -128,6 +173,9 @@ export async function finishPaidMarketingCall(
     outputJson?: unknown;
   }
 ) {
+  if (!Number.isFinite(input.usage.costUsd) || input.usage.costUsd < 0) return;
+  if (!Number.isFinite(input.usage.input) || input.usage.input < 0) return;
+  if (!Number.isFinite(input.usage.output) || input.usage.output < 0) return;
   const db = getDb();
   await db.transaction(async (tx) => {
     const [locked] = await tx
@@ -138,11 +186,24 @@ export async function finishPaidMarketingCall(
       .limit(1);
     if (!locked) return;
     const progress = progressRecord(locked.stepProgress);
+    const settlements = readSettlements(progress);
+    const cancelled = readCancellations(progress);
+    if (settlements[reservation.reservationId] || cancelled.includes(reservation.reservationId)) return;
+
     const hold = readBudgetHold(progress[MARKETING_BUDGET_HOLD_KEY]);
     const ownsHold = hold?.reservationId === reservation.reservationId;
     const committed = readCommittedSpend(progress);
-    const nextCommitted = (committed ?? reservation.spentBefore) + input.usage.costUsd;
+    const nextCommitted = addMoney(committed ?? reservation.spentBefore, input.usage.costUsd);
+    settlements[reservation.reservationId] = {
+      costUsd: money(input.usage.costUsd),
+      input: input.usage.input,
+      output: input.usage.output,
+    };
+    progress[MARKETING_BUDGET_SETTLED_KEY] = settlements;
     progress[MARKETING_BUDGET_COMMITTED_KEY] = nextCommitted;
+    if (exceedsMoney(nextCommitted, reservation.budget)) {
+      progress[MARKETING_BUDGET_OVER_KEY] = true;
+    }
     if (ownsHold) delete progress[MARKETING_BUDGET_HOLD_KEY];
     const costUsd = ownsHold || !hold ? money(nextCommitted) : undefined;
     await tx
@@ -168,7 +229,11 @@ export async function finishPaidMarketingCall(
   });
 }
 
-/** Release a reservation when the model call fails before any usage is recorded. */
+/**
+ * Release a reservation when the model call fails before any usage is recorded.
+ * Cancellation after settlement does not reverse committed spend.
+ * A cancelled reservation cannot be settled later.
+ */
 export async function cancelPaidMarketingCall(reservation: MarketingBudgetReservation) {
   const db = getDb();
   await db.transaction(async (tx) => {
@@ -180,8 +245,12 @@ export async function cancelPaidMarketingCall(reservation: MarketingBudgetReserv
       .limit(1);
     if (!locked) return;
     const progress = progressRecord(locked.stepProgress);
+    const settlements = readSettlements(progress);
+    const cancelled = readCancellations(progress);
+    if (settlements[reservation.reservationId] || cancelled.includes(reservation.reservationId)) return;
     const hold = readBudgetHold(progress[MARKETING_BUDGET_HOLD_KEY]);
     if (hold?.reservationId !== reservation.reservationId) return;
+    progress[MARKETING_BUDGET_CANCELLED_KEY] = [...cancelled, reservation.reservationId];
     delete progress[MARKETING_BUDGET_HOLD_KEY];
     const committed = readCommittedSpend(progress) ?? reservation.spentBefore;
     await tx

@@ -23,6 +23,7 @@ function freePort(): Promise<number> {
 let postgres: EmbeddedPostgres | null = null;
 
 export default async function setup() {
+  if (process.env.RUN_DB_INTEGRATION_TESTS === "1" && process.env.DATABASE_URL) return async () => {};
   const port = await freePort();
   const databaseUrl = `postgresql://postgres:postgres@127.0.0.1:${port}/worker_budget`;
   rmSync(databaseDir, { recursive: true, force: true });
