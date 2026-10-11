@@ -33,7 +33,14 @@ export type MarketingContractAdjustment = {
   result?: string | number;
 };
 
-export type MarketingClaimCategory = "delivery" | "discount" | "guarantee" | "ranking" | "location" | "testimonial";
+export type MarketingClaimCategory =
+  | "delivery"
+  | "discount"
+  | "guarantee"
+  | "ranking"
+  | "location"
+  | "testimonial"
+  | "channel";
 
 export type MarketingContractIssue = {
   code: string;
@@ -46,6 +53,29 @@ export type MarketingContractIssue = {
   authorization?: string;
 };
 
+export type CreativeQualityStatus = "PASS" | "FAIL" | "REQUIRES_CREATIVE_REVIEW";
+
+export type CreativeQualityDimensionName =
+  | "hook"
+  | "storyProgression"
+  | "productClarity"
+  | "commercialRelevance"
+  | "visualExecutability"
+  | "languageNaturalness"
+  | "businessGrounding";
+
+export type CreativeQualityReport = {
+  status: CreativeQualityStatus;
+  total: number | null;
+  maxScore: 35;
+  dimensions: Array<{
+    name: CreativeQualityDimensionName;
+    score: number | null;
+    basis: "deterministic" | "structural";
+    evidence: string;
+  }>;
+};
+
 export type MarketingContractDiagnostic = {
   ok: boolean;
   stage: "strategy" | "content";
@@ -56,6 +86,7 @@ export type MarketingContractDiagnostic = {
   adjustments?: MarketingContractAdjustment[];
   issues?: MarketingContractIssue[];
   providerRequestId?: string;
+  quality?: CreativeQualityReport;
 };
 
 export type StrategyContractFacts = {
@@ -70,6 +101,12 @@ export type StrategyContractFacts = {
 export type ContentContractFacts = StrategyContractFacts & {
   durationSec?: number | null;
   providerRequestId?: string | null;
+  audience?: string | null;
+  city?: string | null;
+  country?: string | null;
+  website?: string | null;
+  phone?: string | null;
+  platforms?: string[] | null;
 };
 
 const INSTRUCTION_LEAK = /promote only these authorized facts|do not add prices|video generation stays unauthorized|^request:/i;
@@ -88,9 +125,10 @@ function diagnostic(
   fields: string[],
   adjustments: MarketingContractAdjustment[] = [],
   issues: MarketingContractIssue[] = [],
-  providerRequestId?: string | null
+  providerRequestId?: string | null,
+  quality?: CreativeQualityReport
 ): MarketingContractDiagnostic {
-  const bounded = issues.slice(0, 12).map((issue) => ({
+  const bounded = issues.slice(0, 32).map((issue) => ({
     ...issue,
     ...(issue.excerpt ? { excerpt: issue.excerpt.replace(/\s+/g, " ").trim().slice(0, 80) } : {}),
     ...(issue.received ? { received: issue.received.slice(0, 120) } : {}),
@@ -108,6 +146,7 @@ function diagnostic(
     ...(adjustments.length ? { adjustments } : {}),
     ...(bounded.length ? { issues: bounded } : {}),
     ...(requestId ? { providerRequestId: requestId } : {}),
+    ...(quality ? { quality } : {}),
   };
 }
 
@@ -138,11 +177,13 @@ function issueFields(error: z.ZodError): string[] {
   return error.issues.map((issue) => issue.path.join(".") || issue.code);
 }
 
-const DELIVERY_CLAIM = /delivery|配送|送货|包邮|当日达|免运|penghantaran/i;
+const DELIVERY_CLAIM = /delivery|same-?day|配送|送货|包邮|当日达|免运|penghantaran|hari yang sama/i;
 const DISCOUNT_CLAIM = /(?:\d+\s*%|\bdiscount\b|半价|折扣|优惠|促销|\$\s?\d|\bRM\s?\d|\bdiskaun\b)/i;
 const GUARANTEE_CLAIM = /(?:\bguaranteed\b|保证转化|保证送达|保证到货|品质保证|保证结果|\bdijamin\b)/i;
-const RANKING_CLAIM = /(?:\bbest\s+florist\b|bestflowerstore|bestflorist|#1\s*florist|number\s+one\s+florist|最好的花店|全岛第一|kedai bunga terbaik)/i;
-const LOCATION_CLAIM = /visit our (?:shop|store)|our (?:shop|store)\b|right in the heart of|in the heart of|storefront|walk-?in|shop address|市中心|到店|进店|门店|实体店|lawati kedai|di pusat bandar/i;
+const RANKING_CLAIM = /(?:\bbest\s+florist\b|bestflowerstore|bestflorist|#1\s*florist|number\s+one\s+florist|最好的花店|全岛第一|kedai bunga terbaik|\bfinest\b|最优质|顶级花卉)/i;
+const LOCATION_CLAIM = /visit our (?:shop|store)|visit us(?:\s+today|\s+in\s+[A-Za-z]+|\s+at\s+[A-Za-z]+)?|our (?:shop|store)\b|right in the heart of|in the heart of|storefront|walk-?in|shop address|市中心|到店|进店|门店|实体店|欢迎到店|欢迎来到|lawati kedai|di pusat bandar|kunjungi kedai/i;
+const ORDER_CHANNEL_CLAIM = /order online|order through our website|on our website|our website|通过我们的网站|官网下单|网站下单/i;
+const ENQUIRY_CHANNEL_CLAIM = /direct message|\bdm us\b|私信我们|whatsapp|发消息给我们/i;
 const TESTIMONIAL_CLAIM = /customer reviews?|customers say|our customers love|five[- ]star|5[- ]star|客户评价|顾客说|真实评价|testimoni pelanggan|pelanggan kata/i;
 const CTA_OFFER = /\d+\s*%|\bdiscount\b|\bsale\b|free\s+delivery|优惠|折扣|半价|促销|买一送一/i;
 const CTA_DENIAL = /no\s+promotion|no\s+discount|not\s+on\s+sale|full\s+price|no\s+delivery|没有优惠|无折扣|不打折|无促销/i;
@@ -204,6 +245,296 @@ export function authorizedMarketingFacts(info: unknown): Pick<StrategyContractFa
 export function explicitScriptDurationSec(notes: string | null | undefined): number | undefined {
   const match = notes?.match(/(?:^|\n)\s*Duration:\s*(15|30|60)\s+seconds\b/i);
   return match ? Number(match[1]) : undefined;
+}
+
+/**
+ * Spoken-duration heuristics for the canonical 15/30/60 second slots.
+ * These are planning ranges, not a claim that every second is speech.
+ * English ~2.4 words/sec, Malay ~2.2 words/sec, Chinese ~4.2 Han characters/sec.
+ * A shorter voiceover is plausible only when explicit visual seconds cover the rest.
+ */
+export const MARKETING_SPEECH_RATES = {
+  englishWordsPerSecond: 2.4,
+  malayWordsPerSecond: 2.2,
+  chineseCharactersPerSecond: 4.2,
+  minimumCoveredRatio: 0.85,
+  maximumSpeechRatio: 1.15,
+} as const;
+
+const MALAY_SPEECH = /\b(dan|untuk|dengan|yang|bunga|segar|anda|kami|ini|pelanggan)\b/i;
+const ENGLISH_SPEECH = /\b(the|and|for|with|this|from|your)\b/i;
+
+export function estimateSpokenSeconds(text: string): {
+  seconds: number;
+  englishWords: number;
+  malayWords: number;
+  chineseCharacters: number;
+} {
+  const chineseCharacters = text.match(/\p{Script=Han}/gu)?.length ?? 0;
+  const words = text.replace(/\p{Script=Han}/gu, " ").split(/[^A-Za-z]+/).filter(Boolean);
+  const malay = MALAY_SPEECH.test(text) && !ENGLISH_SPEECH.test(text);
+  const englishWords = malay ? 0 : words.length;
+  const malayWords = malay ? words.length : 0;
+  const seconds =
+    englishWords / MARKETING_SPEECH_RATES.englishWordsPerSecond +
+    malayWords / MARKETING_SPEECH_RATES.malayWordsPerSecond +
+    chineseCharacters / MARKETING_SPEECH_RATES.chineseCharactersPerSecond;
+  return { seconds, englishWords, malayWords, chineseCharacters };
+}
+
+export function explicitVisualSeconds(texts: string[]): number {
+  let seconds = 0;
+  for (const text of texts) {
+    for (const match of text.matchAll(/(\d+(?:\.\d+)?)\s*(?:seconds|second|sec)\b/gi)) {
+      seconds += Number(match[1]);
+    }
+  }
+  return seconds;
+}
+
+export type MarketingCreativeFactContract = {
+  authorizedProducts: string[];
+  authorizedServices: string[];
+  targetMarket: string | null;
+  audience: string | null;
+  verifiedLocation: string | null;
+  verifiedDelivery: boolean;
+  verifiedPromotions: boolean;
+  verifiedRankings: boolean;
+  approvedCtaChannels: Array<"awareness" | "follow" | "enquire" | "order_online" | "visit_store">;
+  unavailable: string[];
+};
+
+function textList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim());
+}
+
+function textOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** Compact creative authority derived from the canonical business profile. A market is not a shop. */
+export function buildMarketingCreativeFactContract(
+  info: unknown,
+  platforms?: string[] | null
+): MarketingCreativeFactContract {
+  const record = info && typeof info === "object" && !Array.isArray(info) ? (info as Record<string, unknown>) : {};
+  const services = textList(record.services);
+  const description = textOrNull(record.description) ?? textOrNull(record.businessDescription);
+  const address = textOrNull(record.address);
+  const audience = textOrNull(record.audience) ?? textOrNull(record.targetAudience);
+  const city = textOrNull(record.city);
+  const country = textOrNull(record.country);
+  const website = textOrNull(record.website);
+  const phone = textOrNull(record.phone) ?? textOrNull(record.businessPhone);
+  const keywords = textList(record.brandKeywords);
+  const lines = [description ?? "", address ?? "", ...services, ...keywords];
+  const verifiedDelivery = profileAllows(lines, DELIVERY_CLAIM);
+  const verifiedPromotions = profileAllows(lines, DISCOUNT_CLAIM);
+  const verifiedRankings = profileAllows(lines, RANKING_CLAIM);
+  const social = (platforms ?? textList(record.platforms)).some((item) =>
+    /tiktok|instagram|facebook|xiaohongshu|youtube|threads|linkedin|google/i.test(item)
+  );
+  const approvedCtaChannels: MarketingCreativeFactContract["approvedCtaChannels"] = ["awareness"];
+  if (social) approvedCtaChannels.push("follow");
+  if (website || phone) approvedCtaChannels.push("enquire");
+  if (website) approvedCtaChannels.push("order_online");
+  if (address) approvedCtaChannels.push("visit_store");
+  const unavailable = [
+    !address ? "physical shop" : "",
+    !verifiedDelivery ? "delivery" : "",
+    !verifiedPromotions ? "promotions" : "",
+    !verifiedRankings ? "rankings" : "",
+    !website ? "website ordering" : "",
+    !phone && !website ? "contact channel" : "",
+  ].filter(Boolean);
+  const market = [city, country].filter(Boolean).join(", ");
+  return {
+    authorizedProducts: services,
+    authorizedServices: services,
+    targetMarket: market || null,
+    audience,
+    verifiedLocation: address,
+    verifiedDelivery,
+    verifiedPromotions,
+    verifiedRankings,
+    approvedCtaChannels,
+    unavailable,
+  };
+}
+
+export function creativeAuthorizationFromBusiness(
+  info: unknown,
+  platforms?: string[] | null
+): Pick<ContentContractFacts, "audience" | "city" | "country" | "website" | "phone" | "platforms"> {
+  const record = info && typeof info === "object" && !Array.isArray(info) ? (info as Record<string, unknown>) : {};
+  return {
+    audience: textOrNull(record.audience) ?? textOrNull(record.targetAudience),
+    city: textOrNull(record.city),
+    country: textOrNull(record.country),
+    website: textOrNull(record.website),
+    phone: textOrNull(record.phone) ?? textOrNull(record.businessPhone),
+    platforms: platforms ?? textList(record.platforms),
+  };
+}
+
+const VISUAL_SHOT_CATEGORIES: Array<{ name: string; pattern: RegExp }> = [
+  { name: "close-up", pattern: /close-?up|特写/i },
+  { name: "hands", pattern: /\bhands?\b|手部|tangan/i },
+  { name: "ribbon", pattern: /ribbon|丝带|reben/i },
+  { name: "packaging", pattern: /packag|包装|bungkus/i },
+  { name: "reveal", pattern: /reveal|揭晓|dedah/i },
+  { name: "arranging", pattern: /arrang|插花|整理|menyusun/i },
+  { name: "petal", pattern: /petal|花瓣|kelopak/i },
+];
+
+function visualShotCount(texts: string[]): number {
+  const blob = texts.join("\n");
+  return VISUAL_SHOT_CATEGORIES.filter((category) => category.pattern.test(blob)).length;
+}
+
+function spokenSentences(text: string): string[] {
+  return text.split(/[.!?。！？]/).map((item) => item.trim()).filter((item) => item.length > 8);
+}
+
+function assessScriptDuration(
+  contentPackage: MarketingContentPackage,
+  facts: ContentContractFacts,
+  codes: string[],
+  fields: string[],
+  issues: MarketingContractIssue[]
+) {
+  const duration = facts.durationSec;
+  if (duration !== 15 && duration !== 30 && duration !== 60) return;
+  const slot = `${duration}s` as "15s" | "30s" | "60s";
+  const script = contentPackage.voiceScripts[slot]?.trim() ?? "";
+  if (!script) return;
+  const spoken = estimateSpokenSeconds(script);
+  const visual = explicitVisualSeconds([...contentPackage.broll, ...contentPackage.effects]);
+  const covered = spoken.seconds + visual;
+  if (spoken.seconds > duration * MARKETING_SPEECH_RATES.maximumSpeechRatio) {
+    codes.push("SCRIPT_SPEECH_TOO_LONG");
+    fields.push(`voiceScripts.${slot}`);
+    issues.push({
+      code: "SCRIPT_SPEECH_TOO_LONG",
+      field: `voiceScripts.${slot}`,
+      expected: `spoken time within ${duration} seconds`,
+      received: `${spoken.seconds.toFixed(1)}s speech`,
+      normalizable: false,
+    });
+  } else if (covered < duration * MARKETING_SPEECH_RATES.minimumCoveredRatio) {
+    codes.push("SCRIPT_DURATION_SHORT");
+    fields.push(`voiceScripts.${slot}`);
+    issues.push({
+      code: "SCRIPT_DURATION_SHORT",
+      field: `voiceScripts.${slot}`,
+      expected: `${duration}s covered by speech or explicit visual seconds`,
+      received: `${spoken.seconds.toFixed(1)}s speech and ${visual.toFixed(1)}s explicit visuals`,
+      normalizable: false,
+    });
+  }
+  const timelineEnd = contentPackage.subtitleTimeline.reduce((end, cue) => Math.max(end, cue.endSec), 0);
+  if (timelineEnd > 0 && timelineEnd + 1 < duration && visual < duration - timelineEnd) {
+    codes.push("SCRIPT_TIMELINE_SHORT");
+    fields.push("subtitleTimeline");
+    issues.push({
+      code: "SCRIPT_TIMELINE_SHORT",
+      field: "subtitleTimeline",
+      expected: `cues or explicit visuals covering ${duration} seconds`,
+      received: `timeline ends at ${timelineEnd}s`,
+      normalizable: false,
+    });
+  }
+  const sentences = spokenSentences(script);
+  const repeated = sentences.some((sentence) => sentences.filter((item) => item === sentence).length >= 3);
+  if (repeated) {
+    codes.push("SCRIPT_FILLER");
+    fields.push(`voiceScripts.${slot}`);
+    issues.push({
+      code: "SCRIPT_FILLER",
+      field: `voiceScripts.${slot}`,
+      expected: "no sentence repeated to fill the duration",
+      received: "repeated sentence",
+      normalizable: false,
+    });
+  }
+}
+
+function assessCreativeQuality(
+  contentPackage: MarketingContentPackage,
+  facts: ContentContractFacts,
+  unsupported: boolean
+): CreativeQualityReport {
+  const duration = facts.durationSec === 15 || facts.durationSec === 30 || facts.durationSec === 60
+    ? facts.durationSec
+    : 30;
+  const script = contentPackage.voiceScripts[`${duration}s`] || contentPackage.voiceScripts["30s"] || "";
+  const hook = contentPackage.hooks[0]?.text ?? "";
+  const productNamed = /bouquet|flower|花束|鲜花|bunga/i.test(`${hook}\n${script}`);
+  const hookSpecific = /bouquet|flower|petal|花束|鲜花|花瓣|bunga|kelopak/i.test(hook);
+  const sentences = spokenSentences(script);
+  const shots = visualShotCount([...contentPackage.broll, ...contentPackage.effects]);
+  const visualText = [...contentPackage.broll, ...contentPackage.effects].join(" ").trim();
+  const leaked = isMarketingInstructionLeak(script);
+  const repeated = sentences.some((sentence) => sentences.filter((item) => item === sentence).length >= 3);
+  const dimensions: CreativeQualityReport["dimensions"] = [
+    {
+      name: "hook",
+      score: hookSpecific ? 4 : hook.trim() ? 2 : null,
+      basis: "deterministic",
+      evidence: hookSpecific ? "Hook names a concrete product detail." : "Hook has no concrete product noun.",
+    },
+    {
+      name: "storyProgression",
+      score: sentences.length >= 3 ? 4 : sentences.length >= 1 && productNamed ? 3 : 2,
+      basis: "deterministic",
+      evidence: `${sentences.length} spoken sentence(s). This counts structure, not dramatic quality.`,
+    },
+    {
+      name: "productClarity",
+      score: productNamed ? 5 : 2,
+      basis: "deterministic",
+      evidence: productNamed ? "The requested script names the authorized product." : "The requested script does not name the product.",
+    },
+    {
+      name: "commercialRelevance",
+      score: unsupported ? 1 : contentPackage.cta.some((item) => item.text.trim()) ? 4 : 2,
+      basis: "deterministic",
+      evidence: unsupported ? "A required line asserts an unauthorized commercial fact." : "CTA is present and no unauthorized commercial fact was detected.",
+    },
+    {
+      name: "visualExecutability",
+      score: visualText ? (shots >= 3 ? 4 : shots === 2 ? 3 : 2) : null,
+      basis: "deterministic",
+      evidence: visualText
+        ? `${shots} feasible shot categor${shots === 1 ? "y" : "ies"} in suggested visuals.`
+        : "No suggested shots were provided, so visual executability was not scored.",
+    },
+    {
+      name: "languageNaturalness",
+      score: leaked || repeated ? 2 : script.trim() ? 3 : null,
+      basis: "structural",
+      evidence: leaked || repeated
+        ? "Instruction text or a repeated filler sentence is present."
+        : "No instruction leak or repeated filler sentence. Naturalness was not scored by a model.",
+    },
+    {
+      name: "businessGrounding",
+      score: unsupported ? 1 : 5,
+      basis: "deterministic",
+      evidence: unsupported ? "Unsupported factual claim in required copy." : "No unsupported factual claim in required copy.",
+    },
+  ];
+  const missing = dimensions.some((dimension) => dimension.score == null);
+  const total = missing ? null : dimensions.reduce((sum, dimension) => sum + (dimension.score ?? 0), 0);
+  const product = dimensions.find((dimension) => dimension.name === "productClarity")?.score ?? 0;
+  const grounding = dimensions.find((dimension) => dimension.name === "businessGrounding")?.score ?? 0;
+  const below = dimensions.some((dimension) => dimension.score != null && dimension.score < 3);
+  let status: CreativeQualityStatus = "PASS";
+  if (unsupported || below || (product != null && product < 4) || (grounding != null && grounding < 4) || (total != null && total < 28)) status = "FAIL";
+  else if (missing) status = "REQUIRES_CREATIVE_REVIEW";
+  return { status, total, maxScore: 35, dimensions };
 }
 
 function lowerFirstEnglish(text: string): string {
@@ -402,16 +733,33 @@ function stripOptionalClaims(
   return kept;
 }
 
+function channelMatches(
+  text: string,
+  facts: ContentContractFacts
+): Array<{ category: MarketingClaimCategory; excerpt: string }> {
+  const hits: Array<{ category: MarketingClaimCategory; excerpt: string }> = [];
+  const order = text.match(ORDER_CHANNEL_CLAIM);
+  if (order && !facts.website?.trim()) {
+    hits.push({ category: "channel", excerpt: order[0].replace(/\s+/g, " ").trim().slice(0, 80) });
+  }
+  const enquiry = text.match(ENQUIRY_CHANNEL_CLAIM);
+  if (enquiry && !facts.website?.trim() && !facts.phone?.trim()) {
+    hits.push({ category: "channel", excerpt: enquiry[0].replace(/\s+/g, " ").trim().slice(0, 80) });
+  }
+  return hits;
+}
+
 function rejectProseClaims(
   field: string,
   value: unknown,
-  facts: StrategyContractFacts,
+  facts: ContentContractFacts,
   codes: string[],
   fields: string[],
-  issues?: MarketingContractIssue[]
+  issues?: MarketingContractIssue[],
+  includeChannels = false
 ) {
   if (typeof value !== "string" || !value.trim()) return;
-  const hits = claimMatches(value, facts);
+  const hits = [...claimMatches(value, facts), ...(includeChannels ? channelMatches(value, facts) : [])];
   if (hits.length === 0) return;
   codes.push("UNSUPPORTED_CLAIM");
   fields.push(field);
@@ -751,18 +1099,18 @@ function stripContentOptionalClaims(
 function pushClaim(
   field: string,
   value: unknown,
-  facts: StrategyContractFacts,
+  facts: ContentContractFacts,
   codes: string[],
   fields: string[],
   issues: MarketingContractIssue[]
 ) {
-  rejectProseClaims(field, value, facts, codes, fields, issues);
+  rejectProseClaims(field, value, facts, codes, fields, issues, true);
 }
 
 function scanContentClaims(
   contentPackage: MarketingContentPackage,
   payload: Record<string, unknown>,
-  facts: StrategyContractFacts,
+  facts: ContentContractFacts,
   codes: string[],
   fields: string[],
   issues: MarketingContractIssue[]
@@ -919,13 +1267,28 @@ export function evaluateContentContract(
     fields.push("voiceScripts");
   }
   scanContentClaims(contentPackage, payload, facts, codes, fields, issues);
+  assessScriptDuration(contentPackage, facts, codes, fields, issues);
+  const quality = assessCreativeQuality(contentPackage, facts, codes.includes("UNSUPPORTED_CLAIM"));
   if (codes.length > 0) {
-    return { diagnostic: diagnostic("content", codes, fields, adjustments, issues, facts.providerRequestId), contentPackage: null };
+    return {
+      diagnostic: diagnostic("content", codes, fields, adjustments, issues, facts.providerRequestId, quality),
+      contentPackage: null,
+    };
   }
-  return { diagnostic: diagnostic("content", [], [], adjustments, issues, facts.providerRequestId), contentPackage };
+  return {
+    diagnostic: diagnostic("content", [], [], adjustments, issues, facts.providerRequestId, quality),
+    contentPackage,
+  };
 }
 
 export function contentAllowsTranslation(contentPackage: MarketingContentPackage | null | undefined): boolean {
   if (!contentPackage) return false;
   return evaluateContentContract(contentPackage).diagnostic.ok;
+}
+
+export function contentIsCommerciallyReady(result: {
+  diagnostic: MarketingContractDiagnostic;
+  contentPackage: MarketingContentPackage | null;
+}): boolean {
+  return Boolean(result.contentPackage) && result.diagnostic.ok && result.diagnostic.quality?.status === "PASS";
 }

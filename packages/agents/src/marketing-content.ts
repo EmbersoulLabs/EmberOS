@@ -29,6 +29,9 @@ import {
   type StrategyPlan,
   type VisionAnalysis,
   MARKETING_SKILL_GUIDANCE,
+  CONTENT_CREATIVE_GUIDANCE,
+  buildMarketingCreativeFactContract,
+  creativeAuthorizationFromBusiness,
 } from "@ceo-agent/shared";
 
 export type { ContentLocale };
@@ -71,9 +74,11 @@ Do not invent testimonials, prices, discounts, operating hours, addresses, award
 If a fact is missing, omit it.
 Write each language field in that language only. Do not copy one language into another.
 Platform captions must differ. Xiaohongshu stays Simplified Chinese.
-15s = hook + one benefit + CTA. 30s = hook + pain + benefit + CTA. 60s = hook + scene + two supported benefits + CTA.
+15 seconds: one idea, product early, one benefit, one CTA. 30 seconds: opening, demonstration, ending. 60 seconds: a fuller explanation using only supplied facts.
 
 ${MARKETING_SKILL_GUIDANCE}
+
+${CONTENT_CREATIVE_GUIDANCE}
 
 marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100 content checklist, not live analytics),
 estimatedCtr, estimatedEngagement, estimatedConversion (empty strings unless the input already contains that measured figure)
@@ -848,6 +853,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     platforms: input.platforms,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
+    creativeFacts: buildMarketingCreativeFactContract(input.businessInformation, input.platforms),
     ...(input.userNotes ? { userNotes: input.userNotes } : {}),
     locale: localeToPromptTag(locale),
     outputLanguage: outputLanguageInstruction(locale),
@@ -866,6 +872,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   const evaluated = evaluateContentContract(result, {
     brief: substantiveCampaignBrief(input.userNotes, input.videoAnalysis) ?? null,
     ...authorizedMarketingFacts(input.businessInformation),
+    ...creativeAuthorizationFromBusiness(input.businessInformation, input.platforms),
     durationSec: explicitScriptDurationSec(input.userNotes),
     providerRequestId,
   });

@@ -551,7 +551,11 @@ export function normalizeMarketingContentPackage(
       data.voiceStyle && typeof data.voiceStyle === "object"
         ? (data.voiceStyle as Record<string, string | string[]>)
         : {},
-    broll: Array.isArray(data.broll) ? (data.broll as string[]) : [],
+    broll: Array.isArray(data.broll)
+      ? (data.broll as string[])
+      : typeof data.broll === "string" && data.broll.trim()
+        ? [data.broll.trim()]
+        : [],
     musicMood: String(data.musicMood ?? ""),
     effects: Array.isArray(data.effects) ? (data.effects as string[]) : [],
     postingRecommendation: {

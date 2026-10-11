@@ -1,0 +1,275 @@
+{
+  "voiceScripts": {
+    "15s": "Discover the elegance of luxury flower bouquets at Ember Florist Test. Impress with beauty. Visit us in Singapore.",
+    "30s": "At Ember Florist Test, we craft stunning flower bouquets that layer color and elegance, perfect for any occasion. Experience the luxury of fresh flowers and impress your loved ones. Visit us in Singapore for the finest floral arrangements.",
+    "60s": "Ember Florist Test offers exquisite flower bouquets that speak the language of luxury. Our floral designs, with their vibrant colors and intricate layering, set the stage for any event. Whether you're gifting or decorating, our fresh flowers ensure you impress. Visit us in Singapore and discover the art of thoughtful luxury."
+  },
+  "voiceScriptsZh": {
+    "15s": "在 Ember Florist Test 发现奢华花束的优雅。用美丽打动人心。欢迎来到新加坡。",
+    "30s": "在 Ember Florist Test，我们打造令人惊叹的花束，将色彩和优雅完美结合，适合各种场合。体验新鲜花卉的奢华，打动您的亲人。欢迎来到新加坡，选购最优质的花卉。",
+    "60s": "Ember Florist Test 提供精美的花束，传达奢华的语言。我们的花卉设计，以其鲜艳的色彩和复杂的层次感，为任何活动增光添彩。无论是送礼还是装饰，我们的新鲜花卉都能确保您留下深刻印象。欢迎来到新加坡，发现体贴奢华的艺术。"
+  },
+  "voiceScriptsEn": {
+    "15s": "Discover the elegance of luxury flower bouquets at Ember Florist Test. Impress with beauty. Visit us in Singapore.",
+    "30s": "At Ember Florist Test, we craft stunning flower bouquets that layer color and elegance, perfect for any occasion. Experience the luxury of fresh flowers and impress your loved ones. Visit us in Singapore for the finest floral arrangements.",
+    "60s": "Ember Florist Test offers exquisite flower bouquets that speak the language of luxury. Our floral designs, with their vibrant colors and intricate layering, set the stage for any event. Whether you're gifting or decorating, our fresh flowers ensure you impress. Visit us in Singapore and discover the art of thoughtful luxury."
+  },
+  "subtitleTimeline": [
+    {
+      "startSec": 0,
+      "endSec": 5,
+      "text": "Discover the elegance of luxury flower bouquets."
+    },
+    {
+      "startSec": 5,
+      "endSec": 10,
+      "text": "Ember Florist Test offers stunning floral arrangements."
+    },
+    {
+      "startSec": 10,
+      "endSec": 15,
+      "text": "Visit us in Singapore for the finest flowers."
+    }
+  ],
+  "hooks": [
+    {
+      "text": "Discover luxury in every petal.",
+      "textEn": "Discover luxury in every petal.",
+      "textMs": "Temui kemewahan dalam setiap kelopak.",
+      "type": "emotional"
+    },
+    {
+      "text": "Elevate your gifting game.",
+      "textEn": "Elevate your gifting game.",
+      "textMs": "Tingkatkan permainan pemberian hadiah anda.",
+      "type": "benefit"
+    },
+    {
+      "text": "Experience floral elegance.",
+      "textEn": "Experience floral elegance.",
+      "textMs": "Alami keanggunan bunga.",
+      "type": "emotional"
+    },
+    {
+      "text": "Luxury flowers, unforgettable impressions.",
+      "textEn": "Luxury flowers, unforgettable impressions.",
+      "textMs": "Bunga mewah, kesan yang tak terlupakan.",
+      "type": "benefit"
+    },
+    {
+      "text": "Fresh flowers, timeless beauty.",
+      "textEn": "Fresh flowers, timeless beauty.",
+      "textMs": "Bunga segar, kecantikan abadi.",
+      "type": "emotional"
+    },
+    {
+      "text": "Bring luxury home with our bouquets.",
+      "textEn": "Bring luxury home with our bouquets.",
+      "textMs": "Bawa kemewahan ke rumah dengan buket kami.",
+      "type": "emotional"
+    },
+    {
+      "text": "Gifting made luxurious.",
+      "textEn": "Gifting made luxurious.",
+      "textMs": "Pemberian hadiah yang mewah.",
+      "type": "benefit"
+    },
+    {
+      "text": "Impress with our stunning bouquets.",
+      "textEn": "Impress with our stunning bouquets.",
+      "textMs": "Kagumkan dengan buket kami yang menakjubkan.",
+      "type": "benefit"
+    },
+    {
+      "text": "Your floral journey begins here.",
+      "textEn": "Your floral journey begins here.",
+      "textMs": "Perjalanan bunga anda bermula di sini.",
+      "type": "emotional"
+    },
+    {
+      "text": "Discover the art of floral luxury.",
+      "textEn": "Discover the art of floral luxury.",
+      "textMs": "Temui seni kemewahan bunga.",
+      "type": "emotional"
+    }
+  ],
+  "cta": [
+    {
+      "text": "Visit us today!"
+    },
+    {
+      "text": "Explore our bouquets!"
+    },
+    {
+      "text": "Discover floral luxury!"
+    },
+    {
+      "text": "Elevate your floral game!"
+    },
+    {
+      "text": "Experience beauty now!"
+    }
+  ],
+  "voiceStyle": "warm, inviting",
+  "broll": "slow motion shots of vibrant flower bouquets being arranged",
+  "musicMood": "soothing and elegant",
+  "effects": "soft focus transitions to highlight floral details",
+  "postingRecommendation": "Post during weekday mornings when engagement is higher.",
+  "consistencyScore": 87,
+  "marketingScore": 92,
+  "hookScore": 88,
+  "seoScore": 90,
+  "emotionalScore": 85,
+  "conversionScore": 78,
+  "estimatedCtr": "",
+  "estimatedEngagement": "",
+  "estimatedConversion": "",
+  "strategyBrief": {
+    "primaryGoal": "Increase brand awareness among Singapore gift buyers.",
+    "targetAudience": "25-45 year olds in Singapore, interested in gifting and floral design.",
+    "contentAngle": "Creating a sense of luxury through flower bouquet design.",
+    "painPoint": "Difficulty in finding elegant flower arrangements.",
+    "desiredEmotion": "Impressed and thoughtful.",
+    "ctaStrategy": "Direct message to get similar arrangements, save for later, and follow for more floral inspiration."
+  },
+  "platformAssets": {
+    "tiktok": {
+      "caption": "Discover luxury in every petal. Follow for floral inspiration! 🌸",
+      "hook": "Luxury flowers that impress!",
+      "hashtags": [
+        "#Florist",
+        "#LuxuryFlowers",
+        "#GiftIdeas"
+      ],
+      "cta": "Follow for more floral designs!",
+      "formatStyle": "short, engaging video with trendy music."
+    },
+    "instagram": {
+      "caption": "Elevate your gifting game with luxury bouquets! 🌺 #FloralDesign",
+      "hook": "Stunning floral elegance awaits!",
+      "hashtags": [
+        "#Florist",
+        "#FlowerBouquet",
+        "#LuxuryFlowers"
+      ],
+      "cta": "Explore our stunning bouquets!",
+      "formatStyle": "high-quality image post with emotional caption"
+    },
+    "facebook": {
+      "caption": "At Ember Florist Test, we believe in the power of flowers to transform any space. Our luxury bouquets are designed to impress and convey thoughtfulness. Visit us in Singapore and discover the art of floral elegance.",
+      "hook": "Transform your space with luxury flowers.",
+      "hashtags": [
+        "#SingaporeFlorist",
+        "#LuxuryFloralDesign"
+      ],
+      "cta": "Visit our store today!",
+      "formatStyle": "storytelling post with community engagement"
+    },
+    "linkedin": {
+      "caption": "Ember Florist Test offers premium floral solutions for your gifting and decor needs. Our expertise in luxury floral arrangements ensures quality and elegance in every bouquet. Discover how we can elevate your floral experience.",
+      "hook": "Professional floral solutions for every occasion.",
+      "hashtags": [
+        "#FloralDesign",
+        "#CorporateGifting",
+        "#LuxuryFlowers"
+      ],
+      "cta": "Discover our floral solutions.",
+      "formatStyle": "professional post with educational insight"
+    },
+    "xiaohongshu": {
+      "caption": "🌸 在 Ember Florist Test，体验奢华花束的艺术！我们的花艺设计结合色彩与优雅，为任何场合增添光彩。欢迎来到新加坡，发现花卉的魅力。#新加坡花店 #奢华花艺",
+      "hook": "体验奢华花束的艺术！",
+      "hashtags": [
+        "#新加坡花店",
+        "#奢华花艺",
+        "#花卉设计"
+      ],
+      "cta": "立即关注我们，获取更多花艺灵感！",
+      "formatStyle": "lifestyle-focused post with emojis and line breaks"
+    },
+    "threads": {
+      "caption": "Why settle for ordinary when you can gift luxury? Discover the art of floral elegance with us.",
+      "hook": "Gifting luxury is just a petal away.",
+      "cta": "",
+      "formatStyle": "conversational post with opinion hook"
+    },
+    "googleBusiness": {
+      "caption": "Searching for luxury flower bouquets in Singapore? Ember Florist Test offers exquisite floral arrangements perfect for any occasion. Call us now to explore our range!",
+      "hook": "",
+      "cta": "Call now to explore our range!",
+      "formatStyle": "local SEO-focused post with direct call-to-action"
+    },
+    "youtubeShorts": {
+      "title": "Luxury Flowers Await!",
+      "hook": "Discover the elegance of luxury bouquets.",
+      "description": "Ember Florist Test offers stunning floral arrangements that redefine luxury. Visit us in Singapore today!",
+      "hashtags": [
+        "#FloralDesign",
+        "#LuxuryFlowers",
+        "#Singapore"
+      ],
+      "cta": "Visit our store today!",
+      "formatStyle": "short, engaging video with quick cuts and music"
+    }
+  },
+  "legacyCaptions": {
+    "tiktok": "Discover luxury in every petal. Follow for floral inspiration! 🌸",
+    "instagram": "Elevate your gifting game with luxury bouquets! 🌺 #FloralDesign",
+    "facebook": "At Ember Florist Test, we believe in the power of flowers to transform any space. Our luxury bouquets are designed to impress and convey thoughtfulness. Visit us in Singapore and discover the art of floral elegance.",
+    "linkedin": "Ember Florist Test offers premium floral solutions for your gifting and decor needs. Our expertise in luxury floral arrangements ensures quality and elegance in every bouquet. Discover how we can elevate your floral experience.",
+    "xiaohongshu": "🌸 在 Ember Florist Test，体验奢华花束的艺术！我们的花艺设计结合色彩与优雅，为任何场合增添光彩。欢迎来到新加坡，发现花卉的魅力。#新加坡花店 #奢华花艺",
+    "threads": "Why settle for ordinary when you can gift luxury? Discover the art of floral elegance with us.",
+    "googleBusiness": "Searching for luxury flower bouquets in Singapore? Ember Florist Test offers exquisite floral arrangements perfect for any occasion. Call us now to explore our range!",
+    "youtubeShorts": "Ember Florist Test offers stunning floral arrangements that redefine luxury. Visit us in Singapore today!"
+  },
+  "seo": {
+    "primaryKeywords": [
+      "flower bouquet",
+      "luxury flowers"
+    ],
+    "secondaryKeywords": [
+      "gift ideas",
+      "floral arrangements"
+    ],
+    "longTailKeywords": [
+      "luxury flower bouquets in Singapore",
+      "elegant floral gifts"
+    ],
+    "localKeywords": [
+      "Singapore florist",
+      "Singapore flowers"
+    ],
+    "searchIntent": "Informational and transactional"
+  },
+  "hashtagPack": {
+    "highVolume": [
+      "#Florist",
+      "#GiftIdeas"
+    ],
+    "mediumVolume": [
+      "#LuxuryFlowers",
+      "#FloralDesign"
+    ],
+    "local": [
+      "#SingaporeFlorist",
+      "#SingaporeFlowers"
+    ],
+    "brand": [
+      "#EmberFlorist"
+    ],
+    "industry": [
+      "#FlowerBouquet",
+      "#FloralArrangements"
+    ]
+  },
+  "aiSuggestions": [
+    "Post during weekday mornings when engagement is higher.",
+    "Use slow-motion effects to highlight floral details.",
+    "Engage with followers by asking their favorite flower types.",
+    "Share behind-the-scenes content of bouquet arrangements.",
+    "Collaborate with local influencers for wider reach.",
+    "Utilize stories to showcase daily featured bouquets.",
+    "Encourage user-generated content with a branded hashtag.",
+    "Highlight unique flower types to spark curiosity."
+  ]
+}
