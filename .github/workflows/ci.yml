@@ -318,6 +318,9 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/staging-execute-entitlement-administration.integration.test.ts
 
+      - name: Certify marketing budget settlement idempotency
+        run: pnpm exec vitest run --config vitest.marketing-budget-idempotency.config.ts
+
   verify:
     name: Test, typecheck, build
     runs-on: ubuntu-latest
