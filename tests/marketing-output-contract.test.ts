@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  STRATEGY_CONFIDENCE_CATEGORY,
+  STRATEGY_JSON_CONTRACT,
   contentAllowsTranslation,
   evaluateContentContract,
   evaluateStrategyContract,
   isMarketingInstructionLeak,
+  strategyAllowsContent,
 } from "@ceo-agent/shared";
 
 vi.mock("@ceo-agent/db", () => ({
@@ -147,3 +150,158 @@ describe("marketing output contract", () => {
     expect(db.cancelPaidMarketingCall).not.toHaveBeenCalled();
   });
 });
+
+const SECOND_E2E_STRATEGY = {
+  industry: "florist",
+  businessType: "retail",
+  product: "Fresh flower bouquet",
+  marketingGoal: "awareness",
+  marketingAngle: "Create a high-end feel through layering and color combinations.",
+  brandPersonality: ["warm"],
+  tone: "friendly",
+  videoStyle: "emotional and visually appealing",
+  audience: {
+    interests: ["gifting", "home decor", "event planning"],
+    painPoints: ["struggling to find high-quality flower arrangements"],
+    location: "Singapore",
+    desiredOutcome: "to receive a beautiful, high-end flower bouquet",
+  },
+  customerJourney: "awareness",
+  platformPriority: ["tiktok"],
+  ctaStrategy: ["Direct message for similar arrangements", "Save for future reference during holidays", "Follow for more floral inspiration"],
+  keywords: ["flowers", "floral arrangements", "gift ideas"],
+  hashtags: {
+    industry: ["#florist", "#freshflowers"],
+    local: ["#SingaporeFlowers", "#SGFlorist"],
+    trending: ["#FlowerBouquet", "#GiftIdeas"],
+    seo: ["#FlowerDeliverySG", "#SingaporeGifts"],
+  },
+  confidence: "high",
+};
+
+describe("strategy contract compatibility", () => {
+  it("describes the canonical strategy schema without an opaque Zod object", () => {
+    expect(STRATEGY_JSON_CONTRACT).toContain("ctaStrategy: string");
+    expect(STRATEGY_JSON_CONTRACT).toContain("confidence: number from 0 to 1");
+    expect(STRATEGY_JSON_CONTRACT).not.toContain("ZodObject");
+    expect(STRATEGY_JSON_CONTRACT).toContain("Do not add delivery");
+  });
+
+  it("keeps a historical string CTA and numeric-string confidence", () => {
+    const result = evaluateStrategyContract(strategy(), FACTS);
+    expect(result.diagnostic.ok).toBe(true);
+    expect(result.plan?.ctaStrategy).toBe("Come see the bouquets");
+    expect(result.plan?.confidence).toBe(0.8);
+  });
+
+  it("accepts a CTA array with one item", () => {
+    const result = evaluateStrategyContract(strategyObject({ ctaStrategy: ["  Come see the bouquets  "] }), FACTS);
+    expect(result.plan?.ctaStrategy).toBe("Come see the bouquets");
+  });
+
+  it("joins compatible CTA suggestions without adding a new promise", () => {
+    const result = evaluateStrategyContract(strategyObject({
+      ctaStrategy: ["Show the bouquet", "Invite viewers to enquire"],
+    }), FACTS);
+    expect(result.diagnostic.ok).toBe(true);
+    expect(result.plan?.ctaStrategy).toBe("Show the bouquet and invite viewers to enquire.");
+  });
+
+  it("rejects CTA options that make contradictory promises", () => {
+    const result = evaluateStrategyContract(strategyObject({
+      ctaStrategy: ["Buy now with 50% discount", "No promotion available"],
+    }), FACTS);
+    expect(result.diagnostic.codes).toContain("CTA_CONFLICT");
+    expect(result.diagnostic.fields).toContain("ctaStrategy");
+    expect(result.plan).toBeNull();
+    expect(strategyAllowsContent(result)).toBe(false);
+  });
+
+  it("rejects an empty CTA array", () => {
+    const result = evaluateStrategyContract(strategyObject({ ctaStrategy: [" ", ""] }), FACTS);
+    expect(result.diagnostic.codes).toContain("CTA_MISSING");
+    expect(result.diagnostic.fields).toContain("ctaStrategy");
+    expect(result.plan).toBeNull();
+  });
+
+  it("maps high, medium, and low confidence categories", () => {
+    expect(evaluateStrategyContract(strategyObject({ confidence: "high" }), FACTS).plan?.confidence).toBe(STRATEGY_CONFIDENCE_CATEGORY.high);
+    expect(evaluateStrategyContract(strategyObject({ confidence: "Medium" }), FACTS).plan?.confidence).toBe(STRATEGY_CONFIDENCE_CATEGORY.medium);
+    expect(evaluateStrategyContract(strategyObject({ confidence: "low" }), FACTS).plan?.confidence).toBe(STRATEGY_CONFIDENCE_CATEGORY.low);
+    const high = evaluateStrategyContract(strategyObject({ confidence: "high" }), FACTS);
+    expect(high.diagnostic.adjustments).toContainEqual({ field: "confidence", action: "map", raw: "high", result: 0.8 });
+  });
+
+  it("accepts an in-range numeric confidence", () => {
+    expect(evaluateStrategyContract(strategyObject({ confidence: 0.42 }), FACTS).plan?.confidence).toBe(0.42);
+  });
+
+  it("rejects an unknown confidence label instead of defaulting high", () => {
+    const result = evaluateStrategyContract(strategyObject({ confidence: "very high" }), FACTS);
+    expect(result.diagnostic.codes).toContain("CONFIDENCE_UNKNOWN");
+    expect(result.diagnostic.fields).toContain("confidence");
+    expect(result.plan).toBeNull();
+  });
+
+  it("rejects confidence outside 0 to 1 and contradictory representations", () => {
+    expect(evaluateStrategyContract(strategyObject({ confidence: -0.2 }), FACTS).diagnostic.codes).toContain("CONFIDENCE_OUT_OF_RANGE");
+    expect(evaluateStrategyContract(strategyObject({ confidence: 1.5 }), FACTS).diagnostic.codes).toContain("CONFIDENCE_OUT_OF_RANGE");
+    expect(evaluateStrategyContract(strategyObject({ confidence: 101 }), FACTS).diagnostic.codes).toContain("CONFIDENCE_OUT_OF_RANGE");
+    const mixed = evaluateStrategyContract(strategyObject({ confidence: { label: "high", value: 0.2 } }), FACTS);
+    expect(mixed.diagnostic.codes).toContain("CONFIDENCE_CONTRADICTORY");
+    expect(mixed.plan).toBeNull();
+    expect(evaluateStrategyContract(strategyObject({ confidence: "high or low" }), FACTS).diagnostic.codes).toContain("CONFIDENCE_CONTRADICTORY");
+  });
+
+  it("keeps an authorized delivery claim and a geographic hashtag", () => {
+    const authorized = evaluateStrategyContract(strategyObject({
+      hashtags: { industry: [], local: ["#SGFlorist"], trending: [], seo: ["#FlowerDeliverySG", "#SingaporeGifts"] },
+    }), { ...FACTS, services: ["Fresh flower bouquet", "Same-day delivery"] });
+    expect(authorized.diagnostic.ok).toBe(true);
+    expect(authorized.plan?.hashtags.seo).toEqual(["#FlowerDeliverySG", "#SingaporeGifts"]);
+    expect(authorized.plan?.hashtags.local).toEqual(["#SGFlorist"]);
+  });
+
+  it("removes an unsupported delivery hashtag and keeps geographic tags", () => {
+    const result = evaluateStrategyContract(strategyObject({
+      hashtags: { industry: [], local: ["#SingaporeFlowers"], trending: [], seo: ["#FlowerDeliverySG", "#SingaporeGifts"] },
+    }), FACTS);
+    expect(result.diagnostic.ok).toBe(true);
+    expect(result.plan?.hashtags.seo).toEqual(["#SingaporeGifts"]);
+    expect(result.plan?.hashtags.local).toEqual(["#SingaporeFlowers"]);
+    expect(JSON.stringify(result.plan)).not.toContain("FlowerDeliverySG");
+    expect(result.diagnostic.adjustments).toContainEqual({ field: "hashtags.seo", action: "remove", raw: "#FlowerDeliverySG" });
+  });
+
+  it("rejects unsupported delivery, discount, guarantee, and ranking claims in required copy", () => {
+    expect(evaluateStrategyContract(strategyObject({ ctaStrategy: "Free delivery" }), FACTS).diagnostic).toMatchObject({
+      codes: ["UNSUPPORTED_CLAIM"],
+      fields: ["ctaStrategy"],
+    });
+    expect(evaluateStrategyContract(strategyObject({ marketingAngle: "Same-day delivery" }), FACTS).diagnostic.fields).toContain("marketingAngle");
+    expect(evaluateStrategyContract(strategyObject({ marketingAngle: "Guaranteed delivery" }), FACTS).diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
+    expect(evaluateStrategyContract(strategyObject({ marketingAngle: "50% off" }), FACTS).diagnostic.fields).toContain("marketingAngle");
+    expect(evaluateStrategyContract(strategyObject({ marketingAngle: "Best florist in Singapore" }), FACTS).diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
+    expect(evaluateStrategyContract(strategyObject({ marketingAngle: "50% off" }), FACTS).plan).toBeNull();
+  });
+
+  it("replays the sanitized second real strategy response without another provider call", () => {
+    const result = evaluateStrategyContract(SECOND_E2E_STRATEGY, FACTS);
+    expect(result.diagnostic.ok).toBe(true);
+    expect(result.plan?.product).toBe("Fresh flower bouquet");
+    expect(result.plan?.industry).toBe("florist");
+    expect(result.plan?.audience.location).toBe("Singapore");
+    expect(result.plan?.ctaStrategy).toBe("Direct message for similar arrangements, save for future reference during holidays, and follow for more floral inspiration.");
+    expect(result.plan?.confidence).toBe(STRATEGY_CONFIDENCE_CATEGORY.high);
+    expect(result.plan?.hashtags.seo).toEqual(["#SingaporeGifts"]);
+    expect(JSON.stringify(result.plan)).not.toContain("FlowerDeliverySG");
+    expect(JSON.stringify(result.plan)).not.toContain(FACTS.brief);
+    expect(strategyAllowsContent(result)).toBe(true);
+    expect(strategyAllowsContent(evaluateStrategyContract(strategyObject({ confidence: "very high" }), FACTS))).toBe(false);
+  });
+});
+
+function strategyObject(overrides: Record<string, unknown>) {
+  return { ...strategy(), hashtags: { industry: ["flowers"], local: [], trending: [], seo: [] }, ...overrides };
+}
+
