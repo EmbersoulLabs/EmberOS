@@ -30,19 +30,63 @@ export function selectNextLocalGpuRelease<T extends LocalGpuReleaseCandidate>(ro
 
 type ClaimDb = Pick<ReturnType<typeof getDb>, "update" | "select">;
 
-/** Conditional update. A concurrent worker that loses the null-gate race claims nothing in this cycle. */
+export type ScopedLocalGpuReleaseRow = {
+  workspaceId: string;
+  storyId: string;
+  sceneExecutionId: string;
+  packageId: string | null;
+  runtimeAuthorizationId: string;
+  existingGate: string | null;
+  executionMode: string;
+  releaseState: string;
+};
+
+/** One workspace, story, and scene. This does not choose the next released row. */
+export async function selectScopedLocalGpuRelease(
+  db: Pick<ReturnType<typeof getDb>, "select">,
+  scope: { workspaceId: string; storyId: string; sceneExecutionId: string },
+): Promise<ScopedLocalGpuReleaseRow | null> {
+  const rows = await db.select({
+    workspaceId: schema.aiStorySceneReleaseStates.workspaceId,
+    storyId: schema.aiStorySceneExecutions.storyId,
+    sceneExecutionId: schema.aiStorySceneReleaseStates.sceneExecutionId,
+    packageId: schema.aiStorySceneReleaseStates.currentLocalGenerationPackageId,
+    runtimeAuthorizationId: schema.aiStorySceneReleaseStates.runtimeAuthorizationId,
+    existingGate: schema.aiStorySceneReleaseStates.gateProviderAttemptId,
+    executionMode: schema.aiStorySceneReleaseStates.executionMode,
+    releaseState: schema.aiStorySceneReleaseStates.releaseState,
+  }).from(schema.aiStorySceneReleaseStates).innerJoin(
+    schema.aiStorySceneExecutions,
+    eq(schema.aiStorySceneExecutions.id, schema.aiStorySceneReleaseStates.sceneExecutionId),
+  ).where(and(
+    eq(schema.aiStorySceneReleaseStates.workspaceId, scope.workspaceId),
+    eq(schema.aiStorySceneExecutions.workspaceId, scope.workspaceId),
+    eq(schema.aiStorySceneExecutions.storyId, scope.storyId),
+    eq(schema.aiStorySceneReleaseStates.sceneExecutionId, scope.sceneExecutionId),
+  )).limit(1);
+  return rows[0] ?? null;
+}
+
+/** Conditional update for one scoped scene. A lost null-gate race claims nothing else. */
 export async function claimExplicitLocalGpuReleaseGate(
   db: ClaimDb,
-  input: { sceneExecutionId: string; jobId: string },
+  input: { workspaceId: string; storyId: string; sceneExecutionId: string; jobId: string },
 ): Promise<boolean> {
   const rows = await db.update(schema.aiStorySceneReleaseStates).set({
     gateProviderAttemptId: input.jobId,
     updatedAt: new Date(),
   }).where(and(
     eq(schema.aiStorySceneReleaseStates.sceneExecutionId, input.sceneExecutionId),
+    eq(schema.aiStorySceneReleaseStates.workspaceId, input.workspaceId),
     eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
     eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
     isNull(schema.aiStorySceneReleaseStates.gateProviderAttemptId),
+    sql`exists (
+      select 1 from ${schema.aiStorySceneExecutions}
+      where ${schema.aiStorySceneExecutions.id} = ${schema.aiStorySceneReleaseStates.sceneExecutionId}
+        and ${schema.aiStorySceneExecutions.storyId} = ${input.storyId}
+        and ${schema.aiStorySceneExecutions.workspaceId} = ${input.workspaceId}
+    )`,
   )).returning({ sceneExecutionId: schema.aiStorySceneReleaseStates.sceneExecutionId });
   return rows.length === 1;
 }

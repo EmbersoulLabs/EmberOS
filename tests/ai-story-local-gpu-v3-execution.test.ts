@@ -3,6 +3,7 @@ import { InMemoryLocalGpuReleaseLedger, claimPreparedLocalGpuRelease } from "@ce
 import {
   planLocalGpuRoute,
   planLocalGpuHttp,
+  runInstalledLocalGpuReleaseCycle,
   runLocalGpuReleaseCycle,
 } from "../packages/agents/src/ai-story/local-gpu-execution";
 import { localGpuAssemblyHandoff, resolveLocalGpuReviewState } from "../packages/agents/src/ai-story/local-gpu-review-handoff";
@@ -343,5 +344,59 @@ describe("LOCAL_GPU V3 execution integration", () => {
       existingResultId: id(40),
       contentHash: `sha256:${"b".repeat(64)}`,
     })).toMatchObject({ action: "reuse", submit: false });
+  });
+
+  it("loads only the scoped scene and does not construct a dispatch port until submit authority exists", async () => {
+    let loads = 0;
+    let ports = 0;
+    const load = async () => {
+      loads += 1;
+      return {
+        submitReady: false,
+        candidate: {
+          ...scope,
+          packageId: id(30),
+          runtimeAuthorizationId: id(70),
+          existingGate: null,
+          route: zeroAsset(),
+        },
+      };
+    };
+    expect(await runInstalledLocalGpuReleaseCycle({}, { load, createPort: () => { ports += 1; throw new Error("port"); } }))
+      .toMatchObject({ code: "DISABLED", posts: 0 });
+    expect(loads).toBe(0);
+    expect(await runInstalledLocalGpuReleaseCycle(stagingEnv, {
+      load,
+      createPort: () => { ports += 1; throw new Error("port"); },
+    })).toMatchObject({ code: "LOCAL_GPU_SUBMIT_AUTHORITY_REQUIRED", posts: 0, submit: false });
+    expect(loads).toBe(1);
+    expect(ports).toBe(0);
+    const posted: string[] = [];
+    const ready = await runInstalledLocalGpuReleaseCycle(stagingEnv, {
+      load: async (requested) => {
+        expect(requested).toEqual(scope);
+        return {
+          submitReady: true,
+          candidate: {
+            ...scope,
+            packageId: id(30),
+            runtimeAuthorizationId: id(70),
+            existingGate: null,
+            route: zeroAsset(),
+          },
+        };
+      },
+      createPort: () => ({
+        jobIdFor: () => id(90),
+        claim: () => true,
+        post: async (jobId: string) => {
+          posted.push(jobId);
+          return "accepted" as const;
+        },
+        status: async () => "found" as const,
+      }),
+    });
+    expect(ready).toMatchObject({ posts: 1, submit: false });
+    expect(posted).toEqual([id(90)]);
   });
 });

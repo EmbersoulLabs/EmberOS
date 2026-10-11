@@ -324,3 +324,63 @@ export async function runLocalGpuReleaseCycle(
   });
   return { code: step.code, posts: step.posts, gets: step.gets, submit: false };
 }
+
+export type LocalGpuInstalledRelease = {
+  candidate: LocalGpuDispatchCandidate;
+  submitReady: boolean;
+};
+
+/**
+ * Composition root. A closed gate never loads a release or constructs the Desktop adapter.
+ * An open gate loads only the scoped scene and still refuses to claim until submit authority exists.
+ */
+export async function runInstalledLocalGpuReleaseCycle(
+  env: Record<string, string | undefined>,
+  deps?: {
+    load?: (scope: LocalGpuSceneScope) => Promise<LocalGpuInstalledRelease | null>;
+    createPort?: (release: LocalGpuInstalledRelease) => LocalGpuDispatchPort;
+  },
+): Promise<{ code: string; posts: number; gets: number; submit: false }> {
+  const gate = localGpuDispatchGate(env);
+  if (!gate.dispatchAuthorized || !gate.scope) return runLocalGpuReleaseCycle(env);
+  const load = deps?.load ?? loadScopedLocalGpuReleaseFromDatabase;
+  const release = await load(gate.scope);
+  if (!release || !sameScope(gate.scope, release.candidate)) {
+    return { code: "LOCAL_GPU_SCENE_SCOPE_MISMATCH", posts: 0, gets: 0, submit: false };
+  }
+  if (!release.submitReady) {
+    return { code: "LOCAL_GPU_SUBMIT_AUTHORITY_REQUIRED", posts: 0, gets: 0, submit: false };
+  }
+  if (!deps?.createPort) {
+    return { code: "LOCAL_GPU_DISPATCH_PORT_UNBOUND", posts: 0, gets: 0, submit: false };
+  }
+  return runLocalGpuReleaseCycle(env, { candidate: release.candidate, port: deps.createPort(release) });
+}
+
+async function loadScopedLocalGpuReleaseFromDatabase(scope: LocalGpuSceneScope): Promise<LocalGpuInstalledRelease | null> {
+  const { getDb, selectScopedLocalGpuRelease } = await import("@ceo-agent/db");
+  const row = await selectScopedLocalGpuRelease(getDb(), scope);
+  if (!row || row.executionMode !== "LOCAL_GPU" || row.releaseState !== "RELEASED" || !row.packageId) return null;
+  return {
+    submitReady: false,
+    candidate: {
+      workspaceId: row.workspaceId,
+      storyId: row.storyId,
+      sceneExecutionId: row.sceneExecutionId,
+      packageId: row.packageId,
+      runtimeAuthorizationId: row.runtimeAuthorizationId,
+      existingGate: row.existingGate,
+      route: {
+        assetMode: "WITHOUT_ASSET",
+        assetRecommendationStatus: "ASSET_RECOMMENDATION_REQUIRED",
+        referenceCount: 0,
+        preQc: null,
+        runtimeAuthorizationId: row.runtimeAuthorizationId,
+        capabilities: null,
+        generateAudio: false,
+        audioBlocked: true,
+        qcExpectation: "SILENT_OUTPUT",
+      },
+    },
+  };
+}
