@@ -4,7 +4,14 @@ import {
   assertLocalGpuDispatchWorkflow,
   assertLocalGpuRequestExpiry,
   assertLocalGpuUploadBinding,
+  assertLocalGpuCreativeBinding,
+  assertLocalGpuV2RuntimeCapabilities,
+  assertLocalGpuV3RuntimeCapabilities,
+  assertLocalGpuSubmitAllowed,
   buildLocalGpuDesktopSubmit,
+  buildLocalGpuDesktopSubmitV2,
+  buildLocalGpuZeroAssetT2VSubmit,
+  localGpuCreativeBindingForV2Body,
   LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
   LOCAL_GPU_CAPABILITIES_ACTION,
   LOCAL_GPU_DEFAULT_REQUEST_TTL_MS,
@@ -15,6 +22,7 @@ import {
   LOCAL_GPU_SUBMIT_ACTION,
   LOCAL_GPU_WORKER_WORKFLOW,
   LocalGpuContractError,
+  type LocalGpuRuntimeCapabilities,
   LocalGpuJobStateSchema,
   localGpuTerminalDisposition,
   mapLocalGpuAudioPolicy,
@@ -124,6 +132,7 @@ export class LocalGpuCloudAdapter {
     workflow: string;
     jobId: string;
     uploadBinding?: LocalGpuSignedFields["uploadBinding"];
+    creativeBinding?: string;
   }): string {
     assertLocalGpuAccess(input.actor, { workspaceId: input.workspaceId });
     const { environment, secret } = this.requireEnabled();
@@ -142,6 +151,7 @@ export class LocalGpuCloudAdapter {
       expiresAt,
       nonce: this.clock.nonce(),
       uploadBinding: input.uploadBinding ?? {},
+      ...(input.creativeBinding !== undefined ? { creativeBinding: input.creativeBinding } : {}),
     }).token;
   }
 
@@ -212,6 +222,111 @@ export class LocalGpuCloudAdapter {
         workflow,
         state: readState(asRecord(response.json).state ?? asRecord(response.json).status ?? "QUEUED"),
         remoteProviderFallback: LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
+      };
+    }
+    if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);
+    if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found");
+    if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict");
+    throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable");
+  }
+
+  async submitContractV2(input: {
+    actor: LocalGpuServerActor;
+    package: Pick<LocalGpuSubmitPackage, "workspaceId" | "sceneExecutionId" | "packageId">;
+    request: Omit<Parameters<typeof buildLocalGpuDesktopSubmitV2>[0], "environment" | "jobId">;
+    capabilities: LocalGpuRuntimeCapabilities | null;
+    existingGate: string | null;
+  }): Promise<{
+    jobId: string;
+    workflow: typeof LOCAL_GPU_WORKER_WORKFLOW;
+    contractVersion: 2;
+    state: LocalGpuJobState;
+    remoteProviderFallback: 0;
+    automaticGenerationRetry: 0;
+  }> {
+    const { environment } = this.requireEnabled();
+    if (environment === "production") throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
+    assertLocalGpuV2RuntimeCapabilities(input.capabilities);
+    assertLocalGpuSubmitAllowed(input.existingGate);
+    const jobId = this.jobIdFor(input.package);
+    const desktop = buildLocalGpuDesktopSubmitV2({ ...input.request, environment, jobId });
+    const creativeBinding = localGpuCreativeBindingForV2Body(desktop.body);
+    const token = this.authorize({
+      actor: input.actor,
+      workspaceId: input.package.workspaceId,
+      sceneExecutionId: input.package.sceneExecutionId,
+      action: LOCAL_GPU_SUBMIT_ACTION,
+      workflow: desktop.body.workflow,
+      jobId,
+      uploadBinding: desktop.uploadBinding,
+      creativeBinding,
+    });
+    assertLocalGpuUploadBinding(desktop.body.upload, desktop.uploadBinding);
+    const response = await this.send({ method: "POST", path: "/v1/jobs", token, body: desktop.body, jobId });
+    if (response.status >= 200 && response.status < 300) {
+      return {
+        jobId,
+        workflow: desktop.body.workflow,
+        contractVersion: 2,
+        state: readState(asRecord(response.json).state ?? asRecord(response.json).status ?? "QUEUED"),
+        remoteProviderFallback: LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
+        automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
+      };
+    }
+    if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);
+    if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found");
+    if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict");
+    throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable");
+  }
+
+  async submitZeroAssetT2V(input: {
+    actor: LocalGpuServerActor;
+    package: Pick<LocalGpuSubmitPackage, "workspaceId" | "sceneExecutionId" | "packageId">;
+    request: Omit<Parameters<typeof buildLocalGpuZeroAssetT2VSubmit>[0], "environment" | "jobId" | "workspaceId" | "sceneExecutionId">;
+    capabilities: { contractVersion: number | null; workflowIds?: readonly string[]; runtimeExecutableWorkflows?: readonly string[] } | null;
+    existingGate: string | null;
+  }): Promise<{
+    jobId: string;
+    workflow: "MINIMAX_H3_T2V";
+    contractVersion: 3;
+    creativeBinding: string;
+    state: LocalGpuJobState;
+    remoteProviderFallback: 0;
+    automaticGenerationRetry: 0;
+  }> {
+    const { environment } = this.requireEnabled();
+    if (environment === "production") throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
+    assertLocalGpuV3RuntimeCapabilities(input.capabilities, "MINIMAX_H3_T2V");
+    assertLocalGpuSubmitAllowed(input.existingGate);
+    const jobId = this.jobIdFor(input.package);
+    const desktop = buildLocalGpuZeroAssetT2VSubmit({
+      ...input.request,
+      environment,
+      jobId,
+      workspaceId: input.package.workspaceId,
+      sceneExecutionId: input.package.sceneExecutionId,
+    });
+    assertLocalGpuCreativeBinding(desktop.canonicalJob, desktop.creativeBinding);
+    const token = this.authorize({
+      actor: input.actor,
+      workspaceId: input.package.workspaceId,
+      sceneExecutionId: input.package.sceneExecutionId,
+      action: LOCAL_GPU_SUBMIT_ACTION,
+      workflow: desktop.body.workflow,
+      jobId,
+      uploadBinding: desktop.uploadBinding,
+      creativeBinding: desktop.creativeBinding,
+    });
+    const response = await this.send({ method: "POST", path: "/v1/jobs", token, body: desktop.body, jobId });
+    if (response.status >= 200 && response.status < 300) {
+      return {
+        jobId,
+        workflow: "MINIMAX_H3_T2V",
+        contractVersion: 3,
+        creativeBinding: desktop.creativeBinding,
+        state: readState(asRecord(response.json).state ?? asRecord(response.json).status ?? "QUEUED"),
+        remoteProviderFallback: LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
+        automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
       };
     }
     if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);

@@ -59,6 +59,7 @@ export function verifyLocalGpuRequest(input: {
     uploadBinding: typeof record.uploadBinding === "string" || (record.uploadBinding && typeof record.uploadBinding === "object")
       ? record.uploadBinding as LocalGpuSignedFields["uploadBinding"]
       : {},
+    ...(typeof record.creativeBinding === "string" ? { creativeBinding: record.creativeBinding } : {}),
   };
   canonicalLocalGpuSigningPayload(fields);
   const decoded = Buffer.from(parts[0], "base64url").toString("utf8");

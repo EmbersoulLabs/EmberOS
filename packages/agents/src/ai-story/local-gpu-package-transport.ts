@@ -4,6 +4,7 @@ import {
   assertLocalGpuDispatchWorkflow,
   assertLocalGpuSubmitAllowed,
   buildLocalGpuDesktopSubmit,
+  buildLocalGpuDesktopSubmitV2,
   mapLocalGpuAudioPolicy,
   type LocalGpuAudioPolicy,
   type LocalGpuDesktopSubmitBody,
@@ -332,4 +333,115 @@ export function authorizeLocalGpuSequentialRelease(input: {
     sceneOrder: pkg.order,
     successorOfPackageId: predecessor?.packageId ?? null,
   };
+}
+
+function modelReferences(pkg: AiStoryLocalGenerationPackage): PackageReference[] {
+  return referencesOf(pkg).filter((reference) => reference.kind !== "FIRST_FRAME" && reference.kind !== "VISUAL_START");
+}
+
+export function mapCanonicalPackageToLocalGpuContractV2(input: {
+  package: AiStoryLocalGenerationPackage;
+  assets: readonly LocalGpuResolvedAsset[];
+  environment: LocalGpuEnvironment;
+  jobId: string;
+  upload: LocalGpuUploadDestination;
+  pinnedVoiceDna?: { voiceDnaId: string } | null;
+  structuredCamera?: boolean;
+  structuredMotion?: boolean;
+  textOnly?: boolean;
+}): ReturnType<typeof buildLocalGpuDesktopSubmitV2> {
+  const pkg = input.package;
+  const references = referencesOf(pkg);
+  if (references.some((reference) => reference.kind === "LOCATION" || reference.kind === "LOCATION_CONTEXT")) {
+    fail("LOCAL_GPU_LOCATION_REFERENCE_UNSUPPORTED");
+  }
+  const start = visualStart(pkg);
+  const frameReference = references.find((reference) => reference.kind === "FIRST_FRAME" || reference.kind === "VISUAL_START") ?? null;
+  const authorityFrame = start.sourceType === "INITIAL_MATERIAL" || start.sourceType === "PREDECESSOR_CONTINUITY"
+    ? { assetId: start.assetId ?? "", contentHash: start.contentHash ?? "" }
+    : frameReference
+      ? { assetId: frameReference.assetId, contentHash: frameReference.contentHash }
+      : null;
+  if (authorityFrame && frameReference && (frameReference.assetId !== authorityFrame.assetId || frameReference.contentHash !== authorityFrame.contentHash)) {
+    fail("LOCAL_GPU_CONTINUITY_FRAME_MISMATCH");
+  }
+  const selected: { role: "CHARACTER" | "PRODUCT"; reference: PackageReference; variantId: string | null }[] = [];
+  const ordered = modelReferences(pkg);
+  if (pkg.characterAuthority) {
+    selected.push({
+      role: "CHARACTER",
+      reference: oneReference(ordered, ["CHARACTER", "CHARACTER_IDENTITY"], pkg.characterAuthority.characterId, "LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED"),
+      variantId: null,
+    });
+  }
+  const product = productVisual(pkg);
+  if (product.image) {
+    const reference = oneReference(ordered, ["PRODUCT", "PRODUCT_IDENTITY"], null, "LOCAL_GPU_PRODUCT_REFERENCE_REQUIRED");
+    if (reference.assetId !== product.image.assetId || reference.contentHash !== product.image.contentHash) {
+      fail("LOCAL_GPU_REFERENCE_CONTENT_HASH_REQUIRED");
+    }
+    selected.push({ role: "PRODUCT", reference, variantId: product.variant });
+  }
+  const selectedRefs = new Set(selected.map((item) => item.reference));
+  if (ordered.some((reference) => !selectedRefs.has(reference))) fail("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+  const desktopReferences = selected
+    .slice()
+    .sort((left, right) => ordered.indexOf(left.reference) - ordered.indexOf(right.reference))
+    .map((item) => {
+      const asset = resolveAsset(input.assets, pkg.workspaceId, item.reference.assetId, item.reference.contentHash);
+      return {
+        approval: "APPROVED" as const,
+        role: item.role,
+        subjectId: item.role === "CHARACTER" ? pkg.characterAuthority!.characterId : product.image?.assetId ?? "",
+        variantId: item.variantId,
+        assetUrl: asset.assetUrl,
+        contentHash: asset.contentHash,
+      };
+    });
+  const frameAsset = authorityFrame
+    ? resolveAsset(input.assets, pkg.workspaceId, authorityFrame.assetId, authorityFrame.contentHash)
+    : null;
+  const productOnlyScene = !pkg.characterAuthority && Boolean(product.image) && pkg.dialogue.length === 0;
+  const audioPolicy = pkg.generateAudio && !pkg.audioBlocked
+    ? "NO_DIALOGUE_WITH_AMBIENT_AUDIO" as const
+    : !pkg.generateAudio && pkg.audioBlocked
+      ? "SILENT_OUTPUT" as const
+      : fail("LOCAL_GPU_AUDIO_POLICY_INVALID");
+  return buildLocalGpuDesktopSubmitV2({
+    environment: input.environment,
+    jobId: input.jobId,
+    sceneExecutionId: pkg.sceneExecutionId,
+    workspaceId: pkg.workspaceId,
+    workflow: pkg.recommendedWorkflow,
+    prompt: flatten(pkg.prompt),
+    plannedDurationMs: pkg.durationSec * 1000,
+    upload: input.upload,
+    audioPolicy,
+    productOnlyScene,
+    creative: {
+      characters: pkg.characterAuthority ? [{
+        subjectId: pkg.characterAuthority.characterId,
+        dnaFingerprint: pkg.characterAuthority.dnaFingerprint,
+      }] : [],
+      products: product.image ? [{
+        subjectId: desktopReferences.find((reference) => reference.role === "PRODUCT")?.subjectId ?? "",
+        variantId: product.variant,
+      }] : [],
+      scene: { sceneExecutionId: pkg.sceneExecutionId },
+    },
+    references: desktopReferences,
+    continuityRequired: authorityFrame !== null,
+    firstFrame: frameAsset && authorityFrame ? {
+      sourceAssetId: authorityFrame.assetId,
+      contentHash: frameAsset.contentHash,
+      assetUrl: frameAsset.assetUrl,
+      authoritySourceAssetId: authorityFrame.assetId,
+      authorityContentHash: authorityFrame.contentHash,
+    } : null,
+    dialogueLineCount: pkg.dialogue.length,
+    pinnedVoiceDna: Boolean(input.pinnedVoiceDna),
+    structuredCamera: input.structuredCamera,
+    structuredMotion: input.structuredMotion,
+    textOnly: input.textOnly,
+  });
 }

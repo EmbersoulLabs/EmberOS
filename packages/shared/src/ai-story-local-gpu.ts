@@ -88,6 +88,8 @@ export type LocalGpuSignedFields = {
   expiresAt: number;
   nonce: string;
   uploadBinding: Record<string, unknown> | string;
+  /** Present for contract V2 and V3. V1 tokens omit it. */
+  creativeBinding?: string;
 };
 
 export type LocalGpuDesktopReferenceRole = (typeof LOCAL_GPU_DESKTOP_REFERENCE_ROLES)[number];
@@ -138,8 +140,16 @@ export function canonicalLocalGpuSigningPayload(fields: LocalGpuSignedFields): s
     expiresAt: fields.expiresAt,
     nonce: assertSignedString(fields.nonce, "nonce"),
     uploadBinding: assertUploadBinding(fields.uploadBinding),
+    ...(fields.creativeBinding !== undefined
+      ? { creativeBinding: assertCreativeBinding(fields.creativeBinding) }
+      : {}),
   };
   return JSON.stringify(claims);
+}
+
+function assertCreativeBinding(value: string): string {
+  if (!/^[0-9a-f]{64}$/.test(value)) throw new LocalGpuContractError("LOCAL_GPU_SIGNED_FIELD_INVALID:creativeBinding");
+  return value;
 }
 
 export function assertLocalGpuRequestExpiry(expiresAt: number, now: Date): void {
@@ -303,6 +313,535 @@ export function buildLocalGpuDesktopSubmit(input: {
       audioPolicy: input.audioPolicy as LocalGpuAudioPolicy,
       upload: destination,
       ...(input.aspectRatio ? { aspectRatio: input.aspectRatio } : {}),
+    },
+  };
+}
+
+export const LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V2 = 2 as const;
+export const LOCAL_GPU_V2_ASSET_MODE = "WITH_ASSET" as const;
+export const LOCAL_GPU_V2_AUDIO_POLICIES = [
+  "NATIVE",
+  "PRESERVE",
+  "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
+  "REMOVE_AUDIO",
+  "SILENT_OUTPUT",
+] as const;
+export type LocalGpuV2AudioPolicy = (typeof LOCAL_GPU_V2_AUDIO_POLICIES)[number];
+
+export type LocalGpuRuntimeCapabilities = {
+  contractVersion: number | null;
+  workflowIds: readonly string[];
+};
+
+export type LocalGpuContractV2Reference = {
+  role: "CHARACTER" | "PRODUCT";
+  subjectId: string;
+  variantId?: string | null;
+  assetUrl: string;
+  contentHash: string;
+  approval?: string;
+};
+
+export type LocalGpuDesktopSubmitBodyV2 = {
+  contractVersion: typeof LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V2;
+  assetMode: typeof LOCAL_GPU_V2_ASSET_MODE;
+  environment: LocalGpuEnvironment;
+  jobId: string;
+  sceneExecutionId: string;
+  workspaceId: string;
+  workflow: typeof LOCAL_GPU_WORKER_WORKFLOW;
+  prompt: string;
+  durationSec: number;
+  durationSource: typeof LOCAL_GPU_DURATION_SOURCE;
+  audioPolicy: LocalGpuV2AudioPolicy;
+  upload: LocalGpuUploadDestination;
+  creative: {
+    characters: { subjectId: string; dnaFingerprint: string | null; modelBound: false }[];
+    products: { subjectId: string; variantId: string | null; modelBound: false }[];
+    scene: { sceneExecutionId: string } | null;
+  };
+  references: {
+    order: number;
+    approval: "APPROVED";
+    role: "CHARACTER" | "PRODUCT";
+    subjectId: string;
+    variantId: string | null;
+    assetUrl: string;
+    contentHash: string;
+  }[];
+  firstFrame: null | { sourceAssetId: string; contentHash: string; assetUrl: string };
+};
+
+export function assertLocalGpuV2RuntimeCapabilities(capabilities: LocalGpuRuntimeCapabilities | null): void {
+  if (
+    !capabilities
+    || capabilities.contractVersion !== LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V2
+    || !capabilities.workflowIds.includes(LOCAL_GPU_WORKER_WORKFLOW)
+  ) {
+    throw new LocalGpuContractError("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
+  }
+}
+
+export function buildLocalGpuDesktopSubmitV2(input: {
+  environment: LocalGpuEnvironment;
+  jobId: string;
+  sceneExecutionId: string;
+  workspaceId: string;
+  workflow: string;
+  prompt: string;
+  plannedDurationMs: number;
+  upload?: { environment?: string; method?: string; url?: string; headers?: Record<string, string>; assetId?: string } | null;
+  audioPolicy: LocalGpuV2AudioPolicy;
+  productOnlyScene?: boolean;
+  creative: {
+    characters: readonly { subjectId: string; dnaFingerprint?: string | null }[];
+    products: readonly { subjectId: string; variantId?: string | null }[];
+    scene?: { sceneExecutionId: string } | null;
+  };
+  references: readonly LocalGpuContractV2Reference[];
+  firstFrame?: null | {
+    sourceAssetId: string;
+    contentHash: string;
+    assetUrl: string;
+    authoritySourceAssetId: string;
+    authorityContentHash: string;
+  };
+  continuityRequired?: boolean;
+  dialogueLineCount?: number;
+  pinnedVoiceDna?: boolean;
+  structuredCamera?: boolean;
+  structuredMotion?: boolean;
+  textOnly?: boolean;
+}): { body: LocalGpuDesktopSubmitBodyV2; uploadBinding: string; speechReviewRequired: boolean } {
+  if ((input.dialogueLineCount ?? 0) > 0 || input.workflow === "MINIMAX_H3_NATIVE_DIALOGUE") {
+    throw new LocalGpuContractError("LOCAL_GPU_DISPATCH_DISABLED");
+  }
+  if (input.pinnedVoiceDna) throw new LocalGpuContractError("LOCAL_GPU_VOICE_DNA_UNSUPPORTED");
+  if (input.structuredCamera || input.structuredMotion) throw new LocalGpuContractError("LOCAL_GPU_CAMERA_MOTION_UNSUPPORTED");
+  if (input.textOnly || input.workflow === "WAN_T2V" || input.workflow === "TEXT_TO_VIDEO") {
+    throw new LocalGpuContractError("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
+  }
+  const workflow = assertLocalGpuDispatchWorkflow(input.workflow);
+  if (!LOCAL_GPU_V2_AUDIO_POLICIES.includes(input.audioPolicy)) throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
+  if (input.productOnlyScene && input.audioPolicy === "REMOVE_AUDIO") throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
+  if (!input.prompt || /[\r\n]/.test(input.prompt)) throw new LocalGpuContractError("LOCAL_GPU_PROMPT_REQUIRED");
+  if (input.references.length < LOCAL_GPU_REFERENCE_MIN) throw new LocalGpuContractError("LOCAL_GPU_REFERENCES_REQUIRED");
+  if (input.references.length > LOCAL_GPU_REFERENCE_MAX) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+  const references = input.references.map((reference, order) => {
+    if (reference.approval !== "APPROVED") throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_NOT_APPROVED");
+    if (reference.role !== "CHARACTER" && reference.role !== "PRODUCT") throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_ROLE_UNSUPPORTED");
+    if (!reference.subjectId) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_AUTHORITY_REQUIRED");
+    if (!reference.assetUrl) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
+    assertHttpsDestination(reference.assetUrl, "LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
+    if (!reference.contentHash || !/^sha256:[0-9a-f]{64}$/.test(reference.contentHash)) {
+      throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_CONTENT_HASH_REQUIRED");
+    }
+    const variantId = reference.variantId ?? null;
+    const authority = reference.role === "CHARACTER"
+      ? input.creative.characters.find((character) => character.subjectId === reference.subjectId)
+      : input.creative.products.find((product) => product.subjectId === reference.subjectId);
+    if (!authority) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_AUTHORITY_REQUIRED");
+    if (reference.role === "PRODUCT" && (authority as { variantId?: string | null }).variantId !== variantId) {
+      throw new LocalGpuContractError("LOCAL_GPU_VARIANT_MISMATCH");
+    }
+    return {
+      order,
+      approval: "APPROVED" as const,
+      role: reference.role,
+      subjectId: reference.subjectId,
+      variantId,
+      assetUrl: reference.assetUrl,
+      contentHash: reference.contentHash,
+    };
+  });
+  const characterIds = references.filter((reference) => reference.role === "CHARACTER").map((reference) => reference.subjectId);
+  const productIds = references.filter((reference) => reference.role === "PRODUCT").map((reference) => reference.subjectId);
+  if (input.creative.characters.some((character) => !characterIds.includes(character.subjectId))) {
+    throw new LocalGpuContractError("LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED");
+  }
+  if (input.creative.products.some((product) => !productIds.includes(product.subjectId))) {
+    throw new LocalGpuContractError("LOCAL_GPU_PRODUCT_REFERENCE_REQUIRED");
+  }
+  let firstFrame: LocalGpuDesktopSubmitBodyV2["firstFrame"] = null;
+  if (input.continuityRequired && !input.firstFrame) throw new LocalGpuContractError("LOCAL_GPU_CONTINUITY_FRAME_REQUIRED");
+  if (input.firstFrame) {
+    const frame = input.firstFrame;
+    if (!frame.sourceAssetId || !frame.authoritySourceAssetId || frame.sourceAssetId !== frame.authoritySourceAssetId) {
+      throw new LocalGpuContractError("LOCAL_GPU_CONTINUITY_FRAME_MISMATCH");
+    }
+    if (!frame.contentHash || frame.contentHash !== frame.authorityContentHash || !/^sha256:[0-9a-f]{64}$/.test(frame.contentHash)) {
+      throw new LocalGpuContractError("LOCAL_GPU_CONTINUITY_FRAME_MISMATCH");
+    }
+    if (!frame.assetUrl) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
+    assertHttpsDestination(frame.assetUrl, "LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
+    firstFrame = { sourceAssetId: frame.sourceAssetId, contentHash: frame.contentHash, assetUrl: frame.assetUrl };
+  }
+  const upload = input.upload;
+  if (!upload?.environment || !upload.method || !upload.url || /[\r\n]/.test(upload.method)) {
+    throw new LocalGpuContractError("LOCAL_GPU_UPLOAD_DESTINATION_REQUIRED");
+  }
+  if (upload.environment !== input.environment) throw new LocalGpuContractError("LOCAL_GPU_UPLOAD_DESTINATION_REQUIRED");
+  assertHttpsDestination(upload.url, "LOCAL_GPU_UPLOAD_DESTINATION_REQUIRED");
+  const destination: LocalGpuUploadDestination = {
+    environment: input.environment,
+    method: upload.method,
+    url: upload.url,
+    ...(upload.headers ? { headers: upload.headers } : {}),
+    ...(upload.assetId ? { assetId: upload.assetId } : {}),
+  };
+  const uploadBinding = localGpuUploadBindingDigest(destination);
+  assertLocalGpuUploadBinding(destination, uploadBinding);
+  const durationSec = localGpuDesktopDurationSec(input.plannedDurationMs);
+  return {
+    uploadBinding,
+    speechReviewRequired: input.audioPolicy === "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
+    body: {
+      contractVersion: LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V2,
+      assetMode: LOCAL_GPU_V2_ASSET_MODE,
+      environment: input.environment,
+      jobId: input.jobId,
+      sceneExecutionId: input.sceneExecutionId,
+      workspaceId: input.workspaceId,
+      workflow,
+      prompt: input.prompt,
+      durationSec,
+      durationSource: LOCAL_GPU_DURATION_SOURCE,
+      audioPolicy: input.audioPolicy,
+      upload: destination,
+      creative: {
+        characters: input.creative.characters.map((character) => ({
+          subjectId: character.subjectId,
+          dnaFingerprint: character.dnaFingerprint ?? null,
+          modelBound: false as const,
+        })),
+        products: input.creative.products.map((product) => ({
+          subjectId: product.subjectId,
+          variantId: product.variantId ?? null,
+          modelBound: false as const,
+        })),
+        scene: input.creative.scene ?? null,
+      },
+      references,
+      firstFrame,
+    },
+  };
+}
+
+export const LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V3 = 3 as const;
+export const LOCAL_GPU_T2V_WORKFLOW = "MINIMAX_H3_T2V" as const;
+export const LOCAL_GPU_DIRECTOR_GUIDANCE = "PROMPT_GUIDANCE" as const;
+export const LOCAL_GPU_V3_E2E_CERTIFIED = false as const;
+export const LOCAL_GPU_CREATIVE_BINDING_KEYS_V2 = [
+  "contractVersion",
+  "assetMode",
+  "jobId",
+  "sceneExecutionId",
+  "workspaceId",
+  "workflow",
+  "prompt",
+  "durationSec",
+  "audioPolicy",
+  "aspectRatio",
+  "megapixels",
+  "voiceInstructions",
+  "seed",
+  "references",
+  "firstFrame",
+] as const;
+export const LOCAL_GPU_CREATIVE_BINDING_KEYS_V3 = [
+  ...LOCAL_GPU_CREATIVE_BINDING_KEYS_V2,
+  "audioReferences",
+  "videoReferences",
+  "dialogue",
+  "director",
+  "lastFrame",
+] as const;
+
+export type LocalGpuDirectorGuidance = {
+  guidance: typeof LOCAL_GPU_DIRECTOR_GUIDANCE;
+  camera: string | null;
+  motion: string | null;
+};
+
+export type LocalGpuCanonicalCreativeJob = {
+  contractVersion: 2 | 3;
+  assetMode: "WITH_ASSET" | "WITHOUT_ASSET";
+  jobId: string;
+  sceneExecutionId: string;
+  workspaceId: string;
+  workflow: string;
+  prompt: string;
+  durationSec: number;
+  audioPolicy: string;
+  aspectRatio: string | null;
+  megapixels: number | null;
+  voiceInstructions: string | null;
+  seed: number | null;
+  references: unknown;
+  firstFrame: unknown | null;
+  audioReferences?: unknown | null;
+  videoReferences?: unknown | null;
+  dialogue?: unknown | null;
+  director?: LocalGpuDirectorGuidance | null;
+  lastFrame?: unknown | null;
+};
+
+export function localGpuDirectorGuidance(input: { camera?: string | null; motion?: string | null } | null): LocalGpuDirectorGuidance | null {
+  if (!input || (!input.camera && !input.motion)) return null;
+  return {
+    guidance: LOCAL_GPU_DIRECTOR_GUIDANCE,
+    camera: input.camera ?? null,
+    motion: input.motion ?? null,
+  };
+}
+
+export function localGpuCanonicalCreativeJob(input: LocalGpuCanonicalCreativeJob): Record<string, unknown> {
+  const job: Record<string, unknown> = {
+    contractVersion: input.contractVersion,
+    assetMode: input.assetMode,
+    jobId: input.jobId,
+    sceneExecutionId: input.sceneExecutionId,
+    workspaceId: input.workspaceId,
+    workflow: input.workflow,
+    prompt: input.prompt,
+    durationSec: input.durationSec,
+    audioPolicy: input.audioPolicy,
+    aspectRatio: input.aspectRatio ?? null,
+    megapixels: input.megapixels ?? null,
+    voiceInstructions: input.voiceInstructions ?? null,
+    seed: input.seed ?? null,
+    references: input.references,
+    firstFrame: input.firstFrame ?? null,
+  };
+  if (input.contractVersion === LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V3) {
+    job.audioReferences = input.audioReferences ?? null;
+    job.videoReferences = input.videoReferences ?? null;
+    job.dialogue = input.dialogue ?? null;
+    job.director = input.director ?? null;
+    job.lastFrame = input.lastFrame ?? null;
+  }
+  return job;
+}
+
+export function localGpuCreativeBindingDigest(job: Record<string, unknown>): string {
+  return createHash("sha256").update(JSON.stringify(job), "utf8").digest("hex");
+}
+
+export function assertLocalGpuCreativeBinding(job: Record<string, unknown>, creativeBinding: string): void {
+  if (localGpuCreativeBindingDigest(job) !== creativeBinding) {
+    throw new LocalGpuContractError("LOCAL_GPU_CREATIVE_BINDING_MISMATCH");
+  }
+}
+
+export function localGpuCreativeBindingForV2Body(
+  body: LocalGpuDesktopSubmitBodyV2 & { aspectRatio?: string | null },
+  seed: number | null = null,
+): string {
+  return localGpuCreativeBindingDigest(localGpuCanonicalCreativeJob({
+    contractVersion: 2,
+    assetMode: body.assetMode,
+    jobId: body.jobId,
+    sceneExecutionId: body.sceneExecutionId,
+    workspaceId: body.workspaceId,
+    workflow: body.workflow,
+    prompt: body.prompt,
+    durationSec: body.durationSec,
+    audioPolicy: body.audioPolicy,
+    aspectRatio: body.aspectRatio ?? null,
+    megapixels: null,
+    voiceInstructions: null,
+    seed,
+    references: body.references,
+    firstFrame: body.firstFrame,
+  }));
+}
+
+export function assertLocalGpuZeroAssetAuthority(input: {
+  workspaceId: string;
+  storyId: string;
+  storyVersionId: string;
+  assetRecommendationStatus: "SATISFIED" | "ASSET_RECOMMENDATION_REQUIRED" | "CONFIRMED_NO_ASSETS";
+  confirmationStoryId?: string | null;
+  confirmationStoryVersionId?: string | null;
+  imageReferenceCount: number;
+}): void {
+  if (input.assetRecommendationStatus !== "CONFIRMED_NO_ASSETS") {
+    throw new LocalGpuContractError("LOCAL_GPU_NO_ASSET_AUTHORITY_REQUIRED");
+  }
+  if (input.confirmationStoryId !== input.storyId || input.confirmationStoryVersionId !== input.storyVersionId) {
+    throw new LocalGpuContractError("LOCAL_GPU_NO_ASSET_AUTHORITY_REQUIRED");
+  }
+  if (!input.workspaceId || !input.storyId || !input.storyVersionId) {
+    throw new LocalGpuContractError("LOCAL_GPU_NO_ASSET_AUTHORITY_REQUIRED");
+  }
+  if (input.imageReferenceCount > 0) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+}
+
+export function selectLocalGpuV3Workflow(input: {
+  assetMode: "WITH_ASSET" | "WITHOUT_ASSET";
+  nativeDialogue?: boolean;
+  audioReferenceCount?: number;
+  videoReferenceCount?: number;
+  imageReferenceCount?: number;
+}): { contractVersion: 3; assetMode: "WITH_ASSET" | "WITHOUT_ASSET"; workflow: typeof LOCAL_GPU_T2V_WORKFLOW | typeof LOCAL_GPU_WORKER_WORKFLOW } {
+  if (input.nativeDialogue || (input.audioReferenceCount ?? 0) > 0 || (input.videoReferenceCount ?? 0) > 0) {
+    throw new LocalGpuContractError("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
+  }
+  if (input.assetMode === "WITHOUT_ASSET") {
+    if ((input.imageReferenceCount ?? 0) > 0) throw new LocalGpuContractError("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
+    return { contractVersion: 3, assetMode: "WITHOUT_ASSET", workflow: LOCAL_GPU_T2V_WORKFLOW };
+  }
+  if ((input.imageReferenceCount ?? 0) < 1) throw new LocalGpuContractError("LOCAL_GPU_REFERENCES_REQUIRED");
+  return { contractVersion: 3, assetMode: "WITH_ASSET", workflow: LOCAL_GPU_WORKER_WORKFLOW };
+}
+
+export function assertLocalGpuV3RuntimeCapabilities(
+  capabilities: { contractVersion: number | null; workflowIds?: readonly string[]; runtimeExecutableWorkflows?: readonly string[] } | null,
+  workflow: string,
+): void {
+  const executable = capabilities?.runtimeExecutableWorkflows ?? [];
+  if (capabilities?.contractVersion !== LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V3 || !executable.includes(workflow)) {
+    throw new LocalGpuContractError("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
+  }
+}
+
+export type LocalGpuDesktopSubmitBodyV3 = {
+  contractVersion: 3;
+  assetMode: "WITHOUT_ASSET" | "WITH_ASSET";
+  environment: LocalGpuEnvironment;
+  jobId: string;
+  sceneExecutionId: string;
+  workspaceId: string;
+  workflow: typeof LOCAL_GPU_T2V_WORKFLOW | typeof LOCAL_GPU_WORKER_WORKFLOW;
+  prompt: string;
+  durationSec: number;
+  durationSource: typeof LOCAL_GPU_DURATION_SOURCE;
+  audioPolicy: LocalGpuV2AudioPolicy;
+  aspectRatio: string;
+  megapixels: number | null;
+  voiceInstructions: null;
+  seed: number;
+  references: [];
+  firstFrame: null;
+  audioReferences: null;
+  videoReferences: null;
+  dialogue: null;
+  director: LocalGpuDirectorGuidance | null;
+  lastFrame: null;
+  upload: LocalGpuUploadDestination;
+};
+
+export function buildLocalGpuZeroAssetT2VSubmit(input: {
+  environment: LocalGpuEnvironment;
+  jobId: string;
+  sceneExecutionId: string;
+  workspaceId: string;
+  storyId: string;
+  storyVersionId: string;
+  prompt: string;
+  plannedDurationMs: number;
+  aspectRatio: "9:16" | "16:9" | "1:1";
+  seed: number;
+  audioPolicy: LocalGpuV2AudioPolicy;
+  megapixels?: number | null;
+  director?: { camera?: string | null; motion?: string | null } | null;
+  upload?: { environment?: string; method?: string; url?: string; headers?: Record<string, string>; assetId?: string } | null;
+  assetRecommendationStatus: "SATISFIED" | "ASSET_RECOMMENDATION_REQUIRED" | "CONFIRMED_NO_ASSETS";
+  confirmationStoryId?: string | null;
+  confirmationStoryVersionId?: string | null;
+  imageReferenceCount?: number;
+  nativeDialogue?: boolean;
+  audioReferenceCount?: number;
+  videoReferenceCount?: number;
+}): { body: LocalGpuDesktopSubmitBodyV3; canonicalJob: Record<string, unknown>; creativeBinding: string; uploadBinding: string; speechReviewRequired: boolean } {
+  assertLocalGpuZeroAssetAuthority({
+    workspaceId: input.workspaceId,
+    storyId: input.storyId,
+    storyVersionId: input.storyVersionId,
+    assetRecommendationStatus: input.assetRecommendationStatus,
+    confirmationStoryId: input.confirmationStoryId,
+    confirmationStoryVersionId: input.confirmationStoryVersionId,
+    imageReferenceCount: input.imageReferenceCount ?? 0,
+  });
+  const selected = selectLocalGpuV3Workflow({
+    assetMode: "WITHOUT_ASSET",
+    nativeDialogue: input.nativeDialogue,
+    audioReferenceCount: input.audioReferenceCount,
+    videoReferenceCount: input.videoReferenceCount,
+    imageReferenceCount: input.imageReferenceCount ?? 0,
+  });
+  if (selected.workflow !== LOCAL_GPU_T2V_WORKFLOW) throw new LocalGpuContractError("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
+  if (!LOCAL_GPU_V2_AUDIO_POLICIES.includes(input.audioPolicy)) throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
+  if (!input.prompt || /[\r\n]/.test(input.prompt)) throw new LocalGpuContractError("LOCAL_GPU_PROMPT_REQUIRED");
+  if (!Number.isInteger(input.seed)) throw new LocalGpuContractError("LOCAL_GPU_SEED_REQUIRED");
+  const durationSec = localGpuDesktopDurationSec(input.plannedDurationMs);
+  const upload = input.upload;
+  if (!upload?.environment || !upload.method || !upload.url || upload.environment !== input.environment) {
+    throw new LocalGpuContractError("LOCAL_GPU_UPLOAD_DESTINATION_REQUIRED");
+  }
+  assertHttpsDestination(upload.url, "LOCAL_GPU_UPLOAD_DESTINATION_REQUIRED");
+  const destination: LocalGpuUploadDestination = {
+    environment: input.environment,
+    method: upload.method,
+    url: upload.url,
+    ...(upload.headers ? { headers: upload.headers } : {}),
+    ...(upload.assetId ? { assetId: upload.assetId } : {}),
+  };
+  const uploadBinding = localGpuUploadBindingDigest(destination);
+  const director = localGpuDirectorGuidance(input.director ?? null);
+  const canonicalJob = localGpuCanonicalCreativeJob({
+    contractVersion: 3,
+    assetMode: "WITHOUT_ASSET",
+    jobId: input.jobId,
+    sceneExecutionId: input.sceneExecutionId,
+    workspaceId: input.workspaceId,
+    workflow: LOCAL_GPU_T2V_WORKFLOW,
+    prompt: input.prompt,
+    durationSec,
+    audioPolicy: input.audioPolicy,
+    aspectRatio: input.aspectRatio,
+    megapixels: input.megapixels ?? null,
+    voiceInstructions: null,
+    seed: input.seed,
+    references: [],
+    firstFrame: null,
+    audioReferences: null,
+    videoReferences: null,
+    dialogue: null,
+    director,
+    lastFrame: null,
+  });
+  const creativeBinding = localGpuCreativeBindingDigest(canonicalJob);
+  assertLocalGpuCreativeBinding(canonicalJob, creativeBinding);
+  return {
+    uploadBinding,
+    canonicalJob,
+    creativeBinding,
+    speechReviewRequired: input.audioPolicy === "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
+    body: {
+      contractVersion: 3,
+      assetMode: "WITHOUT_ASSET",
+      environment: input.environment,
+      jobId: input.jobId,
+      sceneExecutionId: input.sceneExecutionId,
+      workspaceId: input.workspaceId,
+      workflow: LOCAL_GPU_T2V_WORKFLOW,
+      prompt: input.prompt,
+      durationSec,
+      durationSource: LOCAL_GPU_DURATION_SOURCE,
+      audioPolicy: input.audioPolicy,
+      aspectRatio: input.aspectRatio,
+      megapixels: input.megapixels ?? null,
+      voiceInstructions: null,
+      seed: input.seed,
+      references: [],
+      firstFrame: null,
+      audioReferences: null,
+      videoReferences: null,
+      dialogue: null,
+      director,
+      lastFrame: null,
+      upload: destination,
     },
   };
 }
