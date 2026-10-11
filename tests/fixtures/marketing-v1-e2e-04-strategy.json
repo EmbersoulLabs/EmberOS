@@ -1,0 +1,61 @@
+{
+  "industry": "florist",
+  "businessType": "florist",
+  "product": "Fresh flower bouquet",
+  "marketingGoal": "Brand awareness",
+  "marketingAngle": "Creating a sense of luxury through layering and color in floral arrangements",
+  "brandPersonality": [
+    "warm"
+  ],
+  "tone": "warm",
+  "videoStyle": "emotional and visually appealing",
+  "audience": {
+    "age": "25-45",
+    "gender": "all",
+    "location": "Singapore",
+    "interests": [
+      "gifting",
+      "floral design",
+      "event planning",
+      "home decor"
+    ],
+    "buyingIntent": "looking for high-quality floral gifts",
+    "painPoints": [
+      "difficulty in finding elegant flower arrangements",
+      "concern about the quality of flowers",
+      "wanting to impress recipients"
+    ],
+    "desiredOutcome": "to find a stunning flower bouquet that conveys thoughtfulness and luxury"
+  },
+  "customerJourney": "awareness",
+  "platformPriority": [
+    "tiktok"
+  ],
+  "ctaStrategy": "Direct message to get similar arrangements, save for later, and follow for more floral inspiration",
+  "keywords": [
+    "flower bouquet",
+    "luxury flowers",
+    "gift ideas",
+    "floral arrangements"
+  ],
+  "hashtags": {
+    "industry": [
+      "#Florist",
+      "#FlowerBouquet",
+      "#FloralDesign"
+    ],
+    "local": [
+      "#SingaporeFlorist",
+      "#SingaporeFlowers"
+    ],
+    "trending": [
+      "#FlowerPower",
+      "#GiftIdeas"
+    ],
+    "seo": [
+      "FreshFlowerBouquet",
+      "LuxuryFloralDesign"
+    ]
+  },
+  "confidence": 0.9
+}

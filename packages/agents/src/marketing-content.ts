@@ -24,6 +24,9 @@ import {
   type StrategyPlan,
   type VisionAnalysis,
   MARKETING_SKILL_GUIDANCE,
+  CONTENT_CREATIVE_GUIDANCE,
+  buildMarketingCreativeFactContract,
+  creativeAuthorizationFromBusiness,
   CONTENT_JSON_CONTRACT,
   authorizedMarketingFacts,
   evaluateContentContract,
@@ -69,6 +72,8 @@ marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100 cont
 estimatedCtr, estimatedEngagement, estimatedConversion (empty strings unless the input already contains that measured figure)
 
 ${MARKETING_SKILL_GUIDANCE}
+
+${CONTENT_CREATIVE_GUIDANCE}
 
 ### Dashboard: strategyBrief
 primaryGoal, targetAudience, contentAngle, painPoint, desiredEmotion, ctaStrategy (one line each)
@@ -840,6 +845,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     platforms: input.platforms,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
+    creativeFacts: buildMarketingCreativeFactContract(input.businessInformation, input.platforms),
     ...(input.userNotes ? { userNotes: input.userNotes } : {}),
     locale: localeToPromptTag(locale),
     outputLanguage: outputLanguageInstruction(locale),
@@ -858,6 +864,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   const evaluated = evaluateContentContract(result, {
     brief: substantiveCampaignBrief(input.userNotes, input.videoAnalysis) ?? null,
     ...authorizedMarketingFacts(input.businessInformation),
+    ...creativeAuthorizationFromBusiness(input.businessInformation, input.platforms),
     durationSec: explicitScriptDurationSec(input.userNotes),
     providerRequestId,
   });
