@@ -59,6 +59,13 @@ export type CertificationPlanningIdentity = {
   actorUserId: string;
 };
 
+/** Server-side transport grant. It is valid only when the ledger row matches it. */
+export type CertificationPlanningHttpGrant = CertificationPlanningIdentity & {
+  planningClaimId: string;
+  logicalCallIdentity: string;
+  model: typeof CERTIFICATION_PLANNING_MODEL;
+};
+
 export class CertificationPlanningAuthorityService {
   constructor(private readonly db: Db = getDb()) {}
 
@@ -202,6 +209,47 @@ export class CertificationPlanningAuthorityService {
       if (!claim) throw new CertificationPlanningAuthorityError("PLANNING_CLAIM_INVALID", "Planning call claim not persisted");
       return claim;
     });
+  }
+
+  /**
+   * Re-read the acquired claim immediately before HTTP. A context object alone
+   * is not authorization.
+   */
+  async assertHttpTransportAuthorized(grant: CertificationPlanningHttpGrant): Promise<void> {
+    CertificationEnvironmentSchema.parse(grant.environment);
+    if (grant.model !== CERTIFICATION_PLANNING_MODEL || !grant.logicalCallIdentity.trim() || !grant.planningClaimId.trim()) {
+      throw new CertificationPlanningAuthorityError("PLANNING_HTTP_GRANT_INVALID", "Certification transport grant is incomplete");
+    }
+    const [claim] = await this.db.select().from(schema.certificationPlanningClaims).where(eq(schema.certificationPlanningClaims.planningClaimId, grant.planningClaimId)).limit(1);
+    if (!claim || claim.status !== "RESERVED") {
+      throw new CertificationPlanningAuthorityError("PLANNING_HTTP_CLAIM_REQUIRED", "A reserved certification planning claim is required before HTTP");
+    }
+    if (claim.logicalCallIdentity !== grant.logicalCallIdentity || claim.model !== CERTIFICATION_PLANNING_MODEL || claim.requestedBy !== grant.actorUserId || cents(claim.reservedMaximumUsd) < 1) {
+      throw new CertificationPlanningAuthorityError("PLANNING_SCOPE_INVALID", "Certification transport claim does not match the execution");
+    }
+    const [authority] = await this.db.select().from(schema.certificationPlanningAuthorities).where(eq(schema.certificationPlanningAuthorities.planningAuthorityId, claim.planningAuthorityId)).limit(1);
+    if (!authority || authority.status !== "ACTIVE") {
+      throw new CertificationPlanningAuthorityError("PLANNING_AUTHORITY_MISSING", "Active certification planning authority required");
+    }
+    if (
+      authority.environment !== grant.environment
+      || authority.certificationRunId !== grant.certificationRunId
+      || authority.orgId !== grant.orgId
+      || authority.workspaceId !== grant.workspaceId
+      || authority.campaignId !== grant.campaignId
+      || authority.storyId !== grant.storyId
+      || authority.authorizedBy !== grant.actorUserId
+      || authority.model !== grant.model
+      || authority.maxTransportAttempts !== 1
+    ) {
+      throw new CertificationPlanningAuthorityError("PLANNING_SCOPE_INVALID", "Certification transport authority does not match the execution");
+    }
+    if (cents(authority.spentPlanningCostUsd) + cents(authority.reservedPlanningCostUsd) > cents(authority.maxPlanningCostUsd)) {
+      throw new CertificationPlanningAuthorityError("PLANNING_BUDGET_EXCEEDED", "Certification transport budget is exhausted");
+    }
+    if (authority.consumedLogicalCalls + authority.reservedLogicalCalls > authority.maxLogicalCalls) {
+      throw new CertificationPlanningAuthorityError("PLANNING_CALL_LIMIT_EXHAUSTED", "Certification transport logical-call allowance is exhausted");
+    }
   }
 
   async settle(input: { planningClaimId: string; inputTokens: number; outputTokens: number; providerRequestId?: string | null; completedAt: string }) {
