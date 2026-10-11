@@ -439,3 +439,51 @@ test("preserves Chinese, English, and Malay through the browser, clipboard, and 
   };
   await context.close();
 });
+
+test("drafts a one-sentence marketing brief without starting generation", async ({ browser }) => {
+  const context = await browser.newContext();
+  await signIn(context, seed.operatorId);
+  const page = await context.newPage();
+  watch(page);
+  await page.goto(`/w/${seed.workspaceSlug}/campaigns/new`);
+  await expect(page.getByLabel("One-sentence marketing request")).toBeVisible();
+  await page.getByLabel("One-sentence marketing request").fill("帮我的花店生成一个30秒短视频广告，目标是吸引新加坡顾客。");
+  const drafted = page.waitForResponse(
+    (res) => res.url().includes("/marketing-request") && res.request().method() === "POST"
+  );
+  await page.getByRole("button", { name: "Draft brief" }).click();
+  const response = await drafted;
+  const body = await response.json();
+  expect(response.status(), JSON.stringify(body)).toBe(200);
+  record("oneSentence", response.status(), {
+    startsPaidGeneration: body.startsPaidGeneration,
+    mediaGenerationAuthorized: body.mediaGenerationAuthorized,
+    durationSec: body.draft?.durationSec,
+    locations: body.draft?.locations,
+    missing: body.draft?.missing,
+  });
+  expect(body.startsPaidGeneration).toBe(false);
+  expect(body.mediaGenerationAuthorized).toBe(false);
+  expect(body.draft.durationSec).toBe(30);
+  expect(body.draft.locations).toEqual(["Singapore"]);
+  expect(body.draft.campaignName).toBe("Ember Cafe 30s");
+  expect(body.draft.campaignBrief).toContain("Promote only these authorized facts: Coffee.");
+  expect(body.draft.campaignBrief).toContain("Do not add prices");
+  expect(body.draft.campaignBrief).not.toMatch(/\$\d|保证转化|五星好评|Orchard Road/);
+  expect(body.draft.missing).toEqual([]);
+  await expect(page.getByText("This draft does not start video generation.")).toBeVisible();
+  expect(paidRequests).toEqual([]);
+
+  const editor = await browser.newContext();
+  await signIn(editor, seed.editorId);
+  const me = await editor.request.get("/api/me");
+  expect(me.status()).toBe(200);
+  const meBody = await me.json();
+  const workspace = meBody.workspaces.find((item: { slug: string; id: string }) => item.slug === seed.workspaceSlug);
+  const denied = await editor.request.post(`/api/workspaces/${workspace.id}/marketing-request`, {
+    data: { request: "帮我的花店生成一个30秒短视频广告，目标是吸引新加坡顾客。" },
+  });
+  expect(denied.status()).toBe(403);
+  await editor.close();
+  await context.close();
+});

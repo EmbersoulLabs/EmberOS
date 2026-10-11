@@ -25,6 +25,7 @@ import {
   type Platform,
   type StrategyPlan,
   type VisionAnalysis,
+  MARKETING_SKILL_GUIDANCE,
 } from "@ceo-agent/shared";
 
 export type { ContentLocale };
@@ -68,6 +69,8 @@ If a fact is missing, omit it.
 Write each language field in that language only. Do not copy one language into another.
 Platform captions must differ. Xiaohongshu stays Simplified Chinese.
 15s = hook + one benefit + CTA. 30s = hook + pain + benefit + CTA. 60s = hook + scene + two supported benefits + CTA.
+
+${MARKETING_SKILL_GUIDANCE}
 
 marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100 content checklist, not live analytics),
 estimatedCtr, estimatedEngagement, estimatedConversion (empty strings unless the input already contains that measured figure)

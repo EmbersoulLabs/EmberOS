@@ -62,6 +62,9 @@ export function CreateCampaignWizard({ workspaceSlug }: { workspaceSlug: string 
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [sentence, setSentence] = useState("");
+  const [sentenceNote, setSentenceNote] = useState("");
+  const [sentenceBusy, setSentenceBusy] = useState(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const storageKey = `create-campaign-wave3:${workspaceSlug}`;
   const language: "en" | "zh" | "ms" = locale === "zh" || locale === "ms" ? locale : "en";
@@ -173,6 +176,45 @@ export function CreateCampaignWizard({ workspaceSlug }: { workspaceSlug: string 
     } finally { setSubmitting(false); }
   }
 
+  async function draftFromSentence() {
+    if (!workspaceId || sentenceBusy || !sentence.trim()) return;
+    setSentenceBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/workspaces/${workspaceId}/marketing-request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request: sentence }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body.draft) throw new Error(body.error ?? "Could not draft the brief");
+      const result = body.draft as {
+        campaignName: string;
+        objective: CampaignObjectiveId;
+        platforms: PublishingPlatformId[];
+        audienceSummary: string;
+        locations: string[];
+        campaignBrief: string;
+        missing: string[];
+      };
+      setDraft((current) => ({
+        ...current,
+        ...(result.campaignName ? { name: result.campaignName } : {}),
+        objective: result.objective,
+        publishingPlatforms: result.platforms,
+        ...(result.audienceSummary ? { audienceSummary: result.audienceSummary } : {}),
+        ...(result.locations.length > 0 ? { locations: result.locations.join(", ") } : {}),
+        campaignBrief: result.campaignBrief,
+      }));
+      const needed = result.missing.length > 0 ? `Still needed: ${result.missing.join(", ")}. ` : "";
+      setSentenceNote(`${needed}This draft does not start video generation.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not draft the brief");
+    } finally {
+      setSentenceBusy(false);
+    }
+  }
+
   if (loading) return <p className="p-6 text-sm text-ink-secondary">Loading Create Campaign…</p>;
 
   return (
@@ -186,7 +228,7 @@ export function CreateCampaignWizard({ workspaceSlug }: { workspaceSlug: string 
         {STEPS.map((label, index) => <li key={label} aria-current={index === step ? "step" : undefined} className={`rounded-lg px-2 py-2 text-center text-[10px] font-semibold sm:text-xs ${index === step ? "bg-navy text-white" : index < step ? "bg-emerald-50 text-emerald-800" : "bg-surface-muted text-ink-secondary"}`}><span className="sm:hidden">{index + 1}</span><span className="hidden sm:inline">{label}</span></li>)}
       </ol>
       <section className="brand-card p-5 sm:p-7">
-        {step === 0 ? <label className="block text-sm font-semibold text-navy">Campaign Name<input autoFocus value={draft.name} onChange={(event) => set("name", event.target.value)} maxLength={200} className="mt-2 w-full rounded-xl border border-border px-4 py-3 font-normal" placeholder="e.g. Summer Product Launch" /></label> : null}
+        {step === 0 ? <div className="space-y-5"><label className="block text-sm font-semibold text-navy">One-sentence marketing request<textarea aria-label="One-sentence marketing request" value={sentence} onChange={(event) => setSentence(event.target.value)} rows={3} maxLength={500} className="mt-2 w-full rounded-xl border border-border px-4 py-3 font-normal" placeholder="帮我的花店生成一个30秒短视频广告，目标是吸引新加坡顾客。" /></label><button type="button" disabled={sentenceBusy || !sentence.trim()} onClick={() => void draftFromSentence()} className="rounded-xl border border-navy px-4 py-2 text-sm font-semibold text-navy disabled:opacity-40">{sentenceBusy ? "Drafting brief…" : "Draft brief"}</button>{sentenceNote ? <p role="status" className="text-sm text-ink-secondary">{sentenceNote}</p> : null}<label className="block text-sm font-semibold text-navy">Campaign Name<input autoFocus value={draft.name} onChange={(event) => set("name", event.target.value)} maxLength={200} className="mt-2 w-full rounded-xl border border-border px-4 py-3 font-normal" placeholder="e.g. Summer Product Launch" /></label></div> : null}
         {step === 1 ? <CampaignContextStep draft={draft} set={set} workspaceId={workspaceId} language={language} objectiveText={objectiveText} /> : null}
         {step === 2 ? <div><label className="block text-sm font-semibold text-navy">Campaign Brief <span className="font-normal text-ink-secondary">(optional)</span><textarea value={draft.campaignBrief} onChange={(event) => set("campaignBrief", event.target.value)} rows={8} maxLength={10000} className="mt-2 w-full rounded-xl border border-border px-4 py-3 font-normal" placeholder="Describe the marketing intent and content direction." /></label>{workspaceId ? <CampaignBriefAssistant workspaceId={workspaceId} value={draft.campaignBrief} context={{ campaignName: draft.name, objective: objectiveText, platforms: draft.publishingPlatforms, targetAudience: draft.audienceSummary, language }} onAccept={(value) => set("campaignBrief", value)} /> : null}</div> : null}
         {step === 3 ? <dl className="space-y-4"><Review label="Campaign Name" value={draft.name} /><Review label="Objective" value={objectiveText} /><Review label="Publishing Platforms" value={draft.publishingPlatforms.map(platformLabel).join(", ")} /><Review label="Target Audience" value={draft.audienceSummary} /><Review label="Shared assets" value="Optional. Choose assets inside a module." /><Review label="Campaign Brief" value={draft.campaignBrief || "Not provided"} /><Review label="Inferred Language" value={`${language.toUpperCase()} (read-only)`} /></dl> : null}
