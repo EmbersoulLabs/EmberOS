@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { projectMarketingCampaignRead } from "../apps/web/src/lib/campaign-marketing-access";
+import { isOperationalWorkspaceRole, projectMarketingCampaignRead, projectMarketingTaskRead } from "../apps/web/src/lib/campaign-marketing-access";
 
 describe("campaign marketing access projection", () => {
   it("keeps the marketing package and drops operational task data", () => {
@@ -56,5 +56,37 @@ describe("campaign marketing access projection", () => {
     expect(mutations).toContain("requireControlledSelfUseWorkspaceOperator");
     expect(operatorGate).toContain('requireWorkspaceRole(input.workspaceId, input.userId, "operator")');
     expect(operatorGate).toContain('requireWorkspaceRole(input.workspaceId, input.userId, "editor")');
+  });
+
+  it("projects a direct task read below operator and keeps the operator payload path", () => {
+    const projected = projectMarketingTaskRead({
+      id: "task",
+      status: "completed",
+      campaignId: "campaign",
+      workspaceId: "workspace",
+      createdAt: "2026-10-11T00:00:00.000Z",
+      stepProgress: {
+        content_generate: { status: "completed", contentRevision: 2 },
+        export_packs: { "720p": { output: { filename: "operator-only-pack.zip" } } },
+      },
+    });
+    expect(projected.taskAccess).toBe("marketing");
+    expect(projected.creatives).toEqual([]);
+    expect(projected.clipCount).toBe(0);
+    expect(projected.task.stepProgress).not.toHaveProperty("export_packs");
+    expect(JSON.stringify(projected)).not.toContain("operator-only-pack.zip");
+    expect(isOperationalWorkspaceRole("admin")).toBe(true);
+    expect(isOperationalWorkspaceRole("operator")).toBe(true);
+    expect(isOperationalWorkspaceRole("editor")).toBe(false);
+    expect(isOperationalWorkspaceRole("publisher")).toBe(false);
+    expect(isOperationalWorkspaceRole("client_viewer")).toBe(false);
+
+    const route = readFileSync("apps/web/src/app/api/tasks/[id]/route.ts", "utf8");
+    const getBody = route.slice(route.indexOf("export async function GET"), route.indexOf("export async function POST"));
+    const postBody = route.slice(route.indexOf("export async function POST"));
+    expect(getBody.indexOf("requireWorkspaceRole")).toBeLessThan(getBody.indexOf("projectMarketingTaskRead"));
+    expect(getBody.indexOf("projectMarketingTaskRead")).toBeLessThan(getBody.indexOf("withSignedCreativeArtifacts"));
+    expect(postBody).toContain('requireWorkspaceRole(task.workspaceId, user.id, "operator")');
+    expect(postBody).not.toContain("projectMarketingTaskRead");
   });
 });

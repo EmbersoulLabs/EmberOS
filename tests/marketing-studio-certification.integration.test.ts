@@ -999,6 +999,17 @@ describe("campaign marketing role boundary", () => {
       type: "image",
       storagePath: `${workspaceId}/cert-hidden.png`,
     });
+    const require = createRequire(path.resolve("packages/db/package.json"));
+    const postgres = require("postgres") as (
+      url: string,
+      options: { max: number }
+    ) => ((strings: TemplateStringsArray, ...values: unknown[]) => Promise<unknown[]>) & {
+      json: (value: unknown) => unknown;
+      end: () => Promise<void>;
+    };
+    const sql = postgres(process.env.DATABASE_URL!, { max: 1 });
+    await sql`update tasks set generation_input_capsule = ${sql.json({ marker: "capsule-secret" })}, ceo_plan = ${sql.json({ marker: "plan-secret" })} where id = ${taskId}::uuid`;
+    await sql.end();
 
     const campaignRoute = await import("../apps/web/src/app/api/campaigns/[id]/route");
     const editorResponse = await campaignRoute.GET(campaignRequest(editorId), { params: Promise.resolve({ id: campaignId }) });
@@ -1030,6 +1041,39 @@ describe("campaign marketing role boundary", () => {
     expect(operatorBody.assets.some((asset) => asset.storagePath?.endsWith("cert-hidden.png"))).toBe(true);
     expect(operatorBody.task.stepProgress.export_packs).toBeTruthy();
 
+    const taskRoute = await import("../apps/web/src/app/api/tasks/[id]/route");
+    authState.userId = editorId;
+    const editorTask = await taskRoute.GET(new Request("http://127.0.0.1/task"), { params: Promise.resolve({ id: taskId }) });
+    expect(editorTask.status).toBe(200);
+    const editorTaskBody = await editorTask.json() as {
+      taskAccess: string;
+      creatives: unknown[];
+      task: { stepProgress: Record<string, unknown> };
+    };
+    expect(editorTaskBody.taskAccess).toBe("marketing");
+    expect(editorTaskBody.creatives).toEqual([]);
+    expect(editorTaskBody.task.stepProgress.content_generate).toBeTruthy();
+    expect(editorTaskBody.task.stepProgress.export_packs).toBeUndefined();
+    const editorTaskJson = JSON.stringify(editorTaskBody);
+    expect(editorTaskJson).not.toContain("operator-only-pack.zip");
+    expect(editorTaskJson).not.toContain("capsule-secret");
+    expect(editorTaskJson).not.toContain("plan-secret");
+
+    authState.userId = operatorId;
+    const operatorTask = await taskRoute.GET(new Request("http://127.0.0.1/task"), { params: Promise.resolve({ id: taskId }) });
+    expect(operatorTask.status).toBe(200);
+    const operatorTaskJson = JSON.stringify(await operatorTask.json());
+    expect(operatorTaskJson).toContain("operator-only-pack.zip");
+    expect(operatorTaskJson).toContain("capsule-secret");
+    expect(operatorTaskJson).toContain("plan-secret");
+
+    authState.userId = editorId;
+    const editorRetry = await taskRoute.POST(
+      new Request("http://127.0.0.1/task", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ step: "full" }) }),
+      { params: Promise.resolve({ id: taskId }) }
+    );
+    expect(editorRetry.status).toBe(403);
+
     const renamed = await campaignRoute.PATCH(campaignRequest(editorId, "PATCH"), { params: Promise.resolve({ id: campaignId }) });
     expect(renamed.status).toBe(404);
     const removed = await campaignRoute.DELETE(campaignRequest(editorId, "DELETE"), { params: Promise.resolve({ id: campaignId }) });
@@ -1051,6 +1095,11 @@ describe("campaign marketing role boundary", () => {
     expect(regenerated.status).toBe(200);
 
     authState.userId = viewerId;
+    const viewerTask = await taskRoute.GET(new Request("http://127.0.0.1/task"), { params: Promise.resolve({ id: taskId }) });
+    expect(viewerTask.status).toBe(200);
+    const viewerTaskJson = JSON.stringify(await viewerTask.json());
+    expect(viewerTaskJson).not.toContain("capsule-secret");
+    expect(viewerTaskJson).not.toContain("operator-only-pack.zip");
     const viewerCampaign = await campaignRoute.GET(campaignRequest(viewerId), { params: Promise.resolve({ id: campaignId }) });
     expect(viewerCampaign.status).toBe(404);
     const viewerRegenerate = await routes.regenerate(
@@ -1078,6 +1127,8 @@ describe("campaign marketing role boundary", () => {
     );
     expect(wrongWorkspace.status).toBe(404);
     authState.userId = outsiderId;
+    const outsiderTask = await taskRoute.GET(new Request("http://127.0.0.1/task"), { params: Promise.resolve({ id: taskId }) });
+    expect(outsiderTask.status).toBe(403);
     const outsiderRegenerate = await routes.regenerate(
       new Request("http://127.0.0.1/regenerate", {
         method: "POST",

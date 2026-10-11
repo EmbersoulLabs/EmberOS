@@ -20,6 +20,22 @@ type MarketingTaskRead = {
   stepProgress: unknown;
 } | null;
 
+const OPERATIONAL_WORKSPACE_ROLES = new Set(["admin", "operator"]);
+
+/** Operator and workspace admin keep the existing operational task payload. */
+export function isOperationalWorkspaceRole(role: string): boolean {
+  return OPERATIONAL_WORKSPACE_ROLES.has(role);
+}
+
+type MarketingTaskResponseRead = {
+  id: string;
+  status: string;
+  campaignId: string;
+  workspaceId: string;
+  createdAt: Date | string;
+  stepProgress: unknown;
+};
+
 function marketingStepProgress(value: unknown): Record<string, unknown> {
   const progress = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const next: Record<string, unknown> = {};
@@ -61,5 +77,25 @@ export function projectMarketingCampaignRead(campaign: CampaignRead, task: Marke
     hasVideoAsset: false,
     clipCount: 0,
     canDelete: false,
+  };
+}
+
+/** Task fields below operator. Omits execution identity, cost, prompts, and signed media. */
+export function projectMarketingTaskRead(task: MarketingTaskResponseRead) {
+  const stepProgress = marketingStepProgress(task.stepProgress);
+  return {
+    taskAccess: "marketing" as const,
+    task: {
+      id: task.id,
+      status: task.status,
+      campaignId: task.campaignId,
+      workspaceId: task.workspaceId,
+      createdAt: task.createdAt,
+      stepProgress,
+    },
+    stepProgress,
+    creative: null,
+    creatives: [] as [],
+    clipCount: 0,
   };
 }

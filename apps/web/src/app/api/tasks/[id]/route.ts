@@ -3,6 +3,7 @@ import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { retryPipelineStep } from "@ceo-agent/agents";
+import { isOperationalWorkspaceRole, projectMarketingTaskRead } from "@/lib/campaign-marketing-access";
 import { withSignedCreativeArtifacts, withSignedTaskExportProgress } from "@/lib/video-artifact-delivery";
 
 export async function GET(
@@ -16,7 +17,10 @@ export async function GET(
 
     const [task] = await db.select().from(schema.tasks).where(eq(schema.tasks.id, id)).limit(1);
     if (!task) return apiError("Task not found", "NOT_FOUND", 404);
-    await requireWorkspaceRole(task.workspaceId, user.id, "client_viewer");
+    const membership = await requireWorkspaceRole(task.workspaceId, user.id, "client_viewer");
+    if (!isOperationalWorkspaceRole(membership.role)) {
+      return apiSuccess(projectMarketingTaskRead(task));
+    }
 
     const creatives = await db
       .select()
