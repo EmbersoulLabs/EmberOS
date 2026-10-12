@@ -34,7 +34,13 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (api) await api.closeDb();
-  if (sql) { await sql`delete from organizations where id=${ids.org}`; await sql.end(); }
+  if (sql) {
+    // The assets organization FK is installed by a later CI migration, so
+    // this fixture cannot rely on organization deletion to cascade yet.
+    await sql`delete from assets where id=${ids.assetA}`;
+    await sql`delete from organizations where id=${ids.org}`;
+    await sql.end();
+  }
 });
 
 describe("Campaign Content Iteration PostgreSQL authority", () => {
