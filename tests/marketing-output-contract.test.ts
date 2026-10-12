@@ -131,6 +131,39 @@ describe("marketing output contract", () => {
     expect(corrupted.diagnostic.codes).toContain("BRIEF_LEAKAGE");
   });
 
+  it("replays the eighth E2E strategy-to-fact promotion as an unsupported product attribute", () => {
+    const replay = evaluateContentContract(content({
+      platformAssets: nativePlatformAssets(),
+      voiceScripts: {
+        "15s": "See this fresh flower bouquet.",
+        "30s": "This fresh flower bouquet features vibrant colors and unique layering, crafted to impress Singapore gift buyers.",
+        "60s": "This fresh flower bouquet features vibrant colors and unique layering, crafted to impress Singapore gift buyers. Notice every detail and save the idea.",
+      },
+    }), { ...FACTS, enforcePlatformNative: true });
+    expect(replay.diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
+    expect(replay.diagnostic.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ claimCategory: "product_attribute", field: "voiceScripts.30s" }),
+    ]));
+
+    const authorized = evaluateContentContract(content({
+      voiceScripts: {
+        "15s": "See this fresh flower bouquet.",
+        "30s": "This fresh flower bouquet features vibrant colors and unique layering for Singapore gift buyers.",
+        "60s": "This fresh flower bouquet features vibrant colors and unique layering for Singapore gift buyers. Notice every detail and save the idea.",
+      },
+    }), { ...FACTS, description: "Fresh flower bouquet features vibrant colors and unique layering." });
+    expect(authorized.diagnostic.codes).not.toContain("UNSUPPORTED_CLAIM");
+
+    const mismatched = evaluateContentContract(content({
+      voiceScripts: {
+        "15s": "See this fresh flower bouquet.",
+        "30s": "This fresh flower bouquet features imported gold-dipped petals for Singapore gift buyers.",
+        "60s": "This fresh flower bouquet features imported gold-dipped petals for Singapore gift buyers. Notice every detail and save the idea.",
+      },
+    }), { ...FACTS, description: "Fresh flower bouquet features vibrant colors and unique layering." });
+    expect(mismatched.diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
+  });
+
   it("rejects truncated JSON, brief leakage, unsupported claims, and blocks translation", () => {
     expect(evaluateContentContract("{").diagnostic.codes).toContain("CONTENT_JSON_TRUNCATED");
     const leaked = evaluateContentContract(content({

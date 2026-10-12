@@ -50,6 +50,7 @@ export type MarketingClaimCategory =
   | "ranking"
   | "location"
   | "testimonial"
+  | "product_attribute"
   | "channel";
 
 export type MarketingContractIssue = {
@@ -236,6 +237,7 @@ const GUARANTEE_CLAIM = /(?:\bguaranteed\b|保证转化|保证送达|保证到�
 const RANKING_CLAIM = /(?:\bbest\s+florist\b|bestflowerstore|bestflorist|#1\s*florist|number\s+one\s+florist|最好的花店|全岛第一|kedai bunga terbaik|\bfinest\b|最优质|顶级花卉)/i;
 const LOCATION_CLAIM = /visit our (?:shop|store)|visit us(?:\s+today|\s+in\s+[A-Za-z]+|\s+at\s+[A-Za-z]+)?|our (?:shop|store)\b|right in the heart of|in the heart of|storefront|walk-?in|shop address|市中心|到店|进店|门店|实体店|欢迎到店|欢迎来到|lawati kedai|di pusat bandar|kunjungi kedai/i;
 const TESTIMONIAL_CLAIM = /customer reviews?|customers say|our customers love|five[- ]star|5[- ]star|客户评价|顾客说|真实评价|testimoni pelanggan|pelanggan kata/i;
+const PRODUCT_ATTRIBUTE_CLAIM = /(?:bouquet|flowers?|arrangement|product|service|花束|鲜花|产品|服务|sejambak|bunga|produk|perkhidmatan)[^,.!?。！？]{0,30}(?:\b(?:has|have|features?|offers?|uses?|crafted\s+(?:with|to)|made\s+with|known\s+for)\b|(?:具有|采用|选用|精心打造|以.+制成)|(?:mempunyai|menampilkan|menawarkan|dibuat\s+dengan))[^,.!?。！？]{1,80}?(?=\s+(?:for|untuk)\b|[,\.!?。！？]|$)/i;
 const CTA_OFFER = /\d+\s*%|\bdiscount\b|\bsale\b|free\s+delivery|优惠|折扣|半价|促销|买一送一/i;
 const CTA_DENIAL = /no\s+promotion|no\s+discount|not\s+on\s+sale|full\s+price|no\s+delivery|没有优惠|无折扣|不打折|无促销/i;
 const NEGATED_FACT = /\b(no|not|without)\b|不提供|不含|没有/i;
@@ -257,6 +259,7 @@ const CLAIM_RULES: Array<{ category: MarketingClaimCategory; pattern: RegExp; al
   { category: "ranking", pattern: RANKING_CLAIM, allow: RANKING_CLAIM },
   { category: "location", pattern: LOCATION_CLAIM, allow: LOCATION_CLAIM },
   { category: "testimonial", pattern: TESTIMONIAL_CLAIM, allow: TESTIMONIAL_CLAIM },
+  { category: "product_attribute", pattern: PRODUCT_ATTRIBUTE_CLAIM, allow: PRODUCT_ATTRIBUTE_CLAIM },
 ];
 
 function claimMatches(text: string, facts: StrategyContractFacts): Array<{ category: MarketingClaimCategory; excerpt: string }> {
@@ -265,13 +268,27 @@ function claimMatches(text: string, facts: StrategyContractFacts): Array<{ categ
   for (const rule of CLAIM_RULES) {
     const match = text.match(rule.pattern);
     if (!match) continue;
-    const allowed = rule.category === "location"
+    const allowed = rule.category === "product_attribute"
+      ? productAttributeIsGrounded(match[0], lines)
+      : rule.category === "location"
       ? Boolean(facts.address?.trim()) || profileAllows(lines, rule.allow)
       : profileAllows(lines, rule.allow);
     if (allowed) continue;
     hits.push({ category: rule.category, excerpt: match[0].replace(/\s+/g, " ").trim().slice(0, 80) });
   }
   return hits;
+}
+
+function productAttributeIsGrounded(claim: string, lines: string[]): boolean {
+  const ignored = new Set([
+    "a", "an", "and", "are", "bouquet", "flower", "flowers", "arrangement", "product", "service",
+    "has", "have", "feature", "features", "offers", "uses", "crafted", "made", "known", "for", "to", "with",
+    "the", "this", "sejambak", "bunga", "produk", "perkhidmatan", "mempunyai", "menampilkan", "menawarkan",
+  ]);
+  const tokens = claim.toLowerCase().match(/[a-z0-9]+|[\p{Script=Han}]{2,}/gu)?.filter((token) => !ignored.has(token)) ?? [];
+  if (tokens.length === 0) return false;
+  const authority = lines.join(" ").toLowerCase();
+  return tokens.every((token) => authority.includes(token));
 }
 
 function unsupportedClaim(text: string, facts: StrategyContractFacts): boolean {

@@ -186,13 +186,12 @@ export function platformAssetToCaption(asset: PlatformMarketingAsset): string {
     .trim();
 }
 
-/** Sync legacy captions map from platformAssets (threads stays assets-only). */
+/** Sync the rich assets into the locale-aware flat caption contract. */
 export function syncCaptionsFromPlatformAssets(
   assets: PlatformMarketingAssets
 ): Partial<MarketingCaptions> {
   const out: Partial<MarketingCaptions> = {};
   for (const id of MARKETING_PLATFORM_IDS) {
-    if (id === "threads") continue;
     const asset = assets[id];
     if (asset) {
       const cap = platformAssetToCaption(asset);
@@ -208,7 +207,6 @@ export function platformAssetsFromCaptions(
 ): PlatformMarketingAssets {
   const assets: PlatformMarketingAssets = {};
   for (const id of MARKETING_PLATFORM_IDS) {
-    if (id === "threads") continue;
     const cap = captions[id as keyof MarketingCaptions]?.trim();
     if (cap) assets[id] = { caption: cap, cta: "", hashtags: [] };
   }

@@ -13,6 +13,7 @@ import {
   selectBusinessFacts,
   type MarketingContentPackage,
   type PlatformMarketingAsset,
+  isMarketingPackLocaleReady,
 } from "@ceo-agent/shared";
 
 const { callJsonModel } = vi.hoisted(() => ({ callJsonModel: vi.fn() }));
@@ -70,6 +71,21 @@ function pack(): MarketingContentPackage {
 }
 
 describe("marketing studio locale integrity", () => {
+  it("does not report Malay ready by silently substituting English", () => {
+    const base = pack();
+    base.hooks = base.hooks.map((hook) => ({ ...hook, textMs: undefined }));
+    base.cta = base.cta.map((cta) => ({ ...cta, textMs: undefined }));
+    expect(isMarketingPackLocaleReady(base, "ms")).toBe(false);
+  });
+
+  it("keeps Threads in independent English and Malay caption slots", () => {
+    const base = pack();
+    const english = applyPlatformLocaleEdit(base, "threads", asset("A conversational English thought"), "en");
+    const malay = applyPlatformLocaleEdit(english, "threads", asset("Pandangan perbualan Bahasa Melayu"), "ms");
+    expect(malay.captionsEn?.threads).toContain("English thought");
+    expect(malay.captionsMs?.threads).toContain("Bahasa Melayu");
+    expect(malay.captions.threads).not.toContain("English thought");
+  });
   it("editing English TikTok preserves Chinese and Malay TikTok", () => {
     const base = pack();
     const next = applyPlatformLocaleEdit(base, "tiktok", asset("Updated English"), "en");

@@ -7,6 +7,7 @@ const CAPTION_PLATFORM_IDS = [
   "facebook",
   "linkedin",
   "xiaohongshu",
+  "threads",
   "youtubeShorts",
   "googleBusiness",
 ] as const;

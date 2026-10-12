@@ -243,6 +243,8 @@ export const MarketingCaptionsSchema = z.object({
   facebook: z.string().default(""),
   linkedin: z.string().default(""),
   xiaohongshu: z.string().default(""),
+  /** Added after V1 launch; optional keeps historical packages source-compatible. */
+  threads: z.string().optional(),
   youtubeShorts: z.string().default(""),
   googleBusiness: z.string().default(""),
 });
@@ -366,6 +368,7 @@ function parseCaptionBlock(raw: Record<string, unknown>): MarketingCaptions {
     facebook: String(raw.facebook ?? ""),
     linkedin: String(raw.linkedin ?? ""),
     xiaohongshu: String(raw.xiaohongshu ?? ""),
+    threads: String(raw.threads ?? ""),
     youtubeShorts: String(raw.youtubeShorts ?? raw.youtube ?? ""),
     googleBusiness: String(raw.googleBusiness ?? raw.google ?? ""),
   };
@@ -388,7 +391,6 @@ function mergeCaptionsFromPlatformAssets(
 ): MarketingCaptions {
   const merged = { ...captions };
   for (const [id, asset] of Object.entries(assets)) {
-    if (id === "threads") continue;
     if ((merged as Record<string, string>)[id]?.trim()) continue;
     const cap = captionFromPlatformAsset(asset);
     if (cap && id in merged) {

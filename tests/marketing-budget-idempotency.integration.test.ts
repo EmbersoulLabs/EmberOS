@@ -112,6 +112,34 @@ describe("marketing budget settlement idempotency", () => {
     expect(await logsFor(scope.taskId)).toHaveLength(1);
   });
 
+  it("preserves reservation settlement evidence when the final Marketing Package is persisted", async () => {
+    const scope = await insertTask({ progress: { content_generate: { status: "running", contentRevision: 0 } } });
+    const reservation = await reserve(scope.taskId);
+    await finish(scope, reservation, 0.03, "marketing_translate");
+    const contentPackage = {
+      voiceScripts: { "15s": "Fresh flowers", "30s": "Fresh flower bouquet", "60s": "Fresh flower bouquet" },
+      subtitleTimeline: [],
+      captions: { tiktok: "Fresh flower bouquet", instagram: "", facebook: "", linkedin: "", xiaohongshu: "", threads: "", youtubeShorts: "", googleBusiness: "" },
+      hooks: [{ text: "Fresh flower bouquet", type: "curiosity" }],
+      cta: [{ text: "Notice the bouquet" }],
+      voiceStyle: {}, broll: [], musicMood: "warm", effects: [],
+      postingRecommendation: { bestPostingTime: "", bestPlatform: "TikTok", idealAudience: "", estimatedEngagement: "" },
+      consistencyScore: 85, aiSuggestions: [],
+    };
+    const saved = await dbApi.saveMarketingPackIfCurrent({ taskId: scope.taskId, expectedRevision: 0, contentPackage });
+    expect(saved.ok).toBe(true);
+    const task = await loadTask(scope.taskId);
+    const progress = task.stepProgress as {
+      marketing_budget_settlements: Record<string, { costUsd: string }>;
+      marketing_budget_committed: number;
+      content_generate: { contentRevision: number };
+    };
+    expect(progress.marketing_budget_settlements[reservation.reservationId]?.costUsd).toBe("0.030000");
+    expectMoney(progress.marketing_budget_committed, "0.030000");
+    expect(progress.content_generate.contentRevision).toBe(1);
+    expect(await logsFor(scope.taskId)).toHaveLength(1);
+  });
+
   it("keeps cancellation idempotent and blocks settlement afterwards", async () => {
     const scope = await insertTask({ costUsd: "0.020000" });
     const reservation = await reserve(scope.taskId);

@@ -73,7 +73,7 @@ function pack(): MarketingContentPackage {
       instagram: "IG English",
       facebook: "",
       linkedin: "",
-      xiaohongshu: "",
+      xiaohongshu: "Xiaohongshu English archive",
       youtubeShorts: "",
       googleBusiness: "",
     },
@@ -82,7 +82,7 @@ function pack(): MarketingContentPackage {
       instagram: "IG Melayu",
       facebook: "",
       linkedin: "",
-      xiaohongshu: "",
+      xiaohongshu: "Arkib Xiaohongshu Melayu",
       youtubeShorts: "",
       googleBusiness: "",
     },
@@ -404,8 +404,8 @@ describe("postgres marketing budget and authorization", () => {
         hooksMs: ["Cangkuk"],
         ctaEn: ["Learn more"],
         ctaMs: ["Ketahui"],
-        captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
-        captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+        captionsEn: { tiktok: "TikTok English", instagram: "IG English", xiaohongshu: "Xiaohongshu English archive" },
+        captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu", xiaohongshu: "Arkib Xiaohongshu Melayu" },
       },
       usage: { input: 20, output: 10, costUsd: 0.04 },
     }));
@@ -520,8 +520,8 @@ describe("postgres marketing budget and authorization", () => {
         hooksMs: ["Cangkuk"],
         ctaEn: ["Learn more"],
         ctaMs: ["Ketahui"],
-        captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
-        captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+        captionsEn: { tiktok: "TikTok English", instagram: "IG English", xiaohongshu: "Xiaohongshu English archive" },
+        captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu", xiaohongshu: "Arkib Xiaohongshu Melayu" },
       },
       usage: { input: 20, output: 10, costUsd: 0.04 },
     });
@@ -555,8 +555,8 @@ describe("postgres marketing budget and authorization", () => {
       hooksMs: ["Cangkuk"],
       ctaEn: ["Learn more"],
       ctaMs: ["Ketahui"],
-      captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
-      captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+      captionsEn: { tiktok: "TikTok English", instagram: "IG English", xiaohongshu: "Xiaohongshu English archive" },
+      captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu", xiaohongshu: "Arkib Xiaohongshu Melayu" },
     };
     let releaseFirst: () => void = () => {};
     let releaseSecond: () => void = () => {};
@@ -640,8 +640,8 @@ describe("postgres marketing budget and authorization", () => {
       hooksMs: ["Cangkuk"],
       ctaEn: ["Learn more"],
       ctaMs: ["Ketahui"],
-      captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
-      captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+      captionsEn: { tiktok: "TikTok English", instagram: "IG English", xiaohongshu: "Xiaohongshu English archive" },
+      captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu", xiaohongshu: "Arkib Xiaohongshu Melayu" },
     };
     let releaseFirst: () => void = () => {};
     let releaseSecond: () => void = () => {};
@@ -725,8 +725,8 @@ describe("postgres marketing budget and authorization", () => {
         hooksMs: ["Cangkuk"],
         ctaEn: ["Learn more"],
         ctaMs: ["Ketahui"],
-        captionsEn: { tiktok: "TikTok English", instagram: "IG English" },
-        captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu" },
+        captionsEn: { tiktok: "TikTok English", instagram: "IG English", xiaohongshu: "Xiaohongshu English archive" },
+        captionsMs: { tiktok: "TikTok Melayu", instagram: "IG Melayu", xiaohongshu: "Arkib Xiaohongshu Melayu" },
       },
       usage: { input: 4, output: 2, costUsd: 0.01 },
     });
