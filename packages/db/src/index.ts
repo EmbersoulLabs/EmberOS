@@ -51,6 +51,7 @@ export * from "./queries/ai-story-scene-release";
 export * from "./queries/campaign-asset-refs";
 export * from "./queries/asset-library";
 export * from "./queries/create-campaign";
+export * from "./queries/campaign-content-iterations";
 export * from "./queries/admin-runtime-operations";
 export * from "./queries/ai-story-pre-dispatch-recovery";
 export * from "./queries/ai-story-pre-dispatch-bundle-supersession";
