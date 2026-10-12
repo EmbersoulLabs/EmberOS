@@ -16,6 +16,8 @@ import {
   effectiveCampaignGoal,
   resolveAutoClipSourceAsset,
   resolvePipelineContentLocale,
+  selectBusinessFacts,
+  blockUnauthorizedStrategyCta,
   alignStrategyWithVision,
   emitVideoStudioOpsEvent,
   type ContentLocale,
@@ -122,7 +124,8 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
     .limit(1);
   if (!campaign) throw new Error("Campaign not found");
 
-  const { brandProfile } = await loadCanonicalBusinessContext(task.workspaceId);
+  const { profile, brandProfile } = await loadCanonicalBusinessContext(task.workspaceId);
+  const businessInformation = selectBusinessFacts(profile, brandProfile);
   const assets = tracked.assets;
   const priorProgress = (task.stepProgress as StepProgress) ?? {};
   for (const [stepId, step] of Object.entries(priorProgress)) {
@@ -220,6 +223,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       creativeBrief,
       videoAnalysis,
       contentLocale,
+      businessInformation,
     });
     if (!strategyValidation.ok || !rawStrategy) {
       await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategyValidation);
@@ -339,6 +343,11 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
     } else {
       await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
+      const blockedStrategyCta = blockUnauthorizedStrategyCta(strategy.ctaStrategy, businessInformation);
+      if (blockedStrategyCta) {
+        await updateStep(taskId, "content_generate", { status: "failed", completedAt: new Date().toISOString(), output: blockedStrategyCta });
+        throw new Error("STRATEGY_CTA_UNAUTHORIZED");
+      }
       const { contentPackage, contentUsage, translateUsage, validation: contentValidation } = await generateInitialMarketingPackage({
         taskId,
         orgId: task.orgId,
@@ -353,6 +362,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
             campaignName: campaign.name,
             platforms: campaign.platforms,
             contentLocale,
+            businessInformation,
           }),
         translate: (rawContentPackage) => enrichMarketingPackTranslations(rawContentPackage),
       });

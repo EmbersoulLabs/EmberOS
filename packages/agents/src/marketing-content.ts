@@ -17,6 +17,7 @@ import {
   type CopyVariant,
   type HookSet,
   type HookType,
+  type MarketingBusinessFacts,
   type MarketingContentPackage,
   type MarketingPlatformId,
   type PlatformMarketingAsset,
@@ -26,6 +27,7 @@ import {
   MARKETING_SKILL_GUIDANCE,
   CONTENT_CREATIVE_GUIDANCE,
   buildMarketingCreativeFactContract,
+  blockUnauthorizedStrategyCta,
   creativeAuthorizationFromBusiness,
   CONTENT_JSON_CONTRACT,
   authorizedMarketingFacts,
@@ -124,7 +126,7 @@ export interface MarketingContentInput {
   strategy: StrategyPlan;
   vision: VisionAnalysis;
   videoAnalysis?: string | null;
-  businessInformation?: string | Record<string, unknown> | null;
+  businessInformation?: string | Record<string, unknown> | MarketingBusinessFacts | null;
   userNotes?: string | null;
   goal?: string;
   campaignName?: string;
@@ -824,6 +826,14 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   validation: ReturnType<typeof evaluateContentContract>["diagnostic"];
 }> {
   const locale = resolveContentLocale(input);
+  const blockedStrategyCta = blockUnauthorizedStrategyCta(input.strategy.ctaStrategy, input.businessInformation);
+  if (blockedStrategyCta) {
+    return {
+      contentPackage: null,
+      usage: { input: 0, output: 0, costUsd: 0 },
+      validation: blockedStrategyCta,
+    };
+  }
 
   const user = JSON.stringify({
     strategy: input.strategy,
@@ -898,7 +908,7 @@ export interface RegeneratePlatformAssetInput {
   campaignName?: string;
   goal?: string;
   userNotes?: string;
-  businessInformation?: string | Record<string, unknown> | null;
+  businessInformation?: string | Record<string, unknown> | MarketingBusinessFacts | null;
   contentLocale?: ContentLocale;
   previousCaption?: string;
 }

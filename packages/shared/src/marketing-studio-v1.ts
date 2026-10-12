@@ -37,7 +37,7 @@ verifiedLocation is the only storefront. If it is null, do not say visit, come i
 If verifiedDelivery is false, do not mention delivery, same-day fulfillment, or postage.
 If verifiedPromotions is false, do not mention a discount, price, or sale.
 If verifiedRankings is false, do not say best, finest, 最优质, number one, or award.
-approvedCtaChannels lists the only actions you may ask for. awareness is a non-transactional line such as noticing the bouquet. follow is a social follow. enquire, order_online, and visit_store are allowed only when listed.
+approvedCtaChannels lists the only actions you may ask for. awareness is a non-transactional line such as noticing the bouquet. follow, direct message, call, WhatsApp, website, catalog, online order, store visit, delivery, and discount are allowed only when listed. A target platform is not a connected account.
 Do not invent a website, phone, WhatsApp, direct message, or storefront.
 Shape: hook, audience situation, product reveal, one supported benefit, one CTA. A demonstration, a short explanation, or a calm feeling is enough. Do not invent a customer problem or a testimonial.
 15 seconds: one idea, the product early, one benefit, one CTA.
