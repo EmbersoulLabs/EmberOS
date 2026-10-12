@@ -4,6 +4,7 @@ import {
   STRATEGY_CONFIDENCE_CATEGORY,
   STRATEGY_JSON_CONTRACT,
   buildMarketingCreativeFactContract,
+  buildMarketingCreativeBlueprint,
   contentAllowsTranslation,
   strategyCtaAllowsContent,
   contentIsCommerciallyReady,
@@ -614,11 +615,12 @@ describe("script duration and visual guidance", () => {
     expect(result.contentPackage).toBeNull();
     const weak = evaluateContentContract(content({
       broll: ["slow motion shots of vibrant flower bouquets being arranged"],
-    }), CERTIFIED_FLORIST);
-    expect(weak.diagnostic.ok).toBe(true);
+    }), { ...CERTIFIED_FLORIST, enforceQuality: true });
+    expect(weak.diagnostic.ok).toBe(false);
+    expect(weak.diagnostic.codes).toContain("CONTENT_QUALITY_FAILED");
     expect(weak.diagnostic.quality?.status).toBe("FAIL");
     expect(contentIsCommerciallyReady(weak)).toBe(false);
-    expect(contentAllowsTranslation(weak.contentPackage)).toBe(true);
+    expect(contentAllowsTranslation(weak.contentPackage)).toBe(false);
     expect(result.diagnostic.quality?.dimensions.find((item) => item.name === "visualExecutability")?.score).toBe(2);
   });
 
@@ -631,6 +633,52 @@ describe("script duration and visual guidance", () => {
     }), { ...CERTIFIED_FLORIST, durationSec: 30 });
     expect(result.diagnostic.codes).not.toContain("SCRIPT_DURATION_SHORT");
     expect(result.diagnostic.ok).toBe(true);
+  });
+
+  it("builds a fact-bound creative blueprint without forcing one ad formula", () => {
+    const blueprint = buildMarketingCreativeBlueprint({
+      businessInformation: CERTIFIED_FLORIST,
+      durationSec: 30,
+    });
+    expect(blueprint.activeDurationSec).toBe(30);
+    expect(blueprint.eligibleFormats).toEqual(expect.arrayContaining([
+      "product_demonstration",
+      "detail_reveal",
+      "process_montage",
+      "occasion_moment",
+    ]));
+    expect(blueprint.spokenTargets["30s"].englishWords).toBe("62-82");
+    expect(blueprint.visualRequirements.join(" ")).toContain("final endSec must equal 30");
+    expect(blueprint.factPolicy.join(" ")).toContain("Strategy angles");
+    expect(blueprint.approvedCtaChannels).toEqual(["awareness"]);
+  });
+
+  it("replays the fifth response as one combined grounding, timing, and quality failure", () => {
+    const fifth = content({
+      voiceScripts: {
+        "15s": "Discover the luxury of our fresh flower bouquet. Perfect for your next gift. Experience the elegance today!",
+        "30s": "Introducing our luxurious fresh flower bouquet. Layered with vibrant colors, each bouquet is crafted to impress. Whether it is for a celebration, event, or just to show you care, our arrangements offer unmatched elegance. Discover beauty and elegance with each petal.",
+        "60s": "Our bouquets are designed with the finest flowers, ensuring each arrangement is a statement of luxury.",
+      },
+      voiceScriptsEn: { "60s": "Our bouquets are designed with the finest flowers." },
+      voiceScriptsZh: { "60s": "我们的花束由最优质的花材制成。" },
+      subtitleTimeline: [
+        { startSec: 0, endSec: 5, text: "Discover the bouquet." },
+        { startSec: 5, endSec: 10, text: "A gift idea." },
+        { startSec: 10, endSec: 15, text: "See the petals." },
+      ],
+      broll: ["bouquet close-up", "hands arranging flowers", "ribbon being tied"],
+    });
+    const result = evaluateContentContract(fifth, { ...CERTIFIED_FLORIST, durationSec: 30, enforceQuality: true });
+    expect(result.diagnostic.codes).toEqual(expect.arrayContaining([
+      "UNSUPPORTED_CLAIM",
+      "SCRIPT_DURATION_SHORT",
+      "SCRIPT_TIMELINE_SHORT",
+      "CONTENT_QUALITY_FAILED",
+    ]));
+    expect(result.diagnostic.quality?.status).toBe("FAIL");
+    expect(result.contentPackage).toBeNull();
+    expect(contentAllowsTranslation(result.contentPackage)).toBe(false);
   });
 });
 

@@ -24,7 +24,16 @@ export const STRATEGY_FACT_GROUNDING_RULE =
 export const STRATEGY_JSON_CONTRACT = `${describeZodContract(StrategyPlanSchema)} ${STRATEGY_FACT_GROUNDING_RULE}`;
 
 export const CONTENT_JSON_CONTRACT =
-  "Top-level voiceScripts {15s,30s,60s}, voiceScriptsEn, voiceScriptsZh, hooks [{text,type}], cta [{text}], musicMood, captions, broll, subtitleTimeline [{startSec:number, endSec:number, text:string}], postingRecommendation. Do not wrap these keys.";
+  "Return one top-level object. Required: voiceScripts {15s,30s,60s}, voiceScriptsEn {15s,30s,60s}, voiceScriptsZh {15s,30s,60s}, hooks [{text,type}], cta [{text}], musicMood string, captions object, broll string[], effects string[], subtitleTimeline [{startSec:number,endSec:number,text:string}], postingRecommendation, platformAssets. Follow creativeBlueprint exactly: cover the active duration through speech and/or explicitly timed visual beats, end subtitleTimeline at the active duration, use at least three practical shot categories, and use only creativeFacts for factual or commercial claims. Do not wrap these keys.";
+
+export type MarketingCreativeBlueprint = {
+  activeDurationSec: 15 | 30 | 60;
+  eligibleFormats: Array<"product_demonstration" | "detail_reveal" | "process_montage" | "occasion_moment">;
+  spokenTargets: Record<"15s" | "30s" | "60s", { englishWords: string; chineseCharacters: string; malayWords: string }>;
+  visualRequirements: string[];
+  factPolicy: string[];
+  approvedCtaChannels: MarketingCtaAction[];
+};
 
 export type MarketingContractAdjustment = {
   field: string;
@@ -111,6 +120,7 @@ export type ContentContractFacts = StrategyContractFacts & {
   durationSec?: number | null;
   providerRequestId?: string | null;
   platforms?: string[] | null;
+  enforceQuality?: boolean;
 };
 
 const INSTRUCTION_LEAK = /promote only these authorized facts|do not add prices|video generation stays unauthorized|^request:/i;
@@ -476,6 +486,43 @@ export function buildMarketingCreativeFactContract(
     approvedCtaChannels: ctaAuthority.approved,
     unavailable,
     ctaAuthority,
+  };
+}
+
+/** Deterministic planning constraints for one creative pass; the model still chooses the format. */
+export function buildMarketingCreativeBlueprint(input: {
+  businessInformation: unknown;
+  durationSec?: number | null;
+}): MarketingCreativeBlueprint {
+  const creativeFacts = buildMarketingCreativeFactContract(input.businessInformation);
+  const activeDurationSec = input.durationSec === 15 || input.durationSec === 60 ? input.durationSec : 30;
+  const eligibleFormats: MarketingCreativeBlueprint["eligibleFormats"] = [
+    "product_demonstration",
+    "detail_reveal",
+    "process_montage",
+  ];
+  if (creativeFacts.audience || creativeFacts.targetMarket) eligibleFormats.push("occasion_moment");
+  return {
+    activeDurationSec,
+    eligibleFormats,
+    spokenTargets: {
+      "15s": { englishWords: "31-41", chineseCharacters: "54-72", malayWords: "28-38" },
+      "30s": { englishWords: "62-82", chineseCharacters: "108-145", malayWords: "57-76" },
+      "60s": { englishWords: "123-165", chineseCharacters: "215-290", malayWords: "113-152" },
+    },
+    visualRequirements: [
+      `For the active ${activeDurationSec}s cut, use an ordered opening, development, and ending.`,
+      `subtitleTimeline must start at 0, stay monotonic, and its final endSec must equal ${activeDurationSec}.`,
+      "Name at least three practical shot categories in broll/effects; suggestions are directions, not claims that footage exists.",
+      "If speech is intentionally short, put explicit seconds on visual beats so total coverage reaches the active duration.",
+    ],
+    factPolicy: [
+      "creativeFacts is the only authority for products, benefits, location, delivery, promotions, rankings, and contact channels.",
+      "Strategy angles, audience pain points, adjectives, and desired outcomes are creative direction, not verified business facts.",
+      "Do not turn quality, luxury, elegance, freshness, or emotion into superiority, sourcing, guarantee, or availability claims.",
+      "When a benefit is not authorized, demonstrate visible product details instead of inventing one.",
+    ],
+    approvedCtaChannels: creativeFacts.approvedCtaChannels,
   };
 }
 
@@ -1419,6 +1466,17 @@ export function evaluateContentContract(
   scanContentClaims(contentPackage, payload, facts, codes, fields, issues);
   assessScriptDuration(contentPackage, facts, codes, fields, issues);
   const quality = assessCreativeQuality(contentPackage, facts, codes.includes("UNSUPPORTED_CLAIM"));
+  if (facts.enforceQuality === true && quality.status !== "PASS") {
+    codes.push("CONTENT_QUALITY_FAILED");
+    fields.push("quality");
+    issues.push({
+      code: "CONTENT_QUALITY_FAILED",
+      field: "quality",
+      expected: "all scored dimensions at least 3, product and grounding at least 4, total at least 28/35",
+      received: quality.total == null ? quality.status : `${quality.status} ${quality.total}/${quality.maxScore}`,
+      normalizable: false,
+    });
+  }
   if (codes.length > 0) {
     return {
       diagnostic: diagnostic("content", codes, fields, adjustments, issues, facts.providerRequestId, quality),

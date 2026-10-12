@@ -31,6 +31,10 @@ If a fact is missing, leave it out.`;
 
 export const CONTENT_CREATIVE_GUIDANCE = `# Creative fact and duration rules
 Read creativeFacts in the user message before writing. That contract is the authority for this advertisement.
+Read creativeBlueprint before composing. Privately choose exactly one eligible format that suits the product and audience; do not output your analysis and do not combine every format into the same formula.
+Strategy is direction, not evidence. Its pain points, desired outcomes, quality adjectives, and marketing angle are never authorization for a factual claim.
+Meet the spokenTargets for every 15s/30s/60s script. For the active duration, make subtitleTimeline finish exactly at that duration and use explicitly timed visual beats for any intentional silence.
+A visible detail can support a creative observation; it cannot prove quality, sourcing, availability, superiority, delivery, or customer satisfaction.
 authorizedProducts are the only products you may describe. A product is not proof of delivery.
 targetMarket and audience say who the ad is for. They are not a street address and not a shop.
 verifiedLocation is the only storefront. If it is null, do not say visit, come in, 到店, 欢迎来到, or name a neighborhood.

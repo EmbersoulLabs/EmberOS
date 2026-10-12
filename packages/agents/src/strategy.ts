@@ -137,6 +137,8 @@ Return ONLY JSON matching the schema appended to this prompt. No markdown.
 
 ${STRATEGY_FACT_GROUNDING_RULE}
 
+If creativeFacts does not contain a supported customer pain, benefit, quality level, or outcome, keep painPoints empty and use a neutral product-observation angle. Never promote an inferred pain point or adjective into a business fact.
+
 ${MARKETING_SKILL_GUIDANCE}`;
 
 const INDUSTRY_FALLBACK: Partial<

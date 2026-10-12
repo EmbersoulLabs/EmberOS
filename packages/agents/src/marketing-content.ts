@@ -27,6 +27,7 @@ import {
   MARKETING_SKILL_GUIDANCE,
   CONTENT_CREATIVE_GUIDANCE,
   buildMarketingCreativeFactContract,
+  buildMarketingCreativeBlueprint,
   blockUnauthorizedStrategyCta,
   creativeAuthorizationFromBusiness,
   CONTENT_JSON_CONTRACT,
@@ -856,6 +857,10 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
     creativeFacts: buildMarketingCreativeFactContract(input.businessInformation, input.platforms),
+    creativeBlueprint: buildMarketingCreativeBlueprint({
+      businessInformation: input.businessInformation,
+      durationSec: explicitScriptDurationSec(input.userNotes),
+    }),
     ...(input.userNotes ? { userNotes: input.userNotes } : {}),
     locale: localeToPromptTag(locale),
     outputLanguage: outputLanguageInstruction(locale),
@@ -877,6 +882,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     ...creativeAuthorizationFromBusiness(input.businessInformation, input.platforms),
     durationSec: explicitScriptDurationSec(input.userNotes),
     providerRequestId,
+    enforceQuality: true,
   });
   if (!evaluated.diagnostic.ok || !evaluated.contentPackage) {
     console.warn(`[content] contract failed codes=${evaluated.diagnostic.codes.join(",")}`);
