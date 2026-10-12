@@ -5,6 +5,7 @@ import {
   STRATEGY_JSON_CONTRACT,
   buildMarketingCreativeFactContract,
   contentAllowsTranslation,
+  strategyCtaAllowsContent,
   contentIsCommerciallyReady,
   evaluateContentContract,
   evaluateStrategyContract,
@@ -256,10 +257,9 @@ describe("strategy contract compatibility", () => {
   });
 
   it("rejects unsupported delivery, discount, guarantee, and ranking claims in required copy", () => {
-    expect(evaluateStrategyContract(strategyObject({ ctaStrategy: "Free delivery" }), FACTS).diagnostic).toMatchObject({
-      codes: ["UNSUPPORTED_CLAIM"],
-      fields: ["ctaStrategy"],
-    });
+    expect(evaluateStrategyContract(strategyObject({ ctaStrategy: "Free delivery" }), FACTS).diagnostic.codes).toEqual(
+      expect.arrayContaining(["UNSUPPORTED_CLAIM", "STRATEGY_CTA_UNAUTHORIZED"])
+    );
     expect(evaluateStrategyContract(strategyObject({ marketingAngle: "Same-day delivery" }), FACTS).diagnostic.fields).toContain("marketingAngle");
     expect(evaluateStrategyContract(strategyObject({ marketingAngle: "Guaranteed delivery" }), FACTS).diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
     expect(evaluateStrategyContract(strategyObject({ marketingAngle: "50% off" }), FACTS).diagnostic.fields).toContain("marketingAngle");
@@ -269,16 +269,16 @@ describe("strategy contract compatibility", () => {
 
   it("replays the sanitized second real strategy response without another provider call", () => {
     const result = evaluateStrategyContract(SECOND_E2E_STRATEGY, FACTS);
-    expect(result.diagnostic.ok).toBe(true);
-    expect(result.plan?.product).toBe("Fresh flower bouquet");
-    expect(result.plan?.industry).toBe("florist");
-    expect(result.plan?.audience.location).toBe("Singapore");
-    expect(result.plan?.ctaStrategy).toBe("Direct message for similar arrangements, save for future reference during holidays, and follow for more floral inspiration.");
-    expect(result.plan?.confidence).toBe(STRATEGY_CONFIDENCE_CATEGORY.high);
-    expect(result.plan?.hashtags.seo).toEqual(["#SingaporeGifts"]);
-    expect(JSON.stringify(result.plan)).not.toContain("FlowerDeliverySG");
-    expect(JSON.stringify(result.plan)).not.toContain(FACTS.brief);
-    expect(strategyAllowsContent(result)).toBe(true);
+    expect(result.diagnostic.ok).toBe(false);
+    expect(result.plan).toBeNull();
+    expect(result.diagnostic.codes).toContain("STRATEGY_CTA_UNAUTHORIZED");
+    expect(result.diagnostic.fields).toContain("ctaStrategy");
+    expect(result.diagnostic.adjustments).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "ctaStrategy", action: "map" }),
+      { field: "hashtags.seo", action: "remove", raw: "#FlowerDeliverySG" },
+    ]));
+    expect(JSON.stringify(result.diagnostic)).not.toContain(FACTS.brief);
+    expect(strategyAllowsContent(result)).toBe(false);
     expect(strategyAllowsContent(evaluateStrategyContract(strategyObject({ confidence: "very high" }), FACTS))).toBe(false);
   });
 });
@@ -482,14 +482,16 @@ describe("third real content response replay", () => {
     expect(JSON.stringify(result.diagnostic)).not.toContain(FACTS.brief);
   });
 
-  it("removes the unsupported strategy ranking tag and keeps Singapore audience tags", () => {
+  it("removes the unsupported strategy ranking tag and rejects the stale direct-message CTA", () => {
     const result = evaluateStrategyContract(structuredClone(THIRD_E2E_STRATEGY), FACTS);
-    expect(result.diagnostic.ok).toBe(true);
-    expect(result.plan?.product).toBe("Fresh flower bouquet");
-    expect(result.plan?.hashtags.local).toEqual(["#Singapore", "#SGgifts"]);
-    expect(result.plan?.hashtags.seo).toEqual(["#floristSingapore"]);
+    expect(result.plan).toBeNull();
+    expect(result.diagnostic.codes).toContain("STRATEGY_CTA_UNAUTHORIZED");
     expect(result.diagnostic.adjustments).toContainEqual({ field: "hashtags.seo", action: "remove", raw: "#bestflowerstore" });
-    expect(strategyAllowsContent(result)).toBe(true);
+    expect(strategyAllowsContent(result)).toBe(false);
+    expect(strategyCtaAllowsContent("Notice the fresh flower bouquet", {
+      ...FACTS,
+      instagram: "https://instagram.com/emberflorist",
+    }).ok).toBe(true);
   });
 });
 
@@ -520,8 +522,8 @@ describe("creative fact contract and CTA authority", () => {
     expect(contract.verifiedDelivery).toBe(false);
     expect(contract.verifiedPromotions).toBe(false);
     expect(contract.verifiedRankings).toBe(false);
-    expect(contract.approvedCtaChannels).toEqual(["awareness", "follow"]);
-    expect(contract.unavailable).toEqual(expect.arrayContaining(["physical shop", "delivery", "website ordering", "contact channel"]));
+    expect(contract.approvedCtaChannels).toEqual(["awareness"]);
+    expect(contract.unavailable).toEqual(expect.arrayContaining(["follow", "direct message", "visit website", "order online", "visit store", "delivery"]));
   });
 
   it("rejects an unauthorized website order and allows one when a website is verified", () => {
@@ -530,9 +532,15 @@ describe("creative fact contract and CTA authority", () => {
     expect(blocked.diagnostic.issues).toEqual(expect.arrayContaining([
       expect.objectContaining({ field: "cta[0].text", claimCategory: "channel", normalizable: false }),
     ]));
+    const websiteOnly = evaluateContentContract(content({ cta: [{ text: "Order this bouquet on our website" }] }), {
+      ...CERTIFIED_FLORIST,
+      website: "https://emberflorist.example",
+    });
+    expect(websiteOnly.diagnostic.codes).toContain("CONTENT_CTA_UNAUTHORIZED");
     const allowed = evaluateContentContract(content({ cta: [{ text: "Order this bouquet on our website" }] }), {
       ...CERTIFIED_FLORIST,
       website: "https://emberflorist.example",
+      orderingChannel: "https://emberflorist.example/order",
     });
     expect(allowed.diagnostic.ok).toBe(true);
     expect(contentIsCommerciallyReady(allowed)).toBe(true);
@@ -551,9 +559,14 @@ describe("creative fact contract and CTA authority", () => {
   });
 
   it("accepts a non-transactional awareness CTA when no contact channel exists", () => {
-    const result = evaluateContentContract(content({
+    const follow = evaluateContentContract(content({
       cta: [{ text: "Follow for floral inspiration" }],
-    }), { ...CERTIFIED_FLORIST, durationSec: 30 });
+    }), { ...CERTIFIED_FLORIST, platforms: ["tiktok"], durationSec: 30 });
+    expect(follow.diagnostic.codes).toContain("CONTENT_CTA_UNAUTHORIZED");
+    expect(follow.contentPackage).toBeNull();
+    const result = evaluateContentContract(content({
+      cta: [{ text: "Notice this fresh flower bouquet" }],
+    }), { ...CERTIFIED_FLORIST, platforms: ["tiktok"], durationSec: 30 });
     expect(result.diagnostic.ok).toBe(true);
     expect(result.diagnostic.quality?.status).toBe("PASS");
     expect(contentAllowsTranslation(result.contentPackage)).toBe(true);
@@ -595,7 +608,7 @@ describe("script duration and visual guidance", () => {
 
 const FIFTEEN_SCRIPT = "Singapore gift buyers, look at this fresh flower bouquet. The colors are already together. Keep the idea for a later occasion.";
 const THIRTY_SCRIPT = "A fresh flower bouquet sits in frame for Singapore gift buyers. Hands turn the stems until the colors read clearly. The ribbon finishes the shape. Ember Florist Test keeps the bouquet as the whole idea.";
-const SIXTY_SCRIPT = "Start on a fresh flower bouquet, close enough to see the petals. Singapore gift buyers often need one clear gift, and this bouquet is that gift. Hands place one stem, then another, until the shape holds. The ribbon is tied, the paper is folded, and the bouquet is turned once toward the light. Ember Florist Test shows the finished flowers and nothing beyond that product. There is no extra promise, only the bouquet and the person it is for. The last shot holds the bouquet still so the colors can be read. Follow along if floral ideas are useful later.";
+const SIXTY_SCRIPT = "Start on a fresh flower bouquet, close enough to see the petals. Singapore gift buyers often need one clear gift, and this bouquet is that gift. Hands place one stem, then another, until the shape holds. The ribbon is tied, the paper is folded, and the bouquet is turned once toward the light. Ember Florist Test shows the finished flowers and nothing beyond that product. There is no extra promise, only the bouquet and the person it is for. The last shot holds the bouquet still so the colors can be read. Keep the bouquet in mind if floral ideas are useful later.";
 
 function groundedFlorist(duration: 15 | 30 | 60) {
   return content({
@@ -627,7 +640,7 @@ describe("positive florist creative fixtures", () => {
       voiceScriptsZh: {
         "30s": "适合新加坡送礼的人，今天可以看看这束新鲜花束。",
       },
-      cta: [{ text: "Follow for floral inspiration", textMs: "Ikuti untuk inspirasi bunga" }],
+      cta: [{ text: "Notice this fresh flower bouquet", textMs: "Perhatikan buket bunga segar ini" }],
       captions: { tiktok: "Flowers for special occasions #SingaporeGifts" },
     }), { ...CERTIFIED_FLORIST, durationSec: 30 });
     expect(result.diagnostic.ok).toBe(true);
@@ -647,11 +660,60 @@ describe("positive florist creative fixtures", () => {
   });
 });
 
+const AUTHORIZED_FLORIST = {
+  ...CERTIFIED_FLORIST,
+  services: ["Fresh flower bouquet", "Same-day delivery"],
+  description: "10% off bouquet orders this week",
+  address: "12 Orchard Road, Singapore",
+  phone: "+6590000000",
+  whatsapp: "https://wa.me/6590000000",
+  website: "https://emberflorist.example",
+  socialAccounts: ["https://instagram.com/emberflorist"],
+  catalogUrl: "https://emberflorist.example/bouquets",
+  orderingChannel: "https://emberflorist.example/order",
+};
+
+describe("cross-stage CTA authority", () => {
+  it("rejects channel assumptions that a target platform or market does not prove", () => {
+    expect(strategyCtaAllowsContent("Follow for floral inspiration", { ...CERTIFIED_FLORIST, platforms: ["tiktok"] }).ok).toBe(false);
+    expect(strategyCtaAllowsContent("Direct message for a similar bouquet", CERTIFIED_FLORIST).ok).toBe(false);
+    expect(strategyCtaAllowsContent("Visit our website", CERTIFIED_FLORIST).ok).toBe(false);
+    expect(strategyCtaAllowsContent("Order this bouquet online", CERTIFIED_FLORIST).ok).toBe(false);
+    expect(strategyCtaAllowsContent("Visit our store", CERTIFIED_FLORIST).ok).toBe(false);
+    expect(strategyCtaAllowsContent("Same-day delivery for this bouquet", CERTIFIED_FLORIST).ok).toBe(false);
+    expect(strategyCtaAllowsContent("Notice this fresh flower bouquet", CERTIFIED_FLORIST).ok).toBe(true);
+  });
+
+  it("allows each CTA only when the current profile authorizes that channel", () => {
+    expect(strategyCtaAllowsContent("Follow for floral inspiration", AUTHORIZED_FLORIST).ok).toBe(true);
+    expect(strategyCtaAllowsContent("Direct message for a similar bouquet", AUTHORIZED_FLORIST).ok).toBe(true);
+    expect(strategyCtaAllowsContent("Call us about this bouquet", AUTHORIZED_FLORIST).ok).toBe(true);
+    expect(strategyCtaAllowsContent("Message us on WhatsApp", AUTHORIZED_FLORIST).ok).toBe(true);
+    expect(strategyCtaAllowsContent("Visit our website", AUTHORIZED_FLORIST).ok).toBe(true);
+    expect(strategyCtaAllowsContent("Browse our catalog", AUTHORIZED_FLORIST).ok).toBe(true);
+    expect(strategyCtaAllowsContent("Order this bouquet online", AUTHORIZED_FLORIST).ok).toBe(true);
+    expect(strategyCtaAllowsContent("Visit our store", AUTHORIZED_FLORIST).ok).toBe(true);
+    expect(strategyCtaAllowsContent("Same-day delivery for this bouquet", AUTHORIZED_FLORIST).ok).toBe(true);
+    const changed = { ...AUTHORIZED_FLORIST, whatsapp: null, orderingChannel: null, address: null };
+    expect(strategyCtaAllowsContent("Direct message for a similar bouquet", changed).ok).toBe(false);
+    expect(strategyCtaAllowsContent("Order this bouquet online", changed).ok).toBe(false);
+    expect(strategyCtaAllowsContent("Visit our store", changed).ok).toBe(false);
+    const contentResult = evaluateContentContract(content({
+      cta: [{ text: "Direct message for a similar bouquet" }],
+    }), changed);
+    expect(contentResult.diagnostic.codes).toContain("CONTENT_CTA_UNAUTHORIZED");
+    expect(contentResult.contentPackage).toBeNull();
+    expect(contentAllowsTranslation(contentResult.contentPackage)).toBe(false);
+  });
+});
+
 describe("fourth real content response replay", () => {
   it("keeps the strategy valid and rejects the original content with fuller diagnostics", () => {
     const strategy = evaluateStrategyContract(structuredClone(FOURTH_E2E_STRATEGY), FACTS);
-    expect(strategy.diagnostic.ok).toBe(true);
-    expect(strategy.plan?.product).toBe("Fresh flower bouquet");
+    expect(strategy.diagnostic.ok).toBe(false);
+    expect(strategy.plan).toBeNull();
+    expect(strategy.diagnostic.codes).toContain("STRATEGY_CTA_UNAUTHORIZED");
+    expect(strategyCtaAllowsContent(FOURTH_E2E_STRATEGY.ctaStrategy, FACTS).ok).toBe(false);
     const raw = structuredClone(FOURTH_E2E_CONTENT);
     const scripts = JSON.stringify(raw.voiceScripts);
     const result = evaluateContentContract(raw, {

@@ -19,7 +19,7 @@ export const STRATEGY_CONFIDENCE_CATEGORY = {
 } as const;
 
 export const STRATEGY_FACT_GROUNDING_RULE =
-  "ctaStrategy must be one string, not an array. confidence must be a number from 0 to 1. Use only facts in the business profile. Do not add delivery, discounts, prices, guarantees, testimonials, addresses, or ranking claims unless that fact is in the profile. A geographic audience or hashtag is not a delivery promise.";
+  "ctaStrategy must be one string, not an array. confidence must be a number from 0 to 1. Use only facts in the business profile. Choose the CTA only from creativeFacts.approvedCtaChannels. A campaign platform is not a connected social account or a messaging channel. Do not add delivery, discounts, prices, guarantees, testimonials, addresses, or ranking claims unless that fact is in the profile. A geographic audience or hashtag is not a storefront or a delivery promise.";
 
 export const STRATEGY_JSON_CONTRACT = `${describeZodContract(StrategyPlanSchema)} ${STRATEGY_FACT_GROUNDING_RULE}`;
 
@@ -96,16 +96,20 @@ export type StrategyContractFacts = {
   description?: string | null;
   brandKeywords?: string[] | null;
   address?: string | null;
-};
-
-export type ContentContractFacts = StrategyContractFacts & {
-  durationSec?: number | null;
-  providerRequestId?: string | null;
   audience?: string | null;
   city?: string | null;
   country?: string | null;
   website?: string | null;
   phone?: string | null;
+  whatsapp?: string | null;
+  socialAccounts?: string[] | null;
+  catalogUrl?: string | null;
+  orderingChannel?: string | null;
+};
+
+export type ContentContractFacts = StrategyContractFacts & {
+  durationSec?: number | null;
+  providerRequestId?: string | null;
   platforms?: string[] | null;
 };
 
@@ -128,7 +132,7 @@ function diagnostic(
   providerRequestId?: string | null,
   quality?: CreativeQualityReport
 ): MarketingContractDiagnostic {
-  const bounded = issues.slice(0, 32).map((issue) => ({
+  const bounded = issues.slice(0, 64).map((issue) => ({
     ...issue,
     ...(issue.excerpt ? { excerpt: issue.excerpt.replace(/\s+/g, " ").trim().slice(0, 80) } : {}),
     ...(issue.received ? { received: issue.received.slice(0, 120) } : {}),
@@ -182,8 +186,6 @@ const DISCOUNT_CLAIM = /(?:\d+\s*%|\bdiscount\b|半价|折扣|优惠|促销|\$\s
 const GUARANTEE_CLAIM = /(?:\bguaranteed\b|保证转化|保证送达|保证到货|品质保证|保证结果|\bdijamin\b)/i;
 const RANKING_CLAIM = /(?:\bbest\s+florist\b|bestflowerstore|bestflorist|#1\s*florist|number\s+one\s+florist|最好的花店|全岛第一|kedai bunga terbaik|\bfinest\b|最优质|顶级花卉)/i;
 const LOCATION_CLAIM = /visit our (?:shop|store)|visit us(?:\s+today|\s+in\s+[A-Za-z]+|\s+at\s+[A-Za-z]+)?|our (?:shop|store)\b|right in the heart of|in the heart of|storefront|walk-?in|shop address|市中心|到店|进店|门店|实体店|欢迎到店|欢迎来到|lawati kedai|di pusat bandar|kunjungi kedai/i;
-const ORDER_CHANNEL_CLAIM = /order online|order through our website|on our website|our website|通过我们的网站|官网下单|网站下单/i;
-const ENQUIRY_CHANNEL_CLAIM = /direct message|\bdm us\b|私信我们|whatsapp|发消息给我们/i;
 const TESTIMONIAL_CLAIM = /customer reviews?|customers say|our customers love|five[- ]star|5[- ]star|客户评价|顾客说|真实评价|testimoni pelanggan|pelanggan kata/i;
 const CTA_OFFER = /\d+\s*%|\bdiscount\b|\bsale\b|free\s+delivery|优惠|折扣|半价|促销|买一送一/i;
 const CTA_DENIAL = /no\s+promotion|no\s+discount|not\s+on\s+sale|full\s+price|no\s+delivery|没有优惠|无折扣|不打折|无促销/i;
@@ -292,6 +294,24 @@ export function explicitVisualSeconds(texts: string[]): number {
   return seconds;
 }
 
+export type MarketingCtaAction =
+  | "awareness"
+  | "follow"
+  | "direct_message"
+  | "call"
+  | "whatsapp"
+  | "visit_website"
+  | "browse_catalog"
+  | "order_online"
+  | "visit_store"
+  | "delivery"
+  | "discount";
+
+export type MarketingCtaAuthority = {
+  approved: MarketingCtaAction[];
+  unavailable: MarketingCtaAction[];
+};
+
 export type MarketingCreativeFactContract = {
   authorizedProducts: string[];
   authorizedServices: string[];
@@ -301,8 +321,9 @@ export type MarketingCreativeFactContract = {
   verifiedDelivery: boolean;
   verifiedPromotions: boolean;
   verifiedRankings: boolean;
-  approvedCtaChannels: Array<"awareness" | "follow" | "enquire" | "order_online" | "visit_store">;
+  approvedCtaChannels: MarketingCtaAction[];
   unavailable: string[];
+  ctaAuthority: MarketingCtaAuthority;
 };
 
 function textList(value: unknown): string[] {
@@ -314,41 +335,134 @@ function textOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+const CTA_DETECTORS: Array<{ action: MarketingCtaAction; pattern: RegExp }> = [
+  { action: "direct_message", pattern: /direct message|\bdm us\b|私信|发消息给我们/i },
+  { action: "whatsapp", pattern: /whatsapp|wa\.me/i },
+  { action: "call", pattern: /\bcall (?:us|now)\b|致电|打电话给我们/i },
+  { action: "order_online", pattern: /order online|order through|order this|网上下单|在线下单|网站下单/i },
+  { action: "visit_website", pattern: /our website|visit (?:our|the) website|访问网站|我们的网站|laman web kami/i },
+  { action: "browse_catalog", pattern: /browse (?:our |the )?(?:catalog|designs)|查看目录|产品目录|katalog/i },
+  { action: "follow", pattern: /\bfollow (?:us|our|for|along)\b|关注我们|关注账号|ikuti (?:kami|akaun)/i },
+  { action: "visit_store", pattern: LOCATION_CLAIM },
+  { action: "delivery", pattern: DELIVERY_CLAIM },
+  { action: "discount", pattern: DISCOUNT_CLAIM },
+];
+
+function recordOf(info: unknown): Record<string, unknown> {
+  return info && typeof info === "object" && !Array.isArray(info) ? (info as Record<string, unknown>) : {};
+}
+
+function socialAccountsFrom(record: Record<string, unknown>): string[] {
+  const named = ["instagram", "tiktok", "facebook", "youtube", "redNote", "linkedIn", "xiaohongshu", "whatsappBusiness"]
+    .map((key) => textOrNull(record[key]))
+    .filter((item): item is string => Boolean(item));
+  return [...textList(record.socialAccounts), ...named];
+}
+
+/** One CTA permission decision. A target platform, market, or industry is not a channel. */
+export function resolveMarketingCtaAuthority(info: unknown): MarketingCtaAuthority {
+  const record = recordOf(info);
+  const services = textList(record.services);
+  const description = textOrNull(record.description) ?? textOrNull(record.businessDescription);
+  const keywords = textList(record.brandKeywords);
+  const lines = [description ?? "", ...services, ...keywords];
+  const social = socialAccountsFrom(record).filter((item) => !/whatsapp|wa\.me/i.test(item));
+  const whatsapp = textOrNull(record.whatsapp) ?? textOrNull(record.whatsappBusiness);
+  const phone = textOrNull(record.phone) ?? textOrNull(record.businessPhone);
+  const website = textOrNull(record.website);
+  const catalog = textOrNull(record.catalogUrl) ?? textOrNull(record.productPage);
+  const ordering = textOrNull(record.orderingChannel) ?? textOrNull(record.orderingUrl);
+  const store = textOrNull(record.address) ?? textOrNull(record.verifiedLocation);
+  const catalogFact = Boolean(catalog) || profileAllows(lines, /产品目录|\bcatalog\b|product page/i);
+  const orderingFact = Boolean(ordering) || profileAllows(lines, /网上下单|在线下单|online order|order online/i);
+  const enabled: Record<MarketingCtaAction, boolean> = {
+    awareness: true,
+    follow: social.length > 0,
+    direct_message: Boolean(whatsapp),
+    call: Boolean(phone),
+    whatsapp: Boolean(whatsapp),
+    visit_website: Boolean(website),
+    browse_catalog: catalogFact,
+    order_online: orderingFact,
+    visit_store: Boolean(store),
+    delivery: profileAllows(lines, DELIVERY_CLAIM),
+    discount: profileAllows(lines, DISCOUNT_CLAIM),
+  };
+  const actions = Object.keys(enabled) as MarketingCtaAction[];
+  return {
+    approved: actions.filter((action) => enabled[action]),
+    unavailable: actions.filter((action) => !enabled[action]),
+  };
+}
+
+export function unauthorizedCtaHits(
+  text: string,
+  authority: MarketingCtaAuthority
+): Array<{ action: MarketingCtaAction; excerpt: string }> {
+  const hits: Array<{ action: MarketingCtaAction; excerpt: string }> = [];
+  for (const detector of CTA_DETECTORS) {
+    if (authority.approved.includes(detector.action)) continue;
+    const match = text.match(detector.pattern);
+    if (!match) continue;
+    hits.push({ action: detector.action, excerpt: match[0].replace(/\s+/g, " ").trim().slice(0, 80) });
+  }
+  return hits;
+}
+
+/** Revalidate a stored Strategy CTA against the current profile before any paid Content call. */
+export function strategyCtaAllowsContent(cta: string | null | undefined, info: unknown): {
+  ok: boolean;
+  issues: MarketingContractIssue[];
+} {
+  const text = cta?.trim() ?? "";
+  if (!text) return { ok: true, issues: [] };
+  const issues = unauthorizedCtaHits(text, resolveMarketingCtaAuthority(info)).map((hit) => ({
+    code: "STRATEGY_CTA_UNAUTHORIZED",
+    field: "ctaStrategy",
+    expected: "an action in the current CTA authority",
+    received: hit.action,
+    claimCategory: "channel" as const,
+    normalizable: false,
+    excerpt: hit.excerpt,
+    authorization: "business_profile",
+  }));
+  return { ok: issues.length === 0, issues };
+}
+
+/** Diagnostic used to stop Content and Translation before a paid call. */
+export function blockUnauthorizedStrategyCta(
+  cta: string | null | undefined,
+  info: unknown
+): MarketingContractDiagnostic | null {
+  const decision = strategyCtaAllowsContent(cta, info);
+  if (decision.ok) return null;
+  return {
+    ok: false,
+    stage: "strategy",
+    schemaVersion: MARKETING_OUTPUT_SCHEMA_VERSION,
+    codes: ["STRATEGY_CTA_UNAUTHORIZED"],
+    fields: ["ctaStrategy"],
+    fallback: "none",
+    issues: decision.issues,
+  };
+}
+
 /** Compact creative authority derived from the canonical business profile. A market is not a shop. */
 export function buildMarketingCreativeFactContract(
   info: unknown,
-  platforms?: string[] | null
+  _platforms?: string[] | null
 ): MarketingCreativeFactContract {
-  const record = info && typeof info === "object" && !Array.isArray(info) ? (info as Record<string, unknown>) : {};
+  const record = recordOf(info);
   const services = textList(record.services);
   const description = textOrNull(record.description) ?? textOrNull(record.businessDescription);
   const address = textOrNull(record.address);
   const audience = textOrNull(record.audience) ?? textOrNull(record.targetAudience);
   const city = textOrNull(record.city);
   const country = textOrNull(record.country);
-  const website = textOrNull(record.website);
-  const phone = textOrNull(record.phone) ?? textOrNull(record.businessPhone);
   const keywords = textList(record.brandKeywords);
   const lines = [description ?? "", address ?? "", ...services, ...keywords];
-  const verifiedDelivery = profileAllows(lines, DELIVERY_CLAIM);
-  const verifiedPromotions = profileAllows(lines, DISCOUNT_CLAIM);
-  const verifiedRankings = profileAllows(lines, RANKING_CLAIM);
-  const social = (platforms ?? textList(record.platforms)).some((item) =>
-    /tiktok|instagram|facebook|xiaohongshu|youtube|threads|linkedin|google/i.test(item)
-  );
-  const approvedCtaChannels: MarketingCreativeFactContract["approvedCtaChannels"] = ["awareness"];
-  if (social) approvedCtaChannels.push("follow");
-  if (website || phone) approvedCtaChannels.push("enquire");
-  if (website) approvedCtaChannels.push("order_online");
-  if (address) approvedCtaChannels.push("visit_store");
-  const unavailable = [
-    !address ? "physical shop" : "",
-    !verifiedDelivery ? "delivery" : "",
-    !verifiedPromotions ? "promotions" : "",
-    !verifiedRankings ? "rankings" : "",
-    !website ? "website ordering" : "",
-    !phone && !website ? "contact channel" : "",
-  ].filter(Boolean);
+  const ctaAuthority = resolveMarketingCtaAuthority(info);
+  const unavailable = ctaAuthority.unavailable.map((action) => action.replaceAll("_", " "));
   const market = [city, country].filter(Boolean).join(", ");
   return {
     authorizedProducts: services,
@@ -356,25 +470,44 @@ export function buildMarketingCreativeFactContract(
     targetMarket: market || null,
     audience,
     verifiedLocation: address,
-    verifiedDelivery,
-    verifiedPromotions,
-    verifiedRankings,
-    approvedCtaChannels,
+    verifiedDelivery: ctaAuthority.approved.includes("delivery"),
+    verifiedPromotions: ctaAuthority.approved.includes("discount"),
+    verifiedRankings: profileAllows(lines, RANKING_CLAIM),
+    approvedCtaChannels: ctaAuthority.approved,
     unavailable,
+    ctaAuthority,
   };
 }
 
 export function creativeAuthorizationFromBusiness(
   info: unknown,
   platforms?: string[] | null
-): Pick<ContentContractFacts, "audience" | "city" | "country" | "website" | "phone" | "platforms"> {
-  const record = info && typeof info === "object" && !Array.isArray(info) ? (info as Record<string, unknown>) : {};
+): Pick<
+  ContentContractFacts,
+  | "audience"
+  | "city"
+  | "country"
+  | "website"
+  | "phone"
+  | "whatsapp"
+  | "socialAccounts"
+  | "catalogUrl"
+  | "orderingChannel"
+  | "address"
+  | "platforms"
+> {
+  const record = recordOf(info);
   return {
     audience: textOrNull(record.audience) ?? textOrNull(record.targetAudience),
     city: textOrNull(record.city),
     country: textOrNull(record.country),
     website: textOrNull(record.website),
     phone: textOrNull(record.phone) ?? textOrNull(record.businessPhone),
+    whatsapp: textOrNull(record.whatsapp) ?? textOrNull(record.whatsappBusiness),
+    socialAccounts: socialAccountsFrom(record).filter((item) => !/whatsapp|wa\.me/i.test(item)),
+    catalogUrl: textOrNull(record.catalogUrl) ?? textOrNull(record.productPage),
+    orderingChannel: textOrNull(record.orderingChannel) ?? textOrNull(record.orderingUrl),
+    address: textOrNull(record.address),
     platforms: platforms ?? textList(record.platforms),
   };
 }
@@ -736,17 +869,12 @@ function stripOptionalClaims(
 function channelMatches(
   text: string,
   facts: ContentContractFacts
-): Array<{ category: MarketingClaimCategory; excerpt: string }> {
-  const hits: Array<{ category: MarketingClaimCategory; excerpt: string }> = [];
-  const order = text.match(ORDER_CHANNEL_CLAIM);
-  if (order && !facts.website?.trim()) {
-    hits.push({ category: "channel", excerpt: order[0].replace(/\s+/g, " ").trim().slice(0, 80) });
-  }
-  const enquiry = text.match(ENQUIRY_CHANNEL_CLAIM);
-  if (enquiry && !facts.website?.trim() && !facts.phone?.trim()) {
-    hits.push({ category: "channel", excerpt: enquiry[0].replace(/\s+/g, " ").trim().slice(0, 80) });
-  }
-  return hits;
+): Array<{ category: MarketingClaimCategory; excerpt: string; action: MarketingCtaAction }> {
+  return unauthorizedCtaHits(text, resolveMarketingCtaAuthority(facts)).map((hit) => ({
+    category: "channel" as const,
+    excerpt: hit.excerpt,
+    action: hit.action,
+  }));
 }
 
 function rejectProseClaims(
@@ -759,16 +887,30 @@ function rejectProseClaims(
   includeChannels = false
 ) {
   if (typeof value !== "string" || !value.trim()) return;
-  const hits = [...claimMatches(value, facts), ...(includeChannels ? channelMatches(value, facts) : [])];
-  if (hits.length === 0) return;
-  codes.push("UNSUPPORTED_CLAIM");
+  const claimHits = claimMatches(value, facts);
+  const channelHits = includeChannels ? channelMatches(value, facts) : [];
+  if (claimHits.length === 0 && channelHits.length === 0) return;
+  if (claimHits.length) codes.push("UNSUPPORTED_CLAIM");
+  if (channelHits.length) codes.push(includeChannels ? "CONTENT_CTA_UNAUTHORIZED" : "UNSUPPORTED_CLAIM");
   fields.push(field);
-  for (const hit of hits) {
+  for (const hit of claimHits) {
     issues?.push({
       code: "UNSUPPORTED_CLAIM",
       field,
       expected: "authorized business fact",
       received: "string",
+      claimCategory: hit.category,
+      normalizable: false,
+      excerpt: hit.excerpt,
+      authorization: "business_profile",
+    });
+  }
+  for (const hit of channelHits) {
+    issues?.push({
+      code: "CONTENT_CTA_UNAUTHORIZED",
+      field,
+      expected: "an action in the current CTA authority",
+      received: hit.action,
       claimCategory: hit.category,
       normalizable: false,
       excerpt: hit.excerpt,
@@ -841,6 +983,14 @@ export function evaluateStrategyContract(
   }
   for (const field of ["industry", "businessType", "product", "marketingGoal", "marketingAngle", "tone", "videoStyle", "customerJourney", "ctaStrategy"]) {
     rejectProseClaims(field, data[field], facts, codes, fields, issues);
+  }
+  if (typeof data.ctaStrategy === "string") {
+    const ctaGate = strategyCtaAllowsContent(data.ctaStrategy, facts);
+    if (!ctaGate.ok) {
+      codes.push("STRATEGY_CTA_UNAUTHORIZED");
+      fields.push("ctaStrategy");
+      issues.push(...ctaGate.issues);
+    }
   }
   const audience = data.audience && typeof data.audience === "object" && !Array.isArray(data.audience)
     ? data.audience as Record<string, unknown>

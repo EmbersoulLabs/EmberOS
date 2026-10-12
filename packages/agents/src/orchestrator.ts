@@ -17,6 +17,7 @@ import {
   resolveAutoClipSourceAsset,
   resolvePipelineContentLocale,
   selectBusinessFacts,
+  blockUnauthorizedStrategyCta,
   alignStrategyWithVision,
   emitVideoStudioOpsEvent,
   type ContentLocale,
@@ -222,6 +223,7 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       creativeBrief,
       videoAnalysis,
       contentLocale,
+      businessInformation,
     });
     if (!strategyValidation.ok || !rawStrategy) {
       await logAgent(task.orgId, task.workspaceId, taskId, "strategy", strategyUsage, strategyValidation);
@@ -341,6 +343,11 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       await updateStep(taskId, "copy_generate", { status: "completed", completedAt: new Date().toISOString(), output: allVariants });
     } else {
       await updateStep(taskId, "content_generate", { status: "running", startedAt: new Date().toISOString() });
+      const blockedStrategyCta = blockUnauthorizedStrategyCta(strategy.ctaStrategy, businessInformation);
+      if (blockedStrategyCta) {
+        await updateStep(taskId, "content_generate", { status: "failed", completedAt: new Date().toISOString(), output: blockedStrategyCta });
+        throw new Error("STRATEGY_CTA_UNAUTHORIZED");
+      }
       const { contentPackage: rawContentPackage, usage: contentUsage, validation: contentValidation } = await runPaidMarketingStep({
         taskId,
         orgId: task.orgId,

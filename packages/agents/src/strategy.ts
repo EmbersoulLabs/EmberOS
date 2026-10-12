@@ -2,6 +2,8 @@ import { callJsonModel } from "./llm";
 import {
   normalizeStrategyPlan,
   evaluateStrategyContract,
+  buildMarketingCreativeFactContract,
+  creativeAuthorizationFromBusiness,
   STRATEGY_FACT_GROUNDING_RULE,
   STRATEGY_JSON_CONTRACT,
   resolveStrategyIndustryEnum,
@@ -16,6 +18,7 @@ import {
   creativePreferencesForPrompt,
   substantiveCampaignBrief,
   type BrandProfile,
+  type MarketingBusinessFacts,
   type ContentLocale,
   type StrategyPlan,
   type VisionAnalysis,
@@ -44,7 +47,7 @@ export interface StrategyInput {
   videoAnalysis?: string | null;
   imageAnalysis?: string | null;
   productInformation?: string | Record<string, unknown> | null;
-  businessInformation?: string | Record<string, unknown> | null;
+  businessInformation?: string | Record<string, unknown> | MarketingBusinessFacts | null;
   website?: string | null;
   contentLocale?: ContentLocale;
   /** Parsed creative brief for structured preferences (BGM, voice, style). */
@@ -348,7 +351,7 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
         },
         customerJourney: profile?.customerJourney ?? "认知",
         platformPriority: platformLabels(input.platforms),
-        ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "私信了解更多",
+        ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "了解这件产品",
         keywords: profile?.keywords ?? [topic],
         hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
         confidence: 0.65,
@@ -376,12 +379,26 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
       },
       customerJourney: profile?.customerJourney ?? "Awareness",
       platformPriority: platformLabels(input.platforms),
-      ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "Learn More",
+      ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "Learn about the product",
       keywords: profile?.keywords ?? [topic],
       hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
       confidence: 0.65,
     })
   );
+}
+
+function strategyBusinessFacts(input: StrategyInput): Record<string, unknown> {
+  const supplied = input.businessInformation && typeof input.businessInformation === "object" && !Array.isArray(input.businessInformation)
+    ? input.businessInformation as Record<string, unknown>
+    : {};
+  return {
+    ...supplied,
+    services: supplied.services ?? input.brandProfile.services,
+    description: supplied.description ?? input.brandProfile.description,
+    companyName: supplied.companyName ?? input.brandProfile.businessName,
+    audience: supplied.audience ?? supplied.targetAudience ?? input.brandProfile.targetAudience,
+    website: supplied.website ?? input.website,
+  };
 }
 
 export async function runStrategyAgent(input: StrategyInput): Promise<{
@@ -435,6 +452,7 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
     ...(input.imageAnalysis ? { imageAnalysis: input.imageAnalysis } : {}),
     ...(input.productInformation ? { productInformation: input.productInformation } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
+    creativeFacts: buildMarketingCreativeFactContract(strategyBusinessFacts(input)),
     ...(input.website ? { website: input.website } : {}),
     // LAST RESORT: only when nothing else describes the business.
     ...(!hasAnyContext ? { campaignLabel: input.campaignName } : {}),
@@ -452,6 +470,7 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
     brandKeywords: input.brandProfile.brandKeywords,
     companyName: input.brandProfile.businessName,
     brief: substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis) ?? null,
+    ...creativeAuthorizationFromBusiness(strategyBusinessFacts(input)),
   });
   const sanitized = evaluated.plan
     ? sanitizeStrategyOutput({

@@ -32,6 +32,7 @@ import {
   CONTENT_CREATIVE_GUIDANCE,
   buildMarketingCreativeFactContract,
   creativeAuthorizationFromBusiness,
+  blockUnauthorizedStrategyCta,
 } from "@ceo-agent/shared";
 
 export type { ContentLocale };
@@ -832,6 +833,14 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   validation: ReturnType<typeof evaluateContentContract>["diagnostic"];
 }> {
   const locale = resolveContentLocale(input);
+  const blockedStrategyCta = blockUnauthorizedStrategyCta(input.strategy.ctaStrategy, input.businessInformation);
+  if (blockedStrategyCta) {
+    return {
+      contentPackage: null,
+      usage: { input: 0, output: 0, costUsd: 0 },
+      validation: blockedStrategyCta,
+    };
+  }
 
   const user = JSON.stringify({
     strategy: input.strategy,
