@@ -1,6 +1,5 @@
 import { callJsonModel } from "./llm";
 import {
-  StrategyPlanSchema,
   normalizeStrategyPlan,
   resolveStrategyIndustryEnum,
   resolveStrategyPlatforms,
@@ -13,11 +12,18 @@ import {
   isInternalPromptLeak,
   creativePreferencesForPrompt,
   substantiveCampaignBrief,
+  evaluateStrategyContract,
+  buildMarketingCreativeFactContract,
+  creativeAuthorizationFromBusiness,
+  STRATEGY_FACT_GROUNDING_RULE,
+  STRATEGY_JSON_CONTRACT,
   type BrandProfile,
+  type MarketingBusinessFacts,
   type ContentLocale,
   type StrategyPlan,
   type VisionAnalysis,
   type Industry,
+  MARKETING_SKILL_GUIDANCE,
 } from "@ceo-agent/shared";
 import type { CampaignCreativeBrief } from "@ceo-agent/shared";
 import {
@@ -41,7 +47,7 @@ export interface StrategyInput {
   videoAnalysis?: string | null;
   imageAnalysis?: string | null;
   productInformation?: string | Record<string, unknown> | null;
-  businessInformation?: string | Record<string, unknown> | null;
+  businessInformation?: string | Record<string, unknown> | MarketingBusinessFacts | null;
   website?: string | null;
   contentLocale?: ContentLocale;
   /** Parsed creative brief for structured preferences (BGM, voice, style). */
@@ -127,7 +133,13 @@ Works for any industry: retail, fashion, beauty, restaurant, cafe, bakery, real 
 
 Determine industry, business type, product/service, core selling points, brand personality, marketing goal, marketing angle, target audience (age, gender, location, interests, buying intent, pain points, desired outcome), customer journey stage, platform priorities, recommended tone, recommended video style, CTA strategy, keywords, and hashtag categories.
 
-Return ONLY JSON matching the schema. No markdown.`;
+Return ONLY JSON matching the schema appended to this prompt. No markdown.
+
+${STRATEGY_FACT_GROUNDING_RULE}
+
+If creativeFacts does not contain a supported customer pain, benefit, quality level, or outcome, keep painPoints empty and use a neutral product-observation angle. Never promote an inferred pain point or adjective into a business fact.
+
+${MARKETING_SKILL_GUIDANCE}`;
 
 const INDUSTRY_FALLBACK: Partial<
   Record<
@@ -341,7 +353,7 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
         },
         customerJourney: profile?.customerJourney ?? "认知",
         platformPriority: platformLabels(input.platforms),
-        ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "私信了解更多",
+        ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "了解这件产品",
         keywords: profile?.keywords ?? [topic],
         hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
         confidence: 0.65,
@@ -369,7 +381,7 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
       },
       customerJourney: profile?.customerJourney ?? "Awareness",
       platformPriority: platformLabels(input.platforms),
-      ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "Learn More",
+      ctaStrategy: input.brandProfile.cta ?? ctas[0] ?? profile?.cta ?? "Learn about the product",
       keywords: profile?.keywords ?? [topic],
       hashtags: { industry: [topic], local: [], trending: [], seo: profile?.keywords ?? [] },
       confidence: 0.65,
@@ -377,11 +389,26 @@ function buildFallbackStrategy(input: StrategyInput, industry: Industry): Strate
   );
 }
 
+function strategyBusinessFacts(input: StrategyInput): Record<string, unknown> {
+  const supplied = input.businessInformation && typeof input.businessInformation === "object" && !Array.isArray(input.businessInformation)
+    ? input.businessInformation as Record<string, unknown>
+    : {};
+  return {
+    ...supplied,
+    services: supplied.services ?? input.brandProfile.services,
+    description: supplied.description ?? input.brandProfile.description,
+    companyName: supplied.companyName ?? input.brandProfile.businessName,
+    audience: supplied.audience ?? supplied.targetAudience ?? input.brandProfile.targetAudience,
+    website: supplied.website ?? input.website,
+  };
+}
+
 export async function runStrategyAgent(input: StrategyInput): Promise<{
-  strategy: StrategyPlan;
+  strategy: StrategyPlan | null;
   industry: Industry;
   knowledgeSnippets: ReturnType<typeof queryKnowledge>;
   usage: { input: number; output: number; costUsd: number };
+  validation: ReturnType<typeof evaluateStrategyContract>["diagnostic"];
 }> {
   const inferred = inferIndustry(input.goal, strategyExtraContext(input), input.brandProfile.industry);
   const locale = resolveStrategyLocale(input);
@@ -427,6 +454,7 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
     ...(input.imageAnalysis ? { imageAnalysis: input.imageAnalysis } : {}),
     ...(input.productInformation ? { productInformation: input.productInformation } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
+    creativeFacts: buildMarketingCreativeFactContract(strategyBusinessFacts(input)),
     ...(input.website ? { website: input.website } : {}),
     // LAST RESORT: only when nothing else describes the business.
     ...(!hasAnyContext ? { campaignLabel: input.campaignName } : {}),
@@ -435,24 +463,33 @@ export async function runStrategyAgent(input: StrategyInput): Promise<{
   const { result, usage } = await callJsonModel<unknown>(
     STRATEGY_SYSTEM_PROMPT,
     user,
-    StrategyPlanSchema.toString()
+    STRATEGY_JSON_CONTRACT
   );
 
-  const parsed = StrategyPlanSchema.safeParse(result);
-  let strategy = parsed.success
-    ? {
-        ...parsed.data,
-        platformPriority: parsed.data.platformPriority.length
-          ? parsed.data.platformPriority
+  const evaluated = evaluateStrategyContract(result, {
+    services: input.brandProfile.services,
+    description: input.brandProfile.description,
+    brandKeywords: input.brandProfile.brandKeywords,
+    companyName: input.brandProfile.businessName,
+    brief: substantiveCampaignBrief(input.campaignBrief, input.videoAnalysis) ?? null,
+    ...creativeAuthorizationFromBusiness(strategyBusinessFacts(input)),
+  });
+  const sanitized = evaluated.plan
+    ? sanitizeStrategyOutput({
+        ...evaluated.plan,
+        platformPriority: evaluated.plan.platformPriority.length
+          ? evaluated.plan.platformPriority
           : platformLabels(input.platforms),
-      }
-    : buildFallbackStrategy(input, inferred);
+      })
+    : null;
+  const strategy = sanitized?.product.trim() ? sanitized : null;
+  const validation = strategy || !evaluated.diagnostic.ok
+    ? evaluated.diagnostic
+    : { ...evaluated.diagnostic, ok: false, codes: ["PRODUCT_MISSING"], fields: ["product"] };
 
-  strategy = sanitizeStrategyOutput(strategy);
+  const industry = strategy ? resolveStrategyIndustryEnum(strategy, inferred) : inferred;
 
-  const industry = resolveStrategyIndustryEnum(strategy, inferred);
-
-  return { strategy, industry, knowledgeSnippets, usage };
+  return { strategy, industry, knowledgeSnippets, usage, validation };
 }
 
 /** Resolved platforms for downstream agents (copy mix, scoring). */

@@ -3,6 +3,7 @@ import {
   cancelPaidMarketingCall,
   finishPaidMarketingCall,
 } from "@ceo-agent/db";
+import type { MarketingContractDiagnostic } from "@ceo-agent/shared";
 
 type Usage = { input: number; output: number; costUsd: number };
 
@@ -45,28 +46,42 @@ export async function generateInitialMarketingPackage<T>(input: {
   taskId: string;
   orgId: string;
   workspaceId: string;
-  generate: () => Promise<{ contentPackage: T; usage: Usage }>;
+  generate: () => Promise<{ contentPackage: T | null; usage: Usage; validation: MarketingContractDiagnostic }>;
   translate: (contentPackage: T) => Promise<{ contentPackage: T; usage: Usage }>;
-}): Promise<{ contentPackage: T; contentUsage: Usage; translateUsage: Usage }> {
+}): Promise<{
+  contentPackage: T | null;
+  contentUsage: Usage;
+  translateUsage: Usage;
+  validation: MarketingContractDiagnostic;
+}> {
   const generated = await runPaidMarketingStep({
     taskId: input.taskId,
     orgId: input.orgId,
     workspaceId: input.workspaceId,
     agent: "marketing_content",
-    outputOf: (result) => result.contentPackage,
+    outputOf: (result) => result.contentPackage ?? result.validation,
     run: input.generate,
   });
+  if (!generated.validation.ok || !generated.contentPackage) {
+    return {
+      contentPackage: null,
+      contentUsage: generated.usage,
+      translateUsage: { input: 0, output: 0, costUsd: 0 },
+      validation: generated.validation,
+    };
+  }
   const translated = await runPaidMarketingStep({
     taskId: input.taskId,
     orgId: input.orgId,
     workspaceId: input.workspaceId,
     agent: "marketing_translate",
     outputOf: (result) => result.contentPackage,
-    run: () => input.translate(generated.contentPackage),
+    run: () => input.translate(generated.contentPackage as T),
   });
   return {
     contentPackage: translated.contentPackage,
     contentUsage: generated.usage,
     translateUsage: translated.usage,
+    validation: generated.validation,
   };
 }
