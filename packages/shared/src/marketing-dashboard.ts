@@ -62,6 +62,14 @@ export interface MarketingPlatformDef {
   /** Short expert persona — guides LLM tone, not shown as copy. */
   expertPersona: string;
   requiredFields: readonly string[];
+  /** Stable creative role supplied to generation and deterministic validation. */
+  creativeDirection: {
+    opening: string;
+    structure: string;
+    discovery: string;
+    tone: string;
+    cta: string;
+  };
 }
 
 export const MARKETING_PLATFORMS: Record<MarketingPlatformId, MarketingPlatformDef> = {
@@ -72,6 +80,7 @@ export const MARKETING_PLATFORMS: Record<MarketingPlatformId, MarketingPlatformD
     accent: "blue",
     expertPersona: "Community storyteller — longer narrative, warm, social proof",
     requiredFields: ["caption", "cta"],
+    creativeDirection: { opening: "relatable customer context", structure: "context then useful response then community prompt", discovery: "shareable community language", tone: "warm and conversational", cta: "authorized channel or neutral discussion prompt" },
   },
   linkedin: {
     id: "linkedin",
@@ -80,6 +89,7 @@ export const MARKETING_PLATFORMS: Record<MarketingPlatformId, MarketingPlatformD
     accent: "navy",
     expertPersona: "B2B educator — authority, insights, professional tone",
     requiredFields: ["caption", "cta"],
+    creativeDirection: { opening: "practical business or professional insight", structure: "insight then evidence-grounded application", discovery: "industry and use-case terms", tone: "professional and restrained", cta: "authorized channel or neutral learn-more prompt" },
   },
   xiaohongshu: {
     id: "xiaohongshu",
@@ -88,6 +98,7 @@ export const MARKETING_PLATFORMS: Record<MarketingPlatformId, MarketingPlatformD
     accent: "teal",
     expertPersona: "Lifestyle curator — emoji, line breaks, search-friendly, aspirational",
     requiredFields: ["caption", "hashtags", "cta"],
+    creativeDirection: { opening: "natural Chinese lifestyle situation", structure: "experience then useful details then takeaway", discovery: "Chinese search keywords and topic tags", tone: "helpful, personal, Simplified Chinese", cta: "authorized channel or neutral save/discovery prompt" },
   },
   instagram: {
     id: "instagram",
@@ -96,6 +107,7 @@ export const MARKETING_PLATFORMS: Record<MarketingPlatformId, MarketingPlatformD
     accent: "teal",
     expertPersona: "Visual poet — short, emotional, emoji-light, scroll-stopping hook",
     requiredFields: ["caption", "cta"],
+    creativeDirection: { opening: "visual detail or mood", structure: "visual-first moment then concise brand expression", discovery: "relevant visual and interest tags", tone: "concise and expressive", cta: "authorized channel or neutral save/share prompt" },
   },
   threads: {
     id: "threads",
@@ -104,14 +116,16 @@ export const MARKETING_PLATFORMS: Record<MarketingPlatformId, MarketingPlatformD
     accent: "blue",
     expertPersona: "Conversationalist — opinion-led, casual, debate-friendly",
     requiredFields: ["caption", "hook"],
+    creativeDirection: { opening: "specific observation or question", structure: "one conversational thought inviting a response", discovery: "conversation rather than hashtag density", tone: "casual and opinion-led", cta: "neutral reply prompt unless a channel is authorized" },
   },
   googleBusiness: {
     id: "googleBusiness",
     label: "Google Business",
     icon: "G",
     accent: "navy",
-    expertPersona: "Local SEO specialist — service keywords, call-now, trust signals",
-    requiredFields: ["caption", "cta"],
+    expertPersona: "Local discovery specialist — factual business and service information",
+    requiredFields: ["caption", "description", "cta"],
+    creativeDirection: { opening: "clear factual business and product identity", structure: "concise service description with verified context", discovery: "accurate business, product, and local search terms", tone: "factual and direct", cta: "only an authorized contact action; otherwise neutral awareness" },
   },
   youtubeShorts: {
     id: "youtubeShorts",
@@ -120,16 +134,28 @@ export const MARKETING_PLATFORMS: Record<MarketingPlatformId, MarketingPlatformD
     accent: "blue",
     expertPersona: "Short-form video SEO — title, hook, description, hashtags",
     requiredFields: ["title", "hook", "description", "hashtags"],
+    creativeDirection: { opening: "searchable title plus retention hook", structure: "promise then short-video payoff then description", discovery: "search intent in title and description", tone: "clear and retention-oriented", cta: "authorized channel or neutral watch/discovery prompt" },
   },
   tiktok: {
     id: "tiktok",
     label: "TikTok",
     icon: "♪",
     accent: "teal",
-    expertPersona: "Trend native — punchy hook, trending CTA, native slang",
+    expertPersona: "Short-video storyteller — immediate hook, conversational progression, visual payoff",
     requiredFields: ["caption", "hook", "cta"],
+    creativeDirection: { opening: "immediate curiosity or product moment", structure: "hook then visual progression then payoff", discovery: "relevant short-video keywords without invented trends", tone: "conversational and energetic", cta: "authorized channel or neutral watch/save/follow prompt" },
   },
 };
+
+/** Authoritative all-platform brief; platform conventions never grant business permissions. */
+export function buildMarketingPlatformCreativeBrief() {
+  return MARKETING_PLATFORM_IDS.map((id) => ({
+    id,
+    label: MARKETING_PLATFORMS[id].label,
+    requiredFields: MARKETING_PLATFORMS[id].requiredFields,
+    ...MARKETING_PLATFORMS[id].creativeDirection,
+  }));
+}
 
 /** Future AI module slots — plug-in registry (no hardcoded UI). */
 export const MARKETING_MODULE_SLOTS = [

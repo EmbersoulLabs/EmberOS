@@ -5,6 +5,7 @@ import {
   STRATEGY_JSON_CONTRACT,
   buildMarketingCreativeFactContract,
   buildMarketingCreativeBlueprint,
+  buildMarketingPlatformCreativeBrief,
   contentAllowsTranslation,
   strategyCtaAllowsContent,
   contentIsCommerciallyReady,
@@ -56,6 +57,19 @@ function content(overrides: Record<string, unknown> = {}) {
       "ribbon being tied 8 seconds",
     ],
     ...overrides,
+  };
+}
+
+function nativePlatformAssets() {
+  return {
+    tiktok: { hook: "The bouquet detail you notice first", caption: "Watch fresh flowers become one thoughtful gift.", cta: "Save this bouquet idea", hashtags: ["bouquet"] },
+    instagram: { caption: "Colour, texture, and a fresh flower bouquet made for the moment.", cta: "Save for gift inspiration", hashtags: ["floralstyle"] },
+    facebook: { caption: "Choosing a gift can be difficult. What feeling would you want a fresh flower bouquet to express?", cta: "Share your bouquet idea", hashtags: [] },
+    linkedin: { caption: "Thoughtful gifting starts with a clear recipient and occasion. A fresh flower bouquet keeps the choice tangible.", cta: "Consider the occasion", hashtags: [] },
+    xiaohongshu: { caption: "送礼灵感｜用鲜花花束表达心意，先从对方喜欢的色彩开始。", cta: "收藏这份选花思路", hashtags: ["鲜花花束", "送礼灵感"] },
+    threads: { hook: "What makes a gift feel personal?", caption: "Sometimes it starts with choosing the colours they actually love.", cta: "Tell us your take", hashtags: [] },
+    youtubeShorts: { title: "How a Fresh Flower Bouquet Comes Together", hook: "Start with the colour story", description: "A short look at arranging a fresh flower bouquet for a thoughtful gift.", cta: "Watch the bouquet take shape", hashtags: ["FreshFlowerBouquet"] },
+    googleBusiness: { caption: "Ember Florist Test — fresh flower bouquets", description: "Fresh flower bouquet options for Singapore gift buyers.", cta: "Explore bouquet ideas", hashtags: ["Singapore", "FreshFlowerBouquet"] },
   };
 }
 
@@ -132,6 +146,57 @@ describe("marketing output contract", () => {
       },
     }));
     expect(claim.diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
+  });
+
+  it("requires every registered platform and its native fields for new generation", () => {
+    const valid = evaluateContentContract(content({ platformAssets: nativePlatformAssets() }), {
+      ...FACTS,
+      enforcePlatformNative: true,
+    });
+    expect(valid.diagnostic.ok).toBe(true);
+    expect(buildMarketingPlatformCreativeBrief().map((item) => item.id)).toEqual(Object.keys(nativePlatformAssets()));
+
+    const missing = nativePlatformAssets();
+    delete (missing as Partial<typeof missing>).googleBusiness;
+    const invalid = evaluateContentContract(content({ platformAssets: missing }), { ...FACTS, enforcePlatformNative: true });
+    expect(invalid.diagnostic.codes).toContain("PLATFORM_ASSET_MISSING");
+    expect(invalid.diagnostic.fields).toContain("platformAssets.googleBusiness");
+  });
+
+  it("rejects duplicated cross-platform copy without weakening fact or CTA checks", () => {
+    const assets = nativePlatformAssets();
+    assets.instagram = { ...assets.instagram, ...assets.tiktok };
+    const duplicated = evaluateContentContract(content({ platformAssets: assets }), { ...FACTS, enforcePlatformNative: true });
+    expect(duplicated.diagnostic.codes).toContain("PLATFORM_CONTENT_DUPLICATED");
+
+    const unauthorized = nativePlatformAssets();
+    unauthorized.googleBusiness.cta = "Call now";
+    const blocked = evaluateContentContract(content({ platformAssets: unauthorized }), { ...FACTS, enforcePlatformNative: true });
+    expect(blocked.diagnostic.codes).toContain("CONTENT_CTA_UNAUTHORIZED");
+    expect(blocked.diagnostic.fields).toContain("platformAssets.googleBusiness.cta");
+  });
+
+  it("keeps the platform brief industry-neutral across grounded campaigns", () => {
+    const briefs = buildMarketingPlatformCreativeBrief();
+    const serialized = JSON.stringify(briefs);
+    expect(serialized).not.toMatch(/florist|bouquet|restaurant|accounting/i);
+    expect(briefs.find((item) => item.id === "googleBusiness")?.cta).toContain("authorized");
+    expect(briefs.find((item) => item.id === "xiaohongshu")?.tone).toContain("Simplified Chinese");
+  });
+
+  it.each([
+    ["florist", "Fresh flower bouquet", "Ember Florist Test"],
+    ["professional services", "Bookkeeping consultation", "Northstar Books"],
+    ["fitness", "Beginner mobility class", "Everyday Motion"],
+  ])("accepts complete platform-native shapes for %s", (_industry, product, companyName) => {
+    const assets = nativePlatformAssets();
+    assets.googleBusiness.caption = `${companyName} — ${product}`;
+    assets.googleBusiness.description = `${product} information for interested customers.`;
+    assets.youtubeShorts.title = `A short guide to ${product}`;
+    const result = evaluateContentContract(content({ platformAssets: assets }), {
+      services: [product], companyName, enforcePlatformNative: true,
+    });
+    expect(result.diagnostic.ok).toBe(true);
   });
 });
 

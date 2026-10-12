@@ -32,6 +32,7 @@ import {
   CONTENT_CREATIVE_GUIDANCE,
   buildMarketingCreativeFactContract,
   buildMarketingCreativeBlueprint,
+  buildMarketingPlatformCreativeBrief,
   creativeAuthorizationFromBusiness,
   blockUnauthorizedStrategyCta,
 } from "@ceo-agent/shared";
@@ -56,7 +57,8 @@ Marketing Strategy JSON + Video Analysis + Business context.
   userNotes, and videoAnalysis are all absent.
   If the vision shows a specific product/scene, the caption must describe THAT.
 - Follow strategy exactly. Do not invent strategy fields.
-- Every platform asset MUST use unique wording — zero copy-paste between platforms.
+- Follow platformCreativeBriefs for each platform's opening, narrative structure, discovery mechanism, tone, and native fields. Differences must be structural, not platform-name, emoji, hashtag-order, punctuation, or synonym substitutions.
+- Platform conventions never authorize a business claim or contact channel. Every CTA must come from creativeFacts.approvedCtaChannels; when none is relevant, use a factually neutral awareness or engagement action.
 - Short bullets and card-friendly strings only (max 2-3 lines per field unless Facebook/LinkedIn caption).
 - Return ONLY valid JSON. No markdown.
 
@@ -100,9 +102,9 @@ Platform rules:
   search keywords, hashtags. Never leave it empty.
 - instagram: short emotional caption + emoji
 - threads: conversational opinion hook
-- googleBusiness: local SEO, service keywords, call-now CTA
+- googleBusiness: factual business/service discovery; never imply phone, website, location, ordering, delivery, or other contact access unless creativeFacts explicitly authorizes it
 - youtubeShorts: title + hook + description + hashtags
-- tiktok: native hook + trending CTA
+- tiktok: immediate hook + short-video progression + authorized or neutral CTA; do not invent trends
 
 Also populate legacy captions map (flattened) for backward compatibility.
 
@@ -868,6 +870,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
       businessInformation: input.businessInformation,
       durationSec: explicitScriptDurationSec(input.userNotes),
     }),
+    platformCreativeBriefs: buildMarketingPlatformCreativeBrief(),
     ...(input.userNotes ? { userNotes: input.userNotes } : {}),
     locale: localeToPromptTag(locale),
     outputLanguage: outputLanguageInstruction(locale),
@@ -890,6 +893,7 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     durationSec: explicitScriptDurationSec(input.userNotes),
     providerRequestId,
     enforceQuality: true,
+    enforcePlatformNative: true,
   });
   if (!evaluated.diagnostic.ok || !evaluated.contentPackage) {
     console.warn(`[content] contract failed codes=${evaluated.diagnostic.codes.join(",")}`);

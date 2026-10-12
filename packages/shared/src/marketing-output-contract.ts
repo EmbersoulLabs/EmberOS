@@ -5,6 +5,7 @@ import {
   type MarketingContentPackage,
   type StrategyPlan,
 } from "./types/marketing-os";
+import { MARKETING_PLATFORM_IDS, MARKETING_PLATFORMS } from "./marketing-dashboard";
 
 export const MARKETING_OUTPUT_SCHEMA_VERSION = "marketing-output-v1";
 
@@ -121,7 +122,45 @@ export type ContentContractFacts = StrategyContractFacts & {
   providerRequestId?: string | null;
   platforms?: string[] | null;
   enforceQuality?: boolean;
+  enforcePlatformNative?: boolean;
 };
+
+function assessPlatformNativeContent(
+  contentPackage: MarketingContentPackage,
+  codes: string[],
+  fields: string[],
+  issues: MarketingContractIssue[]
+) {
+  const assets = contentPackage.platformAssets ?? {};
+  const fingerprints = new Map<string, string>();
+  for (const id of MARKETING_PLATFORM_IDS) {
+    const asset = assets[id];
+    if (!asset) {
+      codes.push("PLATFORM_ASSET_MISSING");
+      fields.push(`platformAssets.${id}`);
+      issues.push({ code: "PLATFORM_ASSET_MISSING", field: `platformAssets.${id}`, expected: "platform-native asset", received: "missing", normalizable: false });
+      continue;
+    }
+    for (const field of MARKETING_PLATFORMS[id].requiredFields) {
+      const value = asset[field as keyof typeof asset];
+      const present = Array.isArray(value) ? value.some((item) => String(item).trim()) : Boolean(String(value ?? "").trim());
+      if (!present) {
+        codes.push("PLATFORM_FORMAT_INCOMPLETE");
+        fields.push(`platformAssets.${id}.${field}`);
+        issues.push({ code: "PLATFORM_FORMAT_INCOMPLETE", field: `platformAssets.${id}.${field}`, expected: `${id} native field`, received: "empty", normalizable: false });
+      }
+    }
+    const fingerprint = [asset.title, asset.hook, asset.caption, asset.description, asset.cta]
+      .filter(Boolean).join(" ").toLowerCase().replace(/[#\p{P}\p{S}\s]+/gu, " ").trim();
+    if (!fingerprint) continue;
+    const prior = fingerprints.get(fingerprint);
+    if (prior) {
+      codes.push("PLATFORM_CONTENT_DUPLICATED");
+      fields.push(`platformAssets.${id}`);
+      issues.push({ code: "PLATFORM_CONTENT_DUPLICATED", field: `platformAssets.${id}`, expected: `a distinct ${id} creative structure`, received: `duplicates ${prior}`, normalizable: false });
+    } else fingerprints.set(fingerprint, id);
+  }
+}
 
 const INSTRUCTION_LEAK = /promote only these authorized facts|do not add prices|video generation stays unauthorized|^request:/i;
 const UNSUPPORTED_CLAIM = /guaranteed conversion|保证转化|\$\d|\bRM\s?\d/i;
@@ -1464,6 +1503,9 @@ export function evaluateContentContract(
     fields.push("voiceScripts");
   }
   scanContentClaims(contentPackage, payload, facts, codes, fields, issues);
+  if (facts.enforcePlatformNative === true) {
+    assessPlatformNativeContent(contentPackage, codes, fields, issues);
+  }
   assessScriptDuration(contentPackage, facts, codes, fields, issues);
   const quality = assessCreativeQuality(contentPackage, facts, codes.includes("UNSUPPORTED_CLAIM"));
   if (facts.enforceQuality === true && quality.status !== "PASS") {
