@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { AI_STORY_CERTIFIED_LOCAL_WORKFLOWS } from "@ceo-agent/shared/server";
 import { resolveExplicitLocalGpuProviderAuthority } from "../packages/agents/src/ai-story/local-gpu-access";
+import { runWorkerLocalGpuDispatchCycle } from "../apps/worker/src/ai-story-local-gpu-worker-dispatch";
 import {
   localGpuAssemblyHandoff,
   resolveLocalGpuReviewState,
@@ -40,7 +41,7 @@ describe("LOCAL_GPU V1 core phase 4", () => {
     }).regenerate).toBe(false);
   });
 
-  it("selects one worker result and leaves execution closed", () => {
+  it("selects one worker result and leaves execution closed", async () => {
     const row = {
       sourceKind: "LOCAL_GPU_WORKER",
       workspaceId: id(3),
@@ -59,8 +60,13 @@ describe("LOCAL_GPU V1 core phase 4", () => {
     expect([...AI_STORY_CERTIFIED_LOCAL_WORKFLOWS]).toEqual(["MINIMAX_H3_NATIVE_DIALOGUE"]);
     const processors = readFileSync(join(root, "apps/worker/src/processors/index.ts"), "utf8");
     const execute = readFileSync(join(root, "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"), "utf8");
-    expect(processors).not.toContain("local-gpu");
+    expect(processors).toContain("runWorkerLocalGpuDispatchCycle(process.env)");
     expect(execute).not.toContain("LOCAL_GPU");
+    expect(await runWorkerLocalGpuDispatchCycle({
+      LOCAL_GPU_PROVIDER_ENABLED: "true",
+      LOCAL_GPU_SINGLE_RUN_AUTHORIZED: "true",
+      LOCAL_GPU_ENVIRONMENT: "staging",
+    })).toMatchObject({ code: "LOCAL_GPU_SCENE_SCOPE_REQUIRED", posts: 0, gets: 0, submit: false });
     const route = readFileSync(join(root, "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/local-generation/[packageId]/result/route.ts"), "utf8");
     expect(route).toContain("findSoleLocalGpuWorkerResult");
     expect(route).not.toContain("submit(");

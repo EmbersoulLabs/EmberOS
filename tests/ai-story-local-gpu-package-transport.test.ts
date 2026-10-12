@@ -370,7 +370,7 @@ describe("LOCAL_GPU execution stays closed", () => {
     const processors = readFileSync(join(root, "apps/worker/src/processors/index.ts"), "utf8");
     const execute = readFileSync(join(root, "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"), "utf8");
     const sequential = readFileSync(join(root, "packages/agents/src/ai-story/sequential-local-generation.ts"), "utf8");
-    expect(processors).not.toContain("local-gpu");
+    expect(processors).toContain("runWorkerLocalGpuDispatchCycle(process.env)");
     expect(execute).not.toContain("local-gpu-package-transport");
     expect(sequential).not.toContain("local-gpu-package-transport");
     expect(sequential).toContain('executionMode: "MANUAL_LOCAL"');

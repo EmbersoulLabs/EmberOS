@@ -17,6 +17,7 @@ import {
 } from "@ceo-agent/shared/server";
 import { InMemoryLocalGpuReleaseLedger, claimPreparedLocalGpuRelease, selectNextLocalGpuRelease } from "@ceo-agent/db";
 import { materializeLocalGenerationResult } from "../packages/agents/src/ai-story/generation-result-service";
+import { runWorkerLocalGpuDispatchCycle } from "../apps/worker/src/ai-story-local-gpu-worker-dispatch";
 import { AiStoryLocalGenerationPackageSchema } from "@ceo-agent/shared";
 import {
   LocalGpuCloudAdapter,
@@ -226,7 +227,7 @@ describe("LOCAL_GPU V1 core phase 2", () => {
     expect(claimSource).toContain("sceneExecutionId");
   });
 
-  it("keeps execution, Native Dialogue, the candidate, and normal users disabled", () => {
+  it("keeps execution, Native Dialogue, the candidate, and normal users disabled", async () => {
     expect(loadLocalGpuConfigFromEnv({}).enabled).toBe(false);
     expect(loadLocalGpuConfigFromEnv({}).agencyEnabled).toBe(false);
     expect(() => loadLocalGpuConfigFromEnv({ AGENCY_LOCAL_GPU_ENABLED: "true" })).toThrow("LOCAL_GPU_AGENCY_DISABLED");
@@ -243,7 +244,22 @@ describe("LOCAL_GPU V1 core phase 2", () => {
     const execute = readFileSync(join(root, "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"), "utf8");
     const processors = readFileSync(join(root, "apps/worker/src/processors/index.ts"), "utf8");
     expect(execute).not.toContain("LOCAL_GPU");
-    expect(processors).not.toContain("local-gpu");
+    expect(processors).toContain("runWorkerLocalGpuDispatchCycle(process.env)");
+    const closed = {
+      load: async () => { throw new Error("LOCAL_GPU_UNEXPECTED_CLAIM"); },
+      claim: () => { throw new Error("LOCAL_GPU_UNEXPECTED_CLAIM"); },
+      adapter: {} as never,
+      actor,
+      request: {} as never,
+      capabilities: null,
+      existingResultId: null,
+    };
+    expect(await runWorkerLocalGpuDispatchCycle({}, closed)).toMatchObject({ code: "DISABLED", posts: 0, gets: 0, submit: false });
+    expect(await runWorkerLocalGpuDispatchCycle({
+      LOCAL_GPU_PROVIDER_ENABLED: "true",
+      LOCAL_GPU_SINGLE_RUN_AUTHORIZED: "true",
+      LOCAL_GPU_ENVIRONMENT: "production",
+    }, closed)).toMatchObject({ code: "LOCAL_GPU_PRODUCTION_DENIED", posts: 0, gets: 0, submit: false });
     expect(adapter(async () => ({ status: 200, body: "{}" })).remoteProviderFallback).toBe(0);
   });
 

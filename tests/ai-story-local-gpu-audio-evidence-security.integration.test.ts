@@ -92,7 +92,10 @@ describeIntegration("LOCAL_GPU audio evidence database security", () => {
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN CREATE ROLE anon NOLOGIN; END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN CREATE ROLE service_role NOLOGIN BYPASSRLS; END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'local_gpu_audio_no_bypass') THEN CREATE ROLE local_gpu_audio_no_bypass NOLOGIN NOBYPASSRLS; END IF;
       END $$;
+      ALTER ROLE service_role NOLOGIN BYPASSRLS;
+      ALTER ROLE local_gpu_audio_no_bypass NOLOGIN NOBYPASSRLS;
       GRANT USAGE ON SCHEMA public, auth TO anon, authenticated, service_role;
       GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated, service_role;
       CREATE TABLE organizations (id uuid PRIMARY KEY);
@@ -144,7 +147,14 @@ describeIntegration("LOCAL_GPU audio evidence database security", () => {
   });
 
   afterAll(async () => {
-    if (sql) await sql.end();
+    if (sql) {
+      await sql.unsafe(`
+        REVOKE ALL ON ALL TABLES IN SCHEMA public FROM local_gpu_audio_no_bypass;
+        DROP OWNED BY local_gpu_audio_no_bypass;
+        DROP ROLE IF EXISTS local_gpu_audio_no_bypass;
+      `);
+      await sql.end();
+    }
     if (admin && databaseName) {
       await admin.unsafe(`DROP DATABASE IF EXISTS ${databaseName}`);
       await admin.end();
@@ -344,5 +354,52 @@ describeIntegration("LOCAL_GPU audio evidence database security", () => {
       WHERE relname = 'ai_story_local_gpu_audio_evidence'
     `;
     expect(security).toEqual({ relrowsecurity: true, relforcerowsecurity: false });
+    const [serviceRole] = await sql<{ rolbypassrls: boolean }[]>`
+      SELECT rolbypassrls FROM pg_roles WHERE rolname = 'service_role'
+    `;
+    expect(serviceRole?.rolbypassrls).toBe(true);
+  });
+
+  it("rejects insert from a role that does not bypass row security", async () => {
+    await sql.unsafe(`
+      GRANT SELECT ON ai_story_generation_results, assets TO local_gpu_audio_no_bypass;
+      GRANT INSERT ON ai_story_local_gpu_audio_evidence TO local_gpu_audio_no_bypass;
+    `);
+    const [role] = await sql<{ rolbypassrls: boolean }[]>`
+      SELECT rolbypassrls FROM pg_roles WHERE rolname = 'local_gpu_audio_no_bypass'
+    `;
+    expect(role?.rolbypassrls).toBe(false);
+    const before = await sql<{ count: string }[]>`
+      SELECT count(*)::text AS count FROM ai_story_local_gpu_audio_evidence
+    `;
+    const row = fact({
+      evidenceId: randomUUID(),
+      workspaceId: workspaceB,
+      planId: planB,
+      sceneId: sceneB,
+      resultId: resultB,
+      assetId: assetB,
+      contentHash: hashB,
+      fingerprint: fingerprintConflict,
+    });
+    await expect(sql.begin(async (tx) => {
+      await tx.unsafe("SET LOCAL role = 'local_gpu_audio_no_bypass'");
+      await tx`
+        INSERT INTO ai_story_local_gpu_audio_evidence (
+          audio_evidence_id, org_id, workspace_id, execution_plan_id, scene_execution_id,
+          generation_result_id, asset_id, content_hash, has_audio, speech_content,
+          evidence_fingerprint, fact
+        ) VALUES (
+          ${row.audioEvidenceId}::uuid, ${row.orgId}::uuid, ${row.workspaceId}::uuid,
+          ${row.executionPlanId}::uuid, ${row.sceneExecutionId}::uuid, ${row.generationResultId}::uuid,
+          ${row.assetId}::uuid, ${row.contentHash}, ${row.hasAudio}, ${row.speechContent},
+          ${row.evidenceFingerprint}, ${tx.json(row)}
+        )
+      `;
+    })).rejects.toMatchObject({ code: "42501" });
+    const after = await sql<{ count: string }[]>`
+      SELECT count(*)::text AS count FROM ai_story_local_gpu_audio_evidence
+    `;
+    expect(after).toEqual(before);
   });
 });
