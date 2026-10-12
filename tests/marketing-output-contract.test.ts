@@ -13,6 +13,7 @@ import {
   evaluateStrategyContract,
   explicitScriptDurationSec,
   isMarketingInstructionLeak,
+  isMarketingPackLocaleReady,
   normalizeSubtitleTimeline,
   strategyAllowsContent,
 } from "@ceo-agent/shared";
@@ -80,6 +81,17 @@ function nativePlatformAssets() {
 }
 
 describe("marketing output contract", () => {
+  it("does not report Malay ready by silently substituting English", () => {
+    const pkg = evaluateContentContract(content()).contentPackage;
+    expect(pkg).not.toBeNull();
+    if (!pkg) return;
+    pkg.hooks = pkg.hooks.map((hook) => ({ ...hook, textEn: "English hook", textMs: undefined }));
+    pkg.cta = pkg.cta.map((cta) => ({ ...cta, textEn: "English CTA", textMs: undefined }));
+    pkg.captionsEn = { ...pkg.captions, tiktok: "English caption" };
+    pkg.captionsMs = { ...pkg.captions, tiktok: "" };
+    expect(isMarketingPackLocaleReady(pkg, "ms")).toBe(false);
+  });
+
   it("accepts a complete grounded strategy and equivalent field shapes", () => {
     const result = evaluateStrategyContract(strategy(), FACTS);
     expect(result.diagnostic.ok).toBe(true);
@@ -135,6 +147,39 @@ describe("marketing output contract", () => {
       voiceScriptsEn: { "15s": BRIEF, "30s": `${BRIEF} translated leakage`, "60s": `${BRIEF} translated leakage continues` },
     }));
     expect(corrupted.diagnostic.codes).toContain("BRIEF_LEAKAGE");
+  });
+
+  it("replays the eighth E2E strategy-to-fact promotion as an unsupported product attribute", () => {
+    const replay = evaluateContentContract(content({
+      platformAssets: nativePlatformAssets(),
+      voiceScripts: {
+        "15s": "See this fresh flower bouquet.",
+        "30s": "This fresh flower bouquet features vibrant colors and unique layering, crafted to impress Singapore gift buyers.",
+        "60s": "This fresh flower bouquet features vibrant colors and unique layering, crafted to impress Singapore gift buyers. Notice every detail and save the idea.",
+      },
+    }), { ...FACTS, enforcePlatformNative: true });
+    expect(replay.diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
+    expect(replay.diagnostic.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ claimCategory: "product_attribute", field: "voiceScripts.30s" }),
+    ]));
+
+    const authorized = evaluateContentContract(content({
+      voiceScripts: {
+        "15s": "See this fresh flower bouquet.",
+        "30s": "This fresh flower bouquet features vibrant colors and unique layering for Singapore gift buyers.",
+        "60s": "This fresh flower bouquet features vibrant colors and unique layering for Singapore gift buyers. Notice every detail and save the idea.",
+      },
+    }), { ...FACTS, description: "Fresh flower bouquet features vibrant colors and unique layering." });
+    expect(authorized.diagnostic.codes).not.toContain("UNSUPPORTED_CLAIM");
+
+    const mismatched = evaluateContentContract(content({
+      voiceScripts: {
+        "15s": "See this fresh flower bouquet.",
+        "30s": "This fresh flower bouquet features imported gold-dipped petals for Singapore gift buyers.",
+        "60s": "This fresh flower bouquet features imported gold-dipped petals for Singapore gift buyers. Notice every detail and save the idea.",
+      },
+    }), { ...FACTS, description: "Fresh flower bouquet features vibrant colors and unique layering." });
+    expect(mismatched.diagnostic.codes).toContain("UNSUPPORTED_CLAIM");
   });
 
   it("rejects truncated JSON, brief leakage, unsupported claims, and blocks translation", () => {

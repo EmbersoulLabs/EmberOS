@@ -20,6 +20,7 @@ import {
   blockUnauthorizedStrategyCta,
   alignStrategyWithVision,
   type ContentLocale,
+  isMarketingPackFullyTranslated,
 } from "@ceo-agent/shared";
 import { parseIntent } from "./ceo";
 import { runStrategyAgent } from "./strategy";
@@ -297,6 +298,10 @@ export async function runAutoClipPipeline(taskId: string, hooks?: PipelineHooks)
     if (!contentValidation.ok || !contentPackage) {
       await updateStep(taskId, "content_generate", { status: "failed", completedAt: new Date().toISOString(), output: contentValidation });
       throw new Error("CONTENT_CONTRACT_FAILED");
+    }
+    if (!isMarketingPackFullyTranslated(contentPackage)) {
+      await updateStep(taskId, "content_generate", { status: "failed", completedAt: new Date().toISOString(), output: { code: "TRANSLATION_INCOMPLETE" } });
+      throw new Error("TRANSLATION_INCOMPLETE");
     }
     await updateStep(taskId, "content_generate", {
       status: "completed",

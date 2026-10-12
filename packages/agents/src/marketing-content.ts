@@ -56,8 +56,11 @@ Marketing Strategy JSON + Video Analysis + Business context.
   derived only from the campaign label — use campaignLabel ONLY when vision, goal,
   userNotes, and videoAnalysis are all absent.
   If the vision shows a specific product/scene, the caption must describe THAT.
-- Follow strategy exactly. Do not invent strategy fields.
+- Use Strategy for campaign intent, audience, pacing, mood, and creative execution only. Strategy adjectives, benefits, pain points, and visual ideas are NOT verified product attributes.
+- creativeFacts is the sole factual authority. Do not turn a Strategy suggestion into copy that says the product "has", "features", "offers", "uses", "is crafted with", or "is known for" an attribute unless that attribute is explicitly present in creativeFacts.
 - Follow platformCreativeBriefs for each platform's opening, narrative structure, discovery mechanism, tone, and native fields. Differences must be structural, not platform-name, emoji, hashtag-order, punctuation, or synonym substitutions.
+- Give every platform a distinct reader value within the same Campaign: TikTok needs a moment-to-moment reveal or payoff; LinkedIn needs a practical decision/use-case insight; Xiaohongshu needs natural Chinese lifestyle context plus a useful grounded takeaway. Instagram, Facebook, Threads, YouTube Shorts, and Google Business must likewise serve the distinct function in platformCreativeBriefs. Do not reuse a generic brand promise as their central message.
+- Platform-specific value may be a question, viewing instruction, comparison framework, occasion consideration, or discovery aid. It must not manufacture product attributes when creativeFacts is sparse.
 - Platform conventions never authorize a business claim or contact channel. Every CTA must come from creativeFacts.approvedCtaChannels; when none is relevant, use a factually neutral awareness or engagement action.
 - Short bullets and card-friendly strings only (max 2-3 lines per field unless Facebook/LinkedIn caption).
 - Return ONLY valid JSON. No markdown.
@@ -859,6 +862,12 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
     creativeFacts: buildMarketingCreativeFactContract(input.businessInformation, input.platforms),
+    strategyFactBoundary: {
+      authority: "creativeFacts_only",
+      nonFactualFields: ["marketingAngle", "videoStyle", "audience.painPoints", "audience.desiredOutcome"],
+      permittedUse: "opening angle, shot order, editing, tone, question, or hypothetical visual direction",
+      forbiddenUse: "asserted product composition, feature, quality, process, availability, benefit, or outcome",
+    },
     creativeBlueprint: buildMarketingCreativeBlueprint({
       businessInformation: input.businessInformation,
       durationSec: explicitScriptDurationSec(input.userNotes),

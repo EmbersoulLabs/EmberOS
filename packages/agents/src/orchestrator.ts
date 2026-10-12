@@ -21,6 +21,7 @@ import {
   alignStrategyWithVision,
   emitVideoStudioOpsEvent,
   type ContentLocale,
+  isMarketingPackFullyTranslated,
 } from "@ceo-agent/shared";
 import { loadTrackedCampaignTaskInputs } from "./campaign-task-generation-identity";
 import { runCeoAgent, parseIntent } from "./ceo";
@@ -370,6 +371,10 @@ export async function runPipeline(taskId: string, hooks?: PipelineHooks) {
       if (!contentValidation.ok || !contentPackage) {
         await updateStep(taskId, "content_generate", { status: "failed", completedAt: new Date().toISOString(), output: contentValidation });
         throw new Error("CONTENT_CONTRACT_FAILED");
+      }
+      if (!isMarketingPackFullyTranslated(contentPackage)) {
+        await updateStep(taskId, "content_generate", { status: "failed", completedAt: new Date().toISOString(), output: { code: "TRANSLATION_INCOMPLETE" } });
+        throw new Error("TRANSLATION_INCOMPLETE");
       }
       await updateStep(taskId, "content_generate", { status: "completed", completedAt: new Date().toISOString(), output: contentPackage });
 
