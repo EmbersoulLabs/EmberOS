@@ -274,6 +274,16 @@ describe("marketing content fallback origin", () => {
     expect(result.validation.ok).toBe(false);
     expect(result.validation.codes).toContain("CONTENT_SCHEMA_INVALID");
     expect(callJsonModel).toHaveBeenCalledTimes(1);
+    const request = JSON.parse(String(callJsonModel.mock.calls[0]?.[1] ?? "{}"));
+    expect(request.creativeFacts.approvedCtaChannels).toEqual(["awareness"]);
+    expect(request.creativeBlueprint.activeDurationSec).toBe(30);
+    expect(request.creativeBlueprint.eligibleFormats).toEqual(expect.arrayContaining([
+      "product_demonstration",
+      "detail_reveal",
+      "process_montage",
+    ]));
+    expect(request.creativeBlueprint.factPolicy.join(" ")).toContain("Strategy angles");
+    expect(String(callJsonModel.mock.calls[0]?.[2])).toContain("end subtitleTimeline at the active duration");
   });
 });
 
