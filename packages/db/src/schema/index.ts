@@ -180,6 +180,63 @@ export const campaigns = pgTable(
   ]
 );
 
+/** Campaign-owned coordination identity. Existing Creative Modules may operate without one. */
+export const campaignContentIterations = pgTable(
+  "campaign_content_iterations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    sequenceNumber: integer("sequence_number").notNull(),
+    state: text("state").notNull().default("PLANNING"),
+    version: integer("version").notNull().default(1),
+    creationIdempotencyKey: text("creation_idempotency_key").notNull(),
+    creationFingerprint: text("creation_fingerprint").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("campaign_content_iterations_campaign_sequence_unique").on(t.campaignId, t.sequenceNumber),
+    unique("campaign_content_iterations_creation_idempotency_unique").on(t.workspaceId, t.campaignId, t.creationIdempotencyKey),
+    index("campaign_content_iterations_scope_state_idx").on(t.workspaceId, t.campaignId, t.state),
+    check("campaign_content_iterations_sequence_positive", sql`${t.sequenceNumber} > 0`),
+    check("campaign_content_iterations_version_positive", sql`${t.version} > 0`),
+    check("campaign_content_iterations_state_valid", sql`${t.state} in ('PLANNING','PLAN_APPROVED','CREATIVE_IN_PROGRESS','MARKETING_REVIEW','REVISION_REQUIRED','REWORK_REQUIRED','APPROVED','SOCIAL_CONTENT_READY','PUBLISHED','NEXT_RECOMMENDED','COMPLETED','CANCELLED')`),
+  ]
+);
+
+/** Append-only audit facts for Campaign Content Iterations. */
+export const campaignWorkflowFacts = pgTable(
+  "campaign_workflow_facts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    iterationId: uuid("iteration_id").notNull().references(() => campaignContentIterations.id, { onDelete: "cascade" }),
+    factType: text("fact_type").notNull(),
+    sequenceNumber: integer("sequence_number").notNull(),
+    fromState: text("from_state"),
+    toState: text("to_state"),
+    iterationVersion: integer("iteration_version").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    idempotencyKey: text("idempotency_key").notNull(),
+    commandFingerprint: text("command_fingerprint").notNull(),
+    actorUserId: uuid("actor_user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("campaign_workflow_facts_idempotency_unique").on(t.iterationId, t.idempotencyKey),
+    unique("campaign_workflow_facts_sequence_unique").on(t.iterationId, t.sequenceNumber),
+    index("campaign_workflow_facts_history_idx").on(t.iterationId, t.createdAt),
+    check("campaign_workflow_facts_sequence_positive", sql`${t.sequenceNumber} > 0`),
+    check("campaign_workflow_facts_iteration_version_positive", sql`${t.iterationVersion} > 0`),
+    check("campaign_workflow_facts_type_valid", sql`${t.factType} in ('ITERATION_CREATED','STATE_TRANSITIONED','PLAN_PROPOSED','PLAN_APPROVED','MODULE_SELECTED','ARTIFACT_ATTACHED','MARKETING_REVIEW_DECIDED','SOCIAL_CONTENT_PREPARED','PUBLICATION_CONFIRMED','NEXT_CONTENT_RECOMMENDED','NEXT_CONTENT_APPROVED')`),
+  ]
+);
+
 export const assets = pgTable(
   "assets",
   {
@@ -4982,6 +5039,22 @@ export const campaignsRelations = relations(campaigns, ({ one, many }) => ({
   creatives: many(creatives),
   photoSceneGenerations: many(photoSceneGenerations),
   photoSceneSceneSelections: many(photoSceneSceneSelections),
+  contentIterations: many(campaignContentIterations),
+}));
+
+export const campaignContentIterationsRelations = relations(campaignContentIterations, ({ one, many }) => ({
+  campaign: one(campaigns, {
+    fields: [campaignContentIterations.campaignId],
+    references: [campaigns.id],
+  }),
+  facts: many(campaignWorkflowFacts),
+}));
+
+export const campaignWorkflowFactsRelations = relations(campaignWorkflowFacts, ({ one }) => ({
+  iteration: one(campaignContentIterations, {
+    fields: [campaignWorkflowFacts.iterationId],
+    references: [campaignContentIterations.id],
+  }),
 }));
 
 /** Immutable AI Story video observation snapshots. Claims coordinate one paid analysis per reuse key. */
