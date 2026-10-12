@@ -18,7 +18,11 @@ export class AiStoryPlanningCharacterAuthorityError extends Error {
       | "CHARACTER_AUTHORITY_FINGERPRINT_MISMATCH"
       | "CHARACTER_AUTHORITY_IDENTITY_REQUIRED"
       | "CHARACTER_AUTHORITY_CONTINUITY_MISSING"
-      | "CHARACTER_AUTHORITY_STALE",
+      | "CHARACTER_AUTHORITY_STALE"
+      | "CHARACTER_PROPOSAL_NOT_FOUND"
+      | "CHARACTER_PROPOSAL_AMBIGUOUS"
+      | "CHARACTER_PROPOSAL_ALREADY_BOUND"
+      | "CHARACTER_PROPOSAL_AUTHORITY_DUPLICATE",
     message: string
   ) {
     super(message);
@@ -66,6 +70,87 @@ export function projectAcceptedCharactersToPlanning(input: {
       });
     })
     .sort((left, right) => left.characterId.localeCompare(right.characterId));
+}
+
+/**
+ * Human acceptance binds one unresolved proposal slot to a Character that already
+ * exists in the Campaign registry. The proposal key is only a lookup. It is never
+ * copied into characterId, and a matching display name is not a lookup.
+ */
+export function bindProposalToAcceptedCharacter(input: {
+  creativeContext: CreativeContext;
+  proposalKey: string;
+  characterAuthority: PlanningCharacterAuthorityProjection;
+}): CreativeContext {
+  const creativeContext = CreativeContextSchema.parse(input.creativeContext);
+  const authority = PlanningCharacterAuthorityProjectionSchema.parse(input.characterAuthority);
+  const proposalKey = input.proposalKey.trim();
+  const matches = creativeContext.characterContext.characters.filter(
+    (character) => character.id === proposalKey,
+  );
+  if (!proposalKey || matches.length === 0) {
+    throw new AiStoryPlanningCharacterAuthorityError(
+      "CHARACTER_PROPOSAL_NOT_FOUND",
+      "Creative Context has no unresolved Character proposal with that exact key",
+    );
+  }
+  if (matches.length > 1) {
+    throw new AiStoryPlanningCharacterAuthorityError(
+      "CHARACTER_PROPOSAL_AMBIGUOUS",
+      "Creative Context has more than one Character proposal with that exact key",
+    );
+  }
+  const proposal = matches[0]!;
+  if (proposal.canonicalAuthority && !proposal.proposalOnly) {
+    throw new AiStoryPlanningCharacterAuthorityError(
+      "CHARACTER_PROPOSAL_ALREADY_BOUND",
+      "That Creative Context Character already carries accepted authority",
+    );
+  }
+  if (
+    creativeContext.characterContext.characters.some(
+      (character) =>
+        character.id !== proposalKey &&
+        character.canonicalAuthority?.characterId === authority.characterId,
+    )
+  ) {
+    throw new AiStoryPlanningCharacterAuthorityError(
+      "CHARACTER_PROPOSAL_AUTHORITY_DUPLICATE",
+      `Character ${authority.characterId} is already bound in this Creative Context`,
+    );
+  }
+  const characters = creativeContext.characterContext.characters.map((character) =>
+    character.id === proposalKey ? compatibilityCharacter(character, authority) : character,
+  );
+  return CreativeContextSchema.parse({
+    ...creativeContext,
+    characterContext: { ...creativeContext.characterContext, characters },
+  });
+}
+
+/**
+ * A Creative Context character is Script authority only after explicit acceptance.
+ * Proposal ids such as proposed_character_1 are not canonical, and this does not
+ * create a Character, a fingerprint, or a visual Asset.
+ */
+export function assertCreativeCharactersMatchAuthorities(input: {
+  characters: readonly {
+    id?: string;
+    proposalOnly?: boolean;
+    canonicalAuthority?: { characterId: string } | null;
+  }[];
+  characterAuthorities: readonly { characterId: string }[];
+}): void {
+  const authorized = new Set(input.characterAuthorities.map((authority) => authority.characterId));
+  for (const character of input.characters) {
+    const canonicalId = character.canonicalAuthority?.characterId;
+    if (character.proposalOnly || !canonicalId) {
+      throw new Error("CHARACTER_PROPOSAL_ACCEPTANCE_REQUIRED");
+    }
+    if (!authorized.has(canonicalId) || (character.id !== undefined && character.id !== canonicalId)) {
+      throw new Error("CHARACTER_AUTHORITY_IDENTITY_REQUIRED");
+    }
+  }
 }
 
 /**

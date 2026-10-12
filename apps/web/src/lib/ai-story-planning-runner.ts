@@ -15,6 +15,7 @@ import {
   schema,
 } from "@ceo-agent/db";
 import {
+  assertCreativeCharactersMatchAuthorities,
   assertPlanningCharacterAuthorityCurrent,
   assertPlanningProductAuthorityCurrent,
   buildAnimationPackage,
@@ -549,6 +550,13 @@ export async function runSinglePlanningStage(input: {
         "Generate Story Beats before Scene Plan"
       );
       if (requiresCanonicalStoryAuthority(ctx.loaded.story.outlineProfile)) {
+        assertCreativeCharactersMatchAuthorities({
+          characters: draft.creativeContext?.characterContext.characters ?? [],
+          characterAuthorities: selectStoryBoundCharacterAuthorities({
+            characterAuthorities: ctx.characterAuthorities,
+            creativeContext: draft.creativeContext,
+          }),
+        });
         await ensureCurrentFrozenCanonicalOutline({
           db,
           campaignId,
@@ -589,6 +597,13 @@ export async function runSinglePlanningStage(input: {
       );
       let canonicalScript;
       if (requiresCanonicalStoryAuthority(ctx.loaded.story.outlineProfile)) {
+        assertCreativeCharactersMatchAuthorities({
+          characters: draft.creativeContext?.characterContext.characters ?? [],
+          characterAuthorities: selectStoryBoundCharacterAuthorities({
+            characterAuthorities: ctx.characterAuthorities,
+            creativeContext: draft.creativeContext,
+          }),
+        });
         // A durable Scene Plan may predate Outline materialization. Converge
         // the exact current Story authority before producing Script;
         // this is deterministic and does not re-run Scene Planning.

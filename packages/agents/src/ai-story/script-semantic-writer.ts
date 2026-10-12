@@ -1,4 +1,5 @@
 import { callStructuredJsonModel } from "../llm";
+import { assertCreativeCharactersMatchAuthorities } from "./character-authority-planning";
 import { z } from "zod";
 import {
   AI_STORY_COMMERCIAL_STORY_PROFILE_POLICY,
@@ -512,6 +513,10 @@ export async function generateAiStoryScriptSemanticProposalV1(
   if (new Set(input.scenePlan.map((scene) => scene.id)).size !== input.scenePlan.length) {
     throw new Error("CANONICAL_SCRIPT_SCENE_PLAN_ID_AMBIGUOUS");
   }
+  assertCreativeCharactersMatchAuthorities({
+    characters: input.creativeContext.characterContext.characters,
+    characterAuthorities: input.characterAuthorities,
+  });
   const outlineProductIds = resolveOutlineBoundProductAuthorityIds(input.frozenOutline);
   if (JSON.stringify(input.productAuthorityIds) !== JSON.stringify(outlineProductIds)) {
     throw new Error("CANONICAL_SCRIPT_PRODUCT_AUTHORITY_MISMATCH");
