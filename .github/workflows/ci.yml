@@ -100,6 +100,7 @@ jobs:
       - name: Apply and certify Campaign Content Iteration foundation
         run: |
           pnpm --filter @ceo-agent/db sql:campaign-content-iterations
+          pnpm --filter @ceo-agent/db sql:campaign-marketing-plan
           pnpm exec vitest run --config vitest.integration.config.ts tests/campaign-content-iterations.integration.test.ts
 
       - name: Certify Sequential Local V3 recursion on PostgreSQL

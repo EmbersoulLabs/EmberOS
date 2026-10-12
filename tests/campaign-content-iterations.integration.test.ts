@@ -13,6 +13,7 @@ const ids = {
   org: crypto.randomUUID(), workspaceA: crypto.randomUUID(), workspaceB: crypto.randomUUID(),
   admin: crypto.randomUUID(), viewer: crypto.randomUUID(), outsider: crypto.randomUUID(),
   campaignA: crypto.randomUUID(), campaignB: crypto.randomUUID(), taskA: crypto.randomUUID(),
+  assetA: crypto.randomUUID(),
 };
 const scope = () => ({ orgId: ids.org, workspaceId: ids.workspaceA, campaignId: ids.campaignA, actorUserId: ids.admin });
 
@@ -27,6 +28,8 @@ beforeAll(async () => {
   await sql`insert into campaigns(id,org_id,workspace_id,name,platforms,status) values
     (${ids.campaignA},${ids.org},${ids.workspaceA},'Campaign A',${['tiktok']},'draft'),(${ids.campaignB},${ids.org},${ids.workspaceB},'Campaign B',${['instagram']},'draft')`;
   await sql`insert into tasks(id,org_id,workspace_id,campaign_id,status) values(${ids.taskA},${ids.org},${ids.workspaceA},${ids.campaignA},'completed')`;
+  await sql`insert into business_profiles(org_id,workspace_id,company_name,industry_display_name,services,version) values(${ids.org},${ids.workspaceA},'Grounded Co','Retail',${['Consulting']},3)`;
+  await sql`insert into assets(id,org_id,workspace_id,campaign_id,type,storage_path,status) values(${ids.assetA},${ids.org},${ids.workspaceA},${ids.campaignA},'image','test/asset.jpg','ready')`;
 });
 
 afterAll(async () => {
@@ -96,5 +99,49 @@ describe("Campaign Content Iteration PostgreSQL authority", () => {
     expect(directWrite).toHaveLength(0);
     const history = await service.history(scope(), created.iteration.id);
     expect(history.iteration.state).toBe("PLANNING");
+  });
+
+  it("creates immutable Plan revisions and binds approval to the exact latest revision", async () => {
+    const iteration = await new api.CampaignContentIterationService().create(scope(), { idempotencyKey: "plan-revisions" });
+    const service = new api.CampaignMarketingPlanService();
+    const base = { objective: "Awareness", targetAudience: "Local buyers", marketingApproach: "Educational", creativeDirection: "Show the process", assetMode: "ZERO_ASSET" as const, assetIds: [], missingAssets: ["product image"], recommendedModule: "VIDEO_STUDIO" as const, rationale: "Matches the goal", expectedOutcome: "Qualified awareness", businessFactRefs: ["companyName", "industryDisplayName"] };
+    const first = await service.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "plan-r1-key", content: base });
+    const replay = await service.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "plan-r1-key", content: base });
+    expect(replay.reused).toBe(true);
+    expect(replay.plan.id).toBe(first.plan.id);
+    const second = await service.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 2, expectedLatestRevision: 1, idempotencyKey: "plan-r2-key", content: { ...base, creativeDirection: "Explain the customer decision" } });
+    expect([first.plan.revision, second.plan.revision]).toEqual([1, 2]);
+    await expect(service.approve(scope(), iteration.iteration.id, { planId: first.plan.id, expectedRevision: 1, expectedIterationVersion: 3, selectedModule: "AI_STORY", idempotencyKey: "approve-stale" })).rejects.toMatchObject({ code: "CAMPAIGN_MARKETING_PLAN_REVISION_CONFLICT" });
+    const approved = await service.approve(scope(), iteration.iteration.id, { planId: second.plan.id, expectedRevision: 2, expectedIterationVersion: 3, selectedModule: "PHOTO_SCENE", idempotencyKey: "approve-r2-key" });
+    expect(approved.plan.status).toBe("APPROVED");
+    expect(approved.plan.selectedModule).toBe("PHOTO_SCENE");
+    expect(approved.iteration.state).toBe("PLAN_APPROVED");
+    expect((await service.list(scope(), iteration.iteration.id)).map((plan) => plan.status)).toEqual(["DRAFT", "APPROVED"]);
+  });
+
+  it("supports zero-asset and authorized asset-based Plans without requiring scripts", async () => {
+    const iterations = new api.CampaignContentIterationService();
+    const service = new api.CampaignMarketingPlanService();
+    const zero = await iterations.create(scope(), { idempotencyKey: "zero-asset-plan" });
+    const content = { objective: "Awareness", targetAudience: "Local buyers", marketingApproach: "Useful introduction", creativeDirection: "Simple product context", assetMode: "ZERO_ASSET" as const, assetIds: [], missingAssets: [], recommendedModule: "AI_STORY" as const, rationale: "No source asset is needed", expectedOutcome: "Clear positioning", businessFactRefs: ["companyName"] };
+    expect((await service.createRevision(scope(), zero.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "zero-plan-r1", content })).plan.content).not.toHaveProperty("voiceScript");
+    const asset = await iterations.create(scope(), { idempotencyKey: "asset-plan" });
+    const saved = await service.createRevision(scope(), asset.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "asset-plan-r1", content: { ...content, assetMode: "ASSET_BASED", assetIds: [ids.assetA], recommendedModule: "VIDEO_STUDIO" } });
+    expect(saved.plan.content.assetIds).toEqual([ids.assetA]);
+  });
+
+  it("rejects stale concurrent Plan saves, unauthorized facts and cross-Workspace RLS reads", async () => {
+    const iteration = await new api.CampaignContentIterationService().create(scope(), { idempotencyKey: "plan-security" });
+    const service = new api.CampaignMarketingPlanService();
+    const content = { objective: "Awareness", targetAudience: "Local buyers", marketingApproach: "Introduction", creativeDirection: "Factual overview", assetMode: "ZERO_ASSET" as const, assetIds: [], missingAssets: [], recommendedModule: "VIDEO_STUDIO" as const, rationale: "Suitable", expectedOutcome: "Awareness", businessFactRefs: ["companyName"] };
+    const race = await Promise.allSettled([
+      service.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "plan-race-a", content }),
+      service.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "plan-race-b", content: { ...content, rationale: "Different" } }),
+    ]);
+    expect(race.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const current = (await service.list(scope(), iteration.iteration.id))[0]!;
+    const invisible = await sql.begin(async (tx) => { await tx.unsafe("set local role=authenticated"); await tx`select set_config('request.jwt.claim.sub',${ids.outsider},true)`; return tx`select id from campaign_marketing_plan_versions where id=${current.id}`; });
+    expect(invisible).toHaveLength(0);
+    await expect(service.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 2, expectedLatestRevision: 1, idempotencyKey: "bad-fact-key", content: { ...content, rationale: "New", businessFactRefs: ["unverifiedClaim"] } })).rejects.toMatchObject({ code: "CAMPAIGN_MARKETING_PLAN_FACT_UNAUTHORIZED" });
   });
 });

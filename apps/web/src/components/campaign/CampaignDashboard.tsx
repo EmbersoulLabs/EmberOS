@@ -217,6 +217,12 @@ export function CampaignDashboard({
 
         {failure ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{failure}</p> : null}
 
+        <section className="rounded-2xl border border-brand-blue/20 bg-white p-4 shadow-card sm:p-5">
+          <h2 className="font-bold text-navy">Marketing Plan</h2>
+          <p className="mt-1 text-sm text-ink-secondary">Create, revise and approve the pre-production authority for a Content Iteration.</p>
+          <Link href={`/w/${slug}/campaigns/${campaignId}/marketing-plan`} className="mt-4 inline-flex min-h-11 items-center rounded-lg bg-brand-blue px-4 text-sm font-semibold text-white">Open Marketing Plan</Link>
+        </section>
+
         <section aria-labelledby="campaign-overview-title" className="rounded-2xl border border-border bg-white p-4 shadow-card sm:p-6">
           <h2 id="campaign-overview-title" className="text-lg font-bold text-navy">Overview</h2>
           <p className="mt-1 text-sm text-ink-secondary">Read-only Campaign facts confirmed during creation.</p>
