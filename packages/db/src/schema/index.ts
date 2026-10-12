@@ -237,6 +237,38 @@ export const campaignWorkflowFacts = pgTable(
   ]
 );
 
+/** Immutable Marketing Plan revisions. Approval binds one exact revision. */
+export const campaignMarketingPlanVersions = pgTable(
+  "campaign_marketing_plan_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    iterationId: uuid("iteration_id").notNull().references(() => campaignContentIterations.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    content: jsonb("content").$type<import("@ceo-agent/shared").CampaignMarketingPlanContent>().notNull(),
+    contentFingerprint: text("content_fingerprint").notNull(),
+    businessProfileVersion: integer("business_profile_version").notNull(),
+    businessFacts: jsonb("business_facts").$type<Record<string, unknown>>().notNull().default({}),
+    status: text("status").notNull().default("DRAFT"),
+    selectedModule: text("selected_module"),
+    createdBy: uuid("created_by").notNull(),
+    approvedBy: uuid("approved_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("campaign_marketing_plan_versions_revision_unique").on(t.iterationId, t.revision),
+    unique("campaign_marketing_plan_versions_fingerprint_unique").on(t.iterationId, t.contentFingerprint),
+    index("campaign_marketing_plan_versions_scope_idx").on(t.workspaceId, t.campaignId, t.iterationId),
+    check("campaign_marketing_plan_versions_revision_positive", sql`${t.revision} > 0`),
+    check("campaign_marketing_plan_versions_profile_version_positive", sql`${t.businessProfileVersion} > 0`),
+    check("campaign_marketing_plan_versions_status_valid", sql`${t.status} in ('DRAFT','APPROVED')`),
+    check("campaign_marketing_plan_versions_module_valid", sql`${t.selectedModule} is null or ${t.selectedModule} in ('VIDEO_STUDIO','PHOTO_SCENE','AI_STORY')`),
+  ]
+);
+
 export const assets = pgTable(
   "assets",
   {
