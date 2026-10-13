@@ -139,8 +139,29 @@ export async function POST(request: Request, { params }: Params) {
         jobId: deterministicPersistenceUuid("local-gpu-preview-job", { packageId }),
         upload: uploadDestination,
       });
-      const { environment: _environment, jobId: _jobId, ...requestWithoutRuntimeFields } = desktop.body;
-      dispatchRequest = requestWithoutRuntimeFields;
+      const body = desktop.body;
+      dispatchRequest = {
+        sceneExecutionId: body.sceneExecutionId,
+        workspaceId: body.workspaceId,
+        workflow: body.workflow,
+        prompt: body.prompt,
+        plannedDurationMs: body.durationSec * 1000,
+        upload: body.upload,
+        audioPolicy: body.audioPolicy,
+        creative: body.creative,
+        references: body.references,
+        firstFrame: body.firstFrame ? {
+          ...body.firstFrame,
+          authoritySourceAssetId: body.firstFrame.sourceAssetId,
+          authorityContentHash: body.firstFrame.contentHash,
+        } : null,
+        continuityRequired: body.firstFrame !== null,
+        dialogueLineCount: 0,
+        pinnedVoiceDna: false,
+        structuredCamera: false,
+        structuredMotion: false,
+        textOnly: false,
+      };
       route = {
         assetMode: "WITH_ASSET", assetRecommendationStatus: "SATISFIED",
         referenceCount: references.length, preQc: "DISPATCH_ELIGIBLE",
