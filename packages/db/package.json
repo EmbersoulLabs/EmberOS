@@ -21,6 +21,7 @@
     "sql:create-campaign-wave3": "tsx scripts/apply-create-campaign-wave3-v1.ts",
     "sql:campaign-content-iterations": "tsx scripts/apply-campaign-content-iterations-v1.ts",
     "sql:campaign-marketing-plan": "tsx scripts/apply-campaign-marketing-plan-v1.ts",
+    "sql:campaign-creative-handoff": "tsx scripts/apply-campaign-creative-handoff-v1.ts",
     "sql:rls": "tsx scripts/apply-rls.ts",
     "sql:source-asset-content-hash-v1": "tsx scripts/apply-source-asset-content-hash-v1.ts",
     "sql:campaign-video-generation-identity-v1": "tsx scripts/apply-campaign-video-generation-identity-v1.ts",

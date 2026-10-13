@@ -150,4 +150,48 @@ describe("Campaign Content Iteration PostgreSQL authority", () => {
     expect(invisible).toHaveLength(0);
     await expect(service.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 2, expectedLatestRevision: 1, idempotencyKey: "bad-fact-key", content: { ...content, rationale: "New", businessFactRefs: ["unverifiedClaim"] } })).rejects.toMatchObject({ code: "CAMPAIGN_MARKETING_PLAN_FACT_UNAUTHORIZED" });
   });
+
+  it("initializes and recovers the user-selected zero-asset module without generation", async () => {
+    const iterations = new api.CampaignContentIterationService();
+    const plans = new api.CampaignMarketingPlanService();
+    const handoffs = new api.CampaignCreativeHandoffService();
+    const iteration = await iterations.create(scope(), { idempotencyKey: "handoff-zero" });
+    const content = { objective: "Awareness", targetAudience: "Local buyers", marketingApproach: "Introduction", creativeDirection: "Factual overview", assetMode: "ZERO_ASSET" as const, assetIds: [], missingAssets: [], recommendedModule: "VIDEO_STUDIO" as const, rationale: "Suitable", expectedOutcome: "Awareness", businessFactRefs: ["companyName"] };
+    const revision = await plans.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "handoff-zero-plan", content });
+    await expect(handoffs.createOrResume(scope(), { iterationId: iteration.iteration.id, approvedPlanId: revision.plan.id, idempotencyKey: "handoff-before-approval" })).rejects.toMatchObject({ code: "CAMPAIGN_HANDOFF_PLAN_NOT_APPROVED" });
+    await plans.approve(scope(), iteration.iteration.id, { planId: revision.plan.id, expectedRevision: 1, expectedIterationVersion: 2, selectedModule: "AI_STORY", idempotencyKey: "handoff-zero-approve" });
+    const first = await handoffs.createOrResume(scope(), { iterationId: iteration.iteration.id, approvedPlanId: revision.plan.id, idempotencyKey: "handoff-zero-create" });
+    expect(first.reused).toBe(false);
+    expect(first.iteration.state).toBe("CREATIVE_IN_PROGRESS");
+    expect(first.handoff.selectedModule).toBe("AI_STORY");
+    expect(first.handoff.destinationReference).toBe(`campaign:${ids.campaignA}:ai-story:new`);
+    expect(first.handoff.businessProfileSnapshotRef).toContain(revision.plan.id);
+    const lostResponseRecovery = await handoffs.createOrResume(scope(), { iterationId: iteration.iteration.id, approvedPlanId: revision.plan.id, idempotencyKey: "handoff-zero-create" });
+    const refreshRecovery = await handoffs.createOrResume(scope(), { iterationId: iteration.iteration.id, approvedPlanId: revision.plan.id, idempotencyKey: "handoff-after-refresh" });
+    expect(lostResponseRecovery.handoff.id).toBe(first.handoff.id);
+    expect(refreshRecovery.handoff.id).toBe(first.handoff.id);
+    expect(await sql`select count(*)::int as count from campaign_creative_handoffs where iteration_id=${iteration.iteration.id}`).toEqual([{ count: 1 }]);
+    expect(await sql`select count(*)::int as count from tasks where campaign_id=${ids.campaignA}`).toEqual([{ count: 1 }]);
+  });
+
+  it("preserves authorized assets, serializes concurrent handoff, and isolates Workspace reads", async () => {
+    const iterations = new api.CampaignContentIterationService();
+    const plans = new api.CampaignMarketingPlanService();
+    const handoffs = new api.CampaignCreativeHandoffService();
+    const iteration = await iterations.create(scope(), { idempotencyKey: "handoff-asset" });
+    const content = { objective: "Product context", targetAudience: "Local buyers", marketingApproach: "Visual", creativeDirection: "Use the approved asset", assetMode: "ASSET_BASED" as const, assetIds: [ids.assetA], missingAssets: [], recommendedModule: "AI_STORY" as const, rationale: "Existing asset", expectedOutcome: "Recognition", businessFactRefs: ["companyName"] };
+    const revision = await plans.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "handoff-asset-plan", content });
+    await plans.approve(scope(), iteration.iteration.id, { planId: revision.plan.id, expectedRevision: 1, expectedIterationVersion: 2, selectedModule: "PHOTO_SCENE", idempotencyKey: "handoff-asset-approve" });
+    const race = await Promise.all([
+      handoffs.createOrResume(scope(), { iterationId: iteration.iteration.id, approvedPlanId: revision.plan.id, idempotencyKey: "handoff-asset-a" }),
+      handoffs.createOrResume(scope(), { iterationId: iteration.iteration.id, approvedPlanId: revision.plan.id, idempotencyKey: "handoff-asset-b" }),
+    ]);
+    expect(new Set(race.map((result) => result.handoff.id)).size).toBe(1);
+    expect(race[0]!.handoff.assetIds).toEqual([ids.assetA]);
+    expect(race[0]!.handoff.selectedModule).toBe("PHOTO_SCENE");
+    const invisible = await sql.begin(async (tx) => { await tx.unsafe("set local role=authenticated"); await tx`select set_config('request.jwt.claim.sub',${ids.outsider},true)`; return tx`select id from campaign_creative_handoffs where id=${race[0]!.handoff.id}`; });
+    expect(invisible).toHaveLength(0);
+    const directWrite = await sql.begin(async (tx) => { await tx.unsafe("set local role=authenticated"); await tx`select set_config('request.jwt.claim.sub',${ids.admin},true)`; return tx`update campaign_creative_handoffs set destination_reference='tampered' where id=${race[0]!.handoff.id} returning id`; });
+    expect(directWrite).toHaveLength(0);
+  });
 });
