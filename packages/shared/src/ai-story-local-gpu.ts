@@ -387,7 +387,12 @@ export type LocalGpuV2AudioPolicy = (typeof LOCAL_GPU_V2_AUDIO_POLICIES)[number]
 
 export type LocalGpuRuntimeCapabilities = {
   contractVersion: number | null;
-  workflowIds: readonly string[];
+  /** Current Desktop response field. */
+  workflows?: readonly string[];
+  /** Versioned Desktop response field. */
+  contracts?: { v2?: { workflows?: readonly string[] } };
+  /** Historical cloud snapshot field; retained for persisted compatibility. */
+  workflowIds?: readonly string[];
 };
 
 export type LocalGpuContractV2Reference = {
@@ -430,10 +435,14 @@ export type LocalGpuDesktopSubmitBodyV2 = {
 };
 
 export function assertLocalGpuV2RuntimeCapabilities(capabilities: LocalGpuRuntimeCapabilities | null): void {
+  const workflows = capabilities?.workflows
+    ?? capabilities?.contracts?.v2?.workflows
+    ?? capabilities?.workflowIds
+    ?? [];
   if (
     !capabilities
     || capabilities.contractVersion !== LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V2
-    || !capabilities.workflowIds.includes(LOCAL_GPU_WORKER_WORKFLOW)
+    || !workflows.includes(LOCAL_GPU_WORKER_WORKFLOW)
   ) {
     throw new LocalGpuContractError("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
   }

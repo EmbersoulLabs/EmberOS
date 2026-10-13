@@ -296,6 +296,27 @@ describe("contract V2 dispatch guards", () => {
     expect(calls).toBe(0);
   });
 
+  it("accepts the current and versioned Desktop workflow registries without weakening the R2V requirement", async () => {
+    const calls: string[] = [];
+    const cloud = stagingAdapter(async (attempt) => {
+      calls.push(attempt.body ?? "");
+      return { status: 200, body: JSON.stringify({ state: "QUEUED" }) };
+    });
+    await cloud.submitContractV2({
+      actor, package: scope, request,
+      capabilities: { contractVersion: 2, workflows: [LOCAL_GPU_WORKER_WORKFLOW] }, existingGate: null,
+    });
+    await cloud.submitContractV2({
+      actor, package: { ...scope, packageId: id(31) }, request,
+      capabilities: { contractVersion: 2, contracts: { v2: { workflows: [LOCAL_GPU_WORKER_WORKFLOW] } } }, existingGate: null,
+    });
+    await expect(cloud.submitContractV2({
+      actor, package: { ...scope, packageId: id(32) }, request,
+      capabilities: { contractVersion: 2, workflows: ["MINIMAX_H3_T2V"] }, existingGate: null,
+    })).rejects.toThrow("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
+    expect(calls).toHaveLength(2);
+  });
+
   it("posts one mocked V2 body and never a remote fallback", async () => {
     const bodies: unknown[] = [];
     const cloud = stagingAdapter(async (attempt) => {
