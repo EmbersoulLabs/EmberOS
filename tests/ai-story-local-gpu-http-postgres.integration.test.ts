@@ -55,6 +55,12 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
 
   beforeAll(async () => {
     sql = createIntegrationSql();
+    // Mirrors the established Platform Admin PostgreSQL fixture: ephemeral
+    // Postgres has no Supabase auth schema after canonical Drizzle bootstrap.
+    await sql.unsafe(`
+      CREATE SCHEMA IF NOT EXISTS auth;
+      CREATE TABLE IF NOT EXISTS auth.users (id uuid PRIMARY KEY);
+    `);
     process.env.LOCAL_GPU_PROVIDER_ENABLED = "true";
     process.env.LOCAL_GPU_ENVIRONMENT = "production";
     process.env.LOCAL_GPU_SIGNING_SECRET = "ephemeral-postgres-only-secret";
