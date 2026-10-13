@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Sql } from "postgres";
 import {
@@ -61,6 +62,10 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE TABLE IF NOT EXISTS auth.users (id uuid PRIMARY KEY);
     `);
+    await sql.unsafe(readFileSync(
+      "supabase/migrations/20261013030433_ai_story_local_gpu_dispatch_authority_v1.sql",
+      "utf8",
+    ));
     process.env.LOCAL_GPU_PROVIDER_ENABLED = "true";
     process.env.LOCAL_GPU_ENVIRONMENT = "production";
     process.env.LOCAL_GPU_SIGNING_SECRET = "ephemeral-postgres-only-secret";
