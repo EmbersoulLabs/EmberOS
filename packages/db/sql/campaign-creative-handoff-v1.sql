@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS campaign_creative_handoffs (
 );
 CREATE INDEX IF NOT EXISTS campaign_creative_handoffs_scope_idx ON campaign_creative_handoffs(workspace_id,campaign_id,iteration_id);
 
-CREATE OR REPLACE FUNCTION validate_campaign_creative_handoff_scope() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION validate_campaign_creative_handoff_scope() RETURNS trigger
+LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE p_org uuid; p_workspace uuid; p_campaign uuid; p_iteration uuid; p_status text; p_module text;
 BEGIN
   SELECT org_id,workspace_id,campaign_id,iteration_id,status,selected_module
