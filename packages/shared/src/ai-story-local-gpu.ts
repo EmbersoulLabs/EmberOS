@@ -388,12 +388,30 @@ export type LocalGpuV2AudioPolicy = (typeof LOCAL_GPU_V2_AUDIO_POLICIES)[number]
 export type LocalGpuRuntimeCapabilities = {
   contractVersion: number | null;
   /** Current Desktop response field. */
-  workflows?: readonly string[];
+  workflows?: readonly unknown[];
   /** Versioned Desktop response field. */
-  contracts?: { v2?: { workflows?: readonly string[] } };
+  contracts?: { v2?: { workflows?: readonly unknown[] } };
   /** Historical cloud snapshot field; retained for persisted compatibility. */
   workflowIds?: readonly string[];
 };
+
+function readLocalGpuV2WorkflowIds(entries: readonly unknown[]): readonly string[] | null {
+  const ids: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry === "string") {
+      if (!entry) return null;
+      ids.push(entry);
+      continue;
+    }
+    const record = entry && typeof entry === "object" && !Array.isArray(entry)
+      ? entry as Record<string, unknown>
+      : null;
+    const id = record?.id ?? record?.workflow;
+    if (typeof id !== "string" || !id) return null;
+    ids.push(id);
+  }
+  return ids;
+}
 
 export type LocalGpuContractV2Reference = {
   role: "CHARACTER" | "PRODUCT";
@@ -435,14 +453,15 @@ export type LocalGpuDesktopSubmitBodyV2 = {
 };
 
 export function assertLocalGpuV2RuntimeCapabilities(capabilities: LocalGpuRuntimeCapabilities | null): void {
-  const workflows = capabilities?.workflows
+  const workflowEntries = capabilities?.workflows
     ?? capabilities?.contracts?.v2?.workflows
     ?? capabilities?.workflowIds
     ?? [];
+  const workflows = readLocalGpuV2WorkflowIds(workflowEntries);
   if (
     !capabilities
     || capabilities.contractVersion !== LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V2
-    || !workflows.includes(LOCAL_GPU_WORKER_WORKFLOW)
+    || !workflows?.includes(LOCAL_GPU_WORKER_WORKFLOW)
   ) {
     throw new LocalGpuContractError("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
   }

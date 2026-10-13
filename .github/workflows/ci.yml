@@ -112,6 +112,7 @@ jobs:
       - name: Certify Platform Admin Control Plane server-only authority
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
+          --no-file-parallelism
           tests/platform-admin-control-plane-security.integration.test.ts
           tests/platform-admin-grant-management.integration.test.ts
 

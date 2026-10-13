@@ -304,17 +304,26 @@ describe("contract V2 dispatch guards", () => {
     });
     await cloud.submitContractV2({
       actor, package: scope, request,
-      capabilities: { contractVersion: 2, workflows: [LOCAL_GPU_WORKER_WORKFLOW] }, existingGate: null,
+      capabilities: { contractVersion: 2, workflows: [{ id: LOCAL_GPU_WORKER_WORKFLOW }] }, existingGate: null,
     });
     await cloud.submitContractV2({
       actor, package: { ...scope, packageId: id(31) }, request,
-      capabilities: { contractVersion: 2, contracts: { v2: { workflows: [LOCAL_GPU_WORKER_WORKFLOW] } } }, existingGate: null,
+      capabilities: { contractVersion: 2, contracts: { v2: { workflows: [{ workflow: LOCAL_GPU_WORKER_WORKFLOW }] } } }, existingGate: null,
     });
     await expect(cloud.submitContractV2({
       actor, package: { ...scope, packageId: id(32) }, request,
       capabilities: { contractVersion: 2, workflows: ["MINIMAX_H3_T2V"] }, existingGate: null,
     })).rejects.toThrow("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
     expect(calls).toHaveLength(2);
+  });
+
+  it("keeps legacy arrays and rejects malformed workflow objects", async () => {
+    const cloud = stagingAdapter(async () => ({ status: 200, body: JSON.stringify({ state: "QUEUED" }) }));
+    await cloud.submitContractV2({ actor, package: scope, request, capabilities, existingGate: null });
+    await expect(cloud.submitContractV2({
+      actor, package: { ...scope, packageId: id(33) }, request,
+      capabilities: { contractVersion: 2, workflows: [{ name: LOCAL_GPU_WORKER_WORKFLOW }] }, existingGate: null,
+    })).rejects.toThrow("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
   });
 
   it("posts one mocked V2 body and never a remote fallback", async () => {
