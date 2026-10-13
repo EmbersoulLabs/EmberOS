@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryLocalGpuReleaseLedger, claimPreparedLocalGpuRelease } from "@ceo-agent/db";
+import { localGpuDispatchExecutionIdentity } from "@ceo-agent/db";
 import {
   planLocalGpuRoute,
   planLocalGpuHttp,
@@ -258,6 +259,19 @@ describe("LOCAL_GPU V3 execution integration", () => {
       port,
     })).toMatchObject({ code: "LOCAL_GPU_SCENE_SCOPE_MISMATCH", posts: 0 });
     expect(posts).toBe(0);
+  });
+
+  it("opens production only behind the explicit production flag and exact scope", async () => {
+    const production = { ...stagingEnv, LOCAL_GPU_ENVIRONMENT: "production", LOCAL_GPU_PRODUCTION_DISPATCH_ENABLED: "true" };
+    expect(await runLocalGpuReleaseCycle(production)).toMatchObject({ code: "AUTHORIZED_UNBOUND", posts: 0 });
+    expect(await runLocalGpuReleaseCycle({ ...production, LOCAL_GPU_SCOPE_STORY_ID: id(41) })).toMatchObject({ code: "AUTHORIZED_UNBOUND", posts: 0 });
+  });
+
+  it("binds immutable dispatch identity to workspace, story, scene, package, and runtime authorization", () => {
+    const identity = localGpuDispatchExecutionIdentity({ ...scope, packageId: id(30), runtimeAuthorizationId: id(70) });
+    expect(identity).toHaveLength(64);
+    expect(localGpuDispatchExecutionIdentity({ ...scope, packageId: id(31), runtimeAuthorizationId: id(70) })).not.toBe(identity);
+    expect(localGpuDispatchExecutionIdentity({ ...scope, packageId: id(30), runtimeAuthorizationId: id(71) })).not.toBe(identity);
   });
 
   it("claims only the scoped scene when an earlier release is also waiting", async () => {

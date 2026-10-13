@@ -336,6 +336,20 @@ describe("V3 dispatch stays closed without runtime capability", () => {
     expect(calls).toBe(0);
   });
 
+  it("permits one production POST only when server-persisted dispatch authority is supplied", async () => {
+    let calls = 0;
+    const production = adapter(async () => {
+      calls += 1;
+      return { status: 200, body: JSON.stringify({ state: "QUEUED" }) };
+    }, "production");
+    const productionRequest = { ...request, upload: { ...upload, environment: "production" as const } };
+    await production.submitZeroAssetT2V({
+      actor, package: scope, request: productionRequest, capabilities: signedCapabilities,
+      existingGate: null, productionDispatchAuthorized: true,
+    });
+    expect(calls).toBe(1);
+  });
+
   it("does not sign or post a 1 MP request", async () => {
     let calls = 0;
     const cloud = adapter(async () => {

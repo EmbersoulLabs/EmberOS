@@ -27,13 +27,30 @@ export type LocalGpuWorkerDispatchDeps = {
   existingResultId: string | null;
 };
 
-async function loadPersistedDispatch(): Promise<{
+async function loadPersistedDispatch(scope: LocalGpuSceneScope): Promise<{
   candidate: LocalGpuDispatchCandidate;
   actor: Actor;
   request: LocalGpuT2VRequest;
   capabilities: unknown;
 } | null> {
-  return null;
+  const { getDb, loadAuthorizedLocalGpuDispatch } = await import("@ceo-agent/db");
+  const row = await loadAuthorizedLocalGpuDispatch(getDb(), scope);
+  if (!row) return null;
+  const snapshot = row.snapshot;
+  return {
+    candidate: {
+      workspaceId: row.workspaceId,
+      storyId: row.storyId,
+      sceneExecutionId: row.sceneExecutionId,
+      packageId: row.packageId,
+      runtimeAuthorizationId: row.runtimeAuthorizationId,
+      existingGate: row.existingGate,
+      route: snapshot.route as LocalGpuDispatchCandidate["route"],
+    },
+    actor: snapshot.actor,
+    request: snapshot.request as LocalGpuT2VRequest,
+    capabilities: snapshot.capabilities,
+  };
 }
 
 /**
@@ -61,7 +78,7 @@ export async function runWorkerLocalGpuDispatchCycle(
     ) {
       return { code: "LOCAL_GPU_SCENE_SCOPE_MISMATCH", posts: 0, gets: 0, submit: false };
     }
-    const persisted = await loadPersistedDispatch();
+    const persisted = await loadPersistedDispatch(gate.scope);
     if (!persisted) {
       return { code: "LOCAL_GPU_SUBMIT_AUTHORITY_REQUIRED", posts: 0, gets: 0, submit: false };
     }
@@ -78,6 +95,7 @@ export async function runWorkerLocalGpuDispatchCycle(
       request: persisted.request,
       capabilities: persisted.capabilities,
       existingResultId: null,
+      productionDispatchAuthorized: gate.environment === "production",
       finalize: planLocalGpuCompletion,
     });
     return { code: step.code, posts: step.posts, gets: step.gets, submit: false };

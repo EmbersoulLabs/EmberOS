@@ -201,17 +201,17 @@ export function localGpuDispatchGate(env: Record<string, string | undefined>): {
     return { dispatchAuthorized: false, environment: null, code: "DISABLED", scope: null };
   }
   const environment = env.LOCAL_GPU_ENVIRONMENT?.trim();
-  if (environment === "production") {
-    return { dispatchAuthorized: false, environment: "production", code: "LOCAL_GPU_PRODUCTION_DENIED", scope: null };
-  }
-  if (environment !== "staging") {
+  if (environment !== "staging" && environment !== "production") {
     return { dispatchAuthorized: false, environment: null, code: "LOCAL_GPU_ENVIRONMENT_REQUIRED", scope: null };
+  }
+  if (environment === "production" && !enabledFlag(env.LOCAL_GPU_PRODUCTION_DISPATCH_ENABLED)) {
+    return { dispatchAuthorized: false, environment: "production", code: "LOCAL_GPU_PRODUCTION_DENIED", scope: null };
   }
   const scope = readLocalGpuSceneScope(env);
   if (!scope) {
-    return { dispatchAuthorized: false, environment: "staging", code: "LOCAL_GPU_SCENE_SCOPE_REQUIRED", scope: null };
+    return { dispatchAuthorized: false, environment, code: "LOCAL_GPU_SCENE_SCOPE_REQUIRED", scope: null };
   }
-  return { dispatchAuthorized: true, environment: "staging", code: "AUTHORIZED", scope };
+  return { dispatchAuthorized: true, environment, code: "AUTHORIZED", scope };
 }
 
 /** First observation may POST once. Every later observation is status-only. */
@@ -343,6 +343,15 @@ export type LocalGpuEnabledDispatchAdapter = {
     request: LocalGpuT2VRequest;
     capabilities: unknown;
     existingGate: string | null;
+    productionDispatchAuthorized?: boolean;
+  }): Promise<{ jobId: string }>;
+  submitContractV2?(input: {
+    actor: LocalGpuDispatchActor;
+    package: { workspaceId: string; sceneExecutionId: string; packageId: string };
+    request: unknown;
+    capabilities: unknown;
+    existingGate: string | null;
+    productionDispatchAuthorized?: boolean;
   }): Promise<{ jobId: string }>;
   status(jobId: string, scope: {
     actor: LocalGpuDispatchActor;
@@ -369,6 +378,7 @@ export async function runEnabledLocalGpuDispatch(input: {
   request: LocalGpuT2VRequest;
   capabilities: unknown;
   existingResultId: string | null;
+  productionDispatchAuthorized?: boolean;
   finalize?: (completion: { jobId: string; existingResultId: string | null; contentHash: string }) => { action: string; submit: false };
 }): Promise<{ code: string; posts: number; gets: number; submit: false; jobId: string | null; completion: { action: string; submit: false } | null }> {
   if (!sameScope(input.scope, input.candidate)) {
@@ -377,6 +387,9 @@ export async function runEnabledLocalGpuDispatch(input: {
   const route = planLocalGpuRoute(input.candidate.route);
   if (!route.eligible) {
     return { code: route.blocked ?? "LOCAL_GPU_WORKFLOW_UNSUPPORTED", posts: 0, gets: 0, submit: false, jobId: null, completion: null };
+  }
+  if (route.contractVersion === 2 && !input.adapter.submitContractV2) {
+    return { code: "LOCAL_GPU_V2_ADAPTER_UNBOUND", posts: 0, gets: 0, submit: false, jobId: null, completion: null };
   }
   const jobId = input.adapter.jobIdFor({
     workspaceId: input.scope.workspaceId,
@@ -396,17 +409,19 @@ export async function runEnabledLocalGpuDispatch(input: {
       jobId,
     });
     if (!claimed) return { code: "LOCAL_GPU_CLAIM_LOST", posts: 0, gets: 0, submit: false, jobId, completion: null };
-    await input.adapter.submitZeroAssetT2V({
+    const submitInput = {
       actor: input.actor,
-      package: {
-        workspaceId: input.scope.workspaceId,
-        sceneExecutionId: input.scope.sceneExecutionId,
-        packageId: input.candidate.packageId,
-      },
+      package: { workspaceId: input.scope.workspaceId, sceneExecutionId: input.scope.sceneExecutionId, packageId: input.candidate.packageId },
       request: input.request,
       capabilities: input.capabilities,
       existingGate: null,
-    });
+      productionDispatchAuthorized: input.productionDispatchAuthorized,
+    };
+    if (route.contractVersion === 2) {
+      await input.adapter.submitContractV2!(submitInput);
+    } else {
+      await input.adapter.submitZeroAssetT2V(submitInput);
+    }
     return { code: "accepted", posts: 1, gets: 0, submit: false, jobId, completion: null };
   }
   if (input.candidate.existingGate !== jobId) {

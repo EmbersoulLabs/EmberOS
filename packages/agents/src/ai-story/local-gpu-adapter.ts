@@ -236,6 +236,7 @@ export class LocalGpuCloudAdapter {
     request: Omit<Parameters<typeof buildLocalGpuDesktopSubmitV2>[0], "environment" | "jobId">;
     capabilities: LocalGpuRuntimeCapabilities | null;
     existingGate: string | null;
+    productionDispatchAuthorized?: boolean;
   }): Promise<{
     jobId: string;
     workflow: typeof LOCAL_GPU_WORKER_WORKFLOW;
@@ -245,7 +246,9 @@ export class LocalGpuCloudAdapter {
     automaticGenerationRetry: 0;
   }> {
     const { environment } = this.requireEnabled();
-    if (environment === "production") throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
+    if (environment === "production" && input.productionDispatchAuthorized !== true) {
+      throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
+    }
     assertLocalGpuV2RuntimeCapabilities(input.capabilities);
     assertLocalGpuSubmitAllowed(input.existingGate);
     const jobId = this.jobIdFor(input.package);
@@ -285,6 +288,7 @@ export class LocalGpuCloudAdapter {
     request: Omit<Parameters<typeof buildLocalGpuZeroAssetT2VSubmit>[0], "environment" | "jobId" | "workspaceId" | "sceneExecutionId">;
     capabilities: unknown;
     existingGate: string | null;
+    productionDispatchAuthorized?: boolean;
   }): Promise<{
     jobId: string;
     workflow: "MINIMAX_H3_T2V";
@@ -295,7 +299,9 @@ export class LocalGpuCloudAdapter {
     automaticGenerationRetry: 0;
   }> {
     const { environment } = this.requireEnabled();
-    if (environment === "production") throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
+    if (environment === "production" && input.productionDispatchAuthorized !== true) {
+      throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
+    }
     assertLocalGpuV3RuntimeCapabilities(input.capabilities);
     assertLocalGpuSubmitAllowed(input.existingGate);
     const jobId = this.jobIdFor(input.package);

@@ -76,6 +76,7 @@ export * from "./queries/ai-story-sequential-local-release";
 export * from "./queries/ai-story-generation-result";
 export * from "./queries/ai-story-local-gpu-result-authority";
 export * from "./queries/ai-story-local-gpu-release-claim";
+export * from "./queries/ai-story-local-gpu-dispatch-authority";
 export * from "./queries/ai-story-local-gpu-audio-evidence";
 export * from "./queries/ai-story-animation-package-approval-convergence";
 export * from "./queries/ai-story-script-director-handoff";
