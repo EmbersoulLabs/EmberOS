@@ -13,6 +13,7 @@ import type { LocalGpuCloudAdapter } from "./local-gpu-adapter";
 import { planLocalGpuCompletion } from "./local-gpu-result-finalization";
 
 export type LocalGpuT2VRequest = Parameters<LocalGpuCloudAdapter["submitZeroAssetT2V"]>[0]["request"];
+export type LocalGpuV2Request = Parameters<LocalGpuCloudAdapter["submitContractV2"]>[0]["request"];
 type LocalGpuDispatchActor = {
   userId: string;
   workspaceId: string;
@@ -348,8 +349,8 @@ export type LocalGpuEnabledDispatchAdapter = {
   submitContractV2?(input: {
     actor: LocalGpuDispatchActor;
     package: { workspaceId: string; sceneExecutionId: string; packageId: string };
-    request: unknown;
-    capabilities: unknown;
+    request: LocalGpuV2Request;
+    capabilities: Parameters<LocalGpuCloudAdapter["submitContractV2"]>[0]["capabilities"];
     existingGate: string | null;
     productionDispatchAuthorized?: boolean;
   }): Promise<{ jobId: string }>;
@@ -375,7 +376,7 @@ export async function runEnabledLocalGpuDispatch(input: {
   claim: (claim: { workspaceId: string; storyId: string; sceneExecutionId: string; jobId: string }) => Promise<boolean> | boolean;
   adapter: LocalGpuEnabledDispatchAdapter;
   actor: LocalGpuDispatchActor;
-  request: LocalGpuT2VRequest;
+  request: LocalGpuT2VRequest | LocalGpuV2Request;
   capabilities: unknown;
   existingResultId: string | null;
   productionDispatchAuthorized?: boolean;
@@ -418,9 +419,13 @@ export async function runEnabledLocalGpuDispatch(input: {
       productionDispatchAuthorized: input.productionDispatchAuthorized,
     };
     if (route.contractVersion === 2) {
-      await input.adapter.submitContractV2!(submitInput);
+      await input.adapter.submitContractV2!({
+        ...submitInput,
+        request: input.request as LocalGpuV2Request,
+        capabilities: input.capabilities as Parameters<LocalGpuCloudAdapter["submitContractV2"]>[0]["capabilities"],
+      });
     } else {
-      await input.adapter.submitZeroAssetT2V(submitInput);
+      await input.adapter.submitZeroAssetT2V({ ...submitInput, request: input.request as LocalGpuT2VRequest });
     }
     return { code: "accepted", posts: 1, gets: 0, submit: false, jobId, completion: null };
   }
