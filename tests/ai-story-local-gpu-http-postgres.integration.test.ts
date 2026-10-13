@@ -251,10 +251,9 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
 
   it("enforces RLS against an authenticated non-owner", async () => {
     expect(await isRlsEnabled(sql, "ai_story_local_gpu_dispatch_authorities")).toBe(true);
-    const rows = await withAuthenticatedUser(sql, ids.ordinary, (tx) =>
+    await expect(withAuthenticatedUser(sql, ids.ordinary, (tx) =>
       tx<{ count: number }[]>`select count(*)::int count from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace}`,
-    );
-    expect(rows[0]?.count).toBe(0);
+    )).rejects.toMatchObject({ code: "42501" });
   });
 
   it("revalidates revocation and leaves no new authority or output asset", async () => {
