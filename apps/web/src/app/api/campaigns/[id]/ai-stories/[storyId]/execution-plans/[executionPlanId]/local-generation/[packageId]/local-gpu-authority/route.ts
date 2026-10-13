@@ -84,13 +84,6 @@ export async function POST(request: Request, { params }: Params) {
     const storage = createAdminClient().storage.from(bucket);
     const { data: upload, error: uploadError } = await storage.createSignedUploadUrl(storagePath);
     if (uploadError || !upload?.signedUrl) return apiError("Unable to authorize LOCAL_GPU output upload", "STORAGE_ERROR", 502);
-    await getDb().insert(schema.assets).values({
-      id: assetId, orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId,
-      type: "video", storagePath, displayName: `LOCAL_GPU Unit ${pkg.order}`,
-      originalFilename: `${packageId}.mp4`, status: "uploading", source: "ai_story_manual_local",
-      uploadedBy: user.id, mimeType: "video/mp4",
-      metadata: { localGenerationPackageId: packageId, localGenerationUnitId: pkg.unitId, executionPlanId, sourceKind: "LOCAL_GPU_WORKER" },
-    }).onConflictDoNothing();
     const uploadDestination = { environment: "production" as const, method: "PUT", url: upload.signedUrl, assetId };
 
     const references = pkg.references ?? [];
@@ -182,6 +175,14 @@ export async function POST(request: Request, { params }: Params) {
     const planned = planLocalGpuRoute(route as never);
     if (!planned.eligible) return apiError("LOCAL_GPU workflow is unsupported", planned.blocked ?? "LOCAL_GPU_WORKFLOW_UNSUPPORTED", 409);
     if (planned.contractVersion === 2) assertLocalGpuV2RuntimeCapabilities(capabilities);
+
+    await getDb().insert(schema.assets).values({
+      id: assetId, orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId,
+      type: "video", storagePath, displayName: `LOCAL_GPU Unit ${pkg.order}`,
+      originalFilename: `${packageId}.mp4`, status: "uploading", source: "ai_story_manual_local",
+      uploadedBy: user.id, mimeType: "video/mp4",
+      metadata: { localGenerationPackageId: packageId, localGenerationUnitId: pkg.unitId, executionPlanId, sourceKind: "LOCAL_GPU_WORKER" },
+    }).onConflictDoNothing();
 
     const authority = await persistLocalGpuDispatchAuthority(getDb(), {
       idempotencyKey, orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId,
