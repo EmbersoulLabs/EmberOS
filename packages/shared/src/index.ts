@@ -154,3 +154,4 @@ export * from "./provider-executor-authority";
 export * from "./organizations-plan-compatibility";
 export * from "./campaign-marketing-plan";
 export * from "./campaign-creative-handoff";
+export * from "./campaign-marketing-review";

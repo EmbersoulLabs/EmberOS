@@ -9,6 +9,7 @@ import { AppShell } from "@/components/AppShell";
 type Plan = { id: string; revision: number; status: string; selectedModule: string | null; content: CampaignMarketingPlanContent };
 type Iteration = { iteration: { id: string; sequenceNumber: number; state: string; version: number }; plans: Plan[] };
 type Handoff = { id: string; approvedPlanId: string; selectedModule: string; destinationPath: string; assetMode: string; assetIds: string[] };
+type Review = { id: string; revision: number; version: number; status: "PENDING_REVIEW"|"APPROVED"|"CHANGES_REQUESTED"; artifactType: string; artifactId: string; findings: Record<string,{status:string;detail:string}> };
 
 const emptyPlan: CampaignMarketingPlanContent = {
   objective: "", targetAudience: "", marketingApproach: "", creativeDirection: "",
@@ -24,6 +25,9 @@ export default function MarketingPlanPage() {
   const [message, setMessage] = useState("");
   const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [busy, setBusy] = useState(false);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [artifactId, setArtifactId] = useState("");
+  const [decisionNote, setDecisionNote] = useState("");
   const active = iterations.at(-1);
   const latest = active?.plans.at(-1);
 
@@ -40,8 +44,12 @@ export default function MarketingPlanPage() {
       const handoffResponse = await fetch(`/api/campaigns/${id}/creative-handoffs?iterationId=${current.iteration.id}`);
       const handoffBody = await handoffResponse.json();
       if (handoffResponse.ok) setHandoff(handoffBody.handoffs?.[0] ?? null);
+      const reviewResponse = await fetch(`/api/campaigns/${id}/marketing-reviews?iterationId=${current.iteration.id}`);
+      const reviewBody = await reviewResponse.json();
+      if (reviewResponse.ok) setReviews(reviewBody.reviews ?? []);
     }
   }
+  async function reviewCommand(body:Record<string,unknown>){setBusy(true);setMessage("");try{const response=await fetch(`/api/campaigns/${id}/marketing-reviews`,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});const result=await response.json();if(!response.ok)throw new Error(result.error??"Marketing Review command failed");await load();setMessage("Marketing Review saved.");}catch(error){setMessage(error instanceof Error?error.message:"Marketing Review command failed");}finally{setBusy(false);}}
 
   async function continueToModule() {
     if (!active || !latest || latest.status !== "APPROVED") return;
@@ -89,6 +97,8 @@ export default function MarketingPlanPage() {
       </fieldset>
       {latest?.status === "DRAFT" ? <section className="rounded-2xl border border-border bg-white p-5"><h2 className="font-bold text-navy">Approve exact revision {latest.revision}</h2><p className="mt-1 text-sm text-ink-secondary">Your module choice is authoritative and may differ from the recommendation.</p><select value={selectedModule} onChange={(event) => setSelectedModule(event.target.value)} className="mt-3 rounded-lg border border-border p-3">{CAMPAIGN_CREATIVE_MODULES.map((module) => <option key={module}>{module}</option>)}</select><button disabled={busy} onClick={() => command({ action: "approve", iterationId: active.iteration.id, planId: latest.id, expectedRevision: latest.revision, expectedIterationVersion: active.iteration.version, selectedModule, idempotencyKey: crypto.randomUUID() })} className="ml-3 rounded-lg bg-brand-blue px-4 py-3 text-sm font-semibold text-white">Approve Plan</button></section> : null}
       {latest?.status === "APPROVED" ? <section data-testid="approved-plan-handoff" className="rounded-2xl border border-brand-blue/30 bg-white p-5"><h2 className="font-bold text-navy">Approved Plan revision {latest.revision}</h2><p className="mt-1 text-sm text-ink-secondary">Selected module: <strong>{latest.selectedModule}</strong> · {latest.content.assetMode === "ASSET_BASED" ? `${latest.content.assetIds.length} authorized asset(s)` : "Zero-asset workflow"}</p><button disabled={busy} onClick={() => void continueToModule()} className="mt-4 rounded-lg bg-brand-blue px-4 py-3 text-sm font-semibold text-white">{handoff ? "Resume Creative Module" : "Continue to Creative Module"}</button></section> : null}
+      {handoff && ["CREATIVE_IN_PROGRESS","REVISION_REQUIRED"].includes(active.iteration.state) ? <section className="rounded-2xl border border-border bg-white p-5"><h2 className="font-bold text-navy">Submit actual creative artifact</h2><p className="mt-1 text-sm text-ink-secondary">Only a completed output from {handoff.selectedModule} is accepted. This does not start generation.</p><input aria-label="Artifact ID" value={artifactId} onChange={e=>setArtifactId(e.target.value)} placeholder="Completed artifact UUID" className="mt-3 w-full rounded-lg border border-border p-3"/><button disabled={busy||!artifactId} onClick={()=>void reviewCommand({action:"create",handoffId:handoff.id,artifactId,idempotencyKey:`review:${handoff.id}:${artifactId}`})} className="mt-3 rounded-lg bg-brand-blue px-4 py-3 text-sm font-semibold text-white">Start Marketing Review</button></section>:null}
+      {reviews.at(-1) ? (()=>{const review=reviews.at(-1)!;return <section className="rounded-2xl border border-border bg-white p-5"><h2 className="font-bold text-navy">Marketing Review revision {review.revision}: {review.status}</h2><p className="mt-1 text-sm text-ink-secondary">{review.artifactType} · immutable artifact {review.artifactId}</p><ul className="mt-3 space-y-2 text-sm">{Object.entries(review.findings).map(([name,finding])=><li key={name}><strong>{name}</strong>: {finding.status} — {finding.detail}</li>)}</ul>{review.status==="PENDING_REVIEW"?<><textarea aria-label="Review note" value={decisionNote} onChange={e=>setDecisionNote(e.target.value)} placeholder="Optional human review note" className="mt-3 w-full rounded-lg border border-border p-3"/><div className="mt-3 flex gap-3"><button disabled={busy} onClick={()=>void reviewCommand({action:"decide",reviewId:review.id,expectedVersion:review.version,decision:"APPROVED",note:decisionNote,idempotencyKey:crypto.randomUUID()})} className="rounded-lg bg-brand-blue px-4 py-3 text-sm font-semibold text-white">Approve actual artifact</button><button disabled={busy} onClick={()=>void reviewCommand({action:"decide",reviewId:review.id,expectedVersion:review.version,decision:"CHANGES_REQUESTED",note:decisionNote,idempotencyKey:crypto.randomUUID()})} className="rounded-lg border border-border px-4 py-3 text-sm font-semibold">Request changes</button></div></>:null}{active.iteration.state==="SOCIAL_CONTENT_READY"?<p className="mt-3 font-semibold text-success">Ready for Social Content. No captions were generated.</p>:null}</section>})():null}
     </>}
     {message ? <p role="status" className="rounded-lg bg-surface-muted p-3 text-sm">{message}</p> : null}
   </main></AppShell>;
