@@ -128,7 +128,14 @@ export const AiStoryPostGenerationQcInputPackageSchema = z.object({
     context.addIssue({ code: z.ZodIssueCode.custom, message: "Legacy compiled V1 lineage must not fabricate Script or Handoff authority" });
   }
   const local = Boolean(value.localSourceAuthorityId || value.localSourceAuthorityFingerprint);
-  if (local) {
+  if (value.sourceKind === "LOCAL_GPU_WORKER") {
+    const reference = value.media.durableObjectReference;
+    if (value.providerAttemptId !== null || value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
+        !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint ||
+        !reference.startsWith(`${value.workspaceId}/`) || reference.includes("..") || reference.includes("\\")) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_LOCAL_AUTHORITY_REQUIRED" });
+    }
+  } else if (local) {
     if (value.sourceKind !== "MANUAL_LOCAL" || value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
         !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_LOCAL_AUTHORITY_REQUIRED" });
@@ -196,6 +203,9 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
   autoRetryAuthorized: z.literal(false),
   autoReleaseAuthorized: z.literal(false),
   creativeAuthority: z.literal(false),
+  audioEvidenceId: Id.optional(),
+  audioEvidenceFingerprint: Hash.optional(),
+  audioSpeechContent: z.enum(["HUMAN_REVIEW_REQUIRED", "NOT_APPLICABLE"]).optional(),
   evaluationFingerprint: Hash,
   evaluatedAt: z.string().datetime(),
 }).strict().superRefine((value, context) => {
@@ -203,8 +213,16 @@ export const AiStoryPostGenerationQcEvaluationSchema = z.object({
       (value.sourceKind && value.sourceKind !== "REMOTE_PROVIDER" && value.providerAttemptId !== null)) {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_SOURCE_LINEAGE_REQUIRED" });
   }
-  if (value.compiledRequestFingerprint === null && value.sourceKind !== "MANUAL_LOCAL") {
+  if (value.sourceKind === "LOCAL_GPU_WORKER" && (value.providerAttemptId !== null || value.compiledRequestFingerprint !== null)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_LOCAL_AUTHORITY_REQUIRED" });
+  }
+  if (value.compiledRequestFingerprint === null && value.sourceKind !== "MANUAL_LOCAL" && value.sourceKind !== "LOCAL_GPU_WORKER") {
     context.addIssue({ code: z.ZodIssueCode.custom, message: "POST_QC_COMPILED_REQUEST_LINEAGE_REQUIRED" });
+  }
+  const audioFields = [value.audioEvidenceId, value.audioEvidenceFingerprint, value.audioSpeechContent];
+  const present = audioFields.filter((field) => field !== undefined).length;
+  if (present !== 0 && present !== audioFields.length) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "LOCAL_GPU_AUDIO_EVIDENCE_INCOMPLETE" });
   }
 });
 
@@ -224,6 +242,8 @@ export const AiStoryPostQcHumanReviewEvidenceSchema = z.object({
   warningsMayBeAccepted: z.literal(true),
   hardFailureWaiverPolicy: z.literal("EXPLICIT_NON_WAIVABLE_INTEGRITY_DENIAL"),
   humanDecisionRequired: z.literal(true),
+  audioEvidenceId: Id.optional(),
+  audioSpeechContent: z.enum(["HUMAN_REVIEW_REQUIRED", "NOT_APPLICABLE"]).optional(),
 }).strict();
 
 export type AiStoryPostQcRequirement = z.infer<typeof AiStoryPostQcRequirementSchema>;

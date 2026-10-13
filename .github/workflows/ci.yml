@@ -219,6 +219,11 @@ jobs:
       - name: Certify ephemeral PostgreSQL behavior
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-ci-postgres-authority.integration.test.ts
 
+      - name: Certify LOCAL_GPU audio evidence database security
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-local-gpu-audio-evidence-security.integration.test.ts
+
       - name: Certify AI Story Writer Outline PostgreSQL authority
         run: pnpm exec vitest run --config vitest.integration.config.ts tests/ai-story-outline-authority.integration.test.ts
 
@@ -368,6 +373,18 @@ jobs:
 
       - name: Unit tests
         run: pnpm test
+
+      - name: LOCAL_GPU core unit tests
+        run: >-
+          pnpm exec vitest run --config vitest.config.ts
+          tests/ai-story-local-gpu-v1-core-phase1.test.ts
+          tests/ai-story-local-gpu-v1-core-phase2.test.ts
+          tests/ai-story-local-gpu-v1-core-phase3.test.ts
+          tests/ai-story-local-gpu-v1-core-phase4.test.ts
+          tests/ai-story-local-gpu-audio-evidence.test.ts
+          tests/ai-story-local-gpu-package-transport.test.ts
+          tests/ai-story-local-gpu-contract-v2.test.ts
+          tests/ai-story-local-gpu-contract-v3.test.ts
 
       - name: Install browser for auth security E2E
         run: pnpm exec playwright install --with-deps chromium

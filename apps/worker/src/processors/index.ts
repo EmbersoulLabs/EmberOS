@@ -910,6 +910,8 @@ export function startWorkers() {
                 : "")
           );
         }
+        const { runWorkerLocalGpuDispatchCycle } = await import("../ai-story-local-gpu-worker-dispatch");
+        await runWorkerLocalGpuDispatchCycle(process.env);
       } catch (error) {
         console.warn(
           "[ai-story-runtime] cycle error:",

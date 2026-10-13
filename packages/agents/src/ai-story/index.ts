@@ -104,3 +104,7 @@ export * from "./minimax-controlled-validation";
 export * from "./story-execution-orchestrator";
 export * from "./video-observation-service";
 export * from "./local-generation-media";
+export * from "./local-gpu-execution";
+export { LocalGpuCloudAdapter } from "./local-gpu-adapter";
+export { loadLocalGpuConfigFromEnv } from "./local-gpu-config";
+export { planLocalGpuCompletion } from "./local-gpu-result-finalization";

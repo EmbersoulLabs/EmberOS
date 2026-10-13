@@ -1,0 +1,99 @@
+{
+  "kind": "embersoul.local-gpu.cloud-v3.signing-golden-vector",
+  "classification": "TEST_ONLY_SYNTHETIC",
+  "cloudCommit": "74b4adceba3a97df768b1ad6da68b2647d183f91",
+  "desktopCommitExpected": "abce1afc05f1e31df25c9cb7eaa44a23a82c07d3",
+  "contractVersion": 3,
+  "assetMode": "WITHOUT_ASSET",
+  "workflow": "MINIMAX_H3_T2V",
+  "references": [],
+  "firstFrame": null,
+  "testOnlySecret": {
+    "classification": "TEST_ONLY",
+    "utf8": "contract-v3-test-secret"
+  },
+  "syntheticIdentity": {
+    "workspaceId": "00000003-0000-4000-8000-000000000000",
+    "storyId": "00000005-0000-4000-8000-000000000000",
+    "storyVersionId": "00000006-0000-4000-8000-000000000000",
+    "jobId": "00000090-0000-4000-8000-000000000000",
+    "sceneExecutionId": "00000040-0000-4000-8000-000000000000",
+    "actorId": "00000016-0000-4000-8000-000000000000",
+    "preGenerationQcEvaluationId": "00000080-0000-4000-8000-000000000000",
+    "runtimeAuthorizationId": "00000070-0000-4000-8000-000000000000"
+  },
+  "syntheticAuthorization": {
+    "environment": "staging",
+    "action": "submit",
+    "authority": "SUPERADMIN",
+    "platformAdminStatus": "ACTIVE_GRANT",
+    "nonce": "nonce-v3",
+    "now": "2026-10-11T00:00:00.000Z",
+    "expiresAt": 1791676860000
+  },
+  "canonicalJob": {
+    "contractVersion": 3,
+    "assetMode": "WITHOUT_ASSET",
+    "jobId": "00000090-0000-4000-8000-000000000000",
+    "sceneExecutionId": "00000040-0000-4000-8000-000000000000",
+    "workspaceId": "00000003-0000-4000-8000-000000000000",
+    "workflow": "MINIMAX_H3_T2V",
+    "prompt": "A quiet product story with room tone.",
+    "durationSec": 6,
+    "audioPolicy": "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
+    "aspectRatio": "9:16",
+    "megapixels": 1,
+    "voiceInstructions": null,
+    "seed": 11,
+    "references": [],
+    "firstFrame": null,
+    "audioReferences": null,
+    "videoReferences": null,
+    "dialogue": null,
+    "director": {
+      "guidance": "PROMPT_GUIDANCE",
+      "camera": "slow push in",
+      "motion": "hold the ending"
+    },
+    "lastFrame": null
+  },
+  "creativeBinding": {
+    "inputUtf8": "{\"contractVersion\":3,\"assetMode\":\"WITHOUT_ASSET\",\"jobId\":\"00000090-0000-4000-8000-000000000000\",\"sceneExecutionId\":\"00000040-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"workflow\":\"MINIMAX_H3_T2V\",\"prompt\":\"A quiet product story with room tone.\",\"durationSec\":6,\"audioPolicy\":\"NO_DIALOGUE_WITH_AMBIENT_AUDIO\",\"aspectRatio\":\"9:16\",\"megapixels\":1,\"voiceInstructions\":null,\"seed\":11,\"references\":[],\"firstFrame\":null,\"audioReferences\":null,\"videoReferences\":null,\"dialogue\":null,\"director\":{\"guidance\":\"PROMPT_GUIDANCE\",\"camera\":\"slow push in\",\"motion\":\"hold the ending\"},\"lastFrame\":null}",
+    "sha256": "ca7b7356df8282b5ad232317c28ff5493887d2ac82d9c9e31570499dc17519f7"
+  },
+  "signedClaims": {
+    "v": 1,
+    "environment": "staging",
+    "action": "submit",
+    "jobId": "00000090-0000-4000-8000-000000000000",
+    "workspaceId": "00000003-0000-4000-8000-000000000000",
+    "actorId": "00000016-0000-4000-8000-000000000000",
+    "authority": "SUPERADMIN",
+    "workflow": "MINIMAX_H3_T2V",
+    "sceneExecutionId": "00000040-0000-4000-8000-000000000000",
+    "expiresAt": 1791676860000,
+    "nonce": "nonce-v3",
+    "uploadBinding": "a2cb93ad9e94f1cffdd52a39917c61948561975394cd346a24bee955dbe8cf7d",
+    "creativeBinding": "ca7b7356df8282b5ad232317c28ff5493887d2ac82d9c9e31570499dc17519f7"
+  },
+  "canonicalSigningPayload": "{\"v\":1,\"environment\":\"staging\",\"action\":\"submit\",\"jobId\":\"00000090-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"actorId\":\"00000016-0000-4000-8000-000000000000\",\"authority\":\"SUPERADMIN\",\"workflow\":\"MINIMAX_H3_T2V\",\"sceneExecutionId\":\"00000040-0000-4000-8000-000000000000\",\"expiresAt\":1791676860000,\"nonce\":\"nonce-v3\",\"uploadBinding\":\"a2cb93ad9e94f1cffdd52a39917c61948561975394cd346a24bee955dbe8cf7d\",\"creativeBinding\":\"ca7b7356df8282b5ad232317c28ff5493887d2ac82d9c9e31570499dc17519f7\"}",
+  "canonicalSigningInput": "eyJ2IjoxLCJlbnZpcm9ubWVudCI6InN0YWdpbmciLCJhY3Rpb24iOiJzdWJtaXQiLCJqb2JJZCI6IjAwMDAwMDkwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsIndvcmtzcGFjZUlkIjoiMDAwMDAwMDMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIiwiYWN0b3JJZCI6IjAwMDAwMDE2LTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImF1dGhvcml0eSI6IlNVUEVSQURNSU4iLCJ3b3JrZmxvdyI6Ik1JTklNQVhfSDNfVDJWIiwic2NlbmVFeGVjdXRpb25JZCI6IjAwMDAwMDQwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImV4cGlyZXNBdCI6MTc5MTY3Njg2MDAwMCwibm9uY2UiOiJub25jZS12MyIsInVwbG9hZEJpbmRpbmciOiJhMmNiOTNhZDllOTRmMWNmZmRkNTJhMzk5MTdjNjE5NDg1NjE5NzUzOTRjZDM0NmEyNGJlZTk1NWRiZThjZjdkIiwiY3JlYXRpdmVCaW5kaW5nIjoiY2E3YjczNTZkZjgyODJiNWFkMjMyMzE3YzI4ZmY1NDkzODg3ZDJhYzgyZDljOWUzMTU3MDQ5OWRjMTc1MTlmNyJ9",
+  "hmac": {
+    "algorithm": "HMAC-SHA256",
+    "keyEncoding": "utf8",
+    "messageEncoding": "utf8",
+    "digestEncoding": "base64url",
+    "expected": "-UOhERpMxowUl0Fs4GU9R5hUWHuuyuOdWNMiHGyKVB0"
+  },
+  "token": "eyJ2IjoxLCJlbnZpcm9ubWVudCI6InN0YWdpbmciLCJhY3Rpb24iOiJzdWJtaXQiLCJqb2JJZCI6IjAwMDAwMDkwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsIndvcmtzcGFjZUlkIjoiMDAwMDAwMDMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIiwiYWN0b3JJZCI6IjAwMDAwMDE2LTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImF1dGhvcml0eSI6IlNVUEVSQURNSU4iLCJ3b3JrZmxvdyI6Ik1JTklNQVhfSDNfVDJWIiwic2NlbmVFeGVjdXRpb25JZCI6IjAwMDAwMDQwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImV4cGlyZXNBdCI6MTc5MTY3Njg2MDAwMCwibm9uY2UiOiJub25jZS12MyIsInVwbG9hZEJpbmRpbmciOiJhMmNiOTNhZDllOTRmMWNmZmRkNTJhMzk5MTdjNjE5NDg1NjE5NzUzOTRjZDM0NmEyNGJlZTk1NWRiZThjZjdkIiwiY3JlYXRpdmVCaW5kaW5nIjoiY2E3YjczNTZkZjgyODJiNWFkMjMyMzE3YzI4ZmY1NDkzODg3ZDJhYzgyZDljOWUzMTU3MDQ5OWRjMTc1MTlmNyJ9.-UOhERpMxowUl0Fs4GU9R5hUWHuuyuOdWNMiHGyKVB0",
+  "verification": {
+    "expected": "success",
+    "creativeBinding": "ca7b7356df8282b5ad232317c28ff5493887d2ac82d9c9e31570499dc17519f7"
+  },
+  "promptTamper": {
+    "prompt": "changed",
+    "canonicalJobUtf8": "{\"contractVersion\":3,\"assetMode\":\"WITHOUT_ASSET\",\"jobId\":\"00000090-0000-4000-8000-000000000000\",\"sceneExecutionId\":\"00000040-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"workflow\":\"MINIMAX_H3_T2V\",\"prompt\":\"changed\",\"durationSec\":6,\"audioPolicy\":\"NO_DIALOGUE_WITH_AMBIENT_AUDIO\",\"aspectRatio\":\"9:16\",\"megapixels\":1,\"voiceInstructions\":null,\"seed\":11,\"references\":[],\"firstFrame\":null,\"audioReferences\":null,\"videoReferences\":null,\"dialogue\":null,\"director\":{\"guidance\":\"PROMPT_GUIDANCE\",\"camera\":\"slow push in\",\"motion\":\"hold the ending\"},\"lastFrame\":null}",
+    "creativeBindingSha256": "c638052d8374dacd08b1891cf621629af6b7e69a940a430d0dabfa02ffc7c4ba",
+    "expectedError": "LOCAL_GPU_CREATIVE_BINDING_MISMATCH"
+  }
+}
