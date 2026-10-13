@@ -56,7 +56,7 @@ function selection(sceneId: string, sceneVersionId: string) {
   });
 }
 
-function facts(mode: "I2V" | "T2V", sceneExecutionId = id("101")): ProviderNeutralLocalSceneFacts {
+export function providerNeutralLocalFactsFixture(mode: "I2V" | "T2V", sceneExecutionId = id("101")): ProviderNeutralLocalSceneFacts {
   const sceneId = mode === "I2V" ? id("201") : id("202");
   const sceneVersionId = mode === "I2V" ? id("301") : id("302");
   const sceneFingerprint = hash(mode === "I2V" ? "scene-i2v" : "scene-t2v");
@@ -173,6 +173,8 @@ function facts(mode: "I2V" | "T2V", sceneExecutionId = id("101")): ProviderNeutr
     createdAt,
   };
 }
+
+const facts = providerNeutralLocalFactsFixture;
 
 describe("provider-neutral local generation authority", () => {
   it("builds an I2V package from frozen execution authority and the exact derivative", () => {
