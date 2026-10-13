@@ -11,6 +11,7 @@ import {
   AiStoryGenerationResultRepository, AiStoryLocalGenerationRepository,
   AiStoryPostGenerationQcRepository, BoundAiStoryPostGenerationQcRepository,
   DurableSceneMediaAttestationRepositoryImpl, canonicalPersistenceHash,
+  deriveLocalGpuAudioEvidence, LocalGpuAudioEvidenceRepository, assertLocalGpuAudioApproval,
 } from "@ceo-agent/db";
 import { AiStoryPostGenerationQcService, type AiStoryVisualEvidenceProvider } from "./post-generation-qc-service";
 import { localGenerationPackageFingerprint } from "./local-generation-package";
@@ -244,6 +245,7 @@ export class AiStoryGenerationResultService {
     private readonly packages = new AiStoryLocalGenerationRepository(),
     private readonly qc = new AiStoryPostGenerationQcRepository(),
     private readonly durableMedia = new DurableSceneMediaAttestationRepositoryImpl(),
+    private readonly audioEvidence = new LocalGpuAudioEvidenceRepository(),
   ) {}
 
   async evaluateLocal(result: AiStoryGenerationResult, pkg: AiStoryLocalGenerationPackage, evidenceProvider: AiStoryVisualEvidenceProvider, actorUserId: string) {
@@ -252,9 +254,12 @@ export class AiStoryGenerationResultService {
     const input = buildGenerationResultPostQcInput(accepted, pkg);
     if (await this.results.decision(result.generationResultId)) throw new Error("GENERATION_RESULT_DECISION_ALREADY_FROZEN");
     const latest = await this.results.latestQc(result.ownership.workspaceId, result.generationResultId);
+    const audioEvidence = accepted.source.sourceKind === "LOCAL_GPU_WORKER"
+      ? await this.audioEvidence.record(deriveLocalGpuAudioEvidence(accepted))
+      : null;
     const evaluation = await new AiStoryPostGenerationQcService({
       repository: new BoundAiStoryPostGenerationQcRepository(input, this.qc), evidenceProvider,
-    }).evaluate(input, (latest?.evaluationVersion ?? 0) + 1);
+    }).evaluate(input, (latest?.evaluationVersion ?? 0) + 1, undefined, audioEvidence);
     if (evaluation.evaluation.aggregateStatus === "POST_QC_REJECT" && result.source.sourceKind === "MANUAL_LOCAL") {
       const retry = materializeLocalRetryPackage(
         pkg,
@@ -280,6 +285,10 @@ export class AiStoryGenerationResultService {
     const qc = await this.results.latestQc(result.ownership.workspaceId, result.generationResultId);
     assertGenerationResultApproval(result, qc);
     if (!qc) throw new Error("GENERATED_SCENE_POST_QC_REQUIRED");
+    if (result.source.sourceKind === "LOCAL_GPU_WORKER") {
+      const stored = await this.audioEvidence.get(result.ownership.workspaceId, result.generationResultId);
+      assertLocalGpuAudioApproval(result, qc, stored);
+    }
     const decision: AiStoryGenerationResultDecision = {
       decisionId: deterministicPersistenceUuid("ai-story-generation-result-decision", { generationResultId: result.generationResultId }),
       generationResultId: result.generationResultId, postQcEvaluationId: qc.postQcEvaluationId,

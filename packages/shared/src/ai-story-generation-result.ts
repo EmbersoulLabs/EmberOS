@@ -54,7 +54,12 @@ export const AiStoryGenerationResultSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, message: "GENERATION_RESULT_PRIVATE_MEDIA_REQUIRED" });
   }
   const local = Boolean(value.localSourceAuthorityId || value.localSourceAuthorityFingerprint);
-  if (value.source.sourceKind === "MANUAL_LOCAL" && local) {
+  if (value.source.sourceKind === "LOCAL_GPU_WORKER") {
+    if (value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
+        !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "GENERATION_RESULT_LOCAL_AUTHORITY_REQUIRED" });
+    }
+  } else if (value.source.sourceKind === "MANUAL_LOCAL" && local) {
     if (value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
         !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "GENERATION_RESULT_LOCAL_AUTHORITY_REQUIRED" });

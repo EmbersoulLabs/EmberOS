@@ -18,6 +18,7 @@ import {
   type AiStoryPostQcHumanReviewEvidence,
   type AiStoryPostQcObservation,
   type AiStoryPostQcRequirement,
+  type LocalGpuAudioEvidence,
   type AiStoryCompiledProviderRequest,
   type AiStoryProviderAttemptBinding,
   type AiStoryPreGenerationQcEvaluation,
@@ -25,7 +26,7 @@ import {
   type AiStorySceneExecutionIntent,
   type AiStorySceneExecutionPackage,
 } from "@ceo-agent/shared";
-import { deterministicPersistenceUuid } from "@ceo-agent/db";
+import { deterministicPersistenceUuid, stampLocalGpuAudioEvidence } from "@ceo-agent/db";
 import { integrityHash } from "./scene-execution-compiler";
 
 export interface AiStoryVisualEvidenceProvider {
@@ -609,6 +610,10 @@ export function buildAiStoryPostQcHumanReviewEvidence(input: { evaluation: AiSto
     warningsMayBeAccepted: true,
     hardFailureWaiverPolicy: "EXPLICIT_NON_WAIVABLE_INTEGRITY_DENIAL",
     humanDecisionRequired: true,
+    ...(input.evaluation.audioSpeechContent ? {
+      audioEvidenceId: input.evaluation.audioEvidenceId,
+      audioSpeechContent: input.evaluation.audioSpeechContent,
+    } : {}),
   });
 }
 
@@ -623,8 +628,21 @@ export class AiStoryPostGenerationQcService {
       readonly signageIdentityVisible: boolean;
       readonly renderPolicy: AiStoryVisualTextRenderPolicy;
     } | null,
+    audioEvidence?: LocalGpuAudioEvidence | null,
   ) {
     let input = AiStoryPostGenerationQcInputPackageSchema.parse(rawInput);
+    if (input.sourceKind === "LOCAL_GPU_WORKER") {
+      if (
+        !audioEvidence
+        || audioEvidence.generationResultId !== input.generationResultId
+        || audioEvidence.workspaceId !== input.workspaceId
+        || audioEvidence.contentHash !== input.privateMediaContentHash
+      ) {
+        throw new Error(audioEvidence ? "LOCAL_GPU_AUDIO_EVIDENCE_MISMATCH" : "LOCAL_GPU_AUDIO_EVIDENCE_REQUIRED");
+      }
+    } else if (audioEvidence) {
+      throw new Error("LOCAL_GPU_AUDIO_EVIDENCE_MISMATCH");
+    }
     const current = await this.dependencies.repository.getByIdentity({ postQcInputId: input.postQcInputId, evaluationVersion });
     if (current) return { evaluation: current, replayed: true };
     if(this.dependencies.repository.prepareInput) input=AiStoryPostGenerationQcInputPackageSchema.parse(await this.dependencies.repository.prepareInput(input));
@@ -666,9 +684,10 @@ export class AiStoryPostGenerationQcService {
       autoReleaseAuthorized: false as const,
       creativeAuthority: false as const,
     };
+    const stamped = audioEvidence ? stampLocalGpuAudioEvidence(base, audioEvidence) : base;
     const evaluation = AiStoryPostGenerationQcEvaluationSchema.parse({
-      ...base,
-      evaluationFingerprint: computeAiStoryPostQcEvaluationFingerprint(base),
+      ...stamped,
+      evaluationFingerprint: computeAiStoryPostQcEvaluationFingerprint(stamped),
       evaluatedAt: this.dependencies.now?.() ?? new Date().toISOString(),
     });
     return this.dependencies.repository.accept(evaluation);

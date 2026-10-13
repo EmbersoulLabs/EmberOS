@@ -2125,6 +2125,47 @@ export const aiStoryLocalGenerationOutputs = pgTable(
   ],
 );
 
+/**
+ * Server-only authority for one exact LOCAL_GPU V3 dispatch. The payload is an
+ * immutable, already validated Desktop request/capability snapshot; browsers
+ * never read or write this table.
+ */
+export const aiStoryLocalGpuDispatchAuthorities = pgTable(
+  "ai_story_local_gpu_dispatch_authorities",
+  {
+    dispatchAuthorityId: uuid("dispatch_authority_id").primaryKey(),
+    authorityFingerprint: text("authority_fingerprint").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    packageId: uuid("package_id").notNull().references(() => aiStoryLocalGenerationPackages.packageId, { onDelete: "restrict" }),
+    runtimeAuthorizationId: uuid("runtime_authorization_id").notNull().references(() => aiStoryRuntimeAuthorizedFacts.runtimeAuthorizationId, { onDelete: "restrict" }),
+    // Deliberately declared without an inline FK because the canonical Platform
+    // Admin table is defined later in this schema module. The SQL migration adds
+    // the same RESTRICT foreign key without creating a JS initialization cycle.
+    platformAdminAssignmentId: uuid("platform_admin_assignment_id").notNull(),
+    authorizedByUserId: uuid("authorized_by_user_id").notNull(),
+    status: text("status").notNull().default("ACTIVE"),
+    executionIdentity: text("execution_identity").notNull(),
+    dispatchSnapshot: jsonb("dispatch_snapshot").$type<Record<string, unknown>>().notNull(),
+    authorizedAt: timestamp("authorized_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_local_gpu_dispatch_authority_fingerprint_unique").on(t.authorityFingerprint),
+    unique("ai_story_local_gpu_dispatch_authority_idempotency_unique").on(t.workspaceId, t.idempotencyKey),
+    unique("ai_story_local_gpu_dispatch_authority_execution_unique").on(t.sceneExecutionId, t.packageId, t.runtimeAuthorizationId),
+    index("ai_story_local_gpu_dispatch_authority_scope_idx").on(t.workspaceId, t.storyId, t.sceneExecutionId),
+    check("ai_story_local_gpu_dispatch_authority_status_check", sql`${t.status} in ('ACTIVE', 'REVOKED')`),
+  ],
+);
+
 /** Sprint 3 Phase 2A — append-only deterministic AI QC facts (not human review). */
 /** Accepted generated media before QC. Source attempt and downstream result are separate. */
 export const aiStoryGenerationResults = pgTable("ai_story_generation_results", {
@@ -2161,6 +2202,41 @@ export const aiStoryGenerationResultDecisions = pgTable("ai_story_generation_res
   fact: jsonb("fact").$type<import("@ceo-agent/shared").AiStoryGenerationResultDecision>().notNull(),
   decidedAt: timestamp("decided_at", { withTimezone: true }).notNull(),
 }, (t) => [unique("ai_story_generation_result_decision_unique").on(t.generationResultId)]);
+
+/**
+ * Immutable LOCAL_GPU audio finding for one Generation Result.
+ * Speech content cannot be machine PASS. Historical Post-QC rows are not rewritten.
+ */
+export const aiStoryLocalGpuAudioEvidence = pgTable(
+  "ai_story_local_gpu_audio_evidence",
+  {
+    audioEvidenceId: uuid("audio_evidence_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    executionPlanId: uuid("execution_plan_id").notNull().references(() => aiStoryExecutionPlans.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    generationResultId: uuid("generation_result_id").notNull().references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
+    assetId: uuid("asset_id").notNull().references(() => assets.id, { onDelete: "restrict" }),
+    contentHash: text("content_hash").notNull(),
+    hasAudio: boolean("has_audio").notNull(),
+    speechContent: text("speech_content").notNull(),
+    evidenceFingerprint: text("evidence_fingerprint").notNull(),
+    fact: jsonb("fact").$type<import("@ceo-agent/shared").LocalGpuAudioEvidence>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_local_gpu_audio_evidence_result_unique").on(t.generationResultId),
+    unique("ai_story_local_gpu_audio_evidence_fingerprint_unique").on(t.evidenceFingerprint),
+    index("ai_story_local_gpu_audio_evidence_workspace_idx").on(t.workspaceId, t.executionPlanId),
+    check(
+      "ai_story_local_gpu_audio_evidence_speech_check",
+      sql`(
+        (${t.hasAudio} = true AND ${t.speechContent} = 'HUMAN_REVIEW_REQUIRED')
+        OR (${t.hasAudio} = false AND ${t.speechContent} = 'NOT_APPLICABLE')
+      )`,
+    ),
+  ],
+);
 
 export const aiStoryGenerationResultContinuityFrames = pgTable("ai_story_generation_result_continuity_frames", {
   generationResultId: uuid("generation_result_id").primaryKey().references(() => aiStoryGenerationResults.generationResultId, { onDelete: "restrict" }),
