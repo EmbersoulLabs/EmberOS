@@ -176,14 +176,6 @@ export async function POST(request: Request, { params }: Params) {
     if (!planned.eligible) return apiError("LOCAL_GPU workflow is unsupported", planned.blocked ?? "LOCAL_GPU_WORKFLOW_UNSUPPORTED", 409);
     if (planned.contractVersion === 2) assertLocalGpuV2RuntimeCapabilities(capabilities);
 
-    await getDb().insert(schema.assets).values({
-      id: assetId, orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId,
-      type: "video", storagePath, displayName: `LOCAL_GPU Unit ${pkg.order}`,
-      originalFilename: `${packageId}.mp4`, status: "uploading", source: "ai_story_manual_local",
-      uploadedBy: user.id, mimeType: "video/mp4",
-      metadata: { localGenerationPackageId: packageId, localGenerationUnitId: pkg.unitId, executionPlanId, sourceKind: "LOCAL_GPU_WORKER" },
-    }).onConflictDoNothing();
-
     const authority = await persistLocalGpuDispatchAuthority(getDb(), {
       idempotencyKey, orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId,
       storyId, executionPlanId, sceneExecutionId: pkg.sceneExecutionId, packageId,
@@ -193,6 +185,16 @@ export async function POST(request: Request, { params }: Params) {
       snapshot: { contractVersion: 1, actor, route, request: dispatchRequest, capabilities },
       expiresAt: new Date(Date.now() + 15 * 60_000),
     });
+    // The persisted authority is the final fail-closed authorization/CAS gate.
+    // Never leave an output asset behind when that gate denies the request.
+    // The deterministic asset id makes this safe to resume after a lost response.
+    await getDb().insert(schema.assets).values({
+      id: assetId, orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId,
+      type: "video", storagePath, displayName: `LOCAL_GPU Unit ${pkg.order}`,
+      originalFilename: `${packageId}.mp4`, status: "uploading", source: "ai_story_manual_local",
+      uploadedBy: user.id, mimeType: "video/mp4",
+      metadata: { localGenerationPackageId: packageId, localGenerationUnitId: pkg.unitId, executionPlanId, sourceKind: "LOCAL_GPU_WORKER" },
+    }).onConflictDoNothing();
     return apiSuccess({
       dispatchAuthorityId: authority.dispatchAuthorityId,
       executionIdentity: authority.executionIdentity,
