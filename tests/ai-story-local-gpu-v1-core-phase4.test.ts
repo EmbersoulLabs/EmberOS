@@ -57,7 +57,9 @@ describe("LOCAL_GPU V1 core phase 4", () => {
       packageId: id(1),
     })).toThrow("LOCAL_GPU_DUPLICATE_RESULT");
     expect(() => resolveExplicitLocalGpuProviderAuthority({ requestedProvider: "LOCAL_GPU" })).toThrow("LOCAL_GPU_PROVIDER_DISABLED");
-    expect([...AI_STORY_CERTIFIED_LOCAL_WORKFLOWS]).toEqual(["MINIMAX_H3_NATIVE_DIALOGUE"]);
+    expect([...AI_STORY_CERTIFIED_LOCAL_WORKFLOWS]).toEqual([
+      "MINIMAX_H3_NATIVE_DIALOGUE", "MINIMAX_H3_R2V", "MINIMAX_H3_T2V",
+    ]);
     const processors = readFileSync(join(root, "apps/worker/src/processors/index.ts"), "utf8");
     const execute = readFileSync(join(root, "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"), "utf8");
     expect(processors).toContain("runWorkerLocalGpuDispatchCycle(process.env)");

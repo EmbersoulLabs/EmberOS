@@ -53,6 +53,70 @@ const stagingEnv = {
 };
 
 describe("worker LOCAL_GPU dispatch composition", () => {
+  it("selects an exact persisted scope for the explicit production Superadmin policy without scene env allowlists", async () => {
+    let selected = 0;
+    let loaded = 0;
+    const production = {
+      LOCAL_GPU_PROVIDER_ENABLED: "true",
+      LOCAL_GPU_ENVIRONMENT: "production",
+      LOCAL_GPU_PRODUCTION_DISPATCH_ENABLED: "true",
+      LOCAL_GPU_SUPERADMIN_GLOBAL_ENABLED: "true",
+    };
+    const result = await runWorkerLocalGpuDispatchCycle(production, {
+      selectScope: async () => {
+        selected += 1;
+        return scope;
+      },
+      load: async (requested) => {
+        loaded += 1;
+        expect(requested).toEqual(scope);
+        return {
+          ...scope,
+          packageId: id(30),
+          runtimeAuthorizationId: null,
+          existingGate: null,
+          route: {
+            assetMode: "WITHOUT_ASSET",
+            assetRecommendationStatus: "CONFIRMED_NO_ASSETS",
+            referenceCount: 0,
+            preQc: "DISPATCH_ELIGIBLE",
+            runtimeAuthorizationId: null,
+            capabilities,
+            generateAudio: true,
+            audioBlocked: false,
+            qcExpectation: "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
+          },
+        };
+      },
+      claim: () => true,
+      adapter: {} as never,
+      actor,
+      request,
+      capabilities,
+      existingResultId: null,
+    });
+    expect(result).toMatchObject({ code: "LOCAL_GPU_RUNTIME_AUTHORIZATION_REQUIRED", posts: 0 });
+    expect(selected).toBe(1);
+    expect(loaded).toBe(1);
+
+    const closed = await runWorkerLocalGpuDispatchCycle({
+      ...production,
+      LOCAL_GPU_PRODUCTION_DISPATCH_ENABLED: "false",
+    }, {
+      selectScope: async () => {
+        throw new Error("closed gate must not select a scope");
+      },
+      load: async () => null,
+      claim: () => true,
+      adapter: {} as never,
+      actor,
+      request,
+      capabilities,
+      existingResultId: null,
+    });
+    expect(closed).toMatchObject({ code: "LOCAL_GPU_PRODUCTION_DENIED", posts: 0 });
+  });
+
   it("posts once for the scoped scene, then finalizes from status without a second POST", async () => {
     const posts: string[] = [];
     const gets: string[] = [];

@@ -109,6 +109,12 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/ai-story-sequential-local-v3-phase2.integration.test.ts
 
+      - name: Certify LOCAL_GPU Superadmin HTTP authority on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          --no-file-parallelism
+          tests/ai-story-local-gpu-http-postgres.integration.test.ts
+
       - name: Certify Platform Admin Control Plane server-only authority
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
