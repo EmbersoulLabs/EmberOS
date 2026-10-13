@@ -13,6 +13,13 @@ async function main(): Promise<void> {
         CREATE ROLE authenticated NOLOGIN;
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$;
+      DO $$ BEGIN
+        CREATE ROLE service_role NOLOGIN BYPASSRLS;
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$;
+      ALTER ROLE anon NOLOGIN NOBYPASSRLS;
+      ALTER ROLE authenticated NOLOGIN NOBYPASSRLS;
+      ALTER ROLE service_role NOLOGIN BYPASSRLS;
       CREATE SCHEMA IF NOT EXISTS auth;
       CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS
       $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
