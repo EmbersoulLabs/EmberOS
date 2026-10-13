@@ -1,0 +1,72 @@
+name: Wave 6 Staging certification remaining gates
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/wave6-staging-certification.yml"
+      - "scripts/certify-wave6-staging-schema.ts"
+      - "scripts/certify-wave6-staging-product-smoke.ts"
+      - "scripts/diagnose-wave6-staging-login.ts"
+      - "scripts/discover-wave6-staging-ai-story-fixtures.ts"
+      - "scripts/ensure-wave6-staging-ai-story-fixture.ts"
+
+jobs:
+  remaining-gates:
+    if: github.head_ref == 'wave6/staging-certification-remaining-gates'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: Preview
+    steps:
+      - name: Fetch immutable certification source snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          curl --fail --silent --show-error --location \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/tarball/${SOURCE_SHA}" \
+            --output /tmp/emberos-cert-source.tgz
+          tar -xzf /tmp/emberos-cert-source.tgz --strip-components=1
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Read-only Staging schema parity
+        env:
+          STAGING_CERT_DATABASE_URL: ${{ secrets.STAGING_CERT_DATABASE_URL }}
+        run: pnpm exec tsx scripts/certify-wave6-staging-schema.ts
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Read-only Staging AI Story fixture discovery
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          STAGING_CERT_USER_EMAIL: ${{ secrets.STAGING_CERT_USER_EMAIL }}
+          STAGING_CERT_USER_PASSWORD: ${{ secrets.STAGING_CERT_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: pnpm exec tsx scripts/discover-wave6-staging-ai-story-fixtures.ts
+      - name: Ensure canonical zero-provider AI Story fixture
+        timeout-minutes: 2
+        env:
+          STAGING_CERT_USER_EMAIL: ${{ secrets.STAGING_CERT_USER_EMAIL }}
+          STAGING_CERT_USER_PASSWORD: ${{ secrets.STAGING_CERT_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: pnpm exec tsx scripts/ensure-wave6-staging-ai-story-fixture.ts
+      - name: Secret-safe Staging login diagnosis
+        timeout-minutes: 2
+        env:
+          STAGING_CERT_USER_EMAIL: ${{ secrets.STAGING_CERT_USER_EMAIL }}
+          STAGING_CERT_USER_PASSWORD: ${{ secrets.STAGING_CERT_USER_PASSWORD }}
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: pnpm exec tsx scripts/diagnose-wave6-staging-login.ts
+      - name: Authenticated Staging product smoke
+        env:
+          E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: pnpm exec tsx scripts/certify-wave6-staging-product-smoke.ts
