@@ -14,6 +14,7 @@ import {
   schema,
 } from "@ceo-agent/db";
 import { apiError, apiSuccess } from "@/lib/api";
+import { assertLocalGpuV2RuntimeCapabilities } from "@ceo-agent/shared/server";
 import { handleApiError } from "@/lib/auth";
 import { resolveAuthorizedExecutionPlan } from "@/lib/ai-story-execution-plan-access";
 import { requirePlatformAdmin } from "@/lib/platform-admin-auth";
@@ -93,6 +94,13 @@ export async function POST(request: Request, { params }: Params) {
     const uploadDestination = { environment: "production" as const, method: "PUT", url: upload.signedUrl, assetId };
 
     const references = pkg.references ?? [];
+    if (pkg.dialogue.some((line) => !line.offscreen) || pkg.recommendedWorkflow === "MINIMAX_H3_NATIVE_DIALOGUE") {
+      return apiError(
+        "Native dialogue is not supported by the certified LOCAL_GPU V2/V3 workflows",
+        "LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED",
+        409,
+      );
+    }
     const noProductVisual = !pkg.productAuthority
       || ("selection" in pkg.productAuthority && pkg.productAuthority.selection === "NO_PRODUCT_VISUAL_INPUT");
     const zeroAsset = pkg.generationMode === "TEXT_TO_VIDEO" && references.length === 0 && !pkg.characterAuthority && noProductVisual;
@@ -173,6 +181,7 @@ export async function POST(request: Request, { params }: Params) {
     }
     const planned = planLocalGpuRoute(route as never);
     if (!planned.eligible) return apiError("LOCAL_GPU workflow is unsupported", planned.blocked ?? "LOCAL_GPU_WORKFLOW_UNSUPPORTED", 409);
+    if (planned.contractVersion === 2) assertLocalGpuV2RuntimeCapabilities(capabilities);
 
     const authority = await persistLocalGpuDispatchAuthority(getDb(), {
       idempotencyKey, orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId,

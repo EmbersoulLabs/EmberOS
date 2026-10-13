@@ -128,14 +128,20 @@ function dialogueFrom(scene: AiStoryCanonicalScene, instructions: AiStorySceneCo
   });
 }
 
-function certifiedLocalWorkflow(hasVisibleDialogue: boolean) {
-  if (!hasVisibleDialogue) {
-    throw new AiStoryLocalGenerationError(
-      "LOCAL_WORKFLOW_CERTIFICATION_REQUIRED",
-      "No certified MiniMax workflow is registered for a Unit without visible dialogue. WAN and Seedance are not fallbacks.",
-    );
-  }
-  return CERTIFIED_MINIMAX_NATIVE_DIALOGUE_WORKFLOW;
+function certifiedLocalWorkflow(
+  hasVisibleDialogue: boolean,
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthority,
+) {
+  if (hasVisibleDialogue) return CERTIFIED_MINIMAX_NATIVE_DIALOGUE_WORKFLOW;
+  if (generationAuthority.strategy === "TEXT_TO_VIDEO") return "MINIMAX_H3_T2V" as const;
+  if (
+    generationAuthority.strategy === "FIRST_FRAME_IMAGE_TO_VIDEO"
+    || generationAuthority.strategy === "PRODUCT_GROUNDED_VIDEO"
+  ) return "MINIMAX_H3_R2V" as const;
+  throw new AiStoryLocalGenerationError(
+    "LOCAL_WORKFLOW_CERTIFICATION_REQUIRED",
+    "The frozen Scene generation authority has no certified LOCAL_GPU workflow.",
+  );
 }
 
 function factBlock(title: string, facts: readonly string[]): string {
@@ -304,7 +310,7 @@ export function materializeProviderNeutralLocalGenerationPackage(
   }] : [];
   const dialogue = dialogueFrom(scene, instructions);
   const visibleDialogue = dialogue.filter((line) => !line.offscreen);
-  const workflow = certifiedLocalWorkflow(visibleDialogue.length > 0);
+  const workflow = certifiedLocalWorkflow(visibleDialogue.length > 0, generationAuthority);
   const generateAudio = visibleDialogue.length > 0;
   const previous = stateText(scene.entryState);
   const expectedEnd = stateText(scene.exitState);

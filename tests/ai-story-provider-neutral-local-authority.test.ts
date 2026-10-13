@@ -327,18 +327,26 @@ describe("provider-neutral local generation authority", () => {
     expect(silent).not.toContain("says exactly");
     expect(silent).not.toContain("Do not use detached TTS.");
     const input = facts("I2V");
-    expect(() => materializeProviderNeutralLocalGenerationPackage({
+    const packageWithoutDialogue = materializeProviderNeutralLocalGenerationPackage({
       ...input,
       scene: { ...input.scene, events: [] },
-    })).toThrow(AiStoryLocalGenerationError);
-    try {
-      materializeProviderNeutralLocalGenerationPackage({
-        ...input,
-        scene: { ...input.scene, events: [] },
-      });
-    } catch (error) {
-      expect(error).toMatchObject({ code: "LOCAL_WORKFLOW_CERTIFICATION_REQUIRED" });
-    }
+    });
+    expect(packageWithoutDialogue.recommendedWorkflow).toBe("MINIMAX_H3_R2V");
+    expect(packageWithoutDialogue.dialogue).toEqual([]);
+    expect(packageWithoutDialogue.generateAudio).toBe(false);
+    expect(packageWithoutDialogue.audioBlocked).toBe(true);
+  });
+
+  it("selects certified T2V only for a frozen reference-free Scene without visible dialogue", () => {
+    const input = facts("T2V");
+    const item = materializeProviderNeutralLocalGenerationPackage({
+      ...input,
+      scene: { ...input.scene, events: [] },
+    });
+    expect(item.recommendedWorkflow).toBe("MINIMAX_H3_T2V");
+    expect(item.generationMode).toBe("TEXT_TO_VIDEO");
+    expect(item.references).toEqual([]);
+    expect(item.productAuthority).toBeNull();
   });
 
   it("keeps historical V2 packages without dialogue locale readable and new writes deterministic", () => {
