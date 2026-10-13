@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, isNull } from "drizzle-orm";
 import { getDb, schema } from "../client";
 
 export type LocalGpuPersistedDispatchSnapshot = {
@@ -134,4 +134,45 @@ export async function loadAuthorizedLocalGpuDispatch(db: Db, scope: { workspaceI
   if (identity !== row.authority.executionIdentity) throw new Error("LOCAL_GPU_EXECUTION_IDENTITY_MISMATCH");
   return { ...row.authority, existingGate: row.release.gateProviderAttemptId,
     snapshot: row.authority.dispatchSnapshot as LocalGpuPersistedDispatchSnapshot };
+}
+
+/**
+ * Selects one exact scope backed by a live persisted Superadmin authority.
+ * This replaces deployment-time scene allowlists; it does not create authority.
+ * The scoped loader revalidates the complete immutable identity before dispatch.
+ */
+export async function selectNextAuthorizedLocalGpuDispatchScope(db: Db) {
+  const now = new Date();
+  const rows = await db.select({
+    workspaceId: schema.aiStoryLocalGpuDispatchAuthorities.workspaceId,
+    storyId: schema.aiStoryLocalGpuDispatchAuthorities.storyId,
+    sceneExecutionId: schema.aiStoryLocalGpuDispatchAuthorities.sceneExecutionId,
+  }).from(schema.aiStoryLocalGpuDispatchAuthorities)
+    .innerJoin(schema.aiStorySceneReleaseStates, and(
+      eq(schema.aiStorySceneReleaseStates.sceneExecutionId, schema.aiStoryLocalGpuDispatchAuthorities.sceneExecutionId),
+      eq(schema.aiStorySceneReleaseStates.workspaceId, schema.aiStoryLocalGpuDispatchAuthorities.workspaceId),
+      eq(schema.aiStorySceneReleaseStates.runtimeAuthorizationId, schema.aiStoryLocalGpuDispatchAuthorities.runtimeAuthorizationId),
+      eq(schema.aiStorySceneReleaseStates.currentLocalGenerationPackageId, schema.aiStoryLocalGpuDispatchAuthorities.packageId),
+    ))
+    .innerJoin(schema.platformAdminGrants, and(
+      eq(schema.platformAdminGrants.platformAdminAssignmentId, schema.aiStoryLocalGpuDispatchAuthorities.platformAdminAssignmentId),
+      eq(schema.platformAdminGrants.userId, schema.aiStoryLocalGpuDispatchAuthorities.authorizedByUserId),
+      eq(schema.platformAdminGrants.platformRole, "PLATFORM_SUPER_ADMIN"),
+      eq(schema.platformAdminGrants.status, "ACTIVE"),
+    ))
+    .leftJoin(schema.platformAdminRevocations, eq(
+      schema.platformAdminRevocations.platformAdminAssignmentId,
+      schema.aiStoryLocalGpuDispatchAuthorities.platformAdminAssignmentId,
+    ))
+    .where(and(
+      eq(schema.aiStoryLocalGpuDispatchAuthorities.status, "ACTIVE"),
+      gt(schema.aiStoryLocalGpuDispatchAuthorities.expiresAt, now),
+      isNull(schema.aiStoryLocalGpuDispatchAuthorities.revokedAt),
+      isNull(schema.platformAdminRevocations.platformAdminRevocationId),
+      eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
+      eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
+    ))
+    .orderBy(asc(schema.aiStoryLocalGpuDispatchAuthorities.authorizedAt))
+    .limit(1);
+  return rows[0] ?? null;
 }

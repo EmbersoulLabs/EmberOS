@@ -195,24 +195,29 @@ export function localGpuDispatchGate(env: Record<string, string | undefined>): {
   environment: "staging" | "production" | null;
   code: "DISABLED" | "LOCAL_GPU_PRODUCTION_DENIED" | "LOCAL_GPU_ENVIRONMENT_REQUIRED" | "LOCAL_GPU_SCENE_SCOPE_REQUIRED" | "AUTHORIZED";
   scope: LocalGpuSceneScope | null;
+  globalSuperadmin: boolean;
 } {
   const providerEnabled = enabledFlag(env.LOCAL_GPU_PROVIDER_ENABLED);
   const singleRun = enabledFlag(env.LOCAL_GPU_SINGLE_RUN_AUTHORIZED);
-  if (!providerEnabled || !singleRun) {
-    return { dispatchAuthorized: false, environment: null, code: "DISABLED", scope: null };
+  const globalSuperadmin = enabledFlag(env.LOCAL_GPU_SUPERADMIN_GLOBAL_ENABLED);
+  if (!providerEnabled || (!singleRun && !globalSuperadmin)) {
+    return { dispatchAuthorized: false, environment: null, code: "DISABLED", scope: null, globalSuperadmin: false };
   }
   const environment = env.LOCAL_GPU_ENVIRONMENT?.trim();
   if (environment !== "staging" && environment !== "production") {
-    return { dispatchAuthorized: false, environment: null, code: "LOCAL_GPU_ENVIRONMENT_REQUIRED", scope: null };
+    return { dispatchAuthorized: false, environment: null, code: "LOCAL_GPU_ENVIRONMENT_REQUIRED", scope: null, globalSuperadmin: false };
   }
   if (environment === "production" && !enabledFlag(env.LOCAL_GPU_PRODUCTION_DISPATCH_ENABLED)) {
-    return { dispatchAuthorized: false, environment: "production", code: "LOCAL_GPU_PRODUCTION_DENIED", scope: null };
+    return { dispatchAuthorized: false, environment: "production", code: "LOCAL_GPU_PRODUCTION_DENIED", scope: null, globalSuperadmin: false };
   }
   const scope = readLocalGpuSceneScope(env);
-  if (!scope) {
-    return { dispatchAuthorized: false, environment, code: "LOCAL_GPU_SCENE_SCOPE_REQUIRED", scope: null };
+  if (environment === "production" && globalSuperadmin) {
+    return { dispatchAuthorized: true, environment, code: "AUTHORIZED", scope, globalSuperadmin: true };
   }
-  return { dispatchAuthorized: true, environment, code: "AUTHORIZED", scope };
+  if (!scope) {
+    return { dispatchAuthorized: false, environment, code: "LOCAL_GPU_SCENE_SCOPE_REQUIRED", scope: null, globalSuperadmin: false };
+  }
+  return { dispatchAuthorized: true, environment, code: "AUTHORIZED", scope, globalSuperadmin: false };
 }
 
 /** First observation may POST once. Every later observation is status-only. */
