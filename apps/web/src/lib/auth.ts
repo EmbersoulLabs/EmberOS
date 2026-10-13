@@ -1,6 +1,7 @@
 import { getAuthUser } from "@/lib/supabase/server";
 import {
   OrganizationAccessError,
+  PlatformAdminPersistenceError,
   TenantValidationError,
   WorkspaceAccessError,
 } from "@ceo-agent/db";
@@ -114,6 +115,9 @@ export function handleApiError(error: unknown) {
   }
   if (error instanceof WorkspaceAccessError || error instanceof OrganizationAccessError) {
     return apiError(error.message, error.code, 403);
+  }
+  if (error instanceof PlatformAdminPersistenceError) {
+    return apiError(error.message, error.code, error.status);
   }
 
   const recognized = asRecognizedAppError(error);

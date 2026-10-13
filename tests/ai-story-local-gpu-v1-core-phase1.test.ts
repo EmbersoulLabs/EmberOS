@@ -465,7 +465,9 @@ describe("LOCAL_GPU V1 core phase 1", () => {
     expect(existsSync(join(root, "apps/worker/src/ai-story-local-gpu-execution-cycle.ts"))).toBe(false);
     expect(processors).not.toContain("local-gpu-adapter");
     expect(execute).not.toContain("local-gpu-adapter");
-    expect([...AI_STORY_CERTIFIED_LOCAL_WORKFLOWS]).toEqual(["MINIMAX_H3_NATIVE_DIALOGUE"]);
+    expect([...AI_STORY_CERTIFIED_LOCAL_WORKFLOWS]).toEqual([
+      "MINIMAX_H3_NATIVE_DIALOGUE", "MINIMAX_H3_R2V", "MINIMAX_H3_T2V",
+    ]);
     expect([...AI_STORY_VIDEO_EXECUTION_MODES]).toEqual(["MANUAL_LOCAL", "REMOTE_PROVIDER"]);
     expect([...LOCAL_GPU_RESULT_AUTHORITY_DENIED_WORKFLOWS]).toEqual([
       "MINIMAX_H3_NATIVE_DIALOGUE",

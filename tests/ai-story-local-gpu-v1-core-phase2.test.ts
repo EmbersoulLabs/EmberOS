@@ -238,7 +238,9 @@ describe("LOCAL_GPU V1 core phase 2", () => {
     expect(() => assertLocalGpuAccess({ ...actor, isSuperadmin: true } as never, { workspaceId: id(3) })).toThrow("LOCAL_GPU_CLIENT_AUTHORITY_REJECTED");
     expect(() => assertLocalGpuDispatchWorkflow("MINIMAX_H3_NATIVE_DIALOGUE")).toThrow("LOCAL_GPU_DISPATCH_DISABLED");
     expect(() => assertLocalGpuDispatchWorkflow("MINIMAX_H3_PRODUCT_ONLY_CANDIDATE_V1")).toThrow("LOCAL_GPU_DISPATCH_DISABLED");
-    expect([...AI_STORY_CERTIFIED_LOCAL_WORKFLOWS]).toEqual(["MINIMAX_H3_NATIVE_DIALOGUE"]);
+    expect([...AI_STORY_CERTIFIED_LOCAL_WORKFLOWS]).toEqual([
+      "MINIMAX_H3_NATIVE_DIALOGUE", "MINIMAX_H3_R2V", "MINIMAX_H3_T2V",
+    ]);
     expect([...AI_STORY_VIDEO_EXECUTION_MODES]).toEqual(["MANUAL_LOCAL", "REMOTE_PROVIDER"]);
     expect([...LOCAL_GPU_DISPATCH_DISABLED_WORKFLOWS]).toEqual([...LOCAL_GPU_RESULT_AUTHORITY_DENIED_WORKFLOWS]);
     const execute = readFileSync(join(root, "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/execute/route.ts"), "utf8");

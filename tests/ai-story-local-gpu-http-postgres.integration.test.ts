@@ -14,7 +14,7 @@ import {
   materializeProviderNeutralLocalGenerationPackage,
   materializeSequentialLocalPackageV3,
 } from "@ceo-agent/agents";
-import { createIntegrationSql, getIntegrationDbUrl, RUN_DB_INTEGRATION } from "./helpers/db-integration";
+import { createIntegrationSql, getIntegrationDbUrl, isRlsEnabled, RUN_DB_INTEGRATION, withAuthenticatedUser } from "./helpers/db-integration";
 import { providerNeutralLocalFactsFixture } from "./ai-story-provider-neutral-local-authority.test";
 
 const authState = vi.hoisted(() => ({ user: null as null | { id: string; email: string } }));
@@ -39,7 +39,7 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
   const ids = {
     org: randomUUID(), workspace: randomUUID(), campaign: randomUUID(), story: randomUUID(),
     storyVersion: randomUUID(), animation: randomUUID(), plan: randomUUID(), runtime: randomUUID(),
-    sceneExecution: randomUUID(), actor: randomUUID(), ordinary: randomUUID(),
+    sceneExecution: randomUUID(), actor: randomUUID(), ordinary: randomUUID(), agency: randomUUID(),
   };
   let sql: Sql;
   let route: typeof import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/local-generation/[packageId]/local-gpu-authority/route");
@@ -71,11 +71,12 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       } } } },
     } }), { status: 200 })) as typeof fetch;
 
-    await sql`insert into auth.users(id) values(${ids.actor}::uuid),(${ids.ordinary}::uuid) on conflict do nothing`;
+    await sql`insert into auth.users(id) values(${ids.actor}::uuid),(${ids.ordinary}::uuid),(${ids.agency}::uuid) on conflict do nothing`;
     await sql`insert into organizations(id,name,slug) values(${ids.org},'HTTP PostgreSQL Cert',${`http-cert-${ids.org}`})`;
     await sql`insert into workspaces(id,org_id,name,slug) values(${ids.workspace},${ids.org},'HTTP Cert',${`http-cert-${ids.workspace}`})`;
     await sql`insert into workspace_members(org_id,workspace_id,user_id,role) values
-      (${ids.org},${ids.workspace},${ids.actor},'admin'),(${ids.org},${ids.workspace},${ids.ordinary},'admin')`;
+      (${ids.org},${ids.workspace},${ids.actor},'admin'),(${ids.org},${ids.workspace},${ids.ordinary},'admin'),
+      (${ids.org},${ids.workspace},${ids.agency},'viewer')`;
     await sql`insert into campaigns(id,org_id,workspace_id,name) values(${ids.campaign},${ids.org},${ids.workspace},'HTTP Cert')`;
     await sql`insert into ai_stories(id,org_id,workspace_id,campaign_id,title,original_idea)
       values(${ids.story},${ids.org},${ids.workspace},${ids.campaign},'HTTP Cert','HTTP Cert')`;
@@ -144,7 +145,7 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       await sql`delete from platform_admin_grants where platform_admin_assignment_id=${assignmentId}::uuid`;
       await sql`delete from workspaces where id=${ids.workspace}`;
       await sql`delete from organizations where id=${ids.org}`;
-      await sql`delete from auth.users where id in (${ids.actor}::uuid,${ids.ordinary}::uuid)`;
+      await sql`delete from auth.users where id in (${ids.actor}::uuid,${ids.ordinary}::uuid,${ids.agency}::uuid)`;
       await sql.unsafe("set session_replication_role = origin");
       await sql.end();
     }
@@ -154,9 +155,9 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
   it("allows canonical ZERO_ASSET T2V and converges duplicate/concurrent HTTP Execute", async () => {
     const responses = await Promise.all([call(), call()]);
     expect(responses.map((response) => response.status)).toEqual([202, 202]);
-    const bodies = await Promise.all(responses.map((response) => response.json())) as Array<{ data: { dispatchAuthorityId: string; gpuSubmitted: boolean } }>;
-    expect(new Set(bodies.map((body) => body.data.dispatchAuthorityId)).size).toBe(1);
-    expect(bodies.every((body) => body.data.gpuSubmitted === false)).toBe(true);
+    const bodies = await Promise.all(responses.map((response) => response.json())) as Array<{ dispatchAuthorityId: string; gpuSubmitted: boolean }>;
+    expect(new Set(bodies.map((body) => body.dispatchAuthorityId)).size).toBe(1);
+    expect(bodies.every((body) => body.gpuSubmitted === false)).toBe(true);
     const rows = await sql<{ authorities: number; assets: number; mode: string }[]>`
       select (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
       (select count(*) from assets where workspace_id=${ids.workspace} and status='uploading')::int assets,
@@ -177,6 +178,78 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       (select count(*) from assets where workspace_id=${ids.workspace})::int assets`;
     expect(after[0]).toEqual(before[0]);
     authState.user = { id: ids.actor, email: "admin@example.invalid" };
+  });
+
+  it("denies an Agency member without a Platform Admin grant and preserves state", async () => {
+    authState.user = { id: ids.agency, email: "agency@example.invalid" };
+    const before = await sql<{ authorities: number; assets: number; mode: string }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets,
+      (select execution_mode from ai_story_scene_release_states where scene_execution_id=${ids.sceneExecution}) mode`;
+    const response = await call("agency-denied");
+    expect(response.status).toBe(403);
+    const after = await sql<{ authorities: number; assets: number; mode: string }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets,
+      (select execution_mode from ai_story_scene_release_states where scene_execution_id=${ids.sceneExecution}) mode`;
+    expect(after[0]).toEqual(before[0]);
+    authState.user = { id: ids.actor, email: "admin@example.invalid" };
+  });
+
+  it("denies a cross-workspace/campaign route without authority or asset mutation", async () => {
+    const before = await sql<{ authorities: number; assets: number }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets`;
+    const response = await route.POST(new Request("http://localhost/authority", {
+      method: "POST", headers: { "idempotency-key": "cross-workspace" }, body: "",
+    }), { params: Promise.resolve({ id: randomUUID(), storyId: ids.story, executionPlanId: ids.plan, packageId }) });
+    expect(response.status).toBe(404);
+    const after = await sql<{ authorities: number; assets: number }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets`;
+    expect(after[0]).toEqual(before[0]);
+  });
+
+  it("denies an unreleased Scene before creating new side effects", async () => {
+    await sql`update ai_story_scene_release_states set release_state='WAITING_FOR_PREDECESSOR' where scene_execution_id=${ids.sceneExecution}`;
+    const before = await sql<{ authorities: number; assets: number }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets`;
+    const response = await call("unreleased-denied");
+    expect(response.status).toBe(404);
+    const after = await sql<{ authorities: number; assets: number }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets`;
+    expect(after[0]).toEqual(before[0]);
+    await sql`update ai_story_scene_release_states set release_state='RELEASED' where scene_execution_id=${ids.sceneExecution}`;
+  });
+
+  it("keeps Native Dialogue outside certified V2/V3 and creates no new rows", async () => {
+    const [saved] = await sql<{ package: Record<string, unknown> }[]>`select package from ai_story_local_generation_packages where package_id=${packageId}`;
+    const dialoguePackage = materializeProviderNeutralLocalGenerationPackage(
+      providerNeutralLocalFactsFixture("T2V", ids.sceneExecution),
+    );
+    const native = { ...saved!.package, recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      dialogue: dialoguePackage.dialogue };
+    await sql`update ai_story_local_generation_packages set package=${sql.json(native)} where package_id=${packageId}`;
+    const before = await sql<{ authorities: number; assets: number }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets`;
+    const response = await call("native-dialogue-denied");
+    expect(response.status).toBe(409);
+    const after = await sql<{ authorities: number; assets: number }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets`;
+    expect(after[0]).toEqual(before[0]);
+    await sql`update ai_story_local_generation_packages set package=${sql.json(saved!.package)} where package_id=${packageId}`;
+  });
+
+  it("enforces RLS against an authenticated non-owner", async () => {
+    expect(await isRlsEnabled(sql, "ai_story_local_gpu_dispatch_authorities")).toBe(true);
+    const rows = await withAuthenticatedUser(sql, ids.ordinary, (tx) =>
+      tx<{ count: number }[]>`select count(*)::int count from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace}`,
+    );
+    expect(rows[0]?.count).toBe(0);
   });
 
   it("revalidates revocation and leaves no new authority or output asset", async () => {
