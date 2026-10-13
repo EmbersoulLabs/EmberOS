@@ -269,6 +269,36 @@ export const campaignMarketingPlanVersions = pgTable(
   ]
 );
 
+/** Durable, non-generating bridge from one exact approved Plan to an existing Creative Module. */
+export const campaignCreativeHandoffs = pgTable(
+  "campaign_creative_handoffs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    iterationId: uuid("iteration_id").notNull().references(() => campaignContentIterations.id, { onDelete: "cascade" }),
+    approvedPlanId: uuid("approved_plan_id").notNull().references(() => campaignMarketingPlanVersions.id, { onDelete: "restrict" }),
+    selectedModule: text("selected_module").notNull(),
+    assetMode: text("asset_mode").notNull(),
+    assetIds: jsonb("asset_ids").$type<string[]>().notNull().default([]),
+    businessProfileSnapshotRef: text("business_profile_snapshot_ref").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    commandFingerprint: text("command_fingerprint").notNull(),
+    destinationReference: text("destination_reference").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("campaign_creative_handoffs_iteration_unique").on(t.iterationId),
+    unique("campaign_creative_handoffs_plan_module_unique").on(t.approvedPlanId, t.selectedModule),
+    unique("campaign_creative_handoffs_idempotency_unique").on(t.iterationId, t.idempotencyKey),
+    index("campaign_creative_handoffs_scope_idx").on(t.workspaceId, t.campaignId, t.iterationId),
+    check("campaign_creative_handoffs_module_valid", sql`${t.selectedModule} in ('VIDEO_STUDIO','PHOTO_SCENE','AI_STORY')`),
+    check("campaign_creative_handoffs_asset_mode_valid", sql`${t.assetMode} in ('ASSET_BASED','ZERO_ASSET')`),
+  ]
+);
+
 export const assets = pgTable(
   "assets",
   {

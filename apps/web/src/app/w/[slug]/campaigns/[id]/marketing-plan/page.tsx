@@ -8,6 +8,7 @@ import { AppShell } from "@/components/AppShell";
 
 type Plan = { id: string; revision: number; status: string; selectedModule: string | null; content: CampaignMarketingPlanContent };
 type Iteration = { iteration: { id: string; sequenceNumber: number; state: string; version: number }; plans: Plan[] };
+type Handoff = { id: string; approvedPlanId: string; selectedModule: string; destinationPath: string; assetMode: string; assetIds: string[] };
 
 const emptyPlan: CampaignMarketingPlanContent = {
   objective: "", targetAudience: "", marketingApproach: "", creativeDirection: "",
@@ -21,6 +22,7 @@ export default function MarketingPlanPage() {
   const [content, setContent] = useState(emptyPlan);
   const [selectedModule, setSelectedModule] = useState("VIDEO_STUDIO");
   const [message, setMessage] = useState("");
+  const [handoff, setHandoff] = useState<Handoff | null>(null);
   const [busy, setBusy] = useState(false);
   const active = iterations.at(-1);
   const latest = active?.plans.at(-1);
@@ -30,8 +32,35 @@ export default function MarketingPlanPage() {
     const body = await response.json();
     if (!response.ok) throw new Error(body.error ?? "Unable to load Marketing Plans");
     setIterations(body.iterations ?? []);
-    const plan = body.iterations?.at(-1)?.plans?.at(-1);
+    const current = body.iterations?.at(-1);
+    const plan = current?.plans?.at(-1);
     if (plan?.content) setContent(plan.content);
+    if (plan?.selectedModule) setSelectedModule(plan.selectedModule);
+    if (current?.iteration?.id) {
+      const handoffResponse = await fetch(`/api/campaigns/${id}/creative-handoffs?iterationId=${current.iteration.id}`);
+      const handoffBody = await handoffResponse.json();
+      if (handoffResponse.ok) setHandoff(handoffBody.handoffs?.[0] ?? null);
+    }
+  }
+
+  async function continueToModule() {
+    if (!active || !latest || latest.status !== "APPROVED") return;
+    setBusy(true); setMessage("");
+    try {
+      let destination = handoff;
+      if (!destination) {
+        const response = await fetch(`/api/campaigns/${id}/creative-handoffs`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ iterationId: active.iteration.id, approvedPlanId: latest.id, idempotencyKey: `plan-handoff:${latest.id}` }),
+        });
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error ?? "Creative Module handoff failed");
+        destination = body.handoff;
+        setHandoff(destination);
+      }
+      if (destination?.destinationPath) window.location.assign(destination.destinationPath);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Creative Module handoff failed"); }
+    finally { setBusy(false); }
   }
   useEffect(() => { void load().catch((error) => setMessage(error.message)); }, [id]);
 
@@ -59,6 +88,7 @@ export default function MarketingPlanPage() {
         <button type="button" onClick={() => command({ action: "saveRevision", iterationId: active.iteration.id, expectedIterationVersion: active.iteration.version, expectedLatestRevision: latest?.revision ?? 0, idempotencyKey: crypto.randomUUID(), content })} className="rounded-lg bg-navy px-4 py-3 text-sm font-semibold text-white">Save new revision</button>
       </fieldset>
       {latest?.status === "DRAFT" ? <section className="rounded-2xl border border-border bg-white p-5"><h2 className="font-bold text-navy">Approve exact revision {latest.revision}</h2><p className="mt-1 text-sm text-ink-secondary">Your module choice is authoritative and may differ from the recommendation.</p><select value={selectedModule} onChange={(event) => setSelectedModule(event.target.value)} className="mt-3 rounded-lg border border-border p-3">{CAMPAIGN_CREATIVE_MODULES.map((module) => <option key={module}>{module}</option>)}</select><button disabled={busy} onClick={() => command({ action: "approve", iterationId: active.iteration.id, planId: latest.id, expectedRevision: latest.revision, expectedIterationVersion: active.iteration.version, selectedModule, idempotencyKey: crypto.randomUUID() })} className="ml-3 rounded-lg bg-brand-blue px-4 py-3 text-sm font-semibold text-white">Approve Plan</button></section> : null}
+      {latest?.status === "APPROVED" ? <section data-testid="approved-plan-handoff" className="rounded-2xl border border-brand-blue/30 bg-white p-5"><h2 className="font-bold text-navy">Approved Plan revision {latest.revision}</h2><p className="mt-1 text-sm text-ink-secondary">Selected module: <strong>{latest.selectedModule}</strong> · {latest.content.assetMode === "ASSET_BASED" ? `${latest.content.assetIds.length} authorized asset(s)` : "Zero-asset workflow"}</p><button disabled={busy} onClick={() => void continueToModule()} className="mt-4 rounded-lg bg-brand-blue px-4 py-3 text-sm font-semibold text-white">{handoff ? "Resume Creative Module" : "Continue to Creative Module"}</button></section> : null}
     </>}
     {message ? <p role="status" className="rounded-lg bg-surface-muted p-3 text-sm">{message}</p> : null}
   </main></AppShell>;
