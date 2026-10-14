@@ -120,6 +120,8 @@ export async function callStructuredJsonModel<T>(input: {
   schemaName: string;
   model?: "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" | "gpt-4o";
   certificationStage?: CertificationPlanningStage;
+  /** Required by bounded user-initiated calls; certification supplies its own limit. */
+  maxOutputTokens?: number;
 }): Promise<StructuredJsonModelCompletion> {
   if (certificationCallContext.getStore() && input.model && input.model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_MODEL_MISMATCH");
   const model = certificationCallContext.getStore() ? CERTIFICATION_PLANNING_MODEL : (input.model ?? "gpt-4o-mini");
@@ -130,7 +132,11 @@ export async function callStructuredJsonModel<T>(input: {
     response = await completeWithCertificationGrant(certification, () => certificationModelAdapter().complete(
     {
       model,
-      ...(certification ? { max_tokens: certification.maxOutputTokens } : {}),
+      ...(certification
+        ? { max_tokens: certification.maxOutputTokens }
+        : input.maxOutputTokens
+          ? { max_tokens: input.maxOutputTokens }
+          : {}),
       response_format: zodResponseFormat(input.schema, input.schemaName),
       messages: [
         { role: "system", content: input.system },

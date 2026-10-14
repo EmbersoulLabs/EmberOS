@@ -157,3 +157,4 @@ export * from "./organizations-plan-compatibility";
 export * from "./campaign-marketing-plan";
 export * from "./campaign-creative-handoff";
 export * from "./campaign-marketing-review";
+export * from "./campaign-social-content";

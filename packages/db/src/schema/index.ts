@@ -344,6 +344,92 @@ export const campaignMarketingReviews = pgTable(
   ]
 );
 
+/** Independently versioned, human-approved platform copy bound to one approved artifact review. */
+export const campaignSocialContentDrafts = pgTable(
+  "campaign_social_content_drafts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    iterationId: uuid("iteration_id").notNull().references(() => campaignContentIterations.id, { onDelete: "cascade" }),
+    marketingReviewId: uuid("marketing_review_id").notNull().references(() => campaignMarketingReviews.id, { onDelete: "restrict" }),
+    approvedPlanId: uuid("approved_plan_id").notNull().references(() => campaignMarketingPlanVersions.id, { onDelete: "restrict" }),
+    creativeHandoffId: uuid("creative_handoff_id").notNull().references(() => campaignCreativeHandoffs.id, { onDelete: "restrict" }),
+    artifactIdentity: text("artifact_identity").notNull(),
+    platform: text("platform").notNull(),
+    revision: integer("revision").notNull(),
+    content: jsonb("content").$type<Record<string, unknown>>().notNull(),
+    disclosure: jsonb("disclosure").$type<{ containsAiGeneratedContent: boolean; label: string }>().notNull(),
+    generationMode: text("generation_mode").notNull().default("MANUAL"),
+    maxAiCostUsd: numeric("max_ai_cost_usd", { precision: 12, scale: 6 }),
+    actualAiCostUsd: numeric("actual_ai_cost_usd", { precision: 12, scale: 6 }).notNull().default("0"),
+    status: text("status").notNull().default("DRAFT"),
+    version: integer("version").notNull().default(1),
+    contentFingerprint: text("content_fingerprint").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    commandFingerprint: text("command_fingerprint").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    approvedBy: uuid("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    approvalIdempotencyKey: text("approval_idempotency_key"),
+    approvalFingerprint: text("approval_fingerprint"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("campaign_social_content_revision_unique").on(t.marketingReviewId, t.platform, t.revision),
+    unique("campaign_social_content_idempotency_unique").on(t.iterationId, t.idempotencyKey),
+    index("campaign_social_content_scope_idx").on(t.workspaceId, t.campaignId, t.iterationId, t.platform),
+    check("campaign_social_content_platform_valid", sql`${t.platform} in ('YOUTUBE','TIKTOK')`),
+    check("campaign_social_content_status_valid", sql`${t.status} in ('DRAFT','READY_FOR_PUBLISHING')`),
+    check("campaign_social_content_generation_valid", sql`${t.generationMode} in ('MANUAL','AI')`),
+    check("campaign_social_content_revision_positive", sql`${t.revision} > 0`),
+    check("campaign_social_content_version_positive", sql`${t.version} > 0`),
+    check("campaign_social_content_ai_cost_valid", sql`${t.actualAiCostUsd} >= 0 and (${t.maxAiCostUsd} is null or (${t.maxAiCostUsd} > 0 and ${t.actualAiCostUsd} <= ${t.maxAiCostUsd}))`),
+  ]
+);
+
+/** One durable, non-retryable provider attempt for optional Phase 5 copy generation. */
+export const campaignSocialAiClaims = pgTable(
+  "campaign_social_ai_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    iterationId: uuid("iteration_id").notNull().references(() => campaignContentIterations.id, { onDelete: "cascade" }),
+    marketingReviewId: uuid("marketing_review_id").notNull().references(() => campaignMarketingReviews.id, { onDelete: "restrict" }),
+    platform: text("platform").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    model: text("model").notNull(),
+    maxInputTokens: integer("max_input_tokens").notNull(),
+    maxOutputTokens: integer("max_output_tokens").notNull(),
+    reservedMaximumUsd: numeric("reserved_maximum_usd", { precision: 12, scale: 6 }).notNull(),
+    requestedMaximumUsd: numeric("requested_maximum_usd", { precision: 12, scale: 6 }).notNull(),
+    status: text("status").notNull().default("RESERVED"),
+    providerRequestId: text("provider_request_id"),
+    providerModel: text("provider_model"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 12, scale: 6 }),
+    resultJson: jsonb("result_json").$type<Record<string, unknown>>(),
+    draftId: uuid("draft_id").references(() => campaignSocialContentDrafts.id, { onDelete: "restrict" }),
+    errorCode: text("error_code"),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("campaign_social_ai_idempotency_unique").on(t.iterationId, t.idempotencyKey),
+    index("campaign_social_ai_scope_idx").on(t.workspaceId, t.campaignId, t.iterationId, t.platform),
+    check("campaign_social_ai_platform_valid", sql`${t.platform} in ('YOUTUBE','TIKTOK')`),
+    check("campaign_social_ai_status_valid", sql`${t.status} in ('RESERVED','SUBMITTED','RESULT_READY','SETTLED','CANCELLED','UNKNOWN')`),
+    check("campaign_social_ai_limits_valid", sql`${t.maxInputTokens} > 0 and ${t.maxOutputTokens} > 0 and ${t.reservedMaximumUsd} > 0 and ${t.requestedMaximumUsd} >= ${t.reservedMaximumUsd}`),
+  ],
+);
+
 export const assets = pgTable(
   "assets",
   {
