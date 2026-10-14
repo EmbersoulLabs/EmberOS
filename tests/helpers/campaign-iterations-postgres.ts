@@ -28,6 +28,7 @@ export default async function setup() {
     ["pnpm", ["--filter", "@ceo-agent/db", "sql:campaign-content-iterations"]],
     ["pnpm", ["--filter", "@ceo-agent/db", "sql:campaign-marketing-plan"]],
     ["pnpm", ["--filter", "@ceo-agent/db", "sql:campaign-creative-handoff"]],
+    ["pnpm", ["--filter", "@ceo-agent/db", "sql:campaign-marketing-review"]],
   ] as const) {
     const result = spawnSync(command, args, { cwd: path.resolve("."), env, encoding: "utf8", shell: true });
     if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed (${result.status}): ${result.stdout}\n${result.stderr}`);

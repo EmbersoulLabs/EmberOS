@@ -299,6 +299,51 @@ export const campaignCreativeHandoffs = pgTable(
   ]
 );
 
+/** Immutable actual-artifact evidence plus explicit human Marketing Review decision. */
+export const campaignMarketingReviews = pgTable(
+  "campaign_marketing_reviews",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    iterationId: uuid("iteration_id").notNull().references(() => campaignContentIterations.id, { onDelete: "cascade" }),
+    approvedPlanId: uuid("approved_plan_id").notNull().references(() => campaignMarketingPlanVersions.id, { onDelete: "restrict" }),
+    creativeHandoffId: uuid("creative_handoff_id").notNull().references(() => campaignCreativeHandoffs.id, { onDelete: "restrict" }),
+    revision: integer("revision").notNull(),
+    creativeModule: text("creative_module").notNull(),
+    destinationReference: text("destination_reference").notNull(),
+    artifactType: text("artifact_type").notNull(),
+    artifactId: uuid("artifact_id").notNull(),
+    artifactIdentity: text("artifact_identity").notNull(),
+    businessProfileSnapshotRef: text("business_profile_snapshot_ref").notNull(),
+    assetIds: jsonb("asset_ids").$type<string[]>().notNull().default([]),
+    findings: jsonb("findings").$type<import("@ceo-agent/shared").CampaignMarketingReviewFindings>().notNull(),
+    status: text("status").notNull().default("PENDING_REVIEW"),
+    version: integer("version").notNull().default(1),
+    createIdempotencyKey: text("create_idempotency_key").notNull(),
+    createFingerprint: text("create_fingerprint").notNull(),
+    decidedBy: uuid("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    decisionNote: text("decision_note"),
+    decisionIdempotencyKey: text("decision_idempotency_key"),
+    decisionFingerprint: text("decision_fingerprint"),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("campaign_marketing_reviews_handoff_revision_unique").on(t.creativeHandoffId, t.revision),
+    unique("campaign_marketing_reviews_artifact_unique").on(t.creativeHandoffId, t.artifactIdentity),
+    unique("campaign_marketing_reviews_create_key_unique").on(t.iterationId, t.createIdempotencyKey),
+    index("campaign_marketing_reviews_scope_idx").on(t.workspaceId, t.campaignId, t.iterationId),
+    check("campaign_marketing_reviews_revision_positive", sql`${t.revision} > 0`),
+    check("campaign_marketing_reviews_version_positive", sql`${t.version} > 0`),
+    check("campaign_marketing_reviews_status_valid", sql`${t.status} in ('PENDING_REVIEW','APPROVED','CHANGES_REQUESTED')`),
+    check("campaign_marketing_reviews_module_valid", sql`${t.creativeModule} in ('VIDEO_STUDIO','PHOTO_SCENE','AI_STORY')`),
+    check("campaign_marketing_reviews_artifact_type_valid", sql`${t.artifactType} in ('VIDEO_CREATIVE','PHOTO_SCENE_GENERATION','AI_STORY_FINAL_RESULT')`),
+  ]
+);
+
 export const assets = pgTable(
   "assets",
   {

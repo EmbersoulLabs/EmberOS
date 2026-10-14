@@ -13,7 +13,7 @@ const ids = {
   org: crypto.randomUUID(), workspaceA: crypto.randomUUID(), workspaceB: crypto.randomUUID(),
   admin: crypto.randomUUID(), viewer: crypto.randomUUID(), outsider: crypto.randomUUID(),
   campaignA: crypto.randomUUID(), campaignB: crypto.randomUUID(), taskA: crypto.randomUUID(),
-  assetA: crypto.randomUUID(),
+  assetA: crypto.randomUUID(), creativeA: crypto.randomUUID(), creativeB: crypto.randomUUID(),
 };
 const scope = () => ({ orgId: ids.org, workspaceId: ids.workspaceA, campaignId: ids.campaignA, actorUserId: ids.admin });
 
@@ -30,6 +30,9 @@ beforeAll(async () => {
   await sql`insert into tasks(id,org_id,workspace_id,campaign_id,status) values(${ids.taskA},${ids.org},${ids.workspaceA},${ids.campaignA},'completed')`;
   await sql`insert into business_profiles(org_id,workspace_id,company_name,industry_display_name,services,version) values(${ids.org},${ids.workspaceA},'Grounded Co','Retail',${['Consulting']},3)`;
   await sql`insert into assets(id,org_id,workspace_id,campaign_id,type,storage_path,status) values(${ids.assetA},${ids.org},${ids.workspaceA},${ids.campaignA},'image','test/asset.jpg','ready')`;
+  await sql`insert into creatives(id,org_id,workspace_id,campaign_id,status,video_url,render_status,render_cache_fingerprint,version) values
+    (${ids.creativeA},${ids.org},${ids.workspaceA},${ids.campaignA},'completed','https://example.invalid/final-a.mp4','final_ready','phase4-artifact-a',1),
+    (${ids.creativeB},${ids.org},${ids.workspaceA},${ids.campaignA},'completed','https://example.invalid/final-b.mp4','final_ready','phase4-artifact-b',1)`;
 });
 
 afterAll(async () => {
@@ -37,6 +40,7 @@ afterAll(async () => {
   if (sql) {
     // The assets organization FK is installed by a later CI migration, so
     // this fixture cannot rely on organization deletion to cascade yet.
+    await sql`delete from creatives where id in (${ids.creativeA},${ids.creativeB})`;
     await sql`delete from assets where id=${ids.assetA}`;
     await sql`delete from organizations where id=${ids.org}`;
     await sql.end();
@@ -193,5 +197,60 @@ describe("Campaign Content Iteration PostgreSQL authority", () => {
     expect(invisible).toHaveLength(0);
     const directWrite = await sql.begin(async (tx) => { await tx.unsafe("set local role=authenticated"); await tx`select set_config('request.jwt.claim.sub',${ids.admin},true)`; return tx`update campaign_creative_handoffs set destination_reference='tampered' where id=${race[0]!.handoff.id} returning id`; });
     expect(directWrite).toHaveLength(0);
+  });
+
+  it("reviews an actual completed artifact, converges concurrent creation, and persists human approval", async () => {
+    const iterations = new api.CampaignContentIterationService();
+    const plans = new api.CampaignMarketingPlanService();
+    const handoffs = new api.CampaignCreativeHandoffService();
+    const reviews = new api.CampaignMarketingReviewService();
+    const iteration = await iterations.create(scope(), { idempotencyKey: "review-approved-iteration" });
+    const content = { objective: "Awareness", targetAudience: "Local buyers", marketingApproach: "Visual introduction", creativeDirection: "Show the approved creative", assetMode: "ZERO_ASSET" as const, assetIds: [], missingAssets: [], recommendedModule: "VIDEO_STUDIO" as const, rationale: "A completed video is available", expectedOutcome: "Clear positioning", businessFactRefs: ["companyName"] };
+    const plan = await plans.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "review-approved-plan", content });
+    await plans.approve(scope(), iteration.iteration.id, { planId: plan.plan.id, expectedRevision: 1, expectedIterationVersion: 2, selectedModule: "VIDEO_STUDIO", idempotencyKey: "review-approved-plan-decision" });
+    const handoff = await handoffs.createOrResume(scope(), { iterationId: iteration.iteration.id, approvedPlanId: plan.plan.id, idempotencyKey: "review-approved-handoff" });
+
+    const race = await Promise.all([
+      reviews.createOrResume(scope(), { handoffId: handoff.handoff.id, artifactId: ids.creativeA, idempotencyKey: "review-approved-create-a" }),
+      reviews.createOrResume(scope(), { handoffId: handoff.handoff.id, artifactId: ids.creativeA, idempotencyKey: "review-approved-create-b" }),
+    ]);
+    expect(new Set(race.map((result) => result.review.id)).size).toBe(1);
+    expect(race[0]!.review.artifactIdentity).toContain(`creative:${ids.creativeA}:v1:phase4-artifact-a`);
+    expect(race[0]!.review.approvedPlanId).toBe(plan.plan.id);
+    expect(race[0]!.review.creativeHandoffId).toBe(handoff.handoff.id);
+    expect(race[0]!.review.status).toBe("PENDING_REVIEW");
+    expect(await sql`select count(*)::int as count from campaign_marketing_reviews where iteration_id=${iteration.iteration.id}`).toEqual([{ count: 1 }]);
+
+    const approved = await reviews.decide(scope(), { reviewId: race[0]!.review.id, expectedVersion: 1, decision: "APPROVED", note: "Human reviewed the actual final video.", idempotencyKey: "review-approved-decision" });
+    expect(approved.review.status).toBe("APPROVED");
+    expect(approved.iteration.state).toBe("SOCIAL_CONTENT_READY");
+    const replay = await reviews.decide(scope(), { reviewId: race[0]!.review.id, expectedVersion: 1, decision: "APPROVED", note: "Human reviewed the actual final video.", idempotencyKey: "review-approved-decision" });
+    expect(replay.reused).toBe(true);
+
+    const facts = await iterations.history(scope(), iteration.iteration.id);
+    expect(facts.facts.at(-1)?.payload).toMatchObject({ boundary: "READY_FOR_SOCIAL_CONTENT", reviewId: race[0]!.review.id });
+    const invisible = await sql.begin(async (tx) => { await tx.unsafe("set local role=authenticated"); await tx`select set_config('request.jwt.claim.sub',${ids.outsider},true)`; return tx`select id from campaign_marketing_reviews where id=${race[0]!.review.id}`; });
+    expect(invisible).toHaveLength(0);
+    const directWrite = await sql.begin(async (tx) => { await tx.unsafe("set local role=authenticated"); await tx`select set_config('request.jwt.claim.sub',${ids.admin},true)`; return tx`update campaign_marketing_reviews set status='CHANGES_REQUESTED' where id=${race[0]!.review.id} returning id`; });
+    expect(directWrite).toHaveLength(0);
+  });
+
+  it("routes changes requested back to the same module without accepting an ineligible artifact", async () => {
+    const iterations = new api.CampaignContentIterationService();
+    const plans = new api.CampaignMarketingPlanService();
+    const handoffs = new api.CampaignCreativeHandoffService();
+    const reviews = new api.CampaignMarketingReviewService();
+    const iteration = await iterations.create(scope(), { idempotencyKey: "review-revision-iteration" });
+    const content = { objective: "Awareness", targetAudience: "Local buyers", marketingApproach: "Visual introduction", creativeDirection: "Show the approved creative", assetMode: "ZERO_ASSET" as const, assetIds: [], missingAssets: [], recommendedModule: "VIDEO_STUDIO" as const, rationale: "A completed video is available", expectedOutcome: "Clear positioning", businessFactRefs: ["companyName"] };
+    const plan = await plans.createRevision(scope(), iteration.iteration.id, { expectedIterationVersion: 1, expectedLatestRevision: 0, idempotencyKey: "review-revision-plan", content });
+    await plans.approve(scope(), iteration.iteration.id, { planId: plan.plan.id, expectedRevision: 1, expectedIterationVersion: 2, selectedModule: "VIDEO_STUDIO", idempotencyKey: "review-revision-plan-decision" });
+    const handoff = await handoffs.createOrResume(scope(), { iterationId: iteration.iteration.id, approvedPlanId: plan.plan.id, idempotencyKey: "review-revision-handoff" });
+    await expect(reviews.createOrResume(scope(), { handoffId: handoff.handoff.id, artifactId: ids.assetA, idempotencyKey: "review-ineligible-artifact" })).rejects.toMatchObject({ code: "CAMPAIGN_REVIEW_ARTIFACT_INELIGIBLE" });
+    const created = await reviews.createOrResume(scope(), { handoffId: handoff.handoff.id, artifactId: ids.creativeB, idempotencyKey: "review-revision-create" });
+    const decided = await reviews.decide(scope(), { reviewId: created.review.id, expectedVersion: 1, decision: "CHANGES_REQUESTED", note: "Revise the actual video and resubmit through Video Studio.", idempotencyKey: "review-revision-decision" });
+    expect(decided.review.status).toBe("CHANGES_REQUESTED");
+    expect(decided.iteration.state).toBe("REVISION_REQUIRED");
+    expect(decided.review.creativeModule).toBe("VIDEO_STUDIO");
+    expect(await sql`select count(*)::int as count from campaign_marketing_reviews where iteration_id=${iteration.iteration.id}`).toEqual([{ count: 1 }]);
   });
 });
