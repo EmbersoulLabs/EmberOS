@@ -253,4 +253,27 @@ describe("Campaign Content Iteration PostgreSQL authority", () => {
     expect(decided.review.creativeModule).toBe("VIDEO_STUDIO");
     expect(await sql`select count(*)::int as count from campaign_marketing_reviews where iteration_id=${iteration.iteration.id}`).toEqual([{ count: 1 }]);
   });
+
+  it("versions and independently approves YouTube and TikTok drafts with exact Review lineage", async () => {
+    const iterations=new api.CampaignContentIterationService(),plans=new api.CampaignMarketingPlanService(),handoffs=new api.CampaignCreativeHandoffService(),reviews=new api.CampaignMarketingReviewService(),social=new api.CampaignSocialContentService();
+    const iteration=await iterations.create(scope(),{idempotencyKey:"social-iteration"});
+    const content={objective:"Awareness",targetAudience:"Local buyers",marketingApproach:"Platform-native introduction",creativeDirection:"Use the approved artifact",assetMode:"ZERO_ASSET" as const,assetIds:[],missingAssets:[],recommendedModule:"VIDEO_STUDIO" as const,rationale:"Completed video",expectedOutcome:"Discovery",businessFactRefs:["companyName"]};
+    const plan=await plans.createRevision(scope(),iteration.iteration.id,{expectedIterationVersion:1,expectedLatestRevision:0,idempotencyKey:"social-plan",content});
+    await plans.approve(scope(),iteration.iteration.id,{planId:plan.plan.id,expectedRevision:1,expectedIterationVersion:2,selectedModule:"VIDEO_STUDIO",idempotencyKey:"social-plan-approve"});
+    const handoff=await handoffs.createOrResume(scope(),{iterationId:iteration.iteration.id,approvedPlanId:plan.plan.id,idempotencyKey:"social-handoff"});
+    const review=await reviews.createOrResume(scope(),{handoffId:handoff.handoff.id,artifactId:ids.creativeA,idempotencyKey:"social-review"});
+    await reviews.decide(scope(),{reviewId:review.review.id,expectedVersion:1,decision:"APPROVED",idempotencyKey:"social-review-approve"});
+    const youtube={platform:"YOUTUBE" as const,content:{title:"Grounded Co: a clear product introduction",description:"A concise look at the approved creative from Grounded Co.",hashtags:["#GroundedCo","#Singapore"]},disclosure:{containsAiGeneratedContent:false,label:"Edited by a human from the approved creative."}};
+    const tiktok={platform:"TIKTOK" as const,content:{caption:"Meet Grounded Co through our latest approved creative.",hashtags:["#GroundedCo","#SingaporeTikTok"]},disclosure:{containsAiGeneratedContent:false,label:"Edited by a human from the approved creative."}};
+    const [yt,tt]=await Promise.all([social.createRevision(scope(),{reviewId:review.review.id,expectedLatestRevision:0,idempotencyKey:"social-youtube-r1",draft:youtube}),social.createRevision(scope(),{reviewId:review.review.id,expectedLatestRevision:0,idempotencyKey:"social-tiktok-r1",draft:tiktok})]);
+    expect(yt.draft.approvedPlanId).toBe(plan.plan.id);expect(yt.draft.creativeHandoffId).toBe(handoff.handoff.id);expect(yt.draft.artifactIdentity).toBe(review.review.artifactIdentity);expect(tt.draft.platform).toBe("TIKTOK");
+    const yt2=await social.createRevision(scope(),{reviewId:review.review.id,expectedLatestRevision:1,idempotencyKey:"social-youtube-r2",draft:{...youtube,content:{...youtube.content,title:"Grounded Co — approved creative overview"}}});
+    await expect(social.approve(scope(),{draftId:yt.draft.id,expectedVersion:1,idempotencyKey:"social-youtube-stale"})).rejects.toMatchObject({code:"CAMPAIGN_SOCIAL_REVISION_CONFLICT"});
+    const approvedYt=await social.approve(scope(),{draftId:yt2.draft.id,expectedVersion:1,idempotencyKey:"social-youtube-approve"});
+    const approvedTt=await social.approve(scope(),{draftId:tt.draft.id,expectedVersion:1,idempotencyKey:"social-tiktok-approve"});
+    expect(approvedYt.draft.status).toBe("READY_FOR_PUBLISHING");expect(approvedTt.draft.status).toBe("READY_FOR_PUBLISHING");
+    const replay=await social.approve(scope(),{draftId:tt.draft.id,expectedVersion:1,idempotencyKey:"social-tiktok-approve"});expect(replay.reused).toBe(true);
+    const invisible=await sql.begin(async tx=>{await tx.unsafe("set local role=authenticated");await tx`select set_config('request.jwt.claim.sub',${ids.outsider},true)`;return tx`select id from campaign_social_content_drafts where iteration_id=${iteration.iteration.id}`;});expect(invisible).toHaveLength(0);
+    const direct=await sql.begin(async tx=>{await tx.unsafe("set local role=authenticated");await tx`select set_config('request.jwt.claim.sub',${ids.admin},true)`;return tx`update campaign_social_content_drafts set status='READY_FOR_PUBLISHING' where id=${yt2.draft.id} returning id`;});expect(direct).toHaveLength(0);
+  });
 });

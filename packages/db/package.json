@@ -23,6 +23,7 @@
     "sql:campaign-marketing-plan": "tsx scripts/apply-campaign-marketing-plan-v1.ts",
     "sql:campaign-creative-handoff": "tsx scripts/apply-campaign-creative-handoff-v1.ts",
     "sql:campaign-marketing-review": "tsx scripts/apply-campaign-marketing-review-v1.ts",
+    "sql:campaign-social-content": "tsx scripts/apply-campaign-social-content-v1.ts",
     "sql:rls": "tsx scripts/apply-rls.ts",
     "sql:source-asset-content-hash-v1": "tsx scripts/apply-source-asset-content-hash-v1.ts",
     "sql:campaign-video-generation-identity-v1": "tsx scripts/apply-campaign-video-generation-identity-v1.ts",
