@@ -104,6 +104,7 @@ jobs:
           pnpm --filter @ceo-agent/db sql:campaign-creative-handoff
           pnpm --filter @ceo-agent/db sql:campaign-marketing-review
           pnpm --filter @ceo-agent/db sql:campaign-social-content
+          pnpm --filter @ceo-agent/db sql:campaign-social-ai-budget
           pnpm exec vitest run --config vitest.integration.config.ts tests/campaign-content-iterations.integration.test.ts
 
       - name: Certify Sequential Local V3 recursion on PostgreSQL

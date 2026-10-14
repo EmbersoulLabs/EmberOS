@@ -56,6 +56,7 @@ export * from "./queries/campaign-marketing-plans";
 export * from "./queries/campaign-creative-handoffs";
 export * from "./queries/campaign-marketing-reviews";
 export * from "./queries/campaign-social-content";
+export * from "./queries/campaign-social-ai-budget";
 export * from "./queries/admin-runtime-operations";
 export * from "./queries/ai-story-pre-dispatch-recovery";
 export * from "./queries/ai-story-pre-dispatch-bundle-supersession";

@@ -268,6 +268,19 @@ describe("Campaign Content Iteration PostgreSQL authority", () => {
     const [yt,tt]=await Promise.all([social.createRevision(scope(),{reviewId:review.review.id,expectedLatestRevision:0,idempotencyKey:"social-youtube-r1",draft:youtube}),social.createRevision(scope(),{reviewId:review.review.id,expectedLatestRevision:0,idempotencyKey:"social-tiktok-r1",draft:tiktok})]);
     expect(yt.draft.approvedPlanId).toBe(plan.plan.id);expect(yt.draft.creativeHandoffId).toBe(handoff.handoff.id);expect(yt.draft.artifactIdentity).toBe(review.review.artifactIdentity);expect(tt.draft.platform).toBe("TIKTOK");
     const yt2=await social.createRevision(scope(),{reviewId:review.review.id,expectedLatestRevision:1,idempotencyKey:"social-youtube-r2",draft:{...youtube,content:{...youtube.content,title:"Grounded Co — approved creative overview"}}});
+    const aiBudget=new api.CampaignSocialAiBudgetService();
+    const [aiClaim,aiReplay]=await Promise.all([
+      aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"YOUTUBE",idempotencyKey:"social-ai-youtube",requestedMaximumUsd:0.01}),
+      aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"YOUTUBE",idempotencyKey:"social-ai-youtube",requestedMaximumUsd:0.01}),
+    ]);
+    expect([aiClaim.reused,aiReplay.reused].sort()).toEqual([false,true]);
+    await expect(aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"YOUTUBE",idempotencyKey:"social-ai-over-budget",requestedMaximumUsd:0.051})).rejects.toMatchObject({code:"CAMPAIGN_SOCIAL_AI_BUDGET_INVALID"});
+    await aiBudget.markSubmitted(aiClaim.claim.id);
+    await aiBudget.recordResult(aiClaim.claim.id,{providerRequestId:"req_social_fixture",providerModel:"gpt-4o-mini-2024-07-18",inputTokens:800,outputTokens:120,resultJson:youtube});
+    const settled=await aiBudget.finalize(aiClaim.claim.id,yt2.draft.id);expect(settled.status).toBe("SETTLED");expect(Number(settled.actualCostUsd)).toBeLessThanOrEqual(0.01);
+    const cancelled=await aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"TIKTOK",idempotencyKey:"social-ai-cancelled",requestedMaximumUsd:0.01});await aiBudget.cancelBeforeSubmission(cancelled.claim.id,"FIXTURE_PRE_PROVIDER");
+    const uncertain=await aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"TIKTOK",idempotencyKey:"social-ai-unknown",requestedMaximumUsd:0.01});await aiBudget.markSubmitted(uncertain.claim.id);await aiBudget.markUnknown(uncertain.claim.id,"FIXTURE_UNKNOWN");
+    expect((await aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"TIKTOK",idempotencyKey:"social-ai-cancelled",requestedMaximumUsd:0.01})).claim.status).toBe("CANCELLED");expect((await aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"TIKTOK",idempotencyKey:"social-ai-unknown",requestedMaximumUsd:0.01})).claim.status).toBe("UNKNOWN");
     await expect(social.approve(scope(),{draftId:yt.draft.id,expectedVersion:1,idempotencyKey:"social-youtube-stale"})).rejects.toMatchObject({code:"CAMPAIGN_SOCIAL_REVISION_CONFLICT"});
     const approvedYt=await social.approve(scope(),{draftId:yt2.draft.id,expectedVersion:1,idempotencyKey:"social-youtube-approve"});
     const approvedTt=await social.approve(scope(),{draftId:tt.draft.id,expectedVersion:1,idempotencyKey:"social-tiktok-approve"});
@@ -275,5 +288,7 @@ describe("Campaign Content Iteration PostgreSQL authority", () => {
     const replay=await social.approve(scope(),{draftId:tt.draft.id,expectedVersion:1,idempotencyKey:"social-tiktok-approve"});expect(replay.reused).toBe(true);
     const invisible=await sql.begin(async tx=>{await tx.unsafe("set local role=authenticated");await tx`select set_config('request.jwt.claim.sub',${ids.outsider},true)`;return tx`select id from campaign_social_content_drafts where iteration_id=${iteration.iteration.id}`;});expect(invisible).toHaveLength(0);
     const direct=await sql.begin(async tx=>{await tx.unsafe("set local role=authenticated");await tx`select set_config('request.jwt.claim.sub',${ids.admin},true)`;return tx`update campaign_social_content_drafts set status='READY_FOR_PUBLISHING' where id=${yt2.draft.id} returning id`;});expect(direct).toHaveLength(0);
+    const hiddenClaims=await sql.begin(async tx=>{await tx.unsafe("set local role=authenticated");await tx`select set_config('request.jwt.claim.sub',${ids.outsider},true)`;return tx`select id from campaign_social_ai_claims where iteration_id=${iteration.iteration.id}`;});expect(hiddenClaims).toHaveLength(0);
+    await expect(sql.begin(async tx=>{await tx.unsafe("set local role=authenticated");await tx`select set_config('request.jwt.claim.sub',${ids.admin},true)`;await tx`insert into campaign_social_ai_claims(id) values(${crypto.randomUUID()})`;})).rejects.toThrow();
   });
 });

@@ -389,6 +389,47 @@ export const campaignSocialContentDrafts = pgTable(
   ]
 );
 
+/** One durable, non-retryable provider attempt for optional Phase 5 copy generation. */
+export const campaignSocialAiClaims = pgTable(
+  "campaign_social_ai_claims",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "cascade" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: uuid("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+    iterationId: uuid("iteration_id").notNull().references(() => campaignContentIterations.id, { onDelete: "cascade" }),
+    marketingReviewId: uuid("marketing_review_id").notNull().references(() => campaignMarketingReviews.id, { onDelete: "restrict" }),
+    platform: text("platform").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    requestFingerprint: text("request_fingerprint").notNull(),
+    model: text("model").notNull(),
+    maxInputTokens: integer("max_input_tokens").notNull(),
+    maxOutputTokens: integer("max_output_tokens").notNull(),
+    reservedMaximumUsd: numeric("reserved_maximum_usd", { precision: 12, scale: 6 }).notNull(),
+    requestedMaximumUsd: numeric("requested_maximum_usd", { precision: 12, scale: 6 }).notNull(),
+    status: text("status").notNull().default("RESERVED"),
+    providerRequestId: text("provider_request_id"),
+    providerModel: text("provider_model"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    actualCostUsd: numeric("actual_cost_usd", { precision: 12, scale: 6 }),
+    resultJson: jsonb("result_json").$type<Record<string, unknown>>(),
+    draftId: uuid("draft_id").references(() => campaignSocialContentDrafts.id, { onDelete: "restrict" }),
+    errorCode: text("error_code"),
+    createdBy: uuid("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => [
+    unique("campaign_social_ai_idempotency_unique").on(t.iterationId, t.idempotencyKey),
+    index("campaign_social_ai_scope_idx").on(t.workspaceId, t.campaignId, t.iterationId, t.platform),
+    check("campaign_social_ai_platform_valid", sql`${t.platform} in ('YOUTUBE','TIKTOK')`),
+    check("campaign_social_ai_status_valid", sql`${t.status} in ('RESERVED','SUBMITTED','RESULT_READY','SETTLED','CANCELLED','UNKNOWN')`),
+    check("campaign_social_ai_limits_valid", sql`${t.maxInputTokens} > 0 and ${t.maxOutputTokens} > 0 and ${t.reservedMaximumUsd} > 0 and ${t.requestedMaximumUsd} >= ${t.reservedMaximumUsd}`),
+  ],
+);
+
 export const assets = pgTable(
   "assets",
   {
