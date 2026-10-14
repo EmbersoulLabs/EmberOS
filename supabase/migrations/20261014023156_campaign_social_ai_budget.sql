@@ -1,4 +1,4 @@
-CREATE TABLE campaign_social_ai_claims (
+CREATE TABLE IF NOT EXISTS campaign_social_ai_claims (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -32,7 +32,7 @@ CREATE TABLE campaign_social_ai_claims (
     OR status<>'SETTLED'
   )
 );
-CREATE INDEX campaign_social_ai_scope_idx ON campaign_social_ai_claims(workspace_id,campaign_id,iteration_id,platform);
+CREATE INDEX IF NOT EXISTS campaign_social_ai_scope_idx ON campaign_social_ai_claims(workspace_id,campaign_id,iteration_id,platform);
 CREATE OR REPLACE FUNCTION validate_campaign_social_ai_scope() RETURNS trigger
 LANGUAGE plpgsql SET search_path=public,pg_temp AS $$
 DECLARE r campaign_marketing_reviews%ROWTYPE;
@@ -49,9 +49,11 @@ BEGIN
     THEN RAISE EXCEPTION 'CAMPAIGN_SOCIAL_AI_SCOPE_MISMATCH'; END IF;
   RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS campaign_social_ai_scope_guard ON campaign_social_ai_claims;
 CREATE TRIGGER campaign_social_ai_scope_guard BEFORE INSERT OR UPDATE ON campaign_social_ai_claims
 FOR EACH ROW EXECUTE FUNCTION validate_campaign_social_ai_scope();
 ALTER TABLE campaign_social_ai_claims ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS campaign_social_ai_select ON campaign_social_ai_claims;
 CREATE POLICY campaign_social_ai_select ON campaign_social_ai_claims FOR SELECT TO authenticated
 USING (workspace_id IN (SELECT campaign_iteration_user_workspace_ids()));
 GRANT SELECT ON campaign_social_ai_claims TO authenticated;
