@@ -243,6 +243,8 @@ export const MarketingCaptionsSchema = z.object({
   facebook: z.string().default(""),
   linkedin: z.string().default(""),
   xiaohongshu: z.string().default(""),
+  /** Added after V1 launch; optional keeps historical packages source-compatible. */
+  threads: z.string().optional(),
   youtubeShorts: z.string().default(""),
   googleBusiness: z.string().default(""),
 });
@@ -366,6 +368,7 @@ function parseCaptionBlock(raw: Record<string, unknown>): MarketingCaptions {
     facebook: String(raw.facebook ?? ""),
     linkedin: String(raw.linkedin ?? ""),
     xiaohongshu: String(raw.xiaohongshu ?? ""),
+    threads: String(raw.threads ?? ""),
     youtubeShorts: String(raw.youtubeShorts ?? raw.youtube ?? ""),
     googleBusiness: String(raw.googleBusiness ?? raw.google ?? ""),
   };
@@ -388,7 +391,6 @@ function mergeCaptionsFromPlatformAssets(
 ): MarketingCaptions {
   const merged = { ...captions };
   for (const [id, asset] of Object.entries(assets)) {
-    if (id === "threads") continue;
     if ((merged as Record<string, string>)[id]?.trim()) continue;
     const cap = captionFromPlatformAsset(asset);
     if (cap && id in merged) {
@@ -417,7 +419,10 @@ function parseLocalizedItemText(value: unknown): {
 }
 
 /** Normalize LLM hooks/cta that may arrive as plain strings. */
-export function normalizeMarketingContentPackage(raw: unknown): MarketingContentPackage | null {
+export function normalizeMarketingContentPackage(
+  raw: unknown,
+  schemaIssues?: Array<{ path: PropertyKey[]; message: string }>
+): MarketingContentPackage | null {
   if (!raw || typeof raw !== "object") return null;
   const data = raw as Record<string, unknown>;
 
@@ -548,7 +553,11 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
       data.voiceStyle && typeof data.voiceStyle === "object"
         ? (data.voiceStyle as Record<string, string | string[]>)
         : {},
-    broll: Array.isArray(data.broll) ? (data.broll as string[]) : [],
+    broll: Array.isArray(data.broll)
+      ? (data.broll as string[])
+      : typeof data.broll === "string" && data.broll.trim()
+        ? [data.broll.trim()]
+        : [],
     musicMood: String(data.musicMood ?? ""),
     effects: Array.isArray(data.effects) ? (data.effects as string[]) : [],
     postingRecommendation: {
@@ -611,8 +620,12 @@ export function normalizeMarketingContentPackage(raw: unknown): MarketingContent
           const script = candidate.voiceScripts["15s"] || candidate.voiceScripts["30s"] || "";
           return script ? [{ text: script.slice(0, 100), type: "curiosity" }] : [];
         })();
-  const finalCta: ContentCtaItem[] = cta.length > 0 ? cta : [{ text: "Follow for more" }];
+  const finalCta: ContentCtaItem[] = cta;
 
   const parsed = MarketingContentPackageSchema.safeParse({ ...candidate, hooks: finalHooks, cta: finalCta });
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) {
+    schemaIssues?.push(...parsed.error.issues.map((issue) => ({ path: issue.path, message: issue.message })));
+    return null;
+  }
+  return parsed.data;
 }

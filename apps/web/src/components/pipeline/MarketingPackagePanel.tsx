@@ -8,6 +8,7 @@ import type {
   StrategyPlan,
 } from "@ceo-agent/shared";
 import {
+  assessMarketingPackageQuality,
   isMarketingPackLocaleReady,
   localizeMarketingPackage,
   uiLocaleToPackLocale,
@@ -150,6 +151,8 @@ export function MarketingPackagePanel({
     [packLocale, taskId]
   );
 
+  const quality = useMemo(() => assessMarketingPackageQuality(pkg), [pkg]);
+
   return (
     <section className="mt-8">
       <div className="mb-5 border-b border-border/70 pb-4">
@@ -163,6 +166,12 @@ export function MarketingPackagePanel({
           {t("pipeline.marketingPackSubtitle")}
         </p>
       </div>
+
+      <ul aria-label="Advertising quality" className="mb-4 grid gap-1 text-xs text-ink-secondary sm:grid-cols-2">
+        {Object.entries(quality.dimensions).map(([name, result]) => (
+          <li key={name}>{name}: {result}</li>
+        ))}
+      </ul>
 
       {taskId ? (
         <a

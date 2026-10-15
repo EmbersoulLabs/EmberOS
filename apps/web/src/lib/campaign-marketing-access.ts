@@ -36,11 +36,23 @@ type MarketingTaskResponseRead = {
   stepProgress: unknown;
 };
 
+function withoutContractDiagnostics(step: unknown): unknown {
+  if (!step || typeof step !== "object" || Array.isArray(step)) return step;
+  const record = step as Record<string, unknown>;
+  const output = record.output;
+  if (!output || typeof output !== "object" || Array.isArray(output)) return step;
+  const diagnostic = output as Record<string, unknown>;
+  if (!Array.isArray(diagnostic.codes) || typeof diagnostic.schemaVersion !== "string") return step;
+  const rest = { ...record };
+  delete rest.output;
+  return rest;
+}
+
 function marketingStepProgress(value: unknown): Record<string, unknown> {
   const progress = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   const next: Record<string, unknown> = {};
-  if (progress.content_generate) next.content_generate = progress.content_generate;
-  if (progress.strategy_plan) next.strategy_plan = progress.strategy_plan;
+  if (progress.content_generate) next.content_generate = withoutContractDiagnostics(progress.content_generate);
+  if (progress.strategy_plan) next.strategy_plan = withoutContractDiagnostics(progress.strategy_plan);
   return next;
 }
 

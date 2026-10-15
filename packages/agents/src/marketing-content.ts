@@ -1,7 +1,10 @@
 import { callJsonModel } from "./llm";
 import {
-  MarketingContentPackageSchema,
   normalizeMarketingContentPackage,
+  authorizedMarketingFacts,
+  evaluateContentContract,
+  explicitScriptDurationSec,
+  CONTENT_JSON_CONTRACT,
   strategyAudienceSummary,
   strategyPainPoints,
   isChineseText,
@@ -25,6 +28,13 @@ import {
   type Platform,
   type StrategyPlan,
   type VisionAnalysis,
+  MARKETING_SKILL_GUIDANCE,
+  CONTENT_CREATIVE_GUIDANCE,
+  buildMarketingCreativeFactContract,
+  buildMarketingCreativeBlueprint,
+  buildMarketingPlatformCreativeBrief,
+  creativeAuthorizationFromBusiness,
+  blockUnauthorizedStrategyCta,
 } from "@ceo-agent/shared";
 
 export type { ContentLocale };
@@ -46,8 +56,12 @@ Marketing Strategy JSON + Video Analysis + Business context.
   derived only from the campaign label — use campaignLabel ONLY when vision, goal,
   userNotes, and videoAnalysis are all absent.
   If the vision shows a specific product/scene, the caption must describe THAT.
-- Follow strategy exactly. Do not invent strategy fields.
-- Every platform asset MUST use unique wording — zero copy-paste between platforms.
+- Use Strategy for campaign intent, audience, pacing, mood, and creative execution only. Strategy adjectives, benefits, pain points, and visual ideas are NOT verified product attributes.
+- creativeFacts is the sole factual authority. Do not turn a Strategy suggestion into copy that says the product "has", "features", "offers", "uses", "is crafted with", or "is known for" an attribute unless that attribute is explicitly present in creativeFacts.
+- Follow platformCreativeBriefs for each platform's opening, narrative structure, discovery mechanism, tone, and native fields. Differences must be structural, not platform-name, emoji, hashtag-order, punctuation, or synonym substitutions.
+- Give every platform a distinct reader value within the same Campaign: TikTok needs a moment-to-moment reveal or payoff; LinkedIn needs a practical decision/use-case insight; Xiaohongshu needs natural Chinese lifestyle context plus a useful grounded takeaway. Instagram, Facebook, Threads, YouTube Shorts, and Google Business must likewise serve the distinct function in platformCreativeBriefs. Do not reuse a generic brand promise as their central message.
+- Platform-specific value may be a question, viewing instruction, comparison framework, occasion consideration, or discovery aid. It must not manufacture product attributes when creativeFacts is sparse.
+- Platform conventions never authorize a business claim or contact channel. Every CTA must come from creativeFacts.approvedCtaChannels; when none is relevant, use a factually neutral awareness or engagement action.
 - Short bullets and card-friendly strings only (max 2-3 lines per field unless Facebook/LinkedIn caption).
 - Return ONLY valid JSON. No markdown.
 
@@ -67,7 +81,11 @@ Do not invent testimonials, prices, discounts, operating hours, addresses, award
 If a fact is missing, omit it.
 Write each language field in that language only. Do not copy one language into another.
 Platform captions must differ. Xiaohongshu stays Simplified Chinese.
-15s = hook + one benefit + CTA. 30s = hook + pain + benefit + CTA. 60s = hook + scene + two supported benefits + CTA.
+15 seconds: one idea, product early, one benefit, one CTA. 30 seconds: opening, demonstration, ending. 60 seconds: a fuller explanation using only supplied facts.
+
+${MARKETING_SKILL_GUIDANCE}
+
+${CONTENT_CREATIVE_GUIDANCE}
 
 marketingScore, hookScore, seoScore, emotionalScore, conversionScore (0-100 content checklist, not live analytics),
 estimatedCtr, estimatedEngagement, estimatedConversion (empty strings unless the input already contains that measured figure)
@@ -87,9 +105,9 @@ Platform rules:
   search keywords, hashtags. Never leave it empty.
 - instagram: short emotional caption + emoji
 - threads: conversational opinion hook
-- googleBusiness: local SEO, service keywords, call-now CTA
+- googleBusiness: factual business/service discovery; never imply phone, website, location, ordering, delivery, or other contact access unless creativeFacts explicitly authorizes it
 - youtubeShorts: title + hook + description + hashtags
-- tiktok: native hook + trending CTA
+- tiktok: immediate hook + short-video progression + authorized or neutral CTA; do not invent trends
 
 Also populate legacy captions map (flattened) for backward compatibility.
 
@@ -816,10 +834,19 @@ function buildFallbackContent(input: MarketingContentInput): MarketingContentPac
 }
 
 export async function runMarketingContentAgent(input: MarketingContentInput): Promise<{
-  contentPackage: MarketingContentPackage;
+  contentPackage: MarketingContentPackage | null;
   usage: { input: number; output: number; costUsd: number };
+  validation: ReturnType<typeof evaluateContentContract>["diagnostic"];
 }> {
   const locale = resolveContentLocale(input);
+  const blockedStrategyCta = blockUnauthorizedStrategyCta(input.strategy.ctaStrategy, input.businessInformation);
+  if (blockedStrategyCta) {
+    return {
+      contentPackage: null,
+      usage: { input: 0, output: 0, costUsd: 0 },
+      validation: blockedStrategyCta,
+    };
+  }
 
   const user = JSON.stringify({
     strategy: input.strategy,
@@ -841,6 +868,18 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
     platforms: input.platforms,
     ...(input.videoAnalysis ? { videoAnalysis: input.videoAnalysis } : {}),
     ...(input.businessInformation ? { businessInformation: input.businessInformation } : {}),
+    creativeFacts: buildMarketingCreativeFactContract(input.businessInformation, input.platforms),
+    strategyFactBoundary: {
+      authority: "creativeFacts_only",
+      nonFactualFields: ["marketingAngle", "videoStyle", "audience.painPoints", "audience.desiredOutcome"],
+      permittedUse: "opening angle, shot order, editing, tone, question, or hypothetical visual direction",
+      forbiddenUse: "asserted product composition, feature, quality, process, availability, benefit, or outcome",
+    },
+    creativeBlueprint: buildMarketingCreativeBlueprint({
+      businessInformation: input.businessInformation,
+      durationSec: explicitScriptDurationSec(input.userNotes),
+    }),
+    platformCreativeBriefs: buildMarketingPlatformCreativeBrief(),
     ...(input.userNotes ? { userNotes: input.userNotes } : {}),
     locale: localeToPromptTag(locale),
     outputLanguage: outputLanguageInstruction(locale),
@@ -849,28 +888,32 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   // Content generation requires large structured JSON output (hooks×10, 8 platform assets,
   // bilingual voice scripts, analysis, SEO pack). gpt-4o-mini frequently produces malformed
   // or incomplete JSON at this scale; gpt-4o is significantly more reliable here.
-  const { result, usage } = await callJsonModel<unknown>(
+  const { result, usage, providerRequestId } = await callJsonModel<unknown>(
     CONTENT_SYSTEM_PROMPT,
     user,
-    MarketingContentPackageSchema.toString(),
+    CONTENT_JSON_CONTRACT,
     { model: "gpt-4o" }
   );
 
-  const normalized = normalizeMarketingContentPackage(result);
-  if (normalized) {
-    console.log(`[content] ok hooks=${normalized.hooks.length} voiceScripts=${!!normalized.voiceScripts["30s"]}`);
-    return {
-      contentPackage: applyGroundingToPackage({ ...normalized, contentOrigin: "model" }, input),
-      usage,
-    };
+  const evaluated = evaluateContentContract(result, {
+    brief: substantiveCampaignBrief(input.userNotes, input.videoAnalysis) ?? null,
+    ...authorizedMarketingFacts(input.businessInformation),
+    ...creativeAuthorizationFromBusiness(input.businessInformation, input.platforms),
+    durationSec: explicitScriptDurationSec(input.userNotes),
+    providerRequestId,
+    enforceQuality: true,
+    enforcePlatformNative: true,
+  });
+  if (!evaluated.diagnostic.ok || !evaluated.contentPackage) {
+    console.warn(`[content] contract failed codes=${evaluated.diagnostic.codes.join(",")}`);
+    return { contentPackage: null, usage, validation: evaluated.diagnostic };
   }
-
-  // Log what the LLM actually returned so we can diagnose parse failures.
-  const raw = result as Record<string, unknown> | null;
-  const hookCount = Array.isArray(raw?.hooks) ? (raw.hooks as unknown[]).length : typeof raw?.hooks;
-  const ctaCount = Array.isArray(raw?.cta) ? (raw.cta as unknown[]).length : typeof raw?.cta;
-  console.warn(`[content] normalizeMarketingContentPackage failed — using fallback template. hooks=${hookCount} cta=${ctaCount} musicMood=${raw?.musicMood}`);
-  return { contentPackage: { ...buildFallbackContent(input), contentOrigin: "template_fallback" }, usage };
+  console.log(`[content] ok hooks=${evaluated.contentPackage.hooks.length} voiceScripts=${!!evaluated.contentPackage.voiceScripts["30s"]}`);
+  return {
+    contentPackage: applyGroundingToPackage({ ...evaluated.contentPackage, contentOrigin: "model" }, input),
+    usage,
+    validation: evaluated.diagnostic,
+  };
 }
 
 const PLATFORM_REGEN_SYSTEM = `# EmberOS — Single Platform Copy Regenerator
