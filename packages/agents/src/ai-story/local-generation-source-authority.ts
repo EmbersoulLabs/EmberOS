@@ -321,6 +321,7 @@ export function materializeProviderNeutralLocalGenerationPackage(
   const shotLines = instructions.shots.map((shot) =>
     `Shot ${shot.order + 1}: ${shot.cameraType}; ${shot.cameraMovement}; ${shot.composition}; ${shot.framing}; focus ${shot.focus}; ${shot.information}`,
   );
+  const actionEvents = scene.events.filter((event) => event.type === "ACTION");
   const prompt = [instructions.purpose, ...shotLines, ...mustKeep.map((fact) => `Keep: ${fact}`)].join("\n");
   const generationMode = generationAuthority.strategy === "TEXT_TO_VIDEO"
     ? "TEXT_TO_VIDEO" as const
@@ -340,6 +341,15 @@ export function materializeProviderNeutralLocalGenerationPackage(
       requirementId: `director:${index}`, dimension: "DIRECTOR_EXECUTION" as const, summary: fact,
       required: true, waiverPolicy: "WAIVABLE_BY_HUMAN" as const, sourceOwner: "DIRECTOR" as const, visuallyObservable: true,
     })),
+    ...actionEvents.map((event, index) => ({
+      requirementId: `scene-action:${index}`, dimension: "ACTION_COMPLETION" as const, summary: event.action,
+      required: true, waiverPolicy: "NON_WAIVABLE_INTEGRITY" as const, sourceOwner: "SCENE" as const, visuallyObservable: true,
+    })),
+    ...actionEvents.flatMap((event, index) => event.objectId ? [{
+      requirementId: `scene-object:${index}`, dimension: "REQUIRED_EVIDENCE" as const,
+      summary: `Preserve the authorized object interaction: ${event.action}`,
+      required: true, waiverPolicy: "NON_WAIVABLE_INTEGRITY" as const, sourceOwner: "SCENE" as const, visuallyObservable: true,
+    }] : []),
   ];
   const sourceBody = {
     version: AI_STORY_LOCAL_GENERATION_SOURCE_AUTHORITY_VERSION,

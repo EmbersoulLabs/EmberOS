@@ -167,6 +167,9 @@ export const AiStoryCharacterDialoguePerformanceAuthoritySchema = z
     detachedTtsPermitted: z.literal(false),
     mustPreserve: z.array(Text),
     mustAvoid: z.array(Text),
+    voiceDnaId: Id.optional(),
+    voiceDnaFingerprint: Hash.optional(),
+    voiceIdentityInstruction: Text.optional(),
     dialogueFingerprint: Hash,
   })
   .strict()
@@ -195,6 +198,13 @@ export const AiStoryCharacterDialoguePerformanceAuthoritySchema = z
         code: z.ZodIssueCode.custom,
         message:
           "Code-switch authority must bind only the exact primary/secondary locales",
+      });
+    }
+    const voicePinned = Boolean(value.voiceDnaId || value.voiceDnaFingerprint);
+    if (voicePinned && (!value.voiceDnaId || !value.voiceDnaFingerprint || !value.voiceIdentityInstruction)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Voice DNA dialogue binding requires the exact id, fingerprint, and performance instruction",
       });
     }
   });
