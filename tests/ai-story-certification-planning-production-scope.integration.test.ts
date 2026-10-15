@@ -249,9 +249,10 @@ describeIntegration("certification planning and Production scope PostgreSQL auth
       async complete(request, options) {
         fakeAdapterCallCount += 1;
         expect(options?.maxRetries).toBe(0);
-        expect(request.max_tokens).toBe(CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[
+        expect(request.max_completion_tokens).toBe(CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[
           fakeAdapterCallCount === 1 ? "story_polish" : stages[fakeAdapterCallCount - 2]!
         ]);
+        expect(request).not.toHaveProperty("max_tokens");
         return {
           id: `fake-certification-${fakeAdapterCallCount}`,
           object: "chat.completion",
