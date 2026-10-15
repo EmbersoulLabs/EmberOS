@@ -6,6 +6,7 @@ import {
   buildLocalGpuDesktopSubmit,
   buildLocalGpuDesktopSubmitV2,
   mapLocalGpuAudioPolicy,
+  serializeLocalGpuH3Prompt,
   type LocalGpuAudioPolicy,
   type LocalGpuDesktopSubmitBody,
   type LocalGpuEnvironment,
@@ -110,6 +111,37 @@ function expectationFor(pkg: AiStoryLocalGenerationPackage, requested?: LocalGpu
 
 function flatten(value: string): string {
   return value.replace(/[\r\n]+/g, " | ").replace(/\s+/g, " ").trim();
+}
+
+export function serializeCanonicalPackageForH3(pkg: AiStoryLocalGenerationPackage): string {
+  const requirements = pkg.qcRequirements ?? [];
+  const actionProgression = requirements
+    .filter((item) => item.dimension === "ACTION_COMPLETION" || item.dimension === "MOTION_EXECUTION")
+    .map((item) => item.summary);
+  const objectInteractions = requirements
+    .filter((item) => item.dimension === "REQUIRED_EVIDENCE")
+    .map((item) => item.summary);
+  const cameraGuidance = requirements
+    .filter((item) => item.dimension === "DIRECTOR_EXECUTION" || item.dimension === "CINEMATIC_PROGRESSION")
+    .map((item) => item.summary);
+  return serializeLocalGpuH3Prompt({
+    prompt: flatten(pkg.prompt),
+    facts: {
+      sceneContext: [pkg.worldDescription],
+      characterIdentity: pkg.characterAuthority ? ["Preserve the authorized Character identity from the CHARACTER reference throughout the clip."] : [],
+      productIdentity: pkg.productAuthority
+        ? ["Preserve the authorized Product identity from the PRODUCT reference throughout the clip.", pkg.productAuthority.confirmedVariant ?? ""]
+        : [],
+      actionProgression,
+      objectInteractions,
+      cameraGuidance,
+      startState: pkg.currentUnitStartState,
+      endState: pkg.expectedEndState,
+      continuity: pkg.continuityRequirements,
+      mustKeep: pkg.mustKeep,
+      mustAvoid: pkg.mustAvoid,
+    },
+  });
 }
 
 function promptFor(pkg: AiStoryLocalGenerationPackage, variant: string | null): { prompt: string; promptOnlyRequirements: string[] } {
@@ -413,7 +445,7 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
     sceneExecutionId: pkg.sceneExecutionId,
     workspaceId: pkg.workspaceId,
     workflow: pkg.recommendedWorkflow,
-    prompt: flatten(pkg.prompt),
+    prompt: serializeCanonicalPackageForH3(pkg),
     plannedDurationMs: pkg.durationSec * 1000,
     upload: input.upload,
     audioPolicy,

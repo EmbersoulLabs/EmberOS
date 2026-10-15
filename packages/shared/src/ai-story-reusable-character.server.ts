@@ -1,4 +1,5 @@
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "./canonical-integrity";
+import { assertVoiceDnaMatchesCharacterVersion } from "./ai-story-character-voice-dna";
 import { buildAiStoryCharacterVersion } from "./ai-story-character.server";
 import type { AiStoryCharacterAuthorityVersion } from "./ai-story-character";
 import {
@@ -250,6 +251,13 @@ export function buildEpisodeCharacterBinding(input: {
   projection: AiStoryReusableCharacterCampaignProjection;
   episodeLook?: AiStoryCharacterEpisodeLook;
   continuityAnchorIds?: string[];
+  voiceDna?: {
+    voiceDnaId: string;
+    voiceDnaFingerprint: string;
+    reusableCharacterId: string;
+    reusableCharacterVersionId: string;
+    characterIdentityFingerprint: string;
+  };
   createdBy: string;
   createdAt: string;
 }): AiStoryEpisodeCharacterBinding {
@@ -265,6 +273,9 @@ export function buildEpisodeCharacterBinding(input: {
         (asset) => asset.role === "SYNTHETIC_IDENTITY_ANCHOR"
       )?.assetId
     : undefined;
+  if (input.voiceDna) {
+    assertVoiceDnaMatchesCharacterVersion(input.voiceDna, input.reusable);
+  }
   const bindingFingerprint = sha256CanonicalIntegrityHash({
     storyId: input.storyId,
     reusableCharacterVersionId: input.reusable.reusableCharacterVersionId,
@@ -274,6 +285,12 @@ export function buildEpisodeCharacterBinding(input: {
     episodeLook,
     canonicalAssetIds,
     continuityAnchorIds: input.continuityAnchorIds ?? [],
+    ...(input.voiceDna
+      ? {
+          voiceDnaId: input.voiceDna.voiceDnaId,
+          voiceDnaFingerprint: input.voiceDna.voiceDnaFingerprint,
+        }
+      : {}),
     ...(dnaMode
       ? {
           characterDnaFingerprint: input.reusable.characterDnaFingerprint,
@@ -314,6 +331,12 @@ export function buildEpisodeCharacterBinding(input: {
         }
       : {}),
     continuityAnchorIds: input.continuityAnchorIds ?? [],
+    ...(input.voiceDna
+      ? {
+          voiceDnaId: input.voiceDna.voiceDnaId,
+          voiceDnaFingerprint: input.voiceDna.voiceDnaFingerprint,
+        }
+      : {}),
     bindingFingerprint,
     createdBy: input.createdBy,
     createdAt: input.createdAt,

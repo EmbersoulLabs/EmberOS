@@ -1,5 +1,9 @@
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "./canonical-integrity";
 import {
+  assertVoiceDnaCapabilityMatch,
+  type AiStoryCharacterVoiceDna,
+} from "./ai-story-character-voice-dna";
+import {
   AI_STORY_AUDIO_MIX_CONTRACT_VERSION,
   AI_STORY_AUDIO_PLAN_CONTRACT_VERSION,
   AI_STORY_AUDIO_POLICY_VERSION,
@@ -290,6 +294,7 @@ export function compileAiStoryTtsExecutionRequest(input: {
   speed?: number;
   pitchSemitones?: number;
   nativeDialogueAuthorities?: readonly AiStoryCharacterDialoguePerformanceAuthority[];
+  voiceDna?: AiStoryCharacterVoiceDna;
 }): AiStoryTtsExecutionRequest {
   if (input.nativeDialogueAuthorities?.length) {
     assertVisibleDialogueAudioAuthorityExclusive({
@@ -300,6 +305,9 @@ export function compileAiStoryTtsExecutionRequest(input: {
     });
   }
   assertAiStoryVoiceCapability(input);
+  if (input.voiceDna) {
+    assertVoiceDnaCapabilityMatch(input.voiceDna, input.capability);
+  }
   const speed = input.speed ?? 1;
   const pitchSemitones = input.pitchSemitones ?? 0;
   if (speed !== 1 && !input.capability.supportsSpeedControl) {

@@ -97,6 +97,20 @@ function adapter(http: ConstructorParameters<typeof LocalGpuCloudAdapter>[1], en
 }
 
 describe("zero-asset contract V3", () => {
+  it("serializes the exact H3 T2V prompt while retaining deterministic controls as structured fields", () => {
+    const result = t2v({ promptFacts: {
+      sceneContext: ["Rainy evening in the approved street environment"],
+      actionProgression: ["The character opens the umbrella and walks to the doorway"],
+      cameraGuidance: ["One steady lateral tracking shot"],
+      startState: ["Umbrella closed"],
+      endState: ["Character sheltered at the doorway"],
+      mustAvoid: ["No teleportation"],
+    } });
+    expect(result.body.prompt).toBe("A quiet product story with room tone. | SCENE: Rainy evening in the approved street environment | PRIMARY ACTION PROGRESSION: The character opens the umbrella and walks to the doorway | CAMERA GUIDANCE: One steady lateral tracking shot | START STATE: Umbrella closed | REQUIRED END STATE: Character sheltered at the doorway | MUST AVOID: No teleportation");
+    expect(result.body).toMatchObject({ durationSec: 6, aspectRatio: "9:16", megapixels: 0.5, seed: 11 });
+    expect(result.body.prompt).not.toMatch(/duration|9:16|0\.5|seed/i);
+  });
+
   it("builds a WITHOUT_ASSET T2V job with an empty reference list and no fabricated frame", () => {
     const result = t2v();
     expect(result.body.contractVersion).toBe(3);
@@ -385,8 +399,9 @@ describe("V3 golden vectors", () => {
   it("preserves the original 1 MP fixture and matches the 0.5 MP fixture", () => {
     const original = readFileSync("tests/fixtures/local-gpu-cloud-v3-signing-golden-vector.json");
     const certified = readFileSync("tests/fixtures/local-gpu-cloud-v3-signing-golden-vector-0.5mp.json");
-    expect(createHash("sha256").update(original).digest("hex")).toBe("4d1a210342c9510531771400747cbbed20841c5341c430e01563b207b019ae9c");
-    expect(createHash("sha256").update(certified).digest("hex")).toBe("099b0f6a1d98be698071b68633a9c604fde186c65b90f6340a621aa335573e52");
+    const canonicalBytes = (value: Buffer) => Buffer.from(value.toString("utf8").replace(/\r\n/g, "\n"), "utf8");
+    expect(createHash("sha256").update(canonicalBytes(original)).digest("hex")).toBe("4d1a210342c9510531771400747cbbed20841c5341c430e01563b207b019ae9c");
+    expect(createHash("sha256").update(canonicalBytes(certified)).digest("hex")).toBe("099b0f6a1d98be698071b68633a9c604fde186c65b90f6340a621aa335573e52");
     const historical = JSON.parse(original.toString("utf8")) as { creativeBinding: { sha256: string }; canonicalJob: { megapixels: number } };
     const fixture = JSON.parse(certified.toString("utf8")) as {
       megapixels: number;
