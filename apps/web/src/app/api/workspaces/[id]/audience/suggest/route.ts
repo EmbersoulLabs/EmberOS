@@ -28,6 +28,18 @@ export async function POST(
 
     const rawProfile = await getBusinessProfileByWorkspace(workspaceId);
     const profile = normalizeBusinessProfileRecord((rawProfile ?? {}) as Record<string, unknown>);
+    // Controlled self-use deliberately rejects provider HTTP calls that do not
+    // carry a persisted execution/certification grant. Campaign assistance is
+    // an optional authoring aid, so fail before the provider boundary with an
+    // actionable response instead of allowing that denial to become a generic
+    // INTERNAL_ERROR.
+    if (process.env.AI_STORY_PROVIDER_DISPATCH_MODE === "allowlisted_self_use") {
+      return apiError(
+        "AI audience suggestions are unavailable while controlled self-use mode is active. Enter the target audience manually or ask a Platform Superadmin to enable an authorized Campaign-assistance provider path.",
+        "AI_UNAVAILABLE",
+        503,
+      );
+    }
     const completion = await callStructuredJsonModel({
       system:
         "Suggest one concise, concrete campaign target audience. Return JSON only. Do not persist or claim the suggestion was accepted.",
@@ -46,6 +58,7 @@ export async function POST(
       }),
       schema: SuggestionSchema,
       schemaName: "campaign_target_audience_suggestion",
+      maxOutputTokens: 300,
     });
     if (completion.decodeIssue) {
       return apiError("Audience suggestion is unavailable", "AI_UNAVAILABLE", 503);

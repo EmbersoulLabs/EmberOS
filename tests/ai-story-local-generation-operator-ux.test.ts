@@ -148,4 +148,18 @@ describe("Local Generation operator feedback", () => {
     expect(attachmentFilename('attachment; filename="unit-1-local-generation-package.json"', "fallback.json"))
       .toBe("unit-1-local-generation-package.json");
   });
+
+  it("exposes the existing LOCAL_GPU authority only to the projected Platform Superadmin", () => {
+    const page = read("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/[storyId]/page.tsx");
+    const runtime = read("apps/web/src/components/ai-story/StoryRuntimePanel.tsx");
+    const panel = read("apps/web/src/components/ai-story/LocalGenerationPanel.tsx");
+    expect(page).toContain("setIsPlatformSuperAdmin(Boolean(me.isSuperAdmin))");
+    expect(runtime).toContain("localGpuAuthorized={localGpuAuthorized}");
+    expect(panel).toContain("localGpuAuthorized && !output");
+    expect(panel).toContain("Authorize LOCAL_GPU");
+    expect(panel).toContain("/local-gpu-authority");
+    expect(panel).toContain('method: "POST"');
+    expect(panel).toContain('"idempotency-key": `local-gpu:${item.packageId}:${item.runtimeAuthorizationId}`');
+    expect(panel).not.toContain("/v1/jobs");
+  });
 });

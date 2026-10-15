@@ -48,6 +48,7 @@ type Props = {
   storyId: string;
   executionPlanId: string;
   workspaceRole: WorkspaceRole | string | null;
+  localGpuAuthorized?: boolean;
 };
 
 function statusKey(status: string | null | undefined): TranslationKey {
@@ -60,6 +61,7 @@ export function StoryRuntimePanel({
   storyId,
   executionPlanId,
   workspaceRole,
+  localGpuAuthorized = false,
 }: Props) {
   const { t } = useI18n();
   const showExecuteChrome = canShowExecuteButton(workspaceRole);
@@ -433,6 +435,7 @@ export function StoryRuntimePanel({
         storyId={storyId}
         executionPlanId={executionPlanId}
         refreshToken={localGenerationRefreshToken}
+        localGpuAuthorized={localGpuAuthorized}
       />
 
       {showFinalEpisode ? (
