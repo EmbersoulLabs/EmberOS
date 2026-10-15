@@ -35,6 +35,8 @@ export type LocalGpuR2vDnaCapability = {
   characterDna: true;
   sceneExecution: true;
   voiceDna: boolean;
+  continuityFrame: boolean;
+  audioPolicies: readonly string[];
   missingModels: [];
   e2eCertified: boolean;
 };
@@ -45,7 +47,7 @@ export type LocalGpuR2vDnaCapability = {
  */
 export function readLocalGpuR2vDnaCapability(
   value: unknown,
-  options: { voiceDnaRequired: boolean },
+  options: { voiceDnaRequired: boolean; continuityFrameRequired?: boolean; audioPolicy?: string },
 ): LocalGpuR2vDnaCapability {
   const root = record(value);
   const contracts = record(root?.contracts);
@@ -55,12 +57,17 @@ export function readLocalGpuR2vDnaCapability(
   const missingModels = Array.isArray(workflow?.missingModels)
     ? workflow.missingModels.filter((item) => typeof item === "string")
     : null;
+  const audioPolicies = Array.isArray(workflow?.audioPolicies)
+    ? workflow.audioPolicies.filter((item): item is string => typeof item === "string")
+    : [];
   if (
     workflow?.execution !== "enabled"
     || workflow.referenceToVideo !== true
     || workflow.characterDna !== true
     || workflow.sceneExecution !== true
     || (options.voiceDnaRequired && workflow.voiceDna !== true)
+    || (options.continuityFrameRequired && workflow.continuityFrame !== true)
+    || (options.audioPolicy !== undefined && !audioPolicies.includes(options.audioPolicy))
     || !missingModels
     || missingModels.length > 0
   ) {
@@ -73,6 +80,8 @@ export function readLocalGpuR2vDnaCapability(
     characterDna: true,
     sceneExecution: true,
     voiceDna: workflow.voiceDna === true,
+    continuityFrame: workflow.continuityFrame === true,
+    audioPolicies,
     missingModels: [],
     e2eCertified: workflow.e2eCertified === true,
   };
@@ -91,6 +100,7 @@ export type LocalGpuR2vDnaHandoff = {
     durationSec: number;
     aspectRatio: string;
   };
+  audioPolicy: "NATIVE" | "PRESERVE" | "NO_DIALOGUE_WITH_AMBIENT_AUDIO" | "REMOVE_AUDIO" | "SILENT_OUTPUT";
   characterDna: {
     characterId: string;
     characterVersionId: string;
@@ -105,6 +115,7 @@ export type LocalGpuR2vDnaHandoff = {
     exactAcousticVoiceContinuity: "NOT_CLAIMED";
   };
   references: ReturnType<typeof mapCanonicalPackageToLocalGpuContractV2>["body"]["references"];
+  firstFrame: ReturnType<typeof mapCanonicalPackageToLocalGpuContractV2>["body"]["firstFrame"];
   upload: LocalGpuUploadDestination;
 };
 
@@ -134,9 +145,6 @@ export function prepareLocalGpuR2vDnaHandoff(input: {
   if (!pkg.characterAuthority) fail("LOCAL_GPU_CHARACTER_DNA_REQUIRED");
   if (pkg.dialogue.length > 0) fail("LOCAL_GPU_DISPATCH_DISABLED");
 
-  const capability = readLocalGpuR2vDnaCapability(input.capabilities, {
-    voiceDnaRequired: Boolean(input.voiceDna),
-  });
   const voiceDna = input.voiceDna ?? null;
   if (voiceDna) {
     if (voiceDna.status !== "APPROVED" && voiceDna.status !== "FROZEN") {
@@ -163,6 +171,11 @@ export function prepareLocalGpuR2vDnaHandoff(input: {
     jobId: input.jobId,
     upload: input.upload,
   });
+  const capability = readLocalGpuR2vDnaCapability(input.capabilities, {
+    voiceDnaRequired: Boolean(voiceDna),
+    continuityFrameRequired: validated.body.firstFrame !== null,
+    audioPolicy: validated.body.audioPolicy,
+  });
   const handoff: LocalGpuR2vDnaHandoff = {
     contractVersion: 3,
     assetMode: "WITH_ASSET",
@@ -176,6 +189,7 @@ export function prepareLocalGpuR2vDnaHandoff(input: {
       durationSec: validated.body.durationSec,
       aspectRatio: pkg.aspectRatio,
     },
+    audioPolicy: validated.body.audioPolicy,
     characterDna: {
       characterId: pkg.characterAuthority.characterId,
       characterVersionId: pkg.characterAuthority.characterVersionId,
@@ -192,6 +206,7 @@ export function prepareLocalGpuR2vDnaHandoff(input: {
         }
       : null,
     references: validated.body.references,
+    firstFrame: validated.body.firstFrame,
     upload: validated.body.upload,
   };
   return {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { deterministicPersistenceUuid } from "@ceo-agent/db";
+import type { AiStoryCharacterVoiceDna, AiStoryLocalGenerationPackage } from "@ceo-agent/shared";
 import {
   assertLocalGpuDispatchWorkflow,
   assertLocalGpuRequestExpiry,
@@ -34,6 +35,10 @@ import {
 import { assertLocalGpuAccess, type LocalGpuServerActor } from "./local-gpu-access";
 import { type LocalGpuConfig } from "./local-gpu-config";
 import { signLocalGpuRequest } from "./local-gpu-signing";
+import {
+  prepareLocalGpuR2vDnaHandoff,
+} from "./local-gpu-r2v-dna-transport";
+import type { LocalGpuResolvedAsset } from "./local-gpu-package-transport";
 
 export type LocalGpuHttpResponse = { status: number; body: string };
 export type LocalGpuHttp = (input: {
@@ -330,6 +335,68 @@ export class LocalGpuCloudAdapter {
         workflow: "MINIMAX_H3_T2V",
         contractVersion: 3,
         creativeBinding: desktop.creativeBinding,
+        state: readState(asRecord(response.json).state ?? asRecord(response.json).status ?? "QUEUED"),
+        remoteProviderFallback: LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
+        automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
+      };
+    }
+    if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);
+    if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found");
+    if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict");
+    throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable");
+  }
+
+  async submitR2vDna(input: {
+    actor: LocalGpuServerActor;
+    package: AiStoryLocalGenerationPackage;
+    assets: readonly LocalGpuResolvedAsset[];
+    upload: LocalGpuUploadDestination;
+    capabilities: unknown;
+    voiceDna?: AiStoryCharacterVoiceDna | null;
+    existingGate: string | null;
+    productionDispatchAuthorized?: boolean;
+  }): Promise<{
+    jobId: string;
+    workflow: typeof LOCAL_GPU_WORKER_WORKFLOW;
+    contractVersion: 3;
+    creativeBinding: string;
+    state: LocalGpuJobState;
+    remoteProviderFallback: 0;
+    automaticGenerationRetry: 0;
+  }> {
+    const { environment } = this.requireEnabled();
+    if (environment === "production" && input.productionDispatchAuthorized !== true) {
+      throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
+    }
+    assertLocalGpuSubmitAllowed(input.existingGate);
+    const jobId = this.jobIdFor(input.package);
+    const prepared = prepareLocalGpuR2vDnaHandoff({
+      package: input.package,
+      assets: input.assets,
+      environment,
+      jobId,
+      upload: input.upload,
+      capabilities: input.capabilities,
+      voiceDna: input.voiceDna,
+    });
+    const token = this.authorize({
+      actor: input.actor,
+      workspaceId: input.package.workspaceId,
+      sceneExecutionId: input.package.sceneExecutionId,
+      action: LOCAL_GPU_SUBMIT_ACTION,
+      workflow: prepared.handoff.workflow,
+      jobId,
+      uploadBinding: prepared.uploadBinding,
+      creativeBinding: prepared.authorityBinding,
+    });
+    assertLocalGpuUploadBinding(prepared.handoff.upload, prepared.uploadBinding);
+    const response = await this.send({ method: "POST", path: "/v1/jobs", token, body: prepared.handoff, jobId });
+    if (response.status >= 200 && response.status < 300) {
+      return {
+        jobId,
+        workflow: LOCAL_GPU_WORKER_WORKFLOW,
+        contractVersion: 3,
+        creativeBinding: prepared.authorityBinding,
         state: readState(asRecord(response.json).state ?? asRecord(response.json).status ?? "QUEUED"),
         remoteProviderFallback: LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
         automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,

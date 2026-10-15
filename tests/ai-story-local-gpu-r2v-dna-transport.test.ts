@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { AiStoryCharacterVoiceDna, AiStoryLocalGenerationPackage } from "@ceo-agent/shared";
 import { LocalGpuContractError } from "@ceo-agent/shared/server";
 import {
+  LocalGpuCloudAdapter,
   prepareLocalGpuR2vDnaHandoff,
   readLocalGpuR2vDnaCapability,
   type LocalGpuResolvedAsset,
 } from "../packages/agents/src/ai-story";
+import { loadLocalGpuConfigFromEnv } from "../packages/agents/src/ai-story/local-gpu-config";
+import { verifyLocalGpuRequest } from "../packages/agents/src/ai-story/local-gpu-signing";
 
 const id = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
 const hash = (mark: string) => `sha256:${mark.repeat(64)}`;
@@ -22,6 +25,8 @@ const capabilities = {
     characterDna: true,
     voiceDna: true,
     sceneExecution: true,
+    continuityFrame: false,
+    audioPolicies: ["NATIVE", "REMOVE_AUDIO", "SILENT_OUTPUT"],
     missingModels: [],
     e2eCertified: false,
   } } } },
@@ -116,6 +121,8 @@ describe("LOCAL_GPU Character DNA + Voice DNA + Scene R2V handoff", () => {
     expect(result).toMatchObject({ dispatch: false, submit: false, e2eCertified: false });
     expect(result.handoff.workflow).toBe("MINIMAX_H3_R2V");
     expect(result.handoff.scene.sceneExecutionId).toBe(id(40));
+    expect(result.handoff.audioPolicy).toBe("SILENT_OUTPUT");
+    expect(result.handoff.firstFrame).toBeNull();
     expect(result.handoff.characterDna.fingerprint).toBe(hash("a"));
     expect(result.handoff.voiceDna).toMatchObject({
       voiceDnaId: id(90),
@@ -139,6 +146,11 @@ describe("LOCAL_GPU Character DNA + Voice DNA + Scene R2V handoff", () => {
 
   it("keeps zero-claim Desktop capabilities and mismatched DNA blocked", () => {
     expect(code(() => readLocalGpuR2vDnaCapability({ contractVersion: 3 }, { voiceDnaRequired: true }))).toBe("LOCAL_GPU_R2V_DNA_CAPABILITY_MISMATCH");
+    expect(code(() => readLocalGpuR2vDnaCapability(capabilities, {
+      voiceDnaRequired: false,
+      continuityFrameRequired: true,
+      audioPolicy: "SILENT_OUTPUT",
+    }))).toBe("LOCAL_GPU_R2V_DNA_CAPABILITY_MISMATCH");
     expect(code(() => prepareLocalGpuR2vDnaHandoff({
       package: pkg(), assets, environment: "staging", jobId: id(99), upload,
       capabilities: { contracts: { v3: { workflows: { MINIMAX_H3_R2V: { ...capabilities.contracts.v3.workflows.MINIMAX_H3_R2V, voiceDna: false } } } } },
@@ -152,5 +164,39 @@ describe("LOCAL_GPU Character DNA + Voice DNA + Scene R2V handoff", () => {
       package: pkg(), assets, environment: "staging", jobId: id(99), upload, capabilities,
       voiceDna: { ...voiceDna, consistencyMode: "REFERENCE_AUDIO_IDENTITY", referenceAudioAssetId: id(75), referenceAudioContentHash: hash("r") },
     }))).toBe("LOCAL_GPU_VOICE_DNA_REFERENCE_AUDIO_UNSUPPORTED");
+    expect(code(() => prepareLocalGpuR2vDnaHandoff({
+      package: pkg(), assets, environment: "staging", jobId: id(99), upload,
+      capabilities: { contracts: { v3: { workflows: { MINIMAX_H3_R2V: { ...capabilities.contracts.v3.workflows.MINIMAX_H3_R2V, audioPolicies: ["NATIVE"] } } } } },
+    }))).toBe("LOCAL_GPU_R2V_DNA_CAPABILITY_MISMATCH");
+  });
+
+  it("submits one signed Contract V3 request with bound creative and upload authority", async () => {
+    const calls: Array<{ url: string; headers: Record<string, string>; body?: string }> = [];
+    const secret = "r2v-dna-test-secret";
+    const now = new Date("2026-10-14T00:00:00.000Z");
+    const adapter = new LocalGpuCloudAdapter(loadLocalGpuConfigFromEnv({
+      LOCAL_GPU_PROVIDER_ENABLED: "true",
+      LOCAL_GPU_ENVIRONMENT: "staging",
+      LOCAL_GPU_SIGNING_SECRET: secret,
+      LOCAL_GPU_BASE_URL: "https://local-gpu.example.test",
+    }), async (request) => {
+      calls.push(request);
+      return { status: 202, body: JSON.stringify({ state: "QUEUED" }) };
+    }, { now: () => now, nonce: () => "r2v-dna-nonce" });
+    const result = await adapter.submitR2vDna({
+      actor: { userId: id(16), workspaceId, organizationPlan: null, platformAdminStatus: "ACTIVE_GRANT" },
+      package: pkg(), assets, upload, capabilities, voiceDna, existingGate: null,
+    });
+    expect(result).toMatchObject({ workflow: "MINIMAX_H3_R2V", contractVersion: 3, state: "QUEUED", remoteProviderFallback: 0, automaticGenerationRetry: 0 });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://local-gpu.example.test/v1/jobs");
+    const body = JSON.parse(calls[0]!.body!) as { workspaceId: string; scene: { sceneExecutionId: string }; upload: typeof upload };
+    const token = calls[0]!.headers.authorization.replace(/^Bearer /, "");
+    const claims = verifyLocalGpuRequest({ secret, token, now, workspaceId, environment: "staging" });
+    expect(claims.workflow).toBe("MINIMAX_H3_R2V");
+    expect(claims.sceneExecutionId).toBe(body.scene.sceneExecutionId);
+    expect(claims.creativeBinding).toBe(result.creativeBinding);
+    expect(body.workspaceId).toBe(workspaceId);
+    expect(calls[0]!.body).not.toContain(secret);
   });
 });
