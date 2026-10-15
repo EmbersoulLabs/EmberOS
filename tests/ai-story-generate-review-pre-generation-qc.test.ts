@@ -13,6 +13,7 @@ import {
 import { computeAiStoryPreGenerationQcFingerprint } from "@ceo-agent/shared/server";
 import {
   assertCurrentPreGenerationQcForRuntimeAuthorization,
+  ensureCurrentPreGenerationQcForRuntimeAuthorization,
   assertRuntimePreGenerationQcEvidence,
   buildManualLocalPreGenerationQcCapabilitySnapshot,
   buildManualLocalPreQcCompilationRequest,
@@ -436,6 +437,55 @@ describe("Generate Review Pre-Generation QC materialization", () => {
     expect(accept).not.toHaveBeenCalled();
   });
 
+  it("recovers only missing historical Pre-QC before applying the unchanged strict runtime gate", async () => {
+    const sceneExecutionId = "30000000-0000-4000-8000-000000000001";
+    let history: AiStoryPreGenerationQcEvaluation[] = [];
+    const currentEvidence = evaluation({ sceneExecutionId });
+    const assertCurrent = vi.fn(async () => currentEvidence);
+    const materialize = vi.fn(async () => {
+      history = [currentEvidence];
+      return { PRE_QC_SCENE_COUNT: 1, PRE_QC_BLOCKED_COUNT: 0, PRE_QC_WARNING_COUNT: 0, scenes: [] };
+    });
+    await ensureCurrentPreGenerationQcForRuntimeAuthorization({
+      db: {} as never,
+      scope: scriptScope,
+      orderedSceneExecutionIds: [sceneExecutionId],
+      resolveMotion: async () => ({ motionPlanId: current.motion.motionPlanId }),
+      loadSceneAuthorities: async () => [{ sceneExecutionId, generationAuthority: authority({
+        strategy: "TEXT_TO_VIDEO",
+        referenceSource: "REFERENCE_FREE_T2V",
+        effectiveReferenceIds: [],
+        firstFrameAssetId: null,
+        productVisualIdentityRequirement: "NONE",
+      }) }],
+      loadSceneVersionIds: async () => [sceneVersionId],
+      qc: {
+        async history() { return history; },
+        async evaluate() { return currentEvidence; },
+        assertCurrent,
+      },
+      materialize,
+    });
+    expect(materialize).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledOnce();
+
+    await ensureCurrentPreGenerationQcForRuntimeAuthorization({
+      db: {} as never,
+      scope: scriptScope,
+      orderedSceneExecutionIds: [sceneExecutionId],
+      resolveMotion: async () => ({ motionPlanId: current.motion.motionPlanId }),
+      loadSceneVersionIds: async () => [sceneVersionId],
+      qc: {
+        async history() { return history; },
+        async evaluate() { return currentEvidence; },
+        assertCurrent,
+      },
+      materialize,
+    });
+    expect(materialize).toHaveBeenCalledOnce();
+    expect(assertCurrent).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps Scene Intent QC independent and does not create provider work", () => {
     const review = readFileSync(
       resolve("packages/agents/src/ai-story/story-execution-orchestrator.ts"),
@@ -464,7 +514,8 @@ describe("Generate Review Pre-Generation QC materialization", () => {
     expect(materializer).toContain("ensureCurrentEpisodeDispatchAuthorityProjection");
     expect(materializer).not.toContain(".insert(");
     const runtimeGate = materializer.slice(
-      materializer.indexOf("export async function assertCurrentPreGenerationQcForRuntimeAuthorization")
+      materializer.indexOf("export async function assertCurrentPreGenerationQcForRuntimeAuthorization"),
+      materializer.indexOf("export async function ensureCurrentPreGenerationQcForRuntimeAuthorization")
     );
     expect(runtimeGate).toContain("loadCurrentFrozenMotionChain");
     expect(runtimeGate).not.toContain("ensureCurrentEpisodeDispatchAuthorityProjection");
@@ -497,7 +548,7 @@ describe("Generate Review Pre-Generation QC materialization", () => {
     const acceptFact = execute.indexOf("acceptOrReturnCanonicalSnapshotInTransaction");
     expect(gate).toBeGreaterThan(0);
     expect(gate).toBeLessThan(acceptFact);
-    expect(execute).toContain("assertCurrentPreGenerationQcForRuntimeAuthorization");
+    expect(execute).toContain("ensureCurrentPreGenerationQcForRuntimeAuthorization");
     expect(execute).toContain('input.executionMode !== "MANUAL_LOCAL"');
   });
 });

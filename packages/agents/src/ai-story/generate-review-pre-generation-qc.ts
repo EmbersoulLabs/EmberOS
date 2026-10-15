@@ -2,7 +2,7 @@
  * Generate Review materializes immutable Pre-Generation QC evidence.
  * It does not schedule a Provider, create an attempt, or spend Provider cost.
  */
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   AiStoryPreGenerationQcAuthorityService,
   AiStorySceneAuthorityError,
@@ -14,6 +14,7 @@ import {
 import {
   AI_STORY_LOCAL_PACKAGE_GENERATION_MODES,
   AI_STORY_LOCAL_REFERENCE_AUTHORITY_TYPES,
+  AiStoryCanonicalSceneExecutionIntentSchema,
   EpisodeProjectedAuthorityError,
   EXECUTION_CAPABILITY_IDS,
   type AiStoryEffectiveSceneGenerationAuthority,
@@ -485,6 +486,73 @@ export async function assertCurrentPreGenerationQcForRuntimeAuthorization(input:
     }
     await qc.assertCurrent(input.scope, evaluation.qcEvaluationId);
   }
+}
+
+/**
+ * Historical plans compiled before Generate Review persisted Writer-to-Motion
+ * authority can recover that exact current authority once, then pass through
+ * the same strict runtime gate. Existing (including stale) QC evidence is
+ * never replaced here.
+ */
+export async function ensureCurrentPreGenerationQcForRuntimeAuthorization(input: {
+  db: Db;
+  scope: AiStoryScriptScope;
+  orderedSceneExecutionIds: readonly string[];
+  resolveMotion?: () => Promise<{ motionPlanId: string }>;
+  loadSceneAuthorities?: (sceneExecutionIds: readonly string[]) => Promise<readonly {
+    sceneExecutionId: string;
+    generationAuthority: AiStoryEffectiveSceneGenerationAuthority | undefined;
+  }[]>;
+  loadSceneVersionIds?: (storyVersionId: string) => Promise<readonly string[]>;
+  qc?: Pick<AiStoryPreGenerationQcAuthorityService, "evaluate" | "history" | "assertCurrent">;
+  materialize?: typeof materializeGenerateReviewPreGenerationQc;
+}): Promise<void> {
+  const qc = input.qc ?? new AiStoryPreGenerationQcAuthorityService(input.db);
+  const resolveMotion = input.resolveMotion
+    ?? (() => resolveFrozenMotionForGenerateReview(input.db, input.scope));
+  const motion = await resolveMotion();
+  const missing: string[] = [];
+  for (const sceneExecutionId of input.orderedSceneExecutionIds) {
+    if ((await qc.history(input.scope, sceneExecutionId)).length === 0) missing.push(sceneExecutionId);
+  }
+  if (missing.length > 0) {
+    const loadSceneAuthorities = input.loadSceneAuthorities ?? (async (sceneExecutionIds) => {
+      const rows = await input.db.select({
+        sceneExecutionId: schema.aiStorySceneExecutions.id,
+        intent: schema.aiStorySceneExecutions.intent,
+      }).from(schema.aiStorySceneExecutions).where(and(
+        inArray(schema.aiStorySceneExecutions.id, [...sceneExecutionIds]),
+        eq(schema.aiStorySceneExecutions.orgId, input.scope.orgId),
+        eq(schema.aiStorySceneExecutions.workspaceId, input.scope.workspaceId),
+        eq(schema.aiStorySceneExecutions.campaignId, input.scope.campaignId),
+        eq(schema.aiStorySceneExecutions.storyId, input.scope.storyId),
+        eq(schema.aiStorySceneExecutions.storyVersionId, input.scope.storyVersionId),
+      ));
+      return rows.map((row) => {
+        const intent = AiStoryCanonicalSceneExecutionIntentSchema.parse(row.intent);
+        return { sceneExecutionId: row.sceneExecutionId, generationAuthority: intent.generationAuthority };
+      });
+    });
+    const scenes = await loadSceneAuthorities(missing);
+    if (scenes.length !== missing.length || missing.some((id) => !scenes.some((scene) => scene.sceneExecutionId === id))) {
+      throw new GenerateReviewPreQcError("PRE_QC_LINEAGE_ABSENT", "Historical Pre-QC recovery could not resolve every ordered Scene");
+    }
+    await (input.materialize ?? materializeGenerateReviewPreGenerationQc)({
+      db: input.db,
+      scope: input.scope,
+      scenes,
+      qc,
+      resolveMotion: async () => motion,
+    });
+  }
+  await assertCurrentPreGenerationQcForRuntimeAuthorization({
+    db: input.db,
+    scope: input.scope,
+    orderedSceneExecutionIds: input.orderedSceneExecutionIds,
+    resolveMotion: async () => motion,
+    loadSceneVersionIds: input.loadSceneVersionIds,
+    qc,
+  });
 }
 
 /** Accept a RuntimeAuthorizedFact only after current Pre-QC evidence passes. */
