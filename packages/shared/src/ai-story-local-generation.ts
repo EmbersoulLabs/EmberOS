@@ -41,7 +41,6 @@ export const AI_STORY_LOCAL_WORKFLOWS = [
  * version. V1/V2 retain the broader historical workflow enum above.
  */
 export const AI_STORY_CERTIFIED_LOCAL_WORKFLOWS = [
-  "MINIMAX_H3_R2V",
   "MINIMAX_H3_NATIVE_DIALOGUE",
 ] as const;
 export const AI_STORY_LOCAL_GENERATION_STATES = [
