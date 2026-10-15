@@ -64,7 +64,7 @@ export const AI_PROVIDER_ENV_DEFAULTS = {
   TIMEOUT_MS: 600_000,
   MAX_RETRIES: 3,
   OPENAI_BASE_URL: "https://api.openai.com/v1",
-  OPENAI_DEFAULT_MODEL: "gpt-5.5",
+  OPENAI_DEFAULT_MODEL: "gpt-6-luna",
   SEEDANCE_BASE_URL: "https://ark.ap-southeast.bytepluses.com",
   SEEDANCE_DEFAULT_MODEL: "dreamina-seedance-2-0-260128",
   FAL_BASE_URL: "https://queue.fal.run",

@@ -1,6 +1,7 @@
 import type { AiJsonCompletionRequest, AiJsonCompletionResult, AiProviderId } from "../types";
 import { AiSkillError } from "../types";
 import { invokeOpenAiJsonCompletion, invokeUnsupportedProvider } from "./providers/openai";
+import { OPENAI_EFFICIENT_MODEL, isOpenAiTextModel } from "../../openai-model-policy";
 
 export interface AiRouterSelection {
   provider: AiProviderId;
@@ -28,12 +29,12 @@ export function selectAiRoute(
   options: AiRouterOptions = {}
 ): AiRouterSelection {
   const provider: AiProviderId = options.provider ?? "openai";
-  const preferredModel = options.preferredModel ?? request.preferredModel ?? "gpt-4o-mini";
+  const preferredModel = options.preferredModel ?? request.preferredModel ?? OPENAI_EFFICIENT_MODEL;
   const model =
     provider === "openai"
-      ? preferredModel === "gpt-4o"
-        ? "gpt-4o"
-        : "gpt-4o-mini"
+      ? isOpenAiTextModel(preferredModel)
+        ? preferredModel
+        : OPENAI_EFFICIENT_MODEL
       : preferredModel;
 
   return {

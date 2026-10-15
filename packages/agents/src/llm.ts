@@ -1,7 +1,5 @@
-import OpenAI from "openai";
 import type { ChatCompletion, ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { zodResponseFormat } from "openai/helpers/zod";
 import type { ZodType } from "zod";
 import { LLM_BUDGET_PER_TASK_USD, CEO_MAX_RETRIES } from "@ceo-agent/shared";
 import type { TaskGraph } from "@ceo-agent/shared";
@@ -10,10 +8,19 @@ import {
   CertificationPlanningAuthorityService,
   CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS,
   CERTIFICATION_PLANNING_MODEL,
+  isCertificationPlanningModel,
+  type CertificationPlanningModel,
   type CertificationPlanningHttpGrant,
   type CertificationPlanningIdentity,
   type CertificationPlanningStage,
 } from "@ceo-agent/db";
+import {
+  OPENAI_EFFICIENT_MODEL,
+  OPENAI_QUALITY_MODEL,
+  openAiChatControls,
+  openAiTokenCostUsd,
+  type OpenAiTextModel,
+} from "./openai-model-policy";
 
 export type CertificationPlanningModelAdapter = {
   complete(request: ChatCompletionCreateParamsNonStreaming, options?: { maxRetries: number }): Promise<ChatCompletion>;
@@ -21,34 +28,43 @@ export type CertificationPlanningModelAdapter = {
 
 /** The only network-capable completion adapter. Certification tests inject a fake here. */
 export const realCertificationPlanningModelAdapter: CertificationPlanningModelAdapter = {
-  complete: (request, options) => getOpenAI().chat.completions.create(request, options),
+  complete: async (request, options) => (await getOpenAI()).chat.completions.create(request, options),
 };
 
 type CertificationCallContext = CertificationPlanningIdentity & {
   logicalCallSuffix: string;
+  model?: CertificationPlanningModel;
   providerAttemptId?: string;
   modelAdapter?: CertificationPlanningModelAdapter;
 };
 const certificationCallContext = new AsyncLocalStorage<CertificationCallContext>();
+const openAiModelAdapterContext = new AsyncLocalStorage<CertificationPlanningModelAdapter>();
 export function withCertificationPlanningContext<T>(context: CertificationCallContext, run: () => Promise<T>): Promise<T> {
   return certificationCallContext.run(context, run);
 }
 
+/** Test seam at the real request boundary. It does not weaken production authorization. */
+export function withOpenAiModelAdapter<T>(adapter: CertificationPlanningModelAdapter, run: () => Promise<T>): Promise<T> {
+  return openAiModelAdapterContext.run(adapter, run);
+}
+
 function certificationModelAdapter(): CertificationPlanningModelAdapter {
-  return certificationCallContext.getStore()?.modelAdapter ?? realCertificationPlanningModelAdapter;
+  return certificationCallContext.getStore()?.modelAdapter
+    ?? openAiModelAdapterContext.getStore()
+    ?? realCertificationPlanningModelAdapter;
 }
 
 async function claimCertificationCall(stage: CertificationPlanningStage | undefined, model: string) {
   const context = certificationCallContext.getStore();
   if (!context) return null;
-  if (!stage || model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_CALL_CONTRACT_INVALID");
+  if (!stage || !isCertificationPlanningModel(model)) throw new Error("PLANNING_CALL_CONTRACT_INVALID");
   const authority = new CertificationPlanningAuthorityService();
   const logicalCallIdentity = `${stage}:${context.logicalCallSuffix}`;
   const claim = await authority.claim({
     ...context,
     logicalCallIdentity,
     stage,
-    model: CERTIFICATION_PLANNING_MODEL,
+    model,
     maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[stage],
     maxRetries: 0,
     providerAttemptId: context.providerAttemptId,
@@ -64,7 +80,7 @@ async function claimCertificationCall(stage: CertificationPlanningStage | undefi
     storyId: context.storyId,
     actorUserId: context.actorUserId,
     logicalCallIdentity,
-    model: CERTIFICATION_PLANNING_MODEL,
+    model,
   };
   return { authority, claim, maxOutputTokens: CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[stage], httpGrant };
 }
@@ -76,9 +92,10 @@ function completeWithCertificationGrant<T>(
   return certification ? withCertificationPlanningHttpGrant(certification.httpGrant, run) : run();
 }
 
-export function getOpenAI() {
+export async function getOpenAI() {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+  const { default: OpenAI } = await import("openai");
   // Resolve fetch when the client is constructed. The SDK otherwise captures
   // fetch at module import time, before an isolated test can install its guard.
   return new OpenAI({ apiKey, fetch: controlledSelfUseProviderFetch, maxRetries: 0 });
@@ -87,7 +104,8 @@ export function getOpenAI() {
 export type StructuredJsonDecodeIssue =
   | "INVALID_JSON"
   | "MISSING_CONTENT"
-  | "PROVIDER_REFUSAL";
+  | "PROVIDER_REFUSAL"
+  | "TRUNCATED";
 
 export type StructuredJsonModelCompletion = {
   result: unknown;
@@ -97,16 +115,6 @@ export type StructuredJsonModelCompletion = {
   usage: { input: number; output: number; costUsd: number };
   timings: { providerMs: number; decodeMs: number };
 };
-
-function openAiTokenCost(
-  model: "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" | "gpt-4o",
-  input: number,
-  output: number
-): number {
-  // Canonical pricing authority for the currently allowed JSON models.
-  const [inRate, outRate] = model === "gpt-4o" ? [2.5, 10] : [0.15, 0.6];
-  return (input * inRate + output * outRate) / 1_000_000;
-}
 
 /**
  * Strict structured-output call derived directly from a canonical Zod schema.
@@ -118,31 +126,30 @@ export async function callStructuredJsonModel<T>(input: {
   user: string;
   schema: ZodType<T>;
   schemaName: string;
-  model?: "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" | "gpt-4o";
+  model?: OpenAiTextModel;
   certificationStage?: CertificationPlanningStage;
   /** Required by bounded user-initiated calls; certification supplies its own limit. */
   maxOutputTokens?: number;
 }): Promise<StructuredJsonModelCompletion> {
-  if (certificationCallContext.getStore() && input.model && input.model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_MODEL_MISMATCH");
-  const model = certificationCallContext.getStore() ? CERTIFICATION_PLANNING_MODEL : (input.model ?? "gpt-4o-mini");
+  const certificationContext = certificationCallContext.getStore();
+  const certificationModel = certificationContext?.model ?? CERTIFICATION_PLANNING_MODEL;
+  if (certificationContext && input.model && input.model !== certificationModel) throw new Error("PLANNING_MODEL_MISMATCH");
+  const model = certificationContext ? certificationModel : (input.model ?? OPENAI_EFFICIENT_MODEL);
   const certification = await claimCertificationCall(input.certificationStage ?? "story_polish", model);
+  const { zodResponseFormat } = await import("openai/helpers/zod");
   const providerStartedAt = performance.now();
   let response;
   try {
     response = await completeWithCertificationGrant(certification, () => certificationModelAdapter().complete(
     {
       model,
-      ...(certification
-        ? { max_tokens: certification.maxOutputTokens }
-        : input.maxOutputTokens
-          ? { max_tokens: input.maxOutputTokens }
-          : {}),
+      ...openAiChatControls(model, certification?.maxOutputTokens ?? input.maxOutputTokens),
       response_format: zodResponseFormat(input.schema, input.schemaName),
       messages: [
         { role: "system", content: input.system },
         { role: "user", content: input.user },
       ],
-      temperature: 0.7,
+      ...(model === OPENAI_QUALITY_MODEL ? {} : { temperature: 0.7 }),
     },
     { maxRetries: 0 }
   ));
@@ -164,7 +171,7 @@ export async function callStructuredJsonModel<T>(input: {
   const usage = {
     input: inputTokens,
     output: outputTokens,
-    costUsd: openAiTokenCost(model, inputTokens, outputTokens),
+    costUsd: openAiTokenCostUsd(model, inputTokens, outputTokens),
   };
 
   const decodeStartedAt = performance.now();
@@ -173,6 +180,16 @@ export async function callStructuredJsonModel<T>(input: {
     return {
       result: null,
       decodeIssue: "PROVIDER_REFUSAL",
+      providerRequestId: response.id,
+      modelVersion: response.model,
+      usage,
+      timings: { providerMs, decodeMs: performance.now() - decodeStartedAt },
+    };
+  }
+  if (response.choices[0]?.finish_reason === "length") {
+    return {
+      result: null,
+      decodeIssue: "TRUNCATED",
       providerRequestId: response.id,
       modelVersion: response.model,
       usage,
@@ -214,22 +231,24 @@ export async function callJsonModel<T>(
   system: string,
   user: string,
   schemaHint: string,
-  options?: { model?: "gpt-4o-mini" | "gpt-4o-mini-2024-07-18" | "gpt-4o"; certificationStage?: CertificationPlanningStage }
+  options?: { model?: OpenAiTextModel; certificationStage?: CertificationPlanningStage }
 ): Promise<{ result: T; usage: { input: number; output: number; costUsd: number } }> {
-  if (certificationCallContext.getStore() && options?.model && options.model !== CERTIFICATION_PLANNING_MODEL) throw new Error("PLANNING_MODEL_MISMATCH");
-  const model = certificationCallContext.getStore() ? CERTIFICATION_PLANNING_MODEL : (options?.model ?? "gpt-4o-mini");
+  const certificationContext = certificationCallContext.getStore();
+  const certificationModel = certificationContext?.model ?? CERTIFICATION_PLANNING_MODEL;
+  if (certificationContext && options?.model && options.model !== certificationModel) throw new Error("PLANNING_MODEL_MISMATCH");
+  const model = certificationContext ? certificationModel : (options?.model ?? OPENAI_EFFICIENT_MODEL);
   const certification = await claimCertificationCall(options?.certificationStage, model);
   let response;
   try {
     response = await completeWithCertificationGrant(certification, () => certificationModelAdapter().complete({
     model,
-    ...(certification ? { max_tokens: certification.maxOutputTokens } : {}),
+    ...openAiChatControls(model, certification?.maxOutputTokens),
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
       { role: "user", content: user },
     ],
-    temperature: 0.7,
+    ...(model === OPENAI_QUALITY_MODEL ? {} : { temperature: 0.7 }),
   }, certification ? { maxRetries: 0 } : undefined));
   } catch (error) {
     if (certification) await certification.authority.failUnknown({ planningClaimId: certification.claim.planningClaimId, completedAt: new Date().toISOString() });
@@ -243,15 +262,19 @@ export async function callJsonModel<T>(
     await certification.authority.settle({ planningClaimId: certification.claim.planningClaimId, inputTokens: response.usage.prompt_tokens, outputTokens: response.usage.completion_tokens, providerRequestId: response.id, completedAt: new Date().toISOString() });
   }
 
-  const content = response.choices[0]?.message?.content ?? "{}";
+  const message = response.choices[0]?.message;
+  if (message?.refusal) throw new Error("OPENAI_PROVIDER_REFUSAL");
+  if (response.choices[0]?.finish_reason === "length") throw new Error("OPENAI_OUTPUT_TRUNCATED");
+  const content = message?.content;
+  if (!content) throw new Error("OPENAI_OUTPUT_MISSING");
   const input = response.usage?.prompt_tokens ?? 0;
   const output = response.usage?.completion_tokens ?? 0;
-  const costUsd = openAiTokenCost(model, input, output);
+  const costUsd = openAiTokenCostUsd(model, input, output);
 
   return { result: JSON.parse(content) as T, usage: { input, output, costUsd } };
 }
 
-/** GPT-4o vision for frame analysis (higher cost than gpt-4o-mini). */
+/** Low-cost vision extraction. Quality-sensitive visual QC uses the separate quality model. */
 export async function callVisionJsonModel<T>(
   system: string,
   userText: string,
@@ -262,13 +285,14 @@ export async function callVisionJsonModel<T>(
   result: T;
   usage: { input: number; output: number; costUsd: number };
   providerRequestId: string | null;
-  requestedModelId: "gpt-4o";
+  requestedModelId: typeof OPENAI_EFFICIENT_MODEL;
   providerModelId: string | null;
 }> {
-  const openai = getOpenAI();
+  const openai = await getOpenAI();
   const response = await openai.chat.completions.create(
     {
-      model: "gpt-4o",
+      model: OPENAI_EFFICIENT_MODEL,
+      ...openAiChatControls(OPENAI_EFFICIENT_MODEL),
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
@@ -291,13 +315,13 @@ export async function callVisionJsonModel<T>(
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;
   const output = response.usage?.completion_tokens ?? 0;
-  const costUsd = (input * 2.5 + output * 10) / 1_000_000;
+  const costUsd = openAiTokenCostUsd(OPENAI_EFFICIENT_MODEL, input, output);
 
   return {
     result: JSON.parse(content) as T,
     usage: { input, output, costUsd },
     providerRequestId: response.id ?? null,
-    requestedModelId: "gpt-4o",
+    requestedModelId: OPENAI_EFFICIENT_MODEL,
     providerModelId: response.model ?? null,
   };
 }

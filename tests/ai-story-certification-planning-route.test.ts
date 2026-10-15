@@ -18,6 +18,7 @@ function authority(overrides: Partial<{
   workspaceId: string;
   campaignId: string;
   storyId: string | null;
+  model: "gpt-4o-mini-2024-07-18" | "gpt-6-luna";
 }> = {}) {
   return {
     status: "ACTIVE",
@@ -27,6 +28,7 @@ function authority(overrides: Partial<{
     workspaceId: scope.workspaceId,
     campaignId: scope.campaignId,
     storyId: null as string | null,
+    model: "gpt-4o-mini-2024-07-18" as const,
     ...overrides,
   };
 }
@@ -44,6 +46,7 @@ describe("shared certification planning route", () => {
       kind: "certification",
       environment: "PRODUCTION",
       certificationRunId: runId,
+      model: "gpt-4o-mini-2024-07-18",
     });
     expect(classifyCertificationPlanningAuthorities([
       authority({ storyId: scope.storyId }),

@@ -6,7 +6,13 @@ import { deterministicPersistenceUuid } from "./ai-story-scene-execution-persist
 type Db = ReturnType<typeof getDb>;
 export const CERTIFICATION_PLANNING_CONTRACT_VERSION = "ai-story-certification-planning.v1" as const;
 export const CERTIFICATION_PLANNING_MODEL = "gpt-4o-mini-2024-07-18" as const;
-/** Official gpt-4o-mini context window, used as an upper bound, not an estimate. */
+export const CERTIFICATION_PLANNING_MIGRATION_MODEL = "gpt-6-luna" as const;
+export const CERTIFICATION_PLANNING_MODELS = [CERTIFICATION_PLANNING_MODEL, CERTIFICATION_PLANNING_MIGRATION_MODEL] as const;
+export type CertificationPlanningModel = (typeof CERTIFICATION_PLANNING_MODELS)[number];
+export function isCertificationPlanningModel(value: string): value is CertificationPlanningModel {
+  return (CERTIFICATION_PLANNING_MODELS as readonly string[]).includes(value);
+}
+/** Conservative shared input ceiling for both supported model-bound authorities. */
 export const CERTIFICATION_PLANNING_INPUT_TOKEN_CEILING = 128_000;
 export const CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS = {
   story_polish: 4096,
@@ -35,18 +41,22 @@ function cents(value: string | number): number {
 }
 function usd(value: number): string { return (value / 100).toFixed(2); }
 
-/** Ceiling pricing in cents per million tokens: input 15, output 60. */
-export function maximumCertificationPlanningCostCents(maxOutputTokens: number): number {
+function planningRates(model: CertificationPlanningModel) {
+  return model === CERTIFICATION_PLANNING_MIGRATION_MODEL ? { input: 10, output: 50 } : { input: 15, output: 60 };
+}
+export function maximumCertificationPlanningCostCents(maxOutputTokens: number, model: CertificationPlanningModel = CERTIFICATION_PLANNING_MODEL): number {
   if (!Number.isInteger(maxOutputTokens) || maxOutputTokens < 1 || maxOutputTokens > 16_384) {
     throw new CertificationPlanningAuthorityError("PLANNING_OUTPUT_LIMIT_INVALID", "Finite output-token limit is required");
   }
-  return Math.ceil((CERTIFICATION_PLANNING_INPUT_TOKEN_CEILING * 15 + maxOutputTokens * 60) / 1_000_000);
+  const rate = planningRates(model);
+  return Math.ceil((CERTIFICATION_PLANNING_INPUT_TOKEN_CEILING * rate.input + maxOutputTokens * rate.output) / 1_000_000);
 }
-export function actualCertificationPlanningCostCents(inputTokens: number, outputTokens: number): number {
+export function actualCertificationPlanningCostCents(inputTokens: number, outputTokens: number, model: CertificationPlanningModel = CERTIFICATION_PLANNING_MODEL): number {
   if (!Number.isInteger(inputTokens) || !Number.isInteger(outputTokens) || inputTokens < 0 || outputTokens < 0 || inputTokens > CERTIFICATION_PLANNING_INPUT_TOKEN_CEILING || outputTokens > 16_384) {
     throw new CertificationPlanningAuthorityError("PLANNING_USAGE_INVALID", "Provider usage exceeds certified model bounds");
   }
-  return Math.ceil((inputTokens * 15 + outputTokens * 60) / 1_000_000);
+  const rate = planningRates(model);
+  return Math.ceil((inputTokens * rate.input + outputTokens * rate.output) / 1_000_000);
 }
 
 export type CertificationPlanningIdentity = {
@@ -63,7 +73,7 @@ export type CertificationPlanningIdentity = {
 export type CertificationPlanningHttpGrant = CertificationPlanningIdentity & {
   planningClaimId: string;
   logicalCallIdentity: string;
-  model: typeof CERTIFICATION_PLANNING_MODEL;
+  model: CertificationPlanningModel;
 };
 
 export class CertificationPlanningAuthorityService {
@@ -109,10 +119,10 @@ export class CertificationPlanningAuthorityService {
     maxPlanningCostUsd: string;
     maxLogicalCalls: number;
     maxTransportAttempts: number;
-    model: typeof CERTIFICATION_PLANNING_MODEL;
+    model: CertificationPlanningModel;
   }) {
     CertificationEnvironmentSchema.parse(input.environment);
-    if (input.model !== CERTIFICATION_PLANNING_MODEL || !Number.isInteger(input.maxLogicalCalls) || input.maxLogicalCalls < 1 || input.maxTransportAttempts !== 1 || !input.authorizationReason.trim() || cents(input.maxPlanningCostUsd) < 1) {
+    if (!isCertificationPlanningModel(input.model) || !Number.isInteger(input.maxLogicalCalls) || input.maxLogicalCalls < 1 || input.maxTransportAttempts !== 1 || !input.authorizationReason.trim() || cents(input.maxPlanningCostUsd) < 1) {
       throw new CertificationPlanningAuthorityError("PLANNING_AUTHORIZATION_INVALID", "Finite planning authorization is required");
     }
     return this.db.transaction(async (tx) => {
@@ -153,7 +163,7 @@ export class CertificationPlanningAuthorityService {
   async claim(input: CertificationPlanningIdentity & {
     logicalCallIdentity: string;
     stage: CertificationPlanningStage;
-    model: typeof CERTIFICATION_PLANNING_MODEL;
+    model: CertificationPlanningModel;
     maxOutputTokens: number;
     maxRetries: number;
     providerAttemptId?: string | null;
@@ -161,10 +171,10 @@ export class CertificationPlanningAuthorityService {
   }) {
     CertificationEnvironmentSchema.parse(input.environment);
     const requiredLimit = CERTIFICATION_PLANNING_STAGE_OUTPUT_LIMITS[input.stage];
-    if (!requiredLimit || input.maxOutputTokens !== requiredLimit || input.model !== CERTIFICATION_PLANNING_MODEL || input.maxRetries !== 0 || !input.logicalCallIdentity.trim()) {
+    if (!requiredLimit || input.maxOutputTokens !== requiredLimit || !isCertificationPlanningModel(input.model) || input.maxRetries !== 0 || !input.logicalCallIdentity.trim()) {
       throw new CertificationPlanningAuthorityError("PLANNING_CALL_CONTRACT_INVALID", "Stage, model, output limit or retry policy is not authorized");
     }
-    const projectedCents = maximumCertificationPlanningCostCents(input.maxOutputTokens);
+    const projectedCents = maximumCertificationPlanningCostCents(input.maxOutputTokens, input.model);
     return this.db.transaction(async (tx) => {
       let [authority] = await tx.select().from(schema.certificationPlanningAuthorities).where(and(
         eq(schema.certificationPlanningAuthorities.environment, input.environment),
@@ -217,14 +227,14 @@ export class CertificationPlanningAuthorityService {
    */
   async assertHttpTransportAuthorized(grant: CertificationPlanningHttpGrant): Promise<void> {
     CertificationEnvironmentSchema.parse(grant.environment);
-    if (grant.model !== CERTIFICATION_PLANNING_MODEL || !grant.logicalCallIdentity.trim() || !grant.planningClaimId.trim()) {
+    if (!isCertificationPlanningModel(grant.model) || !grant.logicalCallIdentity.trim() || !grant.planningClaimId.trim()) {
       throw new CertificationPlanningAuthorityError("PLANNING_HTTP_GRANT_INVALID", "Certification transport grant is incomplete");
     }
     const [claim] = await this.db.select().from(schema.certificationPlanningClaims).where(eq(schema.certificationPlanningClaims.planningClaimId, grant.planningClaimId)).limit(1);
     if (!claim || claim.status !== "RESERVED") {
       throw new CertificationPlanningAuthorityError("PLANNING_HTTP_CLAIM_REQUIRED", "A reserved certification planning claim is required before HTTP");
     }
-    if (claim.logicalCallIdentity !== grant.logicalCallIdentity || claim.model !== CERTIFICATION_PLANNING_MODEL || claim.requestedBy !== grant.actorUserId || cents(claim.reservedMaximumUsd) < 1) {
+    if (claim.logicalCallIdentity !== grant.logicalCallIdentity || claim.model !== grant.model || claim.requestedBy !== grant.actorUserId || cents(claim.reservedMaximumUsd) < 1) {
       throw new CertificationPlanningAuthorityError("PLANNING_SCOPE_INVALID", "Certification transport claim does not match the execution");
     }
     const [authority] = await this.db.select().from(schema.certificationPlanningAuthorities).where(eq(schema.certificationPlanningAuthorities.planningAuthorityId, claim.planningAuthorityId)).limit(1);
@@ -253,7 +263,6 @@ export class CertificationPlanningAuthorityService {
   }
 
   async settle(input: { planningClaimId: string; inputTokens: number; outputTokens: number; providerRequestId?: string | null; completedAt: string }) {
-    const actualCents = actualCertificationPlanningCostCents(input.inputTokens, input.outputTokens);
     return this.db.transaction(async (tx) => {
       const [binding] = await tx.select({ planningAuthorityId: schema.certificationPlanningClaims.planningAuthorityId }).from(schema.certificationPlanningClaims).where(eq(schema.certificationPlanningClaims.planningClaimId, input.planningClaimId)).limit(1);
       if (!binding) throw new CertificationPlanningAuthorityError("PLANNING_CLAIM_INVALID", "Planning claim missing");
@@ -261,6 +270,8 @@ export class CertificationPlanningAuthorityService {
       if (!authority) throw new CertificationPlanningAuthorityError("PLANNING_AUTHORITY_MISSING", "Planning authority missing");
       const [claim] = await tx.select().from(schema.certificationPlanningClaims).where(eq(schema.certificationPlanningClaims.planningClaimId, input.planningClaimId)).limit(1).for("update");
       if (!claim || claim.status !== "RESERVED") throw new CertificationPlanningAuthorityError("PLANNING_CLAIM_INVALID", "Only a reserved claim can settle");
+      if (!isCertificationPlanningModel(claim.model)) throw new CertificationPlanningAuthorityError("PLANNING_CLAIM_INVALID", "Planning claim model is unsupported");
+      const actualCents = actualCertificationPlanningCostCents(input.inputTokens, input.outputTokens, claim.model);
       const reservedCents = cents(claim.reservedMaximumUsd);
       if (actualCents > reservedCents || input.outputTokens > claim.maxOutputTokens || input.inputTokens > claim.projectedInputTokens) throw new CertificationPlanningAuthorityError("PLANNING_USAGE_EXCEEDS_RESERVATION", "Provider usage exceeds pre-call authority");
       await tx.update(schema.certificationPlanningClaims).set({ status: "SETTLED", actualInputTokens: input.inputTokens, actualOutputTokens: input.outputTokens, actualCostUsd: usd(actualCents), providerRequestId: input.providerRequestId ?? null, completedAt: new Date(input.completedAt) }).where(eq(schema.certificationPlanningClaims.planningClaimId, claim.planningClaimId));

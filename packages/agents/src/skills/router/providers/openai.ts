@@ -5,14 +5,11 @@ import type {
   AiProviderId,
 } from "../../types";
 import { AiSkillError } from "../../types";
+import { OPENAI_EFFICIENT_MODEL, isOpenAiTextModel, type OpenAiTextModel } from "../../../openai-model-policy";
 
-const OPENAI_MODELS = new Set(["gpt-4o-mini", "gpt-4o"]);
-
-function resolveOpenAiModel(preferred?: string): "gpt-4o-mini" | "gpt-4o" {
-  if (preferred && OPENAI_MODELS.has(preferred)) {
-    return preferred as "gpt-4o-mini" | "gpt-4o";
-  }
-  return "gpt-4o-mini";
+function resolveOpenAiModel(preferred?: string): OpenAiTextModel {
+  if (preferred && isOpenAiTextModel(preferred)) return preferred;
+  return OPENAI_EFFICIENT_MODEL;
 }
 
 /** OpenAI JSON completion — provider logic terminates here (PD-014). */

@@ -17,8 +17,9 @@ import {
   type AiStoryVideoAnalysisSnapshotRepository,
 } from "@ceo-agent/shared";
 import { classifyAiStoryVideoAssetAnalysis } from "@ceo-agent/shared";
+import { OPENAI_EFFICIENT_MODEL } from "../openai-model-policy";
 
-export const AI_STORY_VIDEO_OBSERVATION_MODEL = "gpt-4o" as const;
+export const AI_STORY_VIDEO_OBSERVATION_MODEL = OPENAI_EFFICIENT_MODEL;
 
 export class AiStoryVideoAnalysisServiceError extends Error {
   constructor(

@@ -11,14 +11,14 @@ import {
 } from "../packages/agents/src/skills/router/ai-router";
 
 describe("AI Router selection (PD-014)", () => {
-  it("defaults to OpenAI gpt-4o-mini", () => {
+  it("defaults to the low-cost OpenAI model", () => {
     const route = selectAiRoute({
       system: "s",
       user: "u",
       schemaHint: "{}",
     });
     expect(route.provider).toBe("openai");
-    expect(route.model).toBe("gpt-4o-mini");
+    expect(route.model).toBe("gpt-6-luna");
     expect(route.maxRetries).toBeGreaterThanOrEqual(0);
   });
 
@@ -60,7 +60,7 @@ describe("BusinessProfileAnalyzerSkill (PD-014)", () => {
     expect(prompt.system).toMatch(/PROMPT-002/);
     expect(prompt.user).toContain("Bloom Co");
     expect(prompt.schemaHint).toContain("brandSummary");
-    expect(prompt.preferredModel).toBe("gpt-4o-mini");
+    expect(prompt.preferredModel).toBe("gpt-6-luna");
   });
 
   it("normalizes raw provider JSON into the skill output contract", () => {

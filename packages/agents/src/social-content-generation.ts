@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CampaignSocialContentSchema, type CampaignSocialContent } from "@ceo-agent/shared";
 import { callStructuredJsonModel, type StructuredJsonModelCompletion } from "./llm";
+import { OPENAI_EFFICIENT_MODEL, type OpenAiTextModel } from "./openai-model-policy";
 
 export type SocialContentGenerationInput={
   platform:"YOUTUBE"|"TIKTOK";
@@ -10,20 +11,20 @@ export type SocialContentGenerationInput={
   artifactIdentity:string;
 };
 export const SOCIAL_AI_MAX_EVIDENCE_BYTES=10_000;
-export type SocialContentCompletion=(input:{system:string;user:string;schema:z.ZodTypeAny;schemaName:string;model:"gpt-4o-mini";maxOutputTokens:number})=>Promise<StructuredJsonModelCompletion>;
+export type SocialContentCompletion=(input:{system:string;user:string;schema:z.ZodTypeAny;schemaName:string;model:OpenAiTextModel;maxOutputTokens:number})=>Promise<StructuredJsonModelCompletion>;
 
 const schemas={
   YOUTUBE:z.object({platform:z.literal("YOUTUBE"),content:z.object({title:z.string().min(1).max(100),description:z.string().min(1).max(5000),hashtags:z.array(z.string()).max(15)}),disclosure:z.object({containsAiGeneratedContent:z.boolean(),label:z.string().min(1).max(300)})}),
   TIKTOK:z.object({platform:z.literal("TIKTOK"),content:z.object({caption:z.string().min(1).max(2200),hashtags:z.array(z.string()).max(20)}),disclosure:z.object({containsAiGeneratedContent:z.boolean(),label:z.string().min(1).max(300)})}),
 } as const;
 
-export async function generateCampaignSocialContent(input:SocialContentGenerationInput,deps:{complete?:SocialContentCompletion}={}){
+export async function generateCampaignSocialContent(input:SocialContentGenerationInput,deps:{complete?:SocialContentCompletion;model?:OpenAiTextModel}={}){
   const complete:SocialContentCompletion=deps.complete??((request)=>callStructuredJsonModel(request));
   const schema=schemas[input.platform];
   const evidence=JSON.stringify({platform:input.platform,businessFacts:input.businessFacts,approvedPlan:input.approvedPlan,reviewFindings:input.reviewFindings,artifactIdentity:input.artifactIdentity});
   if(Buffer.byteLength(evidence,"utf8")>SOCIAL_AI_MAX_EVIDENCE_BYTES)throw new Error("SOCIAL_AI_INPUT_LIMIT_EXCEEDED");
   const completion=await complete({
-    model:"gpt-4o-mini",
+    model:deps.model??OPENAI_EFFICIENT_MODEL,
     maxOutputTokens:1200,
     schema,
     schemaName:`campaign_social_${input.platform.toLowerCase()}_v1`,

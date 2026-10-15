@@ -141,7 +141,7 @@ export async function persistAiStoryPlanningOutcome(
     attemptNumber: 0,
     providerId: "openai",
     providerVersion: PROVIDER_VERSION,
-    modelVersion: input.accounting?.model ?? "gpt-4o-mini",
+    modelVersion: input.accounting?.model ?? "gpt-6-luna",
     providerRequestId: input.accounting?.providerRequestId,
     requestHash: input.identity.requestHash,
     responseHash: sha256CanonicalIntegrityHash({

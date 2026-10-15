@@ -4792,7 +4792,7 @@ export const certificationPlanningAuthorities = pgTable(
   (t) => [
     unique("certification_planning_run_environment_unique").on(t.environment, t.certificationRunId),
     check("certification_planning_environment_check", sql`${t.environment} in ('STAGING','PRODUCTION')`),
-    check("certification_planning_model_check", sql`${t.model} = 'gpt-4o-mini-2024-07-18'`),
+    check("certification_planning_model_check", sql`${t.model} in ('gpt-4o-mini-2024-07-18','gpt-6-luna')`),
     check("certification_planning_status_check", sql`${t.status} in ('ACTIVE','CLOSED','REVOKED')`),
     check("certification_planning_limits_check", sql`${t.maxPlanningCostUsd} > 0 and ${t.maxLogicalCalls} > 0 and ${t.maxTransportAttempts} > 0`),
     check("certification_planning_counters_check", sql`${t.spentPlanningCostUsd} >= 0 and ${t.reservedPlanningCostUsd} >= 0 and ${t.consumedLogicalCalls} >= 0 and ${t.reservedLogicalCalls} >= 0 and ${t.spentPlanningCostUsd} + ${t.reservedPlanningCostUsd} <= ${t.maxPlanningCostUsd} and ${t.consumedLogicalCalls} + ${t.reservedLogicalCalls} <= ${t.maxLogicalCalls}`),

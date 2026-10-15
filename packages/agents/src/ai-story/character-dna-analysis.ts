@@ -9,8 +9,9 @@ import {
   sanitizeCharacterDnaAnalysisOutput,
 } from "@ceo-agent/shared/server";
 import { callVisionJsonModel } from "../llm";
+import { OPENAI_EFFICIENT_MODEL } from "../openai-model-policy";
 
-export const CHARACTER_DNA_VISION_MODEL = "gpt-4o" as const;
+export const CHARACTER_DNA_VISION_MODEL = OPENAI_EFFICIENT_MODEL;
 export const CHARACTER_DNA_VISION_PROVIDER = "openai-vision" as const;
 export const CHARACTER_DNA_VISION_REQUEST_OPTIONS = Object.freeze({
   maxRetries: 0,
