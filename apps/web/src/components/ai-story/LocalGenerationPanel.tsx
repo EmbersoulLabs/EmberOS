@@ -21,6 +21,7 @@ type Props = {
   storyId: string;
   executionPlanId: string;
   refreshToken?: number;
+  localGpuAuthorized?: boolean;
 };
 
 type UploadPhase = "idle" | "preparing" | "uploading" | "validating" | "uploaded" | "failed";
@@ -60,12 +61,13 @@ type ReadModel = {
   mediaJobs: Array<{packageId:string;kind:string;state:string;errorCode:string|null}>;
 };
 
-export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, refreshToken }: Props) {
+export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, refreshToken, localGpuAuthorized = false }: Props) {
   const [model, setModel] = useState<ReadModel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copyPhase, setCopyPhase] = useState<Record<string, OperatorPhase>>({});
   const [downloadPhase, setDownloadPhase] = useState<Record<string, OperatorPhase>>({});
   const [uploadPhase, setUploadPhase] = useState<Record<string, UploadPhase>>({});
+  const [localGpuPhase, setLocalGpuPhase] = useState<Record<string, "idle" | "authorizing" | "authorized" | "failed">>({});
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const uploadLock = useRef<Set<string>>(new Set());
   const base = `/api/campaigns/${campaignId}/ai-stories/${storyId}/execution-plans/${executionPlanId}`;
@@ -171,6 +173,29 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
     }
   }
 
+  async function authorizeLocalGpu(item: ReadModel["packages"][number]) {
+    const phase = localGpuPhase[item.packageId];
+    if (phase === "authorizing" || phase === "authorized") return;
+    setError(null);
+    setLocalGpuPhase((current) => ({ ...current, [item.packageId]: "authorizing" }));
+    try {
+      const response = await fetch(`${base}/local-generation/${item.packageId}/local-gpu-authority`, {
+        method: "POST",
+        headers: {
+          "idempotency-key": `local-gpu:${item.packageId}:${item.runtimeAuthorizationId}`,
+        },
+      });
+      const body = await response.json();
+      if (!response.ok || body?.status !== "ACTIVE" || body?.gpuSubmitted !== false) {
+        throw new Error(body?.error ?? "LOCAL_GPU authorization failed");
+      }
+      setLocalGpuPhase((current) => ({ ...current, [item.packageId]: "authorized" }));
+    } catch (cause) {
+      setLocalGpuPhase((current) => ({ ...current, [item.packageId]: "failed" }));
+      setError(cause instanceof Error ? cause.message : "LOCAL_GPU authorization failed");
+    }
+  }
+
   if (!model || model.packages.length === 0) return null;
   const outputs = new Map(model.outputs.map((output) => [output.packageId, output]));
 
@@ -241,6 +266,23 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
                     </button>
                   );
                 })}
+                {localGpuAuthorized && !output ? (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-brand-blue px-3 py-1.5 text-sm font-semibold text-brand-blue disabled:opacity-50"
+                    disabled={localGpuPhase[item.packageId] === "authorizing" || localGpuPhase[item.packageId] === "authorized"}
+                    onClick={() => void authorizeLocalGpu(item)}
+                    data-testid={`authorize-local-gpu-${item.order}`}
+                  >
+                    {localGpuPhase[item.packageId] === "authorizing"
+                      ? "Authorizing LOCAL_GPU…"
+                      : localGpuPhase[item.packageId] === "authorized"
+                        ? "LOCAL_GPU authorized ✓"
+                        : localGpuPhase[item.packageId] === "failed"
+                          ? "Retry LOCAL_GPU authorization"
+                          : "Authorize LOCAL_GPU"}
+                  </button>
+                ) : null}
               </div>
               {!output ? (
                 <div className="mt-3">
