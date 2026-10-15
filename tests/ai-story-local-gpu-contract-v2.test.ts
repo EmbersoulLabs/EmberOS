@@ -47,6 +47,17 @@ function pkg(overrides: Record<string, unknown> = {}): AiStoryLocalGenerationPac
     order: 1,
     durationSec: 6,
     prompt: "The product stays on the table.",
+    worldDescription: "A quiet studio with soft window light.",
+    mustKeep: ["The label remains readable."],
+    mustAvoid: ["Do not invent another logo."],
+    continuityRequirements: ["The bottle remains on the same table."],
+    currentUnitStartState: ["PRODUCT_STATE: sealed"],
+    expectedEndState: ["PRODUCT_STATE: label facing camera"],
+    qcRequirements: [
+      { dimension: "MOTION_EXECUTION", summary: "The hand reaches for the bottle, grips it, and rotates it once." },
+      { dimension: "DIRECTOR_EXECUTION", summary: "Use one slow push-in while keeping the label centered." },
+      { dimension: "REQUIRED_EVIDENCE", summary: "The hand remains in contact with the bottle during the rotation." },
+    ],
     dialogue: [],
     generateAudio: true,
     audioBlocked: false,
@@ -135,8 +146,16 @@ describe("Desktop contract V2", () => {
     expect(result.body.creative.products[0]).toEqual({ subjectId: productAssetId, variantId: "matte-black", modelBound: false });
     expect(result.body.firstFrame).toBeNull();
     expect(result.body.audioPolicy).toBe("NO_DIALOGUE_WITH_AMBIENT_AUDIO");
+    expect(result.body.prompt).toBe(
+      "The product stays on the table. | SCENE: A quiet studio with soft window light. | CHARACTER IDENTITY: Preserve the authorized Character identity from the CHARACTER reference throughout the clip. | PRODUCT IDENTITY: Preserve the authorized Product identity from the PRODUCT reference throughout the clip.; matte-black | PRIMARY ACTION PROGRESSION: The hand reaches for the bottle, grips it, and rotates it once. | OBJECT INTERACTIONS: The hand remains in contact with the bottle during the rotation. | CAMERA GUIDANCE: Use one slow push-in while keeping the label centered. | START STATE: PRODUCT_STATE: sealed | REQUIRED END STATE: PRODUCT_STATE: label facing camera | CONTINUITY: The bottle remains on the same table. | MUST KEEP: The label remains readable. | MUST AVOID: Do not invent another logo.",
+    );
     expect(result.speechReviewRequired).toBe(true);
     expect(result.body).not.toHaveProperty("remoteProviderFallback");
+  });
+
+  it("fails closed when the same authoritative fact is both required and forbidden", () => {
+    expect(code(() => map({ mustKeep: ["Keep the bottle sealed"], mustAvoid: ["Keep the bottle sealed"] })))
+      .toBe("LOCAL_GPU_PROMPT_AUTHORITY_CONFLICT");
   });
 
   it("carries an authorized continuity frame outside the two model references", () => {

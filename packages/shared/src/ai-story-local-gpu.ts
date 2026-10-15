@@ -892,6 +892,78 @@ export type LocalGpuDesktopSubmitBodyV3 = {
   upload: LocalGpuUploadDestination;
 };
 
+export type LocalGpuH3PromptFacts = {
+  sceneContext?: readonly string[];
+  characterIdentity?: readonly string[];
+  productIdentity?: readonly string[];
+  actionProgression?: readonly string[];
+  objectInteractions?: readonly string[];
+  cameraGuidance?: readonly string[];
+  startState?: readonly string[];
+  endState?: readonly string[];
+  continuity?: readonly string[];
+  mustKeep?: readonly string[];
+  mustAvoid?: readonly string[];
+};
+
+function normalizedPromptFact(value: string): string {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+/** Deterministic, provider-local H3 serialization. It only projects supplied authority facts. */
+export function serializeLocalGpuH3Prompt(input: {
+  prompt: string;
+  facts?: LocalGpuH3PromptFacts | null;
+  maxLength?: number;
+}): string {
+  const base = normalizedPromptFact(input.prompt);
+  if (!base) throw new LocalGpuContractError("LOCAL_GPU_PROMPT_REQUIRED");
+  const facts = input.facts;
+  if (!facts) return base;
+  const seen = new Set<string>();
+  const baseKey = base.toLocaleLowerCase("en");
+  const unique = (values: readonly string[] | undefined) => {
+    return (values ?? []).flatMap((value) => {
+      if (typeof value !== "string") return [];
+      const fact = normalizedPromptFact(value);
+      const key = fact.toLocaleLowerCase("en");
+      if (!fact || seen.has(key) || baseKey.includes(key)) return [];
+      seen.add(key);
+      return [fact];
+    });
+  };
+  const normalized = (values: readonly string[] | undefined) => (values ?? [])
+    .map(normalizedPromptFact)
+    .filter(Boolean);
+  const keepFacts = normalized(facts.mustKeep);
+  const avoidFacts = normalized(facts.mustAvoid);
+  const keepKeys = new Set(keepFacts.map((value) => value.toLocaleLowerCase("en")));
+  if (avoidFacts.some((value) => keepKeys.has(value.toLocaleLowerCase("en")))) {
+    throw new LocalGpuContractError("LOCAL_GPU_PROMPT_AUTHORITY_CONFLICT");
+  }
+  const sections: Array<[string, string[]]> = [
+    ["SCENE", unique(facts.sceneContext)],
+    ["CHARACTER IDENTITY", unique(facts.characterIdentity)],
+    ["PRODUCT IDENTITY", unique(facts.productIdentity)],
+    ["PRIMARY ACTION PROGRESSION", unique(facts.actionProgression).slice(0, 4)],
+    ["OBJECT INTERACTIONS", unique(facts.objectInteractions).slice(0, 3)],
+    ["CAMERA GUIDANCE", unique(facts.cameraGuidance).slice(0, 3)],
+    ["START STATE", unique(facts.startState)],
+    ["REQUIRED END STATE", unique(facts.endState)],
+    ["CONTINUITY", unique(facts.continuity)],
+    ["MUST KEEP", unique(keepFacts)],
+    ["MUST AVOID", unique(avoidFacts)],
+  ];
+  const serialized = [
+    base,
+    ...sections.flatMap(([title, values]) => values.length ? [`${title}: ${values.join("; ")}`] : []),
+  ].join(" | ");
+  if (serialized.length > (input.maxLength ?? 12_000)) {
+    throw new LocalGpuContractError("LOCAL_GPU_PROMPT_DENSITY_EXCEEDED");
+  }
+  return serialized;
+}
+
 export function assertLocalGpuT2vMegapixels(megapixels: number): number {
   if (!Number.isFinite(megapixels) || megapixels <= 0) {
     throw new LocalGpuContractError("LOCAL_GPU_RESOLUTION_REQUIRED");
@@ -910,6 +982,7 @@ export function buildLocalGpuZeroAssetT2VSubmit(input: {
   storyId: string;
   storyVersionId: string;
   prompt: string;
+  promptFacts?: LocalGpuH3PromptFacts | null;
   plannedDurationMs: number;
   aspectRatio: "9:16" | "16:9" | "1:1";
   seed: number;
@@ -962,7 +1035,7 @@ export function buildLocalGpuZeroAssetT2VSubmit(input: {
   });
   if (selected.workflow !== LOCAL_GPU_T2V_WORKFLOW) throw new LocalGpuContractError("LOCAL_GPU_WORKFLOW_UNSUPPORTED");
   if (!LOCAL_GPU_V2_AUDIO_POLICIES.includes(input.audioPolicy)) throw new LocalGpuContractError("LOCAL_GPU_AUDIO_POLICY_INVALID");
-  if (!input.prompt || /[\r\n]/.test(input.prompt)) throw new LocalGpuContractError("LOCAL_GPU_PROMPT_REQUIRED");
+  const prompt = serializeLocalGpuH3Prompt({ prompt: input.prompt, facts: input.promptFacts });
   if (!Number.isInteger(input.seed)) throw new LocalGpuContractError("LOCAL_GPU_SEED_REQUIRED");
   const megapixels = assertLocalGpuT2vMegapixels(input.megapixels);
   const durationSec = localGpuDesktopDurationSec(input.plannedDurationMs);
@@ -987,7 +1060,7 @@ export function buildLocalGpuZeroAssetT2VSubmit(input: {
     sceneExecutionId: input.sceneExecutionId,
     workspaceId: input.workspaceId,
     workflow: LOCAL_GPU_T2V_WORKFLOW,
-    prompt: input.prompt,
+    prompt,
     durationSec,
     audioPolicy: input.audioPolicy,
     aspectRatio: input.aspectRatio,
@@ -1018,7 +1091,7 @@ export function buildLocalGpuZeroAssetT2VSubmit(input: {
       sceneExecutionId: input.sceneExecutionId,
       workspaceId: input.workspaceId,
       workflow: LOCAL_GPU_T2V_WORKFLOW,
-      prompt: input.prompt,
+      prompt,
       durationSec,
       durationSource: LOCAL_GPU_DURATION_SOURCE,
       audioPolicy: input.audioPolicy,
