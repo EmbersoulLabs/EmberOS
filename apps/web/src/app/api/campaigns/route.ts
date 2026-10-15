@@ -1,4 +1,4 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, isNull } from "drizzle-orm";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
@@ -33,7 +33,11 @@ export async function GET(request: Request) {
     });
 
     const db = getDb();
-    let conditions = [eq(schema.campaigns.workspaceId, workspaceId)];
+    let conditions = [
+      eq(schema.campaigns.workspaceId, workspaceId),
+      isNull(schema.campaigns.archivedAt),
+      isNull(schema.campaigns.deletedAt),
+    ];
     if (status) {
       conditions.push(eq(schema.campaigns.status, status));
     }
