@@ -73,6 +73,20 @@ export const AiStoryScriptEntrySchema = z.discriminatedUnion("type", [
   AiStoryScriptActionEntrySchema, AiStoryScriptDialogueEntrySchema, AiStoryScriptVoEntrySchema,
 ]);
 
+/**
+ * Audit evidence persisted by the semantic-authority normalizer. Historical
+ * frozen Scripts may carry this field even though it is not execution
+ * authority; decoding it must remain strict so unknown data cannot affect the
+ * canonical Script/Scene lineage.
+ */
+export const AiStoryScriptSemanticAuthorityAuditSchema = z.object({
+  rawSceneFunction: Text.max(1000),
+  normalizedSceneFunction: z.enum(Object.keys(AI_STORY_SCENE_FUNCTION_REGISTRY) as [keyof typeof AI_STORY_SCENE_FUNCTION_REGISTRY, ...(keyof typeof AI_STORY_SCENE_FUNCTION_REGISTRY)[]]),
+  canonicalRequiredSceneFunction: z.enum(Object.keys(AI_STORY_SCENE_FUNCTION_REGISTRY) as [keyof typeof AI_STORY_SCENE_FUNCTION_REGISTRY, ...(keyof typeof AI_STORY_SCENE_FUNCTION_REGISTRY)[]]).nullable(),
+  authorityOverride: z.boolean(),
+  productAuthorityIds: z.array(Id),
+}).strict();
+
 export const AiStoryScriptSceneSchema = z.object({
   scriptSceneId: Id,
   order: z.number().int().nonnegative(),
@@ -95,6 +109,7 @@ export const AiStoryScriptSceneSchema = z.object({
   causalPreconditions: z.array(Text.max(1000)).optional(),
   commercialContribution: AiStoryCommercialSceneContributionSchema.optional(),
   storyConsequence: Text.max(1000).optional(),
+  semanticAuthorityAudit: AiStoryScriptSemanticAuthorityAuditSchema.optional(),
 }).strict();
 
 export const AiStoryScriptVersionSchema = z.object({

@@ -114,6 +114,27 @@ describe("AI Story Canonical Script producer lifecycle V1", () => {
     expect(current.sourceHash).not.toBe(legacy.sourceHash);
   });
 
+  it("strictly decodes persisted semantic authority audit evidence", () => {
+    const current = scriptFor();
+    const semanticAuthorityAudit = {
+      rawSceneFunction: "PRODUCT_INTRODUCTION",
+      normalizedSceneFunction: "PRODUCT_INTRODUCTION" as const,
+      canonicalRequiredSceneFunction: "PRODUCT_INTRODUCTION" as const,
+      authorityOverride: false,
+      productAuthorityIds: [I.product],
+    };
+    const persisted = {
+      ...current,
+      scenes: [{ ...current.scenes[0]!, semanticAuthorityAudit }, ...current.scenes.slice(1)],
+    };
+    expect(AiStoryScriptVersionSchema.parse(persisted).scenes[0]!.semanticAuthorityAudit)
+      .toEqual(semanticAuthorityAudit);
+    expect(AiStoryScriptVersionSchema.safeParse({
+      ...persisted,
+      scenes: [{ ...persisted.scenes[0]!, semanticAuthorityAudit: { ...semanticAuthorityAudit, unexpected: true } }, ...persisted.scenes.slice(1)],
+    }).success).toBe(false);
+  });
+
   it("calls the writer once only before first persistence and completes the full lifecycle", async () => {
     const state = runtime();
     const result = await ensureCurrentFrozenCanonicalScript(ensureInput, state.deps);
