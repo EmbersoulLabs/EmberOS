@@ -41,7 +41,7 @@ import {
   type AiStoryLocalGenerationPreparationPort,
 } from "./local-generation-service";
 import {
-  assertCurrentPreGenerationQcForRuntimeAuthorization,
+  ensureCurrentPreGenerationQcForRuntimeAuthorization,
   persistRuntimeAuthorizationAfterPreQc,
 } from "./generate-review-pre-generation-qc";
 import { AiStoryLocalGenerationError } from "./local-generation-package";
@@ -531,7 +531,7 @@ export async function authorizeAndExecuteExecutionPlan(
           // Remote scheduling keeps its existing authority path. MANUAL_LOCAL
           // must prove current Pre-QC before a RuntimeAuthorizedFact is stored.
           if (input.executionMode !== "MANUAL_LOCAL" || !defaultDbRepositories) return;
-          await assertCurrentPreGenerationQcForRuntimeAuthorization({
+          await ensureCurrentPreGenerationQcForRuntimeAuthorization({
             db: getDb(),
             scope: {
               orgId: input.ownership.orgId,
