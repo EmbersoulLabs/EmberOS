@@ -138,11 +138,29 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryOutlineScope, 
         and (${!scope.requireCurrentFrozenStoryVersion} = true or (
           s.current_version_id=v.id and v.frozen_at is not null
         ))
-        and exists(
-          select 1 from workspace_members wm
-          where wm.workspace_id=${scope.workspaceId}::uuid
-            and wm.user_id=${scope.actorUserId}::uuid
-            and (${mutation} = false or wm.role in ('admin','operator','editor','reviewer'))
+        and (
+          exists(
+            select 1 from workspace_members wm
+            where wm.workspace_id=${scope.workspaceId}::uuid
+              and wm.user_id=${scope.actorUserId}::uuid
+              and (${mutation} = false or wm.role in ('admin','operator','editor','reviewer'))
+          )
+          or exists(
+            select 1
+            from platform_admin_grants admin
+            join controlled_self_use_authorities authority
+              on authority.account_user_id=admin.user_id
+             and authority.scope_kind='ACCOUNT'
+             and authority.status='ACTIVE'
+             and authority.environment='PRODUCTION'
+            join controlled_self_use_organization_scopes internal_scope
+              on internal_scope.authority_id=authority.authority_id
+             and internal_scope.organization_id=${scope.orgId}::uuid
+             and internal_scope.status='ACTIVE'
+            where admin.user_id=${scope.actorUserId}::uuid
+              and admin.platform_role='PLATFORM_SUPER_ADMIN'
+              and admin.status='ACTIVE'
+          )
         )
     ) as ok
   `);

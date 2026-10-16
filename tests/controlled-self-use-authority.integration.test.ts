@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Sql } from "postgres";
 import {
   ControlledSelfUseAuthorityService,
+  AiStoryOutlineAuthorityService,
   EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID,
   BillingAccountRepositoryImpl,
   PlatformAdminRepositoryImpl,
@@ -208,6 +209,41 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       providerKey: "openai",
       actorUserId: adminUserId,
     })).resolves.toMatchObject({ authorityId });
+  });
+
+  it("projects account authority into canonical Outline scope without crossing into customer Companies", async () => {
+    const internalCampaignId = crypto.randomUUID();
+    const internalStoryId = crypto.randomUUID();
+    const internalVersionId = crypto.randomUUID();
+    const customerCampaignId = crypto.randomUUID();
+    const customerStoryId = crypto.randomUUID();
+    const customerVersionId = crypto.randomUUID();
+    await sql`insert into campaigns (id,org_id,workspace_id,name) values
+      (${internalCampaignId}::uuid,${secondInternalOrgId}::uuid,${secondInternalWorkspaceId}::uuid,'Internal Outline'),
+      (${customerCampaignId}::uuid,${otherOrgId}::uuid,${otherWorkspaceId}::uuid,'Customer Outline')`;
+    await sql`insert into ai_stories (id,org_id,workspace_id,campaign_id,title,original_idea,status) values
+      (${internalStoryId}::uuid,${secondInternalOrgId}::uuid,${secondInternalWorkspaceId}::uuid,${internalCampaignId}::uuid,'Internal','Idea','planning'),
+      (${customerStoryId}::uuid,${otherOrgId}::uuid,${otherWorkspaceId}::uuid,${customerCampaignId}::uuid,'Customer','Idea','planning')`;
+    await sql`insert into ai_story_versions (id,story_id,version_number,structured_content,frozen_at) values
+      (${internalVersionId}::uuid,${internalStoryId}::uuid,1,'{}'::jsonb,now()),
+      (${customerVersionId}::uuid,${customerStoryId}::uuid,1,'{}'::jsonb,now())`;
+    const outlines = new AiStoryOutlineAuthorityService();
+    await expect(outlines.history({
+      orgId: secondInternalOrgId,
+      workspaceId: secondInternalWorkspaceId,
+      campaignId: internalCampaignId,
+      storyId: internalStoryId,
+      storyVersionId: internalVersionId,
+      actorUserId: adminUserId,
+    })).resolves.toEqual([]);
+    await expect(outlines.history({
+      orgId: otherOrgId,
+      workspaceId: otherWorkspaceId,
+      campaignId: customerCampaignId,
+      storyId: customerStoryId,
+      storyVersionId: customerVersionId,
+      actorUserId: adminUserId,
+    })).rejects.toThrow("Outline authority scope does not resolve");
   });
 
   it("converges an existing explicit internal Workspace scope without treating platform access as ownership", async () => {
