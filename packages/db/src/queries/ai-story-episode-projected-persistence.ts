@@ -40,6 +40,7 @@ export async function persistEpisodeProjectedDirector(
   scope: AiStoryScriptScope,
   source: EpisodeProjectedAuthoritySource,
   createdAt = new Date().toISOString(),
+  targetStatus: "VALIDATED" | "FROZEN" = "FROZEN",
 ): Promise<AiStoryEpisodeProjectedDirectorPlan> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`director-plan:${scope.storyId}`}))`);
@@ -76,7 +77,7 @@ export async function persistEpisodeProjectedDirector(
       createdAt,
     });
     const same = existing.find((row) => row.sourceHash === draft.sourceHash);
-    if (same) return freezeDirector(tx, scope, AiStoryEpisodeProjectedDirectorPlanSchema.parse({ ...same.directorPlan, status: same.status, approvedBy: same.approvedBy, approvedAt: same.approvedAt?.toISOString() ?? null, frozenAt: same.frozenAt?.toISOString() ?? null }), createdAt);
+    if (same) return advanceDirector(tx, scope, AiStoryEpisodeProjectedDirectorPlanSchema.parse({ ...same.directorPlan, status: same.status, approvedBy: same.approvedBy, approvedAt: same.approvedAt?.toISOString() ?? null, frozenAt: same.frozenAt?.toISOString() ?? null }), createdAt, targetStatus);
     const conflict = existing.find((row) => row.storyVersionId === scope.storyVersionId && row.status === "FROZEN");
     if (conflict) throw new EpisodeProjectedAuthorityError("EPISODE_PROJECTED_AUTHORITY_CONFLICT", "Frozen Director authority does not match the Episode projection");
     const plan = { ...draft, version: (existing.at(-1)?.version ?? 0) + 1 };
@@ -87,7 +88,7 @@ export async function persistEpisodeProjectedDirector(
       sourceHash: plan.sourceHash, directorFingerprint: plan.directorFingerprint, status: "DRAFT", supersedesDirectorPlanId: null,
       directorPlan: plan, createdBy: plan.createdBy, createdAt: new Date(plan.createdAt),
     });
-    return freezeDirector(tx, scope, plan, createdAt);
+    return advanceDirector(tx, scope, plan, createdAt, targetStatus);
   });
 }
 
@@ -95,11 +96,12 @@ function lifecycleRank(status: string) {
   return ["DRAFT", "VALIDATED", "APPROVED", "FROZEN"].indexOf(status);
 }
 
-async function freezeDirector(tx: Tx, scope: AiStoryScriptScope, plan: AiStoryEpisodeProjectedDirectorPlan, at: string) {
+async function advanceDirector(tx: Tx, scope: AiStoryScriptScope, plan: AiStoryEpisodeProjectedDirectorPlan, at: string, targetStatus: "VALIDATED" | "FROZEN") {
   let current = plan;
   for (const status of ["VALIDATED", "APPROVED", "FROZEN"] as const) {
     if (current.status === "FROZEN") return current;
     if (lifecycleRank(current.status) >= lifecycleRank(status)) continue;
+    if (lifecycleRank(status) > lifecycleRank(targetStatus)) break;
     const next = AiStoryEpisodeProjectedDirectorPlanSchema.parse(withLifecycle(current, status, scope.actorUserId, at));
     await tx.update(schema.aiStoryDirectorPlanVersions).set({
       status,
@@ -119,6 +121,7 @@ export async function persistEpisodeProjectedMotion(
   source: EpisodeProjectedAuthoritySource,
   directorPlanId: string,
   createdAt = new Date().toISOString(),
+  targetStatus: "VALIDATED" | "FROZEN" = "FROZEN",
 ): Promise<AiStoryEpisodeProjectedMotionPlan> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`motion-plan:${scope.storyId}`}))`);
@@ -127,14 +130,14 @@ export async function persistEpisodeProjectedMotion(
       eq(schema.aiStoryDirectorPlanVersions.directorPlanId, directorPlanId),
       eq(schema.aiStoryDirectorPlanVersions.workspaceId, scope.workspaceId),
       eq(schema.aiStoryDirectorPlanVersions.storyVersionId, scope.storyVersionId),
-      eq(schema.aiStoryDirectorPlanVersions.status, "FROZEN"),
+      sql`${schema.aiStoryDirectorPlanVersions.status} in ('VALIDATED', 'FROZEN')`,
     )).limit(1).for("share");
     if (!directors[0]) throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "Projected Motion requires the frozen projected Director");
     const director = AiStoryEpisodeProjectedDirectorPlanSchema.parse({ ...directors[0].directorPlan, status: directors[0].status, approvedBy: directors[0].approvedBy, approvedAt: directors[0].approvedAt?.toISOString() ?? null, frozenAt: directors[0].frozenAt?.toISOString() ?? null });
     const existing = await tx.select().from(schema.aiStoryMotionPlanVersions).where(eq(schema.aiStoryMotionPlanVersions.storyId, scope.storyId)).orderBy(asc(schema.aiStoryMotionPlanVersions.version)).for("update");
     const draft = buildEpisodeProjectedMotionPlan({ directorPlan: director, source, version: (existing.at(-1)?.version ?? 0) + 1, supersedesMotionPlanId: null, createdBy: scope.actorUserId, createdAt });
     const same = existing.find((row) => row.sourceHash === draft.sourceHash);
-    if (same) return freezeMotion(tx, scope, AiStoryEpisodeProjectedMotionPlanSchema.parse({ ...same.motionPlan, status: same.status, approvedBy: same.approvedBy, approvedAt: same.approvedAt?.toISOString() ?? null, frozenAt: same.frozenAt?.toISOString() ?? null }), createdAt);
+    if (same) return advanceMotion(tx, scope, AiStoryEpisodeProjectedMotionPlanSchema.parse({ ...same.motionPlan, status: same.status, approvedBy: same.approvedBy, approvedAt: same.approvedAt?.toISOString() ?? null, frozenAt: same.frozenAt?.toISOString() ?? null }), createdAt, targetStatus);
     const conflict = existing.find((row) => row.storyVersionId === scope.storyVersionId && row.status === "FROZEN");
     if (conflict) throw new EpisodeProjectedAuthorityError("EPISODE_PROJECTED_AUTHORITY_CONFLICT", "Frozen Motion authority does not match the Episode projection");
     await tx.insert(schema.aiStoryMotionPlanVersions).values({
@@ -144,15 +147,16 @@ export async function persistEpisodeProjectedMotion(
       sourceDirectorFingerprint: draft.sourceDirectorFingerprint, sourceHash: draft.sourceHash, motionFingerprint: draft.motionFingerprint,
       status: "DRAFT", supersedesMotionPlanId: null, motionPlan: draft, createdBy: draft.createdBy, createdAt: new Date(draft.createdAt),
     });
-    return freezeMotion(tx, scope, draft, createdAt);
+    return advanceMotion(tx, scope, draft, createdAt, targetStatus);
   });
 }
 
-async function freezeMotion(tx: Tx, scope: AiStoryScriptScope, plan: AiStoryEpisodeProjectedMotionPlan, at: string) {
+async function advanceMotion(tx: Tx, scope: AiStoryScriptScope, plan: AiStoryEpisodeProjectedMotionPlan, at: string, targetStatus: "VALIDATED" | "FROZEN") {
   let current = plan;
   for (const status of ["VALIDATED", "APPROVED", "FROZEN"] as const) {
     if (current.status === "FROZEN") return current;
     if (lifecycleRank(current.status) >= lifecycleRank(status)) continue;
+    if (lifecycleRank(status) > lifecycleRank(targetStatus)) break;
     const next = AiStoryEpisodeProjectedMotionPlanSchema.parse(withLifecycle(current, status, scope.actorUserId, at));
     await tx.update(schema.aiStoryMotionPlanVersions).set({
       status,

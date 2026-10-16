@@ -107,8 +107,26 @@ describe("AI Story planning approval client dispatch", () => {
     expect(component).toContain('role="alert"');
     expect(component).toContain('"Approving…"');
     expect(component).toContain('"Approved"');
-    expect(component).not.toContain("onClick=");
+    expect(component).toContain("planning/readiness");
+    expect(component).toContain('readiness?.status !== "PASS"');
+    expect(component).toContain("Re-run validation");
+    expect(component).toContain("Creative decision required");
     expect(page).toContain("<PlanningApprovalControl");
     expect(page).not.toContain("async function approvePlanning()");
+  });
+
+  it("gates approval on the exact validated authority and freezes matching fingerprints", async () => {
+    const route = await readFile(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/approve/route.ts",
+      "utf8"
+    );
+    expect(route).toContain("prepareEpisodePlanningExecutionReadiness");
+    expect(route).toContain('readiness.status !== "PASS"');
+    expect(route).toContain("PLANNING_EXECUTION_READINESS_BLOCKED");
+    expect(route.indexOf("prepareEpisodePlanningExecutionReadiness(scope")).toBeLessThan(route.indexOf("approveAnimationPackage(db"));
+    expect(route).toContain("ensureCurrentEpisodeDispatchAuthorityProjection");
+    expect(route).toContain("frozen.directorFingerprint !== readiness.directorFingerprint");
+    expect(route).toContain("frozen.motionFingerprint !== readiness.motionFingerprint");
+    expect(route.indexOf("ensureCurrentEpisodeDispatchAuthorityProjection(scope")).toBeLessThan(route.indexOf("setAiStoryStatus(db"));
   });
 });
