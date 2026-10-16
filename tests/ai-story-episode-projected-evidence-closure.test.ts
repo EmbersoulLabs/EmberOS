@@ -88,6 +88,7 @@ describe("projected QC evidence closure", () => {
   it("certifies bounded persisted shot evidence without fabricating camera state", () => {
     expect(evaluateEpisodeProjectedCameraExecution([{ cameraType: "static", cameraMovement: "none" }])).toEqual({ outcome: "BOUNDED_CAMERA_EXECUTION_PROVEN", families: ["STATIC"] });
     expect(evaluateEpisodeProjectedCameraExecution([{ cameraType: "static", cameraMovement: "slow push-in" }])).toEqual({ outcome: "BOUNDED_CAMERA_EXECUTION_PROVEN", families: ["SLOW_PUSH_IN"] });
+    expect(evaluateEpisodeProjectedCameraExecution([{ cameraType: "static", cameraMovement: "gentle pull-back" }])).toEqual({ outcome: "BOUNDED_CAMERA_EXECUTION_PROVEN", families: ["SLOW_PULL_BACK"] });
     expect(evaluateEpisodeProjectedCameraExecution([{ cameraType: "static", cameraMovement: "orbit" }]).outcome).toBe("CAMERA_EXECUTION_NOT_PROVEN");
     expect(evaluateEpisodeProjectedCameraExecution([{ cameraType: "static", cameraMovement: "dramatic crane" }]).outcome).toBe("CAMERA_EXECUTION_NOT_PROVEN");
     const source = projectedSource();

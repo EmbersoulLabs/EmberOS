@@ -583,6 +583,11 @@ function normalizeCameraToken(value: string) {
 
 function canonicalCameraFamily(value: string) {
   const normalized = normalizeCameraToken(value);
+  const persistedAliases: Readonly<Record<string, (typeof AI_STORY_CAMERA_FAMILIES)[number]>> = {
+    "gentle pull back": "SLOW_PULL_BACK",
+  };
+  const aliased = persistedAliases[normalized];
+  if (aliased) return aliased;
   return AI_STORY_CAMERA_FAMILIES.find((family) => normalizeCameraToken(family) === normalized) ?? null;
 }
 
