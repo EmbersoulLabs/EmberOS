@@ -66,7 +66,7 @@ export const AI_STORY_ALLOWED_TRANSITIONS: Record<
   AiStoryStatus,
   readonly AiStoryStatus[]
 > = {
-  draft: ["generating", "archived"],
+  draft: ["generating", "review", "archived"],
   generating: ["review", "failed"],
   review: ["generating", "approved", "draft", "archived"],
   approved: ["ready_for_animation", "review"],
