@@ -1,8 +1,9 @@
 import { eq } from "drizzle-orm";
-import { getDb, schema } from "@ceo-agent/db";
+import { AiStoryAssetMatchingRepository, getDb, schema } from "@ceo-agent/db";
 import { enqueueStoryPlanningStage } from "@ceo-agent/queue";
 import {
   STORY_PLANNING_STAGE_ORDER,
+  AiStorySceneGroundingError,
   isUuid,
   nextRequiredPlanningStage,
   type AiStoryStatus,
@@ -15,6 +16,10 @@ import {
   getLatestAnimationPackageForStory,
   readPlanningDraftFromPackage,
 } from "@/lib/ai-story-planning-service";
+import {
+  persistStoryAssetMatching,
+  prepareStoryAssetGroundingFromCache,
+} from "@/lib/ai-story-asset-semantic-grounding";
 
 export async function POST(
   request: Request,
@@ -48,6 +53,37 @@ export async function POST(
     }
     if (!loaded.currentVersion.frozenAt) {
       return apiError("Story Version must be frozen before planning", "VALIDATION_ERROR", 409);
+    }
+
+    try {
+      await new AiStoryAssetMatchingRepository(db).loadScenePlanningGroundingContext({
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        storyId,
+        storyVersionId: loaded.currentVersion.id,
+      });
+    } catch (error) {
+      if (!(error instanceof AiStorySceneGroundingError) || error.code !== "SCENE_GROUNDING_AUTHORITY_REQUIRED") {
+        throw error;
+      }
+      const grounding = await prepareStoryAssetGroundingFromCache({
+        db,
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        assetLinks: loaded.assetLinks,
+      });
+      if (grounding.analyzedAssets.length === 0) throw error;
+      await persistStoryAssetMatching({
+        db,
+        orgId: campaign.orgId,
+        workspaceId: campaign.workspaceId,
+        storyId,
+        storyVersionId: loaded.currentVersion.id,
+        storyVersionNumber: loaded.currentVersion.versionNumber,
+        structuredStory: loaded.currentVersion.structuredContent,
+        grounding,
+        nativeDialogueDesired: loaded.story.episodeIntent?.nativeCharacterDialogue === true,
+      });
     }
 
     const latestPackage = await getLatestAnimationPackageForStory(db, {
