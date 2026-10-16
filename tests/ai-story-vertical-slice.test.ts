@@ -74,6 +74,7 @@ describe("AI Story vertical slice (V1)", () => {
 
     it("enforces explicit status transitions", () => {
       expect(() => assertAiStoryTransition("draft", "generating")).not.toThrow();
+      expect(() => assertAiStoryTransition("draft", "review")).not.toThrow();
       expect(() => assertAiStoryTransition("generating", "review")).not.toThrow();
       expect(() => assertAiStoryTransition("review", "approved")).not.toThrow();
       expect(() => assertAiStoryTransition("approved", "ready_for_animation")).not.toThrow();
