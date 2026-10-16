@@ -249,7 +249,7 @@ export function createOpenAiStoryTtsAdapter(input: {
       if (!authorization.authorizationId.trim()) {
         throw new Error("TTS_PAID_EXECUTION_AUTHORITY_REQUIRED");
       }
-      const client = getOpenAI();
+      const client = await getOpenAI();
       const response = await client.audio.speech.create({
         model: request.providerModel,
         voice: request.providerVoiceRef as

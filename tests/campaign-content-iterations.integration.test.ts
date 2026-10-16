@@ -48,6 +48,23 @@ afterAll(async () => {
 });
 
 describe("Campaign Content Iteration PostgreSQL authority", () => {
+  it("applies the forward-only OpenAI model authority expansion on disposable PostgreSQL", async () => {
+    const migration = readFileSync("supabase/migrations/20261015143000_openai_gpt6_luna_model_authority.sql", "utf8")
+      .replace(/^BEGIN;\s*/i, "")
+      .replace(/\s*COMMIT;\s*$/i, "");
+    await sql.begin((tx) => tx.unsafe(migration));
+    const constraints = await sql<{ table_name: string; definition: string }[]>`
+      select conrelid::regclass::text as table_name, pg_get_constraintdef(oid) as definition
+      from pg_constraint
+      where conname in ('campaign_social_ai_claims_model_check','certification_planning_model_check')
+      order by conname
+    `;
+    expect(constraints).toHaveLength(2);
+    expect(constraints.every((row) => row.definition.includes("gpt-6-luna"))).toBe(true);
+    expect(constraints.find((row) => row.table_name === "campaign_social_ai_claims")?.definition).toContain("gpt-4o-mini");
+    expect(constraints.find((row) => row.table_name === "certification_planning_authorities")?.definition).toContain("gpt-4o-mini-2024-07-18");
+  });
+
   it("reapplies the additive migration without changing historical Campaign rows", async () => {
     await sql.unsafe(readFileSync("packages/db/sql/campaign-content-iterations-v1.sql", "utf8"));
     const campaigns = await sql`select id from campaigns where org_id=${ids.org} order by id`;
@@ -274,10 +291,16 @@ describe("Campaign Content Iteration PostgreSQL authority", () => {
       aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"YOUTUBE",idempotencyKey:"social-ai-youtube",requestedMaximumUsd:0.01}),
     ]);
     expect([aiClaim.reused,aiReplay.reused].sort()).toEqual([false,true]);
+    expect(aiClaim.claim.model).toBe("gpt-6-luna");
     await expect(aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"YOUTUBE",idempotencyKey:"social-ai-over-budget",requestedMaximumUsd:0.051})).rejects.toMatchObject({code:"CAMPAIGN_SOCIAL_AI_BUDGET_INVALID"});
     await aiBudget.markSubmitted(aiClaim.claim.id);
-    await aiBudget.recordResult(aiClaim.claim.id,{providerRequestId:"req_social_fixture",providerModel:"gpt-4o-mini-2024-07-18",inputTokens:800,outputTokens:120,resultJson:youtube});
+    const ready=await aiBudget.recordResult(aiClaim.claim.id,{providerRequestId:"req_social_fixture",providerModel:"gpt-6-luna-2026-09-30",inputTokens:800,outputTokens:120,resultJson:youtube});
+    expect(ready.status).toBe("RESULT_READY");expect(Number(ready.actualCostUsd)).toBe(0.00014);
     const settled=await aiBudget.finalize(aiClaim.claim.id,yt2.draft.id);expect(settled.status).toBe("SETTLED");expect(Number(settled.actualCostUsd)).toBeLessThanOrEqual(0.01);
+    const legacyClaimId=crypto.randomUUID();
+    await sql`insert into campaign_social_ai_claims(id,org_id,workspace_id,campaign_id,iteration_id,marketing_review_id,platform,idempotency_key,request_fingerprint,model,max_input_tokens,max_output_tokens,reserved_maximum_usd,requested_maximum_usd,status,created_by,submitted_at) values(${legacyClaimId},${ids.org},${ids.workspaceA},${ids.campaignA},${iteration.iteration.id},${review.review.id},'YOUTUBE','social-ai-legacy-cross-deploy','legacy-fingerprint','gpt-4o-mini',12000,1200,0.01,0.01,'SUBMITTED',${ids.admin},now())`;
+    const legacyReady=await aiBudget.recordResult(legacyClaimId,{providerRequestId:"req_social_legacy",providerModel:"gpt-4o-mini-2024-07-18",inputTokens:800,outputTokens:120,resultJson:youtube});
+    expect(Number(legacyReady.actualCostUsd)).toBe(0.000192);
     const cancelled=await aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"TIKTOK",idempotencyKey:"social-ai-cancelled",requestedMaximumUsd:0.01});await aiBudget.cancelBeforeSubmission(cancelled.claim.id,"FIXTURE_PRE_PROVIDER");
     const uncertain=await aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"TIKTOK",idempotencyKey:"social-ai-unknown",requestedMaximumUsd:0.01});await aiBudget.markSubmitted(uncertain.claim.id);await aiBudget.markUnknown(uncertain.claim.id,"FIXTURE_UNKNOWN");
     expect((await aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"TIKTOK",idempotencyKey:"social-ai-cancelled",requestedMaximumUsd:0.01})).claim.status).toBe("CANCELLED");expect((await aiBudget.reserve(scope(),{reviewId:review.review.id,platform:"TIKTOK",idempotencyKey:"social-ai-unknown",requestedMaximumUsd:0.01})).claim.status).toBe("UNKNOWN");

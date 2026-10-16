@@ -10,6 +10,7 @@ import {
   type ProviderErrorKind,
 } from "@ceo-agent/shared";
 import { callJsonModel } from "../llm";
+import { OPENAI_EFFICIENT_MODEL, OPENAI_TEXT_MODELS } from "../openai-model-policy";
 import {
   ProviderAdapterError,
   type ProviderAdapter,
@@ -28,7 +29,7 @@ const OpenAIJsonPayloadSchema = z
     system: z.string().min(1),
     user: z.string().min(1),
     schemaHint: z.string().min(1),
-    preferredModel: z.enum(["gpt-4o-mini", "gpt-4o"]).optional(),
+    preferredModel: z.enum(OPENAI_TEXT_MODELS).optional(),
     temperature: z.number().min(0).max(2).optional(),
   })
   .strict();
@@ -52,7 +53,7 @@ const CAPABILITY = Object.freeze({
     qualityClass: "HIGH",
     reliabilityClass: "HIGH",
     regions: [],
-    modelFamilies: ["gpt-4o"],
+    modelFamilies: ["gpt-6", "gpt-4o"],
     sensitiveDataAllowed: false,
     externalProcessing: true,
     trainingOptOut: false,
@@ -197,7 +198,7 @@ export class OpenAIJsonCompatibilityAdapter implements ProviderAdapter {
         await this.payloadResolver.resolve(request.normalizedPayloadReference, context)
       );
       const mappedRequest = {
-        model: payload.preferredModel ?? "gpt-4o-mini",
+        model: payload.preferredModel ?? OPENAI_EFFICIENT_MODEL,
         system: payload.system,
         user: payload.user,
         schemaHint: payload.schemaHint,

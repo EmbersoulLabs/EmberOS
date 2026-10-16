@@ -219,6 +219,7 @@ export async function POST(
         return withCertificationPlanningContext({
           environment: certificationRoute.environment,
           certificationRunId: certificationRoute.certificationRunId,
+          model: certificationRoute.model,
           orgId: campaign.orgId,
           workspaceId: campaign.workspaceId,
           campaignId,

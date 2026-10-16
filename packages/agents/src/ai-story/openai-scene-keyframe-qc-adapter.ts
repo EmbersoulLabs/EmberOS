@@ -11,8 +11,9 @@ import type {
   SceneKeyframeQcEvidence,
 } from "./scene-keyframe-preparation";
 import { SCENE_KEYFRAME_QC_DIMENSIONS } from "./scene-keyframe-preparation";
+import { OPENAI_QUALITY_MODEL, openAiChatControls } from "../openai-model-policy";
 
-export const OPENAI_SCENE_KEYFRAME_QC_MODEL = "gpt-4o" as const;
+export const OPENAI_SCENE_KEYFRAME_QC_MODEL = OPENAI_QUALITY_MODEL;
 
 function imageDataUrl(bytes: Buffer, mimeType: string): string {
   return `data:${mimeType};base64,${bytes.toString("base64")}`;
@@ -47,8 +48,8 @@ export class OpenAiSceneKeyframeQcAdapter implements SceneKeyframeQcAdapter {
   async evaluate(input: Parameters<SceneKeyframeQcAdapter["evaluate"]>[0]): Promise<SceneKeyframeQcEvidence> {
     const response = await this.client.chat.completions.create({
       model: OPENAI_SCENE_KEYFRAME_QC_MODEL,
+      ...openAiChatControls(OPENAI_SCENE_KEYFRAME_QC_MODEL, 2048),
       response_format: { type: "json_object" },
-      temperature: 0,
       messages: [{
         role: "system",
         content: "You are a strict narrative keyframe QC evaluator. Judge only visible evidence. Return JSON with a dimensions object containing every requested dimension, each with verdict PASS, FAIL, or UNKNOWN and a short note. Unknown is required when visual proof is insufficient.",
@@ -68,7 +69,10 @@ export class OpenAiSceneKeyframeQcAdapter implements SceneKeyframeQcAdapter {
         ],
       }],
     }, { maxRetries: 0 });
-    const content = response.choices[0]?.message?.content;
+    const message = response.choices[0]?.message;
+    if (message?.refusal) throw new Error("SCENE_KEYFRAME_QC_PROVIDER_REFUSAL");
+    if (response.choices[0]?.finish_reason === "length") throw new Error("SCENE_KEYFRAME_QC_OUTPUT_TRUNCATED");
+    const content = message?.content;
     if (!content) throw new Error("SCENE_KEYFRAME_QC_OUTPUT_MISSING");
     try {
       return parseQcEvidence(JSON.parse(content));

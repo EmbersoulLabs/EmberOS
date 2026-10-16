@@ -182,7 +182,7 @@ describe("AI Story Character DNA from Photo V1", () => {
 
     expect(CHARACTER_DNA_VISION_REQUEST_OPTIONS).toEqual({ maxRetries: 0 });
     expect(receivedOptions).toEqual({ maxRetries: 0 });
-    expect(result.providerModel).toBe("gpt-4o");
+    expect(result.providerModel).toBe("gpt-6-luna");
     expect(result.imageGenerationCalls).toBe(0);
     expect(result.gptImageCalls).toBe(0);
   });

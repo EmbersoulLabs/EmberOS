@@ -1,4 +1,5 @@
 import { callJsonModel } from "./llm";
+import { OPENAI_QUALITY_MODEL } from "./openai-model-policy";
 import {
   MarketingContentPackageSchema,
   normalizeMarketingContentPackage,
@@ -847,13 +848,13 @@ export async function runMarketingContentAgent(input: MarketingContentInput): Pr
   });
 
   // Content generation requires large structured JSON output (hooks×10, 8 platform assets,
-  // bilingual voice scripts, analysis, SEO pack). gpt-4o-mini frequently produces malformed
-  // or incomplete JSON at this scale; gpt-4o is significantly more reliable here.
+  // bilingual voice scripts, analysis, SEO pack). Keep this quality-sensitive
+  // package on an explicit model choice; never reach it through automatic escalation.
   const { result, usage } = await callJsonModel<unknown>(
     CONTENT_SYSTEM_PROMPT,
     user,
     MarketingContentPackageSchema.toString(),
-    { model: "gpt-4o" }
+    { model: OPENAI_QUALITY_MODEL }
   );
 
   const normalized = normalizeMarketingContentPackage(result);

@@ -20,7 +20,7 @@ export async function synthesizeSpeech(
   if (!trimmed) throw new Error("TTS text is empty");
 
   const voiceMap = gender === "male" ? VOICE_MALE : VOICE_FEMALE;
-  const openai = getOpenAI();
+  const openai = await getOpenAI();
   const response = await openai.audio.speech.create({
     model: "tts-1-hd",
     voice: voiceMap[locale],

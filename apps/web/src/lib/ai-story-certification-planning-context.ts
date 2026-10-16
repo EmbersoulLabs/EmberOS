@@ -1,6 +1,9 @@
 import { withCertificationPlanningContext } from "@ceo-agent/agents";
 import {
   CertificationPlanningAuthorityService,
+  CERTIFICATION_PLANNING_MODEL,
+  isCertificationPlanningModel,
+  type CertificationPlanningModel,
   type CertificationPlanningIdentity,
 } from "@ceo-agent/db";
 import { isUuid } from "@ceo-agent/shared";
@@ -32,6 +35,11 @@ export function withConfiguredCertificationPlanningContext<T>(input: {
     actorUserId: input.actorUserId,
     logicalCallSuffix: input.regenerationIdentity ?? "initial",
     providerAttemptId: input.providerAttemptId,
+    model: (() => {
+      const configuredModel = process.env.AI_STORY_CERTIFICATION_MODEL?.trim() || CERTIFICATION_PLANNING_MODEL;
+      if (!isCertificationPlanningModel(configuredModel)) throw new Error("PLANNING_MODEL_INVALID");
+      return configuredModel;
+    })(),
   }, run);
 }
 
@@ -43,6 +51,7 @@ export type CampaignCertificationAuthority = {
   workspaceId: string;
   campaignId: string;
   storyId: string | null;
+  model?: string;
 };
 
 export type CertificationPlanningRoute =
@@ -51,6 +60,7 @@ export type CertificationPlanningRoute =
       kind: "certification";
       environment: CertificationEnvironment;
       certificationRunId: string;
+      model: CertificationPlanningModel;
     };
 
 /**
@@ -76,10 +86,13 @@ export function classifyCertificationPlanningAuthorities(
   const authority = applicable[0];
   if (authority.status !== "ACTIVE") throw new Error("PLANNING_AUTHORITY_MISSING");
   if (!isUuid(authority.certificationRunId)) throw new Error("PLANNING_CERTIFICATION_RUN_ID_REQUIRED");
+  const authorityModel = authority.model ?? CERTIFICATION_PLANNING_MODEL;
+  if (!isCertificationPlanningModel(authorityModel)) throw new Error("PLANNING_MODEL_INVALID");
   return {
     kind: "certification",
     environment: CertificationEnvironmentSchema.parse(authority.environment),
     certificationRunId: authority.certificationRunId,
+    model: authorityModel,
   };
 }
 
@@ -122,6 +135,7 @@ export async function runUnderPlanningCertification<T>(
   const identity: CertificationPlanningIdentity & {
     logicalCallSuffix: string;
     providerAttemptId?: string;
+    model: CertificationPlanningModel;
   } = {
     environment: route.environment,
     certificationRunId: route.certificationRunId,
@@ -132,6 +146,7 @@ export async function runUnderPlanningCertification<T>(
     actorUserId: input.actorUserId,
     logicalCallSuffix: input.regenerationIdentity ?? "initial",
     providerAttemptId: input.providerAttemptId,
+    model: route.model,
   };
   return withCertificationPlanningContext(identity, run);
 }
