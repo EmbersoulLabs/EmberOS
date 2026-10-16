@@ -203,6 +203,55 @@ export async function prepareStoryAssetGrounding(input: {
   return { context, analyzedAssets, semanticAnalyzerCalls };
 }
 
+/**
+ * Rebuilds Story-relative matching from already-persisted semantic snapshots.
+ * This recovery boundary never downloads Asset bytes or invokes a Provider.
+ */
+export async function prepareStoryAssetGroundingFromCache(input: {
+  readonly db: Db;
+  readonly orgId: string;
+  readonly workspaceId: string;
+  readonly assetLinks: readonly StoryAssetLink[];
+}): Promise<PreparedStoryAssetGrounding> {
+  if (input.assetLinks.length === 0) {
+    return { context: null, analyzedAssets: [], semanticAnalyzerCalls: 0 };
+  }
+  const selectedIds = [...new Set(input.assetLinks.map((link) => link.assetId))];
+  const cached = await new AiStoryAssetMatchingRepository(input.db).loadEligibleAnalyzedAssets({
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    analyzerVersion: VISUAL_SEMANTIC_ANALYZER_VERSION,
+    schemaVersion: AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION,
+    assetIds: selectedIds,
+  });
+  const cachedByAssetId = new Map(cached.map((entry) => [entry.registry.assetId, entry]));
+  if (cachedByAssetId.size !== selectedIds.length) {
+    throw new AiStorySemanticGroundingRuntimeError(
+      "ASSET_SEMANTIC_SNAPSHOT_REQUIRED",
+      "Historical Story recovery requires cached semantic authority for every selected Asset"
+    );
+  }
+  const linkByAssetId = new Map(input.assetLinks.map((link) => [link.assetId, link]));
+  const analyzedAssets = selectedIds.map((assetId) => {
+    const entry = cachedByAssetId.get(assetId)!;
+    return {
+      registry: entry.registry,
+      snapshot: entry.snapshot,
+      usageType: linkByAssetId.get(assetId)?.usageType ?? "reference",
+    };
+  });
+  const context = compileStoryAssetGroundingContext({
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    assets: analyzedAssets.map((entry) => ({
+      registry: entry.registry,
+      snapshot: entry.snapshot,
+      explicitRoleHint: explicitRoleHintForAiStoryUsage(entry.usageType),
+    })),
+  });
+  return { context, analyzedAssets, semanticAnalyzerCalls: 0 };
+}
+
 /** Builds and persists Story-relative matching only after a real Story Version exists. */
 export async function persistStoryAssetMatching(input: {
   readonly db: Db;
