@@ -47,7 +47,7 @@ type SaveState = "CLEAN" | "DIRTY" | "SAVING" | "SAVED" | "ERROR";
 
 function isReadOnlyStatus(status: string): boolean {
   return ["ready_for_animation", "planning", "planning_review", "ready_for_execution",
-    "generate_review", "executing", "execution_review", "execution_failed", "archived"].includes(status);
+    "generate_review", "executing", "execution_review", "execution_failed", "failed", "archived"].includes(status);
 }
 
 function isPlanningStatus(status: string): boolean {

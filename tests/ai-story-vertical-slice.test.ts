@@ -188,6 +188,10 @@ describe("AI Story vertical slice (V1)", () => {
       "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/screenwriter/route.ts",
       "utf8"
     );
+    const reviewPage = readFileSync(
+      "apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/[storyId]/page.tsx",
+      "utf8"
+    );
 
     it("requires authentication and canonical AI Story access on all routes", () => {
       for (const source of [
@@ -235,6 +239,11 @@ describe("AI Story vertical slice (V1)", () => {
         .toBeLessThan(approveRoute.lastIndexOf("freezeAiStoryVersion"));
       expect(approveRoute).toContain("freezeAiStoryVersion");
       expect(approveRoute).toContain('"ready_for_animation"');
+    });
+
+    it("keeps a frozen Story read-only after Planning failure so recovery reuses its authority", () => {
+      expect(reviewPage).toContain('"execution_failed", "failed", "archived"');
+      expect(reviewPage).toContain('"ready_for_animation", "planning", "planning_review", "ready_for_execution", "failed"');
     });
 
     it("generate uses provider-neutral polish service", () => {

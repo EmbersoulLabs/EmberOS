@@ -144,7 +144,13 @@ export async function loadAiStoryPlanningContext(
     : null;
   const completion = profile ? assessBusinessProfileCompletion(profile) : null;
 
-  const characters = await new AiStoryCharacterAuthorityService(db).list({
+  // The HTTP entrypoint has already authorized the actor and the queued Worker
+  // revalidates the exact org/workspace/Campaign/Story/Version tuple before
+  // reaching this loader. Character authority is an optional projection here:
+  // an empty set is valid, while any rows returned remain tenant-scoped by the
+  // canonical query. Requiring a second workspace-membership lookup would
+  // incorrectly reject authorized Platform Admin/internal-self-use execution.
+  const characters = await new AiStoryCharacterAuthorityService(db).listForVerifiedScope({
     orgId: campaign.orgId,
     workspaceId: campaign.workspaceId,
     campaignId,

@@ -25,6 +25,28 @@ describe("handleApiError", () => {
     expect(body).toEqual({ error: "Unauthorized", code: "UNAUTHORIZED" });
   });
 
+  it("returns actionable authority failures instead of a generic 500", async () => {
+    const character = Object.assign(
+      new Error("Character Campaign authority scope does not resolve"),
+      { code: "CHARACTER_SCOPE_DENIED" }
+    );
+    expect(await readError(handleApiError(character))).toEqual({
+      status: 403,
+      body: {
+        error: "Character Campaign authority scope does not resolve",
+        code: "CHARACTER_SCOPE_DENIED",
+      },
+    });
+
+    const product = Object.assign(
+      new Error("Persisted Planning Product authority is stale"),
+      { code: "PRODUCT_AUTHORITY_STALE" }
+    );
+    const result = await readError(handleApiError(product));
+    expect(result.status).toBe(409);
+    expect(result.body.code).toBe("PRODUCT_AUTHORITY_STALE");
+  });
+
   it("maps TenantValidationError / VALIDATION_ERROR to 400", async () => {
     const { status, body } = await readError(
       handleApiError(new TenantValidationError("orgId must be a valid UUID"))
