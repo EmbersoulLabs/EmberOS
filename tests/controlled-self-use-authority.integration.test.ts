@@ -37,6 +37,12 @@ describeIntegration("Production Controlled Self-Use authority", () => {
         "utf8"
       )
     );
+    await sql.unsafe(
+      readFileSync(
+        "supabase/migrations/20261016033243_superadmin_internal_self_use_workspace_scope.sql",
+        "utf8"
+      )
+    );
     await sql`
       insert into organizations (id, name, slug)
       values (${EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID}::uuid, 'EmberSoulLabs', ${`embersoul-self-use-${crypto.randomUUID()}`})
@@ -74,6 +80,14 @@ describeIntegration("Production Controlled Self-Use authority", () => {
         createdAt: "2026-09-26T00:01:00.000Z",
       });
     authorityId = provisioned.authority.authorityId;
+    await new ControlledSelfUseAuthorityService().authorizeInternalWorkspace({
+      authorityId,
+      organizationId: EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID,
+      workspaceId,
+      authorizedBy: adminUserId,
+      reason: "explicit owner workspace scope",
+      createdAt: "2026-09-26T00:01:01.000Z",
+    });
   });
 
   afterAll(async () => { await sql?.end(); });
@@ -109,7 +123,7 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       workspaceId: otherWorkspaceId,
       capabilityKey: "ai_story.execute",
       providerKey: "seedance",
-    })).rejects.toThrow(/restricted to EmberSoulLabs/i);
+    })).rejects.toThrow(/not eligible/i);
     await expect(service.assertWorkspaceEligible({
       environment: "PRODUCTION",
       organizationId: EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID,
@@ -138,6 +152,46 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       maximumCostUsd: "5.01",
       reservedAt: "2026-09-27T01:00:00.000Z",
     })).rejects.toThrow(/ceiling/i);
+  });
+
+  it("authorizes one explicit internal workspace and revocation fails closed", async () => {
+    const service = new ControlledSelfUseAuthorityService();
+    const provisioned = await service.provisionInternalSelfUseAuthority({
+      environment: "PRODUCTION",
+      organizationId: otherOrgId,
+      authorizedBy: adminUserId,
+      reason: "explicit isolated internal test workspace",
+      createdAt: "2026-09-27T02:00:00.000Z",
+    });
+    const scope = await service.authorizeInternalWorkspace({
+      authorityId: provisioned.authority.authorityId,
+      organizationId: otherOrgId,
+      workspaceId: otherWorkspaceId,
+      authorizedBy: adminUserId,
+      reason: "explicit isolated internal test workspace",
+      createdAt: "2026-09-27T02:00:01.000Z",
+    });
+    expect(scope.replayed).toBe(false);
+    await expect(service.assertWorkspaceEligible({
+      environment: "PRODUCTION",
+      organizationId: otherOrgId,
+      workspaceId: otherWorkspaceId,
+      capabilityKey: "campaign.generate",
+      providerKey: "openai",
+    })).resolves.toMatchObject({ authorityId: provisioned.authority.authorityId });
+    await service.revokeInternalWorkspace({
+      organizationId: otherOrgId,
+      workspaceId: otherWorkspaceId,
+      revokedBy: adminUserId,
+      revokedAt: "2026-09-27T02:00:02.000Z",
+    });
+    await expect(service.assertWorkspaceEligible({
+      environment: "PRODUCTION",
+      organizationId: otherOrgId,
+      workspaceId: otherWorkspaceId,
+      capabilityKey: "campaign.generate",
+      providerKey: "openai",
+    })).rejects.toThrow(/not eligible/i);
   });
 
   it("creates only an execution-bound expiring entitlement and immediately reserved credits", async () => {
