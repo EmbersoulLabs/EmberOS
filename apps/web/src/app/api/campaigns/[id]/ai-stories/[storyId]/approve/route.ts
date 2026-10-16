@@ -4,7 +4,11 @@ import { isUuid, type AiStoryStatus } from "@ceo-agent/shared";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
-import { freezeAiStoryVersion, loadCampaignAiStory } from "@/lib/ai-story-service";
+import {
+  freezeAiStoryVersion,
+  loadCampaignAiStory,
+  setAiStoryStatus,
+} from "@/lib/ai-story-service";
 
 export async function POST(
   _request: Request,
@@ -32,9 +36,17 @@ export async function POST(
       return apiError("No Story Draft to approve", "VALIDATION_ERROR", 409);
     }
 
-    const status = loaded.story.status as AiStoryStatus;
+    let status = loaded.story.status as AiStoryStatus;
     if (status === "ready_for_animation") {
       return apiError("Story is already Ready for Animation", "ALREADY_APPROVED", 409);
+    }
+    // A draft can already have a durable current version when a previous save
+    // completed but the follow-up review transition did not. The explicit
+    // approval request is the operator's review action, so recover that valid
+    // checkpoint without creating or mutating another version.
+    if (status === "draft") {
+      await setAiStoryStatus(db, storyId, "draft", "review");
+      status = "review";
     }
     if (status !== "review" && status !== "approved") {
       return apiError("Story must be in review before approval", "VALIDATION_ERROR", 409);
