@@ -127,7 +127,7 @@ describe("Episode Continuity production runtime integration", () => {
     const runner = readFileSync("apps/web/src/lib/ai-story-planning-runner.ts", "utf8");
     const loadAt = runner.indexOf(".loadForPlanning({");
     const semanticAt = runner.indexOf(
-      "const runStage = () => withConfiguredCertificationPlanningContext"
+      "const runLegacyStage = () => withConfiguredCertificationPlanningContext"
     );
     expect(loadAt).toBeGreaterThan(-1);
     expect(semanticAt).toBeGreaterThan(loadAt);
