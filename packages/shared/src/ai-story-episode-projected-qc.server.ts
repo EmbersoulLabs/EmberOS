@@ -174,7 +174,7 @@ function same(left: unknown, right: unknown) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function projectedDirectorIssues(plan: AiStoryEpisodeProjectedDirectorPlan, handoff: AiStoryPreGenerationQcInput["handoff"], canonicalScenes: AiStoryPreGenerationQcInput["canonicalScenes"]): Issue[] {
+export function projectedDirectorIssues(plan: AiStoryEpisodeProjectedDirectorPlan, handoff: AiStoryPreGenerationQcInput["handoff"], canonicalScenes: AiStoryPreGenerationQcInput["canonicalScenes"]): Issue[] {
   const issues: Issue[] = [];
   const story = (gate: string, message: string) => issues.push({ gate, severity: "BLOCK", message, scope: "STORY", scriptSceneIds: [] });
   const sceneIssue = (gate: string, message: string, scriptSceneId: string) => issues.push({ gate, severity: "BLOCK", message, scope: "SCENE", scriptSceneIds: [scriptSceneId] });
@@ -217,7 +217,7 @@ function shotField(shots: readonly { composition: string; information: string }[
   return shots.map((shot) => shot[field]).join("\n");
 }
 
-function projectedMotionIssues(plan: AiStoryEpisodeProjectedMotionPlan, director: AiStoryEpisodeProjectedDirectorPlan, script: AiStoryPreGenerationQcInput["script"]): Issue[] {
+export function projectedMotionIssues(plan: AiStoryEpisodeProjectedMotionPlan, director: AiStoryEpisodeProjectedDirectorPlan, script: AiStoryPreGenerationQcInput["script"]): Issue[] {
   const issues: Issue[] = [];
   const story = (gate: string, message: string) => issues.push({ gate, severity: "BLOCK", message, scope: "STORY", scriptSceneIds: [] });
   const sceneIssue = (gate: string, message: string, scriptSceneId: string) => issues.push({ gate, severity: "BLOCK", message, scope: "SCENE", scriptSceneIds: [scriptSceneId] });
@@ -265,6 +265,56 @@ function projectedMotionIssues(plan: AiStoryEpisodeProjectedMotionPlan, director
     }
   }
   return issues;
+}
+
+export type EpisodeProjectedPlanningReadinessFinding = {
+  code: string;
+  classification: "MISSING_EVIDENCE" | "CONTRADICTION";
+  owner: "DIRECTOR" | "MOTION";
+  scope: "STORY" | "SCENE" | "BOUNDARY";
+  scriptSceneIds: string[];
+  message: string;
+};
+
+/**
+ * Planning-phase execution readiness uses the same Director/Motion issue
+ * functions as canonical Pre-QC. It intentionally does not authorize dispatch.
+ */
+export function evaluateEpisodeProjectedPlanningReadiness(input: {
+  script: AiStoryPreGenerationQcInput["script"];
+  handoff: AiStoryPreGenerationQcInput["handoff"];
+  directorPlan: AiStoryEpisodeProjectedDirectorPlan;
+  motionPlan: AiStoryEpisodeProjectedMotionPlan;
+  canonicalScenes: NonNullable<AiStoryPreGenerationQcInput["canonicalScenes"]>;
+}) {
+  const readinessStatuses = new Set(["VALIDATED", "FROZEN"]);
+  const raw = [
+    ...projectedDirectorIssues(input.directorPlan, input.handoff, input.canonicalScenes).map((issue) => ({ ...issue, owner: "DIRECTOR" as const })),
+    ...projectedMotionIssues(input.motionPlan, input.directorPlan, input.script).map((issue) => ({ ...issue, owner: "MOTION" as const })),
+  ];
+  if (!readinessStatuses.has(input.directorPlan.status)) raw.push({ gate: "DIRECTOR_NOT_VALIDATED", severity: "BLOCK", message: "Director authority is not deterministically validated", scope: "STORY", scriptSceneIds: [], owner: "DIRECTOR" });
+  if (!readinessStatuses.has(input.motionPlan.status)) raw.push({ gate: "MOTION_NOT_VALIDATED", severity: "BLOCK", message: "Motion authority is not deterministically validated", scope: "STORY", scriptSceneIds: [], owner: "MOTION" });
+  const findings: EpisodeProjectedPlanningReadinessFinding[] = raw.filter((issue) => issue.severity === "BLOCK").map((issue) => {
+    const text = `${issue.gate} ${issue.message}`.toUpperCase();
+    const missing = /(NOT[_ ]ASSERTED|NOT[_ ]PROVEN|REQUIRED|MISSING|ABSENT|UNRESOLVED|NO PERSISTED)/.test(text);
+    return {
+      code: issue.gate,
+      classification: missing ? "MISSING_EVIDENCE" as const : "CONTRADICTION" as const,
+      owner: issue.owner,
+      scope: issue.scope,
+      scriptSceneIds: [...issue.scriptSceneIds],
+      message: issue.message,
+    };
+  });
+  return {
+    status: findings.length === 0 ? "PASS" as const : "BLOCK" as const,
+    dispatchAuthorized: false as const,
+    directorPlanId: input.directorPlan.directorPlanId,
+    directorFingerprint: input.directorPlan.directorFingerprint,
+    motionPlanId: input.motionPlan.motionPlanId,
+    motionFingerprint: input.motionPlan.motionFingerprint,
+    findings,
+  };
 }
 
 function bindProjectedQcTarget(

@@ -1,5 +1,7 @@
-import { AiStorySceneGenerationAuthoritySchema, EpisodeProjectedAuthorityError, type EpisodeProjectedAuthoritySource } from "@ceo-agent/shared";
-import { getDb } from "../client";
+import { and, eq } from "drizzle-orm";
+import { AiStorySceneGenerationAuthoritySchema, AuthoritativeAnimationPackagePayloadSchema, EpisodeProjectedAuthorityError, type AiStoryEpisodeProjectedDirectorPlan, type AiStoryEpisodeProjectedMotionPlan, type AiStoryScriptVersion, type EpisodeProjectedAuthoritySource } from "@ceo-agent/shared";
+import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, evaluateEpisodeProjectedPlanningReadiness } from "@ceo-agent/shared/server";
+import { getDb, schema } from "../client";
 import { resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion } from "./ai-story-approved-animation-package";
 import { AiStoryDirectorPlanAuthorityService } from "./ai-story-director-plan";
 import { AiStoryMotionPlanAuthorityService } from "./ai-story-motion-plan";
@@ -14,6 +16,8 @@ export type LoadedEpisodeDispatchAuthority = {
   source: EpisodeProjectedAuthoritySource;
 };
 
+type ProjectionPackage = { id: string; payload: ReturnType<typeof AuthoritativeAnimationPackagePayloadSchema.parse> };
+
 function stateFact(fact: { dimension: string; subjectId: string; value: string; fromValue?: string | null; reason?: string | null }) {
   return {
     dimension: fact.dimension,
@@ -24,21 +28,7 @@ function stateFact(fact: { dimension: string; subjectId: string; value: string; 
   };
 }
 
-export async function loadEpisodeDispatchProjectionSource(
-  db: Db,
-  scope: AiStoryScriptScope,
-): Promise<LoadedEpisodeDispatchAuthority> {
-  const scripts = await new AiStoryScriptAuthorityService(db).history(scope);
-  const script = scripts.filter((item) => item.status === "FROZEN" && item.storyVersionId === scope.storyVersionId);
-  if (script.length !== 1) {
-    throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "Episode projection requires exactly one FROZEN Script for the Story Version");
-  }
-  const scenes = await resolveCurrentFrozenCanonicalSceneSet(db, scope);
-  const animationPackage = await resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion(db, scope);
-  if (!scenes || !animationPackage) {
-    throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "Episode projection requires the current FROZEN Canonical Scene set and approved Animation Package");
-  }
-  const current = script[0]!;
+function projectionSource(current: AiStoryScriptVersion, scenes: NonNullable<Awaited<ReturnType<typeof resolveCurrentFrozenCanonicalSceneSet>>>, animationPackage: ProjectionPackage): LoadedEpisodeDispatchAuthority {
   return {
     scriptVersionId: current.scriptVersionId,
     source: {
@@ -110,6 +100,38 @@ export async function loadEpisodeDispatchProjectionSource(
   };
 }
 
+async function frozenScript(db: Db, scope: AiStoryScriptScope) {
+  const scripts = await new AiStoryScriptAuthorityService(db).history(scope);
+  const frozen = scripts.filter((item) => item.status === "FROZEN" && item.storyVersionId === scope.storyVersionId);
+  if (frozen.length !== 1) throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "Episode projection requires exactly one FROZEN Script for the Story Version");
+  return frozen[0]!;
+}
+
+export async function loadEpisodeDispatchProjectionSource(db: Db, scope: AiStoryScriptScope): Promise<LoadedEpisodeDispatchAuthority> {
+  const current = await frozenScript(db, scope);
+  const scenes = await resolveCurrentFrozenCanonicalSceneSet(db, scope);
+  const animationPackage = await resolveCurrentCanonicalApprovedAnimationPackageForStoryVersion(db, scope);
+  if (!scenes || !animationPackage) throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "Episode projection requires the current FROZEN Canonical Scene set and approved Animation Package");
+  return projectionSource(current, scenes, { id: animationPackage.id, payload: AuthoritativeAnimationPackagePayloadSchema.parse(animationPackage.payload) });
+}
+
+export async function loadEpisodePlanningProjectionSource(db: Db, scope: AiStoryScriptScope, animationPackageId: string): Promise<LoadedEpisodeDispatchAuthority> {
+  const current = await frozenScript(db, scope);
+  const scenes = await resolveCurrentFrozenCanonicalSceneSet(db, scope);
+  const [row] = await db.select().from(schema.aiStoryAnimationPackages).where(and(
+    eq(schema.aiStoryAnimationPackages.id, animationPackageId),
+    eq(schema.aiStoryAnimationPackages.orgId, scope.orgId),
+    eq(schema.aiStoryAnimationPackages.workspaceId, scope.workspaceId),
+    eq(schema.aiStoryAnimationPackages.campaignId, scope.campaignId),
+    eq(schema.aiStoryAnimationPackages.storyId, scope.storyId),
+    eq(schema.aiStoryAnimationPackages.storyVersionId, scope.storyVersionId),
+  )).limit(1);
+  if (!scenes || !row) throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "Planning readiness requires the current FROZEN Canonical Scene set and exact Animation Package");
+  const payload = AuthoritativeAnimationPackagePayloadSchema.parse(row.payload);
+  assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent({ storyId: scope.storyId, storyVersionId: scope.storyVersionId, scenePlan: payload.scenePlan, canonicalScenes: scenes, authority: payload.canonicalSceneAuthority });
+  return projectionSource(current, scenes, { id: row.id, payload });
+}
+
 export async function ensureCurrentEpisodeDispatchAuthorityProjection(
   scope: AiStoryScriptScope,
   db: Db = getDb(),
@@ -141,4 +163,27 @@ export async function ensureCurrentEpisodeDispatchAuthorityProjection(
     motionFingerprint: motion.motionFingerprint,
     motionStatus: motion.status,
   };
+}
+
+export async function prepareEpisodePlanningExecutionReadiness(
+  scope: AiStoryScriptScope,
+  animationPackageId: string,
+  db: Db = getDb(),
+) {
+  const loaded = await loadEpisodePlanningProjectionSource(db, scope, animationPackageId);
+  const handoffRecord = await new AiStoryScriptDirectorHandoffAuthorityService(db).createFromFrozenScript(scope, loaded.scriptVersionId);
+  const director = await new AiStoryDirectorPlanAuthorityService(db).projectFromEpisodeAuthority(scope, loaded.source, undefined, "VALIDATED");
+  const motion = await new AiStoryMotionPlanAuthorityService(db).projectFromEpisodeAuthority(scope, loaded.source, director.directorPlanId, undefined, "VALIDATED");
+  const scripts = await new AiStoryScriptAuthorityService(db).history(scope);
+  const script = scripts.find((item) => item.scriptVersionId === loaded.scriptVersionId && item.status === "FROZEN");
+  const canonicalScenes = await resolveCurrentFrozenCanonicalSceneSet(db, scope);
+  if (!script || !canonicalScenes) throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "Planning readiness lost frozen Script or Canonical Scene authority");
+  const readiness = evaluateEpisodeProjectedPlanningReadiness({
+    script,
+    handoff: handoffRecord.handoff,
+    directorPlan: director as AiStoryEpisodeProjectedDirectorPlan,
+    motionPlan: motion as AiStoryEpisodeProjectedMotionPlan,
+    canonicalScenes,
+  });
+  return { ...readiness, handoffId: handoffRecord.handoff.handoffId, animationPackageId };
 }

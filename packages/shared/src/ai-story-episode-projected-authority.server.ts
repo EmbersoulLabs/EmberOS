@@ -74,8 +74,8 @@ export function buildEpisodeProjectedMotionPlan(input: {
   createdBy: string;
   createdAt: string;
 }): AiStoryEpisodeProjectedMotionPlan {
-  if (input.directorPlan.status !== "FROZEN") {
-    throw new EpisodeProjectedAuthorityError("EPISODE_PROJECTED_AUTHORITY_CONFLICT", "Projected Motion requires a FROZEN projected Director plan");
+  if (input.directorPlan.status !== "VALIDATED" && input.directorPlan.status !== "FROZEN") {
+    throw new EpisodeProjectedAuthorityError("EPISODE_PROJECTED_AUTHORITY_CONFLICT", "Projected Motion requires a VALIDATED or FROZEN projected Director plan");
   }
   if (input.directorPlan.contractVersion !== AI_STORY_DIRECTOR_PLAN_EPISODE_PROJECTED_CONTRACT_VERSION) {
     throw new EpisodeProjectedAuthorityError("EPISODE_PROJECTED_AUTHORITY_CONFLICT", "Projected Motion cannot bind an authored Director plan");

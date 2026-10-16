@@ -3,6 +3,7 @@ import { AI_STORY_CAMERA_FAMILIES } from "./ai-story-director-plan";
 import { cinematicCameraMovementIntensity } from "./ai-story-cinematic-execution-contract";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
 import { provePersistedProductCameraSafety, type AiStoryShotCameraSafety } from "./ai-story-product-camera-safety";
+import { AiStorySuccessorMotionReviewSchema } from "./ai-story-successor-motion";
 
 export const AI_STORY_DIRECTOR_PLAN_EPISODE_PROJECTED_CONTRACT_VERSION = "ai-story-director-plan.episode-projected.v1" as const;
 export const AI_STORY_MOTION_PLAN_EPISODE_PROJECTED_CONTRACT_VERSION = "ai-story-motion-plan.episode-projected.v1" as const;
@@ -191,6 +192,7 @@ export const AiStoryEpisodeProjectedMotionPlanSchema = z.object({
   approvedBy: Id.nullable(),
   approvedAt: z.string().datetime().nullable(),
   frozenAt: z.string().datetime().nullable(),
+  successorReview: AiStorySuccessorMotionReviewSchema.optional(),
 }).strict();
 
 export type AiStoryEpisodeProjectedDirectorPlan = z.infer<typeof AiStoryEpisodeProjectedDirectorPlanSchema>;

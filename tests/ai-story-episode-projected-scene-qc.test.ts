@@ -15,6 +15,7 @@ import {
   buildAiStoryScriptDirectorHandoff,
   buildAiStoryScriptVersion,
   evaluateAiStoryPreGenerationQc,
+  evaluateEpisodeProjectedPlanningReadiness,
   evaluateEpisodeProjectedPreGenerationQc,
   includeValidatedCampaignAuthority,
   resolveProjectedQcTargetScene,
@@ -437,5 +438,72 @@ describe("scene-scoped projected pre-generation QC", () => {
     built.directorPlan.sceneDirections[1] = scenes[1]!;
     const evaluation = evaluate(1, built);
     expect(gate(evaluation, "PRODUCT_GROUNDED_MOTION_SAFETY_GATE").safeEvidence.join(" ")).toContain("PROJECTED_PRODUCT_CAMERA_SAFETY_EVIDENCE_REQUIRED");
+  });
+
+  it("uses the canonical projected QC rules before approval and never authorizes dispatch", () => {
+    const built = story();
+    const readiness = evaluateEpisodeProjectedPlanningReadiness({
+      script: built.script,
+      handoff: built.handoff,
+      directorPlan: { ...built.directorPlan, status: "VALIDATED", approvedBy: null, approvedAt: null, frozenAt: null },
+      motionPlan: { ...built.motionPlan, status: "VALIDATED", approvedBy: null, approvedAt: null, frozenAt: null },
+      canonicalScenes: built.directorPlan.sceneDirections.map((scene) => ({
+        sceneId: scene.canonicalSceneId,
+        sceneVersionId: scene.canonicalSceneVersionId,
+        storyId: STORY,
+        storyVersionId: STORY_VERSION,
+        orgId: ORG,
+        workspaceId: WORKSPACE,
+        campaignId: CAMPAIGN,
+        order: scene.sceneOrder,
+        sourceScriptSceneIds: [scene.scriptSceneId],
+        fingerprint: HASH,
+        status: "FROZEN" as const,
+      })),
+    });
+    expect(readiness.dispatchAuthorized).toBe(false);
+    expect(readiness.directorFingerprint).toBe(built.directorPlan.directorFingerprint);
+    expect(readiness.motionFingerprint).toBe(built.motionPlan.motionFingerprint);
+  });
+
+  it("accepts a complete single-scene ZERO_ASSET T2V authority before approval", () => {
+    const built = story([specs()[0]!]);
+    const readiness = evaluateEpisodeProjectedPlanningReadiness({
+      script: built.script,
+      handoff: built.handoff,
+      directorPlan: built.directorPlan,
+      motionPlan: built.motionPlan,
+      canonicalScenes: built.directorPlan.sceneDirections.map((direction) => ({
+        sceneId: direction.canonicalSceneId, sceneVersionId: direction.canonicalSceneVersionId,
+        storyId: STORY, storyVersionId: STORY_VERSION, orgId: ORG, workspaceId: WORKSPACE,
+        campaignId: CAMPAIGN, order: direction.sceneOrder, sourceScriptSceneIds: [direction.scriptSceneId],
+        fingerprint: HASH, status: "FROZEN" as const,
+      })),
+    });
+    expect(readiness.status).toBe("PASS");
+    expect(readiness.findings).toEqual([]);
+    expect(readiness.dispatchAuthorized).toBe(false);
+  });
+
+  it("classifies absent object exit authority as missing evidence before approval", () => {
+    const built = story();
+    const scene = built.motionPlan.sceneMotionPlans[1]!;
+    scene.exitState = scene.exitState.filter((fact) => fact.subjectId !== PRODUCT);
+    const readiness = evaluateEpisodeProjectedPlanningReadiness({
+      script: built.script,
+      handoff: built.handoff,
+      directorPlan: built.directorPlan,
+      motionPlan: built.motionPlan,
+      canonicalScenes: built.directorPlan.sceneDirections.map((direction) => ({
+        sceneId: direction.canonicalSceneId, sceneVersionId: direction.canonicalSceneVersionId,
+        storyId: STORY, storyVersionId: STORY_VERSION, orgId: ORG, workspaceId: WORKSPACE,
+        campaignId: CAMPAIGN, order: direction.sceneOrder, sourceScriptSceneIds: [direction.scriptSceneId],
+        fingerprint: HASH, status: "FROZEN" as const,
+      })),
+    });
+    expect(readiness.status).toBe("BLOCK");
+    expect(readiness.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "OBJECT_PERSISTENCE_GATE", classification: "MISSING_EVIDENCE", scriptSceneIds: [scene.scriptSceneId] }),
+    ]));
   });
 });

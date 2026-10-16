@@ -1,12 +1,22 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import {
   PlanningApprovalClientError,
   createPlanningApprovalRequestGate,
 } from "@/lib/ai-story-planning-approval-client";
 
 type ApprovalPhase = "idle" | "pending" | "success" | "failure";
+type ReadinessFinding = {
+  code: string;
+  classification: "MISSING_EVIDENCE" | "CONTRADICTION";
+  message: string;
+  scriptSceneIds: string[];
+};
+type Readiness = {
+  status: "PASS" | "BLOCK";
+  findings: ReadinessFinding[];
+};
 
 export function PlanningApprovalControl({
   campaignId,
@@ -30,8 +40,33 @@ export function PlanningApprovalControl({
 
   const [phase, setPhase] = useState<ApprovalPhase>("idle");
   const [error, setError] = useState("");
+  const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const [readinessPending, setReadinessPending] = useState(false);
   const identityReady = Boolean(storyVersionId && animationPackageId);
   const pending = phase === "pending";
+
+  const refreshReadiness = useCallback(async () => {
+    if (!identityReady) return;
+    setReadinessPending(true);
+    setError("");
+    try {
+      const response = await fetch(`/api/campaigns/${encodeURIComponent(campaignId)}/ai-stories/${encodeURIComponent(storyId)}/planning/readiness`, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { Accept: "application/json" },
+      });
+      const payload = await response.json() as { readiness?: Readiness; error?: string };
+      if (!response.ok || !payload.readiness) throw new Error(payload.error ?? "Execution readiness could not be evaluated");
+      setReadiness(payload.readiness);
+    } catch (caught) {
+      setReadiness(null);
+      setError(caught instanceof Error ? caught.message : "Execution readiness could not be evaluated");
+    } finally {
+      setReadinessPending(false);
+    }
+  }, [campaignId, storyId, identityReady]);
+
+  useEffect(() => { void refreshReadiness(); }, [refreshReadiness]);
 
   async function submitApproval(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -67,10 +102,26 @@ export function PlanningApprovalControl({
   }
 
   return (
-    <form onSubmit={submitApproval} data-testid="planning-approval-form">
+    <form onSubmit={submitApproval} data-testid="planning-approval-form" className="space-y-3">
+      <div className="rounded-lg border border-border bg-slate-50 p-3" data-testid="planning-execution-readiness">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-medium text-navy">Execution readiness: {readinessPending ? "Checking…" : readiness?.status ?? "Unavailable"}</p>
+          <button type="button" onClick={() => void refreshReadiness()} disabled={readinessPending || !identityReady} className="text-xs font-medium text-primary disabled:opacity-60">Re-run validation</button>
+        </div>
+        {readiness?.findings.length ? (
+          <ul className="mt-2 space-y-2 text-sm text-ink-secondary">
+            {readiness.findings.map((finding, index) => (
+              <li key={`${finding.code}-${finding.scriptSceneIds.join("-") || "plan"}-${index}`}>
+                <span className="font-medium">{finding.classification === "MISSING_EVIDENCE" ? "Creative decision required" : "Contradiction"}</span>
+                {finding.scriptSceneIds.length ? ` · Scene ${finding.scriptSceneIds.join(", ")}` : ""}: {finding.message}
+              </li>
+            ))}
+          </ul>
+        ) : readiness?.status === "PASS" ? <p className="mt-2 text-sm text-green-700">Director, Motion, object-state and camera authority are complete and consistent.</p> : null}
+      </div>
       <button
         type="submit"
-        disabled={disabled || pending || phase === "success" || !identityReady}
+        disabled={disabled || pending || phase === "success" || !identityReady || readinessPending || readiness?.status !== "PASS"}
         aria-busy={pending}
         className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
       >
