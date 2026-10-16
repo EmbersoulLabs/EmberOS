@@ -27,6 +27,7 @@ export * from "./ai-story-script-director-handoff.server";
 export * from "./ai-story-director-plan.server";
 export * from "./ai-story-episode-dispatch-projection";
 export * from "./ai-story-episode-projected-authority.server";
+export * from "./ai-story-successor-motion.server";
 export * from "./ai-story-episode-projected-qc.server";
 export * from "./ai-story-cinematic-execution-contract";
 export * from "./ai-story-cinematic-execution-contract.server";

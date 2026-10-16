@@ -91,6 +91,7 @@ export * from "./ai-story-script-director-handoff";
 export * from "./ai-story-director-plan";
 export * from "./ai-story-episode-dispatch-projection";
 export * from "./ai-story-episode-projected-authority";
+export * from "./ai-story-successor-motion";
 export * from "./ai-story-cinematic-execution-contract";
 export * from "./ai-story-motion-plan";
 export * from "./ai-story-pre-generation-qc";
