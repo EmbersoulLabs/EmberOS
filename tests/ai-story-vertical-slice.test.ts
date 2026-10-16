@@ -228,7 +228,11 @@ describe("AI Story vertical slice (V1)", () => {
       expect(service).toContain("schema.assets.workspaceId");
     });
 
-    it("approve transitions review to ready_for_animation via freeze", () => {
+    it("approve recovers a persisted draft through review before freezing", () => {
+      expect(approveRoute).toContain('if (status === "draft")');
+      expect(approveRoute).toContain('setAiStoryStatus(db, storyId, "draft", "review")');
+      expect(approveRoute.indexOf('setAiStoryStatus(db, storyId, "draft", "review")'))
+        .toBeLessThan(approveRoute.lastIndexOf("freezeAiStoryVersion"));
       expect(approveRoute).toContain("freezeAiStoryVersion");
       expect(approveRoute).toContain('"ready_for_animation"');
     });
