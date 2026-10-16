@@ -27,22 +27,18 @@ describeIntegration("Production Controlled Self-Use authority", () => {
   const workspaceId = crypto.randomUUID();
   const otherOrgId = crypto.randomUUID();
   const otherWorkspaceId = crypto.randomUUID();
+  const secondInternalOrgId = crypto.randomUUID();
+  const secondInternalWorkspaceId = crypto.randomUUID();
+  const legacyInternalOrgId = crypto.randomUUID();
+  const legacyInternalWorkspaceId = crypto.randomUUID();
   let authorityId = "";
 
   beforeAll(async () => {
     sql = createIntegrationSql();
-    await sql.unsafe(
-      readFileSync(
-        "supabase/migrations/20260926055546_controlled_self_use_authority_v1.sql",
-        "utf8"
-      )
-    );
-    await sql.unsafe(
-      readFileSync(
-        "supabase/migrations/20261016033243_superadmin_internal_self_use_workspace_scope.sql",
-        "utf8"
-      )
-    );
+    const [base] = await sql<{ present: boolean }[]>`select to_regclass('public.controlled_self_use_authorities') is not null as present`;
+    if (!base?.present) await sql.unsafe(readFileSync("supabase/migrations/20260926055546_controlled_self_use_authority_v1.sql", "utf8"));
+    const [legacyScope] = await sql<{ present: boolean }[]>`select to_regclass('public.controlled_self_use_workspace_scopes') is not null as present`;
+    if (!legacyScope?.present) await sql.unsafe(readFileSync("supabase/migrations/20261016033243_superadmin_internal_self_use_workspace_scope.sql", "utf8"));
     await sql`
       insert into organizations (id, name, slug)
       values (${EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID}::uuid, 'EmberSoulLabs', ${`embersoul-self-use-${crypto.randomUUID()}`})
@@ -53,10 +49,20 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       values (${otherOrgId}::uuid, 'Customer', ${`customer-${crypto.randomUUID()}`})
     `;
     await sql`
+      insert into organizations (id, name, slug)
+      values (${secondInternalOrgId}::uuid, 'Second Internal Company', ${`internal-2-${crypto.randomUUID()}`})
+    `;
+    await sql`
+      insert into organizations (id, name, slug)
+      values (${legacyInternalOrgId}::uuid, 'Legacy Internal Company', ${`legacy-internal-${crypto.randomUUID()}`})
+    `;
+    await sql`
       insert into workspaces (id, org_id, name, slug)
       values
         (${workspaceId}::uuid, ${EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID}::uuid, 'Owner Workspace', ${`owner-${crypto.randomUUID()}`}),
-        (${otherWorkspaceId}::uuid, ${otherOrgId}::uuid, 'Customer Workspace', ${`customer-ws-${crypto.randomUUID()}`})
+        (${otherWorkspaceId}::uuid, ${otherOrgId}::uuid, 'Customer Workspace', ${`customer-ws-${crypto.randomUUID()}`}),
+        (${secondInternalWorkspaceId}::uuid, ${secondInternalOrgId}::uuid, 'Second Internal Workspace', ${`internal-ws-2-${crypto.randomUUID()}`}),
+        (${legacyInternalWorkspaceId}::uuid, ${legacyInternalOrgId}::uuid, 'Legacy Internal Workspace', ${`legacy-internal-ws-${crypto.randomUUID()}`})
     `;
     const assignment = buildPlatformAdminAssignment({
       userId: adminUserId,
@@ -66,6 +72,12 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       identitySeed: `self-use:${adminUserId}`,
     });
     await new PlatformAdminRepositoryImpl().acceptOrConvergeGrant(assignment);
+    await sql`
+      insert into organization_members (org_id, user_id, role)
+      values
+        (${EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID}::uuid, ${adminUserId}::uuid, 'owner'),
+        (${secondInternalOrgId}::uuid, ${adminUserId}::uuid, 'owner')
+    `;
     await new BillingAccountRepositoryImpl().createOrConverge(buildBillingAccount({
       orgId: EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID,
       createdAt: "2026-09-26T00:00:30.000Z",
@@ -88,6 +100,23 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       reason: "explicit owner workspace scope",
       createdAt: "2026-09-26T00:01:01.000Z",
     });
+    const legacyAuthority = await new ControlledSelfUseAuthorityService().provisionInternalSelfUseAuthority({
+      environment: "PRODUCTION",
+      organizationId: legacyInternalOrgId,
+      authorizedBy: adminUserId,
+      reason: "pre-account explicit internal authority",
+      createdAt: "2026-09-26T00:01:02.000Z",
+    });
+    await new ControlledSelfUseAuthorityService().authorizeInternalWorkspace({
+      authorityId: legacyAuthority.authority.authorityId,
+      organizationId: legacyInternalOrgId,
+      workspaceId: legacyInternalWorkspaceId,
+      authorizedBy: adminUserId,
+      reason: "pre-account explicit internal scope",
+      createdAt: "2026-09-26T00:01:03.000Z",
+    });
+    const [globalScope] = await sql<{ present: boolean }[]>`select to_regclass('public.controlled_self_use_organization_scopes') is not null as present`;
+    if (!globalScope?.present) await sql.unsafe(readFileSync("supabase/migrations/20261016160034_global_superadmin_entitlement_v1.sql", "utf8"));
   });
 
   afterAll(async () => { await sql?.end(); });
@@ -108,14 +137,15 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       where n.nspname='public' and c.relname in (
         'controlled_self_use_authorities',
         'controlled_self_use_reservations',
-        'controlled_self_use_events'
+        'controlled_self_use_events',
+        'controlled_self_use_organization_scopes'
       ) order by c.relname
     `;
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     expect(rows.every((item) => item.rls && !item.anon_any && !item.authenticated_any && item.policies === 0)).toBe(true);
   });
 
-  it("fails closed for customer organizations, foreign workspaces, retries, and per-execution overflow", async () => {
+  it("fails closed for customer organizations, foreign workspaces and retries without imposing an internal USD ceiling", async () => {
     const service = new ControlledSelfUseAuthorityService();
     await expect(service.assertWorkspaceEligible({
       environment: "PRODUCTION",
@@ -123,6 +153,7 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       workspaceId: otherWorkspaceId,
       capabilityKey: "ai_story.execute",
       providerKey: "seedance",
+      actorUserId: adminUserId,
     })).rejects.toThrow(/not eligible/i);
     await expect(service.assertWorkspaceEligible({
       environment: "PRODUCTION",
@@ -130,6 +161,7 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       workspaceId: otherWorkspaceId,
       capabilityKey: "campaign.generate",
       providerKey: "openai",
+      actorUserId: adminUserId,
     })).rejects.toThrow(/not eligible/i);
     await expect(service.reserve({
       environment: "PRODUCTION",
@@ -150,48 +182,73 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       executionIdentity: `over-${crypto.randomUUID()}`,
       providerKey: "seedance",
       maximumCostUsd: "5.01",
+      actorUserId: adminUserId,
       reservedAt: "2026-09-27T01:00:00.000Z",
-    })).rejects.toThrow(/ceiling/i);
+    })).resolves.toMatchObject({ reservation: { reservedCostUsd: "5.01" } });
   });
 
-  it("authorizes one explicit internal workspace and revocation fails closed", async () => {
+  it("inherits one account authority across owned Companies and all their Workspaces", async () => {
     const service = new ControlledSelfUseAuthorityService();
-    const provisioned = await service.provisionInternalSelfUseAuthority({
-      environment: "PRODUCTION",
-      organizationId: otherOrgId,
-      authorizedBy: adminUserId,
-      reason: "explicit isolated internal test workspace",
-      createdAt: "2026-09-27T02:00:00.000Z",
-    });
-    const scope = await service.authorizeInternalWorkspace({
-      authorityId: provisioned.authority.authorityId,
-      organizationId: otherOrgId,
-      workspaceId: otherWorkspaceId,
-      authorizedBy: adminUserId,
-      reason: "explicit isolated internal test workspace",
-      createdAt: "2026-09-27T02:00:01.000Z",
-    });
-    expect(scope.replayed).toBe(false);
     await expect(service.assertWorkspaceEligible({
       environment: "PRODUCTION",
-      organizationId: otherOrgId,
-      workspaceId: otherWorkspaceId,
+      organizationId: secondInternalOrgId,
+      workspaceId: secondInternalWorkspaceId,
       capabilityKey: "campaign.generate",
       providerKey: "openai",
-    })).resolves.toMatchObject({ authorityId: provisioned.authority.authorityId });
-    await service.revokeInternalWorkspace({
-      organizationId: otherOrgId,
-      workspaceId: otherWorkspaceId,
-      revokedBy: adminUserId,
-      revokedAt: "2026-09-27T02:00:02.000Z",
-    });
+      actorUserId: adminUserId,
+    })).resolves.toMatchObject({ authorityId, scopeKind: "ACCOUNT", accountUserId: adminUserId });
+    const newWorkspaceId = crypto.randomUUID();
+    await sql`insert into workspaces (id, org_id, name, slug) values
+      (${newWorkspaceId}::uuid, ${secondInternalOrgId}::uuid, 'Inherited Workspace', ${`inherited-${crypto.randomUUID()}`})`;
     await expect(service.assertWorkspaceEligible({
       environment: "PRODUCTION",
-      organizationId: otherOrgId,
-      workspaceId: otherWorkspaceId,
+      organizationId: secondInternalOrgId,
+      workspaceId: newWorkspaceId,
       capabilityKey: "campaign.generate",
       providerKey: "openai",
-    })).rejects.toThrow(/not eligible/i);
+      actorUserId: adminUserId,
+    })).resolves.toMatchObject({ authorityId });
+  });
+
+  it("converges an existing explicit internal Workspace scope without treating platform access as ownership", async () => {
+    const service = new ControlledSelfUseAuthorityService();
+    await expect(service.assertWorkspaceEligible({
+      environment: "PRODUCTION",
+      organizationId: legacyInternalOrgId,
+      workspaceId: legacyInternalWorkspaceId,
+      capabilityKey: "ai_story.plan",
+      providerKey: "openai",
+      actorUserId: adminUserId,
+    })).resolves.toMatchObject({ authorityId, scopeKind: "ACCOUNT" });
+    const [scope] = await sql<{ source: string }[]>`
+      select source from controlled_self_use_organization_scopes
+      where authority_id=${authorityId}::uuid and organization_id=${legacyInternalOrgId}::uuid
+    `;
+    expect(scope?.source).toBe("LEGACY_WORKSPACE_AUTHORITY");
+  });
+
+  it("auto-inherits a newly owned internal Company and fails closed on Superadmin revocation", async () => {
+    const orgId = crypto.randomUUID();
+    const inheritedWorkspaceId = crypto.randomUUID();
+    await sql`insert into organizations (id,name,slug) values
+      (${orgId}::uuid,'New Internal Company',${`new-internal-${crypto.randomUUID()}`})`;
+    await sql`insert into organization_members (org_id,user_id,role) values
+      (${orgId}::uuid,${adminUserId}::uuid,'owner')`;
+    await sql`insert into workspaces (id,org_id,name,slug) values
+      (${inheritedWorkspaceId}::uuid,${orgId}::uuid,'Automatically Inherited',${`auto-${crypto.randomUUID()}`})`;
+    const service = new ControlledSelfUseAuthorityService();
+    const input = {
+      environment: "PRODUCTION" as const,
+      organizationId: orgId,
+      workspaceId: inheritedWorkspaceId,
+      capabilityKey: "ai_story.plan" as const,
+      providerKey: "openai" as const,
+      actorUserId: adminUserId,
+    };
+    await expect(service.assertWorkspaceEligible(input)).resolves.toMatchObject({ authorityId });
+    await sql`update platform_admin_grants set status='REVOKED' where user_id=${adminUserId}::uuid`;
+    await expect(service.assertWorkspaceEligible(input)).rejects.toThrow(/not eligible/i);
+    await sql`update platform_admin_grants set status='ACTIVE' where user_id=${adminUserId}::uuid`;
   });
 
   it("creates only an execution-bound expiring entitlement and immediately reserved credits", async () => {
@@ -238,7 +295,7 @@ describeIntegration("Production Controlled Self-Use authority", () => {
     expect(facts?.reservation_amount).toBe(10);
   });
 
-  it("serializes concurrent reservations against the combined USD 10 daily cap", async () => {
+  it("keeps concurrent account usage idempotent and metered without an EmberOS daily cap", async () => {
     const service = new ControlledSelfUseAuthorityService();
     const day = "2026-09-28T02:00:00.000Z";
     const attempts = await Promise.allSettled(["a", "b", "c"].map((suffix) =>
@@ -250,11 +307,31 @@ describeIntegration("Production Controlled Self-Use authority", () => {
         executionIdentity: `daily-${suffix}-${crypto.randomUUID()}`,
         providerKey: "seedance",
         maximumCostUsd: "5.00",
+        actorUserId: adminUserId,
         reservedAt: day,
       })
     ));
-    expect(attempts.filter((item) => item.status === "fulfilled")).toHaveLength(2);
-    expect(attempts.filter((item) => item.status === "rejected")).toHaveLength(1);
+    expect(attempts.filter((item) => item.status === "fulfilled")).toHaveLength(3);
+    expect(attempts.filter((item) => item.status === "rejected")).toHaveLength(0);
+    const metered = await service.reserve({
+      environment: "PRODUCTION",
+      organizationId: secondInternalOrgId,
+      workspaceId: secondInternalWorkspaceId,
+      capabilityKey: "ai_story.plan",
+      executionIdentity: `actual-cost-${crypto.randomUUID()}`,
+      providerKey: "openai",
+      maximumCostUsd: "0.10",
+      actorUserId: adminUserId,
+      reservedAt: day,
+    });
+    const settled = await service.settle(
+      metered.reservation.reservationId,
+      "0.25",
+      "2026-09-28T02:01:00.000Z",
+      "provider-request-test"
+    );
+    expect(settled.settledCostUsd).toBe("0.25");
+    expect(settled.workspaceId).toBe(secondInternalWorkspaceId);
   });
 
   it("releases unused terminal pre-provider planning reservations once", async () => {

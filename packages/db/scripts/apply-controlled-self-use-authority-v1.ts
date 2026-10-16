@@ -17,7 +17,11 @@ try {
     resolve(here, "../../../supabase/migrations/20260926055546_controlled_self_use_authority_v1.sql"),
     "utf8"
   ));
-  console.log("Controlled Self-Use authority applied.");
+  await db.unsafe(readFileSync(
+    resolve(here, "../../../supabase/migrations/20261016033243_superadmin_internal_self_use_workspace_scope.sql"),
+    "utf8"
+  ));
+  console.log("Controlled Self-Use authority and legacy Workspace scope applied.");
 } finally {
   await db.end();
 }

@@ -3,7 +3,6 @@
  */
 import { and, eq } from "drizzle-orm";
 import {
-  BillingAccountRepositoryImpl,
   ControlledSelfUseAuthorityService,
   PlatformAdminRepositoryImpl,
   getDb,
@@ -87,10 +86,6 @@ export async function executeCampaignGenerate(
     const grant = await new PlatformAdminRepositoryImpl(db).getActiveGrantForUser(userId);
     if (!grant) {
       return { ok: false, error: "Controlled Self-Use requires an active Platform Super Admin", code: "SELF_USE_DENIED", status: 403 };
-    }
-    const billing = await new BillingAccountRepositoryImpl(db).getByOrgId(campaign.orgId);
-    if (!billing) {
-      return { ok: false, error: "Billing Account is required for Controlled Self-Use", code: "BILLING_REQUIRED", status: 403 };
     }
     const selfUse = new ControlledSelfUseAuthorityService(db);
     await selfUse.assertWorkspaceEligible({

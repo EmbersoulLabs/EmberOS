@@ -6,7 +6,6 @@ import {
   AiStoryCharacterAuthorityService,
   resolveCurrentFrozenOutlineForStoryVersion,
   AiStoryAssetMatchingRepository,
-  BillingAccountRepositoryImpl,
   ControlledSelfUseAuthorityService,
   PlatformAdminRepositoryImpl,
   PgEpisodeContinuityRuntimeIntegration,
@@ -890,11 +889,8 @@ export async function runSinglePlanningStage(input: {
   const grant = await new PlatformAdminRepositoryImpl(db).getActiveGrantForUser(
     input.actorUserId
   );
-  const billing = await new BillingAccountRepositoryImpl(db).getByOrgId(
-    ctx.campaign.orgId
-  );
-  if (!grant || !billing) {
-    throw new Error("CONTROLLED_SELF_USE_PLANNING_BILLING_AUTHORITY_DENIED");
+  if (!grant) {
+    throw new Error("CONTROLLED_SELF_USE_PLATFORM_AUTHORITY_DENIED");
   }
   const authority = new ControlledSelfUseAuthorityService(db);
   const executionIdentity = [

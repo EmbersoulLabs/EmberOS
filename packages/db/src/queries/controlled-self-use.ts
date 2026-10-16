@@ -30,6 +30,8 @@ export type ControlledSelfUseAuthority = {
   authorityId: string;
   environment: ControlledSelfUseEnvironment;
   organizationId: string;
+  scopeKind: "ORGANIZATION" | "ACCOUNT";
+  accountUserId: string | null;
   status: "ACTIVE" | "DISABLED" | "REVOKED";
   maxUsdPerExecution: string;
   dailyCapUsd: string;
@@ -45,6 +47,7 @@ export type ControlledSelfUseReservation = {
   authorityId: string;
   organizationId: string;
   workspaceId: string;
+  actorUserId: string | null;
   capabilityKey: ControlledSelfUseCapability;
   executionIdentity: string;
   providerKey: ControlledSelfUseProvider;
@@ -118,6 +121,8 @@ function authorityFromRow(value: Record<string, unknown>): ControlledSelfUseAuth
     authorityId: String(value.authority_id),
     environment: value.environment as ControlledSelfUseEnvironment,
     organizationId: String(value.organization_id),
+    scopeKind: (value.scope_kind ?? "ORGANIZATION") as ControlledSelfUseAuthority["scopeKind"],
+    accountUserId: value.account_user_id ? String(value.account_user_id) : null,
     status: value.status as ControlledSelfUseAuthority["status"],
     maxUsdPerExecution: String(value.max_usd_per_execution),
     dailyCapUsd: String(value.daily_cap_usd),
@@ -135,6 +140,7 @@ function reservationFromRow(value: Record<string, unknown>): ControlledSelfUseRe
     authorityId: String(value.authority_id),
     organizationId: String(value.organization_id),
     workspaceId: String(value.workspace_id),
+    actorUserId: value.actor_user_id ? String(value.actor_user_id) : null,
     capabilityKey: value.capability_key as ControlledSelfUseCapability,
     executionIdentity: String(value.execution_identity),
     providerKey: value.provider_key as ControlledSelfUseProvider,
@@ -351,7 +357,7 @@ export class ControlledSelfUseAuthorityService {
     authorityId: string;
     organizationId: typeof EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID;
     status: "ACTIVE" | "DISABLED" | "REVOKED";
-    actorUserId: string;
+    actorUserId?: string;
     occurredAt: string;
   }): Promise<ControlledSelfUseAuthority> {
     if (input.organizationId !== EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID) {
@@ -399,6 +405,27 @@ export class ControlledSelfUseAuthorityService {
         and organization_id = ${organizationId}::uuid
         and purpose = 'CONTROLLED_SELF_USE'
         and status = 'ACTIVE'
+      limit 1
+    `);
+    const found = row<Record<string, unknown>>(rows);
+    return found ? authorityFromRow(found) : null;
+  }
+
+  async getActiveAccountAuthority(
+    environment: ControlledSelfUseEnvironment,
+    accountUserId: string
+  ): Promise<ControlledSelfUseAuthority | null> {
+    const rows = await this.db.execute(sql`
+      select authority.* from controlled_self_use_authorities authority
+      join platform_admin_grants admin
+        on admin.user_id=authority.account_user_id
+       and admin.user_id=${accountUserId}::uuid
+       and admin.platform_role='PLATFORM_SUPER_ADMIN'
+       and admin.status='ACTIVE'
+      where authority.environment=${environment}
+        and authority.scope_kind='ACCOUNT'
+        and authority.purpose='CONTROLLED_SELF_USE'
+        and authority.status='ACTIVE'
       limit 1
     `);
     const found = row<Record<string, unknown>>(rows);
@@ -500,25 +527,63 @@ export class ControlledSelfUseAuthorityService {
     workspaceId: string;
     capabilityKey: ControlledSelfUseCapability;
     providerKey: ControlledSelfUseProvider;
+    actorUserId?: string;
   }): Promise<ControlledSelfUseAuthority> {
     const rows = await this.db.execute(sql`
-      select authority.*
+      with eligible as (
+      select authority.*, 0 as priority
+      from controlled_self_use_authorities authority
+      join controlled_self_use_organization_scopes scope
+        on scope.authority_id = authority.authority_id
+       and scope.organization_id = ${input.organizationId}::uuid
+       and scope.owner_user_id = coalesce(${input.actorUserId ?? null}::uuid, authority.account_user_id)
+       and scope.status = 'ACTIVE'
+      left join organization_members owner
+        on owner.org_id = scope.organization_id
+       and owner.user_id = scope.owner_user_id
+       and owner.role = 'owner'
+      join platform_admin_grants admin
+        on admin.user_id = authority.account_user_id
+       and admin.user_id = coalesce(${input.actorUserId ?? null}::uuid, authority.account_user_id)
+       and admin.platform_role = 'PLATFORM_SUPER_ADMIN'
+       and admin.status = 'ACTIVE'
+      join workspaces workspace
+        on workspace.id = ${input.workspaceId}::uuid
+       and workspace.org_id = scope.organization_id
+      where authority.environment = ${input.environment}
+        and authority.purpose = 'CONTROLLED_SELF_USE'
+        and authority.scope_kind = 'ACCOUNT'
+        and authority.status = 'ACTIVE'
+        and authority.allowed_capabilities ? ${input.capabilityKey}
+        and authority.allowed_providers ? ${input.providerKey}
+        and (owner.id is not null or scope.source = 'LEGACY_WORKSPACE_AUTHORITY')
+      union all
+      select authority.*, 1 as priority
       from controlled_self_use_authorities authority
       join controlled_self_use_workspace_scopes scope
         on scope.authority_id = authority.authority_id
        and scope.organization_id = authority.organization_id
        and scope.workspace_id = ${input.workspaceId}::uuid
        and scope.status = 'ACTIVE'
-      join workspaces workspace
-        on workspace.id = ${input.workspaceId}::uuid
-       and workspace.org_id = authority.organization_id
+      join workspaces workspace on workspace.id = scope.workspace_id and workspace.org_id = authority.organization_id
+      join platform_admin_grants admin
+        on admin.user_id = coalesce(${input.actorUserId ?? null}::uuid, authority.authorized_by)
+       and admin.platform_role = 'PLATFORM_SUPER_ADMIN' and admin.status = 'ACTIVE'
       where authority.environment = ${input.environment}
         and authority.organization_id = ${input.organizationId}::uuid
         and authority.purpose = 'CONTROLLED_SELF_USE'
+        and authority.scope_kind = 'ORGANIZATION'
         and authority.status = 'ACTIVE'
         and authority.allowed_capabilities ? ${input.capabilityKey}
         and authority.allowed_providers ? ${input.providerKey}
-      limit 1
+        and not exists (
+          select 1 from controlled_self_use_authorities account_authority
+          where account_authority.environment = authority.environment
+            and account_authority.account_user_id = coalesce(${input.actorUserId ?? null}::uuid, authority.authorized_by)
+            and account_authority.scope_kind = 'ACCOUNT'
+            and account_authority.status = 'ACTIVE'
+        )
+      ) select * from eligible order by priority limit 1
     `);
     const found = row<Record<string, unknown>>(rows);
     if (!found) {
@@ -543,6 +608,17 @@ export class ControlledSelfUseAuthorityService {
     reservedAt: string;
   }): Promise<{ reservation: ControlledSelfUseReservation; replayed: boolean }> {
     return this.db.transaction(async (tx) => {
+      const eligibleAuthority = await this.assertWorkspaceEligible({
+        environment: input.environment,
+        organizationId: input.organizationId,
+        workspaceId: input.workspaceId,
+        capabilityKey: input.capabilityKey,
+        providerKey: input.providerKey,
+        ...(input.actorUserId ? { actorUserId: input.actorUserId } : {}),
+      });
+      const effectiveActorUserId = input.actorUserId
+        ?? eligibleAuthority.accountUserId
+        ?? eligibleAuthority.authorizedBy;
       const existingRows = await tx.execute(sql`
         select * from controlled_self_use_reservations
         where execution_identity = ${input.executionIdentity}
@@ -558,6 +634,7 @@ export class ControlledSelfUseAuthorityService {
           parsed.providerKey !== input.providerKey ||
           parsed.reservedCostUsd !== Number(input.maximumCostUsd).toFixed(2) ||
           parsed.retryOrdinal !== (input.retryOrdinal ?? 0)
+          || (parsed.actorUserId !== null && parsed.actorUserId !== effectiveActorUserId)
         ) {
           throw new ControlledSelfUseError(
             "CONTROLLED_SELF_USE_RESERVATION_CONFLICT",
@@ -567,22 +644,7 @@ export class ControlledSelfUseAuthorityService {
         return { reservation: parsed, replayed: true };
       }
 
-      const authorityRows = await tx.execute(sql`
-        select authority.*
-        from controlled_self_use_authorities authority
-        join controlled_self_use_workspace_scopes scope
-          on scope.authority_id = authority.authority_id
-         and scope.organization_id = authority.organization_id
-         and scope.workspace_id = ${input.workspaceId}::uuid
-         and scope.status = 'ACTIVE'
-        join workspaces workspace
-          on workspace.id = ${input.workspaceId}::uuid
-         and workspace.org_id = authority.organization_id
-        where authority.environment = ${input.environment}
-          and authority.organization_id = ${input.organizationId}::uuid
-          and authority.purpose = 'CONTROLLED_SELF_USE'
-        for update of authority
-      `);
+      const authorityRows = await tx.execute(sql`select * from controlled_self_use_authorities where authority_id=${eligibleAuthority.authorityId}::uuid for update`);
       const authorityRow = row<Record<string, unknown>>(authorityRows);
       if (!authorityRow) {
         throw new ControlledSelfUseError("CONTROLLED_SELF_USE_DENIED", "Controlled Self-Use authority is missing");
@@ -600,7 +662,9 @@ export class ControlledSelfUseAuthorityService {
         throw new ControlledSelfUseError("CONTROLLED_SELF_USE_RETRY_DENIED", "Automatic paid retry is not authorized");
       }
       const requestedCents = money(input.maximumCostUsd);
-      if (requestedCents <= 0 || requestedCents > money(authority.maxUsdPerExecution)) {
+      if (requestedCents <= 0 || (
+        authority.scopeKind === "ORGANIZATION" && requestedCents > money(authority.maxUsdPerExecution)
+      )) {
         throw new ControlledSelfUseError("CONTROLLED_SELF_USE_EXECUTION_CAP_EXCEEDED", "Execution exceeds the self-use USD ceiling");
       }
       const budgetDay = input.reservedAt.slice(0, 10);
@@ -609,12 +673,24 @@ export class ControlledSelfUseAuthorityService {
           case when status = 'SETTLED' then settled_cost_usd else reserved_cost_usd end
         ), 0)::text as committed_usd
         from controlled_self_use_reservations
-        where authority_id = ${authority.authorityId}::uuid
-          and budget_day = ${budgetDay}::date
+        where budget_day = ${budgetDay}::date
           and status in ('RESERVED', 'SUBMITTED', 'SETTLED')
+          and (
+            authority_id = ${authority.authorityId}::uuid
+            or (
+              ${authority.scopeKind} = 'ACCOUNT'
+              and organization_id in (
+                select organization_id from controlled_self_use_organization_scopes
+                where authority_id = ${authority.authorityId}::uuid and status = 'ACTIVE'
+              )
+            )
+          )
       `);
       const committedCents = money(String(row<{ committed_usd: string }>(spendRows)?.committed_usd ?? "0"));
-      if (committedCents + requestedCents > money(authority.dailyCapUsd)) {
+      if (
+        authority.scopeKind === "ORGANIZATION"
+        && committedCents + requestedCents > money(authority.dailyCapUsd)
+      ) {
         throw new ControlledSelfUseError("SELF_USE_DAILY_BUDGET_EXCEEDED", "Organization daily self-use budget is exhausted");
       }
 
@@ -627,6 +703,7 @@ export class ControlledSelfUseAuthorityService {
         executionIdentity: input.executionIdentity,
         providerKey: input.providerKey,
         reservedCostUsd: usd(requestedCents),
+        actorUserId: effectiveActorUserId,
         retryOrdinal,
         budgetDay,
         createdAt: input.reservedAt,
@@ -636,13 +713,14 @@ export class ControlledSelfUseAuthorityService {
       const inserted = await tx.execute(sql`
         insert into controlled_self_use_reservations (
           reservation_id, authority_id, organization_id, workspace_id,
-          capability_key, execution_identity, provider_key, reserved_cost_usd,
+          capability_key, execution_identity, provider_key, reserved_cost_usd, actor_user_id,
           retry_ordinal, status, budget_day, created_at, integrity_hash, contract_version
         ) values (
           ${reservationId}::uuid, ${authority.authorityId}::uuid,
           ${input.organizationId}::uuid, ${input.workspaceId}::uuid,
           ${input.capabilityKey}, ${input.executionIdentity}, ${input.providerKey},
-          ${usd(requestedCents)}::numeric, ${retryOrdinal}, 'RESERVED',
+          ${usd(requestedCents)}::numeric, ${effectiveActorUserId}::uuid,
+          ${retryOrdinal}, 'RESERVED',
           ${budgetDay}::date, ${input.reservedAt}::timestamptz,
           ${integrityHash}, 'controlled-self-use-reservation.v1'
         ) returning *
@@ -651,7 +729,7 @@ export class ControlledSelfUseAuthorityService {
         authorityId: authority.authorityId,
         reservationId,
         eventType: "RESERVED",
-        actorUserId: input.actorUserId,
+        actorUserId: effectiveActorUserId,
         costUsd: usd(requestedCents),
         occurredAt: input.reservedAt,
         evidence: { capabilityKey: input.capabilityKey, executionIdentity: input.executionIdentity },
@@ -890,7 +968,16 @@ export class ControlledSelfUseAuthorityService {
         (target === "SETTLED" && ["RESERVED", "SUBMITTED"].includes(current.status)) ||
         (target === "RELEASED" && ["RESERVED", "SUBMITTED"].includes(current.status));
       if (!allowed) throw new ControlledSelfUseError("CONTROLLED_SELF_USE_RESERVATION_STATE_INVALID", "Reservation transition is not allowed");
-      if (settledCostUsd && money(settledCostUsd) > money(current.reservedCostUsd)) {
+      const authorityRows = await tx.execute(sql`
+        select scope_kind from controlled_self_use_authorities
+        where authority_id=${current.authorityId}::uuid limit 1
+      `);
+      const scopeKind = row<{ scope_kind: string }>(authorityRows)?.scope_kind ?? "ORGANIZATION";
+      if (
+        scopeKind === "ORGANIZATION"
+        && settledCostUsd
+        && money(settledCostUsd) > money(current.reservedCostUsd)
+      ) {
         throw new ControlledSelfUseError("CONTROLLED_SELF_USE_SETTLEMENT_EXCEEDED", "Settlement exceeds reservation");
       }
       const updated = await tx.execute(sql`

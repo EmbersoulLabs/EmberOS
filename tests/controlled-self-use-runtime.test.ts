@@ -4,16 +4,20 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("Controlled Self-Use runtime boundaries", () => {
-  it("restricts Production authority to explicit server-only workspace scopes", () => {
+  it("restricts Production authority to server-only owned Organization scopes", () => {
     const service = read("packages/db/src/queries/controlled-self-use.ts");
     const migration = read("supabase/migrations/20260926055546_controlled_self_use_authority_v1.sql");
     const scopeMigration = read("supabase/migrations/20261016033243_superadmin_internal_self_use_workspace_scope.sql");
+    const globalMigration = read("supabase/migrations/20261016160034_global_superadmin_entitlement_v1.sql");
     expect(service).toContain("52519c8c-4011-478f-bf09-34e087e4bbdd");
     expect(service).toContain("controlled_self_use_workspace_scopes scope");
     expect(migration).toContain("controlled_self_use_production_org_check");
     expect(migration).not.toMatch(/using\s*\(\s*true\s*\)/i);
     expect(scopeMigration).toContain("drop constraint if exists controlled_self_use_production_org_check");
     expect(scopeMigration).not.toMatch(/using\s*\(\s*true\s*\)/i);
+    expect(globalMigration).toContain("controlled_self_use_organization_scopes");
+    expect(globalMigration).toContain("organization_owner_global_internal_self_use");
+    expect(globalMigration).not.toMatch(/using\s*\(\s*true\s*\)/i);
   });
 
   it("filters AI Story outbox selection before dispatch claim", () => {
@@ -50,13 +54,14 @@ describe("Controlled Self-Use runtime boundaries", () => {
     }
   });
 
-  it("requires Billing Account and durable reservation in both product paths", () => {
+  it("uses durable metering claims without requiring a Superadmin SaaS subscription", () => {
     const campaign = read("apps/web/src/lib/campaign-generate.ts");
     const planning = read("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/generate/route.ts");
     const storyWorker = read("apps/worker/src/ai-story-certification-commercial-reservation.ts");
-    expect(campaign).toContain("BillingAccountRepositoryImpl");
     expect(campaign).toContain("maximumCostUsd: \"0.50\"");
-    expect(planning).toContain("CONTROLLED_SELF_USE_PLANNING_BILLING_AUTHORITY_DENIED");
+    expect(planning).toContain("CONTROLLED_SELF_USE_PLATFORM_AUTHORITY_DENIED");
+    expect(campaign).not.toContain("BillingAccountRepositoryImpl");
+    expect(planning).not.toContain("BillingAccountRepositoryImpl");
     expect(storyWorker).toContain("AiStoryControlledSelfUseCommercialReservationGate");
     expect(storyWorker).toContain('providerKey: "seedance"');
     const commercial = read("packages/agents/src/commercial/commercial-authorization-runtime.ts");

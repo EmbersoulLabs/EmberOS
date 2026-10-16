@@ -4,11 +4,9 @@ import { requirePlatformAdmin } from "@/lib/platform-admin-auth";
 import {
   ControlledSelfUseAuthorityService,
   ControlledSelfUseError,
-  BillingAccountRepositoryImpl,
   getDb,
   schema,
 } from "@ceo-agent/db";
-import { buildBillingAccount } from "@ceo-agent/shared/server";
 import { and, eq } from "drizzle-orm";
 
 export async function POST(request: Request) {
@@ -17,51 +15,38 @@ export async function POST(request: Request) {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const organizationId = typeof body.organizationId === "string" ? body.organizationId : "";
     const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
-    const reason = typeof body.reason === "string" && body.reason.trim()
-      ? body.reason.trim()
-      : "Platform Superadmin internal self-use workspace authorization";
     if (!organizationId || !workspaceId) {
       return apiError("organizationId and workspaceId are required", "INVALID_REQUEST", 400);
     }
 
     const [workspace] = await getDb().select({ id: schema.workspaces.id })
       .from(schema.workspaces)
+      .innerJoin(schema.organizationMembers, and(
+        eq(schema.organizationMembers.orgId, schema.workspaces.orgId),
+        eq(schema.organizationMembers.userId, user.id),
+        eq(schema.organizationMembers.role, "owner")
+      ))
       .where(and(eq(schema.workspaces.id, workspaceId), eq(schema.workspaces.orgId, organizationId)))
       .limit(1);
-    if (!workspace) return apiError("Workspace scope not found", "WORKSPACE_NOT_FOUND", 404);
+    if (!workspace) return apiError("Owned internal Workspace scope not found", "WORKSPACE_NOT_FOUND", 404);
 
-    const now = new Date().toISOString();
     const service = new ControlledSelfUseAuthorityService();
-    const provisioned = await service.provisionInternalSelfUseAuthority({
+    const authority = await service.assertWorkspaceEligible({
       environment: "PRODUCTION",
       organizationId,
-      authorizedBy: user.id,
-      reason,
-      createdAt: now,
-    });
-    await new BillingAccountRepositoryImpl().createOrConverge(buildBillingAccount({
-      orgId: organizationId,
-      createdAt: now,
-      identitySeed: `controlled-self-use-billing:${organizationId}`,
-    }));
-    const scoped = await service.authorizeInternalWorkspace({
-      authorityId: provisioned.authority.authorityId,
-      organizationId,
       workspaceId,
-      authorizedBy: user.id,
-      reason,
-      createdAt: now,
+      capabilityKey: "ai_story.plan",
+      providerKey: "openai",
+      actorUserId: user.id,
     });
     return apiSuccess({
-      authorityId: provisioned.authority.authorityId,
-      scopeId: scoped.scopeId,
+      authorityId: authority.authorityId,
       organizationId,
       workspaceId,
-      maxUsdPerExecution: provisioned.authority.maxUsdPerExecution,
-      dailyCapUsd: provisioned.authority.dailyCapUsd,
-      maxAutomaticRetries: provisioned.authority.maxAutomaticRetries,
-      replayed: provisioned.replayed && scoped.replayed,
-    }, provisioned.replayed && scoped.replayed ? 200 : 201);
+      scopeKind: authority.scopeKind,
+      inherited: true,
+      maxAutomaticRetries: authority.maxAutomaticRetries,
+    });
   } catch (error) {
     if (error instanceof ControlledSelfUseError) {
       return apiError(error.message, error.code, 403);
@@ -72,18 +57,13 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
-    const { user } = await requirePlatformAdmin();
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const organizationId = typeof body.organizationId === "string" ? body.organizationId : "";
-    const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
-    if (!organizationId || !workspaceId) return apiError("organizationId and workspaceId are required", "INVALID_REQUEST", 400);
-    const result = await new ControlledSelfUseAuthorityService().revokeInternalWorkspace({
-      organizationId,
-      workspaceId,
-      revokedBy: user.id,
-      revokedAt: new Date().toISOString(),
-    });
-    return apiSuccess({ ...result, organizationId, workspaceId });
+    await requirePlatformAdmin();
+    void request;
+    return apiError(
+      "Global internal self-use follows active Platform Superadmin ownership; revoke the account role or Organization ownership authority instead",
+      "GLOBAL_INTERNAL_SELF_USE_SCOPE",
+      409
+    );
   } catch (error) {
     if (error instanceof ControlledSelfUseError) return apiError(error.message, error.code, 403);
     return handleApiError(error);
