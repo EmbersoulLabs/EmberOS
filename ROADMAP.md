@@ -1,159 +1,70 @@
-# 16 周开发路线图（Plan To-dos）
+# EmberOS Delivery Roadmap
 
-与 Cursor Plan 输出对齐，映射到 [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md)。
+This roadmap describes the current release boundary. For architecture, setup, and live-status evidence, start with [README.md](./README.md). Historical milestone documents remain under `docs/`; they are not proof that a capability is deployed or enabled.
 
-**图例：** ✅ 代码已有 · 🔄 需联调/验证 · ⬜ 未做或待部署
+Status meanings:
 
----
+- **Deployed**: the named revision has successful deployment metadata and a bounded smoke or health result.
+- **Verified**: deterministic tests or recorded certification evidence exist for the stated boundary.
+- **Partial**: implementation exists, but a release, runtime, or end-to-end gate remains.
+- **Blocked**: a required safety or capability prerequisite is missing.
+- **Planned**: no completed implementation is claimed.
 
-## M1 — 地基（W1–W4）→ Dev 2
+## Current release state
 
-| 周 | 任务 | Dev 段 | 状态 | 仓库位置 |
-|----|------|--------|------|----------|
-| **W1** | pnpm monorepo scaffold（Turbo）、apps/web、apps/worker、packages、.cursor/rules、README env | Dev 2.1 | ✅ | 根目录 `package.json`、`turbo.json`、`pnpm-workspace.yaml` |
-| **W2** | Supabase + Drizzle migrations、RLS、Auth、Next.js login skeleton | Dev 2.3–2.4 | ✅ | `packages/db/`、`apps/web/src/app/login/`、`packages/db/sql/rls.sql` |
-| **W3** | Org/Workspace CRUD API、workspace 列表 UI、RBAC | Dev 2.6–2.7 | ✅ | `api/workspaces`、`api/organizations`、`app/workspaces` |
-| **W4** | Campaign CRUD、presigned upload、ffprobe 元数据 | Dev 2.6 | ✅ | `api/campaigns`、`upload-url`、`confirm`；worker `probeVideo` |
+| Area | Status | Evidence and boundary |
+| --- | --- | --- |
+| Web/API | Deployed | Vercel Production deployment and `/api/health` report revision `9e937efa67aa3b0edb41d4ab9f5b8337b7f4f4c1`. A web health response is not Worker or provider certification. |
+| Background Worker | Deployed, health partially verified | Railway Production deployment metadata reports the same revision. Job processing health still requires Railway logs/heartbeat evidence; the Web health endpoint only reports queue depth. |
+| Video Studio V1 | Verified, frozen | Bounded render/review/export implementation and regression coverage exist. Do not expand its scope through unrelated work. |
+| Photo Scene V1 | Verified, frozen | Product extraction, official scene selection, composition, signed delivery, retry, and campaign binding are implemented. |
+| Campaign Marketing and Social Content | Partial | Versioned plans, handoffs, reviews, drafts, AI budget claims, and isolation tests exist. Open migration/model work must remain behind its database-first rollout order. |
+| AI Story planning and authority | Verified in code/tests | Canonical revisions, Scene/Director/Motion plans, Character/Product authority, Pre-QC, scheduling, Post-QC, review, assembly, and commercial controls exist. Runtime enablement is authority- and environment-specific. |
+| AI Story commercial production | Partial / release-gated | Self-use and bounded certification evidence exist, but public commercial readiness and a fresh actual-advertisement production run are not established by source or CI alone. |
+| LOCAL_GPU V2/V3 | Verified offline; runtime partial | Signed R2V/T2V contracts, H3 prompt mapping, reference hashes, upload bindings, and fail-closed capabilities are tested. Desktop H3 source is at `3b04b5fe6874cba21fa34805cbd2705f13e869eb`; its default branch remains the older baseline and local ports were not listening during the 2026-10-16 audit. |
+| Tenant isolation | Partial | Current Drizzle schema declares 153 tables and SQL contracts enable RLS on 109 distinct tables. Focused static/unit isolation tests pass, but Production catalog grants/policies were not read back and the legacy `usage_records` table has no RLS contract in current source. |
 
-**M1 段末演示：** 登录 → 建 Workspace → 上传 mp4 ✅（代码就绪，需配 `.env` 实测）
+## Release-critical work
 
----
+1. Review and resolve the `usage_records` exposure ambiguity in a separate security PR: establish its intended access model, add an additive RLS/GRANT contract if client roles can reach it, and test SELECT/INSERT/UPDATE/DELETE denial across workspaces.
+2. Add a catalog-based F3 suite on disposable PostgreSQL that enumerates every application table and validates RLS, grants, policies, nullable tenant keys, and cross-workspace CRUD. Keep server-only and global tables on an explicit allowlist.
+3. Bring the Desktop H3 branch through review/default-branch integration and perform a no-generation health/capability check before any single authorized real-GPU certification.
 
-## M2 — Agent 流水线（W5–W8）→ Dev 3
+## Product backlog
 
-| 周 | 任务 | Dev 段 | 状态 | 仓库位置 |
-|----|------|--------|------|----------|
-| **W5–W8** | BullMQ worker、CEO/Vision/Copy agents、task 状态机、进度 UI | Dev 3 | ✅ | `apps/worker/`、`packages/agents/`、`app/.../task/` |
+### In progress or gated
 
-**细分：**
+- Production-grade AI Story commercial cutover, including current release evidence and human review readiness.
+- OpenAI model-policy migration in Draft PR #218; no live quality claim exists.
+- Successor Motion authority validation in PR #224.
+- Documentation reconciliation in the current Draft PR.
 
-| 子项 | 状态 | 文件 |
-|------|------|------|
-| BullMQ + Redis | ✅ | `packages/queue/`、`apps/worker/src/index.ts` |
-| CEO Orchestrator | ✅ | `packages/agents/src/ceo.ts`、`orchestrator.ts` |
-| Vision Agent | ✅ | `packages/agents/src/vision.ts` |
-| Copy Agent | ✅ | `packages/agents/src/copy.ts` |
-| Task 状态机 + run API | ✅ | `api/campaigns/[id]/run`、`api/tasks/[id]` |
-| 进度 UI | ✅ | `TaskProgressContent.tsx` |
+### Blocked until separately authorized
 
-**M2 段末演示：** `POST run` → task completed → creative 有数据 🔄（需 Redis + Supabase + OpenAI key 联调）
+- Exact acoustic voice cloning or voice consistency. Descriptive Voice DNA is not an acoustic guarantee.
+- Unsupported continuity, audio, first-frame, or workflow requirements. These must fail closed.
+- Paid-provider or real-GPU quality certification without an explicit bounded authorization.
+- Any Production data mutation used only to prove isolation.
 
----
+### Planned
 
-## M3 — 剪辑与审核（W9–W12）→ Dev 3–4
+- Direct social-platform OAuth publishing, scheduling, and analytics feedback loops.
+- Broader SaaS billing/plan activation.
+- General-purpose long-form/timeline editing beyond the frozen Video Studio boundary.
+- Broader automated media-aware QC while retaining mandatory human review.
 
-| 周 | 任务 | Dev 段 | 状态 | 仓库位置 |
-|----|------|--------|------|----------|
-| **W9–W12** | Edit Director、FFmpeg 渲染、compliance、内部审核、错误重试 | Dev 3–4 | ✅ | 见下表 |
+## Historical milestones
 
-| 子项 | 状态 | 文件 |
-|------|------|------|
-| Edit Director | ✅ | `packages/agents/src/edit.ts` |
-| FFmpeg pipeline | ✅ | `apps/worker/src/ffmpeg/pipeline.ts` |
-| Compliance Agent | ✅ | `packages/agents/src/compliance.ts` |
-| 内部审核流 | ✅ | `api/reviews`、`app/.../reviews` |
-| Retry 路径 | ✅ | `packages/agents/src/orchestrator.ts`、`.cursor/rules/agents-pipeline.mdc` |
-| Creative 预览 + 改文案 | ✅ | `app/.../creatives/[id]`、`api/creatives/[id]` |
+The original W1–W16 plan delivered the monorepo foundation, authentication, workspace/campaign flows, agents, BullMQ Worker, FFmpeg pipeline, review, portal, exports, CI, and deployment manifests. It is retained in Git history and earlier planning documents. It must not be used as current deployment or E2E evidence.
 
-**M3 段末演示：** 浏览器内审核 pass/reject 🔄
-
----
-
-## M4 — Portal / 硬化 / 部署（W13–W16）→ Dev 4–6
-
-| 周 | 任务 | Dev 段 | 状态 | 仓库位置 |
-|----|------|--------|------|----------|
-| **W13–W16** | Client Portal、ZIP export、隔离测试、限流、Vercel/Railway 部署 | Dev 4–6 | 🔄 | 见下表 |
-
-| 子项 | 状态 | 文件 |
-|------|------|------|
-| Client Portal | ✅ | `app/portal/[token]`、`api/portal/[token]` |
-| ZIP export | ✅ | `api/creatives/[id]/export`、worker `createExportZip` |
-| Workspace 隔离测试 | 🔄 | `tests/workspace-isolation.test.ts`（需跑 `pnpm test`） |
-| API 限流 | ✅ | `apps/web/src/lib/rate-limit.ts` + 敏感路由；Redis 优先 |
-| GitHub Actions CI | ✅ | `.github/workflows/ci.yml` — test/typecheck/build/smoke |
-| Vercel 部署 web | ⬜ | 待配 `vercel.json` / 环境变量 |
-| Railway 部署 worker | ⬜ | 待 `infra/docker/Dockerfile.worker` |
-
-**M4 段末演示：** 生产 URL 跑通 1 条 Campaign ⬜
-
----
-
-## 与 Dev 六段对照
-
-| Plan 里程碑 | 开发 Workflow | 周次 |
-|-------------|---------------|------|
-| M1 | Dev 2 地基 | W1–W4 |
-| M2 | Dev 3 流水线（前半） | W5–W8 |
-| M3 | Dev 3–4 流水线 + 审核 | W9–W12 |
-| M4 | Dev 4–6 Portal + 联调 + 部署 | W13–W16 |
-
----
-
-## 当前建议：你在哪、下一步做什么
-
-```
-代码 scaffold：约 M1–M3 完成（~75%）
-真正缺口：环境配置 + 端到端联调 + M4 部署硬化
-```
-
-### 立即做（本周）
-
-1. **配环境** — 复制 `.env.example` → `.env.local`，填 Supabase / Redis / OpenAI
-2. **推 DB** — `pnpm db:push`，执行 `packages/db/sql/rls.sql`
-3. **本地双进程** — `pnpm dev` + `pnpm worker:dev`
-4. **走一条片** — 上传 → run → 看 task 页 → 审核 → export
-5. **跑测试** — `pnpm test`（隔离测试）
-
-### 随后做（M4）
-
-6. API rate limit（`LLM_BUDGET_PER_TASK_USD` 已有，加 HTTP 限流）
-7. Worker Docker 镜像 + Railway
-8. Vercel 部署 + 生产烟雾测试
-
----
-
-## Cursor Plan To-do 勾选建议
-
-在 Plan 面板可整项勾选：
-
-- [x] M1 W1 — monorepo scaffold
-- [x] M1 W2 — Supabase/Drizzle/Auth
-- [x] M1 W3 — Workspace/RBAC
-- [x] M1 W4 — Campaign/upload/ffprobe
-- [x] M2 W5–W8 — worker + agents + task UI（代码完成，联调后勾）
-- [x] M3 W9–W12 — FFmpeg + review + retry（代码完成，联调后勾）
-- [ ] M4 W13–W16 — Portal/export 已有；**CI + 限流 + 健康检查** ✅；**部署 + 生产验证** 待做
-
----
-
-## 每周验收命令（复制即用）
+## Verification commands
 
 ```bash
-# 安装
-pnpm install
-
-# 数据库
-pnpm db:push
-
-# 开发
-pnpm dev          # :3000
-pnpm worker:dev   # 另开终端
-
-# 检查
-pnpm typecheck
+pnpm install --frozen-lockfile
 pnpm test
-pnpm verify          # test + typecheck + web build（与 CI 一致）
-pnpm smoke:prod -- --url http://localhost:3000
-pnpm smoke:infra     # DATABASE_URL + REDIS_URL 连通性
-pnpm build
+pnpm typecheck
+pnpm --filter @ceo-agent/worker typecheck
+pnpm --filter @ceo-agent/web build
 ```
 
-**人工 E2E 路径：**
-
-```
-/login → /workspaces → /w/{slug}/campaigns/new
-→ 上传 → /w/{slug}/campaigns/{id} → 运行 CEO
-→ /w/{slug}/campaigns/{id}/task → /w/{slug}/creatives/{id}
-→ /w/{slug}/reviews → /w/{slug}/creatives/{id}/export
-```
+`pnpm test:integration` mutates its selected database and therefore requires a disposable PostgreSQL target plus the repository's explicit test-identity guards. The optional Production E2E workflow is manual, may create records or incur cost, and is not a normal release check.
