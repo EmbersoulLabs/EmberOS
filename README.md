@@ -268,7 +268,23 @@ Deployments are release operations, not a side effect of the documented local co
 | Jamendo | Optional online music search | UI search is hidden when unconfigured. |
 | Vercel / Railway | Web and worker deployment targets | Live revision must be verified independently for an operational claim. |
 
-## Release status
+## Current status entry point
+
+This section is the single current-state entry point. [ROADMAP.md](./ROADMAP.md) tracks remaining release work, while [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md) defines evidence and release procedures. Historical documents remain useful context but are not live-state authority.
+
+Audit snapshot (2026-10-16):
+
+| Runtime or control | Verified state |
+| --- | --- |
+| GitHub `main` | `9e937efa67aa3b0edb41d4ab9f5b8337b7f4f4c1` |
+| Production Web | Vercel deployment succeeded at the same SHA; `/api/health` returned `ok: true` and the same release revision. |
+| Production background Worker | Railway deployment metadata succeeded at the same SHA. Direct job-processing health was not independently established by the Web health response. |
+| LOCAL_GPU Desktop source | H3 branch SHA `3b04b5fe6874cba21fa34805cbd2705f13e869eb`; Desktop default branch remains `b1bb6be25e25e8e03bf34f1781122f782e3fe8aa`. Local Worker and ComfyUI ports were not listening during this audit, so active runtime status is **not verified**. |
+| Cloudflare Worker | No EmberOS Cloudflare application Worker configuration exists in current main. Railway remains the configured background Worker; Cloudflare references do not establish a replacement runtime. |
+| Tenant isolation | Focused static/unit suite passed 44/44. Exact-head CI passed its ephemeral PostgreSQL authority job. Production catalog RLS/grants were not read back; `usage_records` has no RLS contract in current source and requires separate security review. |
+| Paid AI / GPU work in this audit | 0 / 0 |
+
+### Release authority
 
 The repository's release authority is [RELEASE_CHANNEL.md](./RELEASE_CHANNEL.md). At its last recorded update:
 
@@ -278,9 +294,9 @@ The repository's release authority is [RELEASE_CHANNEL.md](./RELEASE_CHANNEL.md)
 | Photo Scene V1 | Released and frozen as a bounded production assembly |
 | AI Story Self-Use V1 | Deployed, awaiting complete real-episode certification; not publicly released |
 | AI Story public commercial release | No |
-| Full current `main` | Not established as the Production revision |
+| Full current `main` | Web and Railway deployment metadata identify `9e937ef`; this does not certify every gated capability or provider |
 
-Those are repository records, not a live environment probe. Current Production and Staging SHAs, worker health, database migration state, provider configuration, and feature flags are **unknown until read from their respective deployment systems**.
+The release table is repository authority. The audit snapshot above adds bounded runtime evidence; database migration state, Production catalog grants/policies, provider configuration, and feature flags remain **unknown unless explicitly stated**.
 
 Staging, preview, local, certification, and Production authorities are intentionally separate. Production-only scripts require explicit target checks and acknowledgement flags. Never use customer campaigns or Production records for routine development tests.
 
