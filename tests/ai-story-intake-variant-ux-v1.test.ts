@@ -90,9 +90,17 @@ describe("AI Story Intake UX V1 product variant closure", () => {
     const form = readFileSync("apps/web/src/components/ai-story/EpisodeCreateForm.tsx", "utf8");
     const page = readFileSync("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/new/page.tsx", "utf8");
     expect(route).toContain("analyzeVisualSemanticAsset");
+    expect(route).toContain("findReusableAnalysis");
+    expect(route).toContain("withControlledSelfUseProviderContext");
+    expect(route).toContain('request.headers.get("idempotency-key")');
+    expect(route).toContain("onProviderCompletion");
+    expect(route).toContain("authority.settle");
     expect(grounding).toContain("AiStoryAssetAwareExecutionPlannerRepository");
-    expect(grounding).toContain("new VisualSemanticAssetAnalyzer()");
+    expect(grounding).toContain("new VisualSemanticAssetAnalyzer(undefined, input.onProviderCompletion)");
     expect(form).toContain("Analyzing product variants…");
+    expect(form).toContain("Analyze product variants");
+    expect(form).toContain('headers: { "idempotency-key": crypto.randomUUID() }');
+    expect(form).not.toContain("requestedVariantAnalyses");
     expect(form).toContain("Choose from Library");
     expect(form).toContain("Choose from Workspace Library");
     expect(form).toContain("Needs a clear");

@@ -24,7 +24,16 @@ export type VisualSemanticModelAdapter = (input: {
   readonly imageDataUrl: string;
 }) => Promise<z.input<typeof ModelSemanticOutputSchema>>;
 
-const defaultModelAdapter: VisualSemanticModelAdapter = async (input) => {
+export type VisualSemanticCompletionObserver = (completion: {
+  readonly providerRequestId: string | null;
+  readonly providerModelId: string | null;
+  readonly usage: { readonly input: number; readonly output: number; readonly costUsd: number };
+}) => void | Promise<void>;
+
+const defaultModelAdapter = async (
+  input: Parameters<VisualSemanticModelAdapter>[0],
+  onCompletion?: VisualSemanticCompletionObserver
+) => {
   const response = await callVisionJsonModel<unknown>(
     input.system,
     input.user,
@@ -63,7 +72,7 @@ const defaultModelAdapter: VisualSemanticModelAdapter = async (input) => {
         characterGroundingSupported: false,
       },
     }),
-    { maxRetries: 0 }
+    { maxRetries: 0, onCompletion }
   );
   return ModelSemanticOutputSchema.parse(response.result);
 };
@@ -89,7 +98,10 @@ export class VisualSemanticAssetAnalyzer implements AssetIntelligenceAnalyzer {
   readonly analyzerVersion = VISUAL_SEMANTIC_ANALYZER_VERSION;
   readonly schemaVersion = AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION;
 
-  constructor(private readonly modelAdapter: VisualSemanticModelAdapter = defaultModelAdapter) {}
+  constructor(
+    private readonly modelAdapter?: VisualSemanticModelAdapter,
+    private readonly onCompletion?: VisualSemanticCompletionObserver
+  ) {}
 
   async analyze(input: {
     readonly asset: FinalizedAssetForAnalysis & { readonly contentHash: string };
@@ -104,8 +116,7 @@ export class VisualSemanticAssetAnalyzer implements AssetIntelligenceAnalyzer {
     const mimeType = input.asset.mimeType?.startsWith("image/")
       ? input.asset.mimeType
       : "image/jpeg";
-    const result = ModelSemanticOutputSchema.parse(
-      await this.modelAdapter({
+    const request = {
         system: [
           "Analyze one visual asset as evidence for a general creative-production system.",
           "Report only directly visible text, names, objects, people, environments, and brand/logo cues under observed.",
@@ -118,7 +129,11 @@ export class VisualSemanticAssetAnalyzer implements AssetIntelligenceAnalyzer {
         ].join(" "),
         user: "Return the typed semantic analysis for this single asset.",
         imageDataUrl: `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
-      })
+    };
+    const result = ModelSemanticOutputSchema.parse(
+      await (this.modelAdapter
+        ? this.modelAdapter(request)
+        : defaultModelAdapter(request, this.onCompletion))
     );
     const semantics = AiStoryVisualSemanticFactsSchema.parse({
       contractVersion: AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION,

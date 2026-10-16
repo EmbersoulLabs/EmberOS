@@ -9,6 +9,7 @@ import {
   AssetAnalysisService,
   VisualSemanticAssetAnalyzer,
   VISUAL_SEMANTIC_ANALYZER_VERSION,
+  type VisualSemanticCompletionObserver,
 } from "@ceo-agent/agents";
 import {
   AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION,
@@ -87,6 +88,7 @@ export async function analyzeVisualSemanticAsset(input: {
   readonly orgId: string;
   readonly workspaceId: string;
   readonly assetId: string;
+  readonly onProviderCompletion?: VisualSemanticCompletionObserver;
 }) {
   const [asset] = await input.db
     .select()
@@ -106,7 +108,7 @@ export async function analyzeVisualSemanticAsset(input: {
   }
   const service = new AssetAnalysisService(
     new AiStoryAssetAwareExecutionPlannerRepository(input.db),
-    new VisualSemanticAssetAnalyzer()
+    new VisualSemanticAssetAnalyzer(undefined, input.onProviderCompletion)
   );
   return service.analyzeFinalizedAsset({
     asset,

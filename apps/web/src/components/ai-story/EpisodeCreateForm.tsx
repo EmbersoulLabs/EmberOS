@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AI_STORY_AUDIO_LOCALES,
   AI_STORY_EPISODE_ASPECT_RATIOS,
@@ -131,7 +131,6 @@ export function EpisodeCreateForm({
   const [productVariantSelections, setProductVariantSelections] = useState<{ assetId: string; variant: string }[]>([]);
   const [analyzingVariantAssetIds, setAnalyzingVariantAssetIds] = useState<string[]>([]);
   const [variantAnalysisErrors, setVariantAnalysisErrors] = useState<Record<string, string>>({});
-  const requestedVariantAnalyses = useRef(new Set<string>());
   const [liveCostLabel, setLiveCostLabel] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -171,44 +170,6 @@ export function EpisodeCreateForm({
       cancelled = true;
     };
   }, [aspectRatio, campaignId, customDurationSec, durationSec, nativeDialogue]);
-  useEffect(() => {
-    for (const assetId of productAssetIds) {
-      const asset = assets.find((candidate) => candidate.id === assetId);
-      if ((asset?.variantAnalysisState ?? "MISSING") !== "MISSING") continue;
-      if (requestedVariantAnalyses.current.has(assetId)) continue;
-      requestedVariantAnalyses.current.add(assetId);
-      setAnalyzingVariantAssetIds((current) => [...new Set([...current, assetId])]);
-      void fetch(`/api/campaigns/${campaignId}/assets/${assetId}/variant-analysis`, { method: "POST" })
-        .then(async (response) => ({ ok: response.ok, body: await response.json() }))
-        .then(({ ok, body }) => {
-          if (!ok) throw new Error(body.error ?? "Product variant analysis failed");
-          onAssetsChange?.(assets.map((candidate) => candidate.id === assetId
-            ? {
-                ...candidate,
-                variantAnalysisState: body.variantAnalysisState,
-                variantCandidates: body.variantCandidates ?? [],
-                variantCandidateEvidence: body.variantCandidateEvidence ?? [],
-              }
-            : candidate));
-          setVariantAnalysisErrors((current) => {
-            const next = { ...current };
-            delete next[assetId];
-            return next;
-          });
-        })
-        .catch((analysisError) => {
-          setVariantAnalysisErrors((current) => ({
-            ...current,
-            [assetId]: analysisError instanceof Error
-              ? analysisError.message
-              : "Product variant analysis failed",
-          }));
-        })
-        .finally(() => {
-          setAnalyzingVariantAssetIds((current) => current.filter((id) => id !== assetId));
-        });
-    }
-  }, [assets, campaignId, onAssetsChange, productAssetIds]);
   const selectedCharacter = characters.find((character) => character.reusableCharacterId === reusableCharacterId) ?? null;
   const portraitAssetId = selectedCharacter?.portraitAssetId ?? null;
   const authority = compileAiStoryIntakeAuthority({
@@ -283,6 +244,41 @@ export function EpisodeCreateForm({
     const attached = await onAttachLibraryAsset(assetId);
     onAssetsChange?.([...assets.filter((asset) => asset.id !== attached.id), attached]);
     assignRole(attached.id, role, true);
+  }
+
+  async function analyzeProductVariant(assetId: string) {
+    if (analyzingVariantAssetIds.includes(assetId)) return;
+    setAnalyzingVariantAssetIds((current) => [...new Set([...current, assetId])]);
+    setVariantAnalysisErrors((current) => {
+      const next = { ...current };
+      delete next[assetId];
+      return next;
+    });
+    try {
+      const response = await fetch(`/api/campaigns/${campaignId}/assets/${assetId}/variant-analysis`, {
+        method: "POST",
+        headers: { "idempotency-key": crypto.randomUUID() },
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Product variant analysis failed");
+      onAssetsChange?.(assets.map((candidate) => candidate.id === assetId
+        ? {
+            ...candidate,
+            variantAnalysisState: body.variantAnalysisState,
+            variantCandidates: body.variantCandidates ?? [],
+            variantCandidateEvidence: body.variantCandidateEvidence ?? [],
+          }
+        : candidate));
+    } catch (analysisError) {
+      setVariantAnalysisErrors((current) => ({
+        ...current,
+        [assetId]: analysisError instanceof Error
+          ? analysisError.message
+          : "Product variant analysis failed",
+      }));
+    } finally {
+      setAnalyzingVariantAssetIds((current) => current.filter((id) => id !== assetId));
+    }
   }
 
   function buildPayload(): EpisodeCreatePayload {
@@ -470,6 +466,20 @@ export function EpisodeCreateForm({
                           ? `${item.variant}${item.variantStatus === "confirmed" ? " ✓" : " — proposed"}`
                           : "No variant distinction required"}
                 </p>
+                {item.variantStatus === "analysis_required" && !analyzing ? (
+                  <button
+                    type="button"
+                    className="mt-2 rounded-md border border-primary px-3 py-1.5 text-xs font-medium text-primary"
+                    onClick={() => void analyzeProductVariant(item.assetId)}
+                  >
+                    Analyze product variants
+                  </button>
+                ) : null}
+                {item.variantStatus === "analysis_required" ? (
+                  <p className="mt-1 text-xs text-ink-secondary">
+                    Runs only when selected and requires authorized planning budget. Failed analysis is not retried automatically.
+                  </p>
+                ) : null}
                 {analysisError ? <p className="mt-1 text-xs text-red-600">{analysisError}</p> : null}
                 <p className="mt-2 text-xs font-medium text-navy">Visual reference</p>
                 {item.visualGroundingStatus === "confirmed" && workspaceId ? (

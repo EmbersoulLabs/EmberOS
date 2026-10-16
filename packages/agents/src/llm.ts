@@ -257,7 +257,14 @@ export async function callVisionJsonModel<T>(
   userText: string,
   imageDataUrls: string[],
   schemaHint: string,
-  requestOptions?: { maxRetries: number }
+  requestOptions?: {
+    maxRetries: number;
+    onCompletion?: (completion: {
+      providerRequestId: string | null;
+      providerModelId: string | null;
+      usage: { input: number; output: number; costUsd: number };
+    }) => void | Promise<void>;
+  }
 ): Promise<{
   result: T;
   usage: { input: number; output: number; costUsd: number };
@@ -285,13 +292,19 @@ export async function callVisionJsonModel<T>(
       ],
       temperature: 0.4,
     },
-    requestOptions
+    { maxRetries: requestOptions?.maxRetries ?? 0 }
   );
 
   const content = response.choices[0]?.message?.content ?? "{}";
   const input = response.usage?.prompt_tokens ?? 0;
   const output = response.usage?.completion_tokens ?? 0;
   const costUsd = (input * 2.5 + output * 10) / 1_000_000;
+
+  await requestOptions?.onCompletion?.({
+    providerRequestId: response.id ?? null,
+    providerModelId: response.model ?? null,
+    usage: { input, output, costUsd },
+  });
 
   return {
     result: JSON.parse(content) as T,
