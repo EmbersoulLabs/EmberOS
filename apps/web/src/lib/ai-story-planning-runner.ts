@@ -881,10 +881,10 @@ export async function runSinglePlanningStage(input: {
     }, stageWork);
   }
 
-  const runStage = () => withConfiguredCertificationPlanningContext(certificationScope, stageWork);
+  const runLegacyStage = () => withConfiguredCertificationPlanningContext(certificationScope, stageWork);
 
   if (process.env.AI_STORY_PROVIDER_DISPATCH_MODE !== "allowlisted_self_use") {
-    return runStage();
+    return runLegacyStage();
   }
   const grant = await new PlatformAdminRepositoryImpl(db).getActiveGrantForUser(
     input.actorUserId
@@ -918,7 +918,10 @@ export async function runSinglePlanningStage(input: {
       workspaceId: ctx.campaign.workspaceId,
       executionIdentity,
       providerKey: "openai",
-    }, runStage);
+    // The explicit Campaign certification route above remains fail-closed.
+    // An authenticated Platform Superadmin reservation is a separate authority
+    // and must not inherit an orphaned legacy certification environment flag.
+    }, stageWork);
     if (stageCostUsd > 0) {
       await authority.settle(
         reservation.reservationId,

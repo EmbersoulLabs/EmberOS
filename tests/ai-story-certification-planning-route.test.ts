@@ -88,6 +88,8 @@ describe("shared certification planning route", () => {
       expect(source).toContain("certificationRoute.kind === \"certification\"");
     }
     expect(generate).toContain("certificationRoute.kind === \"legacy\"");
-    expect(runner).toContain("const runStage = () => withConfiguredCertificationPlanningContext");
+    expect(runner).toContain("const runLegacyStage = () => withConfiguredCertificationPlanningContext");
+    expect(runner).toContain("}, stageWork);");
+    expect(generate).toContain('certificationRoute.kind === "certification" ? runPolish : polishDraft');
   });
 });

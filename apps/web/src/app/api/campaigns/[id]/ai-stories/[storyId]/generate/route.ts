@@ -237,7 +237,10 @@ export async function POST(
           workspaceId: campaign.workspaceId,
           executionIdentity: accountingIdentity.attemptId,
           providerKey: "openai",
-        }, runPolish)
+        // Explicit Campaign certification authority is handled by runPolish.
+        // Account-scoped Superadmin self-use is independent of the optional
+        // legacy environment-based certification route.
+        }, certificationRoute.kind === "certification" ? runPolish : polishDraft)
       : await runPolish();
 
     if (!polish.ok) {
