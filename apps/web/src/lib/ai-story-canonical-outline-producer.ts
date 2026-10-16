@@ -110,7 +110,11 @@ const defaultDependencies: CanonicalOutlineProducerDependencies = {
   resolveProfile: (db, upstream) => resolveAiStoryOutlineProfileAuthority(db, upstream),
   resolveProductAuthorityIds: async (db, upstream) => (await resolveStoryProductSources(db, upstream)).map((item) => item.assetId),
   resolveCharacterAuthorities: async (db, upstream, actorUserId) => {
-    const values = await new AiStoryCharacterAuthorityService(db).list({
+    // Canonical Outline production is reached only after the caller has
+    // validated the exact current frozen Story scope. Read the optional
+    // Character projection without imposing a second membership gate; rows
+    // are still constrained by org/workspace/Campaign in the service query.
+    const values = await new AiStoryCharacterAuthorityService(db).listForVerifiedScope({
       orgId: upstream.orgId,
       workspaceId: upstream.workspaceId,
       campaignId: upstream.campaignId,

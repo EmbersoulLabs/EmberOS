@@ -90,6 +90,15 @@ describe("AI Story protected Character/Cast read fanout repair", () => {
     expect(cast).toContain("initialSupportingCharacters !== undefined");
   });
 
+  it("uses verified-scope Character projections in queued Planning and canonical Outline recovery", () => {
+    const runner = read("apps/web/src/lib/ai-story-planning-runner.ts");
+    const outline = read("apps/web/src/lib/ai-story-canonical-outline-producer.ts");
+    expect(runner).toContain("AiStoryCharacterAuthorityService(db).listForVerifiedScope({");
+    expect(outline).toContain("AiStoryCharacterAuthorityService(db).listForVerifiedScope({");
+    expect(runner).not.toContain("AiStoryCharacterAuthorityService(db).list({");
+    expect(outline).not.toContain("AiStoryCharacterAuthorityService(db).list({");
+  });
+
   it("coalesces /api/me and does not reload the Story when operator identity resolves", () => {
     const shell = read("apps/web/src/components/AppShell.tsx");
     const page = read("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/[storyId]/page.tsx");
