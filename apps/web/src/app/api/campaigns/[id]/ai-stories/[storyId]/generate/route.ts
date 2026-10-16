@@ -4,7 +4,6 @@ import {
   CertificationPlanningAuthorityService,
   schema,
   getBusinessProfileByWorkspace,
-  BillingAccountRepositoryImpl,
   ControlledSelfUseAuthorityService,
   PlatformAdminRepositoryImpl,
   resolveAiStoryOutlineProfileAuthority,
@@ -175,9 +174,8 @@ export async function POST(
     let selfUseReservation: Awaited<ReturnType<ControlledSelfUseAuthorityService["reserve"]>>["reservation"] | null = null;
     if (selfUse) {
       const grant = await new PlatformAdminRepositoryImpl(db).getActiveGrantForUser(user.id);
-      const billing = await new BillingAccountRepositoryImpl(db).getByOrgId(campaign.orgId);
-      if (!grant || !billing) {
-        throw new Error("CONTROLLED_SELF_USE_PLANNING_BILLING_AUTHORITY_DENIED");
+      if (!grant) {
+        throw new Error("CONTROLLED_SELF_USE_PLATFORM_AUTHORITY_DENIED");
       }
       selfUseReservation = (await selfUse.reserve({
         environment: "PRODUCTION",

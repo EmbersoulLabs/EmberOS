@@ -57,6 +57,18 @@ export async function controlledSelfUseProviderFetch(
     ) {
       throw new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED");
     }
+    try {
+      await authority.assertWorkspaceEligible({
+        environment: "PRODUCTION",
+        organizationId: current.organizationId,
+        workspaceId: current.workspaceId,
+        capabilityKey: reservation.capabilityKey,
+        providerKey: reservation.providerKey,
+        ...(reservation.actorUserId ? { actorUserId: reservation.actorUserId } : {}),
+      });
+    } catch {
+      throw new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED");
+    }
     await authority.markSubmitted(reservation.reservationId, new Date().toISOString());
   } else {
     const grant = certificationHttpGrant.getStore();
