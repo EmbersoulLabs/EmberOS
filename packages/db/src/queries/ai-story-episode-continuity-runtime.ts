@@ -422,10 +422,12 @@ export class PgEpisodeContinuityRuntimeIntegration {
       )
       .limit(1);
     if (!resultRow) {
-      throw new EpisodeContinuityAuthorityError(
-        "STALE_PREVIOUS_EPISODE_AUTHORITY",
-        "Adjacent previous Episode has no canonical Final Story Result"
-      );
+      // ai_story_versions.version_number is a revision sequence inside one
+      // Episode, not an Episode-order authority. A revised first Episode must
+      // reuse its current frozen facts without fabricating cross-Episode
+      // continuity from the prior draft. Real adjacent-Episode continuity is
+      // consumed only when an immutable Final Story Result exists.
+      return null;
     }
     await this.materializeAfterFinalStoryResult({
       result: parseFinalStoryResultPersistenceRecord(resultRow.result),
