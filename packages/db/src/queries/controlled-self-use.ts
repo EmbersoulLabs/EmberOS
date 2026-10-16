@@ -187,19 +187,13 @@ async function recordEvent(tx: Tx, input: {
 export class ControlledSelfUseAuthorityService {
   constructor(private readonly db: Db = getDb()) {}
 
-  async provisionEmberSoulLabsAuthority(input: {
+  async provisionInternalSelfUseAuthority(input: {
     environment: ControlledSelfUseEnvironment;
-    organizationId: typeof EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID;
+    organizationId: string;
     authorizedBy: string;
     reason: string;
     createdAt: string;
   }): Promise<{ authority: ControlledSelfUseAuthority; replayed: boolean }> {
-    if (input.organizationId !== EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID) {
-      throw new ControlledSelfUseError(
-        "CONTROLLED_SELF_USE_ORGANIZATION_DENIED",
-        "V1 Controlled Self-Use is restricted to EmberSoulLabs"
-      );
-    }
     return this.db.transaction(async (tx) => {
       const adminRows = await tx.execute(sql`
         select 1 from platform_admin_grants
@@ -210,7 +204,7 @@ export class ControlledSelfUseAuthorityService {
       if (!row(adminRows)) {
         throw new ControlledSelfUseError(
           "CONTROLLED_SELF_USE_ACTOR_DENIED",
-          "Only an active persistent Platform Super Admin may provision self-use"
+          "Only an active persistent Platform Super Admin may provision internal self-use"
         );
       }
       const existingRows = await tx.execute(sql`
@@ -223,33 +217,20 @@ export class ControlledSelfUseAuthorityService {
       const existing = row<Record<string, unknown>>(existingRows);
       if (existing) {
         const parsed = authorityFromRow(existing);
-        if (
-          parsed.maxUsdPerExecution !== "5.00" ||
-          parsed.dailyCapUsd !== "10.00" ||
-          parsed.maxAutomaticRetries !== 0 ||
-          parsed.allowedProviders.join(",") !== "openai,seedance" ||
-          parsed.allowedCapabilities.join(",") !== "campaign.generate,ai_story.plan,ai_story.execute"
-        ) {
-          throw new ControlledSelfUseError(
-            "CONTROLLED_SELF_USE_AUTHORITY_CONFLICT",
-            "Existing authority differs from the certified bounded contract"
-          );
+        if (parsed.maxUsdPerExecution !== "5.00" || parsed.dailyCapUsd !== "10.00" ||
+            parsed.maxAutomaticRetries !== 0 || parsed.allowedProviders.join(",") !== "openai,seedance" ||
+            parsed.allowedCapabilities.join(",") !== "campaign.generate,ai_story.plan,ai_story.execute") {
+          throw new ControlledSelfUseError("CONTROLLED_SELF_USE_AUTHORITY_CONFLICT", "Existing authority differs from the certified bounded contract");
         }
         return { authority: parsed, replayed: true };
       }
       const body = {
-        contractVersion: "controlled-self-use-authority.v1",
-        environment: input.environment,
-        organizationId: input.organizationId,
-        purpose: "CONTROLLED_SELF_USE",
-        maxUsdPerExecution: "5.00",
-        dailyCapUsd: "10.00",
-        maxAutomaticRetries: 0,
+        contractVersion: "controlled-self-use-authority.v1", environment: input.environment,
+        organizationId: input.organizationId, purpose: "CONTROLLED_SELF_USE",
+        maxUsdPerExecution: "5.00", dailyCapUsd: "10.00", maxAutomaticRetries: 0,
         allowedProviders: ["openai", "seedance"],
         allowedCapabilities: ["campaign.generate", "ai_story.plan", "ai_story.execute"],
-        authorizedBy: input.authorizedBy,
-        reason: input.reason,
-        createdAt: input.createdAt,
+        authorizedBy: input.authorizedBy, reason: input.reason, createdAt: input.createdAt,
       };
       const authorityId = deterministicPersistenceUuid("controlled-self-use-authority", body);
       const integrityHash = canonicalPersistenceHash(body);
@@ -268,17 +249,101 @@ export class ControlledSelfUseAuthorityService {
           ${integrityHash}, 'controlled-self-use-authority.v1'
         ) returning *
       `);
-      await recordEvent(tx, {
-        authorityId,
-        eventType: "CREATED",
-        actorUserId: input.authorizedBy,
-        occurredAt: input.createdAt,
-        evidence: { organizationId: input.organizationId, environment: input.environment },
-      });
-      return {
-        authority: authorityFromRow(row<Record<string, unknown>>(inserted)!),
-        replayed: false,
-      };
+      await recordEvent(tx, { authorityId, eventType: "CREATED", actorUserId: input.authorizedBy,
+        occurredAt: input.createdAt, evidence: { organizationId: input.organizationId, environment: input.environment } });
+      return { authority: authorityFromRow(row<Record<string, unknown>>(inserted)!), replayed: false };
+    });
+  }
+
+  async provisionEmberSoulLabsAuthority(input: {
+    environment: ControlledSelfUseEnvironment;
+    organizationId: typeof EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID;
+    authorizedBy: string;
+    reason: string;
+    createdAt: string;
+  }): Promise<{ authority: ControlledSelfUseAuthority; replayed: boolean }> {
+    if (input.organizationId !== EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID) {
+      throw new ControlledSelfUseError(
+        "CONTROLLED_SELF_USE_ORGANIZATION_DENIED",
+        "V1 Controlled Self-Use is restricted to EmberSoulLabs"
+      );
+    }
+    return this.provisionInternalSelfUseAuthority(input);
+  }
+
+  async authorizeInternalWorkspace(input: {
+    authorityId: string;
+    organizationId: string;
+    workspaceId: string;
+    authorizedBy: string;
+    reason: string;
+    createdAt: string;
+  }): Promise<{ scopeId: string; replayed: boolean }> {
+    return this.db.transaction(async (tx) => {
+      const eligible = await tx.execute(sql`
+        select authority.authority_id
+        from controlled_self_use_authorities authority
+        join platform_admin_grants admin on admin.user_id = ${input.authorizedBy}::uuid
+          and admin.platform_role = 'PLATFORM_SUPER_ADMIN' and admin.status = 'ACTIVE'
+        join workspaces workspace on workspace.id = ${input.workspaceId}::uuid
+          and workspace.org_id = ${input.organizationId}::uuid
+        where authority.authority_id = ${input.authorityId}::uuid
+          and authority.organization_id = ${input.organizationId}::uuid
+          and authority.status = 'ACTIVE'
+        limit 1
+      `);
+      if (!row(eligible)) throw new ControlledSelfUseError("CONTROLLED_SELF_USE_SCOPE_DENIED", "Active Platform Super Admin, authority, organization, and workspace must match");
+      const existing = row<{ scope_id: string; status: string }>(await tx.execute(sql`
+        select scope_id, status from controlled_self_use_workspace_scopes
+        where authority_id = ${input.authorityId}::uuid and workspace_id = ${input.workspaceId}::uuid
+        for update
+      `));
+      if (existing?.status === "ACTIVE") return { scopeId: existing.scope_id, replayed: true };
+      if (existing) throw new ControlledSelfUseError("CONTROLLED_SELF_USE_SCOPE_REVOKED", "Revoked workspace scope cannot be silently reactivated");
+      const body = { contractVersion: "controlled-self-use-workspace-scope.v1", authorityId: input.authorityId,
+        organizationId: input.organizationId, workspaceId: input.workspaceId, authorizedBy: input.authorizedBy,
+        reason: input.reason, createdAt: input.createdAt };
+      const scopeId = deterministicPersistenceUuid("controlled-self-use-workspace-scope", body);
+      const integrityHash = canonicalPersistenceHash(body);
+      await tx.execute(sql`
+        insert into controlled_self_use_workspace_scopes (
+          scope_id, authority_id, organization_id, workspace_id, status, authorized_by,
+          reason, created_at, integrity_hash, contract_version
+        ) values (${scopeId}::uuid, ${input.authorityId}::uuid, ${input.organizationId}::uuid,
+          ${input.workspaceId}::uuid, 'ACTIVE', ${input.authorizedBy}::uuid, ${input.reason},
+          ${input.createdAt}::timestamptz, ${integrityHash}, 'controlled-self-use-workspace-scope.v1')
+      `);
+      return { scopeId, replayed: false };
+    });
+  }
+
+  async revokeInternalWorkspace(input: {
+    organizationId: string;
+    workspaceId: string;
+    revokedBy: string;
+    revokedAt: string;
+  }): Promise<{ scopeId: string; replayed: boolean }> {
+    return this.db.transaction(async (tx) => {
+      const admin = await tx.execute(sql`
+        select 1 from platform_admin_grants where user_id = ${input.revokedBy}::uuid
+          and platform_role = 'PLATFORM_SUPER_ADMIN' and status = 'ACTIVE' limit 1
+      `);
+      if (!row(admin)) throw new ControlledSelfUseError("CONTROLLED_SELF_USE_ACTOR_DENIED", "Only an active Platform Super Admin may revoke internal self-use");
+      const current = row<{ scope_id: string; status: string }>(await tx.execute(sql`
+        select scope.scope_id, scope.status from controlled_self_use_workspace_scopes scope
+        join controlled_self_use_authorities authority on authority.authority_id = scope.authority_id
+        where scope.organization_id = ${input.organizationId}::uuid
+          and scope.workspace_id = ${input.workspaceId}::uuid
+          and authority.environment = 'PRODUCTION'
+        for update of scope
+      `));
+      if (!current) throw new ControlledSelfUseError("CONTROLLED_SELF_USE_SCOPE_DENIED", "Workspace scope not found");
+      if (current.status === "REVOKED") return { scopeId: current.scope_id, replayed: true };
+      await tx.execute(sql`
+        update controlled_self_use_workspace_scopes set status = 'REVOKED', revoked_at = ${input.revokedAt}::timestamptz
+        where scope_id = ${current.scope_id}::uuid
+      `);
+      return { scopeId: current.scope_id, replayed: false };
     });
   }
 
@@ -436,18 +501,14 @@ export class ControlledSelfUseAuthorityService {
     capabilityKey: ControlledSelfUseCapability;
     providerKey: ControlledSelfUseProvider;
   }): Promise<ControlledSelfUseAuthority> {
-    if (
-      input.environment === "PRODUCTION" &&
-      input.organizationId !== EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID
-    ) {
-      throw new ControlledSelfUseError(
-        "CONTROLLED_SELF_USE_ORGANIZATION_DENIED",
-        "Production Controlled Self-Use is restricted to EmberSoulLabs"
-      );
-    }
     const rows = await this.db.execute(sql`
       select authority.*
       from controlled_self_use_authorities authority
+      join controlled_self_use_workspace_scopes scope
+        on scope.authority_id = authority.authority_id
+       and scope.organization_id = authority.organization_id
+       and scope.workspace_id = ${input.workspaceId}::uuid
+       and scope.status = 'ACTIVE'
       join workspaces workspace
         on workspace.id = ${input.workspaceId}::uuid
        and workspace.org_id = authority.organization_id
@@ -509,6 +570,11 @@ export class ControlledSelfUseAuthorityService {
       const authorityRows = await tx.execute(sql`
         select authority.*
         from controlled_self_use_authorities authority
+        join controlled_self_use_workspace_scopes scope
+          on scope.authority_id = authority.authority_id
+         and scope.organization_id = authority.organization_id
+         and scope.workspace_id = ${input.workspaceId}::uuid
+         and scope.status = 'ACTIVE'
         join workspaces workspace
           on workspace.id = ${input.workspaceId}::uuid
          and workspace.org_id = authority.organization_id

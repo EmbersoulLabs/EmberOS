@@ -4,13 +4,16 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(path, "utf8");
 
 describe("Controlled Self-Use runtime boundaries", () => {
-  it("restricts Production authority to EmberSoulLabs and no customer wildcard", () => {
+  it("restricts Production authority to explicit server-only workspace scopes", () => {
     const service = read("packages/db/src/queries/controlled-self-use.ts");
     const migration = read("supabase/migrations/20260926055546_controlled_self_use_authority_v1.sql");
+    const scopeMigration = read("supabase/migrations/20261016033243_superadmin_internal_self_use_workspace_scope.sql");
     expect(service).toContain("52519c8c-4011-478f-bf09-34e087e4bbdd");
-    expect(service).toContain("Production Controlled Self-Use is restricted to EmberSoulLabs");
+    expect(service).toContain("controlled_self_use_workspace_scopes scope");
     expect(migration).toContain("controlled_self_use_production_org_check");
     expect(migration).not.toMatch(/using\s*\(\s*true\s*\)/i);
+    expect(scopeMigration).toContain("drop constraint if exists controlled_self_use_production_org_check");
+    expect(scopeMigration).not.toMatch(/using\s*\(\s*true\s*\)/i);
   });
 
   it("filters AI Story outbox selection before dispatch claim", () => {
@@ -19,6 +22,7 @@ describe("Controlled Self-Use runtime boundaries", () => {
     expect(dispatch).toContain("controlledSelfUseOnly");
     expect(dispatch).toContain("self_use_authority.status = 'ACTIVE'");
     expect(dispatch).toContain("self_use_workspace.org_id = self_use_authority.organization_id");
+    expect(dispatch).toContain("controlled_self_use_workspace_scopes self_use_scope");
     expect(cycle).toContain("controlledSelfUseOnly: controlledSelfUse");
     expect(cycle).toContain("zero automatic paid retries");
   });

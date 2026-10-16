@@ -488,6 +488,11 @@ export class ExecutionDispatchRepository {
           join workspaces self_use_workspace
             on self_use_workspace.id = self_use_correlation.workspace_id
            and self_use_workspace.org_id = self_use_authority.organization_id
+          join controlled_self_use_workspace_scopes self_use_scope
+            on self_use_scope.authority_id = self_use_authority.authority_id
+           and self_use_scope.organization_id = self_use_correlation.org_id
+           and self_use_scope.workspace_id = self_use_correlation.workspace_id
+           and self_use_scope.status = 'ACTIVE'
           where self_use_correlation.outbox_job_id = job.job_id
         )`
       : sql``;
