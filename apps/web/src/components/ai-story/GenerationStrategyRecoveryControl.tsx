@@ -29,8 +29,8 @@ export function GenerationStrategyRecoveryControl({
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Generation strategy recovery failed");
-      await onRecovered();
       setRecovered(true);
+      await onRecovered();
     } catch (error) {
       onError(error instanceof Error ? error.message : "Generation strategy recovery failed");
     } finally {
