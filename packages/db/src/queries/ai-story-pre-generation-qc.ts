@@ -6,10 +6,11 @@ import { getDb } from "../client";
 import { loadCommercialEpisodeRepairForQc } from "./ai-story-episode-repair-qc";
 import * as schema from "../schema";
 import type { AiStoryScriptScope } from "./ai-story-script";
+import { hasAiStoryActorScope } from "./ai-story-actor-scope";
 
 type Db=ReturnType<typeof getDb>;
 export class AiStoryPreGenerationQcAuthorityError extends Error { constructor(readonly code:string,message:string){super(message);this.name="AiStoryPreGenerationQcAuthorityError";} }
-async function assertScope(tx:any,scope:AiStoryScriptScope,write=false){const rows=await tx.select().from(schema.aiStories).where(and(eq(schema.aiStories.id,scope.storyId),eq(schema.aiStories.workspaceId,scope.workspaceId),eq(schema.aiStories.campaignId,scope.campaignId))).limit(1);if(!rows[0])throw new AiStoryPreGenerationQcAuthorityError("QC_SCOPE_DENIED","Story is outside the requested scope");const members=await tx.select().from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.workspaceId,scope.workspaceId),eq(schema.workspaceMembers.userId,scope.actorUserId))).limit(1);if(!members[0]||(write&&!['admin','operator','editor','reviewer'].includes(members[0].role)))throw new AiStoryPreGenerationQcAuthorityError("QC_AUTHORIZATION_DENIED","Workspace authority denied");}
+async function assertScope(tx:any,scope:AiStoryScriptScope,write=false){const rows=await tx.select().from(schema.aiStories).where(and(eq(schema.aiStories.id,scope.storyId),eq(schema.aiStories.orgId,scope.orgId),eq(schema.aiStories.workspaceId,scope.workspaceId),eq(schema.aiStories.campaignId,scope.campaignId))).limit(1);if(!rows[0])throw new AiStoryPreGenerationQcAuthorityError("QC_SCOPE_DENIED","Story is outside the requested scope");if(!await hasAiStoryActorScope(tx,scope,write))throw new AiStoryPreGenerationQcAuthorityError("QC_AUTHORIZATION_DENIED","Workspace authority denied");}
 
 export class AiStoryPreGenerationQcAuthorityService {
   constructor(private readonly db:Db=getDb()){}

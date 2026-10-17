@@ -8,6 +8,7 @@ import {
 } from "@ceo-agent/shared";
 import { buildAiStoryCharacterVersion, computeAiStoryCharacterFingerprint } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 
 type Db = ReturnType<typeof getDb>;
 export type AiStoryCharacterScope = { orgId: string; workspaceId: string; campaignId: string; actorUserId: string };
@@ -19,11 +20,8 @@ export class AiStoryCharacterAuthorityError extends Error {
 async function assertCampaignScope(db: Pick<Db, "execute">, scope: AiStoryCharacterScope, mutation: boolean) {
   const rows = await db.execute<{ ok: boolean }>(sql`select exists(
     select 1 from campaigns c where c.id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid
-      and c.workspace_id=${scope.workspaceId}::uuid and exists(
-        select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid
-          and wm.user_id=${scope.actorUserId}::uuid
-          and (${mutation}=false or wm.role in ('admin','operator'))
-      )
+      and c.workspace_id=${scope.workspaceId}::uuid
+      and ${aiStoryActorScopePredicate(scope, mutation, "CHARACTER")}
   ) as ok`);
   if (!rows[0]?.ok) throw new AiStoryCharacterAuthorityError("CHARACTER_SCOPE_DENIED", "Character Campaign authority scope does not resolve");
 }

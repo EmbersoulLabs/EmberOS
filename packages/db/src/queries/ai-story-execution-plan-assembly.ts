@@ -33,6 +33,7 @@ import {
 } from "./ai-story-ownership";
 import { deriveLogicalReviewStatus } from "./ai-story-execution-plan-review";
 import { ROLE_HIERARCHY } from "./tenant";
+import { hasInternalSuperadminWorkspaceScope } from "./ai-story-actor-scope";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -742,13 +743,17 @@ export class ExecutionPlanAssemblyRepository implements ExecutionPlanAssemblySto
         )
       )
       .limit(1);
-    if (!member) {
+    const internalSuperadmin = !member && await hasInternalSuperadminWorkspaceScope(db, {
+      workspaceId,
+      actorUserId: userId,
+    });
+    if (!member && !internalSuperadmin) {
       throw new AssemblyOwnershipError(
         "Creator is not a member of this workspace"
       );
     }
     if (
-      ROLE_HIERARCHY[member.role as WorkspaceRole] < ROLE_HIERARCHY[CREATOR_MIN_ROLE]
+      member && ROLE_HIERARCHY[member.role as WorkspaceRole] < ROLE_HIERARCHY[CREATOR_MIN_ROLE]
     ) {
       throw new AssemblyOwnershipError(
         "Creator lacks required workspace role"

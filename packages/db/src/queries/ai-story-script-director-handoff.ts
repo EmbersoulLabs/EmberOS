@@ -11,6 +11,7 @@ import {
   computeAiStoryScriptDirectorHandoffSourceHash,
   deriveProductBindingRoles,
 } from "@ceo-agent/shared/server";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 import { getDb, schema } from "../client";
 import type { AiStoryScriptScope } from "./ai-story-script";
 
@@ -34,8 +35,7 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryScriptScope, m
     select 1 from ai_stories s join campaigns c on c.id=s.campaign_id join ai_story_versions v on v.story_id=s.id
     where s.id=${scope.storyId}::uuid and s.org_id=${scope.orgId}::uuid and s.workspace_id=${scope.workspaceId}::uuid
       and s.campaign_id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid
-      and v.id=${scope.storyVersionId}::uuid and exists(select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid
-        and wm.user_id=${scope.actorUserId}::uuid and (${mutation}=false or wm.role in ('admin','operator','editor','reviewer')))
+      and v.id=${scope.storyVersionId}::uuid and ${aiStoryActorScopePredicate(scope, mutation)}
   ) as ok`);
   if (!rows[0]?.ok) throw new AiStoryScriptDirectorHandoffAuthorityError("HANDOFF_SCOPE_DENIED", "Director handoff authority scope does not resolve");
 }

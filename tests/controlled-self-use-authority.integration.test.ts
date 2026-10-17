@@ -4,6 +4,8 @@ import type { Sql } from "postgres";
 import {
   ControlledSelfUseAuthorityService,
   AiStoryOutlineAuthorityService,
+  hasAiStoryActorScope,
+  hasInternalSuperadminWorkspaceScope,
   EMBERSOUL_LABS_CONTROLLED_SELF_USE_ORGANIZATION_ID,
   BillingAccountRepositoryImpl,
   PlatformAdminRepositoryImpl,
@@ -244,6 +246,41 @@ describeIntegration("Production Controlled Self-Use authority", () => {
       storyVersionId: customerVersionId,
       actorUserId: adminUserId,
     })).rejects.toThrow("Outline authority scope does not resolve");
+  });
+
+  it("resolves the shared AI Story actor scope for reads, mutations, new Workspaces, and revocation", async () => {
+    const newWorkspaceId = crypto.randomUUID();
+    await sql`insert into workspaces (id,org_id,name,slug) values
+      (${newWorkspaceId}::uuid,${secondInternalOrgId}::uuid,'Authority Matrix',${`authority-${crypto.randomUUID()}`})`;
+    const internalScope = {
+      orgId: secondInternalOrgId,
+      workspaceId: newWorkspaceId,
+      actorUserId: adminUserId,
+    };
+    await expect(hasAiStoryActorScope(sql as never, internalScope, false)).resolves.toBe(true);
+    await expect(hasAiStoryActorScope(sql as never, internalScope, true)).resolves.toBe(true);
+    await expect(hasInternalSuperadminWorkspaceScope(sql as never, {
+      workspaceId: newWorkspaceId,
+      actorUserId: adminUserId,
+    })).resolves.toBe(true);
+    await expect(hasAiStoryActorScope(sql as never, {
+      orgId: otherOrgId,
+      workspaceId: otherWorkspaceId,
+      actorUserId: adminUserId,
+    }, true)).resolves.toBe(false);
+
+    const memberUserId = crypto.randomUUID();
+    await sql`insert into workspace_members (org_id,workspace_id,user_id,role) values
+      (${otherOrgId}::uuid,${otherWorkspaceId}::uuid,${memberUserId}::uuid,'operator')`;
+    await expect(hasAiStoryActorScope(sql as never, {
+      orgId: otherOrgId,
+      workspaceId: otherWorkspaceId,
+      actorUserId: memberUserId,
+    }, true, "CHARACTER")).resolves.toBe(true);
+
+    await sql`update platform_admin_grants set status='REVOKED' where user_id=${adminUserId}::uuid`;
+    await expect(hasAiStoryActorScope(sql as never, internalScope, true)).resolves.toBe(false);
+    await sql`update platform_admin_grants set status='ACTIVE' where user_id=${adminUserId}::uuid`;
   });
 
   it("converges an existing explicit internal Workspace scope without treating platform access as ownership", async () => {

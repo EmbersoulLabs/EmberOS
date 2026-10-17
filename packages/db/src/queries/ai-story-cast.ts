@@ -13,6 +13,7 @@ import {
 } from "@ceo-agent/shared";
 import { buildAiStorySupportingCharacterVersion, computeAiStorySupportingCharacterFingerprint } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 import { AiStoryCharacterAuthorityService } from "./ai-story-character";
 
 type Db = ReturnType<typeof getDb>;
@@ -27,8 +28,7 @@ async function assertStoryScope(db: Pick<Db, "execute">, scope: AiStoryCastScope
     select 1 from ai_stories s join campaigns c on c.id=s.campaign_id
     where s.id=${scope.storyId}::uuid and s.org_id=${scope.orgId}::uuid and s.workspace_id=${scope.workspaceId}::uuid
       and s.campaign_id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid
-      and exists(select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid and wm.user_id=${scope.actorUserId}::uuid
-        and (${mutation}=false or wm.role in ('admin','operator')))
+      and ${aiStoryActorScopePredicate(scope, mutation, "CHARACTER")}
   ) as ok`);
   if (!rows[0]?.ok) throw new AiStoryCastAuthorityError("CAST_SCOPE_DENIED", "Story Cast authority scope does not resolve");
 }

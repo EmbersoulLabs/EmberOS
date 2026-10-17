@@ -21,6 +21,7 @@ import {
   validateAiStoryCanonicalScenes,
 } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 import { resolveKnownCastReferences } from "./ai-story-cast";
 import {
   resolveCurrentFrozenScriptForStoryVersion,
@@ -61,8 +62,7 @@ async function assertCampaignScope(
   const rows = await db.execute<{ ok: boolean }>(sql`select exists(
     select 1 from campaigns c
     where c.id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid
-      and exists(select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid and wm.user_id=${scope.actorUserId}::uuid
-        and (${mutation}=false or wm.role in ('admin','operator')))
+      and ${aiStoryActorScopePredicate(scope, mutation, "CHARACTER")}
   ) as ok`);
   if (!rows[0]?.ok) throw new AiStorySceneAuthorityError("LOCATION_SCOPE_DENIED", "Location authority scope does not resolve");
 }
@@ -78,8 +78,7 @@ async function assertStoryScope(
       and s.campaign_id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid
       and v.id=${scope.storyVersionId}::uuid
       and (${!scope.requireCurrentFrozenStoryVersion}=true or (s.current_version_id=v.id and v.frozen_at is not null))
-      and exists(select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid and wm.user_id=${scope.actorUserId}::uuid
-        and (${mutation}=false or wm.role in ('admin','operator')))
+      and ${aiStoryActorScopePredicate(scope, mutation, "CHARACTER")}
   ) as ok`);
   if (!rows[0]?.ok) throw new AiStorySceneAuthorityError("SCENE_SCOPE_DENIED", "Canonical Scene authority scope does not resolve");
 }

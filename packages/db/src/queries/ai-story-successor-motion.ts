@@ -8,6 +8,7 @@ import {
 import { buildSuccessorProjectedMotionPlan, validateSuccessorMotionReview } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 import type { AiStoryScriptScope } from "./ai-story-script";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -24,13 +25,12 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryScriptScope, m
       select 1 from ai_stories s
       join campaigns c on c.id = s.campaign_id
       join ai_story_versions v on v.story_id = s.id
-      join workspace_members wm on wm.workspace_id = s.workspace_id and wm.user_id = ${scope.actorUserId}::uuid
       where s.id = ${scope.storyId}::uuid
         and s.org_id = ${scope.orgId}::uuid
         and s.workspace_id = ${scope.workspaceId}::uuid
         and s.campaign_id = ${scope.campaignId}::uuid
         and v.id = ${scope.storyVersionId}::uuid
-        and (${mutate} = false or wm.role in ('admin','operator','editor','reviewer'))
+        and ${aiStoryActorScopePredicate(scope, mutate)}
     ) as ok
   `);
   if (!rows[0]?.ok) throw new AiStorySuccessorMotionError("SUCCESSOR_MOTION_SCOPE_DENIED", "Successor Motion authority scope does not resolve");

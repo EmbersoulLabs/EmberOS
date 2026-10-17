@@ -8,6 +8,7 @@ import {
 } from "@ceo-agent/shared";
 import { commercialExecutionIdentityForPlan } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
+import { hasInternalSuperadminWorkspaceScope } from "./ai-story-actor-scope";
 import {
   canonicalPersistenceHash,
   deterministicPersistenceUuid,
@@ -241,7 +242,10 @@ export class PostTerminalProviderRetryRepository {
           )
         )
         .limit(1);
-      if (!membership) {
+      if (!membership && !await hasInternalSuperadminWorkspaceScope(tx, {
+        workspaceId: input.workspaceId,
+        actorUserId: input.actorUserId,
+      })) {
         throw new PostTerminalProviderRetryError(
           "POST_TERMINAL_RETRY_ACTOR_DENIED",
           "Human retry actor is not a member of the exact workspace",
