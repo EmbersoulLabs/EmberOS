@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Sql } from "postgres";
 import {
   auditApprovedAnimationPackageDuplicates,
@@ -27,6 +27,15 @@ import {
   RUN_DB_INTEGRATION,
   createIntegrationSql,
 } from "./helpers/db-integration";
+
+const authState = vi.hoisted(() => ({ user: null as null | { id: string; email: string } }));
+vi.mock("@/lib/auth", async (load) => ({
+  ...(await load<Record<string, unknown>>()),
+  requireAuth: async () => {
+    if (!authState.user) throw new Error("UNAUTHENTICATED");
+    return authState.user;
+  },
+}));
 
 describe.skipIf(!RUN_DB_INTEGRATION).sequential(
   "current approved Animation Package PostgreSQL authority",
@@ -373,6 +382,89 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         SELECT count(*)::int AS count FROM ai_story_animation_packages WHERE story_id = ${ids.story}
       `;
       expect(packageCount).toEqual([{ count: 6 }]);
+    }, 120_000);
+
+    it("recovers an approved historical package through the real HTTP route without changing frozen facts", async () => {
+      const [source] = await sql<{
+        id: string;
+        approved_at: Date;
+        approved_by: string;
+        payload: Record<string, unknown>;
+      }[]>`
+        SELECT id, approved_at, approved_by, payload
+        FROM ai_story_animation_packages
+        WHERE story_id = ${ids.story}
+          AND story_version_id = ${ids.v3}
+          AND status = 'ready_for_execution'
+      `;
+      expect(source).toBeTruthy();
+      await sql`UPDATE ai_story_animation_packages SET created_at = now() - interval '1 day' WHERE story_id = ${ids.story}`;
+      await sql`UPDATE ai_story_animation_packages SET created_at = now() WHERE id = ${source!.id}`;
+      await sql`UPDATE ai_stories SET status = 'ready_for_execution', current_version_id = ${ids.v3} WHERE id = ${ids.story}`;
+      authState.user = { id: ids.user, email: "operator@example.invalid" };
+      const route = await import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/strategy-successor/route");
+      const call = () => route.POST(
+        new Request("http://localhost/planning/strategy-successor", { method: "POST", body: "" }),
+        { params: Promise.resolve({ id: ids.campaign, storyId: ids.story }) },
+      );
+
+      const first = await call();
+      expect(first.status).toBe(201);
+      const firstBody = await first.json() as {
+        status: string;
+        sourcePackageId: string;
+        successorPackageId: string;
+        externalAiCalls: number;
+        idempotent: boolean;
+        humanApprovalRequired: boolean;
+      };
+      expect(firstBody).toMatchObject({
+        status: "planning_review",
+        sourcePackageId: source!.id,
+        externalAiCalls: 0,
+        idempotent: false,
+        humanApprovalRequired: true,
+      });
+      const second = await call();
+      expect(second.status).toBe(201);
+      const secondBody = await second.json() as typeof firstBody;
+      expect(secondBody).toMatchObject({
+        successorPackageId: firstBody.successorPackageId,
+        externalAiCalls: 0,
+        idempotent: true,
+        humanApprovalRequired: true,
+      });
+
+      const [historical] = await sql<{
+        status: string;
+        approved_at: Date;
+        approved_by: string;
+        payload: Record<string, unknown>;
+      }[]>`SELECT status, approved_at, approved_by, payload FROM ai_story_animation_packages WHERE id = ${source!.id}`;
+      expect(historical).toMatchObject({
+        status: "superseded",
+        approved_by: source!.approved_by,
+      });
+      expect(historical!.approved_at.toISOString()).toBe(source!.approved_at.toISOString());
+      expect({ ...historical!.payload, status: (source!.payload as { status?: unknown }).status })
+        .toEqual(source!.payload);
+      const [successor] = await sql<{ status: string; payload: Record<string, unknown> }[]>`
+        SELECT status, payload FROM ai_story_animation_packages WHERE id = ${firstBody.successorPackageId}
+      `;
+      expect(successor).toMatchObject({ status: "review" });
+      expect(successor!.payload).toMatchObject({
+        status: "review",
+        strategyRecovery: {
+          supersedesAnimationPackageId: source!.id,
+          externalAiCalls: 0,
+        },
+      });
+      expect(await sql<{ count: number }[]>`
+        SELECT count(*)::int count FROM ai_story_animation_packages
+        WHERE story_id = ${ids.story}
+          AND (payload->'strategyRecovery'->>'supersedesAnimationPackageId') = ${source!.id}
+      `).toEqual([{ count: 2 }]);
+      authState.user = null;
     }, 120_000);
   }
 );
