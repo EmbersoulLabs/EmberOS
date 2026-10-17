@@ -18,6 +18,7 @@ import {
   buildAiStoryOutlineVersion,
   buildAiStoryScriptVersion,
   canonicalAiStorySceneIdV1,
+  computeAiStoryScriptSemanticInputFingerprint,
   finalizeAiStoryCanonicalScene,
   sha256CanonicalIntegrityHash,
 } from "@ceo-agent/shared/server";
@@ -162,7 +163,19 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
           storyId: ids.story, storyVersionId, outlineVersionId: outline.outlineVersionId,
           orgId: ids.org, workspaceId: ids.workspace, version: index + 1,
           profileId: "CORE", profileVersion: 1, outlineSourceHash: frozenOutline.sourceHash,
-          semanticInputFingerprint: `sha256:${"e".repeat(64)}`,
+          semanticInputFingerprint: computeAiStoryScriptSemanticInputFingerprint({
+            storyId: ids.story,
+            storyVersionId,
+            outlineVersionId: outline.outlineVersionId,
+            outlineSourceHash: frozenOutline.sourceHash,
+            story: review.story,
+            storyBeats: review.storyBeats,
+            scenePlan: review.scenePlan,
+            creativeContext: review.creativeContext,
+            directorThinking: review.directorThinking,
+            characterAuthorities: [authority],
+            productAuthorityIds: [],
+          }),
           scenes: [{
             scriptSceneId, order: 0, outlineBeatClaims: [{ outlineBeatId: beatId, claim: "Exact claim" }],
             sceneFunction: "DEMONSTRATE", sceneFunctionRegistryVersion: 1,
