@@ -363,11 +363,13 @@ export type LocalGpuEnabledDispatchAdapter = {
     actor: LocalGpuDispatchActor;
     workspaceId: string;
     sceneExecutionId: string;
+    workflow: string;
   }): Promise<{ found: boolean; uncertain?: boolean; state?: string }>;
   result(jobId: string, scope: {
     actor: LocalGpuDispatchActor;
     workspaceId: string;
     sceneExecutionId: string;
+    workflow: string;
   }): Promise<{ contentHash: string }>;
 };
 
@@ -440,10 +442,12 @@ export async function runEnabledLocalGpuDispatch(input: {
     sceneExecutionId: input.scope.sceneExecutionId,
     packageId: input.candidate.packageId,
   });
+  // Desktop binds status/result tokens to the job's own workflow.
   const scope = {
     actor: input.actor,
     workspaceId: input.scope.workspaceId,
     sceneExecutionId: input.scope.sceneExecutionId,
+    workflow: route.workflow ?? LOCAL_GPU_WORKER_WORKFLOW,
   };
   const ledger = input.ledger;
   const now = input.now ?? (() => new Date());

@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Sql } from "postgres";
@@ -24,6 +24,27 @@ vi.mock("@/lib/auth", async (load) => ({
   requireAuth: async () => {
     if (!authState.user) throw new Error("UNAUTHENTICATED");
     return authState.user;
+  },
+}));
+// Storage and ffprobe/ffmpeg are the only mocked boundaries of result delivery; hashing,
+// MP4 inspection, duration, ownership and persistence run for real.
+const storageState = vi.hoisted(() => ({ objects: new Map<string, Buffer>() }));
+vi.mock("../apps/worker/src/storage", async (load) => ({
+  ...(await load<Record<string, unknown>>()),
+  downloadStorageBytes: async (path: string) => {
+    const bytes = storageState.objects.get(path);
+    if (!bytes) throw new Error("STORAGE_OBJECT_NOT_FOUND");
+    return bytes;
+  },
+}));
+vi.mock("@ceo-agent/agents", async (load) => ({
+  ...(await load<Record<string, unknown>>()),
+  validateLocalGenerationMedia: async (bytes: Uint8Array, expectedContentHash: string, nativeAudioRequired: boolean) => {
+    if (`sha256:${createHash("sha256").update(bytes).digest("hex")}` !== expectedContentHash) throw new Error("LOCAL_GENERATION_MEDIA_HASH_MISMATCH");
+    if (nativeAudioRequired) throw new Error("LOCAL_GENERATION_NATIVE_AUDIO_REQUIRED");
+    const buffer = Buffer.from(bytes);
+    const marker = buffer.indexOf(Buffer.from("mvhd", "ascii"));
+    return { durationMs: buffer.readUInt32BE(marker + 20), width: 720, height: 1280, hasAudio: false };
   },
 }));
 vi.mock("@/lib/supabase/admin", () => ({
@@ -68,6 +89,10 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
     ));
     await sql.unsafe(readFileSync(
       "supabase/migrations/20261018030000_ai_story_local_gpu_submit_outcomes_v1.sql",
+      "utf8",
+    ));
+    await sql.unsafe(readFileSync(
+      "supabase/migrations/20261018080000_ai_story_local_gpu_non_acceptance_attestation_v1.sql",
       "utf8",
     ));
     process.env.LOCAL_GPU_PROVIDER_ENABLED = "true";
@@ -141,6 +166,9 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
         await tx`delete from ai_story_local_gpu_submit_outcomes where workspace_id=${ids.workspace}`;
       });
       await sql.unsafe("set session_replication_role = replica");
+      await sql`delete from ai_story_generation_results where workspace_id=${ids.workspace}`;
+      await sql`delete from ai_story_local_media_jobs where workspace_id=${ids.workspace}`;
+      await sql`delete from ai_story_local_generation_outputs where package_id=${packageId}`;
       await sql`delete from assets where workspace_id=${ids.workspace}`;
       await sql`delete from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace}`;
       await sql`delete from ai_story_scene_release_states where workspace_id=${ids.workspace}`;
@@ -490,6 +518,227 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       expect(unproven.status).toBe(409);
       expect(await unproven.json()).toMatchObject({ code: "LOCAL_GPU_NON_ACCEPTANCE_UNPROVEN" });
       expect(await gate()).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it("recovers a 404-exhausted job only from verified Desktop non-acceptance evidence, once, without duplicate GPU work", async () => {
+      const attestRoute = await import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/scenes/[sceneExecutionId]/local-gpu-submit/attestation/route");
+      const attest = (body: unknown) => attestRoute.POST(new Request("http://localhost/attest", { method: "POST", body: JSON.stringify(body) }), retryParams());
+      const jobId = (await gate())!;
+      type Verdict = { verdict: string; basis: string | null; jobStatus?: string | null; count?: number };
+      let mode: Verdict | { status: number } | { tamper: "signature" | "challenge" } = { status: 404 };
+      const desktopCalls: { method: string; url: string }[] = [];
+      const sign = (evidence: Record<string, unknown>) => {
+        const payload = Buffer.from(JSON.stringify(evidence), "utf8").toString("base64url");
+        const signature = createHmac("sha256", process.env.LOCAL_GPU_SIGNING_SECRET!).update(`local-gpu-submission-evidence.v1.${payload}`).digest("base64url");
+        return { payload, signature };
+      };
+      global.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        const target = new URL(String(url));
+        desktopCalls.push({ method, url: target.pathname });
+        if (!target.pathname.endsWith("/submission-evidence")) return new Response("{}", { status: 404 });
+        if ("status" in mode) return new Response("{}", { status: mode.status });
+        const token = String((init?.headers as Record<string, string>).authorization).replace("Bearer ", "");
+        const claims = JSON.parse(Buffer.from(token.split(".")[0]!, "base64url").toString("utf8")) as Record<string, string>;
+        const verdict: Verdict = "verdict" in mode ? mode : { verdict: "REJECTED_BEFORE_ENQUEUE", basis: "AUTHENTICATED_SUBMIT_WITHOUT_ENQUEUE" };
+        const evidence = {
+          v: 1, contract: "local-gpu-submission-evidence.v1", environment: claims.environment, jobId: claims.jobId,
+          workspaceId: claims.workspaceId, sceneExecutionId: claims.sceneExecutionId, workflow: claims.workflow,
+          verdict: verdict.verdict, basis: verdict.basis, jobStatus: verdict.jobStatus ?? null, rejection: null,
+          submitAuthorizationCount: verdict.count ?? 1, lastSubmitAuthorizationAt: new Date(Date.now() - 3_600_000).toISOString(),
+          challenge: "tamper" in mode && mode.tamper === "challenge" ? "f".repeat(64) : target.searchParams.get("challenge"),
+          issuedAt: new Date().toISOString(), desktopVersion: "integration",
+        };
+        const signed = sign(evidence);
+        return new Response(JSON.stringify("tamper" in mode && mode.tamper === "signature" ? { ...signed, signature: sign({ ...evidence, v: 2 }).signature } : signed), { status: 200 });
+      }) as typeof fetch;
+      const expectCode = async (response: Response, status: number, code: string) => {
+        expect(response.status).toBe(status);
+        expect(await response.json()).toMatchObject({ code });
+      };
+      const attestedRows = async () => (await outcomes()).filter((row) => row.kind === "DESKTOP_NON_ACCEPTANCE_ATTESTED");
+
+      authState.user = { id: ids.ordinary, email: "ordinary@example.invalid" };
+      expect((await attest({ expectedAttemptNumber: 1 })).status).toBe(403);
+      authState.user = { id: ids.actor, email: "admin@example.invalid" };
+      expect((await attest({})).status).toBe(422);
+      await expectCode(await attest({ expectedAttemptNumber: 2 }), 409, "LOCAL_GPU_RETRY_ATTEMPT_STALE");
+      await expectCode(await attest({ expectedAttemptNumber: 1 }), 503, "LOCAL_GPU_ATTESTATION_UNAVAILABLE");
+      mode = { tamper: "signature" };
+      await expectCode(await attest({ expectedAttemptNumber: 1 }), 502, "LOCAL_GPU_ATTESTATION_INVALID");
+      mode = { tamper: "challenge" };
+      await expectCode(await attest({ expectedAttemptNumber: 1 }), 502, "LOCAL_GPU_ATTESTATION_INVALID");
+      mode = { verdict: "ACCEPTED", basis: "JOB_RECORD", jobStatus: "RUNNING" };
+      await expectCode(await attest({ expectedAttemptNumber: 1 }), 409, "LOCAL_GPU_JOB_PREVIOUSLY_ACCEPTED");
+      mode = { verdict: "ACCEPTED", basis: "JOB_RECORD", jobStatus: "COMPLETED" };
+      await expectCode(await attest({ expectedAttemptNumber: 1 }), 409, "LOCAL_GPU_JOB_ALREADY_COMPLETED");
+      for (const verdict of ["IN_FLIGHT", "NO_SUBMIT_RECORD", "INCONSISTENT"]) {
+        mode = { verdict, basis: null };
+        await expectCode(await attest({ expectedAttemptNumber: 1 }), 409, "LOCAL_GPU_NON_ACCEPTANCE_UNPROVEN");
+      }
+      expect(await attestedRows()).toHaveLength(0);
+      await expectCode(await retry({ expectedAttemptNumber: 1 }), 409, "LOCAL_GPU_NON_ACCEPTANCE_UNPROVEN");
+
+      await sql.begin(async (tx) => {
+        await tx.unsafe("set local session_replication_role = replica");
+        await tx`update ai_story_local_gpu_dispatch_authorities set revoked_at=now() where workspace_id=${ids.workspace}`;
+      });
+      mode = { verdict: "REJECTED_BEFORE_ENQUEUE", basis: "AUTHENTICATED_SUBMIT_WITHOUT_ENQUEUE" };
+      await expectCode(await attest({ expectedAttemptNumber: 1 }), 409, "LOCAL_GPU_DISPATCH_AUTHORITY_REVOKED");
+      await sql.begin(async (tx) => {
+        await tx.unsafe("set local session_replication_role = replica");
+        await tx`update ai_story_local_gpu_dispatch_authorities set revoked_at=null where workspace_id=${ids.workspace}`;
+      });
+
+      const proven = await Promise.all([attest({ expectedAttemptNumber: 1 }), attest({ expectedAttemptNumber: 1 })]);
+      expect(proven.map((response) => response.status).sort()).toEqual([200, 201]);
+      const [row] = await attestedRows();
+      expect(await attestedRows()).toHaveLength(1);
+      expect(row).toMatchObject({ attempt: 1, by: "HUMAN" });
+      const [diagnostic] = await sql<{ diagnostic: Record<string, unknown> }[]>`select diagnostic from ai_story_local_gpu_submit_outcomes
+        where workspace_id=${ids.workspace} and kind='DESKTOP_NON_ACCEPTANCE_ATTESTED'`;
+      expect(diagnostic!.diagnostic).toMatchObject({ verdict: "REJECTED_BEFORE_ENQUEUE", basis: "AUTHENTICATED_SUBMIT_WITHOUT_ENQUEUE" });
+      expect(String(diagnostic!.diagnostic.attestationDigest)).toMatch(/^[0-9a-f]{64}$/);
+      expect(JSON.stringify(diagnostic!.diagnostic)).not.toMatch(/Bearer|eyJ|signature|ephemeral-postgres-only-secret/);
+      await expect(sql`insert into ai_story_local_gpu_submit_outcomes(outcome_id,org_id,workspace_id,story_id,scene_execution_id,package_id,dispatch_authority_id,job_id,attempt_number,kind,diagnostic,recorded_by,recorded_by_user_id)
+        select ${randomUUID()},org_id,workspace_id,story_id,scene_execution_id,package_id,dispatch_authority_id,job_id,7,'DESKTOP_NON_ACCEPTANCE_ATTESTED','{}'::jsonb,'HUMAN',recorded_by_user_id
+        from ai_story_local_gpu_submit_outcomes where workspace_id=${ids.workspace} and kind='DESKTOP_NON_ACCEPTANCE_ATTESTED'`)
+        .rejects.toMatchObject({ code: "23514" });
+      expect(desktopCalls.every((call) => call.method === "GET")).toBe(true);
+      expect(await gate()).toBe(jobId);
+
+      const io = desktop(
+        () => new Response(JSON.stringify({ state: "QUEUED" }), { status: 202 }),
+        () => new Response(JSON.stringify({ job: { state: "QUEUED" } }), { status: 200 }),
+      );
+      const opened = await retry({ expectedAttemptNumber: 1 });
+      expect(opened.status).toBe(201);
+      expect(await opened.json()).toMatchObject({ jobId, attemptNumber: 2, replayed: false });
+      const { runWorkerLocalGpuDispatchCycle } = await import("../apps/worker/src/ai-story-local-gpu-worker-dispatch");
+      await Promise.all([runWorkerLocalGpuDispatchCycle(workerEnv()), runWorkerLocalGpuDispatchCycle(workerEnv())]);
+      await runWorkerLocalGpuDispatchCycle(workerEnv());
+      expect(io.posts()).toBe(1);
+      expect((await outcomes()).filter((item) => item.attempt === 2).map((item) => item.kind))
+        .toEqual(["HUMAN_RETRY_AUTHORIZED", "SUBMIT_STARTED", "SUBMIT_ACCEPTED"]);
+      await expectCode(await attest({ expectedAttemptNumber: 2 }), 409, "LOCAL_GPU_ATTESTATION_NOT_APPLICABLE");
+      expect(await gate()).toBe(jobId);
+    });
+
+    it("delivers a mocked Desktop result through signed status/result, hash binding, validation and Generation Result to the human-review boundary exactly once", async () => {
+      const jobId = (await gate())!;
+      const [unit] = await sql<{ durationSec: string }[]>`select package->>'durationSec' "durationSec" from ai_story_local_generation_packages where package_id=${packageId}`;
+      const mp4 = (marker: string) => {
+        const ftyp = Buffer.alloc(16); ftyp.writeUInt32BE(16, 0); ftyp.write("ftypisom", 4, "ascii");
+        const mvhd = Buffer.alloc(32); mvhd.writeUInt32BE(32, 0); mvhd.write("mvhd", 4, "ascii");
+        mvhd.writeUInt32BE(1000, 20); mvhd.writeUInt32BE(Number(unit!.durationSec) * 1000, 24);
+        const free = Buffer.from(`\0\0\0\0free${marker}`, "binary"); free.writeUInt32BE(free.length, 0);
+        return Buffer.concat([ftyp, mvhd, free]);
+      };
+      const sha = (bytes: Buffer) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+      const output = mp4("desktop-output"), forged = mp4("forged-output");
+      const [asset] = await sql<{ id: string; path: string; status: string; uploadedBy: string }[]>`select id, storage_path path, status, uploaded_by "uploadedBy"
+        from assets where workspace_id=${ids.workspace} and metadata->>'sourceKind'='LOCAL_GPU_WORKER'`;
+      expect(asset).toMatchObject({ status: "uploading", uploadedBy: ids.actor });
+      expect(asset!.path.startsWith(`${ids.workspace}/ai-story/local-generation/${packageId}/`)).toBe(true);
+      storageState.objects.clear();
+      const desktopCalls: { method: string; path: string; action: string; workflow: string }[] = [];
+      global.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        const target = new URL(String(url));
+        const token = String(new Headers(init?.headers).get("authorization")).replace("Bearer ", "");
+        const claims = JSON.parse(Buffer.from(token.split(".")[0]!, "base64url").toString("utf8")) as Record<string, string>;
+        desktopCalls.push({ method, path: target.pathname, action: claims.action!, workflow: claims.workflow! });
+        // Mirrors Desktop assertSameIdentity: job tokens must carry the job's own workflow.
+        if (claims.jobId !== jobId || claims.workflow !== "MINIMAX_H3_T2V") {
+          return new Response(JSON.stringify({ error: { code: "LOCAL_GPU_WORKFLOW_MISMATCH" } }), { status: 403 });
+        }
+        if (method === "GET" && target.pathname === `/v1/jobs/${jobId}`) return new Response(JSON.stringify({ job: { state: "COMPLETED" } }), { status: 200 });
+        if (method === "GET" && target.pathname === `/v1/jobs/${jobId}/result`) {
+          return new Response(JSON.stringify({ jobId, status: "COMPLETED", result: { contentHash: sha(output) } }), { status: 200 });
+        }
+        return new Response("{}", { status: 404 });
+      }) as typeof fetch;
+      const counts = async () => (await sql<{ results: number; outputs: number; jobs: number }[]>`select
+        (select count(*) from ai_story_generation_results where workspace_id=${ids.workspace})::int results,
+        (select count(*) from ai_story_local_generation_outputs where package_id=${packageId})::int outputs,
+        (select count(*) from ai_story_local_media_jobs where workspace_id=${ids.workspace} and kind='VALIDATE_OUTPUT')::int jobs`)[0]!;
+      const mediaJob = async () => (await sql<{ state: string; code: string | null }[]>`select state, error_code code from ai_story_local_media_jobs
+        where workspace_id=${ids.workspace} and kind='VALIDATE_OUTPUT'`)[0];
+      const assetRow = async () => (await sql<{ status: string; hash: string | null; desktopHash: string | null; size: number | null }[]>`select status, content_hash hash,
+        metadata->>'desktopResultContentHash' "desktopHash", file_size_bytes::int size from assets where id=${asset!.id}`)[0]!;
+
+      const { runWorkerLocalGpuDispatchCycle, bindLocalGpuDesktopOutput } = await import("../apps/worker/src/ai-story-local-gpu-worker-dispatch");
+      const { runAiStoryLocalMediaWorkerCycle } = await import("../apps/worker/src/ai-story-local-media-worker-cycle");
+      const steps = await Promise.all([runWorkerLocalGpuDispatchCycle(workerEnv()), runWorkerLocalGpuDispatchCycle(workerEnv())]);
+      expect(steps.map((step) => step.code)).toContain("LOCAL_GPU_OUTPUT_VALIDATION_ENQUEUED");
+      expect(desktopCalls.length).toBeGreaterThan(0);
+      expect(desktopCalls.every((call) => call.method === "GET" && call.workflow === "MINIMAX_H3_T2V")).toBe(true);
+      expect(new Set(desktopCalls.map((call) => call.action))).toEqual(new Set(["status", "result"]));
+      expect(await counts()).toEqual({ results: 0, outputs: 0, jobs: 1 });
+      expect(await assetRow()).toMatchObject({ status: "uploading", desktopHash: sha(output) });
+      const reads = desktopCalls.length;
+      await runWorkerLocalGpuDispatchCycle(workerEnv());
+      expect(desktopCalls.length).toBe(reads);
+
+      // Upload not yet visible in storage: fails closed, nothing is materialized.
+      expect(await runAiStoryLocalMediaWorkerCycle()).toMatchObject({ status: "FAILED", errorCode: "STORAGE_OBJECT_NOT_FOUND" });
+      expect(await counts()).toEqual({ results: 0, outputs: 0, jobs: 1 });
+
+      const outputRoute = await import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/local-generation/[packageId]/output/route");
+      const outputParams = () => ({ params: Promise.resolve({ id: ids.campaign, storyId: ids.story, executionPlanId: ids.plan, packageId }) });
+      const revalidate = () => outputRoute.PATCH(new Request("http://localhost/output", { method: "PATCH", body: JSON.stringify({ assetId: asset!.id }) }), outputParams());
+      authState.user = { id: ids.ordinary, email: "ordinary@example.invalid" };
+      expect((await revalidate()).status).toBe(403);
+      expect(await mediaJob()).toEqual({ state: "FAILED", code: "STORAGE_OBJECT_NOT_FOUND" });
+      authState.user = { id: ids.actor, email: "admin@example.invalid" };
+
+      // Bytes that differ from the Desktop-signed hash never become a result.
+      storageState.objects.set(asset!.path, forged);
+      expect((await revalidate()).status).toBe(202);
+      expect(await runAiStoryLocalMediaWorkerCycle()).toMatchObject({ status: "FAILED", errorCode: "GENERATION_RESULT_CONTENT_MISMATCH" });
+      expect(await counts()).toEqual({ results: 0, outputs: 0, jobs: 1 });
+      expect((await assetRow()).status).toBe("uploading");
+      expect(await bindLocalGpuDesktopOutput({ orgId: ids.org, workspaceId: ids.workspace, campaignId: ids.campaign, executionPlanId: ids.plan,
+        packageId, runtimeAuthorizationId: ids.runtime }, sha(forged))).toBe("GENERATION_RESULT_CONTENT_MISMATCH");
+
+      storageState.objects.set(asset!.path, output);
+      expect((await revalidate()).status).toBe(202);
+      expect(await runAiStoryLocalMediaWorkerCycle()).toMatchObject({ status: "SUCCEEDED" });
+      expect(await counts()).toEqual({ results: 1, outputs: 1, jobs: 1 });
+      expect(await assetRow()).toEqual({ status: "ready", hash: sha(output), desktopHash: sha(output), size: output.length });
+      const [result] = await sql<{ id: string; sourceKind: string; hash: string; scene: string; plan: string; assetId: string; outputId: string | null; attempt: string | null }[]>`
+        select generation_result_id id, source_kind "sourceKind", content_hash hash, scene_execution_id scene, execution_plan_id plan, asset_id "assetId",
+          coalesce(local_worker_output_id, local_generation_output_id) "outputId", provider_attempt_id attempt
+        from ai_story_generation_results where workspace_id=${ids.workspace}`;
+      // Desktop bytes reuse the canonical manual-local VALIDATE_OUTPUT authority; no Provider Attempt is invented.
+      expect(result).toMatchObject({ sourceKind: "MANUAL_LOCAL", hash: sha(output), scene: ids.sceneExecution, plan: ids.plan, assetId: asset!.id, attempt: null });
+      const [stored] = await sql<{ outputId: string; hash: string; qc: string }[]>`select output_id "outputId", content_hash hash, qc_state qc
+        from ai_story_local_generation_outputs where package_id=${packageId}`;
+      expect(stored).toMatchObject({ outputId: result!.outputId, hash: sha(output), qc: "PENDING" });
+
+      // Replays after success (operator re-run, Worker restart re-bind) are suppressed.
+      const replay = await revalidate();
+      expect(replay.status).toBe(202);
+      expect(await replay.json()).toMatchObject({ state: "SUCCEEDED" });
+      expect(await bindLocalGpuDesktopOutput({ orgId: ids.org, workspaceId: ids.workspace, campaignId: ids.campaign, executionPlanId: ids.plan,
+        packageId, runtimeAuthorizationId: ids.runtime }, sha(output))).toBe("LOCAL_GPU_OUTPUT_VALIDATION_ENQUEUED");
+      expect(await runAiStoryLocalMediaWorkerCycle()).toEqual({ status: "IDLE" });
+      expect(await mediaJob()).toEqual({ state: "SUCCEEDED", code: null });
+      expect(await counts()).toEqual({ results: 1, outputs: 1, jobs: 1 });
+
+      // Post-QC requirements are served; nothing is evaluated, approved or released without a human.
+      const resultRoute = await import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/local-generation/[packageId]/result/route");
+      const review = await resultRoute.GET(new Request("http://localhost/result"), outputParams());
+      expect(review.status).toBe(200);
+      const body = await review.json() as { generationResultId: string; sourceKind: string; requirements: unknown[]; evaluation: unknown; decision: unknown; continuityFrame: unknown };
+      expect(body).toMatchObject({ generationResultId: result!.id, sourceKind: "MANUAL_LOCAL", evaluation: null, decision: null, continuityFrame: null });
+      expect(body.requirements.length).toBeGreaterThan(0);
+      const premature = await resultRoute.POST(new Request("http://localhost/result", { method: "POST", body: JSON.stringify({ action: "APPROVE", rationale: "no Post-QC yet" }) }), outputParams());
+      expect(premature.status).toBeGreaterThanOrEqual(400);
+      expect((await sql`select 1 from ai_story_generation_result_decisions where generation_result_id=${result!.id}`).length).toBe(0);
+      expect((await sql`select 1 from ai_story_local_media_jobs where workspace_id=${ids.workspace} and kind='EXTRACT_FRAME'`).length).toBe(0);
+      expect(desktopCalls.some((call) => call.method !== "GET")).toBe(false);
+      expect(await gate()).toBe(jobId);
     });
 
     it("keeps evidence append-only and server-only", async () => {

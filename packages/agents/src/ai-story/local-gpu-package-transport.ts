@@ -11,6 +11,8 @@ import {
   type LocalGpuDesktopSubmitBody,
   type LocalGpuEnvironment,
   type LocalGpuUploadDestination,
+  type LocalGpuV2FirstFrameAuthorityType,
+  type LocalGpuV2FirstFrameLineage,
 } from "@ceo-agent/shared/server";
 
 /**
@@ -376,6 +378,20 @@ function modelReferences(pkg: AiStoryLocalGenerationPackage): PackageReference[]
   return referencesOf(pkg).filter((reference) => reference.kind !== "FIRST_FRAME" && reference.kind !== "VISUAL_START");
 }
 
+/** Persisted predecessor lineage for a continuity frame; any other start must match an approved reference. */
+function firstFrameLineage(pkg: AiStoryLocalGenerationPackage): LocalGpuV2FirstFrameLineage | null {
+  if (pkg.version !== "local-generation-package.v3") return null;
+  const semantic = pkg.predecessorAuthority?.semantic;
+  if (pkg.visualStartAuthority.sourceType !== "PREDECESSOR_CONTINUITY" || !semantic) return null;
+  return {
+    sourceType: "PREDECESSOR_CONTINUITY",
+    sourceSceneId: semantic.predecessorSceneExecutionId,
+    predecessorGenerationResultId: semantic.predecessorGenerationResultId,
+    storyVersion: pkg.storyVersionId,
+    executionPlanId: pkg.executionPlanId,
+  };
+}
+
 export function mapCanonicalPackageToLocalGpuContractV2(input: {
   package: AiStoryLocalGenerationPackage;
   assets: readonly LocalGpuResolvedAsset[];
@@ -386,6 +402,7 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
   structuredCamera?: boolean;
   structuredMotion?: boolean;
   textOnly?: boolean;
+  firstFrameAuthorities?: readonly LocalGpuV2FirstFrameAuthorityType[];
 }): ReturnType<typeof buildLocalGpuDesktopSubmitV2> {
   const pkg = input.package;
   const references = referencesOf(pkg);
@@ -474,7 +491,9 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
       assetUrl: frameAsset.assetUrl,
       authoritySourceAssetId: authorityFrame.assetId,
       authorityContentHash: authorityFrame.contentHash,
+      lineage: firstFrameLineage(pkg),
     } : null,
+    firstFrameAuthorities: input.firstFrameAuthorities,
     dialogueLineCount: pkg.dialogue.length,
     pinnedVoiceDna: Boolean(input.pinnedVoiceDna),
     structuredCamera: input.structuredCamera,

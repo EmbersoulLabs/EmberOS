@@ -214,8 +214,16 @@ describe("zero-asset contract V3", () => {
       megapixels: null,
       voiceInstructions: null,
       seed: null,
-      references: v2.body.references,
-      firstFrame: v2.body.firstFrame,
+      references: v2.body.references.map((reference) => ({
+        role: reference.role,
+        assetUrl: reference.assetUrl,
+        contentHash: reference.contentHash,
+        subjectId: reference.subjectId,
+        variantId: reference.variantId,
+        dnaVersion: null,
+        dnaFingerprint: null,
+      })),
+      firstFrame: null,
     });
     expect(Object.keys(v2Job)).toEqual([...LOCAL_GPU_CREATIVE_BINDING_KEYS_V2]);
     expect(localGpuCreativeBindingForV2Body(v2.body)).toBe(localGpuCreativeBindingDigest(v2Job));

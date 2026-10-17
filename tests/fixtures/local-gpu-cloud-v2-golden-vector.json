@@ -1,0 +1,377 @@
+{
+  "kind": "embersoul.local-gpu.cloud-v2.golden-vector",
+  "version": 1,
+  "classification": "TEST_ONLY_SYNTHETIC",
+  "contractVersion": 2,
+  "testOnlySecret": {
+    "classification": "TEST_ONLY",
+    "utf8": "contract-v2-golden-test-secret"
+  },
+  "syntheticAuthorization": {
+    "now": "2026-10-18T00:00:00.000Z",
+    "authority": "SUPERADMIN",
+    "action": "submit"
+  },
+  "cases": [
+    {
+      "name": "product-only-initial-material-first-frame",
+      "covers": [
+        "PRODUCT_REFERENCE",
+        "INITIAL_MATERIAL_REFERENCE",
+        "FIRST_FRAME_SHARES_PRODUCT_IMAGE",
+        "SILENT_OUTPUT"
+      ],
+      "firstFrameAuthorities": [
+        "PREDECESSOR_CONTINUITY",
+        "INITIAL_MATERIAL_REFERENCE"
+      ],
+      "body": {
+        "contractVersion": 2,
+        "assetMode": "WITH_ASSET",
+        "environment": "staging",
+        "jobId": "90000001-0000-4000-8000-000000000000",
+        "sceneExecutionId": "40000001-0000-4000-8000-000000000000",
+        "workspaceId": "00000003-0000-4000-8000-000000000000",
+        "workflow": "MINIMAX_H3_R2V",
+        "prompt": "Golden V2 scene 1. The authorized subject stays centered.",
+        "durationSec": 6,
+        "durationSource": "RECOMMENDED_DURATION_AUTHORITY",
+        "audioPolicy": "SILENT_OUTPUT",
+        "upload": {
+          "environment": "staging",
+          "method": "PUT",
+          "url": "https://uploads.invalid/v2-golden/1.mp4",
+          "assetId": "a0000001-0000-4000-8000-000000000000"
+        },
+        "creative": {
+          "characters": [],
+          "products": [
+            {
+              "subjectId": "00000022-0000-4000-8000-000000000000",
+              "variantId": "matte-black",
+              "modelBound": false,
+              "references": [
+                {
+                  "approval": "APPROVED",
+                  "assetUrl": "https://assets.invalid/v2-golden/product.png",
+                  "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                }
+              ]
+            }
+          ],
+          "continuity": {
+            "sourceType": "INITIAL_MATERIAL_REFERENCE",
+            "approval": "APPROVED",
+            "assetUrl": "https://assets.invalid/v2-golden/product.png",
+            "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "sourceAssetId": "b0000001-0000-4000-8000-000000000000",
+            "workspaceId": "00000003-0000-4000-8000-000000000000"
+          }
+        },
+        "references": [
+          {
+            "order": 0,
+            "approval": "APPROVED",
+            "role": "PRODUCT",
+            "subjectId": "00000022-0000-4000-8000-000000000000",
+            "variantId": "matte-black",
+            "assetUrl": "https://assets.invalid/v2-golden/product.png",
+            "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "firstFrame": {
+          "approval": "APPROVED",
+          "sourceAssetId": "b0000001-0000-4000-8000-000000000000",
+          "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "assetUrl": "https://assets.invalid/v2-golden/product.png"
+        }
+      },
+      "canonicalCreativeJobUtf8": "{\"contractVersion\":2,\"assetMode\":\"WITH_ASSET\",\"jobId\":\"90000001-0000-4000-8000-000000000000\",\"sceneExecutionId\":\"40000001-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"workflow\":\"MINIMAX_H3_R2V\",\"prompt\":\"Golden V2 scene 1. The authorized subject stays centered.\",\"durationSec\":6,\"audioPolicy\":\"SILENT_OUTPUT\",\"aspectRatio\":null,\"megapixels\":null,\"voiceInstructions\":null,\"seed\":null,\"references\":[{\"role\":\"PRODUCT\",\"assetUrl\":\"https://assets.invalid/v2-golden/product.png\",\"contentHash\":\"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"subjectId\":\"00000022-0000-4000-8000-000000000000\",\"variantId\":\"matte-black\",\"dnaVersion\":null,\"dnaFingerprint\":null}],\"firstFrame\":{\"assetUrl\":\"https://assets.invalid/v2-golden/product.png\",\"contentHash\":\"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"sourceAssetId\":\"b0000001-0000-4000-8000-000000000000\",\"sourceSceneId\":null,\"predecessorGenerationResultId\":null,\"storyVersion\":null,\"executionPlanId\":null,\"workspaceId\":\"00000003-0000-4000-8000-000000000000\"}}",
+      "creativeBinding": "e98aa9722f0adb2ea34f1e4789e73916b30e777ace2eced5e41a7440eab3ebf6",
+      "uploadBinding": "4629329eb20adf6677dd23ce9ce74f1fbd8ed7f2c6323a3fef07bac8b9c1e47c",
+      "signedClaims": {
+        "v": 1,
+        "environment": "staging",
+        "action": "submit",
+        "jobId": "90000001-0000-4000-8000-000000000000",
+        "workspaceId": "00000003-0000-4000-8000-000000000000",
+        "actorId": "00000016-0000-4000-8000-000000000000",
+        "authority": "SUPERADMIN",
+        "workflow": "MINIMAX_H3_R2V",
+        "sceneExecutionId": "40000001-0000-4000-8000-000000000000",
+        "expiresAt": 1792281900000,
+        "nonce": "v2-golden-nonce-1",
+        "uploadBinding": "4629329eb20adf6677dd23ce9ce74f1fbd8ed7f2c6323a3fef07bac8b9c1e47c",
+        "creativeBinding": "e98aa9722f0adb2ea34f1e4789e73916b30e777ace2eced5e41a7440eab3ebf6"
+      },
+      "canonicalSigningInput": "{\"v\":1,\"environment\":\"staging\",\"action\":\"submit\",\"jobId\":\"90000001-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"actorId\":\"00000016-0000-4000-8000-000000000000\",\"authority\":\"SUPERADMIN\",\"workflow\":\"MINIMAX_H3_R2V\",\"sceneExecutionId\":\"40000001-0000-4000-8000-000000000000\",\"expiresAt\":1792281900000,\"nonce\":\"v2-golden-nonce-1\",\"uploadBinding\":\"4629329eb20adf6677dd23ce9ce74f1fbd8ed7f2c6323a3fef07bac8b9c1e47c\",\"creativeBinding\":\"e98aa9722f0adb2ea34f1e4789e73916b30e777ace2eced5e41a7440eab3ebf6\"}",
+      "token": "eyJ2IjoxLCJlbnZpcm9ubWVudCI6InN0YWdpbmciLCJhY3Rpb24iOiJzdWJtaXQiLCJqb2JJZCI6IjkwMDAwMDAxLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsIndvcmtzcGFjZUlkIjoiMDAwMDAwMDMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIiwiYWN0b3JJZCI6IjAwMDAwMDE2LTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImF1dGhvcml0eSI6IlNVUEVSQURNSU4iLCJ3b3JrZmxvdyI6Ik1JTklNQVhfSDNfUjJWIiwic2NlbmVFeGVjdXRpb25JZCI6IjQwMDAwMDAxLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImV4cGlyZXNBdCI6MTc5MjI4MTkwMDAwMCwibm9uY2UiOiJ2Mi1nb2xkZW4tbm9uY2UtMSIsInVwbG9hZEJpbmRpbmciOiI0NjI5MzI5ZWIyMGFkZjY2NzdkZDIzY2U5Y2U3NGYxZmJkOGVkN2YyYzYzMjNhM2ZlZjA3YmFjOGI5YzFlNDdjIiwiY3JlYXRpdmVCaW5kaW5nIjoiZTk4YWE5NzIyZjBhZGIyZWEzNGYxZTQ3ODllNzM5MTZiMzBlNzc3YWNlMmVjZWQ1ZTQxYTc0NDBlYWIzZWJmNiJ9.K9Mx_2oEi-kUVlnu_5RFX6g3I57KI3MolDDCtOaEVhI"
+    },
+    {
+      "name": "character-only-no-first-frame",
+      "covers": [
+        "CHARACTER_REFERENCE",
+        "CHARACTER_DNA_FINGERPRINT",
+        "NO_FIRST_FRAME",
+        "NO_DIALOGUE_WITH_AMBIENT_AUDIO"
+      ],
+      "firstFrameAuthorities": [
+        "PREDECESSOR_CONTINUITY"
+      ],
+      "body": {
+        "contractVersion": 2,
+        "assetMode": "WITH_ASSET",
+        "environment": "staging",
+        "jobId": "90000002-0000-4000-8000-000000000000",
+        "sceneExecutionId": "40000002-0000-4000-8000-000000000000",
+        "workspaceId": "00000003-0000-4000-8000-000000000000",
+        "workflow": "MINIMAX_H3_R2V",
+        "prompt": "Golden V2 scene 2. The authorized subject stays centered.",
+        "durationSec": 7,
+        "durationSource": "RECOMMENDED_DURATION_AUTHORITY",
+        "audioPolicy": "NO_DIALOGUE_WITH_AMBIENT_AUDIO",
+        "upload": {
+          "environment": "staging",
+          "method": "PUT",
+          "url": "https://uploads.invalid/v2-golden/2.mp4",
+          "assetId": "a0000002-0000-4000-8000-000000000000"
+        },
+        "creative": {
+          "characters": [
+            {
+              "subjectId": "00000011-0000-4000-8000-000000000000",
+              "dnaFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "modelBound": false,
+              "references": [
+                {
+                  "approval": "APPROVED",
+                  "assetUrl": "https://assets.invalid/v2-golden/character.png",
+                  "contentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+              ]
+            }
+          ],
+          "products": []
+        },
+        "references": [
+          {
+            "order": 0,
+            "approval": "APPROVED",
+            "role": "CHARACTER",
+            "subjectId": "00000011-0000-4000-8000-000000000000",
+            "variantId": null,
+            "assetUrl": "https://assets.invalid/v2-golden/character.png",
+            "contentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ],
+        "firstFrame": null
+      },
+      "canonicalCreativeJobUtf8": "{\"contractVersion\":2,\"assetMode\":\"WITH_ASSET\",\"jobId\":\"90000002-0000-4000-8000-000000000000\",\"sceneExecutionId\":\"40000002-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"workflow\":\"MINIMAX_H3_R2V\",\"prompt\":\"Golden V2 scene 2. The authorized subject stays centered.\",\"durationSec\":7,\"audioPolicy\":\"NO_DIALOGUE_WITH_AMBIENT_AUDIO\",\"aspectRatio\":null,\"megapixels\":null,\"voiceInstructions\":null,\"seed\":null,\"references\":[{\"role\":\"CHARACTER\",\"assetUrl\":\"https://assets.invalid/v2-golden/character.png\",\"contentHash\":\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"subjectId\":\"00000011-0000-4000-8000-000000000000\",\"variantId\":null,\"dnaVersion\":null,\"dnaFingerprint\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}],\"firstFrame\":null}",
+      "creativeBinding": "2ee76eaa39af291600d2f2a673a4f4719e10ccfbc71a4338a62ef71fec7c8f7d",
+      "uploadBinding": "f8e36d2b787ac6dc953af7a6ddd505e8092a1ce8a99d1a1eac7cf68202c81c41",
+      "signedClaims": {
+        "v": 1,
+        "environment": "staging",
+        "action": "submit",
+        "jobId": "90000002-0000-4000-8000-000000000000",
+        "workspaceId": "00000003-0000-4000-8000-000000000000",
+        "actorId": "00000016-0000-4000-8000-000000000000",
+        "authority": "SUPERADMIN",
+        "workflow": "MINIMAX_H3_R2V",
+        "sceneExecutionId": "40000002-0000-4000-8000-000000000000",
+        "expiresAt": 1792281900000,
+        "nonce": "v2-golden-nonce-2",
+        "uploadBinding": "f8e36d2b787ac6dc953af7a6ddd505e8092a1ce8a99d1a1eac7cf68202c81c41",
+        "creativeBinding": "2ee76eaa39af291600d2f2a673a4f4719e10ccfbc71a4338a62ef71fec7c8f7d"
+      },
+      "canonicalSigningInput": "{\"v\":1,\"environment\":\"staging\",\"action\":\"submit\",\"jobId\":\"90000002-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"actorId\":\"00000016-0000-4000-8000-000000000000\",\"authority\":\"SUPERADMIN\",\"workflow\":\"MINIMAX_H3_R2V\",\"sceneExecutionId\":\"40000002-0000-4000-8000-000000000000\",\"expiresAt\":1792281900000,\"nonce\":\"v2-golden-nonce-2\",\"uploadBinding\":\"f8e36d2b787ac6dc953af7a6ddd505e8092a1ce8a99d1a1eac7cf68202c81c41\",\"creativeBinding\":\"2ee76eaa39af291600d2f2a673a4f4719e10ccfbc71a4338a62ef71fec7c8f7d\"}",
+      "token": "eyJ2IjoxLCJlbnZpcm9ubWVudCI6InN0YWdpbmciLCJhY3Rpb24iOiJzdWJtaXQiLCJqb2JJZCI6IjkwMDAwMDAyLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsIndvcmtzcGFjZUlkIjoiMDAwMDAwMDMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIiwiYWN0b3JJZCI6IjAwMDAwMDE2LTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImF1dGhvcml0eSI6IlNVUEVSQURNSU4iLCJ3b3JrZmxvdyI6Ik1JTklNQVhfSDNfUjJWIiwic2NlbmVFeGVjdXRpb25JZCI6IjQwMDAwMDAyLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImV4cGlyZXNBdCI6MTc5MjI4MTkwMDAwMCwibm9uY2UiOiJ2Mi1nb2xkZW4tbm9uY2UtMiIsInVwbG9hZEJpbmRpbmciOiJmOGUzNmQyYjc4N2FjNmRjOTUzYWY3YTZkZGQ1MDVlODA5MmExY2U4YTk5ZDFhMWVhYzdjZjY4MjAyYzgxYzQxIiwiY3JlYXRpdmVCaW5kaW5nIjoiMmVlNzZlYWEzOWFmMjkxNjAwZDJmMmE2NzNhNGY0NzE5ZTEwY2NmYmM3MWE0MzM4YTYyZWY3MWZlYzdjOGY3ZCJ9.zm5LlrULWGhIyf28Es8yqjDoxt7XfsX6_o2IAE077PM"
+    },
+    {
+      "name": "mixed-predecessor-continuity-first-frame",
+      "covers": [
+        "PRODUCT_REFERENCE",
+        "CHARACTER_REFERENCE",
+        "REFERENCE_ORDER_CHARACTER_THEN_PRODUCT",
+        "PREDECESSOR_CONTINUITY",
+        "PRESERVE"
+      ],
+      "firstFrameAuthorities": [
+        "PREDECESSOR_CONTINUITY"
+      ],
+      "body": {
+        "contractVersion": 2,
+        "assetMode": "WITH_ASSET",
+        "environment": "staging",
+        "jobId": "90000003-0000-4000-8000-000000000000",
+        "sceneExecutionId": "40000003-0000-4000-8000-000000000000",
+        "workspaceId": "00000003-0000-4000-8000-000000000000",
+        "workflow": "MINIMAX_H3_R2V",
+        "prompt": "Golden V2 scene 3. The authorized subject stays centered.",
+        "durationSec": 8,
+        "durationSource": "RECOMMENDED_DURATION_AUTHORITY",
+        "audioPolicy": "PRESERVE",
+        "upload": {
+          "environment": "staging",
+          "method": "PUT",
+          "url": "https://uploads.invalid/v2-golden/3.mp4",
+          "assetId": "a0000003-0000-4000-8000-000000000000"
+        },
+        "creative": {
+          "characters": [
+            {
+              "subjectId": "00000011-0000-4000-8000-000000000000",
+              "dnaFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "modelBound": false,
+              "references": [
+                {
+                  "approval": "APPROVED",
+                  "assetUrl": "https://assets.invalid/v2-golden/character.png",
+                  "contentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+              ]
+            }
+          ],
+          "products": [
+            {
+              "subjectId": "00000022-0000-4000-8000-000000000000",
+              "variantId": "matte-black",
+              "modelBound": false,
+              "references": [
+                {
+                  "approval": "APPROVED",
+                  "assetUrl": "https://assets.invalid/v2-golden/product.png",
+                  "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                }
+              ]
+            }
+          ],
+          "continuity": {
+            "sourceType": "PREDECESSOR_CONTINUITY",
+            "approval": "APPROVED",
+            "assetUrl": "https://assets.invalid/v2-golden/predecessor-frame.png",
+            "contentHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "sourceAssetId": "b0000003-0000-4000-8000-000000000000",
+            "workspaceId": "00000003-0000-4000-8000-000000000000",
+            "sourceSceneId": "40000002-0000-4000-8000-000000000000",
+            "predecessorGenerationResultId": "c0000002-0000-4000-8000-000000000000",
+            "storyVersion": "60000001-0000-4000-8000-000000000000",
+            "executionPlanId": "50000001-0000-4000-8000-000000000000"
+          }
+        },
+        "references": [
+          {
+            "order": 0,
+            "approval": "APPROVED",
+            "role": "CHARACTER",
+            "subjectId": "00000011-0000-4000-8000-000000000000",
+            "variantId": null,
+            "assetUrl": "https://assets.invalid/v2-golden/character.png",
+            "contentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          },
+          {
+            "order": 1,
+            "approval": "APPROVED",
+            "role": "PRODUCT",
+            "subjectId": "00000022-0000-4000-8000-000000000000",
+            "variantId": "matte-black",
+            "assetUrl": "https://assets.invalid/v2-golden/product.png",
+            "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          }
+        ],
+        "firstFrame": {
+          "approval": "APPROVED",
+          "sourceAssetId": "b0000003-0000-4000-8000-000000000000",
+          "contentHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "assetUrl": "https://assets.invalid/v2-golden/predecessor-frame.png"
+        }
+      },
+      "canonicalCreativeJobUtf8": "{\"contractVersion\":2,\"assetMode\":\"WITH_ASSET\",\"jobId\":\"90000003-0000-4000-8000-000000000000\",\"sceneExecutionId\":\"40000003-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"workflow\":\"MINIMAX_H3_R2V\",\"prompt\":\"Golden V2 scene 3. The authorized subject stays centered.\",\"durationSec\":8,\"audioPolicy\":\"PRESERVE\",\"aspectRatio\":null,\"megapixels\":null,\"voiceInstructions\":null,\"seed\":null,\"references\":[{\"role\":\"CHARACTER\",\"assetUrl\":\"https://assets.invalid/v2-golden/character.png\",\"contentHash\":\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"subjectId\":\"00000011-0000-4000-8000-000000000000\",\"variantId\":null,\"dnaVersion\":null,\"dnaFingerprint\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},{\"role\":\"PRODUCT\",\"assetUrl\":\"https://assets.invalid/v2-golden/product.png\",\"contentHash\":\"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"subjectId\":\"00000022-0000-4000-8000-000000000000\",\"variantId\":\"matte-black\",\"dnaVersion\":null,\"dnaFingerprint\":null}],\"firstFrame\":{\"assetUrl\":\"https://assets.invalid/v2-golden/predecessor-frame.png\",\"contentHash\":\"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"sourceAssetId\":\"b0000003-0000-4000-8000-000000000000\",\"sourceSceneId\":\"40000002-0000-4000-8000-000000000000\",\"predecessorGenerationResultId\":\"c0000002-0000-4000-8000-000000000000\",\"storyVersion\":\"60000001-0000-4000-8000-000000000000\",\"executionPlanId\":\"50000001-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\"}}",
+      "creativeBinding": "3e27e1cea38fb357b66a8a34cd53e9d768ad4ef5c7946409d276933b6a099738",
+      "uploadBinding": "bb11561a9e45b65a786039da819e5c1c082e8c74d814f27351d5b186bdd1df0a",
+      "signedClaims": {
+        "v": 1,
+        "environment": "staging",
+        "action": "submit",
+        "jobId": "90000003-0000-4000-8000-000000000000",
+        "workspaceId": "00000003-0000-4000-8000-000000000000",
+        "actorId": "00000016-0000-4000-8000-000000000000",
+        "authority": "SUPERADMIN",
+        "workflow": "MINIMAX_H3_R2V",
+        "sceneExecutionId": "40000003-0000-4000-8000-000000000000",
+        "expiresAt": 1792281900000,
+        "nonce": "v2-golden-nonce-3",
+        "uploadBinding": "bb11561a9e45b65a786039da819e5c1c082e8c74d814f27351d5b186bdd1df0a",
+        "creativeBinding": "3e27e1cea38fb357b66a8a34cd53e9d768ad4ef5c7946409d276933b6a099738"
+      },
+      "canonicalSigningInput": "{\"v\":1,\"environment\":\"staging\",\"action\":\"submit\",\"jobId\":\"90000003-0000-4000-8000-000000000000\",\"workspaceId\":\"00000003-0000-4000-8000-000000000000\",\"actorId\":\"00000016-0000-4000-8000-000000000000\",\"authority\":\"SUPERADMIN\",\"workflow\":\"MINIMAX_H3_R2V\",\"sceneExecutionId\":\"40000003-0000-4000-8000-000000000000\",\"expiresAt\":1792281900000,\"nonce\":\"v2-golden-nonce-3\",\"uploadBinding\":\"bb11561a9e45b65a786039da819e5c1c082e8c74d814f27351d5b186bdd1df0a\",\"creativeBinding\":\"3e27e1cea38fb357b66a8a34cd53e9d768ad4ef5c7946409d276933b6a099738\"}",
+      "token": "eyJ2IjoxLCJlbnZpcm9ubWVudCI6InN0YWdpbmciLCJhY3Rpb24iOiJzdWJtaXQiLCJqb2JJZCI6IjkwMDAwMDAzLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsIndvcmtzcGFjZUlkIjoiMDAwMDAwMDMtMDAwMC00MDAwLTgwMDAtMDAwMDAwMDAwMDAwIiwiYWN0b3JJZCI6IjAwMDAwMDE2LTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImF1dGhvcml0eSI6IlNVUEVSQURNSU4iLCJ3b3JrZmxvdyI6Ik1JTklNQVhfSDNfUjJWIiwic2NlbmVFeGVjdXRpb25JZCI6IjQwMDAwMDAzLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsImV4cGlyZXNBdCI6MTc5MjI4MTkwMDAwMCwibm9uY2UiOiJ2Mi1nb2xkZW4tbm9uY2UtMyIsInVwbG9hZEJpbmRpbmciOiJiYjExNTYxYTllNDViNjVhNzg2MDM5ZGE4MTllNWMxYzA4MmU4Yzc0ZDgxNGYyNzM1MWQ1YjE4NmJkZDFkZjBhIiwiY3JlYXRpdmVCaW5kaW5nIjoiM2UyN2UxY2VhMzhmYjM1N2I2NmE4YTM0Y2Q1M2U5ZDc2OGFkNGVmNWM3OTQ2NDA5ZDI3NjkzM2I2YTA5OTczOCJ9.lh51X4kfmF9TZnxxRf2vyjWxlkD59OD9otU4alv-haQ"
+    }
+  ],
+  "cloudRefusals": [
+    {
+      "name": "initial-material-on-desktop-without-capability",
+      "expectedCloudError": "LOCAL_GPU_FIRST_FRAME_AUTHORITY_UNSUPPORTED"
+    },
+    {
+      "name": "first-frame-without-lineage-or-approved-reference",
+      "expectedCloudError": "LOCAL_GPU_CONTINUITY_AUTHORITY_REQUIRED"
+    },
+    {
+      "name": "product-without-variant",
+      "expectedCloudError": "LOCAL_GPU_PRODUCT_VARIANT_REQUIRED"
+    }
+  ],
+  "legacyShapeRejection": {
+    "description": "Pre-canonical Cloud V2 shape: bare firstFrame, flat product, empty scene authority.",
+    "expectedDesktopError": "LOCAL_GPU_CONTINUITY_NOT_APPROVED",
+    "body": {
+      "contractVersion": 2,
+      "assetMode": "WITH_ASSET",
+      "environment": "staging",
+      "jobId": "90000001-0000-4000-8000-000000000000",
+      "sceneExecutionId": "40000001-0000-4000-8000-000000000000",
+      "workspaceId": "00000003-0000-4000-8000-000000000000",
+      "workflow": "MINIMAX_H3_R2V",
+      "prompt": "Golden V2 scene 1. The authorized subject stays centered.",
+      "durationSec": 6,
+      "durationSource": "RECOMMENDED_DURATION_AUTHORITY",
+      "audioPolicy": "SILENT_OUTPUT",
+      "upload": {
+        "environment": "staging",
+        "method": "PUT",
+        "url": "https://uploads.invalid/v2-golden/1.mp4",
+        "assetId": "a0000001-0000-4000-8000-000000000000"
+      },
+      "creative": {
+        "characters": [],
+        "products": [
+          {
+            "subjectId": "00000022-0000-4000-8000-000000000000",
+            "variantId": "matte-black",
+            "modelBound": false
+          }
+        ],
+        "scene": {
+          "sceneExecutionId": "40000001-0000-4000-8000-000000000000"
+        }
+      },
+      "references": [
+        {
+          "order": 0,
+          "approval": "APPROVED",
+          "role": "PRODUCT",
+          "subjectId": "00000022-0000-4000-8000-000000000000",
+          "variantId": "matte-black",
+          "assetUrl": "https://assets.invalid/v2-golden/product.png",
+          "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "firstFrame": {
+        "sourceAssetId": "b0000001-0000-4000-8000-000000000000",
+        "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "assetUrl": "https://assets.invalid/v2-golden/product.png"
+      }
+    }
+  }
+}

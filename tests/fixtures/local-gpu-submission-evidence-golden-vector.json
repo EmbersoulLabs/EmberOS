@@ -1,0 +1,32 @@
+{
+  "kind": "embersoul.local-gpu.submission-evidence.golden-vector",
+  "version": 1,
+  "classification": "TEST_ONLY_SYNTHETIC",
+  "testOnlySecret": {
+    "classification": "TEST_ONLY",
+    "utf8": "submission-evidence-golden-test-secret"
+  },
+  "verifyAt": "2026-10-18T00:01:00.000Z",
+  "evidence": {
+    "v": 1,
+    "contract": "local-gpu-submission-evidence.v1",
+    "environment": "production",
+    "jobId": "90000001-0000-4000-8000-000000000000",
+    "workspaceId": "00000003-0000-4000-8000-000000000000",
+    "sceneExecutionId": "40000001-0000-4000-8000-000000000000",
+    "workflow": "MINIMAX_H3_R2V",
+    "verdict": "REJECTED_BEFORE_ENQUEUE",
+    "basis": "AUTHENTICATED_SUBMIT_WITHOUT_ENQUEUE",
+    "jobStatus": null,
+    "rejection": null,
+    "submitAuthorizationCount": 1,
+    "lastSubmitAuthorizationAt": "2026-10-17T18:05:49.000Z",
+    "challenge": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "issuedAt": "2026-10-18T00:00:00.000Z",
+    "desktopVersion": "golden"
+  },
+  "signed": {
+    "payload": "eyJ2IjoxLCJjb250cmFjdCI6ImxvY2FsLWdwdS1zdWJtaXNzaW9uLWV2aWRlbmNlLnYxIiwiZW52aXJvbm1lbnQiOiJwcm9kdWN0aW9uIiwiam9iSWQiOiI5MDAwMDAwMS0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAiLCJ3b3Jrc3BhY2VJZCI6IjAwMDAwMDAzLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwMDAwMCIsInNjZW5lRXhlY3V0aW9uSWQiOiI0MDAwMDAwMS0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDAiLCJ3b3JrZmxvdyI6Ik1JTklNQVhfSDNfUjJWIiwidmVyZGljdCI6IlJFSkVDVEVEX0JFRk9SRV9FTlFVRVVFIiwiYmFzaXMiOiJBVVRIRU5USUNBVEVEX1NVQk1JVF9XSVRIT1VUX0VOUVVFVUUiLCJqb2JTdGF0dXMiOm51bGwsInJlamVjdGlvbiI6bnVsbCwic3VibWl0QXV0aG9yaXphdGlvbkNvdW50IjoxLCJsYXN0U3VibWl0QXV0aG9yaXphdGlvbkF0IjoiMjAyNi0xMC0xN1QxODowNTo0OS4wMDBaIiwiY2hhbGxlbmdlIjoiMDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1Njc4OWFiY2RlZiIsImlzc3VlZEF0IjoiMjAyNi0xMC0xOFQwMDowMDowMC4wMDBaIiwiZGVza3RvcFZlcnNpb24iOiJnb2xkZW4ifQ",
+    "signature": "AY7__j0hTtRfFJKAlm8AYPmQl3WXn6sHikiFwssVMnE"
+  }
+}

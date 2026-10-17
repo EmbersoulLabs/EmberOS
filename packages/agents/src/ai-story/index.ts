@@ -116,5 +116,6 @@ export {
   type LocalGpuDesktopRejection,
 } from "./local-gpu-adapter";
 export { loadLocalGpuConfigFromEnv } from "./local-gpu-config";
+export * from "./local-gpu-submission-evidence";
 export { planLocalGpuCompletion } from "./local-gpu-result-finalization";
 export * from "./local-gpu-dispatch-authorization";

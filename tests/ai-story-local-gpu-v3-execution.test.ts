@@ -4,9 +4,11 @@ import { localGpuDispatchExecutionIdentity } from "@ceo-agent/db";
 import {
   planLocalGpuRoute,
   planLocalGpuHttp,
+  runEnabledLocalGpuDispatch,
   runInstalledLocalGpuReleaseCycle,
   runLocalGpuReleaseCycle,
 } from "../packages/agents/src/ai-story/local-gpu-execution";
+import { localGpuOutputAssetId } from "../packages/agents/src/ai-story/local-gpu-dispatch-authorization";
 import { localGpuAssemblyHandoff, resolveLocalGpuReviewState } from "../packages/agents/src/ai-story/local-gpu-review-handoff";
 import { planLocalGpuCompletion } from "../packages/agents/src/ai-story/local-gpu-result-finalization";
 import {
@@ -217,6 +219,44 @@ describe("LOCAL_GPU V3 execution integration", () => {
     expect(posts).toBe(1);
     expect(claimed).toHaveLength(1);
     expect(planLocalGpuHttp({ dispatchAuthorized: true, existingGate: id(90), eligible: true }).http).toBe("status_only");
+  });
+
+  it("signs status and result reads with the job's own workflow so a T2V job can deliver its result", async () => {
+    const observed: { call: string; workflow: string }[] = [];
+    const adapter = {
+      jobIdFor: () => id(90),
+      submitZeroAssetT2V: async () => { throw new Error("no submit expected"); },
+      status: async (_jobId: string, read: { workflow: string }) => {
+        observed.push({ call: "status", workflow: read.workflow });
+        return { found: true, state: "COMPLETED" };
+      },
+      result: async (_jobId: string, read: { workflow: string }) => {
+        observed.push({ call: "result", workflow: read.workflow });
+        return { contentHash: `sha256:${"b".repeat(64)}` };
+      },
+    };
+    const step = await runEnabledLocalGpuDispatch({
+      scope: { ...scope },
+      candidate: { ...scope, packageId: id(30), runtimeAuthorizationId: id(70), existingGate: id(90), route: zeroAsset() },
+      claim: () => { throw new Error("no claim expected"); },
+      adapter,
+      actor: { userId: id(1), workspaceId: scope.workspaceId, organizationPlan: null, platformAdminStatus: "ACTIVE_GRANT" },
+      request: {} as never,
+      capabilities,
+      existingResultId: null,
+    });
+    expect(step).toMatchObject({ code: "materialize_once", posts: 0, gets: 2 });
+    expect(observed).toEqual([
+      { call: "status", workflow: LOCAL_GPU_T2V_WORKFLOW },
+      { call: "result", workflow: LOCAL_GPU_T2V_WORKFLOW },
+    ]);
+  });
+
+  it("derives the reserved output asset from package and runtime authority only, whatever row the caller holds", () => {
+    const identity = { packageId: id(30), runtimeAuthorizationId: id(70) };
+    const reserved = localGpuOutputAssetId(identity);
+    expect(localGpuOutputAssetId({ ...identity, dispatchAuthorityId: id(80), orgId: id(2), expiresAt: new Date() } as typeof identity)).toBe(reserved);
+    expect(localGpuOutputAssetId({ ...identity, runtimeAuthorizationId: id(71) })).not.toBe(reserved);
   });
 
   it("stays disabled unless staging, both flags, and the exact scene scope are all present", async () => {

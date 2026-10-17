@@ -2359,7 +2359,7 @@ export const aiStoryLocalGpuSubmitOutcomes = pgTable(
     unique("ai_story_local_gpu_submit_outcome_attempt_kind_unique").on(t.jobId, t.attemptNumber, t.kind),
     index("ai_story_local_gpu_submit_outcome_scope_idx").on(t.workspaceId, t.sceneExecutionId, t.jobId, t.attemptNumber),
     check("ai_story_local_gpu_submit_outcome_attempt_check", sql`${t.attemptNumber} > 0`),
-    check("ai_story_local_gpu_submit_outcome_kind_check", sql`${t.kind} in ('SUBMIT_STARTED', 'SUBMIT_ACCEPTED', 'SUBMIT_REJECTED', 'SUBMIT_UNCERTAIN', 'STATUS_NOT_FOUND_EXHAUSTED', 'HUMAN_RETRY_AUTHORIZED')`),
+    check("ai_story_local_gpu_submit_outcome_kind_check", sql`${t.kind} in ('SUBMIT_STARTED', 'SUBMIT_ACCEPTED', 'SUBMIT_REJECTED', 'SUBMIT_UNCERTAIN', 'STATUS_NOT_FOUND_EXHAUSTED', 'DESKTOP_NON_ACCEPTANCE_ATTESTED', 'HUMAN_RETRY_AUTHORIZED')`),
     check("ai_story_local_gpu_submit_outcome_recorder_check", sql`${t.recordedBy} in ('WORKER', 'HUMAN')`),
   ],
 );
