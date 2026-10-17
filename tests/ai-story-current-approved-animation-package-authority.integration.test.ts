@@ -435,7 +435,24 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
       expect(source).toBeTruthy();
       await sql`UPDATE ai_story_animation_packages SET created_at = now() - interval '1 day' WHERE story_id = ${ids.story}`;
       await sql`UPDATE ai_story_animation_packages SET created_at = now() WHERE id = ${source!.id}`;
-      await sql`UPDATE ai_stories SET status = 'ready_for_execution', current_version_id = ${ids.v3} WHERE id = ${ids.story}`;
+      await sql`UPDATE ai_stories SET
+        status = 'ready_for_execution',
+        current_version_id = ${ids.v3},
+        episode_intent = ${sql.json({
+          contractVersion: "ai-story-episode-intent.v1",
+          episodeType: "PRODUCT_STORY",
+          requestedDurationSec: 6,
+          aspectRatio: "9:16",
+          spokenLanguage: "en-SG",
+          dialogueStyle: "No dialogue",
+          nativeCharacterDialogue: false,
+          pacing: "NATURAL",
+          cta: null,
+          visualTextLanguages: ["en"],
+          visualTextPolicy: { criticalSurfacePolicy: "PROVIDER_NON_LEGIBLE" },
+          acceptedAt: "2026-09-15T00:30:00.000Z",
+        } as never)}
+        WHERE id = ${ids.story}`;
       authState.user = { id: ids.user, email: "operator@example.invalid" };
       const route = await import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/strategy-successor/route");
       const call = () => route.POST(
