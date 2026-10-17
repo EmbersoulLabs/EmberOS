@@ -118,6 +118,11 @@ jobs:
           --no-file-parallelism
           tests/ai-story-local-gpu-http-postgres.integration.test.ts
 
+      - name: Certify execution-unit duration gate over real HTTP on PostgreSQL
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-execution-unit-duration-http-postgres.integration.test.ts
+
       - name: Certify Platform Admin Control Plane server-only authority
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts

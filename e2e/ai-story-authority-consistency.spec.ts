@@ -60,7 +60,7 @@ afterAll(async () => {
   if (authServer) await new Promise<void>((resolve) => authServer.close(() => resolve()));
 });
 
-async function openPlanning(page: Page, readiness: { status: "PASS" | "BLOCK"; findings: unknown[] }) {
+async function openPlanning(page: Page, readiness: { status: "PASS" | "BLOCK"; findings: unknown[]; executionUnitDurations?: unknown }) {
   let approvalPosts = 0;
   let paidCalls = 0;
   let storyStatus = "planning_review";
@@ -166,6 +166,49 @@ test("derivative authority mismatch blocks approval", async ({ page }) => {
     }],
   });
   await expect(page.getByTestId("planning-readiness-finding")).toContainText("DERIVATIVE_AUTHORITY_MISMATCH");
+  await expect(page.getByRole("button", { name: "Approve Planning" })).toBeDisabled();
+  expect(observed.approvalPosts()).toBe(0);
+  expect(observed.paidCalls()).toBe(0);
+});
+
+test("uncertified Scene durations show certified units and the one creative decision without approval", async ({ page }) => {
+  const evidence = "Scene 001 and Scene 002 are merged as one continuous shot.";
+  const observed = await openPlanning(page, {
+    status: "BLOCK",
+    findings: [{
+      code: "PLANNING_EXECUTION_UNIT_CREATIVE_DECISION_REQUIRED",
+      classification: "MISSING_EVIDENCE",
+      message: "scene-001 (2s), scene-002 (2s), scene-003 (2s) are outside the certified 5–15 whole-second generation range.",
+      scriptSceneIds: [],
+    }],
+    executionUnitDurations: {
+      contractVersion: "ai-story-execution-unit-duration.v1",
+      minSec: 5,
+      maxSec: 15,
+      status: "CREATIVE_DECISION_REQUIRED",
+      episodeDurationSec: 6,
+      scenes: [],
+      units: [
+        { sceneIds: ["scene-001", "scene-002"], durationSec: 4, certified: false, basis: "FROZEN_CONTINUOUS_SHOT", evidence: [evidence], cameraSequence: ["LOCKED", "SLOW_PUSH_IN"] },
+        { sceneIds: ["scene-003"], durationSec: 2, certified: false, basis: "ORIGINAL_SCENE", evidence: [], cameraSequence: ["LOCKED"] },
+      ],
+      decision: {
+        question: "Choose one option.",
+        unresolvedSceneIds: ["scene-001", "scene-002", "scene-003"],
+        options: [
+          { kind: "CONFIRM_CONTINUOUS_TAKE", sceneIds: ["scene-001", "scene-002", "scene-003"], durationSec: 6, cameraSequence: ["LOCKED", "SLOW_PUSH_IN", "LOCKED"], episodeDurationSec: 6, creativeChanges: ["Removes 1 Scene cut that frozen continuity does not mark as continuous"] },
+          { kind: "CHANGE_UNIT_DURATION", changes: [], episodeDurationSec: 10, creativeChanges: ["Episode length changes from 6s to 10s"] },
+        ],
+      },
+    },
+  });
+  await expect(page.getByTestId("planning-readiness-finding")).toContainText("Creative decision required");
+  await expect(page.getByTestId("planning-execution-unit")).toHaveCount(2);
+  await expect(page.getByTestId("planning-execution-unit").first()).toContainText(`scene-001 + scene-002 · 4s · outside range · grouped by frozen continuity: ${evidence}`);
+  await expect(page.getByTestId("planning-execution-unit-option")).toHaveText([
+    "Confirm one continuous take (Episode 6s): Removes 1 Scene cut that frozen continuity does not mark as continuous",
+    "Change Scene durations (Episode 10s): Episode length changes from 6s to 10s",
+  ]);
   await expect(page.getByRole("button", { name: "Approve Planning" })).toBeDisabled();
   expect(observed.approvalPosts()).toBe(0);
   expect(observed.paidCalls()).toBe(0);

@@ -6,6 +6,7 @@
  */
 import { createHash } from "crypto";
 import { z } from "zod";
+import { AI_STORY_EXECUTION_UNIT_MAX_SEC, AI_STORY_EXECUTION_UNIT_MIN_SEC } from "./ai-story-execution-unit-duration";
 
 export const LOCAL_GPU_PROVIDER_ID = "LOCAL_GPU" as const;
 export const LOCAL_GPU_EXECUTION_CLASS = "LOCAL_GPU" as const;
@@ -27,8 +28,8 @@ export const LOCAL_GPU_SUBMIT_ACTION = "submit" as const;
 export const LOCAL_GPU_STATUS_ACTION = "status" as const;
 export const LOCAL_GPU_RESULT_ACTION = "result" as const;
 export const LOCAL_GPU_DURATION_SOURCE = "RECOMMENDED_DURATION_AUTHORITY" as const;
-export const LOCAL_GPU_DURATION_MIN_SEC = 5;
-export const LOCAL_GPU_DURATION_MAX_SEC = 15;
+export const LOCAL_GPU_DURATION_MIN_SEC = AI_STORY_EXECUTION_UNIT_MIN_SEC;
+export const LOCAL_GPU_DURATION_MAX_SEC = AI_STORY_EXECUTION_UNIT_MAX_SEC;
 export const LOCAL_GPU_REFERENCE_MIN = 1;
 export const LOCAL_GPU_REFERENCE_MAX = 2;
 export const LOCAL_GPU_RECONCILE_ATTEMPT_LIMIT = 3 as const;
