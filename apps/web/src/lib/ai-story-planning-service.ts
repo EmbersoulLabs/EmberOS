@@ -2,8 +2,8 @@
  * Campaign-owned AI Story planning persistence helpers.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
-import { ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, schema } from "@ceo-agent/db";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, resolveCurrentFrozenScriptForStoryVersion, schema } from "@ceo-agent/db";
 import {
   AuthoritativeAnimationPackagePayloadSchema,
   resolveExplicitAiStorySceneGenerationAuthority,
@@ -13,6 +13,9 @@ import {
   isStoryPlanningDraft,
   validatePlanningConsistency,
   type AnimationPackagePayload,
+  AiStoryCharacterAuthorityVersionSchema,
+  type AiStoryCharacterAuthorityVersion,
+  type AiStoryScriptVersion,
   type AiStoryExecutionCapabilityAuthority,
   type CreativeContext,
   type NarrativeIntegrationReport,
@@ -22,6 +25,7 @@ import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiSto
 import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
 import { assertFreshExecutionCapabilityAuthority } from "@/lib/ai-story-execution-capability";
 import { ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
+import { resolveStoryProductSources, type AiStoryResolvedProductSource } from "@/lib/ai-story-product-sources";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -204,30 +208,84 @@ export class AiStoryGenerationStrategyRecoveryError extends Error {
   }
 }
 
-function recoveredSceneAuthority(scene: AnimationPackagePayload["scenePlan"][number]) {
+export type FrozenSuccessorAuthority = {
+  frozenScript: AiStoryScriptVersion;
+  productSources: readonly AiStoryResolvedProductSource[];
+  characterVersions: readonly AiStoryCharacterAuthorityVersion[];
+};
+
+function unique(values: readonly string[]) {
+  return [...new Set(values)];
+}
+
+function recoveredSceneAuthority(
+  scene: AnimationPackagePayload["scenePlan"][number],
+  frozen?: FrozenSuccessorAuthority,
+) {
   const evidence = scene.groundingLineage?.evidence ?? [];
-  const productAssets = [...new Set(evidence.filter((item) => item.role === "PRODUCT_AUTHORITY").map((item) => item.assetId))];
-  const characterAssets = [...new Set(evidence.filter((item) => item.role === "CHARACTER_AUTHORITY").map((item) => item.assetId))];
-  if (productAssets.length > 1 || (productAssets.length && characterAssets.length)) {
+  const scriptScene = frozen?.frozenScript.scenes.find((item) => item.order === scene.order);
+  if (frozen && !scriptScene) {
+    throw new AiStoryGenerationStrategyRecoveryError(
+      "GENERATION_STRATEGY_SUCCESSOR_SCENE_AUTHORITY_MISSING",
+      `Scene ${scene.id} does not resolve to the frozen Script`,
+    );
+  }
+  const productEvidence = unique(evidence.filter((item) => item.role === "PRODUCT_AUTHORITY").map((item) => item.assetId));
+  const frozenProductIds = unique(scriptScene?.productAuthorityRefs ?? []);
+  const productAssets = frozenProductIds.length > 0 ? frozenProductIds : productEvidence;
+  if (productAssets.length > 1) {
     throw new AiStoryGenerationStrategyRecoveryError(
       "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
-      `Scene ${scene.id} has multiple identity authorities and requires human reference selection`,
+      `Scene ${scene.id} has multiple Product authorities and requires one consolidated human reference selection`,
+    );
+  }
+  if (frozen && productAssets[0] && !frozen.productSources.some((source) => source.assetId === productAssets[0])) {
+    throw new AiStoryGenerationStrategyRecoveryError(
+      "GENERATION_STRATEGY_SUCCESSOR_PRODUCT_AUTHORITY_UNRESOLVED",
+      `Scene ${scene.id} Product authority does not resolve to a verified frozen Product source`,
+    );
+  }
+
+  const characterEvidence = unique(evidence.filter((item) => item.role === "CHARACTER_AUTHORITY").map((item) => item.assetId));
+  const characterAssets = scriptScene && frozen
+    ? unique(scriptScene.characterIds.flatMap((characterId) => {
+        const authorityRef = frozen.frozenScript.authorityReferences.find((reference) =>
+          reference.authorityType === "CHARACTER" && reference.authorityId === characterId
+        );
+        if (!authorityRef?.authorityVersionId || !authorityRef.authorityFingerprint) {
+          throw new AiStoryGenerationStrategyRecoveryError(
+            "GENERATION_STRATEGY_SUCCESSOR_CHARACTER_AUTHORITY_UNRESOLVED",
+            `Scene ${scene.id} Character ${characterId} lacks an exact frozen authority snapshot`,
+          );
+        }
+        const version = frozen.characterVersions.find((candidate) =>
+          candidate.characterId === characterId
+          && candidate.characterVersionId === authorityRef.authorityVersionId
+          && candidate.fingerprint === authorityRef.authorityFingerprint
+        );
+        if (!version) {
+          throw new AiStoryGenerationStrategyRecoveryError(
+            "GENERATION_STRATEGY_SUCCESSOR_CHARACTER_AUTHORITY_UNRESOLVED",
+            `Scene ${scene.id} Character ${characterId} frozen authority cannot be resolved`,
+          );
+        }
+        return version.visualAssetReferences.map((reference) => reference.assetId);
+      }))
+    : characterEvidence;
+  if (characterAssets.length > 1) {
+    throw new AiStoryGenerationStrategyRecoveryError(
+      "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
+      `Scene ${scene.id} has multiple Character visual references and requires one consolidated human reference selection`,
     );
   }
   if (productAssets[0]) {
     return {
       strategy: "PRODUCT_GROUNDED_VIDEO" as const,
       referenceSource: "SCENE_EXPLICIT" as const,
-      referenceAssetIds: [productAssets[0]],
+      referenceAssetIds: [productAssets[0], ...characterAssets],
       firstFrameAssetId: productAssets[0],
       productVisualIdentityRequirement: "REQUIRED" as const,
     };
-  }
-  if (characterAssets.length > 1) {
-    throw new AiStoryGenerationStrategyRecoveryError(
-      "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
-      `Scene ${scene.id} has multiple Character references and requires human reference selection`,
-    );
   }
   if (characterAssets[0]) {
     return {
@@ -243,8 +301,47 @@ function recoveredSceneAuthority(scene: AnimationPackagePayload["scenePlan"][num
 
 export function recoverScenePlanGenerationAuthorities(
   scenePlan: AnimationPackagePayload["scenePlan"],
+  frozen?: FrozenSuccessorAuthority,
 ) {
-  return scenePlan.map((scene) => ({ ...scene, generationAuthority: recoveredSceneAuthority(scene) }));
+  if (frozen && frozen.frozenScript.scenes.length !== scenePlan.length) {
+    throw new AiStoryGenerationStrategyRecoveryError(
+      "GENERATION_STRATEGY_SUCCESSOR_SCENE_AUTHORITY_MISSING",
+      "Scene Plan topology does not match the frozen Script",
+    );
+  }
+  return scenePlan.map((scene) => ({ ...scene, generationAuthority: recoveredSceneAuthority(scene, frozen) }));
+}
+
+async function resolveFrozenSuccessorAuthority(db: Db, input: {
+  orgId: string; workspaceId: string; campaignId: string; storyId: string; storyVersionId: string;
+}): Promise<FrozenSuccessorAuthority> {
+  const scope = { ...input, requireCurrentFrozenStoryVersion: true };
+  const [frozenScript, productSources] = await Promise.all([
+    resolveCurrentFrozenScriptForStoryVersion(db, scope),
+    resolveStoryProductSources(db, input),
+  ]);
+  if (!frozenScript) {
+    throw new AiStoryGenerationStrategyRecoveryError(
+      "GENERATION_STRATEGY_SUCCESSOR_FROZEN_SCRIPT_REQUIRED",
+      "Generation strategy recovery requires the exact current frozen Script",
+    );
+  }
+  const characterVersionIds = unique(frozenScript.authorityReferences.flatMap((reference) =>
+    reference.authorityType === "CHARACTER" && reference.authorityVersionId ? [reference.authorityVersionId] : []
+  ));
+  const rows = characterVersionIds.length === 0 ? [] : await db.select({ snapshot: schema.aiStoryCharacterVersions.snapshot })
+    .from(schema.aiStoryCharacterVersions)
+    .where(and(
+      inArray(schema.aiStoryCharacterVersions.characterVersionId, characterVersionIds),
+      eq(schema.aiStoryCharacterVersions.orgId, input.orgId),
+      eq(schema.aiStoryCharacterVersions.workspaceId, input.workspaceId),
+      eq(schema.aiStoryCharacterVersions.campaignId, input.campaignId),
+    ));
+  return {
+    frozenScript,
+    productSources,
+    characterVersions: rows.map((row) => AiStoryCharacterAuthorityVersionSchema.parse(row.snapshot)),
+  };
 }
 
 /**
@@ -277,7 +374,8 @@ export async function createGenerationStrategySuccessor(
     throw new AiStoryGenerationStrategyRecoveryError("GENERATION_STRATEGY_SUCCESSOR_SOURCE_MISSING", "Complete source Planning Package not found");
   }
   const source = AuthoritativeAnimationPackagePayloadSchema.parse(sourceRow.payload);
-  const scenePlan = recoverScenePlanGenerationAuthorities(source.scenePlan);
+  const frozenAuthority = await resolveFrozenSuccessorAuthority(db, input);
+  const scenePlan = recoverScenePlanGenerationAuthorities(source.scenePlan, frozenAuthority);
   if (sameJson(scenePlan, source.scenePlan)) {
     if (source.strategyRecovery && source.sourcePlanningPackageId) {
       const [supersededSourceRow] = await db.select().from(schema.aiStoryAnimationPackages).where(and(

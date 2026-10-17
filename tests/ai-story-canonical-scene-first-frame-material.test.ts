@@ -142,6 +142,21 @@ describe("canonical scene first-frame material authority", () => {
     });
   });
 
+  it("accepts the exact frozen Script Product reference as historical successor grounding", () => {
+    const recovered = PLAN.map((scene, index) => index === 1 ? { ...scene, groundingLineage: undefined } : scene);
+    const scenes = compose({ scenePlan: recovered });
+    expect(scenes[1]!.generationAuthority).toMatchObject({
+      strategy: "FIRST_FRAME_IMAGE_TO_VIDEO",
+      firstFrameAssetId: I.product,
+      referenceAssetIds: [I.product],
+    });
+    expect(scenes[1]!.productBindings[0]).toMatchObject({
+      productAuthorityId: I.product,
+      sourceAssetId: I.product,
+      sourceAssetContentHash: SOURCE_HASH,
+    });
+  });
+
   it("fails closed when script product authority differs from the grounded first frame", () => {
     const frozenScript = script();
     frozenScript.scenes[1]!.productAuthorityRefs = [I.otherProduct];

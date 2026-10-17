@@ -176,13 +176,14 @@ function sceneProductBindings(
       productRequirement(scriptScene, productAuthorityId),
     ));
   }
-  const grounded = scenePlan.groundingLineage?.evidence.some((evidence) =>
+  const groundedByHistoricalLineage = scenePlan.groundingLineage?.evidence.some((evidence) =>
     evidence.role === "PRODUCT_AUTHORITY" && evidence.assetId === firstFrameAssetId,
   ) === true;
-  if (!grounded) {
+  const groundedByFrozenScript = narrativeIds.includes(firstFrameAssetId);
+  if (!groundedByHistoricalLineage && !groundedByFrozenScript) {
     fail(
       "CANONICAL_SCENE_FIRST_FRAME_GROUNDING_AUTHORITY_INVALID",
-      `Scene ${scenePlan.id} first-frame Asset is not proven by PRODUCT_AUTHORITY grounding`,
+      `Scene ${scenePlan.id} first-frame Asset is not proven by PRODUCT_AUTHORITY grounding or the frozen Script`,
     );
   }
   const visual = productBinding(firstFrameAssetId, sourceMap.get(firstFrameAssetId), "REQUIRED");
