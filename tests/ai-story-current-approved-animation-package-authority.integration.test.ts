@@ -173,7 +173,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
             scenePlan: review.scenePlan,
             creativeContext: review.creativeContext,
             directorThinking: review.directorThinking,
-            characterAuthorities: [authority],
+            characterAuthorities: [],
             productAuthorityIds: [],
           }),
           scenes: [{
