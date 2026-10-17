@@ -103,6 +103,18 @@ function shot(index: number) {
 describe("original character acceptance before outline freeze", () => {
   beforeEach(() => { callStructuredJsonModel.mockReset(); callJsonModel.mockReset(); });
 
+  it("completes Character Continuity deterministically when the Story has no Characters", async () => {
+    const result = await generateCharacterContinuity({
+      creativeContext: context([]) as never,
+      directorThinking: DIRECTOR,
+      storyBeats: beats(2),
+      scenePlan: scenes(2),
+      shotPlan: [shot(0), shot(1)] as never,
+    });
+    expect(result).toEqual({ characterContinuity: [], usage: { input: 0, output: 0, costUsd: 0 } });
+    expect(callJsonModel).not.toHaveBeenCalled();
+  });
+
   it("reproduces the old failure when a proposal reaches the writer before acceptance", async () => {
     const outline = outlineFor([]);
     await expect(generateAiStoryScriptSemanticProposalV1({

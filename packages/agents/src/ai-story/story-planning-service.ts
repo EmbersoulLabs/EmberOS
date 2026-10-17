@@ -1046,6 +1046,13 @@ export async function generateCharacterContinuity(input: {
   scenePlan: ScenePlanItem[];
   shotPlan: ShotPlanItem[];
 }): Promise<{ characterContinuity: CharacterContinuityEntry[]; usage: Usage }> {
+  // Character continuity is conditional authority. Product-only and other
+  // character-free Stories have no Character facts to infer or preserve, so
+  // completing this stage is a deterministic empty projection, not a paid
+  // provider task.
+  if (input.creativeContext.characterContext.characters.length === 0) {
+    return { characterContinuity: [], usage: { input: 0, output: 0, costUsd: 0 } };
+  }
   const schemaHint = JSON.stringify({
     characterContinuity: [
       {
