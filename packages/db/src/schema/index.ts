@@ -2332,6 +2332,38 @@ export const aiStoryLocalGpuDispatchAuthorities = pgTable(
   ],
 );
 
+/** Append-only LOCAL_GPU submit evidence; the SQL migration adds the immutability trigger. */
+export const aiStoryLocalGpuSubmitOutcomes = pgTable(
+  "ai_story_local_gpu_submit_outcomes",
+  {
+    outcomeId: uuid("outcome_id").primaryKey(),
+    orgId: uuid("org_id").notNull().references(() => organizations.id, { onDelete: "restrict" }),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id, { onDelete: "restrict" }),
+    storyId: uuid("story_id").notNull().references(() => aiStories.id, { onDelete: "restrict" }),
+    sceneExecutionId: uuid("scene_execution_id").notNull().references(() => aiStorySceneExecutions.id, { onDelete: "restrict" }),
+    packageId: uuid("package_id").notNull().references(() => aiStoryLocalGenerationPackages.packageId, { onDelete: "restrict" }),
+    dispatchAuthorityId: uuid("dispatch_authority_id").notNull().references(() => aiStoryLocalGpuDispatchAuthorities.dispatchAuthorityId, { onDelete: "restrict" }),
+    jobId: text("job_id").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    kind: text("kind").notNull(),
+    httpStatus: integer("http_status"),
+    desktopErrorCode: text("desktop_error_code"),
+    desktopErrorMessage: text("desktop_error_message"),
+    uncertainReason: text("uncertain_reason"),
+    diagnostic: jsonb("diagnostic").$type<Record<string, unknown>>().notNull().default({}),
+    recordedBy: text("recorded_by").notNull(),
+    recordedByUserId: uuid("recorded_by_user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique("ai_story_local_gpu_submit_outcome_attempt_kind_unique").on(t.jobId, t.attemptNumber, t.kind),
+    index("ai_story_local_gpu_submit_outcome_scope_idx").on(t.workspaceId, t.sceneExecutionId, t.jobId, t.attemptNumber),
+    check("ai_story_local_gpu_submit_outcome_attempt_check", sql`${t.attemptNumber} > 0`),
+    check("ai_story_local_gpu_submit_outcome_kind_check", sql`${t.kind} in ('SUBMIT_STARTED', 'SUBMIT_ACCEPTED', 'SUBMIT_REJECTED', 'SUBMIT_UNCERTAIN', 'STATUS_NOT_FOUND_EXHAUSTED', 'HUMAN_RETRY_AUTHORIZED')`),
+    check("ai_story_local_gpu_submit_outcome_recorder_check", sql`${t.recordedBy} in ('WORKER', 'HUMAN')`),
+  ],
+);
+
 /** Sprint 3 Phase 2A — append-only deterministic AI QC facts (not human review). */
 /** Accepted generated media before QC. Source attempt and downstream result are separate. */
 export const aiStoryGenerationResults = pgTable("ai_story_generation_results", {

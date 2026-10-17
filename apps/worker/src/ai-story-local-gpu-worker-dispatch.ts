@@ -8,6 +8,7 @@ import {
   type LocalGpuDispatchCandidate,
   type LocalGpuEnabledDispatchAdapter,
   type LocalGpuSceneScope,
+  type LocalGpuSubmitLedger,
   type LocalGpuT2VRequest,
   type LocalGpuV2Request,
 } from "@ceo-agent/agents";
@@ -28,10 +29,16 @@ export type LocalGpuWorkerDispatchDeps = {
   request: LocalGpuT2VRequest | LocalGpuV2Request;
   capabilities: unknown;
   existingResultId: string | null;
+  ledger?: LocalGpuSubmitLedger;
+  authorityLive?: boolean;
+  now?: () => Date;
 };
 
 async function loadPersistedDispatch(scope: LocalGpuSceneScope): Promise<{
-  authority: { orgId: string; workspaceId: string; campaignId: string; executionPlanId: string; packageId: string; runtimeAuthorizationId: string };
+  authority: {
+    dispatchAuthorityId: string; orgId: string; workspaceId: string; storyId: string; sceneExecutionId: string;
+    campaignId: string; executionPlanId: string; packageId: string; runtimeAuthorizationId: string; expiresAt: Date;
+  };
   candidate: LocalGpuDispatchCandidate;
   actor: Actor;
   request: LocalGpuT2VRequest | LocalGpuV2Request;
@@ -83,6 +90,7 @@ async function dispatchPersistedScope(
   }
   const persisted = await loadPersistedDispatch(scope);
   if (!persisted) return { code: "LOCAL_GPU_SUBMIT_AUTHORITY_REQUIRED", posts: 0, gets: 0 };
+  const ledger = persistedSubmitLedger(getDb(), persisted.authority);
   const adapter = new LocalGpuCloudAdapter(loadLocalGpuConfigFromEnv(env), async (attempt) => {
     const response = await fetch(attempt.url, { method: attempt.method, headers: attempt.headers, body: attempt.body });
     return { status: response.status, body: await response.text() };
@@ -98,6 +106,8 @@ async function dispatchPersistedScope(
     capabilities: persisted.capabilities,
     existingResultId: null,
     productionDispatchAuthorized: environment === "production",
+    ledger,
+    authorityLive: persisted.authority.expiresAt > new Date(),
     finalize: (completion) => {
       completedHash = completion.contentHash;
       return planLocalGpuCompletion(completion);
@@ -107,7 +117,47 @@ async function dispatchPersistedScope(
     const bound = await bindLocalGpuDesktopOutput(persisted.authority, completedHash);
     return { code: bound, posts: step.posts, gets: step.gets };
   }
-  return { code: step.code, posts: step.posts, gets: step.gets };
+  return { code: localGpuStepCode(step), posts: step.posts, gets: step.gets };
+}
+
+/** Appends the Desktop status and error code so operational logs carry the rejection, never its body. */
+function localGpuStepCode(step: { code: string; rejection?: { httpStatus: number; desktopErrorCode: string | null } }): string {
+  if (!step.rejection) return step.code;
+  return `${step.code}:${step.rejection.httpStatus}:${step.rejection.desktopErrorCode ?? "NO_DESKTOP_CODE"}`;
+}
+
+type PersistedAuthority = {
+  dispatchAuthorityId: string; orgId: string; workspaceId: string; storyId: string; sceneExecutionId: string; packageId: string;
+};
+
+export function persistedSubmitLedger(
+  db: Parameters<typeof import("@ceo-agent/db").appendLocalGpuSubmitOutcome>[0],
+  authority: PersistedAuthority,
+): LocalGpuSubmitLedger {
+  const context = (jobId: string) => ({
+    orgId: authority.orgId,
+    workspaceId: authority.workspaceId,
+    storyId: authority.storyId,
+    sceneExecutionId: authority.sceneExecutionId,
+    packageId: authority.packageId,
+    dispatchAuthorityId: authority.dispatchAuthorityId,
+    jobId,
+  });
+  return {
+    read: async (jobId) => {
+      const { readLocalGpuSubmitLedger } = await import("@ceo-agent/db");
+      return readLocalGpuSubmitLedger(db, { workspaceId: authority.workspaceId, sceneExecutionId: authority.sceneExecutionId, jobId });
+    },
+    start: async (jobId, attemptNumber) => {
+      const { appendLocalGpuSubmitOutcome } = await import("@ceo-agent/db");
+      return appendLocalGpuSubmitOutcome(db, context(jobId), attemptNumber, "SUBMIT_STARTED");
+    },
+    record: async (jobId, attemptNumber, outcome) => {
+      const { appendLocalGpuSubmitOutcome } = await import("@ceo-agent/db");
+      const { kind, ...evidence } = outcome;
+      await appendLocalGpuSubmitOutcome(db, context(jobId), attemptNumber, kind, evidence);
+    },
+  };
 }
 
 export async function bindLocalGpuDesktopOutput(
@@ -197,6 +247,9 @@ export async function runWorkerLocalGpuDispatchCycle(
     capabilities: deps.capabilities,
     existingResultId: deps.existingResultId,
     finalize: planLocalGpuCompletion,
+    ledger: deps.ledger,
+    authorityLive: deps.authorityLive,
+    now: deps.now,
   });
-  return { code: step.code, posts: step.posts, gets: step.gets, submit: false };
+  return { code: localGpuStepCode(step), posts: step.posts, gets: step.gets, submit: false };
 }

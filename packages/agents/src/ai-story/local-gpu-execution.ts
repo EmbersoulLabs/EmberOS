@@ -9,7 +9,7 @@ import {
   selectLocalGpuV3Workflow,
 } from "@ceo-agent/shared/server";
 import { advanceLocalGpuRelease, type LocalGpuReleaseRuntime } from "./local-gpu-release-cycle";
-import type { LocalGpuCloudAdapter } from "./local-gpu-adapter";
+import { LocalGpuSubmitAmbiguousError, LocalGpuSubmitRejectedError, type LocalGpuCloudAdapter } from "./local-gpu-adapter";
 import { planLocalGpuCompletion } from "./local-gpu-result-finalization";
 
 export type LocalGpuT2VRequest = Parameters<LocalGpuCloudAdapter["submitZeroAssetT2V"]>[0]["request"];
@@ -375,6 +375,39 @@ export type LocalGpuEnabledDispatchAdapter = {
  * Enabled path. Claims only the scoped scene, posts at most once, then reconciles
  * status and plans result finalization without another POST.
  */
+/** A 404 status is reconciled, never trusted alone: only after this window of 404s since the last submit evidence does polling stop. */
+export const LOCAL_GPU_STATUS_NOT_FOUND_RECONCILIATION_MS = 10 * 60 * 1000;
+
+export type LocalGpuSubmitLedgerOutcome =
+  | { kind: "SUBMIT_ACCEPTED"; diagnostic?: Record<string, unknown> }
+  | { kind: "SUBMIT_REJECTED"; httpStatus: number; desktopErrorCode: string | null; desktopErrorMessage: string | null; diagnostic: Record<string, unknown> }
+  | { kind: "SUBMIT_UNCERTAIN"; httpStatus: number | null; uncertainReason: string }
+  | { kind: "STATUS_NOT_FOUND_EXHAUSTED"; httpStatus: 404; diagnostic: Record<string, unknown> };
+
+export type LocalGpuSubmitLedger = {
+  read: (jobId: string) => Promise<{
+    attemptNumber: number;
+    started: boolean;
+    accepted: boolean;
+    terminal: "SUBMIT_REJECTED" | "STATUS_NOT_FOUND_EXHAUSTED" | null;
+    retryAuthorized: boolean;
+    evidenceAt: Date | null;
+  }>;
+  /** Unique (job, attempt) claim; false means another consumer already started this attempt. */
+  start: (jobId: string, attemptNumber: number) => Promise<boolean>;
+  record: (jobId: string, attemptNumber: number, outcome: LocalGpuSubmitLedgerOutcome) => Promise<void>;
+};
+
+export type LocalGpuDispatchStepResult = {
+  code: string;
+  posts: number;
+  gets: number;
+  submit: false;
+  jobId: string | null;
+  completion: { action: string; submit: false } | null;
+  rejection?: { httpStatus: number; desktopErrorCode: string | null };
+};
+
 export async function runEnabledLocalGpuDispatch(input: {
   scope: LocalGpuSceneScope;
   candidate: LocalGpuDispatchCandidate;
@@ -386,7 +419,12 @@ export async function runEnabledLocalGpuDispatch(input: {
   existingResultId: string | null;
   productionDispatchAuthorized?: boolean;
   finalize?: (completion: { jobId: string; existingResultId: string | null; contentHash: string }) => { action: string; submit: false };
-}): Promise<{ code: string; posts: number; gets: number; submit: false; jobId: string | null; completion: { action: string; submit: false } | null }> {
+  /** Durable submit evidence. Without it the step keeps the legacy claim-then-poll behavior. */
+  ledger?: LocalGpuSubmitLedger;
+  /** False when the persisted dispatch authority's submit TTL has lapsed. */
+  authorityLive?: boolean;
+  now?: () => Date;
+}): Promise<LocalGpuDispatchStepResult> {
   if (!sameScope(input.scope, input.candidate)) {
     return { code: "LOCAL_GPU_SCENE_SCOPE_MISMATCH", posts: 0, gets: 0, submit: false, jobId: null, completion: null };
   }
@@ -407,14 +445,9 @@ export async function runEnabledLocalGpuDispatch(input: {
     workspaceId: input.scope.workspaceId,
     sceneExecutionId: input.scope.sceneExecutionId,
   };
-  if (input.candidate.existingGate === null) {
-    const claimed = await input.claim({
-      workspaceId: input.scope.workspaceId,
-      storyId: input.scope.storyId,
-      sceneExecutionId: input.scope.sceneExecutionId,
-      jobId,
-    });
-    if (!claimed) return { code: "LOCAL_GPU_CLAIM_LOST", posts: 0, gets: 0, submit: false, jobId, completion: null };
+  const ledger = input.ledger;
+  const now = input.now ?? (() => new Date());
+  const submitOnce = async (): Promise<void> => {
     const submitInput = {
       actor: input.actor,
       package: { workspaceId: input.scope.workspaceId, sceneExecutionId: input.scope.sceneExecutionId, packageId: input.candidate.packageId },
@@ -432,14 +465,80 @@ export async function runEnabledLocalGpuDispatch(input: {
     } else {
       await input.adapter.submitZeroAssetT2V({ ...submitInput, request: input.request as LocalGpuT2VRequest });
     }
-    return { code: "accepted", posts: 1, gets: 0, submit: false, jobId, completion: null };
+  };
+  const stepResult = (code: string, posts: number, gets: number, extra: Partial<LocalGpuDispatchStepResult> = {}): LocalGpuDispatchStepResult => ({
+    code, posts, gets, submit: false, jobId, completion: null, ...extra,
+  });
+  // Evidence is persisted before the step returns, so a terminal outcome is durable before polling stops.
+  const submitAndRecord = async (attemptNumber: number): Promise<LocalGpuDispatchStepResult> => {
+    try {
+      await submitOnce();
+    } catch (error) {
+      if (!ledger) throw error;
+      if (error instanceof LocalGpuSubmitRejectedError) {
+        await ledger.record(jobId, attemptNumber, {
+          kind: "SUBMIT_REJECTED",
+          httpStatus: error.httpStatus,
+          desktopErrorCode: error.rejection.desktopErrorCode,
+          desktopErrorMessage: error.rejection.desktopErrorMessage,
+          diagnostic: { issuePaths: error.rejection.issuePaths },
+        });
+        return stepResult("LOCAL_GPU_SUBMIT_REJECTED", 1, 0, {
+          rejection: { httpStatus: error.httpStatus, desktopErrorCode: error.rejection.desktopErrorCode },
+        });
+      }
+      const reason = error instanceof LocalGpuSubmitAmbiguousError
+        ? error.reason
+        : `local_error:${error instanceof Error && /^[A-Z][A-Z0-9_]+$/.test(error.message) ? error.message : "UNKNOWN"}`;
+      await ledger.record(jobId, attemptNumber, {
+        kind: "SUBMIT_UNCERTAIN",
+        httpStatus: error instanceof LocalGpuSubmitAmbiguousError ? error.httpStatus : null,
+        uncertainReason: reason,
+      });
+      return stepResult("LOCAL_GPU_SUBMIT_UNCERTAIN", 1, 0);
+    }
+    if (ledger) await ledger.record(jobId, attemptNumber, { kind: "SUBMIT_ACCEPTED" });
+    return stepResult("accepted", 1, 0);
+  };
+
+  if (input.candidate.existingGate === null) {
+    const claimed = await input.claim({
+      workspaceId: input.scope.workspaceId,
+      storyId: input.scope.storyId,
+      sceneExecutionId: input.scope.sceneExecutionId,
+      jobId,
+    });
+    if (!claimed) return stepResult("LOCAL_GPU_CLAIM_LOST", 0, 0);
+    if (ledger && !(await ledger.start(jobId, 1))) return stepResult("LOCAL_GPU_CLAIM_LOST", 0, 0);
+    return submitAndRecord(1);
   }
   if (input.candidate.existingGate !== jobId) {
-    return { code: "LOCAL_GPU_JOB_IDENTITY_MISMATCH", posts: 0, gets: 0, submit: false, jobId, completion: null };
+    return stepResult("LOCAL_GPU_JOB_IDENTITY_MISMATCH", 0, 0);
+  }
+  const state = ledger ? await ledger.read(jobId) : null;
+  if (state?.terminal) return stepResult(`LOCAL_GPU_SUBMIT_TERMINAL_${state.terminal}`, 0, 0);
+  if (ledger && state?.retryAuthorized && !state.started) {
+    if (input.authorityLive === false) return stepResult("LOCAL_GPU_RETRY_AWAITING_AUTHORITY_RENEWAL", 0, 0);
+    if (!(await ledger.start(jobId, state.attemptNumber))) return stepResult("LOCAL_GPU_CLAIM_LOST", 0, 0);
+    return submitAndRecord(state.attemptNumber);
   }
   const observed = await input.adapter.status(jobId, scope);
+  if (observed.found && ledger && state && !state.accepted) {
+    await ledger.record(jobId, state.attemptNumber, { kind: "SUBMIT_ACCEPTED", diagnostic: { observedState: observed.state } });
+  }
+  if (!observed.found && !observed.uncertain && ledger && state) {
+    const since = state.evidenceAt;
+    if (since && now().getTime() - since.getTime() >= LOCAL_GPU_STATUS_NOT_FOUND_RECONCILIATION_MS) {
+      await ledger.record(jobId, state.attemptNumber, {
+        kind: "STATUS_NOT_FOUND_EXHAUSTED",
+        httpStatus: 404,
+        diagnostic: { notFoundSince: since.toISOString(), windowMs: LOCAL_GPU_STATUS_NOT_FOUND_RECONCILIATION_MS },
+      });
+      return stepResult("LOCAL_GPU_SUBMIT_TERMINAL_STATUS_NOT_FOUND_EXHAUSTED", 0, 1);
+    }
+  }
   if (!observed.found || observed.state !== "COMPLETED") {
-    return { code: observed.found ? "poll" : observed.uncertain ? "uncertain" : "not_found", posts: 0, gets: 1, submit: false, jobId, completion: null };
+    return stepResult(observed.found ? "poll" : observed.uncertain ? "uncertain" : "not_found", 0, 1);
   }
   const result = await input.adapter.result(jobId, scope);
   const completion = (input.finalize ?? planLocalGpuCompletion)({

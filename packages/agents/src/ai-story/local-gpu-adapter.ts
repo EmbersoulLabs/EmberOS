@@ -65,24 +65,76 @@ export type LocalGpuSubmitPackage = {
 /** 400/401/403/422 reject before acceptance. 409 is not in this set: the Desktop contract fixture does not define it as a validation failure, and a client-supplied job id can already exist after a lost acceptance. */
 const DEFINITE_REJECTION = new Set([400, 401, 403, 422]);
 
+/** Secret-free projection of a Desktop error body. Values are never copied; only codes, a redacted message and field paths. */
+export type LocalGpuDesktopRejection = {
+  desktopErrorCode: string | null;
+  desktopErrorMessage: string | null;
+  issuePaths: string[];
+};
+
+const DESKTOP_CODE = /^[A-Za-z0-9_.:-]{1,80}$/;
+
+export function redactLocalGpuDiagnosticText(value: string): string {
+  return value
+    .replace(/https?:\/\/\S+/gi, "<url>")
+    .replace(/Bearer\s+\S+/gi, "Bearer <redacted>")
+    .replace(/eyJ[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]+){0,2}/g, "<token>")
+    .replace(/\b(token|signature|sig|secret|key|authorization)=([^&\s"]+)/gi, "$1=<redacted>")
+    .replace(/[0-9a-f]{40,}/gi, "<hex>")
+    .slice(0, 300);
+}
+
+export function readLocalGpuDesktopRejection(json: unknown): LocalGpuDesktopRejection {
+  const body = asRecord(json);
+  const nested = asRecord(body.error);
+  const codeCandidate = [body.code, body.errorCode, nested.code].find((value) => typeof value === "string" && DESKTOP_CODE.test(value));
+  const messageCandidate = [body.message, typeof body.error === "string" ? body.error : undefined, nested.message, body.detail]
+    .find((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const issues = [body.issues, body.errors, nested.issues, body.details].find(Array.isArray) as unknown[] | undefined;
+  const issuePaths = (issues ?? []).slice(0, 10).flatMap((issue) => {
+    const path = asRecord(issue).path ?? asRecord(issue).field ?? asRecord(issue).loc;
+    const joined = Array.isArray(path) ? path.map(String).join(".") : typeof path === "string" ? path : null;
+    return joined && /^[A-Za-z0-9_.[\]-]{1,120}$/.test(joined) ? [joined] : [];
+  });
+  return {
+    desktopErrorCode: typeof codeCandidate === "string" ? codeCandidate : null,
+    desktopErrorMessage: messageCandidate ? redactLocalGpuDiagnosticText(messageCandidate) : null,
+    issuePaths,
+  };
+}
+
 export class LocalGpuSubmitRejectedError extends LocalGpuContractError {
   readonly jobId: string;
   readonly httpStatus: number;
-  constructor(jobId: string, httpStatus: number) {
+  readonly rejection: LocalGpuDesktopRejection;
+  constructor(jobId: string, httpStatus: number, rejection: LocalGpuDesktopRejection = { desktopErrorCode: null, desktopErrorMessage: null, issuePaths: [] }) {
     super("LOCAL_GPU_SUBMIT_REJECTED");
     this.jobId = jobId;
     this.httpStatus = httpStatus;
+    this.rejection = rejection;
   }
 }
 
 export class LocalGpuSubmitAmbiguousError extends LocalGpuContractError {
   readonly jobId: string;
   readonly reason: "timeout" | "connection" | "not_found" | "unavailable" | "unreadable" | "conflict";
-  constructor(jobId: string, reason: LocalGpuSubmitAmbiguousError["reason"]) {
+  readonly httpStatus: number | null;
+  constructor(jobId: string, reason: LocalGpuSubmitAmbiguousError["reason"], httpStatus: number | null = null) {
     super("LOCAL_GPU_SUBMIT_AMBIGUOUS");
     this.jobId = jobId;
     this.reason = reason;
+    this.httpStatus = httpStatus;
   }
+}
+
+/** Maps a non-2xx submit response. Only 400/401/403/422 are definite non-acceptance. */
+function throwSubmitFailure(jobId: string, response: { status: number; json: unknown }): never {
+  if (DEFINITE_REJECTION.has(response.status)) {
+    throw new LocalGpuSubmitRejectedError(jobId, response.status, readLocalGpuDesktopRejection(response.json));
+  }
+  if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found", 404);
+  if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict", 409);
+  throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable", response.status);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -180,7 +232,8 @@ export class LocalGpuCloudAdapter {
     try {
       return { status: response.status, json: JSON.parse(response.body) };
     } catch {
-      throw new LocalGpuSubmitAmbiguousError(input.jobId, "unreadable");
+      if (response.status < 200 || response.status >= 300) return { status: response.status, json: null };
+      throw new LocalGpuSubmitAmbiguousError(input.jobId, "unreadable", response.status);
     }
   }
 
@@ -229,10 +282,7 @@ export class LocalGpuCloudAdapter {
         remoteProviderFallback: LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
       };
     }
-    if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);
-    if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found");
-    if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict");
-    throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable");
+    throwSubmitFailure(jobId, response);
   }
 
   async submitContractV2(input: {
@@ -281,10 +331,7 @@ export class LocalGpuCloudAdapter {
         automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
       };
     }
-    if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);
-    if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found");
-    if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict");
-    throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable");
+    throwSubmitFailure(jobId, response);
   }
 
   async submitZeroAssetT2V(input: {
@@ -340,10 +387,7 @@ export class LocalGpuCloudAdapter {
         automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
       };
     }
-    if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);
-    if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found");
-    if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict");
-    throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable");
+    throwSubmitFailure(jobId, response);
   }
 
   async submitR2vDna(input: {
@@ -402,10 +446,7 @@ export class LocalGpuCloudAdapter {
         automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
       };
     }
-    if (DEFINITE_REJECTION.has(response.status)) throw new LocalGpuSubmitRejectedError(jobId, response.status);
-    if (response.status === 404) throw new LocalGpuSubmitAmbiguousError(jobId, "not_found");
-    if (response.status === 409) throw new LocalGpuSubmitAmbiguousError(jobId, "conflict");
-    throw new LocalGpuSubmitAmbiguousError(jobId, "unavailable");
+    throwSubmitFailure(jobId, response);
   }
 
   async status(jobId: string, scope: { actor: LocalGpuServerActor; workspaceId: string; sceneExecutionId: string }): Promise<

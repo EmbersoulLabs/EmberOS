@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "../client";
+import { localGpuGateRetryPendingSql, localGpuGateTerminalSql } from "./ai-story-local-gpu-submit-outcomes";
 
 export type LocalGpuPersistedDispatchSnapshot = {
   contractVersion: 1;
@@ -55,7 +56,10 @@ export async function listReleasedLocalPackagesAwaitingOutput(db: Db, scope: { w
       eq(schema.aiStorySceneReleaseStates.executionMode, "MANUAL_LOCAL"),
       eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
     ),
-    isNull(schema.aiStorySceneReleaseStates.gateProviderAttemptId),
+    or(
+      isNull(schema.aiStorySceneReleaseStates.gateProviderAttemptId),
+      localGpuGateRetryPendingSql(schema.aiStorySceneReleaseStates.gateProviderAttemptId),
+    ),
     isNotNull(schema.aiStorySceneReleaseStates.currentLocalGenerationPackageId),
     sql`not exists (
       select 1 from ${schema.aiStoryLocalGenerationOutputs}
@@ -222,7 +226,11 @@ async function reuseOrRenewDispatchAuthority(db: Db, input: PersistInput & { ide
   const authority = existing.authority;
   if (authority.executionIdentity !== input.identity) throw new Error("LOCAL_GPU_EXECUTION_IDENTITY_MISMATCH");
   if (authority.status !== "ACTIVE" || authority.revokedAt) throw new Error("LOCAL_GPU_DISPATCH_AUTHORITY_REVOKED");
-  if (authority.expiresAt > input.now || existing.gate !== null) return { ...authority, replayed: true };
+  if (authority.expiresAt > input.now) return { ...authority, replayed: true };
+  if (existing.gate !== null) {
+    const [pending] = await db.execute<{ pending: boolean }>(sql`select ${localGpuGateRetryPendingSql(sql`${existing.gate}`)} as pending`);
+    if (!pending?.pending) return { ...authority, replayed: true };
+  }
   const renewed = await db.update(schema.aiStoryLocalGpuDispatchAuthorities).set({
     authorityFingerprint: input.fingerprint,
     platformAdminAssignmentId: input.platformAdminAssignmentId,
@@ -259,6 +267,7 @@ function dispatchObservableCondition(now: Date) {
     isNull(schema.platformAdminRevocations.platformAdminRevocationId),
     eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
     eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
+    sql`not ${localGpuGateTerminalSql(schema.aiStorySceneReleaseStates.gateProviderAttemptId)}`,
     sql`not exists (
       select 1 from ${schema.aiStoryLocalGenerationOutputs}
       where ${schema.aiStoryLocalGenerationOutputs.packageId} = ${schema.aiStoryLocalGpuDispatchAuthorities.packageId}
