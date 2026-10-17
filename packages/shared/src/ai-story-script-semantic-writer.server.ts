@@ -193,14 +193,17 @@ export function promoteAiStoryScriptSemanticProposalV1(
     const claimedBeatIds = canonicalClaimsByScene.get(scenePlan.id)!;
     const goals = (productPolicy?.progressionGoals ?? []).filter((goal) => goal.required && goal.beatIds.some((id) => claimedBeatIds.includes(id)));
     const directFunctions = new Set(goals.map((goal) => goal.semanticFunction).filter((value) => value === "PRODUCT_INTRODUCTION" || value === "PRODUCT_DETAIL_REVEAL"));
+    if (directFunctions.size > 1) {
+      fail("CANONICAL_SCRIPT_SCENE_FUNCTION_AUTHORITY_CONFLICT", "A Scene cannot claim multiple authoritative direct Product functions");
+    }
+    // PRODUCT_STORY progression is frozen Outline authority. The model owns the
+    // semantic proposal, but it cannot reclassify a Scene that claims one exact
+    // authoritative Product progression goal. Project that classification here;
+    // entries, state, narrative facts, and creative intent remain unchanged.
+    const authoritativeDirectFunction = [...directFunctions][0];
+    const sceneFunction = authoritativeDirectFunction ?? proposal.sceneFunction;
     if (!productPolicy?.claimEvidence.length && proposal.sceneFunction === "PRODUCT_BENEFIT_PROOF") {
       fail("CANONICAL_SCRIPT_UNSUPPORTED_PRODUCT_PROOF", "Product benefit proof requires canonical claim evidence");
-    }
-    if (directFunctions.has("PRODUCT_INTRODUCTION") && proposal.sceneFunction !== "PRODUCT_INTRODUCTION") {
-      fail("CANONICAL_SCRIPT_SCENE_FUNCTION_INCOMPATIBLE", "Product introduction Scene must use PRODUCT_INTRODUCTION");
-    }
-    if (!directFunctions.has("PRODUCT_INTRODUCTION") && directFunctions.has("PRODUCT_DETAIL_REVEAL") && proposal.sceneFunction !== "PRODUCT_DETAIL_REVEAL") {
-      fail("CANONICAL_SCRIPT_SCENE_FUNCTION_INCOMPATIBLE", "Product detail Scene must use PRODUCT_DETAIL_REVEAL");
     }
     const usedCharacters = new Set<string>();
     const usedProducts = new Set<string>(goals.length ? productIds : []);
@@ -244,6 +247,7 @@ export function promoteAiStoryScriptSemanticProposalV1(
       order: scenePlan.order,
       claimedBeatIds,
       proposal,
+      sceneFunction,
       contributions,
     });
     const scriptSceneId = deterministicUuidFromFingerprint("ai-story-script-scene", sceneSemanticHash);
@@ -264,7 +268,7 @@ export function promoteAiStoryScriptSemanticProposalV1(
       scriptSceneId,
       order: scenePlan.order,
       outlineBeatClaims: claimedBeatIds.map((id) => ({ outlineBeatId: id, claim: outlineBeatById.get(id)!.purpose })),
-      sceneFunction: proposal.sceneFunction,
+      sceneFunction,
       sceneFunctionRegistryVersion: proposal.sceneFunctionRegistryVersion,
       sceneStateIn: proposal.sceneStateIn,
       sceneStateDeltas: proposal.sceneStateDeltas,
