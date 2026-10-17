@@ -891,6 +891,7 @@ export function startWorkers() {
       .finally(() => { localMediaCycleRunning = false; });
   }, 5000);
   localMediaLoop.unref?.();
+  let lastLocalGpuCycleCode: string | null = null;
   const providerLoop = setInterval(() => {
     void (async () => {
       try {
@@ -911,7 +912,11 @@ export function startWorkers() {
           );
         }
         const { runWorkerLocalGpuDispatchCycle } = await import("../ai-story-local-gpu-worker-dispatch");
-        await runWorkerLocalGpuDispatchCycle(process.env);
+        const localGpu = await runWorkerLocalGpuDispatchCycle(process.env);
+        if (localGpu.code !== lastLocalGpuCycleCode || localGpu.posts > 0) {
+          console.log(`[local-gpu] cycle code=${localGpu.code} posts=${localGpu.posts} gets=${localGpu.gets}`);
+          lastLocalGpuCycleCode = localGpu.code;
+        }
       } catch (error) {
         console.warn(
           "[ai-story-runtime] cycle error:",

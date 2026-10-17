@@ -107,7 +107,14 @@ export * from "./local-generation-media";
 export * from "./local-gpu-execution";
 export { mapCanonicalPackageToLocalGpuContractV2 } from "./local-gpu-package-transport";
 export * from "./local-gpu-r2v-dna-transport";
-export { LocalGpuCloudAdapter } from "./local-gpu-adapter";
+export {
+  LocalGpuCloudAdapter,
+  LocalGpuSubmitAmbiguousError,
+  LocalGpuSubmitRejectedError,
+  readLocalGpuDesktopRejection,
+  redactLocalGpuDiagnosticText,
+  type LocalGpuDesktopRejection,
+} from "./local-gpu-adapter";
 export { loadLocalGpuConfigFromEnv } from "./local-gpu-config";
 export { planLocalGpuCompletion } from "./local-gpu-result-finalization";
 export * from "./local-gpu-dispatch-authorization";

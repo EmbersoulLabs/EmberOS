@@ -66,6 +66,10 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       "supabase/migrations/20261013030433_ai_story_local_gpu_dispatch_authority_v1.sql",
       "utf8",
     ));
+    await sql.unsafe(readFileSync(
+      "supabase/migrations/20261018030000_ai_story_local_gpu_submit_outcomes_v1.sql",
+      "utf8",
+    ));
     process.env.LOCAL_GPU_PROVIDER_ENABLED = "true";
     process.env.LOCAL_GPU_ENVIRONMENT = "production";
     process.env.LOCAL_GPU_SIGNING_SECRET = "ephemeral-postgres-only-secret";
@@ -132,6 +136,10 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
     global.fetch = oldFetch;
     for (const key of envKeys) oldEnv[key] === undefined ? delete process.env[key] : process.env[key] = oldEnv[key];
     if (sql) {
+      await sql.begin(async (tx) => {
+        await tx.unsafe("set local session_replication_role = replica");
+        await tx`delete from ai_story_local_gpu_submit_outcomes where workspace_id=${ids.workspace}`;
+      });
       await sql.unsafe("set session_replication_role = replica");
       await sql`delete from assets where workspace_id=${ids.workspace}`;
       await sql`delete from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace}`;
@@ -328,6 +336,172 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
     expect(calls.filter((item) => item.method === "POST" && item.body.includes(ids.sceneExecution))).toHaveLength(1);
     const [after] = await sql<{ gate: string | null }[]>`select gate_provider_attempt_id gate from ai_story_scene_release_states where scene_execution_id=${ids.sceneExecution}`;
     expect(after!.gate).toBe(gateId);
+  });
+
+  describe("submit rejection recovery", () => {
+    const workerEnv = () => ({
+      ...process.env,
+      LOCAL_GPU_SUPERADMIN_GLOBAL_ENABLED: "true",
+      LOCAL_GPU_PRODUCTION_DISPATCH_ENABLED: "true",
+      LOCAL_GPU_SCENE_EXECUTION_ID: undefined,
+    });
+    const desktopCapabilities = { capabilities: { contracts: { v3: { workflows: { MINIMAX_H3_T2V: {
+      execution: "enabled", textToVideo: true, placeholderImage: false, missingModels: [], e2eCertified: true,
+    } } } } } };
+    const desktop = (post: () => Response, status: () => Response) => {
+      const calls: { method: string; url: string; body: string }[] = [];
+      global.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+        const method = init?.method ?? "GET";
+        calls.push({ method, url: String(url), body: String(init?.body ?? "") });
+        if (String(url).endsWith("/v1/capabilities")) return new Response(JSON.stringify(desktopCapabilities), { status: 200 });
+        return method === "POST" ? post() : status();
+      }) as typeof fetch;
+      return {
+        posts: () => calls.filter((item) => item.method === "POST" && item.body.includes(ids.sceneExecution)).length,
+        statusReads: () => calls.filter((item) => item.method === "GET" && item.url.includes("/v1/jobs/")).length,
+      };
+    };
+    const outcomes = () => sql<{ attempt: number; kind: string; http: number | null; code: string | null; message: string | null; reason: string | null; by: string }[]>`
+      select attempt_number attempt, kind, http_status http, desktop_error_code code, desktop_error_message message,
+        uncertain_reason reason, recorded_by by
+      from ai_story_local_gpu_submit_outcomes where workspace_id=${ids.workspace} order by attempt_number, created_at`;
+    const gate = async () => (await sql<{ gate: string | null }[]>`select gate_provider_attempt_id gate from ai_story_scene_release_states where scene_execution_id=${ids.sceneExecution}`)[0]!.gate;
+    // Fixture-only reset between scenarios; production code never clears a claim or deletes evidence.
+    const resetFixture = () => sql.begin(async (tx) => {
+      await tx.unsafe("set local session_replication_role = replica");
+      await tx`delete from ai_story_local_gpu_submit_outcomes where workspace_id=${ids.workspace}`;
+      await tx`update ai_story_scene_release_states set gate_provider_attempt_id=null where scene_execution_id=${ids.sceneExecution}`;
+      await tx`update ai_story_local_gpu_dispatch_authorities set expires_at=now()+interval '10 minutes' where workspace_id=${ids.workspace}`;
+    });
+    let retryRoute: typeof import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/scenes/[sceneExecutionId]/local-gpu-submit/route");
+    const retryParams = () => ({ params: Promise.resolve({ id: ids.campaign, storyId: ids.story, executionPlanId: ids.plan, sceneExecutionId: ids.sceneExecution }) });
+    const retry = (body: unknown) => retryRoute.POST(new Request("http://localhost/retry", { method: "POST", body: JSON.stringify(body) }), retryParams());
+
+    beforeAll(async () => {
+      retryRoute = await import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/scenes/[sceneExecutionId]/local-gpu-submit/route");
+    });
+
+    it("persists a definite 422 rejection with its Desktop code once across concurrent Workers, then stops polling", async () => {
+      await resetFixture();
+      const io = desktop(
+        () => new Response(JSON.stringify({ error: {
+          code: "CONTRACT_V2_UPLOAD_BINDING_MISMATCH",
+          message: "binding mismatch for https://storage.invalid/upload/x?token=eyJhbGciOiJIUzI1NiJ9.eyJ4IjoxfQ.sig",
+          issues: [{ path: ["request", "upload", "binding"] }],
+        } }), { status: 422 }),
+        () => new Response("{}", { status: 404 }),
+      );
+      const { runWorkerLocalGpuDispatchCycle } = await import("../apps/worker/src/ai-story-local-gpu-worker-dispatch");
+      const steps = await Promise.all([runWorkerLocalGpuDispatchCycle(workerEnv()), runWorkerLocalGpuDispatchCycle(workerEnv())]);
+      expect(steps.map((step) => step.code).join(",")).toContain("LOCAL_GPU_SUBMIT_REJECTED:422:CONTRACT_V2_UPLOAD_BINDING_MISMATCH");
+      expect(io.posts()).toBe(1);
+      const rows = await outcomes();
+      expect(rows.map((row) => row.kind)).toEqual(["SUBMIT_STARTED", "SUBMIT_REJECTED"]);
+      expect(rows[1]).toMatchObject({ attempt: 1, http: 422, code: "CONTRACT_V2_UPLOAD_BINDING_MISMATCH", by: "WORKER" });
+      expect(rows[1]!.message).not.toMatch(/storage\.invalid|eyJ|token=/);
+      expect(await gate()).toMatch(/^[0-9a-f-]{36}$/);
+
+      const { getDb: db, selectAuthorizedLocalGpuDispatchScopes } = await import("@ceo-agent/db");
+      expect((await selectAuthorizedLocalGpuDispatchScopes(db(), 5)).some((scope) => scope.sceneExecutionId === ids.sceneExecution)).toBe(false);
+      await runWorkerLocalGpuDispatchCycle(workerEnv());
+      expect(io.posts()).toBe(1);
+      expect(io.statusReads()).toBe(0);
+
+      const evidence = await retryRoute.GET(new Request("http://localhost/evidence"), retryParams());
+      expect(evidence.status).toBe(200);
+      const body = await evidence.json() as { outcomes: { kind: string; desktopErrorCode: string | null }[] };
+      expect(body.outcomes.find((row) => row.kind === "SUBMIT_REJECTED")?.desktopErrorCode).toBe("CONTRACT_V2_UPLOAD_BINDING_MISMATCH");
+    });
+
+    it("lets only a Superadmin open the next attempt, renews an expired authority, and the Worker posts it exactly once", async () => {
+      authState.user = { id: ids.ordinary, email: "ordinary@example.invalid" };
+      expect((await retry({ expectedAttemptNumber: 1 })).status).toBe(403);
+      authState.user = { id: ids.actor, email: "admin@example.invalid" };
+      expect((await retry({})).status).toBe(422);
+      const stale = await retry({ expectedAttemptNumber: 2 });
+      expect(stale.status).toBe(409);
+      expect(await stale.json()).toMatchObject({ code: "LOCAL_GPU_RETRY_ATTEMPT_STALE" });
+      expect((await outcomes()).some((row) => row.kind === "HUMAN_RETRY_AUTHORIZED")).toBe(false);
+
+      await sql`update ai_story_local_gpu_dispatch_authorities set expires_at=now()-interval '1 minute' where workspace_id=${ids.workspace}`;
+      const io = desktop(
+        () => new Response(JSON.stringify({ state: "QUEUED" }), { status: 202 }),
+        () => new Response(JSON.stringify({ job: { state: "QUEUED" } }), { status: 200 }),
+      );
+      const opened = await retry({ expectedAttemptNumber: 1 });
+      expect(opened.status).toBe(201);
+      expect(await opened.json()).toMatchObject({ attemptNumber: 2, replayed: false, localGpuAuthorization: { status: "AUTHORIZED" } });
+      const replay = await retry({ expectedAttemptNumber: 1 });
+      expect(replay.status).toBe(200);
+      expect(await replay.json()).toMatchObject({ attemptNumber: 2, replayed: true });
+      const [live] = await sql<{ live: boolean }[]>`select bool_and(expires_at > now()) live from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace}`;
+      expect(live!.live).toBe(true);
+      expect(io.posts()).toBe(0);
+
+      const { runWorkerLocalGpuDispatchCycle } = await import("../apps/worker/src/ai-story-local-gpu-worker-dispatch");
+      await Promise.all([runWorkerLocalGpuDispatchCycle(workerEnv()), runWorkerLocalGpuDispatchCycle(workerEnv())]);
+      expect(io.posts()).toBe(1);
+      await runWorkerLocalGpuDispatchCycle(workerEnv());
+      expect(io.posts()).toBe(1);
+      const attempt2 = (await outcomes()).filter((row) => row.attempt === 2);
+      expect(attempt2.map((row) => row.kind)).toEqual(["HUMAN_RETRY_AUTHORIZED", "SUBMIT_STARTED", "SUBMIT_ACCEPTED"]);
+      expect(attempt2[0]!.by).toBe("HUMAN");
+      const accepted = await retry({ expectedAttemptNumber: 2 });
+      expect(accepted.status).toBe(409);
+      expect(await accepted.json()).toMatchObject({ code: "LOCAL_GPU_RETRY_NOT_ELIGIBLE" });
+    });
+
+    it("waits for authority renewal before starting a pending retry", async () => {
+      await resetFixture();
+      const io = desktop(
+        () => new Response(JSON.stringify({ code: "PAYLOAD_INVALID" }), { status: 400 }),
+        () => new Response("{}", { status: 404 }),
+      );
+      const { runWorkerLocalGpuDispatchCycle } = await import("../apps/worker/src/ai-story-local-gpu-worker-dispatch");
+      await runWorkerLocalGpuDispatchCycle(workerEnv());
+      expect(io.posts()).toBe(1);
+      expect((await retry({ expectedAttemptNumber: 1 })).status).toBe(201);
+      await sql`update ai_story_local_gpu_dispatch_authorities set expires_at=now()-interval '1 minute' where workspace_id=${ids.workspace}`;
+      const waiting = await runWorkerLocalGpuDispatchCycle(workerEnv());
+      expect(waiting.code).toContain("LOCAL_GPU_RETRY_AWAITING_AUTHORITY_RENEWAL");
+      expect(io.posts()).toBe(1);
+    });
+
+    it("keeps status-only reconciliation after an uncertain POST and stops only after a bounded 404 window, refusing retry as unproven", async () => {
+      await resetFixture();
+      const io = desktop(
+        () => new Response("{}", { status: 409 }),
+        () => new Response("{}", { status: 404 }),
+      );
+      const { runWorkerLocalGpuDispatchCycle } = await import("../apps/worker/src/ai-story-local-gpu-worker-dispatch");
+      expect((await runWorkerLocalGpuDispatchCycle(workerEnv())).code).toContain("LOCAL_GPU_SUBMIT_UNCERTAIN");
+      expect((await runWorkerLocalGpuDispatchCycle(workerEnv())).code).toContain("not_found");
+      expect((await outcomes()).map((row) => row.kind)).toEqual(["SUBMIT_STARTED", "SUBMIT_UNCERTAIN"]);
+      await sql.begin(async (tx) => {
+        await tx.unsafe("set local session_replication_role = replica");
+        await tx`update ai_story_local_gpu_submit_outcomes set created_at=now()-interval '11 minutes' where workspace_id=${ids.workspace}`;
+      });
+      expect((await runWorkerLocalGpuDispatchCycle(workerEnv())).code).toContain("LOCAL_GPU_SUBMIT_TERMINAL_STATUS_NOT_FOUND_EXHAUSTED");
+      const reads = io.statusReads();
+      await runWorkerLocalGpuDispatchCycle(workerEnv());
+      expect(io.statusReads()).toBe(reads);
+      expect(io.posts()).toBe(1);
+      const unproven = await retry({ expectedAttemptNumber: 1 });
+      expect(unproven.status).toBe(409);
+      expect(await unproven.json()).toMatchObject({ code: "LOCAL_GPU_NON_ACCEPTANCE_UNPROVEN" });
+      expect(await gate()).toMatch(/^[0-9a-f-]{36}$/);
+    });
+
+    it("keeps evidence append-only and server-only", async () => {
+      await expect(sql`update ai_story_local_gpu_submit_outcomes set kind='SUBMIT_ACCEPTED' where workspace_id=${ids.workspace}`)
+        .rejects.toMatchObject({ code: "23514" });
+      await expect(sql`delete from ai_story_local_gpu_submit_outcomes where workspace_id=${ids.workspace}`)
+        .rejects.toMatchObject({ code: "23514" });
+      expect(await isRlsEnabled(sql, "ai_story_local_gpu_submit_outcomes")).toBe(true);
+      await expect(withAuthenticatedUser(sql, ids.ordinary, (tx) =>
+        tx<{ count: number }[]>`select count(*)::int count from ai_story_local_gpu_submit_outcomes where workspace_id=${ids.workspace}`,
+      )).rejects.toMatchObject({ code: "42501" });
+    });
   });
 
   it("revalidates revocation and leaves no new authority or output asset", async () => {
