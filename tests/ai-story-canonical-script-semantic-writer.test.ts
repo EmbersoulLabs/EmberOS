@@ -268,6 +268,18 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(result.scenes.flatMap((scene) => scene.productStoryContributions ?? []).every((item) => item.claimIds.length === 0)).toBe(true);
   });
 
+  it("projects the exact frozen Product progression function without changing proposal facts", () => {
+    const value = proposal();
+    value.scenes[1] = { ...value.scenes[1]!, sceneFunction: "DEMONSTRATE" };
+    const result = promote({ semanticProposal: value });
+    expect(result.scenes[1]).toMatchObject({
+      sceneFunction: "PRODUCT_DETAIL_REVEAL",
+      entries: [expect.objectContaining({ action: value.scenes[1]!.entries[0]!.type === "ACTION" ? value.scenes[1]!.entries[0]!.action : "" })],
+      newInformation: value.scenes[1]!.newInformation,
+      newActionOutcomes: value.scenes[1]!.newActionOutcomes,
+    });
+  });
+
   it.each([
     ["PRODUCT_RELATIONSHIP", "NEW_PRODUCT_RELATIONSHIP"],
     ["PRODUCT_EVIDENCE", "NEW_PRODUCT_EVIDENCE"],
