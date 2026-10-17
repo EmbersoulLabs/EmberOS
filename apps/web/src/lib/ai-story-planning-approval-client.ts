@@ -7,6 +7,7 @@ export type PlanningApprovalResponse = {
 export type PlanningApprovalRequest = {
   readonly campaignId: string;
   readonly storyId: string;
+  readonly executionEnvironment: "LOCAL_GPU";
 };
 
 export type PlanningApprovalFetch = (
@@ -36,7 +37,8 @@ export async function dispatchPlanningApproval(
     method: "POST",
     credentials: "same-origin",
     cache: "no-store",
-    headers: { Accept: "application/json" },
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify({ executionEnvironment: input.executionEnvironment }),
   });
 
   let payload: Record<string, unknown> = {};

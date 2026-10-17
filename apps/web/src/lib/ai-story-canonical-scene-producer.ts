@@ -50,7 +50,13 @@ export type EnsureCurrentFrozenCanonicalSceneSetInput = {
   worldContinuity: WorldContinuity;
   characterAuthorities: PlanningCharacterAuthorityProjection[];
   episodeIntent?: import("@ceo-agent/shared").AiStoryEpisodeIntentAuthority;
+  /** Exact historical Plan whose creative semantics produced the frozen Script. */
+  priorScenePlanForStrategySuccessor?: ScenePlanItem[];
 };
+
+function creativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
+  return plan.map(({ generationAuthority: _generationAuthority, groundingLineage: _groundingLineage, ...creative }) => creative);
+}
 
 export type CanonicalSceneProducerDependencies = {
   resolveCurrentOutline: typeof resolveCurrentFrozenOutlineForStoryVersion;
@@ -120,6 +126,17 @@ export async function ensureCurrentFrozenCanonicalSceneSet(
   const script = await deps.resolveCurrentScript(input.db, authorityScope);
   if (!script) throw new AiStoryCanonicalSceneProducerError("CURRENT_FROZEN_SCRIPT_REQUIRED", "Canonical Scene production requires the exact current FROZEN Script");
   const productAuthorityIds = resolveOutlineBoundProductAuthorityIds(outline);
+  const semanticPlan = input.priorScenePlanForStrategySuccessor ?? input.scenePlan;
+  if (
+    input.priorScenePlanForStrategySuccessor &&
+    JSON.stringify(creativeScenePlanProjection(input.priorScenePlanForStrategySuccessor)) !==
+      JSON.stringify(creativeScenePlanProjection(input.scenePlan))
+  ) {
+    throw new AiStoryCanonicalSceneProducerError(
+      "GENERATION_STRATEGY_SUCCESSOR_CREATIVE_CHANGE_DENIED",
+      "Generation strategy recovery cannot change approved creative Scene facts",
+    );
+  }
   const semanticInputFingerprint = computeAiStoryScriptSemanticInputFingerprint({
     storyId: input.storyId,
     storyVersionId: input.storyVersionId,
@@ -127,7 +144,7 @@ export async function ensureCurrentFrozenCanonicalSceneSet(
     outlineSourceHash: outline.sourceHash,
     story: input.story,
     storyBeats: input.storyBeats,
-    scenePlan: input.scenePlan,
+    scenePlan: semanticPlan,
     creativeContext: input.creativeContext,
     directorThinking: input.directorThinking,
     characterAuthorities: input.characterAuthorities,

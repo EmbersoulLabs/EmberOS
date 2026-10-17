@@ -50,7 +50,7 @@ export function PlanningApprovalControl({
     setReadinessPending(true);
     setError("");
     try {
-      const response = await fetch(`/api/campaigns/${encodeURIComponent(campaignId)}/ai-stories/${encodeURIComponent(storyId)}/planning/readiness`, {
+      const response = await fetch(`/api/campaigns/${encodeURIComponent(campaignId)}/ai-stories/${encodeURIComponent(storyId)}/planning/readiness?executionEnvironment=LOCAL_GPU`, {
         credentials: "same-origin",
         cache: "no-store",
         headers: { Accept: "application/json" },
@@ -83,7 +83,7 @@ export function PlanningApprovalControl({
     setError("");
     onError("");
     try {
-      const result = await gateRef.current!.approve({ campaignId, storyId });
+      const result = await gateRef.current!.approve({ campaignId, storyId, executionEnvironment: "LOCAL_GPU" });
       setPhase("success");
       await onApproved(result.status);
     } catch (caught) {
@@ -103,6 +103,17 @@ export function PlanningApprovalControl({
 
   return (
     <form onSubmit={submitApproval} data-testid="planning-approval-form" className="space-y-3">
+      <label className="block text-sm font-medium text-navy">
+        Execution environment
+        <select
+          value="LOCAL_GPU"
+          disabled
+          className="mt-1 block w-full rounded-lg border border-border bg-white px-3 py-2 text-sm"
+          aria-label="Execution environment"
+        >
+          <option value="LOCAL_GPU">LOCAL_GPU Desktop</option>
+        </select>
+      </label>
       <div className="rounded-lg border border-border bg-slate-50 p-3" data-testid="planning-execution-readiness">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm font-medium text-navy">Execution readiness: {readinessPending ? "Checking…" : readiness?.status ?? "Unavailable"}</p>

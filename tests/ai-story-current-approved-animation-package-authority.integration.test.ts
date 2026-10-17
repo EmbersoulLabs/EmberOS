@@ -19,6 +19,7 @@ import {
   buildAiStoryScriptVersion,
   canonicalAiStorySceneIdV1,
   finalizeAiStoryCanonicalScene,
+  sha256CanonicalIntegrityHash,
 } from "@ceo-agent/shared/server";
 import { approveAnimationPackage } from "../apps/web/src/lib/ai-story-planning-service";
 import { animationPackageFixture } from "./helpers/ai-story-animation-package";
@@ -51,6 +52,18 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
     };
     const review = animationPackageFixture("review");
     review.scenePlan[0]!.generationAuthority = { strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" };
+    const runtimeCapabilities = { contractVersion: 2, contracts: { v3: { workflows: [{ id: "MINIMAX_H3_T2V", execution: "enabled", textToVideo: true, placeholderImage: false, missingModels: [], e2eCertified: true }] } } };
+    const executionCapabilityAuthority = {
+      contractVersion: "ai-story-execution-capability-authority.v1" as const,
+      executionEnvironment: "LOCAL_GPU" as const,
+      environment: "staging" as const,
+      verifiedPlatformAdminAssignmentId: ids.user,
+      capabilityFingerprint: sha256CanonicalIntegrityHash(runtimeCapabilities),
+      fetchedAt: "2099-01-01T00:00:00.000Z",
+      expiresAt: "2099-01-01T00:05:00.000Z",
+      capabilities: runtimeCapabilities,
+      scenes: [{ sceneId: review.scenePlan[0]!.id, strategy: review.scenePlan[0]!.generationAuthority!, workflow: "MINIMAX_H3_T2V", status: "SUPPORTED" as const }],
+    };
     let establishAuthority: (storyVersionId: string, index: number) => Promise<typeof review>;
 
     beforeAll(async () => {
@@ -253,6 +266,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         campaignId: ids.campaign,
         storyId: ids.story,
         approvedBy: ids.user,
+        executionCapabilityAuthority,
       });
       const again = await approveAnimationPackage(db, {
         packageId: ids.p1,
@@ -261,6 +275,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         campaignId: ids.campaign,
         storyId: ids.story,
         approvedBy: ids.user,
+        executionCapabilityAuthority,
       });
       expect(again).toEqual(first);
       expect(first.approvedAt).toBeTruthy();
@@ -284,6 +299,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         campaignId: ids.campaign,
         storyId: ids.story,
         approvedBy: ids.user,
+        executionCapabilityAuthority,
       })).rejects.toMatchObject({
         code: "ANIMATION_PACKAGE_ALREADY_APPROVED_FOR_STORY_VERSION",
       });
@@ -297,6 +313,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         campaignId: ids.campaign,
         storyId: ids.story,
         approvedBy: ids.user,
+        executionCapabilityAuthority,
       });
       await expect(approveAnimationPackage(db, {
         packageId: ids.p6,
@@ -305,6 +322,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         campaignId: ids.campaign,
         storyId: ids.story,
         approvedBy: ids.user,
+        executionCapabilityAuthority,
       })).rejects.toMatchObject({ code: "CURRENT_FROZEN_STORY_VERSION_REQUIRED" });
 
       const reviewV3 = await establishAuthority(ids.v3, 2);
@@ -317,6 +335,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
           campaignId: ids.campaign,
           storyId: ids.story,
           approvedBy: ids.user,
+          executionCapabilityAuthority,
         })
       ));
       expect(concurrent.filter((result) => result.status === "fulfilled")).toHaveLength(1);

@@ -81,6 +81,7 @@ export const AI_STORY_ALLOWED_TRANSITIONS: Record<
     "archived",
   ],
   ready_for_execution: [
+    "planning_review",
     "generate_review",
     "executing",
     "execution_review",
@@ -88,6 +89,7 @@ export const AI_STORY_ALLOWED_TRANSITIONS: Record<
     "archived",
   ],
   generate_review: [
+    "planning_review",
     "executing",
     "execution_review",
     "execution_failed",
@@ -96,7 +98,7 @@ export const AI_STORY_ALLOWED_TRANSITIONS: Record<
   ],
   executing: ["execution_review", "execution_failed", "archived"],
   execution_review: ["executing", "archived"],
-  execution_failed: ["executing", "execution_review", "ready_for_execution", "archived"],
+  execution_failed: ["planning_review", "executing", "execution_review", "ready_for_execution", "archived"],
   failed: ["draft", "generating", "planning", "archived"],
   archived: [],
 };
@@ -164,6 +166,7 @@ export const ANIMATION_PACKAGE_STATUSES = [
   "generating",
   "review",
   "ready_for_execution",
+  "superseded",
   "failed",
 ] as const;
 
@@ -416,6 +419,12 @@ export const StoryPlanningDraftSchema = z.object({
   worldContinuity: WorldContinuitySchema.optional(),
   episodeContinuity: EpisodeContinuityPlanningContextSchema.optional(),
   usage: PlanningUsageSchema.optional(),
+  strategyRecovery: z.object({
+    contractVersion: z.literal("ai-story-generation-strategy-successor.v1"),
+    supersedesAnimationPackageId: z.string().uuid(),
+    sourceStrategyFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+    externalAiCalls: z.literal(0),
+  }).strict().optional(),
 });
 
 export type StoryPlanningDraft = z.infer<typeof StoryPlanningDraftSchema>;
@@ -477,6 +486,31 @@ export const AiStoryAnimationPackageCanonicalSceneAuthoritySchema = z.object({
   scenes: z.array(AiStoryAnimationPackageCanonicalSceneBindingSchema).min(1),
 }).strict();
 
+export const AI_STORY_EXECUTION_CAPABILITY_AUTHORITY_VERSION =
+  "ai-story-execution-capability-authority.v1" as const;
+
+/** Server-issued proof for the execution environment explicitly selected at review. */
+export const AiStoryExecutionCapabilityAuthoritySchema = z.object({
+  contractVersion: z.literal(AI_STORY_EXECUTION_CAPABILITY_AUTHORITY_VERSION),
+  executionEnvironment: z.literal("LOCAL_GPU"),
+  environment: z.enum(["staging", "production"]),
+  verifiedPlatformAdminAssignmentId: z.string().uuid(),
+  capabilityFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  fetchedAt: z.string().datetime(),
+  expiresAt: z.string().datetime(),
+  capabilities: z.unknown(),
+  scenes: z.array(z.object({
+    sceneId: NonEmptyTextSchema,
+    strategy: AiStorySceneGenerationAuthoritySchema,
+    workflow: NonEmptyTextSchema,
+    status: z.literal("SUPPORTED"),
+  }).strict()).min(1),
+}).strict();
+
+export type AiStoryExecutionCapabilityAuthority = z.infer<
+  typeof AiStoryExecutionCapabilityAuthoritySchema
+>;
+
 export const AnimationPackagePayloadSchema = z.object({
   /** Exact draft Package whose persisted Scene authority fed Shot Planning. */
   sourcePlanningPackageId: z.string().uuid().optional(),
@@ -496,6 +530,14 @@ export const AnimationPackagePayloadSchema = z.object({
   usage: PlanningUsageSchema.optional(),
   /** Read compatibility: historical Packages predate Canonical Scene binding. */
   canonicalSceneAuthority: AiStoryAnimationPackageCanonicalSceneAuthoritySchema.optional(),
+  /** Historical and pre-review Packages predate capability-aware approval. */
+  executionCapabilityAuthority: AiStoryExecutionCapabilityAuthoritySchema.optional(),
+  strategyRecovery: z.object({
+    contractVersion: z.literal("ai-story-generation-strategy-successor.v1"),
+    supersedesAnimationPackageId: z.string().uuid(),
+    sourceStrategyFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+    externalAiCalls: z.literal(0),
+  }).strict().optional(),
 });
 
 export type AnimationPackagePayload = z.infer<typeof AnimationPackagePayloadSchema>;

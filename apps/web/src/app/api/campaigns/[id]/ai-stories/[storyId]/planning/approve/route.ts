@@ -2,10 +2,12 @@ import { eq } from "drizzle-orm";
 import {
   ensureCurrentEpisodeDispatchAuthorityProjection,
   getDb,
+  PlatformAdminRepositoryImpl,
   prepareEpisodePlanningExecutionReadiness,
+  requireActivePlatformAdminAssignment,
   schema,
 } from "@ceo-agent/db";
-import { EpisodeProjectedAuthorityError, isUuid, type AiStoryStatus } from "@ceo-agent/shared";
+import { AuthoritativeAnimationPackagePayloadSchema, EpisodeProjectedAuthorityError, isUuid, type AiStoryStatus } from "@ceo-agent/shared";
 import { NextResponse } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
@@ -15,13 +17,22 @@ import {
   approveAnimationPackage,
   getLatestCompleteAnimationPackageForStory,
 } from "@/lib/ai-story-planning-service";
+import { AiStoryExecutionCapabilityError, fetchLocalGpuPlanningCapabilityAuthority } from "@/lib/ai-story-execution-capability";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string; storyId: string }> }
 ) {
   try {
     const user = await requireAuth();
+    const body = await request.json().catch(() => null) as { executionEnvironment?: unknown } | null;
+    if (body?.executionEnvironment !== "LOCAL_GPU") {
+      return apiError(
+        "Select and verify an execution environment before approving Planning",
+        "PLANNING_EXECUTION_ENVIRONMENT_REQUIRED",
+        422
+      );
+    }
     const { id: campaignId, storyId } = await params;
     if (!isUuid(campaignId) || !isUuid(storyId)) {
       return apiError("Invalid id", "VALIDATION_ERROR", 400);
@@ -72,6 +83,18 @@ export async function POST(
         readiness,
       }, { status: 409 });
     }
+    const assignment = await requireActivePlatformAdminAssignment({
+      userId: user.id,
+      email: user.email,
+      repository: new PlatformAdminRepositoryImpl(),
+    });
+    const parsedPackage = AuthoritativeAnimationPackagePayloadSchema.parse(animationPackage.payload);
+    const executionCapabilityAuthority = await fetchLocalGpuPlanningCapabilityAuthority({
+      userId: user.id,
+      workspaceId: campaign.workspaceId,
+      assignment,
+      scenePlan: parsedPackage.scenePlan,
+    });
     const approvedPackage = await approveAnimationPackage(db, {
       packageId: animationPackage.id,
       orgId: campaign.orgId,
@@ -79,6 +102,7 @@ export async function POST(
       storyId,
       workspaceId: campaign.workspaceId,
       approvedBy: user.id,
+      executionCapabilityAuthority,
     });
     const frozen = await ensureCurrentEpisodeDispatchAuthorityProjection(scope, db);
     if (
@@ -100,6 +124,7 @@ export async function POST(
       readiness,
     });
   } catch (error) {
+    if (error instanceof AiStoryExecutionCapabilityError) return apiError(error.message, error.code, 409);
     if (error instanceof EpisodeProjectedAuthorityError) return apiError(error.message, error.code, 409);
     return handleApiError(error);
   }
