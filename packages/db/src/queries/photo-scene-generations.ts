@@ -29,11 +29,11 @@ export async function getPhotoSceneGeneration(
   return row ?? null;
 }
 
-export async function findReusablePhotoSceneExtraction(
+export async function listReusablePhotoSceneExtractions(
   db: Db,
   input: { workspaceId: string; sourceAssetId: string; fingerprint: string }
 ) {
-  const [row] = await db
+  return db
     .select()
     .from(schema.photoSceneGenerations)
     .where(
@@ -46,7 +46,14 @@ export async function findReusablePhotoSceneExtraction(
       )
     )
     .orderBy(desc(schema.photoSceneGenerations.completedAt), desc(schema.photoSceneGenerations.createdAt))
-    .limit(1);
+    .limit(2);
+}
+
+export async function findReusablePhotoSceneExtraction(
+  db: Db,
+  input: { workspaceId: string; sourceAssetId: string; fingerprint: string }
+) {
+  const [row] = await listReusablePhotoSceneExtractions(db, input);
   return row ?? null;
 }
 

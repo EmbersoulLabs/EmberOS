@@ -104,6 +104,18 @@ describe("handleApiError", () => {
     });
   });
 
+  it("maps derivative authority mismatch to 409", async () => {
+    const error = new Error("Derivative evidence must bind the exact Scene Product authority") as Error & { code: string };
+    error.name = "ProductVisualMaterialSelectionAuthorityError";
+    error.code = "DERIVATIVE_AUTHORITY_MISMATCH";
+    const { status, body } = await readError(handleApiError(error));
+    expect(status).toBe(409);
+    expect(body).toEqual({
+      error: "Derivative evidence must bind the exact Scene Product authority",
+      code: "DERIVATIVE_AUTHORITY_MISMATCH",
+    });
+  });
+
   it("maps unusable product material to 409", async () => {
     const { status, body } = await readError(handleApiError(new AiStoryProductMaterialRuntimeError(
       "PRODUCT_MATERIAL_UNUSABLE",

@@ -1,10 +1,12 @@
 import { eq } from "drizzle-orm";
 import {
+  ApprovedAnimationPackageAuthorityError,
   ensureCurrentEpisodeDispatchAuthorityProjection,
   getDb,
   PlatformAdminRepositoryImpl,
   prepareEpisodePlanningExecutionReadiness,
   requireActivePlatformAdminAssignment,
+  resolveCurrentFrozenCanonicalSceneSet,
   schema,
 } from "@ceo-agent/db";
 import { AuthoritativeAnimationPackagePayloadSchema, EpisodeProjectedAuthorityError, isUuid, type AiStoryStatus } from "@ceo-agent/shared";
@@ -18,6 +20,7 @@ import {
   getLatestCompleteAnimationPackageForStory,
 } from "@/lib/ai-story-planning-service";
 import { AiStoryExecutionCapabilityError, fetchLocalGpuPlanningCapabilityAuthority } from "@/lib/ai-story-execution-capability";
+import { revalidatePlanningProductMaterialAuthority } from "@/lib/ai-story-product-material-runtime";
 
 export async function POST(
   request: Request,
@@ -83,6 +86,17 @@ export async function POST(
         readiness,
       }, { status: 409 });
     }
+    const canonicalScenes = await resolveCurrentFrozenCanonicalSceneSet(db, scope);
+    if (!canonicalScenes) {
+      throw new EpisodeProjectedAuthorityError(
+        "EPISODE_DISPATCH_SOURCE_MISSING",
+        "Planning approval lost the current FROZEN Canonical Scene set",
+      );
+    }
+    const productMaterial = await revalidatePlanningProductMaterialAuthority({
+      ...scope,
+      canonicalScenes,
+    });
     const assignment = await requireActivePlatformAdminAssignment({
       userId: user.id,
       email: user.email,
@@ -103,6 +117,7 @@ export async function POST(
       workspaceId: campaign.workspaceId,
       approvedBy: user.id,
       executionCapabilityAuthority,
+      expectedProductMaterialFingerprint: productMaterial.fingerprint,
     });
     const frozen = await ensureCurrentEpisodeDispatchAuthorityProjection(scope, db);
     if (
@@ -126,6 +141,7 @@ export async function POST(
   } catch (error) {
     if (error instanceof AiStoryExecutionCapabilityError) return apiError(error.message, error.code, 409);
     if (error instanceof EpisodeProjectedAuthorityError) return apiError(error.message, error.code, 409);
+    if (error instanceof ApprovedAnimationPackageAuthorityError) return apiError(error.message, error.code, error.status);
     return handleApiError(error);
   }
 }

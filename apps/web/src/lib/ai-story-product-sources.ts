@@ -9,12 +9,35 @@ import {
 type Db = ReturnType<typeof getDb>;
 
 export class AiStoryProductSourceAuthorityError extends Error {
-  readonly code = "VALIDATION_ERROR" as const;
+  readonly code: "VALIDATION_ERROR" | "PRODUCT_SOURCE_VARIANT_AMBIGUOUS";
 
-  constructor(message: string) {
+  constructor(
+    message: string,
+    code: AiStoryProductSourceAuthorityError["code"] = "VALIDATION_ERROR",
+  ) {
     super(message);
     this.name = "AiStoryProductSourceAuthorityError";
+    this.code = code;
   }
+}
+
+/** One confirmed variant per source Asset. Conflicting links fail closed. */
+export function confirmedVariantBySourceAsset(
+  links: readonly { assetId: string; confirmedVariant?: string | null }[],
+): Map<string, string | null> {
+  const variants = new Map<string, string | null>();
+  for (const link of links) {
+    const variant = link.confirmedVariant ?? null;
+    const previous = variants.get(link.assetId);
+    if (previous !== undefined && previous !== variant) {
+      throw new AiStoryProductSourceAuthorityError(
+        "Confirmed Product variant is ambiguous for the authorized source Asset",
+        "PRODUCT_SOURCE_VARIANT_AMBIGUOUS",
+      );
+    }
+    variants.set(link.assetId, variant);
+  }
+  return variants;
 }
 
 export type AiStoryProductSourceAssetCandidate = {
@@ -222,7 +245,7 @@ export async function resolveStoryProductSources(
     loadProductCandidates(db, productAssetIds),
     loadCampaignAssetIds(db, input.campaignId, productAssetIds),
   ]);
-  const variants = new Map(links.map((link) => [link.assetId, link.confirmedVariant]));
+  const variants = confirmedVariantBySourceAsset(links);
   return verifyExplicitStoryProductSources({
     ...input,
     assetIds: productAssetIds,

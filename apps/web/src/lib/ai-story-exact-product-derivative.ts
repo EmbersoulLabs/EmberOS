@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import {
   findReusablePhotoSceneExtraction,
   getDb,
+  listReusablePhotoSceneExtractions,
   schema,
 } from "@ceo-agent/db";
 import { fingerprintPhotoSceneExtractionIdentityV1 } from "@ceo-agent/shared/photo-scene-extraction.server";
@@ -24,11 +25,15 @@ type Generation = typeof schema.photoSceneGenerations.$inferSelect;
 type Asset = typeof schema.assets.$inferSelect;
 
 export class AiStoryExactProductDerivativeAuthorityError extends Error {
-  readonly code = "EXACT_STORY_PRODUCT_AUTHORITY_REQUIRED" as const;
+  readonly code: "EXACT_STORY_PRODUCT_AUTHORITY_REQUIRED" | "DERIVATIVE_LINEAGE_AMBIGUOUS";
 
-  constructor(message: string) {
+  constructor(
+    message: string,
+    code: AiStoryExactProductDerivativeAuthorityError["code"] = "EXACT_STORY_PRODUCT_AUTHORITY_REQUIRED",
+  ) {
     super(message);
     this.name = "AiStoryExactProductDerivativeAuthorityError";
+    this.code = code;
   }
 }
 
@@ -40,6 +45,7 @@ type OutputCandidate = {
 type Dependencies = {
   resolveSources: typeof resolveStoryProductSources;
   findReady: typeof findReusablePhotoSceneExtraction;
+  listReady?: typeof listReusablePhotoSceneExtractions;
   loadOutput: (
     db: Db,
     input: { outputAssetId: string | null; campaignId: string }
@@ -96,16 +102,27 @@ async function loadOutputCandidate(
   return { asset, currentCampaignAuthorized: campaignRef != null };
 }
 
+function productIdentity(source: {
+  assetId: string;
+  contentHash: string;
+  confirmedVariant?: string | null;
+}) {
+  return {
+    productAuthorityId: source.assetId,
+    sourceAssetId: source.assetId,
+    sourceAssetContentHash: source.contentHash,
+    ...(source.confirmedVariant ? { confirmedVariant: source.confirmedVariant } : {}),
+  };
+}
+
 function notFound(
-  source: { assetId: string; contentHash: string },
+  source: { assetId: string; contentHash: string; confirmedVariant?: string | null },
   reason: "NO_READY_EXTRACTION" | "CANDIDATE_NOT_REUSABLE" | "OUTPUT_UNAVAILABLE"
 ): ExactProductDerivativeResolution {
   return ExactProductDerivativeResolutionSchema.parse({
     contractVersion: AI_STORY_EXACT_PRODUCT_DERIVATIVE_RESOLUTION_VERSION,
     status: "NOT_FOUND",
-    productAuthorityId: source.assetId,
-    sourceAssetId: source.assetId,
-    sourceAssetContentHash: source.contentHash,
+    ...productIdentity(source),
     reason,
   });
 }
@@ -126,6 +143,7 @@ export async function resolveExactStoryProductDerivative(
   dependencies: Dependencies = {
     resolveSources: resolveStoryProductSources,
     findReady: findReusablePhotoSceneExtraction,
+    listReady: listReusablePhotoSceneExtractions,
     loadOutput: loadOutputCandidate,
   }
 ): Promise<ExactProductDerivativeResolution> {
@@ -152,11 +170,22 @@ export async function resolveExactStoryProductDerivative(
     workspaceId: source.workspaceId,
     sourceContentHash: source.contentHash,
   });
-  const generation = await dependencies.findReady(db, {
+  const readyQuery = {
     workspaceId: source.workspaceId,
     sourceAssetId: source.assetId,
     fingerprint,
-  });
+  };
+  const readyRows = dependencies.listReady
+    ? await dependencies.listReady(db, readyQuery)
+    : [await dependencies.findReady(db, readyQuery)].filter((row) => row != null);
+  const outputIds = new Set(readyRows.map((row) => row.outputAssetId));
+  if (outputIds.size > 1) {
+    throw new AiStoryExactProductDerivativeAuthorityError(
+      "Ready Product extraction lineage is ambiguous for the exact source Asset",
+      "DERIVATIVE_LINEAGE_AMBIGUOUS",
+    );
+  }
+  const generation = readyRows[0];
   if (!generation) return notFound(source, "NO_READY_EXTRACTION");
   if (generation.orgId !== input.orgId || generation.workspaceId !== input.workspaceId) {
     return notFound(source, "CANDIDATE_NOT_REUSABLE");
@@ -195,9 +224,7 @@ export async function resolveExactStoryProductDerivative(
   return ExactProductDerivativeResolutionSchema.parse({
     contractVersion: AI_STORY_EXACT_PRODUCT_DERIVATIVE_RESOLUTION_VERSION,
     status: "FOUND",
-    productAuthorityId: source.assetId,
-    sourceAssetId: source.assetId,
-    sourceAssetContentHash: source.contentHash,
+    ...productIdentity(source),
     derivative: {
       assetId: asset.id,
       contentHash: asset.contentHash,

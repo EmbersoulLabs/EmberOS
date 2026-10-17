@@ -258,6 +258,36 @@ describe("AI Story read-only exact Product derivative resolution", () => {
     });
   });
 
+  it("binds a confirmed variant onto FOUND and NOT_FOUND without replacing the source Asset", async () => {
+    const confirmed = { ...source(), confirmedVariant: "north-facing" };
+    const found = await resolve({ sources: [confirmed] });
+    expect(found.result).toMatchObject({
+      status: "FOUND",
+      productAuthorityId: id(10),
+      sourceAssetId: id(10),
+      confirmedVariant: "north-facing",
+      derivative: { assetId: id(30) },
+    });
+    expect(found.result.status === "FOUND" && found.result.derivative.assetId).not.toBe(id(10));
+    const missing = await resolve({ sources: [confirmed], candidate: null });
+    expect(missing.result).toMatchObject({
+      status: "NOT_FOUND",
+      reason: "NO_READY_EXTRACTION",
+      sourceAssetId: id(10),
+      confirmedVariant: "north-facing",
+    });
+  });
+
+  it("fails closed when two ready extractions name different derivative Assets", async () => {
+    const second = generation({ id: id(21), outputAssetId: id(31) });
+    await expect(resolveExactStoryProductDerivative({} as never, scope, {
+      resolveSources: vi.fn().mockResolvedValue([source()]),
+      findReady: vi.fn(),
+      listReady: vi.fn().mockResolvedValue([generation(), second]),
+      loadOutput: vi.fn(),
+    } as never)).rejects.toMatchObject({ code: "DERIVATIVE_LINEAGE_AMBIGUOUS" });
+  });
+
   it("fails closed when exact current Story product_source authority is absent", async () => {
     await expect(resolve({ sources: [] })).rejects.toThrowError(
       AiStoryExactProductDerivativeAuthorityError

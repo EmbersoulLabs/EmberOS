@@ -122,7 +122,9 @@ export function PlanningApprovalControl({
         {readiness?.findings.length ? (
           <ul className="mt-2 space-y-2 text-sm text-ink-secondary">
             {readiness.findings.map((finding, index) => (
-              <li key={`${finding.code}-${finding.scriptSceneIds.join("-") || "plan"}-${index}`}>
+              <li key={`${finding.code}-${finding.scriptSceneIds.join("-") || "plan"}-${index}`} data-testid="planning-readiness-finding">
+                <span className="font-medium">{finding.code}</span>
+                {" · "}
                 <span className="font-medium">{finding.classification === "MISSING_EVIDENCE" ? "Creative decision required" : "Contradiction"}</span>
                 {finding.scriptSceneIds.length ? ` · Scene ${finding.scriptSceneIds.join(", ")}` : ""}: {finding.message}
               </li>

@@ -6,7 +6,6 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, resolveCurrentFrozenScriptForStoryVersion, schema } from "@ceo-agent/db";
 import {
   AuthoritativeAnimationPackagePayloadSchema,
-  resolveExplicitAiStorySceneGenerationAuthority,
   AnimationPackagePayloadSchema,
   CreativeContextSchema,
   StoryPlanningDraftSchema,
@@ -23,7 +22,7 @@ import {
   bindProductShotCameraSafety,
 } from "@ceo-agent/shared";
 import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiStoryAnimationPackageCanonicalSceneAuthorityV1, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
-import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
+import { revalidatePlanningProductMaterialAuthority } from "@/lib/ai-story-product-material-runtime";
 import { assertFreshExecutionCapabilityAuthority } from "@/lib/ai-story-execution-capability";
 import { creativeScenePlanProjection, ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
 import { resolveStoryProductSources, type AiStoryResolvedProductSource } from "@/lib/ai-story-product-sources";
@@ -572,6 +571,7 @@ export async function approveAnimationPackage(
     workspaceId: string;
     approvedBy: string;
     executionCapabilityAuthority: AiStoryExecutionCapabilityAuthority;
+    expectedProductMaterialFingerprint?: string;
   }
 ) {
   const [preflightCandidate] = await db
@@ -610,21 +610,23 @@ export async function approveAnimationPackage(
       canonicalScenes,
       authority: payload.canonicalSceneAuthority,
     });
-    for (const scene of canonicalScenes) {
-      const authority = resolveExplicitAiStorySceneGenerationAuthority(scene.generationAuthority);
-      if (authority.strategy !== "TEXT_TO_VIDEO") {
-        await resolveCurrentSceneProductMaterialForScheduling({
-          orgId: input.orgId,
-          workspaceId: input.workspaceId,
-          campaignId: input.campaignId,
-          storyId: input.storyId,
-          storyVersionId: preflightCandidate.storyVersionId,
-          sceneId: scene.sceneId,
-          sceneVersionId: scene.sceneVersionId,
-          actorUserId: input.approvedBy,
-          generationAuthority: authority,
-        });
-      }
+    const productMaterial = await revalidatePlanningProductMaterialAuthority({
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      campaignId: input.campaignId,
+      storyId: input.storyId,
+      storyVersionId: preflightCandidate.storyVersionId,
+      actorUserId: input.approvedBy,
+      canonicalScenes,
+    });
+    if (
+      input.expectedProductMaterialFingerprint
+      && productMaterial.fingerprint !== input.expectedProductMaterialFingerprint
+    ) {
+      throw new ApprovedAnimationPackageAuthorityError(
+        "PLANNING_EXECUTION_AUTHORITY_STALE",
+        "Validated product material authority changed during approval",
+      );
     }
   }
   return db.transaction(async (tx) => {
