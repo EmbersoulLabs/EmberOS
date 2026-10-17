@@ -189,6 +189,11 @@ export async function createGenerateReview(input: {
   }
 
   const payload = AuthoritativeAnimationPackagePayloadSchema.parse(pkgRow.payload);
+  if (!payload.executionCapabilityAuthority) {
+    throw new Error(
+      "APPROVED_EXECUTION_CAPABILITY_AUTHORITY_REQUIRED: Return the Package to Planning Review and verify the selected execution environment",
+    );
+  }
   const referencedAssetIds = collectReferencedAssetIds(payload);
 
   const resolvedAssets =

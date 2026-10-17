@@ -4,7 +4,9 @@ import {
   ExecutionPlanAssemblyRepository,
   ExecutionPlanReviewRepository,
   getDb,
+  PlatformAdminRepositoryImpl,
   persistSameWorkspaceCampaignAssetRef,
+  requireActivePlatformAdminAssignment,
   schema,
   withFreshDbContext,
 } from "@ceo-agent/db";
@@ -22,6 +24,7 @@ import {
 } from "@ceo-agent/shared";
 import { createAiStoryVersion, freezeAiStoryVersion, setAiStoryStatus } from "@/lib/ai-story-service";
 import { approveAnimationPackage, saveAnimationPackage } from "@/lib/ai-story-planning-service";
+import { fetchLocalGpuPlanningCapabilityAuthority } from "@/lib/ai-story-execution-capability";
 import { createCanonicalExecuteProviderRouter } from "@/lib/ai-story-canonical-execute-router";
 import { AI_STORY_PRODUCTION_VERIFICATION_POLICY_VERSION } from "@ceo-agent/db";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -416,6 +419,21 @@ export async function createProductionVerificationFixture(input: {
       await setAiStoryStatus(db, story.id, "ready_for_animation", "planning");
       await setAiStoryStatus(db, story.id, "planning", "planning_review");
     });
+    const assignment = await step("platform_admin_authority", () =>
+      requireActivePlatformAdminAssignment({
+        userId: input.user.id,
+        email: input.user.email,
+        repository: new PlatformAdminRepositoryImpl(),
+      })
+    );
+    const executionCapabilityAuthority = await step("desktop_capability_authority", () =>
+      fetchLocalGpuPlanningCapabilityAuthority({
+        userId: input.user.id,
+        workspaceId: campaign.workspaceId,
+        assignment,
+        scenePlan: payload.scenePlan,
+      })
+    );
     const approvedPackage = await step("animation_package_approval", () => approveAnimationPackage(db, {
       packageId: pkg.id,
       orgId: campaign.orgId,
@@ -423,6 +441,7 @@ export async function createProductionVerificationFixture(input: {
       storyId: story.id,
       workspaceId: campaign.workspaceId,
       approvedBy: input.user.id,
+      executionCapabilityAuthority,
     }));
 
     const generated = await step("scene_plan_persistence", () => createGenerateReview({

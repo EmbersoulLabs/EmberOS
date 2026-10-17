@@ -13,12 +13,15 @@ import {
   isStoryPlanningDraft,
   validatePlanningConsistency,
   type AnimationPackagePayload,
+  type AiStoryExecutionCapabilityAuthority,
   type CreativeContext,
   type NarrativeIntegrationReport,
   type StoryPlanningDraft,
 } from "@ceo-agent/shared";
-import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent } from "@ceo-agent/shared/server";
+import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiStoryAnimationPackageCanonicalSceneAuthorityV1, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
+import { assertFreshExecutionCapabilityAuthority } from "@/lib/ai-story-execution-capability";
+import { ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -194,6 +197,207 @@ export async function getLatestCompleteAnimationPackageForStory(
   return null;
 }
 
+export class AiStoryGenerationStrategyRecoveryError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "AiStoryGenerationStrategyRecoveryError";
+  }
+}
+
+function recoveredSceneAuthority(scene: AnimationPackagePayload["scenePlan"][number]) {
+  const evidence = scene.groundingLineage?.evidence ?? [];
+  const productAssets = [...new Set(evidence.filter((item) => item.role === "PRODUCT_AUTHORITY").map((item) => item.assetId))];
+  const characterAssets = [...new Set(evidence.filter((item) => item.role === "CHARACTER_AUTHORITY").map((item) => item.assetId))];
+  if (productAssets.length > 1 || (productAssets.length && characterAssets.length)) {
+    throw new AiStoryGenerationStrategyRecoveryError(
+      "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
+      `Scene ${scene.id} has multiple identity authorities and requires human reference selection`,
+    );
+  }
+  if (productAssets[0]) {
+    return {
+      strategy: "PRODUCT_GROUNDED_VIDEO" as const,
+      referenceSource: "SCENE_EXPLICIT" as const,
+      referenceAssetIds: [productAssets[0]],
+      firstFrameAssetId: productAssets[0],
+      productVisualIdentityRequirement: "REQUIRED" as const,
+    };
+  }
+  if (characterAssets.length > 1) {
+    throw new AiStoryGenerationStrategyRecoveryError(
+      "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
+      `Scene ${scene.id} has multiple Character references and requires human reference selection`,
+    );
+  }
+  if (characterAssets[0]) {
+    return {
+      strategy: "TEXT_TO_VIDEO" as const,
+      referenceSource: "CHARACTER_SYNTHETIC_ANCHOR" as const,
+      referenceAssetIds: [characterAssets[0]],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE" as const,
+    };
+  }
+  return scene.generationAuthority;
+}
+
+export function recoverScenePlanGenerationAuthorities(
+  scenePlan: AnimationPackagePayload["scenePlan"],
+) {
+  return scenePlan.map((scene) => ({ ...scene, generationAuthority: recoveredSceneAuthority(scene) }));
+}
+
+/**
+ * Creates a no-provider-call successor Planning Package from persisted facts.
+ * Canonical Scene rows are revised append-only; the prior Package is retained
+ * as SUPERSEDED and the successor returns to normal human Planning Review.
+ */
+export async function createGenerationStrategySuccessor(
+  db: Db,
+  input: {
+    orgId: string;
+    workspaceId: string;
+    campaignId: string;
+    storyId: string;
+    storyVersionId: string;
+    actorUserId: string;
+    sourcePackageId: string;
+    episodeIntent?: import("@ceo-agent/shared").AiStoryEpisodeIntentAuthority;
+  },
+) {
+  const [sourceRow] = await db.select().from(schema.aiStoryAnimationPackages).where(and(
+    eq(schema.aiStoryAnimationPackages.id, input.sourcePackageId),
+    eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+    eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+    eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+    eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+    eq(schema.aiStoryAnimationPackages.storyVersionId, input.storyVersionId),
+  )).limit(1);
+  if (!sourceRow || isStoryPlanningDraft(sourceRow.payload)) {
+    throw new AiStoryGenerationStrategyRecoveryError("GENERATION_STRATEGY_SUCCESSOR_SOURCE_MISSING", "Complete source Planning Package not found");
+  }
+  const source = AuthoritativeAnimationPackagePayloadSchema.parse(sourceRow.payload);
+  const scenePlan = recoverScenePlanGenerationAuthorities(source.scenePlan);
+  if (sameJson(scenePlan, source.scenePlan)) {
+    if (source.strategyRecovery && source.sourcePlanningPackageId) {
+      const [supersededSourceRow] = await db.select().from(schema.aiStoryAnimationPackages).where(and(
+        eq(schema.aiStoryAnimationPackages.id, source.strategyRecovery.supersedesAnimationPackageId),
+        eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+        eq(schema.aiStoryAnimationPackages.storyVersionId, input.storyVersionId),
+      )).limit(1);
+      if (supersededSourceRow && !isStoryPlanningDraft(supersededSourceRow.payload)) {
+        const supersededSource = AuthoritativeAnimationPackagePayloadSchema.parse(supersededSourceRow.payload);
+        if (supersededSource.status !== "superseded") {
+          await db.update(schema.aiStoryAnimationPackages).set({
+            status: "superseded",
+            payload: AnimationPackagePayloadSchema.parse({ ...supersededSource, status: "superseded" }),
+            updatedAt: new Date(),
+          }).where(eq(schema.aiStoryAnimationPackages.id, supersededSourceRow.id));
+        }
+      }
+      return {
+        sourcePackageId: source.strategyRecovery.supersedesAnimationPackageId,
+        planningDraftId: source.sourcePlanningPackageId,
+        animationPackage: sourceRow,
+        externalAiCalls: 0 as const,
+        idempotent: true as const,
+      };
+    }
+  }
+  const sourceStrategyFingerprint = sha256CanonicalIntegrityHash(source.scenePlan.map((scene) => ({
+    sceneId: scene.id,
+    generationAuthority: scene.generationAuthority,
+    groundingLineage: scene.groundingLineage,
+  })));
+  const strategyRecovery = {
+    contractVersion: "ai-story-generation-strategy-successor.v1" as const,
+    supersedesAnimationPackageId: sourceRow.id,
+    sourceStrategyFingerprint,
+    externalAiCalls: 0 as const,
+  };
+  const draft = StoryPlanningDraftSchema.parse({
+    kind: "planning_draft",
+    completedStages: ["creative_context", "director_thinking", "story_beats", "scene_plan", "shot_plan", "character_continuity", "world_continuity"],
+    story: source.story,
+    creativeContext: source.creativeContext,
+    directorThinking: source.directorThinking,
+    storyBeats: source.storyBeats,
+    scenePlan,
+    shotPlan: source.shotPlan,
+    characterContinuity: source.characterContinuity,
+    worldContinuity: source.worldContinuity,
+    episodeContinuity: source.episodeContinuity,
+    usage: source.usage,
+    strategyRecovery,
+  });
+  const existingDraftRows = await db.select().from(schema.aiStoryAnimationPackages).where(and(
+    eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+    eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+    eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+    eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+    eq(schema.aiStoryAnimationPackages.storyVersionId, input.storyVersionId),
+  )).orderBy(desc(schema.aiStoryAnimationPackages.createdAt));
+  const existingDraftRow = existingDraftRows.find((row) => {
+    if (!isStoryPlanningDraft(row.payload)) return false;
+    const candidate = StoryPlanningDraftSchema.parse(row.payload);
+    return candidate.strategyRecovery?.supersedesAnimationPackageId === sourceRow.id
+      && candidate.strategyRecovery.sourceStrategyFingerprint === sourceStrategyFingerprint;
+  });
+  const draftRow = existingDraftRow ?? await savePlanningDraft(db, { ...input, payload: draft });
+  const shotPlan = source.shotPlan.map((shot) => {
+    if (!shot.authorityLineage) return shot;
+    const scene = scenePlan.find((item) => item.id === shot.sceneId);
+    if (!scene?.generationAuthority) return shot;
+    return { ...shot, authorityLineage: { ...shot.authorityLineage, planningPackageId: draftRow.id, generationAuthority: scene.generationAuthority } };
+  });
+  const characterAuthorities = source.creativeContext.characterContext.characters.flatMap((character) =>
+    character.canonicalAuthority ? [character.canonicalAuthority] : []
+  );
+  const canonicalScenes = await ensureCurrentFrozenCanonicalSceneSet({
+    db,
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    storyVersionId: input.storyVersionId,
+    actorUserId: input.actorUserId,
+    story: source.story,
+    storyBeats: source.storyBeats,
+    scenePlan,
+    priorScenePlanForStrategySuccessor: source.scenePlan,
+    creativeContext: source.creativeContext,
+    directorThinking: source.directorThinking,
+    worldContinuity: source.worldContinuity,
+    characterAuthorities,
+    ...(input.episodeIntent ? { episodeIntent: input.episodeIntent } : {}),
+  });
+  const successorPayload = AuthoritativeAnimationPackagePayloadSchema.parse({
+    ...source,
+    sourcePlanningPackageId: draftRow.id,
+    scenePlan,
+    shotPlan,
+    canonicalSceneAuthority: buildAiStoryAnimationPackageCanonicalSceneAuthorityV1({
+      storyId: input.storyId,
+      storyVersionId: input.storyVersionId,
+      scenePlan,
+      canonicalScenes,
+    }),
+    executionCapabilityAuthority: undefined,
+    strategyRecovery,
+    status: "review",
+  });
+  const successor = await saveAnimationPackage(db, { ...input, payload: successorPayload });
+  const supersededPayload = AnimationPackagePayloadSchema.parse({ ...source, status: "superseded" });
+  await db.update(schema.aiStoryAnimationPackages).set({
+    status: "superseded",
+    payload: supersededPayload,
+    updatedAt: new Date(),
+  }).where(eq(schema.aiStoryAnimationPackages.id, sourceRow.id));
+  return { sourcePackageId: sourceRow.id, planningDraftId: draftRow.id, animationPackage: successor, externalAiCalls: 0 as const, idempotent: false as const };
+}
+
 export async function approveAnimationPackage(
   db: Db,
   input: {
@@ -203,6 +407,7 @@ export async function approveAnimationPackage(
     storyId: string;
     workspaceId: string;
     approvedBy: string;
+    executionCapabilityAuthority: AiStoryExecutionCapabilityAuthority;
   }
 ) {
   const [preflightCandidate] = await db
@@ -348,6 +553,16 @@ export async function approveAnimationPackage(
           "Animation Package row and payload approval states disagree"
         );
       }
+      if (
+        !approvedPayload.executionCapabilityAuthority ||
+        approvedPayload.executionCapabilityAuthority.capabilityFingerprint !==
+          input.executionCapabilityAuthority.capabilityFingerprint
+      ) {
+        throw new ApprovedAnimationPackageAuthorityError(
+          "ANIMATION_PACKAGE_EXECUTION_CAPABILITY_MISMATCH",
+          "Approved Animation Package is bound to different execution capability evidence"
+        );
+      }
       return current;
     }
     if (isStoryPlanningDraft(current.payload)) {
@@ -367,9 +582,14 @@ export async function approveAnimationPackage(
         "Animation Package row and payload approval states disagree"
       );
     }
+    assertFreshExecutionCapabilityAuthority(
+      input.executionCapabilityAuthority,
+      payload.scenePlan,
+    );
     const approvedPayload: AnimationPackagePayload = {
       ...payload,
       status: "ready_for_execution",
+      executionCapabilityAuthority: input.executionCapabilityAuthority,
     };
     const now = new Date();
     const [updated] = await tx

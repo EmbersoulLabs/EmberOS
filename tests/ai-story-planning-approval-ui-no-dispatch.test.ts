@@ -8,10 +8,11 @@ import {
 const request = {
   campaignId: "8d1bdda0-fabc-48b2-9936-cc16224f98e3",
   storyId: "36430b98-5f2b-425a-a176-0c9205f3a74c",
+  executionEnvironment: "LOCAL_GPU" as const,
 };
 
 describe("AI Story planning approval client dispatch", () => {
-  it("dispatches exactly one canonical POST with no request body", async () => {
+  it("dispatches exactly one canonical POST with the explicit execution environment", async () => {
     const fetchImpl = vi.fn(async () =>
       new Response(JSON.stringify({ status: "ready_for_execution", storyId: request.storyId }), {
         status: 200,
@@ -32,7 +33,9 @@ describe("AI Story planning approval client dispatch", () => {
         cache: "no-store",
       })
     );
-    expect(fetchImpl.mock.calls[0]?.[1]).not.toHaveProperty("body");
+    expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({
+      body: JSON.stringify({ executionEnvironment: "LOCAL_GPU" }),
+    });
   });
 
   it("converges pointer/keyboard or double-submit attempts to one request", async () => {
