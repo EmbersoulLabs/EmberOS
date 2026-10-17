@@ -4,7 +4,8 @@ import { getDb, schema, AiStoryLocalMediaJobRepository, AiStoryLocalGenerationRe
   AiStoryGenerationResultRepository, deterministicPersistenceUuid, type LocalMediaJob } from "@ceo-agent/db";
 import { assertDistinctSceneMediaContent, assertLocalGenerationDuration, inspectLocalGenerationMp4, validateLocalGenerationMedia,
   extractLocalGenerationEndFrame, materializeLocalGenerationResult,
-  AiStoryLocalGenerationService } from "@ceo-agent/agents";
+  AiStoryLocalGenerationService, autoAuthorizeReleasedLocalGpuPackages } from "@ceo-agent/agents";
+import { createWorkerLocalGpuAuthorizationPorts } from "./ai-story-local-gpu-authorization-ports";
 import { CanonicalAdapterRegistry } from "@ceo-agent/agents";
 import { downloadStorageBytes, uploadStorageBytesImmutable } from "./storage";
 
@@ -24,8 +25,12 @@ export async function processAiStoryLocalMediaJob(job:LocalMediaJob) {
       !asset.storagePath.startsWith(`${pkg.workspaceId}/ai-story/local-generation/${pkg.packageId}/`))
       throw new Error("LOCAL_GENERATION_OUTPUT_WRONG_UNIT");
     const bytes=await downloadStorageBytes(asset.storagePath);
-    if(bytes.length>100_000_000||bytes.length!==asset.fileSizeBytes)throw new Error("LOCAL_GENERATION_MEDIA_SIZE_INVALID");
+    // Desktop uploads carry no declared size; the hash reported by the signed result endpoint binds them instead.
+    const desktopHash=asset.metadata?.sourceKind==="LOCAL_GPU_WORKER"?asset.metadata?.desktopResultContentHash:undefined;
+    if(asset.metadata?.sourceKind==="LOCAL_GPU_WORKER"&&typeof desktopHash!=="string")throw new Error("LOCAL_GPU_RESULT_CONTENT_HASH_REQUIRED");
+    if(bytes.length>100_000_000||(desktopHash===undefined&&bytes.length!==asset.fileSizeBytes))throw new Error("LOCAL_GENERATION_MEDIA_SIZE_INVALID");
     const inspected=inspectLocalGenerationMp4(bytes);
+    if(desktopHash!==undefined&&desktopHash!==inspected.contentHash)throw new Error("GENERATION_RESULT_CONTENT_MISMATCH");
     if(asset.status==="ready"&&asset.contentHash!==inspected.contentHash)throw new Error("GENERATION_RESULT_CONTENT_MISMATCH");
     const peers=await db.select({
       sceneExecutionId:schema.aiStoryGenerationResults.sceneExecutionId,
@@ -43,7 +48,7 @@ export async function processAiStoryLocalMediaJob(job:LocalMediaJob) {
     if(!scene||!plan||scene.executionPlanId!==plan.id||scene.workspaceId!==pkg.workspaceId)throw new Error("GENERATION_RESULT_UNIT_MISMATCH");
     const now=new Date();
     await db.update(schema.assets).set({status:"ready",contentHash:inspected.contentHash,durationSec:String(probe.durationMs/1000),
-      width:probe.width,height:probe.height,updatedAt:now}).where(eq(schema.assets.id,asset.id));
+      width:probe.width,height:probe.height,fileSizeBytes:bytes.length,updatedAt:now}).where(eq(schema.assets.id,asset.id));
     const accepted=await packages.insertOutput({
       outputId:deterministicPersistenceUuid("ai-story-local-output",{packageId:pkg.packageId,assetId:asset.id}),
       packageId:pkg.packageId,unitId:pkg.unitId,sceneExecutionId:pkg.sceneExecutionId,assetId:asset.id,contentHash:inspected.contentHash,
@@ -136,6 +141,12 @@ async function releaseImmediateSuccessor(
       },
     },
   });
+  // The approving user's action is the legitimate trigger; no second manual authorization.
+  const localGpu=await autoAuthorizeReleasedLocalGpuPackages({
+    env:process.env,orgId:result.ownership.orgId,workspaceId:result.ownership.workspaceId,campaignId:result.ownership.campaignId,
+    executionPlanId:result.ownership.executionPlanId,actorUserId,ports:createWorkerLocalGpuAuthorizationPorts(),
+  });
+  if(localGpu.status==="FAILED")console.warn("ai_story_local_gpu_successor_authorization_failed",{executionPlanId:result.ownership.executionPlanId,code:localGpu.code});
 }
 
 async function continueApprovedLocalAssembly(result:import("@ceo-agent/shared").AiStoryGenerationResult) {

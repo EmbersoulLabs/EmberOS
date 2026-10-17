@@ -75,6 +75,11 @@ export async function uploadStorageBytesImmutable(storagePath:string,bytes:Uint8
   if(/already exists|Duplicate|409|resource already/i.test(error.message))return "already_exists";
   throw new Error("LOCAL_MEDIA_STORAGE_UPLOAD_FAILED");
 }
+/** Signed one-object upload destination handed to the Desktop inside a signed job. */
+export async function createSignedStorageUploadUrl(storagePath:string):Promise<string|null> {
+  const {data,error}=await getAdminClient().storage.from(getBucket()).createSignedUploadUrl(storagePath);
+  return error||!data?.signedUrl?null:data.signedUrl;
+}
 /** Resolve only the exact server-derived object, with bounded legacy URL support. */
 export function resolveExpectedStoragePath(
   reference: string,

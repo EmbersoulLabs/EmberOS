@@ -256,6 +256,80 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
     )).rejects.toMatchObject({ code: "42501" });
   });
 
+  it("replays a lost response under a new key and renews an expired never-dispatched authority in place", async () => {
+    const [first] = await sql<{ id: string }[]>`select dispatch_authority_id id from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace}`;
+    const replay = await call("lost-response-retry");
+    expect(replay.status).toBe(202);
+    expect(await replay.json()).toMatchObject({ dispatchAuthorityId: first!.id, replayed: true, gpuSubmitted: false });
+    await sql`update ai_story_local_gpu_dispatch_authorities set expires_at=now()-interval '1 minute' where workspace_id=${ids.workspace}`;
+    const renewed = await call("after-expiry");
+    expect(renewed.status).toBe(202);
+    expect(await renewed.json()).toMatchObject({ dispatchAuthorityId: first!.id, replayed: false });
+    const rows = await sql<{ authorities: number; live: boolean; assets: number }[]>`select
+      (select count(*) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace})::int authorities,
+      (select bool_and(expires_at > now()) from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace}) live,
+      (select count(*) from assets where workspace_id=${ids.workspace})::int assets`;
+    expect(rows[0]).toEqual({ authorities: 1, live: true, assets: 1 });
+  });
+
+  it("derives per-execution authority automatically only from a Superadmin and frozen production LOCAL_GPU Planning", async () => {
+    const { autoAuthorizeReleasedLocalGpuPackages } = await import("@ceo-agent/agents");
+    const ports = {
+      fetchCapabilities: async () => ({ status: 200, body: { capabilities: { contracts: { v3: { workflows: { MINIMAX_H3_T2V: {
+        execution: "enabled", textToVideo: true, placeholderImage: false, missingModels: [], e2eCertified: true,
+      } } } } } } }),
+      createSignedUploadUrl: async (path: string) => `https://storage.invalid/upload/${path}`,
+      createSignedReadUrl: async (path: string) => `https://storage.invalid/read/${path}`,
+    };
+    const base = { env: process.env, orgId: ids.org, workspaceId: ids.workspace, campaignId: ids.campaign, executionPlanId: ids.plan, ports };
+    expect(await autoAuthorizeReleasedLocalGpuPackages({ ...base, actorUserId: ids.ordinary }))
+      .toMatchObject({ status: "NOT_ELIGIBLE", code: "LOCAL_GPU_SUPERADMIN_AUTHORITY_REQUIRED" });
+    expect(await autoAuthorizeReleasedLocalGpuPackages({ ...base, actorUserId: ids.actor }))
+      .toMatchObject({ status: "NOT_ELIGIBLE", code: "LOCAL_GPU_PLANNING_ENVIRONMENT_NOT_SELECTED" });
+    await sql`update ai_story_animation_packages set payload=${sql.json({ scenePlan: [], executionCapabilityAuthority: {
+      executionEnvironment: "LOCAL_GPU", environment: "production",
+    } })} where id=${ids.animation}`;
+    const derived = await autoAuthorizeReleasedLocalGpuPackages({ ...base, actorUserId: ids.actor });
+    expect(derived.status).toBe("AUTHORIZED");
+    expect(derived.packages).toEqual([expect.objectContaining({ packageId, sceneExecutionId: ids.sceneExecution, replayed: true, code: null })]);
+    const [count] = await sql<{ authorities: number }[]>`select count(*)::int authorities from ai_story_local_gpu_dispatch_authorities where workspace_id=${ids.workspace}`;
+    expect(count!.authorities).toBe(1);
+  });
+
+  it("Worker discovers persisted authority, claims once across concurrent instances, signs one POST, then stays status-only after the TTL", async () => {
+    const workerEnv = {
+      ...process.env,
+      LOCAL_GPU_SUPERADMIN_GLOBAL_ENABLED: "true",
+      LOCAL_GPU_PRODUCTION_DISPATCH_ENABLED: "true",
+      LOCAL_GPU_SCENE_EXECUTION_ID: undefined,
+    };
+    const calls: { method: string; url: string; authorization: string | null; body: string }[] = [];
+    global.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      calls.push({ method: init?.method ?? "GET", url: String(url), authorization: headers.get("authorization"), body: String(init?.body ?? "") });
+      if ((init?.method ?? "GET") === "POST") return new Response(JSON.stringify({ state: "QUEUED" }), { status: 202 });
+      return new Response(JSON.stringify({ job: { state: "QUEUED" } }), { status: 200 });
+    }) as typeof fetch;
+    const { runWorkerLocalGpuDispatchCycle } = await import("../apps/worker/src/ai-story-local-gpu-worker-dispatch");
+    await Promise.all([runWorkerLocalGpuDispatchCycle(workerEnv), runWorkerLocalGpuDispatchCycle(workerEnv)]);
+    const ours = () => calls.filter((item) => item.body.includes(ids.sceneExecution) || item.url.includes(gateId ?? "__none__"));
+    const [release] = await sql<{ gate: string | null }[]>`select gate_provider_attempt_id gate from ai_story_scene_release_states where scene_execution_id=${ids.sceneExecution}`;
+    const gateId = release!.gate;
+    expect(gateId).toMatch(/^[0-9a-f-]{36}$/);
+    const posts = calls.filter((item) => item.method === "POST" && item.url === "https://desktop.invalid/v1/jobs" && item.body.includes(ids.sceneExecution));
+    expect(posts).toHaveLength(1);
+    expect(posts[0]!.authorization).toMatch(/^Bearer /);
+    expect(posts[0]!.body).toContain(gateId!);
+
+    await sql`update ai_story_local_gpu_dispatch_authorities set expires_at=now()-interval '1 minute' where workspace_id=${ids.workspace}`;
+    await runWorkerLocalGpuDispatchCycle(workerEnv);
+    const statusReads = ours().filter((item) => item.method === "GET" && item.url === `https://desktop.invalid/v1/jobs/${gateId}`);
+    expect(statusReads.length).toBeGreaterThanOrEqual(1);
+    expect(calls.filter((item) => item.method === "POST" && item.body.includes(ids.sceneExecution))).toHaveLength(1);
+    const [after] = await sql<{ gate: string | null }[]>`select gate_provider_attempt_id gate from ai_story_scene_release_states where scene_execution_id=${ids.sceneExecution}`;
+    expect(after!.gate).toBe(gateId);
+  });
+
   it("revalidates revocation and leaves no new authority or output asset", async () => {
     const assignment = buildPlatformAdminAssignment({ userId: ids.actor, grantedAt: new Date().toISOString(),
       reason: "ephemeral HTTP/PostgreSQL certification", identitySeed: `http-cert:${ids.actor}` });

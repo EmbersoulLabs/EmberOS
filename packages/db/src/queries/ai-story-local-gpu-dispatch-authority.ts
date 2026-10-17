@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, asc, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "../client";
 
 export type LocalGpuPersistedDispatchSnapshot = {
@@ -22,6 +22,48 @@ export function localGpuDispatchExecutionIdentity(input: {
 
 type Db = ReturnType<typeof getDb>;
 
+/** The account-level Platform Superadmin entitlement for one user, if active and unrevoked. */
+export async function findActiveSuperadminAssignment(db: Db, userId: string): Promise<{ platformAdminAssignmentId: string } | null> {
+  const rows = await db.select({ platformAdminAssignmentId: schema.platformAdminGrants.platformAdminAssignmentId })
+    .from(schema.platformAdminGrants)
+    .leftJoin(schema.platformAdminRevocations, eq(
+      schema.platformAdminRevocations.platformAdminAssignmentId,
+      schema.platformAdminGrants.platformAdminAssignmentId,
+    ))
+    .where(and(
+      eq(schema.platformAdminGrants.userId, userId),
+      eq(schema.platformAdminGrants.platformRole, "PLATFORM_SUPER_ADMIN"),
+      eq(schema.platformAdminGrants.status, "ACTIVE"),
+      isNull(schema.platformAdminRevocations.platformAdminRevocationId),
+    )).limit(1);
+  return rows[0] ?? null;
+}
+
+/** Released local packages in one plan that have no bound output yet. */
+export async function listReleasedLocalPackagesAwaitingOutput(db: Db, scope: { workspaceId: string; executionPlanId: string }) {
+  return db.select({
+    sceneExecutionId: schema.aiStorySceneReleaseStates.sceneExecutionId,
+    packageId: schema.aiStorySceneReleaseStates.currentLocalGenerationPackageId,
+    runtimeAuthorizationId: schema.aiStorySceneReleaseStates.runtimeAuthorizationId,
+    executionMode: schema.aiStorySceneReleaseStates.executionMode,
+    sceneOrder: schema.aiStorySceneReleaseStates.sceneOrder,
+  }).from(schema.aiStorySceneReleaseStates).where(and(
+    eq(schema.aiStorySceneReleaseStates.workspaceId, scope.workspaceId),
+    eq(schema.aiStorySceneReleaseStates.executionPlanId, scope.executionPlanId),
+    eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
+    or(
+      eq(schema.aiStorySceneReleaseStates.executionMode, "MANUAL_LOCAL"),
+      eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
+    ),
+    isNull(schema.aiStorySceneReleaseStates.gateProviderAttemptId),
+    isNotNull(schema.aiStorySceneReleaseStates.currentLocalGenerationPackageId),
+    sql`not exists (
+      select 1 from ${schema.aiStoryLocalGenerationOutputs}
+      where ${schema.aiStoryLocalGenerationOutputs.packageId} = ${schema.aiStorySceneReleaseStates.currentLocalGenerationPackageId}
+    )`,
+  )).orderBy(asc(schema.aiStorySceneReleaseStates.sceneOrder));
+}
+
 export async function persistLocalGpuDispatchAuthority(db: Db, input: {
   idempotencyKey: string;
   orgId: string; workspaceId: string; campaignId: string; storyId: string;
@@ -35,6 +77,12 @@ export async function persistLocalGpuDispatchAuthority(db: Db, input: {
   if ((input.snapshot.route as { runtimeAuthorizationId?: unknown }).runtimeAuthorizationId !== input.runtimeAuthorizationId) {
     throw new Error("LOCAL_GPU_RUNTIME_AUTHORIZATION_MISMATCH");
   }
+  return db.transaction(async (tx) => persistLocalGpuDispatchAuthorityInTransaction(tx as unknown as Db, input));
+}
+
+type PersistInput = Parameters<typeof persistLocalGpuDispatchAuthority>[1];
+
+async function persistLocalGpuDispatchAuthorityInTransaction(db: Db, input: PersistInput) {
   const preflight = await db.select({
     packageId: schema.aiStoryLocalGenerationPackages.packageId,
     releaseMode: schema.aiStorySceneReleaseStates.executionMode,
@@ -126,6 +174,8 @@ export async function persistLocalGpuDispatchAuthority(db: Db, input: {
   });
   const fingerprint = digest({ identity, assignment: input.platformAdminAssignmentId, snapshot: input.snapshot });
   const now = new Date();
+  const reusable = await reuseOrRenewDispatchAuthority(db, { ...input, identity, fingerprint, now });
+  if (reusable) return reusable;
   const inserted = await db.insert(schema.aiStoryLocalGpuDispatchAuthorities).values({
     dispatchAuthorityId: randomUUID(), authorityFingerprint: fingerprint, idempotencyKey: input.idempotencyKey,
     orgId: input.orgId, workspaceId: input.workspaceId, campaignId: input.campaignId, storyId: input.storyId,
@@ -134,13 +184,91 @@ export async function persistLocalGpuDispatchAuthority(db: Db, input: {
     authorizedByUserId: input.authorizedByUserId, executionIdentity: identity, dispatchSnapshot: input.snapshot,
     authorizedAt: now, expiresAt: input.expiresAt,
   }).onConflictDoNothing().returning();
-  if (inserted[0]) return inserted[0];
-  const existing = await db.select().from(schema.aiStoryLocalGpuDispatchAuthorities).where(and(
-    eq(schema.aiStoryLocalGpuDispatchAuthorities.workspaceId, input.workspaceId),
-    eq(schema.aiStoryLocalGpuDispatchAuthorities.idempotencyKey, input.idempotencyKey),
-  )).limit(1);
-  if (!existing[0] || existing[0].authorityFingerprint !== fingerprint) throw new Error("LOCAL_GPU_IDEMPOTENCY_CONFLICT");
-  return existing[0];
+  if (inserted[0]) return { ...inserted[0], replayed: false };
+  // A concurrent request for the same execution identity won the insert.
+  const concurrent = await reuseOrRenewDispatchAuthority(db, { ...input, identity, fingerprint, now });
+  if (concurrent) return concurrent;
+  throw new Error("LOCAL_GPU_IDEMPOTENCY_CONFLICT");
+}
+
+/**
+ * One authority row exists per execution identity. A live row (or one whose release
+ * already holds a deterministic job gate) is replayed. An expired row that never
+ * dispatched is renewed in place so the package cannot be stranded by the TTL.
+ */
+async function reuseOrRenewDispatchAuthority(db: Db, input: PersistInput & { identity: string; fingerprint: string; now: Date }) {
+  const rows = await db.select({ authority: schema.aiStoryLocalGpuDispatchAuthorities, gate: schema.aiStorySceneReleaseStates.gateProviderAttemptId })
+    .from(schema.aiStoryLocalGpuDispatchAuthorities)
+    .innerJoin(schema.aiStorySceneReleaseStates, eq(
+      schema.aiStorySceneReleaseStates.sceneExecutionId,
+      schema.aiStoryLocalGpuDispatchAuthorities.sceneExecutionId,
+    ))
+    .where(and(
+      eq(schema.aiStoryLocalGpuDispatchAuthorities.workspaceId, input.workspaceId),
+      eq(schema.aiStoryLocalGpuDispatchAuthorities.sceneExecutionId, input.sceneExecutionId),
+      eq(schema.aiStoryLocalGpuDispatchAuthorities.packageId, input.packageId),
+      eq(schema.aiStoryLocalGpuDispatchAuthorities.runtimeAuthorizationId, input.runtimeAuthorizationId),
+    )).limit(1);
+  const existing = rows[0];
+  if (!existing) {
+    const keyed = await db.select({ executionIdentity: schema.aiStoryLocalGpuDispatchAuthorities.executionIdentity })
+      .from(schema.aiStoryLocalGpuDispatchAuthorities).where(and(
+        eq(schema.aiStoryLocalGpuDispatchAuthorities.workspaceId, input.workspaceId),
+        eq(schema.aiStoryLocalGpuDispatchAuthorities.idempotencyKey, input.idempotencyKey),
+      )).limit(1);
+    if (keyed[0] && keyed[0].executionIdentity !== input.identity) throw new Error("LOCAL_GPU_IDEMPOTENCY_CONFLICT");
+    return null;
+  }
+  const authority = existing.authority;
+  if (authority.executionIdentity !== input.identity) throw new Error("LOCAL_GPU_EXECUTION_IDENTITY_MISMATCH");
+  if (authority.status !== "ACTIVE" || authority.revokedAt) throw new Error("LOCAL_GPU_DISPATCH_AUTHORITY_REVOKED");
+  if (authority.expiresAt > input.now || existing.gate !== null) return { ...authority, replayed: true };
+  const renewed = await db.update(schema.aiStoryLocalGpuDispatchAuthorities).set({
+    authorityFingerprint: input.fingerprint,
+    platformAdminAssignmentId: input.platformAdminAssignmentId,
+    authorizedByUserId: input.authorizedByUserId,
+    dispatchSnapshot: input.snapshot,
+    authorizedAt: input.now,
+    expiresAt: input.expiresAt,
+  }).where(and(
+    eq(schema.aiStoryLocalGpuDispatchAuthorities.dispatchAuthorityId, authority.dispatchAuthorityId),
+    eq(schema.aiStoryLocalGpuDispatchAuthorities.status, "ACTIVE"),
+    lte(schema.aiStoryLocalGpuDispatchAuthorities.expiresAt, input.now),
+    isNull(schema.aiStoryLocalGpuDispatchAuthorities.revokedAt),
+  )).returning();
+  if (renewed[0]) return { ...renewed[0], replayed: false };
+  const current = await db.select().from(schema.aiStoryLocalGpuDispatchAuthorities)
+    .where(eq(schema.aiStoryLocalGpuDispatchAuthorities.dispatchAuthorityId, authority.dispatchAuthorityId)).limit(1);
+  if (!current[0] || current[0].status !== "ACTIVE" || current[0].revokedAt) throw new Error("LOCAL_GPU_DISPATCH_AUTHORITY_REVOKED");
+  return { ...current[0], replayed: true };
+}
+
+/**
+ * A dispatch scope stays observable after its submit TTL once the release holds a job gate,
+ * so status-only recovery continues. Scenes whose Desktop output is already bound to the
+ * canonical validation path are finished from the dispatcher's point of view.
+ */
+function dispatchObservableCondition(now: Date) {
+  return and(
+    eq(schema.aiStoryLocalGpuDispatchAuthorities.status, "ACTIVE"),
+    or(
+      gt(schema.aiStoryLocalGpuDispatchAuthorities.expiresAt, now),
+      isNotNull(schema.aiStorySceneReleaseStates.gateProviderAttemptId),
+    ),
+    isNull(schema.aiStoryLocalGpuDispatchAuthorities.revokedAt),
+    isNull(schema.platformAdminRevocations.platformAdminRevocationId),
+    eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
+    eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
+    sql`not exists (
+      select 1 from ${schema.aiStoryLocalGenerationOutputs}
+      where ${schema.aiStoryLocalGenerationOutputs.packageId} = ${schema.aiStoryLocalGpuDispatchAuthorities.packageId}
+    )`,
+    sql`not exists (
+      select 1 from ${schema.aiStoryLocalMediaJobs}
+      where ${schema.aiStoryLocalMediaJobs.packageId} = ${schema.aiStoryLocalGpuDispatchAuthorities.packageId}
+        and ${schema.aiStoryLocalMediaJobs.kind} = 'VALIDATE_OUTPUT'
+    )`,
+  );
 }
 
 /** Revalidates release identity and the still-active Superadmin grant on every Worker observation. */
@@ -168,12 +296,7 @@ export async function loadAuthorizedLocalGpuDispatch(db: Db, scope: { workspaceI
       eq(schema.aiStoryLocalGpuDispatchAuthorities.workspaceId, scope.workspaceId),
       eq(schema.aiStoryLocalGpuDispatchAuthorities.storyId, scope.storyId),
       eq(schema.aiStoryLocalGpuDispatchAuthorities.sceneExecutionId, scope.sceneExecutionId),
-      eq(schema.aiStoryLocalGpuDispatchAuthorities.status, "ACTIVE"),
-      gt(schema.aiStoryLocalGpuDispatchAuthorities.expiresAt, now),
-      isNull(schema.aiStoryLocalGpuDispatchAuthorities.revokedAt),
-      isNull(schema.platformAdminRevocations.platformAdminRevocationId),
-      eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
-      eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
+      dispatchObservableCondition(now),
     )).limit(1);
   const row = rows[0];
   if (!row) return null;
@@ -191,6 +314,11 @@ export async function loadAuthorizedLocalGpuDispatch(db: Db, scope: { workspaceI
  * The scoped loader revalidates the complete immutable identity before dispatch.
  */
 export async function selectNextAuthorizedLocalGpuDispatchScope(db: Db) {
+  return (await selectAuthorizedLocalGpuDispatchScopes(db, 1))[0] ?? null;
+}
+
+/** Oldest-first live scopes, bounded so one slow Desktop job cannot starve later scenes. */
+export async function selectAuthorizedLocalGpuDispatchScopes(db: Db, limit: number) {
   const now = new Date();
   const rows = await db.select({
     workspaceId: schema.aiStoryLocalGpuDispatchAuthorities.workspaceId,
@@ -213,15 +341,8 @@ export async function selectNextAuthorizedLocalGpuDispatchScope(db: Db) {
       schema.platformAdminRevocations.platformAdminAssignmentId,
       schema.aiStoryLocalGpuDispatchAuthorities.platformAdminAssignmentId,
     ))
-    .where(and(
-      eq(schema.aiStoryLocalGpuDispatchAuthorities.status, "ACTIVE"),
-      gt(schema.aiStoryLocalGpuDispatchAuthorities.expiresAt, now),
-      isNull(schema.aiStoryLocalGpuDispatchAuthorities.revokedAt),
-      isNull(schema.platformAdminRevocations.platformAdminRevocationId),
-      eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
-      eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
-    ))
+    .where(dispatchObservableCondition(now))
     .orderBy(asc(schema.aiStoryLocalGpuDispatchAuthorities.authorizedAt))
-    .limit(1);
-  return rows[0] ?? null;
+    .limit(Math.max(1, Math.min(limit, 25)));
+  return rows;
 }

@@ -6,6 +6,8 @@ import {
   type AiStorySceneGenerationAuthority,
 } from "@ceo-agent/shared";
 import {
+  LOCAL_GPU_DURATION_MAX_SEC,
+  LOCAL_GPU_DURATION_MIN_SEC,
   LOCAL_GPU_T2V_WORKFLOW,
   LOCAL_GPU_WORKER_WORKFLOW,
   assertLocalGpuV2RuntimeCapabilities,
@@ -42,6 +44,14 @@ function assertSceneCapability(
     );
   }
   const workflow = workflowFor(authority);
+  // Same rule the Desktop submit builders enforce, applied before the plan is frozen.
+  const durationMs = Math.round(scene.durationSec * 1000);
+  if (durationMs % 1000 !== 0 || durationMs < LOCAL_GPU_DURATION_MIN_SEC * 1000 || durationMs > LOCAL_GPU_DURATION_MAX_SEC * 1000) {
+    throw new AiStoryExecutionCapabilityError(
+      "PLANNING_EXECUTION_DURATION_UNSUPPORTED",
+      `Scene ${scene.id} lasts ${scene.durationSec}s; ${workflow} on LOCAL_GPU accepts whole seconds from ${LOCAL_GPU_DURATION_MIN_SEC}s to ${LOCAL_GPU_DURATION_MAX_SEC}s`,
+    );
+  }
   try {
     if (workflow === LOCAL_GPU_T2V_WORKFLOW) {
       const t2v = readLocalGpuV3T2vCapability(capabilities);
