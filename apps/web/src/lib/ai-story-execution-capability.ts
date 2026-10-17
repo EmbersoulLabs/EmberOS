@@ -2,6 +2,7 @@ import { LocalGpuCloudAdapter, loadLocalGpuConfigFromEnv } from "@ceo-agent/agen
 import type { PlatformAdminAssignment, ScenePlanItem } from "@ceo-agent/shared";
 import {
   AI_STORY_EXECUTION_CAPABILITY_AUTHORITY_VERSION,
+  AI_STORY_EXECUTION_UNIT_MAX_SEC,
   isCertifiedExecutionUnitDuration,
   type AiStoryExecutionCapabilityAuthority,
   type AiStorySceneGenerationAuthority,
@@ -49,7 +50,7 @@ function assertSceneCapability(
   if (!isCertifiedExecutionUnitDuration(scene.durationSec)) {
     throw new AiStoryExecutionCapabilityError(
       "PLANNING_EXECUTION_DURATION_UNSUPPORTED",
-      `Scene ${scene.id} lasts ${scene.durationSec}s; ${workflow} on LOCAL_GPU accepts whole seconds from ${LOCAL_GPU_DURATION_MIN_SEC}s to ${LOCAL_GPU_DURATION_MAX_SEC}s`,
+      `Scene ${scene.id} lasts ${scene.durationSec}s; ${workflow} on LOCAL_GPU accepts whole seconds from ${LOCAL_GPU_DURATION_MIN_SEC}s to ${LOCAL_GPU_DURATION_MAX_SEC}s and Pre-QC caps a Scene at ${AI_STORY_EXECUTION_UNIT_MAX_SEC}s`,
     );
   }
   try {

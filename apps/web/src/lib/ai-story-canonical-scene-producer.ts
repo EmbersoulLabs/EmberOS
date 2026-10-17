@@ -52,10 +52,16 @@ export type EnsureCurrentFrozenCanonicalSceneSetInput = {
   episodeIntent?: import("@ceo-agent/shared").AiStoryEpisodeIntentAuthority;
   /** Exact historical Plan whose creative semantics produced the frozen Script. */
   priorScenePlanForStrategySuccessor?: ScenePlanItem[];
+  /** Lineage contains a human-authorized execution-unit duration successor. */
+  allowAuthorizedDurationChanges?: boolean;
 };
 
 export function creativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
   return plan.map(({ generationAuthority: _generationAuthority, groundingLineage: _groundingLineage, ...creative }) => creative);
+}
+
+export function durationNeutralCreativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
+  return creativeScenePlanProjection(plan).map(({ durationSec: _durationSec, ...creative }) => creative);
 }
 
 export type CanonicalSceneProducerDependencies = {
@@ -127,10 +133,13 @@ export async function ensureCurrentFrozenCanonicalSceneSet(
   if (!script) throw new AiStoryCanonicalSceneProducerError("CURRENT_FROZEN_SCRIPT_REQUIRED", "Canonical Scene production requires the exact current FROZEN Script");
   const productAuthorityIds = resolveOutlineBoundProductAuthorityIds(outline);
   const semanticPlan = input.priorScenePlanForStrategySuccessor ?? input.scenePlan;
+  const creativeProjection = input.allowAuthorizedDurationChanges
+    ? durationNeutralCreativeScenePlanProjection
+    : creativeScenePlanProjection;
   if (
     input.priorScenePlanForStrategySuccessor &&
-    JSON.stringify(creativeScenePlanProjection(input.priorScenePlanForStrategySuccessor)) !==
-      JSON.stringify(creativeScenePlanProjection(input.scenePlan))
+    JSON.stringify(creativeProjection(input.priorScenePlanForStrategySuccessor)) !==
+      JSON.stringify(creativeProjection(input.scenePlan))
   ) {
     throw new AiStoryCanonicalSceneProducerError(
       "GENERATION_STRATEGY_SUCCESSOR_CREATIVE_CHANGE_DENIED",
