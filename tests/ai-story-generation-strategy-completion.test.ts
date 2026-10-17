@@ -148,4 +148,12 @@ describe("deterministic generation-strategy successor", () => {
     expect(route).toContain("humanApprovalRequired: true");
     expect(route).not.toMatch(/OpenAI|callJsonModel|\/v1\/jobs/);
   });
+
+  it("binds persisted product camera safety while creating an append-only successor", async () => {
+    const service = await readFile("apps/web/src/lib/ai-story-planning-service.ts", "utf8");
+    expect(service).toContain("bindProductShotCameraSafety({ scenePlan, shotPlan: source.shotPlan })");
+    expect(service).toContain("sameJson(recoveredShotPlan, source.shotPlan)");
+    expect(service).toContain("shotPlan: recoveredShotPlan");
+    expect(service).toContain("recoveredShotPlan.map((shot)");
+  });
 });
