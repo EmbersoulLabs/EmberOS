@@ -172,7 +172,12 @@ function resolveAsset(
   assetId: string,
   contentHash: string,
 ): LocalGpuResolvedAsset {
-  const matches = assets.filter((asset) => asset.assetId === assetId);
+  // One stored asset may legitimately serve several roles (e.g. VISUAL_START and
+  // PRODUCT_IDENTITY). Only conflicting resolutions of the same id are ambiguous.
+  const matches = assets.filter((asset, index) => asset.assetId === assetId
+    && assets.findIndex((other) => other.assetId === assetId
+      && other.contentHash === asset.contentHash
+      && other.workspaceId === asset.workspaceId) === index);
   if (matches.length !== 1) fail(matches.length === 0 ? "LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED" : "LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
   const asset = matches[0]!;
   if (asset.workspaceId !== workspaceId) fail("LOCAL_GPU_REFERENCE_WORKSPACE_MISMATCH");

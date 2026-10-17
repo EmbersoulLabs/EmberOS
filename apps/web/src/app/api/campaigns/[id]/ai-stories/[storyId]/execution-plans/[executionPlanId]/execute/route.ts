@@ -15,6 +15,7 @@ import {
   AiStoryExecutionDeniedError,
 } from "@ceo-agent/agents";
 import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
+import { autoAuthorizeLocalGpuAfterRelease } from "@/lib/ai-story-local-gpu-authorization-ports";
 import {
   CANONICAL_EXECUTE_FORBIDDEN_BODY_KEYS,
   CanonicalExecuteRequestSchema,
@@ -118,10 +119,17 @@ export async function POST(request: Request, { params }: RouteParams) {
         productMaterial: resolveCurrentSceneProductMaterialForScheduling,
       }),
     });
+    const localGpuAuthorization = result.httpStatus < 300
+      ? await autoAuthorizeLocalGpuAfterRelease({
+        orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId: ctx.campaignId,
+        executionPlanId: ctx.executionPlanId, actorUserId: user.id,
+      })
+      : null;
 
     return apiSuccess(
       {
         ...result.response,
+        localGpuAuthorization,
         // Explicit lock stamp for legacy-path clarity; selective Execute is allowed.
         phase1LockRemainsOnLegacyPaths: true as const,
         selectiveUnlockPath: "canonical-execute" as const,

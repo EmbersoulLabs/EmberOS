@@ -9,6 +9,7 @@ import { resolveAuthorizedExecutionPlan } from "@/lib/ai-story-execution-plan-ac
 import { deriveApprovedGenerationResultContinuity } from "@/lib/ai-story-generation-result-continuity";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
+import { autoAuthorizeLocalGpuAfterRelease } from "@/lib/ai-story-local-gpu-authorization-ports";
 
 type Params = { params: Promise<{ id: string; storyId: string; executionPlanId: string; packageId: string }> };
 async function resolve(params: Params["params"], role: "operator" | "client_viewer") {
@@ -116,7 +117,7 @@ export async function POST(request: Request, { params }: Params) {
       if (!qc || !decision || !frame || !frame.extractionContractVersion || !runtime) {
         return apiError("Approved predecessor continuity is not ready", "SEQUENTIAL_LOCAL_PREDECESSOR_NOT_READY", 409);
       }
-      return apiSuccess(await new AiStoryLocalGenerationService({
+      const released = await new AiStoryLocalGenerationService({
         productMaterial: resolveCurrentSceneProductMaterialForScheduling,
       }).releaseImmediateSuccessor({
         orgId: result.ownership.orgId,
@@ -142,7 +143,12 @@ export async function POST(request: Request, { params }: Params) {
             extractedAt: frame.extractedAt.toISOString(),
           },
         },
-      }));
+      });
+      const localGpuAuthorization = await autoAuthorizeLocalGpuAfterRelease({
+        orgId: result.ownership.orgId, workspaceId: result.ownership.workspaceId, campaignId: result.ownership.campaignId,
+        executionPlanId: result.ownership.executionPlanId, actorUserId: user.id,
+      });
+      return apiSuccess({ ...released, localGpuAuthorization });
     }
     if (command.action === "APPROVE") {
       const approved=await service.approve(result, user.id, command.rationale);

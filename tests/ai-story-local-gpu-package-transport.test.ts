@@ -138,6 +138,13 @@ describe("canonical LOCAL_GPU package transport", () => {
     expect(result.desktop).not.toHaveProperty("dialogue");
   });
 
+  it("accepts one stored asset resolved for several canonical roles and still rejects conflicting resolutions", () => {
+    const duplicated = [...assets, asset(productAssetId, productHash, "product")];
+    expect(map({}, duplicated).desktop.references.map((reference) => reference.contentHash)).toEqual([characterHash, productHash]);
+    const conflicting = [...assets, { ...asset(productAssetId, productHash, "product"), workspaceId: id(4) }];
+    expect(code(() => map({}, conflicting))).toBe("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+  });
+
   it("does not select the first uploaded image when it is not the authorized character", () => {
     const selected = map().desktop.references[0];
     expect(assets[0]?.assetId).toBe(otherAssetId);
