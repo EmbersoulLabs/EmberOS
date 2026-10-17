@@ -617,12 +617,20 @@ export async function createExecutionUnitDurationSuccessor(
   if (!sourceRow || isStoryPlanningDraft(sourceRow.payload)) {
     throw new AiStoryGenerationStrategyRecoveryError("EXECUTION_UNIT_DURATION_SUCCESSOR_SOURCE_MISSING", "Complete source Planning Package not found");
   }
-  const source = AuthoritativeAnimationPackagePayloadSchema.parse(sourceRow.payload);
+  const sourcePayload = AnimationPackagePayloadSchema.parse(sourceRow.payload);
   const applied = applyExecutionUnitDurationChanges({
-    scenePlan: source.scenePlan,
-    shotPlan: source.shotPlan,
+    scenePlan: sourcePayload.scenePlan,
+    shotPlan: sourcePayload.shotPlan,
     durations: input.durations,
   });
+  const authoritativeSource = AuthoritativeAnimationPackagePayloadSchema.safeParse(sourceRow.payload);
+  if (!authoritativeSource.success) {
+    throw new AiStoryGenerationStrategyRecoveryError(
+      "EXECUTION_UNIT_DURATION_SUCCESSOR_SOURCE_NOT_AUTHORITATIVE",
+      "Source Planning Package lacks frozen Canonical Scene authority",
+    );
+  }
+  const source = authoritativeSource.data;
   if (applied.changes.length === 0) {
     if (source.durationRecovery && source.sourcePlanningPackageId) {
       return {
