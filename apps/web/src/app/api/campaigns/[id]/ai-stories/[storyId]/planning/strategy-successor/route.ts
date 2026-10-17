@@ -10,6 +10,7 @@ import {
   createGenerationStrategySuccessor,
   getLatestCompleteAnimationPackageForStory,
 } from "@/lib/ai-story-planning-service";
+import { AiStoryCanonicalSceneProducerError } from "@/lib/ai-story-canonical-scene-producer";
 
 export async function POST(
   request: Request,
@@ -54,6 +55,7 @@ export async function POST(
     }, 201);
   } catch (error) {
     if (error instanceof AiStoryGenerationStrategyRecoveryError) return apiError(error.message, error.code, 409);
+    if (error instanceof AiStoryCanonicalSceneProducerError) return apiError(error.message, error.code, 409);
     return handleApiError(error);
   }
 }

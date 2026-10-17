@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { sha256CanonicalIntegrityHash } from "../packages/shared/src/canonical-integrity";
-import type { AiStoryExecutionCapabilityAuthority, ScenePlanItem } from "../packages/shared/src/ai-story";
+import { AuthoritativeAnimationPackagePayloadSchema, type AiStoryExecutionCapabilityAuthority, type AiStoryCanonicalScene, type ScenePlanItem } from "../packages/shared/src/ai-story";
+import { buildAiStoryAnimationPackageCanonicalSceneAuthorityV1 } from "../packages/shared/src/ai-story-animation-package-canonical-scene-binding.server";
 import type { AiStoryCharacterAuthorityVersion } from "../packages/shared/src/ai-story-character";
 import type { AiStoryScriptVersion } from "../packages/shared/src/ai-story-script";
 import {
   AiStoryExecutionCapabilityError,
   assertFreshExecutionCapabilityAuthority,
 } from "../apps/web/src/lib/ai-story-execution-capability";
-import { recoverScenePlanGenerationAuthorities } from "../apps/web/src/lib/ai-story-planning-service";
+import { recoverScenePlanGenerationAuthorities, resolveGenerationStrategySemanticAncestor } from "../apps/web/src/lib/ai-story-planning-service";
+import { animationPackageFixture } from "./helpers/ai-story-animation-package";
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const base = (authority: ScenePlanItem["generationAuthority"]): ScenePlanItem => ({
@@ -155,5 +157,36 @@ describe("deterministic generation-strategy successor", () => {
     expect(service).toContain("sameJson(recoveredShotPlan, source.shotPlan)");
     expect(service).toContain("shotPlan: recoveredShotPlan");
     expect(service).toContain("recoveredShotPlan.map((shot)");
+  });
+
+  it("resolves the original Script semantic Scene Plan across successor-of-successor lineage", async () => {
+    const legacy = animationPackageFixture("review");
+    const referenceFree = { strategy: "TEXT_TO_VIDEO" as const, referenceSource: "REFERENCE_FREE_T2V" as const, referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" as const };
+    const productGrounded = { strategy: "PRODUCT_GROUNDED_VIDEO" as const, referenceSource: "SCENE_EXPLICIT" as const, referenceAssetIds: [id(300)], firstFrameAssetId: id(300), productVisualIdentityRequirement: "REQUIRED" as const };
+    const canonical = (generationAuthority: typeof referenceFree | typeof productGrounded): AiStoryCanonicalScene => ({
+      sceneId: id(301), sceneVersionId: id(302), storyId: id(303), storyVersionId: id(304), scriptVersionId: id(305),
+      order: 0, fingerprint: HASH, sourceScriptSceneIds: [id(306)], status: "FROZEN", generationAuthority,
+    } as AiStoryCanonicalScene);
+    const pkg = (generationAuthority: typeof referenceFree | typeof productGrounded, recovery?: { parentId: string; marker: string }) => {
+      const scenePlan = legacy.scenePlan.map((scene) => ({ ...scene, generationAuthority }));
+      return AuthoritativeAnimationPackagePayloadSchema.parse({
+        ...legacy,
+        scenePlan,
+        canonicalSceneAuthority: buildAiStoryAnimationPackageCanonicalSceneAuthorityV1({ storyId: id(303), storyVersionId: id(304), scenePlan, canonicalScenes: [canonical(generationAuthority)] }),
+        ...(recovery ? { strategyRecovery: { contractVersion: "ai-story-generation-strategy-successor.v1", supersedesAnimationPackageId: recovery.parentId, sourceStrategyFingerprint: `sha256:${recovery.marker.repeat(64)}`, externalAiCalls: 0 } } : {}),
+      });
+    };
+    const original = { id: id(310), payload: pkg(referenceFree) };
+    const first = { id: id(311), payload: pkg(productGrounded, { parentId: original.id, marker: "b" }) };
+    const second = { id: id(312), payload: pkg(productGrounded, { parentId: first.id, marker: "c" }) };
+    const rows = new Map([original, first].map((row) => [row.id, row]));
+    await expect(resolveGenerationStrategySemanticAncestor(second, async (parentId) => rows.get(parentId) ?? null))
+      .resolves.toEqual(original.payload.scenePlan);
+
+    const changed = structuredClone(original);
+    changed.payload.scenePlan[0]!.purpose = "Changed approved intent";
+    rows.set(original.id, changed);
+    await expect(resolveGenerationStrategySemanticAncestor(second, async (parentId) => rows.get(parentId) ?? null))
+      .rejects.toMatchObject({ code: "GENERATION_STRATEGY_SUCCESSOR_CREATIVE_LINEAGE_CHANGED" });
   });
 });

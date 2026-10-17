@@ -54,7 +54,7 @@ export type EnsureCurrentFrozenCanonicalSceneSetInput = {
   priorScenePlanForStrategySuccessor?: ScenePlanItem[];
 };
 
-function creativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
+export function creativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
   return plan.map(({ generationAuthority: _generationAuthority, groundingLineage: _groundingLineage, ...creative }) => creative);
 }
 

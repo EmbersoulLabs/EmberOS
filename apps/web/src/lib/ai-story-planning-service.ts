@@ -25,7 +25,7 @@ import {
 import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiStoryAnimationPackageCanonicalSceneAuthorityV1, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
 import { assertFreshExecutionCapabilityAuthority } from "@/lib/ai-story-execution-capability";
-import { ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
+import { creativeScenePlanProjection, ensureCurrentFrozenCanonicalSceneSet } from "@/lib/ai-story-canonical-scene-producer";
 import { resolveStoryProductSources, type AiStoryResolvedProductSource } from "@/lib/ai-story-product-sources";
 
 type Db = ReturnType<typeof getDb>;
@@ -215,6 +215,53 @@ export type FrozenSuccessorAuthority = {
   characterVersions: readonly AiStoryCharacterAuthorityVersion[];
 };
 
+type GenerationStrategyLineagePackage = {
+  id: string;
+  payload: unknown;
+};
+
+/**
+ * Resolve the immutable semantic Scene Plan that originally produced the
+ * frozen Script. A successor may itself be recovered repeatedly; using only
+ * its immediate parent would incorrectly treat a strategy-only revision as a
+ * new Script semantic input. Every hop must retain identical creative facts.
+ */
+export async function resolveGenerationStrategySemanticAncestor(
+  sourceRow: GenerationStrategyLineagePackage,
+  loadParent: (id: string) => Promise<GenerationStrategyLineagePackage | null>,
+) {
+  const visited = new Set<string>();
+  let currentRow = sourceRow;
+  let current = AuthoritativeAnimationPackagePayloadSchema.parse(currentRow.payload);
+  const expectedCreative = JSON.stringify(creativeScenePlanProjection(current.scenePlan));
+  for (let depth = 0; current.strategyRecovery; depth += 1) {
+    if (depth >= 32 || visited.has(currentRow.id)) {
+      throw new AiStoryGenerationStrategyRecoveryError(
+        "GENERATION_STRATEGY_SUCCESSOR_LINEAGE_AMBIGUOUS",
+        "Generation strategy successor lineage is cyclic or exceeds the supported immutable history depth",
+      );
+    }
+    visited.add(currentRow.id);
+    const parent = await loadParent(current.strategyRecovery.supersedesAnimationPackageId);
+    if (!parent || isStoryPlanningDraft(parent.payload)) {
+      throw new AiStoryGenerationStrategyRecoveryError(
+        "GENERATION_STRATEGY_SUCCESSOR_LINEAGE_MISSING",
+        "Generation strategy successor lineage does not resolve to a complete immutable ancestor",
+      );
+    }
+    const parentPayload = AuthoritativeAnimationPackagePayloadSchema.parse(parent.payload);
+    if (JSON.stringify(creativeScenePlanProjection(parentPayload.scenePlan)) !== expectedCreative) {
+      throw new AiStoryGenerationStrategyRecoveryError(
+        "GENERATION_STRATEGY_SUCCESSOR_CREATIVE_LINEAGE_CHANGED",
+        "Generation strategy successor lineage changed approved creative Scene facts",
+      );
+    }
+    currentRow = parent;
+    current = parentPayload;
+  }
+  return current.scenePlan;
+}
+
 function unique(values: readonly string[]) {
   return [...new Set(values)];
 }
@@ -375,6 +422,17 @@ export async function createGenerationStrategySuccessor(
     throw new AiStoryGenerationStrategyRecoveryError("GENERATION_STRATEGY_SUCCESSOR_SOURCE_MISSING", "Complete source Planning Package not found");
   }
   const source = AuthoritativeAnimationPackagePayloadSchema.parse(sourceRow.payload);
+  const semanticAncestorScenePlan = await resolveGenerationStrategySemanticAncestor(sourceRow, async (parentId) => {
+    const [parent] = await db.select().from(schema.aiStoryAnimationPackages).where(and(
+      eq(schema.aiStoryAnimationPackages.id, parentId),
+      eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+      eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+      eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+      eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+      eq(schema.aiStoryAnimationPackages.storyVersionId, input.storyVersionId),
+    )).limit(1);
+    return parent ?? null;
+  });
   const frozenAuthority = await resolveFrozenSuccessorAuthority(db, input);
   const scenePlan = recoverScenePlanGenerationAuthorities(source.scenePlan, frozenAuthority);
   const recoveredShotPlan = bindProductShotCameraSafety({ scenePlan, shotPlan: source.shotPlan });
@@ -472,7 +530,7 @@ export async function createGenerationStrategySuccessor(
     story: source.story,
     storyBeats: source.storyBeats,
     scenePlan,
-    priorScenePlanForStrategySuccessor: source.scenePlan,
+    priorScenePlanForStrategySuccessor: semanticAncestorScenePlan,
     creativeContext: source.creativeContext,
     directorThinking: source.directorThinking,
     worldContinuity: source.worldContinuity,
