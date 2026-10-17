@@ -102,6 +102,11 @@ test("operator prepares an immutable strategy successor and returns to Planning 
     contentType: "application/json",
     body: JSON.stringify({ story: { id: storyId, status: storyStatus }, currentVersion: { id: "00000000-0000-4000-8000-000000000505", structuredContent: draft } }),
   }));
+  await page.route(`**/api/campaigns/${campaignId}/ai-stories/${storyId}/planning**`, (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ planningDraft: { completedStages: [] } }),
+  }));
   await page.route(`**/api/campaigns/${campaignId}/ai-stories/${storyId}/planning/strategy-successor`, async (route) => {
     successorCalls += 1;
     expect(route.request().method()).toBe("POST");
@@ -120,12 +125,6 @@ test("operator prepares an immutable strategy successor and returns to Planning 
       }),
     });
   });
-  await page.route(`**/api/campaigns/${campaignId}/ai-stories/${storyId}/planning**`, (route) => route.fulfill({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify({ planningDraft: { completedStages: [] } }),
-  }));
-
   await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
   const recovery = page.getByTestId("generation-strategy-recovery");
   await expect(recovery).toContainText("This makes no AI call and still requires Planning approval");

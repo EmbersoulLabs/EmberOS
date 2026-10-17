@@ -133,9 +133,6 @@ jobs:
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/controlled-self-use-authority.integration.test.ts
 
-      - name: Apply Global Superadmin entitlement authority
-        run: pnpm --filter @ceo-agent/db sql:global-superadmin-entitlement
-
       - name: Apply AI Story video analysis snapshots
         run: pnpm --filter @ceo-agent/db sql:ai-story-video-analysis-snapshot
 
