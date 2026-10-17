@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
 import { sha256CanonicalIntegrityHash } from "../packages/shared/src/canonical-integrity";
 import type { AiStoryExecutionCapabilityAuthority, ScenePlanItem } from "../packages/shared/src/ai-story";
+import type { AiStoryCharacterAuthorityVersion } from "../packages/shared/src/ai-story-character";
+import type { AiStoryScriptVersion } from "../packages/shared/src/ai-story-script";
 import {
   AiStoryExecutionCapabilityError,
   assertFreshExecutionCapabilityAuthority,
@@ -57,6 +59,47 @@ describe("system-wide capability-aware Planning", () => {
 });
 
 describe("deterministic generation-strategy successor", () => {
+  const HASH = `sha256:${"a".repeat(64)}`;
+  const frozen = (input: {
+    productIds?: string[];
+    characterIds?: string[];
+    characterAssets?: string[];
+  }) => {
+    const characterIds = input.characterIds ?? [];
+    const authorityReferences: AiStoryScriptVersion["authorityReferences"] = [
+      ...(input.productIds ?? []).map((authorityId) => ({ authorityType: "PRODUCT" as const, authorityId })),
+      ...characterIds.map((authorityId, index) => ({
+        authorityType: "CHARACTER" as const,
+        authorityId,
+        authorityVersionId: id(200 + index),
+        authorityFingerprint: HASH,
+      })),
+    ];
+    const frozenScript = {
+      scenes: [{ order: 0, productAuthorityRefs: input.productIds ?? [], characterIds }],
+      authorityReferences,
+    } as AiStoryScriptVersion;
+    const characterVersions: AiStoryCharacterAuthorityVersion[] = characterIds.map((characterId, index) => ({
+      characterId,
+      characterVersionId: id(200 + index),
+      orgId: id(210), workspaceId: id(211), campaignId: id(212), version: 1,
+      contractVersion: "ai-story-character.v1", name: `Character ${index}`,
+      canonicalFacts: { identity: "Authorized identity", appearance: "Authorized appearance", personality: "Calm", emotionalArc: "Stable", relationships: [] },
+      visualAssetReferences: (input.characterAssets ?? []).map((assetId) => ({ assetId, contentHash: HASH, purpose: "CHARACTER_VISUAL_REFERENCE" })),
+      status: "ACTIVE", fingerprint: HASH, supersedesCharacterVersionId: null,
+      createdBy: id(213), createdAt: "2026-10-17T00:00:00.000Z",
+    }));
+    return {
+      frozenScript,
+      productSources: (input.productIds ?? []).map((assetId) => ({
+        storyId: id(220), assetId, usageType: "product_source" as const,
+        orgId: id(210), workspaceId: id(211), campaignId: id(212), contentHash: HASH,
+        status: "ready", confirmedVariant: "Pink",
+      })),
+      characterVersions,
+    };
+  };
+
   it("repairs Product authority while preserving zero-asset Scene strategy", () => {
     const product = {
       ...base({ strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" }),
@@ -71,6 +114,32 @@ describe("deterministic generation-strategy successor", () => {
     expect(recovered[0]?.generationAuthority).toMatchObject({ strategy: "PRODUCT_GROUNDED_VIDEO", firstFrameAssetId: id(3), referenceAssetIds: [id(3)] });
     expect(recovered[1]?.generationAuthority).toEqual(zero.generationAuthority);
     expect(recovered[0]?.purpose).toBe(product.purpose);
+  });
+
+  it("projects Product-only frozen Script authority even when historical grounding is missing", () => {
+    const scene = base({ strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" });
+    const result = recoverScenePlanGenerationAuthorities([scene], frozen({ productIds: [id(3)] }));
+    expect(result[0]?.generationAuthority).toEqual({
+      strategy: "PRODUCT_GROUNDED_VIDEO", referenceSource: "SCENE_EXPLICIT",
+      referenceAssetIds: [id(3)], firstFrameAssetId: id(3), productVisualIdentityRequirement: "REQUIRED",
+    });
+  });
+
+  it("supports Character-only and combined Product + Character authority with stable Product-first ordering", () => {
+    const scene = base({ strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" });
+    const characterOnly = recoverScenePlanGenerationAuthorities([scene], frozen({ characterIds: [id(20)], characterAssets: [id(21)] }));
+    expect(characterOnly[0]?.generationAuthority).toMatchObject({ referenceSource: "CHARACTER_SYNTHETIC_ANCHOR", referenceAssetIds: [id(21)] });
+    const combined = recoverScenePlanGenerationAuthorities([scene], frozen({ productIds: [id(3)], characterIds: [id(20)], characterAssets: [id(21)] }));
+    expect(combined[0]?.generationAuthority).toMatchObject({
+      strategy: "PRODUCT_GROUNDED_VIDEO", referenceAssetIds: [id(3), id(21)], firstFrameAssetId: id(3),
+    });
+  });
+
+  it("keeps genuine reference-free authority and fails closed on ambiguous Product or Character material", () => {
+    const scene = base({ strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" });
+    expect(recoverScenePlanGenerationAuthorities([scene], frozen({}))[0]?.generationAuthority).toEqual(scene.generationAuthority);
+    expect(() => recoverScenePlanGenerationAuthorities([scene], frozen({ productIds: [id(3), id(4)] }))).toThrowError(expect.objectContaining({ code: "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED" }));
+    expect(() => recoverScenePlanGenerationAuthorities([scene], frozen({ characterIds: [id(20)], characterAssets: [id(21), id(22)] }))).toThrowError(expect.objectContaining({ code: "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED" }));
   });
 
   it("exposes normal user-facing successor recovery without provider calls", async () => {
