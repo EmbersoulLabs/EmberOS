@@ -96,7 +96,7 @@ test("operator diagnostics are server-role bounded and collapsed by default", as
 test("operator prepares an immutable strategy successor and returns to Planning review", async ({ page }) => {
   const calls = await authenticate(page, "operator");
   let successorCalls = 0;
-  let storyStatus = "ready_for_execution";
+  let storyStatus = "planning_review";
   await page.route(`**/api/campaigns/${campaignId}/ai-stories/${storyId}`, (route) => route.fulfill({
     status: 200,
     contentType: "application/json",
