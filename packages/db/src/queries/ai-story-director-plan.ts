@@ -5,10 +5,11 @@ import type { EpisodeProjectedAuthoritySource } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
 import { persistEpisodeProjectedDirector } from "./ai-story-episode-projected-persistence";
 import type { AiStoryScriptScope } from "./ai-story-script";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 type Db=ReturnType<typeof getDb>;
 export class AiStoryDirectorPlanAuthorityError extends Error { constructor(readonly code:string,message:string){super(message);this.name="AiStoryDirectorPlanAuthorityError";} }
 function parse(row:typeof schema.aiStoryDirectorPlanVersions.$inferSelect){return AiStoryDirectorPlanSchema.parse({...row.directorPlan,status:row.status,approvedBy:row.approvedBy,approvedAt:row.approvedAt?.toISOString()??null,frozenAt:row.frozenAt?.toISOString()??null});}
-async function assertScope(db:Pick<Db,"execute">,scope:AiStoryScriptScope,mutation:boolean){const rows=await db.execute<{ok:boolean}>(sql`select exists(select 1 from ai_stories s join campaigns c on c.id=s.campaign_id join ai_story_versions v on v.story_id=s.id where s.id=${scope.storyId}::uuid and s.org_id=${scope.orgId}::uuid and s.workspace_id=${scope.workspaceId}::uuid and s.campaign_id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid and v.id=${scope.storyVersionId}::uuid and exists(select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid and wm.user_id=${scope.actorUserId}::uuid and (${mutation}=false or wm.role in('admin','operator','editor','reviewer')))) as ok`);if(!rows[0]?.ok)throw new AiStoryDirectorPlanAuthorityError("DIRECTOR_SCOPE_DENIED","Director plan authority scope does not resolve");}
+async function assertScope(db:Pick<Db,"execute">,scope:AiStoryScriptScope,mutation:boolean){const rows=await db.execute<{ok:boolean}>(sql`select exists(select 1 from ai_stories s join campaigns c on c.id=s.campaign_id join ai_story_versions v on v.story_id=s.id where s.id=${scope.storyId}::uuid and s.org_id=${scope.orgId}::uuid and s.workspace_id=${scope.workspaceId}::uuid and s.campaign_id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid and v.id=${scope.storyVersionId}::uuid and ${aiStoryActorScopePredicate(scope,mutation)}) as ok`);if(!rows[0]?.ok)throw new AiStoryDirectorPlanAuthorityError("DIRECTOR_SCOPE_DENIED","Director plan authority scope does not resolve");}
 
 export class AiStoryDirectorPlanAuthorityService {
   constructor(private readonly db:Db=getDb()){}

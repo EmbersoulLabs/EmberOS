@@ -10,13 +10,14 @@ import {
 } from "@ceo-agent/shared";
 import { buildEpisodeProjectedDirectorPlan, buildEpisodeProjectedMotionPlan } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 import type { AiStoryScriptScope } from "./ai-story-script";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 async function assertScope(db: Pick<Db, "execute">, scope: AiStoryScriptScope) {
-  const rows = await db.execute<{ ok: boolean }>(sql`select exists(select 1 from ai_stories s join campaigns c on c.id=s.campaign_id join ai_story_versions v on v.story_id=s.id where s.id=${scope.storyId}::uuid and s.org_id=${scope.orgId}::uuid and s.workspace_id=${scope.workspaceId}::uuid and s.campaign_id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid and v.id=${scope.storyVersionId}::uuid and exists(select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid and wm.user_id=${scope.actorUserId}::uuid and wm.role in('admin','operator','editor','reviewer'))) as ok`);
+  const rows = await db.execute<{ ok: boolean }>(sql`select exists(select 1 from ai_stories s join campaigns c on c.id=s.campaign_id join ai_story_versions v on v.story_id=s.id where s.id=${scope.storyId}::uuid and s.org_id=${scope.orgId}::uuid and s.workspace_id=${scope.workspaceId}::uuid and s.campaign_id=${scope.campaignId}::uuid and c.org_id=${scope.orgId}::uuid and c.workspace_id=${scope.workspaceId}::uuid and v.id=${scope.storyVersionId}::uuid and ${aiStoryActorScopePredicate(scope,true)}) as ok`);
   if (!rows[0]?.ok) throw new EpisodeProjectedAuthorityError("EPISODE_DISPATCH_SOURCE_MISSING", "Projected authority scope does not resolve");
 }
 

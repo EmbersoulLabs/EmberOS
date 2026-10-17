@@ -10,6 +10,7 @@ import {
   type PlanAiStoryEpisodeRevisionInput,
   type PlanAiStoryEpisodeRevisionResult,
 } from "@ceo-agent/shared/server";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 import { getDb, schema } from "../client";
 import { AiStoryScriptAuthorityService } from "./ai-story-script";
 
@@ -124,12 +125,7 @@ async function assertRevisionScope(
       and s.campaign_id = ${scope.campaignId}::uuid
       and c.org_id = ${scope.orgId}::uuid
       and c.workspace_id = ${scope.workspaceId}::uuid
-      and exists (
-        select 1 from workspace_members wm
-        where wm.workspace_id = ${scope.workspaceId}::uuid
-          and wm.user_id = ${scope.actorUserId}::uuid
-          and (${!mutation}=true or wm.role in ('admin','operator','editor','reviewer'))
-      )
+      and ${aiStoryActorScopePredicate(scope, mutation)}
   ) as ok`);
   if (!rows[0]?.ok) {
     throw new AiStoryEpisodeRevisionPersistenceError(

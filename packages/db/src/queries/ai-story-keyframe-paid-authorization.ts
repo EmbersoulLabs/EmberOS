@@ -4,6 +4,7 @@ import {
 } from "@ceo-agent/shared/server";
 import { AiStoryKeyframePaidAuthorizationFactSchema, type AiStoryKeyframePaidAuthorizationFact } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
+import { hasInternalSuperadminWorkspaceScope } from "./ai-story-actor-scope";
 
 export interface AiStoryKeyframePaidAuthorizationRepository {
   findById(authorizationId: string): Promise<AiStoryKeyframePaidAuthorizationFact | null>;
@@ -49,7 +50,10 @@ export class PostgresAiStoryKeyframePaidAuthorizationRepository implements AiSto
         .where(and(eq(schema.workspaceMembers.orgId, fact.orgId),
           eq(schema.workspaceMembers.workspaceId, fact.workspaceId),
           eq(schema.workspaceMembers.userId, fact.authorizedBy))).limit(1);
-      if (!actor) throw new KeyframePaidAuthorizationPersistenceError("ACTOR_NOT_AUTHORIZED");
+      if (!actor && !await hasInternalSuperadminWorkspaceScope(tx, {
+        workspaceId: fact.workspaceId,
+        actorUserId: fact.authorizedBy,
+      })) throw new KeyframePaidAuthorizationPersistenceError("ACTOR_NOT_AUTHORIZED");
 
       await tx.insert(schema.aiStoryKeyframePaidAuthorizations).values({
         authorizationId: fact.authorizationId, contractVersion: fact.contractVersion,

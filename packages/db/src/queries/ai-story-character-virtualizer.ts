@@ -29,6 +29,7 @@ import {
 } from "@ceo-agent/shared/server";
 import { STORAGE_PATHS } from "@ceo-agent/shared";
 import { getDb, schema } from "../client";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 import {
   AiStoryReusableCharacterError,
   AiStoryReusableCharacterService,
@@ -53,11 +54,7 @@ type OutputBytesPersister = (input: {
 async function assertWorkspaceScope(db: Pick<Db, "execute">, scope: Scope, mutation: boolean) {
   const rows = await db.execute<{ ok: boolean }>(sql`select exists(
     select 1 from workspaces w where w.id=${scope.workspaceId}::uuid and w.org_id=${scope.orgId}::uuid
-      and exists(
-        select 1 from workspace_members wm where wm.workspace_id=${scope.workspaceId}::uuid
-          and wm.user_id=${scope.actorUserId}::uuid
-          and (${mutation}=false or wm.role in ('admin','operator'))
-      )
+      and ${aiStoryActorScopePredicate(scope, mutation, "CHARACTER")}
   ) as ok`);
   if (!rows[0]?.ok) {
     throw new AiStoryCharacterVirtualizerError(

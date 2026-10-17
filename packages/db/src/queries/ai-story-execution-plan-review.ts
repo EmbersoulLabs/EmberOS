@@ -35,6 +35,7 @@ import {
   planOwnershipFromRow,
 } from "./ai-story-ownership";
 import { ROLE_HIERARCHY } from "./tenant";
+import { hasInternalSuperadminWorkspaceScope } from "./ai-story-actor-scope";
 
 type Db = ReturnType<typeof getDb>;
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -863,13 +864,17 @@ export class ExecutionPlanReviewRepository implements ExecutionPlanReviewStore {
         )
       )
       .limit(1);
-    if (!member) {
+    const internalSuperadmin = !member && await hasInternalSuperadminWorkspaceScope(db, {
+      workspaceId,
+      actorUserId: userId,
+    });
+    if (!member && !internalSuperadmin) {
       throw new ExecutionPlanReviewOwnershipError(
         "Reviewer is not a member of this workspace"
       );
     }
     if (
-      ROLE_HIERARCHY[member.role as WorkspaceRole] < ROLE_HIERARCHY[REVIEWER_MIN_ROLE]
+      member && ROLE_HIERARCHY[member.role as WorkspaceRole] < ROLE_HIERARCHY[REVIEWER_MIN_ROLE]
     ) {
       throw new ExecutionPlanReviewOwnershipError(
         "Reviewer lacks required workspace role"

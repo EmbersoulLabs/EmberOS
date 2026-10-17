@@ -6,6 +6,7 @@ import {
 import { deterministicUuidFromFingerprint, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 import type { AiStoryScriptScope } from "./ai-story-script";
+import { aiStoryActorScopePredicate } from "./ai-story-actor-scope";
 
 type Db = ReturnType<typeof getDb>;
 
@@ -63,12 +64,7 @@ async function assertScope(db: Pick<Db, "execute">, scope: AiStoryScriptScope) {
       and c.workspace_id = ${scope.workspaceId}::uuid
       and v.id = ${scope.storyVersionId}::uuid
       and (${!scope.requireCurrentFrozenStoryVersion} = true or (s.current_version_id = v.id and v.frozen_at is not null))
-      and exists (
-        select 1 from workspace_members wm
-        where wm.workspace_id = ${scope.workspaceId}::uuid
-          and wm.user_id = ${scope.actorUserId}::uuid
-          and wm.role in ('admin', 'operator', 'editor', 'reviewer')
-      )
+      and ${aiStoryActorScopePredicate(scope, true)}
   ) as ok`);
   if (!rows[0]?.ok) fail("SCRIPT_SEMANTIC_PROPOSAL_SCOPE_DENIED", "Script semantic proposal scope does not resolve");
 }
