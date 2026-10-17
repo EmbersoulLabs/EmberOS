@@ -70,6 +70,31 @@ export function PlanningApprovalControl({
 
   useEffect(() => { void refreshReadiness(); }, [refreshReadiness]);
 
+  const [durationPending, setDurationPending] = useState(false);
+  const [durationNotice, setDurationNotice] = useState("");
+  async function applyDurationDecision(changes: { sceneId: string; toDurationSec: number }[]) {
+    if (durationPending) return;
+    setDurationPending(true);
+    setError("");
+    setDurationNotice("");
+    try {
+      const response = await fetch(`/api/campaigns/${encodeURIComponent(campaignId)}/ai-stories/${encodeURIComponent(storyId)}/planning/duration-successor`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ durations: changes.map((change) => ({ sceneId: change.sceneId, durationSec: change.toDurationSec })) }),
+      });
+      const payload = await response.json() as { error?: string; successorPackageId?: string };
+      if (!response.ok) throw new Error(payload.error ?? "Duration successor could not be created");
+      setDurationNotice("A successor Planning revision was created. Review it and approve Planning to continue.");
+      await refreshReadiness();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Duration successor could not be created");
+    } finally {
+      setDurationPending(false);
+    }
+  }
+
   async function submitApproval(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending || phase === "success") return;
@@ -140,26 +165,30 @@ export function PlanningApprovalControl({
             </p>
             <ul className="space-y-1">
               {readiness.executionUnitDurations.units.map((unit) => (
-                <li key={unit.sceneIds.join("+")} data-testid="planning-execution-unit">
-                  {unit.sceneIds.join(" + ")} · {unit.durationSec}s · {unit.certified ? "certified" : "outside range"}
-                  {unit.basis === "FROZEN_CONTINUOUS_SHOT" ? ` · grouped by frozen continuity: ${unit.evidence.join(" ")}` : ""}
+                <li key={unit.sceneId} data-testid="planning-execution-unit">
+                  {unit.sceneId} · {unit.durationSec}s · {unit.certified ? "certified" : "outside range"}
                 </li>
               ))}
             </ul>
             {readiness.executionUnitDurations.decision ? (
-              <ul className="space-y-1" data-testid="planning-execution-unit-decision">
-                {readiness.executionUnitDurations.decision.options.map((option) => (
-                  <li key={option.kind} data-testid="planning-execution-unit-option">
-                    <span className="font-medium">
-                      {option.kind === "CONFIRM_CONTINUOUS_TAKE" ? "Confirm one continuous take" : "Change Scene durations"}
-                    </span>
-                    {` (Episode ${option.episodeDurationSec}s): ${option.creativeChanges.join("; ")}`}
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-2" data-testid="planning-execution-unit-decision">
+                <p data-testid="planning-execution-unit-option">
+                  {`Change Scene durations (Episode ${readiness.executionUnitDurations.decision.option.episodeDurationSec}s): ${readiness.executionUnitDurations.decision.option.creativeChanges.join("; ")}`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void applyDurationDecision(readiness.executionUnitDurations!.decision!.option.changes)}
+                  disabled={disabled || durationPending || readinessPending}
+                  aria-busy={durationPending}
+                  className="rounded-lg border border-primary px-3 py-1.5 text-xs font-medium text-primary disabled:opacity-60"
+                >
+                  Create duration successor for review
+                </button>
+              </div>
             ) : null}
           </div>
         ) : null}
+        {durationNotice ? <p className="mt-2 text-sm text-green-700" data-testid="planning-duration-successor-notice">{durationNotice}</p> : null}
       </div>
       <button
         type="submit"

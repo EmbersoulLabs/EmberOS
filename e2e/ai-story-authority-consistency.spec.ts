@@ -63,6 +63,7 @@ afterAll(async () => {
 async function openPlanning(page: Page, readiness: { status: "PASS" | "BLOCK"; findings: unknown[]; executionUnitDurations?: unknown }) {
   let approvalPosts = 0;
   let paidCalls = 0;
+  const durationSuccessorBodies: unknown[] = [];
   let storyStatus = "planning_review";
   await page.addInitScript(() => localStorage.setItem("emberos-locale", "en"));
   await page.route("**/auth/continue", (route) => route.fulfill({
@@ -116,6 +117,14 @@ async function openPlanning(page: Page, readiness: { status: "PASS" | "BLOCK"; f
         body: JSON.stringify({ readiness }),
       });
     }
+    if (url.endsWith("/planning/duration-successor") && route.request().method() === "POST") {
+      durationSuccessorBodies.push(route.request().postDataJSON());
+      return route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "planning_review", successorPackageId: packageId, humanApprovalRequired: true }),
+      });
+    }
     if (url.endsWith("/planning/approve") && route.request().method() === "POST") {
       approvalPosts += 1;
       storyStatus = "ready_for_execution";
@@ -142,6 +151,7 @@ async function openPlanning(page: Page, readiness: { status: "PASS" | "BLOCK"; f
   return {
     approvalPosts: () => approvalPosts,
     paidCalls: () => paidCalls,
+    durationSuccessorBodies: () => durationSuccessorBodies,
   };
 }
 
@@ -171,45 +181,47 @@ test("derivative authority mismatch blocks approval", async ({ page }) => {
   expect(observed.paidCalls()).toBe(0);
 });
 
-test("uncertified Scene durations show certified units and the one creative decision without approval", async ({ page }) => {
-  const evidence = "Scene 001 and Scene 002 are merged as one continuous shot.";
+test("uncertified Scene durations require an explicit duration successor before approval", async ({ page }) => {
+  const changes = ["scene-001", "scene-002", "scene-003"].map((sceneId) => ({ sceneId, fromDurationSec: 2, toDurationSec: 5 }));
   const observed = await openPlanning(page, {
     status: "BLOCK",
     findings: [{
       code: "PLANNING_EXECUTION_UNIT_CREATIVE_DECISION_REQUIRED",
       classification: "MISSING_EVIDENCE",
-      message: "scene-001 (2s), scene-002 (2s), scene-003 (2s) are outside the certified 5–15 whole-second generation range.",
+      message: "scene-001 (2s), scene-002 (2s), scene-003 (2s) must become 5–12 whole-second generation units.",
       scriptSceneIds: [],
     }],
     executionUnitDurations: {
-      contractVersion: "ai-story-execution-unit-duration.v1",
+      contractVersion: "ai-story-execution-unit-duration.v2",
       minSec: 5,
-      maxSec: 15,
+      maxSec: 12,
       status: "CREATIVE_DECISION_REQUIRED",
       episodeDurationSec: 6,
-      scenes: [],
-      units: [
-        { sceneIds: ["scene-001", "scene-002"], durationSec: 4, certified: false, basis: "FROZEN_CONTINUOUS_SHOT", evidence: [evidence], cameraSequence: ["LOCKED", "SLOW_PUSH_IN"] },
-        { sceneIds: ["scene-003"], durationSec: 2, certified: false, basis: "ORIGINAL_SCENE", evidence: [], cameraSequence: ["LOCKED"] },
-      ],
+      units: changes.map((change, order) => ({ sceneId: change.sceneId, order, durationSec: 2, certified: false })),
       decision: {
-        question: "Choose one option.",
-        unresolvedSceneIds: ["scene-001", "scene-002", "scene-003"],
-        options: [
-          { kind: "CONFIRM_CONTINUOUS_TAKE", sceneIds: ["scene-001", "scene-002", "scene-003"], durationSec: 6, cameraSequence: ["LOCKED", "SLOW_PUSH_IN", "LOCKED"], episodeDurationSec: 6, creativeChanges: ["Removes 1 Scene cut that frozen continuity does not mark as continuous"] },
-          { kind: "CHANGE_UNIT_DURATION", changes: [], episodeDurationSec: 10, creativeChanges: ["Episode length changes from 6s to 10s"] },
-        ],
+        question: "Approve the duration change to create a successor Planning revision.",
+        unresolvedSceneIds: changes.map((change) => change.sceneId),
+        option: {
+          kind: "CHANGE_UNIT_DURATION",
+          changes,
+          episodeDurationSec: 15,
+          creativeChanges: ["scene-001 changes from 2s to 5s", "Episode length changes from 6s to 15s"],
+        },
       },
     },
   });
   await expect(page.getByTestId("planning-readiness-finding")).toContainText("Creative decision required");
-  await expect(page.getByTestId("planning-execution-unit")).toHaveCount(2);
-  await expect(page.getByTestId("planning-execution-unit").first()).toContainText(`scene-001 + scene-002 · 4s · outside range · grouped by frozen continuity: ${evidence}`);
-  await expect(page.getByTestId("planning-execution-unit-option")).toHaveText([
-    "Confirm one continuous take (Episode 6s): Removes 1 Scene cut that frozen continuity does not mark as continuous",
-    "Change Scene durations (Episode 10s): Episode length changes from 6s to 10s",
-  ]);
+  await expect(page.getByTestId("planning-execution-unit")).toHaveCount(3);
+  await expect(page.getByTestId("planning-execution-unit").first()).toHaveText("scene-001 · 2s · outside range");
+  await expect(page.getByTestId("planning-execution-unit-option")).toHaveText(
+    "Change Scene durations (Episode 15s): scene-001 changes from 2s to 5s; Episode length changes from 6s to 15s",
+  );
   await expect(page.getByRole("button", { name: "Approve Planning" })).toBeDisabled();
+  await page.getByRole("button", { name: "Create duration successor for review" }).click();
+  await expect(page.getByTestId("planning-duration-successor-notice")).toBeVisible();
+  expect(observed.durationSuccessorBodies()).toEqual([{
+    durations: changes.map((change) => ({ sceneId: change.sceneId, durationSec: 5 })),
+  }]);
   expect(observed.approvalPosts()).toBe(0);
   expect(observed.paidCalls()).toBe(0);
 });

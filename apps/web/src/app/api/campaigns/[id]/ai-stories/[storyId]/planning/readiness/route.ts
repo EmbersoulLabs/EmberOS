@@ -50,20 +50,17 @@ export async function GET(
     if (durationPayload.success) {
       const executionUnitDurations = assessExecutionUnitDurations(durationPayload.data);
       readiness = { ...readiness, executionUnitDurations };
-      if (executionUnitDurations.status !== "COMPLIANT") {
-        const uncertified = executionUnitDurations.scenes.filter((scene) => !scene.certified);
+      if (executionUnitDurations.decision) {
         readiness = {
           ...readiness,
           status: "BLOCK",
           findings: [...readiness.findings, {
-            code: executionUnitDurations.status === "CREATIVE_DECISION_REQUIRED"
-              ? "PLANNING_EXECUTION_UNIT_CREATIVE_DECISION_REQUIRED"
-              : "PLANNING_EXECUTION_UNIT_REGROUP_REQUIRED",
-            classification: executionUnitDurations.decision ? "MISSING_EVIDENCE" as const : "CONTRADICTION" as const,
+            code: "PLANNING_EXECUTION_UNIT_CREATIVE_DECISION_REQUIRED",
+            classification: "MISSING_EVIDENCE" as const,
             owner: "DIRECTOR" as const,
             scope: "STORY" as const,
             scriptSceneIds: [],
-            message: `${uncertified.map((scene) => `${scene.sceneId} (${scene.durationSec}s)`).join(", ")} ${uncertified.length === 1 ? "is" : "are"} outside the certified ${executionUnitDurations.minSec}–${executionUnitDurations.maxSec} whole-second generation range. ${executionUnitDurations.decision?.question ?? "Frozen continuity supports regrouping; a human-approved successor revision is required."}`,
+            message: executionUnitDurations.decision.question,
           }],
         };
       }

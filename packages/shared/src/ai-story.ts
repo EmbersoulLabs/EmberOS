@@ -96,7 +96,7 @@ export const AI_STORY_ALLOWED_TRANSITIONS: Record<
     "ready_for_execution",
     "archived",
   ],
-  executing: ["execution_review", "execution_failed", "archived"],
+  executing: ["execution_review", "execution_failed", "planning_review", "archived"],
   execution_review: ["executing", "archived"],
   execution_failed: ["planning_review", "executing", "execution_review", "ready_for_execution", "archived"],
   failed: ["draft", "generating", "planning", "archived"],
@@ -425,6 +425,7 @@ export const StoryPlanningDraftSchema = z.object({
     sourceStrategyFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
     externalAiCalls: z.literal(0),
   }).strict().optional(),
+  durationRecovery: z.lazy(() => AiStoryExecutionUnitDurationRecoverySchema).optional(),
 });
 
 export type StoryPlanningDraft = z.infer<typeof StoryPlanningDraftSchema>;
@@ -538,9 +539,23 @@ export const AnimationPackagePayloadSchema = z.object({
     sourceStrategyFingerprint: z.string().regex(/^sha256:[0-9a-f]{64}$/),
     externalAiCalls: z.literal(0),
   }).strict().optional(),
+  durationRecovery: z.lazy(() => AiStoryExecutionUnitDurationRecoverySchema).optional(),
 });
 
 export type AnimationPackagePayload = z.infer<typeof AnimationPackagePayloadSchema>;
+
+/** Append-only lineage for a human-authorized, topology-preserving duration revision. */
+export const AiStoryExecutionUnitDurationRecoverySchema = z.object({
+  contractVersion: z.literal("ai-story-execution-unit-duration-successor.v1"),
+  supersedesAnimationPackageId: z.string().uuid(),
+  changes: z.array(z.object({
+    sceneId: NonEmptyTextSchema,
+    fromDurationSec: z.number().positive(),
+    toDurationSec: z.number().int().positive(),
+  }).strict()).min(1),
+  authorizedBy: z.string().uuid(),
+  externalAiCalls: z.literal(0),
+}).strict();
 export type AiStoryAnimationPackageCanonicalSceneAuthority = z.infer<
   typeof AiStoryAnimationPackageCanonicalSceneAuthoritySchema
 >;
