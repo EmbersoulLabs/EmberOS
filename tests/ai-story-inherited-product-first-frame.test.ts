@@ -395,6 +395,39 @@ describe("inherited product scene first-frame resolution", () => {
     expect(authority).toEqual(scene.generationAuthority);
   });
 
+  it("overrides a model-proposed reference-free mode when the Scene consumes Product authority", () => {
+    const scene = {
+      id: "scene-product",
+      beatIds: ["beat-001"],
+      purpose: "Keep the exact approved product recognizable.",
+      durationSec: 6,
+      transition: "",
+      continuityNotes: "The Product remains unchanged.",
+      order: 0,
+      generationAuthority: {
+        strategy: "TEXT_TO_VIDEO" as const,
+        referenceSource: "REFERENCE_FREE_T2V" as const,
+        referenceAssetIds: [] as string[],
+        firstFrameAssetId: null,
+        productVisualIdentityRequirement: "NONE" as const,
+      },
+    };
+    const authority = resolveScenePlanGenerationAuthority({
+      sceneId: scene.id,
+      scene,
+      lineage: lineage([productEvidence]),
+      acceptedContext,
+      expectedScope: scope,
+    });
+    expect(authority).toEqual({
+      strategy: "PRODUCT_GROUNDED_VIDEO",
+      referenceSource: "SCENE_EXPLICIT",
+      referenceAssetIds: [productAssetId],
+      firstFrameAssetId: productAssetId,
+      productVisualIdentityRequirement: "REQUIRED",
+    });
+  });
+
   it("does not move resolution into canonical scene or script authorization", () => {
     const planner = readFileSync("packages/agents/src/ai-story/story-planning-service.ts", "utf8");
     const lineageCall = planner.indexOf("const lineageByScene = bindSceneGroundingLineage(");

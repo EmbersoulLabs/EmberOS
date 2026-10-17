@@ -301,6 +301,53 @@ export function resolveScenePlanGenerationAuthority(input: {
     storyVersionId: string;
   };
 }): AiStorySceneGenerationAuthority {
+  // Scene grounding is the canonical strategy decision owner. Once a Scene
+  // actually consumes Product authority, reference-free T2V is incompatible
+  // with the approved identity requirement regardless of the model proposal.
+  // Reuse the existing exact-material resolver so scope, Snapshot and
+  // ambiguity checks remain fail-closed.
+  const productEvidence = input.lineage.evidence.filter(
+    (evidence) => evidence.role === "PRODUCT_AUTHORITY",
+  );
+  if (productEvidence.length > 0) {
+    const explicitAssetId = input.scene.generationAuthority.referenceSource === "SCENE_EXPLICIT"
+      ? input.scene.generationAuthority.firstFrameAssetId
+      : null;
+    if (
+      explicitAssetId &&
+      productEvidence.some(
+        (evidence) => evidence.assetId === explicitAssetId,
+      )
+    ) {
+      return resolveInheritedProductSceneFirstFrame({
+        sceneId: input.sceneId,
+        generationAuthority: {
+          strategy: "PRODUCT_GROUNDED_VIDEO",
+          referenceSource: "STORY_INHERITED",
+          productVisualIdentityRequirement: "REQUIRED",
+        },
+        lineage: {
+          ...input.lineage,
+          evidence: productEvidence.filter(
+            (evidence) => evidence.assetId === explicitAssetId,
+          ),
+        },
+        acceptedContext: input.acceptedContext,
+        expectedScope: input.expectedScope,
+      });
+    }
+    return resolveInheritedProductSceneFirstFrame({
+      sceneId: input.sceneId,
+      generationAuthority: {
+        strategy: "PRODUCT_GROUNDED_VIDEO",
+        referenceSource: "STORY_INHERITED",
+        productVisualIdentityRequirement: "REQUIRED",
+      },
+      lineage: input.lineage,
+      acceptedContext: input.acceptedContext,
+      expectedScope: input.expectedScope,
+    });
+  }
   const resolved = resolveInheritedProductSceneFirstFrame({
     sceneId: input.sceneId,
     generationAuthority: input.scene.generationAuthority,
@@ -764,11 +811,11 @@ export async function generateScenePlan(input: {
       "You are an animation scene planner.",
       "Create scenes that cover every story beat, merging beats only when continuityNotes explicitly say which beat was merged.",
       "Use sequential order values starting at 0 and stable scene ids.",
-      "For EVERY Scene choose an explicit creative generationAuthority: TEXT_TO_VIDEO with REFERENCE_FREE_T2V and no reference Asset, or FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT and an exact input Asset UUID as firstFrameAssetId and referenceAssetIds. Never infer a mode from Product presence or Provider capability. If an exact required Asset ID is unavailable, do not invent one.",
+      "For EVERY Scene propose an explicit generationAuthority from its actual creative needs and accepted Asset authority. Use reference-free TEXT_TO_VIDEO only for genuinely reference-free Scenes; use PRODUCT_GROUNDED_VIDEO with STORY_INHERITED when the Scene consumes exactly one accepted PRODUCT_AUTHORITY; use FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT only when an exact accepted opening frame is required. Never choose a mode merely because an Asset exists, and never invent an Asset ID.",
       "FIRST_FRAME_IMAGE_TO_VIDEO and PRODUCT_GROUNDED_VIDEO always require productVisualIdentityRequirement REQUIRED. They may never use NONE. TEXT_TO_VIDEO may use REQUIRED only when the Scene still visually depicts a grounded Product.",
       "The supplied accepted Asset grounding authority is immutable. Every Scene must include its own grounding object using only exact accepted binding IDs and exact facts from those bindings. Copy bindingId verbatim; never invent or transform a UUID.",
       "A PRODUCT_AUTHORITY binding is required whenever a Scene visually depicts, introduces, highlights, sells, serves, consumes, or shows detail of that Product. SUPPORTING_REFERENCE never becomes PRODUCT_AUTHORITY.",
-      "If a Scene has only SUPPORTING_REFERENCE evidence, use TEXT_TO_VIDEO with REFERENCE_FREE_T2V and productVisualIdentityRequirement NONE. Never select image-conditioned mode or REQUIRED product identity from a supporting-only binding.",
+      "If a Scene has only SUPPORTING_REFERENCE evidence and no other identity or continuity requirement, use TEXT_TO_VIDEO with REFERENCE_FREE_T2V and productVisualIdentityRequirement NONE. Supporting evidence alone never becomes Product or first-frame authority.",
       "A menu/catalog item may be referenced as EXISTENCE_ONLY from exact visible text. Do not invent its appearance unless OBSERVED_APPEARANCE is supported by a selected PRODUCT_AUTHORITY and an exact observed fact.",
       `visualClaims.subject must be one exact allowed Asset visual subject: ${JSON.stringify(allowedVisualSubjects)}. If this list is empty, visualClaims must be empty. Narrative and visual intent may describe Characters and actions, but visualClaims.subject must never contain Character/action phrases, sentence fragments, descriptions, or combined Character/Product prose. A narrative such as \"the Character enjoys the Product\" must use only the exact allowed Product subject, never the combined prose phrase.`,
       "Every Product or catalog name used as a visual claim must appear in visualClaims. Never add unsupported Product names or attributes in purpose, narrativeIntent, visualIntent, continuityNotes, or visualClaims. Character identity comes from Character authority, not Asset visualClaims.",

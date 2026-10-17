@@ -122,9 +122,46 @@ export type PreparedStoryAssetGrounding = {
     readonly registry: ReturnType<typeof registryFromAsset>;
     readonly snapshot: ReturnType<typeof AiStoryAssetAnalysisSnapshotSchema.parse>;
     readonly usageType: string;
+    readonly confirmedVariant: string | null;
   }[];
   readonly semanticAnalyzerCalls: number;
 };
+
+/**
+ * Resolves the persisted Story role into matching authority. A confirmed
+ * `product_source` is already an explicit human mapping decision; requiring
+ * the model-authored Story text to repeat an analyzer label made the same
+ * Product silently fall back to SUPPORTING_REFERENCE. Semantic affordances
+ * still gate PRODUCT_AUTHORITY in `matchAnalyzedAssetsToStory`.
+ */
+export function resolveStoryAssetSemanticDecision(input: {
+  readonly assetId: string;
+  readonly analysisSnapshotId: string;
+  readonly usageType: string;
+  readonly confirmedVariant: string | null;
+  readonly canonicalStoryText: string;
+  readonly productCandidateNames: readonly string[];
+  readonly observedSummary: string;
+}) {
+  const explicitProduct = input.usageType === "product_source";
+  const confirmedProduct = explicitProduct && Boolean(input.confirmedVariant?.trim());
+  const storyNamesProduct = explicitProduct && input.productCandidateNames.some(
+    (candidate) => input.canonicalStoryText.includes(candidate.toLocaleLowerCase())
+  );
+  const productIdentityRequired = confirmedProduct || storyNamesProduct;
+  return {
+    assetId: input.assetId,
+    analysisSnapshotId: input.analysisSnapshotId,
+    intent: productIdentityRequired ? "PRODUCT_IDENTITY" as const : "SUPPORTING" as const,
+    required: productIdentityRequired,
+    reason: productIdentityRequired
+      ? confirmedProduct
+        ? `Confirmed Product source variant: ${input.confirmedVariant!.trim()}`
+        : `Explicit Product source supported by semantic evidence: ${input.productCandidateNames.join(", ")}`
+      : `Story reference grounded by observed semantic evidence: ${input.observedSummary}`,
+    source: explicitProduct ? "HUMAN_SELECTION" as const : "CANONICAL_AUTHORITY" as const,
+  };
+}
 
 /** Ensures exact selected Assets have cached semantic authority before Writer execution. */
 export async function prepareStoryAssetGrounding(input: {
@@ -180,6 +217,7 @@ export async function prepareStoryAssetGrounding(input: {
         registry: registryFromAsset(asset),
         snapshot: AiStoryAssetAnalysisSnapshotSchema.parse(outcome.snapshot),
         usageType: linkByAssetId.get(asset.id)?.usageType ?? "reference",
+        confirmedVariant: linkByAssetId.get(asset.id)?.confirmedVariant ?? null,
       });
     } catch (error) {
       throw new AiStorySemanticGroundingRuntimeError(
@@ -238,6 +276,7 @@ export async function prepareStoryAssetGroundingFromCache(input: {
       registry: entry.registry,
       snapshot: entry.snapshot,
       usageType: linkByAssetId.get(assetId)?.usageType ?? "reference",
+      confirmedVariant: linkByAssetId.get(assetId)?.confirmedVariant ?? null,
     };
   });
   const context = compileStoryAssetGroundingContext({
@@ -269,21 +308,15 @@ export async function persistStoryAssetMatching(input: {
   const canonicalStoryText = JSON.stringify(input.structuredStory).toLocaleLowerCase();
   const semanticDecisions = input.grounding.analyzedAssets.map((entry) => {
     const facts = visualSemanticFactsFromSnapshot(entry.snapshot);
-    const explicitProduct = entry.usageType === "product_source";
-    const storyUsesProduct = explicitProduct && facts.inferred.productCandidates.some(
-      (candidate) => canonicalStoryText.includes(candidate.name.toLocaleLowerCase())
-    );
-    const intent = storyUsesProduct ? "PRODUCT_IDENTITY" as const : "SUPPORTING" as const;
-    return {
+    return resolveStoryAssetSemanticDecision({
       assetId: entry.registry.assetId,
       analysisSnapshotId: entry.snapshot.snapshotId,
-      intent,
-      required: storyUsesProduct,
-      reason: storyUsesProduct
-        ? `Explicit Product source supported by semantic evidence: ${facts.inferred.productCandidates.map((candidate) => candidate.name).join(", ")}`
-        : `Story reference grounded by observed semantic evidence: ${facts.observed.namedItems.join(", ") || facts.observed.objects.join(", ")}`,
-      source: explicitProduct ? "HUMAN_SELECTION" as const : "CANONICAL_AUTHORITY" as const,
-    };
+      usageType: entry.usageType,
+      confirmedVariant: entry.confirmedVariant,
+      canonicalStoryText,
+      productCandidateNames: facts.inferred.productCandidates.map((candidate) => candidate.name),
+      observedSummary: facts.observed.namedItems.join(", ") || facts.observed.objects.join(", ") || "authorized reference",
+    });
   });
   const identity = {
     kind: "ai-story-asset-matching-runtime.v1",

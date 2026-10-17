@@ -485,6 +485,35 @@ describe("scene-scoped projected pre-generation QC", () => {
     expect(readiness.dispatchAuthorized).toBe(false);
   });
 
+  it("blocks Planning approval when a Product-bound Scene was frozen as reference-free T2V", () => {
+    const built = story([specs()[1]!]);
+    built.directorPlan.sceneDirections[0]!.generationAuthority = {
+      state: "KNOWN",
+      value: textToVideo,
+    };
+    built.motionPlan.sceneMotionPlans[0]!.generationAuthority =
+      built.directorPlan.sceneDirections[0]!.generationAuthority;
+    const readiness = evaluateEpisodeProjectedPlanningReadiness({
+      script: built.script,
+      handoff: built.handoff,
+      directorPlan: built.directorPlan,
+      motionPlan: built.motionPlan,
+      canonicalScenes: built.directorPlan.sceneDirections.map((direction) => ({
+        sceneId: direction.canonicalSceneId, sceneVersionId: direction.canonicalSceneVersionId,
+        storyId: STORY, storyVersionId: STORY_VERSION, orgId: ORG, workspaceId: WORKSPACE,
+        campaignId: CAMPAIGN, order: direction.sceneOrder, sourceScriptSceneIds: [direction.scriptSceneId],
+        fingerprint: HASH, status: "FROZEN" as const,
+      })),
+    });
+    expect(readiness.status).toBe("BLOCK");
+    expect(readiness.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "GENERATION_UNIT_BINDING_GATE",
+        message: expect.stringContaining("cannot freeze as reference-free"),
+      }),
+    ]));
+  });
+
   it("classifies absent object exit authority as missing evidence before approval", () => {
     const built = story();
     const scene = built.motionPlan.sceneMotionPlans[1]!;
