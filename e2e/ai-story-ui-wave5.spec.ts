@@ -93,6 +93,47 @@ test("operator diagnostics are server-role bounded and collapsed by default", as
   expect(calls.providerCalls()).toBe(0);
 });
 
+test("operator prepares an immutable strategy successor and returns to Planning review", async ({ page }) => {
+  const calls = await authenticate(page, "operator");
+  let successorCalls = 0;
+  let storyStatus = "ready_for_execution";
+  await page.route(`**/api/campaigns/${campaignId}/ai-stories/${storyId}`, (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ story: { id: storyId, status: storyStatus }, currentVersion: { id: "00000000-0000-4000-8000-000000000505", structuredContent: draft } }),
+  }));
+  await page.route(`**/api/campaigns/${campaignId}/ai-stories/${storyId}/planning**`, (route) => route.fulfill({
+    status: 200,
+    contentType: "application/json",
+    body: JSON.stringify({ planningDraft: { completedStages: [] } }),
+  }));
+  await page.route(`**/api/campaigns/${campaignId}/ai-stories/${storyId}/planning/strategy-successor`, async (route) => {
+    successorCalls += 1;
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postData() ?? "").toBe("");
+    storyStatus = "planning_review";
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        status: "planning_review",
+        sourcePackageId: "00000000-0000-4000-8000-000000000801",
+        successorPackageId: "00000000-0000-4000-8000-000000000802",
+        externalAiCalls: 0,
+        idempotent: false,
+        humanApprovalRequired: true,
+      }),
+    });
+  });
+  await page.goto(`/w/wave-5/campaigns/${campaignId}/ai-stories/${storyId}`);
+  const recovery = page.getByTestId("generation-strategy-recovery");
+  await expect(recovery).toContainText("This makes no AI call and still requires Planning approval");
+  await recovery.getByRole("button", { name: "Prepare strategy successor" }).click();
+  await expect.poll(() => successorCalls).toBe(1);
+  await expect(page.getByTestId("generation-strategy-recovery")).toHaveCount(0);
+  expect(calls.providerCalls()).toBe(0);
+});
+
 test("mobile normal-user story flow remains reachable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const calls = await authenticate(page, "client_viewer");
