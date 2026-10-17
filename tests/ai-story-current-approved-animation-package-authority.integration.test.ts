@@ -96,6 +96,7 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
       }
 
       await sql`INSERT INTO organizations (id, name, slug) VALUES (${ids.org}, 'Approved Package Test', ${`approved-package-${ids.org.slice(0, 8)}`})`;
+      await sql`UPDATE organizations SET plan = 'agency' WHERE id = ${ids.org}`;
       await sql`INSERT INTO workspaces (id, org_id, name, slug) VALUES (${ids.workspace}, ${ids.org}, 'Approved Package Test', ${`approved-package-${ids.workspace.slice(0, 8)}`})`;
       await sql`INSERT INTO workspace_members (org_id, workspace_id, user_id, role) VALUES (${ids.org}, ${ids.workspace}, ${ids.user}, 'admin')`;
       await sql`INSERT INTO campaigns (id, org_id, workspace_id, name) VALUES (${ids.campaign}, ${ids.org}, ${ids.workspace}, 'Approved Package Test')`;
