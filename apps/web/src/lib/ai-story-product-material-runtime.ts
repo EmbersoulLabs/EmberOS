@@ -5,6 +5,7 @@ import {
   AiStoryAuthoritativeSceneProductBindingSchema,
   freezePhotoSceneExtractionInput,
   resolveExplicitAiStorySceneGenerationAuthority,
+  type AiStoryCanonicalScene,
   type AiStoryEffectiveSceneGenerationAuthority,
   type ProductVisualMaterialSelectionAuthority,
 } from "@ceo-agent/shared";
@@ -179,4 +180,80 @@ export async function resolveCurrentSceneProductMaterialForScheduling(input: {
     }
   }
   return selection;
+}
+
+const PLANNING_PRODUCT_MATERIAL_AUTHORITY_CODES = new Set([
+  "DERIVATIVE_AUTHORITY_MISMATCH",
+  "PRODUCT_AUTHORITY_MISMATCH",
+  "SCENE_PRODUCT_AUTHORITY_REQUIRED",
+  "SUITABILITY_AUTHORITY_INVALID",
+  "PREPARATION_CAPABILITY_MISMATCH",
+  "EFFECTIVE_GENERATION_AUTHORITY_INVALID",
+  "PRODUCT_MATERIAL_AUTHORITY_INVALID",
+  "PRODUCT_MATERIAL_PREPARATION_REQUIRED",
+  "PRODUCT_MATERIAL_UNUSABLE",
+  "EXACT_STORY_PRODUCT_AUTHORITY_REQUIRED",
+  "DERIVATIVE_LINEAGE_AMBIGUOUS",
+  "PRODUCT_SOURCE_VARIANT_AMBIGUOUS",
+  "PRODUCT_BACKGROUND_SUITABILITY_AUTHORITY_REQUIRED",
+  "CURRENT_STORY_VERSION_REQUIRED",
+  "CURRENT_CANONICAL_SCENE_REQUIRED",
+  "CURRENT_SCENE_PRODUCT_BINDING_REQUIRED",
+  "SCENE_PRODUCT_VISUAL_IDENTITY_REQUIREMENT_UNRESOLVED",
+  "SCENE_PRODUCT_IDENTITY_INVALID",
+  "CURRENT_STORY_PRODUCT_SOURCE_MISMATCH",
+]);
+
+export function readPlanningProductMaterialAuthorityError(
+  error: unknown,
+): { code: string; message: string } | null {
+  if (!(error instanceof Error) || !("code" in error)) return null;
+  const code = (error as Error & { code?: unknown }).code;
+  if (typeof code !== "string" || !PLANNING_PRODUCT_MATERIAL_AUTHORITY_CODES.has(code)) return null;
+  return { code, message: error.message };
+}
+
+/**
+ * Shared Planning authority gate for Readiness and Approval.
+ * Image-conditioned Scenes revalidate the exact current Product material.
+ * Character-only TEXT_TO_VIDEO Scenes contribute no Product material fingerprint.
+ */
+export async function revalidatePlanningProductMaterialAuthority(input: {
+  orgId: string;
+  workspaceId: string;
+  campaignId: string;
+  storyId: string;
+  storyVersionId: string;
+  actorUserId: string;
+  canonicalScenes: readonly Pick<
+    AiStoryCanonicalScene,
+    "sceneId" | "sceneVersionId" | "generationAuthority"
+  >[];
+}): Promise<{ fingerprint: string }> {
+  const sceneFingerprints: { sceneId: string; fingerprint: string | null }[] = [];
+  for (const scene of input.canonicalScenes) {
+    const authority = resolveExplicitAiStorySceneGenerationAuthority(scene.generationAuthority);
+    if (authority.strategy === "TEXT_TO_VIDEO") {
+      sceneFingerprints.push({ sceneId: scene.sceneId, fingerprint: null });
+      continue;
+    }
+    const selection = await resolveCurrentSceneProductMaterialForScheduling({
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      campaignId: input.campaignId,
+      storyId: input.storyId,
+      storyVersionId: input.storyVersionId,
+      sceneId: scene.sceneId,
+      sceneVersionId: scene.sceneVersionId,
+      actorUserId: input.actorUserId,
+      generationAuthority: authority,
+    });
+    sceneFingerprints.push({ sceneId: scene.sceneId, fingerprint: selection.fingerprint });
+  }
+  return {
+    fingerprint: sha256CanonicalIntegrityHash({
+      kind: "planning-product-material-authority.v1",
+      scenes: sceneFingerprints,
+    }),
+  };
 }

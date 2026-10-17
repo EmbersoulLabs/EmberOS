@@ -163,6 +163,7 @@ jobs:
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
           tests/photo-scene-reused-derivative-campaign-authorization-convergence.integration.test.ts
+          tests/ai-story-authority-consistency-http-postgres.integration.test.ts
 
       - name: Apply AI Story episode revision persistence
         run: pnpm --filter @ceo-agent/db sql:ai-story-episode-revision-persistence
@@ -420,6 +421,9 @@ jobs:
 
       - name: Wave 5 AI Story normal-user UI browser E2E
         run: pnpm exec playwright test e2e/ai-story-ui-wave5.spec.ts
+
+      - name: Planning authority consistency browser E2E
+        run: pnpm exec playwright test e2e/ai-story-authority-consistency.spec.ts
 
       - name: Typecheck
         run: pnpm typecheck

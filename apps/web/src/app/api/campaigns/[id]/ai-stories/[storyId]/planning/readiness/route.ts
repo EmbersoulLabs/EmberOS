@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { getDb, PlatformAdminRepositoryImpl, prepareEpisodePlanningExecutionReadiness, requireActivePlatformAdminAssignment, schema } from "@ceo-agent/db";
+import { getDb, PlatformAdminRepositoryImpl, prepareEpisodePlanningExecutionReadiness, requireActivePlatformAdminAssignment, resolveCurrentFrozenCanonicalSceneSet, schema } from "@ceo-agent/db";
 import { AuthoritativeAnimationPackagePayloadSchema, EpisodeProjectedAuthorityError, isUuid } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
@@ -7,6 +7,7 @@ import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
 import { getLatestCompleteAnimationPackageForStory } from "@/lib/ai-story-planning-service";
 import { AiStoryExecutionCapabilityError, fetchLocalGpuPlanningCapabilityAuthority } from "@/lib/ai-story-execution-capability";
+import { readPlanningProductMaterialAuthorityError, revalidatePlanningProductMaterialAuthority } from "@/lib/ai-story-product-material-runtime";
 
 export async function GET(
   request: Request,
@@ -27,7 +28,9 @@ export async function GET(
     if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
     const animationPackage = await getLatestCompleteAnimationPackageForStory(db, { campaignId, storyId, workspaceId: campaign.workspaceId });
     if (!animationPackage) return apiError("Complete Animation Package not found — finish planning stages first", "NOT_FOUND", 404);
-    const readiness = await prepareEpisodePlanningExecutionReadiness({
+    let readiness: Awaited<ReturnType<typeof prepareEpisodePlanningExecutionReadiness>> & {
+      productMaterialFingerprint?: string | null;
+    } = await prepareEpisodePlanningExecutionReadiness({
       orgId: campaign.orgId,
       workspaceId: campaign.workspaceId,
       campaignId,
@@ -35,6 +38,49 @@ export async function GET(
       storyVersionId: loaded.currentVersion.id,
       actorUserId: user.id,
     }, animationPackage.id, db);
+    if (readiness.status === "PASS") {
+      try {
+        const canonicalScenes = await resolveCurrentFrozenCanonicalSceneSet(db, {
+          orgId: campaign.orgId,
+          workspaceId: campaign.workspaceId,
+          campaignId,
+          storyId,
+          storyVersionId: loaded.currentVersion.id,
+        });
+        if (!canonicalScenes) {
+          throw new EpisodeProjectedAuthorityError(
+            "EPISODE_DISPATCH_SOURCE_MISSING",
+            "Planning readiness lost the current FROZEN Canonical Scene set",
+          );
+        }
+        const material = await revalidatePlanningProductMaterialAuthority({
+          orgId: campaign.orgId,
+          workspaceId: campaign.workspaceId,
+          campaignId,
+          storyId,
+          storyVersionId: loaded.currentVersion.id,
+          actorUserId: user.id,
+          canonicalScenes,
+        });
+        readiness = { ...readiness, productMaterialFingerprint: material.fingerprint };
+      } catch (error) {
+        const authority = readPlanningProductMaterialAuthorityError(error);
+        if (!authority) throw error;
+        return apiSuccess({ readiness: {
+          ...readiness,
+          status: "BLOCK" as const,
+          productMaterialFingerprint: null,
+          findings: [...readiness.findings, {
+            code: authority.code,
+            classification: "CONTRADICTION" as const,
+            owner: "DIRECTOR" as const,
+            scope: "STORY" as const,
+            scriptSceneIds: [],
+            message: authority.message,
+          }],
+        } });
+      }
+    }
     if (readiness.status === "PASS") {
       try {
         const assignment = await requireActivePlatformAdminAssignment({

@@ -536,4 +536,54 @@ describe("private Provider Product material transport", () => {
       campaignId: ID.campaign, productMaterialSelection: authority,
     })).rejects.toThrow(/content hash changed/i);
   });
+
+  it("accepts an unchanged confirmed-variant derivative and rejects substituted or stale identity", () => {
+    const variant = "north-facing";
+    const boundSuitability = suitability("OPAQUE_NOT_ISOLATED");
+    const suitabilityBody = { ...boundSuitability, confirmedVariant: variant };
+    const { fingerprint: _ignored, ...suitabilityAuthority } = suitabilityBody;
+    const certifiedSuitability = {
+      ...suitabilityAuthority,
+      fingerprint: sha256CanonicalIntegrityHash({
+        kind: AI_STORY_PRODUCT_BACKGROUND_SUITABILITY_CONTRACT_VERSION,
+        authority: suitabilityAuthority,
+      }),
+    } as ProductBackgroundSuitabilityAuthority;
+    const boundDerivative = { ...derivative("FOUND"), confirmedVariant: variant };
+    const input = selectionInput({ derivative: boundDerivative, outcome: "OPAQUE_NOT_ISOLATED" });
+    input.sceneProductBinding = { ...input.sceneProductBinding, confirmedVariant: variant };
+    input.resolvedProductAuthority = { ...input.resolvedProductAuthority, confirmedVariant: variant };
+    input.suitability = certifiedSuitability;
+    const first = deriveProductVisualMaterialSelectionAuthority(input);
+    const second = deriveProductVisualMaterialSelectionAuthority(input);
+    expect(first.selection).toBe("EXTRACTED_DERIVATIVE");
+    expect(first.selectedMaterial).toMatchObject({ kind: "EXTRACTED_DERIVATIVE", assetId: ID.derivative });
+    expect(first.productAuthority.sourceAssetId).toBe(ID.productA);
+    expect(first.fingerprint).toBe(second.fingerprint);
+
+    expect(() => deriveProductVisualMaterialSelectionAuthority({
+      ...input,
+      derivativeResolution: derivative("FOUND"),
+    })).toThrowError(ProductVisualMaterialSelectionAuthorityError);
+    try {
+      deriveProductVisualMaterialSelectionAuthority({
+        ...input,
+        derivativeResolution: derivative("FOUND"),
+      });
+    } catch (error) {
+      expect(error).toMatchObject({ code: "DERIVATIVE_AUTHORITY_MISMATCH" });
+    }
+    expect(() => deriveProductVisualMaterialSelectionAuthority({
+      ...input,
+      derivativeResolution: {
+        ...boundDerivative,
+        productAuthorityId: ID.derivative,
+        sourceAssetId: ID.derivative,
+      },
+    })).toThrowError(ProductVisualMaterialSelectionAuthorityError);
+    expect(() => deriveProductVisualMaterialSelectionAuthority({
+      ...input,
+      derivativeResolution: { ...boundDerivative, sourceAssetContentHash: HASH_B },
+    })).toThrowError(ProductVisualMaterialSelectionAuthorityError);
+  });
 });

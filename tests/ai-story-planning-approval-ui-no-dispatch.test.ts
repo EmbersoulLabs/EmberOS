@@ -131,5 +131,15 @@ describe("AI Story planning approval client dispatch", () => {
     expect(route).toContain("frozen.directorFingerprint !== readiness.directorFingerprint");
     expect(route).toContain("frozen.motionFingerprint !== readiness.motionFingerprint");
     expect(route.indexOf("ensureCurrentEpisodeDispatchAuthorityProjection(scope")).toBeLessThan(route.indexOf("setAiStoryStatus(db"));
+    const readinessRoute = await readFile(
+      "apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/readiness/route.ts",
+      "utf8"
+    );
+    const service = await readFile("apps/web/src/lib/ai-story-planning-service.ts", "utf8");
+    expect(readinessRoute).toContain("revalidatePlanningProductMaterialAuthority");
+    expect(service).toContain("revalidatePlanningProductMaterialAuthority");
+    expect(readinessRoute.indexOf("await revalidatePlanningProductMaterialAuthority")).toBeLessThan(
+      readinessRoute.indexOf("await fetchLocalGpuPlanningCapabilityAuthority")
+    );
   });
 });
