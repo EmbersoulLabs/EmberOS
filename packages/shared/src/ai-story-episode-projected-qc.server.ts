@@ -196,6 +196,13 @@ export function projectedDirectorIssues(plan: AiStoryEpisodeProjectedDirectorPla
     if (scene.sceneOrder > 0 && scene.differentiation.state === "NOT_ASSERTED") sceneIssue("DIFFERENTIATION_REQUIREMENT_GATE", `Projected differentiation is not asserted for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.sceneOrder === 0 && scene.differentiation.state === "KNOWN") sceneIssue("DIFFERENTIATION_REQUIREMENT_GATE", `Opening Scene differentiation claims a comparison baseline`, scene.scriptSceneId);
     const identitySensitive = scene.generationAuthority.state === "KNOWN" && scene.generationAuthority.value.productVisualIdentityRequirement === "REQUIRED";
+    if (scene.productBindingIds.length > 0 && !identitySensitive) {
+      sceneIssue(
+        "GENERATION_UNIT_BINDING_GATE",
+        `Product-bound Scene ${scene.scriptSceneId} cannot freeze as reference-free generation`,
+        scene.scriptSceneId,
+      );
+    }
     const safetyMissing = [scene.shots.some((shot) => shot.perspectiveChange.state === "NOT_ASSERTED"), scene.shots.some((shot) => shot.revealsUnseenProductSurface.state === "NOT_ASSERTED"), scene.shots.some((shot) => shot.productIdentityTransformation.state === "NOT_ASSERTED")].some(Boolean);
     if (identitySensitive && safetyMissing) sceneIssue("PRODUCT_CAMERA_SAFETY_GATE", `PROJECTED_PRODUCT_CAMERA_SAFETY_EVIDENCE_REQUIRED for ${scene.scriptSceneId}`, scene.scriptSceneId);
     if (scene.generationAuthority.state === "NOT_ASSERTED") sceneIssue("GENERATION_UNIT_BINDING_GATE", `Projected generation authority is not asserted for ${scene.scriptSceneId}`, scene.scriptSceneId);
