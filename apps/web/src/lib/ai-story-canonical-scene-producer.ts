@@ -151,7 +151,25 @@ export async function ensureCurrentFrozenCanonicalSceneSet(
     productAuthorityIds,
     ...(input.episodeIntent ? { episodeIntent: input.episodeIntent } : {}),
   });
-  if (!script.semanticInputFingerprint || script.semanticInputFingerprint !== semanticInputFingerprint) {
+  const legacySuccessorFingerprint = input.priorScenePlanForStrategySuccessor && input.episodeIntent
+    ? computeAiStoryScriptSemanticInputFingerprint({
+        storyId: input.storyId,
+        storyVersionId: input.storyVersionId,
+        outlineVersionId: outline.outlineVersionId,
+        outlineSourceHash: outline.sourceHash,
+        story: input.story,
+        storyBeats: input.storyBeats,
+        scenePlan: semanticPlan,
+        creativeContext: input.creativeContext,
+        directorThinking: input.directorThinking,
+        characterAuthorities: input.characterAuthorities,
+        productAuthorityIds,
+      })
+    : null;
+  if (
+    !script.semanticInputFingerprint ||
+    (script.semanticInputFingerprint !== semanticInputFingerprint && script.semanticInputFingerprint !== legacySuccessorFingerprint)
+  ) {
     throw new AiStoryCanonicalSceneProducerError("CANONICAL_SCENE_SCRIPT_PLANNING_INPUT_STALE", "Persisted planning semantics no longer match the current FROZEN Script");
   }
   const products = await deps.resolveProducts(input.db, {
