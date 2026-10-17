@@ -129,6 +129,25 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         authorityVersionId: character.characterVersionId,
         authorityFingerprint: character.fingerprint,
       };
+      const planningCharacterAuthority = {
+        characterId: ids.character,
+        characterVersionId: character.characterVersionId,
+        characterFingerprint: character.fingerprint,
+        name: character.name,
+        canonicalFacts: character.canonicalFacts,
+      };
+      const authorityCreativeContext = {
+        ...review.creativeContext,
+        characterContext: {
+          ...review.creativeContext.characterContext,
+          characters: review.creativeContext.characterContext.characters.map((entry) => ({
+            ...entry,
+            id: ids.character,
+            name: character.name,
+            canonicalAuthority: planningCharacterAuthority,
+          })),
+        },
+      };
       let lastOutlineVersionId: string | null = null;
       let lastScriptVersionId: string | null = null;
       establishAuthority = async (storyVersionId, index) => {
@@ -171,9 +190,9 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
             story: review.story,
             storyBeats: review.storyBeats,
             scenePlan: review.scenePlan,
-            creativeContext: review.creativeContext,
+            creativeContext: authorityCreativeContext,
             directorThinking: review.directorThinking,
-            characterAuthorities: [],
+            characterAuthorities: [planningCharacterAuthority],
             productAuthorityIds: [],
           }),
           scenes: [{
@@ -217,6 +236,8 @@ describe.skipIf(!RUN_DB_INTEGRATION).sequential(
         expect(frozenScenes).toHaveLength(1);
         return {
           ...review,
+          characters: authorityCreativeContext.characterContext.characters,
+          creativeContext: authorityCreativeContext,
           canonicalSceneAuthority: buildAiStoryAnimationPackageCanonicalSceneAuthorityV1({
             storyId: ids.story, storyVersionId, scenePlan: review.scenePlan, canonicalScenes: frozenScenes!,
           }),

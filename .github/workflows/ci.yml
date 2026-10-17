@@ -128,6 +128,9 @@ jobs:
       - name: Apply Controlled Self-Use authority
         run: pnpm --filter @ceo-agent/db sql:controlled-self-use-authority
 
+      - name: Apply Global Superadmin entitlement authority
+        run: pnpm --filter @ceo-agent/db sql:global-superadmin-entitlement
+
       - name: Certify Controlled Self-Use budget and security authority
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts
