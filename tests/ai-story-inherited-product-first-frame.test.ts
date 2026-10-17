@@ -308,7 +308,7 @@ describe("inherited product scene first-frame resolution", () => {
           id: "scene-002",
           beatIds: ["beat-001"],
           purpose: "Reveal the accepted product.",
-          durationSec: 4,
+          durationSec: 5,
           transition: "cut",
           continuityNotes: "Product stays the accepted asset.",
           order: 0,

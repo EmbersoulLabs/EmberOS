@@ -1,6 +1,13 @@
 import { eq } from "drizzle-orm";
 import { getDb, PlatformAdminRepositoryImpl, prepareEpisodePlanningExecutionReadiness, requireActivePlatformAdminAssignment, resolveCurrentFrozenCanonicalSceneSet, schema } from "@ceo-agent/db";
-import { AuthoritativeAnimationPackagePayloadSchema, EpisodeProjectedAuthorityError, isUuid } from "@ceo-agent/shared";
+import {
+  AnimationPackagePayloadSchema,
+  assessExecutionUnitDurations,
+  AuthoritativeAnimationPackagePayloadSchema,
+  EpisodeProjectedAuthorityError,
+  isUuid,
+  type ExecutionUnitDurationAssessment,
+} from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
@@ -30,6 +37,7 @@ export async function GET(
     if (!animationPackage) return apiError("Complete Animation Package not found — finish planning stages first", "NOT_FOUND", 404);
     let readiness: Awaited<ReturnType<typeof prepareEpisodePlanningExecutionReadiness>> & {
       productMaterialFingerprint?: string | null;
+      executionUnitDurations?: ExecutionUnitDurationAssessment;
     } = await prepareEpisodePlanningExecutionReadiness({
       orgId: campaign.orgId,
       workspaceId: campaign.workspaceId,
@@ -38,6 +46,28 @@ export async function GET(
       storyVersionId: loaded.currentVersion.id,
       actorUserId: user.id,
     }, animationPackage.id, db);
+    const durationPayload = AnimationPackagePayloadSchema.safeParse(animationPackage.payload);
+    if (durationPayload.success) {
+      const executionUnitDurations = assessExecutionUnitDurations(durationPayload.data);
+      readiness = { ...readiness, executionUnitDurations };
+      if (executionUnitDurations.status !== "COMPLIANT") {
+        const uncertified = executionUnitDurations.scenes.filter((scene) => !scene.certified);
+        readiness = {
+          ...readiness,
+          status: "BLOCK",
+          findings: [...readiness.findings, {
+            code: executionUnitDurations.status === "CREATIVE_DECISION_REQUIRED"
+              ? "PLANNING_EXECUTION_UNIT_CREATIVE_DECISION_REQUIRED"
+              : "PLANNING_EXECUTION_UNIT_REGROUP_REQUIRED",
+            classification: executionUnitDurations.decision ? "MISSING_EVIDENCE" as const : "CONTRADICTION" as const,
+            owner: "DIRECTOR" as const,
+            scope: "STORY" as const,
+            scriptSceneIds: [],
+            message: `${uncertified.map((scene) => `${scene.sceneId} (${scene.durationSec}s)`).join(", ")} ${uncertified.length === 1 ? "is" : "are"} outside the certified ${executionUnitDurations.minSec}–${executionUnitDurations.maxSec} whole-second generation range. ${executionUnitDurations.decision?.question ?? "Frozen continuity supports regrouping; a human-approved successor revision is required."}`,
+          }],
+        };
+      }
+    }
     if (readiness.status === "PASS") {
       try {
         const canonicalScenes = await resolveCurrentFrozenCanonicalSceneSet(db, {

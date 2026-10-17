@@ -9,7 +9,14 @@ import {
   resolveCurrentFrozenCanonicalSceneSet,
   schema,
 } from "@ceo-agent/db";
-import { AuthoritativeAnimationPackagePayloadSchema, EpisodeProjectedAuthorityError, isUuid, type AiStoryStatus } from "@ceo-agent/shared";
+import {
+  AnimationPackagePayloadSchema,
+  assessExecutionUnitDurations,
+  AuthoritativeAnimationPackagePayloadSchema,
+  EpisodeProjectedAuthorityError,
+  isUuid,
+  type AiStoryStatus,
+} from "@ceo-agent/shared";
 import { NextResponse } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
@@ -69,6 +76,16 @@ export async function POST(
         "NOT_FOUND",
         404
       );
+    }
+    const executionUnitDurations = assessExecutionUnitDurations(
+      AnimationPackagePayloadSchema.parse(animationPackage.payload),
+    );
+    if (executionUnitDurations.status !== "COMPLIANT") {
+      return NextResponse.json({
+        error: "Planning contains Scenes outside the certified whole-second generation range.",
+        code: "PLANNING_EXECUTION_UNIT_DURATION_UNSUPPORTED",
+        executionUnitDurations,
+      }, { status: 409 });
     }
     const scope = {
       orgId: campaign.orgId,

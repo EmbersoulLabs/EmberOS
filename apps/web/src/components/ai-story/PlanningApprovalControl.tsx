@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import type { ExecutionUnitDurationAssessment } from "@ceo-agent/shared";
 import {
   PlanningApprovalClientError,
   createPlanningApprovalRequestGate,
@@ -16,6 +17,7 @@ type ReadinessFinding = {
 type Readiness = {
   status: "PASS" | "BLOCK";
   findings: ReadinessFinding[];
+  executionUnitDurations?: ExecutionUnitDurationAssessment;
 };
 
 export function PlanningApprovalControl({
@@ -131,6 +133,33 @@ export function PlanningApprovalControl({
             ))}
           </ul>
         ) : readiness?.status === "PASS" ? <p className="mt-2 text-sm text-green-700">Director, Motion, object-state and camera authority are complete and consistent.</p> : null}
+        {readiness?.executionUnitDurations && readiness.executionUnitDurations.status !== "COMPLIANT" ? (
+          <div className="mt-3 space-y-2 text-sm text-ink-secondary" data-testid="planning-execution-units">
+            <p className="font-medium text-navy">
+              Generation units (certified {readiness.executionUnitDurations.minSec}–{readiness.executionUnitDurations.maxSec}s, Episode {readiness.executionUnitDurations.episodeDurationSec}s)
+            </p>
+            <ul className="space-y-1">
+              {readiness.executionUnitDurations.units.map((unit) => (
+                <li key={unit.sceneIds.join("+")} data-testid="planning-execution-unit">
+                  {unit.sceneIds.join(" + ")} · {unit.durationSec}s · {unit.certified ? "certified" : "outside range"}
+                  {unit.basis === "FROZEN_CONTINUOUS_SHOT" ? ` · grouped by frozen continuity: ${unit.evidence.join(" ")}` : ""}
+                </li>
+              ))}
+            </ul>
+            {readiness.executionUnitDurations.decision ? (
+              <ul className="space-y-1" data-testid="planning-execution-unit-decision">
+                {readiness.executionUnitDurations.decision.options.map((option) => (
+                  <li key={option.kind} data-testid="planning-execution-unit-option">
+                    <span className="font-medium">
+                      {option.kind === "CONFIRM_CONTINUOUS_TAKE" ? "Confirm one continuous take" : "Change Scene durations"}
+                    </span>
+                    {` (Episode ${option.episodeDurationSec}s): ${option.creativeChanges.join("; ")}`}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
       </div>
       <button
         type="submit"

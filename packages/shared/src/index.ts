@@ -104,6 +104,7 @@ export * from "./ai-story-local-generation";
 export * from "./ai-story-generation-result";
 export * from "./ai-story-local-gpu-result-authority";
 export * from "./ai-story-local-gpu-audio-evidence";
+export * from "./ai-story-execution-unit-duration";
 export * from "./ai-story-v2v-execution";
 export * from "./ai-story-video-asset-analysis";
 export * from "./ai-story-video-strategy-router";

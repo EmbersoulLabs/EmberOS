@@ -2,6 +2,7 @@ import { LocalGpuCloudAdapter, loadLocalGpuConfigFromEnv } from "@ceo-agent/agen
 import type { PlatformAdminAssignment, ScenePlanItem } from "@ceo-agent/shared";
 import {
   AI_STORY_EXECUTION_CAPABILITY_AUTHORITY_VERSION,
+  isCertifiedExecutionUnitDuration,
   type AiStoryExecutionCapabilityAuthority,
   type AiStorySceneGenerationAuthority,
 } from "@ceo-agent/shared";
@@ -45,8 +46,7 @@ function assertSceneCapability(
   }
   const workflow = workflowFor(authority);
   // Same rule the Desktop submit builders enforce, applied before the plan is frozen.
-  const durationMs = Math.round(scene.durationSec * 1000);
-  if (durationMs % 1000 !== 0 || durationMs < LOCAL_GPU_DURATION_MIN_SEC * 1000 || durationMs > LOCAL_GPU_DURATION_MAX_SEC * 1000) {
+  if (!isCertifiedExecutionUnitDuration(scene.durationSec)) {
     throw new AiStoryExecutionCapabilityError(
       "PLANNING_EXECUTION_DURATION_UNSUPPORTED",
       `Scene ${scene.id} lasts ${scene.durationSec}s; ${workflow} on LOCAL_GPU accepts whole seconds from ${LOCAL_GPU_DURATION_MIN_SEC}s to ${LOCAL_GPU_DURATION_MAX_SEC}s`,
