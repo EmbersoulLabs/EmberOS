@@ -382,6 +382,42 @@ function stateFact(fact: EpisodeProjectedStateFact): EpisodeProjectedStateFact {
   };
 }
 
+function projectUnambiguousPhysicalLineage(input: {
+  actions: readonly { entryId: string; action: string; subjectId: string; objectId?: string | null; stateDelta?: EpisodeProjectedStateFact | null }[];
+  sceneStateDeltas: readonly EpisodeProjectedStateFact[];
+  entryState: readonly EpisodeProjectedStateFact[];
+  exitState: readonly EpisodeProjectedStateFact[];
+  events: readonly { entryId: string; action: string; subjectId: string; objectId?: string | null; stateDelta?: EpisodeProjectedStateFact | null }[];
+}) {
+  const physicalFacts = input.sceneStateDeltas.filter((fact) => PHYSICAL_SCRIPT_DIMENSIONS.has(fact.dimension));
+  const physicalChanges = physicalFacts.filter(isPhysicalChange);
+  if (physicalFacts.length !== 1 || physicalChanges.length !== 1 || input.actions.length !== 1 || input.events.length !== 1) {
+    return { actions: input.actions, events: input.events };
+  }
+  const delta = physicalChanges[0]!;
+  const action = input.actions[0]!;
+  const event = input.events[0]!;
+  const actionParticipantIds = new Set([action.subjectId, action.objectId].filter((value): value is string => Boolean(value)));
+  const eventParticipantIds = new Set([event.subjectId, event.objectId].filter((value): value is string => Boolean(value)));
+  const entryFacts = input.entryState.filter((fact) => fact.dimension === delta.dimension && fact.subjectId === delta.subjectId);
+  const exitFacts = input.exitState.filter((fact) => fact.dimension === delta.dimension && fact.subjectId === delta.subjectId);
+  const existing = [action.stateDelta, event.stateDelta].filter((fact): fact is EpisodeProjectedStateFact => Boolean(fact));
+  const aligned = action.entryId === event.entryId
+    && action.action === event.action
+    && actionParticipantIds.has(delta.subjectId)
+    && eventParticipantIds.has(delta.subjectId)
+    && entryFacts.length === 1
+    && entryFacts[0]!.value === delta.fromValue
+    && exitFacts.length === 1
+    && exitFacts[0]!.value === delta.value
+    && existing.every((fact) => samePhysicalChange(fact, delta));
+  if (!aligned) return { actions: input.actions, events: input.events };
+  return {
+    actions: [{ ...action, stateDelta: action.stateDelta ?? stateFact(delta) }],
+    events: [{ ...event, stateDelta: event.stateDelta ?? stateFact(delta) }],
+  };
+}
+
 export function projectEpisodeMotionScenes(
   source: EpisodeProjectedAuthoritySource,
   directorScenes: readonly AiStoryEpisodeProjectedDirectorScene[],
@@ -399,28 +435,37 @@ export function projectEpisodeMotionScenes(
     const cameraBehaviors = new Set(direction.shots.map((shot) => `${shot.cameraType}|${shot.cameraMovement}`));
     const durationSec = direction.shots.reduce((total, shot) => total + shot.durationSec, 0);
     const authority = direction.generationAuthority.state === "KNOWN" ? direction.generationAuthority.value : null;
+    const projectedLineage = projectUnambiguousPhysicalLineage({
+      actions: script.actions,
+      sceneStateDeltas: script.sceneStateDeltas,
+      entryState: scene.entryState,
+      exitState: scene.exitState,
+      events: scene.events,
+    });
+    const projectedActions = projectedLineage.actions.map((action) => ({
+      entryId: action.entryId,
+      semanticAction: action.action,
+      subjectId: action.subjectId,
+      objectId: action.objectId ?? null,
+      stateDelta: action.stateDelta ? stateFact(action.stateDelta) : null,
+    }));
+    const projectedEvents = projectedLineage.events.map((event) => ({
+      entryId: event.entryId,
+      type: "ACTION" as const,
+      action: event.action,
+      subjectId: event.subjectId,
+      objectId: event.objectId ?? null,
+      stateDelta: event.stateDelta ? stateFact(event.stateDelta) : null,
+    }));
     return {
       scriptSceneId: direction.scriptSceneId,
       sceneOrder: direction.sceneOrder,
-      actions: script.actions.map((action) => ({
-        entryId: action.entryId,
-        semanticAction: action.action,
-        subjectId: action.subjectId,
-        objectId: action.objectId ?? null,
-        stateDelta: action.stateDelta ? stateFact(action.stateDelta) : null,
-      })),
+      actions: projectedActions,
       sceneStateIn: script.sceneStateIn.map(stateFact),
       sceneStateDeltas: script.sceneStateDeltas.map(stateFact),
       sceneStateOut: script.sceneStateOut.map(stateFact),
       entryState: scene.entryState.map(stateFact),
-      events: scene.events.map((event) => ({
-        entryId: event.entryId,
-        type: "ACTION" as const,
-        action: event.action,
-        subjectId: event.subjectId,
-        objectId: event.objectId ?? null,
-        stateDelta: event.stateDelta ? stateFact(event.stateDelta) : null,
-      })),
+      events: projectedEvents,
       exitState: scene.exitState.map(stateFact),
       shots: direction.shots.map((shot) => ({
         shotId: shot.shotId,
@@ -444,19 +489,11 @@ export function projectEpisodeMotionScenes(
         productIdentitySensitive: authority?.productVisualIdentityRequirement === "REQUIRED",
       },
       physicalCompletion: proveEpisodeProjectedPhysicalCompletion({
-        actions: script.actions.map((action) => ({
-          entryId: action.entryId,
-          semanticAction: action.action,
-          stateDelta: action.stateDelta ? stateFact(action.stateDelta) : null,
-        })),
+        actions: projectedActions,
         sceneStateDeltas: script.sceneStateDeltas.map(stateFact),
         entryState: scene.entryState.map(stateFact),
         exitState: scene.exitState.map(stateFact),
-        events: scene.events.map((event) => ({
-          entryId: event.entryId,
-          action: event.action,
-          stateDelta: event.stateDelta ? stateFact(event.stateDelta) : null,
-        })),
+        events: projectedEvents,
       }),
       cameraStateBoundary: notAsserted,
     };

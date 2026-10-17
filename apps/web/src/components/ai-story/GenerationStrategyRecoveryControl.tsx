@@ -16,6 +16,7 @@ export function GenerationStrategyRecoveryControl({
   onError: (message: string) => void;
 }) {
   const [pending, setPending] = useState(false);
+  const [recovered, setRecovered] = useState(false);
   async function recover() {
     if (pending) return;
     setPending(true);
@@ -29,12 +30,14 @@ export function GenerationStrategyRecoveryControl({
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Generation strategy recovery failed");
       await onRecovered();
+      setRecovered(true);
     } catch (error) {
       onError(error instanceof Error ? error.message : "Generation strategy recovery failed");
     } finally {
       setPending(false);
     }
   }
+  if (recovered) return null;
   return (
     <section className="rounded-lg border border-amber-200 bg-amber-50 p-3" data-testid="generation-strategy-recovery">
       <p className="text-sm font-medium text-amber-950">Historical generation strategy</p>

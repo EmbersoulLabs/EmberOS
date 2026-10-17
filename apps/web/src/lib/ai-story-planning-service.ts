@@ -20,6 +20,7 @@ import {
   type CreativeContext,
   type NarrativeIntegrationReport,
   type StoryPlanningDraft,
+  bindProductShotCameraSafety,
 } from "@ceo-agent/shared";
 import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiStoryAnimationPackageCanonicalSceneAuthorityV1, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { resolveCurrentSceneProductMaterialForScheduling } from "@/lib/ai-story-product-material-runtime";
@@ -376,7 +377,8 @@ export async function createGenerationStrategySuccessor(
   const source = AuthoritativeAnimationPackagePayloadSchema.parse(sourceRow.payload);
   const frozenAuthority = await resolveFrozenSuccessorAuthority(db, input);
   const scenePlan = recoverScenePlanGenerationAuthorities(source.scenePlan, frozenAuthority);
-  if (sameJson(scenePlan, source.scenePlan)) {
+  const recoveredShotPlan = bindProductShotCameraSafety({ scenePlan, shotPlan: source.shotPlan });
+  if (sameJson(scenePlan, source.scenePlan) && sameJson(recoveredShotPlan, source.shotPlan)) {
     if (source.strategyRecovery && source.sourcePlanningPackageId) {
       const [supersededSourceRow] = await db.select().from(schema.aiStoryAnimationPackages).where(and(
         eq(schema.aiStoryAnimationPackages.id, source.strategyRecovery.supersedesAnimationPackageId),
@@ -404,11 +406,17 @@ export async function createGenerationStrategySuccessor(
       };
     }
   }
-  const sourceStrategyFingerprint = sha256CanonicalIntegrityHash(source.scenePlan.map((scene) => ({
-    sceneId: scene.id,
-    generationAuthority: scene.generationAuthority,
-    groundingLineage: scene.groundingLineage,
-  })));
+  const sourceStrategyFingerprint = sha256CanonicalIntegrityHash({
+    scenes: scenePlan.map((scene) => ({
+      sceneId: scene.id,
+      generationAuthority: scene.generationAuthority,
+      groundingLineage: scene.groundingLineage,
+    })),
+    shots: recoveredShotPlan.map((shot) => ({
+      shotId: shot.id,
+      cameraSafety: shot.cameraSafety ?? null,
+    })),
+  });
   const strategyRecovery = {
     contractVersion: "ai-story-generation-strategy-successor.v1" as const,
     supersedesAnimationPackageId: sourceRow.id,
@@ -423,7 +431,7 @@ export async function createGenerationStrategySuccessor(
     directorThinking: source.directorThinking,
     storyBeats: source.storyBeats,
     scenePlan,
-    shotPlan: source.shotPlan,
+    shotPlan: recoveredShotPlan,
     characterContinuity: source.characterContinuity,
     worldContinuity: source.worldContinuity,
     episodeContinuity: source.episodeContinuity,
@@ -444,7 +452,7 @@ export async function createGenerationStrategySuccessor(
       && candidate.strategyRecovery.sourceStrategyFingerprint === sourceStrategyFingerprint;
   });
   const draftRow = existingDraftRow ?? await savePlanningDraft(db, { ...input, payload: draft });
-  const shotPlan = source.shotPlan.map((shot) => {
+  const shotPlan = recoveredShotPlan.map((shot) => {
     if (!shot.authorityLineage) return shot;
     const scene = scenePlan.find((item) => item.id === shot.sceneId);
     if (!scene?.generationAuthority) return shot;

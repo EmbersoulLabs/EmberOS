@@ -85,6 +85,54 @@ describe("projected QC evidence closure", () => {
     expect(completion({ eventDelta: false })).toEqual({ state: "NOT_ASSERTED" });
   });
 
+  it("recovers an unambiguous frozen physical completion without rewriting frozen facts", () => {
+    const source = projectedSource();
+    const physicalDelta = { dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "spinning", fromValue: "upright" };
+    source.scriptScenes[1] = {
+      ...source.scriptScenes[1]!,
+      actions: [{ entryId: USER, action: "The product blades begin spinning.", subjectId: SUBJECT }],
+      sceneStateIn: [{ dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "upright" }],
+      sceneStateDeltas: [physicalDelta],
+      sceneStateOut: [{ dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "spinning" }],
+    };
+    source.canonicalScenes[1] = {
+      ...source.canonicalScenes[1]!,
+      entryState: [{ dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "upright" }],
+      events: [{ entryId: USER, type: "ACTION", action: "The product blades begin spinning.", subjectId: SUBJECT, objectId: null, stateDelta: null }],
+      exitState: [{ dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "spinning" }],
+    };
+    const motion = projectEpisodeMotionScenes(source, projectEpisodeDirectorScenes(source));
+    expect(motion[1]?.physicalCompletion).toEqual({ state: "KNOWN", value: { dimension: "PHYSICAL_CONDITION", fromValue: "upright", toValue: "spinning" } });
+    expect(motion[1]?.actions[0]?.stateDelta).toEqual(physicalDelta);
+    expect(motion[1]?.events[0]?.stateDelta).toEqual(physicalDelta);
+    expect(source.scriptScenes[1]?.actions[0]?.stateDelta).toBeUndefined();
+    expect(source.canonicalScenes[1]?.events[0]?.stateDelta).toBeNull();
+  });
+
+  it("keeps ambiguous frozen physical lineage unasserted", () => {
+    const source = projectedSource();
+    source.scriptScenes[1] = {
+      ...source.scriptScenes[1]!,
+      actions: [{ entryId: USER, action: "The product blades begin spinning.", subjectId: SUBJECT }],
+      sceneStateIn: [{ dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "upright" }],
+      sceneStateDeltas: [
+        { dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "spinning", fromValue: "upright" },
+        { dimension: "LOCATION", subjectId: SUBJECT, value: "shelf", fromValue: "tabletop" },
+      ],
+      sceneStateOut: [{ dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "spinning" }],
+    };
+    source.canonicalScenes[1] = {
+      ...source.canonicalScenes[1]!,
+      entryState: [{ dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "upright" }],
+      events: [{ entryId: USER, type: "ACTION", action: "The product blades begin spinning.", subjectId: SUBJECT, objectId: null, stateDelta: null }],
+      exitState: [{ dimension: "PHYSICAL_CONDITION", subjectId: SUBJECT, value: "spinning" }],
+    };
+    const motion = projectEpisodeMotionScenes(source, projectEpisodeDirectorScenes(source));
+    expect(motion[1]?.physicalCompletion).toEqual({ state: "NOT_ASSERTED" });
+    expect(motion[1]?.actions[0]?.stateDelta).toBeNull();
+    expect(motion[1]?.events[0]?.stateDelta).toBeNull();
+  });
+
   it("certifies bounded persisted shot evidence without fabricating camera state", () => {
     expect(evaluateEpisodeProjectedCameraExecution([{ cameraType: "static", cameraMovement: "none" }])).toEqual({ outcome: "BOUNDED_CAMERA_EXECUTION_PROVEN", families: ["STATIC"] });
     expect(evaluateEpisodeProjectedCameraExecution([{ cameraType: "static", cameraMovement: "slow push-in" }])).toEqual({ outcome: "BOUNDED_CAMERA_EXECUTION_PROVEN", families: ["SLOW_PUSH_IN"] });
