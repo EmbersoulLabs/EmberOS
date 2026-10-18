@@ -58,6 +58,7 @@ export async function processAiStoryLocalMediaJob(job:LocalMediaJob) {
     await results.accept(materializeLocalGenerationResult({
       package:pkg,output:accepted.output,animationPackageId:plan.animationPackageId,sceneId:scene.sceneId,sceneOrder:scene.sceneOrder,
       storagePath:asset.storagePath,byteSize:bytes.length,decodable:true,
+      sourceKind:desktopHash===undefined?"MANUAL_LOCAL":"LOCAL_GPU_WORKER",
     }));
     return;
   }

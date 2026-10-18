@@ -4,6 +4,7 @@ import {
   AiStoryPostGenerationQcEvaluationSchema, CanonicalSceneResultSchema,
   AiStoryProviderAttemptBindingSchema,
   LocalGpuGenerationInputAuthoritySchema,
+  localGenerationOutputIdOf,
   localGpuServerEnvironment,
   postQcAllowsHumanApproval,
   type AiStoryGenerationResult, type AiStoryGenerationResultDecision,
@@ -105,10 +106,11 @@ export class AiStoryGenerationResultRepository {
           runtime.animationPackageId!==plan.animationPackageId || !runtime.orderedSceneExecutionIds.includes(result.sceneExecutionId)) {
         throw new Error("GENERATION_RESULT_RUNTIME_AUTHORITY_MISMATCH");
       }
-      if (result.source.sourceKind === "MANUAL_LOCAL") {
+      const localOutputId = localGenerationOutputIdOf(result.source);
+      if (localOutputId !== null) {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${plan.id}))`);
         const [output] = await tx.select().from(schema.aiStoryLocalGenerationOutputs).where(
-          eq(schema.aiStoryLocalGenerationOutputs.outputId, result.source.localGenerationOutputId),
+          eq(schema.aiStoryLocalGenerationOutputs.outputId, localOutputId),
         ).limit(1);
         const [pkg] = output ? await tx.select().from(schema.aiStoryLocalGenerationPackages).where(
           eq(schema.aiStoryLocalGenerationPackages.packageId, output.packageId),
@@ -147,6 +149,27 @@ export class AiStoryGenerationResultRepository {
             asset.workspaceId !== plan.workspaceId || asset.orgId !== plan.orgId || asset.campaignId !== plan.campaignId ||
             asset.contentHash !== result.media.contentHash || asset.storagePath !== result.media.storagePath) {
           throw new Error("GENERATION_RESULT_LOCAL_SOURCE_MISMATCH");
+        }
+        const desktopReserved = asset.metadata?.sourceKind === "LOCAL_GPU_WORKER";
+        if (result.source.sourceKind === "MANUAL_LOCAL" && desktopReserved) {
+          throw new Error("GENERATION_RESULT_LOCAL_SOURCE_MISMATCH");
+        }
+        if (result.source.sourceKind === "LOCAL_GPU_WORKER") {
+          // Origin is proven only by server facts: the authority-reserved asset and the Worker-bound Desktop hash.
+          const [authority] = await tx.select({ id: schema.aiStoryLocalGpuDispatchAuthorities.dispatchAuthorityId })
+            .from(schema.aiStoryLocalGpuDispatchAuthorities).where(and(
+              eq(schema.aiStoryLocalGpuDispatchAuthorities.workspaceId, plan.workspaceId),
+              eq(schema.aiStoryLocalGpuDispatchAuthorities.sceneExecutionId, result.sceneExecutionId),
+              eq(schema.aiStoryLocalGpuDispatchAuthorities.packageId, pkg.packageId),
+              eq(schema.aiStoryLocalGpuDispatchAuthorities.runtimeAuthorizationId, runtime.runtimeAuthorizationId),
+            )).limit(1);
+          if (!desktopReserved || !authority || release === true || release.executionMode !== "LOCAL_GPU" ||
+              asset.metadata?.desktopResultContentHash !== result.media.contentHash ||
+              asset.id !== deterministicPersistenceUuid("local-gpu-output-asset", {
+                packageId: pkg.packageId, runtimeAuthorizationId: runtime.runtimeAuthorizationId,
+              })) {
+            throw new Error("GENERATION_RESULT_LOCAL_GPU_SOURCE_MISMATCH");
+          }
         }
       } else if (result.source.sourceKind === "REMOTE_PROVIDER") {
         if (!result.compiledRequestId || !result.compiledRequestFingerprint) {
@@ -331,7 +354,7 @@ export class AiStoryGenerationResultRepository {
     extractionContractVersion?:string|null; extractedAt:Date;
   }) {
     return this.db.transaction(async (tx) => {
-      const localPackageId = result.source.sourceKind === "MANUAL_LOCAL"
+      const localPackageId = localGenerationOutputIdOf(result.source) !== null
         ? result.inputAuthority.localPackageId
         : null;
       const [localPackage] = typeof localPackageId === "string"
@@ -477,7 +500,7 @@ export class AiStoryGenerationResultRepository {
       if (localGpuDecisionDisposition(existing ? { decision: existing.decision, actorUserId: existing.actorUserId } : null, decision) === "replay") {
         return { decision: AiStoryGenerationResultDecisionSchema.parse(existing!.fact), replayed: true };
       }
-      const localPackageId = result.source.sourceKind === "MANUAL_LOCAL"
+      const localPackageId = localGenerationOutputIdOf(result.source) !== null
         ? result.inputAuthority.localPackageId
         : null;
       const [localPackage] = typeof localPackageId === "string"

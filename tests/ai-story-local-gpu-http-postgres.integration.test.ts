@@ -710,11 +710,26 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
         select generation_result_id id, source_kind "sourceKind", content_hash hash, scene_execution_id scene, execution_plan_id plan, asset_id "assetId",
           coalesce(local_worker_output_id, local_generation_output_id) "outputId", provider_attempt_id attempt
         from ai_story_generation_results where workspace_id=${ids.workspace}`;
-      // Desktop bytes reuse the canonical manual-local VALIDATE_OUTPUT authority; no Provider Attempt is invented.
-      expect(result).toMatchObject({ sourceKind: "MANUAL_LOCAL", hash: sha(output), scene: ids.sceneExecution, plan: ids.plan, assetId: asset!.id, attempt: null });
+      // Desktop bytes reuse the canonical local VALIDATE_OUTPUT authority but keep their LOCAL_GPU origin; no Provider Attempt is invented.
+      expect(result).toMatchObject({ sourceKind: "LOCAL_GPU_WORKER", hash: sha(output), scene: ids.sceneExecution, plan: ids.plan, assetId: asset!.id, attempt: null });
       const [stored] = await sql<{ outputId: string; hash: string; qc: string }[]>`select output_id "outputId", content_hash hash, qc_state qc
         from ai_story_local_generation_outputs where package_id=${packageId}`;
       expect(stored).toMatchObject({ outputId: result!.outputId, hash: sha(output), qc: "PENDING" });
+      expect((await sql`select 1 from ai_story_generation_results where generation_result_id=${result!.id}
+        and local_generation_output_id=${stored!.outputId} and local_worker_output_id is null`).length).toBe(1);
+
+      // The same Desktop output can never be relabelled as a manual upload, and LOCAL_GPU origin needs the Worker-bound hash.
+      const { AiStoryGenerationResultRepository, materializeGenerationResult } = await import("../packages/db/src");
+      const repository = new AiStoryGenerationResultRepository();
+      const accepted = (await repository.get(ids.workspace, result!.id))!;
+      const { generationResultId: _id, fingerprint: _fp, contractVersion: _cv, ...facts } = accepted;
+      await expect(repository.accept(materializeGenerationResult({ ...facts, source: { ...accepted.source, sourceKind: "MANUAL_LOCAL", localWorkerOutputId: null } as never })))
+        .rejects.toThrow("GENERATION_RESULT_LOCAL_SOURCE_MISMATCH");
+      await sql`update assets set metadata = metadata || ${sql.json({ desktopResultContentHash: sha(forged) })} where id=${asset!.id}`;
+      await expect(repository.accept(accepted)).rejects.toThrow("GENERATION_RESULT_LOCAL_GPU_SOURCE_MISMATCH");
+      await sql`update assets set metadata = metadata || ${sql.json({ desktopResultContentHash: sha(output) })} where id=${asset!.id}`;
+      expect(await repository.accept(accepted)).toMatchObject({ replayed: true });
+      expect(await counts()).toEqual({ results: 1, outputs: 1, jobs: 1 });
 
       // Replays after success (operator re-run, Worker restart re-bind) are suppressed.
       const replay = await revalidate();
@@ -730,11 +745,29 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       const resultRoute = await import("../apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/execution-plans/[executionPlanId]/local-generation/[packageId]/result/route");
       const review = await resultRoute.GET(new Request("http://localhost/result"), outputParams());
       expect(review.status).toBe(200);
-      const body = await review.json() as { generationResultId: string; sourceKind: string; requirements: unknown[]; evaluation: unknown; decision: unknown; continuityFrame: unknown };
-      expect(body).toMatchObject({ generationResultId: result!.id, sourceKind: "MANUAL_LOCAL", evaluation: null, decision: null, continuityFrame: null });
+      const body = await review.json() as { generationResultId: string; sourceKind: string; requirements: { requirementId: string }[]; evaluation: unknown; decision: unknown; continuityFrame: unknown };
+      expect(body).toMatchObject({ generationResultId: result!.id, sourceKind: "LOCAL_GPU_WORKER", evaluation: null, decision: null, continuityFrame: null });
       expect(body.requirements.length).toBeGreaterThan(0);
       const premature = await resultRoute.POST(new Request("http://localhost/result", { method: "POST", body: JSON.stringify({ action: "APPROVE", rationale: "no Post-QC yet" }) }), outputParams());
       expect(premature.status).toBeGreaterThanOrEqual(400);
+
+      // Existing human-evidence Post-QC runs on the LOCAL_GPU result and stops at the Human Review boundary.
+      const observations = body.requirements.map((requirement) => ({
+        observationId: randomUUID(), evidenceVersion: "ai-story-visual-evidence.v1", requirementId: requirement.requirementId,
+        source: "HUMAN_SUPPLIED_EVIDENCE", summary: "Reviewer confirmed this requirement in the delivered video.", observableSignal: "SATISFIED",
+        confidence: { level: "HIGH", score: 0.9, evidenceQuality: "STRONG" }, timeRangeMs: null, subjects: [], artifactSeverity: null,
+      }));
+      const evaluated = await resultRoute.POST(new Request("http://localhost/result", { method: "POST", body: JSON.stringify({ action: "EVALUATE", observations }) }), outputParams());
+      expect(evaluated.status).toBe(200);
+      const qc = (await resultRoute.GET(new Request("http://localhost/result"), outputParams()).then((response) => response.json())) as {
+        sourceKind: string; decision: unknown; audioEvidence: { autoApproved: false } | null;
+        evaluation: { sourceKind: string; generationResultId: string; mediaContentHash: string; eligibleForHumanReview: boolean; autoApproved: boolean; audioEvidenceId?: string };
+      };
+      expect(qc).toMatchObject({ sourceKind: "LOCAL_GPU_WORKER", decision: null });
+      expect(qc.evaluation).toMatchObject({ sourceKind: "LOCAL_GPU_WORKER", generationResultId: result!.id, mediaContentHash: sha(output), eligibleForHumanReview: true, autoApproved: false });
+      expect(qc.evaluation.audioEvidenceId).toBeTruthy();
+      expect((await sql`select 1 from ai_story_local_gpu_audio_evidence where generation_result_id=${result!.id}`).length).toBe(1);
+      expect((await sql`select 1 from ai_story_local_generation_packages where retry_of_package_id=${packageId}`).length).toBe(0);
       expect((await sql`select 1 from ai_story_generation_result_decisions where generation_result_id=${result!.id}`).length).toBe(0);
       expect((await sql`select 1 from ai_story_local_media_jobs where workspace_id=${ids.workspace} and kind='EXTRACT_FRAME'`).length).toBe(0);
       expect(desktopCalls.some((call) => call.method !== "GET")).toBe(false);

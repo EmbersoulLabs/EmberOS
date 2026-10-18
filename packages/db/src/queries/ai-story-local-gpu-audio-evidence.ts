@@ -11,9 +11,7 @@ import { canonicalPersistenceHash, deterministicPersistenceUuid } from "./ai-sto
 
 type AudioDb = Pick<ReturnType<typeof getDb>, "insert" | "select">;
 
-/** Derived from the immutable Generation Result. Callers do not supply the speech finding. */
-export function deriveLocalGpuAudioEvidence(result: AiStoryGenerationResult): LocalGpuAudioEvidence {
-  if (result.source.sourceKind !== "LOCAL_GPU_WORKER") throw new Error("LOCAL_GPU_AUDIO_EVIDENCE_MISMATCH");
+function workerOutputHasAudio(result: AiStoryGenerationResult): boolean {
   const authority = LocalGpuGenerationInputAuthoritySchema.parse(result.inputAuthority);
   if (
     authority.workspaceId !== result.ownership.workspaceId
@@ -22,7 +20,25 @@ export function deriveLocalGpuAudioEvidence(result: AiStoryGenerationResult): Lo
   ) {
     throw new Error("LOCAL_GPU_AUDIO_EVIDENCE_MISMATCH");
   }
-  const speechContent = authority.hasAudio ? "HUMAN_REVIEW_REQUIRED" as const : "NOT_APPLICABLE" as const;
+  return authority.hasAudio;
+}
+
+/** Local output deliveries carry the frozen package audio policy; media validation already enforced it. */
+function localOutputHasAudio(result: AiStoryGenerationResult): boolean {
+  const { generateAudio, audioBlocked } = result.inputAuthority;
+  if (typeof generateAudio !== "boolean" || typeof audioBlocked !== "boolean") {
+    throw new Error("LOCAL_GPU_AUDIO_EVIDENCE_MISMATCH");
+  }
+  return generateAudio && !audioBlocked;
+}
+
+/** Derived from the immutable Generation Result. Callers do not supply the speech finding. */
+export function deriveLocalGpuAudioEvidence(result: AiStoryGenerationResult): LocalGpuAudioEvidence {
+  if (result.source.sourceKind !== "LOCAL_GPU_WORKER") throw new Error("LOCAL_GPU_AUDIO_EVIDENCE_MISMATCH");
+  const hasAudio = result.source.localGenerationOutputId !== null
+    ? localOutputHasAudio(result)
+    : workerOutputHasAudio(result);
+  const speechContent = hasAudio ? "HUMAN_REVIEW_REQUIRED" as const : "NOT_APPLICABLE" as const;
   const facts = {
     orgId: result.ownership.orgId,
     workspaceId: result.ownership.workspaceId,
@@ -31,7 +47,7 @@ export function deriveLocalGpuAudioEvidence(result: AiStoryGenerationResult): Lo
     generationResultId: result.generationResultId,
     assetId: result.media.assetId,
     contentHash: result.media.contentHash,
-    hasAudio: authority.hasAudio,
+    hasAudio,
     speechContent,
   };
   return LocalGpuAudioEvidenceSchema.parse({

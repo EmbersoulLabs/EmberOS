@@ -61,6 +61,8 @@ export function materializeLocalGenerationResult(input: {
   package: AiStoryLocalGenerationPackage; output: AiStoryLocalGenerationOutput;
   animationPackageId: string; sceneId: string; sceneOrder: number;
   storagePath: string; byteSize: number; decodable: boolean;
+  /** LOCAL_GPU_WORKER only for Desktop output bound by the Worker; accept() re-proves it from server facts. */
+  sourceKind?: "MANUAL_LOCAL" | "LOCAL_GPU_WORKER";
 }) {
   const { package: pkg, output } = input;
   if (output.packageId !== pkg.packageId || output.unitId !== pkg.unitId ||
@@ -73,7 +75,7 @@ export function materializeLocalGenerationResult(input: {
       storyId: pkg.storyId, storyVersionId: pkg.storyVersionId, animationPackageId: input.animationPackageId, executionPlanId: pkg.executionPlanId },
     runtimeAuthorizationId: pkg.runtimeAuthorizationId,
     generationUnitId: pkg.unitId, sceneExecutionId: pkg.sceneExecutionId, sceneId: input.sceneId, sceneOrder: input.sceneOrder,
-    source: { sourceKind: "MANUAL_LOCAL", providerAttemptId: null, localGenerationOutputId: output.outputId, localWorkerOutputId: null },
+    source: { sourceKind: input.sourceKind ?? "MANUAL_LOCAL", providerAttemptId: null, localGenerationOutputId: output.outputId, localWorkerOutputId: null },
     compiledRequestId: lineage.compiledRequestId,
     compiledRequestFingerprint: lineage.compiledRequestFingerprint,
     inputAuthorityFingerprint: lineage.inputAuthorityFingerprint,

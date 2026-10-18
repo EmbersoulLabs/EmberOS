@@ -8,8 +8,16 @@ const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const Source = z.discriminatedUnion("sourceKind", [
   z.object({ sourceKind: z.literal("REMOTE_PROVIDER"), providerAttemptId: z.string().min(1), localGenerationOutputId: z.null(), localWorkerOutputId: z.null() }).strict(),
   z.object({ sourceKind: z.literal("MANUAL_LOCAL"), providerAttemptId: z.null(), localGenerationOutputId: Id, localWorkerOutputId: z.null() }).strict(),
-  z.object({ sourceKind: z.literal("LOCAL_GPU_WORKER"), providerAttemptId: z.null(), localGenerationOutputId: z.null(), localWorkerOutputId: Id }).strict(),
+  /** Desktop output delivered either through a worker output record or through the shared local output record. */
+  z.object({ sourceKind: z.literal("LOCAL_GPU_WORKER"), providerAttemptId: z.null(), localGenerationOutputId: Id.nullable(), localWorkerOutputId: Id.nullable() }).strict(),
 ]);
+
+type GenerationResultSource = z.infer<typeof Source>;
+
+/** The local output record behind a result: manual uploads and Desktop deliveries validated as local outputs. */
+export function localGenerationOutputIdOf(source: GenerationResultSource): string | null {
+  return source.sourceKind === "REMOTE_PROVIDER" ? null : source.localGenerationOutputId;
+}
 
 /** Immutable accepted media, before QC or Human approval. Production method is provenance only. */
 export const AiStoryGenerationResultSchema = z.object({
@@ -55,6 +63,9 @@ export const AiStoryGenerationResultSchema = z.object({
   }
   const local = Boolean(value.localSourceAuthorityId || value.localSourceAuthorityFingerprint);
   if (value.source.sourceKind === "LOCAL_GPU_WORKER") {
+    if ((value.source.localGenerationOutputId === null) === (value.source.localWorkerOutputId === null)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "GENERATION_RESULT_LOCAL_GPU_OUTPUT_REQUIRED" });
+    }
     if (value.compiledRequestId !== null || value.compiledRequestFingerprint !== null ||
         !value.localSourceAuthorityId || !value.localSourceAuthorityFingerprint) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "GENERATION_RESULT_LOCAL_AUTHORITY_REQUIRED" });
