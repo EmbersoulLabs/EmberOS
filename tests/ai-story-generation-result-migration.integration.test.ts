@@ -21,6 +21,7 @@ const migrations=[
   "packages/db/sql/ai-story-local-generation-package-contract-v2.sql",
   "packages/db/sql/ai-story-sequential-manual-local-package-v3.sql",
 ];
+const localGpuSourceMigration="supabase/migrations/20261018100000_ai_story_generation_result_local_gpu_local_output_v1.sql";
 suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
   let admin:Sql, db:Sql, ormClient:Sql, name:string, restore:()=>void;
   let before:unknown;
@@ -39,6 +40,7 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
     const manifest=JSON.parse(read("docs/releases/ai-story-v1-production-migration-manifest.json")) as {entries:Array<{file:string}>};
     for(const entry of manifest.entries){const source=read(entry.file);await db.unsafe(/^\s*(?:--[^\n]*\n\s*)*BEGIN\s*;/i.test(source)?source:`BEGIN;\n${source}\nCOMMIT;`);}
     for(const file of migrations)await db.unsafe(read(file));
+    await db.unsafe(read(localGpuSourceMigration));
   },120_000);
   afterAll(async()=>{await ormClient?.end();await db?.end();if(admin&&/^emberos_generation_result_[a-f0-9]+_test$/.test(name))await admin.unsafe(`DROP DATABASE "${name}" WITH (FORCE)`);await admin?.end();restore?.();},120_000);
   it("loads both additive migrations against the certified predecessor closure",async()=>{const rows=await db`select tablename from pg_tables where schemaname='public' and tablename in ('ai_story_generation_results','ai_story_generation_result_decisions','ai_story_generation_result_continuity_frames','ai_story_local_generation_packages','ai_story_local_generation_outputs','ai_story_local_media_jobs')`;expect(rows).toHaveLength(6);});
@@ -53,7 +55,7 @@ suite("Provider-neutral upgrade preserves actual predecessor authority",()=>{
   it("preserves all historical Provider Attempt rows",async()=>{expect(await evidence()).toEqual(before);});
   it("preserves four Production-only Provider historical relations",async()=>{for(const table of ["provider_execution_finalizations","provider_finalization_costs","provider_finalization_usage","provider_terminal_ledger_records"]){const rows=await db.unsafe(`select count(*)::int as count from ${table}`);expect(rows[0]?.count).toBe(1);}});
   it("allows null Provider provenance only with canonical result authority",async()=>{const columns=await db`select column_name,is_nullable from information_schema.columns where table_name='ai_story_post_generation_qc_evaluations' and column_name in ('provider_attempt_id','media_asset_id','generation_result_id')`;expect(columns).toHaveLength(3);expect(columns.every(row=>row.is_nullable==="YES")).toBe(true);});
-  it("enforces exactly-one source in PostgreSQL",async()=>{const constraints=await db`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='ai_story_generation_results'::regclass and conname='ai_story_generation_result_exact_source'`;expect(constraints[0]?.definition).toContain("MANUAL_LOCAL");expect(constraints[0]?.definition).toContain("REMOTE_PROVIDER");expect(constraints[0]?.definition).toContain("LOCAL_GPU_WORKER");});
+  it("enforces exactly-one source in PostgreSQL",async()=>{const constraints=await db`select pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='ai_story_generation_results'::regclass and conname='ai_story_generation_result_exact_source'`;expect(constraints[0]?.definition).toContain("MANUAL_LOCAL");expect(constraints[0]?.definition).toContain("REMOTE_PROVIDER");expect(constraints[0]?.definition).toContain("LOCAL_GPU_WORKER");expect(constraints[0]?.definition).toContain("((local_generation_output_id IS NULL) <> (local_worker_output_id IS NULL))");});
   it("enables RLS and denies authenticated direct result/package writes",async()=>{for(const table of ["ai_story_generation_results","ai_story_generation_result_decisions","ai_story_generation_result_continuity_frames","ai_story_local_generation_packages","ai_story_local_generation_outputs","ai_story_local_media_jobs"]){const rows=await db`select relrowsecurity,has_table_privilege('authenticated',${table},'INSERT') as can_insert from pg_class where oid=${table}::regclass`;expect(rows[0]?.relrowsecurity).toBe(true);expect(rows[0]?.can_insert).toBe(false);}});
   it("has immutable triggers on results, decisions, frames and outputs",async()=>{const triggers=await db`select tgname from pg_trigger where not tgisinternal and tgname in ('generation_result_immutable','generation_result_decision_immutable','generation_result_frame_immutable','ai_story_local_generation_output_immutable')`;expect(triggers).toHaveLength(4);});
   it("creates no result, review, frame or commercial authority automatically",async()=>{for(const table of ["ai_story_generation_results","ai_story_generation_result_decisions","ai_story_generation_result_continuity_frames","ai_story_local_generation_packages"]){const rows=await db.unsafe(`select count(*)::int as count from ${table}`);expect(rows[0]?.count).toBe(0);}});
