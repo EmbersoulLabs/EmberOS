@@ -95,6 +95,10 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       "supabase/migrations/20261018080000_ai_story_local_gpu_non_acceptance_attestation_v1.sql",
       "utf8",
     ));
+    await sql.unsafe(readFileSync(
+      "supabase/migrations/20261018100000_ai_story_generation_result_local_gpu_local_output_v1.sql",
+      "utf8",
+    ));
     process.env.LOCAL_GPU_PROVIDER_ENABLED = "true";
     process.env.LOCAL_GPU_ENVIRONMENT = "production";
     process.env.LOCAL_GPU_SIGNING_SECRET = "ephemeral-postgres-only-secret";
