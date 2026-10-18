@@ -3,6 +3,7 @@ import { AiStoryCommercialAudioRepository, AiStoryGenerationResultRepository, Ai
 import { AiStoryGenerationResultService, AiStoryLocalGenerationService, buildGenerationResultPostQcInput } from "@ceo-agent/agents";
 import { AiStoryPostQcObservationSchema } from "@ceo-agent/shared";
 import { z } from "zod";
+import { customerReviewObservationError } from "@/components/ai-story/simple-video-review";
 import { apiError, apiSuccess } from "@/lib/api";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { resolveAuthorizedExecutionPlan } from "@/lib/ai-story-execution-plan-access";
@@ -198,8 +199,15 @@ export async function POST(request: Request, { params }: Params) {
       return apiSuccess({...approved,continuityJobId:continuityJob.jobId,continuityState:continuityJob.state,continuityReady:false});
     }
     const allowed = new Set(buildGenerationResultPostQcInput(result, pkg).requirements.map(item => item.requirementId));
-    if (command.observations.some(item => item.source !== "HUMAN_SUPPLIED_EVIDENCE" || !allowed.has(item.requirementId))) {
-      return apiError("QC evidence does not match this Generation Unit", "POST_QC_EVIDENCE_INVALID", 422);
+    const observationError = customerReviewObservationError(command.observations, allowed);
+    if (observationError) {
+      return apiError(
+        observationError === "HUMAN_VISIBLE_REVIEW_CANNOT_PASS_REQUIREMENTS"
+          ? "Looks Good only records that you watched the video. It cannot mark each detail as passed."
+          : "QC evidence does not match this Generation Unit",
+        observationError,
+        422,
+      );
     }
     return apiSuccess(await service.evaluateLocal(result, pkg, {
       providerId: "human-supplied-evidence", contractVersion: "ai-story-visual-evidence.v1",
