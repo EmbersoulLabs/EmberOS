@@ -1,672 +1,339 @@
-# EmberOS — AIGC CEO for Marketing
+# EmberOS
 
-**EmberSoul Labs** · 上传素材 → CEO Agent 编排 → 爆款文案 + 剪辑成片 + 平台适配 → 审核 → 导出/发布
+EmberOS is a private, multi-tenant marketing production system developed by EmberSoul Labs. It combines campaign and asset management, structured marketing generation, automated short-video production, Photo Scene composition, and a campaign-owned AI Story workflow behind workspace-scoped authorization and human review.
 
-面向 **自用 / 代运营 / SaaS** 三合一的 AIGC 营销流水线。用户上传视频或图片，由 **CEO Orchestrator** 调度多模态子 Agent，自动产出可发布的短视频与配套文案，经人工或客户审核后导出或发布到社交平台。
+This repository is the canonical monorepo for the web application, background worker, domain services, database contracts, queue contracts, tests, and release documentation. Source-code reachability does not by itself prove that a feature is enabled or deployed in Production; see [Release status](#release-status).
 
-**生产环境：** [emberos-iota.vercel.app](https://emberos-iota.vercel.app) · **法律文档：** [Terms](https://embersoullabs.com/terms/) · [Privacy (PDPA)](https://embersoullabs.com/privacy/)
+## Capability status
 
----
+### Implemented in the repository
 
-## 目录
+- Organization, workspace, membership, and role-scoped access control.
+- Workspace Asset Library with signed upload, confirmation, preview, download, attachment, and isolation flows.
+- Business Profile and campaign creation/workspace flows.
+- Campaign marketing plans, creative handoffs, review records, structured marketing packages, translation, and approved Social Content drafts.
+- Video Studio V1 bounded auto-clip pipeline: source analysis, copy/edit planning, FFmpeg rendering, review, private artifact delivery, and export.
+- Photo Scene V1: product extraction, official-scene selection, deterministic composition, durable generation records, signed delivery, retry, and campaign asset binding.
+- AI Story planning and execution contracts, including story revisions, canonical Scenes, Director and Motion plans, Character/Product authority, Character DNA, descriptive Voice DNA authority, pre-generation QC, scene scheduling, provider attempts, human review, Post-QC, assembly, and Final Story Result projection.
+- Provider-neutral routing, commercial authorization, budget/claim records, idempotency, outbox processing, and settlement controls.
+- LOCAL_GPU V2/V3 package transport for asset-based R2V and zero-asset T2V, including signed requests, reference hashes, upload bindings, deterministic H3 prompt serialization, and fail-closed capability checks.
+- Super Admin control-plane and runtime diagnostics.
+- Supabase PostgreSQL RLS and workspace-scoped data-access tests.
 
-- [产品定位](#产品定位)
-- [三种使用模式](#三种使用模式)
-- [端到端 Workflow](#端到端-workflow)
-- [角色与操作路径](#角色与操作路径)
-- [CEO 任务流水线](#ceo-任务流水线)
-- [审核状态机](#审核状态机)
-- [系统架构](#系统架构)
-- [数据模型](#数据模型)
-- [技术栈](#技术栈)
-- [项目结构](#项目结构)
-- [本地开发](#本地开发)
-- [生产与 CI](#生产与-ci)
-- [环境变量](#环境变量)
-- [API 概览](#api-概览)
-- [路线图](#路线图)
-- [成本与安全](#成本与安全)
+### In progress or release-gated
 
----
+- AI Story Self-Use V1 is implemented and has a bounded deployment record, but the repository release authority still classifies it as `DEPLOYED / AWAITING REAL EPISODE CERT`. It is not a public commercial release.
+- LOCAL_GPU Character DNA + optional descriptive Voice DNA + Scene R2V support exists in the Laptop contract. Individual Desktop workflows must advertise and enforce the required Contract V3 capabilities before dispatch.
+- Several AI Story runtime capabilities are environment-, model-, authority-, and budget-gated. A route existing in source does not mean that a provider is configured or authorized.
+- Current main contains work newer than the last bounded Production overlay. Full-main deployment is not implied or recommended by this README.
 
-## 产品定位
+### Blocked or deliberately unsupported
 
-| 能力 | 说明 |
-|------|------|
-| **CEO Agent** | 理解营销目标，拆解任务，调度子 Agent，质检与重试 |
-| **爆款文案** | 按平台（抖音/小红书/TikTok）生成多版标题、正文、标签 |
-| **智能剪辑** | FFmpeg 裁切 9:16、字幕、封面、基础节奏 |
-| **多租户** | Organization → Workspace → Campaign，代运营多客户隔离 |
-| **审核闭环** | 内部 QC + 客户 Portal（scoped token，无需登录） |
-| **导出/发布** | Phase 1 导出成片+文案包；Phase 1.5+ 对接平台 API |
+- Exact acoustic voice cloning/continuity is not claimed. Voice DNA is descriptive and capability-bound; unsupported audio requirements fail closed.
+- AI Story raw-video observation extraction and its upload/Director integration remain explicitly marked `NOT_IMPLEMENTED` in the current contracts.
+- Provider callbacks and provider-native idempotency are unsupported for the current Seedance and MiniMax V1 adapters; replay protection is implemented within EmberOS.
+- AI Story execution can be blocked by missing authorization, stale approvals, failed Pre-QC, unsupported continuity/audio requirements, absent provider capability, or cost ceilings.
+- Public commercial AI Story access and the separate AUTH-01 commercial cutover remain release-gated.
 
-**Phase 1 目标：** 上传后 **10 分钟内** 产出 1 条 9:16 成片 + 3 套文案，支持代运营客户审片。
+### Planned or outside the current release boundary
 
----
+- Direct social-platform OAuth publishing, scheduling, and analytics feedback loops.
+- Studio-mode long-form editing, advanced rhythm editing, and a general-purpose timeline editor.
+- Broader SaaS billing/plan rollout and quota activation.
+- Automated media-aware QC beyond the currently certified plan/intent checks plus mandatory human generated-media review.
 
-## 三种使用模式
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    统一 CEO 引擎（同一套流水线）              │
-└─────────────────────────────────────────────────────────────┘
-         ▲                    ▲                    ▲
-         │                    │                    │
-   ┌─────┴─────┐        ┌─────┴─────┐        ┌─────┴─────┐
-   │   自用     │        │  代运营    │        │   SaaS    │
-   │ 自有品牌   │        │ 多甲方客户 │        │ 租户自助   │
-   └───────────┘        └─────┬─────┘        └───────────┘
-                              │
-                        ┌─────┴─────┐
-                        │  Client   │
-                        │  Portal   │
-                        └───────────┘
-```
-
-| 模式 | 谁在用 | Workspace 含义 | 审核链 |
-|------|--------|----------------|--------|
-| **自用** | 你们自己的品牌 | 品牌 A / 品牌 B | 内部同事审核 → 发布 |
-| **代运营** | 你们团队 + 甲方 | 每个客户 1 个 Workspace | 内部 QC → **客户 Portal** → 发布 |
-| **SaaS** | 外部付费租户 | 租户自建多个品牌 | 租户内可选审核 → 发布 |
-
----
-
-## 端到端 Workflow
-
-### 总览
+## Architecture
 
 ```mermaid
 flowchart LR
-    A[① 创建 Campaign] --> B[② 上传素材]
-    B --> C[③ 配置目标与平台]
-    C --> D[④ 触发 CEO]
-    D --> E[⑤ Agent 流水线]
-    E --> F[⑥ 预览与改稿]
-    F --> G[⑦ 提交审核]
-    G --> H{通过?}
-    H -->|否| I[驳回 → 重跑 Agent]
-    I --> F
-    H -->|是| J[⑧ 平台适配]
-    J --> K[⑨ 导出 / 发布]
+    U[Next.js web UI] --> A[Route handlers and authorization]
+    A --> D[(Supabase PostgreSQL)]
+    A --> S[(Supabase Storage)]
+    A --> Q[BullMQ / Redis]
+    Q --> W[Node.js worker]
+    W --> F[FFmpeg / ffprobe]
+    W --> S
+    A --> L[Agent and domain services]
+    W --> L
+    L --> O[Configured AI providers]
+    L --> G[LOCAL_GPU Desktop contract]
 ```
 
-### 详细步骤
-
-#### ① 创建 Campaign
-
-运营在指定 **Workspace** 下新建营销活动，填写：
-
-- **目标**：涨粉 / 带货 / 种草 / 品牌曝光
-- **平台**：`douyin` | `xiaohongshu` | `tiktok` | `wechat_channels`
-- **品牌配置**（可选）：调性、禁用词、目标人群、CTA
-
-#### ② 上传素材
-
-支持：
-
-| 类型 | 格式 | 说明 |
-|------|------|------|
-| 视频 | mp4, mov | 原片、口播、产品展示 |
-| 图片 | jpg, png, webp | 产品图、海报（≥1 张，推荐 3 张） |
-| 参考 | URL / 文本 | 爆款参考链接、品牌手册摘要 |
-
-素材写入 Object Storage，路径：`{workspace_id}/campaigns/{campaign_id}/assets/`
-
-#### ③ 配置并启动
-
-用户确认平台规格后点击 **「运行 CEO」**：
-
-- API 创建 `Task`，状态 `draft` → `processing`
-- 任务入队 BullMQ，Worker 开始执行 CEO Task Graph
-
-#### ④⑤ CEO + 子 Agent 流水线
-
-见 [CEO 任务流水线](#ceo-任务流水线)。
-
-产出：
-
-- **Creative**：1 条成片（9:16）+ 3–5 套文案变体 + 封面
-- 状态进入 `pending_internal_review`
-
-#### ⑥ 预览与改稿
-
-运营在 Creative 预览页：
-
-- 播放成片、切换文案版本
-- 直接编辑标题/正文/标签
-- 保存后可选 **仅重跑 Copy** 或 **重跑剪辑**
-
-#### ⑦ 审核
-
-| 场景 | 流程 |
-|------|------|
-| 自用 | Operator 提交 → Reviewer 内部审核 |
-| 代运营 | 内部 QC 通过 → 生成 **Client Portal** 链接 → 客户审片 |
-| SaaS | 可配置是否跳过客户审核 |
-
-客户通过 **Client Portal** 链接打开审片页，无需登录，仅可查看 token 绑定的 Creative 并 pass/reject/comment。
-
-#### ⑧ 平台适配
-
-Publish Agent 按目标平台格式化：
-
-| 平台 | 适配项 |
-|------|--------|
-| 抖音 | 标题 ≤30 字、口语化、话题标签 |
-| 小红书 | 标题 emoji、分段正文、标签 |
-| TikTok | 英文/双语、hashtags、时长 ≤60s |
-
-#### ⑨ 导出 / 发布
-
-**Phase 1（当前）：**
-
-- 下载 ZIP：成片 mp4 + 封面 + 文案 txt + 标签列表
-- 运营手动上传到平台
-
-**Phase 1.5+：**
-
-- 绑定平台账号 OAuth
-- 定时发布 / 即时发布
-- 发布状态回写 `publish_jobs`
-
----
-
-## 角色与操作路径
-
-### 角色权限（RBAC）
-
-| 角色 | 上传 | 运行 CEO | 改文案 | 内部审核 | 客户审核 | 发布/导出 |
-|------|:----:|:--------:|:------:|:--------:|:--------:|:---------:|
-| Workspace Admin | ✓ | ✓ | ✓ | ✓ | — | ✓ |
-| Operator | ✓ | ✓ | ✓ | 提交 | — | ✓ |
-| Editor | ✓ | — | ✓ | — | — | — |
-| Reviewer | — | — | — | ✓ | — | — |
-| Publisher | — | — | — | — | — | ✓ |
-| Client Viewer | — | — | — | — | ✓ | — |
-
-### 路径 A：自用品牌（最快闭环）
-
-```
-登录 → 选择 Workspace（自有品牌）
-  → 新建 Campaign → 上传视频
-  → 选「带货 + 抖音」→ 运行 CEO
-  → 等待 ~10min → 预览 Creative
-  → 微调文案 → 内部审核通过
-  → 导出 ZIP → 手动发抖音
-```
-
-### 路径 B：代运营（核心商业路径）
-
-```
-登录 → Workspace 看板（客户 A / B / C）
-  → 进入客户 A → 新建 Campaign
-  → 上传客户素材 → 运行 CEO
-  → 内部 QC 预览 → 修改 → 通过内部审核
-  → 生成 Client Portal 链接 → 发给客户微信/邮件
-  → 客户打开链接 → 审片 pass/reject
-  → 若 reject：运营改稿 → 重新提交客户审
-  → 若 pass：导出或发布到客户账号
-```
-
-### 路径 C：SaaS 租户（Phase 2）
-
-```
-自助注册 → 创建 Organization → 创建 Workspace
-  → 同上路径 A → 套餐用量扣减 → 超限提示升级
-```
-
----
-
-## CEO 任务流水线
-
-### Task Graph
-
-```mermaid
-flowchart TD
-    START([Campaign Run]) --> PARSE[parse_intent<br/>解析目标与平台]
-    PARSE --> PLAN[ceo_plan<br/>生成 Task Graph]
-    PLAN --> VISION[vision_analyze<br/>画面/产品/情绪/钩子]
-    PLAN --> COPY[copy_generate<br/>爆款文案 3-5 版]
-    VISION --> EDIT[edit_director_plan<br/>分镜 + 字幕轴]
-    COPY --> EDIT
-    EDIT --> RENDER[ffmpeg_render<br/>9:16 成片 + 封面]
-    RENDER --> COMPLY[compliance_check<br/>广告法/敏感词]
-    COMPLY --> QA{质检通过?}
-    QA -->|否, retry≤2| COPY
-    QA -->|否, retry≤2| EDIT
-    QA -->|是| REVIEW[pending_review<br/>等待人工审核]
-    REVIEW --> ADAPT[platform_adapt<br/>按平台格式化]
-    ADAPT --> OUT([export / publish])
-```
-
-### 子 Agent 职责
-
-| Agent | 输入 | 输出 |
-|-------|------|------|
-| **CEO Orchestrator** | goal, platforms, assets, brand_profile | TaskGraph JSON、调度、重试、成本预算 |
-| **Vision** | 素材 URL、抽帧 | subjects, scenes, hooks[], transcript? |
-| **Copy** | vision 摘要、平台、目标 | variants[]: title, hook, body, cta, tags |
-| **Edit Director** | vision + copy + 时长 | timeline[], cover_text, bgm? |
-| **Compliance** | 文案 + 字幕 | passed, flags[] |
-| **Publish** | 已审核 creative | export_pack_url 或 publish_job |
-
-### 爆款文案结构（Copy Agent）
-
-每版文案遵循「收缩」骨架：
-
-```
-[0-3s 钩子]  疑问 / 反差 / 数字
-[中间价值]   ≤3 个卖点
-[结尾 CTA]   关注 / 下单 / 私信
-```
-
-模板类型：痛点型 | 对比型 | 清单型 | 故事型 | 测评型
-
-### 并行与重试
-
-- `vision_analyze` 与 `copy_generate` 在 CEO 规划后可 **并行**（copy 可先基于元数据草稿，vision 完成后 refine）
-- 合规失败或质检低分：CEO 决定重跑 Copy 或 Edit，**上限 2 次**
-- 人工驳回：仅重跑被点名的 Agent，不整链重跑
-
----
-
-## 审核状态机
-
-### Creative / Task 状态
-
-```mermaid
-stateDiagram-v2
-    [*] --> draft
-    draft --> processing: 运行 CEO
-    processing --> pending_internal_review: 流水线完成
-    processing --> failed: 错误/超限
-    pending_internal_review --> pending_client_review: 内部通过（代运营）
-    pending_internal_review --> approved: 内部通过（自用/SaaS 可跳过客户）
-    pending_internal_review --> rejected: 内部驳回
-    pending_client_review --> approved: 客户通过
-    pending_client_review --> rejected: 客户驳回
-    rejected --> processing: 重跑 Agent
-    approved --> scheduled: 定时发布
-    approved --> published: 即时发布/导出完成
-    scheduled --> published
-    failed --> processing: 手动重试
-    published --> [*]
-```
-
-### 代运营审核时序
-
-```mermaid
-sequenceDiagram
-    participant Op as Operator
-    participant Sys as 系统
-    participant QC as 内部 Reviewer
-    participant Client as 客户 Portal
-    participant Pub as Publisher
-
-    Op->>Sys: 上传素材 + 运行 CEO
-    Sys->>Sys: Agent 流水线 + 渲染
-    Sys->>QC: pending_internal_review
-    QC->>Sys: pass
-    Sys->>Client: 发送 Portal 链接
-    Client->>Sys: pass / reject + comment
-    alt 客户通过
-        Sys->>Pub: approved → 导出/发布
-    else 客户驳回
-        Sys->>Op: rejected + 修改意见
-        Op->>Sys: 改文案 → 重跑 → 再提交审核
-    end
-```
-
----
-
-## 系统架构
-
-```mermaid
-flowchart TB
-    subgraph Client
-        WEB[Web Console]
-        PORTAL[Client Portal]
-    end
-
-    subgraph API
-        GW[Auth + RBAC + Rate Limit]
-        SVC[Campaign / Review / Publish API]
-    end
-
-    subgraph Orchestration
-        CEO[CEO Orchestrator]
-        AGENTS[Vision · Copy · Edit · Compliance · Publish]
-    end
-
-    subgraph Worker
-        QUEUE[BullMQ]
-        FFMPEG[FFmpeg Pipeline]
-    end
-
-    subgraph Data
-        PG[(PostgreSQL)]
-        OSS[(Object Storage)]
-        REDIS[(Redis)]
-    end
-
-    WEB --> GW --> SVC --> CEO --> AGENTS
-    PORTAL --> GW
-    CEO --> QUEUE --> FFMPEG --> OSS
-    SVC --> PG
-    SVC --> REDIS
-```
-
-### 部署
-
-| 组件 | 部署位置 | 状态 |
-|------|----------|------|
-| Next.js Web + API | Vercel | ✅ [emberos-iota.vercel.app](https://emberos-iota.vercel.app) |
-| Worker + FFmpeg | Railway / Fly.io / VPS | 🔄 需确认生产 Worker 在线 |
-| PostgreSQL + Auth | Supabase | ✅ |
-| Redis 队列 | Upstash | ✅ |
-| 视频/图片文件 | Supabase Storage | ✅ |
-
----
-
-## 数据模型
-
-```
-Organization
-  └── Workspace（隔离边界）
-        ├── brand_profile（调性、禁用词）
-        ├── workspace_members（角色）
-        └── Campaign
-              ├── Asset（video | image）
-              ├── Task（CEO 执行单元）
-              │     └── ceo_plan JSON
-              └── Creative
-                    ├── copy_variants[]
-                    ├── video_url, cover_url
-                    ├── Review[]（internal | client）
-                    └── PublishJob[]（per platform）
-```
-
-**强制规则：** 所有业务表含 `org_id` + `workspace_id`，所有查询必须带 workspace 过滤。
-
----
-
-## 技术栈
-
-| 层 | 技术 |
-|----|------|
-| 前端 | Next.js 14+ App Router, TypeScript, Tailwind |
-| 后端 API | Next.js Route Handlers |
-| 数据库 | Supabase PostgreSQL + Drizzle ORM |
-| 认证 | Supabase Auth |
-| 队列 | BullMQ + Upstash Redis |
-| Agent | OpenAI SDK + 自研状态机 |
-| 视频 | FFmpeg（Worker 内 CLI） |
-| 存储 | Supabase Storage / S3 |
-| 部署 | Vercel + Railway |
-
----
-
-## 项目结构
-
-```
-ceo-agent/
+Key boundaries:
+
+- `apps/web` owns the Next.js UI, authenticated route handlers, signed delivery, and product-facing runtime views.
+- `apps/worker` consumes BullMQ jobs, runs media processing, provider execution/finalization, assembly, and operational heartbeats.
+- `packages/agents` contains orchestration, provider adapters, AI Story compilation/QC, marketing generation, Photo Scene, and media-domain services.
+- `packages/db` owns the Drizzle schema, scoped queries, additive SQL contracts, and migration/apply scripts.
+- `packages/queue` defines queue names and typed job payloads.
+- `packages/shared` contains provider-neutral schemas, runtime contracts, authorization facts, and shared UI/domain types.
+- PostgreSQL rows, immutable fingerprints, approvals, provider claims, and workspace bindings are authoritative. Prompt text does not replace deterministic constraints.
+
+## Technology stack
+
+| Area | Implementation |
+| --- | --- |
+| Web | Next.js 14 App Router, React 18, TypeScript, Tailwind CSS |
+| API | Next.js Route Handlers with Supabase authentication and workspace authorization |
+| Data | PostgreSQL, Drizzle ORM, SQL migrations/contracts, Row Level Security |
+| Authentication and storage | Supabase Auth and Supabase Storage |
+| Queue | BullMQ with Redis-compatible infrastructure |
+| Worker/media | Node.js worker, FFmpeg, ffprobe |
+| Validation | Zod schemas and deterministic fingerprints |
+| AI/provider integration | OpenAI plus gated Seedance, MiniMax, and LOCAL_GPU adapters |
+| Tests | Vitest, Playwright, ephemeral PostgreSQL integration tests |
+| Deployment manifests | Vercel for web; Railway Docker worker |
+
+## Repository layout
+
+```text
+EmberOS/
 ├── apps/
-│   ├── web/                    # Next.js：控制台 + Client Portal + API
-│   │   ├── app/
-│   │   │   ├── (auth)/         # 登录
-│   │   │   ├── workspaces/     # 代运营看板
-│   │   │   ├── campaigns/      # 创建 / 详情 / 进度
-│   │   │   ├── creatives/      # 预览 / 改稿
-│   │   │   ├── reviews/        # 审核队列
-│   │   │   ├── portal/[token]/ # 客户审片（无登录）
-│   │   │   └── api/            # REST API
-│   │   └── components/
-│   └── worker/                 # BullMQ consumer + FFmpeg
-│       ├── processors/
-│       └── ffmpeg/
+│   ├── web/                 # Next.js UI and API routes
+│   └── worker/              # BullMQ consumers and media/provider runtime
 ├── packages/
-│   ├── agents/                 # CEO, Vision, Copy, Edit, Compliance, Publish
-│   ├── db/                     # Schema, migrations, queries
-│   ├── queue/                  # Job types, enqueue helpers
-│   └── shared/                 # Types, platform specs, constants
-├── .cursor/rules/              # Cursor Agent 开发约定
-├── infra/docker/               # Worker 镜像（含 FFmpeg）
-├── PLAN_PROMPT.md              # Cursor Plan 模式 Prompt
-└── README.md
+│   ├── agents/              # Orchestration and domain/provider services
+│   ├── db/                  # Schema, scoped queries, SQL, and apply scripts
+│   ├── queue/               # Typed queues and job contracts
+│   └── shared/              # Shared schemas, contracts, and constants
+├── supabase/migrations/     # Forward Supabase migrations
+├── schemas/                 # Versioned external/runtime schemas
+├── tests/                   # Unit, contract, security, and integration tests
+├── e2e/                     # Playwright browser coverage
+├── scripts/                 # Verification, smoke, and guarded operator tools
+├── infra/docker/            # Worker container definition
+├── docs/                    # Architecture, product, release, and review evidence
+└── .github/workflows/       # CI definition
 ```
 
----
+## Local development
 
-## 本地开发
+### Prerequisites
 
-> Monorepo scaffold 与 M1–M3 功能已完成。按以下步骤配置环境并启动。
+- Node.js 20 or later.
+- pnpm 9.15.0, matching the root `packageManager` declaration.
+- PostgreSQL and Redis for database-, queue-, and worker-backed flows.
+- FFmpeg and ffprobe on `PATH` for media processing.
+- A development Supabase project for authenticated UI, Storage, and RLS flows.
+- Provider credentials only for the specific provider-backed flow being exercised. Most unit and contract tests use injected deterministic adapters and do not require paid calls.
 
-### 前置要求
-
-- Node.js 20+
-- pnpm 9.15+（见根目录 `packageManager`）
-- FFmpeg（Worker 本地调试，加入 PATH）
-- Supabase 项目（Postgres + Auth + Storage）
-- Redis（本地或 Upstash）
-- OpenAI API Key
-
-### 安装
+### Install and configure
 
 ```bash
 git clone https://github.com/EmbersoulLabs/EmberOS.git
 cd EmberOS
-pnpm install
+pnpm install --frozen-lockfile
 cp .env.example .env.local
-# 编辑 .env.local 填入 Supabase、Redis、OpenAI 密钥
-pnpm dev:sync   # 同步到 apps/web 与 apps/worker
+pnpm dev:sync
 ```
 
-### 数据库
+`pnpm dev:sync` copies the root environment file to the web and worker locations used by local scripts. Review the target files before using shared or remote infrastructure. If local development points at a shared Redis instance, set `LOCAL_DEV` and an isolated `BULLMQ_PREFIX`.
+
+### Start services
 
 ```bash
-pnpm db:push          # 推送 schema 到 Supabase
-pnpm db:rls           # 启用多租户 RLS（可重复执行，幂等）
-# 或
-pnpm db:migrate       # 运行 migrations
-```
-
-### 启动
-
-```bash
-# 推荐：Web + Worker 一起启动（会先 dev:sync）
+# Run all Turbo development tasks
 pnpm dev
 
-# 或分开两个终端
-pnpm dev            # Web
-pnpm worker:dev     # Worker
+# Run only the worker in another terminal when needed
+pnpm worker:dev
 ```
 
-访问：`http://localhost:3000`（注册须勾选 [Terms](https://embersoullabs.com/terms/) 与 [Privacy](https://embersoullabs.com/privacy/)）
+The web package listens on `http://localhost:3000` by default. Database-backed and authenticated pages require the configured development infrastructure; a successful Next.js startup alone does not certify those dependencies.
 
-### 快速验证流程
+### Database safety
 
-1. 注册/登录 → 创建 Workspace
-2. 新建 Campaign → 上传测试 mp4
-3. 选择平台 + 目标 → 点击「运行 CEO」
-4. 在 Task 页查看进度 → Creative 预览（Auto Clip 默认 3 条 clip）
-5. 内部审核通过 → 导出 ZIP
+The repository exposes `db:generate`, `db:push`, `db:migrate`, and many feature-specific `sql:*` scripts. These commands mutate the database selected by `DATABASE_URL`; they are not part of the default bootstrap sequence. Use only a disposable or explicitly authorized environment, read the corresponding apply script, and run integration tests before any shared-environment rollout. Never rewrite an applied migration.
 
-### 常用命令
+## Environment variables
+
+Names below are taken from `.env.example` and current runtime configuration. Values and secrets must not be committed.
+
+### Core web, database, storage, and queue
+
+- `NEXT_PUBLIC_APP_URL`
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `DATABASE_URL`
+- `REDIS_URL`
+- `SUPABASE_STORAGE_BUCKET`
+- `SUPABASE_BRANDING_BUCKET`
+- `SUPERADMIN_EMAILS`
+- `EXPORT_PAYWALL`
+- `NEXT_PUBLIC_EXPORT_PAYWALL`
+
+### Worker and local isolation
+
+- `FFMPEG_PATH`
+- `FFPROBE_PATH`
+- `WORKER_CONCURRENCY`
+- `RENDER_CONCURRENCY`
+- `LOCAL_DEV`
+- `BULLMQ_PREFIX`
+- `AGENT_JOB_LOCK_MS`
+- `RENDER_JOB_LOCK_MS`
+
+### Provider integrations
+
+- `OPENAI_API_KEY`
+- `AI_PROVIDER_SEEDANCE_ENABLED`
+- `AI_PROVIDER_SEEDANCE_BASE_URL`
+- `AI_PROVIDER_SEEDANCE_API_KEY`
+- `AI_PROVIDER_SEEDANCE_DEFAULT_MODEL`
+- `AI_PROVIDER_MINIMAX_ENABLED`
+- `AI_PROVIDER_MINIMAX_BASE_URL`
+- `AI_PROVIDER_MINIMAX_API_KEY`
+- `AI_PROVIDER_MINIMAX_DEFAULT_MODEL`
+- `LOCAL_GPU_ENVIRONMENT`
+- `AI_STORY_PROVIDER_DISPATCH_MODE`
+- `JAMENDO_CLIENT_ID`
+- `PHOTO_SCENE_BACKGROUND_REMOVAL_PROVIDER`
+- `PHOTOROOM_API_KEY`
+- `PHOTO_SCENE_PHOTOROOM_COST_USD`
+- `PHOTO_SCENE_PROVIDER_TIMEOUT_MS`
+- `PHOTO_SCENE_ALLOW_DETERMINISTIC_PROVIDER`
+- `PHOTO_SCENE_OFFICIAL_BUCKET`
+
+### Cost and retry controls
+
+- `LLM_BUDGET_PER_TASK_USD`
+- `CEO_MAX_RETRIES`
+- `PROVIDER_EXECUTION_POLL_MS`
+- `EMBEROS_AI_STORY_LOOKUP_DEADLINE_MS`
+- `EMBEROS_AI_STORY_LOOKUP_POLL_MS`
+
+Migration acknowledgements, certification identifiers, E2E seeds, and production-operator flags also exist under `scripts/`. They are intentionally omitted from normal setup because they are guarded operational inputs, not routine application configuration.
+
+## Validation and development workflow
+
+Use a branch or isolated worktree and preserve unrelated local changes. The standard offline verification command is:
 
 ```bash
-pnpm verify                              # test + typecheck + web build（与 CI 一致）
-pnpm check:infra                         # DATABASE_URL + REDIS_URL + OpenAI 连通性
-pnpm smoke:prod -- --url http://localhost:3000
-pnpm e2e:video-studio -- --list          # 列出有视频的 Campaign
-pnpm e2e:video-studio -- --run <id>      # 完整 Auto Clip E2E（需 Worker 在线）
+pnpm verify
 ```
 
----
-
-## 生产与 CI
-
-### GitHub Actions
-
-推送 `main` 触发 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml)：
-
-| Job | 内容 |
-|-----|------|
-| **verify** | `pnpm test` → `pnpm typecheck` → web build |
-| **smoke-local** | 启动 Next.js，验证 `GET /api/health` |
-| **e2e-production** | 手动 `workflow_dispatch`；需配置 Secrets |
-
-**推荐 Secrets：**
-
-| Secret | 用途 |
-|--------|------|
-| `PRODUCTION_APP_URL` | 如 `https://emberos-iota.vercel.app` |
-| `DATABASE_URL` / `REDIS_URL` / `OPENAI_API_KEY` | E2E 与 infra 检查 |
-| `E2E_CAMPAIGN_ID` | 可选；有则跑完整 Auto Clip pipeline |
-
-### 生产烟雾测试
+It runs the root Vitest suite, all package typechecks, and the web production build. Useful narrower commands are:
 
 ```bash
-pnpm smoke:prod -- --url https://emberos-iota.vercel.app --strict --infra
+pnpm test
+pnpm typecheck
+pnpm --filter @ceo-agent/worker typecheck
+pnpm --filter @ceo-agent/web build
+pnpm test:auth-browser
 ```
 
-`--strict` 要求 `/api/health` 返回 `ok: true`（Supabase / DB / Redis 均已配置）。
-
-### 共享 Upstash 时注意
-
-本地与 Railway 共用 Redis 时，在 `.env.local` 设置 `LOCAL_DEV=true` 与 `BULLMQ_PREFIX=local`（`pnpm dev:sync` 在检测到 Upstash 时会自动写入），避免生产 Worker 抢本地任务。对生产队列跑 E2E 时使用 `E2E_PROD_QUEUE=1`。
-
----
-
-## 环境变量
+Database tests must target an isolated database:
 
 ```bash
-# App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-
-# Supabase
-NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
-DATABASE_URL=
-
-# Redis / Queue
-REDIS_URL=
-
-# LLM
-OPENAI_API_KEY=
-# 可选备用
-ANTHROPIC_API_KEY=
-
-# Storage（若不用 Supabase Storage）
-S3_BUCKET=
-S3_REGION=
-S3_ACCESS_KEY=
-S3_SECRET_KEY=
-
-# Worker
-FFMPEG_PATH=/usr/bin/ffmpeg
-WORKER_CONCURRENCY=2
-
-# 本地与生产 Redis 隔离（共用 Upstash 时）
-LOCAL_DEV=true
-BULLMQ_PREFIX=local
-
-# 计费 / 导出
-EXPORT_PAYWALL=false
-
-# 成本护栏
-LLM_BUDGET_PER_TASK_USD=0.50
-CEO_MAX_RETRIES=2
+pnpm test:integration
 ```
 
----
+The test runner requires explicit test-environment markers and contains guards against known Production database targets. Do not weaken those guards.
 
-## API 概览
+See [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md) and [docs/DEVELOPMENT-RULES.md](./docs/DEVELOPMENT-RULES.md) for contribution and migration rules.
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `GET` | `/api/health` | 健康检查（env 就绪状态） |
-| `GET` / `POST` | `/api/workspaces` | 列表 / 创建 Workspace |
-| `GET` / `POST` | `/api/workspaces/:id` | 详情 / **生成 Client Portal 链接** |
-| `GET` / `POST` | `/api/campaigns` | 列表 / 创建 Campaign |
-| `GET` / `PATCH` | `/api/campaigns/:id` | Campaign 详情 / 更新 |
-| `POST` | `/api/campaigns/:id/assets/upload-url` | 预签名上传 |
-| `POST` | `/api/campaigns/:id/assets/:assetId/confirm` | 确认上传 |
-| `POST` | `/api/campaigns/:id/run` | 触发 CEO 流水线 |
-| `GET` / `POST` | `/api/tasks/:id` | 任务进度 / **重跑指定 step** |
-| `GET` / `PATCH` | `/api/creatives/:id` | 预览 Creative |
-| `PATCH` | `/api/creatives/:id/copy` | 修改文案 |
-| `POST` | `/api/creatives/:id/submit-review` | 提交审核 |
-| `POST` | `/api/reviews/:id/decide` | pass / reject |
-| `GET` / `POST` | `/api/portal/:token` | 客户 Portal 数据 / 审片决定 |
-| `GET` / `POST` | `/api/creatives/:id/export` | 导出 ZIP |
-| `GET` / `POST` | `/api/tasks/:id/export` | 任务级多 clip 导出包 |
+## CI/CD and deployment
 
----
+`.github/workflows/ci.yml` runs on pull requests and pushes to `main`, `master`, and `codex/**` branches. Required coverage includes:
 
-## 路线图
+- dependency installation with the lockfile;
+- unit and LOCAL_GPU contract tests;
+- browser tests for authentication and Waves 1–5;
+- monorepo typecheck, worker compile, and web build;
+- an ephemeral PostgreSQL authority suite with migration guards;
+- a local `/api/health` smoke test backed by disposable PostgreSQL and Redis services.
 
-### Phase 1 — MVP（当前 ~75%）
+The Production E2E job is manual (`workflow_dispatch`) and uses configured secrets. It may reach external infrastructure and must not be treated as an ordinary PR check.
 
-- [x] 产品定义 & 架构设计
-- [x] Monorepo scaffold（Web + Worker + Agents）
-- [x] Vercel 生产部署 + `/api/health` smoke
-- [x] 生产 Supabase RLS（`pnpm db:rls`）
-- [x] Auto Clip E2E 验证（真实 Campaign，3/3 clips）
-- [x] Client Portal 审片（代码已就绪）
-- [x] GitHub Actions CI（test / typecheck / build / smoke）
-- [x] API 限流 + 注册页 Terms/Privacy 勾选
-- [x] 单元测试（RLS 覆盖、RBAC、pipeline 逻辑）
-- [ ] Railway Worker 生产稳定运行（待确认）
-- [ ] Stripe 订阅接入 EmberOS（账号已有，产品内待接）
-- [ ] Workspace DB 级集成测试（F3）
+Deployment configuration present in the repository:
 
-### Phase 1.5
+- Root `vercel.json` and `apps/web/vercel.json` build `@ceo-agent/web` for Vercel.
+- `railway.toml` builds `infra/docker/Dockerfile.worker` and starts `@ceo-agent/worker` on Railway.
+- Production database changes use separately reviewed, ordered, additive migrations/apply scripts.
 
-- [ ] 抖音 / 小红书 / TikTok OAuth 发布
-- [ ] 定时发布队列
-- [ ] 用量统计（`usage_records` 接线）
+Deployments are release operations, not a side effect of the documented local commands. Use the bounded release instructions for the product being changed; do not deploy full main merely because CI passes.
 
-### Phase 2 — SaaS
+## External services
 
-- [ ] 套餐、Stripe Checkout / Customer Portal
-- [ ] Agency 档（多 Workspace）
-- [ ] 模板市场 / 行业 Starter
+| Service | Purpose | Notes |
+| --- | --- | --- |
+| Supabase | PostgreSQL, authentication, private/public buckets, signed delivery | Workspace RLS and service-role boundaries are security-critical. |
+| Redis-compatible service | BullMQ queues and worker coordination | Local/shared prefixes must be isolated. |
+| OpenAI | Structured text/vision, selected image, transcription, and TTS adapters | Paid execution requires an authorized runtime claim. |
+| BytePlus Seedance | Gated AI Story video provider | Disabled unless explicitly configured and authorized. |
+| MiniMax | Gated AI Story video provider | Capability-specific; callbacks are not used. |
+| LOCAL_GPU Desktop | Local H3 R2V/T2V execution over signed V2/V3 contracts | The normal local video path; capability mismatch fails closed. |
+| Photoroom | Photo Scene background removal | Deterministic fallback is prohibited in Production. |
+| Jamendo | Optional online music search | UI search is hidden when unconfigured. |
+| Vercel / Railway | Web and worker deployment targets | Live revision must be verified independently for an operational claim. |
 
-### Phase 3 — 规模化
+## Current status entry point
 
-- [ ] 数据回流（播放/转化）→ CEO 优化文案
-- [ ] A/B 多版本批量渲染
-- [ ] Enterprise SSO、白标
+This section is the single current-state entry point. [ROADMAP.md](./ROADMAP.md) tracks remaining release work, while [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md) defines evidence and release procedures. Historical documents remain useful context but are not live-state authority.
 
----
+Audit snapshot (2026-10-16):
 
-## 成本与安全
+| Runtime or control | Verified state |
+| --- | --- |
+| GitHub `main` | `9e937efa67aa3b0edb41d4ab9f5b8337b7f4f4c1` |
+| Production Web | Vercel deployment succeeded at the same SHA; `/api/health` returned `ok: true` and the same release revision. |
+| Production background Worker | Railway deployment metadata succeeded at the same SHA. Direct job-processing health was not independently established by the Web health response. |
+| LOCAL_GPU Desktop source | H3 branch SHA `3b04b5fe6874cba21fa34805cbd2705f13e869eb`; Desktop default branch remains `b1bb6be25e25e8e03bf34f1781122f782e3fe8aa`. Local Worker and ComfyUI ports were not listening during this audit, so active runtime status is **not verified**. |
+| Cloudflare Worker | No EmberOS Cloudflare application Worker configuration exists in current main. Railway remains the configured background Worker; Cloudflare references do not establish a replacement runtime. |
+| Tenant isolation | Focused static/unit suite passed 44/44. Exact-head CI passed its ephemeral PostgreSQL authority job. Production catalog RLS/grants were not read back; `usage_records` has no RLS contract in current source and requires separate security review. |
+| Paid AI / GPU work in this audit | 0 / 0 |
 
-| 策略 | 说明 |
-|------|------|
-| LLM 预算上限 | 每 Task 默认 ≤ US$0.50 |
-| 重试上限 | CEO 自动重试 ≤ 2 次 |
-| 分辨率 | 预览 720p，导出 1080p |
-| 长视频 | 先 ASR 转写，再文本规划；不全量 4K 喂 Vision |
-| 租户隔离 | 存储路径 + API `requireWorkspaceRole` + DB RLS（7 张核心表） |
-| Portal 安全 | Token 绑定 Creative、过期时间、rate limit |
-| 合规 | Compliance Agent + 广告法敏感词库；[Privacy Policy](https://embersoullabs.com/privacy/)（MY PDPA） |
+### Release authority
 
-**单 Campaign 运营成本参考：** ~S$0.75（标准档）
+The repository's release authority is [RELEASE_CHANNEL.md](./RELEASE_CHANNEL.md). At its last recorded update:
 
----
+| Capability | Recorded status |
+| --- | --- |
+| Video Studio V1 | Released and frozen as a bounded production assembly |
+| Photo Scene V1 | Released and frozen as a bounded production assembly |
+| AI Story Self-Use V1 | Deployed, awaiting complete real-episode certification; not publicly released |
+| AI Story public commercial release | No |
+| Full current `main` | Web and Railway deployment metadata identify `9e937ef`; this does not certify every gated capability or provider |
 
-## 相关文档
+The release table is repository authority. The audit snapshot above adds bounded runtime evidence; database migration state, Production catalog grants/policies, provider configuration, and feature flags remain **unknown unless explicitly stated**.
 
-- [DEVELOPMENT_WORKFLOW.md](./DEVELOPMENT_WORKFLOW.md) — **开发 Workflow**（Dev 1–6 · solo + Cursor）
-- [ROADMAP.md](./ROADMAP.md) — **16 周 Plan To-dos** 与完成状态
-- [WORKFLOW.md](./WORKFLOW.md) — 产品分段业务流程（用户操作）
-- [PLAN_PROMPT.md](./PLAN_PROMPT.md) — Cursor Plan 模式完整规划 Prompt
-- [embersoullabs.com/terms](https://embersoullabs.com/terms/) · [Privacy](https://embersoullabs.com/privacy/) — 法律文档（EmberOS / Stripe / OpenAI 已覆盖）
+Staging, preview, local, certification, and Production authorities are intentionally separate. Production-only scripts require explicit target checks and acknowledgement flags. Never use customer campaigns or Production records for routine development tests.
 
----
+## Known limitations and operational notes
+
+- `/api/health` reports web/runtime readiness; Redis queue depth is intentionally non-fatal to basic web health. Use worker logs and queue diagnostics for worker certification.
+- The asset bucket is private in the recorded bounded release. Persist canonical storage identities and deliver artifacts through authorized signed routes rather than storing expiring provider URLs as authority.
+- A Local GPU workflow ID alone does not prove Character DNA, Voice DNA, continuity, audio, or first-frame support. The advertised capability block and authority binding must match the request.
+- `UNKNOWN` provider outcomes are reconciliation states and must not automatically trigger a second paid call.
+- Human approval, immutable fingerprints, provider attempts, workspace scope, and commercial claims must survive retries and replay.
+- Some older planning documents describe superseded product targets. Prefer executable contracts, current tests, `RELEASE_CHANNEL.md`, and the newest bounded release evidence.
+- The optional Production E2E and provider quality checks may incur costs or create records. They require separate authorization and are not run by `pnpm verify`.
+
+## Troubleshooting
+
+| Symptom | Checks |
+| --- | --- |
+| Web starts but authenticated pages fail | Verify Supabase public variables, service-role server configuration, database reachability, and the expected local migration state. |
+| Jobs remain queued | Verify Redis connectivity, `BULLMQ_PREFIX`, worker process health, queue registration, and that web and worker use compatible contracts. |
+| FFmpeg render fails | Run `ffmpeg -version` and `ffprobe -version`; verify `FFMPEG_PATH`, `FFPROBE_PATH`, codecs, fonts, and worker filesystem permissions. |
+| Upload or playback fails | Verify bucket visibility, canonical storage path, service-role access, signed URL generation, and workspace authorization. |
+| Provider dispatch is blocked | Inspect Pre-QC, approval freshness, provider capability, runtime authorization, budget ceiling, and environment-specific provider enablement. Do not bypass the gate or add an automatic fallback. |
+| LOCAL_GPU request is rejected | Compare V2/V3 contract version, signature, timestamp, workflow capability, reference hashes, upload binding, and Desktop active worker version. |
+| Integration tests refuse to run | Use a disposable PostgreSQL instance and the required test markers; do not point the suite at Production. |
+
+## Further documentation
+
+- [Release channel](./RELEASE_CHANNEL.md)
+- [AI Story V1](./docs/AI_STORY_V1.md)
+- [AI Story execution](./docs/AI_STORY_EXECUTION_V1.md)
+- [LOCAL_GPU DNA/R2V Desktop handoff](./docs/releases/local-gpu-dna-r2v-desktop-handoff.md)
+- [Video Studio V1 release roadmap](./docs/releases/video-studio-v1-release-roadmap.md)
+- [Photo Scene V1 architecture](./docs/architecture/photo-scene-v1.md)
+- [Hybrid migration authority and guards](./docs/architecture/EMBEROS-HYBRID-MIGRATION-AUTHORITY-AND-GUARDS.md)
+- [Canonical AI Story RLS](./docs/architecture/ai-story-canonical-rls.md)
+- [Agency onboarding](./docs/AGENCY_ONBOARDING.md)
 
 ## License
 
-Private / 待定
+Private repository. No public license is granted.
