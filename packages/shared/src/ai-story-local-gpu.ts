@@ -27,6 +27,7 @@ export const LOCAL_GPU_CAPABILITIES_ACTION = "capabilities" as const;
 export const LOCAL_GPU_SUBMIT_ACTION = "submit" as const;
 export const LOCAL_GPU_STATUS_ACTION = "status" as const;
 export const LOCAL_GPU_RESULT_ACTION = "result" as const;
+export const LOCAL_GPU_SUBMISSION_EVIDENCE_ACTION = "evidence" as const;
 export const LOCAL_GPU_DURATION_SOURCE = "RECOMMENDED_DURATION_AUTHORITY" as const;
 export const LOCAL_GPU_DURATION_MIN_SEC = AI_STORY_LOCAL_GPU_DESKTOP_MIN_SEC;
 export const LOCAL_GPU_DURATION_MAX_SEC = AI_STORY_LOCAL_GPU_DESKTOP_MAX_SEC;
@@ -437,9 +438,9 @@ export type LocalGpuDesktopSubmitBodyV2 = {
   audioPolicy: LocalGpuV2AudioPolicy;
   upload: LocalGpuUploadDestination;
   creative: {
-    characters: { subjectId: string; dnaFingerprint: string | null; modelBound: false }[];
-    products: { subjectId: string; variantId: string | null; modelBound: false }[];
-    scene: { sceneExecutionId: string } | null;
+    characters: { subjectId: string; dnaFingerprint: string | null; modelBound: false; references: LocalGpuV2AuthorityImage[] }[];
+    products: { subjectId: string; variantId: string; modelBound: false; references: LocalGpuV2AuthorityImage[] }[];
+    continuity?: LocalGpuV2ContinuityAuthority;
   };
   references: {
     order: number;
@@ -450,8 +451,44 @@ export type LocalGpuDesktopSubmitBodyV2 = {
     assetUrl: string;
     contentHash: string;
   }[];
-  firstFrame: null | { sourceAssetId: string; contentHash: string; assetUrl: string };
+  firstFrame: null | { approval: "APPROVED"; sourceAssetId: string; contentHash: string; assetUrl: string };
 };
+
+export type LocalGpuV2AuthorityImage = { approval: "APPROVED"; assetUrl: string; contentHash: string };
+
+/** Desktop V2 first-frame authority types; the Desktop advertises the ones it accepts. */
+export const LOCAL_GPU_V2_FIRST_FRAME_AUTHORITIES = ["PREDECESSOR_CONTINUITY", "INITIAL_MATERIAL_REFERENCE"] as const;
+export type LocalGpuV2FirstFrameAuthorityType = (typeof LOCAL_GPU_V2_FIRST_FRAME_AUTHORITIES)[number];
+
+export type LocalGpuV2FirstFrameLineage =
+  | { sourceType: "INITIAL_MATERIAL_REFERENCE" }
+  | {
+    sourceType: "PREDECESSOR_CONTINUITY";
+    sourceSceneId: string;
+    predecessorGenerationResultId: string;
+    storyVersion: string;
+    executionPlanId: string;
+  };
+
+export type LocalGpuV2ContinuityAuthority = {
+  sourceType: LocalGpuV2FirstFrameAuthorityType;
+  approval: "APPROVED";
+  assetUrl: string;
+  contentHash: string;
+  sourceAssetId: string;
+  workspaceId: string;
+  sourceSceneId?: string;
+  predecessorGenerationResultId?: string;
+  storyVersion?: string;
+  executionPlanId?: string;
+};
+
+/** Reads the first-frame authority types a Desktop declares for Contract V2; absent means predecessor only. */
+export function readLocalGpuV2FirstFrameAuthorities(capabilities: unknown): LocalGpuV2FirstFrameAuthorityType[] {
+  const v2 = (capabilities as { contracts?: { v2?: { firstFrameAuthorities?: unknown } } } | null)?.contracts?.v2;
+  const declared = Array.isArray(v2?.firstFrameAuthorities) ? v2.firstFrameAuthorities : ["PREDECESSOR_CONTINUITY"];
+  return LOCAL_GPU_V2_FIRST_FRAME_AUTHORITIES.filter((type) => declared.includes(type));
+}
 
 export function assertLocalGpuV2RuntimeCapabilities(capabilities: LocalGpuRuntimeCapabilities | null): void {
   const workflowEntries = capabilities?.workflows
@@ -483,6 +520,7 @@ export function buildLocalGpuDesktopSubmitV2(input: {
     characters: readonly { subjectId: string; dnaFingerprint?: string | null }[];
     products: readonly { subjectId: string; variantId?: string | null }[];
     scene?: { sceneExecutionId: string } | null;
+    continuity?: LocalGpuV2ContinuityAuthority | null;
   };
   references: readonly LocalGpuContractV2Reference[];
   firstFrame?: null | {
@@ -491,7 +529,10 @@ export function buildLocalGpuDesktopSubmitV2(input: {
     assetUrl: string;
     authoritySourceAssetId: string;
     authorityContentHash: string;
+    lineage?: LocalGpuV2FirstFrameLineage | null;
   };
+  /** First-frame authority types the target Desktop accepts (from its capabilities). */
+  firstFrameAuthorities?: readonly LocalGpuV2FirstFrameAuthorityType[];
   continuityRequired?: boolean;
   dialogueLineCount?: number;
   pinnedVoiceDna?: boolean;
@@ -549,6 +590,7 @@ export function buildLocalGpuDesktopSubmitV2(input: {
     throw new LocalGpuContractError("LOCAL_GPU_PRODUCT_REFERENCE_REQUIRED");
   }
   let firstFrame: LocalGpuDesktopSubmitBodyV2["firstFrame"] = null;
+  let continuity: LocalGpuV2ContinuityAuthority | undefined;
   if (input.continuityRequired && !input.firstFrame) throw new LocalGpuContractError("LOCAL_GPU_CONTINUITY_FRAME_REQUIRED");
   if (input.firstFrame) {
     const frame = input.firstFrame;
@@ -560,8 +602,37 @@ export function buildLocalGpuDesktopSubmitV2(input: {
     }
     if (!frame.assetUrl) throw new LocalGpuContractError("LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
     assertHttpsDestination(frame.assetUrl, "LOCAL_GPU_REFERENCE_ASSET_URL_REQUIRED");
-    firstFrame = { sourceAssetId: frame.sourceAssetId, contentHash: frame.contentHash, assetUrl: frame.assetUrl };
+    const lineage = resolveV2FirstFrameLineage(frame, references, input.creative.continuity ?? null);
+    const accepted = input.firstFrameAuthorities ?? ["PREDECESSOR_CONTINUITY"];
+    if (!accepted.includes(lineage.sourceType)) throw new LocalGpuContractError("LOCAL_GPU_FIRST_FRAME_AUTHORITY_UNSUPPORTED");
+    firstFrame = { approval: "APPROVED", sourceAssetId: frame.sourceAssetId, contentHash: frame.contentHash, assetUrl: frame.assetUrl };
+    continuity = {
+      sourceType: lineage.sourceType,
+      approval: "APPROVED",
+      assetUrl: frame.assetUrl,
+      contentHash: frame.contentHash,
+      sourceAssetId: frame.sourceAssetId,
+      workspaceId: input.workspaceId,
+      ...(lineage.sourceType === "PREDECESSOR_CONTINUITY" ? {
+        sourceSceneId: lineage.sourceSceneId,
+        predecessorGenerationResultId: lineage.predecessorGenerationResultId,
+        storyVersion: lineage.storyVersion,
+        executionPlanId: lineage.executionPlanId,
+      } : {}),
+    };
   }
+  const authorityImages = (role: "CHARACTER" | "PRODUCT", subjectId: string): LocalGpuV2AuthorityImage[] => references
+    .filter((reference) => reference.role === role && reference.subjectId === subjectId)
+    .map((reference) => ({ approval: "APPROVED" as const, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
+  const products = input.creative.products.map((product) => {
+    if (!product.variantId) throw new LocalGpuContractError("LOCAL_GPU_PRODUCT_VARIANT_REQUIRED");
+    return { subjectId: product.subjectId, variantId: product.variantId, modelBound: false as const, references: authorityImages("PRODUCT", product.subjectId) };
+  });
+  // Desktop flattens creative authority as characters, then products; top-level order must match.
+  const orderedReferences = [
+    ...references.filter((reference) => reference.role === "CHARACTER"),
+    ...references.filter((reference) => reference.role === "PRODUCT"),
+  ].map((reference, order) => ({ ...reference, order }));
   const upload = input.upload;
   if (!upload?.environment || !upload.method || !upload.url || /[\r\n]/.test(upload.method)) {
     throw new LocalGpuContractError("LOCAL_GPU_UPLOAD_DESTINATION_REQUIRED");
@@ -599,18 +670,45 @@ export function buildLocalGpuDesktopSubmitV2(input: {
           subjectId: character.subjectId,
           dnaFingerprint: character.dnaFingerprint ?? null,
           modelBound: false as const,
+          references: authorityImages("CHARACTER", character.subjectId),
         })),
-        products: input.creative.products.map((product) => ({
-          subjectId: product.subjectId,
-          variantId: product.variantId ?? null,
-          modelBound: false as const,
-        })),
-        scene: input.creative.scene ?? null,
+        products,
+        ...(continuity ? { continuity } : {}),
       },
-      references,
+      references: orderedReferences,
       firstFrame,
     },
   };
+}
+
+/**
+ * A first frame is either predecessor continuity with full persisted lineage, or the approved initial
+ * material that is byte-identical to one of this job's approved references. Nothing else is sent.
+ */
+function resolveV2FirstFrameLineage(
+  frame: { assetUrl: string; contentHash: string; lineage?: LocalGpuV2FirstFrameLineage | null },
+  references: readonly { assetUrl: string; contentHash: string }[],
+  persisted: LocalGpuV2ContinuityAuthority | null,
+): LocalGpuV2FirstFrameLineage {
+  const lineage = frame.lineage ?? (persisted?.sourceType === "PREDECESSOR_CONTINUITY" && persisted.sourceSceneId
+    && persisted.predecessorGenerationResultId && persisted.storyVersion && persisted.executionPlanId
+    ? {
+      sourceType: "PREDECESSOR_CONTINUITY" as const,
+      sourceSceneId: persisted.sourceSceneId,
+      predecessorGenerationResultId: persisted.predecessorGenerationResultId,
+      storyVersion: persisted.storyVersion,
+      executionPlanId: persisted.executionPlanId,
+    }
+    : null);
+  const matchesApprovedReference = references.some((reference) => reference.assetUrl === frame.assetUrl && reference.contentHash === frame.contentHash);
+  if (lineage?.sourceType === "PREDECESSOR_CONTINUITY") {
+    if (!lineage.sourceSceneId || !lineage.predecessorGenerationResultId || !lineage.storyVersion || !lineage.executionPlanId) {
+      throw new LocalGpuContractError("LOCAL_GPU_CONTINUITY_AUTHORITY_REQUIRED");
+    }
+    return lineage;
+  }
+  if (!matchesApprovedReference) throw new LocalGpuContractError("LOCAL_GPU_CONTINUITY_AUTHORITY_REQUIRED");
+  return { sourceType: "INITIAL_MATERIAL_REFERENCE" };
 }
 
 export const LOCAL_GPU_DESKTOP_CONTRACT_VERSION_V3 = 3 as const;
@@ -722,11 +820,24 @@ export function assertLocalGpuCreativeBinding(job: Record<string, unknown>, crea
   }
 }
 
+/**
+ * Mirrors the Desktop V2 creative binding byte for byte: references carry the identity Desktop
+ * attaches from creative authority, and the first frame carries its resolved continuity lineage.
+ */
 export function localGpuCreativeBindingForV2Body(
   body: LocalGpuDesktopSubmitBodyV2 & { aspectRatio?: string | null },
   seed: number | null = null,
 ): string {
-  return localGpuCreativeBindingDigest(localGpuCanonicalCreativeJob({
+  return localGpuCreativeBindingDigest(localGpuCanonicalCreativeJobForV2Body(body, seed));
+}
+
+export function localGpuCanonicalCreativeJobForV2Body(
+  body: LocalGpuDesktopSubmitBodyV2 & { aspectRatio?: string | null },
+  seed: number | null = null,
+): Record<string, unknown> {
+  const dna = new Map(body.creative.characters.map((character) => [character.subjectId, character.dnaFingerprint]));
+  const continuity = body.creative.continuity;
+  return localGpuCanonicalCreativeJob({
     contractVersion: 2,
     assetMode: body.assetMode,
     jobId: body.jobId,
@@ -740,9 +851,26 @@ export function localGpuCreativeBindingForV2Body(
     megapixels: null,
     voiceInstructions: null,
     seed,
-    references: body.references,
-    firstFrame: body.firstFrame,
-  }));
+    references: body.references.map((reference) => ({
+      role: reference.role,
+      assetUrl: reference.assetUrl,
+      contentHash: reference.contentHash.toLowerCase(),
+      subjectId: reference.subjectId,
+      variantId: reference.role === "PRODUCT" ? reference.variantId : null,
+      dnaVersion: null,
+      dnaFingerprint: reference.role === "CHARACTER" ? dna.get(reference.subjectId)?.toLowerCase() ?? null : null,
+    })),
+    firstFrame: body.firstFrame && continuity ? {
+      assetUrl: continuity.assetUrl,
+      contentHash: continuity.contentHash.toLowerCase(),
+      sourceAssetId: continuity.sourceAssetId,
+      sourceSceneId: continuity.sourceSceneId ?? null,
+      predecessorGenerationResultId: continuity.predecessorGenerationResultId ?? null,
+      storyVersion: continuity.storyVersion ?? null,
+      executionPlanId: continuity.executionPlanId ?? null,
+      workspaceId: continuity.workspaceId,
+    } : null,
+  });
 }
 
 export function assertLocalGpuZeroAssetAuthority(input: {

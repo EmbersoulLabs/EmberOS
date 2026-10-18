@@ -10,7 +10,7 @@ import {
   schema,
 } from "@ceo-agent/db";
 import type { AiStoryLocalGenerationPackage } from "@ceo-agent/shared";
-import { assertLocalGpuV2RuntimeCapabilities, LocalGpuContractError } from "@ceo-agent/shared/server";
+import { assertLocalGpuV2RuntimeCapabilities, LocalGpuContractError, readLocalGpuV2FirstFrameAuthorities } from "@ceo-agent/shared/server";
 import { LocalGpuCloudAdapter } from "./local-gpu-adapter";
 import { loadLocalGpuConfigFromEnv, type LocalGpuConfig } from "./local-gpu-config";
 import { planLocalGpuRoute } from "./local-gpu-execution";
@@ -77,7 +77,11 @@ export function toLocalGpuAuthorizationError(error: unknown): LocalGpuAuthorizat
 }
 
 export function localGpuOutputAssetId(input: { packageId: string; runtimeAuthorizationId: string }): string {
-  return deterministicPersistenceUuid("local-gpu-output-asset", input);
+  // Callers pass wider authority rows; only these two fields define the reserved asset identity.
+  return deterministicPersistenceUuid("local-gpu-output-asset", {
+    packageId: input.packageId,
+    runtimeAuthorizationId: input.runtimeAuthorizationId,
+  });
 }
 
 /** Same prefix as manual local uploads so the canonical VALIDATE_OUTPUT path accepts Desktop bytes. */
@@ -170,6 +174,7 @@ async function buildDispatch(input: {
     package: pkg, assets: resolvedAssets, environment: "production",
     jobId: deterministicPersistenceUuid("local-gpu-preview-job", { packageId: pkg.packageId }),
     upload: input.upload,
+    firstFrameAuthorities: readLocalGpuV2FirstFrameAuthorities(capabilities),
   });
   const body = desktop.body;
   return {
@@ -191,7 +196,9 @@ async function buildDispatch(input: {
       creative: body.creative,
       references: body.references,
       firstFrame: body.firstFrame ? {
-        ...body.firstFrame,
+        sourceAssetId: body.firstFrame.sourceAssetId,
+        contentHash: body.firstFrame.contentHash,
+        assetUrl: body.firstFrame.assetUrl,
         authoritySourceAssetId: body.firstFrame.sourceAssetId,
         authorityContentHash: body.firstFrame.contentHash,
       } : null,

@@ -11,6 +11,7 @@ import {
   assertLocalGpuSubmitAllowed,
   buildLocalGpuDesktopSubmit,
   buildLocalGpuDesktopSubmitV2,
+  readLocalGpuV2FirstFrameAuthorities,
   buildLocalGpuZeroAssetT2VSubmit,
   localGpuCreativeBindingForV2Body,
   LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
@@ -21,6 +22,7 @@ import {
   LOCAL_GPU_RESULT_ACTION,
   LOCAL_GPU_STATUS_ACTION,
   LOCAL_GPU_SUBMIT_ACTION,
+  LOCAL_GPU_SUBMISSION_EVIDENCE_ACTION,
   LOCAL_GPU_WORKER_WORKFLOW,
   LocalGpuContractError,
   type LocalGpuRuntimeCapabilities,
@@ -35,6 +37,12 @@ import {
 import { assertLocalGpuAccess, type LocalGpuServerActor } from "./local-gpu-access";
 import { type LocalGpuConfig } from "./local-gpu-config";
 import { signLocalGpuRequest } from "./local-gpu-signing";
+import {
+  localGpuSubmissionEvidenceDigest,
+  verifyLocalGpuSubmissionEvidence,
+  type LocalGpuSubmissionEvidence,
+  type SignedLocalGpuSubmissionEvidence,
+} from "./local-gpu-submission-evidence";
 import {
   prepareLocalGpuR2vDnaHandoff,
 } from "./local-gpu-r2v-dna-transport";
@@ -307,7 +315,12 @@ export class LocalGpuCloudAdapter {
     assertLocalGpuV2RuntimeCapabilities(input.capabilities);
     assertLocalGpuSubmitAllowed(input.existingGate);
     const jobId = this.jobIdFor(input.package);
-    const desktop = buildLocalGpuDesktopSubmitV2({ ...input.request, environment, jobId });
+    const desktop = buildLocalGpuDesktopSubmitV2({
+      ...input.request,
+      environment,
+      jobId,
+      firstFrameAuthorities: readLocalGpuV2FirstFrameAuthorities(input.capabilities),
+    });
     const creativeBinding = localGpuCreativeBindingForV2Body(desktop.body);
     const token = this.authorize({
       actor: input.actor,
@@ -449,7 +462,7 @@ export class LocalGpuCloudAdapter {
     throwSubmitFailure(jobId, response);
   }
 
-  async status(jobId: string, scope: { actor: LocalGpuServerActor; workspaceId: string; sceneExecutionId: string }): Promise<
+  async status(jobId: string, scope: { actor: LocalGpuServerActor; workspaceId: string; sceneExecutionId: string; workflow?: string }): Promise<
     | { found: true; jobId: string; state: LocalGpuJobState; remoteProviderFallback: null }
     | { found: false; jobId: string; uncertain: boolean }
   > {
@@ -459,7 +472,7 @@ export class LocalGpuCloudAdapter {
       workspaceId: scope.workspaceId,
       sceneExecutionId: scope.sceneExecutionId,
       action: LOCAL_GPU_STATUS_ACTION,
-      workflow: LOCAL_GPU_WORKER_WORKFLOW,
+      workflow: scope.workflow ?? LOCAL_GPU_WORKER_WORKFLOW,
       jobId,
     });
     let response: { status: number; json: unknown };
@@ -478,13 +491,13 @@ export class LocalGpuCloudAdapter {
     return { found: true, jobId, state, remoteProviderFallback: null };
   }
 
-  async result(jobId: string, scope: { actor: LocalGpuServerActor; workspaceId: string; sceneExecutionId: string }): Promise<{ jobId: string; state: "COMPLETED"; contentHash: string }> {
+  async result(jobId: string, scope: { actor: LocalGpuServerActor; workspaceId: string; sceneExecutionId: string; workflow?: string }): Promise<{ jobId: string; state: "COMPLETED"; contentHash: string }> {
     const token = this.authorize({
       actor: scope.actor,
       workspaceId: scope.workspaceId,
       sceneExecutionId: scope.sceneExecutionId,
       action: LOCAL_GPU_RESULT_ACTION,
-      workflow: LOCAL_GPU_WORKER_WORKFLOW,
+      workflow: scope.workflow ?? LOCAL_GPU_WORKER_WORKFLOW,
       jobId,
     });
     const response = await this.send({ method: "GET", path: `/v1/jobs/${jobId}/result`, token, jobId });
@@ -496,6 +509,44 @@ export class LocalGpuCloudAdapter {
       throw new LocalGpuContractError("LOCAL_GPU_RESULT_CONTENT_HASH_REQUIRED");
     }
     return { jobId, state: "COMPLETED", contentHash };
+  }
+
+  /**
+   * Reads Desktop's signed submission evidence for one job. Read-only on the Desktop: it never
+   * enqueues, and an unreachable or pre-evidence Desktop is reported as unavailable, not as proof.
+   */
+  async submissionEvidence(jobId: string, scope: {
+    actor: LocalGpuServerActor; workspaceId: string; sceneExecutionId: string; workflow: string; challenge: string;
+  }): Promise<{ available: true; evidence: LocalGpuSubmissionEvidence; digest: string } | { available: false; httpStatus: number | null }> {
+    const { environment, secret } = this.requireEnabled();
+    const token = this.authorize({
+      actor: scope.actor,
+      workspaceId: scope.workspaceId,
+      sceneExecutionId: scope.sceneExecutionId,
+      action: LOCAL_GPU_SUBMISSION_EVIDENCE_ACTION,
+      workflow: scope.workflow,
+      jobId,
+    });
+    let response: { status: number; json: unknown };
+    try {
+      response = await this.send({
+        method: "GET",
+        path: `/v1/jobs/${encodeURIComponent(jobId)}/submission-evidence?challenge=${scope.challenge}`,
+        token,
+        jobId,
+      });
+    } catch (error) {
+      if (error instanceof LocalGpuSubmitAmbiguousError) return { available: false, httpStatus: error.httpStatus };
+      throw error;
+    }
+    if (response.status !== 200) return { available: false, httpStatus: response.status };
+    const evidence = verifyLocalGpuSubmissionEvidence({
+      signed: response.json,
+      secret,
+      now: this.clock.now(),
+      expected: { environment, jobId, workspaceId: scope.workspaceId, sceneExecutionId: scope.sceneExecutionId, workflow: scope.workflow, challenge: scope.challenge },
+    });
+    return { available: true, evidence, digest: localGpuSubmissionEvidenceDigest(response.json as SignedLocalGpuSubmissionEvidence) };
   }
 
   capabilitiesToken(scope: { actor: LocalGpuServerActor; workspaceId: string }): string {

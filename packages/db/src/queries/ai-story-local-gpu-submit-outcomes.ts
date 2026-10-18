@@ -1,4 +1,5 @@
 import { and, asc, eq, sql, type SQL } from "drizzle-orm";
+import { LOCAL_GPU_T2V_WORKFLOW } from "@ceo-agent/shared/server";
 import { getDb, schema } from "../client";
 import { deterministicPersistenceUuid } from "./ai-story-scene-execution-persistence";
 
@@ -10,6 +11,7 @@ export type LocalGpuSubmitOutcomeKind =
   | "SUBMIT_REJECTED"
   | "SUBMIT_UNCERTAIN"
   | "STATUS_NOT_FOUND_EXHAUSTED"
+  | "DESKTOP_NON_ACCEPTANCE_ATTESTED"
   | "HUMAN_RETRY_AUTHORIZED";
 
 export type LocalGpuSubmitOutcomeContext = {
@@ -36,6 +38,8 @@ export type LocalGpuSubmitLedgerState = {
   accepted: boolean;
   terminal: "SUBMIT_REJECTED" | "STATUS_NOT_FOUND_EXHAUSTED" | null;
   retryAuthorized: boolean;
+  /** Verified Desktop attestation that no submit of this job was ever enqueued, for the current attempt. */
+  nonAcceptanceAttested: boolean;
   /** Latest submit evidence for the current attempt; bounds status-only reconciliation. */
   evidenceAt: Date | null;
 };
@@ -89,6 +93,7 @@ export function deriveLocalGpuSubmitLedgerState(
     accepted: kinds.has("SUBMIT_ACCEPTED"),
     terminal: terminal ?? null,
     retryAuthorized: kinds.has("HUMAN_RETRY_AUTHORIZED"),
+    nonAcceptanceAttested: kinds.has("DESKTOP_NON_ACCEPTANCE_ATTESTED"),
     evidenceAt: evidence.length > 0
       ? new Date(Math.max(...evidence))
       : attemptNumber === 1 ? legacyClaimAt : null,
@@ -155,37 +160,98 @@ export async function listLocalGpuSubmitOutcomes(db: Db, input: { workspaceId: s
   )).orderBy(asc(schema.aiStoryLocalGpuSubmitOutcomes.createdAt));
 }
 
+type ReleaseScope = { orgId: string; workspaceId: string; executionPlanId: string; sceneExecutionId: string };
+
+/** Locks the released LOCAL_GPU Scene and resolves its submitted job and active dispatch authority. */
+async function lockSubmittedLocalGpuScene(tx: Db, input: ReleaseScope) {
+  const [release] = await tx.select().from(schema.aiStorySceneReleaseStates).where(and(
+    eq(schema.aiStorySceneReleaseStates.orgId, input.orgId),
+    eq(schema.aiStorySceneReleaseStates.workspaceId, input.workspaceId),
+    eq(schema.aiStorySceneReleaseStates.executionPlanId, input.executionPlanId),
+    eq(schema.aiStorySceneReleaseStates.sceneExecutionId, input.sceneExecutionId),
+    eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
+    eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
+  )).limit(1).for("update");
+  if (!release?.gateProviderAttemptId || !release.currentLocalGenerationPackageId) {
+    throw new LocalGpuSubmitOutcomeError("LOCAL_GPU_RETRY_NO_SUBMITTED_JOB", 409);
+  }
+  const jobId = release.gateProviderAttemptId;
+  const [authority] = await tx.select().from(schema.aiStoryLocalGpuDispatchAuthorities).where(and(
+    eq(schema.aiStoryLocalGpuDispatchAuthorities.workspaceId, input.workspaceId),
+    eq(schema.aiStoryLocalGpuDispatchAuthorities.sceneExecutionId, input.sceneExecutionId),
+    eq(schema.aiStoryLocalGpuDispatchAuthorities.packageId, release.currentLocalGenerationPackageId),
+    eq(schema.aiStoryLocalGpuDispatchAuthorities.runtimeAuthorizationId, release.runtimeAuthorizationId),
+  )).limit(1);
+  if (!authority || authority.status !== "ACTIVE" || authority.revokedAt) {
+    throw new LocalGpuSubmitOutcomeError("LOCAL_GPU_DISPATCH_AUTHORITY_REVOKED", 409);
+  }
+  const state = await readLocalGpuSubmitLedger(tx, { workspaceId: input.workspaceId, sceneExecutionId: input.sceneExecutionId, jobId });
+  return { jobId, authority, state };
+}
+
+/** The submitted job, its workflow and current attempt, for requesting Desktop submission evidence. */
+export async function readLocalGpuAttestationScope(db: Db, input: ReleaseScope) {
+  return db.transaction(async (tx) => {
+    const { jobId, authority, state } = await lockSubmittedLocalGpuScene(tx as unknown as Db, input);
+    const snapshot = authority.dispatchSnapshot as { route?: { assetMode?: unknown }; request?: { workflow?: unknown } } | null;
+    // Contract V3 zero-asset snapshots carry no workflow field; the adapter always signs them as T2V.
+    const workflow = typeof snapshot?.request?.workflow === "string" ? snapshot.request.workflow
+      : snapshot?.route?.assetMode === "WITHOUT_ASSET" ? LOCAL_GPU_T2V_WORKFLOW : null;
+    if (!workflow) throw new LocalGpuSubmitOutcomeError("LOCAL_GPU_DISPATCH_AUTHORITY_REVOKED", 409);
+    return { jobId, workflow, state };
+  });
+}
+
+export type LocalGpuNonAcceptanceAttestation = {
+  verdict: "REJECTED_BEFORE_ENQUEUE";
+  basis: string;
+  attestationDigest: string;
+  challenge: string;
+  issuedAt: string;
+  desktopVersion: string;
+  submitAuthorizationCount: number;
+  lastSubmitAuthorizationAt: string | null;
+  rejection: { httpStatus: number; errorCode: string; at: string } | null;
+};
+
 /**
- * Human-controlled recovery. Only an authoritative Desktop rejection of the current attempt
- * proves non-acceptance; a 404-exhausted reconciliation is not proof and is refused.
+ * Appends a verified Desktop non-acceptance attestation for the current attempt. Only an attempt whose
+ * delivery ended unresolved (404 exhaustion) needs one; an authoritative rejection already proves it.
+ */
+export async function recordLocalGpuNonAcceptanceAttestation(db: Db, input: ReleaseScope & {
+  actorUserId: string; expectedAttemptNumber: number; expectedJobId: string; attestation: LocalGpuNonAcceptanceAttestation;
+}) {
+  return db.transaction(async (tx) => {
+    const { jobId, authority, state } = await lockSubmittedLocalGpuScene(tx as unknown as Db, input);
+    if (jobId !== input.expectedJobId || state.attemptNumber !== input.expectedAttemptNumber) {
+      throw new LocalGpuSubmitOutcomeError("LOCAL_GPU_RETRY_ATTEMPT_STALE", 409);
+    }
+    if (state.terminal !== "STATUS_NOT_FOUND_EXHAUSTED" || state.accepted || state.retryAuthorized) {
+      throw new LocalGpuSubmitOutcomeError("LOCAL_GPU_ATTESTATION_NOT_APPLICABLE", 409);
+    }
+    const created = await appendLocalGpuSubmitOutcome(tx as unknown as Db, {
+      orgId: input.orgId, workspaceId: input.workspaceId, storyId: authority.storyId,
+      sceneExecutionId: input.sceneExecutionId, packageId: authority.packageId,
+      dispatchAuthorityId: authority.dispatchAuthorityId, jobId,
+    }, state.attemptNumber, "DESKTOP_NON_ACCEPTANCE_ATTESTED", {
+      desktopErrorCode: input.attestation.rejection?.errorCode ?? null,
+      httpStatus: input.attestation.rejection?.httpStatus ?? null,
+      diagnostic: { ...input.attestation },
+    }, input.actorUserId);
+    return { jobId, attemptNumber: state.attemptNumber, replayed: !created };
+  });
+}
+
+/**
+ * Human-controlled recovery. Non-acceptance must be proven for the current attempt: an authoritative
+ * Desktop rejection, or a verified Desktop attestation after 404 exhaustion. A 404 alone is refused.
  * Opens attempt n+1 for the same deterministic job identity; the Worker claims it once.
  */
 export async function authorizeLocalGpuHumanRetry(db: Db, input: {
   orgId: string; workspaceId: string; executionPlanId: string; sceneExecutionId: string; actorUserId: string; expectedAttemptNumber: number;
 }) {
   return db.transaction(async (tx) => {
-    const [release] = await tx.select().from(schema.aiStorySceneReleaseStates).where(and(
-      eq(schema.aiStorySceneReleaseStates.orgId, input.orgId),
-      eq(schema.aiStorySceneReleaseStates.workspaceId, input.workspaceId),
-      eq(schema.aiStorySceneReleaseStates.executionPlanId, input.executionPlanId),
-      eq(schema.aiStorySceneReleaseStates.sceneExecutionId, input.sceneExecutionId),
-      eq(schema.aiStorySceneReleaseStates.executionMode, "LOCAL_GPU"),
-      eq(schema.aiStorySceneReleaseStates.releaseState, "RELEASED"),
-    )).limit(1).for("update");
-    if (!release?.gateProviderAttemptId || !release.currentLocalGenerationPackageId) {
-      throw new LocalGpuSubmitOutcomeError("LOCAL_GPU_RETRY_NO_SUBMITTED_JOB", 409);
-    }
-    const jobId = release.gateProviderAttemptId;
-    const [authority] = await tx.select().from(schema.aiStoryLocalGpuDispatchAuthorities).where(and(
-      eq(schema.aiStoryLocalGpuDispatchAuthorities.workspaceId, input.workspaceId),
-      eq(schema.aiStoryLocalGpuDispatchAuthorities.sceneExecutionId, input.sceneExecutionId),
-      eq(schema.aiStoryLocalGpuDispatchAuthorities.packageId, release.currentLocalGenerationPackageId),
-      eq(schema.aiStoryLocalGpuDispatchAuthorities.runtimeAuthorizationId, release.runtimeAuthorizationId),
-    )).limit(1);
-    if (!authority || authority.status !== "ACTIVE" || authority.revokedAt) {
-      throw new LocalGpuSubmitOutcomeError("LOCAL_GPU_DISPATCH_AUTHORITY_REVOKED", 409);
-    }
-    const state = await readLocalGpuSubmitLedger(tx as unknown as Db, { workspaceId: input.workspaceId, sceneExecutionId: input.sceneExecutionId, jobId });
+    const { jobId, authority, state } = await lockSubmittedLocalGpuScene(tx as unknown as Db, input);
     const nextAttempt = state.attemptNumber + 1;
     if (state.retryAuthorized && state.attemptNumber === input.expectedAttemptNumber + 1) {
       return { jobId, attemptNumber: state.attemptNumber, replayed: true as const };
@@ -193,7 +259,9 @@ export async function authorizeLocalGpuHumanRetry(db: Db, input: {
     if (state.attemptNumber !== input.expectedAttemptNumber) {
       throw new LocalGpuSubmitOutcomeError("LOCAL_GPU_RETRY_ATTEMPT_STALE", 409);
     }
-    if (state.terminal !== "SUBMIT_REJECTED") {
+    const proven = state.terminal === "SUBMIT_REJECTED"
+      || (state.terminal === "STATUS_NOT_FOUND_EXHAUSTED" && state.nonAcceptanceAttested && !state.accepted);
+    if (!proven) {
       throw new LocalGpuSubmitOutcomeError(
         state.terminal === "STATUS_NOT_FOUND_EXHAUSTED" ? "LOCAL_GPU_NON_ACCEPTANCE_UNPROVEN" : "LOCAL_GPU_RETRY_NOT_ELIGIBLE",
         409,

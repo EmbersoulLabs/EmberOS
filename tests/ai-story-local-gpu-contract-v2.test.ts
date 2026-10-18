@@ -138,12 +138,24 @@ describe("Desktop contract V2", () => {
     const result = map();
     expect(result.body.contractVersion).toBe(2);
     expect(result.body.assetMode).toBe("WITH_ASSET");
-    expect(result.body.references.map((item) => item.role)).toEqual(["PRODUCT", "CHARACTER"]);
+    expect(result.body.references.map((item) => item.role)).toEqual(["CHARACTER", "PRODUCT"]);
     expect(result.body.references.map((item) => item.order)).toEqual([0, 1]);
-    expect(result.body.references.map((item) => item.subjectId)).toEqual([productAssetId, characterId]);
-    expect(result.body.references.map((item) => item.contentHash)).toEqual([productHash, characterHash]);
-    expect(result.body.creative.characters[0]).toEqual({ subjectId: characterId, dnaFingerprint: hash("a"), modelBound: false });
-    expect(result.body.creative.products[0]).toEqual({ subjectId: productAssetId, variantId: "matte-black", modelBound: false });
+    expect(result.body.references.map((item) => item.subjectId)).toEqual([characterId, productAssetId]);
+    expect(result.body.references.map((item) => item.contentHash)).toEqual([characterHash, productHash]);
+    expect(result.body.creative.characters[0]).toEqual({
+      subjectId: characterId,
+      dnaFingerprint: hash("a"),
+      modelBound: false,
+      references: [{ approval: "APPROVED", assetUrl: "https://assets.example.test/character.png", contentHash: characterHash }],
+    });
+    expect(result.body.creative.products[0]).toEqual({
+      subjectId: productAssetId,
+      variantId: "matte-black",
+      modelBound: false,
+      references: [{ approval: "APPROVED", assetUrl: "https://assets.example.test/product.png", contentHash: productHash }],
+    });
+    expect(result.body.creative).not.toHaveProperty("scene");
+    expect(result.body.creative).not.toHaveProperty("continuity");
     expect(result.body.firstFrame).toBeNull();
     expect(result.body.audioPolicy).toBe("NO_DIALOGUE_WITH_AMBIENT_AUDIO");
     expect(result.body.prompt).toBe(
@@ -158,20 +170,65 @@ describe("Desktop contract V2", () => {
       .toBe("LOCAL_GPU_PROMPT_AUTHORITY_CONFLICT");
   });
 
-  it("carries an authorized continuity frame outside the two model references", () => {
-    const result = map({
+  it("refuses a first frame without persisted continuity lineage or a matching approved reference", () => {
+    expect(code(() => map({
       references: [
         { authorityType: "CHARACTER", authorityId: characterId, assetId: characterAssetId, contentHash: characterHash },
         { authorityType: "PRODUCT", authorityId: id(13), assetId: productAssetId, contentHash: productHash },
         { authorityType: "FIRST_FRAME", authorityId: id(16), assetId: frameAssetId, contentHash: frameHash },
       ],
-    }, [...assets, asset(frameAssetId, frameHash, "frame")]);
+    }, [...assets, asset(frameAssetId, frameHash, "frame")]))).toBe("LOCAL_GPU_CONTINUITY_AUTHORITY_REQUIRED");
+  });
+
+  it("carries predecessor continuity lineage as Desktop continuity authority", () => {
+    const lineage = {
+      sourceType: "PREDECESSOR_CONTINUITY" as const,
+      sourceSceneId: id(41),
+      predecessorGenerationResultId: id(42),
+      storyVersion: id(60),
+      executionPlanId: id(50),
+    };
+    const frame = { sourceAssetId: frameAssetId, authoritySourceAssetId: frameAssetId, contentHash: frameHash, authorityContentHash: frameHash, assetUrl: "https://assets.example.test/frame.png" };
+    const result = v2({ firstFrame: { ...frame, lineage } });
     expect(result.body.references).toHaveLength(2);
-    expect(result.body.firstFrame).toEqual({
-      sourceAssetId: frameAssetId,
+    expect(result.body.firstFrame).toEqual({ approval: "APPROVED", sourceAssetId: frameAssetId, contentHash: frameHash, assetUrl: frame.assetUrl });
+    const { sourceType: _sourceType, ...persisted } = lineage;
+    expect(result.body.creative.continuity).toEqual({
+      sourceType: "PREDECESSOR_CONTINUITY",
+      approval: "APPROVED",
+      assetUrl: frame.assetUrl,
       contentHash: frameHash,
-      assetUrl: "https://assets.example.test/frame.png",
+      sourceAssetId: frameAssetId,
+      workspaceId,
+      ...persisted,
     });
+    const replay = v2({ creative: { ...result.body.creative }, firstFrame: frame });
+    expect(replay.body).toEqual(result.body);
+  });
+
+  it("sends an initial-material first frame only when byte-identical to an approved reference and supported", () => {
+    const frame = { sourceAssetId: productAssetId, authoritySourceAssetId: productAssetId, contentHash: productHash, authorityContentHash: productHash, assetUrl: "https://assets.example.test/product.png" };
+    expect(code(() => v2({ firstFrame: frame }))).toBe("LOCAL_GPU_FIRST_FRAME_AUTHORITY_UNSUPPORTED");
+    const result = v2({ firstFrame: frame, firstFrameAuthorities: ["PREDECESSOR_CONTINUITY", "INITIAL_MATERIAL_REFERENCE"] });
+    expect(result.body.creative.continuity).toEqual({
+      sourceType: "INITIAL_MATERIAL_REFERENCE",
+      approval: "APPROVED",
+      assetUrl: frame.assetUrl,
+      contentHash: productHash,
+      sourceAssetId: productAssetId,
+      workspaceId,
+    });
+    expect(code(() => v2({
+      firstFrame: { ...frame, contentHash: frameHash, authorityContentHash: frameHash },
+      firstFrameAuthorities: ["PREDECESSOR_CONTINUITY", "INITIAL_MATERIAL_REFERENCE"],
+    }))).toBe("LOCAL_GPU_CONTINUITY_AUTHORITY_REQUIRED");
+  });
+
+  it("requires an explicit product variant", () => {
+    expect(code(() => v2({
+      creative: { characters: [{ subjectId: characterId, dnaFingerprint: hash("a") }], products: [{ subjectId: productAssetId, variantId: null }] },
+      references: [{ ...reference("PRODUCT", productAssetId, productHash), variantId: null }, reference("CHARACTER", characterId, characterHash)],
+    }))).toBe("LOCAL_GPU_PRODUCT_VARIANT_REQUIRED");
   });
 
   it("rejects a hash mismatch, a variant mismatch, missing authority, and a third model reference", () => {
