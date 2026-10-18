@@ -61,8 +61,3 @@ create trigger ai_story_commercial_audio_identity
 
 alter table public.ai_story_commercial_audio_assemblies enable row level security;
 revoke all on public.ai_story_commercial_audio_assemblies from anon, authenticated;
-grant select on public.ai_story_commercial_audio_assemblies to authenticated;
-create policy commercial_audio_select on public.ai_story_commercial_audio_assemblies
-  for select to authenticated using (
-    package_id in (select package_id from public.ai_story_local_generation_packages)
-  );

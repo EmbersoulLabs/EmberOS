@@ -110,7 +110,6 @@ export class AiStoryCommercialAudioRepository {
     packageId: string;
     generationResultId: string;
     actorUserId: string;
-    explicitSilence?: boolean;
     trackId?: string | null;
   }): Promise<{ decision: CommercialAudioDecision; assembly: CommercialAudioAssembly | null }> {
     return this.db.transaction(async (tx) => {
@@ -123,17 +122,13 @@ export class AiStoryCommercialAudioRepository {
         WHERE workspace_id = ${input.workspaceId} AND package_id = ${input.packageId} LIMIT 1`);
       if (!result || !pkgRow) throw new CommercialAudioError("COMMERCIAL_AUDIO_NOT_ASSEMBLED");
       const pkg = pkgRow.package as PackageAudioFacts;
-      const decision = decisionFor(pkg, input.explicitSilence === true);
+      const decision = decisionFor(pkg, false);
       if (decision.finalPolicy === "BLOCKED") throw new CommercialAudioError("MISSING_LICENSED_MUSIC");
-      if (decision.finalPolicy === "PRESERVE_NATIVE") return { decision, assembly: null };
+      if (decision.finalPolicy === "PRESERVE_NATIVE" || decision.finalPolicy === "EXPLICIT_SILENCE") return { decision, assembly: null };
       const brief = [pkg.prompt, pkg.worldDescription, ...(pkg.mustKeep ?? [])].filter(Boolean).join("\n");
-      const selected = input.explicitSilence
-        ? null
-        : input.trackId
-          ? commerciallyLicensedTrack(input.trackId)
-          : selectCommercialBgm({ brief }).track;
-      if (!input.explicitSilence && !selected) throw new CommercialAudioError("COMMERCIAL_AUDIO_TRACK_UNLICENSED");
-      const finalPolicy = input.explicitSilence ? "EXPLICIT_SILENCE" as const : decision.finalPolicy === "NATIVE_PLUS_BGM" ? "NATIVE_PLUS_BGM" as const : "LICENSED_BGM" as const;
+      const selected = input.trackId ? commerciallyLicensedTrack(input.trackId) : selectCommercialBgm({ brief }).track;
+      if (!selected) throw new CommercialAudioError("COMMERCIAL_AUDIO_TRACK_UNLICENSED");
+      const finalPolicy = decision.finalPolicy === "NATIVE_PLUS_BGM" ? "NATIVE_PLUS_BGM" as const : "LICENSED_BGM" as const;
       const [existing] = await tx.execute(sql`SELECT ${projection}
         FROM ai_story_commercial_audio_assemblies a
         LEFT JOIN assets src ON src.id = a.source_asset_id
@@ -159,8 +154,8 @@ export class AiStoryCommercialAudioRepository {
         VALUES (${assemblyId}, ${result.orgId}, ${input.workspaceId}, ${result.campaignId}, ${input.executionPlanId},
           ${result.sceneExecutionId}, ${input.packageId}, ${input.generationResultId}, ${result.assetId},
           ${result.contentHash}, ${decision.generationPolicy}, ${finalPolicy}, ${JSON.stringify(decision.blockers)}::jsonb,
-          ${selected?.id ?? null}, ${selected?.license ?? null}, ${selected?.licenseUrl ?? null},
-          ${input.explicitSilence ? "ASSEMBLED" : "PENDING"}, ${input.actorUserId})`);
+          ${selected.id}, ${selected.license ?? null}, ${selected.licenseUrl ?? null},
+          'PENDING', ${input.actorUserId})`);
       const [created] = await tx.execute(sql`SELECT ${projection}
         FROM ai_story_commercial_audio_assemblies a
         LEFT JOIN assets src ON src.id = a.source_asset_id

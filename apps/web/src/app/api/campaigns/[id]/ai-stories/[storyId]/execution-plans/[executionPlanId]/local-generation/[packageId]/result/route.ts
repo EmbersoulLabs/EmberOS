@@ -45,8 +45,7 @@ async function resolve(params: Params["params"], role: "operator" | "client_view
 }
 
 function reviewAudioBlock(described: Awaited<ReturnType<AiStoryCommercialAudioRepository["describe"]>>): string | null {
-  if (described.assembly?.finalPolicy === "EXPLICIT_SILENCE") return null;
-  if (described.decision.finalPolicy === "PRESERVE_NATIVE") return null;
+  if (described.decision.finalPolicy === "EXPLICIT_SILENCE" || described.decision.finalPolicy === "PRESERVE_NATIVE") return null;
   if (described.decision.finalPolicy === "BLOCKED") return "MISSING_LICENSED_MUSIC";
   if (described.decision.finalPolicy === "LICENSED_BGM" || described.decision.finalPolicy === "NATIVE_PLUS_BGM") {
     return described.assembly?.state === "ASSEMBLED" && described.assembly.hasAudio ? null : "COMMERCIAL_AUDIO_ASSEMBLY_REQUIRED";

@@ -13,7 +13,6 @@ import { resolveAuthorizedExecutionPlan } from "@/lib/ai-story-execution-plan-ac
 type Params = { params: Promise<{ id: string; storyId: string; executionPlanId: string; packageId: string }> };
 const Body = z.object({
   trackId: z.string().trim().min(1).max(80).optional(),
-  explicitSilence: z.boolean().optional(),
 }).strict();
 
 /** Queues licensed music onto a copy of the generation video, or records explicit silence. It does not approve review. */
@@ -44,8 +43,7 @@ export async function POST(request: Request, { params }: Params) {
     if (!generationResultId) return apiError("Generation result is not ready", "COMMERCIAL_AUDIO_NOT_ASSEMBLED", 409);
     const requested = await new AiStoryCommercialAudioRepository().request({
       workspaceId: ctx.workspaceId, executionPlanId, packageId,
-      generationResultId, actorUserId: user.id,
-      explicitSilence: body.explicitSilence, trackId: body.trackId,
+      generationResultId, actorUserId: user.id, trackId: body.trackId,
     });
     return apiSuccess({
       finalPolicy: requested.assembly?.finalPolicy ?? requested.decision.finalPolicy,
