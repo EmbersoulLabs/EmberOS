@@ -303,7 +303,7 @@ export function LocalGenerationPanel({ campaignId, storyId, executionPlanId, ref
                   </button>
                 </div>
               ) : null}
-              {output ? <LocalGenerationReview endpoint={`${base}/local-generation/${item.packageId}/result`} /> : null}
+              {output ? <LocalGenerationReview endpoint={`${base}/local-generation/${item.packageId}/result`} sceneIndex={item.order} sceneTotal={model.packages.length} /> : null}
             </li>
           );
         })}
