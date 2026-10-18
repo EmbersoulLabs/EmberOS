@@ -396,7 +396,7 @@ export async function transcribeAudioDetailed(
   audioBuffer: Buffer
 ): Promise<{ text: string; segments: WhisperSegment[] }> {
   const { getOpenAI } = await import("./llm");
-  const openai = getOpenAI();
+  const openai = await getOpenAI();
   const file = new File([new Uint8Array(audioBuffer)], "audio.mp3", { type: "audio/mpeg" });
   const transcription = await openai.audio.transcriptions.create({
     model: "whisper-1",

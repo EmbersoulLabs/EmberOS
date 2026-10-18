@@ -645,8 +645,14 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     const dimensions = Object.fromEntries(SCENE_KEYFRAME_QC_DIMENSIONS.map((dimension) => [
       dimension, { verdict: "PASS", note: "visible" },
     ]));
+    let qcRequest: Record<string, unknown> | undefined;
+    let qcOptions: Record<string, unknown> | undefined;
     const qc = new OpenAiSceneKeyframeQcAdapter({
-      chat: { completions: { create: async () => ({ choices: [{ message: { content: JSON.stringify({ dimensions }) } }] }) } },
+      chat: { completions: { create: async (request: Record<string, unknown>, options: Record<string, unknown>) => {
+        qcRequest = request;
+        qcOptions = options;
+        return { choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ dimensions }) } }] };
+      } } },
     } as never);
     expect(await qc.evaluate({
       brief,
@@ -655,6 +661,13 @@ describe("AI Story V1 Scene Keyframe execution", () => {
     })).toEqual(passEvidence(Object.fromEntries(SCENE_KEYFRAME_QC_DIMENSIONS.map((dimension) => [
       dimension, { verdict: "PASS", note: "visible" },
     ])) as Partial<SceneKeyframeQcEvidence>));
+    expect(qcRequest).toMatchObject({
+      model: "gpt-6.1-sol",
+      reasoning_effort: "low",
+      max_completion_tokens: 2048,
+    });
+    expect(qcRequest).not.toHaveProperty("temperature");
+    expect(qcOptions).toEqual({ maxRetries: 0 });
   });
 });
 

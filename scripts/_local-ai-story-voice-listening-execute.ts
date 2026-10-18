@@ -104,7 +104,7 @@ async function main(): Promise<void> {
     throw new Error("LISTENING_OUTPUT_DIRECTORY_MUST_BE_EMPTY");
   }
   loadProviderEnvironment();
-  const client = getOpenAI();
+  const client = await getOpenAI();
   const startedAt = new Date().toISOString();
   const completed: Array<Record<string, unknown>> = [];
 

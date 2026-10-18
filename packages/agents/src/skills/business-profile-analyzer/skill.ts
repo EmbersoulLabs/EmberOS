@@ -121,7 +121,7 @@ export const BusinessProfileAnalyzerSkill: AiSkill<
       system: SYSTEM_PROMPT,
       user: buildUserPrompt(input, meta),
       schemaHint: SCHEMA_HINT,
-      preferredModel: "gpt-4o-mini",
+      preferredModel: "gpt-6-luna",
       temperature: 0.7,
     };
   },

@@ -872,6 +872,7 @@ export async function runSinglePlanningStage(input: {
     return withCertificationPlanningContext({
       environment: certificationRoute.environment,
       certificationRunId: certificationRoute.certificationRunId,
+      model: certificationRoute.model,
       orgId: certificationScope.orgId,
       workspaceId: certificationScope.workspaceId,
       campaignId,

@@ -273,6 +273,7 @@ describe("marketing content fallback origin", () => {
     expect(result.contentPackage.contentOrigin).toBe("template_fallback");
     expect(result.contentPackage.analysis?.estimatedCtr ?? "").toBe("");
     expect(callJsonModel).toHaveBeenCalledTimes(1);
+    expect(callJsonModel.mock.calls[0]?.[3]).toEqual({ model: "gpt-6.1-sol" });
   });
 });
 

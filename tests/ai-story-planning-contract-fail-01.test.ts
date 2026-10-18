@@ -39,7 +39,7 @@ describe("AI Story production planning structured-output contract", () => {
       "packages/agents/src/ai-story/story-polish-service.ts",
       "utf8"
     );
-    expect(source).toContain('import { zodResponseFormat } from "openai/helpers/zod"');
+    expect(source).toMatch(/await import\(["']openai\/helpers\/zod["']\)/);
     expect(source).toContain("response_format: zodResponseFormat(input.schema, input.schemaName)");
     expect(service).toContain("schema: AiStoryStructuredDraftSchema");
   });
