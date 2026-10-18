@@ -8,6 +8,7 @@ import {
 } from "@ceo-agent/db";
 import { regeneratePlatformAsset } from "@ceo-agent/agents";
 import {
+  contentAllowsTranslation,
   MARKETING_PLATFORM_IDS,
   applyPlatformRegeneration,
   normalizeMarketingContentPackage,
@@ -63,7 +64,9 @@ export async function POST(
       return apiError("Marketing pack not ready", "NOT_READY", 400);
     }
     const existing = normalizeMarketingContentPackage(step.output);
-    if (!existing) return apiError("Invalid marketing pack", "INVALID", 400);
+    if (!existing || !contentAllowsTranslation(existing)) {
+      return apiError("Marketing pack failed content validation", "CONTENT_CONTRACT_FAILED", 422);
+    }
 
     const vision = progress.vision_analyze?.output as VisionAnalysis | undefined;
     const rawStrategy = task.strategyJson ?? progress.strategy_plan?.output;

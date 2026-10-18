@@ -1,5 +1,6 @@
 import type { ContentStrategyBrief, MarketingCaptions, MarketingContentPackage } from "@ceo-agent/shared";
 import {
+  contentAllowsTranslation,
   isChineseText,
   isMarketingPackFullyTranslated,
 } from "@ceo-agent/shared";
@@ -26,6 +27,7 @@ const CAPTION_KEYS: (keyof MarketingCaptions)[] = [
   "facebook",
   "linkedin",
   "xiaohongshu",
+  "threads",
   "youtubeShorts",
   "googleBusiness",
 ];
@@ -89,6 +91,9 @@ function mergeTranslations(
 export async function enrichMarketingPackTranslations(
   pkg: MarketingContentPackage
 ): Promise<{ contentPackage: MarketingContentPackage; usage: { input: number; output: number; costUsd: number } }> {
+  if (!contentAllowsTranslation(pkg)) {
+    return { contentPackage: pkg, usage: { input: 0, output: 0, costUsd: 0 } };
+  }
   const needsVoiceScripts = needsEnglishVoiceScripts(pkg);
   const needsStrategyBrief = strategyBriefNeedsTranslation(pkg);
   if (isMarketingPackFullyTranslated(pkg) && !needsVoiceScripts && !needsStrategyBrief) {
@@ -115,14 +120,15 @@ export async function enrichMarketingPackTranslations(
 
   const { result, usage } = await callJsonModel<TranslationBatch>(
     `You translate short-form marketing copy for Malaysia/Southeast Asia brands.
-Return natural English (en) and Bahasa Malaysia (ms) versions.
+Return natural English (en) and Bahasa Malaysia (ms) versions for every supplied item.
+captionsEn and captionsMs must repeat every input captions key, including threads. Never return a generic captions alias and never use English as a Malay placeholder.
 Keep brand names, numbers, hashtags, and platform handles unchanged.
 Do not mix Chinese characters into en/ms fields.
 Array lengths must match the input hooks and cta arrays.
 When voiceScripts are provided, translate each (15s/30s/60s) into natural spoken English for on-screen bilingual subtitles, preserving meaning and length.
 When strategyBrief is provided, translate every field (primaryGoal, targetAudience, contentAngle, painPoint, desiredEmotion, ctaStrategy) into en and ms objects with the same keys.`,
     JSON.stringify(payload),
-    `{ hooksEn: string[], hooksMs: string[], ctaEn: string[], ctaMs: string[], captionsEn: { tiktok?, instagram?, facebook?, linkedin?, xiaohongshu?, youtubeShorts?, googleBusiness? }, captionsMs: same keys, voiceScriptsEn?: { "15s"?, "30s"?, "60s"? }, strategyBriefEn?: { primaryGoal, targetAudience, contentAngle, painPoint, desiredEmotion, ctaStrategy }, strategyBriefMs?: same keys }`
+    `{ hooksEn: string[], hooksMs: string[], ctaEn: string[], ctaMs: string[], captionsEn: { tiktok?, instagram?, facebook?, linkedin?, xiaohongshu?, threads?, youtubeShorts?, googleBusiness? }, captionsMs: same keys, voiceScriptsEn?: { "15s"?, "30s"?, "60s"? }, strategyBriefEn?: { primaryGoal, targetAudience, contentAngle, painPoint, desiredEmotion, ctaStrategy }, strategyBriefMs?: same keys }`
   );
 
   return { contentPackage: mergeTranslations(pkg, result), usage };

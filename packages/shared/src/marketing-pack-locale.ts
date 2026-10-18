@@ -24,8 +24,6 @@ export function pickHookText(hook: ContentHookItem, locale: MarketingPackLocale)
   }
   const ms = hook.textMs?.trim();
   if (ms && isMarketingPackTranslationValid(ms, "ms")) return ms;
-  const en = hook.textEn?.trim();
-  if (en && isMarketingPackTranslationValid(en, "en")) return en;
   return "";
 }
 
@@ -38,8 +36,6 @@ export function pickCtaText(cta: ContentCtaItem, locale: MarketingPackLocale): s
   }
   const ms = cta.textMs?.trim();
   if (ms && isMarketingPackTranslationValid(ms, "ms")) return ms;
-  const en = cta.textEn?.trim();
-  if (en && isMarketingPackTranslationValid(en, "en")) return en;
   return "";
 }
 
@@ -68,8 +64,6 @@ export function pickPlatformCaption(
   }
   const ms = pkg.captionsMs?.[platform]?.trim();
   if (ms && isMarketingPackTranslationValid(ms, "ms")) return ms;
-  const en = pkg.captionsEn?.[platform]?.trim();
-  if (en && isMarketingPackTranslationValid(en, "en")) return en;
   return "";
 }
 
@@ -104,25 +98,21 @@ export function isMarketingPackLocaleReady(
   if (locale === "zh") return true;
   const hooksOk = pkg.hooks.slice(0, 5).every((h) => {
     if (locale === "en") return isMarketingPackTranslationValid(h.textEn, "en");
-    return (
-      isMarketingPackTranslationValid(h.textMs, "ms") ||
-      isMarketingPackTranslationValid(h.textEn, "en")
-    );
+    return isMarketingPackTranslationValid(h.textMs, "ms");
   });
   if (!hooksOk) return false;
   const ctaOk = pkg.cta.slice(0, 5).every((c) => {
     if (locale === "en") return isMarketingPackTranslationValid(c.textEn, "en");
-    return (
-      isMarketingPackTranslationValid(c.textMs, "ms") ||
-      isMarketingPackTranslationValid(c.textEn, "en")
-    );
+    return isMarketingPackTranslationValid(c.textMs, "ms");
   });
   if (!ctaOk) return false;
   for (const key of Object.keys(pkg.captions) as (keyof MarketingCaptions)[]) {
-    // Xiaohongshu stays Chinese by design — never blocks translation readiness.
-    if (key === "xiaohongshu") continue;
     if (!pkg.captions[key]?.trim()) continue;
-    const cap = pickPlatformCaption(pkg, key, locale);
+    // Xiaohongshu remains Chinese in the UI, but its hidden locale maps must still be
+    // complete for persistence/export instead of silently declaring translation done.
+    const cap = key === "xiaohongshu"
+      ? pkg[locale === "ms" ? "captionsMs" : "captionsEn"]?.xiaohongshu?.trim() ?? ""
+      : pickPlatformCaption(pkg, key, locale);
     if (!isMarketingPackTranslationValid(cap, locale === "ms" ? "ms" : "en")) return false;
   }
   if (strategyBriefNeedsTranslation(pkg)) {

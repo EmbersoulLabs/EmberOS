@@ -13,6 +13,7 @@ import {
   selectBusinessFacts,
   type MarketingContentPackage,
   type PlatformMarketingAsset,
+  isMarketingPackLocaleReady,
 } from "@ceo-agent/shared";
 
 const { callJsonModel } = vi.hoisted(() => ({ callJsonModel: vi.fn() }));
@@ -70,6 +71,21 @@ function pack(): MarketingContentPackage {
 }
 
 describe("marketing studio locale integrity", () => {
+  it("does not report Malay ready by silently substituting English", () => {
+    const base = pack();
+    base.hooks = base.hooks.map((hook) => ({ ...hook, textMs: undefined }));
+    base.cta = base.cta.map((cta) => ({ ...cta, textMs: undefined }));
+    expect(isMarketingPackLocaleReady(base, "ms")).toBe(false);
+  });
+
+  it("keeps Threads in independent English and Malay caption slots", () => {
+    const base = pack();
+    const english = applyPlatformLocaleEdit(base, "threads", asset("A conversational English thought"), "en");
+    const malay = applyPlatformLocaleEdit(english, "threads", asset("Pandangan perbualan Bahasa Melayu"), "ms");
+    expect(malay.captionsEn?.threads).toContain("English thought");
+    expect(malay.captionsMs?.threads).toContain("Bahasa Melayu");
+    expect(malay.captions.threads).not.toContain("English thought");
+  });
   it("editing English TikTok preserves Chinese and Malay TikTok", () => {
     const base = pack();
     const next = applyPlatformLocaleEdit(base, "tiktok", asset("Updated English"), "en");
@@ -270,9 +286,20 @@ describe("marketing content fallback origin", () => {
       campaignName: "Cafe",
       businessInformation: { companyName: "Ember Cafe", city: "Kuala Lumpur" },
     });
-    expect(result.contentPackage.contentOrigin).toBe("template_fallback");
-    expect(result.contentPackage.analysis?.estimatedCtr ?? "").toBe("");
+    expect(result.contentPackage).toBeNull();
+    expect(result.validation.ok).toBe(false);
+    expect(result.validation.codes).toContain("CONTENT_SCHEMA_INVALID");
     expect(callJsonModel).toHaveBeenCalledTimes(1);
+    const request = JSON.parse(String(callJsonModel.mock.calls[0]?.[1] ?? "{}"));
+    expect(request.creativeFacts.approvedCtaChannels).toEqual(["awareness"]);
+    expect(request.creativeBlueprint.activeDurationSec).toBe(30);
+    expect(request.creativeBlueprint.eligibleFormats).toEqual(expect.arrayContaining([
+      "product_demonstration",
+      "detail_reveal",
+      "process_montage",
+    ]));
+    expect(request.creativeBlueprint.factPolicy.join(" ")).toContain("Strategy angles");
+    expect(String(callJsonModel.mock.calls[0]?.[2])).toContain("end subtitleTimeline at the active duration");
   });
 });
 

@@ -75,6 +75,34 @@ describe("campaign marketing access projection", () => {
     expect(projected.clipCount).toBe(0);
     expect(projected.task.stepProgress).not.toHaveProperty("export_packs");
     expect(JSON.stringify(projected)).not.toContain("operator-only-pack.zip");
+    const failed = {
+      id: "task",
+      status: "failed",
+      campaignId: "campaign",
+      workspaceId: "workspace",
+      createdAt: "2026-10-11T00:00:00.000Z",
+      stepProgress: {
+        content_generate: {
+          status: "failed",
+          output: {
+            ok: false,
+            stage: "content",
+            schemaVersion: "marketing-output-v1",
+            codes: ["UNSUPPORTED_CLAIM"],
+            fields: ["voiceScripts.30s"],
+            fallback: "none",
+            providerRequestId: "chatcmpl-EXnKFxdeteqdqGeiCt94V6vqXUerM",
+            issues: [{ field: "voiceScripts.30s", excerpt: "right in the heart of Singapore", claimCategory: "location" }],
+          },
+        },
+      },
+    };
+    const hidden = projectMarketingTaskRead(failed);
+    expect(hidden.task.status).toBe("failed");
+    expect(JSON.stringify(hidden)).not.toContain("right in the heart of Singapore");
+    expect(JSON.stringify(hidden)).not.toContain("chatcmpl-EXnKFxdeteqdqGeiCt94V6vqXUerM");
+    expect(JSON.stringify(hidden)).not.toContain("UNSUPPORTED_CLAIM");
+    expect(JSON.stringify(failed.stepProgress)).toContain("voiceScripts.30s");
     expect(isOperationalWorkspaceRole("admin")).toBe(true);
     expect(isOperationalWorkspaceRole("operator")).toBe(true);
     expect(isOperationalWorkspaceRole("editor")).toBe(false);

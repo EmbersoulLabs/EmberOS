@@ -12,7 +12,14 @@ export interface MarketingBusinessFacts {
   address: string | null;
   hours: unknown;
   phone: string | null;
+  whatsapp: string | null;
   website: string | null;
+  instagram: string | null;
+  tiktok: string | null;
+  facebook: string | null;
+  youtube: string | null;
+  redNote: string | null;
+  linkedIn: string | null;
   tone: string | null;
   bannedWords: string[];
   approvedCta: string | null;
@@ -31,7 +38,14 @@ type ProfileFacts = {
   address?: string | null;
   businessHours?: unknown;
   businessPhone?: string | null;
+  whatsappBusiness?: string | null;
   website?: string | null;
+  instagram?: string | null;
+  tiktok?: string | null;
+  facebook?: string | null;
+  youtube?: string | null;
+  redNote?: string | null;
+  linkedIn?: string | null;
 };
 
 function text(value: string | null | undefined): string | null {
@@ -56,7 +70,14 @@ export function selectBusinessFacts(
     address: text(profile?.address),
     hours: profile?.businessHours ?? null,
     phone: text(profile?.businessPhone),
+    whatsapp: text(profile?.whatsappBusiness),
     website: text(profile?.website),
+    instagram: text(profile?.instagram),
+    tiktok: text(profile?.tiktok),
+    facebook: text(profile?.facebook),
+    youtube: text(profile?.youtube),
+    redNote: text(profile?.redNote),
+    linkedIn: text(profile?.linkedIn),
     tone: text(brand?.tone),
     bannedWords: brand?.bannedWords ?? [],
     approvedCta: text(brand?.cta),
