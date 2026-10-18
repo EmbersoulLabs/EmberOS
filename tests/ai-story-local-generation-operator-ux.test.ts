@@ -137,13 +137,13 @@ describe("Local Generation operator feedback", () => {
 
   it("uses one plain video review for the primary choice and keeps support details collapsed", () => {
     const review = read("apps/web/src/components/ai-story/LocalGenerationReview.tsx");
-    expect(review).toContain("Looks Good");
-    expect(review).toContain("Needs Changes");
+    expect(review).toContain("review.looksGood");
+    expect(review).toContain("review.needsChanges");
     expect(review).toContain("sceneProgressLabel");
     expect(review).toContain("<details");
-    expect(review).toContain("Support details");
+    expect(review).toContain("review.support");
     expect(review).toContain("playsInline");
-    expect(review).toContain("explicitCheckObservations");
+    expect(review).toContain("buildLooksGoodObservation");
     expect(review).toContain("buildChangeObservation");
     expect(review).not.toContain("RELEASE_SUCCESSOR");
     expect(review).not.toContain("local-gpu-submit");

@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { useI18n } from "@/lib/i18n/provider";
 import { postQcAllowsHumanApproval, type AiStoryPostGenerationQcEvaluation, type AiStoryPostQcRequirement } from "@ceo-agent/shared";
 import {
   approveActionLabel,
@@ -12,10 +13,10 @@ import {
 import {
   VIDEO_REVIEW_ISSUE_CATEGORIES,
   buildChangeObservation,
-  explicitCheckObservations,
+  buildLooksGoodObservation,
+  categoryLabelKey,
   formatChangeSummary,
   formatReviewClock,
-  issueCategoryLabel,
   looksGoodDecision,
   plainRequirementLabel,
   plainReviewError,
@@ -55,13 +56,14 @@ export function LocalGenerationReview({
   sceneIndex?: number;
   sceneTotal?: number;
 }) {
+  const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [model, setModel] = useState<Model | null>(null);
   const [signals, setSignals] = useState<Record<string, ReviewSignal | undefined>>({});
   const [trackId, setTrackId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [mode, setMode] = useState<"watch" | "changes" | "confirm">("watch");
+  const [mode, setMode] = useState<"watch" | "changes">("watch");
   const [category, setCategory] = useState<VideoReviewIssueCategory>("product");
   const [startSec, setStartSec] = useState(0);
   const [endSec, setEndSec] = useState(0);
@@ -95,8 +97,15 @@ export function LocalGenerationReview({
 
   useEffect(() => {
     if (summaryTouched) return;
-    setSummary(formatChangeSummary({ category, startSec, endSec, explanation }));
-  }, [category, startSec, endSec, explanation, summaryTouched]);
+    setSummary(formatChangeSummary({
+      category,
+      startSec,
+      endSec,
+      explanation,
+      categoryLabel: t(categoryLabelKey(category)),
+      sentence: (label, range) => t("review.changeLead", { category: label, range }),
+    }));
+  }, [category, startSec, endSec, explanation, summaryTouched, t]);
 
   async function applyMusic() {
     setError(null);
@@ -149,31 +158,6 @@ export function LocalGenerationReview({
     }
   }
 
-  async function saveConfirmedChecks() {
-    if (!model || qcBusy || approveBusy) return;
-    const observations = explicitCheckObservations({
-      requirements: model.requirements,
-      signals,
-      observationIdFor: () => crypto.randomUUID(),
-    });
-    if (observations.length === 0) {
-      setError("Choose what you see for at least one item. Items you skip stay unconfirmed.");
-      return;
-    }
-    setQcPhase("saving");
-    setError(null);
-    setQcPhase("evaluating");
-    try {
-      await postReview({ action: "EVALUATE", observations }, "The check could not be saved.");
-      await load();
-      setQcPhase("done");
-      setNotice("Your checks are saved. If everything you confirmed is complete, you can choose Looks Good.");
-    } catch (cause) {
-      setQcPhase("error");
-      setError(cause instanceof Error ? cause.message : "The check could not be saved.");
-    }
-  }
-
   async function approve() {
     if (!model || approveBusy || qcBusy) return;
     setApprovePhase("approving");
@@ -188,16 +172,32 @@ export function LocalGenerationReview({
     }
   }
 
-  function looksGood() {
+  async function looksGood() {
     if (!model || approveBusy || qcBusy) return;
-    const decision = looksGoodDecision({ evaluation: model.evaluation, requirements: model.requirements });
-    if (decision.action === "explain") {
-      setMode("confirm");
-      setNotice(null);
-      setError(decision.message);
+    const current = looksGoodDecision({ evaluation: model.evaluation });
+    if (current.action === "explain") {
+      setError(current.message);
       return;
     }
-    void approve();
+    setApprovePhase("approving");
+    setError(null);
+    try {
+      const recorded = await postReview({ action: "EVALUATE", observations: [buildLooksGoodObservation(crypto.randomUUID())] }, t("review.error.save"));
+      const evaluation = recorded.evaluation ?? null;
+      const decision = looksGoodDecision({ evaluation });
+      if (decision.action === "explain" || !evaluation?.eligibleForHumanReview) {
+        setApprovePhase("error");
+        setError(decision.action === "explain" ? decision.message : t("review.error.technical"));
+        await load();
+        return;
+      }
+      await postReview({ action: "APPROVE", rationale: "I watched this video and it looks good." }, t("review.error.save"));
+      setApprovePhase("approved");
+      await load();
+    } catch (cause) {
+      setApprovePhase("error");
+      setError(cause instanceof Error ? cause.message : t("review.error.save"));
+    }
   }
 
   async function submitChanges() {
@@ -224,7 +224,7 @@ export function LocalGenerationReview({
       await load();
       setQcPhase("done");
       setMode("watch");
-      setNotice(built.limitation ?? "Your change request is saved. This video was not accepted, and nothing new was generated.");
+      setNotice(built.limitation ?? t("review.changeSaved"));
     } catch (cause) {
       setQcPhase("error");
       setError(cause instanceof Error ? cause.message : "The change request could not be saved.");
@@ -254,7 +254,7 @@ export function LocalGenerationReview({
     }
   }
 
-  if (!model) return error ? <p role="alert">{error}</p> : <p>Loading the video…</p>;
+  if (!model) return error ? <p role="alert">{error}</p> : <p>{t("review.loading")}</p>;
   const jobState = model.continuityJob?.state ?? null;
   const continuityLabel = continuityStatusLabel({
     frameReady: Boolean(model.continuityFrame),
@@ -263,17 +263,17 @@ export function LocalGenerationReview({
   });
   const showPrepare = model.decision?.decision === "APPROVED" && !model.continuityFrame && jobState !== "PENDING" && jobState !== "RUNNING" && jobState !== "SUCCEEDED" && continuityPhase !== "preparing" && continuityPhase !== "extracting";
   const requirements = visibleOperatorRequirements(model.requirements);
-  const progress = sceneIndex && sceneTotal ? sceneProgressLabel(sceneIndex, sceneTotal) : null;
+  const progress = sceneIndex && sceneTotal ? t("review.scene", { index: sceneIndex, total: sceneTotal }) : sceneProgressLabel(0, 0);
   const musicPending = model.commercialAudio && model.commercialAudio.finalPolicy !== "EXPLICIT_SILENCE" && model.commercialAudio.finalPolicy !== "PRESERVE_NATIVE";
   const musicReady = model.commercialAudio?.assembly?.state === "ASSEMBLED" && model.commercialAudio.assembly.hasAudio;
-  const acceptance = looksGoodDecision({ evaluation: model.evaluation, requirements: model.requirements });
+  const acceptance = looksGoodDecision({ evaluation: model.evaluation });
   const terminal = model.evaluation ? postQcTerminalLabel(model.evaluation.aggregateStatus) : null;
   const duration = durationSec ?? 0;
 
   return <section className="mt-4 w-full min-w-0 max-w-full space-y-4 overflow-x-hidden rounded-xl border border-border bg-white p-4" data-testid="simple-video-review">
     <div>
-      <h4 className="text-lg font-semibold text-navy">Review this video</h4>
-      {progress ? <p className="text-sm text-ink-secondary">{progress}</p> : null}
+      <h4 className="text-lg font-semibold text-navy">{t("review.title")}</h4>
+      {sceneIndex && sceneTotal ? <p className="text-sm text-ink-secondary">{progress}</p> : null}
     </div>
     {model.playbackUrl
       ? <video
@@ -283,7 +283,7 @@ export function LocalGenerationReview({
           preload="metadata"
           className="aspect-video max-h-[70vh] w-full rounded-lg bg-black"
           src={model.playbackUrl}
-          aria-label="Generated video"
+          aria-label={t("review.videoLabel")}
           onLoadedMetadata={(event) => {
             const next = event.currentTarget.duration;
             if (!Number.isFinite(next)) return;
@@ -291,76 +291,65 @@ export function LocalGenerationReview({
             setEndSec((current) => current > 0 ? current : next);
           }}
         />
-      : <p>The video is temporarily unavailable. Reload the page and try again.</p>}
+      : <p>{t("review.unavailable")}</p>}
     {model.decision ? <div className="space-y-2 text-sm">
       <p className="font-semibold">Human review: {model.decision.decision}</p>
-      {model.decision.decision === "APPROVED" ? <p>This video is accepted.</p> : <p>This video was not accepted.</p>}
+      {model.decision.decision === "APPROVED" ? <p>{t("review.completed")}</p> : <p>{t("review.notAccepted")}</p>}
       <p>Continuity frame: {continuityLabel}</p>
       {showPrepare ? <button type="button" className="min-h-11 rounded border px-3 py-2" disabled={continuityBusy} onClick={() => void prepareContinuity()}>Prepare the next scene</button> : null}
     </div> : <>
-      <p className="text-sm text-ink-secondary">Watch the video, then choose one option.</p>
+      <p className="text-sm text-ink-secondary">{t("review.watch")}</p>
       {musicPending ? <div className="space-y-2 text-sm">
-        <p>{musicReady ? `Music is included${model.commercialAudio?.assembly?.trackId ? `: ${model.commercialAudio.assembly.trackId}` : ""}.` : "This video needs background music before it can be accepted."}</p>
+        <p>{musicReady ? t("review.musicIncluded") : t("review.musicNeeded")}</p>
         {model.commercialAudio?.recommendation ? <label className="block">Music
-          <select className="mt-1 w-full max-w-full rounded border p-2" aria-label="Background music" value={trackId || model.commercialAudio.recommendation.trackId} onChange={(event) => setTrackId(event.target.value)}>
+          <select className="mt-1 w-full max-w-full rounded border p-2" aria-label={t("review.musicLabel")} value={trackId || model.commercialAudio.recommendation.trackId} onChange={(event) => setTrackId(event.target.value)}>
             <option value={model.commercialAudio.recommendation.trackId}>{model.commercialAudio.recommendation.name}</option>
             {model.commercialAudio.recommendation.alternatives.map((item) => <option key={item.trackId} value={item.trackId}>{item.name}</option>)}
           </select>
-        </label> : <p>No licensed music is available yet.</p>}
-        <button type="button" className="min-h-11 rounded border px-3 py-2" onClick={() => void applyMusic()}>{model.commercialAudio?.assembly?.state === "PENDING" || model.commercialAudio?.assembly?.state === "RUNNING" ? "Adding music…" : "Use this music"}</button>
+        </label> : <p>{t("review.musicNone")}</p>}
+        <button type="button" className="min-h-11 rounded border px-3 py-2" onClick={() => void applyMusic()}>{model.commercialAudio?.assembly?.state === "PENDING" || model.commercialAudio?.assembly?.state === "RUNNING" ? t("review.musicAdding") : t("review.musicUse")}</button>
       </div> : null}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <button type="button" className="brand-btn-primary min-h-11 w-full" disabled={approveBusy || qcBusy} onClick={looksGood}>{approveBusy ? "Saving…" : "Looks Good"}</button>
-        <button type="button" className="brand-btn-secondary min-h-11 w-full" disabled={qcBusy || approveBusy} onClick={() => { setMode("changes"); setError(null); }}>Needs Changes</button>
+        <button type="button" className="brand-btn-primary min-h-11 w-full" disabled={approveBusy || qcBusy} onClick={() => void looksGood()}>{approveBusy ? t("review.saving") : t("review.looksGood")}</button>
+        <button type="button" className="brand-btn-secondary min-h-11 w-full" disabled={qcBusy || approveBusy} onClick={() => { setMode("changes"); setError(null); }}>{t("review.needsChanges")}</button>
       </div>
       {mode === "changes" ? <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void submitChanges(); }}>
-        <p className="text-sm font-semibold">What should change?</p>
+        <p className="text-sm font-semibold">{t("review.changeTitle")}</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <label className="text-sm">Starts at {formatReviewClock(startSec)}
-            <input className="mt-1 w-full" type="range" min={0} max={duration || 0} step={0.1} value={Math.min(startSec, duration || startSec)} aria-label="Problem starts at" onChange={(event) => { setStartSec(Number(event.target.value)); setSummaryTouched(false); }} />
+          <label className="text-sm">{t("review.startsAt", { time: formatReviewClock(startSec) })}
+            <input className="mt-1 w-full" type="range" min={0} max={duration || 0} step={0.1} value={Math.min(startSec, duration || startSec)} aria-label={t("review.startsAt", { time: formatReviewClock(startSec) })} onChange={(event) => { setStartSec(Number(event.target.value)); setSummaryTouched(false); }} />
           </label>
-          <label className="text-sm">Ends at {formatReviewClock(endSec)}
-            <input className="mt-1 w-full" type="range" min={0} max={duration || 0} step={0.1} value={Math.min(endSec, duration || endSec)} aria-label="Problem ends at" onChange={(event) => { setEndSec(Number(event.target.value)); setSummaryTouched(false); }} />
+          <label className="text-sm">{t("review.endsAt", { time: formatReviewClock(endSec) })}
+            <input className="mt-1 w-full" type="range" min={0} max={duration || 0} step={0.1} value={Math.min(endSec, duration || endSec)} aria-label={t("review.endsAt", { time: formatReviewClock(endSec) })} onChange={(event) => { setEndSec(Number(event.target.value)); setSummaryTouched(false); }} />
           </label>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="min-h-11 rounded border px-3 py-2 text-sm" onClick={() => markTime("start")}>Use current time as start</button>
-          <button type="button" className="min-h-11 rounded border px-3 py-2 text-sm" onClick={() => markTime("end")}>Use current time as end</button>
+          <button type="button" className="min-h-11 rounded border px-3 py-2 text-sm" onClick={() => markTime("start")}>{t("review.useStart")}</button>
+          <button type="button" className="min-h-11 rounded border px-3 py-2 text-sm" onClick={() => markTime("end")}>{t("review.useEnd")}</button>
         </div>
         <fieldset className="space-y-2">
-          <legend className="text-sm font-semibold">Problem type</legend>
+          <legend className="text-sm font-semibold">{t("review.problemType")}</legend>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {VIDEO_REVIEW_ISSUE_CATEGORIES.map((item) => <label key={item.id} className="flex min-h-11 items-center gap-2 rounded border px-2 text-sm">
               <input type="radio" name="problem-type" value={item.id} checked={category === item.id} onChange={() => { setCategory(item.id); setSummaryTouched(false); }} />
-              {item.label}
+              {t(categoryLabelKey(item.id))}
             </label>)}
           </div>
         </fieldset>
-        <label className="block text-sm">Explanation, optional
+        <label className="block text-sm">{t("review.explanation")}
           <textarea className="mt-1 w-full rounded border p-2" rows={3} maxLength={2000} value={explanation} onChange={(event) => { setExplanation(event.target.value); setSummaryTouched(false); }} />
         </label>
-        <label className="block text-sm">Summary
-          <textarea className="mt-1 w-full rounded border p-2" rows={3} maxLength={3000} value={summary} aria-label="Change summary" onChange={(event) => { setSummary(event.target.value); setSummaryTouched(true); }} />
+        <label className="block text-sm">{t("review.summary")}
+          <textarea className="mt-1 w-full rounded border p-2" rows={3} maxLength={3000} value={summary} aria-label={t("review.summary")} onChange={(event) => { setSummary(event.target.value); setSummaryTouched(true); }} />
         </label>
-        <p className="text-sm text-ink-secondary">{issueCategoryLabel(category)} from {formatReviewClock(startSec)} to {formatReviewClock(endSec)}. You can edit the summary before submitting.</p>
-        <button type="submit" className="brand-btn-primary min-h-11 w-full sm:w-auto" disabled={qcBusy || approveBusy}>{qcBusy ? "Saving…" : "Submit changes"}</button>
+        <p className="text-sm text-ink-secondary">{t("review.summaryHint")}</p>
+        <button type="submit" className="brand-btn-primary min-h-11 w-full sm:w-auto" disabled={qcBusy || approveBusy}>{qcBusy ? t("review.saving") : t("review.submit")}</button>
       </form> : null}
-      {mode === "confirm" ? <div className="space-y-3">
-        <p className="text-sm font-semibold">Confirm only what you see</p>
-        {requirements.map((item) => <div key={item.requirementId} className="space-y-2 rounded border p-3">
-          <p className="text-sm">{plainRequirementLabel(item)}</p>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            <button type="button" className="min-h-11 rounded border px-3 py-2 text-sm" aria-pressed={signals[item.requirementId] === "SATISFIED"} onClick={() => setSignals((current) => ({ ...current, [item.requirementId]: "SATISFIED" }))}>Looks right</button>
-            <button type="button" className="min-h-11 rounded border px-3 py-2 text-sm" aria-pressed={signals[item.requirementId] === "VIOLATED"} onClick={() => setSignals((current) => ({ ...current, [item.requirementId]: "VIOLATED" }))}>Not right</button>
-          </div>
-        </div>)}
-        <button type="button" className="brand-btn-primary min-h-11" disabled={qcBusy || approveBusy} onClick={() => void saveConfirmedChecks()}>{qcBusy ? "Saving…" : "Save what I checked"}</button>
-      </div> : null}
     </>}
     {notice ? <p className="text-sm">{notice}</p> : null}
     {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : null}
     <details className="text-sm">
-      <summary className="cursor-pointer font-semibold">Support details</summary>
+      <summary className="cursor-pointer font-semibold">{t("review.support")}</summary>
       <div className="mt-3 space-y-3">
         <p>These details are for support. They do not accept the video by themselves.</p>
         {model.reviewedMedia === "ASSEMBLED_OUTPUT" ? <p>The main player shows the video with music. The original video is below.</p> : null}

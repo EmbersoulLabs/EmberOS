@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { AiStoryPostGenerationQcEvaluation, AiStoryPostQcRequirement } from "@ceo-agent/shared";
 import {
   buildChangeObservation,
+  buildLooksGoodObservation,
+  customerReviewObservationError,
   explicitCheckObservations,
   formatChangeSummary,
   looksGoodDecision,
@@ -56,19 +58,28 @@ describe("simple video review", () => {
     expect(sceneProgressLabel(1, 3)).toBe("Scene 1 of 3");
   });
 
-  it("does not turn Looks Good into fabricated check results", () => {
-    expect(looksGoodDecision({ evaluation: null, requirements }).action).toBe("explain");
-    const observations = explicitCheckObservations({
+  it("records Looks Good as one watched-video note and does not pass individual checks", () => {
+    const observation = buildLooksGoodObservation("88888888-8888-4888-8888-888888888888");
+    expect(observation.requirementId).toBe("human-visible-review");
+    expect(observation.subjectiveTasteOnly).toBe(true);
+    expect(observation.observableSignal).toBe("SATISFIED");
+    expect(JSON.stringify(observation)).not.toContain("product-identity");
+    expect(JSON.stringify(observation)).not.toContain("character-identity");
+    const allowed = new Set(requirements.map((item) => item.requirementId));
+    expect(customerReviewObservationError([observation as { requirementId: string; source: string; subjectiveTasteOnly: boolean }], allowed)).toBeNull();
+    expect(customerReviewObservationError([
+      observation as { requirementId: string; source: string; subjectiveTasteOnly: boolean; observableSignal: string },
+      { requirementId: "product-identity", source: "HUMAN_SUPPLIED_EVIDENCE", observableSignal: "SATISFIED", subjectiveTasteOnly: false },
+    ], allowed)).toBe("HUMAN_VISIBLE_REVIEW_CANNOT_PASS_REQUIREMENTS");
+    const chosen = explicitCheckObservations({
       requirements,
       signals: { "product-identity": "SATISFIED" },
       observationIdFor: () => "88888888-8888-4888-8888-888888888888",
     });
-    expect(observations).toHaveLength(1);
-    expect(observations.map((item) => item.requirementId)).toEqual(["product-identity"]);
-    expect(observations.every((item) => item.observableSignal === "SATISFIED" && item.source === "HUMAN_SUPPLIED_EVIDENCE")).toBe(true);
+    expect(chosen).toHaveLength(1);
   });
 
-  it("blocks Looks Good while a required check is still unconfirmed", () => {
+  it("accepts a watched video while visible details stay unconfirmed", () => {
     const decision = looksGoodDecision({
       evaluation: evaluation([{
         findingId: "99999999-9999-4999-8999-999999999999",
@@ -83,9 +94,28 @@ describe("simple video review", () => {
         waiverPolicy: "NON_WAIVABLE_INTEGRITY",
         sameInputRetryCandidate: false,
       }]),
-      requirements,
+    });
+    expect(decision).toEqual({ action: "approve" });
+  });
+
+  it("stops Looks Good when the video file itself failed the technical check", () => {
+    const decision = looksGoodDecision({
+      evaluation: evaluation([{
+        findingId: "99999999-9999-4999-8999-999999999999",
+        requirementId: "output-integrity",
+        dimension: "OUTPUT_INTEGRITY",
+        result: "REJECT",
+        reason: "Durable private media failed one or more structural integrity checks.",
+        evidenceIds: [],
+        confidence: "HIGH",
+        failureClass: "OUTPUT_INTEGRITY_FAILURE",
+        repairOwner: "POST_PROCESSING",
+        waiverPolicy: "NON_WAIVABLE_INTEGRITY",
+        sameInputRetryCandidate: false,
+      }]),
     });
     expect(decision.action).toBe("explain");
+    if (decision.action === "explain") expect(decision.message).toContain("incomplete");
   });
 
   it("allows Looks Good only after the saved check can be accepted", () => {
@@ -103,7 +133,6 @@ describe("simple video review", () => {
         waiverPolicy: "NON_WAIVABLE_INTEGRITY",
         sameInputRetryCandidate: false,
       }]),
-      requirements,
     });
     expect(decision).toEqual({ action: "approve" });
   });
@@ -127,7 +156,7 @@ describe("simple video review", () => {
     expect(String(built.observation.summary)).toContain("The logo is blurry.");
   });
 
-  it("keeps an audio note on the general visible check and says there is no separate sound check", () => {
+  it("stores audio feedback as audio evidence instead of a visual defect", () => {
     const built = buildChangeObservation({
       observationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       requirements,
@@ -139,9 +168,12 @@ describe("simple video review", () => {
     });
     expect("observation" in built).toBe(true);
     if (!("observation" in built)) return;
-    expect(built.observation.requirementId).toBe("must-keep:0");
+    expect(built.observation.requirementId).toBe("audio-review");
+    expect(built.observation.subjects).toEqual(["audio"]);
     expect(built.observation.subjectiveTasteOnly).toBe(true);
-    expect(built.limitation).toContain("no separate sound check");
+    expect(built.observation.timeRangeMs).toEqual({ start: 0, end: 2000 });
+    expect(String(built.observation.requirementId)).not.toBe("must-keep:0");
+    expect(String(built.observation.requirementId)).not.toBe("product-identity");
   });
 
   it("rejects a time range that ends before it starts", () => {
