@@ -135,6 +135,20 @@ describe("Local Generation operator feedback", () => {
     expect(visible).toHaveLength(1);
   });
 
+  it("uses one plain video review for the primary choice and keeps support details collapsed", () => {
+    const review = read("apps/web/src/components/ai-story/LocalGenerationReview.tsx");
+    expect(review).toContain("Looks Good");
+    expect(review).toContain("Needs Changes");
+    expect(review).toContain("sceneProgressLabel");
+    expect(review).toContain("<details");
+    expect(review).toContain("Support details");
+    expect(review).toContain("playsInline");
+    expect(review).toContain("explicitCheckObservations");
+    expect(review).toContain("buildChangeObservation");
+    expect(review).not.toContain("RELEASE_SUCCESSOR");
+    expect(review).not.toContain("local-gpu-submit");
+  });
+
   it("does not let operator controls call Story execution or a cloud video provider", () => {
     const panel = read("apps/web/src/components/ai-story/LocalGenerationPanel.tsx");
     const review = read("apps/web/src/components/ai-story/LocalGenerationReview.tsx");
