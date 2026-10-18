@@ -891,6 +891,16 @@ export function startWorkers() {
       .finally(() => { localMediaCycleRunning = false; });
   }, 5000);
   localMediaLoop.unref?.();
+  let commercialAudioRunning = false;
+  const commercialAudioLoop = setInterval(() => {
+    if (commercialAudioRunning) return;
+    commercialAudioRunning = true;
+    void import("../ai-story-commercial-audio-cycle")
+      .then(({ runAiStoryCommercialAudioCycle }) => runAiStoryCommercialAudioCycle())
+      .catch(() => console.warn("[commercial-audio] assembly unavailable"))
+      .finally(() => { commercialAudioRunning = false; });
+  }, 5000);
+  commercialAudioLoop.unref?.();
   let lastLocalGpuCycleCode: string | null = null;
   const providerLoop = setInterval(() => {
     void (async () => {

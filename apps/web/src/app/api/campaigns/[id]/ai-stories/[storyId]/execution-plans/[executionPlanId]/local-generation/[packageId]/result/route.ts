@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { AiStoryGenerationResultRepository, AiStoryLocalGenerationRepository, AiStoryLocalMediaJobRepository, deterministicPersistenceUuid, getDb, schema } from "@ceo-agent/db";
+import { AiStoryCommercialAudioRepository, AiStoryGenerationResultRepository, AiStoryLocalGenerationRepository, AiStoryLocalMediaJobRepository, deterministicPersistenceUuid, getDb, schema } from "@ceo-agent/db";
 import { AiStoryGenerationResultService, AiStoryLocalGenerationService, buildGenerationResultPostQcInput } from "@ceo-agent/agents";
 import { AiStoryPostQcObservationSchema } from "@ceo-agent/shared";
 import { z } from "zod";
@@ -44,18 +44,48 @@ async function resolve(params: Params["params"], role: "operator" | "client_view
   return { user, pkg, result, results };
 }
 
+function reviewAudioBlock(described: Awaited<ReturnType<AiStoryCommercialAudioRepository["describe"]>>): string | null {
+  if (described.assembly?.finalPolicy === "EXPLICIT_SILENCE") return null;
+  if (described.decision.finalPolicy === "PRESERVE_NATIVE") return null;
+  if (described.decision.finalPolicy === "BLOCKED") return "MISSING_LICENSED_MUSIC";
+  if (described.decision.finalPolicy === "LICENSED_BGM" || described.decision.finalPolicy === "NATIVE_PLUS_BGM") {
+    return described.assembly?.state === "ASSEMBLED" && described.assembly.hasAudio ? null : "COMMERCIAL_AUDIO_ASSEMBLY_REQUIRED";
+  }
+  return null;
+}
+
 export async function GET(_request: Request, { params }: Params) {
   try {
     const { pkg, result, results } = await resolve(params, "client_viewer");
-    const playback=await createAdminClient().storage.from(process.env.SUPABASE_STORAGE_BUCKET??"campaign-assets")
-      .createSignedUrl(result.media.storagePath,600);
+    const bucket = createAdminClient().storage.from(process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets");
+    const playback = await bucket.createSignedUrl(result.media.storagePath, 600);
+    const commercial = await new AiStoryCommercialAudioRepository().describe({
+      workspaceId: result.ownership.workspaceId, executionPlanId: result.ownership.executionPlanId,
+      packageId: pkg.packageId, generationResultId: result.generationResultId,
+    });
+    const assembled = commercial.assembly?.state === "ASSEMBLED" && commercial.assembly.hasAudio && commercial.assembly.outputStoragePath
+      ? await bucket.createSignedUrl(commercial.assembly.outputStoragePath, 600) : null;
     const jobs = await new AiStoryLocalMediaJobRepository().list(result.ownership.workspaceId, result.ownership.executionPlanId);
     const continuityJob = jobs.find((job) => job.kind === "EXTRACT_FRAME" && job.generationResultId === result.generationResultId) ?? null;
     const evaluation = await results.latestQc(result.ownership.workspaceId, result.generationResultId);
     return apiSuccess({
       generationResultId: result.generationResultId,
       sourceKind: result.source.sourceKind,
-      playbackUrl:playback.error?null:playback.data?.signedUrl??null,
+      playbackUrl: assembled && !assembled.error ? assembled.data?.signedUrl ?? null : playback.error ? null : playback.data?.signedUrl ?? null,
+      sourcePlaybackUrl: playback.error ? null : playback.data?.signedUrl ?? null,
+      reviewedMedia: assembled && !assembled.error ? "ASSEMBLED_OUTPUT" : "GENERATION_SOURCE",
+      commercialAudio: {
+        finalPolicy: commercial.assembly?.finalPolicy ?? commercial.decision.finalPolicy,
+        generationPolicy: commercial.decision.generationPolicy,
+        blockers: commercial.decision.blockers,
+        recommendation: commercial.recommendation,
+        assembly: commercial.assembly ? {
+          state: commercial.assembly.state, finalPolicy: commercial.assembly.finalPolicy,
+          trackId: commercial.assembly.bgmTrackId, license: commercial.assembly.bgmLicense,
+          hasAudio: commercial.assembly.hasAudio, errorCode: commercial.assembly.errorCode,
+          outputContentHash: commercial.assembly.outputContentHash,
+        } : null,
+      },
       requirements: buildGenerationResultPostQcInput(result, pkg).requirements,
       evaluation,
       ...(result.source.sourceKind === "LOCAL_GPU_WORKER" ? {
@@ -152,6 +182,14 @@ export async function POST(request: Request, { params }: Params) {
         executionPlanId: result.ownership.executionPlanId, actorUserId: user.id,
       });
       return apiSuccess({ ...released, localGpuAuthorization });
+    }
+    if (command.action === "APPROVE" || command.action === "EVALUATE") {
+      const described = await new AiStoryCommercialAudioRepository().describe({
+        workspaceId: result.ownership.workspaceId, executionPlanId: result.ownership.executionPlanId,
+        packageId: pkg.packageId, generationResultId: result.generationResultId,
+      });
+      const block = reviewAudioBlock(described);
+      if (block) return apiError(block, block, 409);
     }
     if (command.action === "APPROVE") {
       const approved=await service.approve(result, user.id, command.rationale);

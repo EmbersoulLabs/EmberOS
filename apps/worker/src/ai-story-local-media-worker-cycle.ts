@@ -6,6 +6,7 @@ import { assertDistinctSceneMediaContent, assertLocalGenerationDuration, inspect
   extractLocalGenerationEndFrame, materializeLocalGenerationResult,
   AiStoryLocalGenerationService, autoAuthorizeReleasedLocalGpuPackages } from "@ceo-agent/agents";
 import { createWorkerLocalGpuAuthorizationPorts } from "./ai-story-local-gpu-authorization-ports";
+import { enqueueCommercialAudioAfterValidation } from "@ceo-agent/db";
 import { CanonicalAdapterRegistry } from "@ceo-agent/agents";
 import { downloadStorageBytes, uploadStorageBytesImmutable } from "./storage";
 
@@ -162,14 +163,20 @@ async function continueApprovedLocalAssembly(result:import("@ceo-agent/shared").
 export async function runAiStoryLocalMediaWorkerCycle(dependencies:{
   repository:Pick<AiStoryLocalMediaJobRepository,"claim"|"finish">;
   process:(job:LocalMediaJob)=>Promise<void>;
+  enqueueCommercialAudio?:(job:LocalMediaJob)=>Promise<void>;
 }={
   repository:new AiStoryLocalMediaJobRepository(), process:processAiStoryLocalMediaJob,
+  enqueueCommercialAudio:enqueueCommercialAudioAfterValidation,
 }) {
   const job=await dependencies.repository.claim();
   if(!job)return {status:"IDLE" as const};
   try {
     await dependencies.process(job);
     await dependencies.repository.finish(job,null);
+    if(job.kind==="VALIDATE_OUTPUT"){
+      try{await dependencies.enqueueCommercialAudio?.(job);}
+      catch(error){console.warn("commercial_audio_enqueue_failed",{packageId:job.packageId,code:error instanceof Error?error.message:"COMMERCIAL_AUDIO_ENQUEUE_FAILED"});}
+    }
     return {status:"SUCCEEDED" as const,jobId:job.jobId};
   } catch(error) {
     const code=error instanceof Error&&/^[A-Z][A-Z0-9_]+$/.test(error.message)?error.message:"LOCAL_MEDIA_PROCESSING_FAILED";
