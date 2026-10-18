@@ -99,6 +99,10 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       "supabase/migrations/20261018100000_ai_story_generation_result_local_gpu_local_output_v1.sql",
       "utf8",
     ));
+    await sql.unsafe(readFileSync(
+      "supabase/migrations/20261018140000_ai_story_commercial_audio_assembly_v1.sql",
+      "utf8",
+    ));
     process.env.LOCAL_GPU_PROVIDER_ENABLED = "true";
     process.env.LOCAL_GPU_ENVIRONMENT = "production";
     process.env.LOCAL_GPU_SIGNING_SECRET = "ephemeral-postgres-only-secret";
@@ -752,6 +756,18 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
       const body = await review.json() as { generationResultId: string; sourceKind: string; requirements: { requirementId: string }[]; evaluation: unknown; decision: unknown; continuityFrame: unknown };
       expect(body).toMatchObject({ generationResultId: result!.id, sourceKind: "LOCAL_GPU_WORKER", evaluation: null, decision: null, continuityFrame: null });
       expect(body.requirements.length).toBeGreaterThan(0);
+      const reviewBody = body as typeof body & { commercialAudio: { finalPolicy: string; assembly: { state: string } | null }; reviewedMedia: string };
+      expect(reviewBody.commercialAudio.finalPolicy).toBe("LICENSED_BGM");
+      expect(reviewBody.commercialAudio.assembly?.state).toBe("PENDING");
+      expect(reviewBody.reviewedMedia).toBe("GENERATION_SOURCE");
+      const blockedQc = await resultRoute.POST(new Request("http://localhost/result", { method: "POST", body: JSON.stringify({ action: "EVALUATE", observations: [] }) }), outputParams());
+      expect(blockedQc.status).toBe(409);
+      const assembledAssetId = randomUUID();
+      await sql`insert into assets(id, org_id, workspace_id, campaign_id, type, mime_type, storage_path, status, source, uploaded_by, content_hash, file_size_bytes, display_name)
+        select ${assembledAssetId}, org_id, workspace_id, campaign_id, 'video', 'video/mp4', storage_path || '-commercial-audio', 'ready', 'ai_story_commercial_audio', uploaded_by, ${sha(output)}, 1, 'assembled'
+        from assets where id=${asset!.id}`;
+      await sql`update ai_story_commercial_audio_assemblies set state='ASSEMBLED', output_asset_id=${assembledAssetId}, output_content_hash=${sha(output)}, has_audio=true
+        where generation_result_id=${result!.id} and state='PENDING'`;
       const premature = await resultRoute.POST(new Request("http://localhost/result", { method: "POST", body: JSON.stringify({ action: "APPROVE", rationale: "no Post-QC yet" }) }), outputParams());
       expect(premature.status).toBeGreaterThanOrEqual(400);
 

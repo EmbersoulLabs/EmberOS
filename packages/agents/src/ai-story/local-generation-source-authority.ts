@@ -182,7 +182,12 @@ export function buildLocalGenerationOperatorInstructions(input: LocalOperatorIns
         "Do not replace the frozen character dialogue with narration.",
         "Do not burn subtitles into the generated video.",
       ].join("\n")
-    : "AUDIO\nVideo only. Do not invent speech, narration, or subtitles.";
+    : [
+        "AUDIO",
+        "Generation: this workflow has no certified native speech or ambient audio. Generate the picture without an audio track.",
+        "Do not invent speech, narration, or subtitles.",
+        "Final commercial output: absent dialogue is not silence. Assemble licensed background music after generation unless an explicit silence plan is selected.",
+      ].join("\n");
   return [
     `WORKFLOW\n${input.recommendedWorkflow}`,
     `DURATION\n${input.durationSec} seconds`,

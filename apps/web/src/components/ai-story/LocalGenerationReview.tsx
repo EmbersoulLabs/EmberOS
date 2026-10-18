@@ -11,9 +11,18 @@ import {
 } from "./local-generation-operator-feedback";
 
 type ContinuityJob = { state: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED"; errorCode: string | null } | null;
+type CommercialAudio = {
+  finalPolicy: string;
+  blockers: string[];
+  recommendation: { trackId: string; name: string; license: string | null; alternatives: { trackId: string; name: string }[] } | null;
+  assembly: { state: string; trackId: string | null; hasAudio: boolean; errorCode: string | null } | null;
+};
 type Model = {
   generationResultId: string;
   playbackUrl: string | null;
+  sourcePlaybackUrl?: string | null;
+  reviewedMedia?: "ASSEMBLED_OUTPUT" | "GENERATION_SOURCE";
+  commercialAudio?: CommercialAudio;
   requirements: AiStoryPostQcRequirement[];
   evaluation: AiStoryPostGenerationQcEvaluation | null;
   decision: { decision: string } | null;
@@ -25,6 +34,7 @@ type Model = {
 export function LocalGenerationReview({ endpoint }: { endpoint: string }) {
   const [model, setModel] = useState<Model | null>(null);
   const [signals, setSignals] = useState<Record<string, "SATISFIED" | "VIOLATED" | "UNCERTAIN">>({});
+  const [trackId, setTrackId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [qcPhase, setQcPhase] = useState<"idle" | "saving" | "evaluating" | "done" | "error">("idle");
   const [approvePhase, setApprovePhase] = useState<"idle" | "approving" | "approved" | "error">("idle");
@@ -42,6 +52,28 @@ export function LocalGenerationReview({ endpoint }: { endpoint: string }) {
   }
 
   useEffect(() => { void load().catch(cause => setError(cause instanceof Error ? cause.message : "Review unavailable")); }, [endpoint]);
+
+  useEffect(() => {
+    const audioState = model?.commercialAudio?.assembly?.state;
+    if (audioState !== "PENDING" && audioState !== "RUNNING") return;
+    const timer = setInterval(() => { void load().catch(() => undefined); }, 3000);
+    return () => clearInterval(timer);
+  }, [endpoint, model?.commercialAudio?.assembly?.state]);
+
+  async function applyMusic() {
+    setError(null);
+    try {
+      const response = await fetch(endpoint.replace(/\/result$/, "/commercial-audio"), {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify(trackId ? { trackId } : {}),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Licensed music could not be queued");
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Licensed music could not be queued");
+    }
+  }
 
   useEffect(() => {
     const pending = model?.continuityJob?.state === "PENDING" || model?.continuityJob?.state === "RUNNING" || continuityPhase === "extracting";
@@ -130,6 +162,19 @@ export function LocalGenerationReview({ endpoint }: { endpoint: string }) {
   return <div className="mt-4 space-y-3 rounded-lg border border-border p-3">
     <h4 className="font-semibold">Review local output</h4>
     {model.playbackUrl ? <video controls preload="metadata" className="max-h-96 w-full" src={model.playbackUrl} /> : <p>The exact uploaded media is temporarily unavailable for playback.</p>}
+    {model.reviewedMedia === "ASSEMBLED_OUTPUT" ? <p className="text-sm">Playing the assembled commercial video. The original generation stays available underneath.</p> : null}
+    {model.sourcePlaybackUrl && model.reviewedMedia === "ASSEMBLED_OUTPUT" ? <video controls preload="metadata" className="max-h-40 w-full" src={model.sourcePlaybackUrl} /> : null}
+    {model.commercialAudio && model.commercialAudio.finalPolicy !== "EXPLICIT_SILENCE" && model.commercialAudio.finalPolicy !== "PRESERVE_NATIVE" ? <div className="space-y-2 text-sm">
+      <p>Licensed background music. No dialogue is not silence. {model.commercialAudio.assembly?.state === "ASSEMBLED" && model.commercialAudio.assembly.hasAudio ? `Assembled with ${model.commercialAudio.assembly.trackId}.` : "The final video is not reviewable until this mix is ready."}</p>
+      {model.commercialAudio.recommendation ? <label>Music
+        <select className="ml-2 rounded border p-1" value={trackId || model.commercialAudio.recommendation.trackId} onChange={(event) => setTrackId(event.target.value)}>
+          <option value={model.commercialAudio.recommendation.trackId}>{model.commercialAudio.recommendation.name}</option>
+          {model.commercialAudio.recommendation.alternatives.map((item) => <option key={item.trackId} value={item.trackId}>{item.name}</option>)}
+        </select>
+      </label> : <p>No commercially licensed music is available.</p>}
+      <button type="button" className="rounded border px-3 py-2" onClick={() => void applyMusic()}>{model.commercialAudio.assembly?.state === "PENDING" || model.commercialAudio.assembly?.state === "RUNNING" ? "Mixing licensed music…" : "Use this licensed music"}</button>
+      {model.commercialAudio.blockers.length > 0 ? <p>Speech was not invented. {model.commercialAudio.blockers.join(", ")}</p> : null}
+    </div> : null}
     <p className="text-sm">Inspect your exact uploaded video. Technical validation alone does not verify Character, Product or visual continuity.</p>
     {requirements.map(item => <label key={item.requirementId} className="block text-sm">{operatorRequirementLabel(item)}
       <select className="ml-2 rounded border p-1" disabled={qcBusy || approveBusy} value={signals[item.requirementId] ?? "UNCERTAIN"} onChange={event => { const value = event.target.value; if (value === "SATISFIED" || value === "VIOLATED" || value === "UNCERTAIN") setSignals(current => ({ ...current, [item.requirementId]: value })); }}>
