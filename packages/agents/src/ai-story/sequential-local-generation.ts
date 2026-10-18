@@ -1,6 +1,7 @@
 import {
   AI_STORY_CERTIFIED_LOCAL_WORKFLOWS,
   AiStoryLocalGenerationPackageV3Schema,
+  localGenerationOutputIdOf,
   type AiStoryGenerationResult,
   type AiStoryGenerationResultDecision,
   type AiStoryLocalGenerationPackage,
@@ -78,7 +79,7 @@ function assertContinuity(
     || predecessorPackage.sceneExecutionId !== generationResult.sceneExecutionId
     || predecessorPackage.unitId !== generationResult.generationUnitId
     || generationResult.runtimeAuthorizationId !== base.runtimeAuthorizationId
-    || generationResult.source.sourceKind !== "MANUAL_LOCAL"
+    || localGenerationOutputIdOf(generationResult.source) === null
     || generationResult.ownership.orgId !== base.organizationId
     || generationResult.ownership.executionPlanId !== base.executionPlanId
     || generationResult.ownership.workspaceId !== base.workspaceId
@@ -95,7 +96,7 @@ function assertContinuity(
     postQc.generationResultId !== generationResult.generationResultId
     || postQc.orgId !== base.organizationId
     || postQc.workspaceId !== base.workspaceId
-    || postQc.sourceKind !== "MANUAL_LOCAL"
+    || postQc.sourceKind !== generationResult.source.sourceKind
     || postQc.postQcEvaluationId !== decision.postQcEvaluationId
     || postQc.mediaContentHash !== generationResult.media.contentHash
     || !postQc.eligibleForHumanReview

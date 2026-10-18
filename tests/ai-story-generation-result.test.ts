@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { AiStoryGenerationResultSchema, AiStoryLocalGenerationPackageSchema } from "@ceo-agent/shared";
+import { AiStoryGenerationResultSchema, AiStoryLocalGenerationPackageSchema, localGenerationOutputIdOf } from "@ceo-agent/shared";
 import { DurableSceneMediaAttestationSchema } from "@ceo-agent/shared/server";
-import { materializeGenerationResult, validateGenerationResult, projectApprovedGenerationResult } from "@ceo-agent/db";
+import { materializeGenerationResult, validateGenerationResult, projectApprovedGenerationResult, deriveLocalGpuAudioEvidence } from "@ceo-agent/db";
 import { materializeLocalGenerationResult, buildGenerationResultPostQcInput, assertGenerationResultApproval, materializeLocalRetryPackage, materializeGenerationResultDurableAttestation } from "../packages/agents/src/ai-story/generation-result-service";
 import { assertDistinctSceneMediaContent } from "../packages/agents/src/ai-story/local-generation-media";
 import { AiStoryPostGenerationQcService, FakeAiStoryVisualEvidenceProvider, InMemoryAiStoryPostGenerationQcRepository } from "../packages/agents/src/ai-story/post-generation-qc-service";
@@ -66,6 +66,22 @@ describe("Provider-neutral Generation Result",()=>{
   it("rejects missing hash, bytes or decode authority",()=>{for(const media of [{...local().media,contentHash:""},{...local().media,byteSize:0},{...local().media,decodable:false}]) expect(AiStoryGenerationResultSchema.safeParse({...local(),media}).success).toBe(false);});
   it("projects remote provenance without deleting Provider lineage",()=>{const {generationResultId:_,fingerprint:__,contractVersion:___,...facts}=local();const result=materializeGenerationResult({...facts,source:{sourceKind:"REMOTE_PROVIDER",providerAttemptId:"historical-attempt",localGenerationOutputId:null,localWorkerOutputId:null}});expect(result.source.providerAttemptId).toBe("historical-attempt");});
   it("rejects a local-worker source that still carries compiled remote lineage",()=>{const {generationResultId:_,fingerprint:__,contractVersion:___,...facts}=local();expect(()=>materializeGenerationResult({...facts,source:{sourceKind:"LOCAL_GPU_WORKER",providerAttemptId:null,localGenerationOutputId:null,localWorkerOutputId:id(25)}})).toThrow("GENERATION_RESULT_LOCAL_AUTHORITY_REQUIRED");});
+  it("keeps LOCAL_GPU origin for Desktop output delivered through the local output record",()=>{
+    const {generationResultId:_,fingerprint:__,contractVersion:___,...facts}=local();
+    const gpu=(source:Record<string,unknown>,audio:{generateAudio:boolean;audioBlocked:boolean}={generateAudio:false,audioBlocked:true})=>materializeGenerationResult({...facts,
+      compiledRequestId:null,compiledRequestFingerprint:null,localSourceAuthorityId:id(30),localSourceAuthorityFingerprint:hash,
+      inputAuthority:{...facts.inputAuthority,...audio},
+      source:{sourceKind:"LOCAL_GPU_WORKER",providerAttemptId:null,localGenerationOutputId:null,localWorkerOutputId:null,...source} as never});
+    const delivered=gpu({localGenerationOutputId:id(14)});
+    expect(delivered.source).toMatchObject({sourceKind:"LOCAL_GPU_WORKER",localGenerationOutputId:id(14),localWorkerOutputId:null});
+    expect(localGenerationOutputIdOf(delivered.source)).toBe(id(14));
+    expect(delivered.generationResultId).not.toBe(local().generationResultId);
+    expect(()=>gpu({})).toThrow("GENERATION_RESULT_LOCAL_GPU_OUTPUT_REQUIRED");
+    expect(()=>gpu({localGenerationOutputId:id(14),localWorkerOutputId:id(25)})).toThrow("GENERATION_RESULT_LOCAL_GPU_OUTPUT_REQUIRED");
+    expect(deriveLocalGpuAudioEvidence(delivered)).toMatchObject({hasAudio:false,speechContent:"NOT_APPLICABLE",contentHash:hash});
+    expect(deriveLocalGpuAudioEvidence(gpu({localGenerationOutputId:id(14)},{generateAudio:true,audioBlocked:false}))).toMatchObject({hasAudio:true,speechContent:"HUMAN_REVIEW_REQUIRED"});
+    expect(localGenerationOutputIdOf(local().source)).toBe(id(14));
+  });
   it("runs actual Post-QC on a manual result",async()=>{const evaluation=await qc();expect(evaluation.generationResultId).toBe(local().generationResultId);expect(evaluation.providerAttemptId).toBeNull();expect(evaluation.aggregateStatus).toBe("POST_QC_PASS");});
   it("rejects cross-Story and cross-Unit QC",()=>{for(const altered of [{...pkg(),storyId:id(26)},{...pkg(),unitId:id(27)}]) expect(()=>buildGenerationResultPostQcInput(local(),altered)).toThrow("MISMATCH");});
   it("requires actual QC before human approval",()=>{expect(()=>assertGenerationResultApproval(local(),null)).toThrow("POST_QC_REQUIRED");});

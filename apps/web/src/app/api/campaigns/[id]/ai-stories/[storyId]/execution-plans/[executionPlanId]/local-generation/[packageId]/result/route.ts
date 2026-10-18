@@ -33,10 +33,13 @@ async function resolve(params: Params["params"], role: "operator" | "client_view
     if (!gpu) throw new Error("GENERATION_RESULT_NOT_FOUND");
     return { user, pkg, result: gpu, results };
   }
-  const resultId = deterministicPersistenceUuid("ai-story-generation-result", {
-    sourceKind: "MANUAL_LOCAL", providerAttemptId: null, localGenerationOutputId: output.outputId, localWorkerOutputId: null,
-  });
-  const result = await results.get(ctx.workspaceId, resultId);
+  // One output row is accepted under exactly one origin; accept() refuses the other.
+  let result: Awaited<ReturnType<typeof results.get>> = null;
+  for (const sourceKind of ["LOCAL_GPU_WORKER", "MANUAL_LOCAL"] as const) {
+    result ??= await results.get(ctx.workspaceId, deterministicPersistenceUuid("ai-story-generation-result", {
+      sourceKind, providerAttemptId: null, localGenerationOutputId: output.outputId, localWorkerOutputId: null,
+    }));
+  }
   if (!result) throw new Error("GENERATION_RESULT_NOT_FOUND");
   return { user, pkg, result, results };
 }
