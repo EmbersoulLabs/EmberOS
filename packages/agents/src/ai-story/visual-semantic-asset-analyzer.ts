@@ -7,9 +7,11 @@ import {
 } from "@ceo-agent/shared";
 import { callVisionJsonModel } from "../llm";
 import type {
+  AssetAnalyzerInvocationEvidence,
   AssetIntelligenceAnalyzer,
   FinalizedAssetForAnalysis,
 } from "./asset-analysis-service";
+import { AssetAnalyzerExecutionError } from "./asset-analysis-service";
 
 export const VISUAL_SEMANTIC_ANALYZER_VERSION =
   "emberos-asset-visual-semantic-analyzer.v3" as const;
@@ -30,11 +32,52 @@ export type VisualSemanticCompletionObserver = (completion: {
   readonly usage: { readonly input: number; readonly output: number; readonly costUsd: number };
 }) => void | Promise<void>;
 
+export function classifyVisualSemanticProviderError(
+  error: unknown,
+  completion: AssetAnalyzerInvocationEvidence | null
+): AssetAnalyzerExecutionError {
+  if (error instanceof AssetAnalyzerExecutionError) return error;
+  const message = error instanceof Error ? error.message : "";
+  const status = typeof error === "object" && error !== null && "status" in error
+    ? Number((error as { status?: unknown }).status)
+    : null;
+  const requestId = typeof error === "object" && error !== null && "request_id" in error
+    ? String((error as { request_id?: unknown }).request_id ?? "") || null
+    : null;
+  if (message === "CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED") {
+    return new AssetAnalyzerExecutionError(
+      "ASSET_ANALYZER_AUTHORIZATION_DENIED",
+      "PROVIDER_AUTHORIZATION",
+      "DEFINITE"
+    );
+  }
+  if (completion) {
+    return new AssetAnalyzerExecutionError(
+      "ASSET_ANALYZER_RESPONSE_DECODE_FAILED",
+      "RESPONSE_DECODE",
+      "DEFINITE",
+      completion
+    );
+  }
+  const definiteProviderRejection = status !== null && status >= 400 && status < 500 && status !== 408;
+  return new AssetAnalyzerExecutionError(
+    definiteProviderRejection
+      ? `ASSET_ANALYZER_PROVIDER_REJECTED_${status}`
+      : "ASSET_ANALYZER_PROVIDER_OUTCOME_UNKNOWN",
+    "PROVIDER_REQUEST",
+    definiteProviderRejection ? "DEFINITE" : "UNKNOWN",
+    { providerRequestId: requestId, providerModelId: "gpt-4o" }
+  );
+}
+
 const defaultModelAdapter = async (
   input: Parameters<VisualSemanticModelAdapter>[0],
   onCompletion?: VisualSemanticCompletionObserver
 ) => {
-  const response = await callVisionJsonModel<unknown>(
+  let completion: AssetAnalyzerInvocationEvidence | null = null;
+  let response;
+  try {
+    response = await callVisionJsonModel<unknown>(
     input.system,
     input.user,
     [input.imageDataUrl],
@@ -72,9 +115,31 @@ const defaultModelAdapter = async (
         characterGroundingSupported: false,
       },
     }),
-    { maxRetries: 0, onCompletion }
-  );
-  return ModelSemanticOutputSchema.parse(response.result);
+      {
+        maxRetries: 0,
+        onCompletion: async (value) => {
+          completion = {
+            providerRequestId: value.providerRequestId,
+            providerModelId: value.providerModelId,
+            usage: value.usage,
+          };
+          await onCompletion?.(value);
+        },
+      }
+    );
+  } catch (error) {
+    throw classifyVisualSemanticProviderError(error, completion);
+  }
+  try {
+    return ModelSemanticOutputSchema.parse(response.result);
+  } catch {
+    throw new AssetAnalyzerExecutionError(
+      "ASSET_ANALYZER_RESPONSE_VALIDATION_FAILED",
+      "RESPONSE_VALIDATION",
+      "DEFINITE",
+      completion ?? { providerModelId: "gpt-4o" }
+    );
+  }
 };
 
 function fileKind(type: string) {
@@ -109,13 +174,32 @@ export class VisualSemanticAssetAnalyzer implements AssetIntelligenceAnalyzer {
   }): Promise<AiStoryAssetAnalysisSnapshot["analysis"]> {
     const kind = fileKind(input.asset.type);
     if (kind !== "IMAGE" || !input.loadRawBytes) {
-      throw new Error("VISUAL_SEMANTIC_IMAGE_BYTES_REQUIRED");
+      throw new AssetAnalyzerExecutionError(
+        "VISUAL_SEMANTIC_IMAGE_BYTES_REQUIRED",
+        "ASSET_INPUT",
+        "DEFINITE"
+      );
     }
-    const bytes = await input.loadRawBytes();
-    if (bytes.byteLength === 0) throw new Error("VISUAL_SEMANTIC_IMAGE_EMPTY");
-    const mimeType = input.asset.mimeType?.startsWith("image/")
-      ? input.asset.mimeType
-      : "image/jpeg";
+    let bytes: Uint8Array;
+    try {
+      bytes = await input.loadRawBytes();
+    } catch {
+      throw new AssetAnalyzerExecutionError(
+        "ASSET_STORAGE_OBJECT_UNAVAILABLE",
+        "STORAGE_RETRIEVAL",
+        "DEFINITE"
+      );
+    }
+    if (bytes.byteLength === 0) {
+      throw new AssetAnalyzerExecutionError("VISUAL_SEMANTIC_IMAGE_EMPTY", "ASSET_INPUT", "DEFINITE");
+    }
+    if (bytes.byteLength > 8 * 1024 * 1024) {
+      throw new AssetAnalyzerExecutionError("VISUAL_SEMANTIC_IMAGE_TOO_LARGE", "ASSET_INPUT", "DEFINITE");
+    }
+    const mimeType = input.asset.mimeType;
+    if (!mimeType?.startsWith("image/")) {
+      throw new AssetAnalyzerExecutionError("VISUAL_SEMANTIC_IMAGE_MIME_INVALID", "ASSET_INPUT", "DEFINITE");
+    }
     const request = {
         system: [
           "Analyze one visual asset as evidence for a general creative-production system.",
@@ -130,11 +214,21 @@ export class VisualSemanticAssetAnalyzer implements AssetIntelligenceAnalyzer {
         user: "Return the typed semantic analysis for this single asset.",
         imageDataUrl: `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
     };
-    const result = ModelSemanticOutputSchema.parse(
-      await (this.modelAdapter
-        ? this.modelAdapter(request)
-        : defaultModelAdapter(request, this.onCompletion))
-    );
+    let result;
+    try {
+      result = ModelSemanticOutputSchema.parse(
+        await (this.modelAdapter
+          ? this.modelAdapter(request)
+          : defaultModelAdapter(request, this.onCompletion))
+      );
+    } catch (error) {
+      if (error instanceof AssetAnalyzerExecutionError) throw error;
+      throw new AssetAnalyzerExecutionError(
+        "ASSET_ANALYZER_RESPONSE_VALIDATION_FAILED",
+        "RESPONSE_VALIDATION",
+        "DEFINITE"
+      );
+    }
     const semantics = AiStoryVisualSemanticFactsSchema.parse({
       contractVersion: AI_STORY_VISUAL_SEMANTIC_SCHEMA_VERSION,
       ...result,

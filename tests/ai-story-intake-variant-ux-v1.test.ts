@@ -96,7 +96,8 @@ describe("AI Story Intake UX V1 product variant closure", () => {
     expect(route).toContain("onProviderCompletion");
     expect(route).toContain("authority.settle");
     expect(grounding).toContain("AiStoryAssetAwareExecutionPlannerRepository");
-    expect(grounding).toContain("new VisualSemanticAssetAnalyzer(undefined, input.onProviderCompletion)");
+    expect(grounding).toContain("new VisualSemanticAssetAnalyzer(undefined, async (completion) =>");
+    expect(grounding).toContain("await input.onProviderCompletion?.(completion)");
     expect(form).toContain("Analyzing product variants…");
     expect(form).toContain("Analyze product variants");
     expect(form).toContain('headers: { "idempotency-key": crypto.randomUUID() }');

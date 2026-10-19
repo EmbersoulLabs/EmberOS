@@ -151,6 +151,11 @@ jobs:
           pnpm exec vitest run --config vitest.config.ts
           tests/ai-story-asset-aware-canonical-runtime.test.ts
 
+      - name: Certify Asset Analyzer diagnostics predecessor upgrade
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/ai-story-asset-analysis-diagnostics.integration.test.ts
+
       - name: Certify AI Story runtime status convergence
         run: >-
           pnpm exec vitest run --config vitest.integration.config.ts

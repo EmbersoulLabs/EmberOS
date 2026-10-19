@@ -24,6 +24,7 @@ export class AiStoryAssetPlannerPersistenceError extends Error {
       | "ASSET_ANALYSIS_SCOPE_MISMATCH"
       | "ASSET_ANALYSIS_IMMUTABLE_CONFLICT"
       | "ASSET_ANALYSIS_FAILED"
+      | "ASSET_ANALYSIS_UNKNOWN_RECONCILIATION_REQUIRED"
       | "STORY_ASSET_BINDING_SCOPE_MISMATCH"
       | "EXECUTION_PLANNER_IMMUTABLE_CONFLICT"
       | "AUTHORIZED_SCHEDULING_AUTHORITY_CONFLICT"
@@ -31,7 +32,10 @@ export class AiStoryAssetPlannerPersistenceError extends Error {
       | "NO_ASSET_CONFIRMATION_STALE_VERSION"
       | "NO_ASSET_CONFIRMATION_VERSION_NOT_FROZEN"
       | "NO_ASSET_CONFIRMATION_CONFLICT",
-    message: string
+    message: string,
+    readonly analyzerFailureCode?: string,
+    readonly analyzerFailureStage?: string,
+    readonly outcomeCertainty?: "DEFINITE" | "UNKNOWN"
   ) {
     super(message);
     this.name = "AiStoryAssetPlannerPersistenceError";
@@ -103,6 +107,14 @@ export class AiStoryAssetAwareExecutionPlannerRepository {
     readonly analyze: () => Promise<
       import("@ceo-agent/shared").AiStoryAssetAnalysisSnapshot["analysis"]
     >;
+    readonly getInvocationEvidence?: () => {
+      readonly failureCode?: string;
+      readonly failureStage?: string;
+      readonly outcomeCertainty?: "DEFINITE" | "UNKNOWN";
+      readonly providerRequestId?: string | null;
+      readonly providerModelId?: string | null;
+      readonly usage?: { readonly input: number; readonly output: number; readonly costUsd: number };
+    } | null;
     readonly now?: () => Date;
   }): Promise<{
     readonly snapshot: AiStoryAssetAnalysisSnapshot;
@@ -172,6 +184,29 @@ export class AiStoryAssetAwareExecutionPlannerRepository {
         };
       }
 
+      const [unknown] = await tx
+        .select({ attemptId: schema.assetAnalysisAttempts.attemptId })
+        .from(schema.assetAnalysisAttempts)
+        .where(
+          and(
+            eq(schema.assetAnalysisAttempts.workspaceId, input.workspaceId),
+            eq(schema.assetAnalysisAttempts.contentHash, input.contentHash),
+            eq(schema.assetAnalysisAttempts.analyzerVersion, input.analyzerVersion),
+            eq(schema.assetAnalysisAttempts.schemaVersion, input.schemaVersion),
+            eq(schema.assetAnalysisAttempts.status, "UNKNOWN")
+          )
+        )
+        .limit(1);
+      if (unknown) {
+        throw new AiStoryAssetPlannerPersistenceError(
+          "ASSET_ANALYSIS_UNKNOWN_RECONCILIATION_REQUIRED",
+          "A prior analyzer request has an uncertain Provider outcome; status reconciliation is required before another call",
+          "ASSET_ANALYZER_PROVIDER_OUTCOME_UNKNOWN",
+          "PROVIDER_REQUEST",
+          "UNKNOWN"
+        );
+      }
+
       const startedAt = (input.now ?? (() => new Date()))();
       let analysis: import("@ceo-agent/shared").AiStoryAssetAnalysisSnapshot["analysis"];
       try {
@@ -180,10 +215,13 @@ export class AiStoryAssetAwareExecutionPlannerRepository {
         );
       } catch (error) {
         const completedAt = (input.now ?? (() => new Date()))();
-        const errorCode =
-          error instanceof AiStoryAssetPlannerPersistenceError
+        const evidence = input.getInvocationEvidence?.() ?? null;
+        const errorCode = evidence?.failureCode
+          ?? (error instanceof AiStoryAssetPlannerPersistenceError
             ? error.code
-            : "ASSET_ANALYZER_INVOCATION_FAILED";
+            : "ASSET_ANALYZER_INVOCATION_FAILED");
+        const failureStage = evidence?.failureStage ?? "PROVIDER_REQUEST";
+        const outcomeCertainty = evidence?.outcomeCertainty ?? "UNKNOWN";
         await tx.insert(schema.assetAnalysisAttempts).values({
           attemptId: randomUUID(),
           orgId: input.orgId,
@@ -192,13 +230,18 @@ export class AiStoryAssetAwareExecutionPlannerRepository {
           contentHash: input.contentHash,
           analyzerVersion: input.analyzerVersion,
           schemaVersion: input.schemaVersion,
-          status: "FAILED",
+          status: outcomeCertainty === "UNKNOWN" ? "UNKNOWN" : "FAILED",
           snapshotId: null,
           errorCode,
+          failureStage,
+          outcomeCertainty,
+          providerRequestId: evidence?.providerRequestId ?? null,
+          providerModelId: evidence?.providerModelId ?? null,
+          providerUsage: evidence?.usage ?? null,
           startedAt,
           completedAt,
         });
-        return { kind: "FAILURE" as const, errorCode };
+        return { kind: "FAILURE" as const, errorCode, failureStage, outcomeCertainty };
       }
 
       const analysisFingerprint = canonicalPersistenceHash({
@@ -251,6 +294,11 @@ export class AiStoryAssetAwareExecutionPlannerRepository {
         status: "SUCCEEDED",
         snapshotId,
         errorCode: null,
+        failureStage: null,
+        outcomeCertainty: "DEFINITE",
+        providerRequestId: input.getInvocationEvidence?.()?.providerRequestId ?? null,
+        providerModelId: input.getInvocationEvidence?.()?.providerModelId ?? null,
+        providerUsage: input.getInvocationEvidence?.()?.usage ?? null,
         startedAt,
         completedAt,
       });
@@ -263,8 +311,13 @@ export class AiStoryAssetAwareExecutionPlannerRepository {
     });
     if (outcome.kind === "FAILURE") {
       throw new AiStoryAssetPlannerPersistenceError(
-        "ASSET_ANALYSIS_FAILED",
-        `Asset analysis failed with explicit outcome ${outcome.errorCode}`
+        outcome.outcomeCertainty === "UNKNOWN"
+          ? "ASSET_ANALYSIS_UNKNOWN_RECONCILIATION_REQUIRED"
+          : "ASSET_ANALYSIS_FAILED",
+        `Asset analysis failed with sanitized outcome ${outcome.errorCode}`,
+        outcome.errorCode,
+        outcome.failureStage,
+        outcome.outcomeCertainty
       );
     }
     return outcome;

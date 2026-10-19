@@ -1012,6 +1012,11 @@ export const assetAnalysisAttempts = pgTable(
       { onDelete: "restrict" }
     ),
     errorCode: text("error_code"),
+    failureStage: text("failure_stage"),
+    outcomeCertainty: text("outcome_certainty"),
+    providerRequestId: text("provider_request_id"),
+    providerModelId: text("provider_model_id"),
+    providerUsage: jsonb("provider_usage"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
     completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
   },
@@ -1030,8 +1035,8 @@ export const assetAnalysisAttempts = pgTable(
     ),
     check(
       "asset_analysis_attempt_outcome_check",
-      sql`(${t.status} = 'SUCCEEDED' AND ${t.snapshotId} IS NOT NULL AND ${t.errorCode} IS NULL)
-        OR (${t.status} = 'FAILED' AND ${t.snapshotId} IS NULL AND ${t.errorCode} IS NOT NULL)`
+      sql`(${t.status} = 'SUCCEEDED' AND ${t.snapshotId} IS NOT NULL AND ${t.errorCode} IS NULL AND ${t.outcomeCertainty} = 'DEFINITE')
+        OR (${t.status} IN ('FAILED', 'UNKNOWN') AND ${t.snapshotId} IS NULL AND ${t.errorCode} IS NOT NULL AND ${t.failureStage} IS NOT NULL AND ${t.outcomeCertainty} IN ('DEFINITE', 'UNKNOWN'))`
     ),
   ]
 );

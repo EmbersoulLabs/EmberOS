@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
   AiStoryAssetAwareExecutionPlannerRepository,
+  AiStoryAssetPlannerPersistenceError,
   AiStoryAssetMatchingRepository,
   getDb,
   schema,
@@ -36,7 +37,10 @@ export class AiStorySemanticGroundingRuntimeError extends Error {
       | "ASSET_SEMANTIC_ANALYSIS_FAILED"
       | "ASSET_SEMANTIC_SNAPSHOT_REQUIRED"
       | "ASSET_SEMANTIC_SCOPE_MISMATCH",
-    message: string
+    message: string,
+    readonly analyzerFailureCode?: string,
+    readonly analyzerFailureStage?: string,
+    readonly outcomeCertainty?: "DEFINITE" | "UNKNOWN"
   ) {
     super(message);
     this.name = "AiStorySemanticGroundingRuntimeError";
@@ -90,6 +94,11 @@ export async function analyzeVisualSemanticAsset(input: {
   readonly assetId: string;
   readonly onProviderCompletion?: VisualSemanticCompletionObserver;
 }) {
+  let invocationEvidence: {
+    providerRequestId: string | null;
+    providerModelId: string | null;
+    usage: { input: number; output: number; costUsd: number };
+  } | null = null;
   const [asset] = await input.db
     .select()
     .from(schema.assets)
@@ -108,11 +117,15 @@ export async function analyzeVisualSemanticAsset(input: {
   }
   const service = new AssetAnalysisService(
     new AiStoryAssetAwareExecutionPlannerRepository(input.db),
-    new VisualSemanticAssetAnalyzer(undefined, input.onProviderCompletion)
+    new VisualSemanticAssetAnalyzer(undefined, async (completion) => {
+      invocationEvidence = completion;
+      await input.onProviderCompletion?.(completion);
+    })
   );
   return service.analyzeFinalizedAsset({
     asset,
     loadRawBytes: () => loadAssetBytes(asset.storagePath),
+    getInvocationEvidence: () => invocationEvidence,
   });
 }
 
@@ -169,6 +182,7 @@ export async function prepareStoryAssetGrounding(input: {
   readonly orgId: string;
   readonly workspaceId: string;
   readonly assetLinks: readonly StoryAssetLink[];
+  readonly onProviderCompletion?: VisualSemanticCompletionObserver;
 }): Promise<PreparedStoryAssetGrounding> {
   if (input.assetLinks.length === 0) {
     return { context: null, analyzedAssets: [], semanticAnalyzerCalls: 0 };
@@ -211,6 +225,7 @@ export async function prepareStoryAssetGrounding(input: {
         orgId: input.orgId,
         workspaceId: input.workspaceId,
         assetId: asset.id,
+        onProviderCompletion: input.onProviderCompletion,
       });
       if (outcome.analyzerInvoked) semanticAnalyzerCalls += 1;
       analyzedAssets.push({
@@ -222,7 +237,10 @@ export async function prepareStoryAssetGrounding(input: {
     } catch (error) {
       throw new AiStorySemanticGroundingRuntimeError(
         "ASSET_SEMANTIC_ANALYSIS_FAILED",
-        error instanceof Error ? error.message : "Asset semantic analysis failed"
+        error instanceof Error ? error.message : "Asset semantic analysis failed",
+        error instanceof AiStoryAssetPlannerPersistenceError ? error.analyzerFailureCode : undefined,
+        error instanceof AiStoryAssetPlannerPersistenceError ? error.analyzerFailureStage : undefined,
+        error instanceof AiStoryAssetPlannerPersistenceError ? error.outcomeCertainty : undefined
       );
     }
   }
