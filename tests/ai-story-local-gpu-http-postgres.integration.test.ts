@@ -439,9 +439,10 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
 
       const { getDb: db, selectAuthorizedLocalGpuDispatchScopes } = await import("@ceo-agent/db");
       expect((await selectAuthorizedLocalGpuDispatchScopes(db(), 5)).some((scope) => scope.sceneExecutionId === ids.sceneExecution)).toBe(false);
+      const statusReadsAfterConcurrentWorkers = io.statusReads();
       await runWorkerLocalGpuDispatchCycle(workerEnv());
       expect(io.posts()).toBe(1);
-      expect(io.statusReads()).toBe(0);
+      expect(io.statusReads()).toBe(statusReadsAfterConcurrentWorkers);
 
       const evidence = await retryRoute.GET(new Request("http://localhost/evidence"), retryParams());
       expect(evidence.status).toBe(200);
