@@ -47,6 +47,18 @@ const capabilities = {
     },
   },
 };
+const nativeDialogueCapabilities = (e2eCertified: boolean) => ({
+  contractVersion: 2,
+  acceptedContractVersions: [1, 2, 3],
+  contracts: { v3: { workflows: { MINIMAX_H3_NATIVE_DIALOGUE: {
+    execution: "enabled",
+    implemented: true,
+    modelInstalled: true,
+    buildExecutable: true,
+    nativeDialogue: "PROMPT_CONDITIONED",
+    e2eCertified,
+  } } } },
+});
 
 function zeroAsset(overrides: Record<string, unknown> = {}) {
   return {
@@ -136,7 +148,7 @@ describe("LOCAL_GPU V3 execution integration", () => {
   it("fails closed before a GPU call when authority, references, dialogue, or capabilities do not match", () => {
     expect(planLocalGpuRoute(zeroAsset({ assetRecommendationStatus: "ASSET_RECOMMENDATION_REQUIRED" })).blocked).toBe("LOCAL_GPU_NO_ASSET_AUTHORITY_REQUIRED");
     expect(planLocalGpuRoute(zeroAsset({ referenceCount: 1, imageReferenceCount: 1 })).blocked).toBe("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
-    expect(planLocalGpuRoute(zeroAsset({ dialogueRequired: true })).blocked).toBe("LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED");
+    expect(planLocalGpuRoute(zeroAsset({ dialogueRequired: true })).blocked).toBe("LOCAL_GPU_REFERENCES_REQUIRED");
     expect(planLocalGpuRoute(zeroAsset({ voiceDnaRequired: true })).blocked).toBe("LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED");
     expect(planLocalGpuRoute(zeroAsset({ capabilities: { contractVersion: 3 } })).blocked).toBe("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
     expect(planLocalGpuRoute(zeroAsset({ preQc: "DISPATCH_BLOCKED" })).blocked).toBe("LOCAL_GPU_PRE_QC_REQUIRED");
@@ -159,6 +171,80 @@ describe("LOCAL_GPU V3 execution integration", () => {
       referenceCount: 1,
       recommendedWorkflow: "MINIMAX_H3_PRODUCT_ONLY_CANDIDATE_V1",
     })).blocked).toBe("LOCAL_GPU_DISPATCH_DISABLED");
+  });
+
+  it("keeps native dialogue closed until Desktop certification and then preserves native audio review", () => {
+    const native = {
+      ...zeroAsset(),
+      assetMode: "WITH_ASSET" as const,
+      assetRecommendationStatus: "SATISFIED" as const,
+      referenceCount: 2,
+      imageReferenceCount: 2,
+      dialogueRequired: true,
+      recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      qcExpectation: "NATIVE_CHARACTER_DIALOGUE" as const,
+      capabilities: nativeDialogueCapabilities(false),
+    };
+    expect(planLocalGpuRoute(native).blocked).toBe("LOCAL_GPU_NATIVE_DIALOGUE_NOT_CERTIFIED");
+    expect(planLocalGpuRoute({ ...native, nativeDialogueCanaryAuthorized: true })).toMatchObject({
+      eligible: true,
+      contractVersion: 3,
+      workflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+    });
+    expect(planLocalGpuRoute({ ...native, capabilities: nativeDialogueCapabilities(true) })).toMatchObject({
+      eligible: true,
+      contractVersion: 3,
+      workflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      desktopAudioPolicy: "NATIVE",
+      qcExpectation: "NATIVE_CHARACTER_DIALOGUE",
+      speechContent: "HUMAN_REVIEW_REQUIRED",
+      hasAudio: true,
+    });
+    expect(planLocalGpuRoute({ ...native, generateAudio: false, audioBlocked: true }).blocked).toBe("LOCAL_GPU_AUDIO_POLICY_INVALID");
+    expect(planLocalGpuRoute({ ...native, referenceCount: 4 }).blocked).toBe("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+  });
+
+  it("submits one certified native-dialogue V3 request without falling through to T2V", async () => {
+    let nativePosts = 0;
+    let t2vPosts = 0;
+    const nativeRoute = {
+      ...zeroAsset(),
+      assetMode: "WITH_ASSET" as const,
+      assetRecommendationStatus: "SATISFIED" as const,
+      referenceCount: 1,
+      imageReferenceCount: 1,
+      dialogueRequired: true,
+      recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      qcExpectation: "NATIVE_CHARACTER_DIALOGUE" as const,
+      capabilities: nativeDialogueCapabilities(false),
+      nativeDialogueCanaryAuthorized: true,
+    };
+    const adapter = {
+      jobIdFor: () => id(90),
+      submitZeroAssetT2V: async () => { t2vPosts += 1; return { jobId: id(90) }; },
+      submitNativeDialogueV3: async (input: { creativeBinding: string; nativeDialogueCanaryAuthorized?: boolean }) => {
+        nativePosts += 1;
+        expect(input.creativeBinding).toBe("binding");
+        expect(input.nativeDialogueCanaryAuthorized).toBe(true);
+        return { jobId: id(90) };
+      },
+      status: async () => ({ found: false }),
+      result: async () => ({ contentHash: `sha256:${"b".repeat(64)}` }),
+    };
+    const step = await runEnabledLocalGpuDispatch({
+      scope,
+      candidate: { ...scope, packageId: id(30), runtimeAuthorizationId: id(70), existingGate: null,
+        route: { ...nativeRoute, nativeDialogueCanaryAuthorized: true } },
+      claim: () => true,
+      adapter,
+      actor: { userId: id(1), workspaceId: scope.workspaceId, organizationPlan: null, platformAdminStatus: "ACTIVE_GRANT" },
+      request: { body: {} as never, creativeBinding: "binding" },
+      capabilities: nativeDialogueCapabilities(false),
+      existingResultId: null,
+    });
+    expect(step).toMatchObject({ code: "accepted", posts: 1, gets: 0 });
+    expect(nativePosts).toBe(1);
+    expect(t2vPosts).toBe(0);
   });
 
   it("keeps an authorized reference scene on the supported R2V workflow", () => {

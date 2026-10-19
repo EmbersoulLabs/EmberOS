@@ -14,7 +14,10 @@ import { assertLocalGpuV2RuntimeCapabilities, LocalGpuContractError, readLocalGp
 import { LocalGpuCloudAdapter } from "./local-gpu-adapter";
 import { loadLocalGpuConfigFromEnv, type LocalGpuConfig } from "./local-gpu-config";
 import { planLocalGpuRoute } from "./local-gpu-execution";
-import { mapCanonicalPackageToLocalGpuContractV2 } from "./local-gpu-package-transport";
+import {
+  mapCanonicalPackageToLocalGpuContractV2,
+  mapCanonicalPackageToLocalGpuNativeDialogueV3,
+} from "./local-gpu-package-transport";
 
 type Db = ReturnType<typeof getDb>;
 type Env = Record<string, string | undefined>;
@@ -123,7 +126,10 @@ async function buildDispatch(input: {
 }): Promise<BuiltDispatch> {
   const { pkg, capabilities } = input;
   const references = pkg.references ?? [];
-  const qcExpectation = pkg.generateAudio && !pkg.audioBlocked ? "NO_DIALOGUE_WITH_AMBIENT_AUDIO" : "SILENT_OUTPUT";
+  const nativeDialogue = pkg.recommendedWorkflow === "MINIMAX_H3_NATIVE_DIALOGUE" || pkg.dialogue.some((line) => !line.offscreen);
+  const qcExpectation = nativeDialogue
+    ? "NATIVE_CHARACTER_DIALOGUE"
+    : pkg.generateAudio && !pkg.audioBlocked ? "NO_DIALOGUE_WITH_AMBIENT_AUDIO" : "SILENT_OUTPUT";
   const noProductVisual = !pkg.productAuthority
     || ("selection" in pkg.productAuthority && pkg.productAuthority.selection === "NO_PRODUCT_VISUAL_INPUT");
   const zeroAsset = pkg.generationMode === "TEXT_TO_VIDEO" && references.length === 0 && !pkg.characterAuthority && noProductVisual;
@@ -169,6 +175,34 @@ async function buildDispatch(input: {
     const assetUrl = await input.ports.createSignedReadUrl(asset.storagePath, 900);
     if (!assetUrl) throw new LocalGpuAuthorizationError("STORAGE_ERROR", 502, "Unable to authorize LOCAL_GPU reference");
     resolvedAssets.push({ assetId: asset.id, contentHash: asset.contentHash, workspaceId: asset.workspaceId, assetUrl });
+  }
+  if (nativeDialogue) {
+    const native = mapCanonicalPackageToLocalGpuNativeDialogueV3({
+      package: pkg,
+      assets: resolvedAssets,
+      environment: "production",
+      jobId: deterministicPersistenceUuid("local-gpu-job.v1", {
+        environment: "production",
+        workspaceId: pkg.workspaceId,
+        sceneExecutionId: pkg.sceneExecutionId,
+        packageId: pkg.packageId,
+      }),
+      upload: input.upload,
+      seed: seedFor(pkg.packageId),
+      megapixels: 0.5,
+    });
+    return {
+      route: {
+        assetMode: "WITH_ASSET", assetRecommendationStatus: "SATISFIED",
+        referenceCount: references.length, imageReferenceCount: references.length,
+        videoReferenceCount: 0, audioReferenceCount: 0,
+        dialogueRequired: true, voiceDnaRequired: false, continuityFrameRequired: false,
+        preQc: "DISPATCH_ELIGIBLE", runtimeAuthorizationId: pkg.runtimeAuthorizationId,
+        capabilities, recommendedWorkflow: pkg.recommendedWorkflow,
+        generateAudio: pkg.generateAudio, audioBlocked: pkg.audioBlocked, qcExpectation,
+      },
+      request: { body: native.body, creativeBinding: native.creativeBinding },
+    };
   }
   const desktop = mapCanonicalPackageToLocalGpuContractV2({
     package: pkg, assets: resolvedAssets, environment: "production",
@@ -227,6 +261,8 @@ export async function authorizeLocalGpuPackageDispatch(input: {
   actorUserId: string;
   platformAdminAssignmentId: string;
   idempotencyKey: string;
+  /** Explicit one-execution Production canary consent; ignored for every non-dialogue workflow. */
+  nativeDialogueCanaryAuthorized?: boolean;
   ports: LocalGpuAuthorizationPorts;
 }): Promise<LocalGpuAuthorizationResult> {
   try {
@@ -239,13 +275,11 @@ export async function authorizeLocalGpuPackageDispatch(input: {
 async function authorizeUnmapped(input: Parameters<typeof authorizeLocalGpuPackageDispatch>[0]): Promise<LocalGpuAuthorizationResult> {
   const db = input.db ?? getDb();
   const { pkg } = input;
-  const config = requireProductionConfig(input.env);
-  if (pkg.dialogue.some((line) => !line.offscreen) || pkg.recommendedWorkflow === "MINIMAX_H3_NATIVE_DIALOGUE") {
-    throw new LocalGpuAuthorizationError(
-      "LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED", 409,
-      "Native dialogue is not supported by the certified LOCAL_GPU V2/V3 workflows",
-    );
+  const nativeDialogue = pkg.recommendedWorkflow === "MINIMAX_H3_NATIVE_DIALOGUE" || pkg.dialogue.some((line) => !line.offscreen);
+  if (input.nativeDialogueCanaryAuthorized && !nativeDialogue) {
+    throw new LocalGpuAuthorizationError("LOCAL_GPU_NATIVE_DIALOGUE_CANARY_SCOPE_MISMATCH", 409, "Native Dialogue canary authority only applies to a Native Dialogue package");
   }
+  const config = requireProductionConfig(input.env);
   const actor = {
     userId: input.actorUserId,
     workspaceId: input.workspaceId,
@@ -279,6 +313,9 @@ async function authorizeUnmapped(input: Parameters<typeof authorizeLocalGpuPacka
   const built = await buildDispatch({
     db, pkg, orgId: input.orgId, workspaceId: input.workspaceId, capabilities, upload, ports: input.ports,
   });
+  if (nativeDialogue && input.nativeDialogueCanaryAuthorized) {
+    built.route.nativeDialogueCanaryAuthorized = true;
+  }
   const planned = planLocalGpuRoute(built.route as never);
   if (!planned.eligible) {
     throw new LocalGpuAuthorizationError(planned.blocked ?? "LOCAL_GPU_WORKFLOW_UNSUPPORTED", 409, "LOCAL_GPU workflow is unsupported");
@@ -291,7 +328,7 @@ async function authorizeUnmapped(input: Parameters<typeof authorizeLocalGpuPacka
     runtimeAuthorizationId: pkg.runtimeAuthorizationId,
     platformAdminAssignmentId: input.platformAdminAssignmentId,
     authorizedByUserId: input.actorUserId,
-    snapshot: { contractVersion: 1, actor, route: built.route, request: built.request, capabilities },
+    snapshot: { contractVersion: nativeDialogue ? 2 : 1, actor, route: built.route, request: built.request, capabilities },
     expiresAt: new Date(Date.now() + LOCAL_GPU_DISPATCH_AUTHORITY_TTL_MS),
   });
   // The persisted authority is the fail-closed gate, so the output asset is created only

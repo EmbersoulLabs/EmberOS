@@ -4,7 +4,8 @@ import { getDb, schema } from "../client";
 import { localGpuGateRetryPendingSql, localGpuGateTerminalSql } from "./ai-story-local-gpu-submit-outcomes";
 
 export type LocalGpuPersistedDispatchSnapshot = {
-  contractVersion: 1;
+  /** V2 adds the Contract V3 Native Dialogue request envelope and scoped canary flag. */
+  contractVersion: 1 | 2;
   actor: { userId: string; workspaceId: string; organizationPlan: string | null; platformAdminStatus: "ACTIVE_GRANT" };
   route: Record<string, unknown>;
   request: Record<string, unknown>;

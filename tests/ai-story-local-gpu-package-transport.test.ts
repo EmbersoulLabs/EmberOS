@@ -3,11 +3,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { AiStoryLocalGenerationPackage } from "@ceo-agent/shared";
-import { LocalGpuContractError } from "@ceo-agent/shared/server";
+import { LocalGpuContractError, localGpuCanonicalCreativeJob, localGpuCreativeBindingDigest, localGpuUploadBindingDigest } from "@ceo-agent/shared/server";
 import { assertLocalGpuAccess, resolveExplicitLocalGpuProviderAuthority } from "../packages/agents/src/ai-story/local-gpu-access";
+import { LocalGpuCloudAdapter } from "../packages/agents/src/ai-story/local-gpu-adapter";
+import { loadLocalGpuConfigFromEnv } from "../packages/agents/src/ai-story/local-gpu-config";
+import { verifyLocalGpuRequest } from "../packages/agents/src/ai-story/local-gpu-signing";
 import {
   authorizeLocalGpuSequentialRelease,
+  canonicalizeLocalGpuNativeDialogueV3Body,
   mapCanonicalPackageToLocalGpuDesktop,
+  mapCanonicalPackageToLocalGpuNativeDialogueV3,
   type LocalGpuResolvedAsset,
 } from "../packages/agents/src/ai-story/local-gpu-package-transport";
 
@@ -108,6 +113,27 @@ function code(run: () => void): string {
     return error instanceof LocalGpuContractError ? error.message : String(error);
   }
   return "";
+}
+
+function mapNativeDialogue(overrides: Record<string, unknown> = {}, extraAssets = assets) {
+  return mapCanonicalPackageToLocalGpuNativeDialogueV3({
+    package: pkg({
+      recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      dialogue: [{
+        speakerCharacterId: characterId,
+        speakerLabel: "Yuki",
+        text: "妈，你每天这样做，不累咩？",
+        offscreen: false,
+        locale: "zh-MY",
+      }],
+      ...overrides,
+    }),
+    assets: extraAssets,
+    environment: "staging",
+    jobId: id(91),
+    upload,
+    seed: 42,
+  });
 }
 
 describe("canonical LOCAL_GPU package transport", () => {
@@ -233,6 +259,71 @@ describe("canonical LOCAL_GPU package transport", () => {
       upload,
       pinnedVoiceDna: { voiceDnaId: id(17) },
     }))).toBe("LOCAL_GPU_VOICE_DNA_UNSUPPORTED");
+  });
+
+  it("projects approved visible dialogue and authority references into signed Contract V3 material", () => {
+    const result = mapNativeDialogue();
+    expect(result.body).toMatchObject({
+      contractVersion: 3,
+      environment: "staging",
+      workflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      audioPolicy: "NATIVE",
+      voiceInstructions: null,
+      seed: 42,
+      dialogue: [{
+        speakerId: characterId,
+        text: "妈，你每天这样做，不累咩？",
+        language: "zh-MY",
+      }],
+    });
+    expect(result.body.references).toEqual([
+      expect.objectContaining({ role: "CHARACTER", contentHash: characterHash }),
+      expect.objectContaining({ role: "PRODUCT", contentHash: productHash }),
+    ]);
+    expect(result.body.creative).toMatchObject({
+      characters: [{
+        subjectId: characterId,
+        dnaFingerprint: hash("a"),
+        references: [expect.objectContaining({ contentHash: characterHash })],
+      }],
+      products: [{ references: [expect.objectContaining({ contentHash: productHash })] }],
+    });
+    expect(result.creativeBinding).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.uploadBinding).toMatch(/^[0-9a-f]{64}$/);
+    const withScene = mapNativeDialogue({
+      references: [
+        { authorityType: "LOCATION", authorityId: id(15), assetId: otherAssetId, contentHash: hash("9") },
+        { authorityType: "PRODUCT", authorityId: id(13), assetId: productAssetId, contentHash: productHash },
+        { authorityType: "CHARACTER", authorityId: characterId, assetId: characterAssetId, contentHash: characterHash },
+      ],
+    });
+    expect(withScene.body.references).toEqual([
+      expect.objectContaining({ role: "CHARACTER" }),
+      expect.objectContaining({ role: "PRODUCT" }),
+      expect.objectContaining({ role: "SCENE" }),
+    ]);
+    expect(withScene.body.creative).toMatchObject({
+      scene: { subjectId: id(40), references: [expect.objectContaining({ contentHash: hash("9") })] },
+    });
+  });
+
+  it("fails closed for speaker, audio, character, and reference authority mismatches", () => {
+    expect(code(() => mapNativeDialogue({
+      dialogue: [{ speakerCharacterId: characterId, text: "Hello", offscreen: true, locale: "en" }],
+    }))).toBe("LOCAL_GPU_NATIVE_DIALOGUE_SPEAKER_MISMATCH");
+    expect(code(() => mapNativeDialogue({
+      dialogue: [{ speakerCharacterId: id(99), text: "Hello", offscreen: false, locale: "en" }],
+    }))).toBe("LOCAL_GPU_NATIVE_DIALOGUE_SPEAKER_MISMATCH");
+    expect(code(() => mapNativeDialogue({ characterAuthority: null }))).toBe("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
+    expect(code(() => mapNativeDialogue({ generateAudio: false, audioBlocked: true }))).toBe("LOCAL_GPU_AUDIO_POLICY_INVALID");
+    expect(code(() => mapNativeDialogue({
+      references: [
+        { authorityType: "CHARACTER", authorityId: characterId, assetId: characterAssetId, contentHash: characterHash },
+        { authorityType: "PRODUCT", authorityId: id(13), assetId: productAssetId, contentHash: productHash },
+        { authorityType: "LOCATION", authorityId: id(15), assetId: otherAssetId, contentHash: hash("9") },
+        { authorityType: "SCENE", authorityId: id(18), assetId: frameAssetId, contentHash: frameHash },
+      ],
+    }, [...assets, asset(frameAssetId, frameHash, "scene")]))).toBe("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
   });
 
   it("rejects unsupported workflows and preserves ambient audio separately from silence", () => {
@@ -362,6 +453,107 @@ describe("LOCAL_GPU sequential release eligibility", () => {
       existingGate: null,
       predecessor: null,
     }))).toBe("SEQUENTIAL_LOCAL_PREDECESSOR_REQUIRED");
+  });
+});
+
+describe("native dialogue Contract V3 request boundary", () => {
+  const secret = "native-dialogue-test-secret";
+  const now = new Date("2026-10-19T00:00:00.000Z");
+  const scope = { workspaceId, sceneExecutionId: id(40), packageId: id(30) };
+  const actor = { userId: id(16), workspaceId, organizationPlan: null, platformAdminStatus: "ACTIVE_GRANT" as const };
+  const capabilities = (certified: boolean) => ({
+    contractVersion: 2,
+    acceptedContractVersions: [1, 2, 3],
+    contracts: { v3: { workflows: { MINIMAX_H3_NATIVE_DIALOGUE: {
+      execution: "enabled",
+      implemented: true,
+      modelInstalled: true,
+      buildExecutable: true,
+      nativeDialogue: "PROMPT_CONDITIONED",
+      e2eCertified: certified,
+    } } } },
+  });
+  const adapter = (environment: "staging" | "production", calls: Parameters<typeof LocalGpuCloudAdapter>[1] extends never ? never : unknown) => new LocalGpuCloudAdapter(
+    loadLocalGpuConfigFromEnv({
+      LOCAL_GPU_PROVIDER_ENABLED: "true",
+      LOCAL_GPU_ENVIRONMENT: environment,
+      LOCAL_GPU_SIGNING_SECRET: secret,
+      LOCAL_GPU_BASE_URL: "https://local-gpu.example.test",
+    }),
+    calls as ConstructorParameters<typeof LocalGpuCloudAdapter>[1],
+    { now: () => now, nonce: () => "native-dialogue-nonce" },
+  );
+
+  it("signs and posts the exact canonical request once in staging", async () => {
+    const attempts: Parameters<ConstructorParameters<typeof LocalGpuCloudAdapter>[1]>[0][] = [];
+    const cloud = adapter("staging", async (attempt: Parameters<ConstructorParameters<typeof LocalGpuCloudAdapter>[1]>[0]) => {
+      attempts.push(attempt);
+      return { status: 200, body: JSON.stringify({ state: "QUEUED" }) };
+    });
+    const jobId = cloud.jobIdFor(scope);
+    const transport = mapCanonicalPackageToLocalGpuNativeDialogueV3({
+      package: pkg({ recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE", dialogue: [{
+        speakerCharacterId: characterId, speakerLabel: "Yuki", text: "你好", offscreen: false, locale: "zh-MY",
+      }] }),
+      assets, environment: "staging", jobId, upload, seed: 42,
+    });
+    const result = await cloud.submitNativeDialogueV3({
+      actor, package: scope, request: transport.body, creativeBinding: transport.creativeBinding,
+      capabilities: capabilities(false), existingGate: null,
+    });
+    expect(result).toMatchObject({ workflow: "MINIMAX_H3_NATIVE_DIALOGUE", state: "QUEUED", automaticGenerationRetry: 0, remoteProviderFallback: 0 });
+    expect(attempts).toHaveLength(1);
+    expect(JSON.parse(attempts[0]!.body!)).toEqual(transport.body);
+    const claims = verifyLocalGpuRequest({
+      secret,
+      token: attempts[0]!.headers.authorization.replace("Bearer ", ""),
+      now,
+      workspaceId,
+      environment: "staging",
+    });
+    expect(claims).toMatchObject({ workflow: "MINIMAX_H3_NATIVE_DIALOGUE", creativeBinding: transport.creativeBinding });
+  });
+
+  it("keeps the cross-repository native-dialogue golden vector byte-compatible", () => {
+    const fixture = JSON.parse(readFileSync(join(root, "tests/fixtures/local-gpu-native-dialogue-v3-golden-vector.json"), "utf8")) as {
+      classification: string;
+      body: Parameters<typeof localGpuCanonicalCreativeJob>[0] & { upload: typeof upload; dialogue: Array<{ text: string; language: string }> };
+      creativeBinding: string;
+      uploadBinding: string;
+    };
+    expect(fixture.classification).toBe("TEST_ONLY_SYNTHETIC");
+    expect(localGpuCreativeBindingDigest(canonicalizeLocalGpuNativeDialogueV3Body(fixture.body))).toBe(fixture.creativeBinding);
+    expect(localGpuUploadBindingDigest(fixture.body.upload)).toBe(fixture.uploadBinding);
+    expect(fixture.body.dialogue).toEqual([{ speakerId: characterId, text: "你好。", language: "zh-MY", startSec: null, endSec: null }]);
+  });
+
+  it("does not post to Production until Desktop reports real E2E certification", async () => {
+    let calls = 0;
+    const cloud = adapter("production", async () => {
+      calls += 1;
+      return { status: 200, body: JSON.stringify({ state: "QUEUED" }) };
+    });
+    const jobId = cloud.jobIdFor(scope);
+    const productionUpload = { ...upload, environment: "production" as const };
+    const transport = mapCanonicalPackageToLocalGpuNativeDialogueV3({
+      package: pkg({ recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE", dialogue: [{
+        speakerCharacterId: characterId, speakerLabel: "Yuki", text: "Hello", offscreen: false, locale: "en",
+      }] }),
+      assets, environment: "production", jobId, upload: productionUpload, seed: 42,
+    });
+    await expect(cloud.submitNativeDialogueV3({
+      actor, package: scope, request: transport.body, creativeBinding: transport.creativeBinding,
+      capabilities: capabilities(false), existingGate: null, productionDispatchAuthorized: true,
+    })).rejects.toThrow("LOCAL_GPU_NATIVE_DIALOGUE_NOT_CERTIFIED");
+    expect(calls).toBe(0);
+
+    const result = await cloud.submitNativeDialogueV3({
+      actor, package: scope, request: transport.body, creativeBinding: transport.creativeBinding,
+      capabilities: capabilities(false), existingGate: null, productionDispatchAuthorized: true,
+      nativeDialogueCanaryAuthorized: true,
+    });
+    expect(result).toMatchObject({ workflow: "MINIMAX_H3_NATIVE_DIALOGUE", state: "QUEUED" });
+    expect(calls).toBe(1);
   });
 });
 

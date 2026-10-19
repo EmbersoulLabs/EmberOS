@@ -5,6 +5,9 @@ import {
   assertLocalGpuSubmitAllowed,
   buildLocalGpuDesktopSubmit,
   buildLocalGpuDesktopSubmitV2,
+  localGpuCanonicalCreativeJob,
+  localGpuCreativeBindingDigest,
+  localGpuUploadBindingDigest,
   mapLocalGpuAudioPolicy,
   serializeLocalGpuH3Prompt,
   type LocalGpuAudioPolicy,
@@ -38,6 +41,70 @@ export type LocalGpuResolvedAsset = {
   workspaceId: string;
   assetUrl: string;
 };
+
+export type LocalGpuNativeDialogueV3Transport = {
+  body: Record<string, unknown> & {
+    contractVersion: 3;
+    environment: LocalGpuEnvironment;
+    jobId: string;
+    sceneExecutionId: string;
+    workspaceId: string;
+    workflow: "MINIMAX_H3_NATIVE_DIALOGUE";
+    upload: LocalGpuUploadDestination;
+  };
+  creativeBinding: string;
+  uploadBinding: string;
+};
+
+/** Mirrors Desktop Contract V3 parsing before it recomputes the signed creative binding. */
+export function canonicalizeLocalGpuNativeDialogueV3Body(body: LocalGpuNativeDialogueV3Transport["body"]): Record<string, unknown> {
+  const references = Array.isArray(body.references) ? body.references : [];
+  const dialogue = Array.isArray(body.dialogue) ? body.dialogue : [];
+  const normalizedReferences = references.map((value) => {
+    const reference = value as Record<string, unknown>;
+    return {
+      role: reference.role,
+      assetUrl: reference.assetUrl,
+      contentHash: typeof reference.contentHash === "string" ? reference.contentHash.toLowerCase() : reference.contentHash,
+      subjectId: reference.subjectId ?? null,
+      variantId: reference.variantId ?? null,
+      dnaVersion: reference.dnaVersion ?? null,
+      dnaFingerprint: typeof reference.dnaFingerprint === "string" ? reference.dnaFingerprint.toLowerCase() : null,
+    };
+  });
+  const normalizedDialogue = dialogue.map((value) => {
+    const line = value as Record<string, unknown>;
+    return {
+      speakerId: line.speakerId,
+      text: line.text,
+      language: line.language,
+      startSec: line.startSec ?? null,
+      endSec: line.endSec ?? null,
+    };
+  });
+  return localGpuCanonicalCreativeJob({
+    contractVersion: 3,
+    assetMode: body.assetMode as "WITH_ASSET" | "WITHOUT_ASSET",
+    jobId: body.jobId,
+    sceneExecutionId: body.sceneExecutionId,
+    workspaceId: body.workspaceId,
+    workflow: body.workflow,
+    prompt: String(body.prompt),
+    durationSec: Number(body.durationSec),
+    audioPolicy: String(body.audioPolicy),
+    aspectRatio: typeof body.aspectRatio === "string" ? body.aspectRatio : null,
+    megapixels: typeof body.megapixels === "number" ? body.megapixels : null,
+    voiceInstructions: typeof body.voiceInstructions === "string" ? body.voiceInstructions : null,
+    seed: typeof body.seed === "number" ? body.seed : null,
+    references: normalizedReferences,
+    firstFrame: body.firstFrame ?? null,
+    audioReferences: body.audioReferences ?? null,
+    videoReferences: body.videoReferences ?? null,
+    dialogue: normalizedDialogue,
+    director: body.director as Parameters<typeof localGpuCanonicalCreativeJob>[0]["director"],
+    lastFrame: body.lastFrame ?? null,
+  });
+}
 
 export type LocalGpuPackageTransport = {
   dispatch: false;
@@ -144,6 +211,117 @@ export function serializeCanonicalPackageForH3(pkg: AiStoryLocalGenerationPackag
       mustAvoid: pkg.mustAvoid,
     },
   });
+}
+
+/** Contract V3 projection for approved visible dialogue. No dialogue text or reference is inferred. */
+export function mapCanonicalPackageToLocalGpuNativeDialogueV3(input: {
+  package: AiStoryLocalGenerationPackage;
+  assets: readonly LocalGpuResolvedAsset[];
+  environment: LocalGpuEnvironment;
+  jobId: string;
+  upload: LocalGpuUploadDestination;
+  seed: number;
+  megapixels?: number;
+}): LocalGpuNativeDialogueV3Transport {
+  const pkg = input.package;
+  if (pkg.recommendedWorkflow !== "MINIMAX_H3_NATIVE_DIALOGUE" || pkg.dialogue.length === 0) {
+    fail("LOCAL_GPU_NATIVE_DIALOGUE_AUTHORITY_REQUIRED");
+  }
+  if (!pkg.generateAudio || pkg.audioBlocked) fail("LOCAL_GPU_AUDIO_POLICY_INVALID");
+  if (!pkg.characterAuthority) fail("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
+  if (pkg.dialogue.some((line) => line.offscreen || line.speakerCharacterId !== pkg.characterAuthority?.characterId)) {
+    fail("LOCAL_GPU_NATIVE_DIALOGUE_SPEAKER_MISMATCH");
+  }
+  const references = referencesOf(pkg);
+  const roleFor = (reference: PackageReference) => ["CHARACTER", "CHARACTER_IDENTITY"].includes(reference.kind)
+    ? "CHARACTER" as const
+    : ["PRODUCT", "PRODUCT_IDENTITY"].includes(reference.kind)
+      ? "PRODUCT" as const
+      : "SCENE" as const;
+  const selected = references.filter((reference) => ["CHARACTER", "CHARACTER_IDENTITY", "PRODUCT", "PRODUCT_IDENTITY", "LOCATION", "LOCATION_CONTEXT", "SCENE"].includes(reference.kind));
+  if (selected.length < 1 || selected.length > 3 || selected.length !== references.length) {
+    fail(selected.length > 3 ? "LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS" : "LOCAL_GPU_REFERENCES_REQUIRED");
+  }
+  const productSubjectId = pkg.productAuthority?.assetId ?? null;
+  const productVariantId = pkg.productAuthority?.confirmedVariant ?? null;
+  const desktopReferences = selected.map((reference) => {
+    const asset = resolveAsset(input.assets, pkg.workspaceId, reference.assetId, reference.contentHash);
+    const role = roleFor(reference);
+    return {
+      approval: "APPROVED" as const,
+      role,
+      assetUrl: asset.assetUrl,
+      contentHash: asset.contentHash,
+      subjectId: role === "CHARACTER" ? pkg.characterAuthority!.characterId : role === "PRODUCT" ? productSubjectId : pkg.sceneExecutionId,
+      variantId: role === "PRODUCT" ? productVariantId : null,
+      dnaVersion: role === "CHARACTER" ? pkg.characterAuthority!.characterVersionId : null,
+      dnaFingerprint: role === "CHARACTER" ? pkg.characterAuthority!.dnaFingerprint : null,
+    };
+  }).sort((left, right) => ["CHARACTER", "PRODUCT", "SCENE"].indexOf(left.role) - ["CHARACTER", "PRODUCT", "SCENE"].indexOf(right.role));
+  const characterReferences = desktopReferences.filter((reference) => reference.role === "CHARACTER")
+    .map((reference) => ({ approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
+  if (characterReferences.length === 0) fail("LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED");
+  const productReferences = desktopReferences.filter((reference) => reference.role === "PRODUCT")
+    .map((reference) => ({ approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
+  const sceneReferences = desktopReferences.filter((reference) => reference.role === "SCENE")
+    .map((reference) => ({ approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
+  const dialogue = pkg.dialogue.map((line) => ({
+    speakerId: line.speakerCharacterId!,
+    text: line.text,
+    language: line.locale ?? "und",
+    startSec: null,
+    endSec: null,
+  }));
+  const creative = {
+    characters: [{
+      subjectId: pkg.characterAuthority.characterId,
+      dnaVersion: pkg.characterAuthority.characterVersionId,
+      dnaFingerprint: pkg.characterAuthority.dnaFingerprint,
+      references: characterReferences,
+    }],
+    ...(pkg.productAuthority && productReferences.length > 0 ? { products: [{
+      subjectId: productSubjectId!,
+      variantId: pkg.productAuthority.confirmedVariant ?? "approved-variant",
+      references: productReferences,
+    }] } : {}),
+    ...(sceneReferences.length > 0 ? { scene: {
+      subjectId: pkg.sceneExecutionId,
+      references: sceneReferences,
+    } } : {}),
+    dialogue,
+  };
+  const body = {
+    contractVersion: 3 as const,
+    assetMode: "WITH_ASSET" as const,
+    environment: input.environment,
+    jobId: input.jobId,
+    sceneExecutionId: pkg.sceneExecutionId,
+    workspaceId: pkg.workspaceId,
+    workflow: "MINIMAX_H3_NATIVE_DIALOGUE" as const,
+    prompt: serializeCanonicalPackageForH3(pkg),
+    durationSec: pkg.durationSec,
+    durationSource: "RECOMMENDED_DURATION_AUTHORITY" as const,
+    audioPolicy: "NATIVE" as const,
+    aspectRatio: pkg.aspectRatio,
+    megapixels: input.megapixels ?? 0.5,
+    voiceInstructions: null,
+    seed: input.seed,
+    references: desktopReferences,
+    firstFrame: null,
+    audioReferences: null,
+    videoReferences: null,
+    dialogue,
+    director: null,
+    lastFrame: null,
+    creative,
+    upload: input.upload,
+  };
+  const canonical = canonicalizeLocalGpuNativeDialogueV3Body(body);
+  return {
+    body,
+    creativeBinding: localGpuCreativeBindingDigest(canonical),
+    uploadBinding: localGpuUploadBindingDigest(input.upload),
+  };
 }
 
 function promptFor(pkg: AiStoryLocalGenerationPackage, variant: string | null): { prompt: string; promptOnlyRequirements: string[] } {

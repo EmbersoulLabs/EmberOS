@@ -11,6 +11,7 @@ import {
   type LocalGpuSubmitLedger,
   type LocalGpuT2VRequest,
   type LocalGpuV2Request,
+  type LocalGpuNativeDialogueRequest,
 } from "@ceo-agent/agents";
 
 type Actor = {
@@ -26,7 +27,7 @@ export type LocalGpuWorkerDispatchDeps = {
   claim: (claim: { workspaceId: string; storyId: string; sceneExecutionId: string; jobId: string }) => Promise<boolean> | boolean;
   adapter: LocalGpuEnabledDispatchAdapter;
   actor: Actor;
-  request: LocalGpuT2VRequest | LocalGpuV2Request;
+  request: LocalGpuT2VRequest | LocalGpuV2Request | LocalGpuNativeDialogueRequest;
   capabilities: unknown;
   existingResultId: string | null;
   ledger?: LocalGpuSubmitLedger;
@@ -41,7 +42,7 @@ async function loadPersistedDispatch(scope: LocalGpuSceneScope): Promise<{
   };
   candidate: LocalGpuDispatchCandidate;
   actor: Actor;
-  request: LocalGpuT2VRequest | LocalGpuV2Request;
+  request: LocalGpuT2VRequest | LocalGpuV2Request | LocalGpuNativeDialogueRequest;
   capabilities: unknown;
 } | null> {
   const { getDb, loadAuthorizedLocalGpuDispatch } = await import("@ceo-agent/db");
@@ -60,7 +61,7 @@ async function loadPersistedDispatch(scope: LocalGpuSceneScope): Promise<{
       route: snapshot.route as LocalGpuDispatchCandidate["route"],
     },
     actor: snapshot.actor,
-    request: snapshot.request as LocalGpuT2VRequest | LocalGpuV2Request,
+    request: snapshot.request as LocalGpuT2VRequest | LocalGpuV2Request | LocalGpuNativeDialogueRequest,
     capabilities: snapshot.capabilities,
   };
 }

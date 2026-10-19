@@ -147,6 +147,7 @@ export function materializeLocalGenerationPackage(input: {
         speakerLabel: "On-screen Character",
         text: request.nativeAvRequest.dialogueAuthority.exactText,
         offscreen: false,
+        locale: request.nativeAvRequest.dialogueAuthority.primaryLocale,
       }]
     : [];
   const product = request.productMaterialSelection?.productAuthority ?? null;

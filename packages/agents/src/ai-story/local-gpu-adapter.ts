@@ -13,6 +13,7 @@ import {
   buildLocalGpuDesktopSubmitV2,
   readLocalGpuV2FirstFrameAuthorities,
   buildLocalGpuZeroAssetT2VSubmit,
+  localGpuUploadBindingDigest,
   localGpuCreativeBindingForV2Body,
   LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
   LOCAL_GPU_CAPABILITIES_ACTION,
@@ -46,7 +47,7 @@ import {
 import {
   prepareLocalGpuR2vDnaHandoff,
 } from "./local-gpu-r2v-dna-transport";
-import type { LocalGpuResolvedAsset } from "./local-gpu-package-transport";
+import { canonicalizeLocalGpuNativeDialogueV3Body, type LocalGpuResolvedAsset } from "./local-gpu-package-transport";
 
 export type LocalGpuHttpResponse = { status: number; body: string };
 export type LocalGpuHttp = (input: {
@@ -69,6 +70,44 @@ export type LocalGpuSubmitPackage = {
   aspectRatio?: string | null;
   references: readonly { approval?: string; role?: string; assetUrl?: string; contentHash?: string }[];
 };
+
+export type LocalGpuContractV3Request = Record<string, unknown> & {
+  contractVersion: 3;
+  environment: LocalGpuEnvironment;
+  jobId: string;
+  sceneExecutionId: string;
+  workspaceId: string;
+  workflow: string;
+  upload: LocalGpuUploadDestination;
+};
+
+function assertNativeDialogueV3Capability(
+  capabilities: unknown,
+  environment: LocalGpuEnvironment,
+  nativeDialogueCanaryAuthorized = false,
+): void {
+  const root = asRecord(capabilities);
+  const contracts = asRecord(root.contracts);
+  const v3 = asRecord(contracts.v3);
+  const workflows = asRecord(v3.workflows);
+  const capability = asRecord(workflows.MINIMAX_H3_NATIVE_DIALOGUE);
+  const accepted = Array.isArray(root.acceptedContractVersions)
+    ? root.acceptedContractVersions
+    : Array.isArray(root.acceptedContracts) ? root.acceptedContracts : [];
+  if (
+    !accepted.includes(3)
+    || capability.execution !== "enabled"
+    || capability.implemented !== true
+    || capability.modelInstalled !== true
+    || capability.buildExecutable !== true
+    || capability.nativeDialogue !== "PROMPT_CONDITIONED"
+  ) {
+    throw new LocalGpuContractError("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
+  }
+  if (environment === "production" && capability.e2eCertified !== true && !nativeDialogueCanaryAuthorized) {
+    throw new LocalGpuContractError("LOCAL_GPU_NATIVE_DIALOGUE_NOT_CERTIFIED");
+  }
+}
 
 /** 400/401/403/422 reject before acceptance. 409 is not in this set: the Desktop contract fixture does not define it as a validation failure, and a client-supplied job id can already exist after a lost acceptance. */
 const DEFINITE_REJECTION = new Set([400, 401, 403, 422]);
@@ -395,6 +434,71 @@ export class LocalGpuCloudAdapter {
         workflow: "MINIMAX_H3_T2V",
         contractVersion: 3,
         creativeBinding: desktop.creativeBinding,
+        state: readState(asRecord(response.json).state ?? asRecord(response.json).status ?? "QUEUED"),
+        remoteProviderFallback: LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
+        automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
+      };
+    }
+    throwSubmitFailure(jobId, response);
+  }
+
+  /** Submit approved native dialogue without changing any creative fields. Staging may certify it; Production requires Desktop E2E evidence. */
+  async submitNativeDialogueV3(input: {
+    actor: LocalGpuServerActor;
+    package: Pick<LocalGpuSubmitPackage, "workspaceId" | "sceneExecutionId" | "packageId">;
+    request: LocalGpuContractV3Request;
+    creativeBinding: string;
+    capabilities: unknown;
+    existingGate: string | null;
+    productionDispatchAuthorized?: boolean;
+    nativeDialogueCanaryAuthorized?: boolean;
+  }): Promise<{
+    jobId: string;
+    workflow: string;
+    contractVersion: 3;
+    creativeBinding: string;
+    state: LocalGpuJobState;
+    remoteProviderFallback: 0;
+    automaticGenerationRetry: 0;
+  }> {
+    const { environment } = this.requireEnabled();
+    if (environment === "production" && input.productionDispatchAuthorized !== true) {
+      throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
+    }
+    assertLocalGpuSubmitAllowed(input.existingGate);
+    assertNativeDialogueV3Capability(input.capabilities, environment, input.nativeDialogueCanaryAuthorized === true);
+    const jobId = this.jobIdFor(input.package);
+    if (
+      input.request.contractVersion !== 3
+      || input.request.workflow !== "MINIMAX_H3_NATIVE_DIALOGUE"
+      || input.request.environment !== environment
+      || input.request.jobId !== jobId
+      || input.request.workspaceId !== input.package.workspaceId
+      || input.request.sceneExecutionId !== input.package.sceneExecutionId
+    ) {
+      throw new LocalGpuContractError("LOCAL_GPU_CONTRACT_IDENTITY_MISMATCH");
+    }
+    const canonical = canonicalizeLocalGpuNativeDialogueV3Body(input.request as Parameters<typeof canonicalizeLocalGpuNativeDialogueV3Body>[0]);
+    assertLocalGpuCreativeBinding(canonical, input.creativeBinding);
+    const uploadBinding = localGpuUploadBindingDigest(input.request.upload);
+    const token = this.authorize({
+      actor: input.actor,
+      workspaceId: input.package.workspaceId,
+      sceneExecutionId: input.package.sceneExecutionId,
+      action: LOCAL_GPU_SUBMIT_ACTION,
+      workflow: input.request.workflow,
+      jobId,
+      uploadBinding,
+      creativeBinding: input.creativeBinding,
+    });
+    assertLocalGpuUploadBinding(input.request.upload, uploadBinding);
+    const response = await this.send({ method: "POST", path: "/v1/jobs", token, body: input.request, jobId });
+    if (response.status >= 200 && response.status < 300) {
+      return {
+        jobId,
+        workflow: input.request.workflow,
+        contractVersion: 3,
+        creativeBinding: input.creativeBinding,
         state: readState(asRecord(response.json).state ?? asRecord(response.json).status ?? "QUEUED"),
         remoteProviderFallback: LOCAL_GPU_REMOTE_PROVIDER_FALLBACK,
         automaticGenerationRetry: LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,

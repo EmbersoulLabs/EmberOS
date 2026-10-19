@@ -1,0 +1,38 @@
+{
+  "classification": "TEST_ONLY_SYNTHETIC",
+  "body": {
+    "contractVersion": 3,
+    "assetMode": "WITH_ASSET",
+    "environment": "staging",
+    "jobId": "00000090-0000-4000-8000-000000000000",
+    "sceneExecutionId": "00000040-0000-4000-8000-000000000000",
+    "workspaceId": "00000003-0000-4000-8000-000000000000",
+    "workflow": "MINIMAX_H3_NATIVE_DIALOGUE",
+    "prompt": "A mother speaks at her approved stall. | CHARACTER IDENTITY: Preserve the authorized Character identity from the CHARACTER reference throughout the clip. | PRODUCT IDENTITY: Preserve the authorized Product identity from the PRODUCT reference throughout the clip.; approved-product | CONTINUITY: same location | MUST KEEP: same identity | MUST AVOID: no invented speech",
+    "durationSec": 6,
+    "durationSource": "RECOMMENDED_DURATION_AUTHORITY",
+    "audioPolicy": "NATIVE",
+    "aspectRatio": "9:16",
+    "megapixels": 0.5,
+    "voiceInstructions": null,
+    "seed": 42,
+    "references": [
+      {"approval": "APPROVED", "role": "CHARACTER", "assetUrl": "https://assets.invalid/native-dialogue/character.png", "contentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "subjectId": "00000011-0000-4000-8000-000000000000", "variantId": null, "dnaVersion": "00000012-0000-4000-8000-000000000000", "dnaFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      {"approval": "APPROVED", "role": "PRODUCT", "assetUrl": "https://assets.invalid/native-dialogue/product.png", "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "subjectId": "00000022-0000-4000-8000-000000000000", "variantId": "approved-product", "dnaVersion": null, "dnaFingerprint": null}
+    ],
+    "firstFrame": null,
+    "audioReferences": null,
+    "videoReferences": null,
+    "dialogue": [{"speakerId": "00000011-0000-4000-8000-000000000000", "text": "你好。", "language": "zh-MY", "startSec": null, "endSec": null}],
+    "director": null,
+    "lastFrame": null,
+    "creative": {
+      "characters": [{"subjectId": "00000011-0000-4000-8000-000000000000", "dnaVersion": "00000012-0000-4000-8000-000000000000", "dnaFingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "references": [{"approval": "APPROVED", "assetUrl": "https://assets.invalid/native-dialogue/character.png", "contentHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}]}],
+      "products": [{"subjectId": "00000022-0000-4000-8000-000000000000", "variantId": "approved-product", "references": [{"approval": "APPROVED", "assetUrl": "https://assets.invalid/native-dialogue/product.png", "contentHash": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}]}],
+      "dialogue": [{"speakerId": "00000011-0000-4000-8000-000000000000", "text": "你好。", "language": "zh-MY", "startSec": null, "endSec": null}]
+    },
+    "upload": {"environment": "staging", "method": "PUT", "url": "https://uploads.invalid/native-dialogue.mp4"}
+  },
+  "creativeBinding": "4c24a7c74636e4fcde2e065fb34ad0da8fd2535201f5625d8cad263d17b7d3d8",
+  "uploadBinding": "33d6fb0b54d9e0a8c87b32fe73c0f605377255b33f087c8594b329a7526c0226"
+}
