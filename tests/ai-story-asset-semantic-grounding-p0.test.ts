@@ -15,6 +15,8 @@ import {
   FinalizedAssetMetadataAnalyzer,
   VISUAL_SEMANTIC_ANALYZER_VERSION,
   VisualSemanticAssetAnalyzer,
+  AssetAnalyzerExecutionError,
+  classifyVisualSemanticProviderError,
   buildAiStoryPolishPrompt,
   type AssetAnalysisCacheRepository,
 } from "@ceo-agent/agents";
@@ -135,6 +137,72 @@ function registry(assetId = ids.product, workspaceId = ids.workspace): AiStoryAs
 }
 
 describe("P0 visual semantic intelligence and Story grounding", () => {
+  it("classifies the missing Production Provider context as a definite authorization failure", () => {
+    const failure = classifyVisualSemanticProviderError(
+      new Error("CONTROLLED_SELF_USE_PROVIDER_HTTP_DENIED"),
+      null
+    );
+    expect(failure).toMatchObject({
+      failureCode: "ASSET_ANALYZER_AUTHORIZATION_DENIED",
+      failureStage: "PROVIDER_AUTHORIZATION",
+      outcomeCertainty: "DEFINITE",
+    });
+  });
+
+  it("distinguishes Provider rejection, timeout uncertainty, and post-response decode failure", () => {
+    expect(classifyVisualSemanticProviderError({ status: 429, request_id: "req-rate" }, null)).toMatchObject({
+      failureCode: "ASSET_ANALYZER_PROVIDER_REJECTED_429",
+      outcomeCertainty: "DEFINITE",
+      evidence: { providerRequestId: "req-rate" },
+    });
+    expect(classifyVisualSemanticProviderError({ status: 500, request_id: "req-unknown" }, null)).toMatchObject({
+      failureCode: "ASSET_ANALYZER_PROVIDER_OUTCOME_UNKNOWN",
+      outcomeCertainty: "UNKNOWN",
+      evidence: { providerRequestId: "req-unknown" },
+    });
+    expect(classifyVisualSemanticProviderError(new SyntaxError("bad json"), {
+      providerRequestId: "req-decode",
+      providerModelId: "gpt-4o-2024-11-20",
+      usage: { input: 10, output: 4, costUsd: 0.001 },
+    })).toMatchObject({
+      failureCode: "ASSET_ANALYZER_RESPONSE_DECODE_FAILED",
+      failureStage: "RESPONSE_DECODE",
+      outcomeCertainty: "DEFINITE",
+      evidence: { providerRequestId: "req-decode" },
+    });
+  });
+
+  it("rejects invalid MIME, missing Storage bytes, and over-limit images before Provider execution", async () => {
+    const adapter = vi.fn(async () => semantics());
+    const analyzer = new VisualSemanticAssetAnalyzer(adapter);
+    await expect(analyzer.analyze({
+      asset: { ...asset(), mimeType: "application/octet-stream", contentHash: hash },
+      loadRawBytes: async () => new Uint8Array([1]),
+    })).rejects.toMatchObject({ failureCode: "VISUAL_SEMANTIC_IMAGE_MIME_INVALID", failureStage: "ASSET_INPUT" });
+    await expect(analyzer.analyze({
+      asset: { ...asset(), contentHash: hash },
+      loadRawBytes: async () => { throw new Error("private storage detail"); },
+    })).rejects.toMatchObject({ failureCode: "ASSET_STORAGE_OBJECT_UNAVAILABLE", failureStage: "STORAGE_RETRIEVAL" });
+    await expect(analyzer.analyze({
+      asset: { ...asset(), contentHash: hash },
+      loadRawBytes: async () => new Uint8Array(8 * 1024 * 1024 + 1),
+    })).rejects.toMatchObject({ failureCode: "VISUAL_SEMANTIC_IMAGE_TOO_LARGE", failureStage: "ASSET_INPUT" });
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes malformed structured output without exposing its contents", async () => {
+    const analyzer = new VisualSemanticAssetAnalyzer(async () => ({ privatePayload: "must-not-leak" } as never));
+    const rejection = await analyzer.analyze({
+      asset: { ...asset(), contentHash: hash },
+      loadRawBytes: async () => new Uint8Array([1]),
+    }).catch((error) => error as AssetAnalyzerExecutionError);
+    expect(rejection).toMatchObject({
+      failureCode: "ASSET_ANALYZER_RESPONSE_VALIDATION_FAILED",
+      failureStage: "RESPONSE_VALIDATION",
+      outcomeCertainty: "DEFINITE",
+    });
+    expect(rejection.message).not.toContain("must-not-leak");
+  });
   it("keeps the historical metadata analyzer identity and semantic affordances", async () => {
     const analyzer = new FinalizedAssetMetadataAnalyzer();
     expect(analyzer.analyzerVersion).toBe(ASSET_INTELLIGENCE_ANALYZER_VERSION);

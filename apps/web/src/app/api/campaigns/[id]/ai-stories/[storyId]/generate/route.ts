@@ -38,6 +38,7 @@ import {
   setAiStoryStatus,
 } from "@/lib/ai-story-service";
 import {
+  AiStorySemanticGroundingRuntimeError,
   persistStoryAssetMatching,
   prepareStoryAssetGrounding,
 } from "@/lib/ai-story-asset-semantic-grounding";
@@ -102,16 +103,6 @@ export async function POST(
                 )
               )
           ).map((a) => assetLabelFromProductionRow(a));
-
-    // Required before Writer execution: exact selected bytes must have usable,
-    // immutable visual semantic authority. Cache hits perform no raw-byte read
-    // and no additional vision call.
-    const assetGrounding = await prepareStoryAssetGrounding({
-      db,
-      orgId: campaign.orgId,
-      workspaceId: campaign.workspaceId,
-      assetLinks: loaded.assetLinks,
-    });
 
     const [claimedStory] = await db
       .update(schema.aiStories)
@@ -190,6 +181,66 @@ export async function POST(
         reservedAt: new Date().toISOString(),
       })).reservation;
     }
+    const assetProviderCompletions: Array<{
+      providerRequestId: string | null;
+      providerModelId: string | null;
+      usage: { input: number; output: number; costUsd: number };
+    }> = [];
+    const runAssetGrounding = () => prepareStoryAssetGrounding({
+      db,
+      orgId: campaign.orgId,
+      workspaceId: campaign.workspaceId,
+      assetLinks: loaded.assetLinks,
+      onProviderCompletion: (completion) => {
+        assetProviderCompletions.push(completion);
+      },
+    });
+    let assetGrounding;
+    try {
+      // The same durable Provider authorization covers semantic grounding and
+      // Story polish. The HTTP boundary still revalidates it before every call.
+      assetGrounding = selfUseReservation
+        ? await withControlledSelfUseProviderContext({
+            reservationId: selfUseReservation.reservationId,
+            organizationId: campaign.orgId,
+            workspaceId: campaign.workspaceId,
+            executionIdentity: accountingIdentity.attemptId,
+            providerKey: "openai",
+          }, runAssetGrounding)
+        : await runAssetGrounding();
+    } catch (error) {
+      await db
+        .update(schema.aiStories)
+        .set({ status: "failed", updatedAt: new Date() })
+        .where(and(eq(schema.aiStories.id, storyId), eq(schema.aiStories.status, "generating")));
+      if (selfUse && selfUseReservation) {
+        const latest = await selfUse.getReservationById(selfUseReservation.reservationId);
+        if (latest?.status === "RESERVED") {
+          await selfUse.release(selfUseReservation.reservationId, new Date().toISOString());
+        } else if (latest?.status === "SUBMITTED" && assetProviderCompletions.length > 0) {
+          const cost = assetProviderCompletions.reduce((sum, value) => sum + value.usage.costUsd, 0);
+          const providerRequestId = assetProviderCompletions.at(-1)?.providerRequestId ?? undefined;
+          await selfUse.settle(
+            selfUseReservation.reservationId,
+            cost.toFixed(2),
+            new Date().toISOString(),
+            providerRequestId ?? undefined
+          );
+        }
+        // SUBMITTED without completion evidence is intentionally left unresolved.
+      }
+      if (error instanceof AiStorySemanticGroundingRuntimeError) {
+        const unknown = error.outcomeCertainty === "UNKNOWN";
+        return apiError(
+          unknown
+            ? "Asset analysis has an uncertain Provider outcome; reconcile status before retrying"
+            : `Asset analysis stopped at ${error.analyzerFailureStage ?? "ANALYZER"}`,
+          error.analyzerFailureCode ?? error.code,
+          unknown ? 409 : error.analyzerFailureStage === "PROVIDER_AUTHORIZATION" ? 403 : 422
+        );
+      }
+      throw error;
+    }
     const polishDraft = () => polishAiStoryDraft({
       originalIdea: loaded.story.originalIdea,
       campaign: {
@@ -258,9 +309,11 @@ export async function POST(
       });
       if (selfUse && selfUseReservation) {
         if (polish.accounting) {
+          const totalCost = Number(polish.accounting.cost.amount)
+            + assetProviderCompletions.reduce((sum, value) => sum + value.usage.costUsd, 0);
           await selfUse.settle(
             selfUseReservation.reservationId,
-            Number(polish.accounting.cost.amount).toFixed(2),
+            totalCost.toFixed(2),
             new Date().toISOString(),
             polish.accounting.providerRequestId
           );
@@ -296,9 +349,11 @@ export async function POST(
       completedAt: new Date().toISOString(),
     });
     if (selfUse && selfUseReservation) {
+      const totalCost = Number(polish.accounting.cost.amount)
+        + assetProviderCompletions.reduce((sum, value) => sum + value.usage.costUsd, 0);
       await selfUse.settle(
         selfUseReservation.reservationId,
-        Number(polish.accounting.cost.amount).toFixed(2),
+        totalCost.toFixed(2),
         new Date().toISOString(),
         polish.accounting.providerRequestId
       );

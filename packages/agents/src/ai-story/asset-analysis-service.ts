@@ -41,12 +41,43 @@ export type AssetAnalysisCacheRepository = {
     readonly analyzerVersion: string;
     readonly schemaVersion: string;
     readonly analyze: () => Promise<AiStoryAssetAnalysisSnapshot["analysis"]>;
+    readonly getInvocationEvidence?: () => AssetAnalyzerInvocationEvidence | null;
   }): Promise<{
     readonly snapshot: AiStoryAssetAnalysisSnapshot;
     readonly cacheStatus: "HIT" | "MISS";
     readonly analyzerInvoked: boolean;
   }>;
 };
+
+export type AssetAnalyzerFailureStage =
+  | "ASSET_INPUT"
+  | "STORAGE_RETRIEVAL"
+  | "PROVIDER_AUTHORIZATION"
+  | "PROVIDER_REQUEST"
+  | "RESPONSE_DECODE"
+  | "RESPONSE_VALIDATION";
+
+export type AssetAnalyzerInvocationEvidence = {
+  readonly failureCode?: string;
+  readonly failureStage?: AssetAnalyzerFailureStage;
+  readonly outcomeCertainty?: "DEFINITE" | "UNKNOWN";
+  readonly providerRequestId?: string | null;
+  readonly providerModelId?: string | null;
+  readonly usage?: { readonly input: number; readonly output: number; readonly costUsd: number };
+};
+
+/** Sanitized analyzer failure. Raw provider/storage messages and credentials never cross this boundary. */
+export class AssetAnalyzerExecutionError extends Error {
+  constructor(
+    readonly failureCode: string,
+    readonly failureStage: AssetAnalyzerFailureStage,
+    readonly outcomeCertainty: "DEFINITE" | "UNKNOWN",
+    readonly evidence: AssetAnalyzerInvocationEvidence = {}
+  ) {
+    super(failureCode);
+    this.name = "AssetAnalyzerExecutionError";
+  }
+}
 
 export type AssetIntelligenceAnalyzer = {
   readonly analyzerVersion: string;
@@ -141,6 +172,7 @@ export class AssetAnalysisService {
   async analyzeFinalizedAsset(input: {
     readonly asset: FinalizedAssetForAnalysis;
     readonly loadRawBytes?: () => Promise<Uint8Array>;
+    readonly getInvocationEvidence?: () => AssetAnalyzerInvocationEvidence | null;
   }): Promise<{
     readonly snapshot: AiStoryAssetAnalysisSnapshot;
     readonly cacheStatus: "HIT" | "MISS";
@@ -180,6 +212,7 @@ export class AssetAnalysisService {
       };
     }
 
+    let invocationEvidence: AssetAnalyzerInvocationEvidence | null = null;
     return this.repository.resolveAnalysisOnce({
       orgId: asset.orgId,
       workspaceId: asset.workspaceId,
@@ -187,13 +220,27 @@ export class AssetAnalysisService {
       contentHash: asset.contentHash,
       analyzerVersion: this.analyzer.analyzerVersion,
       schemaVersion: this.analyzer.schemaVersion,
-      analyze: () =>
-        this.analyzer.analyze({
+      getInvocationEvidence: () => invocationEvidence ?? input.getInvocationEvidence?.() ?? null,
+      analyze: async () => {
+        try {
+          return await this.analyzer.analyze({
           asset: { ...asset, contentHash: asset.contentHash! },
           ...(input.loadRawBytes
             ? { loadRawBytes: input.loadRawBytes }
             : {}),
-        }),
+          });
+        } catch (error) {
+          if (error instanceof AssetAnalyzerExecutionError) {
+            invocationEvidence = {
+              ...error.evidence,
+              failureCode: error.failureCode,
+              failureStage: error.failureStage,
+              outcomeCertainty: error.outcomeCertainty,
+            };
+          }
+          throw error;
+        }
+      },
     });
   }
 }

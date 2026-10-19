@@ -76,6 +76,7 @@
     "sql:ai-story-production-verification": "tsx scripts/apply-ai-story-production-verification-v1.ts",
     "sql:ai-story-worker-runtime": "tsx scripts/apply-ai-story-worker-runtime-v1.ts",
     "sql:ai-story-worker-attempt-observation": "tsx scripts/apply-ai-story-worker-attempt-observation-v1.ts",
+    "sql:ai-story-asset-analysis-diagnostics": "tsx scripts/apply-ai-story-asset-analysis-diagnostics-v1.ts",
     "sql:platform-admin": "tsx scripts/apply-platform-admin-v1.ts",
     "sql:platform-admin-control-plane-security": "tsx scripts/apply-platform-admin-control-plane-security-v1.ts",
     "sql:controlled-self-use-authority": "tsx scripts/apply-controlled-self-use-authority-v1.ts",
