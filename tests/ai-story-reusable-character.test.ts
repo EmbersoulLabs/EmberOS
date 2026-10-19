@@ -82,6 +82,12 @@ function alicia(version = 1, workspaceId = IDS.workspace) {
 }
 
 describe("AI Story reusable Character cross-Episode identity", () => {
+  it("keeps Character creation available to an authenticated Platform Superadmin without Workspace membership", () => {
+    const page = readFileSync(resolve(process.cwd(), "apps/web/src/app/w/[slug]/characters/page.tsx"), "utf8");
+
+    expect(page).toContain('canEdit={isSuperAdmin || workspace.role === "admin" || workspace.role === "operator"}');
+  });
+
   it("freezes library vs Campaign projection authority and voice boundary", () => {
     expect(WORKSPACE_CHARACTER_LIBRARY).toBe("REUSABLE_IDENTITY_ROOT");
     expect(CAMPAIGN_CHARACTER_AUTHORITY).toBe("EXECUTION_PROJECTION");
