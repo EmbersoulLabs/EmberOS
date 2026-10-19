@@ -49,9 +49,10 @@ describeIntegration("Asset Analyzer diagnostics predecessor migration", () => {
     const source = readFileSync(
       resolve(process.cwd(), "packages/db/sql/ai-story-asset-analysis-diagnostics-v1.sql"),
       "utf8"
-    ).replaceAll("asset_analysis_attempts", `${q}.asset_analysis_attempts`);
-    await sql.unsafe(source);
-    await sql.unsafe(source);
+    );
+    await sql.unsafe(`set search_path to ${q}, public;\n${source}`);
+    await sql.unsafe(`set search_path to ${q}, public;\n${source}`);
+    await sql.unsafe("set search_path to public");
 
     const [historical] = await sql.unsafe<Array<{ outcome_certainty: string; failure_stage: string }>>(
       `select outcome_certainty, failure_stage from ${q}.asset_analysis_attempts where error_code='ASSET_ANALYZER_INVOCATION_FAILED'`
