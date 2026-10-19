@@ -120,6 +120,18 @@ describe("AI Story Intake UX V1 product variant closure", () => {
     expect(page).toContain("/generate`");
   });
 
+  it("resumes a saved Intake through the canonical Generate Episode route", () => {
+    const review = readFileSync(
+      "apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/[storyId]/page.tsx",
+      "utf8"
+    );
+    expect(review).toContain('if (status === "draft")');
+    expect(review).toContain("await generateEpisodeFromIntake()");
+    expect(review).toContain("/ai-stories/${storyId}/generate`");
+    expect(review).toContain("Recover Episode Planning");
+    expect(review).toContain('status === "failed" && !planningDraft');
+  });
+
   it("keys intake readback by content identity and exact analyzer version", () => {
     const campaign = readFileSync("apps/web/src/app/api/campaigns/[id]/route.ts", "utf8");
     const confirmation = readFileSync("apps/web/src/lib/ai-story-service.ts", "utf8");
