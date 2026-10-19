@@ -14,6 +14,10 @@ import { planLocalGpuCompletion } from "./local-gpu-result-finalization";
 
 export type LocalGpuT2VRequest = Parameters<LocalGpuCloudAdapter["submitZeroAssetT2V"]>[0]["request"];
 export type LocalGpuV2Request = Parameters<LocalGpuCloudAdapter["submitContractV2"]>[0]["request"];
+export type LocalGpuNativeDialogueRequest = {
+  body: Parameters<LocalGpuCloudAdapter["submitNativeDialogueV3"]>[0]["request"];
+  creativeBinding: string;
+};
 type LocalGpuDispatchActor = {
   userId: string;
   workspaceId: string;
@@ -39,7 +43,7 @@ export type LocalGpuRouteInput = {
   recommendedWorkflow?: string | null;
   generateAudio: boolean;
   audioBlocked: boolean;
-  qcExpectation: "NO_DIALOGUE_WITH_AMBIENT_AUDIO" | "SILENT_OUTPUT";
+  qcExpectation: "NATIVE_CHARACTER_DIALOGUE" | "NO_DIALOGUE_WITH_AMBIENT_AUDIO" | "SILENT_OUTPUT";
 };
 
 export type LocalGpuRoutePlan = {
@@ -76,6 +80,47 @@ function codeOf(error: unknown): string {
 export function planLocalGpuRoute(input: LocalGpuRouteInput): LocalGpuRoutePlan {
   if (input.preQc !== "DISPATCH_ELIGIBLE") return blocked(input.assetMode, "LOCAL_GPU_PRE_QC_REQUIRED");
   if (!input.runtimeAuthorizationId) return blocked(input.assetMode, "LOCAL_GPU_RUNTIME_AUTHORIZATION_REQUIRED");
+  if (input.dialogueRequired || input.recommendedWorkflow === "MINIMAX_H3_NATIVE_DIALOGUE") {
+    if (input.assetMode !== "WITH_ASSET" || input.referenceCount < 1 || input.referenceCount > 3) {
+      return blocked(input.assetMode, input.referenceCount > 3 ? "LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS" : "LOCAL_GPU_REFERENCES_REQUIRED");
+    }
+    if (!input.generateAudio || input.audioBlocked || input.qcExpectation !== "NATIVE_CHARACTER_DIALOGUE") {
+      return blocked(input.assetMode, "LOCAL_GPU_AUDIO_POLICY_INVALID");
+    }
+    if (input.voiceDnaRequired || input.continuityFrameRequired || (input.audioReferenceCount ?? 0) > 0 || (input.videoReferenceCount ?? 0) > 0) {
+      return blocked(input.assetMode, "LOCAL_GPU_WORKFLOW_UNSUPPORTED");
+    }
+    const root = input.capabilities && typeof input.capabilities === "object" ? input.capabilities as Record<string, unknown> : {};
+    const contracts = root.contracts && typeof root.contracts === "object" ? root.contracts as Record<string, unknown> : {};
+    const v3 = contracts.v3 && typeof contracts.v3 === "object" ? contracts.v3 as Record<string, unknown> : {};
+    const workflows = v3.workflows && typeof v3.workflows === "object" ? v3.workflows as Record<string, unknown> : {};
+    const capability = workflows.MINIMAX_H3_NATIVE_DIALOGUE && typeof workflows.MINIMAX_H3_NATIVE_DIALOGUE === "object"
+      ? workflows.MINIMAX_H3_NATIVE_DIALOGUE as Record<string, unknown>
+      : {};
+    if (
+      !Array.isArray(root.acceptedContractVersions)
+      || !root.acceptedContractVersions.includes(3)
+      || capability.execution !== "enabled"
+      || capability.implemented !== true
+      || capability.modelInstalled !== true
+      || capability.buildExecutable !== true
+      || capability.nativeDialogue !== "PROMPT_CONDITIONED"
+      || capability.e2eCertified !== true
+    ) {
+      return blocked(input.assetMode, "LOCAL_GPU_NATIVE_DIALOGUE_NOT_CERTIFIED");
+    }
+    return {
+      eligible: true,
+      blocked: null,
+      contractVersion: 3,
+      assetMode: "WITH_ASSET",
+      workflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+      desktopAudioPolicy: "NATIVE",
+      qcExpectation: "NATIVE_CHARACTER_DIALOGUE",
+      speechContent: "HUMAN_REVIEW_REQUIRED",
+      hasAudio: true,
+    };
+  }
   let audio: ReturnType<typeof localGpuPersistedAudioSeparation>;
   try {
     audio = localGpuPersistedAudioSeparation({
@@ -125,7 +170,7 @@ export function planLocalGpuRoute(input: LocalGpuRouteInput): LocalGpuRoutePlan 
     return blocked(input.assetMode, "LOCAL_GPU_ASSET_MODE_CONFLICT");
   }
   if (input.referenceCount < 1) return blocked(input.assetMode, "LOCAL_GPU_REFERENCES_REQUIRED");
-  if (input.dialogueRequired || input.voiceDnaRequired || input.continuityFrameRequired) {
+  if (input.voiceDnaRequired || input.continuityFrameRequired) {
     return blocked(input.assetMode, "LOCAL_GPU_T2V_CAPABILITY_UNSUPPORTED");
   }
   try {
@@ -359,6 +404,15 @@ export type LocalGpuEnabledDispatchAdapter = {
     existingGate: string | null;
     productionDispatchAuthorized?: boolean;
   }): Promise<{ jobId: string }>;
+  submitNativeDialogueV3?(input: {
+    actor: LocalGpuDispatchActor;
+    package: { workspaceId: string; sceneExecutionId: string; packageId: string };
+    request: Parameters<LocalGpuCloudAdapter["submitNativeDialogueV3"]>[0]["request"];
+    creativeBinding: string;
+    capabilities: unknown;
+    existingGate: string | null;
+    productionDispatchAuthorized?: boolean;
+  }): Promise<{ jobId: string }>;
   status(jobId: string, scope: {
     actor: LocalGpuDispatchActor;
     workspaceId: string;
@@ -416,7 +470,7 @@ export async function runEnabledLocalGpuDispatch(input: {
   claim: (claim: { workspaceId: string; storyId: string; sceneExecutionId: string; jobId: string }) => Promise<boolean> | boolean;
   adapter: LocalGpuEnabledDispatchAdapter;
   actor: LocalGpuDispatchActor;
-  request: LocalGpuT2VRequest | LocalGpuV2Request;
+  request: LocalGpuT2VRequest | LocalGpuV2Request | LocalGpuNativeDialogueRequest;
   capabilities: unknown;
   existingResultId: string | null;
   productionDispatchAuthorized?: boolean;
@@ -436,6 +490,9 @@ export async function runEnabledLocalGpuDispatch(input: {
   }
   if (route.contractVersion === 2 && !input.adapter.submitContractV2) {
     return { code: "LOCAL_GPU_V2_ADAPTER_UNBOUND", posts: 0, gets: 0, submit: false, jobId: null, completion: null };
+  }
+  if (route.workflow === "MINIMAX_H3_NATIVE_DIALOGUE" && !input.adapter.submitNativeDialogueV3) {
+    return { code: "LOCAL_GPU_NATIVE_DIALOGUE_ADAPTER_UNBOUND", posts: 0, gets: 0, submit: false, jobId: null, completion: null };
   }
   const jobId = input.adapter.jobIdFor({
     workspaceId: input.scope.workspaceId,
@@ -465,6 +522,17 @@ export async function runEnabledLocalGpuDispatch(input: {
         ...submitInput,
         request: input.request as LocalGpuV2Request,
         capabilities: input.capabilities as Parameters<LocalGpuCloudAdapter["submitContractV2"]>[0]["capabilities"],
+      });
+    } else if (route.workflow === "MINIMAX_H3_NATIVE_DIALOGUE") {
+      const native = input.request as LocalGpuNativeDialogueRequest;
+      await input.adapter.submitNativeDialogueV3!({
+        actor: input.actor,
+        package: submitInput.package,
+        request: native.body,
+        creativeBinding: native.creativeBinding,
+        capabilities: input.capabilities,
+        existingGate: null,
+        productionDispatchAuthorized: input.productionDispatchAuthorized,
       });
     } else {
       await input.adapter.submitZeroAssetT2V({ ...submitInput, request: input.request as LocalGpuT2VRequest });

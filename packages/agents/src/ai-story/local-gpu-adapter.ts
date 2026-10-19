@@ -88,10 +88,11 @@ function assertNativeDialogueV3Capability(capabilities: unknown, environment: Lo
   const v3 = asRecord(contracts.v3);
   const workflows = asRecord(v3.workflows);
   const capability = asRecord(workflows.MINIMAX_H3_NATIVE_DIALOGUE);
-  const accepted = Array.isArray(root.acceptedContracts) ? root.acceptedContracts : [];
+  const accepted = Array.isArray(root.acceptedContractVersions)
+    ? root.acceptedContractVersions
+    : Array.isArray(root.acceptedContracts) ? root.acceptedContracts : [];
   if (
-    root.contractVersion !== 3
-    || !accepted.includes(3)
+    !accepted.includes(3)
     || capability.execution !== "enabled"
     || capability.implemented !== true
     || capability.modelInstalled !== true

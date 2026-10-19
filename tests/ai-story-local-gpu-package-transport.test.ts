@@ -461,8 +461,8 @@ describe("native dialogue Contract V3 request boundary", () => {
   const scope = { workspaceId, sceneExecutionId: id(40), packageId: id(30) };
   const actor = { userId: id(16), workspaceId, organizationPlan: null, platformAdminStatus: "ACTIVE_GRANT" as const };
   const capabilities = (certified: boolean) => ({
-    contractVersion: 3,
-    acceptedContracts: [1, 2, 3],
+    contractVersion: 2,
+    acceptedContractVersions: [1, 2, 3],
     contracts: { v3: { workflows: { MINIMAX_H3_NATIVE_DIALOGUE: {
       execution: "enabled",
       implemented: true,
