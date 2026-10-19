@@ -217,7 +217,7 @@ export function mapCanonicalPackageToLocalGpuNativeDialogueV3(input: {
       references: characterReferences,
     }],
     ...(pkg.productAuthority && productReferences.length > 0 ? { products: [{
-      subjectId: "assetId" in pkg.productAuthority ? pkg.productAuthority.assetId : pkg.productAuthority.selectedMaterialAssetId,
+      subjectId: pkg.productAuthority.assetId,
       variantId: pkg.productAuthority.confirmedVariant ?? "approved-variant",
       references: productReferences,
     }] } : {}),
