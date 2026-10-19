@@ -25,7 +25,7 @@ export default function WorkspaceCharactersPage() {
         <ReusableCharacterLibraryPanel
           workspaceId={workspace.id}
           slug={slug}
-          canEdit={workspace.role === "admin" || workspace.role === "operator"}
+          canEdit={isSuperAdmin || workspace.role === "admin" || workspace.role === "operator"}
           isSuperAdmin={isSuperAdmin}
         />
       ) : <p className="text-sm text-ink-secondary">Loading…</p>}
