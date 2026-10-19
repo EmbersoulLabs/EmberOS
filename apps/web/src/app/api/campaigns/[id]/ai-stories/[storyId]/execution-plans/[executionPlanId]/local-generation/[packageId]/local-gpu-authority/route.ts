@@ -25,7 +25,7 @@ export async function POST(request: Request, { params }: Params) {
     if ((await request.text()).trim()) {
       return apiError("LOCAL_GPU authority accepts no client authority fields", "EXECUTE_FORBIDDEN_FIELD", 422);
     }
-    if (canaryHeader !== null && canaryHeader !== "authorize-once") {
+    if (canaryHeader !== undefined && canaryHeader !== "authorize-once") {
       return apiError("Native Dialogue canary authorization is invalid", "VALIDATION_ERROR", 422);
     }
 
