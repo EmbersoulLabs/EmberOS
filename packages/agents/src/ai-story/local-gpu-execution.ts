@@ -37,6 +37,8 @@ export type LocalGpuRouteInput = {
   dialogueRequired?: boolean;
   voiceDnaRequired?: boolean;
   continuityFrameRequired?: boolean;
+  /** One persisted, explicitly authorized Production execution; never a global capability claim. */
+  nativeDialogueCanaryAuthorized?: boolean;
   preQc: "DISPATCH_ELIGIBLE" | "DISPATCH_ELIGIBLE_WITH_WARNINGS" | "DISPATCH_BLOCKED" | null;
   runtimeAuthorizationId: string | null;
   capabilities: unknown;
@@ -105,7 +107,7 @@ export function planLocalGpuRoute(input: LocalGpuRouteInput): LocalGpuRoutePlan 
       || capability.modelInstalled !== true
       || capability.buildExecutable !== true
       || capability.nativeDialogue !== "PROMPT_CONDITIONED"
-      || capability.e2eCertified !== true
+      || (capability.e2eCertified !== true && input.nativeDialogueCanaryAuthorized !== true)
     ) {
       return blocked(input.assetMode, "LOCAL_GPU_NATIVE_DIALOGUE_NOT_CERTIFIED");
     }
@@ -418,6 +420,7 @@ export type LocalGpuEnabledDispatchAdapter = {
     capabilities: unknown;
     existingGate: string | null;
     productionDispatchAuthorized?: boolean;
+    nativeDialogueCanaryAuthorized?: boolean;
   }): Promise<{ jobId: string }>;
   status(jobId: string, scope: {
     actor: LocalGpuDispatchActor;
@@ -539,6 +542,7 @@ export async function runEnabledLocalGpuDispatch(input: {
         capabilities: input.capabilities,
         existingGate: null,
         productionDispatchAuthorized: input.productionDispatchAuthorized,
+        nativeDialogueCanaryAuthorized: input.candidate.route.nativeDialogueCanaryAuthorized === true,
       });
     } else {
       await input.adapter.submitZeroAssetT2V({ ...submitInput, request: input.request as LocalGpuT2VRequest });

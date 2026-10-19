@@ -18,11 +18,15 @@ export async function POST(request: Request, { params }: Params) {
     const { user, assignment } = await requirePlatformAdmin();
     const { id: campaignId, storyId, executionPlanId, packageId } = await params;
     const idempotencyKey = request.headers.get("idempotency-key")?.trim();
+    const canaryHeader = request.headers.get("x-local-gpu-native-dialogue-canary")?.trim();
     if (!idempotencyKey || idempotencyKey.length > 200) {
       return apiError("A bounded idempotency-key header is required", "VALIDATION_ERROR", 422);
     }
     if ((await request.text()).trim()) {
       return apiError("LOCAL_GPU authority accepts no client authority fields", "EXECUTE_FORBIDDEN_FIELD", 422);
+    }
+    if (canaryHeader !== null && canaryHeader !== "authorize-once") {
+      return apiError("Native Dialogue canary authorization is invalid", "VALIDATION_ERROR", 422);
     }
 
     const ctx = await resolveAuthorizedExecutionPlan({
@@ -36,6 +40,7 @@ export async function POST(request: Request, { params }: Params) {
       env: process.env, pkg, orgId: ctx.orgId, workspaceId: ctx.workspaceId, campaignId,
       actorUserId: user.id, platformAdminAssignmentId: assignment.platformAdminAssignmentId,
       idempotencyKey, ports: createWebLocalGpuAuthorizationPorts(),
+      nativeDialogueCanaryAuthorized: canaryHeader === "authorize-once",
     });
     return apiSuccess(authority, 202);
   } catch (error) {

@@ -546,6 +546,14 @@ describe("native dialogue Contract V3 request boundary", () => {
       capabilities: capabilities(false), existingGate: null, productionDispatchAuthorized: true,
     })).rejects.toThrow("LOCAL_GPU_NATIVE_DIALOGUE_NOT_CERTIFIED");
     expect(calls).toBe(0);
+
+    const result = await cloud.submitNativeDialogueV3({
+      actor, package: scope, request: transport.body, creativeBinding: transport.creativeBinding,
+      capabilities: capabilities(false), existingGate: null, productionDispatchAuthorized: true,
+      nativeDialogueCanaryAuthorized: true,
+    });
+    expect(result).toMatchObject({ workflow: "MINIMAX_H3_NATIVE_DIALOGUE", state: "QUEUED" });
+    expect(calls).toBe(1);
   });
 });
 

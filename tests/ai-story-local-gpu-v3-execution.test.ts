@@ -186,6 +186,11 @@ describe("LOCAL_GPU V3 execution integration", () => {
       capabilities: nativeDialogueCapabilities(false),
     };
     expect(planLocalGpuRoute(native).blocked).toBe("LOCAL_GPU_NATIVE_DIALOGUE_NOT_CERTIFIED");
+    expect(planLocalGpuRoute({ ...native, nativeDialogueCanaryAuthorized: true })).toMatchObject({
+      eligible: true,
+      contractVersion: 3,
+      workflow: "MINIMAX_H3_NATIVE_DIALOGUE",
+    });
     expect(planLocalGpuRoute({ ...native, capabilities: nativeDialogueCapabilities(true) })).toMatchObject({
       eligible: true,
       contractVersion: 3,
@@ -211,14 +216,16 @@ describe("LOCAL_GPU V3 execution integration", () => {
       dialogueRequired: true,
       recommendedWorkflow: "MINIMAX_H3_NATIVE_DIALOGUE",
       qcExpectation: "NATIVE_CHARACTER_DIALOGUE" as const,
-      capabilities: nativeDialogueCapabilities(true),
+      capabilities: nativeDialogueCapabilities(false),
+      nativeDialogueCanaryAuthorized: true,
     };
     const adapter = {
       jobIdFor: () => id(90),
       submitZeroAssetT2V: async () => { t2vPosts += 1; return { jobId: id(90) }; },
-      submitNativeDialogueV3: async (input: { creativeBinding: string }) => {
+      submitNativeDialogueV3: async (input: { creativeBinding: string; nativeDialogueCanaryAuthorized?: boolean }) => {
         nativePosts += 1;
         expect(input.creativeBinding).toBe("binding");
+        expect(input.nativeDialogueCanaryAuthorized).toBe(true);
         return { jobId: id(90) };
       },
       status: async () => ({ found: false }),
@@ -226,12 +233,13 @@ describe("LOCAL_GPU V3 execution integration", () => {
     };
     const step = await runEnabledLocalGpuDispatch({
       scope,
-      candidate: { ...scope, packageId: id(30), runtimeAuthorizationId: id(70), existingGate: null, route: nativeRoute },
+      candidate: { ...scope, packageId: id(30), runtimeAuthorizationId: id(70), existingGate: null,
+        route: { ...nativeRoute, nativeDialogueCanaryAuthorized: true } },
       claim: () => true,
       adapter,
       actor: { userId: id(1), workspaceId: scope.workspaceId, organizationPlan: null, platformAdminStatus: "ACTIVE_GRANT" },
       request: { body: {} as never, creativeBinding: "binding" },
-      capabilities: nativeDialogueCapabilities(true),
+      capabilities: nativeDialogueCapabilities(false),
       existingResultId: null,
     });
     expect(step).toMatchObject({ code: "accepted", posts: 1, gets: 0 });

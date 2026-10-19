@@ -81,7 +81,11 @@ export type LocalGpuContractV3Request = Record<string, unknown> & {
   upload: LocalGpuUploadDestination;
 };
 
-function assertNativeDialogueV3Capability(capabilities: unknown, environment: LocalGpuEnvironment): void {
+function assertNativeDialogueV3Capability(
+  capabilities: unknown,
+  environment: LocalGpuEnvironment,
+  nativeDialogueCanaryAuthorized = false,
+): void {
   const root = asRecord(capabilities);
   const contracts = asRecord(root.contracts);
   const v3 = asRecord(contracts.v3);
@@ -100,7 +104,7 @@ function assertNativeDialogueV3Capability(capabilities: unknown, environment: Lo
   ) {
     throw new LocalGpuContractError("LOCAL_GPU_CONTRACT_CAPABILITY_MISMATCH");
   }
-  if (environment === "production" && capability.e2eCertified !== true) {
+  if (environment === "production" && capability.e2eCertified !== true && !nativeDialogueCanaryAuthorized) {
     throw new LocalGpuContractError("LOCAL_GPU_NATIVE_DIALOGUE_NOT_CERTIFIED");
   }
 }
@@ -447,6 +451,7 @@ export class LocalGpuCloudAdapter {
     capabilities: unknown;
     existingGate: string | null;
     productionDispatchAuthorized?: boolean;
+    nativeDialogueCanaryAuthorized?: boolean;
   }): Promise<{
     jobId: string;
     workflow: string;
@@ -461,7 +466,7 @@ export class LocalGpuCloudAdapter {
       throw new LocalGpuContractError("LOCAL_GPU_PRODUCTION_DENIED");
     }
     assertLocalGpuSubmitAllowed(input.existingGate);
-    assertNativeDialogueV3Capability(input.capabilities, environment);
+    assertNativeDialogueV3Capability(input.capabilities, environment, input.nativeDialogueCanaryAuthorized === true);
     const jobId = this.jobIdFor(input.package);
     if (
       input.request.contractVersion !== 3
