@@ -13,7 +13,6 @@ import {
   buildLocalGpuDesktopSubmitV2,
   readLocalGpuV2FirstFrameAuthorities,
   buildLocalGpuZeroAssetT2VSubmit,
-  localGpuCanonicalCreativeJob,
   localGpuUploadBindingDigest,
   localGpuCreativeBindingForV2Body,
   LOCAL_GPU_AUTOMATIC_GENERATION_RETRY,
@@ -48,7 +47,7 @@ import {
 import {
   prepareLocalGpuR2vDnaHandoff,
 } from "./local-gpu-r2v-dna-transport";
-import type { LocalGpuResolvedAsset } from "./local-gpu-package-transport";
+import { canonicalizeLocalGpuNativeDialogueV3Body, type LocalGpuResolvedAsset } from "./local-gpu-package-transport";
 
 export type LocalGpuHttpResponse = { status: number; body: string };
 export type LocalGpuHttp = (input: {
@@ -474,7 +473,7 @@ export class LocalGpuCloudAdapter {
     ) {
       throw new LocalGpuContractError("LOCAL_GPU_CONTRACT_IDENTITY_MISMATCH");
     }
-    const canonical = localGpuCanonicalCreativeJob(input.request as unknown as Parameters<typeof localGpuCanonicalCreativeJob>[0]);
+    const canonical = canonicalizeLocalGpuNativeDialogueV3Body(input.request as Parameters<typeof canonicalizeLocalGpuNativeDialogueV3Body>[0]);
     assertLocalGpuCreativeBinding(canonical, input.creativeBinding);
     const uploadBinding = localGpuUploadBindingDigest(input.request.upload);
     const token = this.authorize({

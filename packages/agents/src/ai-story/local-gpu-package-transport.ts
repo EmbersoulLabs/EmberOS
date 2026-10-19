@@ -56,6 +56,37 @@ export type LocalGpuNativeDialogueV3Transport = {
   uploadBinding: string;
 };
 
+/** Mirrors Desktop Contract V3 parsing before it recomputes the signed creative binding. */
+export function canonicalizeLocalGpuNativeDialogueV3Body(body: LocalGpuNativeDialogueV3Transport["body"]): Record<string, unknown> {
+  const references = Array.isArray(body.references) ? body.references : [];
+  const dialogue = Array.isArray(body.dialogue) ? body.dialogue : [];
+  return localGpuCanonicalCreativeJob({
+    ...body,
+    references: references.map((value) => {
+      const reference = value as Record<string, unknown>;
+      return {
+        role: reference.role,
+        assetUrl: reference.assetUrl,
+        contentHash: typeof reference.contentHash === "string" ? reference.contentHash.toLowerCase() : reference.contentHash,
+        subjectId: reference.subjectId ?? null,
+        variantId: reference.variantId ?? null,
+        dnaVersion: reference.dnaVersion ?? null,
+        dnaFingerprint: typeof reference.dnaFingerprint === "string" ? reference.dnaFingerprint.toLowerCase() : null,
+      };
+    }),
+    dialogue: dialogue.map((value) => {
+      const line = value as Record<string, unknown>;
+      return {
+        speakerId: line.speakerId,
+        text: line.text,
+        language: line.language,
+        startSec: line.startSec ?? null,
+        endSec: line.endSec ?? null,
+      };
+    }),
+  } as Parameters<typeof localGpuCanonicalCreativeJob>[0]);
+}
+
 export type LocalGpuPackageTransport = {
   dispatch: false;
   submit: false;
@@ -192,22 +223,35 @@ export function mapCanonicalPackageToLocalGpuNativeDialogueV3(input: {
   if (selected.length < 1 || selected.length > 3 || selected.length !== references.length) {
     fail(selected.length > 3 ? "LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS" : "LOCAL_GPU_REFERENCES_REQUIRED");
   }
+  const productSubjectId = pkg.productAuthority?.assetId ?? null;
+  const productVariantId = pkg.productAuthority?.confirmedVariant ?? null;
   const desktopReferences = selected.map((reference) => {
     const asset = resolveAsset(input.assets, pkg.workspaceId, reference.assetId, reference.contentHash);
     const role = roleFor(reference);
-    return { approval: "APPROVED" as const, role, assetUrl: asset.assetUrl, contentHash: asset.contentHash };
+    return {
+      approval: "APPROVED" as const,
+      role,
+      assetUrl: asset.assetUrl,
+      contentHash: asset.contentHash,
+      subjectId: role === "CHARACTER" ? pkg.characterAuthority!.characterId : role === "PRODUCT" ? productSubjectId : pkg.sceneExecutionId,
+      variantId: role === "PRODUCT" ? productVariantId : null,
+      dnaVersion: role === "CHARACTER" ? pkg.characterAuthority!.characterVersionId : null,
+      dnaFingerprint: role === "CHARACTER" ? pkg.characterAuthority!.dnaFingerprint : null,
+    };
   }).sort((left, right) => ["CHARACTER", "PRODUCT", "SCENE"].indexOf(left.role) - ["CHARACTER", "PRODUCT", "SCENE"].indexOf(right.role));
   const characterReferences = desktopReferences.filter((reference) => reference.role === "CHARACTER")
-    .map(({ role: _role, ...reference }) => reference);
+    .map((reference) => ({ approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
   if (characterReferences.length === 0) fail("LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED");
   const productReferences = desktopReferences.filter((reference) => reference.role === "PRODUCT")
-    .map(({ role: _role, ...reference }) => reference);
+    .map((reference) => ({ approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
   const sceneReferences = desktopReferences.filter((reference) => reference.role === "SCENE")
-    .map(({ role: _role, ...reference }) => reference);
+    .map((reference) => ({ approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
   const dialogue = pkg.dialogue.map((line) => ({
     speakerId: line.speakerCharacterId!,
     text: line.text,
     language: line.locale ?? "und",
+    startSec: null,
+    endSec: null,
   }));
   const creative = {
     characters: [{
@@ -217,7 +261,7 @@ export function mapCanonicalPackageToLocalGpuNativeDialogueV3(input: {
       references: characterReferences,
     }],
     ...(pkg.productAuthority && productReferences.length > 0 ? { products: [{
-      subjectId: pkg.productAuthority.assetId,
+      subjectId: productSubjectId!,
       variantId: pkg.productAuthority.confirmedVariant ?? "approved-variant",
       references: productReferences,
     }] } : {}),
@@ -253,7 +297,7 @@ export function mapCanonicalPackageToLocalGpuNativeDialogueV3(input: {
     creative,
     upload: input.upload,
   };
-  const canonical = localGpuCanonicalCreativeJob(body);
+  const canonical = canonicalizeLocalGpuNativeDialogueV3Body(body);
   return {
     body,
     creativeBinding: localGpuCreativeBindingDigest(canonical),

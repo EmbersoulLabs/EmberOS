@@ -3,13 +3,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { AiStoryLocalGenerationPackage } from "@ceo-agent/shared";
-import { LocalGpuContractError } from "@ceo-agent/shared/server";
+import { LocalGpuContractError, localGpuCanonicalCreativeJob, localGpuCreativeBindingDigest, localGpuUploadBindingDigest } from "@ceo-agent/shared/server";
 import { assertLocalGpuAccess, resolveExplicitLocalGpuProviderAuthority } from "../packages/agents/src/ai-story/local-gpu-access";
 import { LocalGpuCloudAdapter } from "../packages/agents/src/ai-story/local-gpu-adapter";
 import { loadLocalGpuConfigFromEnv } from "../packages/agents/src/ai-story/local-gpu-config";
 import { verifyLocalGpuRequest } from "../packages/agents/src/ai-story/local-gpu-signing";
 import {
   authorizeLocalGpuSequentialRelease,
+  canonicalizeLocalGpuNativeDialogueV3Body,
   mapCanonicalPackageToLocalGpuDesktop,
   mapCanonicalPackageToLocalGpuNativeDialogueV3,
   type LocalGpuResolvedAsset,
@@ -511,6 +512,19 @@ describe("native dialogue Contract V3 request boundary", () => {
       environment: "staging",
     });
     expect(claims).toMatchObject({ workflow: "MINIMAX_H3_NATIVE_DIALOGUE", creativeBinding: transport.creativeBinding });
+  });
+
+  it("keeps the cross-repository native-dialogue golden vector byte-compatible", () => {
+    const fixture = JSON.parse(readFileSync(join(root, "tests/fixtures/local-gpu-native-dialogue-v3-golden-vector.json"), "utf8")) as {
+      classification: string;
+      body: Parameters<typeof localGpuCanonicalCreativeJob>[0] & { upload: typeof upload; dialogue: Array<{ text: string; language: string }> };
+      creativeBinding: string;
+      uploadBinding: string;
+    };
+    expect(fixture.classification).toBe("TEST_ONLY_SYNTHETIC");
+    expect(localGpuCreativeBindingDigest(canonicalizeLocalGpuNativeDialogueV3Body(fixture.body))).toBe(fixture.creativeBinding);
+    expect(localGpuUploadBindingDigest(fixture.body.upload)).toBe(fixture.uploadBinding);
+    expect(fixture.body.dialogue).toEqual([{ speakerId: characterId, text: "你好。", language: "zh-MY", startSec: null, endSec: null }]);
   });
 
   it("does not post to Production until Desktop reports real E2E certification", async () => {
