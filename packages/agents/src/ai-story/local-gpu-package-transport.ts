@@ -60,31 +60,50 @@ export type LocalGpuNativeDialogueV3Transport = {
 export function canonicalizeLocalGpuNativeDialogueV3Body(body: LocalGpuNativeDialogueV3Transport["body"]): Record<string, unknown> {
   const references = Array.isArray(body.references) ? body.references : [];
   const dialogue = Array.isArray(body.dialogue) ? body.dialogue : [];
+  const normalizedReferences = references.map((value) => {
+    const reference = value as Record<string, unknown>;
+    return {
+      role: reference.role,
+      assetUrl: reference.assetUrl,
+      contentHash: typeof reference.contentHash === "string" ? reference.contentHash.toLowerCase() : reference.contentHash,
+      subjectId: reference.subjectId ?? null,
+      variantId: reference.variantId ?? null,
+      dnaVersion: reference.dnaVersion ?? null,
+      dnaFingerprint: typeof reference.dnaFingerprint === "string" ? reference.dnaFingerprint.toLowerCase() : null,
+    };
+  });
+  const normalizedDialogue = dialogue.map((value) => {
+    const line = value as Record<string, unknown>;
+    return {
+      speakerId: line.speakerId,
+      text: line.text,
+      language: line.language,
+      startSec: line.startSec ?? null,
+      endSec: line.endSec ?? null,
+    };
+  });
   return localGpuCanonicalCreativeJob({
-    ...body,
-    references: references.map((value) => {
-      const reference = value as Record<string, unknown>;
-      return {
-        role: reference.role,
-        assetUrl: reference.assetUrl,
-        contentHash: typeof reference.contentHash === "string" ? reference.contentHash.toLowerCase() : reference.contentHash,
-        subjectId: reference.subjectId ?? null,
-        variantId: reference.variantId ?? null,
-        dnaVersion: reference.dnaVersion ?? null,
-        dnaFingerprint: typeof reference.dnaFingerprint === "string" ? reference.dnaFingerprint.toLowerCase() : null,
-      };
-    }),
-    dialogue: dialogue.map((value) => {
-      const line = value as Record<string, unknown>;
-      return {
-        speakerId: line.speakerId,
-        text: line.text,
-        language: line.language,
-        startSec: line.startSec ?? null,
-        endSec: line.endSec ?? null,
-      };
-    }),
-  } as Parameters<typeof localGpuCanonicalCreativeJob>[0]);
+    contractVersion: 3,
+    assetMode: body.assetMode as "WITH_ASSET" | "WITHOUT_ASSET",
+    jobId: body.jobId,
+    sceneExecutionId: body.sceneExecutionId,
+    workspaceId: body.workspaceId,
+    workflow: body.workflow,
+    prompt: String(body.prompt),
+    durationSec: Number(body.durationSec),
+    audioPolicy: String(body.audioPolicy),
+    aspectRatio: typeof body.aspectRatio === "string" ? body.aspectRatio : null,
+    megapixels: typeof body.megapixels === "number" ? body.megapixels : null,
+    voiceInstructions: typeof body.voiceInstructions === "string" ? body.voiceInstructions : null,
+    seed: typeof body.seed === "number" ? body.seed : null,
+    references: normalizedReferences,
+    firstFrame: body.firstFrame ?? null,
+    audioReferences: body.audioReferences ?? null,
+    videoReferences: body.videoReferences ?? null,
+    dialogue: normalizedDialogue,
+    director: body.director as Parameters<typeof localGpuCanonicalCreativeJob>[0]["director"],
+    lastFrame: body.lastFrame ?? null,
+  });
 }
 
 export type LocalGpuPackageTransport = {

@@ -121,6 +121,12 @@ export function planLocalGpuRoute(input: LocalGpuRouteInput): LocalGpuRoutePlan 
       hasAudio: true,
     };
   }
+  // Native dialogue is handled exclusively by the certified Contract V3 branch above.
+  // Keeping this guard explicit also prevents the legacy audio mapper from silently
+  // interpreting a future unsupported native-dialogue combination.
+  if (input.qcExpectation === "NATIVE_CHARACTER_DIALOGUE") {
+    return blocked(input.assetMode, "LOCAL_GPU_AUDIO_POLICY_INVALID");
+  }
   let audio: ReturnType<typeof localGpuPersistedAudioSeparation>;
   try {
     audio = localGpuPersistedAudioSeparation({
