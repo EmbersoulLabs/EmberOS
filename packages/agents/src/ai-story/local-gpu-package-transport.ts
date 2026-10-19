@@ -5,6 +5,9 @@ import {
   assertLocalGpuSubmitAllowed,
   buildLocalGpuDesktopSubmit,
   buildLocalGpuDesktopSubmitV2,
+  localGpuCanonicalCreativeJob,
+  localGpuCreativeBindingDigest,
+  localGpuUploadBindingDigest,
   mapLocalGpuAudioPolicy,
   serializeLocalGpuH3Prompt,
   type LocalGpuAudioPolicy,
@@ -37,6 +40,20 @@ export type LocalGpuResolvedAsset = {
   contentHash: string;
   workspaceId: string;
   assetUrl: string;
+};
+
+export type LocalGpuNativeDialogueV3Transport = {
+  body: Record<string, unknown> & {
+    contractVersion: 3;
+    environment: LocalGpuEnvironment;
+    jobId: string;
+    sceneExecutionId: string;
+    workspaceId: string;
+    workflow: "MINIMAX_H3_NATIVE_DIALOGUE";
+    upload: LocalGpuUploadDestination;
+  };
+  creativeBinding: string;
+  uploadBinding: string;
 };
 
 export type LocalGpuPackageTransport = {
@@ -144,6 +161,104 @@ export function serializeCanonicalPackageForH3(pkg: AiStoryLocalGenerationPackag
       mustAvoid: pkg.mustAvoid,
     },
   });
+}
+
+/** Contract V3 projection for approved visible dialogue. No dialogue text or reference is inferred. */
+export function mapCanonicalPackageToLocalGpuNativeDialogueV3(input: {
+  package: AiStoryLocalGenerationPackage;
+  assets: readonly LocalGpuResolvedAsset[];
+  environment: LocalGpuEnvironment;
+  jobId: string;
+  upload: LocalGpuUploadDestination;
+  seed: number;
+  megapixels?: number;
+}): LocalGpuNativeDialogueV3Transport {
+  const pkg = input.package;
+  if (pkg.recommendedWorkflow !== "MINIMAX_H3_NATIVE_DIALOGUE" || pkg.dialogue.length === 0) {
+    fail("LOCAL_GPU_NATIVE_DIALOGUE_AUTHORITY_REQUIRED");
+  }
+  if (!pkg.generateAudio || pkg.audioBlocked) fail("LOCAL_GPU_AUDIO_POLICY_INVALID");
+  if (!pkg.characterAuthority) fail("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
+  if (pkg.dialogue.some((line) => line.offscreen || line.speakerCharacterId !== pkg.characterAuthority?.characterId)) {
+    fail("LOCAL_GPU_NATIVE_DIALOGUE_SPEAKER_MISMATCH");
+  }
+  const references = referencesOf(pkg);
+  const roleFor = (reference: PackageReference) => ["CHARACTER", "CHARACTER_IDENTITY"].includes(reference.kind)
+    ? "CHARACTER" as const
+    : ["PRODUCT", "PRODUCT_IDENTITY"].includes(reference.kind)
+      ? "PRODUCT" as const
+      : "SCENE" as const;
+  const selected = references.filter((reference) => ["CHARACTER", "CHARACTER_IDENTITY", "PRODUCT", "PRODUCT_IDENTITY", "LOCATION", "LOCATION_CONTEXT", "SCENE"].includes(reference.kind));
+  if (selected.length < 1 || selected.length > 3 || selected.length !== references.length) {
+    fail(selected.length > 3 ? "LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS" : "LOCAL_GPU_REFERENCES_REQUIRED");
+  }
+  const desktopReferences = selected.map((reference) => {
+    const asset = resolveAsset(input.assets, pkg.workspaceId, reference.assetId, reference.contentHash);
+    const role = roleFor(reference);
+    return { approval: "APPROVED" as const, role, assetUrl: asset.assetUrl, contentHash: asset.contentHash };
+  }).sort((left, right) => ["CHARACTER", "PRODUCT", "SCENE"].indexOf(left.role) - ["CHARACTER", "PRODUCT", "SCENE"].indexOf(right.role));
+  const characterReferences = desktopReferences.filter((reference) => reference.role === "CHARACTER")
+    .map(({ role: _role, ...reference }) => reference);
+  if (characterReferences.length === 0) fail("LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED");
+  const productReferences = desktopReferences.filter((reference) => reference.role === "PRODUCT")
+    .map(({ role: _role, ...reference }) => reference);
+  const sceneReferences = desktopReferences.filter((reference) => reference.role === "SCENE")
+    .map(({ role: _role, ...reference }) => reference);
+  const dialogue = pkg.dialogue.map((line) => ({
+    speakerId: line.speakerCharacterId!,
+    text: line.text,
+    language: line.locale ?? "und",
+  }));
+  const creative = {
+    characters: [{
+      subjectId: pkg.characterAuthority.characterId,
+      dnaVersion: pkg.characterAuthority.characterVersionId,
+      dnaFingerprint: pkg.characterAuthority.dnaFingerprint,
+      references: characterReferences,
+    }],
+    ...(pkg.productAuthority && productReferences.length > 0 ? { products: [{
+      subjectId: "assetId" in pkg.productAuthority ? pkg.productAuthority.assetId : pkg.productAuthority.selectedMaterialAssetId,
+      variantId: pkg.productAuthority.confirmedVariant ?? "approved-variant",
+      references: productReferences,
+    }] } : {}),
+    ...(sceneReferences.length > 0 ? { scene: {
+      subjectId: pkg.sceneExecutionId,
+      references: sceneReferences,
+    } } : {}),
+    dialogue,
+  };
+  const body = {
+    contractVersion: 3 as const,
+    assetMode: "WITH_ASSET" as const,
+    environment: input.environment,
+    jobId: input.jobId,
+    sceneExecutionId: pkg.sceneExecutionId,
+    workspaceId: pkg.workspaceId,
+    workflow: "MINIMAX_H3_NATIVE_DIALOGUE" as const,
+    prompt: serializeCanonicalPackageForH3(pkg),
+    durationSec: pkg.durationSec,
+    durationSource: "RECOMMENDED_DURATION_AUTHORITY" as const,
+    audioPolicy: "NATIVE" as const,
+    aspectRatio: pkg.aspectRatio,
+    megapixels: input.megapixels ?? 0.5,
+    voiceInstructions: null,
+    seed: input.seed,
+    references: desktopReferences,
+    firstFrame: null,
+    audioReferences: null,
+    videoReferences: null,
+    dialogue,
+    director: null,
+    lastFrame: null,
+    creative,
+    upload: input.upload,
+  };
+  const canonical = localGpuCanonicalCreativeJob(body);
+  return {
+    body,
+    creativeBinding: localGpuCreativeBindingDigest(canonical),
+    uploadBinding: localGpuUploadBindingDigest(input.upload),
+  };
 }
 
 function promptFor(pkg: AiStoryLocalGenerationPackage, variant: string | null): { prompt: string; promptOnlyRequirements: string[] } {
