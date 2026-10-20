@@ -1101,8 +1101,22 @@ export async function generateCharacterContinuity(input: {
   if (input.creativeContext.characterContext.characters.length === 0) {
     return { characterContinuity: [], usage: { input: 0, output: 0, costUsd: 0 } };
   }
+  // Provider transport is deliberately stricter than the historical domain
+  // read schema: Structured Outputs requires every field to be required, and
+  // canonicalAuthority is server-owned rather than model-authored.
+  const providerCharacterContinuityEntrySchema = z.object({
+    characterId: z.string().trim().min(1),
+    name: z.string().trim().min(1),
+    appearance: z.string().trim().min(1),
+    emotion: z.string().trim().min(1),
+    costume: z.string(),
+    accessories: z.string(),
+    age: z.string(),
+    pose: z.string(),
+    identity: z.string().trim().min(1),
+  }).strict();
   const providerOutputSchema = z.object({
-    characterContinuity: z.array(CharacterContinuityEntrySchema),
+    characterContinuity: z.array(providerCharacterContinuityEntrySchema),
   }).strict();
   const completion = await callStructuredJsonModel({
     system: [

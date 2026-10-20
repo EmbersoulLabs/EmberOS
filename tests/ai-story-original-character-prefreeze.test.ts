@@ -175,7 +175,7 @@ describe("original character acceptance before outline freeze", () => {
       });
       callStructuredJsonModel.mockResolvedValueOnce({ result: { shotsByScene: Object.fromEntries([0, 1, 2, 3].map((index) => [`scene_${index}`, [shot(index)]])) }, usage: USAGE });
       const shots = await generateShotPlan({ story: STORY, creativeContext: bound as never, directorThinking: DIRECTOR, storyBeats: beats(), scenePlan: scenes(), canonicalScript: script });
-      callStructuredJsonModel.mockResolvedValueOnce({ result: { characterContinuity: [{ characterId: I.character, name: "Origin", appearance: authority!.canonicalFacts.appearance, emotion: "Quiet", identity: authority!.canonicalFacts.identity }] }, usage: USAGE });
+      callStructuredJsonModel.mockResolvedValueOnce({ result: { characterContinuity: [{ characterId: I.character, name: "Origin", appearance: authority!.canonicalFacts.appearance, emotion: "Quiet", costume: "", accessories: "", age: "Adult", pose: "Standing", identity: authority!.canonicalFacts.identity }] }, usage: USAGE });
       const continuity = await generateCharacterContinuity({ creativeContext: bound as never, directorThinking: DIRECTOR, storyBeats: beats(), scenePlan: scenes(), shotPlan: shots.shotPlan });
       callStructuredJsonModel.mockResolvedValueOnce({ result: { worldContinuity: { location: "A quiet room", lighting: "Soft", environment: "No product is present.", objects: ["Table"], timeline: "One moment", worldRules: ["Nothing is added."] } }, usage: USAGE });
       const world = await generateWorldContinuity({ creativeContext: bound as never, directorThinking: DIRECTOR, storyBeats: beats(), scenePlan: scenes(), shotPlan: shots.shotPlan });
@@ -196,6 +196,8 @@ describe("original character acceptance before outline freeze", () => {
     expect(callJsonModel).not.toHaveBeenCalled();
     expect(callStructuredJsonModel.mock.calls.filter(([request]) => request.schemaName === "ai_story_character_continuity_v1")).toHaveLength(2);
     expect(callStructuredJsonModel.mock.calls.filter(([request]) => request.schemaName === "ai_story_world_continuity_v1")).toHaveLength(2);
+    const characterTransportSchema = callStructuredJsonModel.mock.calls.find(([request]) => request.schemaName === "ai_story_character_continuity_v1")?.[0]?.schema;
+    expect(characterTransportSchema.safeParse({ characterContinuity: [{ characterId: I.character, name: "Origin", appearance: "Stable", emotion: "Quiet", accessories: "", age: "Adult", pose: "Standing", identity: "Stable" }] }).success).toBe(false);
   });
 
   it("rejects name matching, another workspace, and use of the proposal key as the Character ID", () => {
