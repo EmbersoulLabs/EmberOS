@@ -209,7 +209,13 @@ describe("no-asset original character authority", () => {
           scenesByOrder: Object.fromEntries([0, 1, 2, 3].map((index) => [`scene_${index}`, {
             sceneFunction: index === 0 ? "INTRODUCE" : index === 3 ? "RESOLVE" : "ESCALATE",
             sceneFunctionRegistryVersion: 1,
-            sceneStateDeltas: [],
+            sceneStateDeltas: index === 0 ? [{
+              dimension: "PHYSICAL_CONDITION",
+              subjectId: authority!.characterId,
+              fromValue: "Standing still before the quiet moment",
+              value: "Moving through the quiet moment",
+              reason: "The authorized Character's visible action begins the story progression.",
+            }] : [],
             newInformation: [`Scene ${index} adds one fact.`],
             newActionOutcomes: [`Scene ${index} completes one action.`],
             visibleAction: {
@@ -243,8 +249,8 @@ describe("no-asset original character authority", () => {
       expect(result.semanticProposal.scenes).toHaveLength(4);
       expect(result.semanticProposal.scenes.every((scene) =>
         scene.sceneStateIn.length === scene.sceneStateOut.length
-        && scene.sceneStateDeltas.length === 0
       )).toBe(true);
+      expect(result.semanticProposal.scenes.flatMap((scene) => scene.sceneStateDeltas)).toHaveLength(1);
       expect(JSON.stringify(result.semanticProposal)).not.toContain("PRODUCT_STATE");
       expect(JSON.stringify(outline)).toBe(before);
     }

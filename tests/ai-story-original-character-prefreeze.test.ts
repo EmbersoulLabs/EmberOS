@@ -89,7 +89,11 @@ function writerTransport(characterId: string, count = 4) {
     contractVersion: "ai-story-script-semantic-proposal.v1",
     scenesByOrder: Object.fromEntries(Array.from({ length: count }, (_, index) => [`scene_${index}`, {
       sceneFunction: index === 0 ? "INTRODUCE" : index === count - 1 ? "RESOLVE" : "ESCALATE",
-      sceneFunctionRegistryVersion: 1, sceneStateDeltas: [],
+      sceneFunctionRegistryVersion: 1, sceneStateDeltas: index === 0 ? [{
+        dimension: "PHYSICAL_CONDITION", subjectId: characterId,
+        fromValue: "Standing still before the quiet moment", value: "Moving through the quiet moment",
+        reason: "The authorized Character's visible action begins the story progression.",
+      }] : [],
       newInformation: [`Scene ${index} adds one fact.`], newActionOutcomes: [`Scene ${index} completes one action.`],
       visibleAction: { type: "ACTION", subjectId: characterId, action: "The person moves through the quiet moment.", objectId: null, storyEffect: "The story advances without a product.", stateDelta: null },
       followingEntries: [], narrativeFunction: index === 0 ? "SETUP" : "TURN", storyConsequence: "The feeling remains.",

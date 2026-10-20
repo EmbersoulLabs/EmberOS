@@ -170,7 +170,12 @@ function narrativeScene(index: number, delta?: {
 }
 
 function brandTransport(deltas: Array<Parameters<typeof narrativeScene>[1]> = []) {
-  const scenes = [0, 1, 2, 3].map((index) => narrativeScene(index, deltas[index]));
+  const openingDelta = deltas[0] ?? {
+    dimension: "KNOWLEDGE" as const,
+    fromValue: "The quiet moment has not been noticed",
+    value: "The quiet moment is consciously noticed",
+  };
+  const scenes = [0, 1, 2, 3].map((index) => narrativeScene(index, index === 0 ? openingDelta : deltas[index]));
   return {
     contractVersion: "ai-story-script-semantic-proposal.v1",
     scenesByOrder: Object.fromEntries(scenes.map((scene, index) => [`scene_${index}`, scene])),
