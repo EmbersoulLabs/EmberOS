@@ -395,6 +395,42 @@ describe("inherited product scene first-frame resolution", () => {
     expect(authority).toEqual(scene.generationAuthority);
   });
 
+  it("reconciles a model-proposed inherited Product mode before requiring a Product frame", () => {
+    const scene = {
+      id: "scene-supporting-only",
+      beatIds: ["beat-001"],
+      purpose: "Show the approved Character preparing food without Product identity evidence.",
+      durationSec: 6,
+      transition: "",
+      continuityNotes: "Keep the action continuous.",
+      order: 0,
+      generationAuthority: {
+        strategy: "PRODUCT_GROUNDED_VIDEO" as const,
+        referenceSource: "STORY_INHERITED" as const,
+        productVisualIdentityRequirement: "REQUIRED" as const,
+      },
+    };
+    const supportingOnly = lineage([], [{
+      subject: "Salad Popiah",
+      detail: "Salad Popiah",
+      evidenceLevel: "EXISTENCE_ONLY",
+    }]);
+
+    expect(resolveScenePlanGenerationAuthority({
+      sceneId: scene.id,
+      scene,
+      lineage: supportingOnly,
+      acceptedContext,
+      expectedScope: scope,
+    })).toEqual({
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "REFERENCE_FREE_T2V",
+      referenceAssetIds: [],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE",
+    });
+  });
+
   it("overrides a model-proposed reference-free mode when the Scene consumes Product authority", () => {
     const scene = {
       id: "scene-product",
