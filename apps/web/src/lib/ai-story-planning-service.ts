@@ -975,7 +975,25 @@ export async function createSceneCastSuccessor(
           visualIdentityRequirement: participant.presence === "ON_SCREEN" ? "REQUIRED" : "NONE",
         });
       }
-      return { ...scene, castReferences: [...references.values()] };
+      const entries = scene.entries.map((entry) => {
+        if (entry.type === "DIALOGUE" && references.has(entry.speakerId)) {
+          return { ...entry, speakerCastReference: references.get(entry.speakerId)! };
+        }
+        if (entry.type === "VO" && references.has(entry.voiceOwnerId)) {
+          return { ...entry, voiceOwnerCastReference: references.get(entry.voiceOwnerId)! };
+        }
+        if (entry.type === "ACTION") {
+          const subjectCastReference = references.get(entry.subjectId);
+          const objectCastReference = entry.objectId ? references.get(entry.objectId) : undefined;
+          return {
+            ...entry,
+            ...(subjectCastReference ? { subjectCastReference } : {}),
+            ...(objectCastReference ? { objectCastReference } : {}),
+          };
+        }
+        return entry;
+      });
+      return { ...scene, entries, castReferences: [...references.values()] };
     });
     const scriptScope = {
       orgId: input.orgId,
