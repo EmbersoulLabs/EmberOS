@@ -27,13 +27,63 @@ import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { campaignPlanningFields } from "@/lib/ai-story-production-compat";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
 import {
+  AiStoryPlanningDialogueRevisionError,
   loadLatestCreativeContextForStory,
-  saveCreativeContext,
+  savePreDirectorCreativeContextRevision,
 } from "@/lib/ai-story-planning-service";
 
 const BodySchema = z.object({
   action: z.enum(["characters", "dialogue", "narrative"]),
 });
+
+const UserDialogueBodySchema = z.object({
+  dialogue: z.array(z.object({
+    speaker: z.string().trim().min(1).max(200),
+    line: z.string().trim().min(1).max(2000),
+    beatHint: z.string().trim().max(500).default(""),
+  })).max(50),
+});
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string; storyId: string }> }
+) {
+  try {
+    const user = await requireAuth();
+    const { id: campaignId, storyId } = await params;
+    if (!isUuid(campaignId) || !isUuid(storyId)) return apiError("Invalid id", "VALIDATION_ERROR", 400);
+    const body = UserDialogueBodySchema.safeParse(await request.json().catch(() => ({})));
+    if (!body.success) return apiError("Dialogue requires valid speaker and line text", "VALIDATION_ERROR", 400);
+    const db = getDb();
+    const [campaign] = await db.select().from(schema.campaigns)
+      .where(eq(schema.campaigns.id, campaignId)).limit(1);
+    if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
+    const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
+    if (!loaded?.currentVersion) return apiError("AI Story not found", "NOT_FOUND", 404);
+    if (!["ready_for_animation", "planning"].includes(loaded.story.status)) {
+      return apiError("Dialogue changes after Planning require a durable Episode revision", "PLANNING_DIALOGUE_SUCCESSOR_REQUIRED", 409);
+    }
+    const existing = await loadLatestCreativeContextForStory(db, { campaignId, storyId, workspaceId: campaign.workspaceId });
+    if (!existing) return apiError("Generate Creative Context before editing dialogue", "PLANNING_DIALOGUE_CONTEXT_REQUIRED", 409);
+    const creativeContext = CreativeContextSchema.parse(existing.payload);
+    const saved = await savePreDirectorCreativeContextRevision(db, {
+      orgId: campaign.orgId, workspaceId: campaign.workspaceId, campaignId, storyId,
+      storyVersionId: loaded.currentVersion.id,
+      payload: {
+        ...creativeContext,
+        narrativeContext: { ...creativeContext.narrativeContext, dialogue: body.data.dialogue },
+      },
+    });
+    return apiSuccess({
+      storyId, creativeContext: saved.context, planningDraft: saved.planningDraft,
+      dialogueSource: "USER_AUTHORED", providerCalls: 0,
+    });
+  } catch (error) {
+    if (error instanceof AiStoryPlanningDialogueRevisionError) return apiError(error.message, error.code, 409);
+    return handleApiError(error);
+  }
+}
 
 export async function POST(
   request: Request,
@@ -187,7 +237,7 @@ export async function POST(
       );
     }
 
-    const saved = await saveCreativeContext(db, {
+    const saved = await savePreDirectorCreativeContextRevision(db, {
       orgId: campaign.orgId,
       workspaceId: campaign.workspaceId,
       campaignId,
@@ -199,11 +249,12 @@ export async function POST(
     return apiSuccess({
       storyId,
       action: body.data.action,
-      creativeContext: saved,
+      creativeContext: saved.context,
       characterProposals,
       canonicalCharacterAuthorityChanged: false,
     });
   } catch (error) {
+    if (error instanceof AiStoryPlanningDialogueRevisionError) return apiError(error.message, error.code, 409);
     return handleApiError(error);
   }
 }

@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { AppShell, fetchCurrentUserProjection, StatusBadge } from "@/components/AppShell";
 import { StoryRuntimePanel } from "@/components/ai-story/StoryRuntimePanel";
 import { PlanningApprovalControl } from "@/components/ai-story/PlanningApprovalControl";
+import { PlanningDialogueEditor } from "@/components/ai-story/PlanningDialogueEditor";
 import { GenerationStrategyRecoveryControl } from "@/components/ai-story/GenerationStrategyRecoveryControl";
 import { CharacterPanel } from "@/components/ai-story/CharacterPanel";
 import { CharacterProposalAcceptancePanel } from "@/components/ai-story/CharacterProposalAcceptancePanel";
@@ -333,6 +334,21 @@ export default function AiStoryReviewPage() {
     finally { setBusy(false); }
   }
 
+  async function savePlanningDialogue(dialogue: CreativeContext["narrativeContext"]["dialogue"]) {
+    setBusy(true); setError("");
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/screenwriter`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dialogue }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Dialogue save failed");
+      setPlanningReload((value) => value + 1);
+      await load();
+    } catch (err) { setError(err instanceof Error ? err.message : "Dialogue save failed"); }
+    finally { setBusy(false); }
+  }
+
   function stageEnabled(stage: StoryPlanningStage): boolean {
     const index = STORY_PLANNING_STAGE_ORDER.indexOf(stage);
     if (index === 0) return true;
@@ -370,6 +386,14 @@ export default function AiStoryReviewPage() {
          <CharacterPanel campaignId={campaignId} canEdit={advancedAuthorized} initialCharacters={initialCharacters} />
          <CharacterIdentityReviewPanel onSameCharacter={() => undefined} onIdentityDrift={() => undefined} />
          <SupportingCastPanel campaignId={campaignId} storyId={storyId} canEdit={advancedAuthorized} initialSupportingCharacters={initialSupportingCharacters} />
+
+        {advancedAuthorized && creativeContext && completedStages.size === 1 && completedStages.has("creative_context") ? (
+          <PlanningDialogueEditor
+            dialogue={creativeContext.narrativeContext.dialogue}
+            disabled={busy}
+            onSave={savePlanningDialogue}
+          />
+        ) : null}
 
         {polishPreview ? <section className="space-y-4 rounded-2xl border border-brand-blue/30 bg-brand-blue/5 p-5" data-testid="ai-polish-preview"><div><h2 className="text-lg font-bold text-navy">AI Polish Preview</h2><p className="mt-1 text-sm text-ink-secondary">Your current Story remains authoritative until you accept this preview.</p></div><StoryPreview draft={polishPreview} /><div className="flex flex-wrap gap-2"><button type="button" className="brand-btn-primary" disabled={busy} onClick={() => void acceptPolishPreview()}>Accept changes</button><button type="button" className="rounded-lg border border-border bg-white px-3 py-2 text-sm" disabled={busy} onClick={() => setPolishPreview(null)}>Cancel</button><button type="button" className="rounded-lg border border-border bg-white px-3 py-2 text-sm" disabled={busy} onClick={() => void requestPolishPreview()}>Regenerate</button></div></section> : null}
 

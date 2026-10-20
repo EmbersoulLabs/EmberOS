@@ -222,7 +222,7 @@ describe("AI Story vertical slice (V1)", () => {
       expect(planningStageRoute).toContain("loadCampaignAiStory");
       expect(planningStageRoute).toContain("campaign.workspaceId");
       expect(rewriteRoute).toContain("loadCampaignAiStory");
-      expect(screenwriterRoute).toContain("saveCreativeContext");
+      expect(screenwriterRoute).toContain("savePreDirectorCreativeContextRevision");
     });
 
     it("validates campaign assets belong to the campaign and workspace", () => {
@@ -261,7 +261,7 @@ describe("AI Story vertical slice (V1)", () => {
       expect(screenwriterRoute).toContain("generateStoryCharacters");
       expect(screenwriterRoute).toContain("generateStoryDialogue");
       expect(screenwriterRoute).toContain("generateStoryNarrative");
-      expect(screenwriterRoute).toContain("saveCreativeContext");
+      expect(screenwriterRoute).toContain("savePreDirectorCreativeContextRevision");
       expect(screenwriterRoute).not.toMatch(/openai/i);
     });
 

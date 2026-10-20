@@ -81,6 +81,78 @@ export async function saveCreativeContext(
   return context;
 }
 
+export class AiStoryPlanningDialogueRevisionError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "AiStoryPlanningDialogueRevisionError";
+  }
+}
+
+export function applyUserAuthoredDialogueToPlanningDraft(
+  current: StoryPlanningDraft,
+  creativeContext: CreativeContext
+): StoryPlanningDraft {
+  const draft = StoryPlanningDraftSchema.parse(current);
+  const payload = CreativeContextSchema.parse(creativeContext);
+  if (draft.completedStages.some((stage) => stage !== "creative_context")) {
+    throw new AiStoryPlanningDialogueRevisionError(
+      "PLANNING_DIALOGUE_SUCCESSOR_REQUIRED",
+      "Director or later authority already exists; create a durable Episode dialogue revision"
+    );
+  }
+  return { ...draft, creativeContext: payload, completedStages: ["creative_context"] };
+}
+
+/** Persist user-authored dialogue before Director authority exists. */
+export async function savePreDirectorCreativeContextRevision(
+  db: Db,
+  input: {
+    orgId: string; workspaceId: string; campaignId: string; storyId: string;
+    storyVersionId: string; payload: CreativeContext;
+  }
+) {
+  const payload = CreativeContextSchema.parse(input.payload);
+  return db.transaction(async (tx) => {
+    const [latestPackage] = await tx.select().from(schema.aiStoryAnimationPackages)
+      .where(and(
+        eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+        eq(schema.aiStoryAnimationPackages.storyVersionId, input.storyVersionId)
+      )).orderBy(desc(schema.aiStoryAnimationPackages.createdAt)).limit(1);
+    if (!latestPackage || !isStoryPlanningDraft(latestPackage.payload)) {
+      throw new AiStoryPlanningDialogueRevisionError(
+        "PLANNING_DIALOGUE_SUCCESSOR_REQUIRED",
+        "Dialogue can only be edited in Planning before a complete Animation Package exists"
+      );
+    }
+    const nextDraft = applyUserAuthoredDialogueToPlanningDraft(
+      StoryPlanningDraftSchema.parse(latestPackage.payload), payload
+    );
+    const [context] = await tx.insert(schema.aiStoryCreativeContexts).values({
+      orgId: input.orgId, workspaceId: input.workspaceId,
+      campaignId: input.campaignId, storyId: input.storyId,
+      storyVersionId: input.storyVersionId, payload,
+    }).returning();
+    const [planningDraft] = await tx.update(schema.aiStoryAnimationPackages)
+      .set({ payload: nextDraft, updatedAt: new Date() })
+      .where(and(
+        eq(schema.aiStoryAnimationPackages.id, latestPackage.id),
+        eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+        eq(schema.aiStoryAnimationPackages.storyId, input.storyId)
+      )).returning();
+    if (!context || !planningDraft) {
+      throw new AiStoryPlanningDialogueRevisionError(
+        "PLANNING_DIALOGUE_WRITE_CONFLICT",
+        "Dialogue revision could not be persisted atomically"
+      );
+    }
+    return { context, planningDraft };
+  });
+}
+
 export async function getLatestAnimationPackageForStory(
   db: Db,
   input: { campaignId: string; storyId: string; workspaceId: string }
