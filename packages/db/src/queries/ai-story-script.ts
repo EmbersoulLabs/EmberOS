@@ -227,7 +227,6 @@ export class AiStoryScriptAuthorityService {
           eq(schema.aiStoryScriptVersions.orgId, scope.orgId),
           eq(schema.aiStoryScriptVersions.workspaceId, scope.workspaceId),
           eq(schema.aiStoryScriptVersions.storyId, scope.storyId),
-          eq(schema.aiStoryScriptVersions.storyVersionId, scope.storyVersionId),
         )).for("update");
         if (priorRows.length !== 1 || priorRows[0]!.status !== "FROZEN" || priorRows[0]!.version !== current.version - 1) {
           throw new AiStoryScriptAuthorityError("SCRIPT_SUPERSESSION_INVALID", "Successor freeze requires its exact prior Script to remain frozen");
