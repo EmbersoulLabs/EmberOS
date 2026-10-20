@@ -25,7 +25,7 @@ describe("AI Story planning pipeline assembly", () => {
           usage,
         };
       }
-      return {
+      if (callStructuredJsonModel.mock.calls.length === 2) return {
         result: {
           shotsByScene: {
             scene_0: [{
@@ -40,6 +40,14 @@ describe("AI Story planning pipeline assembly", () => {
             }],
           },
         },
+        usage,
+      };
+      if (callStructuredJsonModel.mock.calls.length === 3) return {
+        result: { characterContinuity: [{ characterId: "hero", name: "Hero", appearance: "Smart casual", emotion: "Concern to relief", costume: "Neutral shirt", accessories: "Phone", age: "Adult", pose: "Holding gift", identity: "Customer hero" }] },
+        usage,
+      };
+      return {
+        result: { worldContinuity: { location: "Apartment", lighting: "Soft morning", environment: "Urban home", objects: ["gift box"], timeline: "Morning", worldRules: ["Keep brand colors visible"] } },
         usage,
       };
     });
@@ -131,39 +139,7 @@ describe("AI Story planning pipeline assembly", () => {
           usage,
         };
       }
-      if (calls === 4) {
-        return {
-          result: {
-            characterContinuity: [
-              {
-                characterId: "hero",
-                name: "Hero",
-                appearance: "Smart casual",
-                emotion: "Concern to relief",
-                costume: "Neutral shirt",
-                accessories: "Phone",
-                age: "Adult",
-                pose: "Holding gift",
-                identity: "Customer hero",
-              },
-            ],
-          },
-          usage,
-        };
-      }
-      return {
-        result: {
-          worldContinuity: {
-            location: "Apartment",
-            lighting: "Soft morning",
-            environment: "Urban home",
-            objects: ["gift box"],
-            timeline: "Morning",
-            worldRules: ["Keep brand colors visible"],
-          },
-        },
-        usage,
-      };
+      throw new Error(`Unexpected legacy JSON model call ${calls}`);
     });
     vi.doMock("../packages/agents/src/llm", () => ({ callJsonModel, callStructuredJsonModel }));
 
@@ -196,8 +172,8 @@ describe("AI Story planning pipeline assembly", () => {
       ],
     });
 
-    expect(callJsonModel).toHaveBeenCalledTimes(5);
-    expect(callStructuredJsonModel).toHaveBeenCalledTimes(2);
+    expect(callJsonModel).toHaveBeenCalledTimes(3);
+    expect(callStructuredJsonModel).toHaveBeenCalledTimes(4);
     expect(payload.status).toBe("review");
     expect(payload.narrativeIntegration.consistent).toBe(true);
     expect(payload.creativeContext.productAuthorities).toEqual([

@@ -1101,41 +1101,30 @@ export async function generateCharacterContinuity(input: {
   if (input.creativeContext.characterContext.characters.length === 0) {
     return { characterContinuity: [], usage: { input: 0, output: 0, costUsd: 0 } };
   }
-  const schemaHint = JSON.stringify({
-    characterContinuity: [
-      {
-        characterId: "same id from creativeContext when available",
-        name: "same character name from creativeContext",
-        appearance: "string",
-        emotion: "string",
-        costume: "string",
-        accessories: "string",
-        age: "string",
-        pose: "string",
-        identity: "string",
-      },
-    ],
-  });
-  const { value, usage } = await callStage<CharacterContinuityEntry[]>(
-    "Character continuity",
-    [
+  const providerOutputSchema = z.object({
+    characterContinuity: z.array(CharacterContinuityEntrySchema),
+  }).strict();
+  const completion = await callStructuredJsonModel({
+    system: [
       "You are a character continuity supervisor.",
       "Only create entries for characters present in creativeContext.characterContext.characters.",
       "For canonical Characters, copy the exact characterId and treat canonical identity and appearance as immutable; generate only evolving emotion, costume, accessories, and pose state.",
+      "Return exactly one entry for every supplied Character and no additional entries.",
       "Return stable identity, appearance, emotion, costume, accessories, age, and pose guidance.",
-      "Return ONLY JSON.",
     ].join(" "),
-    JSON.stringify(input, null, 2),
-    schemaHint,
-    z.array(CharacterContinuityEntrySchema),
-    (result) => result.characterContinuity
-  );
+    user: JSON.stringify(input, null, 2),
+    schema: providerOutputSchema,
+    schemaName: "ai_story_character_continuity_v1",
+    certificationStage: "character_continuity",
+  });
+  if (completion.decodeIssue) throw new Error(`CHARACTER_CONTINUITY_${completion.decodeIssue}`);
+  const value = providerOutputSchema.parse(completion.result).characterContinuity;
   return {
     characterContinuity: bindCharacterContinuityToCharacterAuthority({
       creativeContext: input.creativeContext,
       characterContinuity: value,
     }),
-    usage,
+    usage: completion.usage,
   };
 }
 
@@ -1146,29 +1135,22 @@ export async function generateWorldContinuity(input: {
   scenePlan: ScenePlanItem[];
   shotPlan: ShotPlanItem[];
 }): Promise<{ worldContinuity: WorldContinuity; usage: Usage }> {
-  const schemaHint = JSON.stringify({
-    worldContinuity: {
-      location: "string",
-      lighting: "string",
-      environment: "string",
-      objects: ["string"],
-      timeline: "string",
-      worldRules: ["string"],
-    },
-  });
-  const { value, usage } = await callStage<WorldContinuity>(
-    "World continuity",
-    [
+  const providerOutputSchema = z.object({ worldContinuity: WorldContinuitySchema }).strict();
+  const completion = await callStructuredJsonModel({
+    system: [
       "You are a world continuity supervisor.",
       "Produce non-empty location, lighting, environment, objects, timeline, and world rules.",
-      "Return ONLY JSON.",
     ].join(" "),
-    JSON.stringify(input, null, 2),
-    schemaHint,
-    WorldContinuitySchema,
-    (result) => result.worldContinuity ?? result
-  );
-  return { worldContinuity: value, usage };
+    user: JSON.stringify(input, null, 2),
+    schema: providerOutputSchema,
+    schemaName: "ai_story_world_continuity_v1",
+    certificationStage: "world_continuity",
+  });
+  if (completion.decodeIssue) throw new Error(`WORLD_CONTINUITY_${completion.decodeIssue}`);
+  return {
+    worldContinuity: providerOutputSchema.parse(completion.result).worldContinuity,
+    usage: completion.usage,
+  };
 }
 
 export function buildAnimationPackage(input: {
