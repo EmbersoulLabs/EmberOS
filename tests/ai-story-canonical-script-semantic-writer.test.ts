@@ -26,7 +26,7 @@ import {
   validateAiStoryCommercialStoryProfile,
   validateAiStoryProductStoryProfile,
 } from "@ceo-agent/shared/server";
-import { buildAiStoryScriptSemanticProviderOutputSchema, generateAiStoryScriptSemanticProposalV1, resolveCommercialIntegrationAnchorSceneIndex, resolveCommercialStateChangeAnchorSceneIndex } from "../packages/agents/src/ai-story/script-semantic-writer";
+import { bindAuthorizedNativeDialogue, buildAiStoryScriptSemanticProviderOutputSchema, generateAiStoryScriptSemanticProposalV1, resolveCommercialIntegrationAnchorSceneIndex, resolveCommercialStateChangeAnchorSceneIndex } from "../packages/agents/src/ai-story/script-semantic-writer";
 
 const id = (n: number) => `96000000-0000-4000-8000-${n.toString().padStart(12, "0")}`;
 const I = {
@@ -173,6 +173,38 @@ function expectCode(run: () => unknown, code: string) {
 describe("AI Story Canonical Script Semantic Writer V1", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("deterministically restores exact approved native dialogue for a bound bilingual alias", () => {
+    const scenes = proposal().scenes.map((scene) => ({
+      ...scene,
+      entries: scene.entries.filter((entry) => entry.type !== "DIALOGUE"),
+    }));
+    const result = bindAuthorizedNativeDialogue({
+      scenes,
+      storyBeats: [
+        { ...BEATS[0]!, name: "Opening" },
+        { ...BEATS[1]!, name: "Development" },
+      ],
+      scenePlan: SCENES,
+      characterAuthorities: [{ ...CHARACTER, name: "肥嫂 / Fei Sao" }],
+      suppliedDialogue: [
+        { speaker: "Daughter", line: "妈，你每天这样做，不累咩？", beatHint: "opening" },
+        { speaker: "Fei Sao", line: "累啊，不然你来做咯。", beatHint: "development" },
+      ],
+      language: "zh-MY",
+    });
+    expect(result.flatMap((scene) => scene.entries)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "DIALOGUE",
+        speakerId: I.character,
+        line: "累啊，不然你来做咯。",
+        language: "zh-MY",
+      }),
+    ]));
+    expect(result.flatMap((scene) => scene.entries)).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ line: "妈，你每天这样做，不累咩？" }),
+    ]));
   });
 
   it("keeps the strict semantic proposal separate from canonical authority", () => {
