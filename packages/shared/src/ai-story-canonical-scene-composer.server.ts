@@ -238,6 +238,14 @@ function candidateInput(
   }
   const sourceMap = new Map(input.productSources.map((source) => [source.assetId, source] as const));
   const products = sceneProductBindings(scriptScene, scenePlan, sourceMap);
+  const sceneCastBindings = castBindings(scriptScene, input.frozenScript, input.campaignId, input.characterAuthorities);
+  const castDirection = scenePlan.castDirection ?? scriptScene.castDirection;
+  if (castDirection) {
+    const bindingKeys = new Set(sceneCastBindings.map((binding) => `${binding.scope}:${binding.id}`));
+    if (castDirection.participants.some((participant) => !bindingKeys.has(`${participant.cast.scope}:${participant.cast.id}`))) {
+      fail("CANONICAL_SCENE_CAST_DIRECTION_UNBOUND", "Scene cast direction references Cast outside frozen Script authority");
+    }
+  }
   assertExplicitAiStorySceneGenerationMode({
     generationAuthority: scenePlan.generationAuthority,
     productBindings: products,
@@ -267,8 +275,8 @@ function candidateInput(
       visualIdentityRequirement: "NONE" as const,
     },
     locationState: { temporaryFacts: [] },
-    castBindings: castBindings(scriptScene, input.frozenScript, input.campaignId, input.characterAuthorities),
-    ...(scriptScene.castDirection ? { castDirection: scriptScene.castDirection } : {}),
+    castBindings: sceneCastBindings,
+    ...(castDirection ? { castDirection } : {}),
     productBindings: products,
     generationAuthority: scenePlan.generationAuthority,
     entryState: structuredClone(scriptScene.sceneStateIn),

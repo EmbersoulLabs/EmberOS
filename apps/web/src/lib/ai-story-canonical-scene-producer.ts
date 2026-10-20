@@ -54,6 +54,8 @@ export type EnsureCurrentFrozenCanonicalSceneSetInput = {
   priorScenePlanForStrategySuccessor?: ScenePlanItem[];
   /** Lineage contains a human-authorized execution-unit duration successor. */
   allowAuthorizedDurationChanges?: boolean;
+  /** Lineage contains a human-authorized Scene cast successor. */
+  allowAuthorizedCastChanges?: boolean;
 };
 
 export function creativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
@@ -62,6 +64,14 @@ export function creativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
 
 export function durationNeutralCreativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
   return creativeScenePlanProjection(plan).map(({ durationSec: _durationSec, ...creative }) => creative);
+}
+
+export function castNeutralCreativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
+  return creativeScenePlanProjection(plan).map(({ castDirection: _castDirection, ...creative }) => creative);
+}
+
+export function durationAndCastNeutralCreativeScenePlanProjection(plan: readonly ScenePlanItem[]) {
+  return durationNeutralCreativeScenePlanProjection(plan).map(({ castDirection: _castDirection, ...creative }) => creative);
 }
 
 export type CanonicalSceneProducerDependencies = {
@@ -133,9 +143,13 @@ export async function ensureCurrentFrozenCanonicalSceneSet(
   if (!script) throw new AiStoryCanonicalSceneProducerError("CURRENT_FROZEN_SCRIPT_REQUIRED", "Canonical Scene production requires the exact current FROZEN Script");
   const productAuthorityIds = resolveOutlineBoundProductAuthorityIds(outline);
   const semanticPlan = input.priorScenePlanForStrategySuccessor ?? input.scenePlan;
-  const creativeProjection = input.allowAuthorizedDurationChanges
-    ? durationNeutralCreativeScenePlanProjection
-    : creativeScenePlanProjection;
+  const creativeProjection = input.allowAuthorizedDurationChanges && input.allowAuthorizedCastChanges
+    ? durationAndCastNeutralCreativeScenePlanProjection
+    : input.allowAuthorizedDurationChanges
+      ? durationNeutralCreativeScenePlanProjection
+      : input.allowAuthorizedCastChanges
+        ? castNeutralCreativeScenePlanProjection
+        : creativeScenePlanProjection;
   if (
     input.priorScenePlanForStrategySuccessor &&
     JSON.stringify(creativeProjection(input.priorScenePlanForStrategySuccessor)) !==
