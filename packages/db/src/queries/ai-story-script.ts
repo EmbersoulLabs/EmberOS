@@ -167,8 +167,6 @@ export class AiStoryScriptAuthorityService {
       if (parsed.supersedesScriptVersionId) {
         const prior = await tx.select().from(schema.aiStoryScriptVersions).where(and(eq(schema.aiStoryScriptVersions.scriptVersionId, parsed.supersedesScriptVersionId), eq(schema.aiStoryScriptVersions.storyId, scope.storyId))).for("update");
         if (prior.length !== 1 || prior[0]!.status !== "FROZEN") throw new AiStoryScriptAuthorityError("SCRIPT_SUPERSESSION_INVALID", "Only a frozen Script in the same Story may be superseded");
-        const priorScript = parseRow(prior[0]!);
-        await tx.update(schema.aiStoryScriptVersions).set({ status: "SUPERSEDED", script: { ...priorScript, status: "SUPERSEDED" } }).where(eq(schema.aiStoryScriptVersions.scriptVersionId, priorScript.scriptVersionId));
       }
       await tx.insert(schema.aiStoryScriptVersions).values({
         scriptVersionId: parsed.scriptVersionId, orgId: parsed.orgId, workspaceId: parsed.workspaceId, campaignId: scope.campaignId,
@@ -201,6 +199,7 @@ export class AiStoryScriptAuthorityService {
 
   private async transition(scope: AiStoryScriptScope, id: string, to: "VALIDATED" | "APPROVED" | "FROZEN", actor: string | null) {
     return this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`script:${scope.storyId}`}))`);
       await assertScope(tx, scope, true);
       const rows = await tx.select().from(schema.aiStoryScriptVersions).where(and(eq(schema.aiStoryScriptVersions.scriptVersionId, id), eq(schema.aiStoryScriptVersions.orgId, scope.orgId), eq(schema.aiStoryScriptVersions.workspaceId, scope.workspaceId), eq(schema.aiStoryScriptVersions.storyId, scope.storyId))).for("update");
       if (rows.length !== 1) throw new AiStoryScriptAuthorityError("SCRIPT_NOT_FOUND", "Script not found in authority scope");
@@ -222,6 +221,29 @@ export class AiStoryScriptAuthorityService {
       }
       const now = new Date();
       const next = AiStoryScriptVersionSchema.parse({ ...current, status: to, approvedBy: to === "APPROVED" ? actor : current.approvedBy, approvedAt: to === "APPROVED" ? now.toISOString() : current.approvedAt, frozenAt: to === "FROZEN" ? now.toISOString() : current.frozenAt });
+      if (to === "FROZEN" && current.supersedesScriptVersionId) {
+        const priorRows = await tx.select().from(schema.aiStoryScriptVersions).where(and(
+          eq(schema.aiStoryScriptVersions.scriptVersionId, current.supersedesScriptVersionId),
+          eq(schema.aiStoryScriptVersions.orgId, scope.orgId),
+          eq(schema.aiStoryScriptVersions.workspaceId, scope.workspaceId),
+          eq(schema.aiStoryScriptVersions.storyId, scope.storyId),
+          eq(schema.aiStoryScriptVersions.storyVersionId, scope.storyVersionId),
+        )).for("update");
+        if (priorRows.length !== 1 || priorRows[0]!.status !== "FROZEN" || priorRows[0]!.version !== current.version - 1) {
+          throw new AiStoryScriptAuthorityError("SCRIPT_SUPERSESSION_INVALID", "Successor freeze requires its exact prior Script to remain frozen");
+        }
+        const prior = parseRow(priorRows[0]!);
+        await tx.update(schema.aiStoryScriptVersions).set({
+          status: "SUPERSEDED",
+          script: { ...prior, status: "SUPERSEDED" },
+        }).where(eq(schema.aiStoryScriptVersions.scriptVersionId, prior.scriptVersionId));
+      } else if (to === "FROZEN") {
+        const frozenRows = await tx.select({ scriptVersionId: schema.aiStoryScriptVersions.scriptVersionId })
+          .from(schema.aiStoryScriptVersions)
+          .where(and(eq(schema.aiStoryScriptVersions.storyId, scope.storyId), eq(schema.aiStoryScriptVersions.status, "FROZEN")))
+          .for("update");
+        if (frozenRows.length !== 0) throw new AiStoryScriptAuthorityError("SCRIPT_SUPERSESSION_INVALID", "Initial Script cannot freeze while another Script is authoritative");
+      }
       await tx.update(schema.aiStoryScriptVersions).set({ status: next.status, script: next, approvedBy: next.approvedBy, approvedAt: next.approvedAt ? new Date(next.approvedAt) : null, frozenAt: next.frozenAt ? new Date(next.frozenAt) : null }).where(eq(schema.aiStoryScriptVersions.scriptVersionId, id));
       return next;
     });
