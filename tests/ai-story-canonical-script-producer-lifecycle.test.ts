@@ -78,6 +78,11 @@ function runtime(seed: AiStoryScriptVersion[] = []) {
     const index = history.findIndex((item) => item.scriptVersionId === scriptVersionId);
     const prior = history[index]!;
     const next = AiStoryScriptVersionSchema.parse({ ...prior, status, approvedBy: status === "APPROVED" || status === "FROZEN" ? I.actor : prior.approvedBy, approvedAt: status === "APPROVED" || status === "FROZEN" ? "2026-09-15T01:01:00.000Z" : prior.approvedAt, frozenAt: status === "FROZEN" ? "2026-09-15T01:02:00.000Z" : prior.frozenAt });
+    if (status === "FROZEN" && next.supersedesScriptVersionId) {
+      history = history.map((item) => item.scriptVersionId === next.supersedesScriptVersionId
+        ? AiStoryScriptVersionSchema.parse({ ...item, status: "SUPERSEDED" })
+        : item);
+    }
     history[index] = next;
     return next;
   };
@@ -86,7 +91,7 @@ function runtime(seed: AiStoryScriptVersion[] = []) {
     history: async (_db, scope) => { expect(scope.requireCurrentFrozenStoryVersion).toBe(true); return [...history]; },
     generateSemanticProposal: async () => { writerCalls += 1; return { semanticProposal: proposal(), usage: { input: 11, output: 7, costUsd: 0.02 } }; },
     promoteSemanticProposal: promoteAiStoryScriptSemanticProposalV1,
-    propose: async (_db, _scope, script) => { lifecycle.push("DRAFT"); if (script.supersedesScriptVersionId) history = history.map((item) => item.scriptVersionId === script.supersedesScriptVersionId ? AiStoryScriptVersionSchema.parse({ ...item, status: "SUPERSEDED" }) : item); history.push(script); return script; },
+    propose: async (_db, _scope, script) => { lifecycle.push("DRAFT"); history.push(script); return script; },
     validate: transition("VALIDATED") as never,
     approve: transition("APPROVED") as never,
     freeze: transition("FROZEN") as never,

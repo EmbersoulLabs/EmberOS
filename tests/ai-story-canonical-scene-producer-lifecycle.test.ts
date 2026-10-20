@@ -95,6 +95,15 @@ describe("AI Story Canonical Scene Package 1",()=>{
     expect(scenes.map((scene)=>scene.generationAuthority?.strategy)).toEqual(["TEXT_TO_VIDEO","TEXT_TO_VIDEO"]);
   });
 
+  it("projects a human Scene-cast successor and rejects unbound identities",()=>{
+    const cast={scope:"CAMPAIGN_CHARACTER" as const,id:I.character,campaignId:I.campaign,authorityVersionId:I.characterVersion,authorityFingerprint:hash("a"),visualIdentityRequirement:"PREFERRED" as const};
+    const direction={mode:"MULTI_CHARACTER" as const,participants:[{cast,presence:"ON_SCREEN" as const,visualRole:"PRIMARY_VISUAL" as const}],genericExtras:[{description:"Anonymous customers",count:2,facesReadable:false}]};
+    const planned=PLAN.map((scene,index)=>index===0?{...scene,castDirection:direction}:scene);
+    expect(composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:planned})[0]!.castDirection).toEqual(direction);
+    const unbound={...direction,participants:[{...direction.participants[0]!,cast:{...cast,id:id(99)}}]};
+    expect(()=>composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:PLAN.map((scene,index)=>index===0?{...scene,castDirection:unbound}:scene)})).toThrowError(expect.objectContaining({code:"CANONICAL_SCENE_CAST_DIRECTION_UNBOUND"}));
+  });
+
   it("rejects missing or mismatched mode without inferring it from Product presence",()=>{
     const missing=PLAN.map((item)=>({...item,generationAuthority:undefined}));
     expect(()=>composeAiStoryCanonicalSceneSetV1({...composerInput(),scenePlan:missing})).toThrowError(expect.objectContaining({code:"CANONICAL_SCENE_GENERATION_MODE_AUTHORITY_MISSING"}));

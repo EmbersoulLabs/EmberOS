@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AiStoryShotCameraSafetySchema } from "./ai-story-product-camera-safety";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { AiStorySceneCastDirectionSchema } from "./ai-story-cast";
 import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
 import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
@@ -297,6 +298,8 @@ export const ScenePlanItemSchema = z.object({
   transition: z.string().default(""),
   continuityNotes: z.string().default(""),
   order: z.number().int().nonnegative(),
+  /** Human-reviewed cast staging; absent historical Plans retain AUTO semantics. */
+  castDirection: AiStorySceneCastDirectionSchema.optional(),
   generationAuthority: AiStorySceneGenerationAuthoritySchema.optional(),
   groundingLineage: AiStorySceneGroundingLineageSchema.optional(),
 });
@@ -426,6 +429,7 @@ export const StoryPlanningDraftSchema = z.object({
     externalAiCalls: z.literal(0),
   }).strict().optional(),
   durationRecovery: z.lazy(() => AiStoryExecutionUnitDurationRecoverySchema).optional(),
+  castRecovery: z.lazy(() => AiStorySceneCastRecoverySchema).optional(),
 });
 
 export type StoryPlanningDraft = z.infer<typeof StoryPlanningDraftSchema>;
@@ -540,6 +544,7 @@ export const AnimationPackagePayloadSchema = z.object({
     externalAiCalls: z.literal(0),
   }).strict().optional(),
   durationRecovery: z.lazy(() => AiStoryExecutionUnitDurationRecoverySchema).optional(),
+  castRecovery: z.lazy(() => AiStorySceneCastRecoverySchema).optional(),
 });
 
 export type AnimationPackagePayload = z.infer<typeof AnimationPackagePayloadSchema>;
@@ -559,6 +564,20 @@ export const AiStoryExecutionUnitDurationRecoverySchema = z.object({
 export type AiStoryAnimationPackageCanonicalSceneAuthority = z.infer<
   typeof AiStoryAnimationPackageCanonicalSceneAuthoritySchema
 >;
+
+/** Append-only lineage for an explicit human Scene-cast decision. */
+export const AiStorySceneCastRecoverySchema = z.object({
+  contractVersion: z.literal("ai-story-scene-cast-successor.v1"),
+  supersedesAnimationPackageId: z.string().uuid(),
+  changes: z.array(z.object({
+    sceneId: NonEmptyTextSchema,
+    from: AiStorySceneCastDirectionSchema.nullable(),
+    to: AiStorySceneCastDirectionSchema,
+  }).strict()).min(1),
+  authorizedBy: z.string().uuid(),
+  externalAiCalls: z.literal(0),
+}).strict();
+export type AiStorySceneCastRecovery = z.infer<typeof AiStorySceneCastRecoverySchema>;
 
 /** Strict new-write contract. Historical reads continue through AnimationPackagePayloadSchema. */
 export const AuthoritativeAnimationPackagePayloadSchema = AnimationPackagePayloadSchema.extend({

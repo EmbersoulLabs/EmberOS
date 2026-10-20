@@ -52,6 +52,27 @@ describe("system-wide capability-aware Planning", () => {
     expect(() => assertFreshExecutionCapabilityAuthority(denied, [t2v], new Date("2026-10-17T01:01:00.000Z"))).toThrow(/not certified/);
   });
 
+  it("blocks multiple identity-conditioned people until Desktop explicitly certifies the reference count", () => {
+    const multi = {
+      ...base({ strategy: "PRODUCT_GROUNDED_VIDEO", referenceSource: "SCENE_EXPLICIT", referenceAssetIds: [id(3)], firstFrameAssetId: id(3), productVisualIdentityRequirement: "REQUIRED" }),
+      castDirection: {
+        mode: "MULTI_CHARACTER" as const,
+        participants: [id(40), id(41)].map((characterId, index) => ({
+          cast: { scope: "CAMPAIGN_CHARACTER" as const, id: characterId, campaignId: id(42), authorityVersionId: id(50 + index), authorityFingerprint: `sha256:${"a".repeat(64)}`, visualIdentityRequirement: "REQUIRED" as const },
+          presence: "ON_SCREEN" as const,
+          visualRole: index === 0 ? "PRIMARY_VISUAL" as const : "SUPPORTING_VISUAL" as const,
+        })),
+        genericExtras: [{ description: "Unidentified customers", count: 3, facesReadable: false }],
+      },
+    };
+    expect(() => assertFreshExecutionCapabilityAuthority(authority(multi), [multi], new Date("2026-10-17T01:01:00.000Z"))).toThrow(/requires 2 on-screen Character identities/);
+    const certified = structuredClone(capabilities);
+    (certified.workflows[0] as typeof certified.workflows[0] & { maxCharacterReferences: number }).maxCharacterReferences = 2;
+    (certified.contracts.v2.workflows[0] as typeof certified.contracts.v2.workflows[0] & { maxCharacterReferences: number }).maxCharacterReferences = 2;
+    const accepted = { ...authority(multi), capabilities: certified, capabilityFingerprint: sha256CanonicalIntegrityHash(certified) };
+    expect(() => assertFreshExecutionCapabilityAuthority(accepted, [multi], new Date("2026-10-17T01:01:00.000Z"))).not.toThrow();
+  });
+
   it("binds explicit environment selection before approval and performs no dispatch", async () => {
     const route = await readFile("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/approve/route.ts", "utf8");
     expect(route).toContain('body?.executionEnvironment !== "LOCAL_GPU"');
@@ -134,6 +155,29 @@ describe("deterministic generation-strategy successor", () => {
     const combined = recoverScenePlanGenerationAuthorities([scene], frozen({ productIds: [id(3)], characterIds: [id(20)], characterAssets: [id(21)] }));
     expect(combined[0]?.generationAuthority).toMatchObject({
       strategy: "PRODUCT_GROUNDED_VIDEO", referenceAssetIds: [id(3), id(21)], firstFrameAssetId: id(3),
+    });
+  });
+
+  it("preserves one explicitly selected visual reference per identified Scene participant", () => {
+    const first = id(20); const second = id(21); const firstAsset = id(30); const secondAsset = id(31);
+    const scene = {
+      ...base({ strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" }),
+      castDirection: {
+        mode: "MULTI_CHARACTER" as const,
+        participants: [first, second].map((characterId, index) => ({
+          cast: { scope: "CAMPAIGN_CHARACTER" as const, id: characterId, campaignId: id(212), authorityVersionId: id(200 + index), authorityFingerprint: HASH, visualIdentityRequirement: "REQUIRED" as const },
+          presence: "ON_SCREEN" as const,
+          visualRole: index === 0 ? "PRIMARY_VISUAL" as const : "SUPPORTING_VISUAL" as const,
+        })),
+        genericExtras: [],
+      },
+    };
+    const authority = frozen({ characterIds: [first, second], characterAssets: [] });
+    authority.characterVersions[0]!.visualAssetReferences = [{ assetId: firstAsset, contentHash: HASH, purpose: "IDENTITY" }];
+    authority.characterVersions[1]!.visualAssetReferences = [{ assetId: secondAsset, contentHash: HASH, purpose: "IDENTITY" }];
+    expect(recoverScenePlanGenerationAuthorities([scene], authority)[0]?.generationAuthority).toMatchObject({
+      referenceSource: "CHARACTER_SYNTHETIC_ANCHOR",
+      referenceAssetIds: [firstAsset, secondAsset],
     });
   });
 

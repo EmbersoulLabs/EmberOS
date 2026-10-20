@@ -3,7 +3,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, resolveCurrentFrozenScriptForStoryVersion, schema } from "@ceo-agent/db";
+import { AiStoryScriptAuthorityService, ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, resolveCurrentFrozenScriptForStoryVersion, schema } from "@ceo-agent/db";
 import { AiStoryPlanningCharacterAuthorityError, projectAcceptedCharactersToPlanning, refreshBoundCharacterAuthority } from "@ceo-agent/agents";
 import {
   AuthoritativeAnimationPackagePayloadSchema,
@@ -17,6 +17,8 @@ import {
   type AiStoryCharacterAuthorityVersion,
   type AiStoryScriptVersion,
   type AiStoryExecutionCapabilityAuthority,
+  type AiStorySceneCastDirection,
+  AiStorySceneCastDirectionSchema,
   type CreativeContext,
   type NarrativeIntegrationReport,
   type StoryPlanningDraft,
@@ -24,11 +26,13 @@ import {
   applyExecutionUnitDurationChanges,
   bindProductShotCameraSafety,
 } from "@ceo-agent/shared";
-import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiStoryAnimationPackageCanonicalSceneAuthorityV1, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
+import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiStoryAnimationPackageCanonicalSceneAuthorityV1, buildAiStoryScriptVersion, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { revalidatePlanningProductMaterialAuthority } from "@/lib/ai-story-product-material-runtime";
 import { assertFreshExecutionCapabilityAuthority } from "@/lib/ai-story-execution-capability";
 import {
   creativeScenePlanProjection,
+  castNeutralCreativeScenePlanProjection,
+  durationAndCastNeutralCreativeScenePlanProjection,
   durationNeutralCreativeScenePlanProjection,
   ensureCurrentFrozenCanonicalSceneSet,
 } from "@/lib/ai-story-canonical-scene-producer";
@@ -417,8 +421,15 @@ export async function resolvePlanningSemanticAncestor(
   let current = AuthoritativeAnimationPackagePayloadSchema.parse(currentRow.payload);
   const source = current;
   let durationAdjusted = false;
-  const projection = () => durationAdjusted ? durationNeutralCreativeScenePlanProjection : creativeScenePlanProjection;
-  for (let depth = 0; current.strategyRecovery || current.durationRecovery; depth += 1) {
+  let castAdjusted = false;
+  const projection = () => durationAdjusted && castAdjusted
+    ? durationAndCastNeutralCreativeScenePlanProjection
+    : durationAdjusted
+      ? durationNeutralCreativeScenePlanProjection
+      : castAdjusted
+        ? castNeutralCreativeScenePlanProjection
+        : creativeScenePlanProjection;
+  for (let depth = 0; current.strategyRecovery || current.durationRecovery || current.castRecovery; depth += 1) {
     if (depth >= 32 || visited.has(currentRow.id)) {
       throw new AiStoryGenerationStrategyRecoveryError(
         "GENERATION_STRATEGY_SUCCESSOR_LINEAGE_AMBIGUOUS",
@@ -427,9 +438,12 @@ export async function resolvePlanningSemanticAncestor(
     }
     visited.add(currentRow.id);
     if (current.durationRecovery) durationAdjusted = true;
+    if (current.castRecovery) castAdjusted = true;
     const expectedCreative = JSON.stringify(projection()(source.scenePlan));
     const parent = await loadParent(
-      current.strategyRecovery?.supersedesAnimationPackageId ?? current.durationRecovery!.supersedesAnimationPackageId,
+      current.strategyRecovery?.supersedesAnimationPackageId
+        ?? current.durationRecovery?.supersedesAnimationPackageId
+        ?? current.castRecovery!.supersedesAnimationPackageId,
     );
     if (!parent || isStoryPlanningDraft(parent.payload)) {
       throw new AiStoryGenerationStrategyRecoveryError(
@@ -447,7 +461,7 @@ export async function resolvePlanningSemanticAncestor(
     currentRow = parent;
     current = parentPayload;
   }
-  return { scenePlan: current.scenePlan, durationAdjusted };
+  return { scenePlan: current.scenePlan, durationAdjusted, castAdjusted };
 }
 
 type PlanningPackageScope = {
@@ -501,32 +515,52 @@ function recoveredSceneAuthority(
   }
 
   const characterEvidence = unique(evidence.filter((item) => item.role === "CHARACTER_AUTHORITY").map((item) => item.assetId));
-  const characterAssets = scriptScene && frozen
-    ? unique(scriptScene.characterIds.flatMap((characterId) => {
-        const authorityRef = frozen.frozenScript.authorityReferences.find((reference) =>
-          reference.authorityType === "CHARACTER" && reference.authorityId === characterId
+  const directedCharacters = scene.castDirection?.participants.flatMap((participant) =>
+    participant.presence === "ON_SCREEN" && participant.cast.scope === "CAMPAIGN_CHARACTER" && participant.cast.visualIdentityRequirement !== "NONE"
+      ? [participant.cast]
+      : []
+  ) ?? [];
+  const scriptCharacterBindings = directedCharacters.length > 0
+    ? directedCharacters.map((reference) => ({
+        characterId: reference.id,
+        authorityVersionId: reference.authorityVersionId,
+        authorityFingerprint: reference.authorityFingerprint,
+      }))
+    : (scriptScene?.characterIds ?? []).map((characterId) => {
+        const reference = frozen?.frozenScript.authorityReferences.find((candidate) =>
+          candidate.authorityType === "CHARACTER" && candidate.authorityId === characterId
         );
-        if (!authorityRef?.authorityVersionId || !authorityRef.authorityFingerprint) {
+        return { characterId, authorityVersionId: reference?.authorityVersionId, authorityFingerprint: reference?.authorityFingerprint };
+      });
+  const characterAssets = scriptScene && frozen
+    ? unique(scriptCharacterBindings.flatMap((binding) => {
+        if (!binding.authorityVersionId || !binding.authorityFingerprint) {
           throw new AiStoryGenerationStrategyRecoveryError(
             "GENERATION_STRATEGY_SUCCESSOR_CHARACTER_AUTHORITY_UNRESOLVED",
-            `Scene ${scene.id} Character ${characterId} lacks an exact frozen authority snapshot`,
+            `Scene ${scene.id} Character ${binding.characterId} lacks an exact frozen authority snapshot`,
           );
         }
         const version = frozen.characterVersions.find((candidate) =>
-          candidate.characterId === characterId
-          && candidate.characterVersionId === authorityRef.authorityVersionId
-          && candidate.fingerprint === authorityRef.authorityFingerprint
+          candidate.characterId === binding.characterId
+          && candidate.characterVersionId === binding.authorityVersionId
+          && candidate.fingerprint === binding.authorityFingerprint
         );
         if (!version) {
           throw new AiStoryGenerationStrategyRecoveryError(
             "GENERATION_STRATEGY_SUCCESSOR_CHARACTER_AUTHORITY_UNRESOLVED",
-            `Scene ${scene.id} Character ${characterId} frozen authority cannot be resolved`,
+            `Scene ${scene.id} Character ${binding.characterId} frozen authority cannot be resolved`,
+          );
+        }
+        if (directedCharacters.length > 0 && version.visualAssetReferences.length !== 1) {
+          throw new AiStoryGenerationStrategyRecoveryError(
+            "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
+            `Scene ${scene.id} Character ${binding.characterId} requires one consolidated human reference selection`,
           );
         }
         return version.visualAssetReferences.map((reference) => reference.assetId);
       }))
     : characterEvidence;
-  if (characterAssets.length > 1) {
+  if (directedCharacters.length === 0 && characterAssets.length > 1) {
     throw new AiStoryGenerationStrategyRecoveryError(
       "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
       `Scene ${scene.id} has multiple Character visual references and requires one consolidated human reference selection`,
@@ -545,7 +579,7 @@ function recoveredSceneAuthority(
     return {
       strategy: "TEXT_TO_VIDEO" as const,
       referenceSource: "CHARACTER_SYNTHETIC_ANCHOR" as const,
-      referenceAssetIds: [characterAssets[0]],
+      referenceAssetIds: characterAssets,
       firstFrameAssetId: null,
       productVisualIdentityRequirement: "NONE" as const,
     };
@@ -580,9 +614,14 @@ async function resolveFrozenSuccessorAuthority(db: Db, input: {
       "Generation strategy recovery requires the exact current frozen Script",
     );
   }
-  const characterVersionIds = unique(frozenScript.authorityReferences.flatMap((reference) =>
-    reference.authorityType === "CHARACTER" && reference.authorityVersionId ? [reference.authorityVersionId] : []
-  ));
+  const characterVersionIds = unique([
+    ...frozenScript.authorityReferences.flatMap((reference) =>
+      reference.authorityType === "CHARACTER" && reference.authorityVersionId ? [reference.authorityVersionId] : []
+    ),
+    ...frozenScript.scenes.flatMap((scene) => (scene.castReferences ?? []).flatMap((reference) =>
+      reference.scope === "CAMPAIGN_CHARACTER" ? [reference.authorityVersionId] : []
+    )),
+  ]);
   const rows = characterVersionIds.length === 0 ? [] : await db.select({ snapshot: schema.aiStoryCharacterVersions.snapshot })
     .from(schema.aiStoryCharacterVersions)
     .where(and(
@@ -889,6 +928,241 @@ export async function createExecutionUnitDurationSuccessor(
     externalAiCalls: 0 as const,
     idempotent: false as const,
   };
+}
+
+/** Creates a no-provider-call successor for an explicit human Scene-cast choice. */
+export async function createSceneCastSuccessor(
+  db: Db,
+  input: PlanningPackageScope & {
+    actorUserId: string;
+    sourcePackageId: string;
+    castDirections: readonly {
+      sceneId: string;
+      mode: "AUTO" | "SINGLE_CHARACTER" | "MULTI_CHARACTER";
+      participants: readonly { castId: string; presence: "ON_SCREEN" | "OFF_SCREEN_DIALOGUE" | "VOICE_ONLY"; visualRole: "PRIMARY_VISUAL" | "SUPPORTING_VISUAL" | "BACKGROUND_VISUAL" }[];
+      genericExtras: readonly { description: string; count: number; facesReadable: boolean }[];
+    }[];
+    episodeIntent?: import("@ceo-agent/shared").AiStoryEpisodeIntentAuthority;
+  },
+) {
+  const loadPackage = scopedPackageLoader(db, input);
+  const sourceRow = await loadPackage(input.sourcePackageId);
+  if (!sourceRow || isStoryPlanningDraft(sourceRow.payload)) {
+    throw new AiStoryGenerationStrategyRecoveryError("SCENE_CAST_SUCCESSOR_SOURCE_MISSING", "Complete source Planning Package not found");
+  }
+  const source = AuthoritativeAnimationPackagePayloadSchema.parse(sourceRow.payload);
+  const requested = new Map(input.castDirections.map((change) => [change.sceneId, change] as const));
+  if (requested.size !== input.castDirections.length || [...requested.keys()].some((id) => !source.scenePlan.some((scene) => scene.id === id))) {
+    throw new AiStoryGenerationStrategyRecoveryError("SCENE_CAST_SUCCESSOR_SCENE_INVALID", "Scene cast decisions must target each existing Scene at most once");
+  }
+  let frozenAuthority = await resolveFrozenSuccessorAuthority(db, input);
+  const requestedCharacterIds = unique(input.castDirections.flatMap((change) => change.participants.map((participant) => participant.castId)));
+  const scriptCastIds = new Set(frozenAuthority.frozenScript.scenes.flatMap((scene) => (scene.castReferences ?? []).map((reference) => reference.id)));
+  const missingCharacterIds = requestedCharacterIds.filter((characterId) => !scriptCastIds.has(characterId));
+  if (missingCharacterIds.length > 0) {
+    const characterRows = await db.select({
+      characterId: schema.aiStoryCharacters.characterId,
+      status: schema.aiStoryCharacters.status,
+      currentCharacterVersionId: schema.aiStoryCharacters.currentCharacterVersionId,
+      snapshot: schema.aiStoryCharacterVersions.snapshot,
+    }).from(schema.aiStoryCharacters)
+      .innerJoin(schema.aiStoryCharacterVersions, eq(schema.aiStoryCharacterVersions.characterVersionId, schema.aiStoryCharacters.currentCharacterVersionId))
+      .where(and(
+        inArray(schema.aiStoryCharacters.characterId, missingCharacterIds),
+        eq(schema.aiStoryCharacters.orgId, input.orgId),
+        eq(schema.aiStoryCharacters.workspaceId, input.workspaceId),
+        eq(schema.aiStoryCharacters.campaignId, input.campaignId),
+      ));
+    const currentCharacters = new Map(characterRows
+      .filter((row) => row.status === "ACTIVE")
+      .map((row) => {
+        const character = AiStoryCharacterAuthorityVersionSchema.parse(row.snapshot);
+        return [character.characterId, character] as const;
+      }));
+    if (missingCharacterIds.some((characterId) => !currentCharacters.has(characterId))) {
+      throw new AiStoryGenerationStrategyRecoveryError("SCENE_CAST_SUCCESSOR_AUTHORITY_INVALID", "Selected Cast must resolve to an active current Campaign Character authority");
+    }
+    const requestByOrder = new Map(source.scenePlan.map((scene) => [scene.order, requested.get(scene.id)] as const));
+    const scenes = frozenAuthority.frozenScript.scenes.map((scene) => {
+      const request = requestByOrder.get(scene.order);
+      if (!request) return scene;
+      const references = new Map((scene.castReferences ?? []).map((reference) => [reference.id, reference] as const));
+      for (const participant of request.participants) {
+        if (references.has(participant.castId)) continue;
+        const character = currentCharacters.get(participant.castId);
+        if (!character) continue;
+        references.set(character.characterId, {
+          scope: "CAMPAIGN_CHARACTER",
+          id: character.characterId,
+          campaignId: input.campaignId,
+          authorityVersionId: character.characterVersionId,
+          authorityFingerprint: character.fingerprint,
+          visualIdentityRequirement: participant.presence === "ON_SCREEN" ? "REQUIRED" : "NONE",
+        });
+      }
+      const entries = scene.entries.map((entry) => {
+        if (entry.type === "DIALOGUE" && references.has(entry.speakerId)) {
+          return { ...entry, speakerCastReference: references.get(entry.speakerId)! };
+        }
+        if (entry.type === "VO" && references.has(entry.voiceOwnerId)) {
+          return { ...entry, voiceOwnerCastReference: references.get(entry.voiceOwnerId)! };
+        }
+        if (entry.type === "ACTION") {
+          const subjectCastReference = references.get(entry.subjectId);
+          const objectCastReference = entry.objectId ? references.get(entry.objectId) : undefined;
+          return {
+            ...entry,
+            ...(subjectCastReference ? { subjectCastReference } : {}),
+            ...(objectCastReference ? { objectCastReference } : {}),
+          };
+        }
+        return entry;
+      });
+      return { ...scene, entries, castReferences: [...references.values()] };
+    });
+    const scriptScope = {
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      campaignId: input.campaignId,
+      storyId: input.storyId,
+      storyVersionId: input.storyVersionId,
+      actorUserId: input.actorUserId,
+      requireCurrentFrozenStoryVersion: true,
+    };
+    const scriptService = new AiStoryScriptAuthorityService(db);
+    const successorScript = buildAiStoryScriptVersion({
+      storyId: frozenAuthority.frozenScript.storyId,
+      storyVersionId: frozenAuthority.frozenScript.storyVersionId,
+      outlineVersionId: frozenAuthority.frozenScript.outlineVersionId,
+      orgId: frozenAuthority.frozenScript.orgId,
+      workspaceId: frozenAuthority.frozenScript.workspaceId,
+      version: frozenAuthority.frozenScript.version + 1,
+      profileId: frozenAuthority.frozenScript.profileId,
+      profileVersion: frozenAuthority.frozenScript.profileVersion,
+      outlineSourceHash: frozenAuthority.frozenScript.outlineSourceHash,
+      semanticInputFingerprint: frozenAuthority.frozenScript.semanticInputFingerprint,
+      scenes,
+      authorityReferences: frozenAuthority.frozenScript.authorityReferences,
+      supersedesScriptVersionId: frozenAuthority.frozenScript.scriptVersionId,
+      createdBy: input.actorUserId,
+      createdAt: new Date().toISOString(),
+    });
+    await scriptService.propose(scriptScope, successorScript);
+    await scriptService.validate(scriptScope, successorScript.scriptVersionId);
+    await scriptService.approve(scriptScope, successorScript.scriptVersionId);
+    await scriptService.freeze(scriptScope, successorScript.scriptVersionId);
+    frozenAuthority = await resolveFrozenSuccessorAuthority(db, input);
+  }
+  const scriptByOrder = new Map(frozenAuthority.frozenScript.scenes.map((scene) => [scene.order, scene] as const));
+  const changes: { sceneId: string; from: AiStorySceneCastDirection | null; to: AiStorySceneCastDirection }[] = [];
+  const castScenePlan = source.scenePlan.map((scene) => {
+    const request = requested.get(scene.id);
+    if (!request) return scene;
+    const script = scriptByOrder.get(scene.order);
+    const allowed = new Map((script?.castReferences ?? []).map((cast) => [cast.id, cast] as const));
+    for (const characterId of script?.characterIds ?? []) {
+      if (allowed.has(characterId)) continue;
+      const reference = frozenAuthority.frozenScript.authorityReferences.find((candidate) => candidate.authorityType === "CHARACTER" && candidate.authorityId === characterId);
+      if (reference?.authorityVersionId && reference.authorityFingerprint) {
+        allowed.set(characterId, {
+          scope: "CAMPAIGN_CHARACTER",
+          id: characterId,
+          campaignId: input.campaignId,
+          authorityVersionId: reference.authorityVersionId,
+          authorityFingerprint: reference.authorityFingerprint,
+          visualIdentityRequirement: "PREFERRED",
+        });
+      }
+    }
+    if (!script || request.participants.some((participant) => !allowed.has(participant.castId))) {
+      throw new AiStoryGenerationStrategyRecoveryError("SCENE_CAST_SUCCESSOR_AUTHORITY_INVALID", `Scene ${scene.id} references Cast outside frozen Script authority`);
+    }
+    const direction = AiStorySceneCastDirectionSchema.parse({
+      mode: request.mode,
+      participants: request.participants.map((participant) => ({
+        cast: allowed.get(participant.castId)!,
+        presence: participant.presence,
+        visualRole: participant.visualRole,
+      })),
+      genericExtras: request.genericExtras,
+    });
+    if (JSON.stringify(scene.castDirection ?? null) !== JSON.stringify(direction)) {
+      changes.push({ sceneId: scene.id, from: scene.castDirection ?? null, to: direction });
+    }
+    return { ...scene, castDirection: direction };
+  });
+  if (changes.length === 0) {
+    throw new AiStoryGenerationStrategyRecoveryError("SCENE_CAST_SUCCESSOR_NO_CHANGE", "Requested Scene cast decisions match the current Planning revision");
+  }
+  const semanticAncestor = await resolvePlanningSemanticAncestor(sourceRow, loadPackage);
+  const scenePlan = recoverScenePlanGenerationAuthorities(castScenePlan, frozenAuthority);
+  const shotPlanBase = bindProductShotCameraSafety({ scenePlan, shotPlan: source.shotPlan });
+  const castRecovery = {
+    contractVersion: "ai-story-scene-cast-successor.v1" as const,
+    supersedesAnimationPackageId: sourceRow.id,
+    changes,
+    authorizedBy: input.actorUserId,
+    externalAiCalls: 0 as const,
+  };
+  const draftRow = await savePlanningDraft(db, {
+    ...input,
+    payload: StoryPlanningDraftSchema.parse({
+      kind: "planning_draft",
+      completedStages: ["creative_context", "director_thinking", "story_beats", "scene_plan", "shot_plan", "character_continuity", "world_continuity"],
+      story: source.story,
+      creativeContext: source.creativeContext,
+      directorThinking: source.directorThinking,
+      storyBeats: source.storyBeats,
+      scenePlan,
+      shotPlan: shotPlanBase,
+      characterContinuity: source.characterContinuity,
+      worldContinuity: source.worldContinuity,
+      episodeContinuity: source.episodeContinuity,
+      usage: source.usage,
+      castRecovery,
+    }),
+  });
+  const shotPlan = shotPlanBase.map((shot) => {
+    if (!shot.authorityLineage) return shot;
+    const scene = scenePlan.find((item) => item.id === shot.sceneId);
+    return scene?.generationAuthority
+      ? { ...shot, authorityLineage: { ...shot.authorityLineage, planningPackageId: draftRow.id, generationAuthority: scene.generationAuthority } }
+      : shot;
+  });
+  const canonicalScenes = await ensureCurrentFrozenCanonicalSceneSet({
+    db,
+    ...input,
+    story: source.story,
+    storyBeats: source.storyBeats,
+    scenePlan,
+    priorScenePlanForStrategySuccessor: semanticAncestor.scenePlan,
+    allowAuthorizedDurationChanges: semanticAncestor.durationAdjusted,
+    allowAuthorizedCastChanges: true,
+    creativeContext: source.creativeContext,
+    directorThinking: source.directorThinking,
+    worldContinuity: source.worldContinuity,
+    characterAuthorities: source.creativeContext.characterContext.characters.flatMap((character) => character.canonicalAuthority ? [character.canonicalAuthority] : []),
+    ...(input.episodeIntent ? { episodeIntent: input.episodeIntent } : {}),
+  });
+  const successorPayload = AuthoritativeAnimationPackagePayloadSchema.parse({
+    ...source,
+    sourcePlanningPackageId: draftRow.id,
+    scenePlan,
+    shotPlan,
+    canonicalSceneAuthority: buildAiStoryAnimationPackageCanonicalSceneAuthorityV1({ storyId: input.storyId, storyVersionId: input.storyVersionId, scenePlan, canonicalScenes }),
+    executionCapabilityAuthority: undefined,
+    strategyRecovery: undefined,
+    durationRecovery: undefined,
+    castRecovery,
+    status: "review",
+  });
+  const successor = await saveAnimationPackage(db, { ...input, payload: successorPayload });
+  await db.update(schema.aiStoryAnimationPackages).set({
+    status: "superseded",
+    payload: AnimationPackagePayloadSchema.parse({ ...source, status: "superseded" }),
+    updatedAt: new Date(),
+  }).where(eq(schema.aiStoryAnimationPackages.id, sourceRow.id));
+  return { sourcePackageId: sourceRow.id, planningDraftId: draftRow.id, animationPackage: successor, changes, externalAiCalls: 0 as const };
 }
 
 export async function approveAnimationPackage(
