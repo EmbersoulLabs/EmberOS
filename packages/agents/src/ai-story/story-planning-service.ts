@@ -811,7 +811,7 @@ export async function generateScenePlan(input: {
   const completion = await callStructuredJsonModel({
     system: [
       "You are an animation scene planner.",
-      "Create scenes that cover every story beat, merging beats only when continuityNotes explicitly say which beat was merged.",
+      `Create scenes that cover every story beat. Every supplied Beat ID must appear in beatIds exactly once across the complete Scene Plan: ${JSON.stringify(input.storyBeats.map((beat) => beat.id))}. When multiple Beats share one Scene, include every merged Beat ID in that Scene's beatIds and name the merge in continuityNotes. Never omit a Beat, including a CTA Beat.`,
       "Use sequential order values starting at 0 and stable scene ids.",
       `Every Scene is generated as one video unit: durationSec must be a whole number of seconds from ${AI_STORY_EXECUTION_UNIT_MIN_SEC} to ${AI_STORY_EXECUTION_UNIT_MAX_SEC}. When the Episode is short, plan fewer Scenes and record which beats were merged in continuityNotes instead of creating shorter Scenes.`,
       "For EVERY Scene propose an explicit generationAuthority from its actual creative needs and accepted Asset authority. Use reference-free TEXT_TO_VIDEO only for genuinely reference-free Scenes; use PRODUCT_GROUNDED_VIDEO with STORY_INHERITED when the Scene consumes exactly one accepted PRODUCT_AUTHORITY; use FIRST_FRAME_IMAGE_TO_VIDEO with SCENE_EXPLICIT only when an exact accepted opening frame is required. Never choose a mode merely because an Asset exists, and never invent an Asset ID.",

@@ -109,6 +109,12 @@ describe("AI Story Scene Plan strict structured output", () => {
       schemaName: "ai_story_scene_plan_v1",
       certificationStage: "scene_plan",
     }));
+    expect(callStructuredJsonModel.mock.calls[0]?.[0]?.system).toContain(
+      'Every supplied Beat ID must appear in beatIds exactly once across the complete Scene Plan: ["beat-001"]',
+    );
+    expect(callStructuredJsonModel.mock.calls[0]?.[0]?.system).toContain(
+      "Never omit a Beat, including a CTA Beat.",
+    );
     const structuredSchema = callStructuredJsonModel.mock.calls[0]?.[0]?.schema;
     expect(structuredSchema.safeParse({
       ...validProviderResult,
