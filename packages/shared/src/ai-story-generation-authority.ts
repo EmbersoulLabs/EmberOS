@@ -31,7 +31,10 @@ export const AiStorySceneGenerationAuthoritySchema = z.union([
     z.object({
       strategy: z.literal("TEXT_TO_VIDEO"),
       referenceSource: z.literal("CHARACTER_SYNTHETIC_ANCHOR"),
-      referenceAssetIds: z.array(AssetId).length(1),
+      // The canonical authority may bind one reference per explicitly chosen
+      // on-screen identity. Runtime support is still fail-closed against the
+      // selected execution environment's maxCharacterReferences capability.
+      referenceAssetIds: z.array(AssetId).min(1).max(8),
       firstFrameAssetId: z.null().default(null),
       productVisualIdentityRequirement: z.literal("NONE").default("NONE"),
     }).strict(),
