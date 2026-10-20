@@ -3,7 +3,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, resolveCurrentFrozenScriptForStoryVersion, schema } from "@ceo-agent/db";
+import { AiStoryScriptAuthorityService, ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, resolveCurrentFrozenScriptForStoryVersion, schema } from "@ceo-agent/db";
 import { AiStoryPlanningCharacterAuthorityError, projectAcceptedCharactersToPlanning, refreshBoundCharacterAuthority } from "@ceo-agent/agents";
 import {
   AuthoritativeAnimationPackagePayloadSchema,
@@ -26,7 +26,7 @@ import {
   applyExecutionUnitDurationChanges,
   bindProductShotCameraSafety,
 } from "@ceo-agent/shared";
-import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiStoryAnimationPackageCanonicalSceneAuthorityV1, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
+import { assertAiStoryAnimationPackageCanonicalSceneAuthorityCurrent, buildAiStoryAnimationPackageCanonicalSceneAuthorityV1, buildAiStoryScriptVersion, sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { revalidatePlanningProductMaterialAuthority } from "@/lib/ai-story-product-material-runtime";
 import { assertFreshExecutionCapabilityAuthority } from "@/lib/ai-story-execution-capability";
 import {
@@ -930,7 +930,86 @@ export async function createSceneCastSuccessor(
   if (requested.size !== input.castDirections.length || [...requested.keys()].some((id) => !source.scenePlan.some((scene) => scene.id === id))) {
     throw new AiStoryGenerationStrategyRecoveryError("SCENE_CAST_SUCCESSOR_SCENE_INVALID", "Scene cast decisions must target each existing Scene at most once");
   }
-  const frozenAuthority = await resolveFrozenSuccessorAuthority(db, input);
+  let frozenAuthority = await resolveFrozenSuccessorAuthority(db, input);
+  const requestedCharacterIds = unique(input.castDirections.flatMap((change) => change.participants.map((participant) => participant.castId)));
+  const scriptCastIds = new Set(frozenAuthority.frozenScript.scenes.flatMap((scene) => (scene.castReferences ?? []).map((reference) => reference.id)));
+  const missingCharacterIds = requestedCharacterIds.filter((characterId) => !scriptCastIds.has(characterId));
+  if (missingCharacterIds.length > 0) {
+    const characterRows = await db.select({
+      characterId: schema.aiStoryCharacters.characterId,
+      status: schema.aiStoryCharacters.status,
+      currentCharacterVersionId: schema.aiStoryCharacters.currentCharacterVersionId,
+      snapshot: schema.aiStoryCharacterVersions.snapshot,
+    }).from(schema.aiStoryCharacters)
+      .innerJoin(schema.aiStoryCharacterVersions, eq(schema.aiStoryCharacterVersions.characterVersionId, schema.aiStoryCharacters.currentCharacterVersionId))
+      .where(and(
+        inArray(schema.aiStoryCharacters.characterId, missingCharacterIds),
+        eq(schema.aiStoryCharacters.orgId, input.orgId),
+        eq(schema.aiStoryCharacters.workspaceId, input.workspaceId),
+        eq(schema.aiStoryCharacters.campaignId, input.campaignId),
+      ));
+    const currentCharacters = new Map(characterRows
+      .filter((row) => row.status === "ACTIVE")
+      .map((row) => {
+        const character = AiStoryCharacterAuthorityVersionSchema.parse(row.snapshot);
+        return [character.characterId, character] as const;
+      }));
+    if (missingCharacterIds.some((characterId) => !currentCharacters.has(characterId))) {
+      throw new AiStoryGenerationStrategyRecoveryError("SCENE_CAST_SUCCESSOR_AUTHORITY_INVALID", "Selected Cast must resolve to an active current Campaign Character authority");
+    }
+    const requestByOrder = new Map(source.scenePlan.map((scene) => [scene.order, requested.get(scene.id)] as const));
+    const scenes = frozenAuthority.frozenScript.scenes.map((scene) => {
+      const request = requestByOrder.get(scene.order);
+      if (!request) return scene;
+      const references = new Map((scene.castReferences ?? []).map((reference) => [reference.id, reference] as const));
+      for (const participant of request.participants) {
+        if (references.has(participant.castId)) continue;
+        const character = currentCharacters.get(participant.castId);
+        if (!character) continue;
+        references.set(character.characterId, {
+          scope: "CAMPAIGN_CHARACTER",
+          id: character.characterId,
+          campaignId: input.campaignId,
+          authorityVersionId: character.characterVersionId,
+          authorityFingerprint: character.fingerprint,
+          visualIdentityRequirement: participant.presence === "ON_SCREEN" ? "REQUIRED" : "NONE",
+        });
+      }
+      return { ...scene, castReferences: [...references.values()] };
+    });
+    const scriptScope = {
+      orgId: input.orgId,
+      workspaceId: input.workspaceId,
+      campaignId: input.campaignId,
+      storyId: input.storyId,
+      storyVersionId: input.storyVersionId,
+      actorUserId: input.actorUserId,
+      requireCurrentFrozenStoryVersion: true,
+    };
+    const scriptService = new AiStoryScriptAuthorityService(db);
+    const successorScript = buildAiStoryScriptVersion({
+      storyId: frozenAuthority.frozenScript.storyId,
+      storyVersionId: frozenAuthority.frozenScript.storyVersionId,
+      outlineVersionId: frozenAuthority.frozenScript.outlineVersionId,
+      orgId: frozenAuthority.frozenScript.orgId,
+      workspaceId: frozenAuthority.frozenScript.workspaceId,
+      version: frozenAuthority.frozenScript.version + 1,
+      profileId: frozenAuthority.frozenScript.profileId,
+      profileVersion: frozenAuthority.frozenScript.profileVersion,
+      outlineSourceHash: frozenAuthority.frozenScript.outlineSourceHash,
+      semanticInputFingerprint: frozenAuthority.frozenScript.semanticInputFingerprint,
+      scenes,
+      authorityReferences: frozenAuthority.frozenScript.authorityReferences,
+      supersedesScriptVersionId: frozenAuthority.frozenScript.scriptVersionId,
+      createdBy: input.actorUserId,
+      createdAt: new Date().toISOString(),
+    });
+    await scriptService.propose(scriptScope, successorScript);
+    await scriptService.validate(scriptScope, successorScript.scriptVersionId);
+    await scriptService.approve(scriptScope, successorScript.scriptVersionId);
+    await scriptService.freeze(scriptScope, successorScript.scriptVersionId);
+    frozenAuthority = await resolveFrozenSuccessorAuthority(db, input);
+  }
   const scriptByOrder = new Map(frozenAuthority.frozenScript.scenes.map((scene) => [scene.order, scene] as const));
   const changes: { sceneId: string; from: AiStorySceneCastDirection | null; to: AiStorySceneCastDirection }[] = [];
   const castScenePlan = source.scenePlan.map((scene) => {
