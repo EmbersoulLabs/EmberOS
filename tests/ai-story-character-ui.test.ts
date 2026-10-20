@@ -19,7 +19,10 @@ describe("AI Story Character Panel source boundary", () => {
   it("mounts inside AI Story and exposes no Provider or fingerprint internals", () => {
     const page = read("apps/web/src/app/w/[slug]/campaigns/[id]/ai-stories/[storyId]/page.tsx");
     const component = read("apps/web/src/components/ai-story/CharacterPanel.tsx").toLowerCase();
-    expect(page).toContain("<CharacterPanel campaignId={campaignId} canEdit={advancedAuthorized}");
+    expect(page).toContain("<CharacterPanel");
+    expect(page).toContain("campaignId={campaignId}");
+    expect(page).toContain("storyId={storyId}");
+    expect(page).toContain("canEdit={advancedAuthorized}");
     for (const forbidden of ["seedance", "provider mapping", "fingerprint", "characterVersionId"]) expect(component).not.toContain(forbidden.toLowerCase());
   });
 

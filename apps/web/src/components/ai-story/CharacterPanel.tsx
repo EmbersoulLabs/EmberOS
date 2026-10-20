@@ -26,10 +26,12 @@ const empty: AiStoryCharacterMutationInput = {
 
 export function CharacterPanel({
   campaignId,
+  storyId,
   canEdit,
   initialCharacters,
 }: {
   campaignId: string;
+  storyId?: string;
   canEdit: boolean;
   initialCharacters?: AiStoryCharacterAuthorityVersion[];
 }) {
@@ -42,6 +44,7 @@ export function CharacterPanel({
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photoPreviews, setPhotoPreviews] = useState<Record<string, string>>(
     {},
@@ -192,6 +195,7 @@ export function CharacterPanel({
       const data = await response.json();
       if (!response.ok)
         throw new Error(data.error ?? "Character could not be saved");
+      if (editing && storyId) await synchronizeCurrentStory(String(data.character.characterId));
       setOpen(false);
       await load();
     } catch (reason) {
@@ -203,6 +207,19 @@ export function CharacterPanel({
     } finally {
       setBusy(false);
     }
+  }
+  async function synchronizeCurrentStory(characterId: string) {
+    if (!storyId) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`/api/campaigns/${campaignId}/characters/${characterId}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storyId }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "Character authority could not be synchronized");
+      setNotice("Current Story Planning now uses this Character successor. No AI call was made.");
+    } finally { setBusy(false); }
   }
   async function remove(character: AiStoryCharacterAuthorityVersion) {
     if (
@@ -384,6 +401,7 @@ export function CharacterPanel({
           {error}
         </p>
       ) : null}
+      {notice ? <p className="mt-3 text-sm text-emerald-700" role="status">{notice}</p> : null}
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         {characters.length ? (
           characters.map((character) => (
@@ -416,6 +434,16 @@ export function CharacterPanel({
                   >
                     Edit
                   </button>
+                  {storyId ? <button
+                    type="button"
+                    className="rounded-lg border border-border px-3 py-1.5 text-sm"
+                    disabled={busy}
+                    onClick={() => void synchronizeCurrentStory(character.characterId).catch((reason) =>
+                      setError(reason instanceof Error ? reason.message : "Character authority could not be synchronized")
+                    )}
+                  >
+                    Sync current Story
+                  </button> : null}
                   <button
                     type="button"
                     className="rounded-lg border border-border px-3 py-1.5 text-sm"

@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApprovedAnimationPackageAuthorityError, getDb, resolveCurrentFrozenCanonicalSceneSet, resolveCurrentFrozenScriptForStoryVersion, schema } from "@ceo-agent/db";
+import { AiStoryPlanningCharacterAuthorityError, projectAcceptedCharactersToPlanning, refreshBoundCharacterAuthority } from "@ceo-agent/agents";
 import {
   AuthoritativeAnimationPackagePayloadSchema,
   AnimationPackagePayloadSchema,
@@ -86,6 +87,98 @@ export class AiStoryPlanningDialogueRevisionError extends Error {
     super(message);
     this.name = "AiStoryPlanningDialogueRevisionError";
   }
+}
+
+export class AiStoryPreDirectorCharacterSyncError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = "AiStoryPreDirectorCharacterSyncError";
+  }
+}
+
+/** Atomically rebind one accepted Character successor without another Provider call. */
+export async function synchronizePreDirectorCharacterAuthority(
+  db: Db,
+  input: {
+    orgId: string; workspaceId: string; campaignId: string; storyId: string;
+    storyVersionId: string; character: AiStoryCharacterAuthorityVersion;
+  }
+) {
+  const character = AiStoryCharacterAuthorityVersionSchema.parse(input.character);
+  const [authority] = projectAcceptedCharactersToPlanning({
+    orgId: input.orgId, workspaceId: input.workspaceId,
+    campaignId: input.campaignId, characters: [character],
+  });
+  if (!authority) {
+    throw new AiStoryPreDirectorCharacterSyncError(
+      "PLANNING_CHARACTER_AUTHORITY_REQUIRED", "Current Character authority is unavailable"
+    );
+  }
+  return db.transaction(async (tx) => {
+    const [latestPackage] = await tx.select().from(schema.aiStoryAnimationPackages)
+      .where(and(
+        eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+        eq(schema.aiStoryAnimationPackages.campaignId, input.campaignId),
+        eq(schema.aiStoryAnimationPackages.storyId, input.storyId),
+        eq(schema.aiStoryAnimationPackages.storyVersionId, input.storyVersionId)
+      )).orderBy(desc(schema.aiStoryAnimationPackages.createdAt)).limit(1);
+    if (!latestPackage || !isStoryPlanningDraft(latestPackage.payload)) {
+      throw new AiStoryPreDirectorCharacterSyncError(
+        "PLANNING_CHARACTER_SUCCESSOR_REQUIRED",
+        "Character authority can only be synchronized while the Story is in Planning"
+      );
+    }
+    const currentDraft = StoryPlanningDraftSchema.parse(latestPackage.payload);
+    if (currentDraft.completedStages.some((stage) => stage !== "creative_context")) {
+      throw new AiStoryPreDirectorCharacterSyncError(
+        "PLANNING_CHARACTER_SUCCESSOR_REQUIRED",
+        "Director or later authority already exists; create a durable Episode successor"
+      );
+    }
+    if (!currentDraft.creativeContext) {
+      throw new AiStoryPreDirectorCharacterSyncError(
+        "PLANNING_CHARACTER_CONTEXT_REQUIRED",
+        "Creative Context is required before Character authority can be synchronized"
+      );
+    }
+    let creativeContext: CreativeContext;
+    try {
+      creativeContext = refreshBoundCharacterAuthority({
+        creativeContext: currentDraft.creativeContext, characterAuthority: authority,
+      });
+    } catch (error) {
+      if (error instanceof AiStoryPlanningCharacterAuthorityError) {
+        throw new AiStoryPreDirectorCharacterSyncError(
+          "PLANNING_CHARACTER_NOT_BOUND", "This Character is not accepted in the current Story"
+        );
+      }
+      throw error;
+    }
+    const nextDraft = StoryPlanningDraftSchema.parse({
+      ...currentDraft, creativeContext, completedStages: ["creative_context"],
+    });
+    const [context] = await tx.insert(schema.aiStoryCreativeContexts).values({
+      orgId: input.orgId, workspaceId: input.workspaceId,
+      campaignId: input.campaignId, storyId: input.storyId,
+      storyVersionId: input.storyVersionId, payload: creativeContext,
+    }).returning();
+    const [planningDraft] = await tx.update(schema.aiStoryAnimationPackages)
+      .set({ payload: nextDraft, updatedAt: new Date() })
+      .where(and(
+        eq(schema.aiStoryAnimationPackages.id, latestPackage.id),
+        eq(schema.aiStoryAnimationPackages.orgId, input.orgId),
+        eq(schema.aiStoryAnimationPackages.workspaceId, input.workspaceId),
+        eq(schema.aiStoryAnimationPackages.storyId, input.storyId)
+      )).returning();
+    if (!context || !planningDraft) {
+      throw new AiStoryPreDirectorCharacterSyncError(
+        "PLANNING_CHARACTER_WRITE_CONFLICT",
+        "Character authority synchronization could not be persisted atomically"
+      );
+    }
+    return { context, planningDraft, providerCalls: 0 as const };
+  });
 }
 
 export function applyUserAuthoredDialogueToPlanningDraft(

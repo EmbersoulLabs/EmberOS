@@ -128,6 +128,33 @@ export function bindProposalToAcceptedCharacter(input: {
   });
 }
 
+/** Rebind an accepted pre-Director Character to an exact Campaign successor. */
+export function refreshBoundCharacterAuthority(input: {
+  creativeContext: CreativeContext;
+  characterAuthority: PlanningCharacterAuthorityProjection;
+}): CreativeContext {
+  const creativeContext = CreativeContextSchema.parse(input.creativeContext);
+  const authority = PlanningCharacterAuthorityProjectionSchema.parse(input.characterAuthority);
+  const matches = creativeContext.characterContext.characters.filter((character) =>
+    character.id === authority.characterId && character.canonicalAuthority?.characterId === authority.characterId
+  );
+  if (matches.length !== 1) {
+    throw new AiStoryPlanningCharacterAuthorityError(
+      "CHARACTER_PROPOSAL_NOT_FOUND",
+      `Creative Context does not carry exactly one accepted Character ${authority.characterId}`,
+    );
+  }
+  return CreativeContextSchema.parse({
+    ...creativeContext,
+    characterContext: {
+      ...creativeContext.characterContext,
+      characters: creativeContext.characterContext.characters.map((character) =>
+        character.id === authority.characterId ? compatibilityCharacter(character, authority) : character
+      ),
+    },
+  });
+}
+
 /**
  * A Creative Context character is Script authority only after explicit acceptance.
  * Proposal ids such as proposed_character_1 are not canonical, and this does not
