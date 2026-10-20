@@ -346,6 +346,32 @@ describe("AI Story Canonical Script Semantic Writer V1", () => {
     expect(schema.safeParse(structuredProviderProposal()).success).toBe(false);
   });
 
+  it("requires an opening narrative state transition when commercial Product integration is absent", () => {
+    const schema = providerSchema({
+      commercial: true,
+      stateChangeAnchorSceneIndex: null,
+      commercialAnchorRequired: false,
+      commercialIntegrationAnchorSceneIndex: null,
+      physicalCommercialParticipationRequired: false,
+      commercialAuthorityIds: [],
+      productAuthorityIds: [],
+    });
+    const value = providerTransport(commercialProviderProposal(1));
+    value.scenesByOrder.scene_0!.visibleAction.objectId = null;
+    value.scenesByOrder.scene_1!.visibleAction.objectId = null;
+    value.scenesByOrder.scene_0!.sceneStateDeltas = [];
+    expect(schema.safeParse(value).success).toBe(false);
+    value.scenesByOrder.scene_0!.sceneStateDeltas = [{
+      dimension: "PHYSICAL_CONDITION",
+      subjectId: I.character,
+      fromValue: "Preparing dough at the griddle",
+      value: "A thin wrapper has formed on the griddle",
+      reason: "The authorized Character's visible spreading action forms the wrapper",
+    }];
+    value.scenesByOrder.scene_1!.sceneStateDeltas = [];
+    expect(schema.safeParse(value).success).toBe(true);
+  });
+
   it("resolves the commercial state-change anchor from exact SCENE_ORDER authority", () => {
     const source = commercialOutline();
     const withSceneOrder = AiStoryOutlineVersionSchema.parse({

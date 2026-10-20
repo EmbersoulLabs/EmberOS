@@ -141,6 +141,13 @@ export function classifyCommercialScriptIntegrationContract(
 
 export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScriptSemanticProviderSchemaInput) {
   const { commercial, sceneCount, stateChangeAnchorSceneIndex } = input;
+  // Every COMMERCIAL_STORY needs one real story-world transition. Product-
+  // anchored stories bind it to the frozen integration Scene; a legitimate
+  // narrative-only story binds it to the opening Scene. This prevents a paid
+  // proposal that can only fail the downstream state/causality gates.
+  const requiredStateChangeAnchorSceneIndex = commercial
+    ? stateChangeAnchorSceneIndex ?? 0
+    : stateChangeAnchorSceneIndex;
   const commercialAnchorRequired = input.commercialAnchorRequired ?? commercial;
   const commercialIntegrationAnchorSceneIndex = input.commercialIntegrationAnchorSceneIndex
     ?? stateChangeAnchorSceneIndex;
@@ -280,7 +287,7 @@ export function buildAiStoryScriptSemanticProviderOutputSchema(input: AiStoryScr
         sceneStateIn: z.array(stateFact),
         sceneStateOut: z.array(stateFact),
       }),
-      sceneStateDeltas: index === stateChangeAnchorSceneIndex
+      sceneStateDeltas: index === requiredStateChangeAnchorSceneIndex
         ? commercialProductStateDelta
           ? z.array(commercialProductStateDelta).length(1)
           : z.array(stateDelta).min(1)
@@ -641,7 +648,8 @@ export async function generateAiStoryScriptSemanticProposalV1(
         ] : []),
         ...(stateChangeAnchorSceneIndex === null ? [
           "This Commercial Story has no product integration. Do not invent a Product, product authority, commercial entry point, or PRODUCT_STATE delta.",
-          "Narrative state may change only through a visible character action. Copy unchanged facts forward. Other Scenes may have no state delta when nothing changes.",
+          "Scene array index 0 is the required narrative state-change anchor. It must contain at least one meaningful non-camera state delta for an exact authorized Character, caused by its visibleAction. Use the Character's real physical, knowledge, commitment, relationship, or location progression; never invent Product identity or Product state.",
+          "Narrative state may change only through a visible character action. Copy unchanged facts forward. Other Scenes may have no state delta when nothing changes, and later Scenes must state causalPreconditions when their progression depends on the preceding Scene's outcome.",
         ] : [
           `Scene array index ${stateChangeAnchorSceneIndex} is the frozen commercial-integration state-change anchor. For physical Product or Offer participation, that Scene must contain exactly one PRODUCT_STATE sceneStateDelta for the exact authorized commercial Product, with a non-null fromValue and a changed value. Other Scenes may have no state delta when nothing changes.`,
           "PRODUCT PRESENCE is not PRODUCT PARTICIPATION. A product id, a visible prop, or dialogue that mentions the product does not integrate it.",
