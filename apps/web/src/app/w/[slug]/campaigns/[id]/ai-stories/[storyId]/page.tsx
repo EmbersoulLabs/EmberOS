@@ -383,7 +383,7 @@ export default function AiStoryReviewPage() {
           {!readOnly ? <div className="flex flex-wrap gap-3"><button type="button" disabled={busy} onClick={() => void requestPolishPreview()} className="rounded-lg border border-border px-4 py-2 text-sm font-medium">{busy ? "Polishing…" : "AI Polish"}</button><button type="button" disabled={busy || saveState === "SAVING"} onClick={() => void approveStoryForAnimation()} className="brand-btn-primary">Generate Episode</button></div> : null}
         </section>
 
-         <CharacterPanel campaignId={campaignId} canEdit={advancedAuthorized} initialCharacters={initialCharacters} />
+         <CharacterPanel campaignId={campaignId} storyId={storyId} canEdit={advancedAuthorized} initialCharacters={initialCharacters} />
          <CharacterIdentityReviewPanel onSameCharacter={() => undefined} onIdentityDrift={() => undefined} />
          <SupportingCastPanel campaignId={campaignId} storyId={storyId} canEdit={advancedAuthorized} initialSupportingCharacters={initialSupportingCharacters} />
 

@@ -8,6 +8,7 @@ import {
   bindCharacterContinuityToCharacterAuthority,
   bindCreativeContextToCharacterAuthority,
   projectAcceptedCharactersToPlanning,
+  refreshBoundCharacterAuthority,
 } from "../packages/agents/src/ai-story/character-authority-planning";
 import { resolveEffectiveSceneGenerationAuthority } from "../packages/agents/src/ai-story/scene-execution-compiler";
 
@@ -191,6 +192,28 @@ describe("AI Story canonical Character authority Planning bridge", () => {
     expect(() =>
       assertPlanningCharacterAuthorityCurrent({ creativeContext, characterAuthorities: stale })
     ).toThrowError(/stale/i);
+  });
+
+  it("deterministically refreshes an accepted pre-Director Character successor", () => {
+    const prior = maraVersion();
+    const [priorAuthority] = projectAcceptedCharactersToPlanning({ ...scope, characters: [prior] });
+    const creativeContext = bindCreativeContextToCharacterAuthority({
+      creativeContext: generatedContext({ id: prior.characterId, name: prior.name, role: "Lead" }),
+      characterAuthorities: [priorAuthority!],
+    });
+    const successor = buildAiStoryCharacterVersion({
+      characterId: prior.characterId, ...scope, version: 3, status: "ACTIVE",
+      facts: { name: prior.name, ...prior.canonicalFacts, visualAssetIds: [id(20)] },
+      visualAssetReferences: [{ assetId: id(20), contentHash: `sha256:${"a".repeat(64)}`, purpose: "CHARACTER_VISUAL_REFERENCE" }],
+      supersedesCharacterVersionId: prior.characterVersionId,
+      createdBy: id(8), createdAt: "2026-09-09T05:00:00.000Z",
+    });
+    const [successorAuthority] = projectAcceptedCharactersToPlanning({ ...scope, characters: [successor] });
+    const refreshed = refreshBoundCharacterAuthority({ creativeContext, characterAuthority: successorAuthority! });
+
+    expect(refreshed.characterContext.characters[0]?.canonicalAuthority).toEqual(successorAuthority);
+    expect(refreshed.characterContext.characters[0]?.role).toBe("Lead");
+    expect(refreshed.narrativeContext).toEqual(creativeContext.narrativeContext);
   });
 
   it("keeps human reference-free T2V reference-free while retaining text authority", () => {
