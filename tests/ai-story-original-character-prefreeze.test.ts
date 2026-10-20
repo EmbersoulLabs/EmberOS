@@ -175,9 +175,9 @@ describe("original character acceptance before outline freeze", () => {
       });
       callStructuredJsonModel.mockResolvedValueOnce({ result: { shotsByScene: Object.fromEntries([0, 1, 2, 3].map((index) => [`scene_${index}`, [shot(index)]])) }, usage: USAGE });
       const shots = await generateShotPlan({ story: STORY, creativeContext: bound as never, directorThinking: DIRECTOR, storyBeats: beats(), scenePlan: scenes(), canonicalScript: script });
-      callJsonModel.mockResolvedValueOnce({ result: { characterContinuity: [{ characterId: I.character, name: "Origin", appearance: authority!.canonicalFacts.appearance, emotion: "Quiet", identity: authority!.canonicalFacts.identity }] }, usage: USAGE });
+      callStructuredJsonModel.mockResolvedValueOnce({ result: { characterContinuity: [{ characterId: I.character, name: "Origin", appearance: authority!.canonicalFacts.appearance, emotion: "Quiet", identity: authority!.canonicalFacts.identity }] }, usage: USAGE });
       const continuity = await generateCharacterContinuity({ creativeContext: bound as never, directorThinking: DIRECTOR, storyBeats: beats(), scenePlan: scenes(), shotPlan: shots.shotPlan });
-      callJsonModel.mockResolvedValueOnce({ result: { worldContinuity: { location: "A quiet room", lighting: "Soft", environment: "No product is present.", objects: ["Table"], timeline: "One moment", worldRules: ["Nothing is added."] } }, usage: USAGE });
+      callStructuredJsonModel.mockResolvedValueOnce({ result: { worldContinuity: { location: "A quiet room", lighting: "Soft", environment: "No product is present.", objects: ["Table"], timeline: "One moment", worldRules: ["Nothing is added."] } }, usage: USAGE });
       const world = await generateWorldContinuity({ creativeContext: bound as never, directorThinking: DIRECTOR, storyBeats: beats(), scenePlan: scenes(), shotPlan: shots.shotPlan });
       const canonicalScenes = composeAiStoryCanonicalSceneSetV1({
         orgId: I.org, workspaceId: I.workspace, campaignId: I.campaign, storyId: I.story, storyVersionId: I.storyVersion, actorUserId: I.actor,
@@ -192,8 +192,10 @@ describe("original character acceptance before outline freeze", () => {
       expect(JSON.stringify(canonicalScenes)).not.toContain("proposed_character_1");
       expect(JSON.stringify(canonicalScenes)).not.toContain("PRODUCT_STATE");
     }
-    expect(callStructuredJsonModel).toHaveBeenCalledTimes(4);
-    expect(callJsonModel).toHaveBeenCalledTimes(4);
+    expect(callStructuredJsonModel).toHaveBeenCalledTimes(8);
+    expect(callJsonModel).not.toHaveBeenCalled();
+    expect(callStructuredJsonModel.mock.calls.filter(([request]) => request.schemaName === "ai_story_character_continuity_v1")).toHaveLength(2);
+    expect(callStructuredJsonModel.mock.calls.filter(([request]) => request.schemaName === "ai_story_world_continuity_v1")).toHaveLength(2);
   });
 
   it("rejects name matching, another workspace, and use of the proposal key as the Character ID", () => {
