@@ -386,7 +386,13 @@ export async function runSinglePlanningStage(input: {
   }
 
   const ctx = await loadAiStoryPlanningContext(db, campaignId, storyId, input.actorUserId);
-  const reused = await reuseDurablePlanningStage({ db, ctx, campaignId, storyId, stage });
+  // An explicit regeneration identity is a new, authorized logical call. It
+  // must not be short-circuited by the durable result from an earlier call.
+  // Ordinary recovery requests omit this identity and continue to reuse the
+  // persisted stage without another Provider invocation.
+  const reused = input.regenerationIdentity
+    ? null
+    : await reuseDurablePlanningStage({ db, ctx, campaignId, storyId, stage });
   if (reused) return reused;
   let stageCostUsd = 0;
   const certificationScope = {

@@ -53,12 +53,22 @@ describe("durable planning stage reuse", () => {
       resolve("apps/web/src/lib/ai-story-planning-runner.ts"),
       "utf8"
     );
-    const reuse = source.indexOf("const reused = await reuseDurablePlanningStage");
+    const reuse = source.indexOf(": await reuseDurablePlanningStage");
     const prune = source.indexOf("prunePlanningDraftAfterStage(draft, stage)");
     const model = source.indexOf("generateDirectorThinking(");
     expect(reuse).toBeGreaterThan(-1);
     expect(prune).toBeGreaterThan(reuse);
     expect(model).toBeGreaterThan(reuse);
+  });
+
+  it("does not reuse an earlier durable stage for an explicitly authorized regeneration", () => {
+    const source = readFileSync(
+      resolve("apps/web/src/lib/ai-story-planning-runner.ts"),
+      "utf8"
+    );
+    expect(source).toContain("const reused = input.regenerationIdentity");
+    expect(source).toContain("? null");
+    expect(source).toContain(": await reuseDurablePlanningStage");
   });
 
   it("keeps model execution on the worker job and returns the HTTP request after enqueue", () => {
