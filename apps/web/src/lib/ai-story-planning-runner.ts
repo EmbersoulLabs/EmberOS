@@ -37,6 +37,7 @@ import {
   assertScenePlanningGroundingScope,
   STORY_PLANNING_STAGE_ORDER,
   assessBusinessProfileCompletion,
+  materializeExplicitScenePlanMergeClaims,
   normalizeBusinessProfileRecord,
   isUuid,
   prunePlanningDraftAfterStage,
@@ -580,9 +581,13 @@ export async function runSinglePlanningStage(input: {
       });
       usage = addUsage(usage, generated.usage);
       stageCostUsd += generated.usage.costUsd;
+      const scenePlan = materializeExplicitScenePlanMergeClaims({
+        storyBeats: draft.storyBeats!,
+        scenePlan: generated.scenePlan,
+      });
       draft = {
         ...draft,
-        scenePlan: generated.scenePlan,
+        scenePlan,
         completedStages: [
           "creative_context",
           "director_thinking",
@@ -600,6 +605,13 @@ export async function runSinglePlanningStage(input: {
         Boolean(draft.scenePlan?.length),
         "Generate Scene Plan before Shot Plan"
       );
+      draft = {
+        ...draft,
+        scenePlan: materializeExplicitScenePlanMergeClaims({
+          storyBeats: draft.storyBeats!,
+          scenePlan: draft.scenePlan!,
+        }),
+      };
       let canonicalScript;
       if (requiresCanonicalStoryAuthority(ctx.loaded.story.outlineProfile)) {
         assertCreativeCharactersMatchAuthorities({

@@ -5,6 +5,7 @@ import {
   DirectorThinkingSchema,
   STORY_PLANNING_STAGE_ORDER,
   StoryPlanningDraftSchema,
+  materializeExplicitScenePlanMergeClaims,
   prunePlanningDraftAfterStage,
   validatePlanningConsistency,
   type AnimationPackagePayload,
@@ -153,6 +154,42 @@ function samplePackage(): AnimationPackagePayload {
 }
 
 describe("AI Story planning domain", () => {
+  it("materializes one explicit merge note into the canonical Beat ID claim", () => {
+    const storyBeats = [
+      { id: "beat-opening", name: "Opening", purpose: "Open", order: 0, summary: "Open" },
+      { id: "beat-development", name: "Development", purpose: "Develop", order: 1, summary: "Develop" },
+    ];
+    expect(materializeExplicitScenePlanMergeClaims({
+      storyBeats,
+      scenePlan: [{
+        id: "scene-1",
+        beatIds: ["beat-opening"],
+        purpose: "Opening",
+        durationSec: 4,
+        transition: "none",
+        continuityNotes: "Merge Development into the continuous action.",
+        order: 0,
+      }],
+    })[0]!.beatIds).toEqual(["beat-opening", "beat-development"]);
+  });
+
+  it("refuses missing Beat claims without one explicit merge authority", () => {
+    expect(() => materializeExplicitScenePlanMergeClaims({
+      storyBeats: [
+        { id: "beat-opening", name: "Opening", purpose: "Open", order: 0, summary: "Open" },
+        { id: "beat-ending", name: "Ending", purpose: "End", order: 1, summary: "End" },
+      ],
+      scenePlan: [{
+        id: "scene-1",
+        beatIds: ["beat-opening"],
+        purpose: "Opening",
+        durationSec: 4,
+        transition: "none",
+        continuityNotes: "Continuous action.",
+        order: 0,
+      }],
+    })).toThrow("SCENE_PLAN_BEAT_CLAIM_UNRESOLVED");
+  });
   it("validates Animation Package payloads", () => {
     expect(AnimationPackagePayloadSchema.safeParse(samplePackage()).success).toBe(true);
   });
