@@ -590,6 +590,35 @@ function includesMergeNote(scene: ScenePlanItem, beat: StoryBeat): boolean {
   );
 }
 
+/**
+ * Scene Planning permits a Beat to be merged when the Scene purpose or
+ * continuity note explicitly names that Beat. Canonical Script requires the
+ * same authority as an ID claim. Materialize that already-explicit merge
+ * deterministically; never guess a Scene when the note is missing or
+ * ambiguous.
+ */
+export function materializeExplicitScenePlanMergeClaims(input: {
+  storyBeats: readonly StoryBeat[];
+  scenePlan: readonly ScenePlanItem[];
+}): ScenePlanItem[] {
+  const knownBeatIds = new Set(input.storyBeats.map((beat) => beat.id));
+  for (const scene of input.scenePlan) {
+    if (scene.beatIds.some((beatId) => !knownBeatIds.has(beatId))) {
+      throw new Error("SCENE_PLAN_UNKNOWN_BEAT_CLAIM");
+    }
+  }
+  const next = input.scenePlan.map((scene) => ({ ...scene, beatIds: [...scene.beatIds] }));
+  for (const beat of input.storyBeats) {
+    const claimed = next.filter((scene) => scene.beatIds.includes(beat.id));
+    if (claimed.length > 1) throw new Error("SCENE_PLAN_BEAT_CLAIM_AMBIGUOUS");
+    if (claimed.length === 1) continue;
+    const explicitMerges = next.filter((scene) => includesMergeNote(scene, beat));
+    if (explicitMerges.length !== 1) throw new Error("SCENE_PLAN_BEAT_CLAIM_UNRESOLVED");
+    explicitMerges[0]!.beatIds.push(beat.id);
+  }
+  return next;
+}
+
 export function validatePlanningConsistency(
   animationPackage: AnimationPackagePayload
 ): NarrativeIntegrationReport {
