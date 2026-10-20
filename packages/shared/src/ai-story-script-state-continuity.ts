@@ -126,7 +126,19 @@ export function carryForwardUnchangedScriptSceneState(
 
 function boundCharacterSpeaker(speaker: string, characterNames: readonly string[]) {
   const normalized = speaker.trim().toLocaleLowerCase("en-US");
-  return characterNames.some((name) => name.trim().toLocaleLowerCase("en-US") === normalized);
+  return characterNames.some((name) => characterNameAliases(name).includes(normalized));
+}
+
+/** Canonical display names may carry approved bilingual aliases (for example
+ * `肥嫂 / Fei Sao`). Dialogue authors may use either exact alias. */
+export function characterNameAliases(name: string): string[] {
+  return [...new Set(
+    name
+      .split(/[\/／]/u)
+      .map((part) => part.trim().toLocaleLowerCase("en-US"))
+      .filter(Boolean)
+      .concat(name.trim().toLocaleLowerCase("en-US")),
+  )];
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   AI_STORY_SCENE_FUNCTION_REGISTRY,
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   carryForwardUnchangedScriptSceneState,
+  characterNameAliases,
   detachOffScreenSuppliedDialogue,
   dropUnchangedPhysicalScriptChanges,
   AiStoryNarrativeFunctionSchema,
@@ -319,6 +320,61 @@ const VISIBLE_ACTION_SCENE_FUNCTIONS = Object.entries(AI_STORY_SCENE_FUNCTION_RE
 
 type ProviderEntry = { type: string; [key: string]: unknown };
 
+/**
+ * Approved dialogue text and its bound Character identity are server-owned
+ * authority. Restore a provider-omitted bound line only when the exact speaker
+ * alias and exact beat hint resolve unambiguously. Unbound speakers remain
+ * off-screen information.
+ */
+export function bindAuthorizedNativeDialogue(input: {
+  scenes: AiStoryScriptSemanticProposalV1["scenes"];
+  storyBeats: readonly StoryBeat[];
+  scenePlan: readonly ScenePlanItem[];
+  characterAuthorities: readonly PlanningCharacterAuthorityProjection[];
+  suppliedDialogue: readonly { speaker: string; line: string; beatHint?: string }[];
+  language: string;
+}): AiStoryScriptSemanticProposalV1["scenes"] {
+  const authorityByAlias = new Map<string, PlanningCharacterAuthorityProjection>();
+  for (const authority of input.characterAuthorities) {
+    for (const alias of characterNameAliases(authority.name)) {
+      const existing = authorityByAlias.get(alias);
+      if (existing && existing.characterId !== authority.characterId) {
+        throw new Error("NATIVE_DIALOGUE_SPEAKER_ALIAS_AMBIGUOUS");
+      }
+      authorityByAlias.set(alias, authority);
+    }
+  }
+  const next = input.scenes.map((scene) => ({ ...scene, entries: [...scene.entries] }));
+  for (const line of input.suppliedDialogue) {
+    const authority = authorityByAlias.get(line.speaker.trim().toLocaleLowerCase("en-US"));
+    if (!authority) continue;
+    const exists = next.some((scene) => scene.entries.some((entry) =>
+      entry.type === "DIALOGUE"
+      && entry.speakerId === authority.characterId
+      && entry.line.trim() === line.line.trim()));
+    if (exists) continue;
+    const beatHint = line.beatHint?.trim().toLocaleLowerCase("en-US");
+    const matchingBeats = beatHint
+      ? input.storyBeats.filter((beat) => beat.name.trim().toLocaleLowerCase("en-US") === beatHint)
+      : [];
+    const matchingScenes = matchingBeats.length === 1
+      ? input.scenePlan
+        .map((scene, index) => ({ scene, index }))
+        .filter(({ scene }) => scene.beatIds.includes(matchingBeats[0]!.id))
+      : [];
+    if (matchingScenes.length !== 1 || !next[matchingScenes[0]!.index]) {
+      throw new Error("NATIVE_DIALOGUE_PLACEMENT_UNRESOLVED");
+    }
+    next[matchingScenes[0]!.index]!.entries.push({
+      type: "DIALOGUE",
+      speakerId: authority.characterId,
+      line: line.line,
+      language: input.language,
+    });
+  }
+  return next;
+}
+
 function providerSceneEntries(scene: {
   entries?: unknown;
   visibleAction?: unknown;
@@ -631,12 +687,23 @@ export async function generateAiStoryScriptSemanticProposalV1(
     ? materializeCommercialStateTimeline(canonicalized.scenes)
     : canonicalized.scenes;
   const continued = dropUnchangedPhysicalScriptChanges(carryForwardUnchangedScriptSceneState(stateOwned));
+  const detached = detachOffScreenSuppliedDialogue(continued, {
+    characterNames: input.characterAuthorities.map((authority) => authority.name),
+    suppliedDialogue: input.creativeContext.narrativeContext.dialogue,
+  });
+  const dialogueBound = input.episodeIntent?.nativeCharacterDialogue
+    ? bindAuthorizedNativeDialogue({
+        scenes: detached,
+        storyBeats: input.storyBeats,
+        scenePlan: input.scenePlan,
+        characterAuthorities: input.characterAuthorities,
+        suppliedDialogue: input.creativeContext.narrativeContext.dialogue,
+        language: input.episodeIntent.spokenLanguage,
+      })
+    : detached;
   const semanticProposal = AiStoryScriptSemanticProposalV1Schema.parse({
     ...canonicalized,
-    scenes: detachOffScreenSuppliedDialogue(continued, {
-      characterNames: input.characterAuthorities.map((authority) => authority.name),
-      suppliedDialogue: input.creativeContext.narrativeContext.dialogue,
-    }),
+    scenes: dialogueBound,
   });
   if (input.episodeIntent?.nativeCharacterDialogue) {
     const dialogue = evaluateNativeDialogueIntent({

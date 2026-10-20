@@ -3,6 +3,7 @@ import {
   AI_STORY_SCRIPT_SEMANTIC_PROPOSAL_CONTRACT_VERSION,
   CreativeContextSchema,
   carryForwardUnchangedScriptSceneState,
+  characterNameAliases,
   detachOffScreenSuppliedDialogue,
   dropUnchangedPhysicalScriptChanges,
   validateAiStoryScript,
@@ -52,6 +53,27 @@ function held(value: string) {
 }
 
 describe("commercial script state continuity", () => {
+  it("recognizes either exact half of an approved bilingual Character name", () => {
+    expect(characterNameAliases("肥嫂 / Fei Sao")).toEqual(["肥嫂", "fei sao", "肥嫂 / fei sao"]);
+    const [kept] = detachOffScreenSuppliedDialogue([
+      {
+        ...scene({ scenePlanItemId: "scene-001", sceneStateIn: [], sceneStateOut: [] }),
+        entries: [
+          {
+            type: "DIALOGUE",
+            speakerId: IDS.character,
+            line: "累啊，不然你来做咯。",
+            language: "zh-MY",
+          },
+        ],
+      },
+    ], {
+      characterNames: ["肥嫂 / Fei Sao"],
+      suppliedDialogue: [{ speaker: "Fei Sao", line: "累啊，不然你来做咯。" }],
+    });
+    expect(kept!.entries).toHaveLength(1);
+    expect(kept!.entries[0]).toMatchObject({ type: "DIALOGUE", speakerId: IDS.character });
+  });
   it("carries an unchanged held product across adjacent scenes", () => {
     const product = held("holding the same product");
     const [first, second] = carryForwardUnchangedScriptSceneState([
