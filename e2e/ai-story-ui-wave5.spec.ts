@@ -162,6 +162,10 @@ test("operator manages Campaign Characters on mobile without Provider work", asy
   });
   await page.route(`**/api/campaigns/${campaignId}/characters**`, async (route) => {
     const request = route.request();
+    const collection = new URL(request.url()).pathname.endsWith(`/campaigns/${campaignId}/characters`);
+    if (request.method() === "POST" && !collection) {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ providerCalls: 0 }) });
+    }
     if (request.method() === "POST") {
       const body = request.postDataJSON();
       characters = [{ characterId: "00000000-0000-4000-8000-000000000506", characterVersionId: "00000000-0000-4000-8000-000000000507", orgId: "00000000-0000-4000-8000-000000000508", workspaceId: "00000000-0000-4000-8000-000000000504", campaignId, version: 1, contractVersion: "ai-story-character.v1", name: body.name, canonicalFacts: { identity: body.identity, appearance: body.appearance, personality: body.personality, emotionalArc: body.emotionalArc, relationships: [] }, visualAssetReferences: body.visualAssetIds.map((assetId: string) => ({ assetId, role: "REFERENCE" })), status: "ACTIVE", fingerprint: `sha256:${"a".repeat(64)}`, supersedesCharacterVersionId: null, createdBy: userId, createdAt: "2026-08-29T00:00:00.000Z" }];
