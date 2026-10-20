@@ -117,6 +117,8 @@ const defaultModelAdapter = async (
     }),
       {
         maxRetries: 0,
+        responseSchema: ModelSemanticOutputSchema,
+        responseSchemaName: "ai_story_asset_visual_semantics_v1",
         onCompletion: async (value) => {
           completion = {
             providerRequestId: value.providerRequestId,

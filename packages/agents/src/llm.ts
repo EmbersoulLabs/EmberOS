@@ -259,6 +259,9 @@ export async function callVisionJsonModel<T>(
   schemaHint: string,
   requestOptions?: {
     maxRetries: number;
+    /** Use the SDK's JSON Schema response format at the real Provider boundary. */
+    responseSchema?: ZodType<T>;
+    responseSchemaName?: string;
     onCompletion?: (completion: {
       providerRequestId: string | null;
       providerModelId: string | null;
@@ -276,7 +279,12 @@ export async function callVisionJsonModel<T>(
   const response = await openai.chat.completions.create(
     {
       model: "gpt-4o",
-      response_format: { type: "json_object" },
+      response_format: requestOptions?.responseSchema
+        ? zodResponseFormat(
+            requestOptions.responseSchema,
+            requestOptions.responseSchemaName ?? "vision_response"
+          )
+        : { type: "json_object" },
       messages: [
         { role: "system", content: `${system}\n\nOutput valid JSON matching: ${schemaHint}` },
         {
