@@ -158,6 +158,29 @@ describe("deterministic generation-strategy successor", () => {
     });
   });
 
+  it("preserves one explicitly selected visual reference per identified Scene participant", () => {
+    const first = id(20); const second = id(21); const firstAsset = id(30); const secondAsset = id(31);
+    const scene = {
+      ...base({ strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" }),
+      castDirection: {
+        mode: "MULTI_CHARACTER" as const,
+        participants: [first, second].map((characterId, index) => ({
+          cast: { scope: "CAMPAIGN_CHARACTER" as const, id: characterId, campaignId: id(212), authorityVersionId: id(200 + index), authorityFingerprint: HASH, visualIdentityRequirement: "REQUIRED" as const },
+          presence: "ON_SCREEN" as const,
+          visualRole: index === 0 ? "PRIMARY_VISUAL" as const : "SUPPORTING_VISUAL" as const,
+        })),
+        genericExtras: [],
+      },
+    };
+    const authority = frozen({ characterIds: [first, second], characterAssets: [] });
+    authority.characterVersions[0]!.visualAssetReferences = [{ assetId: firstAsset, contentHash: HASH, purpose: "IDENTITY" }];
+    authority.characterVersions[1]!.visualAssetReferences = [{ assetId: secondAsset, contentHash: HASH, purpose: "IDENTITY" }];
+    expect(recoverScenePlanGenerationAuthorities([scene], authority)[0]?.generationAuthority).toMatchObject({
+      referenceSource: "CHARACTER_SYNTHETIC_ANCHOR",
+      referenceAssetIds: [firstAsset, secondAsset],
+    });
+  });
+
   it("keeps genuine reference-free authority and fails closed on ambiguous Product or Character material", () => {
     const scene = base({ strategy: "TEXT_TO_VIDEO", referenceSource: "REFERENCE_FREE_T2V", referenceAssetIds: [], firstFrameAssetId: null, productVisualIdentityRequirement: "NONE" });
     expect(recoverScenePlanGenerationAuthorities([scene], frozen({}))[0]?.generationAuthority).toEqual(scene.generationAuthority);

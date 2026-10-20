@@ -515,32 +515,52 @@ function recoveredSceneAuthority(
   }
 
   const characterEvidence = unique(evidence.filter((item) => item.role === "CHARACTER_AUTHORITY").map((item) => item.assetId));
-  const characterAssets = scriptScene && frozen
-    ? unique(scriptScene.characterIds.flatMap((characterId) => {
-        const authorityRef = frozen.frozenScript.authorityReferences.find((reference) =>
-          reference.authorityType === "CHARACTER" && reference.authorityId === characterId
+  const directedCharacters = scene.castDirection?.participants.flatMap((participant) =>
+    participant.presence === "ON_SCREEN" && participant.cast.scope === "CAMPAIGN_CHARACTER" && participant.cast.visualIdentityRequirement !== "NONE"
+      ? [participant.cast]
+      : []
+  ) ?? [];
+  const scriptCharacterBindings = directedCharacters.length > 0
+    ? directedCharacters.map((reference) => ({
+        characterId: reference.id,
+        authorityVersionId: reference.authorityVersionId,
+        authorityFingerprint: reference.authorityFingerprint,
+      }))
+    : (scriptScene?.characterIds ?? []).map((characterId) => {
+        const reference = frozen?.frozenScript.authorityReferences.find((candidate) =>
+          candidate.authorityType === "CHARACTER" && candidate.authorityId === characterId
         );
-        if (!authorityRef?.authorityVersionId || !authorityRef.authorityFingerprint) {
+        return { characterId, authorityVersionId: reference?.authorityVersionId, authorityFingerprint: reference?.authorityFingerprint };
+      });
+  const characterAssets = scriptScene && frozen
+    ? unique(scriptCharacterBindings.flatMap((binding) => {
+        if (!binding.authorityVersionId || !binding.authorityFingerprint) {
           throw new AiStoryGenerationStrategyRecoveryError(
             "GENERATION_STRATEGY_SUCCESSOR_CHARACTER_AUTHORITY_UNRESOLVED",
-            `Scene ${scene.id} Character ${characterId} lacks an exact frozen authority snapshot`,
+            `Scene ${scene.id} Character ${binding.characterId} lacks an exact frozen authority snapshot`,
           );
         }
         const version = frozen.characterVersions.find((candidate) =>
-          candidate.characterId === characterId
-          && candidate.characterVersionId === authorityRef.authorityVersionId
-          && candidate.fingerprint === authorityRef.authorityFingerprint
+          candidate.characterId === binding.characterId
+          && candidate.characterVersionId === binding.authorityVersionId
+          && candidate.fingerprint === binding.authorityFingerprint
         );
         if (!version) {
           throw new AiStoryGenerationStrategyRecoveryError(
             "GENERATION_STRATEGY_SUCCESSOR_CHARACTER_AUTHORITY_UNRESOLVED",
-            `Scene ${scene.id} Character ${characterId} frozen authority cannot be resolved`,
+            `Scene ${scene.id} Character ${binding.characterId} frozen authority cannot be resolved`,
+          );
+        }
+        if (directedCharacters.length > 0 && version.visualAssetReferences.length !== 1) {
+          throw new AiStoryGenerationStrategyRecoveryError(
+            "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
+            `Scene ${scene.id} Character ${binding.characterId} requires one consolidated human reference selection`,
           );
         }
         return version.visualAssetReferences.map((reference) => reference.assetId);
       }))
     : characterEvidence;
-  if (characterAssets.length > 1) {
+  if (directedCharacters.length === 0 && characterAssets.length > 1) {
     throw new AiStoryGenerationStrategyRecoveryError(
       "GENERATION_STRATEGY_SUCCESSOR_ASSET_SELECTION_REQUIRED",
       `Scene ${scene.id} has multiple Character visual references and requires one consolidated human reference selection`,
@@ -559,7 +579,7 @@ function recoveredSceneAuthority(
     return {
       strategy: "TEXT_TO_VIDEO" as const,
       referenceSource: "CHARACTER_SYNTHETIC_ANCHOR" as const,
-      referenceAssetIds: [characterAssets[0]],
+      referenceAssetIds: characterAssets,
       firstFrameAssetId: null,
       productVisualIdentityRequirement: "NONE" as const,
     };
@@ -594,9 +614,14 @@ async function resolveFrozenSuccessorAuthority(db: Db, input: {
       "Generation strategy recovery requires the exact current frozen Script",
     );
   }
-  const characterVersionIds = unique(frozenScript.authorityReferences.flatMap((reference) =>
-    reference.authorityType === "CHARACTER" && reference.authorityVersionId ? [reference.authorityVersionId] : []
-  ));
+  const characterVersionIds = unique([
+    ...frozenScript.authorityReferences.flatMap((reference) =>
+      reference.authorityType === "CHARACTER" && reference.authorityVersionId ? [reference.authorityVersionId] : []
+    ),
+    ...frozenScript.scenes.flatMap((scene) => (scene.castReferences ?? []).flatMap((reference) =>
+      reference.scope === "CAMPAIGN_CHARACTER" ? [reference.authorityVersionId] : []
+    )),
+  ]);
   const rows = characterVersionIds.length === 0 ? [] : await db.select({ snapshot: schema.aiStoryCharacterVersions.snapshot })
     .from(schema.aiStoryCharacterVersions)
     .where(and(
