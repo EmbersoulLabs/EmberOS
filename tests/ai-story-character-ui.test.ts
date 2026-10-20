@@ -8,8 +8,8 @@ describe("AI Story Character Panel source boundary", () => {
   it("provides Campaign-scoped Add, Edit, Delete, relationships, and mobile layout", () => {
     const component = read("apps/web/src/components/ai-story/CharacterPanel.tsx");
     expect(component).toContain("Add Character");
-    expect(component).toContain(">Edit<");
-    expect(component).toContain(">Delete<");
+    expect(component).toMatch(/>\s*Edit\s*</);
+    expect(component).toMatch(/>\s*Delete\s*</);
     expect(component).toContain("Relationships");
     expect(component).toContain("sm:items-center");
     expect(component).toContain("rounded-t-2xl");
