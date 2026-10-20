@@ -350,22 +350,20 @@ export function resolveScenePlanGenerationAuthority(input: {
       expectedScope: input.expectedScope,
     });
   }
-  const resolved = resolveInheritedProductSceneFirstFrame({
+  // Reconcile unsupported Product identity claims before resolving execution
+  // material. Otherwise a model-proposed STORY_INHERITED Product mode throws
+  // for a supporting-only/reference-free Scene before the existing safety
+  // reconciliation can convert it to T2V.
+  const reconciled = reconcileSupportingOnlySceneAuthority({
+    scene: input.scene,
+    lineage: input.lineage,
+  });
+  return resolveInheritedProductSceneFirstFrame({
     sceneId: input.sceneId,
-    generationAuthority: input.scene.generationAuthority,
+    generationAuthority: reconciled,
     lineage: input.lineage,
     acceptedContext: input.acceptedContext,
     expectedScope: input.expectedScope,
-  });
-  if (
-    input.scene.generationAuthority.strategy === "PRODUCT_GROUNDED_VIDEO" &&
-    input.scene.generationAuthority.referenceSource === "STORY_INHERITED"
-  ) {
-    return resolved;
-  }
-  return reconcileSupportingOnlySceneAuthority({
-    scene: { ...input.scene, generationAuthority: resolved },
-    lineage: input.lineage,
   });
 }
 
