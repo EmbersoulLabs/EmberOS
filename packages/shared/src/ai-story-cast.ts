@@ -4,6 +4,9 @@ import { AiStoryCharacterVisualAssetReferenceSchema } from "./ai-story-character
 export const AI_STORY_CAST_CONTRACT_VERSION = "ai-story-cast.v1" as const;
 export const AI_STORY_CAST_SCOPES = ["CAMPAIGN_CHARACTER", "STORY_SUPPORTING_CHARACTER", "EPHEMERAL_ACTOR"] as const;
 export const AI_STORY_VISUAL_IDENTITY_REQUIREMENTS = ["NONE", "PREFERRED", "REQUIRED"] as const;
+export const AI_STORY_SCENE_CAST_MODES = ["AUTO", "SINGLE_CHARACTER", "MULTI_CHARACTER"] as const;
+export const AI_STORY_CAST_PRESENCE = ["ON_SCREEN", "OFF_SCREEN_DIALOGUE", "VOICE_ONLY"] as const;
+export const AI_STORY_CAST_VISUAL_ROLES = ["PRIMARY_VISUAL", "SUPPORTING_VISUAL", "BACKGROUND_VISUAL"] as const;
 
 const Id = z.string().uuid();
 const Hash = z.string().regex(/^sha256:[0-9a-f]{64}$/);
@@ -44,6 +47,50 @@ export const AiStoryCastReferenceSchema = z.discriminatedUnion("scope", [
   AiStorySupportingCharacterCastReferenceSchema,
   AiStoryEphemeralActorCastReferenceSchema,
 ]);
+
+/**
+ * Human-reviewable Scene casting direction. This does not create identity
+ * authority: every identified participant still points at an existing Cast
+ * reference, while anonymous passers-by remain Scene-local descriptive facts.
+ * Historical Scenes may omit this authority and continue to use AUTO.
+ */
+export const AiStorySceneCastDirectionSchema = z.object({
+  mode: z.enum(AI_STORY_SCENE_CAST_MODES),
+  participants: z.array(z.object({
+    cast: AiStoryCastReferenceSchema,
+    presence: z.enum(AI_STORY_CAST_PRESENCE),
+    visualRole: z.enum(AI_STORY_CAST_VISUAL_ROLES),
+  }).strict()),
+  genericExtras: z.array(z.object({
+    description: Text.max(1000),
+    count: z.number().int().positive().max(100),
+    facesReadable: z.boolean(),
+  }).strict()).default([]),
+}).strict().superRefine((value, context) => {
+  const onScreen = value.participants.filter((participant) => participant.presence === "ON_SCREEN");
+  const visiblePeople = onScreen.length + value.genericExtras.reduce((sum, group) => sum + group.count, 0);
+  if (value.mode === "SINGLE_CHARACTER" && visiblePeople !== 1) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Single-character Scene must contain exactly one visible person" });
+  }
+  if (value.mode === "MULTI_CHARACTER" && visiblePeople < 2) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Multi-character Scene must contain at least two visible people" });
+  }
+  const primary = onScreen.filter((participant) => participant.visualRole === "PRIMARY_VISUAL");
+  if (onScreen.length > 0 && primary.length !== 1) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Visible identified Cast requires exactly one primary visual participant" });
+  }
+  for (const participant of value.participants) {
+    if (participant.presence !== "ON_SCREEN" && participant.visualRole !== "BACKGROUND_VISUAL") {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Off-screen Cast cannot consume a primary or supporting visual role" });
+    }
+  }
+});
+
+export function sceneCastIdentityConditioningCount(direction: z.infer<typeof AiStorySceneCastDirectionSchema>) {
+  return direction.participants.filter((participant) =>
+    participant.presence === "ON_SCREEN" && participant.cast.visualIdentityRequirement !== "NONE"
+  ).length;
+}
 
 export const AiStoryCastRelationshipSchema = z.object({
   relationshipId: Id,
@@ -111,6 +158,7 @@ export const AiStoryCastPromotionSchema = z.object({
 });
 
 export type AiStoryCastReference = z.infer<typeof AiStoryCastReferenceSchema>;
+export type AiStorySceneCastDirection = z.infer<typeof AiStorySceneCastDirectionSchema>;
 export type AiStoryEphemeralActorCastReference = z.infer<typeof AiStoryEphemeralActorCastReferenceSchema>;
 export type AiStorySupportingCharacterMutationInput = z.infer<typeof AiStorySupportingCharacterMutationInputSchema>;
 export type AiStorySupportingCharacterVersion = z.infer<typeof AiStorySupportingCharacterVersionSchema>;

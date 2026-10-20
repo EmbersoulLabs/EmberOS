@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   AI_STORY_VISUAL_IDENTITY_REQUIREMENTS,
   AiStoryCastReferenceSchema,
+  AiStorySceneCastDirectionSchema,
 } from "./ai-story-cast";
 import { AiStoryScriptEntrySchema, AiStoryScriptStateFactSchema } from "./ai-story-script";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
@@ -48,7 +49,7 @@ export const AiStoryCanonicalSceneSchema=z.object({
   version:z.number().int().positive(),contractVersion:z.literal(AI_STORY_SCENE_CONTRACT_VERSION),order:z.number().int().nonnegative(),
   sourceScriptSceneIds:z.array(Id).min(1),sourceScriptEntryIds:z.array(Id).min(1),sceneFunction:Text,
   sceneRole:z.string().regex(/^(?:[A-Z][A-Z0-9_]{1,63}|EXT:[a-z0-9.-]+:[A-Z][A-Z0-9_]{1,63})$/),importance:z.enum(["MAJOR","SUPPORTING","MINOR","TRANSITIONAL"]),
-  locationBinding:AiStoryLocationReferenceSchema,locationState:AiStorySceneLocationStateSchema,castBindings:z.array(AiStoryCastReferenceSchema),productBindings:z.array(AiStorySceneProductBindingSchema),
+  locationBinding:AiStoryLocationReferenceSchema,locationState:AiStorySceneLocationStateSchema,castBindings:z.array(AiStoryCastReferenceSchema),castDirection:AiStorySceneCastDirectionSchema.optional(),productBindings:z.array(AiStorySceneProductBindingSchema),
   /** Optional solely for historical snapshots; new FROZEN authority requires an explicit decision. */
   generationAuthority:AiStorySceneGenerationAuthoritySchema.optional(),
   entryState:z.array(AiStoryScriptStateFactSchema),events:z.array(AiStoryScriptEntrySchema).min(1),exitState:z.array(AiStoryScriptStateFactSchema),continuityFacts:z.array(Text),

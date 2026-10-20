@@ -2,7 +2,7 @@ import { z } from "zod";
 import { type AiStoryOutlineVersion } from "./ai-story-outline";
 import { AiStoryProductStorySceneContributionSchema } from "./ai-story-product-story-profile";
 import { AiStoryCommercialSceneContributionSchema, AiStoryNarrativeFunctionSchema } from "./ai-story-commercial-story-profile";
-import { AiStoryCastReferenceSchema, AiStorySceneCastRelationshipSchema, castReferenceKey } from "./ai-story-cast";
+import { AiStoryCastReferenceSchema, AiStorySceneCastDirectionSchema, AiStorySceneCastRelationshipSchema, castReferenceKey } from "./ai-story-cast";
 
 export const AI_STORY_SCRIPT_CONTRACT_VERSION = "ai-story-script.v1" as const;
 export const AI_STORY_SCRIPT_STATUSES = ["DRAFT", "VALIDATED", "APPROVED", "FROZEN", "SUPERSEDED"] as const;
@@ -99,6 +99,8 @@ export const AiStoryScriptSceneSchema = z.object({
   entries: z.array(AiStoryScriptEntrySchema).min(1),
   characterIds: z.array(Id), locationIds: z.array(Id), propIds: z.array(Id), assetIds: z.array(Id), productAuthorityRefs: z.array(Id),
   castReferences: z.array(AiStoryCastReferenceSchema).optional(),
+  /** Explicit user/Planner casting choice; absent historical Scenes retain AUTO semantics. */
+  castDirection: AiStorySceneCastDirectionSchema.optional(),
   castRelationships: z.array(AiStorySceneCastRelationshipSchema).optional(),
   targetDurationRange: DurationRange,
   mustKeep: z.array(Text.max(1000)), mustAvoid: z.array(Text.max(1000)),
@@ -189,6 +191,11 @@ export function validateAiStoryScript(
     if (castKeys.size !== castReferences.length) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Scene ${scene.scriptSceneId} contains duplicate typed Cast references`);
     if (options.knownAuthorityReferences) for (const reference of castReferences) if (!options.knownAuthorityReferences.has(castReferenceKey(reference))) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Unknown Cast reference ${castReferenceKey(reference)}`);
     for (const reference of castReferences.filter((item) => item.scope === "EPHEMERAL_ACTOR")) if (reference.storyId !== script.storyId || reference.scriptSceneId !== scene.scriptSceneId) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Ephemeral Actor ${reference.id} is outside Scene scope`);
+    if (scene.castDirection) {
+      for (const participant of scene.castDirection.participants) {
+        if (!castKeys.has(castReferenceKey(participant.cast))) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Scene Cast direction contains unbound participant ${castReferenceKey(participant.cast)}`);
+      }
+    }
     for (const relationship of scene.castRelationships ?? []) if (!castKeys.has(castReferenceKey(relationship.sourceCast)) || !castKeys.has(castReferenceKey(relationship.targetCast))) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Scene Cast relationship ${relationship.relationshipId} has an unresolved participant`);
     if (!AI_STORY_SCENE_FUNCTION_REGISTRY[scene.sceneFunction]) block("SCRIPT_SCENE_FUNCTION_GATE", `Unknown Scene Function ${scene.sceneFunction}`);
     if (!isContiguous(scene.entries)) block("SCRIPT_REFERENCE_INTEGRITY_GATE", `Entries in Scene ${scene.scriptSceneId} must be contiguous`);

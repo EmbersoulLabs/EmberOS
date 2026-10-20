@@ -268,6 +268,7 @@ function candidateInput(
     },
     locationState: { temporaryFacts: [] },
     castBindings: castBindings(scriptScene, input.frozenScript, input.campaignId, input.characterAuthorities),
+    ...(scriptScene.castDirection ? { castDirection: scriptScene.castDirection } : {}),
     productBindings: products,
     generationAuthority: scenePlan.generationAuthority,
     entryState: structuredClone(scriptScene.sceneStateIn),
