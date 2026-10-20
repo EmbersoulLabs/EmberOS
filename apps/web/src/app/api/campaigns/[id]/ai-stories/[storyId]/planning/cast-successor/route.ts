@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { getDb, schema } from "@ceo-agent/db";
+import { AiStorySceneAuthorityError, getDb, schema } from "@ceo-agent/db";
 import { AiStoryEpisodeIntentAuthoritySchema, isUuid, type AiStoryStatus } from "@ceo-agent/shared";
+import { AiStoryCanonicalSceneComposerError } from "@ceo-agent/shared/server";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
@@ -46,7 +47,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const source = await getLatestCompleteAnimationPackageForStory(db, { campaignId, storyId, workspaceId: campaign.workspaceId });
     if (!source) return apiError("Complete source Planning Package not found", "NOT_FOUND", 404);
     const parsedIntent = AiStoryEpisodeIntentAuthoritySchema.safeParse(loaded.story.episodeIntent);
-    const successor = await createSceneCastSuccessor(db, {
+    // Script, canonical Scene, Planning draft, and Package succession form one
+    // authority change. Keeping them in one transaction prevents a failed
+    // downstream projection from leaving a newer frozen Script without its
+    // matching canonical Scene and Package revisions.
+    const successor = await db.transaction((tx) => createSceneCastSuccessor(tx as unknown as typeof db, {
       orgId: campaign.orgId,
       workspaceId: campaign.workspaceId,
       campaignId,
@@ -56,7 +61,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       sourcePackageId: source.id,
       castDirections: body.data.scenes,
       ...(parsedIntent.success ? { episodeIntent: parsedIntent.data } : {}),
-    });
+    }));
     if (status !== "planning_review") await setAiStoryStatus(db, storyId, status, "planning_review");
     return apiSuccess({
       status: "planning_review",
@@ -69,6 +74,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   } catch (error) {
     if (error instanceof AiStoryGenerationStrategyRecoveryError) return apiError(error.message, error.code, 409);
     if (error instanceof AiStoryCanonicalSceneProducerError) return apiError(error.message, error.code, 409);
+    if (error instanceof AiStoryCanonicalSceneComposerError) return apiError(error.message, error.code, 409);
+    if (error instanceof AiStorySceneAuthorityError) return apiError(error.message, error.code, 409);
     return handleApiError(error);
   }
 }

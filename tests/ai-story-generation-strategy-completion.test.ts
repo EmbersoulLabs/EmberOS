@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { sha256CanonicalIntegrityHash } from "../packages/shared/src/canonical-integrity";
 import { AuthoritativeAnimationPackagePayloadSchema, type AiStoryExecutionCapabilityAuthority, type AiStoryCanonicalScene, type ScenePlanItem } from "../packages/shared/src/ai-story";
 import { buildAiStoryAnimationPackageCanonicalSceneAuthorityV1 } from "../packages/shared/src/ai-story-animation-package-canonical-scene-binding.server";
+import { AiStorySceneGenerationAuthoritySchema } from "../packages/shared/src/ai-story-generation-authority";
 import type { AiStoryCharacterAuthorityVersion } from "../packages/shared/src/ai-story-character";
 import type { AiStoryScriptVersion } from "../packages/shared/src/ai-story-script";
 import {
@@ -175,10 +176,12 @@ describe("deterministic generation-strategy successor", () => {
     const authority = frozen({ characterIds: [first, second], characterAssets: [] });
     authority.characterVersions[0]!.visualAssetReferences = [{ assetId: firstAsset, contentHash: HASH, purpose: "IDENTITY" }];
     authority.characterVersions[1]!.visualAssetReferences = [{ assetId: secondAsset, contentHash: HASH, purpose: "IDENTITY" }];
-    expect(recoverScenePlanGenerationAuthorities([scene], authority)[0]?.generationAuthority).toMatchObject({
+    const recovered = recoverScenePlanGenerationAuthorities([scene], authority)[0]?.generationAuthority;
+    expect(recovered).toMatchObject({
       referenceSource: "CHARACTER_SYNTHETIC_ANCHOR",
       referenceAssetIds: [firstAsset, secondAsset],
     });
+    expect(AiStorySceneGenerationAuthoritySchema.parse(recovered)).toEqual(recovered);
   });
 
   it("keeps genuine reference-free authority and fails closed on ambiguous Product or Character material", () => {
@@ -193,6 +196,13 @@ describe("deterministic generation-strategy successor", () => {
     expect(route).toContain("createGenerationStrategySuccessor");
     expect(route).toContain("humanApprovalRequired: true");
     expect(route).not.toMatch(/OpenAI|callJsonModel|\/v1\/jobs/);
+  });
+
+  it("keeps cast succession atomic and returns typed canonical authority conflicts", async () => {
+    const route = await readFile("apps/web/src/app/api/campaigns/[id]/ai-stories/[storyId]/planning/cast-successor/route.ts", "utf8");
+    expect(route).toContain("db.transaction((tx) => createSceneCastSuccessor");
+    expect(route).toContain("error instanceof AiStoryCanonicalSceneComposerError");
+    expect(route).toContain("error instanceof AiStorySceneAuthorityError");
   });
 
   it("binds persisted product camera safety while creating an append-only successor", async () => {
