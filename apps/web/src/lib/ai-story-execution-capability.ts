@@ -6,6 +6,7 @@ import {
   isCertifiedExecutionUnitDuration,
   type AiStoryExecutionCapabilityAuthority,
   type AiStorySceneGenerationAuthority,
+  sceneCastIdentityConditioningCount,
 } from "@ceo-agent/shared";
 import {
   LOCAL_GPU_DURATION_MAX_SEC,
@@ -34,6 +35,27 @@ function workflowFor(authority: AiStorySceneGenerationAuthority): string {
   return LOCAL_GPU_WORKER_WORKFLOW;
 }
 
+function declaredMaxCharacterReferences(capabilities: unknown, workflow: string): number {
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return 1;
+  const record = capabilities as Record<string, unknown>;
+  const contracts = record.contracts && typeof record.contracts === "object" && !Array.isArray(record.contracts)
+    ? record.contracts as Record<string, unknown>
+    : null;
+  const v2 = contracts?.v2 && typeof contracts.v2 === "object" && !Array.isArray(contracts.v2)
+    ? contracts.v2 as Record<string, unknown>
+    : null;
+  const candidates = [record.workflows, v2?.workflows].flatMap((value) => Array.isArray(value) ? value : []);
+  const match = candidates.find((entry) => {
+    if (typeof entry === "string") return entry === workflow;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const item = entry as Record<string, unknown>;
+    return item.id === workflow || item.workflow === workflow;
+  });
+  if (!match || typeof match === "string") return 1;
+  const value = (match as Record<string, unknown>).maxCharacterReferences;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 1;
+}
+
 function assertSceneCapability(
   scene: ScenePlanItem,
   capabilities: unknown,
@@ -46,6 +68,16 @@ function assertSceneCapability(
     );
   }
   const workflow = workflowFor(authority);
+  const identityConditioningCount = scene.castDirection
+    ? sceneCastIdentityConditioningCount(scene.castDirection)
+    : 0;
+  const maxCharacterReferences = declaredMaxCharacterReferences(capabilities, workflow);
+  if (identityConditioningCount > maxCharacterReferences) {
+    throw new AiStoryExecutionCapabilityError(
+      "PLANNING_MULTI_CHARACTER_IDENTITY_UNSUPPORTED",
+      `Scene ${scene.id} requires ${identityConditioningCount} on-screen Character identities, but ${workflow} certifies ${maxCharacterReferences}`,
+    );
+  }
   // Same rule the Desktop submit builders enforce, applied before the plan is frozen.
   if (!isCertifiedExecutionUnitDuration(scene.durationSec)) {
     throw new AiStoryExecutionCapabilityError(

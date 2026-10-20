@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AiStoryShotCameraSafetySchema } from "./ai-story-product-camera-safety";
 import { AiStorySceneGenerationAuthoritySchema } from "./ai-story-generation-authority";
+import { AiStorySceneCastDirectionSchema } from "./ai-story-cast";
 import { AiStoryCharacterCanonicalFactsSchema } from "./ai-story-character";
 import { AiStoryAssetSelectionSchema } from "./ai-story-asset-usage";
 import { PlanningProductAuthorityProjectionSchema } from "./ai-story-product-planning";
@@ -297,6 +298,8 @@ export const ScenePlanItemSchema = z.object({
   transition: z.string().default(""),
   continuityNotes: z.string().default(""),
   order: z.number().int().nonnegative(),
+  /** Human-reviewed cast staging; absent historical Plans retain AUTO semantics. */
+  castDirection: AiStorySceneCastDirectionSchema.optional(),
   generationAuthority: AiStorySceneGenerationAuthoritySchema.optional(),
   groundingLineage: AiStorySceneGroundingLineageSchema.optional(),
 });
