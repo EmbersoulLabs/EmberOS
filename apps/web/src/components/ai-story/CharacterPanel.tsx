@@ -195,9 +195,16 @@ export function CharacterPanel({
       const data = await response.json();
       if (!response.ok)
         throw new Error(data.error ?? "Character could not be saved");
-      if (editing && storyId) await synchronizeCurrentStory(String(data.character.characterId));
       setOpen(false);
       await load();
+      if (editing && storyId) {
+        try {
+          await synchronizeCurrentStory(String(data.character.characterId));
+        } catch (syncReason) {
+          setNotice("Character successor saved. The current frozen Story was not changed; create and approve a Planning successor to use it.");
+          setError(syncReason instanceof Error ? syncReason.message : "Character authority requires a Planning successor");
+        }
+      }
     } catch (reason) {
       setError(
         reason instanceof Error

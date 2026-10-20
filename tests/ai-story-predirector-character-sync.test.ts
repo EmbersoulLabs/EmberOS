@@ -31,6 +31,7 @@ describe("pre-Director Character successor synchronization", () => {
     expect(panel).toContain("Sync current Story");
     expect(panel).toContain("No AI call was made");
     expect(panel).toContain("synchronizeCurrentStory");
+    expect(panel).toContain("Character successor saved. The current frozen Story was not changed; create and approve a Planning successor to use it.");
     expect(page).toContain("storyId={storyId}");
   });
 });
