@@ -8,9 +8,9 @@ import {
   getDb,
   schema,
 } from "@ceo-agent/db";
-import { isUuid, type WorkspaceRole } from "@ceo-agent/shared";
+import { isUuid, WorkspaceRoleSchema, type WorkspaceRole } from "@ceo-agent/shared";
 import { apiError } from "@/lib/api";
-import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
+import { authorizeAiStoryAccess, type AiStoryAccessAuthorization } from "@/lib/ai-story-access";
 
 type Db = ReturnType<typeof getDb>;
 export type RouteOwnershipValidationTiming = {
@@ -149,8 +149,22 @@ export type AuthorizedExecutionPlanContext = {
   readonly storyTitle: string;
   readonly storyStatus: string;
   readonly verificationFixture: boolean;
+  readonly accessAuthorization: AiStoryAccessAuthorization;
   readonly plan: ExecutionPlanRouteAuthority;
 };
+
+/**
+ * Runtime controls use the same server authority that admitted the caller to
+ * the Execution Plan. Platform Admin is not a synthetic workspace membership.
+ */
+export function resolveExecutionPlanRuntimeCallerRole(
+  membershipRole: string | null | undefined,
+  accessAuthorization: AiStoryAccessAuthorization
+): WorkspaceRole | null {
+  const parsedMembershipRole = WorkspaceRoleSchema.safeParse(membershipRole);
+  if (parsedMembershipRole.success) return parsedMembershipRole.data;
+  return accessAuthorization.allowedBy === "ACTIVE_PLATFORM_ADMIN" ? "admin" : null;
+}
 
 /**
  * Resolve campaign → story → execution plan ownership for authenticated caller.
@@ -183,7 +197,7 @@ export async function resolveAuthorizedExecutionPlan(input: {
     throw new ExecutionPlanRouteNotFoundError("Campaign not found");
   }
 
-  await observe("workspace_authorization", () => authorizeAiStoryAccess({
+  const accessAuthorization = await observe("workspace_authorization", () => authorizeAiStoryAccess({
     user: { id: userId },
     orgId: campaign.orgId,
     workspaceId: campaign.workspaceId,
@@ -275,6 +289,7 @@ export async function resolveAuthorizedExecutionPlan(input: {
     storyTitle: story.title,
     storyStatus: story.status,
     verificationFixture: story.verificationFixture,
+    accessAuthorization,
     plan,
   };
 }

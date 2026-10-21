@@ -29,6 +29,7 @@ import { mintSceneResultPlayback } from "@/lib/ai-story-scene-media-playback";
 import {
   executionPlanRouteErrorResponse,
   ExecutionPlanLoadTimingRecorder,
+  resolveExecutionPlanRuntimeCallerRole,
   resolveAuthorizedExecutionPlan,
   RouteOwnershipValidationTimingRecorder,
   StoryLoadTimingRecorder,
@@ -144,9 +145,13 @@ export async function GET(request: Request, { params }: RouteParams) {
     const membership = await recorder.run("workspace_authorization", () =>
       getWorkspaceMembership(ctx.workspaceId, user.id)
     );
+    const effectiveCallerRole = resolveExecutionPlanRuntimeCallerRole(
+      membership?.role,
+      ctx.accessAuthorization
+    );
     const projection = await deriveProductRuntimeProjection({
       executionPlanId: ctx.executionPlanId,
-      callerRole: membership?.role ?? null,
+      callerRole: effectiveCallerRole,
       observeStage: (stage, operation) => recorder.run(stage, operation),
       executionPlanReviewProjectionTimingRecorder: executionPlanReviewRecorder,
       onGeneratedSceneReviewPathMarker: (marker) =>
