@@ -269,7 +269,9 @@ function providerNeutralInputsComplete(authority: AiStoryEffectiveSceneGeneratio
       && authority.productVisualIdentityRequirement === "NONE";
   }
   if (authority.strategy === "TEXT_TO_VIDEO" && authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR") {
-    return authority.effectiveReferenceIds.length === 1 && authority.firstFrameAssetId === null;
+    return authority.effectiveReferenceIds.length >= 1
+      && authority.effectiveReferenceIds.length <= 2
+      && authority.firstFrameAssetId === null;
   }
   if (
     (authority.strategy === "FIRST_FRAME_IMAGE_TO_VIDEO" || authority.strategy === "PRODUCT_GROUNDED_VIDEO")
