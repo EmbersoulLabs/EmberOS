@@ -138,6 +138,56 @@ async function loadResolvedCampaignAssets(
   }));
 }
 
+async function loadFrozenCharacterAssetIds(
+  db: Db,
+  input: {
+    orgId: string;
+    workspaceId: string;
+    campaignId: string;
+    storyId: string;
+    payload: AnimationPackagePayload;
+  }
+): Promise<Set<string>> {
+  const campaignVersionIds = new Set<string>();
+  const supportingVersionIds = new Set<string>();
+  for (const scene of input.payload.scenePlan) {
+    for (const participant of scene.castDirection?.participants ?? []) {
+      if (participant.cast.scope === "CAMPAIGN_CHARACTER") {
+        campaignVersionIds.add(participant.cast.authorityVersionId);
+      } else if (participant.cast.scope === "STORY_SUPPORTING_CHARACTER") {
+        supportingVersionIds.add(participant.cast.authorityVersionId);
+      }
+    }
+  }
+
+  const campaignVersions = campaignVersionIds.size === 0
+    ? []
+    : await db.select({ snapshot: schema.aiStoryCharacterVersions.snapshot })
+        .from(schema.aiStoryCharacterVersions)
+        .where(and(
+          inArray(schema.aiStoryCharacterVersions.characterVersionId, [...campaignVersionIds]),
+          eq(schema.aiStoryCharacterVersions.orgId, input.orgId),
+          eq(schema.aiStoryCharacterVersions.workspaceId, input.workspaceId),
+          eq(schema.aiStoryCharacterVersions.campaignId, input.campaignId),
+        ));
+  const supportingVersions = supportingVersionIds.size === 0
+    ? []
+    : await db.select({ snapshot: schema.aiStorySupportingCharacterVersions.snapshot })
+        .from(schema.aiStorySupportingCharacterVersions)
+        .where(and(
+          inArray(schema.aiStorySupportingCharacterVersions.supportingCharacterVersionId, [...supportingVersionIds]),
+          eq(schema.aiStorySupportingCharacterVersions.orgId, input.orgId),
+          eq(schema.aiStorySupportingCharacterVersions.workspaceId, input.workspaceId),
+          eq(schema.aiStorySupportingCharacterVersions.campaignId, input.campaignId),
+          eq(schema.aiStorySupportingCharacterVersions.storyId, input.storyId),
+        ));
+
+  return new Set([
+    ...campaignVersions.flatMap((row) => row.snapshot.visualAssetReferences.map((asset) => asset.assetId)),
+    ...supportingVersions.flatMap((row) => row.snapshot.visualAssetReferences.map((asset) => asset.assetId)),
+  ]);
+}
+
 export async function createGenerateReview(input: {
   db: Db;
   campaignId: string;
@@ -195,6 +245,13 @@ export async function createGenerateReview(input: {
     );
   }
   const referencedAssetIds = collectReferencedAssetIds(payload);
+  const frozenCharacterAssetIds = await loadFrozenCharacterAssetIds(input.db, {
+    orgId: input.orgId,
+    workspaceId: input.workspaceId,
+    campaignId: input.campaignId,
+    storyId: input.storyId,
+    payload,
+  });
 
   const resolvedAssets =
     referencedAssetIds.length > 0
@@ -239,6 +296,9 @@ export async function createGenerateReview(input: {
         assetId: row.assetId,
         workspaceId: row.workspaceId,
         campaignId: linkedAssetIds.has(row.assetId) ? input.campaignId : null,
+        characterAuthorityCampaignId: frozenCharacterAssetIds.has(row.assetId)
+          ? input.campaignId
+          : null,
       },
     ])
   );

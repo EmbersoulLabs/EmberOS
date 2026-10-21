@@ -492,6 +492,46 @@ describe("Phase 1 AI QC Layer", () => {
     expect(again.errors).toEqual(results[0]!.errors);
   });
 
+  it("accepts an asset authorized by the exact frozen Character authority", () => {
+    const compiled = compileSceneExecutionIntents(samplePackage(), baseCtx);
+    const intent = compiled.intents[0]!;
+    const result = validateSceneExecutionIntent(intent, {
+      storyVersionFrozenAt: baseCtx.storyVersionFrozenAt,
+      animationPackageStatus: "ready_for_execution",
+      workspaceId: WS,
+      campaignId: CAMP,
+      assetsById: new Map([[ASSET_A, {
+        assetId: ASSET_A,
+        workspaceId: WS,
+        campaignId: null,
+        characterAuthorityCampaignId: CAMP,
+      }]]),
+      instructions: compiled.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!,
+      validatedAt: "2026-08-02T01:00:00.000Z",
+    });
+    expect(result.errors.some((error) => error.code === "ASSET_CAMPAIGN_UNAUTHORIZED")).toBe(false);
+  });
+
+  it("does not let Character authority cross Campaign boundaries", () => {
+    const compiled = compileSceneExecutionIntents(samplePackage(), baseCtx);
+    const intent = compiled.intents[0]!;
+    const result = validateSceneExecutionIntent(intent, {
+      storyVersionFrozenAt: baseCtx.storyVersionFrozenAt,
+      animationPackageStatus: "ready_for_execution",
+      workspaceId: WS,
+      campaignId: CAMP,
+      assetsById: new Map([[ASSET_A, {
+        assetId: ASSET_A,
+        workspaceId: WS,
+        campaignId: null,
+        characterAuthorityCampaignId: "00000000-0000-4000-8000-000000000099",
+      }]]),
+      instructions: compiled.instructionsBySceneExecutionId[intent.identity.sceneExecutionId]!,
+      validatedAt: "2026-08-02T01:00:00.000Z",
+    });
+    expect(result.errors.some((error) => error.code === "ASSET_CAMPAIGN_UNAUTHORIZED")).toBe(true);
+  });
+
   it("blocks when Campaign Asset refs are missing even if the workspace asset exists", () => {
     const compiled = compileSceneExecutionIntents(samplePackage(), baseCtx);
     const results = validateAllSceneExecutionIntents(
