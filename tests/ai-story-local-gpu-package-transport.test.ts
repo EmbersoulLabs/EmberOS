@@ -536,6 +536,26 @@ describe("native dialogue Contract V3 request boundary", () => {
     expect(claims).toMatchObject({ workflow: "MINIMAX_H3_NATIVE_DIALOGUE", creativeBinding: transport.creativeBinding });
   });
 
+  it("keeps a second character identity beside the speaking character", () => {
+    const secondCharacterId = id(15);
+    const secondAssetId = id(25);
+    const secondHash = hash("b");
+    const transport = mapNativeDialogue({
+      productAuthority: null,
+      references: [
+        { authorityType: "CHARACTER", authorityId: characterId, assetId: characterAssetId, contentHash: characterHash },
+        { authorityType: "CHARACTER", authorityId: secondCharacterId, assetId: secondAssetId, contentHash: secondHash },
+      ],
+    }, [...assets, asset(secondAssetId, secondHash, "second")]);
+    const characters = (transport.body.creative as { characters: Array<{ subjectId: string; references: Array<{ contentHash: string }> }> }).characters;
+    expect(characters.map((character) => character.subjectId)).toEqual([characterId, secondCharacterId]);
+    expect(characters.map((character) => character.references[0]?.contentHash)).toEqual([characterHash, secondHash]);
+    expect((transport.body.references as Array<{ subjectId: string; contentHash: string }>).map((reference) => [reference.subjectId, reference.contentHash])).toEqual([
+      [characterId, characterHash],
+      [secondCharacterId, secondHash],
+    ]);
+  });
+
   it("keeps the cross-repository native-dialogue golden vector byte-compatible", () => {
     const fixture = JSON.parse(readFileSync(join(root, "tests/fixtures/local-gpu-native-dialogue-v3-golden-vector.json"), "utf8")) as {
       classification: string;
