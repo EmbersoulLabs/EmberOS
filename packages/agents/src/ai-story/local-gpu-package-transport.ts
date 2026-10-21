@@ -609,7 +609,7 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
   if (authorityFrame && frameReference && (frameReference.assetId !== authorityFrame.assetId || frameReference.contentHash !== authorityFrame.contentHash)) {
     fail("LOCAL_GPU_CONTINUITY_FRAME_MISMATCH");
   }
-  const selected: { role: "CHARACTER" | "PRODUCT"; reference: PackageReference; variantId: string | null }[] = [];
+  const selected: { role: "CHARACTER" | "PRODUCT"; reference: PackageReference; variantId: string | null; subjectId: string }[] = [];
   const ordered = modelReferences(pkg);
   const characters = ordered.filter((reference) => reference.kind === "CHARACTER" || reference.kind === "CHARACTER_IDENTITY");
   if (pkg.characterAuthority && !characters.some((reference) => reference.authorityId === pkg.characterAuthority?.characterId)) {
@@ -617,8 +617,9 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
   }
   if (!pkg.characterAuthority && characters.length > 0) fail("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
   for (const reference of characters) {
-    if (!reference.authorityId) fail("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
-    selected.push({ role: "CHARACTER", reference, variantId: null });
+    const subjectId = reference.authorityId;
+    if (!subjectId) fail("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
+    selected.push({ role: "CHARACTER", reference, variantId: null, subjectId });
   }
   const product = productVisual(pkg);
   if (product.image) {
@@ -626,7 +627,7 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
     if (reference.assetId !== product.image.assetId || reference.contentHash !== product.image.contentHash) {
       fail("LOCAL_GPU_REFERENCE_CONTENT_HASH_REQUIRED");
     }
-    selected.push({ role: "PRODUCT", reference, variantId: product.variant });
+    selected.push({ role: "PRODUCT", reference, variantId: product.variant, subjectId: product.image.assetId });
   }
   const selectedRefs = new Set(selected.map((item) => item.reference));
   if (ordered.some((reference) => !selectedRefs.has(reference))) fail("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
@@ -638,7 +639,7 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
       return {
         approval: "APPROVED" as const,
         role: item.role,
-        subjectId: item.role === "CHARACTER" ? item.reference.authorityId : product.image?.assetId ?? "",
+        subjectId: item.subjectId,
         variantId: item.variantId,
         assetUrl: asset.assetUrl,
         contentHash: asset.contentHash,
