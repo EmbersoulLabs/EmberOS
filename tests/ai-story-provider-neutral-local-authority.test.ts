@@ -10,7 +10,11 @@ import {
   type AiStorySceneCompiledInstructions,
   type AiStorySceneExecutionIntent,
 } from "@ceo-agent/shared";
-import { sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
+import {
+  computeAiStoryLocalGenerationPackageV3Fingerprint,
+  deterministicAiStoryLocalGenerationPackageV3Id,
+  sha256CanonicalIntegrityHash,
+} from "@ceo-agent/shared/server";
 import { canonicalPersistenceHash } from "@ceo-agent/db";
 import { AiStoryLocalGenerationError } from "../packages/agents/src/ai-story/local-generation-package";
 import { AiStoryLocalGenerationService } from "../packages/agents/src/ai-story/local-generation-service";
@@ -18,8 +22,14 @@ import { materializeLocalRetryPackage } from "../packages/agents/src/ai-story/ge
 import {
   buildLocalGenerationOperatorInstructions,
   materializeProviderNeutralLocalGenerationPackage,
+  type BoundVisualReference,
   type ProviderNeutralLocalSceneFacts,
 } from "../packages/agents/src/ai-story/local-generation-source-authority";
+import {
+  materializeReleasedPackageIntegrityRetry,
+  materializeSequentialLocalPackageV3,
+} from "../packages/agents/src/ai-story/sequential-local-generation";
+import { mapCanonicalPackageToLocalGpuDesktop } from "../packages/agents/src/ai-story/local-gpu-package-transport";
 
 const root = join(__dirname, "..");
 const read = (path: string) => readFileSync(join(root, path), "utf8");
@@ -377,6 +387,162 @@ describe("provider-neutral local generation authority", () => {
     expect(textToVideo.recommendedWorkflow).toBe("MINIMAX_H3_NATIVE_DIALOGUE");
     expect(textToVideo.generationMode).toBe("TEXT_TO_VIDEO");
     expect(textToVideo.instructions).toContain("FIRST FRAME\nNone.");
+  });
+
+  it("binds character, product, and multi-character references without dropping or reordering them", () => {
+    const characterA = id("611");
+    const characterB = id("612");
+    const assetA = id("811");
+    const assetB = id("812");
+    const productFrame = id("088");
+    const anchor = (assetId: string, authorityId: string, name: string): BoundVisualReference => ({
+      assetId,
+      contentHash: hash(name),
+      mediaType: "image/png",
+      storagePath: `${id("3af")}/library/${assetId}.png`,
+      authorityType: "CHARACTER",
+      authorityId,
+      displayName: name,
+    });
+    const withCharacters = (count: 1 | 2, extra: BoundVisualReference[] = []) => {
+      const input = facts("T2V");
+      const ids = count === 1 ? [assetA] : [assetA, assetB];
+      const sceneAuthority = {
+        strategy: "TEXT_TO_VIDEO" as const,
+        referenceSource: "CHARACTER_SYNTHETIC_ANCHOR" as const,
+        referenceAssetIds: ids,
+        firstFrameAssetId: null,
+        productVisualIdentityRequirement: "NONE" as const,
+      };
+      const generationAuthority = resolveExplicitAiStorySceneGenerationAuthority(sceneAuthority);
+      const instructions = {
+        ...input.instructions,
+        durationMs: 10000,
+        shots: [{ ...input.instructions.shots[0]!, durationMs: 10000 }],
+        generationAuthority,
+        referencedAssetIds: ids,
+      };
+      const scene = {
+        ...input.scene,
+        generationAuthority: sceneAuthority,
+        castBindings: [
+          { scope: "CAMPAIGN_CHARACTER", id: characterA, campaignId: id("4d3"), authorityVersionId: id("711"), authorityFingerprint: hash("cast-a"), visualIdentityRequirement: "REQUIRED" },
+          ...(count === 2 ? [{ scope: "CAMPAIGN_CHARACTER", id: characterB, campaignId: id("4d3"), authorityVersionId: id("712"), authorityFingerprint: hash("cast-b"), visualIdentityRequirement: "REQUIRED" }] : []),
+        ],
+        events: [
+          { type: "ACTION", order: 0, durationRange: { minSeconds: 5, maxSeconds: 5 }, subjectId: characterA, action: "sets the table" },
+          { type: "DIALOGUE", order: 1, durationRange: { minSeconds: 5, maxSeconds: 5 }, speakerId: characterA, language: "zh-MY", line: "来，尝尝。", speakerCastReference: { scope: "CAMPAIGN_CHARACTER", id: characterA } },
+        ],
+      } as ProviderNeutralLocalSceneFacts["scene"];
+      return {
+        ...input,
+        instructionContentHash: canonicalPersistenceHash(instructions),
+        instructions,
+        scene,
+        boundVisualReferences: [anchor(assetA, characterA, "fei"), ...(count === 2 ? [anchor(assetB, characterB, "daughter")] : []), ...extra],
+        order: 1,
+      } satisfies ProviderNeutralLocalSceneFacts;
+    };
+
+    const one = materializeProviderNeutralLocalGenerationPackage(withCharacters(1));
+    expect(one.durationSec).toBe(10);
+    expect(one.references.map((reference) => reference.assetId)).toEqual([assetA]);
+    expect(one.references[0]).toMatchObject({ authorityType: "CHARACTER", authorityId: characterA, contentHash: hash("fei") });
+    expect(one.characterAuthority?.characterId).toBe(characterA);
+    expect(one.dialogue[0]?.locale).toBe("zh-MY");
+    expect(one.recommendedWorkflow).toBe("MINIMAX_H3_NATIVE_DIALOGUE");
+
+    const two = materializeProviderNeutralLocalGenerationPackage({
+      ...withCharacters(2),
+      scene: { ...withCharacters(2).scene, events: [{ type: "ACTION", order: 0, durationRange: { minSeconds: 10, maxSeconds: 10 }, subjectId: characterA, action: "serves" }] } as ProviderNeutralLocalSceneFacts["scene"],
+    });
+    expect(two.references.map((reference) => reference.assetId)).toEqual([assetA, assetB]);
+    expect(two.recommendedWorkflow).toBe("MINIMAX_H3_R2V");
+    expect(two.generationMode).toBe("TEXT_TO_VIDEO");
+    expect(two.durationSec).toBe(10);
+    const v3 = materializeSequentialLocalPackageV3({
+      basePackage: two,
+      release: { releaseRevision: 0, releasedBy: id("1"), releasedAt: createdAt },
+      predecessor: null,
+    });
+    expect(v3.references.map((reference) => reference.assetId)).toEqual([assetA, assetB]);
+    expect(v3.references.map((reference) => reference.role)).toEqual(["CHARACTER_IDENTITY", "CHARACTER_IDENTITY"]);
+    expect(v3.durationSec).toBe(10);
+    const historicalDraft = { ...v3, references: [] as typeof v3.references };
+    const historicalFingerprint = computeAiStoryLocalGenerationPackageV3Fingerprint(historicalDraft);
+    const historical = {
+      ...historicalDraft,
+      packageFingerprint: historicalFingerprint,
+      packageId: deterministicAiStoryLocalGenerationPackageV3Id(historicalFingerprint),
+    };
+    const recovered = materializeReleasedPackageIntegrityRetry({
+      current: historical,
+      rebuilt: v3,
+      createdAt: "2026-10-21T08:00:00.000Z",
+    });
+    expect(recovered.changed).toBe(true);
+    expect(recovered.package.retryOfPackageId).toBe(historical.packageId);
+    expect(recovered.package.retryNumber).toBe(historical.retryNumber + 1);
+    expect(recovered.package.packageId).not.toBe(historical.packageId);
+    expect(recovered.package.references.map((reference) => reference.assetId)).toEqual([assetA, assetB]);
+    expect(recovered.package.durationSec).toBe(10);
+    expect(recovered.package.releaseAuthority.semanticFingerprint).toBe(historical.releaseAuthority.semanticFingerprint);
+    expect(materializeReleasedPackageIntegrityRetry({
+      current: v3,
+      rebuilt: v3,
+      createdAt: "2026-10-21T08:00:00.000Z",
+    }).changed).toBe(false);
+
+    const desktop = mapCanonicalPackageToLocalGpuDesktop({
+      package: v3,
+      assets: [
+        { assetId: assetA, contentHash: hash("fei"), workspaceId: id("3af"), assetUrl: "https://assets.example.test/fei.png" },
+        { assetId: assetB, contentHash: hash("daughter"), workspaceId: id("3af"), assetUrl: "https://assets.example.test/daughter.png" },
+      ],
+      environment: "staging",
+      jobId: id("90"),
+      upload: { environment: "staging", method: "PUT", url: "https://uploads.example.test/scene.mp4" },
+    });
+    expect(desktop.desktop.references.map((reference) => reference.contentHash)).toEqual([hash("fei"), hash("daughter")]);
+    expect(desktop.desktop.durationSec).toBe(10);
+    expect(desktop.submit).toBe(false);
+
+    const overflowIds = [assetA, assetB, productFrame, id("813")];
+    const overflow = withCharacters(2);
+    const overflowAuthority = {
+      strategy: "TEXT_TO_VIDEO" as const,
+      referenceSource: "CHARACTER_SYNTHETIC_ANCHOR" as const,
+      referenceAssetIds: overflowIds,
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE" as const,
+    };
+    const overflowEffective = resolveExplicitAiStorySceneGenerationAuthority(overflowAuthority);
+    const overflowInstructions = { ...overflow.instructions, generationAuthority: overflowEffective, referencedAssetIds: overflowIds };
+    expect(() => materializeProviderNeutralLocalGenerationPackage({
+      ...overflow,
+      scene: { ...overflow.scene, generationAuthority: overflowAuthority },
+      instructions: overflowInstructions,
+      instructionContentHash: canonicalPersistenceHash(overflowInstructions),
+      boundVisualReferences: overflowIds.map((assetId, index) => ({
+        assetId,
+        contentHash: hash(`overflow-${index}`),
+        mediaType: "image/png",
+        storagePath: `${id("3af")}/library/${assetId}.png`,
+        authorityType: "CHARACTER" as const,
+        authorityId: characterA,
+        displayName: `reference ${index + 1}`,
+      })),
+    })).toThrow(/Desktop runtime capacity/);
+    expect(() => materializeProviderNeutralLocalGenerationPackage({
+      ...withCharacters(1),
+      boundVisualReferences: [],
+    })).toThrow(/missing from the canonical package/);
+    const drifted = withCharacters(1);
+    expect(() => materializeProviderNeutralLocalGenerationPackage({
+      ...drifted,
+      instructions: { ...drifted.instructions, durationMs: 5000, shots: [{ ...drifted.instructions.shots[0]!, durationMs: 5000 }] },
+      instructionContentHash: canonicalPersistenceHash({ ...drifted.instructions, durationMs: 5000, shots: [{ ...drifted.instructions.shots[0]!, durationMs: 5000 }] }),
+    })).toThrow(/frozen duration was left unchanged/i);
   });
 
   it("widens package storage for V2 without rewriting V1 rows", () => {

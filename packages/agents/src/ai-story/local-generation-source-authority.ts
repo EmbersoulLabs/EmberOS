@@ -1,4 +1,5 @@
 import {
+  AI_STORY_EXECUTION_UNIT_DURATION_SUCCESSOR_CONTRACT,
   AI_STORY_LOCAL_GENERATION_PACKAGE_VERSION_V2,
   AI_STORY_LOCAL_GENERATION_SOURCE_AUTHORITY_VERSION,
   AiStoryLocalGenerationPackageSchema,
@@ -10,6 +11,8 @@ import {
   type AiStoryCanonicalScene,
   type ProductVisualMaterialSelectionAuthority,
 } from "@ceo-agent/shared";
+/** Desktop 12GB runtime binds at most three images. Certified R2V dispatch stays at two. */
+const DESKTOP_RUNTIME_IMAGE_REFERENCE_MAX = 3;
 import { sha256CanonicalIntegrityHash } from "@ceo-agent/shared/server";
 import { canonicalPersistenceHash, deterministicPersistenceUuid } from "@ceo-agent/db";
 import { AiStoryLocalGenerationError, localGenerationPackageFingerprint } from "./local-generation-package";
@@ -44,14 +47,150 @@ export type ProviderNeutralLocalSceneFacts = {
     readonly mediaType: string;
     readonly storagePath: string;
   } | null;
+  /**
+   * Visual assets already resolved from frozen authority, in effective-reference order.
+   * Absent means a direct fixture still uses the historical product-frame projection.
+   * An empty array is an explicit zero-asset decision and must not invent references.
+   */
+  readonly boundVisualReferences?: readonly BoundVisualReference[];
   readonly order: number;
   readonly createdAt: string;
   readonly retryOfPackageId?: string | null;
   readonly retryNumber?: number;
 };
 
-function fail(message: string): never {
-  throw new AiStoryLocalGenerationError("LOCAL_GENERATION_AUTHORITY_INVALID", message);
+function fail(
+  message: string,
+  code:
+    | "LOCAL_GENERATION_AUTHORITY_INVALID"
+    | "LOCAL_GENERATION_REFERENCE_INTEGRITY"
+    | "LOCAL_GENERATION_REFERENCE_CAPACITY"
+    | "LOCAL_GENERATION_DURATION_CONFLICT" = "LOCAL_GENERATION_AUTHORITY_INVALID",
+): never {
+  throw new AiStoryLocalGenerationError(code, message);
+}
+
+export type BoundVisualReference = {
+  readonly assetId: string;
+  readonly contentHash: string;
+  readonly mediaType: string;
+  readonly storagePath: string;
+  readonly authorityType: "CHARACTER" | "PRODUCT" | "LOCATION" | "FIRST_FRAME";
+  readonly authorityId: string;
+  readonly displayName: string;
+};
+
+function approvedDurationSec(
+  instructions: AiStorySceneCompiledInstructions,
+  scene: AiStoryCanonicalScene,
+): number {
+  const unitMs = instructions.durationMs;
+  const shotMs = instructions.shots.reduce((sum, shot) => sum + shot.durationMs, 0);
+  if (shotMs !== unitMs) {
+    fail(
+      `Approved generation unit is ${unitMs / 1000}s but its shots total ${shotMs / 1000}s. Authorize ${AI_STORY_EXECUTION_UNIT_DURATION_SUCCESSOR_CONTRACT} before creating a package. The frozen duration was left unchanged.`,
+      "LOCAL_GENERATION_DURATION_CONFLICT",
+    );
+  }
+  const ranges = scene.events.flatMap((event) => event.durationRange ? [event.durationRange] : []);
+  if (ranges.length === scene.events.length && ranges.length > 0 && ranges.every((range) => range.minSeconds === range.maxSeconds)) {
+    const eventMs = Math.round(ranges.reduce((sum, range) => sum + range.minSeconds, 0) * 1000);
+    if (eventMs !== unitMs) {
+      fail(
+        `Frozen scene events total ${eventMs / 1000}s and the approved generation unit is ${unitMs / 1000}s. Authorize ${AI_STORY_EXECUTION_UNIT_DURATION_SUCCESSOR_CONTRACT} before creating a package. The frozen duration was left unchanged.`,
+        "LOCAL_GENERATION_DURATION_CONFLICT",
+      );
+    }
+  }
+  return unitMs / 1000;
+}
+
+function projectBoundReferences(input: {
+  generationAuthority: AiStoryEffectiveSceneGenerationAuthority;
+  imageConditioned: boolean;
+  selection: ProductVisualMaterialSelectionAuthority | null;
+  selectedMaterialAsset: ProviderNeutralLocalSceneFacts["selectedMaterialAsset"];
+  boundVisualReferences: readonly BoundVisualReference[] | undefined;
+}) {
+  const authority = input.generationAuthority;
+  if (input.boundVisualReferences) {
+    const bound = input.boundVisualReferences;
+    if (authority.referenceSource === "REFERENCE_FREE_T2V") {
+      if (bound.length > 0 || authority.effectiveReferenceIds.length > 0) {
+        fail("Reference-free execution cannot carry invented visual references", "LOCAL_GENERATION_REFERENCE_INTEGRITY");
+      }
+      return [];
+    }
+    const boundIds = bound.map((reference) => reference.assetId);
+    const productSourceId = input.selection?.productAuthority.sourceAssetId ?? null;
+    const selectedId = input.selectedMaterialAsset?.assetId ?? null;
+    for (const [index, assetId] of authority.effectiveReferenceIds.entries()) {
+      const direct = bound[index];
+      const represented = direct?.assetId === assetId
+        || (productSourceId === assetId && selectedId !== null && boundIds.includes(selectedId));
+      if (!represented) {
+        fail(
+          `Frozen visual reference ${assetId} is missing from the canonical package`,
+          "LOCAL_GENERATION_REFERENCE_INTEGRITY",
+        );
+      }
+    }
+    if (authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR") {
+      const characterIds = bound.filter((reference) => reference.authorityType === "CHARACTER").map((reference) => reference.assetId);
+      if (characterIds.join(",") !== authority.effectiveReferenceIds.join(",")) {
+        fail(
+          "Character references must stay bound in frozen authority order",
+          "LOCAL_GENERATION_REFERENCE_INTEGRITY",
+        );
+      }
+    }
+    for (const reference of bound) {
+      const allowed = authority.effectiveReferenceIds.includes(reference.assetId)
+        || (selectedId === reference.assetId && productSourceId !== null && authority.effectiveReferenceIds.includes(productSourceId));
+      if (!allowed) {
+        fail(
+          `Package reference ${reference.assetId} is not part of the frozen visual authority`,
+          "LOCAL_GENERATION_REFERENCE_INTEGRITY",
+        );
+      }
+    }
+    const uniqueAssets = new Set(bound.map((reference) => reference.assetId)).size;
+    if (uniqueAssets > DESKTOP_RUNTIME_IMAGE_REFERENCE_MAX) {
+      fail(
+        `This execution binds ${uniqueAssets} visual references and the Desktop runtime capacity is ${DESKTOP_RUNTIME_IMAGE_REFERENCE_MAX}. No reference was dropped.`,
+        "LOCAL_GENERATION_REFERENCE_CAPACITY",
+      );
+    }
+    return bound.map((reference) => ({
+      assetId: reference.assetId,
+      contentHash: reference.contentHash,
+      authorityType: reference.authorityType,
+      authorityId: reference.authorityId,
+      displayName: reference.displayName,
+      mediaType: reference.mediaType,
+      storagePath: reference.storagePath,
+      providerWireRole: reference.authorityType === "FIRST_FRAME" ? "first_frame" as const : "reference_image" as const,
+    }));
+  }
+  if (input.imageConditioned && input.selectedMaterialAsset && input.selection) {
+    return [{
+      assetId: input.selectedMaterialAsset.assetId,
+      contentHash: input.selectedMaterialAsset.contentHash,
+      authorityType: "FIRST_FRAME" as const,
+      authorityId: input.selection.productAuthority.productAuthorityId,
+      displayName: "selected product first frame",
+      mediaType: input.selectedMaterialAsset.mediaType,
+      storagePath: input.selectedMaterialAsset.storagePath,
+      providerWireRole: "first_frame" as const,
+    }];
+  }
+  if (authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR" || authority.effectiveReferenceIds.length > 0) {
+    fail(
+      "Required visual identity was not bound and cannot downgrade to reference-free text-to-video",
+      "LOCAL_GENERATION_REFERENCE_INTEGRITY",
+    );
+  }
+  return [];
 }
 
 function stateText(facts: readonly { dimension: string; value: string }[]): string[] {
@@ -133,11 +272,11 @@ function certifiedLocalWorkflow(
   generationAuthority: AiStoryEffectiveSceneGenerationAuthority,
 ) {
   if (hasVisibleDialogue) return CERTIFIED_MINIMAX_NATIVE_DIALOGUE_WORKFLOW;
-  if (generationAuthority.strategy === "TEXT_TO_VIDEO") return "MINIMAX_H3_T2V" as const;
   if (
-    generationAuthority.strategy === "FIRST_FRAME_IMAGE_TO_VIDEO"
-    || generationAuthority.strategy === "PRODUCT_GROUNDED_VIDEO"
-  ) return "MINIMAX_H3_R2V" as const;
+    generationAuthority.referenceSource === "REFERENCE_FREE_T2V"
+    && generationAuthority.effectiveReferenceIds.length === 0
+  ) return "MINIMAX_H3_T2V" as const;
+  if (generationAuthority.effectiveReferenceIds.length > 0) return "MINIMAX_H3_R2V" as const;
   throw new AiStoryLocalGenerationError(
     "LOCAL_WORKFLOW_CERTIFICATION_REQUIRED",
     "The frozen Scene generation authority has no certified LOCAL_GPU workflow.",
@@ -280,8 +419,25 @@ export function materializeProviderNeutralLocalGenerationPackage(
     fail("Reference-free execution cannot carry a first-frame Asset");
   }
 
+  const references = projectBoundReferences({
+    generationAuthority,
+    imageConditioned,
+    selection,
+    selectedMaterialAsset: facts.selectedMaterialAsset,
+    boundVisualReferences: facts.boundVisualReferences,
+  });
   const persistentCast = scene.castBindings.filter((cast) => cast.scope !== "EPHEMERAL_ACTOR");
-  const primaryCast = [...persistentCast].sort((left, right) => left.id.localeCompare(right.id))[0] ?? null;
+  const dialogueForSpeaker = dialogueFrom(scene, instructions).filter((line) => !line.offscreen);
+  const speakerCast = dialogueForSpeaker.length === 1
+    ? persistentCast.find((cast) => cast.id === dialogueForSpeaker[0]?.speakerCharacterId) ?? null
+    : null;
+  const boundCharacterId = references.find((reference) => reference.authorityType === "CHARACTER")?.authorityId ?? null;
+  const boundCast = boundCharacterId
+    ? persistentCast.find((cast) => cast.id === boundCharacterId) ?? null
+    : null;
+  const primaryCast = speakerCast
+    ?? boundCast
+    ?? (persistentCast.length === 1 ? persistentCast[0] : null);
   const characterAuthority = primaryCast ? {
     characterId: primaryCast.id,
     characterVersionId: primaryCast.authorityVersionId,
@@ -304,15 +460,6 @@ export function materializeProviderNeutralLocalGenerationPackage(
     selectedMaterialContentHash: null,
     selection: "NO_PRODUCT_VISUAL_INPUT" as const,
   } : null;
-  const references = imageConditioned && facts.selectedMaterialAsset && selection ? [{
-    assetId: facts.selectedMaterialAsset.assetId,
-    contentHash: facts.selectedMaterialAsset.contentHash,
-    authorityType: "FIRST_FRAME" as const,
-    authorityId: selection.productAuthority.productAuthorityId,
-    displayName: "selected product first frame",
-    mediaType: facts.selectedMaterialAsset.mediaType,
-    storagePath: facts.selectedMaterialAsset.storagePath,
-  }] : [];
   const dialogue = dialogueFrom(scene, instructions);
   const visibleDialogue = dialogue.filter((line) => !line.offscreen);
   const workflow = certifiedLocalWorkflow(visibleDialogue.length > 0, generationAuthority);
@@ -405,9 +552,10 @@ export function materializeProviderNeutralLocalGenerationPackage(
     localSourceAuthorityId,
     retryNumber,
   });
+  const durationSec = approvedDurationSec(instructions, scene);
   const instructionsText = buildLocalGenerationOperatorInstructions({
     recommendedWorkflow: workflow,
-    durationSec: instructions.durationMs / 1000,
+    durationSec,
     aspectRatio: facts.aspectRatio,
     resolutionIntent: "720p",
     generationMode,
@@ -438,7 +586,7 @@ export function materializeProviderNeutralLocalGenerationPackage(
     sceneExecutionId: facts.sceneExecutionId,
     sceneId: scene.sceneId,
     order: facts.order,
-    durationSec: instructions.durationMs / 1000,
+    durationSec,
     aspectRatio: facts.aspectRatio,
     resolutionIntent: "720p" as const,
     recommendedWorkflow: workflow,

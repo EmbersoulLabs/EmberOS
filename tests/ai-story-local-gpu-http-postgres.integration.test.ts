@@ -130,8 +130,9 @@ suite("LOCAL_GPU Superadmin real HTTP/PostgreSQL authority", () => {
     const canonicalFacts = providerNeutralLocalFactsFixture("T2V", ids.sceneExecution);
     const instructions = { ...canonicalFacts.instructions, sceneOrder: 0 };
     const instructionHash = canonicalPersistenceHash(instructions);
+    const { groundingLineage: _lineage, ...persistedInstructions } = instructions;
     await sql`insert into ai_story_scene_instruction_snapshots(content_hash,snapshot_id,org_id,workspace_id,contract_version,instructions)
-      values(${instructionHash},${randomUUID()},${ids.org},${ids.workspace},'1',${sql.json({certification:true})})`;
+      values(${instructionHash},${randomUUID()},${ids.org},${ids.workspace},'1',${sql.json(persistedInstructions)})`;
     await sql`insert into ai_story_execution_plans(id,org_id,workspace_id,campaign_id,story_id,story_version_id,animation_package_id,status,contract_version,compilation_hash,deterministic_fingerprint,plan,compiled_at)
       values(${ids.plan},${ids.org},${ids.workspace},${ids.campaign},${ids.story},${ids.storyVersion},${ids.animation},'PLANNED','1',${hash("plan")},${hash("plan-fingerprint")},${sql.json({certification:true})},now())`;
     const facts = {

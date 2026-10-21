@@ -204,6 +204,17 @@ describe("Generate Review Pre-Generation QC materialization", () => {
     });
     expect(multiCharacter.referenceRoles).toEqual(["CHARACTER"]);
     expect(multiCharacter.providerNeutralInputsComplete).toBe(true);
+    const overflow = buildManualLocalPreQcCompilationRequest({
+      sceneExecutionId,
+      generationAuthority: authority({
+        strategy: "PRODUCT_GROUNDED_VIDEO",
+        referenceSource: "SCENE_EXPLICIT",
+        effectiveReferenceIds: [frameId, "30000000-0000-4000-8000-000000000021", "30000000-0000-4000-8000-000000000022"],
+        firstFrameAssetId: frameId,
+        productVisualIdentityRequirement: "REQUIRED",
+      }),
+    });
+    expect(overflow.providerNeutralInputsComplete).toBe(false);
 
     const grounded = buildManualLocalPreQcCompilationRequest({
       sceneExecutionId,

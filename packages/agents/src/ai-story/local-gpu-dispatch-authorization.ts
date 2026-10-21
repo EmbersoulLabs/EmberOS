@@ -9,7 +9,11 @@ import {
   persistLocalGpuDispatchAuthority,
   schema,
 } from "@ceo-agent/db";
-import type { AiStoryLocalGenerationPackage } from "@ceo-agent/shared";
+import {
+  AI_STORY_EXECUTION_UNIT_DURATION_SUCCESSOR_CONTRACT,
+  AiStorySceneCompiledInstructionsSchema,
+  type AiStoryLocalGenerationPackage,
+} from "@ceo-agent/shared";
 import { assertLocalGpuV2RuntimeCapabilities, LocalGpuContractError, readLocalGpuV2FirstFrameAuthorities } from "@ceo-agent/shared/server";
 import { LocalGpuCloudAdapter } from "./local-gpu-adapter";
 import { loadLocalGpuConfigFromEnv, type LocalGpuConfig } from "./local-gpu-config";
@@ -115,6 +119,42 @@ function requireProductionConfig(env: Env): LocalGpuConfig {
 
 type BuiltDispatch = { route: Record<string, unknown>; request: Record<string, unknown> };
 
+async function assertDispatchDuration(
+  db: Db,
+  pkg: AiStoryLocalGenerationPackage,
+  orgId: string,
+  workspaceId: string,
+): Promise<void> {
+  const [scene] = await db.select({
+    instructionHash: schema.aiStorySceneExecutions.instructionHash,
+  }).from(schema.aiStorySceneExecutions).where(and(
+    eq(schema.aiStorySceneExecutions.id, pkg.sceneExecutionId),
+    eq(schema.aiStorySceneExecutions.workspaceId, workspaceId),
+    eq(schema.aiStorySceneExecutions.orgId, orgId),
+  )).limit(1);
+  const [snapshot] = scene ? await db.select({
+    instructions: schema.aiStorySceneInstructionSnapshots.instructions,
+  }).from(schema.aiStorySceneInstructionSnapshots).where(and(
+    eq(schema.aiStorySceneInstructionSnapshots.contentHash, scene.instructionHash),
+    eq(schema.aiStorySceneInstructionSnapshots.workspaceId, workspaceId),
+    eq(schema.aiStorySceneInstructionSnapshots.orgId, orgId),
+  )).limit(1) : [];
+  const instructions = snapshot
+    ? AiStorySceneCompiledInstructionsSchema.safeParse(snapshot.instructions)
+    : null;
+  const unitMs = instructions?.success ? instructions.data.durationMs : null;
+  const shotMs = instructions?.success
+    ? instructions.data.shots.reduce((sum, shot) => sum + shot.durationMs, 0)
+    : null;
+  if (unitMs === null || shotMs !== unitMs || pkg.durationSec * 1000 !== unitMs) {
+    throw new LocalGpuAuthorizationError(
+      "LOCAL_GENERATION_DURATION_CONFLICT",
+      409,
+      `Package duration is ${pkg.durationSec}s and the approved generation unit is ${unitMs === null ? "unavailable" : `${unitMs / 1000}s`}. Authorize ${AI_STORY_EXECUTION_UNIT_DURATION_SUCCESSOR_CONTRACT} before dispatch. The frozen duration was left unchanged.`,
+    );
+  }
+}
+
 async function buildDispatch(input: {
   db: Db;
   pkg: AiStoryLocalGenerationPackage;
@@ -125,6 +165,34 @@ async function buildDispatch(input: {
   ports: LocalGpuAuthorizationPorts;
 }): Promise<BuiltDispatch> {
   const { pkg, capabilities } = input;
+  if (pkg.version !== "local-generation-package.v1") {
+    const authority = pkg.sourceAuthority.generationAuthority;
+    const characterIds = pkg.references.flatMap((reference) => {
+      if ("role" in reference) return reference.role === "CHARACTER_IDENTITY" ? [reference.assetId] : [];
+      return reference.authorityType === "CHARACTER" ? [reference.assetId] : [];
+    });
+    const visualStartId = pkg.version === "local-generation-package.v3" && pkg.visualStartAuthority.sourceType !== "NONE"
+      ? pkg.visualStartAuthority.assetId
+      : null;
+    const expectedCharacterIds = authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR"
+      ? authority.effectiveReferenceIds.filter((assetId) => assetId !== visualStartId)
+      : [];
+    if (authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR" && expectedCharacterIds.join(",") !== characterIds.join(",")) {
+      throw new LocalGpuAuthorizationError(
+        "LOCAL_GPU_REFERENCE_AUTHORITY_MISMATCH",
+        409,
+        "Canonical package does not preserve frozen character references in authority order",
+      );
+    }
+    if (authority.referenceSource === "REFERENCE_FREE_T2V" && (authority.effectiveReferenceIds.length > 0 || characterIds.length > 0)) {
+      throw new LocalGpuAuthorizationError(
+        "LOCAL_GPU_REFERENCE_AUTHORITY_MISMATCH",
+        409,
+        "Reference-free execution cannot carry invented visual references",
+      );
+    }
+  }
+  await assertDispatchDuration(input.db, input.pkg, input.orgId, input.workspaceId);
   const references = pkg.references ?? [];
   const nativeDialogue = pkg.recommendedWorkflow === "MINIMAX_H3_NATIVE_DIALOGUE" || pkg.dialogue.some((line) => !line.offscreen);
   const qcExpectation = nativeDialogue
