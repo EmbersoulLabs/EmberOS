@@ -23,6 +23,7 @@ import {
   type AiStoryPreGenerationQcEvaluation,
   type AiStoryPreGenerationQcProviderCapability,
 } from "@ceo-agent/shared";
+import { LOCAL_GPU_REFERENCE_MAX } from "@ceo-agent/shared/server";
 import {
   assertAiStoryPreGenerationQcCurrent,
   validateAiStoryPreGenerationQcFingerprint,
@@ -270,7 +271,7 @@ function providerNeutralInputsComplete(authority: AiStoryEffectiveSceneGeneratio
   }
   if (authority.strategy === "TEXT_TO_VIDEO" && authority.referenceSource === "CHARACTER_SYNTHETIC_ANCHOR") {
     return authority.effectiveReferenceIds.length >= 1
-      && authority.effectiveReferenceIds.length <= 2
+      && authority.effectiveReferenceIds.length <= LOCAL_GPU_REFERENCE_MAX
       && authority.firstFrameAssetId === null;
   }
   if (
@@ -279,6 +280,8 @@ function providerNeutralInputsComplete(authority: AiStoryEffectiveSceneGeneratio
   ) {
     return authority.firstFrameAssetId !== null
       && authority.effectiveReferenceIds.includes(authority.firstFrameAssetId)
+      && authority.effectiveReferenceIds.length >= 1
+      && authority.effectiveReferenceIds.length <= LOCAL_GPU_REFERENCE_MAX
       && authority.productVisualIdentityRequirement === "REQUIRED";
   }
   return false;

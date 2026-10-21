@@ -164,6 +164,28 @@ describe("canonical LOCAL_GPU package transport", () => {
     expect(result.desktop).not.toHaveProperty("dialogue");
   });
 
+  it("preserves two character references in order and rejects a third before dispatch", () => {
+    const secondId = id(25);
+    const secondCharacterId = id(15);
+    const secondHash = hash("b");
+    const mapped = map({
+      productAuthority: null,
+      references: [
+        { authorityType: "CHARACTER", authorityId: characterId, assetId: characterAssetId, contentHash: characterHash },
+        { authorityType: "CHARACTER", authorityId: secondCharacterId, assetId: secondId, contentHash: secondHash },
+      ],
+    }, [...assets, asset(secondId, secondHash, "second")]);
+    expect(mapped.desktop.references.map((reference) => reference.contentHash)).toEqual([characterHash, secondHash]);
+    expect(mapped.submit).toBe(false);
+    expect(code(() => map({
+      references: [
+        { authorityType: "CHARACTER", authorityId: characterId, assetId: characterAssetId, contentHash: characterHash },
+        { authorityType: "CHARACTER", authorityId: secondCharacterId, assetId: secondId, contentHash: secondHash },
+        { authorityType: "PRODUCT", authorityId: id(13), assetId: productAssetId, contentHash: productHash },
+      ],
+    }, [...assets, asset(secondId, secondHash, "second")]))).toBe("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+  });
+
   it("accepts one stored asset resolved for several canonical roles and still rejects conflicting resolutions", () => {
     const duplicated = [...assets, asset(productAssetId, productHash, "product")];
     expect(map({}, duplicated).desktop.references.map((reference) => reference.contentHash)).toEqual([characterHash, productHash]);

@@ -175,6 +175,20 @@ export function materializeSequentialLocalPackageV3(input: {
         ?.mediaType ?? "image/png",
     });
   }
+  for (const reference of base.references) {
+    if (reference.authorityType !== "CHARACTER" && reference.authorityType !== "LOCATION") continue;
+    if (!reference.mediaType) {
+      throw new Error("LOCAL_GENERATION_REFERENCE_INTEGRITY");
+    }
+    references.push({
+      role: reference.authorityType === "CHARACTER" ? "CHARACTER_IDENTITY" : "LOCATION_CONTEXT",
+      assetId: reference.assetId,
+      contentHash: reference.contentHash,
+      authorityId: reference.authorityId,
+      displayName: reference.displayName,
+      mediaType: reference.mediaType,
+    });
+  }
 
   const generationAuthority = {
     contractVersion: "ai-story-effective-scene-generation-authority.v2" as const,
@@ -290,4 +304,65 @@ export function materializeSequentialLocalPackageV3(input: {
     packageId:
       deterministicAiStoryLocalGenerationPackageV3Id(packageFingerprint),
   });
+}
+
+function packageReferenceSignature(pkg: AiStoryLocalGenerationPackageV3) {
+  return {
+    references: pkg.references.map((reference) => ({
+      role: reference.role,
+      assetId: reference.assetId,
+      contentHash: reference.contentHash,
+    })),
+    durationSec: pkg.durationSec,
+    recommendedWorkflow: pkg.recommendedWorkflow,
+    generationMode: pkg.generationMode,
+    dialogue: pkg.dialogue.map((line) => ({
+      speakerCharacterId: line.speakerCharacterId ?? null,
+      speakerLabel: line.speakerLabel,
+      text: line.text,
+      offscreen: line.offscreen,
+      locale: line.locale ?? null,
+    })),
+  };
+}
+
+/** A corrected package is the next retry of the current released package. Frozen rows stay in place. */
+export function materializeReleasedPackageIntegrityRetry(input: {
+  current: AiStoryLocalGenerationPackageV3;
+  rebuilt: AiStoryLocalGenerationPackageV3;
+  createdAt: string;
+}): { package: AiStoryLocalGenerationPackageV3; changed: boolean } {
+  const current = input.current;
+  const rebuilt = input.rebuilt;
+  const sameRelease = rebuilt.unitId === current.unitId
+    && rebuilt.sceneExecutionId === current.sceneExecutionId
+    && rebuilt.order === current.order
+    && rebuilt.successorNumber === current.successorNumber
+    && rebuilt.successorOfPackageId === current.successorOfPackageId
+    && rebuilt.runtimeAuthorizationId === current.runtimeAuthorizationId
+    && rebuilt.workspaceId === current.workspaceId
+    && rebuilt.releaseAuthority.semanticFingerprint === current.releaseAuthority.semanticFingerprint
+    && (rebuilt.predecessorAuthority?.semanticFingerprint ?? null)
+      === (current.predecessorAuthority?.semanticFingerprint ?? null);
+  if (!sameRelease) {
+    throw new Error("LOCAL_GENERATION_IMMUTABLE_CONFLICT");
+  }
+  if (JSON.stringify(packageReferenceSignature(rebuilt)) === JSON.stringify(packageReferenceSignature(current))) {
+    return { package: current, changed: false };
+  }
+  const draft = {
+    ...rebuilt,
+    retryOfPackageId: current.packageId,
+    retryNumber: current.retryNumber + 1,
+    createdAt: input.createdAt,
+  };
+  const packageFingerprint = computeAiStoryLocalGenerationPackageV3Fingerprint(draft);
+  return {
+    changed: true,
+    package: AiStoryLocalGenerationPackageV3Schema.parse({
+      ...draft,
+      packageFingerprint,
+      packageId: deterministicAiStoryLocalGenerationPackageV3Id(packageFingerprint),
+    }),
+  };
 }

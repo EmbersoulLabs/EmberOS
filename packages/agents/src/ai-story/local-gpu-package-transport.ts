@@ -1,5 +1,6 @@
 import type { AiStoryLocalGenerationPackage } from "@ceo-agent/shared";
 import {
+  LOCAL_GPU_REFERENCE_MAX,
   LocalGpuContractError,
   assertLocalGpuDispatchWorkflow,
   assertLocalGpuSubmitAllowed,
@@ -409,17 +410,11 @@ export function mapCanonicalPackageToLocalGpuDesktop(input: {
     fail("LOCAL_GPU_FRAME_TRANSPORT_UNSUPPORTED");
   }
   const selected: { role: "CHARACTER" | "PRODUCT"; reference: PackageReference }[] = [];
-  if (pkg.characterAuthority) {
-    selected.push({
-      role: "CHARACTER",
-      reference: oneReference(
-        references,
-        ["CHARACTER", "CHARACTER_IDENTITY"],
-        pkg.characterAuthority.characterId,
-        "LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED",
-      ),
-    });
+  const characters = references.filter((reference) => reference.kind === "CHARACTER" || reference.kind === "CHARACTER_IDENTITY");
+  if (pkg.characterAuthority && !characters.some((reference) => reference.authorityId === pkg.characterAuthority?.characterId)) {
+    fail("LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED");
   }
+  for (const reference of characters) selected.push({ role: "CHARACTER", reference });
   const product = productVisual(pkg);
   if (product.image) {
     const reference = oneReference(references, ["PRODUCT", "PRODUCT_IDENTITY"], null, "LOCAL_GPU_PRODUCT_REFERENCE_REQUIRED");
