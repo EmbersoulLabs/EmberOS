@@ -165,6 +165,51 @@ describe("Desktop contract V2", () => {
     expect(result.body).not.toHaveProperty("remoteProviderFallback");
   });
 
+  it("keeps two character identities in order, including a shared content hash", () => {
+    const secondCharacterId = id(15);
+    const secondAssetId = id(25);
+    const sharedHash = characterHash;
+    const result = map({
+      productAuthority: null,
+      references: [
+        { authorityType: "CHARACTER", authorityId: characterId, assetId: characterAssetId, contentHash: characterHash },
+        { authorityType: "CHARACTER", authorityId: secondCharacterId, assetId: secondAssetId, contentHash: sharedHash },
+      ],
+    }, [...assets, asset(secondAssetId, sharedHash, "second")]);
+    expect(result.body.references.map((item) => [item.role, item.subjectId, item.contentHash, item.assetUrl])).toEqual([
+      ["CHARACTER", characterId, characterHash, "https://assets.example.test/character.png"],
+      ["CHARACTER", secondCharacterId, sharedHash, "https://assets.example.test/second.png"],
+    ]);
+    expect(result.body.creative.characters).toEqual([
+      {
+        subjectId: characterId,
+        dnaFingerprint: hash("a"),
+        modelBound: false,
+        references: [{ approval: "APPROVED", assetUrl: "https://assets.example.test/character.png", contentHash: characterHash }],
+      },
+      {
+        subjectId: secondCharacterId,
+        dnaFingerprint: null,
+        modelBound: false,
+        references: [{ approval: "APPROVED", assetUrl: "https://assets.example.test/second.png", contentHash: sharedHash }],
+      },
+    ]);
+    expect(result.body.creative.products).toEqual([]);
+  });
+
+  it("rejects two characters plus a product instead of dropping one", () => {
+    const secondCharacterId = id(15);
+    const secondAssetId = id(25);
+    const secondHash = hash("b");
+    expect(code(() => map({
+      references: [
+        { authorityType: "CHARACTER", authorityId: characterId, assetId: characterAssetId, contentHash: characterHash },
+        { authorityType: "CHARACTER", authorityId: secondCharacterId, assetId: secondAssetId, contentHash: secondHash },
+        { authorityType: "PRODUCT", authorityId: id(13), assetId: productAssetId, contentHash: productHash },
+      ],
+    }, [...assets, asset(secondAssetId, secondHash, "second")]))).toBe("LOCAL_GPU_REFERENCE_SELECTION_AMBIGUOUS");
+  });
+
   it("fails closed when the same authoritative fact is both required and forbidden", () => {
     expect(code(() => map({ mustKeep: ["Keep the bottle sealed"], mustAvoid: ["Keep the bottle sealed"] })))
       .toBe("LOCAL_GPU_PROMPT_AUTHORITY_CONFLICT");

@@ -248,19 +248,36 @@ export function mapCanonicalPackageToLocalGpuNativeDialogueV3(input: {
   const desktopReferences = selected.map((reference) => {
     const asset = resolveAsset(input.assets, pkg.workspaceId, reference.assetId, reference.contentHash);
     const role = roleFor(reference);
+    const primaryCharacter = role === "CHARACTER" && reference.authorityId === pkg.characterAuthority!.characterId;
+    if (role === "CHARACTER" && !reference.authorityId) fail("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
     return {
       approval: "APPROVED" as const,
       role,
       assetUrl: asset.assetUrl,
       contentHash: asset.contentHash,
-      subjectId: role === "CHARACTER" ? pkg.characterAuthority!.characterId : role === "PRODUCT" ? productSubjectId : pkg.sceneExecutionId,
+      subjectId: role === "CHARACTER" ? reference.authorityId : role === "PRODUCT" ? productSubjectId : pkg.sceneExecutionId,
       variantId: role === "PRODUCT" ? productVariantId : null,
-      dnaVersion: role === "CHARACTER" ? pkg.characterAuthority!.characterVersionId : null,
-      dnaFingerprint: role === "CHARACTER" ? pkg.characterAuthority!.dnaFingerprint : null,
+      dnaVersion: primaryCharacter ? pkg.characterAuthority!.characterVersionId : null,
+      dnaFingerprint: primaryCharacter ? pkg.characterAuthority!.dnaFingerprint : null,
     };
   }).sort((left, right) => ["CHARACTER", "PRODUCT", "SCENE"].indexOf(left.role) - ["CHARACTER", "PRODUCT", "SCENE"].indexOf(right.role));
-  const characterReferences = desktopReferences.filter((reference) => reference.role === "CHARACTER")
-    .map((reference) => ({ approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
+  const characterSubjects: { subjectId: string; dnaVersion: string | null; dnaFingerprint: string | null; references: { approval: "APPROVED"; assetUrl: string; contentHash: string }[] }[] = [];
+  for (const reference of desktopReferences) {
+    if (reference.role !== "CHARACTER" || !reference.subjectId) continue;
+    const image = { approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash };
+    const existing = characterSubjects.find((subject) => subject.subjectId === reference.subjectId);
+    if (existing) {
+      existing.references.push(image);
+      continue;
+    }
+    characterSubjects.push({
+      subjectId: reference.subjectId,
+      dnaVersion: reference.dnaVersion,
+      dnaFingerprint: reference.dnaFingerprint,
+      references: [image],
+    });
+  }
+  const characterReferences = characterSubjects.flatMap((subject) => subject.references);
   if (characterReferences.length === 0) fail("LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED");
   const productReferences = desktopReferences.filter((reference) => reference.role === "PRODUCT")
     .map((reference) => ({ approval: reference.approval, assetUrl: reference.assetUrl, contentHash: reference.contentHash }));
@@ -274,12 +291,12 @@ export function mapCanonicalPackageToLocalGpuNativeDialogueV3(input: {
     endSec: null,
   }));
   const creative = {
-    characters: [{
-      subjectId: pkg.characterAuthority.characterId,
-      dnaVersion: pkg.characterAuthority.characterVersionId,
-      dnaFingerprint: pkg.characterAuthority.dnaFingerprint,
-      references: characterReferences,
-    }],
+    characters: characterSubjects.map((subject) => ({
+      subjectId: subject.subjectId,
+      dnaVersion: subject.dnaVersion,
+      dnaFingerprint: subject.dnaFingerprint,
+      references: subject.references,
+    })),
     ...(pkg.productAuthority && productReferences.length > 0 ? { products: [{
       subjectId: productSubjectId!,
       variantId: pkg.productAuthority.confirmedVariant ?? "approved-variant",
@@ -594,12 +611,14 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
   }
   const selected: { role: "CHARACTER" | "PRODUCT"; reference: PackageReference; variantId: string | null }[] = [];
   const ordered = modelReferences(pkg);
-  if (pkg.characterAuthority) {
-    selected.push({
-      role: "CHARACTER",
-      reference: oneReference(ordered, ["CHARACTER", "CHARACTER_IDENTITY"], pkg.characterAuthority.characterId, "LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED"),
-      variantId: null,
-    });
+  const characters = ordered.filter((reference) => reference.kind === "CHARACTER" || reference.kind === "CHARACTER_IDENTITY");
+  if (pkg.characterAuthority && !characters.some((reference) => reference.authorityId === pkg.characterAuthority?.characterId)) {
+    fail("LOCAL_GPU_CHARACTER_REFERENCE_REQUIRED");
+  }
+  if (!pkg.characterAuthority && characters.length > 0) fail("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
+  for (const reference of characters) {
+    if (!reference.authorityId) fail("LOCAL_GPU_CHARACTER_AUTHORITY_REQUIRED");
+    selected.push({ role: "CHARACTER", reference, variantId: null });
   }
   const product = productVisual(pkg);
   if (product.image) {
@@ -619,7 +638,7 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
       return {
         approval: "APPROVED" as const,
         role: item.role,
-        subjectId: item.role === "CHARACTER" ? pkg.characterAuthority!.characterId : product.image?.assetId ?? "",
+        subjectId: item.role === "CHARACTER" ? item.reference.authorityId : product.image?.assetId ?? "",
         variantId: item.variantId,
         assetUrl: asset.assetUrl,
         contentHash: asset.contentHash,
@@ -634,6 +653,7 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
     : !pkg.generateAudio && pkg.audioBlocked
       ? "SILENT_OUTPUT" as const
       : fail("LOCAL_GPU_AUDIO_POLICY_INVALID");
+  const characterSeen = new Set<string>();
   return buildLocalGpuDesktopSubmitV2({
     environment: input.environment,
     jobId: input.jobId,
@@ -646,10 +666,15 @@ export function mapCanonicalPackageToLocalGpuContractV2(input: {
     audioPolicy,
     productOnlyScene,
     creative: {
-      characters: pkg.characterAuthority ? [{
-        subjectId: pkg.characterAuthority.characterId,
-        dnaFingerprint: pkg.characterAuthority.dnaFingerprint,
-      }] : [],
+      characters: characters.flatMap((reference) => {
+        const subjectId = reference.authorityId;
+        if (!subjectId || characterSeen.has(subjectId)) return [];
+        characterSeen.add(subjectId);
+        return [{
+          subjectId,
+          dnaFingerprint: subjectId === pkg.characterAuthority?.characterId ? pkg.characterAuthority.dnaFingerprint : null,
+        }];
+      }),
       products: product.image ? [{
         subjectId: desktopReferences.find((reference) => reference.role === "PRODUCT")?.subjectId ?? "",
         variantId: product.variant,
