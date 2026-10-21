@@ -79,6 +79,8 @@ describe("Sprint 3 Phase 2A PR2 boundary regression", () => {
       "utf8"
     );
     expect(page).toContain("Generation review ready");
+    expect(page).toContain('data-testid="refresh-generation-review"');
+    expect(page).toContain("advancedAuthorized?");
     expect(page).toContain("Generate Review");
     expect(page).not.toContain("Confirm Execute");
     expect(page).not.toContain("Regenerate One");
