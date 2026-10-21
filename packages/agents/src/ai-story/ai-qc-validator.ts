@@ -24,6 +24,8 @@ export type AiQcAssetFact = {
   assetId: string;
   workspaceId: string;
   campaignId: string | null;
+  /** The exact frozen Campaign/Story Character version authorizes this visual reference. */
+  characterAuthorityCampaignId?: string | null;
 };
 
 export type AiQcValidationContext = {
@@ -356,12 +358,15 @@ export function validateSceneExecutionIntent(
         )
       );
     }
-    if (asset.campaignId !== ctx.campaignId) {
+    if (
+      asset.campaignId !== ctx.campaignId &&
+      asset.characterAuthorityCampaignId !== ctx.campaignId
+    ) {
       errors.push(
         finding(
           "ASSET_CAMPAIGN_UNAUTHORIZED",
           `referencedAssetIds[${index}]`,
-          "Asset is not authorized for the current Campaign."
+          "Asset is not authorized by the current Campaign or frozen Character authority."
         )
       );
     }
