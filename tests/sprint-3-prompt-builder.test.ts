@@ -166,6 +166,19 @@ describe("Sprint 3 execution compiler", () => {
     expect(estimate.aiSummary.toLowerCase()).not.toContain("seedance");
   });
 
+  it("collects Character synthetic anchor references for execution QC", () => {
+    const pkg = samplePackage();
+    pkg.story.assetReferences = [];
+    (pkg.scenePlan[0] as any).generationAuthority = {
+      strategy: "TEXT_TO_VIDEO",
+      referenceSource: "CHARACTER_SYNTHETIC_ANCHOR",
+      referenceAssetIds: [ASSET_A, ASSET_B],
+      firstFrameAssetId: null,
+      productVisualIdentityRequirement: "NONE",
+    };
+    expect(collectReferencedAssetIds(pkg)).toEqual([ASSET_A, ASSET_B]);
+  });
+
   it("compiles an ordered Seedance request with product identity constraints", () => {
     const pkg = samplePackage([ASSET_A, ASSET_B]);
     const manifest = compileExecutionManifest({

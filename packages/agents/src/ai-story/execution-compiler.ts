@@ -38,8 +38,11 @@ export function collectReferencedAssetIds(
     if (id) ids.add(id);
   }
   for (const scene of animationPackage.scenePlan) {
-    if (scene.generationAuthority?.referenceSource !== "SCENE_EXPLICIT") continue;
-    for (const id of scene.generationAuthority.referenceAssetIds) {
+    const authority = scene.generationAuthority;
+    const sceneReferenceIds = authority && "referenceAssetIds" in authority
+      ? authority.referenceAssetIds
+      : [];
+    for (const id of sceneReferenceIds) {
       if (id) ids.add(id);
     }
   }
