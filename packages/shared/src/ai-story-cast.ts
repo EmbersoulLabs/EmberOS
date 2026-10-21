@@ -190,11 +190,16 @@ export function validateCastReferences(input: {
 }): AiStoryCastQcIssue[] {
   const issues: AiStoryCastQcIssue[] = [];
   const block = (gate: AiStoryCastQcIssue["gate"], message: string) => issues.push({ gate, severity: "BLOCK", message });
-  const seen = new Set<string>();
+  const seen = new Map<string, string>();
   for (const reference of input.references) {
     const key = castReferenceKey(reference);
-    if (seen.has(key)) block("CAST_REFERENCE_GATE", `Duplicate Cast reference ${key}`);
-    seen.add(key);
+    const serialized = JSON.stringify(reference);
+    const prior = seen.get(key);
+    if (prior !== undefined && prior !== serialized) {
+      block("CAST_REFERENCE_GATE", `Conflicting Cast reference ${key}`);
+    } else if (prior === undefined) {
+      seen.set(key, serialized);
+    }
     if (reference.scope === "CAMPAIGN_CHARACTER") {
       const character = input.campaignCharacters.find((item) => item.characterId === reference.id && item.characterVersionId === reference.authorityVersionId);
       if (!character) block("CAST_VERSION_GATE", `Campaign Character ${reference.id} version does not resolve`);

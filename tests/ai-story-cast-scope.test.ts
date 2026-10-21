@@ -55,6 +55,17 @@ describe("AI Story Supporting Cast and Ephemeral Actor scope", () => {
     expect(gates).toContain("SUPPORTING_CHARACTER_STORY_SCOPE_GATE"); expect(gates).toContain("EPHEMERAL_ACTOR_SCENE_SCOPE_GATE");
   });
 
+  it("allows the same frozen Cast authority in multiple Scenes and blocks conflicting bindings", () => {
+    const fingerprint = `sha256:${"a".repeat(64)}`;
+    const campaignRef = {scope:"CAMPAIGN_CHARACTER" as const,id:I.campaignCharacter,campaignId:I.campaign,authorityVersionId:I.campaignVersion,authorityFingerprint:fingerprint,visualIdentityRequirement:"REQUIRED" as const};
+    const campaignCharacter = {characterId:I.campaignCharacter,characterVersionId:I.campaignVersion,campaignId:I.campaign,fingerprint,status:"ACTIVE",visualAssetReferences:[]};
+    expect(validateCastReferences({campaignId:I.campaign,storyId:I.story,sceneIds:new Set([I.sceneA,I.sceneB]),references:[campaignRef,campaignRef],campaignCharacters:[campaignCharacter],supportingCharacters:[]})).toEqual([]);
+    const conflicting = {...campaignRef,visualIdentityRequirement:"NONE" as const};
+    expect(validateCastReferences({campaignId:I.campaign,storyId:I.story,sceneIds:new Set([I.sceneA,I.sceneB]),references:[campaignRef,conflicting],campaignCharacters:[campaignCharacter],supportingCharacters:[]})).toEqual([
+      expect.objectContaining({gate:"CAST_REFERENCE_GATE",message:`Conflicting Cast reference CAMPAIGN_CHARACTER:${I.campaignCharacter}`}),
+    ]);
+  });
+
   it("allows only explicit upward promotion while preserving source lineage", () => {
     const source=supporting(); const sourceRef={scope:"STORY_SUPPORTING_CHARACTER" as const,id:source.supportingCharacterId,storyId:I.story,authorityVersionId:source.supportingCharacterVersionId,authorityFingerprint:source.fingerprint,visualIdentityRequirement:"NONE" as const};
     const target={scope:"CAMPAIGN_CHARACTER" as const,id:I.campaignCharacter,campaignId:I.campaign,authorityVersionId:I.campaignVersion,authorityFingerprint:`sha256:${"b".repeat(64)}`,visualIdentityRequirement:"NONE" as const};
