@@ -9,6 +9,21 @@ export type CurrentExecutionPlanDiscovery = {
   };
 };
 
+export function generationReviewFailureMessage(data: unknown): string {
+  if (!data || typeof data !== "object") return "Generation review did not create an Execution Plan";
+  const blockers = (data as { qc?: { blockingErrors?: unknown } }).qc?.blockingErrors;
+  if (!Array.isArray(blockers) || blockers.length === 0) {
+    return "Generation review did not create an Execution Plan";
+  }
+  return blockers.map((item) => {
+    if (!item || typeof item !== "object") return "GENERATION_REVIEW_BLOCKED";
+    const finding = item as { code?: unknown; message?: unknown };
+    const code = typeof finding.code === "string" ? finding.code : "GENERATION_REVIEW_BLOCKED";
+    const message = typeof finding.message === "string" ? finding.message : "Execution QC blocked this Scene";
+    return `${code}: ${message}`;
+  }).join(" · ");
+}
+
 export async function fetchCurrentExecutionPlan(
   input: { campaignId: string; storyId: string },
   fetchImpl: typeof fetch = fetch
