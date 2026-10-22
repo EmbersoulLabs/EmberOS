@@ -1,5 +1,6 @@
 import { Queue, type ConnectionOptions } from "bullmq";
 import { QUEUE_NAMES } from "./jobs";
+import { redisLogLabel } from "./redis-log-label";
 import { assertPhase1ExecutionLocked, emitPhotoSceneOpsEvent, emitVideoStudioOpsEvent } from "@ceo-agent/shared";
 
 export { QUEUE_NAMES } from "./jobs";
@@ -30,13 +31,7 @@ export function getBullmqPrefix(): string | undefined {
 
 export function logQueueConfig(): void {
   const url = process.env.REDIS_URL ?? "redis://localhost:6379";
-  const host = (() => {
-    try {
-      return new URL(url.replace(/^redis:\/\//, "http://")).hostname;
-    } catch {
-      return url;
-    }
-  })();
+  const host = redisLogLabel(url);
   const prefix = getBullmqPrefix();
   console.log(`[queue] redis=${host} prefix=${prefix ?? "(production — shared with remote workers)"}`);
   if (/upstash\.io/i.test(url) && !prefix) {
