@@ -1,6 +1,9 @@
+import { randomUUID } from "node:crypto";
 import {
+  ControlledSelfUseAuthorityService,
+  ControlledSelfUseError,
   getBusinessProfileByWorkspace,
-  requireWorkspaceRole,
+  getDb,
 } from "@ceo-agent/db";
 import {
   BusinessProfileAiAnalyzeRequestSchema,
@@ -8,9 +11,11 @@ import {
   isUuid,
   type BusinessProfileAiAnalyzeRequest,
 } from "@ceo-agent/shared";
+import { withControlledSelfUseProviderContext } from "@ceo-agent/agents";
 import { executeSkill, AiSkillError } from "@/lib/business-profile-ai";
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
+import { requireControlledSelfUseWorkspaceOperator } from "@/lib/controlled-self-use-workspace-access";
 
 function rowToAnalyzeInput(row: Record<string, unknown>): BusinessProfileAiAnalyzeRequest {
   return {
@@ -60,7 +65,13 @@ export async function POST(
       return apiError("workspace id must be a valid UUID", "VALIDATION_ERROR", 400);
     }
 
-    await requireWorkspaceRole(workspaceId, user.id, "operator");
+    const workspace = await requireControlledSelfUseWorkspaceOperator({
+      request,
+      userId: user.id,
+      workspaceId,
+      capabilityKey: "campaign.generate",
+      providerKey: "openai",
+    });
 
     const row = await getBusinessProfileByWorkspace(workspaceId);
     if (!row) {
@@ -97,8 +108,43 @@ export async function POST(
       );
     }
 
+    const db = getDb();
+    const authority = new ControlledSelfUseAuthorityService(db);
+    const executionIdentity = `business-profile-analyze:${workspaceId}:${randomUUID()}`;
+    let reservation;
     try {
-      const result = await executeSkill("business-profile-analyzer", input);
+      reservation = (await authority.reserve({
+        environment: "PRODUCTION",
+        organizationId: workspace.orgId,
+        workspaceId,
+        capabilityKey: "campaign.generate",
+        executionIdentity,
+        providerKey: "openai",
+        maximumCostUsd: "0.10",
+        retryOrdinal: 0,
+        actorUserId: user.id,
+        reservedAt: new Date().toISOString(),
+      })).reservation;
+    } catch (error) {
+      if (error instanceof ControlledSelfUseError) {
+        return apiError("Business profile analysis requires an active, budgeted Production authority", error.code, 403);
+      }
+      throw error;
+    }
+
+    try {
+      const result = await withControlledSelfUseProviderContext({
+        reservationId: reservation.reservationId,
+        organizationId: workspace.orgId,
+        workspaceId,
+        executionIdentity,
+        providerKey: "openai",
+      }, () => executeSkill("business-profile-analyzer", input));
+      await authority.settle(
+        reservation.reservationId,
+        result.metadata.usage.costUsd.toFixed(2),
+        new Date().toISOString()
+      );
       // Preserve PD-013 HTTP response shape (no API contract change).
       return apiSuccess({
         brandSummary: result.brandSummary,
@@ -112,6 +158,10 @@ export async function POST(
         usage: result.metadata.usage,
       });
     } catch (error) {
+      const latest = await authority.getReservationById(reservation.reservationId);
+      if (latest?.status === "RESERVED") {
+        await authority.release(reservation.reservationId, new Date().toISOString());
+      }
       if (error instanceof AiSkillError && error.code === "PROVIDER_UNAVAILABLE") {
         return apiError(
           "AI analysis is unavailable right now. Please try again later.",
