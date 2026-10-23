@@ -13,6 +13,13 @@ type ReadinessFinding = {
   classification: "MISSING_EVIDENCE" | "CONTRADICTION";
   message: string;
   scriptSceneIds: string[];
+  sourceAssetId?: string;
+};
+
+type PhotoSceneGenerationDto = {
+  id: string;
+  status: string;
+  boundedError?: string | null;
 };
 type Readiness = {
   status: "PASS" | "BLOCK";
@@ -69,6 +76,39 @@ export function PlanningApprovalControl({
   }, [campaignId, storyId, identityReady]);
 
   useEffect(() => { void refreshReadiness(); }, [refreshReadiness]);
+
+  const [preparingAssetId, setPreparingAssetId] = useState<string | null>(null);
+  const [prepareError, setPrepareError] = useState("");
+  async function prepareProductMaterial(sourceAssetId: string) {
+    if (preparingAssetId) return;
+    setPreparingAssetId(sourceAssetId);
+    setPrepareError("");
+    try {
+      const startRes = await fetch(`/api/campaigns/${encodeURIComponent(campaignId)}/photo-scene/extractions`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceAssetId }),
+      });
+      let generation = await startRes.json() as PhotoSceneGenerationDto & { error?: string };
+      if (!startRes.ok) throw new Error(generation.error ?? "Product material preparation could not be started");
+      const started = Date.now();
+      while ((generation.status === "queued" || generation.status === "processing") && Date.now() - started < 5 * 60 * 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        const pollRes = await fetch(`/api/photo-scene/generations/${encodeURIComponent(generation.id)}`, { credentials: "same-origin" });
+        if (!pollRes.ok) break;
+        generation = await pollRes.json() as PhotoSceneGenerationDto;
+      }
+      if (generation.status !== "ready") {
+        throw new Error(generation.boundedError ?? "Product material preparation did not complete. Open Photo Scene to check it.");
+      }
+      await refreshReadiness();
+    } catch (caught) {
+      setPrepareError(caught instanceof Error ? caught.message : "Product material preparation failed");
+    } finally {
+      setPreparingAssetId(null);
+    }
+  }
 
   const [durationPending, setDurationPending] = useState(false);
   const [durationNotice, setDurationNotice] = useState("");
@@ -154,10 +194,24 @@ export function PlanningApprovalControl({
                 {" · "}
                 <span className="font-medium">{finding.classification === "MISSING_EVIDENCE" ? "Creative decision required" : "Contradiction"}</span>
                 {finding.scriptSceneIds.length ? ` · Scene ${finding.scriptSceneIds.join(", ")}` : ""}: {finding.message}
+                {finding.code === "PRODUCT_MATERIAL_PREPARATION_REQUIRED" && finding.sourceAssetId ? (
+                  <div className="mt-1">
+                    <button
+                      type="button"
+                      onClick={() => void prepareProductMaterial(finding.sourceAssetId!)}
+                      disabled={preparingAssetId !== null || readinessPending}
+                      className="rounded-lg border border-primary px-3 py-1.5 text-xs font-medium text-primary disabled:opacity-60"
+                      data-testid="prepare-product-material"
+                    >
+                      {preparingAssetId === finding.sourceAssetId ? "Preparing product material…" : "Prepare product material"}
+                    </button>
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>
         ) : readiness?.status === "PASS" ? <p className="mt-2 text-sm text-green-700">Director, Motion, object-state and camera authority are complete and consistent.</p> : null}
+        {prepareError ? <p className="mt-2 text-sm text-red-600" role="alert">{prepareError}</p> : null}
         {readiness?.executionUnitDurations && readiness.executionUnitDurations.status !== "COMPLIANT" ? (
           <div className="mt-3 space-y-2 text-sm text-ink-secondary" data-testid="planning-execution-units">
             <p className="font-medium text-navy">

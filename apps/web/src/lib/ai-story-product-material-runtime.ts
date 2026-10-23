@@ -22,6 +22,7 @@ export class AiStoryProductMaterialRuntimeError extends Error {
       | "PRODUCT_MATERIAL_PREPARATION_REQUIRED"
       | "PRODUCT_MATERIAL_UNUSABLE",
     message: string,
+    readonly sourceAssetId?: string,
   ) {
     super(message);
     this.name = "AiStoryProductMaterialRuntimeError";
@@ -121,6 +122,7 @@ export async function resolveCurrentSceneProductMaterialForScheduling(input: {
     throw new AiStoryProductMaterialRuntimeError(
       "PRODUCT_MATERIAL_PREPARATION_REQUIRED",
       "The exact Product derivative must be prepared before image-conditioned execution",
+      binding.sourceAssetId,
     );
   }
   if (!selection.selectedMaterial || selection.selection === "PRODUCT_VISUAL_INPUT_UNUSABLE") {
@@ -206,11 +208,16 @@ const PLANNING_PRODUCT_MATERIAL_AUTHORITY_CODES = new Set([
 
 export function readPlanningProductMaterialAuthorityError(
   error: unknown,
-): { code: string; message: string } | null {
+): { code: string; message: string; sourceAssetId?: string } | null {
   if (!(error instanceof Error) || !("code" in error)) return null;
   const code = (error as Error & { code?: unknown }).code;
   if (typeof code !== "string" || !PLANNING_PRODUCT_MATERIAL_AUTHORITY_CODES.has(code)) return null;
-  return { code, message: error.message };
+  const sourceAssetId = (error as Error & { sourceAssetId?: unknown }).sourceAssetId;
+  return {
+    code,
+    message: error.message,
+    ...(typeof sourceAssetId === "string" ? { sourceAssetId } : {}),
+  };
 }
 
 /**
