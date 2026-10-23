@@ -360,6 +360,14 @@ jobs:
       - name: Certify marketing budget settlement idempotency
         run: pnpm exec vitest run --config vitest.marketing-budget-idempotency.config.ts
 
+      - name: Apply core tables RLS backfill
+        run: pnpm --filter @ceo-agent/db sql:core-rls-backfill
+
+      - name: Certify core tables RLS tenant isolation
+        run: >-
+          pnpm exec vitest run --config vitest.integration.config.ts
+          tests/core-tables-rls-backfill.integration.test.ts
+
   verify:
     name: Test, typecheck, build
     runs-on: ubuntu-latest
