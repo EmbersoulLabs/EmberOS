@@ -104,6 +104,7 @@ export async function GET(
             scope: "STORY" as const,
             scriptSceneIds: [],
             message: authority.message,
+            ...(authority.sourceAssetId ? { sourceAssetId: authority.sourceAssetId } : {}),
           }],
         } });
       }

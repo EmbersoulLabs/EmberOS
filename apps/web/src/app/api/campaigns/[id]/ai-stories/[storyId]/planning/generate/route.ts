@@ -14,6 +14,7 @@ import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { loadCampaignAiStory } from "@/lib/ai-story-service";
 import {
   getLatestAnimationPackageForStory,
+  readCompleteAnimationPackage,
   readPlanningDraftFromPackage,
 } from "@/lib/ai-story-planning-service";
 import {
@@ -91,10 +92,21 @@ export async function POST(
       storyId,
       workspaceId: campaign.workspaceId,
     });
-    const draft =
-      latestPackage?.storyVersionId === loaded.currentVersion.id
-        ? readPlanningDraftFromPackage(latestPackage)
-        : null;
+    const sameVersion = latestPackage?.storyVersionId === loaded.currentVersion.id;
+    // A package whose payload is already the assembled AnimationPackagePayload (not a
+    // StoryPlanningDraft) means every stage already completed. readPlanningDraftFromPackage
+    // returns null for that shape, which previously made nextRequiredPlanningStage(undefined ?? [])
+    // fall through to the FIRST stage and silently re-run — and overwrite — an already-complete plan.
+    if (sameVersion && readCompleteAnimationPackage(latestPackage) !== null) {
+      return apiSuccess({
+        storyId,
+        storyVersionId: loaded.currentVersion.id,
+        status,
+        execution: "complete",
+        completedStages: [...STORY_PLANNING_STAGE_ORDER],
+      });
+    }
+    const draft = sameVersion ? readPlanningDraftFromPackage(latestPackage) : null;
     const stage = nextRequiredPlanningStage(draft?.completedStages ?? []);
     if (!stage) {
       return apiSuccess({
