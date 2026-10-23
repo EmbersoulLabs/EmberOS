@@ -98,12 +98,30 @@ const requireAuth = vi.fn();
 const requireWorkspaceRole = vi.fn();
 const getBusinessProfileByWorkspace = vi.fn();
 const executeSkill = vi.fn();
+const requireControlledSelfUseWorkspaceOperator = vi.fn();
+const reserveReservation = vi.fn();
+const settleReservation = vi.fn();
+const releaseReservation = vi.fn();
+const getReservationById = vi.fn();
 
 vi.mock("@/lib/auth", async () => {
   const actual = await vi.importActual<typeof import("@/lib/auth")>("@/lib/auth");
   return {
     ...actual,
     requireAuth: () => requireAuth(),
+  };
+});
+
+vi.mock("@/lib/controlled-self-use-workspace-access", () => ({
+  requireControlledSelfUseWorkspaceOperator: (...args: unknown[]) =>
+    requireControlledSelfUseWorkspaceOperator(...args),
+}));
+
+vi.mock("@ceo-agent/agents", async () => {
+  const actual = await vi.importActual<typeof import("@ceo-agent/agents")>("@ceo-agent/agents");
+  return {
+    ...actual,
+    withControlledSelfUseProviderContext: (_context: unknown, run: () => unknown) => run(),
   };
 });
 
@@ -114,6 +132,21 @@ vi.mock("@ceo-agent/db", async () => {
     requireWorkspaceRole: (...args: unknown[]) => requireWorkspaceRole(...args),
     getBusinessProfileByWorkspace: (...args: unknown[]) =>
       getBusinessProfileByWorkspace(...args),
+    getDb: () => ({}),
+    ControlledSelfUseAuthorityService: class {
+      reserve(...args: unknown[]) {
+        return reserveReservation(...args);
+      }
+      settle(...args: unknown[]) {
+        return settleReservation(...args);
+      }
+      release(...args: unknown[]) {
+        return releaseReservation(...args);
+      }
+      getReservationById(...args: unknown[]) {
+        return getReservationById(...args);
+      }
+    },
   };
 });
 
@@ -189,6 +222,19 @@ describe("POST /api/workspaces/[id]/business-profile/analyze", () => {
     requireAuth.mockResolvedValue({ id: userId });
     requireWorkspaceRole.mockResolvedValue({ orgId: orgA, role: "operator" });
     getBusinessProfileByWorkspace.mockResolvedValue(profileRow());
+    requireControlledSelfUseWorkspaceOperator.mockResolvedValue({
+      id: workspaceA,
+      orgId: orgA,
+      slug: "bloom",
+      accessMode: "MEMBER",
+    });
+    reserveReservation.mockResolvedValue({
+      reservation: { reservationId: "reservation-1", status: "RESERVED" },
+      replayed: false,
+    });
+    settleReservation.mockResolvedValue(undefined);
+    releaseReservation.mockResolvedValue(undefined);
+    getReservationById.mockResolvedValue({ status: "SETTLED" });
   });
 
   it("returns normalized AI analysis on success", async () => {
