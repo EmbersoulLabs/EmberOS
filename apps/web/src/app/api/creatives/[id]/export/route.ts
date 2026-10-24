@@ -39,6 +39,12 @@ export async function GET(
       .orderBy(desc(schema.publishJobs.createdAt))
       .limit(1);
 
+    const [campaign] = await db
+      .select({ status: schema.campaigns.status })
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, creative.campaignId))
+      .limit(1);
+
     const renderStatus = creative.renderStatus ?? "none";
     const hasPreview = Boolean(creative.videoUrl);
     const hasFinal = Boolean(creative.videoExportUrl);
@@ -47,6 +53,10 @@ export async function GET(
       (creative.status === "approved" ||
         creative.renderStatus === "final_ready" ||
         EXPORTABLE_CREATIVE_STATUSES.has(creative.status));
+    // Mirrors the POST handler's own gate (checked there first, before the
+    // Creative-level check below) so the pre-flight state the button is
+    // disabled from actually predicts what POST will do.
+    const campaignApproved = !campaign || isCampaignExportable(campaign.status);
 
     let blockReason: string | null = null;
     if (!hasPreview) {
@@ -55,6 +65,8 @@ export async function GET(
       blockReason = "final_rendering";
     } else if (!hasFinal) {
       blockReason = "final_not_ready";
+    } else if (!campaignApproved) {
+      blockReason = "campaign_not_approved";
     } else if (!canExportPack) {
       blockReason = "not_approved";
     }
@@ -74,6 +86,7 @@ export async function GET(
           ? "Export job failed. Check worker logs and retry."
           : null,
       creativeStatus: creative.status,
+      campaignId: creative.campaignId,
       renderStatus,
       hasPreview,
       hasFinal,
@@ -114,7 +127,7 @@ export async function POST(
       .limit(1);
 
     if (campaign && !isCampaignExportable(campaign.status)) {
-      return apiError("Creative must pass review before export", "APPROVAL_REQUIRED", 403);
+      return apiError("Campaign must pass review before export", "APPROVAL_REQUIRED", 403);
     }
 
     if (!creative.videoUrl && !creative.videoExportUrl) {

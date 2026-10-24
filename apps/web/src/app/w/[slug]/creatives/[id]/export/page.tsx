@@ -11,6 +11,7 @@ interface ExportState {
   exportPackUrl: string | null;
   exportError?: string | null;
   creativeStatus?: string;
+  campaignId?: string;
   renderStatus?: string;
   hasPreview?: boolean;
   hasFinal?: boolean;
@@ -49,6 +50,7 @@ export default function ExportPage() {
       exportPackUrl: data.exportPackUrl ?? null,
       exportError: data.exportError ?? null,
       creativeStatus: data.creativeStatus,
+      campaignId: data.campaignId,
       renderStatus: data.renderStatus,
       hasPreview: data.hasPreview,
       hasFinal: data.hasFinal,
@@ -72,6 +74,7 @@ export default function ExportPage() {
     }
     if (s.blockReason === "preview_not_ready") return t("export.waitPreview");
     if (s.blockReason === "final_not_ready") return t("export.needFinal");
+    if (s.blockReason === "campaign_not_approved") return t("export.needCampaignApproval");
     if (s.blockReason === "not_approved") return t("export.needApproval");
     return t("export.idle");
   }
@@ -222,11 +225,22 @@ export default function ExportPage() {
             >
               {t("export.download")}
             </a>
+          ) : state.blockReason === "campaign_not_approved" && state.campaignId ? (
+            <Link
+              href={`/w/${slug}/campaigns/${state.campaignId}/task`}
+              className="inline-flex h-10 items-center rounded-lg bg-navy px-5 text-sm font-medium text-white shadow-sm hover:bg-navy/90"
+            >
+              {t("export.goToCampaignReview")}
+            </Link>
           ) : (
             <button
               type="button"
               onClick={triggerExport}
-              disabled={loading || state.blockReason === "preview_not_ready"}
+              disabled={
+                loading ||
+                state.blockReason === "preview_not_ready" ||
+                state.blockReason === "campaign_not_approved"
+              }
               className="inline-flex h-10 items-center rounded-lg bg-navy px-5 text-sm font-medium text-white shadow-sm hover:bg-navy/90 disabled:opacity-50"
             >
               {loading ? t("export.working") : t("export.generate")}
