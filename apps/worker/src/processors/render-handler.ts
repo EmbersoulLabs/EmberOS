@@ -16,6 +16,7 @@ import {
   resolveLogoStorageReference,
   resolveRenderPreferences,
   stampRenderPreferences,
+  safeFileExtension,
   type ClipDownloadResolution,
   type RenderMode,
   type RenderProgress,
@@ -261,7 +262,7 @@ export async function processRenderJob(data: RenderJobData): Promise<void> {
         ? [videoAsset, ...assets.filter((a) => a.id !== videoAsset.id)]
         : assets;
       for (const asset of downloadOrder) {
-        const ext = asset.storagePath.split(".").pop() ?? "bin";
+        const ext = safeFileExtension(asset.storagePath.split(".").pop() ?? "", "bin");
         const localPath = join(workDir, `${asset.id}.${ext}`);
         await downloadStorageFile(asset.storagePath, localPath);
         assetMap.set(asset.id, {

@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getDb, schema } from "@ceo-agent/db";
-import { STORAGE_PATHS, isMergedSourceAsset } from "@ceo-agent/shared";
+import { STORAGE_PATHS, isMergedSourceAsset, safeFileExtension } from "@ceo-agent/shared";
 import { loadTrackedCampaignTaskInputs } from "@ceo-agent/agents";
 import { concatVideoFiles } from "../ffmpeg/concat-videos";
 import { probeVideo } from "../ffmpeg/pipeline";
@@ -30,7 +30,7 @@ export async function ensureMergedSourceVideo(taskId: string): Promise<void> {
     const localPaths: string[] = [];
     for (let i = 0; i < sourceVideos.length; i++) {
       const asset = sourceVideos[i]!;
-      const ext = asset.storagePath.split(".").pop() ?? "mp4";
+      const ext = safeFileExtension(asset.storagePath.split(".").pop() ?? "", "mp4");
       const localPath = join(workDir, `part-${i}.${ext}`);
       await downloadStorageFile(asset.storagePath, localPath);
       localPaths.push(localPath);

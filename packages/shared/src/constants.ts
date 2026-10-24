@@ -31,6 +31,18 @@ export const SOURCE_END_TRIM_SEC = 3.5;
 export const PORTAL_TOKEN_EXPIRY_DAYS = 7;
 export const EXPORT_ZIP_TTL_HOURS = 24;
 
+/**
+ * Collapse a user/storage-path-derived candidate extension down to a short
+ * alphanumeric token before it's ever interpolated into a storage path or a
+ * local filesystem path. Without this, a crafted filename (e.g. containing
+ * "/" or "../") survives `name.split(".").pop()` and lets `path.join` escape
+ * the intended directory when the worker later downloads the object.
+ */
+export function safeFileExtension(candidate: string, fallback = "bin"): string {
+  const cleaned = candidate.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return cleaned.slice(0, 8) || fallback;
+}
+
 export const STORAGE_PATHS = {
   source: (workspaceId: string, campaignId: string, assetId: string, ext: string) =>
     `${workspaceId}/campaigns/${campaignId}/source/${assetId}.${ext}`,

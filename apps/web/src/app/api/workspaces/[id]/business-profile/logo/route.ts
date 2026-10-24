@@ -11,6 +11,7 @@ import {
   getBusinessLogoBucket,
   businessLogoStorageFromPersistedValue,
   createBusinessLogoStoragePath,
+  detectAllowedBusinessLogoImageType,
   isBusinessLogoMimeType,
   publicBusinessLogoUrl,
 } from "@/lib/business-logo-storage";
@@ -59,8 +60,17 @@ export async function POST(
       return apiError("Logo must be an image file", "VALIDATION_ERROR", 400);
     }
 
+    // `file.type` is a client-supplied form field and can't be trusted on its
+    // own — confirm the actual bytes are one of the raster formats we accept
+    // before this ever reaches the public bucket.
+    const bytes = await file.arrayBuffer();
+    const detectedMimeType = detectAllowedBusinessLogoImageType(new Uint8Array(bytes));
+    if (!detectedMimeType) {
+      return apiError("Logo file content does not match a supported image format", "VALIDATION_ERROR", 400);
+    }
+
     const current = await getBusinessProfileByWorkspace(workspaceId);
-    const storagePath = createBusinessLogoStoragePath(workspaceId, file.name, file.type);
+    const storagePath = createBusinessLogoStoragePath(workspaceId, file.name, detectedMimeType);
     const bucket = getBusinessLogoBucket();
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     if (!supabaseUrl) {
@@ -68,11 +78,10 @@ export async function POST(
     }
 
     const supabase = createAdminClient();
-    const bytes = await file.arrayBuffer();
     const { error } = await supabase.storage
       .from(bucket)
       .upload(storagePath, Buffer.from(bytes), {
-        contentType: file.type,
+        contentType: detectedMimeType,
         upsert: false,
       });
 

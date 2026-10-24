@@ -13,6 +13,28 @@ export type ClipVoicePreset = (typeof CLIP_VOICE_PRESETS)[number];
 
 export type ExternalBgm = NonNullable<EditPlan["audio"]["bgmExternal"]>;
 
+/**
+ * Hosts allowed for external (online) BGM audio downloads. The worker fetches
+ * this URL server-side (`resolveExternalBgmFile`), so an unrestricted
+ * `https?://` check lets a client point it at an internal service or the
+ * cloud metadata endpoint (SSRF). Jamendo (`/api/music/search`) is currently
+ * the only integrated provider, so this is an allowlist of its own CDN hosts
+ * rather than an attempt to blocklist private IP ranges (which is easy to get
+ * wrong — DNS rebinding, alternate IP encodings, etc.).
+ */
+const ALLOWED_EXTERNAL_BGM_HOSTS = [/^jamendo\.com$/i, /\.jamendo\.com$/i];
+
+export function isAllowedExternalBgmAudioUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return false;
+  return ALLOWED_EXTERNAL_BGM_HOSTS.some((pattern) => pattern.test(url.hostname));
+}
+
 export interface CreativeAudioSettings {
   bgm: ClipBgmKey;
   voicePreset: ClipVoicePreset;

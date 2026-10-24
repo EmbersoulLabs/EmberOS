@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { applyVoicePreset } from "@ceo-agent/agents";
 import { getDb, schema, requireWorkspaceRole } from "@ceo-agent/db";
 import {
+  isAllowedExternalBgmAudioUrl,
   isClipBgmKey,
   isClipVoicePreset,
   needsFullAudioRerender,
@@ -32,7 +33,7 @@ function isValidExternalBgm(value: unknown): value is ExternalBgmInput {
     typeof v.trackId === "string" &&
     typeof v.name === "string" &&
     typeof v.audioUrl === "string" &&
-    /^https?:\/\//.test(v.audioUrl)
+    isAllowedExternalBgmAudioUrl(v.audioUrl)
   );
 }
 
