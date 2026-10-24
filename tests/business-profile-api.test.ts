@@ -9,6 +9,13 @@ const orgA = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const userId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const profileId = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee";
 
+// Logo upload now verifies the actual byte signature (not just the claimed
+// MIME type), so fixtures need real magic bytes rather than plain text.
+const PNG_BYTES = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const WEBP_BYTES = Uint8Array.from([
+  0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
+]);
+
 const requireAuth = vi.fn();
 const requireWorkspaceRole = vi.fn();
 const getBusinessProfileByWorkspace = vi.fn();
@@ -260,7 +267,7 @@ describe("Business Profile logo persistence", () => {
   it("uploads logo image to Supabase Storage and persists Business Profile logo URL", async () => {
     const { POST } = await loadLogoRoute();
     const formData = new FormData();
-    formData.set("file", new File(["logo"], "brand-logo.png", { type: "image/png" }));
+    formData.set("file", new File([PNG_BYTES], "brand-logo.png", { type: "image/png" }));
 
     const res = await POST(
       new Request("http://localhost/api", {
@@ -302,7 +309,7 @@ describe("Business Profile logo persistence", () => {
     getBusinessProfileByWorkspace.mockResolvedValue(incompleteProfileRow({ logo: oldLogo }));
     const { POST } = await loadLogoRoute();
     const formData = new FormData();
-    formData.set("file", new File(["new"], "new-logo.webp", { type: "image/webp" }));
+    formData.set("file", new File([WEBP_BYTES], "new-logo.webp", { type: "image/webp" }));
 
     const res = await POST(
       new Request("http://localhost/api", {
@@ -363,7 +370,7 @@ describe("Business Profile logo persistence", () => {
     storageUpload.mockResolvedValue({ error: { message: "storage offline" } });
     const { POST } = await loadLogoRoute();
     const formData = new FormData();
-    formData.set("file", new File(["logo"], "logo.png", { type: "image/png" }));
+    formData.set("file", new File([PNG_BYTES], "logo.png", { type: "image/png" }));
 
     const res = await POST(
       new Request("http://localhost/api", {
