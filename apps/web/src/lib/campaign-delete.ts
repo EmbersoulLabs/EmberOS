@@ -3,12 +3,30 @@ import { getDb, schema } from "@ceo-agent/db";
 
 type Db = ReturnType<typeof getDb>;
 
+export class CampaignHasAiStoryContentError extends Error {
+  readonly code = "CAMPAIGN_HAS_AI_STORY_CONTENT";
+
+  constructor() {
+    super(
+      "This campaign has AI Story content and can't be deleted while that content exists. Remove the AI Story first."
+    );
+    this.name = "CampaignHasAiStoryContentError";
+  }
+}
+
 /** Remove dependent rows that block campaign cascade delete in Postgres. */
 export async function deleteCampaignCascade(
   db: Db,
   campaignId: string,
   workspaceId: string
 ): Promise<void> {
+  const [story] = await db
+    .select({ id: schema.aiStories.id })
+    .from(schema.aiStories)
+    .where(and(eq(schema.aiStories.campaignId, campaignId), eq(schema.aiStories.workspaceId, workspaceId)))
+    .limit(1);
+  if (story) throw new CampaignHasAiStoryContentError();
+
   const tasks = await db
     .select({ id: schema.tasks.id })
     .from(schema.tasks)

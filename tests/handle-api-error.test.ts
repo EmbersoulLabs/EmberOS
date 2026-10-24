@@ -169,6 +169,34 @@ describe("handleApiError", () => {
     spy.mockRestore();
   });
 
+  it("maps a Postgres foreign_key_violation (23503) to a clear 409 instead of a generic 500, without leaking DB metadata", async () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const pgError = Object.assign(
+      new Error('update or delete on table "campaigns" violates foreign key constraint "ai_story_characters_campaign_id_fkey" on table "ai_story_characters"'),
+      {
+        code: "23503",
+        detail: "Key (id)=(abc) is still referenced from table \"ai_story_characters\".",
+        constraint: "ai_story_characters_campaign_id_fkey",
+        schema: "public",
+        table: "ai_story_characters",
+      }
+    );
+
+    const { status, body } = await readError(handleApiError(pgError));
+    expect(status).toBe(409);
+    expect(body).toEqual({
+      error: "This action is blocked because related records still exist.",
+      code: "DEPENDENCY_EXISTS",
+    });
+
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("23503");
+    expect(serialized).not.toContain("ai_story_characters");
+    expect(serialized).not.toContain("constraint");
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
   it("returns generic 500 for arbitrary { code, message } objects", async () => {
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { status, body } = await readError(
