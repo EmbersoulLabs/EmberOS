@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import { getBgmTrack, resolveBgmTrackKey } from "@ceo-agent/shared";
+import { getBgmTrack, isAllowedExternalBgmAudioUrl, resolveBgmTrackKey } from "@ceo-agent/shared";
 
 const CACHE_DIR = join(tmpdir(), "ceo-bgm-cache");
 const BUNDLED_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "assets", "bgm");
@@ -63,6 +63,12 @@ export async function resolveBgmFile(bgmKey: string): Promise<string> {
 
 /** Download + cache an external (online) BGM track by its direct audio URL. */
 export async function resolveExternalBgmFile(audioUrl: string, cacheKey: string): Promise<string> {
+  // Defense-in-depth: the API layer already validates this, but the worker
+  // is what actually makes the server-side request, so it re-checks rather
+  // than trusting that every caller (now or in the future) validated first.
+  if (!isAllowedExternalBgmAudioUrl(audioUrl)) {
+    throw new Error("External BGM audio URL is not from an allowed host");
+  }
   await mkdir(CACHE_DIR, { recursive: true });
   const hash = createHash("sha1").update(audioUrl).digest("hex").slice(0, 16);
   const safeKey = cacheKey.replace(/[^a-z0-9_-]/gi, "_").slice(0, 40);

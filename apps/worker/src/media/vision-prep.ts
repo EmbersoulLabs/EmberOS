@@ -3,7 +3,7 @@ import { access, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
-import { SOURCE_END_TRIM_SEC, VISION_MAX_FRAMES } from "@ceo-agent/shared";
+import { SOURCE_END_TRIM_SEC, VISION_MAX_FRAMES, safeFileExtension } from "@ceo-agent/shared";
 import { getFfmpegPath } from "../ffmpeg/ffmpeg-path";
 import { probeVideo } from "../ffmpeg/pipeline";
 import { downloadStorageFile } from "../storage";
@@ -194,7 +194,7 @@ export async function prepareVisionFromStorage(input: {
   await mkdir(workDir, { recursive: true });
 
   try {
-    const ext = input.storagePath.split(".").pop() ?? "bin";
+    const ext = safeFileExtension(input.storagePath.split(".").pop() ?? "", "bin");
     const localPath = join(workDir, `source.${ext}`);
     await downloadStorageFile(input.storagePath, localPath);
 

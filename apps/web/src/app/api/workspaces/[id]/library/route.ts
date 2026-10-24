@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, isNull, sql } from "drizzle-orm";
 import { assetSearchCondition, getDb, requireWorkspaceRole, schema } from "@ceo-agent/db";
-import { isUuid, LibraryUploadBodySchema, MAX_UPLOAD_SIZE_BYTES, resolveLibraryAssetType, STORAGE_PATHS } from "@ceo-agent/shared";
+import { isUuid, LibraryUploadBodySchema, MAX_UPLOAD_SIZE_BYTES, resolveLibraryAssetType, safeFileExtension, STORAGE_PATHS } from "@ceo-agent/shared";
 import { apiError, apiSuccess } from "@/lib/api";
 import { handleApiError, requireAuth } from "@/lib/auth";
 import { enforceRateLimit } from "@/lib/rate-limit";
@@ -51,7 +51,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return apiError("File exceeds the configured upload limit", "VALIDATION_ERROR", 400);
     }
     const assetId = randomUUID();
-    const extension = parsed.data.filename.split(".").pop()?.toLowerCase() || type.type;
+    const extension = safeFileExtension(parsed.data.filename.split(".").pop() ?? "", type.type);
     const storagePath = STORAGE_PATHS.library(workspaceId, assetId, extension);
     const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
     const { data, error } = await createAdminClient().storage.from(bucket).createSignedUploadUrl(storagePath);

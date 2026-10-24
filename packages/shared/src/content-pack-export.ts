@@ -28,9 +28,16 @@ export interface TaskContentPack {
   }>;
 }
 
+// A cell starting with one of these is interpreted as a formula by
+// Excel/Sheets on CSV import. AI-generated copy can legitimately start with
+// "-" or "@" (a dash list item, an @mention), so guard with a leading `'`
+// (the standard CSV formula-injection mitigation) rather than stripping it.
+const CSV_FORMULA_TRIGGER_CHARS = new Set(["=", "+", "-", "@", "\t", "\r"]);
+
 function csvEscape(value: string): string {
-  if (/[",\n\r]/.test(value)) return `"${value.replace(/"/g, '""')}"`;
-  return value;
+  const guarded = CSV_FORMULA_TRIGGER_CHARS.has(value[0] ?? "") ? `'${value}` : value;
+  if (/[",\n\r]/.test(guarded)) return `"${guarded.replace(/"/g, '""')}"`;
+  return guarded;
 }
 
 export function buildTaskContentPack(input: {

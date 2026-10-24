@@ -4,7 +4,7 @@ import { getDb, schema, requireWorkspaceRole, persistSameWorkspaceCampaignAssetR
 import { requireAuth, handleApiError } from "@/lib/auth";
 import { apiSuccess, apiError } from "@/lib/api";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { STORAGE_PATHS, MAX_UPLOAD_SIZE_BYTES, assessFinishedAdRisk } from "@ceo-agent/shared";
+import { STORAGE_PATHS, MAX_UPLOAD_SIZE_BYTES, assessFinishedAdRisk, safeFileExtension } from "@ceo-agent/shared";
 import { validateNewAssetUpload } from "@/lib/campaign-assets";
 import { enforceRateLimit } from "@/lib/rate-limit";
 
@@ -53,7 +53,7 @@ export async function POST(
     if (!assetCheck.ok) return apiError(assetCheck.error, "VALIDATION_ERROR", 400);
 
     const assetId = randomUUID();
-    const ext = filename.split(".").pop() ?? "mp4";
+    const ext = safeFileExtension(filename.split(".").pop() ?? "", "mp4");
     const storagePath = STORAGE_PATHS.source(campaign.workspaceId, campaignId, assetId, ext);
     const bucket = process.env.SUPABASE_STORAGE_BUCKET ?? "campaign-assets";
 
