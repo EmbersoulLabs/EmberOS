@@ -76,6 +76,7 @@ const APP_ERROR_HTTP_STATUS = {
   CAMPAIGN_REVIEW_STATE_INVALID: 409,
   CAMPAIGN_REVIEW_ALREADY_DECIDED: 409,
   CAMPAIGN_ASSET_REF_PERSIST_FAILED: 409,
+  CAMPAIGN_HAS_AI_STORY_CONTENT: 409,
   ASSET_SEMANTIC_ANALYSIS_FAILED: 502,
   ASSET_SEMANTIC_SNAPSHOT_REQUIRED: 409,
   ASSET_SEMANTIC_SCOPE_MISMATCH: 403,
@@ -163,6 +164,18 @@ export function handleApiError(error: unknown) {
   const recognized = asRecognizedAppError(error);
   if (recognized) {
     return apiError(recognized.message, recognized.code, recognized.status);
+  }
+
+  // Postgres foreign_key_violation (23503). Surfaces as a clear 409 instead of an
+  // opaque 500 whenever a delete/update is blocked by a dependent row we didn't
+  // anticipate — a safety net alongside any specific, named check upstream.
+  if (error instanceof Error && "code" in error && (error as Error & { code?: unknown }).code === "23503") {
+    console.error(error);
+    return apiError(
+      "This action is blocked because related records still exist.",
+      "DEPENDENCY_EXISTS",
+      409
+    );
   }
 
   console.error(error);
