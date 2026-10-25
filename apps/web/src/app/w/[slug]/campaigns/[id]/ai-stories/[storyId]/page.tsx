@@ -262,16 +262,17 @@ export default function AiStoryReviewPage() {
   async function waitForDurableStage(stage: StoryPlanningStage) {
     const started = Date.now();
     while (Date.now() - started < 8 * 60 * 1000) {
-      const planningRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning`);
+      const planningRes = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}/planning?stage=${stage}`);
+      let planningData: Record<string, unknown> | null = null;
       if (planningRes.ok) {
-        const planningData = await planningRes.json();
-        const stages = (planningData.planningDraft?.completedStages ?? []) as StoryPlanningStage[];
-        const packageReady = stage === "animation_package" && Boolean(planningData.completePackage);
+        planningData = await planningRes.json();
+        const stages = (planningData!.planningDraft as { completedStages?: StoryPlanningStage[] } | null)?.completedStages ?? [];
+        const packageReady = stage === "animation_package" && Boolean(planningData!.completePackage);
         if (stages.includes(stage) || packageReady) {
-          setCreativeContext((planningData.creativeContext?.payload as CreativeContext | undefined) ?? null);
-          setPlanningDraft((planningData.planningDraft as StoryPlanningDraft | undefined) ?? null);
+          setCreativeContext((planningData!.creativeContext as { payload?: CreativeContext } | undefined)?.payload ?? null);
+          setPlanningDraft((planningData!.planningDraft as StoryPlanningDraft | undefined) ?? null);
           if (packageReady) {
-            setAnimationPackage(planningData.completePackage as AnimationPackagePayload);
+            setAnimationPackage(planningData!.completePackage as AnimationPackagePayload);
           }
           return;
         }
@@ -280,7 +281,8 @@ export default function AiStoryReviewPage() {
       if (storyRes.ok) {
         const storyData = await storyRes.json();
         if (String(storyData.story?.status) === "failed") {
-          throw new Error("Planning stage failed before a durable result was saved");
+          const failure = planningData?.stageFailure as { message?: string } | null;
+          throw new Error(failure?.message ?? "Planning stage failed before a durable result was saved");
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 2000));
