@@ -194,6 +194,24 @@ export const STORY_PLANNING_STAGE_ORDER = [
   "animation_package",
 ] as const;
 
+/**
+ * A planning stage job's failedReason is just the thrown error's message
+ * (often a bare contract code). Translate the ones a user can act on
+ * themselves; anything unrecognized still shows the raw reason instead of
+ * a generic "failed" message with no next step.
+ */
+export const AI_STORY_PLANNING_STAGE_FAILURE_MESSAGES: Readonly<Record<string, string>> = {
+  CHARACTER_PROPOSAL_ACCEPTANCE_REQUIRED:
+    "This stage needs an accepted character first. Open the character proposal panel above, accept the pending character, then try this stage again.",
+  CHARACTER_AUTHORITY_IDENTITY_REQUIRED:
+    "A character in this story no longer matches an accepted character identity. Review the character proposals above, accept the correct one, then try this stage again.",
+};
+
+export function describePlanningStageFailure(reason: string | null | undefined): string {
+  if (!reason) return "This stage failed for an unknown reason. Check the Advanced diagnostics below and try again.";
+  return AI_STORY_PLANNING_STAGE_FAILURE_MESSAGES[reason] ?? `This stage failed: ${reason}`;
+}
+
 const NonEmptyTextSchema = z.string().trim().min(1);
 
 export const PlanningCharacterAuthorityProjectionSchema = z.object({
