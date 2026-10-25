@@ -8,6 +8,10 @@ export const CampaignMarketingPlanAssetModeSchema = z.enum(["ASSET_BASED", "ZERO
 export const CampaignMarketingPlanContentSchema = z.object({
   objective: z.string().trim().min(1).max(1000),
   targetAudience: z.string().trim().min(1).max(2000),
+  /** The core message to communicate. An AI-authored conclusion drawn from
+   * the other fields, not a fact the user supplies beforehand — optional
+   * for plans saved before this field existed. */
+  keyMessage: z.string().trim().max(500).default(""),
   marketingApproach: z.string().trim().min(1).max(4000),
   creativeDirection: z.string().trim().min(1).max(4000),
   assetMode: CampaignMarketingPlanAssetModeSchema,
