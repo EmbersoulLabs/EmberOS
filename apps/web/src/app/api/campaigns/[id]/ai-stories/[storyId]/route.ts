@@ -17,6 +17,7 @@ import { requireAuth, handleApiError } from "@/lib/auth";
 import { authorizeAiStoryAccess } from "@/lib/ai-story-access";
 import { apiSuccess, apiError } from "@/lib/api";
 import {
+  archiveAiStory,
   createAiStoryVersion,
   loadCampaignAiStory,
   setAiStoryStatus,
@@ -137,6 +138,40 @@ export async function PATCH(
     }
 
     return apiSuccess({ story: loaded.story, version });
+  } catch (error) {
+    return handleApiError(error);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string; storyId: string }> }
+) {
+  try {
+    const user = await requireAuth();
+    const { id: campaignId, storyId } = await params;
+    if (!isUuid(campaignId) || !isUuid(storyId)) {
+      return apiError("Invalid id", "VALIDATION_ERROR", 400);
+    }
+
+    const db = getDb();
+    const [campaign] = await db
+      .select()
+      .from(schema.campaigns)
+      .where(eq(schema.campaigns.id, campaignId))
+      .limit(1);
+    if (!campaign) return apiError("Campaign not found", "NOT_FOUND", 404);
+    await authorizeAiStoryAccess({ user, orgId: campaign.orgId, workspaceId: campaign.workspaceId, minRole: "operator", request });
+
+    const loaded = await loadCampaignAiStory(db, campaignId, storyId, campaign.workspaceId);
+    if (!loaded) return apiError("AI Story not found", "NOT_FOUND", 404);
+
+    // Soft-delete only: the ~50 dependent tables behind an AI Story keep
+    // onDelete: "restrict" on purpose, so its production history is never
+    // touched. This just stops the Story from blocking the Campaign delete.
+    await archiveAiStory(db, storyId, campaignId, campaign.workspaceId);
+
+    return apiSuccess({ archived: true });
   } catch (error) {
     return handleApiError(error);
   }

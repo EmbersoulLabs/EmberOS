@@ -3,18 +3,20 @@ import { getDb, schema } from "@ceo-agent/db";
 
 type Db = ReturnType<typeof getDb>;
 
-export class CampaignHasAiStoryContentError extends Error {
-  readonly code = "CAMPAIGN_HAS_AI_STORY_CONTENT";
-
-  constructor() {
-    super(
-      "This campaign has AI Story content and can't be deleted while that content exists. Remove the AI Story first."
-    );
-    this.name = "CampaignHasAiStoryContentError";
-  }
-}
-
-/** Remove dependent rows that block campaign cascade delete in Postgres. */
+/**
+ * Remove dependent rows that block campaign cascade delete in Postgres, or
+ * — when the Campaign has any AI Story history, archived or not — soft-
+ * delete the Campaign instead of hard-deleting it.
+ *
+ * ~40 tables behind an AI Story (character versions, canonical scenes,
+ * script versions, provider cost ledgers, …) hold their own campaign_id
+ * foreign key with onDelete: "restrict", independent of ai_stories.id and
+ * independent of whether that Story is archived. A true hard delete of such
+ * a Campaign is not possible without destroying that production history, so
+ * archiving the Story first does not unblock it. Soft-deleting achieves the
+ * same outcome the user wants — the Campaign disappears from every normal
+ * view — without touching any of it.
+ */
 export async function deleteCampaignCascade(
   db: Db,
   campaignId: string,
@@ -25,7 +27,13 @@ export async function deleteCampaignCascade(
     .from(schema.aiStories)
     .where(and(eq(schema.aiStories.campaignId, campaignId), eq(schema.aiStories.workspaceId, workspaceId)))
     .limit(1);
-  if (story) throw new CampaignHasAiStoryContentError();
+  if (story) {
+    await db
+      .update(schema.campaigns)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(schema.campaigns.id, campaignId), eq(schema.campaigns.workspaceId, workspaceId)));
+    return;
+  }
 
   const tasks = await db
     .select({ id: schema.tasks.id })

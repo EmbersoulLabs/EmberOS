@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { schema } from "@ceo-agent/db";
-import { CampaignHasAiStoryContentError, deleteCampaignCascade } from "../apps/web/src/lib/campaign-delete";
+import { deleteCampaignCascade } from "../apps/web/src/lib/campaign-delete";
 
 /**
  * Minimal fluent + thenable query stub standing in for drizzle's chainable builder.
@@ -25,40 +25,44 @@ function makeDb(opts: { aiStoryRows: unknown[]; taskRows?: unknown[]; creativeRo
     .mockReturnValueOnce(queryStub(opts.taskRows ?? []))
     .mockReturnValueOnce(queryStub(opts.creativeRows ?? []));
   const del = vi.fn(() => ({ where: deleteWhere }));
-  return { select, delete: del, deleteWhere } as unknown as Parameters<typeof deleteCampaignCascade>[0] & {
+  const updateWhere = vi.fn().mockResolvedValue(undefined);
+  const updateSet = vi.fn(() => ({ where: updateWhere }));
+  const update = vi.fn(() => ({ set: updateSet }));
+  return { select, delete: del, deleteWhere, update, updateSet, updateWhere } as unknown as Parameters<
+    typeof deleteCampaignCascade
+  >[0] & {
     select: typeof select;
     delete: typeof del;
     deleteWhere: typeof deleteWhere;
+    update: typeof update;
+    updateSet: typeof updateSet;
+    updateWhere: typeof updateWhere;
   };
 }
 
 describe("deleteCampaignCascade", () => {
-  it("refuses to delete a campaign that still has an AI Story, before touching any other table", async () => {
+  it("soft-deletes the campaign when it has AI Story history, instead of hard-deleting it", async () => {
+    // ~40 tables behind an AI Story hold their own campaign_id FK with
+    // onDelete: "restrict", independent of ai_stories.id — a hard delete of
+    // this campaign would hit one of those, so this must never even attempt
+    // db.delete(schema.campaigns) for it.
     const db = makeDb({ aiStoryRows: [{ id: "story-1" }] });
 
-    await expect(deleteCampaignCascade(db, "campaign-1", "workspace-1")).rejects.toThrow(
-      CampaignHasAiStoryContentError
-    );
+    await deleteCampaignCascade(db, "campaign-1", "workspace-1");
 
-    // Only the AI Story existence check ran; no deletes were attempted anywhere.
     expect(db.select).toHaveBeenCalledTimes(1);
     expect(db.delete).not.toHaveBeenCalled();
+    expect(db.update).toHaveBeenCalledWith(schema.campaigns);
+    expect(db.updateSet).toHaveBeenCalledWith({ deletedAt: expect.any(Date) });
   });
 
-  it("surfaces a 409-mappable, actionable error rather than letting Postgres's raw FK violation bubble up", async () => {
-    const db = makeDb({ aiStoryRows: [{ id: "story-1" }] });
-    await expect(deleteCampaignCascade(db, "campaign-1", "workspace-1")).rejects.toMatchObject({
-      code: "CAMPAIGN_HAS_AI_STORY_CONTENT",
-      message: expect.stringContaining("AI Story"),
-    });
-  });
-
-  it("still deletes the campaign normally when there is no AI Story content", async () => {
+  it("still hard-deletes the campaign normally when there is no AI Story content", async () => {
     const db = makeDb({ aiStoryRows: [], taskRows: [{ id: "task-1" }], creativeRows: [{ id: "creative-1" }] });
 
     await deleteCampaignCascade(db, "campaign-1", "workspace-1");
 
     expect(db.select).toHaveBeenCalledTimes(3);
+    expect(db.update).not.toHaveBeenCalled();
     // agentLogs (by taskId), clientInvites (by creativeId), and campaigns itself.
     expect(db.delete).toHaveBeenCalledTimes(3);
     expect(db.delete).toHaveBeenNthCalledWith(1, schema.agentLogs);
