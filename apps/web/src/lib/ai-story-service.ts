@@ -119,6 +119,33 @@ export async function setAiStoryStatus(
     .where(eq(schema.aiStories.id, storyId));
 }
 
+/**
+ * Soft-delete only. The ~50 dependent tables behind an AI Story (character
+ * versions, canonical scenes, script versions, provider cost ledgers, …)
+ * keep onDelete: "restrict" on purpose — this never touches them. Archiving
+ * just stops the Story from blocking its Campaign's delete and hides it from
+ * the normal list (listCampaignAiStories already filters on archivedAt).
+ * Idempotent: archiving an already-archived Story updates zero rows.
+ */
+export async function archiveAiStory(
+  db: Db,
+  storyId: string,
+  campaignId: string,
+  workspaceId: string
+) {
+  await db
+    .update(schema.aiStories)
+    .set({ archivedAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(schema.aiStories.id, storyId),
+        eq(schema.aiStories.campaignId, campaignId),
+        eq(schema.aiStories.workspaceId, workspaceId),
+        isNull(schema.aiStories.archivedAt)
+      )
+    );
+}
+
 export async function ensureCampaignLibraryAvailability(
   db: Db,
   campaignId: string,

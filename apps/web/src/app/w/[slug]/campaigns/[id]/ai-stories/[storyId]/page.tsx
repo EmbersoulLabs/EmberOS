@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { AppShell, fetchCurrentUserProjection, StatusBadge } from "@/components/AppShell";
 import { StoryRuntimePanel } from "@/components/ai-story/StoryRuntimePanel";
 import { PlanningApprovalControl } from "@/components/ai-story/PlanningApprovalControl";
@@ -72,6 +72,7 @@ function normalizeDraft(content: AiStoryStructuredDraft): AiStoryStructuredDraft
 
 export default function AiStoryReviewPage() {
   const params = useParams();
+  const router = useRouter();
   const slug = params.slug as string;
   const campaignId = params.id as string;
   const storyId = (params.storyId ?? params.episodeId) as string;
@@ -368,6 +369,18 @@ export default function AiStoryReviewPage() {
     return completedStages.has(prior) || Boolean(creativeContext && stage === "director_thinking");
   }
 
+  async function deleteEpisode() {
+    if (!confirm("Delete this Episode? This hides it and lets the Campaign be deleted, but keeps its production history. This can't be undone from here.")) return;
+    setBusy(true); setError("");
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}`, { method: "DELETE" });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error ?? "Delete failed");
+      router.push(`/w/${slug}/campaigns/${campaignId}`);
+    } catch (err) { setError(err instanceof Error ? err.message : "Delete failed"); }
+    finally { setBusy(false); }
+  }
+
   if (loading) return <AppShell><p className="text-sm text-ink-secondary">Loading story…</p></AppShell>;
   const executionActive = ["ready_for_execution", "generate_review", "executing", "execution_review", "execution_failed"].includes(status);
 
@@ -376,7 +389,7 @@ export default function AiStoryReviewPage() {
       <main className="mx-auto max-w-4xl space-y-6" data-testid="ai-story-normal-user-flow">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div><Link href={`/w/${slug}/campaigns/${campaignId}`} className="text-sm text-brand-blue hover:underline">← Campaign</Link><p className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue">AI Story</p><h1 className="mt-1 text-2xl font-bold text-navy">Your Episode</h1></div>
-          <StatusBadge status={status} />
+          <div className="flex items-center gap-3"><StatusBadge status={status} /><button type="button" disabled={busy} onClick={() => void deleteEpisode()} className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Delete Episode</button></div>
         </header>
         <ol className="grid gap-2 text-sm sm:grid-cols-4" aria-label="AI Story progress">
           {["Your Episode", "Create Episode", "Review Episode", "Generate Episode"].map((label, index) => <li key={label} className="rounded-lg border border-border bg-white px-3 py-2"><span className="mr-2 text-brand-blue">{index + 1}</span>{label}</li>)}
