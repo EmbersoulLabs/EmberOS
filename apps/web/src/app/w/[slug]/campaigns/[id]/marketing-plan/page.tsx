@@ -20,8 +20,6 @@ const emptyPlan: CampaignMarketingPlanContent = {
 const MISSING_MATERIAL_LABELS: Record<string, string> = {
   business_profile: "Business Profile (fill in your business description)",
   target_audience: "Target Audience (set it on this Campaign, or in your Business Profile)",
-  platform_strategy: "Platform Strategy (select at least one platform for this Campaign)",
-  product: "Product material (attach at least one image or video to this Campaign)",
 };
 
 type AssetOption = { id: string; label: string };

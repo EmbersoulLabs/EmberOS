@@ -79,15 +79,20 @@ export async function POST(
     const rawProfile = await getBusinessProfileByWorkspace(campaign.workspaceId);
     const profile = rawProfile ? normalizeBusinessProfileRecord(rawProfile as unknown as Record<string, unknown>) : null;
     const productAssets = await loadAttachedProductAssets(db, campaignId, campaign.workspaceId);
+    const hasAssets = productAssets.length > 0;
 
     // Fail-informative: tell the user exactly what to go fill in, before
     // spending any AI budget on a draft that would just cite missing facts.
+    // Only Business Profile and Target Audience are hard requirements — you
+    // can't write a sensible plan without knowing who the business is and
+    // who it's for. Platform Strategy and Product material are tactical,
+    // not identity-level: zero product assets is a normal, legitimate path
+    // (the plan just recommends AI_STORY, which generates from scratch),
+    // and missing platforms just means the AI proposes some.
     const missing: string[] = [];
     if (!profile || !profile.businessDescription) missing.push("business_profile");
     const targetAudience = campaign.targetAudience?.summary || profile?.targetAudience || null;
     if (!targetAudience) missing.push("target_audience");
-    if (!campaign.platforms?.length) missing.push("platform_strategy");
-    if (productAssets.length === 0) missing.push("product");
     if (missing.length) {
       return apiSuccess({ ready: false, missing }, 409);
     }
@@ -128,6 +133,12 @@ export async function POST(
           "Draft a Campaign Marketing Plan from the supplied business material only.",
           `businessFactRefs must be a non-empty subset of exactly these keys: ${CITABLE_BUSINESS_FACTS.join(", ")}.`,
           "Only cite a fact you actually used to reach your conclusions. keyMessage is the single core message this Campaign should communicate — a conclusion you draw from the business, audience, and product material, not a fact you were given.",
+          hasAssets
+            ? "productAssetCount is greater than zero: recommend whichever of AI_STORY, VIDEO_STUDIO, or PHOTO_SCENE best fits the product material and objective."
+            : "productAssetCount is zero: there is no existing photo or video to build from. recommendedModule must be AI_STORY — it generates everything from scratch and is the only module that works with zero assets. Do not recommend VIDEO_STUDIO or PHOTO_SCENE here.",
+          campaign.platforms?.length
+            ? "Respect the given platforms in marketingApproach."
+            : "No platforms were specified yet — propose the platforms that best fit the target audience and objective as part of marketingApproach.",
           "Return JSON only. This is a proposal requiring human review and approval before it takes effect.",
         ].join(" "),
         user: JSON.stringify({
@@ -140,7 +151,7 @@ export async function POST(
             services: profile!.services,
           },
           targetAudience,
-          platforms: campaign.platforms,
+          platforms: campaign.platforms?.length ? campaign.platforms : "none specified",
           productAssetCount: productAssets.length,
           productAssetNames: productAssets.map((asset) => asset.displayName ?? asset.originalFilename ?? asset.id),
         }),
@@ -169,7 +180,13 @@ export async function POST(
       ready: true,
       proposal: {
         ...result.data,
-        assetMode: "ASSET_BASED" as const,
+        // Structural, not a judgment call: zero assets can only ever be a
+        // ZERO_ASSET plan, and only AI_STORY works with zero assets. Enforced
+        // here regardless of what the model answered, same as assetMode/
+        // assetIds already were — the prompt instruction above is belt, this
+        // is suspenders.
+        recommendedModule: hasAssets ? result.data.recommendedModule : "AI_STORY",
+        assetMode: hasAssets ? ("ASSET_BASED" as const) : ("ZERO_ASSET" as const),
         assetIds: productAssets.map((asset) => asset.id),
         missingAssets: [],
       },
