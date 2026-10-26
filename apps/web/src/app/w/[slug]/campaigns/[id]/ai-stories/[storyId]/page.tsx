@@ -370,7 +370,7 @@ export default function AiStoryReviewPage() {
   }
 
   async function deleteEpisode() {
-    if (!confirm("Delete this Episode? This hides it and lets the Campaign be deleted, but keeps its production history. This can't be undone from here.")) return;
+    if (!confirm("Remove this Episode? This hides it and lets the Campaign be deleted, but keeps its production history. This can't be undone from here.")) return;
     setBusy(true); setError("");
     try {
       const res = await fetch(`/api/campaigns/${campaignId}/ai-stories/${storyId}`, { method: "DELETE" });
@@ -389,7 +389,7 @@ export default function AiStoryReviewPage() {
       <main className="mx-auto max-w-4xl space-y-6" data-testid="ai-story-normal-user-flow">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div><Link href={`/w/${slug}/campaigns/${campaignId}`} className="text-sm text-brand-blue hover:underline">← Campaign</Link><p className="mt-3 text-xs font-semibold uppercase tracking-[0.16em] text-brand-blue">AI Story</p><h1 className="mt-1 text-2xl font-bold text-navy">Your Episode</h1></div>
-          <div className="flex items-center gap-3"><StatusBadge status={status} /><button type="button" disabled={busy} onClick={() => void deleteEpisode()} className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Delete Episode</button></div>
+          <div className="flex items-center gap-3"><StatusBadge status={status} /><button type="button" disabled={busy} onClick={() => void deleteEpisode()} className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">Remove Episode</button></div>
         </header>
         <ol className="grid gap-2 text-sm sm:grid-cols-4" aria-label="AI Story progress">
           {["Your Episode", "Create Episode", "Review Episode", "Generate Episode"].map((label, index) => <li key={label} className="rounded-lg border border-border bg-white px-3 py-2"><span className="mr-2 text-brand-blue">{index + 1}</span>{label}</li>)}
